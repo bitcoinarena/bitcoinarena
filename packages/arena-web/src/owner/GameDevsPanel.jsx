@@ -96,7 +96,7 @@ export class GameDevsPanel extends React.Component {
           <p>A game developer's key on this node lets it sign that developer's apps' new versions - a new split of their donations. Paste the key file
             (game-dev.pkcs8) or its seed. It is kept beside this node's store, readable by the node only.</p>
           <textarea {...field} id="gdkey" rows="3" placeholder="-----BEGIN PRIVATE KEY----- … or 64 hex" value={s.key} onChange={(e) => this.setState({ key: e.target.value })} />
-          <p className="sub">The key travels in your signed request: only do this over https or on the node's own machine.</p>
+          <p className="sub">The key is sent with your request. Only do this over https or on the node's own machine.</p>
           <button type="button" className="primary" disabled={!s.key.trim()} onClick={() => this.install()}>Install</button>
           <div className="err">{s.keySaid ? (s.keySaid.ok ? <span className="ok">{s.keySaid.text}</span> : s.keySaid.text) : ''}</div></div></details>);
   }

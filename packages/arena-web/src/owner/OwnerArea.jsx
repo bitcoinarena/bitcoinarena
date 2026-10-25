@@ -48,39 +48,35 @@ export class OwnerArea extends React.Component {
             <div className="card" id="needs">{p.needs ? <NeedsPanel items={p.needs} /> : <p className="sub">checking this node…</p>}</div>
             {/* THE NODE AT A GLANCE (kanban #565): one card per fact, the label small, the value large */}
             <div className="stats">
-              <div className="stat"><span>Node</span><b className="mono">{p.node.slice(0, 12)}…</b><small>its key on the network</small></div>
-              <div className="stat"><span>Custody</span><b className={p.guardian ? 'ok' : undefined}>{p.guardian ? 'Guardian' : 'No custody'}</b><small>{p.guardian ? 'holds players\' bitcoin with its federation' : 'does not hold players\' bitcoin'}</small></div>
+              <div className="stat"><span>Node</span><b className="mono">{p.node.slice(0, 12)}…</b></div>
+              <div className="stat"><span>Custody</span><b className={p.guardian ? 'ok' : undefined}>{p.guardian ? 'Guardian' : 'No custody'}</b></div>
               <div className="stat"><span>Apps</span><b>{games.length}</b><small>{games.length ? games.map((g) => `${g.name} v${g.version ?? '?'}`).join(', ') : 'none installed'}</small></div>
               <div className="stat"><span>Owner since</span><b>{new Date(p.claimedAtMs).toISOString().slice(0, 10)}</b><small>signed in with {HOW[p.how] || p.how}</small></div>
-              <div className="stat"><span>Owner key</span><b className="mono">{p.owner.slice(0, 12)}…</b><small>the key every owner request is signed with</small></div>
+              <div className="stat"><span>Owner key</span><b className="mono">{p.owner.slice(0, 12)}…</b></div>
             </div></>)}
           {sec('roles', <><h2>Roles</h2>
-            <p className="lead">What this node does for the network, and what each role earns.</p><Place id="roles" />
+            <Place id="roles" />
             <h3 className="sh">Custody (guardian)</h3><Place id="custody" />
             <h3 className="sh">Liquidity provider</h3><Place id="liquidity" /></>)}
           {sec('bond', <><h2>Bond</h2>
-            <p className="lead">The bitcoin this node locked so it can be drawn for rounds. It earns your share of the fees.</p>
             <Place id="bond-answer" /><Place id="capacity-plea" className={null} /><Place id="bond" /><Place id="keyswitch-place" className={null} />
             <details className="more"><summary>How this node is drawn (details)</summary><Place id="standing" /></details></>)}
           {sec('services', <><h2>Services</h2>
-            <p className="lead">The programs this node runs and whether they answer.</p>
             <h3 className="sh">Address</h3><Place id="address" /><Place id="services" /></>)}
           {sec('apps', <><h2>Apps</h2>
-            <p className="lead">Games, markets and networks this node runs. New ones come from other nodes; each is checked here and again by the node before it runs.</p>
             <div className="card" id="store"><h3>On this node</h3><Place id="installed" className={null} /><h3>Found on the network</h3><Place id="netfound" className={null} /></div>
             <h3 className="sh">Network</h3><div className="card" id="nets">
-              <p>The network this node plays on: its chain, the donation addresses in force, the game series, and its federations.</p><Place id="netmine" className={null} /></div></>)}
-          {sec('release', <><h2>Updates</h2><p className="lead">The version this node runs and whether a newer one is out.</p><Place id="release" /></>)}
+              <Place id="netmine" className={null} /></div></>)}
+          {sec('release', <><h2>Updates</h2><Place id="release" /></>)}
           {sec('money', <><h2>Donations</h2>
-            <p className="lead">Money this node collects for the developers, and the developers' split.</p>
             <Place id="ballots-open" className={null} />
             <Place id="devs" className={null} />
             <Place id="dons" className={null} />
             <h3 className="sh">Developer split</h3><Place id="ballots" className={null} />
             <Place id="gamedevs" className={null} /></>)}
           {sec('emergency', <><h2>Emergency code</h2><div className="card" id="emergency">
-            <p>If this node will be offline for a while - more than about two days on mainnet, 12 blocks on testnet4 - take it out of the
-              network with your emergency code so you keep your bond. Open <a href="https://testnet.bitcoin-arena.io/offline/" target="_blank" rel="noopener"><b>testnet.bitcoin-arena.io/offline</b></a> on any device and type the code.</p>
+            <p>Going offline for more than two days (12 blocks on testnet4)? Take your node out first with this code and you keep your bond.
+              Type it at <a href="https://testnet.bitcoin-arena.io/offline/" target="_blank" rel="noopener"><b>testnet.bitcoin-arena.io/offline</b></a> on any device.</p>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px', margin: '6px 0 10px' }}><tbody>
               <tr><th style={{ textAlign: 'left' }}>Your node</th><th style={{ textAlign: 'left' }}>What happens</th><th style={{ textAlign: 'left' }}>Your bond</th></tr>
               <tr><td>no custody</td><td>it is out of every draw at once</td><td>kept</td></tr>
@@ -88,9 +84,9 @@ export class OwnerArea extends React.Component {
               <tr><td>custody, too late</td><td>counted as abandoned</td><td>lost</td></tr></tbody></table>
             {p.emergencyCode ? <><div className="row"><span>Your code</span><b id="emcode">{s.emShown ? p.emergencyCode : 'hidden'}</b></div>
               {s.emShown ? null : <button type="button" id="emshow" onClick={() => this.setState({ emShown: true })}>Show the code</button>}</>
-              : <p className="sub">This browser cannot make the code: it signed in without your 24 words{p.how === 'nsec' ? '' : ' or your nsec'}. The installer showed it at setup. Sign in with the words - or, for a node set up with your Nostr key, with your nsec - to see it here.</p>}
-            <p className="sub">The code can only take this node out - no money, no settings. Never type your 24 words on another node.</p>
-            <p className="sub">If the Arena site cannot be reached: the same page is on every node, at <a href={p.emergencyLink}>/Dashboard/emergency</a>.</p></div></>)}
+              : <p className="sub">You signed in without your 24 words{p.how === 'nsec' ? '' : ' or nsec'}, so this browser can't show the code. Sign in with them to see it, or use the code the installer showed you.</p>}
+            <p className="sub">The code only takes your node out. It can't move money or change settings. Never type your 24 words on another node.</p>
+            <p className="sub">Site down? Every node has the same page at <a href={p.emergencyLink}>/Dashboard/emergency</a>.</p></div></>)}
           {sec('leave', <><h2>Leave</h2><Place id="leave" /></>)}
           {sec('developer', <><h2>Developer</h2>
             {/* A DEVELOPER ON THIS NODE (kanban #582): a dev client (a protocol or app recipient) or a game developer's key - then Donations shows */}

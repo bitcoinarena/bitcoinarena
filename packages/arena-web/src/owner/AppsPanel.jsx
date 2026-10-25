@@ -82,7 +82,7 @@ export class AppsPanel extends React.Component {
         {apps.length ? <div className="app-grid">{apps.map((g) => this.card(g))}</div> : <p className="sub">No app on this node yet.</p>}
         <h3 className="sh">Updates</h3>
         <div className="settings-card">
-          <div className="set-row"><div><b>Update apps automatically</b><p className="sub">A newer version from the nodes below is checked in this node and taken.</p></div>
+          <div className="set-row"><div><b>Update apps automatically</b><p className="sub">Newer versions from other nodes are checked, then installed.</p></div>
             <Switch id="auto-update" label="Update apps automatically" checked={auto} onChange={(on) => this.setState({ auto: on, saved: false })} /></div>
           <details><summary className="sub">Where updates come from</summary>
             <label htmlFor="sources">Nodes to take updates from (one address per line)</label>

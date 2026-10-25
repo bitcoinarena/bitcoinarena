@@ -189,7 +189,7 @@ export class DashboardPage extends React.Component {
         <section><h2>Earnings</h2><Earnings totals={D.totals} period={period} onPeriod={(p) => this.setState({ period: p })} /></section>
         <section><div className="card"><Chart days={D.days || []} /></div></section>
         {devs.length || L || G || (D.byGame || []).length || notes.length ? (
-          <section><h2>Money around this node</h2>
+          <section><h2>Money</h2>
             <div className="cards">
               {devs.map((V, i) => <DevClient key={i} client={V} nowMs={now} />)}
               {L || G ? (

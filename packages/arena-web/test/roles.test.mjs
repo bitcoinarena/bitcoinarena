@@ -51,7 +51,7 @@ test('what it does: read from the seat, a switch flipped and counted, Review ask
 
 test('a node not in the census yet: no switches, the reason said; the seat refusing the change is shown', async () => {
   const html = renderToStaticMarkup(React.createElement(RolesPanel, { node: 'me', initial: { loaded: true, mine: null, was: {}, now: {} } }));
-  assert.doesNotMatch(html, /id="rl-/); assert.match(html, /not in the census yet/);
+  assert.doesNotMatch(html, /id="rl-/); assert.match(html, /isn.{1,6}t in the census yet/);
   const c = driven({ get: async (p) => answers[p], signed: async () => ({}), post: async () => ({ ok: false, why: 'the bond wallet holds 200 sat' }) });
   await c.componentDidMount(); c.toggle('relay', true); await c.review();
   assert.deepEqual([c.state.step, c.state.message], ['idle', 'the bond wallet holds 200 sat']);
@@ -66,7 +66,7 @@ test('an unanswered /roles is not "not in the census": asked three times, then s
   await c.componentDidMount();
   assert.deepEqual([calls, c.state.loaded, c.state.unread], [3, true, true]);
   const html = renderToStaticMarkup(c.render());
-  assert.doesNotMatch(html, /not in the census/); assert.doesNotMatch(html, /class="tile/); assert.match(html, /did not answer just now/); assert.match(html, />Try again</);
+  assert.doesNotMatch(html, /not in the census/); assert.doesNotMatch(html, /class="tile/); assert.match(html, /Couldn.{1,6}t load the roles/); assert.match(html, />Try again</);
   down = false;
   await c.retry();
   assert.deepEqual([c.state.unread, c.state.was], [false, { play: true, settlement: true, relay: false, custody: true }]);

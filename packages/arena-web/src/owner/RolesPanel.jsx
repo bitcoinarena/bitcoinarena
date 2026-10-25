@@ -86,7 +86,7 @@ export class RolesPanel extends React.Component {
   render() {
     const { loaded, unread, mine, was, now, step, plan, message } = this.state;
     if (!loaded) return <p className="sub">reading this node's roles…</p>;
-    if (unread) return <div><p className="warn">This node did not answer just now, so its roles are not shown. It may be restarting.</p><Button primary onClick={this.retry}>Try again</Button></div>;
+    if (unread) return <div><p className="warn">Couldn't load the roles. The node may be restarting.</p><Button primary onClick={this.retry}>Try again</Button></div>;
     const changed = changedOf(was, now);
     const sent = step === 'sent';
     return (
@@ -112,7 +112,7 @@ export class RolesPanel extends React.Component {
             ? [<Button key="u" onClick={this.undo}>Undo</Button>, <Button key="c" primary onClick={this.confirm}>Confirm</Button>]
             : [<Button key="u" onClick={this.undo}>Undo</Button>, <Button key="r" primary disabled={step === 'checking'} onClick={this.review}>Review changes</Button>]}
         </SaveBar>
-        {mine ? null : <p className="sub">This node is not in the census yet: its roles can be changed once its bond counts.</p>}
+        {mine ? null : <p className="sub">Your node isn't in the census yet. You can change roles once its bond counts.</p>}
       </div>
     );
   }

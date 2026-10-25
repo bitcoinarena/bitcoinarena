@@ -204,7 +204,7 @@ export class DevClients extends React.Component {
           <label>Label</label><input id="dlabel" autoComplete="off" placeholder="dev a" value={s.label} onChange={(e) => this.setState({ label: e.target.value })} />
           <label>Your dev key's secret (64 hex), or empty for a new key</label>
           <input {...field} id="dsecret" type="password" placeholder="empty = a new key" value={s.secret} onChange={(e) => this.setState({ secret: e.target.value })} />
-          <p className="sub">The secret travels in your signed request: only do this over https or on the node's own machine.</p>
+          <p className="sub">The secret is sent with your request. Only do this over https or on the node's own machine.</p>
           <button type="button" className="primary" id="dsetup" onClick={() => this.setup()}>Set up</button>
           <div className="err" id="derr">{s.setupSaid ? (s.setupSaid.ok ? <span className="ok">{s.setupSaid.text}</span> : s.setupSaid.text) : ''}</div></div></details>);
   }
