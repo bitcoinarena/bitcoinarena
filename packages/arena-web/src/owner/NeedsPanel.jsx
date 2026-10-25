@@ -11,10 +11,10 @@ export const ordered = (items) => [...(items || [])].sort((x, y) => (x.level ===
 export class NeedsPanel extends React.Component {
   render() {
     const list = ordered(this.props.items);
-    if (!list.length) return <div><h3 className="ok">Nothing needs you ✓</h3><p className="sub">This node runs, its bond is enough and it is up to date.</p></div>;
+    if (!list.length) return <div><h3 className="ok">All good ✓</h3><p className="sub">Running, bonded and up to date.</p></div>;
     return (
       <div>
-        <h3>What needs you</h3>
+        <h3>To do</h3>
         {list.map((n, i) => <p key={i} className={n.level === 'bad' ? 'err' : 'warnline'}>{n.level === 'bad' ? '🔴' : '🟡'} {n.text} <a href={`#${n.section}`}>Open</a></p>)}
       </div>);
   }

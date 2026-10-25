@@ -101,7 +101,7 @@ export class SetupStatus extends React.Component {
     const problems = rows.filter(([, , l]) => l.problem).length;
     return (
       <div className="card setup-status" id="setup-status">
-        <h3>Setup {all ? <span className="ok">complete</span> : problems ? <span className="bad">{problems} need{problems === 1 ? 's' : ''} attention</span> : <span className="sub">in progress</span>}</h3>
+        <h3>Setup {all ? <span className="ok">complete</span> : problems ? <span className="bad">{problems} problem{problems === 1 ? '' : 's'}</span> : <span className="sub">in progress</span>}</h3>
         {rows.map(([id, label, l]) => <Step key={id} id={id} label={label} done={l.done} problem={l.problem} text={l.text} meter={l.meter} />)}
         {s.tip ? <p className="sub">Chain tip: block {n(s.tip)}</p> : null}
       </div>);
@@ -162,15 +162,15 @@ export class SetupBanner extends React.Component {
     const { phase, rows } = this.phase();
     if (phase === 'done') return null;
     if (phase === 'open') return (
-      <div className="setup-banner" id="setup-banner" role="status"><b>🛠 Your node is still being set up.</b> Only the parts that help now are open: Overview, Services, Updates, Emergency code and Your login. The rest opens when all services are synchronized.</div>);
+      <div className="setup-banner" id="setup-banner" role="status"><b>Setup is still running.</b> Until it's done you can only use Overview, Services, Updates, Emergency code and Your login.</div>);
     const problems = rows.filter(([, , l]) => l.problem);
     return (
       <div className="setup-gate" id="setup-gate" role="dialog" aria-modal="true" aria-labelledby="setup-gate-title">
         <div className="setup-gate-in">
-          <h2 id="setup-gate-title">🛠 Your node is still being set up</h2>
+          <h2 id="setup-gate-title">Your node is still being set up</h2>
           <p className="setup-gate-msg">Check back when all services are synchronized. This page opens by itself when they are.</p>
           <SetupStatus status={s} />
-          {problems.length ? <div className="setup-gate-fix"><p>{problems.map(([, label]) => label).join(', ')} need{problems.length === 1 ? 's' : ''} you. Open the owner area to fix {problems.length === 1 ? 'it' : 'them'}: only the parts that help are open until the setup is done.</p>
+          {problems.length ? <div className="setup-gate-fix"><p>{problems.map(([, label]) => label).join(' and ')} {problems.length === 1 ? 'has a problem' : 'have problems'} you can fix in the owner area.</p>
             <button type="button" id="setup-gate-enter" onClick={() => this.enter()}>Open the owner area</button></div> : null}
         </div>
       </div>);

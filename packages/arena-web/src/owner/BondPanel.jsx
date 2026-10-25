@@ -46,8 +46,8 @@ export class BondPanel extends React.Component {
   }
   render() {
     const { loaded, bond: b, address, busy, message } = this.state;
-    if (!loaded) return <p className="sub">reading this node's bond…</p>;
-    if (!b) return <p className="sub">This node did not answer about its bond.</p>;
+    if (!loaded) return <p className="sub">Loading the bond…</p>;
+    if (!b) return <p className="sub">Couldn't load the bond.</p>;
     const setup = <SetupStatus status={this.state.setup} />;
     if (!b.bond) return <div>{setup}<p>No bond yet. Until it has one, this node is not drawn for rounds.</p></div>;
     const l = b.lock;

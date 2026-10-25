@@ -19,7 +19,7 @@ test('every part under way, in words; a problem counted in the heading', () => {
     gateway: { ok: false, syncing: true, why: 'syncing' },
     updates: [{ what: 'the newest games and protocols in the advertisement', txid: '9a'.repeat(32), seen: true, confirmations: 3, needed: 6, counts: false }],
     oldBonds: [{ sats: '50000', maturity: 157600, blocksLeft: 41, back: false }] });
-  assert.match(html, /<h3>Setup <span class="bad">1 needs attention<\/span><\/h3>/);
+  assert.match(html, /<h3>Setup <span class="bad">1 problem<\/span><\/h3>/);
   assert.match(html, /id="setup-address"><span class="bad">!<\/span>[\s\S]*https:\/\/n\.example does not answer as your node \(ENOTFOUND\)/);
   assert.match(html, /Test coins<\/b> <span class="sub">52,000 sat arrived, 2 confirmations/);
   assert.match(html, /LND<\/b> <span class="sub">synced at block 157,559, 1 open channel, 1 opening/);
@@ -38,7 +38,7 @@ test('LND: reached directly, over Tor, or not at all (a problem)', () => {
   const lnd = (via) => card({ lnd: { ok: true, synced: true, height: 5, channels: 1, pending: 0, via } });
   assert.match(lnd({ how: 'direct', at: '203.0.113.5:9735' }), /reached directly at 203\.0\.113\.5:9735/);
   assert.match(lnd({ how: 'tor', at: 'abc.onion:9735' }), /reached over Tor \(no open port needed\)/);
-  assert.match(lnd({ how: 'none', why: 'no Tor: the release has none' }), /<span class="bad">1 needs attention[\s\S]*other nodes cannot reach it \(no Tor: the release has none\)/);
+  assert.match(lnd({ how: 'none', why: 'no Tor: the release has none' }), /<span class="bad">1 problem[\s\S]*other nodes cannot reach it \(no Tor: the release has none\)/);
 });
 
 test('the owner\'s Overview reads the setup\'s progress itself and again later (playtest 2026-10-25: "auch in der owners area")', async () => {
@@ -63,8 +63,8 @@ test('the owner area waits behind the setup screen while a part runs; it opens o
   const status = { ok: true, core: { interim: true, sync: { blocks: 1, headers: 2, progress: 0.5 } }, address: { ok: false, url: 'https://n.example', why: 'no answer' } };
   const g = new SetupBanner({ status });
   g.setState = (u) => Object.assign(g.state, u);
-  assert.match(renderToStaticMarkup(g.render()), /Public address needs you\. Open the owner area to fix it[\s\S]*id="setup-gate-enter"/);
+  assert.match(renderToStaticMarkup(g.render()), /Public address has a problem you can fix in the owner area\.[\s\S]*id="setup-gate-enter"/);
   g.setState({ entered: true });
-  assert.match(renderToStaticMarkup(g.render()), /id="setup-banner"[\s\S]*Only the parts that help now are open: Overview, Services, Updates, Emergency code and Your login/);
+  assert.match(renderToStaticMarkup(g.render()), /id="setup-banner"[\s\S]*Setup is still running\.[\s\S]*you can only use Overview, Services, Updates, Emergency code and Your login/);
   assert.deepEqual([...SETUP_OPEN_SECTIONS], ['overview', 'services', 'release', 'emergency', 'login']);
 });

@@ -300,7 +300,7 @@ function custodyPanel() { mount('custody', 'mountCustody', { api: { get: getOk, 
 function liquidityPanel() { mount('liquidity', 'mountLiquidity', { api: { get: getOk, post, signed } }); }
 // THE NODE'S SERVICES (kanban #563): each one's state, start / stop / restart and at boot; the ones that need attention on the Overview
 function servicesPanel() {
-  mount('services', 'mountServices', { api: { post, signed }, onAttention: (bad) => need('services', bad ? 'bad' : null, `${bad} of this node's services need attention.`, 'services') });
+  mount('services', 'mountServices', { api: { post, signed }, onAttention: (bad) => need('services', bad ? 'bad' : null, `${bad} service${bad === 1 ? '' : 's'} not running. See Services.`, 'services') });
 }
 // THE NODE'S ADDRESS (kanban #563 / #562 2C): how the world reaches it, and a switch to another way
 function addressPanel() { mount('address', 'mountAddress', { api: { post, signed } }); }
