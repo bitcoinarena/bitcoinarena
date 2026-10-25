@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN INSTALLED NODE ADDS CUSTODY FROM ITS OWNER PAGE (kanban #563, the owner 2026-10-21: "configure every role and service one by one ... on
+// AN INSTALLED NODE ADDS CUSTODY FROM ITS OWNER PAGE (kanban #563, 2026-10-21: "configure every role and service one by one ... on
 // installed nodes too"; the owner-page rule of 2026-10-20: never "run this command"). Before this the custody card said: open Add custody
 // or run `arena-install --add-custody`. Now the page shows the plan - Lightning, the bond against the guardian floor, what the wallet must
 // hold and why - the owner types I UNDERSTAND (the bond's rules, as the wizard asks them), and the node runs the wizard's own custody

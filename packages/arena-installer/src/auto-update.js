@@ -21,7 +21,7 @@ import { checkAsset } from './release-verify.js';
 import { updateNode } from './update.js';
 import { nodeOf } from './node-services.js';
 
-/** The release files' name (kanban #635, the owner 2026-10-25: "Es muss bitcoin-arena-node heissen"); before 2026.1.8, arena-node. */
+/** The release files' name (kanban #635, 2026-10-25: "Es muss bitcoin-arena-node heissen"); before 2026.1.8, arena-node. */
 export const ASSET_PREFIX = 'bitcoin-arena-node';
 export const LEGACY_ASSET_PREFIX = 'arena-node';
 /** This system's asset of a release: bitcoin-arena-node-<v>-<linux|darwin|windows>-<x64|arm64>.tar.gz (.zip on Windows). */

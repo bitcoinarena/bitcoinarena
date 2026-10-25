@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE APPS STEP (kanban #569, the owner 2026-10-21: "The node still comes with the 3 apps pre installed, that is a step in the installer
+// THE APPS STEP (kanban #569, 2026-10-21: "The node still comes with the 3 apps pre installed, that is a step in the installer
 // where all apps are automatically selected"): the release's apps read from their app.json, all chosen at first, the choice saved by the
 // wizard's door and written into the seat's settings - and an update moving every one of them to the new release.
 import { test } from 'node:test';
@@ -87,7 +87,7 @@ test('the door: the release\'s apps in the state, all on; at least one, no unkno
   assert.equal(state.read().done.apps, undefined, 'nothing saved on a refusal');
   const saved = await go('POST', '/api/apps', { apps: ['rock-paper-scissors', 'nextblock', 'nextblock'] });
   assert.deepEqual([saved.ok, saved.apps], [true, ['rock-paper-scissors', 'nextblock']]);
-  // the games its bond names: every version of the chosen apps, sorted (the owner 2026-10-25: "the newest versions of games")
+  // the games its bond names: every version of the chosen apps, sorted (2026-10-25: "the newest versions of games")
   assert.equal(saved.hostedGames.length, 11, 'Next Block 6 versions + Rock Paper Scissors 5');
   assert.deepEqual(saved.hostedGames, [...saved.hostedGames].sort());
   assert.deepEqual(state.read().apps, ['rock-paper-scissors', 'nextblock']);

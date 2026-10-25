@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OTHER WALLETS IN THIS BROWSER IN REACT (kanban #564, the Wallet's Federations tab since #631): the other phrases kept here with a
 // wallet in a federation, how each federation's merge into this wallet stands (merged, merging, waiting and why), the sats already on their
-// way, and "Merge now", which runs the merge in those federations (the page's `onMerge(federations)`). Kanban #631, the owner 2026-10-24:
+// way, and "Merge now", which runs the merge in those federations (the page's `onMerge(federations)`). Kanban #631, 2026-10-24:
 // "Other wallets in the browser, rework that, ok the lobby makes no sense, not all apps even have a lobby, find better ways to restore
 // funds": no lobby is needed, and the money comes over with one tap. Nothing here opens a wallet. A class component.
 import React from 'react';

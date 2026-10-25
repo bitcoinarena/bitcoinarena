@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// ADD TO BOND ON A TESTNET4 SEAT (kanban #544, the owner 2026-10-19: "this is also the default way. E.g increase your bond by 32000
+// ADD TO BOND ON A TESTNET4 SEAT (kanban #544, 2026-10-19: "this is also the default way. E.g increase your bond by 32000
 // sats"): what `arena-install --add-bond` does for an installed node, for one of the hand-made seats - a SECOND bond output beside
 // the seat's first, its body the seat's own newest advertisement (bondsOf: hosted games, guardian_of, versions, endpoint) with the
 // new output's template-2 height, the first bond untouched. From protocol 19 the census counts both as one entry of their sum.

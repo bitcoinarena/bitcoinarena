@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE APPS A NODE HOSTS (kanban #569, the owner 2026-10-21: "The node still comes with the 3 apps pre installed, that is a step in the
+// THE APPS A NODE HOSTS (kanban #569, 2026-10-21: "The node still comes with the 3 apps pre installed, that is a step in the
 // installer where all apps are automatically selected"). Each app the release carries says what a node hosts of it in its own
 // packages/<app>/app.json: { id, title, short, registrations } - the registration modules (every version still played), relative to the
 // app's folder. The apps step lists them, all chosen; the seat loads the chosen ones' registrations (ARENA_APPS, arena.conf apps=).
@@ -41,7 +41,7 @@ export function appsEnvValue(release, chosenIds, apps = appsIn(release)) {
 }
 
 /**
- * THE GAME IDS A NODE HOSTS, FOR ITS ADVERTISEMENT (the owner 2026-10-25: "Make sure the installer and the nodes use the newest versions of
+ * THE GAME IDS A NODE HOSTS, FOR ITS ADVERTISEMENT (2026-10-25: "Make sure the installer and the nodes use the newest versions of
  * games and protocols"): the census draws a node for a round only when its advertisement names the round's game (census.js hostsGame),
  * and the installer's advertisement named Next Block's first version alone - an installed node was never drawn for Up/Down, Rock Paper
  * Scissors or a newer Next Block. These are the chosen apps' registrations as the seat hosts them (arena-node plugins.js hostedPlugins:

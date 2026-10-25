@@ -9,7 +9,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { WaitingDonations, DevClients, DonationsTable, sat } from '../dist/test/donations.mjs';
 
-test('waiting at this seat at one peek: the total in one line; only sets and recipients with something waiting, folded by day (the owner 2026-10-22)', () => {
+test('waiting at this seat at one peek: the total in one line; only sets and recipients with something waiting, folded by day (2026-10-22)', () => {
   const r = { totalMsat: '1500500', sets: [{ setId: 'ab'.repeat(32), title: 'Protocol developers', kind: 'protocol', serial: 3, recipients: [
     { label: 'dev a', key: '02' + 'cd'.repeat(32), totalMsat: '1000000', donations: 2, byDay: [{ day: '2026-10-21', msat: '1000000' }, { day: '2026-10-20', msat: '0' }], byRound: [] },
     { label: 'dev b', key: null, lnurl: 'devb@getalby.com', totalMsat: '0', donations: 0, byDay: [], byRound: [] }] },
@@ -40,7 +40,7 @@ function dev(props = {}) {
   return { m, calls, html: () => renderToStaticMarkup(React.createElement(React.Fragment, null, m.render())) };
 }
 
-test('the dev clients at one peek: a wide card - ready to withdraw in whole sats with Withdraw, four chips, the split as a bar with counts; the newest donations; the rest folded (the owner 2026-10-22)', () => {
+test('the dev clients at one peek: a wide card - ready to withdraw in whole sats with Withdraw, four chips, the split as a bar with counts; the newest donations; the rest folded (2026-10-22)', () => {
   const h = dev().html();
   assert.match(h, /<div class="devhero"><div class="dh-top"><div class="dh-who"><b>dev a<\/b> <span class="pill on">running<\/span><div class="dh-share"><span class="sub">Your share<\/span><span><b>50 %<\/b> Protocol<\/span><span class="own"><b>100 %<\/b> Rock Paper Scissors<\/span><\/div><small>newest donation [0-9]+ (min|h|d) ago<\/small><\/div><div class="dh-cash"><span>Ready to withdraw<\/span><b>2,000 sat<\/b><button type="button" class="primary">Withdraw<\/button>/);
   assert.match(h, /<div class="dh-chips"><div><span>Today<\/span><b>2,000 sat<\/b><\/div><div><span>This week<\/span><b>2,000 sat<\/b><\/div><div><span>All time<\/span><b>2,000 sat<\/b><\/div><div><span>Donations<\/span><b>3<\/b><\/div><\/div>/);
@@ -96,7 +96,7 @@ test('amounts in a currency: the switch, each chip at the donations own rates, w
   assert.match(h, /<div><span>All time<\/span><b>CHF 1.32<\/b><small>2,000 sat<\/small><\/div>/);
 });
 
-test('the donations table: filters for app, part, search and rows; paging; a row opens its full record; amounts in the currency (the owner 2026-10-22)', async () => {
+test('the donations table: filters for app, part, search and rows; paging; a row opens its full record; amounts in the currency (2026-10-22)', async () => {
   const asked = [];
   const row = (i, extra = {}) => ({ atMs: Date.parse('2026-10-22T15:08:00Z') - i * 60000, amountMsat: '3000', protocolMsat: '2000', appMsat: '1000', app: 'nextblock', title: 'Tick Tock, Next Block',
     market: false, item: null, round: '80b976dc184e5e9a'.padEnd(64, '0'), entry: 'e' + i, player: 'c8a6af2023b9194c'.padEnd(64, '1'), outpoint: 'o:' + i,
@@ -109,7 +109,7 @@ test('the donations table: filters for app, part, search and rows; paging; a row
   await t.load();
   const html = () => renderToStaticMarkup(t.render());
   let h = html();
-  assert.deepEqual(asked[0], { slug: 'deva', app: '', q: '', limit: 10, offset: 0 }, 'ten rows by default (the owner 2026-10-22)');
+  assert.deepEqual(asked[0], { slug: 'deva', app: '', q: '', limit: 10, offset: 0 }, 'ten rows by default (2026-10-22)');
   t.set({ limit: 25 }); await t.load();
   assert.match(h, /<div class="dt-sum"><b>60<\/b> donations · <b>180 sat<\/b><\/div>/);
   assert.match(h, /<option value="" selected="">All apps<\/option><option value="nextblock">Tick Tock, Next Block · 50<\/option><option value="items">Items · 10<\/option>/);

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A STAKE HELD IN ANOTHER FEDERATION IS SWAPPED IN, NOT ASKED AS A DEPOSIT (the owner 2026-10-20 17:3xZ, playtest: 200 sat in 4dc88be7, a 100 sat
+// A STAKE HELD IN ANOTHER FEDERATION IS SWAPPED IN, NOT ASKED AS A DEPOSIT (2026-10-20 17:3xZ, playtest: 200 sat in 4dc88be7, a 100 sat
 // Up/Down order in a 337ae01a round showed "Not enough sats in your player wallet ... Deposit with Lightning?"). Two page rules, run on stubs:
 // the deposit is no longer asked at the press when the player's other federations cover the stake, and a federation on the client's
 // known-good list that this page could not verify yet (4dc88be7: today's rounds name an older census) may pay the swap.

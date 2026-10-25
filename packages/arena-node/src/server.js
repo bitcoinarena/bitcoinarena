@@ -837,7 +837,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         } catch { /* the next seat */ }
       }
     }
-    // AND THE PLAYER OF A DONATION THAT DOES NOT NAME ONE (kanban #580, the owner 2026-10-22: "on markets ... also the player hash"): a market's
+    // AND THE PLAYER OF A DONATION THAT DOES NOT NAME ONE (kanban #580, 2026-10-22: "on markets ... also the player hash"): a market's
     // donation comes out of its fee lock at the resolution, so its row names no player key - the entry it was for does (its EntryContract),
     // read here or asked of the same seats (GET /entry), kept once found
     for (const r of rows || []) {
@@ -979,7 +979,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     console.log(`[plugins] ${replaces ? `updated ${replaces.slice(0, 16)} to` : 'installed'} ${v.name} v${v.version} (${game.slice(0, 16)}) from ${from}: running now`);
     return { ...v, ok: true, game, from, installedAt: at, running: true, replaces };
   }
-  // AN APP'S NEW SPLIT, SIGNED BY ITS DEVELOPER (kanban #582, the owner 2026-10-22: "die Game dev splits darf nur dann gelten, wenn der game
+  // AN APP'S NEW SPLIT, SIGNED BY ITS DEVELOPER (kanban #582, 2026-10-22: "die Game dev splits darf nur dann gelten, wenn der game
   // dev eingeloggt ist"): the developer's browser signs the app's next version (app-version.js) - the key never reaches a node - and this
   // node, on its owner's signed request, takes it as any update is taken (adoptPackage: the developer's signature, its parent, a higher
   // version, the set its manifest names). Only the newest version of an app.
@@ -2234,7 +2234,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         conflicted: [...conflictsFor(rid).conflicted.keys()], ...(publisher ? { publisher } : {}), ...(guardianPayout ? { guardianPayout } : {}) };
     },
   });
-  // WHO PROCESSED THE ROUND, KEPT (kanban #624, the owner 2026-10-24: "Also show who processed the round, e.g for settlement and verify"): each
+  // WHO PROCESSED THE ROUND, KEPT (kanban #624, 2026-10-24: "Also show who processed the round, e.g for settlement and verify"): each
   // settlement step this seat takes - committed, gave its share, combined and submitted, took a peer's signature - with its time, for GET /tx
   {
     const fedOf = (o) => (o && o.federation ? ` (federation ${String(o.federation).slice(0, 8)})` : '');
@@ -3477,7 +3477,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const ownBondNow = () => {
     const me = toHex(round.pubkey);
-    // THE CHAIN'S CENSUS FIRST (the owner 2026-10-20, the owner page after a roll: "This is very wrong since the last update" - "No bond yet"):
+    // THE CHAIN'S CENSUS FIRST (2026-10-20, the owner page after a roll: "This is very wrong since the last update" - "No bond yet"):
     // the newest rounds' censuses are read over minutes after a restart, the chain's in seconds (kept across a restart since 5777ec70)
     const cn = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null;
     if (cn && cn.entries.length) {
@@ -4335,7 +4335,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE FEDERATION'S GATEWAY SEATS (spec §23A.9gateway-watch.js): a guardian probes, every 10 min, the gateways its
   // federation's seated guardians claim, and ranks them per epoch; GET /gateway-seats says its ranking
   const capacityWas = {};   // the band each federation was in at this seat's last /capacity (§23A.3a's gap)
-  // ONE WATCH PER FEDERATION THIS NODE GUARDS (kanban #552, the owner 2026-10-20 ~07:55Z: "Gateways are still not seated" - the successor
+  // ONE WATCH PER FEDERATION THIS NODE GUARDS (kanban #552, 2026-10-20 ~07:55Z: "Gateways are still not seated" - the successor
   // 4dc88be7: "no guardian seat of this federation answered"): its guardian's and its guardian-next's, so a successor's seats are ranked by
   // its own guardians from the start; `gatewayWatch` stays the first (its own federation), `gatewayWatchOf(fid)` finds the one that guards fid
   const gatewayWatches = [];
@@ -4354,7 +4354,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     },
   };
   round.db.exec('CREATE TABLE IF NOT EXISTS gateway_state (federation TEXT PRIMARY KEY, state TEXT NOT NULL)');
-  // THE SIGNED SEATINGS IN THIS SEAT'S DATABASE TOO (kanban #559, the owner 2026-10-20: "the fees to the gateways must be paid"): a
+  // THE SIGNED SEATINGS IN THIS SEAT'S DATABASE TOO (kanban #559, 2026-10-20: "the fees to the gateways must be paid"): a
   // settlement pays the gateway seats from the seating of the epoch before its round's census, which can be days back - in memory
   // only, a restart lost it and that round paid the guardians instead; this guardian's own signed ones ('own') and the standing ones
   round.db.exec('CREATE TABLE IF NOT EXISTS gateway_seatings (federation TEXT NOT NULL, epoch INTEGER NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY (federation, epoch, kind))');
@@ -4372,7 +4372,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       keep: gatewayKeep,
       // the seating its guardians signed for an epoch, where one stands: that epoch's holders step back in the next (the rotation)
       seatingFor: async (fid, e) => { const st = gatewaySeatings.get(`${fid}:${e}`); return st ? st.seats : null; },
-      // 1 seat for a federation draining into its successor, 2 for every other (the owner 2026-10-20, hard rule)
+      // 1 seat for a federation draining into its successor, 2 for every other (2026-10-20, hard rule)
       seatsFor: async (fid) => { const r = fedRecords.recordOf ? fedRecords.recordOf(fid) : null; return r && ['DRAINING', 'CRITICAL'].includes(r.status) ? 1 : 2; },
       tip: async () => Number(await chainTip()),
       beaconAt: async (h) => {
@@ -4559,7 +4559,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
       }
     } catch { /* none said */ }
-    // THE TRANSACTIONS THE NETWORK WAITS ON, ONE LIST (the owner 2026-10-20: "Make sure that both show the same number of transactions at
+    // THE TRANSACTIONS THE NETWORK WAITS ON, ONE LIST (2026-10-20: "Make sure that both show the same number of transactions at
     // all times" - the health page and the mining view had listed different ones): every grid publication and peg-in above, every
     // transaction paying the bond marker (a bond, an advertisement update) in this node's mempool or its last TX_BACK blocks, and the
     // unconfirmed parents each in the mempool waits on - all read on this node's own chain
@@ -4707,7 +4707,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // and posted to every seat - through a fedimint-cli client of that federation when one is named (ARENA_SPENT_SET_CLIENT_DIR).
   // ASKED DIRECTLY over the guardian's own socket when no client is named (kanban #326, rehearsal 17: a client of a halted federation
   // can no longer be joined), and posted to every seat, not only the peers given.
-  // A SEAT'S OWN ADVERTISEMENT NAMES ITS GUARDIANS' FEDERATIONS (kanban #577, the owner 2026-10-23: a founding counts only with no hand step,
+  // A SEAT'S OWN ADVERTISEMENT NAMES ITS GUARDIANS' FEDERATIONS (kanban #577, 2026-10-23: a founding counts only with no hand step,
   // and e2f42eea's needed n495-7's guardian_of update posted by hand): every 10 min a seat set up by hand - one that names its bond wallet
   // (ARENA_BOND_CLI) and has no installer home, where the custody agent does it - reads the federation and guardian key of each guardian it
   // runs (its invite-code, local.json, consensus.json) and, when its advertisement lacks one, posts an update from that wallet. Entries the
@@ -5236,12 +5236,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return c ? claimJson(200, c) : claimJson(404, { ok: false, why: want ? 'this node stands for no gateway seat of that federation' : 'this node stands for no gateway seat' });
       }
       // A LIQUIDITY CLAIM (§23A.10): this node is a liquidity provider - the claim its provider service signed (file)
-      // ROUNDS ON THEIR WAY (the owner 2026-10-20: "Add an estimated message to markets when it's currently no rounds but a new round is
+      // ROUNDS ON THEIR WAY (2026-10-20: "Add an estimated message to markets when it's currently no rounds but a new round is
       // expected at a specific time or blocks"): a grid its publisher put on chain is posted to the seats only once its beacon block is 6
       // deep, so until then no seat lists it and a market said only "No window is open". The publisher (run-testnet4-paid.mjs) writes what
       // it published - the game, the first window, the committee time its beacon block must pass, the publication - to the files
       // ARENA_EXPECTED_FILE names (comma-separated); this door serves the ones not over yet, as the operator states them
-      // WHAT THE NETWORK WAITS FOR, AS THIS NODE SEES IT (kanban #560, the owner 2026-10-20: "All of that must be available via node endpoints
+      // WHAT THE NETWORK WAITS FOR, AS THIS NODE SEES IT (kanban #560, 2026-10-20: "All of that must be available via node endpoints
       // too so it will work on future testnet and mainnet with nodes not operated by us"; "Make sure that /health is also showing this table
       // by asking the nodes"): every grid published and not yet posted - its publication found in this node's own blocks, its beacon block
       // (the first whose median time passes the committee time) read off this node's own headers, how deep; every peg-in the gateway
@@ -5458,7 +5458,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
               excluded: (census.excluded || []).filter((e) => e.pubkey && e.bondSats !== undefined).map(pick),
               censusHeight: Number(c.censusHeight), full: census.entries || [], network: networkOf(c.networkId) });
           }
-          // NONE READ YET (a seat just restarted): the chain's census as the one row (the owner 2026-10-20: "This is very wrong since the last update")
+          // NONE READ YET (a seat just restarted): the chain's census as the one row (2026-10-20: "This is very wrong since the last update")
           if (!rows.length) {
             const cn = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null;
             if (cn && cn.entries.length) {
@@ -5488,7 +5488,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
               ...(() => { if (address.announced && !endpointWarning({ advertised: address.announced, serving: address.serving })) return []; const w = endpointWarning(address); return w ? [w] : []; })()], address });
         }
         // THE STORE'S VIEW OF THIS SEAT (step 5): what it hosts and what is installed, waiting for its next start
-        // THE GAME DEVELOPERS' OVERVIEW (kanban #582, the owner 2026-10-22: "Dann gibt es eine Übersicht ähnlich des protocol devs mit allen
+        // THE GAME DEVELOPERS' OVERVIEW (kanban #582, 2026-10-22: "Dann gibt es eine Übersicht ähnlich des protocol devs mit allen
         // donations und proposals"): for each developer key installed here, the apps it signs - the split in force, every version with its
         // split (the past proposals), and the donations this node's dev clients received for the app (count, the app's part)
         if (req.method === 'GET' && url.pathname === '/owner/app-devs') {
@@ -5549,7 +5549,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         // THE OWNER'S DEV CLIENTS (dev-clients.js): each one's stats from its own record - what it was given, split
         // into the protocol developers' part and each game's part - its wallets, and what the owner's withdrawals answered
-        // THE DONATIONS TABLE (kanban #578, the owner 2026-10-22: "Füge Filter hinzu, App, Protocol, Paging, Rows displayed"): one client's
+        // THE DONATIONS TABLE (kanban #578, 2026-10-22: "Füge Filter hinzu, App, Protocol, Paging, Rows displayed"): one client's
         // donations, newest first, each with its app (or item), its protocol and app parts and its value in EUR / USD / CHF / GBP at its own
         // rate; filtered by app (its items with it; 'items' for all items), searched in player, round, entry and item; paged; the sums
         if (req.method === 'GET' && url.pathname === '/owner/dev/donations') {
@@ -5738,7 +5738,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // services"): what `arenanode status` shows - each service of the installed node (Bitcoin Core / the chain bridge, Tor, LND, the
         // gateway, the guardian, the seat, its tunnel, ...) running or not, and what it answers. Signed by the owner: it names processes
         // and local ports. A seat not started from an installer's arena.conf (src/run.js sets ARENA_HOME) has none to show.
-        // THE NODE'S ADDRESS (kanban #563 / #562 2C, the owner 2026-10-21: "1 default", "Fix 1 and 2"): how the world reaches this node - a
+        // THE NODE'S ADDRESS (kanban #563 / #562 2C, 2026-10-21: "1 default", "Fix 1 and 2"): how the world reaches this node - a
         // stable address is the default - read, and switched by the installer's own reach and service steps (bin/reach-switch.mjs),
         // started detached since they restart this seat. args.mode: quick | workers | direct | tailscale | permanent; workers takes
         // cfToken (and cfSubdomain), permanent a hostname and the Cloudflare login whose link the progress names.
@@ -5776,7 +5776,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const a = owner.authorize(body, 'services');
           if (!a.ok) return answer(a.status || 401, a);
           const home = process.env.ARENA_HOME;
-          // EVERY SERVICE ON EVERY NODE (kanban #563, the owner 2026-10-21: "563 must contain all services even if it's custom installed"):
+          // EVERY SERVICE ON EVERY NODE (kanban #563, 2026-10-21: "563 must contain all services even if it's custom installed"):
           // what the seat runs and reaches, probed from here (own-services.js) - all a node set up by hand shows, and beside an installed
           // node's services the ones the installer does not know (its address, the P2P tunnel, the announcements)
           const own = await ownServices({ port: http.address() ? http.address().port : null, chainTip, guardian, guardianNext, gatewayPort: process.env.ARENA_GATEWAY_PORT || null,
@@ -5851,7 +5851,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const a = owner.authorize(body, 'add-bond');
           if (!a.ok) return answer(a.status || 401, a);
           const home = process.env.ARENA_HOME;
-          // A SEAT SET UP BY HAND (kanban #553, the owner 2026-10-20: "Add bond needs to be posted from within the interface"): from the bond
+          // A SEAT SET UP BY HAND (kanban #553, 2026-10-20: "Add bond needs to be posted from within the interface"): from the bond
           // wallet it names in ARENA_BOND_CLI (add-bond-wallet.js), the same plan and the same post
           if (!home) {
             const { bondCliFrom, addBondFromWallet } = await import('./add-bond-wallet.js');
@@ -5877,10 +5877,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             return answer(200, { ok: true, plan, bond: r.bond || null });
           } catch (e) { return answer(500, { ok: false, why: `the bond could not be added: ${e.message}` }); }
         }
-        // THE NODE'S ROLES (kanban #553, the owner 2026-10-20: "It also offers no options to setup the role of the node"): signed by the owner,
+        // THE NODE'S ROLES (kanban #553, 2026-10-20: "It also offers no options to setup the role of the node"): signed by the owner,
         // { roles: [game, verify, settlement, relay], custody, post } - an advertisement update of its bond from the bond wallet
         // (add-bond-wallet.js changeRolesFromWallet): the plan, and with post: true the two transactions sent; the census reads it 6 deep
-        // THE NODE KEY FROM THE 24 WORDS (kanban #650, the owner 2026-10-25: "b but optional"): an installed node moves to the key its words
+        // THE NODE KEY FROM THE 24 WORDS (kanban #650, 2026-10-25: "b but optional"): an installed node moves to the key its words
         // give - a new bond under it from the node's wallet, the old key kept for its bond's return - then the seat restarts on it. The
         // plan first (post false), then the move (post true); never done unasked
         if (url.pathname === '/owner/key-from-words') {
@@ -6110,7 +6110,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         return text(res, 404, 'no such owner door');
       }
-      // THE SETUP'S PROGRESS (kanban #635, the owner 2026-10-25: "der Status und completion ist dann im Dashboards"): the installer no longer
+      // THE SETUP'S PROGRESS (kanban #635, 2026-10-25: "der Status und completion ist dann im Dashboards"): the installer no longer
       // waits for Bitcoin Core's sync or for confirmations, so the dashboards show them - Core's background sync, the bond's and the
       // peg-in's confirmations (arena-installer/src/setup-status.js). Public: txids, heights and progress only. Read at most once a minute.
       if (req.method === 'GET' && url.pathname === '/setup-status') {
@@ -6202,7 +6202,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // as settlement, as custody"): its advertised roles, whether it is guardian-capable and serving, and the federations whose
       // held record seats it as a guardian (custody) - one ask for the lobby's node list, out of the census this seat reads
       if (req.method === 'GET' && url.pathname === '/roles') {
-        // THE CHAIN'S CENSUS FIRST (the owner 2026-10-20: "On each automatic background refresh it is loosing ... Make sure the data is being updated
+        // THE CHAIN'S CENSUS FIRST (2026-10-20: "On each automatic background refresh it is loosing ... Make sure the data is being updated
         // properly and we always keep a healthy state" - measured: three seats answered three round censuses, 156,968 / 156,813 / 156,220, by the
         // rounds each held): every seat takes it at the same height step, so they agree; a seat that has not read it yet answers its round's
         const chainNow = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null;
@@ -6222,7 +6222,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const nodes = now.entries.filter((e) => e && e.pubkey && e.advert).map((e) => ({ node: toHex(e.pubkey), endpoint: String(e.advert.endpoint || ''),
           roles: [...(e.advert.roles || [])], guardianCapable: !!e.advert.guardianCapable, serving: e.advert.serving !== false,
           custody: custody.get(toHex(e.pubkey)) || [],
-          // ITS BOND AS THE CENSUS COUNTS IT (the owner 2026-10-20: "the bonds take a long time to show up, if they show up at all" - the health page
+          // ITS BOND AS THE CENSUS COUNTS IT (2026-10-20: "the bonds take a long time to show up, if they show up at all" - the health page
           // asked each node's /owner/bond, which a node right after a restart answers without one): every output summed, the latest maturity
           ...(() => { try { const nb = nodeBondOf(now.entries, e.pubkey); if (!nb) return {};
             const mats = (nb.outputs || []).map((o) => o.maturity).filter((m) => Number.isInteger(m));
@@ -7336,7 +7336,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // A TRANSACTION, AS THIS SEAT KNOWS IT (kanban #624): its id is the entry id. The entry (round, app, side, price, stake, keys), when it
       // was stored here, its locks with their federation transaction ids, its place in the book, the round's settlement, every door it passed
       // here with each step's time (its handout's too), and the page's own signed timing - what explorer.bitcoin-arena.io shows
-      // ONE TRANSACTION AS THIS SEAT KNOWS IT, for GET /tx and for GET /txs?full=1 (the explorer's store, the owner 2026-10-24: "It should all be
+      // ONE TRANSACTION AS THIS SEAT KNOWS IT, for GET /tx and for GET /txs?full=1 (the explorer's store, 2026-10-24: "It should all be
       // cached not be fetched from a node"): { code, body }
       const txView = (idHex) => {
         const eid = Buffer.from(idHex, 'hex');
@@ -7351,7 +7351,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const lockOf = (l) => (l ? { outpoint: l.outpoint, txid: String(l.outpoint).split(':')[0], contractId: l.contractId, verifiedAt: l.verifiedMs ? new Date(Number(l.verifiedMs)).toISOString() : null } : null);
         const order = round.db.prepare('SELECT batch, received_ms FROM market_orders WHERE order_id = ?').get(idHex);
         const settled = rr ? round.lockSettlement(e.roundId) || (federation && round.fedLockSettlement ? round.fedLockSettlement(e.roundId, federation) : null) : null;
-        // ITS RESULT (the owner 2026-10-24: "Also show the result of the transaction, if won or lost and how much it has won"): from the round's
+        // ITS RESULT (2026-10-24: "Also show the result of the transaction, if won or lost and how much it has won"): from the round's
         // settlement as this seat keeps it - what it paid the order's player key (a market pays per player key: `sharedBy` entries of the
         // same key in the round share it), and whether the order's stake lock was among the locks it claimed (not claimed: back to the player)
         const resultOf = (en, row) => {
@@ -7379,7 +7379,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           return { state, stakeMsat: String(stake), feeMsat: String(fee), payoutMsat: String(paid), netMsat: String(state === 'refunded' ? 0n : paid - stake - fee),
             sharedBy, settlementTxid: settled.txid };
         };
-        // WHO PROCESSED ITS ROUND (the owner 2026-10-24: "Also show who processed the round, e.g for settlement and verify"): the seats drawn to
+        // WHO PROCESSED ITS ROUND (2026-10-24: "Also show who processed the round, e.g for settlement and verify"): the seats drawn to
         // run the game and to sign the settlement, the asker (who combines and submits it first), the outcome's attestors (who verified the
         // result), the settlement and what this seat did to it
         const processedOf = (rid, row) => {
@@ -7426,7 +7426,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/txs') {
         const since = Math.max(0, Number(url.searchParams.get('since') || 0) || 0), limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit') || 200) || 200));
         const rows = round.db.prepare('SELECT entry_id, round_id, contract, joined_ms FROM entries WHERE joined_ms > ? ORDER BY joined_ms LIMIT ?').all(since, limit);
-        // each with its app and federation (the owner 2026-10-24: "Also display the app that did the transaction in the tx list"), a round's
+        // each with its app and federation (2026-10-24: "Also display the app that did the transaction in the tx list"), a round's
         // contract read once per answer
         const ofRound = new Map();
         const roundOfRow = (rid) => {
@@ -9460,7 +9460,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE GUARDIANS' P2P THROUGH THE NODES (p2p-tunnel.js, kanban #562): /guardian-p2p ends here as a websocket and goes on to
   // this node's guardian's own P2P port; every node carries the other guardians' P2P ports to their seats the same way
   const p2pWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024 });
-  // THIS NODE'S OWN ADDRESS, ANNOUNCED (kanban #562, the owner 2026-10-21 "1 default, 2 for updates so no needed updates"): signed for the
+  // THIS NODE'S OWN ADDRESS, ANNOUNCED (kanban #562, 2026-10-21 "1 default, 2 for updates so no needed updates"): signed for the
   // address it names itself and pushed to every census node's seat every ARENA_ADDRESS_ANNOUNCE_MS (10 min) - no advertisement update
   const announceAddress = async () => {
     if (!publicEndpoint) return null;

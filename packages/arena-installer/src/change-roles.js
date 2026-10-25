@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN INSTALLED NODE CHANGES ITS ROLES FROM ITS OWNER PAGE (kanban #563, the owner 2026-10-21: "configure every role and service one by one
+// AN INSTALLED NODE CHANGES ITS ROLES FROM ITS OWNER PAGE (kanban #563, 2026-10-21: "configure every role and service one by one
 // ... on installed nodes too"): an advertisement update of its bond paid from the node's own wallet - the one the wizard funded - the
 // advertisement rebuilt from the node's state as the bond and the custody agent build it (its endpoint, payout key, guardian endpoint,
 // guardian seats and emergency key kept), with the roles asked and a new timestamp. Before this, POST /owner/roles answered 501 on every
@@ -95,7 +95,7 @@ async function advertUpdateOf({ st, s, release, roles, hostedGames = s.hostedGam
 }
 
 /**
- * THE NEWEST GAMES AND PROTOCOLS IN THE ADVERTISEMENT (the owner 2026-10-25: "Make sure the installer and the nodes use the newest versions of games and
+ * THE NEWEST GAMES AND PROTOCOLS IN THE ADVERTISEMENT (2026-10-25: "Make sure the installer and the nodes use the newest versions of games and
  * protocols"): an update can bring app versions the node's advertisement does not name yet, and the census draws a node only for the
  * games it names. The node's chosen apps in `release` (apps.js hostedGameIdsOf), against what it advertises (state hostedGames, else
  * Next Block's first version, as every installer node named before): the same - nothing to do; else an advertisement update naming

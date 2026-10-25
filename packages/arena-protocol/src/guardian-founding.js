@@ -113,7 +113,7 @@ export const LOAD_TRIGGER = 0.8;
  */
 export const COHORT_NOMINAL = 10;
 /**
- * A FOUNDING EVERY 6 BLOCKS (the owner 2026-10-22: "do the re foundation every 6 blocks on all instead of 19"): the window a drawn set
+ * A FOUNDING EVERY 6 BLOCKS (2026-10-22: "do the re foundation every 6 blocks on all instead of 19"): the window a drawn set
  * has for its codes and DKG, on every network - a void cohort is drawn again founding_window + 1 = 6 blocks later. The genesis
  * founding_window stays as it is: it is hashed into each network's id (testnet4 1060078b would become another network).
  */

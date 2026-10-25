@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A NEW VERSION OF THE MARKET IS ATTESTED (the owner 2026-10-20: "Prediction market outcomes and balance changes were working last week,
+// A NEW VERSION OF THE MARKET IS ATTESTED (2026-10-20: "Prediction market outcomes and balance changes were working last week,
 // so something broke. Write tests to make sure it can never break again"): the live attestors named their markets by a hand-kept
 // --game-id list (v1, v2); versions 3 to 14 went live, their rounds were never attested, and no order on them was decided or paid.
 // The attestor now takes every version a seat hosts whose manifest names its key - here a daemon started with --game-id naming only

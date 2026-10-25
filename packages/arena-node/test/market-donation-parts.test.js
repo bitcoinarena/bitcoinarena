@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A MARKET'S DONATION, ORDER BY ORDER (kanban #580, the owner 2026-10-22: "change the protocol so we can get the player hash for each market
+// A MARKET'S DONATION, ORDER BY ORDER (kanban #580, 2026-10-22: "change the protocol so we can get the player hash for each market
 // order"): a market pays its donation once per recipient per round, out of every filled order's fee. The settlement's donation payout names
 // its parts (lock-settlement.js), the seat keeps them with the row and serves them (GET /donations), the dev client records each order's
 // player and share of the output.

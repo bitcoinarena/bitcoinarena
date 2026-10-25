@@ -54,7 +54,7 @@ export function emergencyOf(seed) {
 }
 
 /**
- * THE NODE IDENTITY FROM THE SEED (kanban #650/#653, the owner 2026-10-25: "the node identity (without nostr) needs to be tied to the seed"):
+ * THE NODE IDENTITY FROM THE SEED (kanban #650/#653, 2026-10-25: "the node identity (without nostr) needs to be tied to the seed"):
  * the key the node signs with - its proposals, its bond - from the seed on its own path, adopted before the node's first start
  * (arena-node/src/store.js adoptIdentity). The same words restore the same node.
  */
@@ -62,7 +62,7 @@ export const NODE_IDENTITY_TAG = 'arena/node-identity/v1';
 export const nodeKeyOf = (seed) => taggedHash(NODE_IDENTITY_TAG, seed);
 
 /**
- * A NODE DRIVEN BY NOSTR (kanban #653, the owner 2026-10-25: "the nostr identity can be used to setup the node ... Nostr basically drives
+ * A NODE DRIVEN BY NOSTR (kanban #653, 2026-10-25: "the nostr identity can be used to setup the node ... Nostr basically drives
  * the entire node" - "Only allow nsec then"): the owner's nsec gives the node's seed on its own path, so everything the 24 words give -
  * wallet, payout, emergency code, LND, gateway, node identity - comes from the nsec, and the same nsec restores the node. The owner logs
  * in with that Nostr key, and the node runs on it alone ("The node must also operate on its own with the nsec"): the nsec is the node's

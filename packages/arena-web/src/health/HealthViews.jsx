@@ -141,7 +141,7 @@ export function Table({ head, rows, empty, foot }) {
     </table>);
 }
 
-// MACHINES (kanban #597, testnet4 only - the owner 2026-10-23: "a section machines where each machine is listed with all its nodes ... the
+// MACHINES (kanban #597, testnet4 only - 2026-10-23: "a section machines where each machine is listed with all its nodes ... the
 // machines folded as an accordion, in the title the number of nodes and the load 1, 5, 15 m, total sats earned, per month earned"): the
 // nodes grouped by the machine id each one's /owner/version names (machine.js: a hash of its host), the load the newest of them answered,
 // and the sum of their earnings. A node that names no machine (mainnet, or a release before 597) is counted, not grouped.

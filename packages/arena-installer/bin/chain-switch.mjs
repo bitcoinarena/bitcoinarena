@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODE MOVES TO ITS OWN BITCOIN CORE ONCE IT IS SYNCED (kanban #635, the owner 2026-10-25: "Auch der Bitcoin core nicht im Vordergrund
+// THE NODE MOVES TO ITS OWN BITCOIN CORE ONCE IT IS SYNCED (kanban #635, 2026-10-25: "Auch der Bitcoin core nicht im Vordergrund
 // machen lassen während der synced ... der Status und completion ist dann im Dashboards"). The installer started Bitcoin Core and went
 // on with the node reading the chain through a public Electrum server. This keeper, a service of its own, reads the sync every minute
 // and writes it to <home>/chain-switch.json { state: syncing | switching | done, sync: { blocks, headers, progress,

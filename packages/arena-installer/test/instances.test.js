@@ -59,7 +59,7 @@ test('the next node after each one, none after the last; a further node takes ov
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-// THE MACHINE'S NAME (kanban #621, the owner 2026-10-24: "give your machine a custom name when installing multiple instances, and that name is
+// THE MACHINE'S NAME (kanban #621, 2026-10-24: "give your machine a custom name when installing multiple instances, and that name is
 // displayed in health - machines"): checked, kept with the count, and in every node's settings as ARENA_MACHINE_NAME, which the node's
 // machine.js reports and the health page's machines show
 test('the machine name: trimmed, at most 40 characters, one env line; every node of the install names it', () => {

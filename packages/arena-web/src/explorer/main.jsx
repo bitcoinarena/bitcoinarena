@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE EXPLORER IN REACT (kanban #624, the owner 2026-10-24: "Is it all react?"; "Group the timings by placement, lock, attestation, settlement
+// THE EXPLORER IN REACT (kanban #624, 2026-10-24: "Is it all react?"; "Group the timings by placement, lock, attestation, settlement
 // and have it collapsed by default"): the newest transactions with their filters, and one transaction as its history - the node side
 // summed up, then each group of what happened (placement, lock, attestation, settlement, and the page's own steps where it handed them),
 // collapsed until opened. The Worker builds what its store holds into the page (window.EXPLORER_DATA), so nothing waits on a node.
@@ -15,7 +15,7 @@ const ago = (ms) => { const s = Math.round((Date.now() - ms) / 1000); return s <
 export const appName = (a) => ({ 'btc-updown-15m': 'Bitcoin Up or Down', '-': 'unknown' })[a] || a || 'unknown';
 const given = typeof window !== 'undefined' ? window.EXPLORER_DATA || {} : {};
 
-// THE RESULT (the owner 2026-10-24: "Also show the result of the transaction, if won or lost and how much it has won")
+// THE RESULT (2026-10-24: "Also show the result of the transaction, if won or lost and how much it has won")
 const sats = (msat) => (Number(msat) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 });
 const signed = (msat) => (BigInt(msat) >= 0n ? '+' : '−') + sats(String(BigInt(msat) < 0n ? -BigInt(msat) : BigInt(msat))) + ' sat';
 // AN ATTESTED OUTCOME BEFORE THE SETTLEMENT (kanban #629, 2026-10-24: the Up/Down card said lost at the outcome, this page said pending until
@@ -83,7 +83,7 @@ function List() {
 }
 
 // ---- one transaction -------------------------------------------------------------------------------------------------------------------
-// THE WORDS (the owner 2026-10-24: "Review all strings and make them less ai like"): a node door, a settlement step, a UI step - short
+// THE WORDS (2026-10-24: "Review all strings and make them less ai like"): a node door, a settlement step, a UI step - short
 const DOORS = { handout: 'Stake shares received', entry: 'Order received', lock: 'Stake lock received', 'fee-lock': 'Fee lock received' };
 const SETTLE_WORDS = [[/^committed to the settlement/, 'Nonce committed'], [/^gave its signature share/, 'Signature share sent'],
   [/^combined and submitted the settlement: ?(.*)/, (m) => 'Settlement submitted' + (m[1] ? ' · ' + m[1].toLowerCase() : '')],
@@ -194,7 +194,7 @@ function Tx({ id }) {
   const e = tx.entry || {};
   const ev = timelineOf(tx);
   const nodeEv = ev.filter((x) => x.group !== 'page' && !x.away);
-  // THE ORDER'S START: the press where the page handed it, else the first node it reached - so nothing is before it (the owner 2026-10-24:
+  // THE ORDER'S START: the press where the page handed it, else the first node it reached - so nothing is before it (2026-10-24:
   // "Negative timings": the page's steps come before the first node)
   const press = ev.find((x) => x.group === 'page');
   const t0 = press ? press.atMs : nodeEv.length ? nodeEv[0].atMs : ev.length ? ev[0].atMs : Date.now();

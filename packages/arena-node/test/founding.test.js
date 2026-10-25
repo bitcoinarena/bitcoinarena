@@ -116,7 +116,7 @@ test('a replacement that is silent too is replaced a fifth after IT was seated, 
   assert.ok(n.log.some((l) => l[0] === 'dkg' && l[1] === alt2), 'the DKG runs with the second alternate');
 });
 
-test('more no-shows than alternates (the owner 2026-10-22: ten are enough): the late keep their seats to the window\'s end, then void', async () => {
+test('more no-shows than alternates (2026-10-22: ten are enough): the late keep their seats to the window\'s end, then void', async () => {
   const probe = network().seats[0].state();
   const silent = new Set([...probe.seated.slice(0, 2).map((x) => x.node), ...probe.alternates].map(idx));
   const n = network({ offline: silent });
@@ -131,7 +131,7 @@ test('more no-shows than alternates (the owner 2026-10-22: ten are enough): the 
   assert.ok(!n.log.some((l) => l[0] === 'dkg'));
 });
 
-test('ten are enough (the owner 2026-10-22: "we need 10 nodes not 14"): as many eligible as seats, two late past the fifth - they keep their seats and the federation is founded inside the window', async () => {
+test('ten are enough (2026-10-22: "we need 10 nodes not 14"): as many eligible as seats, two late past the fifth - they keep their seats and the federation is founded inside the window', async () => {
   // the measured 3d30afd4 in small: 4 eligible for 4 seats, no alternates; two seated nodes see the draw only after a burst of blocks
   const late = new Set([2, 3]);
   const n = network({ count: 4, offline: (t) => (t < 107 ? late : new Set()) });

@@ -1,4 +1,4 @@
-// THE SITE IS OPEN (kanban #611, the owner 2026-10-24: "Remove the password from the website so everything works as expected"): it was
+// THE SITE IS OPEN (kanban #611, 2026-10-24: "Remove the password from the website so everything works as expected"): it was
 // behind a password form (SITE_PASSWORD, cookie ba_gate) since 2026-10-08, and the games screen's "Docs" link opened that form. Every
 // page is served as it is. A link from the gated days still works: /__login and ?password=... land on the page they named, without a form.
 import { scanChain } from './chain-scan.js';

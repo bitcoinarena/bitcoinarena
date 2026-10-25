@@ -101,7 +101,7 @@ export function depositParts(s, pegInSats) {
   return parts;
 }
 
-// ONE DEPOSIT FOR ALL NODES OF A COUNT (kanban #596, the owner 2026-10-23: "wenn mehr als 1 instance ausgewählt ist tut der User nur 1 Bond
+// ONE DEPOSIT FOR ALL NODES OF A COUNT (kanban #596, 2026-10-23: "wenn mehr als 1 instance ausgewählt ist tut der User nur 1 Bond
 // einzahlen, das wird automatisch multipliziert und aus N Instanzen auf gesplittet"): node 1 asks for its own deposit and the others' -
 // each as much as its own, plus the payment that hands it on - and each further node's bond step is paid from node 1's wallet
 export const SPLIT_FEE_SATS = 500;
@@ -198,7 +198,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   const releaseApps = (() => { try { return appsIn(release); } catch (e) { log(`apps: ${e.message}`); return []; } })();
   const mark = (step, patch = {}) => { const s = state.read(); return state.save({ ...patch, done: { ...(s.done || {}), [step]: Date.now() } }); };
 
-  // THE SERVICE STEP'S PROGRESS (kanban #651, the owner 2026-10-25: "this hangs alot and user doesn't know what it is doing. Provide more
+  // THE SERVICE STEP'S PROGRESS (kanban #651, 2026-10-25: "this hangs alot and user doesn't know what it is doing. Provide more
   // details and context and a progress bar"): POST /api/service moves through these stages; GET /api/service/progress tells the page
   // which is done, which runs and for how long, and - while the node is slow to answer, or after a failure - the node log's last lines
   const SERVICE_STAGES = [['settings', 'Writing your node\'s settings'], ['services', 'Installing its services'],
@@ -338,7 +338,7 @@ const serviceRun = async (b) => {
     // BITCOIN CORE, INSTALLED WHEN ASKED (ruling 8): the plan (one already here? the disk against what mainnet and testnet4 need),
     // the install (checked download, a datadir and config per network, a service each), and the sync's progress with an ETA - and once
     // testnet4 is synced, the chain step is saved with it and the wizard goes on
-    // WHERE ITS BLOCKS GO IS THE OWNER'S CHOICE (kanban #635, the owner 2026-10-25: "Wo BTC core installiert wird sollte auswählbar
+    // WHERE ITS BLOCKS GO IS THE OWNER'S CHOICE (kanban #635, 2026-10-25: "Wo BTC core installiert wird sollte auswählbar
     // sein"): a folder on any disk - the node's own folder when none is given - checked for space before anything is written
     'POST /api/core/plan': async (b = {}) => {
       const where = coreDirOf(b);
@@ -370,7 +370,7 @@ const serviceRun = async (b) => {
       }
       const core = { bitcoind: got.bitcoind, prune, dir: where.dir, networks, startedMs: nowMs() };
       state.save({ core });
-      // THE SYNC RUNS IN THE BACKGROUND (kanban #635, the owner 2026-10-25: "Auch der Bitcoin core nicht im Vordergrund machen lassen während
+      // THE SYNC RUNS IN THE BACKGROUND (kanban #635, 2026-10-25: "Auch der Bitcoin core nicht im Vordergrund machen lassen während
       // der synced"): a Core still syncing cannot see a fresh deposit nor take a transaction that spends one, so until it is synced the
       // node reads the chain through a public Electrum server - the first that passes the chain test - and the chain-switch keeper
       // (bin/chain-switch.mjs, installed with the service) moves it to its own Core once testnet4 is synced. With no server passing,
@@ -432,7 +432,7 @@ const serviceRun = async (b) => {
       return { ok: true, roles };
     },
 
-    // THE APPS (kanban #569, the owner 2026-10-21: "The node still comes with the 3 apps pre installed, that is a step in the installer
+    // THE APPS (kanban #569, 2026-10-21: "The node still comes with the 3 apps pre installed, that is a step in the installer
     // where all apps are automatically selected"): the ones the seat hosts, at least one; an app this release does not carry is refused
     'POST /api/apps': async (b) => {
       const apps = [...new Set((Array.isArray(b.apps) ? b.apps : []).map(String))];
@@ -446,7 +446,7 @@ const serviceRun = async (b) => {
       return { ok: true, apps, hostedGames };
     },
 
-    // NEW OR RESTORED, BY 24 WORDS OR BY NOSTR (kanban #652/#654, the owner 2026-10-25: "neuer step im installer: New/Restore"; "User first
+    // NEW OR RESTORED, BY 24 WORDS OR BY NOSTR (kanban #652/#654, 2026-10-25: "neuer step im installer: New/Restore"; "User first
     // selects Operation Mode: Nostr / New Seed (24 Words)"; #653 "Only allow nsec then"): the first step.
     //   words + new      the seed step shows new words later
     //   words + restore  the 24 typed words are checked (a wrong word or checksum refused by name) and become the seed; the seed step is done
@@ -489,7 +489,7 @@ const serviceRun = async (b) => {
       const em = emergencyOf(seed);
       const now = Date.now(), done = { ...(s0.done || {}), start: now, seed: now };
       if (owner) {
-        // THE NODE RUNS ON THE NSEC ITSELF (the owner 2026-10-25: "The node must also operate on its own with the nsec"): the Nostr key is the
+        // THE NODE RUNS ON THE NSEC ITSELF (2026-10-25: "The node must also operate on its own with the nsec"): the Nostr key is the
         // node's identity on the network - it signs its proposals and bonds with no one at the page - and its owner
         const db = openStore(state.path('node.db'));
         let own;
@@ -697,7 +697,7 @@ const serviceRun = async (b) => {
       const s = state.read();
       if (!s.gateway) return { ok: false, why: 'no gateway set up yet' };
       const t = await gwKit.testGateway(s.gateway);
-      // A GATEWAY WAITING FOR THE CHAIN IS SET UP (kanban #635, the owner 2026-10-25: "Lnd muss nicht auf dem Bitcoin Core Testnet Sync
+      // A GATEWAY WAITING FOR THE CHAIN IS SET UP (kanban #635, 2026-10-25: "Lnd muss nicht auf dem Bitcoin Core Testnet Sync
       // warten"): gatewayd runs and says Syncing until its LND is synced - it connects by itself then, and the dashboards show it
       if (!t.ok && t.syncing) { mark('lightning', { gateway: { ...s.gateway, state: t.state, syncingMs: Date.now() } }); return { ok: true, syncing: true, state: t.state, federations: [] }; }
       if (!t.ok) return { ok: false, why: t.why, waiting: true };
@@ -772,7 +772,7 @@ const serviceRun = async (b) => {
       return { ok: true, address: w.address, tip, coins, totalSats: total, needSats, parts, fundedFrom, fundWhy, enough: total >= needSats, lock: laterCustody(s) ? null : lockOf(tip), update: laterCustody(s),
         minimum: state.read().bondMinimum || null };
     },
-    // TESTCOINS, AUTOMATICALLY (kanban #635, the owner 2026-10-25: "Automatisch oder geführt an testcoins"): the Arena faucet sends what
+    // TESTCOINS, AUTOMATICALLY (kanban #635, 2026-10-25: "Automatisch oder geführt an testcoins"): the Arena faucet sends what
     // the bond step still lacks to this node's address; the deposit then counts as soon as it is in the mempool. The guided way (public
     // faucets) is the page's other choice, and the one it points to when the faucet says no.
     'POST /api/coins/auto': async (b) => {

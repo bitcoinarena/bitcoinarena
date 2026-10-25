@@ -257,7 +257,7 @@
       /* CENTRED AND SCROLLABLE (measured at 800x437: anchored to the bottom it grew over the top edge, its close and tabs cut off) */
       top: 50%; bottom: auto; transform: translate(-50%, -50%); max-height: 94vh; overflow-y: auto; box-sizing: border-box; }
     #arena-deposit.over-settings { z-index: 44 !important; }
-    /* THE DEPOSIT WINDOW ON THE OVERLAY LEVEL (the owner 2026-10-20 17:3xZ: "the deposit modal is not clickable"; measured in Chrome at UI 262: a press
+    /* THE DEPOSIT WINDOW ON THE OVERLAY LEVEL (2026-10-20 17:3xZ: "the deposit modal is not clickable"; measured in Chrome at UI 262: a press
        on its buttons landed on #arena-ov-scrim): the scrim lies at 41, under the overlays (44); the window stood at 38, under the scrim */
     body > #arena-deposit.deposit-modal:not(:empty) { z-index: 44; }
     #arena-deposit .dep-notice h3 { margin: 4px 0 8px; color: #f7a83b; font-size: 18px; } #arena-deposit .dep-notice p { margin: 0 0 14px; line-height: 1.45; color: #d6dbe3; }
@@ -872,7 +872,7 @@
     #arena-deposit .arena-deposit-qr { margin-top: 12px; margin-bottom: 12px; }
     #arena-deposit .dep-inv-row { margin-top: 12px; }
     #arena-deposit .pay-status { margin-top: 12px; }
-    /* ONE PHONE SCREEN, NO SCROLLING (kanban #539, the owner 2026-10-19 ~20:02Z: "Deposit needs to fit to one screen on mobile no scrolling";
+    /* ONE PHONE SCREEN, NO SCROLLING (kanban #539, 2026-10-19 ~20:02Z: "Deposit needs to fit to one screen on mobile no scrolling";
        measured at 390x660, Safari's visible area: 696 px of content in 588, the QR cut off). Safari's vh is the screen with its bars hidden,
        so the box and the QR are sized by dvh, the part actually visible; on a short screen the gaps, the warning and the buttons are tighter. */
     @supports (height: 1dvh) {
@@ -913,7 +913,7 @@
     body:has(#arena-withdraw.show) #arena-ov-scrim, body:has(#arena-move.show) #arena-ov-scrim, body:has(#arena-deposit.deposit-modal:not(:empty)) #arena-ov-scrim,
     body:has(#arena-bal-split:not([style*="none"]):not(:empty)) #arena-ov-scrim { display: block; }
     body:has(#arena-wallet-modal:not([style*="none"])) #arena-ov-scrim { display: block; }
-    /* THE WALLET'S LAYER COVERS THE WHOLE SCREEN (kanban #631, the owner 2026-10-25: "a tap outside then lands on the backdrop and the window
+    /* THE WALLET'S LAYER COVERS THE WHOLE SCREEN (kanban #631, 2026-10-25: "a tap outside then lands on the backdrop and the window
        stays; only its × closes it"): measured on UI 387 at 390x844, a touch on the top bar's deposit, withdraw, leaderboard, gear or back
        closed it - the layer began under the bar and ended over the games list's foot */
     body:has(#arena-wallet-modal:not([style*="none"])) #arena-ov-scrim { top: 0; bottom: 0; }
@@ -1125,7 +1125,7 @@
     #arena-wallet-modal #arena-bal-split { position: static; transform: none; width: auto; max-height: none; overflow: visible; box-shadow: none; margin: 10px 0 0; padding: 10px 0 0; border: 0; border-top: 1px solid #2a3440; border-radius: 0; background: none; z-index: auto; display: block; }
     /* THE HISTORY IN COLUMNS (kanban #558: "much more structured and doesn't overlap/wrap on small screens"): date, what, amount - the date and the
        amount never wrap, the description ends with an ellipsis, and a narrow screen puts the date on its own line */
-    /* the time column as wide as its text (the owner 2026-10-20 19:2xZ, "That looks broken": "2026-10-20 18:33 UTC" needs ~11em, the column
+    /* the time column as wide as its text (2026-10-20 19:2xZ, "That looks broken": "2026-10-20 18:33 UTC" needs ~11em, the column
        was 8.2em and the time ran under "Moved in from ..." / "Deposit") */
     #arena-wallet-modal .hist-row { display: grid; grid-template-columns: max-content minmax(0, 1fr) auto auto; gap: 2px 10px; align-items: baseline; }
     #arena-wallet-modal .hist-row .hist-when { color: #8b949e; white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -1395,7 +1395,7 @@
   <div id="arena-move" role="dialog" aria-modal="true" aria-labelledby="arena-move-title"><div class="wd-head"><h3 id="arena-move-title">Move between federations</h3><button type="button" class="wd-close" aria-label="Close">&times;</button></div><div class="mv-body"></div></div>
   <div id="arena-ov-scrim" aria-hidden="true"></div>
   <div id="arena-bal-split" role="dialog" aria-label="your balance by federation" style="display:none"></div>
-  <!-- THE WALLET (kanban #558, the owner 2026-10-20: "Combine Wallet view in "Settings" and "Balance click" into one view when clicking the balance,
+  <!-- THE WALLET (kanban #558, 2026-10-20: "Combine Wallet view in "Settings" and "Balance click" into one view when clicking the balance,
        that is the new Wallet, the title of the modal"): Settings' wallet section and the balance by federation, in one modal -->
   <div id="arena-wallet-modal" role="dialog" aria-modal="true" aria-labelledby="arena-wallet-modal-title" style="display:none"><div class="wl-head"><h3 id="arena-wallet-modal-title">Wallet</h3><button type="button" class="wl-close" aria-label="Close">&times;</button></div><div id="arena-wallet-modal-body"></div></div>
   <!-- THE BALANCE, IN THE LOBBY'S OWN PANEL (2026-09-29): placed over the row Unity reports as `balance`, where
@@ -2218,7 +2218,7 @@
     // at once when this wallet's last balance is known
     function paintHeaderBalance() {
       const hb = window.ARENA_WALLET_BALANCE; const he = document.getElementById('arena-hdr-sats');
-      // MERGING, AS AN ICON (the owner 2026-10-20 19:4xZ: "200 merging won't fit on all displays, display an icon instead"): the total already holds
+      // MERGING, AS AN ICON (2026-10-20 19:4xZ: "200 merging won't fit on all displays, display an icon instead"): the total already holds
       // it; a ⇄ beside it says part of it is still coming in from this browser's other wallets, the sentence on hover / long press
       const mergeTip = hb && hb.merging ? Number(hb.merging).toLocaleString('en-US') + ' sat of it merging in from your other wallets in this browser' : '';
       if (he) { const t = (hb ? Number(hb.sats || 0).toLocaleString('en-US') + ' sat' : '– sat') + (mergeTip ? ' \u21c4' : ''); if (he.textContent !== t) window.ArenaText.say(he, t); he.title = mergeTip; }
@@ -2297,7 +2297,7 @@
     // the build's files are brotli, unpacked by the browser as they arrive: the stream sees unpacked bytes, so each file's
     // packed and unpacked size (written in when the page is filled - fill-template.mjs) turn them back into the bytes downloaded
     const BUILD_SIZES = (() => { try { return JSON.parse('__BUILD_SIZES__'); } catch (e) { return {}; } })();
-    // NEXT BLOCK'S CLIENT, HASH-PINNED (kanban #569, the owner 2026-10-21: "The Arena page loads that build like any other app client,
+    // NEXT BLOCK'S CLIENT, HASH-PINNED (kanban #569, 2026-10-21: "The Arena page loads that build like any other app client,
     // hash-pinned"): the app publishes its WebGL client (a release of arena-app-next-block), the Arena pins every file of it
     // (tools/pin-app-webgl.mjs: src/arena-ui/apps/nextblock.webgl-pin.json) and builds this page with the hashes inside it
     // (tools/build-arena-page.mjs). Every file of the client the page fetches - Unity's loader through ARENA_PINNED_SCRIPT, the
@@ -2574,7 +2574,7 @@
           Object.assign({}, opts, { verify: verify, stakeLock: window.ARENA_STAKE_LOCK || undefined }))
           .then(function (client) {
             if (client && client.provedChain) window.ARENA_PROVED_CHAIN = client.provedChain;
-            // A RUN'S TRANSACTION RECORDED AS AN ORDER'S (the owner 2026-10-24: "Make sure that the other apps also get all these timing
+            // A RUN'S TRANSACTION RECORDED AS AN ORDER'S (2026-10-24: "Make sure that the other apps also get all these timing
             // fixes"): its tx id in the log, the page's timing signed by the run's own session to the seats (explorer), a slow one's log
             // kept in this browser
             if (client && typeof client.join === 'function' && !client.__txWrapped) {
@@ -2801,7 +2801,7 @@
             try { await Promise.race([prepRound(named.roundIdHex, named.round, named.nodes).signer, new Promise((r) => setTimeout(r, 12000))]); } catch (e) { /* said below by the gate */ }
           }
           const st = loaded();
-          // NO VERIFIED RECORD READ: THE INVITE THIS BROWSER JOINED THAT FEDERATION WITH BEFORE (kanban #616, the owner 2026-10-24 playtest:
+          // NO VERIFIED RECORD READ: THE INVITE THIS BROWSER JOINED THAT FEDERATION WITH BEFORE (kanban #616, 2026-10-24 playtest:
           // "Order not placed: ... That invite names another federation than the round's 4dc88be70830d361" - the round's federation's record had
           // not been read on this page, so the lobby's invite, of another federation, was taken). The gate below still checks it names the round's.
           const kept = ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(window.ARENA_BROWSER_STORE(), fid) : null;
@@ -2978,10 +2978,10 @@
       // seat that did not answer). Before the round's other steps and beside them: the player wallet opened and read; short of the stake,
       // the deposit is shown now, and the round's funding below waits on this same offer (page-lock.js earlyDepositOffer).
       let earlyDeposit = null;
-      // NOT WHEN ANOTHER FEDERATION OF THE PLAYER'S HOLDS THE STAKE (the owner 2026-10-20 17:3xZ: 200 sat in 4dc88be7, a 100 sat Up/Down order in
+      // NOT WHEN ANOTHER FEDERATION OF THE PLAYER'S HOLDS THE STAKE (2026-10-20 17:3xZ: 200 sat in 4dc88be7, a 100 sat Up/Down order in
       // 337ae01a asked "Not enough sats ... Deposit with Lightning?" at the press): the swap below moves the shortfall in first; only when
       // it does not, the deposit is asked (fundPlayerWallet's askDeposit)
-      // NOR WHEN MONEY STILL MERGING IN FROM THIS BROWSER'S OTHER WALLETS DOES (the owner 2026-10-22: 2,901 sat with ⇄, the same deposit window): the
+      // NOR WHEN MONEY STILL MERGING IN FROM THIS BROWSER'S OTHER WALLETS DOES (2026-10-22: 2,901 sat with ⇄, the same deposit window): the
       // whole balance the page shows is weighed (page-lock.js joinFundingPlan), and the deposit is asked at the press only when none of it covers
       const roundFedHex = Array.from(named.round.federationId || [], (b) => b.toString(16).padStart(2, '0')).join('');
       const pressPlan = ARENACLIENT.joinFundingPlan({ parts: (window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || [], roundFederation: roundFedHex, needMsat: named.round.stakeMsat || 0 });
@@ -3166,7 +3166,7 @@
           // THE NOTES FOLLOW THE SUCCESSOR (§23A.6 step 3): before any top-up, every federation this browser
           // held notes in whose checked record says DRAINING and names this round's federation as its successor moves what
           // it can send here - no press; the stage line says moving. A join step, never a timer (W4: no interval spends).
-          // EACH STEP BEFORE THE LOCK TIMED (kanban #618, the owner 2026-10-24: "Order submitted in 16.78 s" - measured: 16-39 s between the
+          // EACH STEP BEFORE THE LOCK TIMED (kanban #618, 2026-10-24: "Order submitted in 16.78 s" - measured: 16-39 s between the
           // deposit step and "the player wallet is open", nothing said in between)
           const preAt = performance.now(); const lap = (step) => { console.log('[arena] TIMED before the lock: ' + step + ' at ' + Math.round(performance.now() - preAt) + ' ms'); txStep(step); };
           // NOT IN THE ORDER'S WAY WHEN THE ROUND'S FEDERATION PAYS IT ALREADY (kanban #625, the owner's log 2026-10-24 20:30Z: 52, 94 and 126 s
@@ -3198,7 +3198,7 @@
           } catch { coversHere = false; }
           if (coversHere) successionMove(); else await successionMove();
           lap(coversHere ? 'succession (beside the order)' : 'succession');
-          // MONEY STILL MERGING IS MERGED FIRST (the owner 2026-10-22: "If it's not spendable it should say so in the window instead of a deposit
+          // MONEY STILL MERGING IS MERGED FIRST (2026-10-22: "If it's not spendable it should say so in the window instead of a deposit
           // request. But it's been like this for minutes"): this phrase's wallets in the round's federation and in the ones a swap may draw on take
           // in what this browser's other wallets hold, before the swap and the funding read them - a minute at most
           try {
@@ -3208,14 +3208,14 @@
             if (plan.coveredBy === 'merge' && plan.mergeFirst.length && window.ARENA_MERGE_NOW) {
               const m = ((window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.merging) || 0);
               onStep(`merging ${m.toLocaleString('en-US')} sat in from your other wallets in this browser first`);
-              // (kanban #625, the owner 2026-10-24 275bf1e2: 52 s between the stake shares and the lock - this wait, unnamed): said in the order's steps
+              // (kanban #625, 2026-10-24 275bf1e2: 52 s between the stake shares and the lock - this wait, unnamed): said in the order's steps
               txStep('-> merge ' + m + ' sat first');
               await window.ARENA_MERGE_NOW(plan.mergeFirst, 60000, { seed, LockClient: wasm.LockClient, extra: { [here]: named.federation } });
               txStep('<- merge ' + m + ' sat first');
             }
           } catch (e) { console.warn('[arena] merge before the join: ' + e.message); }
           lap('merge');
-          // A ROUND IN ANOTHER FEDERATION IS ENTERED BY AN E-CASH EXCHANGE WITH A SEAT (kanban #614, the owner 2026-10-24: "Kein Lightning swap,
+          // A ROUND IN ANOTHER FEDERATION IS ENTERED BY AN E-CASH EXCHANGE WITH A SEAT (kanban #614, 2026-10-24: "Kein Lightning swap,
           // sondern übertragen in die andere federation"; "es sollte automatisch passieren"): before a top-up, what the round's federation lacks
           // is moved from the wallet's federation that holds the most spendable sats - its e-cash to a seat, the seat's e-cash of this federation
           // back (ARENA_EXCHANGE_INTO). No gateway, no invoice, no dialog. The Lightning swap and its "Enter by swap" press are gone from here.
@@ -3479,7 +3479,7 @@
             // the guardians refuse refuses the join by name - its stake is never counted, and no money moved.
             if (made.accepted) {
               const t0 = Date.now();
-              // HOW LONG THE LOCK TOOK, KEPT WITH THE ORDER (kanban #619, the owner 2026-10-24: "Display the order accept time and lock time"): from
+              // HOW LONG THE LOCK TOOK, KEPT WITH THE ORDER (kanban #619, 2026-10-24: "Display the order accept time and lock time"): from
               // the press, by round and order number - noteOrderTime puts it on the order's record once that exists
               const lockKey = named.roundIdHex + ':' + (Number(window.ARENA_PICK_CHOSEN && window.ARENA_PICK_CHOSEN.orderIndex) || 0);
               const pressedAt = window.ARENA_ORDER_PRESSED_AT || null;
@@ -3590,7 +3590,7 @@
         console.log('[arena] hidden move in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status)));
         window.ARENA_ORDER_BUSY_UNTIL = 0;
         if (!sent.entries.some((x) => x.status === 201)) { window.ARENA_JOIN_REFUSED = 'the signer nodes refused the entry: ' + sent.why; return; }
-        // THE SAME TRANSACTION RECORD AS AN ORDER'S (the owner 2026-10-24: "Make sure that the other apps also get all these timing fixes"): the tx
+        // THE SAME TRANSACTION RECORD AS AN ORDER'S (2026-10-24: "Make sure that the other apps also get all these timing fixes"): the tx
         // id in the log, the page's signed timing to the seats (explorer), a slow one's log kept in this browser
         { const tookMs = performance.now() - (typeof pressAt === 'number' ? pressAt : (window.ARENA_ORDER_PRESSED_AT || performance.now()));
           console.log('[arena] tx ' + sent.entryId + ': taken ' + Math.round(tookMs) + ' ms after the press, round ' + named.roundIdHex.slice(0, 16));
@@ -3632,7 +3632,7 @@
             // AN ORDER: the pick at most this price of the scale, until this time - from a market client's order
             ...(chosen.limitPrice ? { limitPrice: chosen.limitPrice, orderExpiryMs: BigInt(chosen.orderExpiryMs || 0) } : {}),
           }), { roundId: ARENACLIENT.fromHex(named.roundIdHex), sessionPubkey });
-        // SUBMITTED AT ONCE, PLACED AFTER (kanban #601, the owner 2026-10-23: "Deutlich unter 1s ist die Zielmarke", ruling "Sofort eingereicht"): the
+        // SUBMITTED AT ONCE, PLACED AFTER (kanban #601, 2026-10-23: "Deutlich unter 1s ist die Zielmarke", ruling "Sofort eingereicht"): the
         // order is the tab's - shown, cancellable - as soon as its locks are sent to the federation and the first seat took its entry
         // (`submitted`); it is placed once the first seat holds the accepted lock; refused by the federation or every seat, it is taken back
         const recordOf = (eid, state) => Object.assign(ARENACLIENT.pickRecord({ roundIdHex: named.roundIdHex, entryIdHex: eid, pick: chosen.pick,
@@ -3642,7 +3642,7 @@
         const t0 = performance.now();
         const placedIds = window.ARENA_PLACED_IDS || (window.ARENA_PLACED_IDS = new Set());   // placed orders: no slow-tx log for them at 10 s
         let early = null;
-        // HOW LONG IT TOOK, SHOWN (the owner 2026-10-23 ~20:35Z: "In der Web ui wenn die Order [placed] wurde sag wie lange das gedauert hat - Bei btc
+        // HOW LONG IT TOOK, SHOWN (2026-10-23 ~20:35Z: "In der Web ui wenn die Order [placed] wurde sag wie lange das gedauert hat - Bei btc
         // up down"): a note at the foot of the page - submitted in N s, then placed in N s - over the market's own client, gone after 6 s
         const tookNote = (text, done) => {
           let el = document.getElementById('arena-order-took');
@@ -4536,7 +4536,7 @@
       if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES();
       return { ok: got.state === 'Success' || got.state === 'AlreadyReceived', from, to, msat: answer.msat, ms: Date.now() - t0, state: got.state };
     };
-    // THE MONEY MOVED BEFORE THE PRESS (kanban #614, the owner 2026-10-24: "Das darf auch nicht länger als 100-300ms dauern"): an exchange is
+    // THE MONEY MOVED BEFORE THE PRESS (kanban #614, 2026-10-24: "Das darf auch nicht länger als 100-300ms dauern"): an exchange is
     // two reissues - seconds - so it is done when the lobby shows rounds this wallet could not pay where its money is, not when the player
     // presses. The soonest paying round of a fixed stake: when no federation it is listed in holds that stake spendable, and another of the
     // wallet's federations does, the stake (and 5 % for the fees) is moved into the soonest one's federation now. A market's rounds are
@@ -4710,7 +4710,7 @@
         } catch (e) { const why = 'No deposit: ' + (e && e.message ? e.message : e); say(why); if (waitBox) waitBox.say(why); return { ok: false, why }; }
       })();
     }
-    // WITHDRAW AND MOVE OPEN THEIR OVERLAYS (kanban #554, the owner 2026-10-20: "Clicking on withdrawal raises, and error message instead of opening the
+    // WITHDRAW AND MOVE OPEN THEIR OVERLAYS (kanban #554, 2026-10-20: "Clicking on withdrawal raises, and error message instead of opening the
     // withdrawal layer. same for move"; #555: "clicking on the withdrawal button should open the withdrawal overlay, as its done with deposit"): as
     // the header's buttons do - with no game picked the wallet is read through a paid round of the games' seats
     for (const [id, which] of [['arena-deposit-go', 'deposit'], ['arena-move-go', 'move'],
@@ -5018,7 +5018,7 @@
         window.ArenaBits.fedChip(fedEl, { fed, level: hl.level, label: hl.label }); }
       const st = vault();
       try { ARENACLIENT.ledgerReadSavedStakes(st, fed); } catch { /* nothing to read */ }
-      // EVERY FEDERATION'S HISTORY, ONE LIST (the owner 2026-10-20 18:4xZ: "it doesn't show the complete history" - his deposits sat in 4dc88be7 and
+      // EVERY FEDERATION'S HISTORY, ONE LIST (2026-10-20 18:4xZ: "it doesn't show the complete history" - his deposits sat in 4dc88be7 and
       // b18947f0 while the list showed only the chip's 337ae01a): each federation this browser holds a wallet in, its rows tagged with it
       const feds = [...new Set([fed, ...(ARENACLIENT.ledgerFederations ? ARENACLIENT.ledgerFederations(st) : [])])];
       const rows = feds.flatMap((f) => { try { ARENACLIENT.ledgerReadSavedStakes(st, f); } catch { /* nothing to read */ }
@@ -5041,7 +5041,7 @@
         if (win) win.location.href = link.url; else window.open(link.url, '_blank', 'noopener');
       };
       // EACH ROW AS DATA (kanban #564), drawn by the page's bundle (window.ArenaWallet, React)
-      // EVERY ROW OF AN ORDER NAMES ITS TRANSACTION (the owner 2026-10-24: "We miss tx ids for most ... You may use the same tx id for the same
+      // EVERY ROW OF AN ORDER NAMES ITS TRANSACTION (2026-10-24: "We miss tx ids for most ... You may use the same tx id for the same
       // event and use #anchor to #settlement"): a stake row its entry; its round's winnings, refund or payout the same id, at #settlement
       const txOfRound = new Map(rows.filter((r) => r.kind === 'stake' && r.entry && r.round).map((r) => [r.round, r.entry]));
       const slow = window.ARENA_SLOW_TX ? window.ARENA_SLOW_TX() : new Map();
@@ -5099,7 +5099,7 @@
     window.ARENA_PAINT_CUSTODY = paintCustody;
     window.ARENA_PAINT_SETTINGS = () => { paintSettings(); paintHistory(); paintOtherWallets(); paintCustody(); if (window.ARENA_PAINT_CONFIRMED) window.ARENA_PAINT_CONFIRMED(); };
     // THE OTHER WALLETS THIS BROWSER KEEPS (2026-10-02: "now fix the balances" - his 402 sat sat in another kept phrase's wallet while this tab
-    // showed 0). Reworked for kanban #631 (the owner 2026-10-24: "Other wallets in the browser, rework that, ok the lobby makes no sense, not all
+    // showed 0). Reworked for kanban #631 (2026-10-24: "Other wallets in the browser, rework that, ok the lobby makes no sense, not all
     // apps even have a lobby, find better ways to restore funds"): no lobby round is needed - each other kept phrase is read only in the
     // federations it holds a wallet in (phraseWalletEntries), with that federation's verified invite, 20 s each at most; the Federations tab
     // shows what each holds and how its merge stands, and "Merge now" moves it into this tab's wallet (ARENA_MERGE_NOW). Nothing is spent here.
@@ -6135,7 +6135,7 @@
         list.textContent = '';
         game = await new Promise((chosen) => {
           // THE TILES IN REACT (kanban #564, packages/arena-web GameTiles): drawn by the Arena page's bundle, the page's checks and taps
-          // handed in; the page's own drawing is gone (the owner 2026-10-21: "no fall backs")
+          // handed in; the page's own drawing is gone (2026-10-21: "no fall backs")
           window.ArenaGames.drawTiles(list, { tiles,
             verifyInfo: (g) => (ARENACLIENT.checkedGameInfoOfTile || ARENACLIENT.checkedGameInfo)(g, pageEd25519Verify),
             routed: window.ARENA_ROUTED_URL || null, onChoose: (g) => chosen(g),
@@ -6226,7 +6226,7 @@
     // A's round although this page had put the wallet's 1,000 sat into B (the lowest load, as ruled), so Up or Down was never
     // played in B. The rows a game is handed put the federation holding most of the wallet's sats first, else the one a deposit
     // goes to; the order among the rest is kept.
-    // BY THE MONEY THAT CAN PAY NOW (the owner 2026-10-24 playtest, "Enter by swap ... your money is in federation 337ae01a" on an Up/Down order
+    // BY THE MONEY THAT CAN PAY NOW (2026-10-24 playtest, "Enter by swap ... your money is in federation 337ae01a" on an Up/Down order
     // that took 4dc88be7's round of the same window): a part still merging names its federation by 16 hex only (arena.wallet.known.<fed16>),
     // so a wallet whose largest part was merging failed the 64-hex test and the rows went in the lobby's order; and a merging or arriving part
     // is no money an order can spend. Ranked by what each federation holds spendable, a federation named by its first 16 hex matched too.
@@ -6452,7 +6452,7 @@
       const frame = document.createElement('iframe');
       frame.id = 'arena-client';
       frame.title = game.title;
-      // SHOWN ONCE THE PAGE'S STYLE IS IN IT (kanban #610, the owner 2026-10-24: "Right after loading, and the loading indicator disappears and
+      // SHOWN ONCE THE PAGE'S STYLE IS IN IT (kanban #610, 2026-10-24: "Right after loading, and the loading indicator disappears and
       // it scrolls up a few pixels. You can reproduce it if you throttle the cpu to 6x slow down" - measured under 6x: the client's title at
       // 58 px for ~0.5 s, then 20 px - its own "← Arena", which the style below hides, stood above it until the frame's load): hidden until
       // the load has added that style, so the client appears in its final place; shown after 8 s whatever happens
@@ -6489,7 +6489,7 @@
         } catch (e) { console.log('[arena] the client frame could not be made to scroll: ' + (e && e.message ? e.message : e)); }
         if (game.kind === 'market' || game.name === 'btc-updown-15m') expectedLine(frame);
       });
-      // WHEN THE NEXT ROUND COMES (the owner 2026-10-20: "Add an estimated message to markets when it's currently no rounds but a new round is
+      // WHEN THE NEXT ROUND COMES (2026-10-20: "Add an estimated message to markets when it's currently no rounds but a new round is
       // expected at a specific time or blocks"): under the client's "No window is open on these nodes right now." the page says when the
       // next window opens - a listed one, else one its publisher put on chain (window.ARENA_EXPECTED) - and, while the grid waits for its
       // draw block, which block: the first whose median time passes the committee time, then 6 deep. The client's bytes are unchanged.
@@ -6688,7 +6688,7 @@
       // waits on its federation's pending deposits once per page, writes each claimed one's history row once, and reads the balance again
       // (set up here, beside ARENA_KEEP_WALLET, so it exists on every page - measured on UI 264: further down it was never reached without a
       // named lobby round, and every merge said "the page set up no merge")
-      // EVERY FEDERATION, NOT ONLY THE LOBBY ROUND'S (the owner 2026-10-20 18:5xZ, "Go and find the 200": his 200 sat sat in 4dc88be7 in the wallet of
+      // EVERY FEDERATION, NOT ONLY THE LOBBY ROUND'S (2026-10-20 18:5xZ, "Go and find the 200": his 200 sat sat in 4dc88be7 in the wallet of
       // phrase acaa8a44, a phrase this browser keeps that was no longer the one in use, and the merge below ran only in the lobby round's
       // federation, 337ae01a). Each federation is merged on its own, one at a time; the e-cash kept between the send and the receive names
       // its federation, and is only ever offered to that federation's wallet (an entry an earlier page kept without one: the lobby round's).
@@ -6740,11 +6740,11 @@
         handover.addEventListener('message', on);
         handover.postMessage({ kind: 'ask', id, phrase: phrase16, fed, to: to16 });
       });
-      // EACH ORDER'S TIMES, FROM THE PRESS (kanban #619, the owner 2026-10-24: "Display the order accept time and lock time here as well so we
+      // EACH ORDER'S TIMES, FROM THE PRESS (kanban #619, 2026-10-24: "Display the order accept time and lock time here as well so we
       // don't have to guess how long it took"): submitted to the first seat, placed on enough seats, its lock accepted by the guardians - in
       // ms, by round and order number until the order's record exists, then on the record (arena.market.picks), which ARENA_GAME.market.orders()
       // hands the client as `timing`
-      // WHY MONEY IS ARRIVING, AND WHEN (kanban #617, the owner 2026-10-24: "61 sat · 2,214 arriving · 495 pending" - "When is it arriving? Has
+      // WHY MONEY IS ARRIVING, AND WHEN (kanban #617, 2026-10-24: "61 sat · 2,214 arriving · 495 pending" - "When is it arriving? Has
       // said this for an hour" - "if there is something arriving, you need to write it in the Wallet screen why is it arriving and WHEN it is
       // arriving with an ETA"): per federation (first 16 hex) the reason this page started the issue for, since when, and by when it is
       // expected - kept in the browser (arena.arriving), so a reload keeps "since". Money arriving that no reason here names keeps its
@@ -6792,7 +6792,7 @@
           console.log('[arena] tx ' + entryIdHex + ': timing to ' + said.filter((x) => x === 201).length + ' of ' + nodes.length + ' seats');
         } catch (e) { console.log('[arena] tx ' + entryIdHex + ': timing not handed over: ' + (e && e.message ? e.message : e)); }
       };
-      // A SLOW ORDER'S LOG, KEPT IN THIS BROWSER (the owner 2026-10-24: "Store the client log for delayed orders locally with a button copy log and a
+      // A SLOW ORDER'S LOG, KEPT IN THIS BROWSER (2026-10-24: "Store the client log for delayed orders locally with a button copy log and a
       // label slow tx"): an order placed after more than SLOW_TX_MS keeps the page's log (ARENA_CLIENT_LOGS, secrets taken out) under its
       // transaction id - the last SLOW_TX_MOST, each cut to SLOW_TX_BYTES; the history marks its row "slow tx" with a Copy log button
       const SLOW_TX_KEY = 'arena.slowtx', SLOW_TX_MS = 2000, SLOW_TX_MOST = 3, SLOW_TX_BYTES = 150000;
@@ -6824,7 +6824,7 @@
           if (x) { x.order.timing = Object.assign({}, x.order.timing || {}, t); window.sessionStorage.setItem('arena.market.picks', JSON.stringify(all)); }
         } catch { /* kept for this page only */ }
       };
-      // OLD WALLET DATABASES OUT OF THE BROWSER'S STORAGE (kanban #616, the owner 2026-10-24: "exceeded the quota" on an order; "You need to clean
+      // OLD WALLET DATABASES OUT OF THE BROWSER'S STORAGE (kanban #616, 2026-10-24: "exceeded the quota" on an order; "You need to clean
       // up old storages"): ARENACLIENT.tidyStorage, once after the page's federations are read and again before each order; a phrase another
       // tab plays with (its heartbeat within 12 s) is never touched
       window.ARENA_TIDY_STORAGE = () => {
@@ -6862,7 +6862,7 @@
         await Promise.race([Promise.all(feds.map((f) => one(f).catch((e) => mergeSaid(f, 'stuck', e && e.message ? e.message : String(e))))), new Promise((r) => setTimeout(r, ms))]);
         if (window.ARENA_SUM_BALANCES) { try { await window.ARENA_SUM_BALANCES(); } catch { /* read again later */ } }
       };
-      // WHAT EACH FEDERATION'S MERGE LAST DID, BY ITS FIRST 16 HEX (the owner 2026-10-22: "If it's not spendable it should say so in the window
+      // WHAT EACH FEDERATION'S MERGE LAST DID, BY ITS FIRST 16 HEX (2026-10-22: "If it's not spendable it should say so in the window
       // instead of a deposit request. But it's been like this for minutes"): { state: 'merging' | 'merged' | 'stuck', why, atMs } - the join
       // names the reason when money still merging is all that would pay a round
       window.ARENA_MERGE_STATE = window.ARENA_MERGE_STATE || {};
@@ -6919,7 +6919,7 @@
             ...phrases.filter((x) => x.hex !== cur && wanted(x, false)).map((x) => ({ hex: x.hex, ancestor: false })),
             ...phrases.filter((x) => wanted(x, true)).map((x) => ({ hex: x.hex, ancestor: true })),
           ];
-          // A REMEMBERED BALANCE THE MERGE WILL NEVER TAKE IN IS DROPPED (the owner 2026-10-22 playtest, "it's been like this for minutes"; measured in
+          // A REMEMBERED BALANCE THE MERGE WILL NEVER TAKE IN IS DROPPED (2026-10-22 playtest, "it's been like this for minutes"; measured in
           // Chrome on UI 306: a kept phrase with no wallet of its own in this federation in this browser, or one noted empty, kept its remembered 700 sat
           // "merging" for good): only a wallet this merge opens is counted as merging in
           for (const x of phrases.filter((y) => y.hex !== cur)) for (const anc of [false, true]) {
@@ -6936,7 +6936,7 @@
               const other = await Promise.race([ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fedHex), invite, seed: ARENACLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L, ancestor: x.ancestor }),
                 new Promise((_, no) => setTimeout(() => no(new Error('the wallet did not open in 30 s')), 30000))]);
               if (typeof other.sendAllEcash !== 'function') return;
-              // WHAT IT HOLDS, REMEMBERED UNTIL IT IS EMPTIED (the owner 2026-10-20 19:3xZ: "The total balance should always show the full balance even if
+              // WHAT IT HOLDS, REMEMBERED UNTIL IT IS EMPTIED (2026-10-20 19:3xZ: "The total balance should always show the full balance even if
               // it's not merged yet. The merge is a kind of slow process"): the sum counts it from the next read on, a next page from its first
               const knownKey = 'arena.wallet.known.' + fedHex.slice(0, 16) + '.' + x.hex.slice(0, 16) + (x.ancestor ? '.blwp' : '');
               const noteEmpty = () => { L.setItem(emptyKey(x.hex, x.ancestor), String(entriesOf(x.hex, x.ancestor))); L.removeItem(knownKey); };
@@ -6975,7 +6975,7 @@
                   await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { signal: AbortSignal.timeout(60000) }, hold)
                     .catch((e) => { if (e && e.name === 'TimeoutError') mergeSaid(fedHex, 'stuck', 'wallet ' + from + ' was busy in this tab for a minute - tried again at the next merge'); else throw e; });
                 }
-                // ANOTHER TAB OF THIS BROWSER PLAYS WITH THAT PHRASE (kanban #615, the owner 2026-10-24 playtest: "Ich kann immernoch keine Bets
+                // ANOTHER TAB OF THIS BROWSER PLAYS WITH THAT PHRASE (kanban #615, 2026-10-24 playtest: "Ich kann immernoch keine Bets
                 // placen" - 3,285 sat "still merging" for good, his own phrase's wallets empty): the merge skipped the locked phrase without a
                 // word, every time. That tab is asked to hand its notes in this federation over (ARENA_ASK_HANDOVER); a tab that does not
                 // answer is named, so the player knows which tab to close
@@ -7122,7 +7122,7 @@
           // copy kept between a send and its receive (arena.ecash.pending.*), per federation; this tab's own phrase is never counted twice
           let merging = 0n;
           { const L2 = vault(); const curHex = ((window.sessionStorage && sessionStorage.getItem('arena.player.seed')) || '').slice(0, 16);
-            // ONLY A PHRASE THIS BROWSER KEEPS CAN MERGE IN (the owner 2026-10-22 playtest, "it's been like this for minutes"; measured in Chrome on
+            // ONLY A PHRASE THIS BROWSER KEEPS CAN MERGE IN (2026-10-22 playtest, "it's been like this for minutes"; measured in Chrome on
             // UI 306: a remembered balance of a phrase no longer kept was counted as merging for good - no merge can ever take it in)
             let keptHex = new Set([curHex]); try { for (const x of JSON.parse(L2.getItem('arena.seeds') || '[]')) { const h = typeof x === 'string' ? x : x && x.hex; if (h) keptHex.add(String(h).slice(0, 16).toLowerCase()); } } catch { /* none kept */ }
             const by = new Map();
@@ -7265,7 +7265,7 @@
       const walletModal = () => document.getElementById('arena-wallet-modal');
       window.ARENA_CLOSE_WALLET = () => { const m = walletModal(); if (m) m.style.display = 'none'; const sp = splitEl(); if (sp) sp.style.display = 'none'; };
       { const m = walletModal(); const x = m && m.querySelector('.wl-close'); if (x) x.addEventListener('click', (e) => { e.stopPropagation(); window.ARENA_CLOSE_WALLET(); }); }
-      // TWO TABS, TRANSACTIONS AND FEDERATIONS (kanban #631, the owner 2026-10-24: "group the page to be more accessible and tidy. Introduce tabs,
+      // TWO TABS, TRANSACTIONS AND FEDERATIONS (kanban #631, 2026-10-24: "group the page to be more accessible and tidy. Introduce tabs,
       // transaction history goes into Transactions, federation stuff into federation. Remove the old text only stuff at the top"): the balance
       // and Deposit / Withdraw / Move stay on top; the history in Transactions; the federations' health, the balance by federation and the
       // other wallets in Federations. Built once, from the parts every painter still finds by id; the tab chosen is kept for this viewer.
@@ -7384,7 +7384,7 @@
         })().catch((e) => { console.log('[arena] the early player wallet did not open: ' + (e && e.message ? e.message : e)); window.ARENA_WALLET_EARLY = null; });
       };
       window.ARENA_LEDGER_GATEWAYS = (new URLSearchParams((testnet ? testnet.search : search).replace(/^\?/, '')).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean);
-      // ROUNDS ON THEIR WAY (the owner 2026-10-20: "Add an estimated message to markets when it's currently no rounds but a new round is expected
+      // ROUNDS ON THEIR WAY (2026-10-20: "Add an estimated message to markets when it's currently no rounds but a new round is expected
       // at a specific time or blocks"): what the seats' publishers put on chain and the seats do not list yet (GET /expected), asked once a minute
       {
         const bases = [...new Set([...((testnet && testnet.named && testnet.named.nodes) || []), ...((named && named.nodes) || [])]

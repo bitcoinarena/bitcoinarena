@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SDK AS ITS OWN REPOSITORY (kanban #568, the owner 2026-10-21: "The external apps ... reference arena through an import in package.json with
+// THE SDK AS ITS OWN REPOSITORY (kanban #568, 2026-10-21: "The external apps ... reference arena through an import in package.json with
 // the github url"): npm installs a whole repository, never a folder of this one, so a tester/arena-sdk holds the SDK standalone - each
 // subpath's Arena module and every module it imports, copied with their paths kept under arena/ (packages/arena-protocol/src/hash.js ->
 // arena/arena-protocol/src/hash.js), the subpath files pointing there, and the npm packages they use pinned.

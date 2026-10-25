@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE GAME DEVELOPERS UNDER DONATIONS (kanban #582, the owner 2026-10-22): shown only when a game developer's key is installed on the node - per
+// THE GAME DEVELOPERS UNDER DONATIONS (kanban #582, 2026-10-22): shown only when a game developer's key is installed on the node - per
 // app the split in force, Change split (signed by the node with that key), the past splits and the donations; installing a key folded.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

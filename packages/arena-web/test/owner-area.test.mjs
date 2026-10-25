@@ -69,7 +69,7 @@ test('the login: the words shown on a press and forgotten; a Nostr login signs o
   assert.match(n.html(), /<p>This browser keeps your login and your nsec\. Your key stays with your nsec - keep it written down\.<\/p><button type="button" id="forget">Sign out on this browser<\/button>/);
 });
 
-test('Donations only with a developer on this node - a dev client or a game developer\'s key; installing one is in Developer (the owner 2026-10-22)', () => {
+test('Donations only with a developer on this node - a dev client or a game developer\'s key; installing one is in Developer (2026-10-22)', () => {
   const without = area({ hasDevs: false }).html();
   assert.doesNotMatch(without, /href="#money"/, 'no Donations in the menu');
   assert.match(without, /<section id="s-money" hidden="">/, 'its section kept (the panels draw into it), hidden');

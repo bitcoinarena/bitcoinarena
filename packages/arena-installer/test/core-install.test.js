@@ -80,7 +80,7 @@ test('with no Electrum server reachable, the wizard installs Bitcoin Core, watch
   assert.equal(readFileSync(join(home, 'sessions.json'), 'utf8').includes(c.cookie.split('=')[1]), false, 'the cookie itself is not on disk');
 });
 
-// KANBAN #635 (the owner 2026-10-25: "Wo BTC core installiert wird sollte auswählbar sein", "Auch der Bitcoin core nicht im Vordergrund machen
+// KANBAN #635 (2026-10-25: "Wo BTC core installiert wird sollte auswählbar sein", "Auch der Bitcoin core nicht im Vordergrund machen
 // lassen während der synced"): the blocks go to the owner's folder, and the wizard goes on at once with an Electrum server as the chain
 // until the chain-switch keeper moves the node to its own Core
 test('Bitcoin Core goes to the chosen folder and syncs in the background: the wizard goes on with an interim Electrum chain', async (t) => {

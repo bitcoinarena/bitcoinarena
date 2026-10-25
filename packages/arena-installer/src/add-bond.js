@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// ADD TO BOND - THE DEFAULT WAY TO RAISE A BOND (kanban #544, the owner 2026-10-19 ~22:15Z: "This needs to be possible so add the ticket,
+// ADD TO BOND - THE DEFAULT WAY TO RAISE A BOND (kanban #544, 2026-10-19 ~22:15Z: "This needs to be possible so add the ticket,
 // this is also the default way. E.g increase your bond by 32000 sats"; spec §5A "Multiple bond outputs"): a second bond output
 // beside the first, built by the same buildBond with no old bond - its own advertisement, the same node key and operator, its own
 // maturity - and the first bond untouched. From protocol 19 the census counts a node's outputs as their sum (census.js nodeBonds).

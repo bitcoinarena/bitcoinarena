@@ -19,7 +19,7 @@ const which = async (x) => {
 
 /**
  * The Bitcoin Core LND reads: the node's chain when it is a Core; while the Core installed here still syncs behind the interim
- * Electrum chain, that Core - LND starts at once and waits for the sync by itself (kanban #635, the owner 2026-10-25: "Du kannst ja
+ * Electrum chain, that Core - LND starts at once and waits for the sync by itself (kanban #635, 2026-10-25: "Du kannst ja
  * bitcoin core schon einrichten und dann direkt lnd danach, und einfach auf den Sync warten"). null when there is no Core.
  */
 export const lndChainOf = (s) => ownCoreOf(s);

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// RETIRING A FEDERATION THAT HOLDS NOTHING (kanban #577, the owner 2026-10-22: "1" - a federation can be retired; then its guardians are
+// RETIRING A FEDERATION THAT HOLDS NOTHING (kanban #577, 2026-10-22: "1" - a federation can be retired; then its guardians are
 // free for the next founding). §23A had no way to end a federation but a succession (its guardians seated first in the successor) or a
 // halt (a failure, then a liquidation). A retirement is neither: a federation whose guardians' own audit says it holds nothing - no
 // e-cash issued, no coins in its wallet, nothing in Lightning contracts - is closed by a record its guardians sign as for any other

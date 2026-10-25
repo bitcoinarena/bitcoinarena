@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WHAT THE INSTALLER LEFT RUNNING, AND HOW FAR IT IS (kanban #635, the owner 2026-10-25: "Bond und alles kann gepostet werden im installiert als
+// WHAT THE INSTALLER LEFT RUNNING, AND HOW FAR IT IS (kanban #635, 2026-10-25: "Bond und alles kann gepostet werden im installiert als
 // Vorbereitung, der Status und completion ist dann im Dashboards", "in dem public Node Dashboard ein Panel einblenden mit dem Status der
 // node anzeigen wieviel confirmations Bond und peg in haben. Das selbe auch beim owner Dashboard"). The installer no longer waits for
 // confirmations or for Bitcoin Core's sync; this reads, for the node's dashboards, where each stands:
 //   core    Bitcoin Core installed here: syncing (blocks, progress, ETA - the chain-switch keeper's chain-switch.json) or switched to
 //   bond    its transaction, confirmations, the height it must confirm by to count (bond.js bondCounts), whether it counts
 //   pegIn   the gateway's peg-in (custody): confirmations against the federation's finality (PEG_IN_FINALITY)
-// AND EVERYTHING ELSE STILL UNDER WAY (the owner 2026-10-25: "a section of installation status to show confirmations on bond, peg in and lnd
+// AND EVERYTHING ELSE STILL UNDER WAY (2026-10-25: "a section of installation status to show confirmations on bond, peg in and lnd
 // status and everything else that may be in progress" - "Fix that"):
 //   lnd       LND set up here: answering, synced to the chain, its height, open and pending channels
 //   gateway   the Lightning gateway: answering, its Lightning node, the federations it joined

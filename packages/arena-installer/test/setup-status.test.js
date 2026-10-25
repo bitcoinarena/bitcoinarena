@@ -33,7 +33,7 @@ test('the bond\'s and the peg-in\'s confirmations, whether the bond counts, and 
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
-// EVERYTHING ELSE UNDER WAY (the owner 2026-10-25: "lnd status and everything else that may be in progress"): LND, the gateway and the address
+// EVERYTHING ELSE UNDER WAY (2026-10-25: "lnd status and everything else that may be in progress"): LND, the gateway and the address
 // as their checks answer; the faucet's coins, advertisement updates and old bonds from the chain
 test('LND, the gateway, the address, the faucet, advertisement updates and old bonds', async () => {
   const home = mkdtempSync(join(tmpdir(), 'arena-setup-status-'));

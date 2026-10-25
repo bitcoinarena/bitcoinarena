@@ -98,7 +98,7 @@ export function wordFromJson(j) {
 }
 
 /**
- * THE MARKETS THIS ATTESTOR SIGNS FOR (the owner 2026-10-20: "Prediction market outcomes and balance changes were working last week, so
+ * THE MARKETS THIS ATTESTOR SIGNS FOR (2026-10-20: "Prediction market outcomes and balance changes were working last week, so
  * something broke. Write tests to make sure it can never break again" - the units named their markets by a hand-kept --game-id
  * list, v1 and v2; versions 3 to 14 went live beside them, their rounds were never attested, and no order on them was ever decided
  * or paid): the ids given, and every market a seat hosts (its /games rows, { id, manifest hex }) of this game's name whose manifest
@@ -112,7 +112,7 @@ export function marketsToAttest({ games = [], name, key, mode = 'outcome', ids =
 }
 
 /**
- * THE VERSIONS OF THE MARKET THAT NAME THIS KEY (the owner 2026-10-20: "Attestors need a dynamic list of versions to support, always
+ * THE VERSIONS OF THE MARKET THAT NAME THIS KEY (2026-10-20: "Attestors need a dynamic list of versions to support, always
  * including the latest version"): of the seats' /games rows, each version once - { id, version } - oldest first, so the last is
  * the latest; the list an attestor shows on /status and logs whenever it changes.
  */

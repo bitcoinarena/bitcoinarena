@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ARENA'S PIECES, AS CLASS COMPONENTS (kanban #564, the owner 2026-10-21: "Also use react classes not use reducer"): state in this.state
+// THE ARENA'S PIECES, AS CLASS COMPONENTS (kanban #564, 2026-10-21: "Also use react classes not use reducer"): state in this.state
 // and setState, no hooks. The classes are arena.css's, so a ported page looks as the old one did.
 import React from 'react';
 

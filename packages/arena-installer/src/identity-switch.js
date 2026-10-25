@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN EXISTING NODE MOVES TO THE KEY ITS 24 WORDS GIVE (kanban #650, the owner 2026-10-25: the node key from the words - "b but optional"):
+// AN EXISTING NODE MOVES TO THE KEY ITS 24 WORDS GIVE (kanban #650, 2026-10-25: the node key from the words - "b but optional"):
 // a node installed before 2026.1.8 signs with a random key kept only in its node.db, so a machine lost with that file loses the node and
 // its bond even with the words. This optional owner-page action gives it the key the words give (seed.js nodeKeyOf, what a new install
 // adopts): a new bond posted under that key from the node's wallet, the same amount as the bond it has, with the node's advertisement

@@ -39,7 +39,7 @@ test('a scan another reader of the same Bitcoin Core is running is waited for, n
   await assert.rejects(coinsOf(chain, new Uint8Array([0x51]), { fetcher, scanPauseMs: 1, scanTries: 4 }), /Scan already in progress/);
 });
 
-// A DEPOSIT STILL IN THE MEMPOOL IS A COIN (kanban #635, the owner 2026-10-25: "sobald die Transaktion da ist weiter erlauben"): with
+// A DEPOSIT STILL IN THE MEMPOOL IS A COIN (kanban #635, 2026-10-25: "sobald die Transaktion da ist weiter erlauben"): with
 // Bitcoin Core the installer waited for the deposit's first block, because scantxoutset reads the UTXO set only
 test('coinsOf on bitcoind finds a deposit still in the mempool, at height 0, and reads each mempool transaction once', async () => {
   const spk = new Uint8Array([0x51, 0x20, ...new Uint8Array(32).fill(7)]); const spkHex = Buffer.from(spk).toString('hex');

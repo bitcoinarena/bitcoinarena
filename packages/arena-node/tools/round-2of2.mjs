@@ -1319,7 +1319,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       // the first 900 rounds' contracts for the tools that read them (a 24 h grid derives 21,600; every seat derives them itself)
       contracts: grid.slice(0, 900).map((c) => toHex(encodeRoundContract(c))), firstClose: new Date(Number(first)).toISOString(),
       committeeTime: new Date(Number(committee)).toISOString() });
-    // AND ANNOUNCED AT ONCE (kanban #560, the owner 2026-10-20: "it will work on future testnet and mainnet with nodes not operated by us"): every
+    // AND ANNOUNCED AT ONCE (kanban #560, 2026-10-20: "it will work on future testnet and mainnet with nodes not operated by us"): every
     // seat this tool runs and every other node of the census gets the signed line and the publication (POST /expected), checks both and
     // says when the grid's first window comes - its rounds are posted only once its beacon block is 6 deep. Not waited for.
     (async () => {

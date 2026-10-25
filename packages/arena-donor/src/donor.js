@@ -18,7 +18,7 @@ export function newKey() {
 }
 
 /**
- * EVERY FEDERATION'S INVITE FROM THE SEATS' SIGNED RECORDS (kanban #578, the owner 2026-10-22: "dass dev a und dev b donations
+ * EVERY FEDERATION'S INVITE FROM THE SEATS' SIGNED RECORDS (kanban #578, 2026-10-22: "dass dev a und dev b donations
  * überall bekommen"): a client knew only the invites of its donor.json and the one federation a daily.json names, so donations
  * paid in any other federation (4dc88be7, B's successor; every new founding) were seen at the seats and never redeemed. Each
  * seat's GET /federations lists the records it holds; a record names its federation's invite. Answers { federation id hex: invite }
@@ -51,7 +51,7 @@ export async function invitesFromSeats({ seats, fetcher = fetch, decode, want = 
 }
 
 /**
- * EVERY DONATION'S DETAILS FOLLOW ITS MONEY (kanban #578, the owner 2026-10-22: "make sure that the donation comments (having the player
+ * EVERY DONATION'S DETAILS FOLLOW ITS MONEY (kanban #578, 2026-10-22: "make sure that the donation comments (having the player
  * key hash and round id etc) is also being transferred, we still need to know the details of every single donation"): a move out of
  * a draining federation writes one line to moves.jsonl - when, from and to, how much, and the outpoints of the donations recorded in
  * that federation (donations.jsonl keeps each one's player key, round, entry, contract, amount, time and rate) - so each donation's

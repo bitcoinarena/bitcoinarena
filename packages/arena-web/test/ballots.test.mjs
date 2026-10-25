@@ -88,7 +88,7 @@ test('open proposals on top: the open part has only the open ones under its head
   assert.equal(panel({ part: 'open', ballots: { ballots: [] }, fees: { proposals: [] } }).html(), '', 'nothing open, nothing drawn');
 });
 
-test('past proposals folded: refused, withdrawn or approved ones under one closed "Past proposals" (the owner 2026-10-22: "past proposals should be hidden by default")', () => {
+test('past proposals folded: refused, withdrawn or approved ones under one closed "Past proposals" (2026-10-22: "past proposals should be hidden by default")', () => {
   const past = { ballots: [...ballots.ballots, { id: 'p2'.repeat(16), serial: 4, state: 'refused', why: 'withdrawn by its proposer', acceptBps: 0, proposer: KB,
     recipients: [{ key: KA, label: 'dev a', shareBps: 5000 }, { key: KB, label: 'dev b', shareBps: 5000 }], votes: [{ key: KB, bps: 4000, accept: false, atHeight: 157289 }] }] };
   const decided = { proposals: [...fees.proposals, { ...fees.proposals[0], id: 'f2'.repeat(16), decision: { accepted: true } }] };
@@ -100,7 +100,7 @@ test('past proposals folded: refused, withdrawn or approved ones under one close
   assert.doesNotMatch(panel({ part: 'rest' }).html(), /Past proposals/, 'no past proposals, no fold');
 });
 
-test('vesting counts with its target: 50 / 30 / 10 growing to 20 is 100 % and is signed so it pays 50 / 30 / 20 at full vesting (the owner 2026-10-22)', async () => {
+test('vesting counts with its target: 50 / 30 / 10 growing to 20 is 100 % and is signed so it pays 50 / 30 / 20 at full vesting (2026-10-22)', async () => {
   const p = panel();
   p.m.state.rows[0].share = '50'; p.m.state.rows[1].share = '30';
   p.m.state.rows.push({ key: '02' + 'cc'.repeat(32), label: 'dev c', share: '10', vest: '20', days: '365', other: true });
