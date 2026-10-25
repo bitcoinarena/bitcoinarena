@@ -50,15 +50,34 @@ on installerDialog()
 	end if
 end installerDialog
 
+-- A NODE INSTALLED (kanban #658, the owner 2026-10-25: "show when it's installed \"Server running\" with options to Stop Node, Start Node,
+-- Doctor" - "And also \"Dashboard\" that opens the browser with the dashboard"): the node in one line, then what to do with it
 on statusDialog()
 	repeat
-		set b to button returned of (display dialog sh("status") with title "Bitcoin Arena" buttons {"Restart", "Close", "Owner page"} default button "Owner page")
-		if b is "Owner page" then
-			sh("owner")
-		else if b is "Restart" then
-			sh("restart")
+		set nodeLine to sh("node")
+		if nodeLine starts with "running" then
+			set heading to "Server running"
+			set toggle to "Stop node"
 		else
-			exit repeat
+			set heading to "Server stopped"
+			set toggle to "Start node"
+		end if
+		set detail to ""
+		if nodeLine contains ";" or nodeLine contains ":" then set detail to return & nodeLine
+		set picked to choose from list {"Dashboard", "Owner page", toggle, "Doctor"} with title "Bitcoin Arena" with prompt (heading & detail) OK button name "Go" cancel button name "Close" default items {"Dashboard"}
+		if picked is false then exit repeat
+		set what to item 1 of picked
+		if what is "Dashboard" then
+			sh("dashboard")
+		else if what is "Owner page" then
+			sh("owner")
+		else if what is "Stop node" then
+			display dialog "Stop your node? It stops serving rounds until you start it again." with title "Bitcoin Arena" buttons {"Cancel", "Stop node"} default button "Stop node" cancel button "Cancel"
+			sh("node-stop")
+		else if what is "Start node" then
+			sh("node-start")
+		else if what is "Doctor" then
+			display dialog sh("doctor") with title "Bitcoin Arena - Doctor" buttons {"OK"} default button 1
 		end if
 	end repeat
 end statusDialog
