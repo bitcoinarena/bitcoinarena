@@ -52,10 +52,10 @@ test('the owner\'s Overview reads the setup\'s progress itself and again later (
   c.componentWillUnmount();
 });
 
-test('"still being set up" above every owner section while a part runs; nothing once all is done (playtest 2026-10-25: roles and bond did not load while Core synced)', () => {
-  const banner = (status) => renderToStaticMarkup(React.createElement(SetupBanner, { status: { ok: true, ...status } }));
-  const h = banner({ core: { interim: true, sync: { blocks: 50070, headers: 157581, progress: 0.059, etaMs: 1920000 } }, address: { ok: true, url: 'https://n.example' } });
-  assert.match(h, /id="setup-banner"[\s\S]*Your node is still being set up\.[\s\S]*Still in progress: Bitcoin Core\. Until Bitcoin Core has synced, parts of this page can load slowly or not at all\.[\s\S]*href="#overview"/);
-  assert.equal(banner({ core: { interim: false }, address: { ok: true, url: 'https://n.example' } }), '', 'all done: no banner');
-  assert.equal(renderToStaticMarkup(React.createElement(SetupBanner, { status: null })), '', 'no answer: no banner');
+test('the owner area waits behind the setup screen while a part runs; it opens once all is done (playtest 2026-10-25)', () => {
+  const gate = (status) => renderToStaticMarkup(React.createElement(SetupBanner, { status: status && { ok: true, ...status } }));
+  const h = gate({ core: { interim: true, sync: { blocks: 50070, headers: 157581, progress: 0.059, etaMs: 1920000 } }, address: { ok: true, url: 'https://n.example' } });
+  assert.match(h, /id="setup-gate" role="dialog"[\s\S]*Your node is still being set up[\s\S]*Check back when all services are synchronized\.[\s\S]*id="setup-status"[\s\S]*Bitcoin Core/);
+  assert.equal(gate({ core: { interim: false }, address: { ok: true, url: 'https://n.example' } }), '', 'all done: the owner area opens');
+  assert.equal(gate(null), '', 'no answer: the owner area as before');
 });
