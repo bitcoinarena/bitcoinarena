@@ -8228,14 +8228,24 @@
       const ids = new Set(games.filter((g) => !gameName || g.name === gameName || (g.manifest && g.manifest.gameName === gameName)).map((g) => g.id));
       // every round the lobby lists, not only its current pick: the sets are the same in every paid round of the game
       const listed = [...(window.ARENA_LOBBY_ROWS || []), ...(window.ARENA_LOBBY || []).map((x) => x.raw)];
-      let row = listed.find((r) => r && !r.free && r.contract && (!gameName || ids.has(r.game)));
+      const rows = listed.filter((r) => r && !r.free && r.contract && (!gameName || ids.has(r.game)));
       // NO LOBBY ON THE GAMES SCREEN (2026-10-17 22:22: "No donations possible from Testnet Screen" - "no paid round is
       // listed to read the donation sets from"): a paid round of the game(s) asked from their own seats (GET /rounds), its contract
       // fetched by its id (fetchRound: it hashes to the id) - the sets are the same in every paid round of a game
-      if (!row) row = await paidRoundFromSeats(games.filter((g) => !gameName || ids.has(g.id)));
-      if (!row) return { ok: false, why: gameName ? 'no paid round of this game is listed to read its donation set from' : 'no paid round is listed to read the donation sets from' };
-      const ds = await ARENACLIENT.fetchDonationSet({ round: Object.assign({}, row.contract, { id: ARENACLIENT.fromHex(row.id) }),
-        nodes: (row.said || []).map((c) => c.node).filter(Boolean), verifyEd25519: pageEd25519Verify, keepBySet: true });
+      if (!rows.length) { const one = await paidRoundFromSeats(games.filter((g) => !gameName || ids.has(g.id))); if (one) rows.push(one); }
+      if (!rows.length) return { ok: false, why: gameName ? 'no paid round of this game is listed to read its donation set from' : 'no paid round is listed to read the donation sets from' };
+      // THE FIRST ROUND THAT GIVES THE SETS, OF UP TO FIVE (measured 2026-10-25 ~23:00Z: one listed round in two answered "not signed by the
+      // network's donation authority at the round's height" or "not every signer node of this round serves its donation set" - rounds of a
+      // branch the chain left, or held by other seats - and the box said the set could not be read)
+      // and the newest census first: a set is in force from the height it was signed at, so the newest rounds are the likeliest to show it
+      rows.sort((a, b) => Number(b.contract.censusHeight || 0) - Number(a.contract.censusHeight || 0));
+      let ds = null, row = null;
+      for (const r of rows.slice(0, 5)) {
+        ds = await ARENACLIENT.fetchDonationSet({ round: Object.assign({}, r.contract, { id: ARENACLIENT.fromHex(r.id) }),
+          nodes: (r.said || []).map((c) => c.node).filter(Boolean), verifyEd25519: pageEd25519Verify, keepBySet: true }).catch((e) => ({ ok: false, why: e.message }));
+        row = r;
+        if (ds.ok && ds.target) break;
+      }
       if (!ds.ok || !ds.target) return { ok: false, why: ds.why || 'the round names no donation sets' };
       const g = games.filter((x) => x.manifest && (x.name === gameName || x.manifest.gameName === gameName)).sort((a, b) => Number(b.manifest.version) - Number(a.manifest.version))[0];
       // INSIDE AN APP, HALF TO EACH (kanban #672): the app's set, and the protocol developers' set beside it
