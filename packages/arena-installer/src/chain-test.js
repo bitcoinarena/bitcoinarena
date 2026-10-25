@@ -15,7 +15,12 @@ import { createHash } from 'node:crypto';
 export const TESTNET4_GENESIS = '00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043';
 
 // THE BUILT-IN LIST: testnet4 Electrum servers, each measured to serve the testnet4 genesis (2026-10-18). A user may add their own.
+// OURS FIRST (kanban #656, the owner 2026-10-25: "also do our own API for the testnet installer"; measured that day: mempool.space answered
+// for hours on neither its Electrum port nor its Esplora API): Fulcrum on the Arena's public-chain testnet4 node, over a websocket.
+// The public servers stay as fallbacks.
+export const ARENA_ELECTRUM = Object.freeze({ host: 'seat.example.com', port: 443, tls: true, ws: true, path: '/electrum', note: 'Bitcoin Arena' });
 export const TESTNET4_ELECTRUM = Object.freeze([
+  ARENA_ELECTRUM,
   { host: 'mempool.space', port: 40002, tls: true, note: 'mempool.space' },
   { host: 'blackie.c3-soft.com', port: 57010, tls: true, note: 'c3-soft' },
   { host: 'blackie.c3-soft.com', port: 57009, tls: false, note: 'c3-soft, plain TCP' },
@@ -32,7 +37,8 @@ export const headerHash = (hex) => {
  * One Electrum session: newline-delimited JSON-RPC over TCP or TLS. TLS certificates are NOT checked (Electrum servers sign their own;
  * the genesis and the agreement with a second source are the checks). Answers { call(method, params), close() }.
  */
-export function electrumSession({ host, port, tls: useTls = true, timeoutMs = 10000, connect = null }) {
+export function electrumSession({ host, port, tls: useTls = true, timeoutMs = 10000, connect = null, ws = false, path = '/' }) {
+  if (ws) return electrumOverWebSocket({ host, port, tls: useTls, path, timeoutMs });
   return new Promise((resolve, reject) => {
     const opts = { host, port: Number(port), servername: net.isIP(host) ? undefined : host, rejectUnauthorized: false };
     const sock = connect ? connect(opts) : useTls ? tls.connect(opts) : net.connect(opts);
@@ -64,6 +70,40 @@ export function electrumSession({ host, port, tls: useTls = true, timeoutMs = 10
         close: () => { clearTimeout(timer); sock.removeAllListeners('close'); sock.destroy(); },
       });
     });
+  });
+}
+
+/**
+ * THE ELECTRUM PROTOCOL OVER A WEBSOCKET (kanban #656): our own server (Fulcrum on the Arena's testnet4 node) is reached at a path of an
+ * https name, wss://<host><path> - one JSON-RPC message each way per frame. Same answer as electrumSession: { call, close }.
+ */
+export function electrumOverWebSocket({ host, port = 443, tls: useTls = true, path = '/', timeoutMs = 10000 }) {
+  const url = `${useTls ? 'wss' : 'ws'}://${host}${Number(port) && Number(port) !== (useTls ? 443 : 80) ? `:${port}` : ''}${path}`;
+  return new Promise((resolve, reject) => {
+    let sock;
+    try { sock = new WebSocket(url); } catch (e) { reject(new Error(`${url}: ${e.message}`)); return; }
+    let id = 0, opened = false;
+    const waiting = new Map();
+    const fail = (e) => { for (const w of waiting.values()) w.reject(e); waiting.clear(); if (!opened) reject(e); };
+    const timer = setTimeout(() => { fail(new Error(`${url} did not answer in ${timeoutMs} ms`)); try { sock.close(); } catch { /* gone */ } }, timeoutMs);
+    sock.onerror = (e) => { clearTimeout(timer); fail(new Error(`${url}: ${(e && e.message) || 'the connection failed'}`)); };
+    sock.onclose = () => fail(new Error(`${url} closed the connection`));
+    sock.onmessage = (ev) => {
+      for (const line of String(ev.data).split('\n')) {
+        if (!line.trim()) continue;
+        let m; try { m = JSON.parse(line); } catch { continue; }
+        const w = waiting.get(m.id); if (!w) continue;
+        waiting.delete(m.id);
+        if (m.error) w.reject(new Error(`${url}: ${m.error.message || JSON.stringify(m.error)}`)); else w.resolve(m.result);
+      }
+    };
+    sock.onopen = () => {
+      opened = true;
+      resolve({
+        call: (method, params = []) => new Promise((ok, no) => { id += 1; waiting.set(id, { resolve: ok, reject: no }); sock.send(JSON.stringify({ jsonrpc: '2.0', id, method, params })); }),
+        close: () => { clearTimeout(timer); sock.onclose = null; try { sock.close(); } catch { /* gone */ } },
+      });
+    };
   });
 }
 

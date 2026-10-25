@@ -110,7 +110,8 @@ test('Bitcoin Core goes to the chosen folder and syncs in the background: the wi
   const r = (await c.post('/api/core/install', { prune: true, dir: join(home, 'disk2') })).json;
   assert.equal(r.ok, true, r.why);
   assert.equal(configured[0].home, join(home, 'disk2'), 'the blocks go to the chosen folder');
-  assert.deepEqual(r.interim, { host: 'blackie.c3-soft.com', port: 57010 }, 'the first server that passed');
+  assert.deepEqual(r.interim, { host: 'seat.example.com', port: 443 }, 'the first server that passed: ours (kanban #656)');
+  assert.deepEqual([tested.find((c) => c.host === 'seat.example.com').ws, tested.find((c) => c.host === 'seat.example.com').path], [true, '/electrum'], 'over its websocket');
   const st = (await c.get('/api/state')).json;
   assert.equal(st.step, 'roles', 'the wizard goes on while Core syncs');
   assert.equal(st.chain.kind, 'electrum');
