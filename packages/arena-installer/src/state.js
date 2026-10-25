@@ -93,10 +93,12 @@ export function guardianSetupOf(s, { release, platform = process.platform }) {
  */
 export const doneOf = (s) => {
   const d = { ...((s && s.done) || {}) };
-  if (!d.apps && d.seed) d.apps = d.seed;
+  // only an install from before the first step (no start in it): a new one reaches the seed before the apps when it restores or uses
+  // Nostr, and must still choose its apps (measured in the installer walk of 9a863f31: the bar showed Apps done after a Nostr start)
+  const older = !d.start;
+  if (!d.apps && d.seed && older) d.apps = d.seed;
   if (!d.start && (d.chain || d.seed)) d.start = d.chain || d.seed;   // (kanban #652: a state from before New / Restore that is past it)
   // (kanban #647: an install from before the code's own step - no start step either - that is past the owner, or any past the address)
-  const older = !((s && s.done) || {}).start;
   if (!d.emergency && (d.reach || d.service || (older && d.owner))) d.emergency = d.reach || d.service || d.owner;
   return d;
 };

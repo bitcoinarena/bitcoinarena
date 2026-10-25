@@ -754,10 +754,9 @@ test('custody on an Electrum node is refused as it is switched on; the emergency
     const { newSeed } = await import('../src/seed.js');
     assert.equal((await c.post('/api/start', { control: 'words', action: 'restore', words: newSeed().words.join(' ') })).json.ok, true);
     assert.equal((await c.post('/api/roles', { roles: ['verify'] })).json.ok, true);
-    await c.post('/api/apps', { apps: [] });
     const st = (await c.get('/api/state')).json;
-    assert.equal(st.done.seed > 0, true);
-    if (st.step === 'apps') await c.post('/api/apps', { apps: st.appInfo.map((a) => a.id) });
+    assert.deepEqual([st.step, !!st.done.apps, !!st.done.seed], ['apps', false, true], 'restored words: the apps are still to choose (walk of 9a863f31)');
+    assert.equal((await c.post('/api/apps', { apps: st.appInfo.map((a) => a.id) })).json.ok, true);
     assert.equal((await c.get('/api/state')).json.step, 'emergency', 'after the words: the emergency code');
     assert.equal((await c.post('/api/emergency/written')).json.ok, true);
     assert.equal((await c.get('/api/state')).json.step, 'owner');
