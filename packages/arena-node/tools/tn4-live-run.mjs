@@ -18,6 +18,9 @@
  * WITH THE PLAYER'S ITEMS: ITEMS_SEED_FILE=<64 hex player seed> - the entry names every item that seed's items key owns
  * in the round's game (GET /items), each with its owner proof, as the page's join does, and the run is driven with their unlocks.
  * GAME_ID=<hex prefix> picks the next round of that game version (nextblock v3: b8b88e23).
+ *
+ * THROUGH A REFERRAL PROGRAM (kanban #675): FRONTEND_PK=<33-byte website key hex> - the entry names it as a page that came by a ?ref= link
+ * does; at settlement the key is paid 10% of the nodes' fee on this stake (GET /referral-fees on the seats then counts it).
  */
 import { readFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -181,7 +184,8 @@ try {
     ...locks.entryFields, claimKeyAttestationRef: att.ref,
     // THE OPERATOR THIS PLAYER DECLARES (§5A.13): OPERATOR_ID=<64 hex> - a committee node advertising the same operator
     // is conflicted in this round: it neither signs nor earns
-    ...(/^[0-9a-f]{64}$/.test(env.OPERATOR_ID || '') ? { operatorId: fromHex(env.OPERATOR_ID) } : {}) };
+    ...(/^[0-9a-f]{64}$/.test(env.OPERATOR_ID || '') ? { operatorId: fromHex(env.OPERATOR_ID) } : {}),
+    ...(/^0[23][0-9a-f]{64}$/.test(env.FRONTEND_PK || '') ? { frontendPk: fromHex(env.FRONTEND_PK) } : {}) };
   // THE PLAYER'S ITEMS, as the page's join names them (ARENA_ITEMS_FOR_ENTRY): owned by the seed's items key, in a round of version 10+
   let unlocks = [];
   if (env.ITEMS_SEED_FILE) {
