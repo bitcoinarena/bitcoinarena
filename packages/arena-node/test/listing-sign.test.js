@@ -12,12 +12,14 @@ test('a small ask is answered before a large one asked earlier, and every signat
   const signer = listingSigner(secret, { chunk: 16 });
   try {
     const msg = (i) => { const m = new Uint8Array(32); m[0] = i & 255; m[1] = i >> 8; return m; };
-    const big = Array.from({ length: 200 }, (_, i) => msg(i)), few = [msg(1000), msg(1001)];
+    const big = Array.from({ length: 200 }, (_, i) => msg(i)), mid = Array.from({ length: 40 }, (_, i) => msg(500 + i)), few = [msg(1000), msg(1001)];
     const done = [];
     const a = signer.sign(big).then((s) => { done.push('large'); return s; });
+    const m = signer.sign(mid).then((s) => { done.push('three chunks'); return s; });
     const b = signer.sign(few).then((s) => { done.push('small'); return s; });
-    const [sa, sb] = await Promise.all([a, b]);
-    assert.deepEqual(done, ['small', 'large'], 'the small ask did not wait for the large one');
+    const [sa, sm, sb] = await Promise.all([a, m, b]);
+    assert.deepEqual(done, ['small', 'three chunks', 'large'], 'the ask with fewest chunks left goes first: the lobby\'s before a full listing');
+    assert.ok(sm.every((s, i) => schnorr.verify(s, mid[i], pub)));
     assert.equal(sa.length, 200);
     assert.ok(sa.every((s, i) => schnorr.verify(s, big[i], pub)), 'every signature of the large ask is its own message\'s');
     assert.ok(sb.every((s, i) => schnorr.verify(s, few[i], pub)));
