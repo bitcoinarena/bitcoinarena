@@ -312,8 +312,15 @@ export class ServiceStep extends React.Component {
     this.props.reload();
   }
   async nostrLogin() {
+    // the nsec typed once more (kanban #653: a Nostr owner needs no browser extension) - signed by setup, never kept
+    if (this.state.nsec) {
+      const r = await this.props.post('/api/owner/login', { nsec: this.state.nsec });
+      this.setState({ nsec: '' });
+      if (r.ok) return this.props.reload();
+      return this.setState({ msg: said(r) });
+    }
     const nostr = this.props.nostr || (typeof window !== 'undefined' ? window.nostr : null);
-    if (!nostr) return this.setState({ msg: said({ ok: false, why: 'no Nostr extension in this browser: use one that holds your key' }) });
+    if (!nostr) return this.setState({ msg: said({ ok: false, why: 'type your nsec above, or use a browser extension that holds your Nostr key' }) });
     const ev = await nostr.signEvent({ ...this.state.template, created_at: Math.floor(Date.now() / 1000) });
     const r = await this.props.post('/api/owner/login', { nostr: ev });
     if (r.ok) return this.props.reload();
@@ -327,7 +334,10 @@ export class ServiceStep extends React.Component {
         <p>Setup installs your node as a service, starts it, checks that it answers at its public address, and logs you in once as its owner.</p>
         <label className={`choice${boot ? ' on' : ''}`}><input type="checkbox" id="boot" checked={boot} onChange={(e) => this.setState({ boot: e.target.checked })} />
           <div><b>Start again after a reboot</b><p>Recommended. It also keeps your node running when you log out.</p></div></label>
-        {template ? <button type="button" onClick={this.nostrLogin}>Log in with Nostr</button>
+        {template ? <>
+          <label htmlFor="svc-nsec">Your nsec, to log in once as the owner</label>
+          <input id="svc-nsec" type="password" autoComplete="off" spellCheck="false" placeholder="nsec1… (or leave empty to use a browser extension)" value={this.state.nsec || ''} onChange={(e) => this.setState({ nsec: e.target.value })} />
+          <button type="button" id="svc-nostr" onClick={this.nostrLogin}>Log in with Nostr</button></>
           : <button type="button" id="svc" disabled={busy} onClick={this.start}>{busy ? 'Installing…' : 'Install and start'}</button>}
         <ServiceProgress progress={progress} />
         <Msg r={msg} />

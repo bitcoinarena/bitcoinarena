@@ -192,6 +192,8 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   const svc = (await c.post('/api/service', { boot: true })).json;
   assert.equal(svc.ok, true, svc.why);
   assert.match(svc.identity, /^[0-9a-f]{64,66}$/);
+  { const { nodeKeyOf } = await import('../src/seed.js'); const { schnorr } = await import('@noble/curves/secp256k1.js');
+    assert.equal(svc.identity, Buffer.from(schnorr.getPublicKey(nodeKeyOf(Buffer.from(state.readSecret('seed.hex').trim(), 'hex')))).toString('hex'), 'the running seat\'s identity is its seed\'s (kanban #650/#653)'); }
   assert.equal(svc.login.ok, true, 'the running seat accepted the owner\'s signed login');
   assert.equal(midway.running, true, 'while it runs');
   assert.deepEqual(midway.stages.map((x) => [x.id, x.state]), [['settings', 'done'], ['services', 'done'], ['start', 'now'], ['address', 'todo'], ['login', 'todo']]);
@@ -449,6 +451,76 @@ test('the wizard page draws no step itself: the roles into their list, every oth
   for (const gone of ['ArenaWizard ||', '!reactStep', '!reactRoles', "$('b-check').onclick", "$('seed-show').onclick", 'function watchSync', 'roles-save', 'class="rc"', 'innerHTML', 'const esc']) assert.ok(!html.includes(gone), gone);
 });
 
+// A NODE RUN BY ITS NSEC, END TO END (kanban #653, the owner 2026-10-25: "The node must also operate on its own with the nsec" - "That means
+// signing etc"): the running seat's identity is the Nostr key, setup logs the owner in with it, and the seat says its seed is Nostr's
+test('a node set up with an nsec runs on it: the seat signs as the Nostr key, its owner is that key, and setup logs in without asking again', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'arena-install-'));
+  const cookiePath = join(home, 'fake.cookie'); writeFileSync(cookiePath, '__cookie__:s3cret');
+  const btc = await fakeBitcoind('__cookie__:s3cret');
+  const children = [];
+  const seatPort = await freePort();
+  const state = nodeState(home);
+  // the chain test with the fake as the source and a fake second source that agrees (the real list needs the internet)
+  const probe = { core: probeCore, electrum: async () => ({ ok: true, height: 0, tipHash: TESTNET4_GENESIS, atHashes: { 0: TESTNET4_GENESIS }, latencyMs: 1 }) };
+  const seat = await reachSeat();
+  // LND's peer port (9735) is measured as a fake here: the real port may be taken on this machine (the the test host's mainnet LND)
+  const reach = { ...reachKit, checkDirect: (o) => (o.port === 9735 ? Promise.resolve({ ok: true, reached: false, address: '203.0.113.5', port: 9735, diagnosis: { advice: 'behind NAT' } })
+    : reachKit.checkDirect({ ...o, seats: [seat.url, seat.url] })) };
+  // THE CHAIN FOR THE BOND: a deposit of 60,000 sat at the wallet's address once asked twice; what is broadcast is kept
+  const sent = []; let asked = 0;
+  const chainKit = { coinsOf: async () => ({ tip: 156900, coins: ++asked > 1 ? [{ txid: '5a'.repeat(32), vout: 1, sats: 366000, height: 156899 }] : [] }),
+    broadcast: async (_chain, hex) => { sent.push(hex); return Buffer.from(parseTransaction(Buffer.from(hex, 'hex')).txid).reverse().toString('hex'); } };
+  const lndKit = { configureLnd, lndArgs };   // the rest set where the Lightning step runs
+  const gwKit = { configureGateway };
+  // THE NETWORK'S BOND TARGET, fixed at the floor: the live seats' GET /capacity said 250,000 sat on 2026-10-21 (band CALM), which turned
+  // this test red on every machine that reached them; the rest of the wizard's fetches go out as they are
+  const fetcher = (url, o) => (/bitcoin-arena\.io/.test(String(url)) ? Promise.resolve(new Response(JSON.stringify(/daily\.json$/.test(String(url))
+    ? { testnet: { node: ['https://a.example', 'https://b.example'] } } : { network: { installMinimumBondSats: 50000, band: 'CALM' } }), { status: 200 }))
+    : /\.example\/capacity$/.test(String(url)) ? Promise.resolve(new Response(JSON.stringify({ network: { installMinimumBondSats: 50000, band: 'CALM' } }), { status: 200 })) : fetch(url, o));
+  // THE PROGRESS WHILE IT RUNS (kanban #651): read through the page's own door once the services are in and the seat is awaited
+  const progressInstall = (o) => directInstall(children)(o);
+  const wizard = createWizard({ state, release: RELEASE, seatPort, reach, chainKit, fetcher, test: (c) => testConnection(c, { probe, list: [{ host: 'second', port: 1 }] }), install: progressInstall, lndKit, gwKit,
+    launch: (o) => writeLaunchers({ ...o, platform: 'linux', env: { XDG_DATA_HOME: join(home, 'xdg'), HOME: home } }) });
+  const server = http.createServer((q, s) => wizard.handle(q, s));
+  await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+  const port = server.address().port;
+  t.after(() => { for (const c of children) c.kill('SIGTERM'); server.close(); btc.close(); seat.close(); rmSync(home, { recursive: true, force: true }); });
+
+  const c = client(port);
+  assert.equal((await c.get('/api/state')).status, 401, 'nothing without the token');
+  assert.equal((await client(port, { host: 'evil.example:80' }).get(`/?t=${wizard.token}`)).status, 421, 'a foreign Host is refused (DNS rebinding)');
+  const token = wizard.token;
+  const enter = await c.get(`/?t=${token}`);
+  assert.equal(enter.status, 303); assert.match(enter.headers['set-cookie'][0], /HttpOnly; SameSite=Strict/);
+  assert.equal((await client(port).get(`/?t=${token}`)).status, 403, 'the token works once');
+  assert.equal((await c.get('/')).status, 200, 'the page, with the session');
+  const steps = await c.get('/wizard.js');
+  assert.equal(steps.status, 200, 'the React steps, with the session (kanban #564)'); assert.match(steps.headers['content-type'], /^text\/javascript/);
+  assert.equal((await client(port).get('/wizard.js')).status, 401, 'not without it');
+  assert.equal((await c.req('POST', '/api/roles', { roles: ['verify'] })).status, 403, 'a POST without x-arena-wizard is refused');
+
+  const { newNsec } = await import('../src/seed.js');
+  const key = newNsec();
+  const st0 = (await c.post('/api/start', { control: 'nostr', action: 'new', nsec: key.nsec })).json;
+  assert.equal(st0.ok, true, st0.why);
+  assert.equal((await c.post('/api/chain/save', { kind: 'core', url: btc.url, cookiePath })).json.ok, true);
+  assert.equal((await c.post('/api/roles', { roles: ['verify', 'settlement'] })).json.ok, true);
+  assert.equal((await c.post('/api/apps', { apps: ['nextblock', 'rock-paper-scissors'] })).json.ok, true);
+  assert.equal((await c.get('/api/state')).json.step, 'reach', 'no seed or owner step: the nsec gave both');
+  assert.equal((await c.post('/api/reach/direct', { port: seatPort })).json.result.reached, true);
+  assert.equal((await c.post('/api/reach/save', { mode: 'direct' })).json.ok, true);
+  const svc = (await c.post('/api/service', { boot: true })).json;
+  assert.equal(svc.ok, true, svc.why);
+  assert.equal(svc.identity, key.pubkey, 'the running seat signs as the Nostr key');
+  assert.equal(svc.login && svc.login.ok, true, 'setup logged the owner in with the node\'s own key');
+  assert.equal(svc.template, null, 'nothing to sign in the browser');
+  const os = await (await fetch(`http://127.0.0.1:${seatPort}/owner`)).json();
+  assert.deepEqual([os.owner, os.nostrSeed], [key.pubkey, true], 'the seat: owned by the Nostr key, its seed from it');
+  // the seat signs on its own: its /identity is the Nostr key
+  const id = Buffer.from(await (await fetch(`http://127.0.0.1:${seatPort}/identity`)).arrayBuffer()).toString('hex');
+  assert.equal(id.slice(-64), key.pubkey);
+});
+
 // NEW OR RESTORED (kanban #652, the owner 2026-10-25: "neuer step im installer: New/Restore"): the first step; a restore writes the typed
 // words' seed and skips the seed step, a wrong word is refused by name, a node with other words keeps its own
 test('the first step: a new node goes on to the seed step, a restore takes the 24 words as its seed (kanban #652)', async () => {
@@ -466,7 +538,7 @@ test('the first step: a new node goes on to the seed step, a restore takes the 2
   };
   await run(async (c) => {
     assert.equal((await c.get('/api/state')).json.step, 'start', 'the first step');
-    assert.deepEqual((await c.post('/api/start', { mode: 'new' })).json, { ok: true, origin: 'new' });
+    assert.deepEqual((await c.post('/api/start', { control: 'words', action: 'new' })).json, { ok: true, control: 'words', origin: 'new' });
     const st = (await c.get('/api/state')).json;
     assert.deepEqual([st.step, st.origin, !!st.done.seed], ['chain', 'new', false], 'a new node: on to Bitcoin, its words come at the seed step');
   });
@@ -476,14 +548,55 @@ test('the first step: a new node goes on to the seed step, a restore takes the 2
     const wrong = [...old.words]; wrong[4] = 'bitcoinx';
     assert.equal((await c.post('/api/start', { mode: 'restore', words: wrong.join(' ') })).json.ok, false, 'a word not in the list');
     const r = (await c.post('/api/start', { mode: 'restore', words: `  ${old.words.join('  ').toUpperCase()} ` })).json;
-    assert.deepEqual(r, { ok: true, origin: 'restore', ownerPubkey: ownerKeyOf(old.seed).pubkey }, 'case and spaces do not count');
+    assert.deepEqual([r.ok, r.control, r.origin, r.ownerPubkey], [true, 'words', 'restore', ownerKeyOf(old.seed).pubkey], 'case and spaces do not count');
+    assert.match(r.emergencyCode, /^ARN-/, 'the emergency code shown again, to write down');
     assert.equal(state.readSecret('seed.hex').trim(), Buffer.from(old.seed).toString('hex'), 'the old seed, written');
     const st = (await c.get('/api/state')).json;
     assert.deepEqual([st.origin, !!st.done.start, !!st.done.seed], ['restore', true, true], 'the seed step is done');
     assert.equal((await c.post('/api/seed/new')).json.ok, false, 'no new words over restored ones');
-    assert.equal((await c.post('/api/start', { mode: 'restore', words: newSeed().words.join(' ') })).json.why, 'this node has other words already: restore on a new node folder');
+    assert.equal((await c.post('/api/start', { mode: 'restore', words: newSeed().words.join(' ') })).json.why, 'this node has other words already: set up another node folder for that');
     assert.equal((await c.post('/api/start', { mode: 'restore', words: old.words.join(' ') })).json.ok, true, 'the same words again: fine');
   });
+  // NOSTR (kanban #653/#654, "Only allow nsec then"): the nsec gives the seed, the owner is that key; the same nsec gives the same node
+  const { newNsec, seedOfNsec } = await import('../src/seed.js');
+  const key = newNsec();
+  let first = null;
+  for (const action of ['new', 'restore']) {
+    await run(async (c, state) => {
+      assert.equal((await c.post('/api/start', { control: 'nostr', action, nsec: 'npub1xyz' })).json.why, 'that is not an nsec (it starts with nsec1)');
+      const r = (await c.post('/api/start', { control: 'nostr', action, nsec: ` ${key.nsec} ` })).json;
+      assert.deepEqual([r.ok, r.control, r.origin, r.ownerPubkey], [true, 'nostr', action, key.pubkey], r.why);
+      const seedHex = state.readSecret('seed.hex').trim();
+      assert.equal(seedHex, Buffer.from(seedOfNsec(key.nsec).seed).toString('hex'));
+      assert.notEqual(seedHex, Buffer.from(seedOfNsec(key.nsec).secret).toString('hex'), 'the seed is not the nsec');
+      { const { openStore, nodeIdentity } = await import('../../arena-node/src/store.js'); const db = openStore(state.path('node.db'));
+        assert.equal(Buffer.from(nodeIdentity(db).pubkey).toString('hex'), key.pubkey, 'the node runs on the nsec: its identity is the Nostr key'); db.close(); }
+      first = first || seedHex;
+      assert.equal(seedHex, first, `${action}: the same node from the same nsec`);
+      const st = (await c.get('/api/state')).json;
+      assert.deepEqual([st.control, !!st.done.seed, !!st.done.owner, st.step], ['nostr', true, true, 'chain'], 'the seed and owner steps are done');
+      assert.equal(JSON.parse(readFileSync(state.path('node.db.owner.json'), 'utf8')).pubkey, key.pubkey, 'the Nostr key owns the node');
+      assert.equal((await c.post('/api/start', { control: 'nostr', action, nsec: newNsec().nsec })).json.ok, false, 'another nsec on this folder: refused');
+    });
+  }
+  await run(async (c) => {
+    const k = (await c.post('/api/start/nsec')).json;
+    assert.match(k.nsec, /^nsec1[02-9ac-hj-np-z]{58}$/, 'a new Nostr key for someone who has none');
+  });
+});
+
+// THE NODE IDENTITY FROM THE SEED (kanban #650/#653): adopted into a new store, kept in one that has its own
+test('a new node\'s identity is the key its seed gives; a node that has one keeps it', async () => {
+  const { openStore, adoptIdentity, nodeIdentity } = await import('../../arena-node/src/store.js');
+  const { newSeed, nodeKeyOf } = await import('../src/seed.js');
+  const { schnorr } = await import('@noble/curves/secp256k1.js');
+  const seed = newSeed().seed, key = nodeKeyOf(seed);
+  const db = openStore(':memory:');
+  assert.equal(adoptIdentity(db, key), true);
+  assert.deepEqual([...nodeIdentity(db).pubkey], [...schnorr.getPublicKey(key)], 'the node signs with the seed\'s key');
+  assert.equal(adoptIdentity(db, key), true, 'the same key again: still its own');
+  const other = openStore(':memory:'); nodeIdentity(other);
+  assert.equal(adoptIdentity(other, key), false, 'an identity there already: kept');
 });
 
 // HOW MANY NODES FROM THE INTRO (kanban #596): POST /api/instances checked and kept; the state says it back
@@ -577,4 +690,23 @@ test('the faucet door asks for exactly what is missing, nothing when enough is t
     const no = await w['POST /api/coins/auto']({});
     assert.deepEqual([no.ok, no.guided], [false, true]); assert.match(no.why, /already/);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// A NOSTR OWNER LOGS IN WITH THE NSEC ALONE (kanban #653): the event setup signs with it passes the node's own owner check
+test('an owner login event signed with the nsec passes the node\'s owner check; another key does not', async () => {
+  const { newNsec, seedOfNsec, signNostrEvent } = await import('../src/seed.js');
+  const { createOwner, ownerEventTemplate } = await import('../../arena-node/src/owner.js');
+  const { schnorr } = await import('@noble/curves/secp256k1.js');
+  const key = newNsec(), node = 'ab'.repeat(32);
+  const owner = createOwner({ store: { read: () => ({ pubkey: key.pubkey, claimedAtMs: 1 }), write: () => {}, writeCode: () => {} }, verify: (sig, m, k) => schnorr.verify(sig, m, k), node });
+  const login = (nsec) => owner.authorize({ action: 'login', args: {}, nostr: signNostrEvent(ownerEventTemplate({ node, action: 'login' }), seedOfNsec(nsec).secret) }, 'login');
+  const ok = login(key.nsec);
+  assert.deepEqual([ok.ok, ok.pubkey], [true, key.pubkey], ok.why);
+  assert.equal(login(newNsec().nsec).ok, false, 'another Nostr key is not the owner');
+  // the owner page signed in with the nsec makes the emergency code the installer showed (owner.html: the node says nostrSeed)
+  const seeded = createOwner({ store: { read: () => ({ pubkey: key.pubkey, claimedAtMs: 1, nostrSeed: true }), write: () => {}, writeCode: () => {} }, verify: () => true, node });
+  assert.deepEqual([seeded.state().nostrSeed, owner.state().nostrSeed], [true, false]);
+  const { nodeSeedFromNsecSecret } = await import('../../arena-node/src/owner.js');
+  const { emergencyOf } = await import('../src/seed.js');
+  assert.equal(emergencyOf(nodeSeedFromNsecSecret(seedOfNsec(key.nsec).secret)).code, emergencyOf(seedOfNsec(key.nsec).seed).code);
 });
