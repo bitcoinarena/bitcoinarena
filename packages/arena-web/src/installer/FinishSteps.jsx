@@ -340,6 +340,7 @@ const ends = (x, k = 10) => (x ? `${String(x).slice(0, k)}…${String(x).slice(-
 const REACH_NOTE = { direct: 'Directly, through your open port.', permanent: 'Your Cloudflare tunnel: a permanent name.', workers: 'Your Worker on workers.dev: a permanent name.',
   tailscale: 'Tailscale Funnel: a permanent name.', quick: 'A temporary tunnel: the name changes when it restarts. Set up a permanent one later on your owner page.' };
 
+export const OWNER_SITE = 'https://testnet.bitcoin-arena.io/owner/';
 export class DoneStep extends React.Component {
   constructor(props) { super(props); this.state = { msg: null, finished: false }; this.finish = this.finish.bind(this); }
   async finish() {
@@ -349,7 +350,7 @@ export class DoneStep extends React.Component {
     const h = await this.props.get('/api/owner/handoff').catch(() => null);   // before Finish: the setup's session ends with it
     const r = await this.props.post('/api/finish');
     if (!r.ok) { if (w && w.close) w.close(); return this.setState({ msg: said(r) }); }
-    const url = this.dashboard();
+    const url = this.ownerSite() ? `${this.ownerSite()}&owner-handoff` : this.dashboard();
     if (w) {
       if (h && h.ok && typeof window !== 'undefined') {
         const origin = new URL(url).origin;
@@ -360,7 +361,7 @@ export class DoneStep extends React.Component {
         };
         window.addEventListener('message', on);
       }
-      w.location.href = `${url}#owner-handoff`;
+      w.location.href = this.ownerSite() ? url : `${url}#owner-handoff`;
     }
     this.setState({ finished: true, msg: { ok: true, text: w ? 'Setup is finished. Your dashboard opened in a new tab, and the owner area there is logged in.' : `Setup is finished. Open your dashboard: ${url}` } });
   }
@@ -368,6 +369,10 @@ export class DoneStep extends React.Component {
   // the dashboard and the owner page on this computer at the node's own port: it never changes, so the login handed over stays (the owner's
   // playtest 2026-10-25: after a restart the quick tunnel had a new name, and the owner page there was logged out)
   local() { return `http://127.0.0.1:${this.props.st.seatPort}`; }
+  // THE OWNER PAGE ON THE ARENA SITE (kanban #668, the owner's playtest 2026-10-25: "Das reicht nicht wenn der Server Remote ist. Der
+  // installer soll es in die Session rein kopieren auch wenn sich die url geändert hat"): one address that never changes, the login kept
+  // there per node key; the site finds the node where it is now. Null before the node has a key.
+  ownerSite() { const id = this.props.st.service && this.props.st.service.identity; return id ? `${OWNER_SITE}#node=${id}` : null; }
   dashboard() { return `${this.local()}/dashboard`; }   // lowercase (playtest 2026-10-25: "ohne grosses D")
   more(l) {
     if (!l) return null;
@@ -390,7 +395,7 @@ export class DoneStep extends React.Component {
   }
   render() {
     const st = this.props.st; const r = st.reach || {}; const sv = st.service || {}; const g = st.gateway; const b = st.bond;
-    const owner = `${this.local()}/dashboard/owner`;
+    const owner = this.ownerSite() || `${this.local()}/dashboard/owner`;
     const syncing = !!(st.coreSync && st.coreSync.interim);
     const card = (id, icon, title, body) => <div className="done-card" id={id}><div className="done-card-head"><span aria-hidden="true">{icon}</span><b>{title}</b></div>{body}</div>;
     return (
@@ -402,7 +407,7 @@ export class DoneStep extends React.Component {
         </div>
         <div className="done-actions">
           {/* one button (playtest 2026-10-25: "Finish soll sagen \"Open Node Dashboard\""): it ends setup and opens the dashboard, owner logged in */}
-          {this.state.finished ? <a className="btn" id="open-dashboard" href={this.dashboard()} target="_blank" rel="noopener noreferrer">Open Node Dashboard</a>
+          {this.state.finished ? <a className="btn" id="open-dashboard" href={this.ownerSite() || this.dashboard()} target="_blank" rel="noopener noreferrer">Open Node Dashboard</a>
             : <button type="button" id="finish" onClick={this.finish}>Open Node Dashboard</button>}
         </div>
         <Msg r={this.state.msg} />
