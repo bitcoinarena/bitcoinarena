@@ -3,7 +3,7 @@
   "apps": {
     "arena-app-next-block": {
       "repo": "a tester/arena-app-next-block",
-      "commit": "ff1677e50002b78c3629f369ea69b97acaeb0538",
+      "commit": "9047b0b6ef6befe29f0330e6b897f422e476cdec",
       "paths": [
         "/*",
         "!/unity/",
@@ -26,7 +26,7 @@
     },
     "arena-app-rock-paper-scissors": {
       "repo": "a tester/arena-app-rock-paper-scissors",
-      "commit": "cd7d2d22af9d7e3a53a82b04b579bdc169319672",
+      "commit": "f3f0c0bc78a2b0660e73f6f104cfa4bda264eb17",
       "copy": "packages/rock-paper-scissors",
       "paths": [
         "/*"
@@ -34,7 +34,7 @@
     },
     "arena-app-up-or-down": {
       "repo": "a tester/arena-app-up-or-down",
-      "commit": "2bac06ef89c4d7f899546fc4a0d8ab78f0f62c49",
+      "commit": "ba0c393e12c5c3d11afeacee2383e2e375747b9a",
       "copy": "packages/btc-updown",
       "paths": [
         "/*"

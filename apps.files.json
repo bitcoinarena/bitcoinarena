@@ -2,7 +2,7 @@
   "about": "What a node downloads of each app at its pinned commit (kanban #575): every file with its SHA-256. Written by tools/pin-apps.mjs from the apps' checkouts; never by hand.",
   "apps": {
     "arena-app-next-block": {
-      "commit": "ff1677e50002b78c3629f369ea69b97acaeb0538",
+      "commit": "9047b0b6ef6befe29f0330e6b897f422e476cdec",
       "files": {
         "README.md": "7fc7113426fb4d9d22e36b8000a3693e669f40de4e020c5fb1bf89014dafc482",
         "app.json": "85e362fde9f4177c55237f0eeabbcbc4af5b7b46391277a9556ef757242a314d",
@@ -315,7 +315,7 @@
       ]
     },
     "arena-app-rock-paper-scissors": {
-      "commit": "cd7d2d22af9d7e3a53a82b04b579bdc169319672",
+      "commit": "f3f0c0bc78a2b0660e73f6f104cfa4bda264eb17",
       "files": {
         "app.json": "414384d51cb16f11d9733f9edc30d87f28a269acc1e4b2e00fa71c9ae6bdae93",
         "brand/rps-icon.svg": "ae9a1a196e3c3194a269df00eaf94ddcfe22ededad568cd19bebb025b02d8f36",
@@ -337,7 +337,7 @@
         "plugin/rock-paper-scissors-v5.js": "181dca880675ce5f6b60a395d3d6fb2ff04a409bcfaa38a84f8eb08fc875c140",
         "plugin/rock-paper-scissors.js": "5556227f02236201cd0455a558a0ff9673126f7fda2e274628f2b8c132c0776b",
         "plugin/rps-manifest.js": "517f598bf4627e26eb1a7e531a0c06b9001f549175d528c511449a67230c7bab",
-        "tools/build-client-v4.mjs": "ddce2672587d1bfe5bc75805c8a7d1240ae8aaa59479b8f67e1b32ca368e813d",
+        "tools/build-client-v4.mjs": "b83f892dfabc79ea2b1aa20c184d5b34c4aa63b47d7fae45432d178a1a3381b7",
         "tools/build-client-v5.mjs": "b0b5d439f8973adf709b1905a8ae1c73bc5755081ee918f85a7fc6a035a50216",
         "tools/build-view.mjs": "42be098581db05403c8c320f605b8e8b081dbc3e5e4c9d857760b93382c29d41",
         "tools/sign-manifest-v3.mjs": "a14161fd69055e81f42f5436d80efbde6d7783fea9ebd36ff4a7cb160d376f33",
@@ -351,7 +351,7 @@
       "exec": []
     },
     "arena-app-up-or-down": {
-      "commit": "2bac06ef89c4d7f899546fc4a0d8ab78f0f62c49",
+      "commit": "ba0c393e12c5c3d11afeacee2383e2e375747b9a",
       "files": {
         "app.json": "3482954b8dd93640ac044b3b4f82072b0785031f6da0c62ddf62c79437773ad1",
         "brand/updown-icon.svg": "3b6d03a10e6e3173ad19cbfe6c3850b8c78d7c37fdd0f06ad25e1c4299a8ec4b",
@@ -418,7 +418,7 @@
         "plugin/market-terms.js": "0b79afb8d931d0ec15839d4ae5f993311cc54a1b59de52fe360c8bd41c061009",
         "plugin/updown-tn4-manifest.js": "b2c4024395aeb3811de8070737412fb6c2feea4c7091aabd73089c2797d24370",
         "tools/build-client-v16.mjs": "09017e2ab2a10523342ca4ccc61a6a4517d0100008d600e50569cbcd76ab40b2",
-        "tools/build-client-v17.mjs": "70f2997edb18f54b9ef6c6e610e5ed8924164aa077a35ada06aa88b96ef4f5f1",
+        "tools/build-client-v17.mjs": "b2e46aa0a9b7a7663a5b92f0e1e1a4cfd371ef2587cbbde3c766553fe3ccfe21",
         "tools/build-client-v18.mjs": "34b767821865c76d72d64eb223303d47a73eafb9044cdd3a425ff57b2a5f8760",
         "tools/build-client-v19.mjs": "e3c9a3c064c3d71a44a57f6a810fa2ed293ac74552471449c6fdf8e171630e60",
         "tools/build-client-v21.mjs": "f009badedb35b24f026c29aaca2059c5fde6c8dcf3ec67d7e526fd11c0e2b867",
