@@ -24,13 +24,24 @@ import { sandboxFor } from './core-sandbox.js';
  * the reason, and the node does not start on it. A map already made by this function is handed back as it is. None
  * given hosts none (§0A.4: nothing is implied; the reference launcher hands nextblock).
  */
-export function hostedPlugins(registrations = [], { verify = verifyEd25519 } = {}) {
+export function hostedPlugins(registrations = [], { verify = verifyEd25519, log = (l) => console.warn(l) } = {}) {
   if (registrations instanceof Map) return registrations;
   const byId = new Map(registrations.map((p) => { try { return [toHex(p.gameId), p.manifest]; } catch { return [null, null]; } }));
   // AN INSTALLED UPDATE CARRIES ITS ANCESTORS' MANIFESTS: its parent stands even when no longer hosted
   for (const p of registrations) for (const a of (p && p.ancestors) || []) { try { const k = toHex(gameIdOf(a)); if (!byId.has(k)) byId.set(k, a); } catch { /* not a manifest */ } }
   const out = new Map();
+  // ONE VERSION THE NODE CANNOT HOST IS LEFT OUT, NOT THE NODE STOPPED (measured in the installer walk of d3b3ddf6, 2026-10-25: the
+  // Up/Down app's app.json left out btc-updown-v20, v21 names v20's manifest as its parent, and the new node stopped at "that game is
+  // not one this node can host" on every start): a registration that does not stand is refused with its reason and logged, the rest
+  // are hosted - hosting less is never unsafe. Nothing that stands: the node does not start, as before.
+  const refused = [];
   for (const p of registrations) {
+    try { hostOne(p); } catch (e) { refused.push(e.message); log(`[games] left out: ${e.message}`); }
+  }
+  if (registrations.length && !out.size) throw new Error(`no game this node can host: ${refused.join('; ')}`);
+  Object.defineProperty(out, 'refused', { value: Object.freeze(refused) });
+  return out;
+  function hostOne(p) {
     if (!p || !p.manifest || !(p.cores instanceof Map)) throw new Error('a game is handed to a node as { name, manifest, gameId, cores }');
     const stands = manifestStands(p.manifest, { verify, parentOf: (id) => byId.get(toHex(id)) || null });
     if (!stands.ok) throw new Error(`that game is not one this node can host: ${stands.why}`);
@@ -74,7 +85,6 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519 } = {
       info: (() => { if (!p.info) return null; const i = gameInfoStands(p.info, { gameId: stands.gameId, manifest: p.manifest, verify });
         return i.ok ? Object.freeze({ ...gameInfoJson(p.info) }) : null; })() }));
   }
-  return out;
 }
 
 /**
