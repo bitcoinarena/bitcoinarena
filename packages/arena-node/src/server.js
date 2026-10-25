@@ -35,6 +35,7 @@ import { stateOf } from './settlement-state.js';
 import { nostrResults, publishRelays } from './nostr-results.js';
 import { createReachCheck } from './reach-check.js';
 import { ownBondOf, ownBondsOf, lockAt, withdrawSpend } from './bond-withdraw.js';
+import { BOND_TEMPLATE_V2 } from '../../arena-protocol/src/bond-script.js';
 import { latestReleaseReader } from './release-latest.js';
 import { createGatewayWatch } from './gateway-watch.js';
 import { lnv2ModuleId, federationCoins, incomingSince } from './gateway-volume.js';
@@ -5421,11 +5422,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           return answer(200, { node: toHex(round.pubkey), version, commit: read('COMMIT'), latest,
             protocols: SUPPORTED_PROTOCOL_VERSIONS, machine: machineOf({ chain }), update: 'arena-install --update <new release> on this machine (checked, backed up, rolled back if it fails)' });
         }
+        // OLD BONDS AFTER A KEY SWITCH (kanban #650: "b but optional"): a node that moved to the key its 24 words give left its bonds under
+        // the old key, kept in the store's identity_old and named in the installer's state (oldBonds). Each with its lock, and whether this
+        // node still holds the key that takes it back.
+        const oldBondsHere = (tip) => {
+          let st = null; try { st = process.env.ARENA_HOME ? JSON.parse(readFileSync(joinPath(process.env.ARENA_HOME, 'state.json'), 'utf8')) : null; } catch { st = null; }
+          const keys = new Map();
+          try { for (const r of db.prepare('SELECT secret, pubkey FROM identity_old').all()) keys.set(toHex(new Uint8Array(r.pubkey)), new Uint8Array(r.secret)); } catch { /* no switch on this node */ }
+          return { network: (st && st.network) || 'testnet4', keys, list: ((st && st.oldBonds) || []).map((o) => ({ txid: o.txid, vout: Number(o.vout || 0), sats: String(o.sats), maturity: Number(o.maturity),
+            key: o.key || null, held: keys.has(o.key), lock: tip === null ? null : lockAt({ maturity: Number(o.maturity) }, tip) })) };
+        };
         if (req.method === 'GET' && url.pathname === '/owner/bond') {
           const found = ownBondNow();
           let tip = null; try { if (typeof chainTip === 'function') tip = Number(await chainTip()); } catch { tip = null; }
-          if (!found) return answer(200, { node: toHex(round.pubkey), bond: null, tip, says: 'no census this seat holds names a bond of this node' });
-          return answer(200, { node: toHex(round.pubkey), bond: found.bond, network: found.network, tip, lock: tip === null ? null : lockAt(found.bond, tip),
+          const olds = oldBondsHere(tip).list;
+          if (!found) return answer(200, { node: toHex(round.pubkey), bond: null, tip, oldBonds: olds, says: 'no census this seat holds names a bond of this node' });
+          return answer(200, { node: toHex(round.pubkey), bond: found.bond, network: found.network, tip, lock: tip === null ? null : lockAt(found.bond, tip), oldBonds: olds,
             // every output of this node and their sum (kanban #544), each with its own lock
             total: found.all ? found.all.sats : found.bond.sats, outputs: (found.all ? found.all.outputs : [found.bond]).map((o) => ({ ...o, lock: tip === null ? null : lockAt(o, tip) })),
             addBond: !!process.env.ARENA_HOME || !!process.env.ARENA_BOND_CLI,   // kanban #553: a seat set up by hand adds from its bond wallet
@@ -6101,6 +6113,26 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try { spend = withdrawSpend({ bond: found.bond, nodeSecret: round.identity.secret, network: found.network, script, feeRate: Number((body.args || {}).feeRate) || 2 }); }
           catch (e) { return answer(400, { ok: false, why: e.message }); }
           try { const txid = await chainSend(spend.hex); console.log(`[bond] withdrawn to ${(body.args || {}).address}: ${txid} (${spend.value} sat, fee ${spend.fee})`); return answer(200, { ok: true, txid, value: spend.value, fee: spend.fee }); }
+          catch (e) { return answer(400, { ok: false, why: e.message }); }
+        }
+        // AN OLD BOND TAKEN BACK (kanban #650): signed by the owner like the bond's own withdrawal, spent with the old key at its maturity
+        if (url.pathname === '/owner/old-bond-withdraw') {
+          const a = owner.authorize(body, 'old-bond-withdraw');
+          if (!a.ok) return answer(a.status, a);
+          const args = body.args || {};
+          if (typeof chainTip !== 'function' || typeof chainSend !== 'function') return answer(503, { ok: false, why: 'this seat reads no chain to send to' });
+          const tip = Number(await chainTip());
+          const here = oldBondsHere(tip);
+          const o = here.list.find((x) => x.txid === String(args.txid || '') && x.vout === Number(args.vout || 0));
+          if (!o) return answer(404, { ok: false, why: 'no old bond of this node with that txid' });
+          if (!o.held) return answer(409, { ok: false, why: 'this node no longer holds the key of that bond' });
+          if (!o.lock || !o.lock.withdrawable) return answer(409, { ok: false, why: `that bond is locked until block ${o.maturity}: ${o.lock ? o.lock.blocksLeft : '?'} blocks from now` });
+          const script = addressScript(args.address, HRP_OF[here.network] || 'tb');
+          if (!script) return answer(400, { ok: false, why: `that is not a ${here.network} address` });
+          let spend;
+          try { spend = withdrawSpend({ bond: { txid: o.txid, vout: o.vout, sats: o.sats, maturity: o.maturity, template: BOND_TEMPLATE_V2 }, nodeSecret: here.keys.get(o.key), network: here.network, script, feeRate: Number(args.feeRate) || 2 }); }
+          catch (e) { return answer(400, { ok: false, why: e.message }); }
+          try { const txid = await chainSend(spend.hex); console.log(`[bond] old bond ${o.txid.slice(0, 16)} taken back to ${args.address}: ${txid} (${spend.value} sat, fee ${spend.fee})`); return answer(200, { ok: true, txid, value: spend.value, fee: spend.fee }); }
           catch (e) { return answer(400, { ok: false, why: e.message }); }
         }
         if (url.pathname === '/owner/login') {

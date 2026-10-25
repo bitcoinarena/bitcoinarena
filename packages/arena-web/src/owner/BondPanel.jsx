@@ -49,7 +49,7 @@ export class BondPanel extends React.Component {
     if (!loaded) return <p className="sub">Loading the bond…</p>;
     if (!b) return <p className="sub">Couldn't load the bond.</p>;
     const setup = <SetupStatus status={this.state.setup} />;
-    if (!b.bond) return <div>{setup}<p>No bond yet. Until it has one, this node is not drawn for rounds.</p></div>;
+    if (!b.bond) return <div>{setup}<p>No bond yet. Until it has one, this node is not drawn for rounds.</p>{this.oldBonds()}</div>;
     const l = b.lock;
     const outs = Array.isArray(b.outputs) && b.outputs.length > 1 ? b.outputs : null;
     const nowMs = this.props.nowMs ? this.props.nowMs() : Date.now();
@@ -76,7 +76,44 @@ export class BondPanel extends React.Component {
           </div>
           {message ? <p className="sub">{message}</p> : null}
         </div>
+        {this.oldBonds()}
       </div>
     );
+  }
+  // OLD BONDS AFTER A KEY SWITCH (kanban #650): each with its lock; at maturity taken back with the old key to an address the owner names
+  oldBonds() {
+    const olds = (this.state.bond && this.state.bond.oldBonds) || [];
+    if (!olds.length) return null;
+    const s = this.state;
+    return (
+      <div className="old-bonds" id="old-bonds">
+        <h3 className="sh">Old bonds</h3>
+        <p className="sub">Left under your node's old key when it moved to the key from your 24 words.</p>
+        {olds.map((o) => {
+          const k = `${o.txid}:${o.vout}`, open = !!(o.lock && o.lock.withdrawable);
+          return (
+            <div className="withdraw" key={k}>
+              <p><b>{n(o.sats)} sat</b> · {open ? 'unlocked' : o.lock ? `locked for ${n(o.lock.blocksLeft)} more blocks (until block ${n(o.maturity)})` : `locked until block ${n(o.maturity)}`}{o.held ? '' : ' · this node no longer holds its key'}</p>
+              {open && o.held ? <div className="inline">
+                <input placeholder="your testnet4 address" value={(s.oldTo || {})[k] || ''} onChange={(e) => this.setState({ oldTo: { ...(s.oldTo || {}), [k]: e.target.value } })} />
+                <Button disabled={s.busy} onClick={() => this.takeBack(o)}>Take it back</Button>
+              </div> : null}
+              {(s.oldSaid || {})[k] ? <p className="sub">{s.oldSaid[k]}</p> : null}
+            </div>);
+        })}
+      </div>);
+  }
+  async takeBack(o) {
+    const k = `${o.txid}:${o.vout}`, address = String((this.state.oldTo || {})[k] || '').trim();
+    const say = (t) => this.setState((st) => ({ busy: false, oldSaid: { ...(st.oldSaid || {}), [k]: t } }));
+    if (!address) return say('Type the address it goes to.');
+    const ask = this.props.confirm || ((q) => window.confirm(q));
+    if (!ask(`Send the old bond of ${n(o.sats)} sat to ${address}?`)) return;
+    this.setState({ busy: true });
+    try {
+      const r = await this.props.api.post('/owner/old-bond-withdraw', await this.props.api.signed('old-bond-withdraw', { txid: o.txid, vout: o.vout, address, feeRate: 2 }));
+      if (!r || r.ok === false) return say((r && r.why) || 'not sent');
+      say(`Sent: ${r.txid} (${n(r.value)} sat)`);
+    } catch (e) { say(e.message); }
   }
 }
