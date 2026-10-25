@@ -3,7 +3,7 @@
   "apps": {
     "arena-app-next-block": {
       "repo": "a tester/arena-app-next-block",
-      "commit": "0977780ed27bf665d5f1504d9622c2c5122e405a",
+      "commit": "ff1677e50002b78c3629f369ea69b97acaeb0538",
       "paths": [
         "/*",
         "!/unity/",
@@ -34,7 +34,7 @@
     },
     "arena-app-up-or-down": {
       "repo": "a tester/arena-app-up-or-down",
-      "commit": "e152e3a79ddecbe756d017bc7245e8f54f47aad6",
+      "commit": "2bac06ef89c4d7f899546fc4a0d8ab78f0f62c49",
       "copy": "packages/btc-updown",
       "paths": [
         "/*"
