@@ -38,6 +38,9 @@ test('the money in the page\'s words: sat with few decimals, short dates on one 
 test('the page: the period switch, earned / owed / profit as stat cards, the dev client\'s card, the rounds with their settlement', () => {
   const h = renderToStaticMarkup(React.createElement(DashboardPage, { data: D }));
   assert.match(h, /<h1>Node dashboard<\/h1>/);
+  // THE RELEASE BESIDE THE TITLE (kanban #674: "include version in node dashboard and owner dashboard"); none from a checkout
+  assert.match(renderToStaticMarkup(React.createElement(DashboardPage, { data: { ...D, release: { version: '2026.1.9.3', commit: 'a55f40bd0f81' } } })),
+    /<h1>Node dashboard<span class="ver" id="release">2026\.1\.9\.3<\/span><\/h1>/);
   assert.match(h, /<button type="button" role="tab" aria-selected="true" class="on">Today<\/button>/);
   assert.match(h, /<span>Earned · today<\/span><b>0 sat<\/b><small>nothing settled yet in this period<\/small>/);
   assert.match(h, /<span>Owed<\/span><b>2.857 sat<\/b>/);

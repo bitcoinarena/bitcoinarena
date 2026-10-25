@@ -152,7 +152,7 @@ select:focus{outline:2px solid var(--st);outline-offset:1px}
 /* the owner area waits for the setup (playtest 2026-10-25): a screen over the whole page until every part is done */.setup-gate{position:fixed;inset:0;z-index:1000;background:var(--bg,#0d1117);overflow:auto;padding:32px 16px}.setup-gate-in{max-width:760px;margin:0 auto}.setup-gate h2{margin:0 0 10px;font-size:24px;text-transform:none;letter-spacing:0;color:var(--text,#e6edf3)}.setup-gate-fix{margin-top:16px}.setup-banner{border:1px solid var(--accent,#f7931a);border-left-width:4px;border-radius:10px;padding:10px 14px;margin:0 0 14px;background:rgba(247,147,26,.08)}body[data-setup="open"] #side a[data-s="roles"],body[data-setup="open"] #side a[data-s="bond"],body[data-setup="open"] #side a[data-s="apps"],body[data-setup="open"] #side a[data-s="money"],body[data-setup="open"] #side a[data-s="leave"],body[data-setup="open"] #side a[data-s="developer"]{pointer-events:none;opacity:.35}body[data-setup="open"] #needs,body[data-setup="open"] #s-roles,body[data-setup="open"] #s-bond,body[data-setup="open"] #s-apps,body[data-setup="open"] #s-money,body[data-setup="open"] #s-leave,body[data-setup="open"] #s-developer{display:none!important}.setup-gate-msg{border:1px solid var(--accent,#f7931a);border-left-width:4px;border-radius:10px;padding:10px 14px;margin:0 0 16px;background:rgba(247,147,26,.08)}
 /* the setup's progress (kanban #635), as tiles (playtest 2026-10-25: "make this more pretty") */.setup-status{padding:18px 20px}.setup-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.setup-head h3{margin:0}.setup-pill{font:600 12px system-ui;padding:3px 10px;border-radius:999px;white-space:nowrap}.setup-pill.ok{background:rgba(63,185,80,.15);color:#3fb950}.setup-pill.wait{background:rgba(210,153,34,.15);color:#d29922}.setup-pill.bad{background:rgba(248,81,73,.15);color:#f85149}.setup-total{height:6px;border-radius:3px;background:rgba(127,127,127,.18);overflow:hidden;margin-bottom:14px}.setup-total>i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,#3fb950,#56d364)}.setup-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}.setup-step{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:12px;border:1px solid rgba(127,127,127,.2);background:rgba(127,127,127,.06)}.setup-step.s-bad{border-color:rgba(248,81,73,.55)}.setup-ic{flex:0 0 26px;height:26px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:14px}.s-ok .setup-ic{background:rgba(63,185,80,.18);color:#3fb950}.s-wait .setup-ic{background:rgba(210,153,34,.18);color:#d29922}.s-bad .setup-ic{background:rgba(248,81,73,.18);color:#f85149}.setup-body{display:flex;flex-direction:column;gap:3px;min-width:0}.setup-body b{font-size:14px}.setup-text{font-size:13px;line-height:1.4;color:#8b949e;overflow-wrap:anywhere}.setup-step .bar{height:5px;border-radius:3px;background:rgba(127,127,127,.18);overflow:hidden;margin-top:6px;max-width:none}.setup-step .bar>i{display:block;height:100%;background:#d29922}.setup-tip{margin:12px 0 0;font-size:12px;color:#8b949e}.setup-ready{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:2px 0 12px}.setup-ready-n{font:700 30px/1.1 system-ui;color:#d29922}.setup-ready-l{font-size:14px;color:#8b949e}.setup-body{flex:1}.setup-eta{margin-left:auto;padding-top:2px;font:600 12px system-ui;color:#d29922;white-space:nowrap}
 </style></head><body>
-<h1>Bitcoin Arena · Node Owner</h1>
+<h1>Bitcoin Arena · Node Owner <span class="ver" id="ver"></span></h1>
 <div class="sub" id="who">loading…</div>
 <div id="view"></div>
 <p class="sub"><a id="public" href="#">← Public dashboard</a></p>
@@ -186,6 +186,13 @@ if (ON_SITE && !BASE) {
 }
 const at = (p) => BASE + p;
 document.getElementById('public').href = at('/Dashboard');
+// THE RELEASE THIS NODE RUNS, BESIDE THE TITLE (kanban #674: "include version in node dashboard and owner dashboard") and in the footer -
+// asked of the node, so the page on the Arena site shows it too
+fetch(at('/owner/version'), { cache: 'no-store' }).then((r) => r.json()).then((v) => {
+  if (!v || !(v.version || v.commit)) return;
+  document.getElementById('ver').textContent = v.version || String(v.commit).slice(0, 8);
+  document.getElementById('build').textContent = ['Bitcoin Arena' + (v.version ? ' ' + v.version : ''), v.commit ? 'build ' + String(v.commit).slice(0, 8) : ''].filter(Boolean).join(' · ');
+}).catch(() => {});
 const C = await import(at('/owner/client.js'));
 // THE REACT SCREENS (kanban #564, 2026-10-21: "Delete the old html code of those components you have ported, no fall backs"): the
 // bundle is loaded once, here, and every ported panel is drawn by it alone
@@ -507,11 +514,5 @@ async function start() {
 start();
 </script>
 <footer class="build" id="build"></footer>
-<script>
-// THE RELEASE IN THE FOOTER (kanban #662): what this node runs, from its public /owner/version
-fetch(location.pathname.replace(/\/[Dd]ashboard\/owner\/?$/, '') + '/owner/version', { cache: 'no-store' }).then((r) => r.json()).then((v) => {
-  if (v && (v.version || v.commit)) document.getElementById('build').textContent = ['Bitcoin Arena' + (v.version ? ' ' + v.version : ''), v.commit ? 'build ' + String(v.commit).slice(0, 8) : ''].filter(Boolean).join(' · ');
-}).catch(() => {});
-</script>
-<style>footer.build{max-width:1100px;margin:28px auto 18px;padding:0 16px;color:var(--dim,#8b949e);font-size:12px;text-align:center}</style>
+<style>h1 .ver,h2 .ver{font:600 13px system-ui;color:var(--dim,#8b949e);border:1px solid var(--line,#30363d);border-radius:999px;padding:2px 10px;vertical-align:middle;margin-left:6px}h1 .ver:empty{display:none}footer.build{max-width:1100px;margin:28px auto 18px;padding:0 16px;color:var(--dim,#8b949e);font-size:12px;text-align:center}</style>
 </body></html>
