@@ -1,7 +1,9 @@
 # ARENA NODE ON WINDOWS: THE SMALL WINDOW (2026-10-19: "for windows we want an exe ... That also includes a small gui
 # version of the installer that launches the browser etc"). The Start menu's "Arena Node" and the end of ArenaNodeSetup.exe open it:
 #   no node yet      the installer runs (hidden), its one-time link opens in the browser, its lines show here; Stop ends it
-#   a node installed `arenanode status` here, with Owner page / Restart / Doctor / Refresh
+#   a node installed "Server running" or "Server stopped" (arenanode state) and its services, with Dashboard / Owner page / Stop node or
+#                    Start node / Doctor / Refresh (kanban #658, the owner 2026-10-25: "show when it's installed \"Server running\" with options to
+#                    Stop Node, Start Node, Doctor" - "And also \"Dashboard\" that opens the browser with the dashboard")
 # Built-in parts only (WinForms in Windows PowerShell): nothing more to install.
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
@@ -22,13 +24,18 @@ $box.Multiline = $true; $box.ReadOnly = $true; $box.ScrollBars = 'Vertical'; $bo
 $box.Font = New-Object System.Drawing.Font('Consolas', 9); $box.BackColor = [System.Drawing.Color]::White
 $form.Controls.Add($box)
 $buttons = @{}
-$x = 14
-foreach ($b in 'Open in browser', 'Owner page', 'Restart', 'Doctor', 'Refresh', 'Stop', 'Close') {
+$order = 'Open in browser', 'Dashboard', 'Owner page', 'Stop node', 'Start node', 'Doctor', 'Refresh', 'Stop', 'Close'
+foreach ($b in $order) {
   $btn = New-Object System.Windows.Forms.Button
-  $btn.Text = $b; $btn.Left = $x; $btn.Top = 418; $btn.Width = 92; $btn.Height = 32; $btn.Visible = $false
-  $form.Controls.Add($btn); $buttons[$b] = $btn; $x += 97
+  $btn.Text = $b; $btn.Top = 418; $btn.Width = 92; $btn.Height = 32; $btn.Visible = $false
+  $form.Controls.Add($btn); $buttons[$b] = $btn
 }
-$buttons['Close'].Visible = $true
+# the shown buttons side by side, in their order, without gaps for the hidden ones
+function Set-Buttons([string[]]$shown) {
+  $x = 14
+  foreach ($b in $order) { $on = $shown -contains $b; $buttons[$b].Visible = $on; if ($on) { $buttons[$b].Left = $x; $x += 97 } }
+}
+Set-Buttons @('Close')
 $buttons['Close'].Add_Click({ $form.Close() })
 
 # a command's output, shown in the box (arenanode: status, doctor, restart)
@@ -41,15 +48,25 @@ function Show-Command([string]$what) {
   $box.Text = ($out -join "`r`n"); $box.SelectionStart = 0; $box.SelectionLength = 0; $form.Cursor = 'Default'
 }
 function Show-Installed {
-  $title.Text = "Your Bitcoin Arena node is installed. Its services, as 'arenanode status' shows them (also in a new console: arenanode help):"
-  foreach ($b in 'Open in browser', 'Stop') { $buttons[$b].Visible = $false }
-  foreach ($b in 'Owner page', 'Restart', 'Doctor', 'Refresh') { $buttons[$b].Visible = $true }
+  $was = [Console]::OutputEncoding; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+  $state = (& cmd /c "chcp 65001 >nul & `"$command`" state 2>&1" | Select-Object -First 1)
+  [Console]::OutputEncoding = $was
+  $running = "$state" -like 'running*'
+  $title.Font = New-Object System.Drawing.Font('Segoe UI', 13, [System.Drawing.FontStyle]::Bold)
+  $title.ForeColor = if ($running) { [System.Drawing.Color]::FromArgb(26, 127, 55) } else { [System.Drawing.Color]::FromArgb(209, 36, 47) }
+  $title.Text = if ($running) { "Server running" } else { "Server stopped" }
+  if ("$state" -match '[;:]') { $title.Text += "`r`n" + $state }
+  Set-Buttons @('Dashboard', 'Owner page', $(if ($running) { 'Stop node' } else { 'Start node' }), 'Doctor', 'Refresh', 'Close')
   Show-Command 'status'
 }
+$buttons['Dashboard'].Add_Click({ & cmd /c "`"$command`" dashboard" | Out-Null })
 $buttons['Owner page'].Add_Click({ & cmd /c "`"$command`" open" | Out-Null })
-$buttons['Restart'].Add_Click({ Show-Command 'restart' })
+$buttons['Stop node'].Add_Click({
+  if ([System.Windows.Forms.MessageBox]::Show('Stop your node? It stops serving rounds until you start it again.', 'Bitcoin Arena', 'OKCancel') -eq 'OK') { Show-Command 'stop'; Show-Installed }
+})
+$buttons['Start node'].Add_Click({ Show-Command 'start'; Show-Installed })
 $buttons['Doctor'].Add_Click({ Show-Command 'doctor' })
-$buttons['Refresh'].Add_Click({ Show-Command 'status' })
+$buttons['Refresh'].Add_Click({ Show-Installed })
 
 if ((Test-Path $command) -and (Test-Path (Join-Path $nodeHome 'arena.conf'))) {
   Show-Installed
@@ -70,9 +87,9 @@ if ((Test-Path $command) -and (Test-Path (Join-Path $nodeHome 'arena.conf'))) {
   $script:link = $null
   # the installer is cmd.exe's child: ended with its whole tree
   function Stop-Installer { if (-not $proc.HasExited) { & taskkill /PID $proc.Id /T /F | Out-Null } }
-  $buttons['Stop'].Visible = $true
+  Set-Buttons @('Stop', 'Close')
   $buttons['Open in browser'].Add_Click({ if ($script:link) { Start-Process $script:link } })
-  $buttons['Stop'].Add_Click({ Stop-Installer; $title.Text = 'The installer was stopped. Open Bitcoin Arena from the Start menu to start it again.'; $buttons['Stop'].Visible = $false })
+  $buttons['Stop'].Add_Click({ Stop-Installer; $title.Text = 'The installer was stopped. Open Bitcoin Arena from the Start menu to start it again.'; Set-Buttons @('Close') })
   $timer = New-Object System.Windows.Forms.Timer
   $timer.Interval = 300
   $timer.Add_Tick({
@@ -82,7 +99,7 @@ if ((Test-Path $command) -and (Test-Path (Join-Path $nodeHome 'arena.conf'))) {
       if ($l -eq '') { continue }
       $box.AppendText($l + "`r`n")
       if (-not $script:link -and $l -match '(https?://\S+\?t=[A-Za-z0-9_-]+)') {
-        $script:link = $Matches[1]; $buttons['Open in browser'].Visible = $true; Start-Process $script:link
+        $script:link = $Matches[1]; Set-Buttons @('Open in browser', 'Stop', 'Close'); Start-Process $script:link
       }
       if ($l -match '^Done\. Your node runs') { $timer.Stop(); Start-Sleep -Seconds 2; Show-Installed; return }
     }
