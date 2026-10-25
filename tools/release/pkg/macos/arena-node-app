@@ -1,6 +1,6 @@
 #!/bin/bash
 # ARENA NODE ON macOS: THE APP (2026-10-19: "a small gui version of the installer that launches the browser"). Arena
-# Node.app from ArenaNode-<version>-darwin-<arch>.dmg, dragged to Applications:
+# Arena.app from bitcoin-arena-node-<version>-darwin-<arch>.dmg, dragged to Applications:
 #   1. its release is copied out of the app to ~/Library/ArenaNode/<release> - the node's services run it from there, never from the
 #      disk image or an app macOS may move (App Translocation) - and its quarantine mark is taken off (the app was opened by the user)
 #   2. no node yet: the installer runs in the background, its one-time link opens in the browser, and a dialog keeps it company:
@@ -8,22 +8,22 @@
 #   3. a node installed: `arenanode status` in a dialog, with Owner page / Restart / Close
 # Built-in parts only (osascript): nothing more to install.
 APP="$(cd "$(dirname "$0")/../.." && pwd)"
-SRC=$(ls -d "$APP/Contents/Resources/release/arena-node-"* 2>/dev/null | head -1)
+SRC=$(ls -d "$APP/Contents/Resources/release/"*arena-node-* 2>/dev/null | head -1)
 NAME=$(basename "$SRC")
 BASE="$HOME/Library/ArenaNode"
 DEST="$BASE/$NAME"
 H="$HOME/.arena-node"
 CMD="$H/bin/arenanode"
 LOG="$BASE/installer.log"
-say() { osascript -e "on run argv" -e "display dialog (item 1 of argv) with title \"Arena Node\" buttons {\"OK\"} default button 1" -e "end run" "$1" >/dev/null 2>&1; }
+say() { osascript -e "on run argv" -e "display dialog (item 1 of argv) with title \"Bitcoin Arena\" buttons {\"OK\"} default button 1" -e "end run" "$1" >/dev/null 2>&1; }
 ask() { # ask <text> <default button> <buttons...> [giving up after N in ASK_WAIT]: the button chosen, or "" when it gave up
   local text=$1 def=$2; shift 2
   local list; list=$(printf '"%s", ' "$@"); list="{${list%, }}"
-  osascript -e "on run argv" -e "set r to display dialog (item 1 of argv) with title \"Arena Node\" buttons $list default button \"$def\"${ASK_WAIT:+ giving up after $ASK_WAIT}" \
+  osascript -e "on run argv" -e "set r to display dialog (item 1 of argv) with title \"Bitcoin Arena\" buttons $list default button \"$def\"${ASK_WAIT:+ giving up after $ASK_WAIT}" \
     -e "if gave up of r then return \"\"" -e "return button returned of r" -e "end run" "$text" 2>/dev/null
 }
 
-[ -n "$SRC" ] || { say "This app holds no Arena node release. Download the disk image again."; exit 1; }
+[ -n "$SRC" ] || { say "This app holds no Bitcoin Arena release. Download the disk image again."; exit 1; }
 if [ ! -x "$DEST/runtime/node" ]; then
   mkdir -p "$BASE" && rm -rf "$DEST.part" && cp -R "$SRC" "$DEST.part" && mv "$DEST.part" "$DEST" || { say "Could not copy the node to $BASE."; exit 1; }
   xattr -dr com.apple.quarantine "$DEST" 2>/dev/null
@@ -57,7 +57,7 @@ while kill -0 $PID 2>/dev/null; do
 
 Last: $last" "Open in browser" "Stop" "Open in browser") in
     "Open in browser") open "$LINK" ;;
-    "Stop") kill $PID 2>/dev/null; say "The installer was stopped. Open Arena Node again to start it."; exit 0 ;;
+    "Stop") kill $PID 2>/dev/null; say "The installer was stopped. Open Bitcoin Arena again to start it."; exit 0 ;;
   esac
 done
 sleep 2

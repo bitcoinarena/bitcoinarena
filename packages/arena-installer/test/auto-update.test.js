@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { checkOnce, runAutoUpdate, assetNameFor, autoUpdateOn } from '../src/auto-update.js';
+import { checkOnce, runAutoUpdate, assetNameFor, autoUpdateOn, LEGACY_ASSET_PREFIX } from '../src/auto-update.js';
 import { installUpdater } from '../src/launchers.js';
 import { installProgram } from '../src/service.js';
 
@@ -23,8 +23,8 @@ function nodeAt({ version = '0.1.0', conf = 'port=8470\n' } = {}) {
   return { root, home };
 }
 // a "release" 0.1.1 for linux-x64: the asset's bytes in 3 pieces, served from an unlisted base
-function served(bytes, { tamper = false } = {}) {
-  const name = assetNameFor('0.1.1', 'linux', 'x64');
+function served(bytes, { tamper = false, legacy = false } = {}) {
+  const name = assetNameFor('0.1.1', 'linux', 'x64', legacy ? LEGACY_ASSET_PREFIX : undefined);
   const pieces = [bytes.subarray(0, 10), bytes.subarray(10, 25), bytes.subarray(25)];
   const files = new Map(pieces.map((p, i) => [`${name}.part0${i}`, tamper && i === 1 ? Buffer.from('x'.repeat(p.length)) : p]));
   files.set('SHA256SUMS', Buffer.from(`${createHash('sha256').update(bytes).digest('hex')}  ${name}\n`));
@@ -44,14 +44,14 @@ test('a newer signed release: this system\'s pieces fetched, joined and checked,
     const s = served(bytes);
     const applied = [], unpacked = [];
     const r = await checkOnce({ home, latest: s.latest, fetcher: s.fetcher, platform: 'linux', arch: 'x64', verifyAsset: ({ sums }) => ({ ok: String(sums).includes(s.name) }),
-      unpack: (archive, dir) => { unpacked.push([archive, dir]); mkdirSync(join(dir, 'arena-node-0.1.1-linux-x64'), { recursive: true }); },
+      unpack: (archive, dir) => { unpacked.push([archive, dir]); mkdirSync(join(dir, 'bitcoin-arena-node-0.1.1-linux-x64'), { recursive: true }); },
       apply: async (o) => { applied.push(o); return { ok: true, backup: '/b' }; } });
     assert.deepEqual([r.ok, r.from, r.to], [true, '0.1.0', '0.1.1']);
     const file = join(home, 'releases', 'downloads', '0.1.1', s.name);
     assert.deepEqual(readFileSync(file), bytes, 'the pieces joined are the asset');
     assert.equal(unpacked.length, 1);
-    assert.equal(applied[0].newRelease, join(home, 'releases', 'arena-node-0.1.1-linux-x64'));
-    assert.equal(applied[0].node, join(home, 'releases', 'arena-node-0.1.1-linux-x64', 'runtime', 'node'));
+    assert.equal(applied[0].newRelease, join(home, 'releases', 'bitcoin-arena-node-0.1.1-linux-x64'));
+    assert.equal(applied[0].node, join(home, 'releases', 'bitcoin-arena-node-0.1.1-linux-x64', 'runtime', 'node'));
     assert.equal(applied[0].port, 8470);
     assert.equal(typeof applied[0].installUpdaterFn, 'function', 'the update brings the auto update service where it is missing');
     assert.equal(JSON.parse(readFileSync(join(home, 'auto-update.json'), 'utf8')).to, '0.1.1', 'recorded for status and the owner page');
@@ -79,7 +79,8 @@ test('a piece not as signed: nothing unpacked, nothing moved; a refused SHA256SU
     assert.equal((await checkOnce({ home: h2, latest: good.latest, fetcher: good.fetcher, apply })).upToDate, true);
     rmSync(r2, { recursive: true, force: true });
     assert.deepEqual([autoUpdateOn({}), autoUpdateOn({ auto_update: 'off' }), autoUpdateOn({ auto_update: '1' })], [true, false, true]);
-    assert.equal(assetNameFor('0.1.1', 'win32', 'x64'), 'arena-node-0.1.1-windows-x64.zip');
+    assert.equal(assetNameFor('0.1.1', 'win32', 'x64'), 'bitcoin-arena-node-0.1.1-windows-x64.zip', 'the name since 2026.1.8 (kanban #635)');
+    assert.equal(assetNameFor('0.1.1', 'win32', 'x64', LEGACY_ASSET_PREFIX), 'arena-node-0.1.1-windows-x64.zip');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -110,5 +111,20 @@ test('the updater as a service: it names the node\'s own arenanode (no release),
     // a Windows update does not end the auto update that runs it: its own process (#546: no longer every auto update - an old updater
     // beside a manual update is ended with its release, and the task runs it again from the new one)
     assert.match(rf(new URL('../src/update.js', import.meta.url), 'utf8'), /\$_\.ProcessId -ne \$\{Number\(selfPid\)\}/, 'a Windows update does not end its own process');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// A RELEASE UNDER THE OLD NAME (kanban #635): a release that names only arena-node-<v>-... is still fetched by its name
+test('a release that carries only the old arena-node name is fetched under it', async () => {
+  const { root, home } = nodeAt();
+  try {
+    const bytes = Buffer.from('an asset under the name releases had before 2026.1.8'.repeat(2));
+    const s = served(bytes, { legacy: true });
+    assert.equal(s.name, 'arena-node-0.1.1-linux-x64.tar.gz');
+    const applied = [];
+    const r = await checkOnce({ home, latest: s.latest, fetcher: s.fetcher, platform: 'linux', arch: 'x64', verifyAsset: () => ({ ok: true }),
+      unpack: (archive, dir) => { mkdirSync(join(dir, 'arena-node-0.1.1-linux-x64'), { recursive: true }); }, apply: async (o) => { applied.push(o); return { ok: true }; } });
+    assert.equal(r.ok, true, r.why);
+    assert.equal(applied[0].newRelease, join(home, 'releases', 'arena-node-0.1.1-linux-x64'));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

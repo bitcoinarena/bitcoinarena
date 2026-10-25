@@ -552,8 +552,11 @@ if (tlsFiles) {
   try { options.tls = { cert: readFileSync(tlsFiles.cert), key: readFileSync(tlsFiles.key) }; }
   catch (e) { console.error(`ARENA_TLS_CERT / ARENA_TLS_KEY: ${e.message}`); process.exit(2); }
 }
+// THE GUARDIAN'S OWN BITCOIN CORE (kanban #635): while an installer node reads the chain through its Electrum bridge (its Bitcoin Core
+// still syncing), its guardian reads that Core directly - ARENA_GUARDIAN_BITCOIND_URL / _COOKIE, else the node's own chain
+const gUrl = process.env.ARENA_GUARDIAN_BITCOIND_URL || url, gCookie = process.env.ARENA_GUARDIAN_BITCOIND_COOKIE || cookiePath;
 const node = await startNode({ db, path }, options,
-  { bitcoindUrl: url, cookiePath, call: url ? bitcoindRpc({ url, cookiePath }) : null });
+  { bitcoindUrl: gUrl, cookiePath: gCookie, call: gUrl ? bitcoindRpc({ url: gUrl, cookiePath: gCookie }) : null });
 // AND STOPS WITH IT: a signal closes the node, and its close() stops its guardian - never one without the other.
 let stopping = false;
 for (const sig of ['SIGINT', 'SIGTERM']) {

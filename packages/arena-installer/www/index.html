@@ -16,7 +16,7 @@ a { color: #58a6ff; } a:visited { color: #a5b4fc; }
 ol.steps { display: flex; gap: 4px; padding: 0 0 2px; list-style: none; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 0 20px; }   /* one line (2026-10-18); a phone scrolls it */
 ol.steps::-webkit-scrollbar { display: none; }
 ol.steps li { flex: none; white-space: nowrap; padding: 4px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 12.5px; }
-ol.steps li.done { border-color: var(--ok); color: var(--ok); } ol.steps li.now { border-color: var(--accent); color: var(--text); }
+ol.steps li.done { border-color: var(--ok); color: var(--ok); cursor: pointer; } ol.steps li.done:hover { background: rgba(63,185,80,.12); } ol.steps li.now { border-color: var(--accent); color: var(--text); } ol.steps li.current { border-style: dashed; border-color: var(--accent); cursor: pointer; }
 section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px; margin-bottom: 16px; display: none; }
 section.on { display: block; }
 label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 13px; }
@@ -221,6 +221,10 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
 const $ = (id) => document.getElementById(id);
 const STEPS = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['apps', 'Apps'], ['seed', 'Seed'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['lightning', 'Lightning'], ['federation', 'Federation'], ['promise', 'Bond rules'], ['bond', 'Bond'], ['done', 'Done']];
 let st = null;
+// A DONE STEP OPENED AGAIN FROM THE BAR (kanban #635, the owner's playtest 2026-10-25: "ich kann auch nicht zurück gehen und den Zustand
+// prüfen"): `viewing` names it; the current step's own pill, or any save, goes back to where the wizard is
+let viewing = null;
+const pick = (k) => { viewing = k === (st && st.step) ? null : k; load(); };
 const post = async (path, body) => (await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-wizard': '1' }, body: JSON.stringify(body || {}) })).json();
 
 let introSkipped = false;
@@ -229,17 +233,18 @@ async function load() {
   st = await (await fetch('/api/state')).json();
   const R = window.ArenaWizard;
   if (!st.ok) { R.refused(document.querySelector('main'), { why: st.why }); return; }
-  R.bar($('steps'), { steps: STEPS, done: st.done, now: st.step });   // the current step scrolled into view
+  const shown = viewing && st.done[viewing] ? viewing : st.step;
+  R.bar($('steps'), { steps: STEPS, done: st.done, now: shown, current: st.step, onPick: pick });   // the step shown scrolled into view
   // THE INTRO: before the first step is done, until "Set up my node" (remembered in this browser where it can be)
   const intro = st.step === 'chain' && !st.done.chain && !introSeen();
   if (intro && st.instances) { $('intro-count').value = st.instances.count; $('intro-ram').checked = st.instances.count < 6 || st.instances.ram !== false; $('intro-name').value = st.instances.name || ''; paintInst(); }
   $('s-intro').classList.toggle('on', intro); $('steps').hidden = intro;
-  for (const [k] of STEPS) $('s-' + k).classList.toggle('on', !intro && st.step === k);
+  for (const [k] of STEPS) $('s-' + k).classList.toggle('on', !intro && shown === k);
   // THE REACT STEPS (kanban #564): the current step draws its section, every other one is taken down (its timers stop); the roles
   // draw into their list, and say when custody is on (its picture shown)
-  const ctx = { st, post, get: async (path) => (await fetch(path)).json(), reload: load };
-  if (st.step === 'roles') R.mount('roles', $('roles'), { ...ctx, onCustody: (on) => { $('custody-explain').hidden = !on; } });
-  R.show(st.step, (k) => $('s-' + k), ctx);
+  const ctx = { st, post, get: async (path) => (await fetch(path)).json(), reload: () => { viewing = null; return load(); } };
+  if (shown === 'roles') R.mount('roles', $('roles'), { ...ctx, onCustody: (on) => { $('custody-explain').hidden = !on; } });
+  R.show(shown, (k) => $('s-' + k), ctx);
 }
 // HOW MANY NODES (kanban #596): the note follows the count; the RAM disk checkbox from more than 5; kept when the intro is left
 const instNote = (n) => (n <= 1 ? '' : `${n} nodes: each its own seed, owner key and bond (${(n * 50000).toLocaleString('en-US')} sat in all).` + (n >= 10 ? ' 10 or more nodes found their own federation.' : ''));

@@ -21,9 +21,12 @@ import { checkAsset } from './release-verify.js';
 import { updateNode } from './update.js';
 import { nodeOf } from './node-services.js';
 
-/** This system's asset of a release: arena-node-<v>-<linux|darwin|windows>-<x64|arm64>.tar.gz (.zip on Windows). */
-export const assetNameFor = (version, platform = process.platform, arch = process.arch) =>
-  `arena-node-${version}-${platform === 'win32' ? 'windows' : platform}-${arch}${platform === 'win32' ? '.zip' : '.tar.gz'}`;
+/** The release files' name (kanban #635, the owner 2026-10-25: "Es muss bitcoin-arena-node heissen"); before 2026.1.8, arena-node. */
+export const ASSET_PREFIX = 'bitcoin-arena-node';
+export const LEGACY_ASSET_PREFIX = 'arena-node';
+/** This system's asset of a release: bitcoin-arena-node-<v>-<linux|darwin|windows>-<x64|arm64>.tar.gz (.zip on Windows). */
+export const assetNameFor = (version, platform = process.platform, arch = process.arch, prefix = ASSET_PREFIX) =>
+  `${prefix}-${version}-${platform === 'win32' ? 'windows' : platform}-${arch}${platform === 'win32' ? '.zip' : '.tar.gz'}`;
 
 /** auto_update in arena.conf: on unless 0 / off / no / false. */
 export const autoUpdateOn = (values) => !['0', 'off', 'no', 'false'].includes(String(values.auto_update ?? '1').trim().toLowerCase());
@@ -44,7 +47,8 @@ export async function checkOnce({ home, latest, fetcher = fetch, platform = proc
   if (!l.latest) return { ok: false, why: l.why || 'the newest release could not be read' };
   if (!l.newer) return { ok: true, upToDate: true, version: node.version, latest: l.latest.version };
   const v = l.latest.version;
-  const name = assetNameFor(v, platform, arch);
+  // the new name first; a release that still carries the old one (its update channel, for nodes before 2026.1.8) under that
+  const name = [assetNameFor(v, platform, arch), assetNameFor(v, platform, arch, LEGACY_ASSET_PREFIX)].find((n) => (l.latest.assets || {})[n]) || assetNameFor(v, platform, arch);
   const want = (l.latest.assets || {})[name];
   const d = l.latest.download;
   if (!want || !d || !d.base || !d.parts || !Array.isArray(d.parts[name]) || !d.parts[name].length) return { ok: false, why: `release ${v} names no download of ${name} for this system` };

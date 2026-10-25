@@ -11,7 +11,7 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createWizard } from '../src/wizard.js';
-import { nodeState } from '../src/state.js';
+import { nodeState, ownCoreOf } from '../src/state.js';
 import { syncStatus, diskCheck, NEEDS, ETA_MIN_SPAN_MS } from '../src/bitcoind.js';
 
 function client(port) {
@@ -114,6 +114,12 @@ test('Bitcoin Core goes to the chosen folder and syncs in the background: the wi
   assert.equal(st.step, 'roles', 'the wizard goes on while Core syncs');
   assert.equal(st.chain.kind, 'electrum');
   assert.deepEqual(st.coreSync, { dir: join(home, 'disk2'), interim: true, prune: true });
+  // CUSTODY ON THE CORE INSTALLED HERE (the owner's playtest 2026-10-25: custody was refused right after "Install Bitcoin Core for me" -
+  // "custody needs your own Bitcoin Core: LND cannot run on an Electrum server"): the interim chain is Electrum, the Core is this node's own
+  const roles = (await c.post('/api/roles', { roles: ['verify', 'settlement', 'custody'] })).json;
+  assert.equal(roles.ok, true, roles.why);
+  assert.deepEqual(ownCoreOf(nodeState(home).read()), { kind: 'core', url: 'http://127.0.0.1:48342/', cookiePath: join(home, 'disk2', 'c') }, 'LND and the guardian read it');
+  assert.equal(ownCoreOf({ chain: { kind: 'electrum', host: 'h', port: 1 } }), null, 'an Electrum node without a Core of its own has none');
 });
 
 test('the ETA is said only after a few minutes of readings, from the progress over the window', async () => {
