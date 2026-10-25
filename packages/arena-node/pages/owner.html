@@ -158,7 +158,32 @@ select:focus{outline:2px solid var(--st);outline-offset:1px}
 <p class="sub"><a id="public" href="#">← Public dashboard</a></p>
 <script type="module">
 // The node's address: this page is <base>/Dashboard/owner, its doors are <base>/owner...
-const BASE = location.pathname.replace(/\/[Dd]ashboard\/owner\/?$/, '');
+// THE OWNER PAGE ON THE ARENA SITE (kanban #668, the owner's playtest 2026-10-25: logged out after a restart - "Das reicht nicht wenn der
+// Server Remote ist. Der installer soll es in die Session rein kopieren auch wenn sich die url geändert hat"): the same page at
+// <site>/owner/#node=<the node's key>. A quick tunnel's address changes at every restart, the browser keeps a login per address - here the
+// address stays the site's, the login is kept per node key, and the node is found where it is now: the seats' signed address announcements
+// (GET /address-announcements, #562) name its current address. The node that answers there must be that key (checked in start()).
+const ON_SITE = !/\/[Dd]ashboard\/owner\/?$/.test(location.pathname);
+const HASH = new URLSearchParams(location.hash.slice(1));
+const NODE_KEY = ON_SITE ? String(HASH.get('node') || '').trim().toLowerCase() : null;
+async function siteBase() {
+  if (HASH.get('url')) return String(HASH.get('url')).replace(/\/+$/, '');
+  if (!/^[0-9a-f]{64}$/.test(NODE_KEY || '')) return null;
+  let seats = ['https://tn4.bitcoin-arena.io/guardian-1', 'https://tn4.bitcoin-arena.io/guardian-2', 'https://tn4.bitcoin-arena.io/guardian-3'];
+  try { const d = await (await fetch('/daily.json', { cache: 'no-store' })).json(); const t = (d && d.testnet) || d || {}; if (Array.isArray(t.node) && t.node.length) seats = t.node; } catch {}
+  const found = await Promise.any(seats.map(async (seat) => {
+    const r = await fetch(seat.replace(/\/+$/, '') + '/address-announcements', { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+    const e = ((await r.json()).announcements || []).find((x) => x && x.node === NODE_KEY && /^https?:\/\//.test(x.endpoint || ''));
+    if (!e) throw new Error('not named here');
+    return e;
+  })).catch(() => null);
+  return found ? found.endpoint.replace(/\/+$/, '') : null;
+}
+const BASE = ON_SITE ? await siteBase() : location.pathname.replace(/\/[Dd]ashboard\/owner\/?$/, '');
+if (ON_SITE && !BASE) {
+  document.getElementById('who').textContent = NODE_KEY ? 'No node announces this key right now (' + NODE_KEY.slice(0, 16) + '…). Is it running?' : 'Open this page from your node\'s dashboard or the installer: it needs your node\'s key.';
+  throw new Error('no node address');
+}
 const at = (p) => BASE + p;
 document.getElementById('public').href = at('/Dashboard');
 const C = await import(at('/owner/client.js'));
@@ -166,7 +191,7 @@ const C = await import(at('/owner/client.js'));
 // bundle is loaded once, here, and every ported panel is drawn by it alone
 await import(at('/owner/react.js'));
 const O = window.ArenaOwner;
-const STORE = 'arena-owner-seed:' + BASE;          // per node address, in this browser only
+const STORE = ON_SITE ? 'arena-owner-seed:node:' + NODE_KEY : 'arena-owner-seed:' + BASE;   // per node address (on the site: per node key), in this browser only
 const $ = (id) => document.getElementById(id);
 const readSeed = () => { try { const h = localStorage.getItem(STORE); return h && /^[0-9a-f]{64}$/.test(h) ? C.fromHex(h) : null; } catch { return null; } };
 const keepSeed = (seed) => { try { localStorage.setItem(STORE, C.toHex(seed)); return true; } catch { return false; } };
@@ -174,7 +199,26 @@ const keepSeed = (seed) => { try { localStorage.setItem(STORE, C.toHex(seed)); r
 // own seed"): the owner key is the Nostr key itself. An nsec signs owner requests as the words' key does; an extension
 // (NIP-07) or a remote signer (NIP-46: bunker://, or a code a phone signer scans) signs each request as a Nostr event.
 // Kept per node address in this browser: { how: 'nsec', secret } | { how: 'extension', pubkey } | { how: 'bunker', bunker, client }
-const NSTORE = 'arena-owner-nostr:' + BASE;
+const NSTORE = ON_SITE ? 'arena-owner-nostr:node:' + NODE_KEY : 'arena-owner-nostr:' + BASE;
+// THE KEY FROM THE INSTALLER (kanban #668): opened by the installer's last button with owner-handoff in its #, this page asks its opener
+// for the owner key - window to window, never in a URL - and keeps it here, so the owner area opens logged in at an address that stays
+const handoff = HASH.has('owner-handoff') && window.opener ? new Promise((done) => {
+  const on = (e) => {
+    const d = e.data;
+    if (e.source !== window.opener || !d || d.type !== 'arena-owner-key') return;
+    try {
+      if (d.kind === 'seed' && /^[0-9a-f]{64}$/.test(d.seed)) localStorage.setItem(STORE, d.seed);
+      else if (d.kind === 'nsec' && /^[0-9a-f]{64}$/.test(d.secret)) localStorage.setItem(NSTORE, JSON.stringify({ how: 'nsec', secret: d.secret }));
+    } catch {}
+    removeEventListener('message', on); HASH.delete('owner-handoff');
+    history.replaceState(null, '', location.pathname + location.search + (HASH.toString() ? '#' + HASH.toString() : ''));
+    done();
+  };
+  addEventListener('message', on);
+  window.opener.postMessage({ type: 'arena-owner-ready' }, '*');
+  setTimeout(done, 8000);
+}) : null;
+if (handoff) await handoff;
 const readNostr = () => { try { const j = JSON.parse(localStorage.getItem(NSTORE) || 'null'); return j && j.how ? j : null; } catch { return null; } };
 const keepNostr = (o) => { try { localStorage.setItem(NSTORE, JSON.stringify(o)); return true; } catch { return false; } };
 const forget = () => { try { localStorage.removeItem(STORE); localStorage.removeItem(NSTORE); } catch {} me = null; start(); };
@@ -447,6 +491,7 @@ async function start() {
   try { state = await (await fetch(at('/owner'), { cache: 'no-store' })).json(); }
   catch (e) { $('who').textContent = 'This node did not answer: ' + e.message; return; }
   $('who').textContent = 'Node ' + state.node;
+  if (ON_SITE && NODE_KEY && state.node !== NODE_KEY) { $('who').textContent = 'The address announced for ' + NODE_KEY.slice(0, 16) + '… answers as another node (' + String(state.node).slice(0, 16) + '…). Try again in a minute.'; return; }
   let id = null;
   try { id = await identity(); }
   catch (e) { message({ title: 'Your Nostr login did not answer', err: e.message, buttons: [{ label: 'Try again', onClick: () => { me = null; start(); } }, { label: 'Sign out on this browser', onClick: forget }] }); return; }

@@ -5323,11 +5323,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && (url.pathname === '/owner/react.js' || url.pathname === '/owner/react.css')) {
         const js = url.pathname.endsWith('.js');
         let body; try { body = readFileSync(new URL(`../../arena-web/dist/${js ? 'owner.js' : 'arena.css'}`, import.meta.url)); } catch { return text(res, 404, 'this release carries no React screens'); }
-        res.writeHead(200, { 'content-type': js ? 'text/javascript; charset=utf-8' : 'text/css; charset=utf-8', 'cache-control': 'no-store' });
+        // with CORS: the owner page on the Arena site loads them from the node (kanban #668)
+        res.writeHead(200, { 'content-type': js ? 'text/javascript; charset=utf-8' : 'text/css; charset=utf-8', 'cache-control': 'no-store', ...CORS });
         return res.end(body);
       }
       if (req.method === 'GET' && url.pathname === '/owner/client.js') {
-        res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' });
+        res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store', ...CORS });
         return res.end(readFileSync(new URL('../pages/owner-client.js', import.meta.url)));
       }
       // THE OPERATOR UI'S DOORS (§27A.7.7): a scoped bearer token, paired through the node's arena-operator: URI
