@@ -5880,6 +5880,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // THE NODE'S ROLES (kanban #553, the owner 2026-10-20: "It also offers no options to setup the role of the node"): signed by the owner,
         // { roles: [game, verify, settlement, relay], custody, post } - an advertisement update of its bond from the bond wallet
         // (add-bond-wallet.js changeRolesFromWallet): the plan, and with post: true the two transactions sent; the census reads it 6 deep
+        // THE NODE KEY FROM THE 24 WORDS (kanban #650, the owner 2026-10-25: "b but optional"): an installed node moves to the key its words
+        // give - a new bond under it from the node's wallet, the old key kept for its bond's return - then the seat restarts on it. The
+        // plan first (post false), then the move (post true); never done unasked
+        if (url.pathname === '/owner/key-from-words') {
+          const a = owner.authorize(body, 'key-from-words');
+          if (!a.ok) return answer(a.status || 401, a);
+          const home = process.env.ARENA_HOME;
+          if (!home) return answer(501, { ok: false, why: 'a node set up by hand keeps its key: there are no 24 words in its home' });
+          try {
+            const { switchToSeedKey } = await import('../../arena-installer/src/identity-switch.js');
+            const r = await switchToSeedKey({ home, release: fileURLToPath(new URL('../../../', import.meta.url)), post: (body.args || {}).post === true });
+            if (!r.ok) return answer(400, r);
+            if (r.bond) {
+              console.log(`[owner] node key moved to the one from the 24 words: ${r.plan.keyNow.slice(0, 16)} -> ${r.plan.keyNext.slice(0, 16)}, bond ${r.bond.txid}; the seat restarts`);
+              const { spawn: sp } = await import('node:child_process');
+              const lib = new URL('../../arena-installer/src/node-services.js', import.meta.url).href;
+              sp(process.execPath, ['--input-type=module', '-e', `const m = await import(${JSON.stringify(lib)}); await new Promise((r) => setTimeout(r, 1500)); await m.control('restart', 'node', { home: ${JSON.stringify(home)} });`],
+                { detached: true, stdio: 'ignore', env: process.env }).unref();
+            }
+            return answer(200, { ok: true, plan: r.plan || null, already: !!r.already, bond: r.bond || null, restarting: !!r.bond });
+          } catch (e) { return answer(500, { ok: false, why: `the key could not be moved: ${e.message}` }); }
+        }
         if (url.pathname === '/owner/roles') {
           const a = owner.authorize(body, 'roles');
           if (!a.ok) return answer(a.status || 401, a);
