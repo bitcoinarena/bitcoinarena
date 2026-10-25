@@ -93,26 +93,28 @@ test('bond: the deposit named whole with its parts, nothing then enough found, t
   assert.equal(foundText({ coins: [{}], totalSats: 10000, needSats: 52000, enough: false }), 'Found 10,000 sat in 1 deposit(s) (sent, not confirmed yet). Needed: 52,000 sat in all (fees included).');
 });
 
-test('done: how the node runs and is reached, the owner page, Lightning and the gateway, the bond and its lock; Finish', async () => {
+test('done: a headline, the dashboard and Finish, one card per part with links in a new window, the command line folded; Finish opens the dashboard', async () => {
   const st = { seatPort: 9090, reach: { mode: 'permanent', url: 'https://node.example.com' }, service: { boot: true, identity: 'ab'.repeat(32), linger: false },
     launchers: { start: '/home/u/.local/share/arena/bin/arena-start', command: { name: 'arena' } }, owner: { mode: 'seed' },
     lightning: { mode: 'own', pubkey: '03' + 'ab'.repeat(32) }, gateway: { testedMs: 1, publicUrl: 'https://node.example.com/gateway/', federations: [{ name: 'T' }] },
     bond: { txid: 'ef'.repeat(32), sats: 250000, maturity: 157483, lock: { estimatedMs: Date.UTC(2026, 9, 23, 8) } } };
-  const c = driven(DoneStep, { st, post: async () => ({ ok: true, owner: 'https://node.example.com/Dashboard/owner' }), reload() {} });
+  const went = [];
+  const c = driven(DoneStep, { st, post: async () => ({ ok: true, owner: 'https://node.example.com/dashboard/owner' }), reload() {}, go: (u) => went.push(u) });
   const html = renderToStaticMarkup(c.render());
-  assert.match(html, /the user service <code>arena-node<\/code> and starts again after a reboot/);
-  assert.match(html, /at <code>https:\/\/node\.example\.com<\/code> through your Cloudflare tunnel/);
-  assert.match(html, /Owner page: <code>https:\/\/node\.example\.com\/Dashboard\/owner<\/code>. Log in with your 24 words/);
-  assert.match(html, /<b>On the command line<\/b>: <code>arena status<\/code> shows every service/);
+  assert.match(html, /<h2>Your node runs<\/h2>[\s\S]*It starts again by itself after a reboot/);
+  assert.match(html, /<a class="btn" id="open-dashboard" href="https:\/\/node\.example\.com\/dashboard" target="_blank"/, 'the dashboard, lowercase, in a new window');
+  assert.match(html, /id="done-address"[\s\S]*<a href="https:\/\/node\.example\.com" target="_blank" rel="noopener noreferrer">https:\/\/node\.example\.com<\/a>[\s\S]*Your Cloudflare tunnel/);
+  assert.match(html, /id="done-owner"[\s\S]*href="https:\/\/node\.example\.com\/dashboard\/owner" target="_blank"[\s\S]*Log in with your 24 words/);
+  assert.match(html, /id="done-bond"[\s\S]*250,000 sat[\s\S]*Locked until block 157,483/);
+  assert.match(html, /id="done-lightning"[\s\S]*Gateway runs, serving T\./);
+  assert.match(html, /<details class="done-more"><summary>Start, stop and the command line<\/summary>[\s\S]*<code>arena status<\/code>/);
   assert.match(html, /sudo loginctl enable-linger/);
-  assert.match(html, /The gateway runs \(the user service <code>arena-gateway<\/code>\) at <code>https:\/\/node\.example\.com\/gateway\/<\/code>, serving T\./);
-  assert.match(html, /250,000 sat, <b>locked until block 157483<\/b>/);
   await c.finish();
-  assert.equal(c.state.msg.text, 'Finished. Setup has stopped. Your owner page: https://node.example.com/Dashboard/owner');
-  assert.match(renderToStaticMarkup(c.render()), /id="finish" disabled=""/);
+  assert.deepEqual(went, ['https://node.example.com/dashboard'], 'Finish opens the dashboard');
+  assert.match(renderToStaticMarkup(c.render()), /id="finish"[^>]*disabled=""/);
   const none = renderToStaticMarkup(React.createElement(DoneStep, { st: { seatPort: 9090, reach: { mode: 'quick' }, service: {}, wallet: { address: 'tb1pnode' } }, post: async () => ({}) }));
-  assert.match(none, /This name changes when the tunnel restarts/); assert.match(none, /No bond yet: send it to <code>tb1pnode<\/code>/);
-  assert.match(none, /http:\/\/127\.0\.0\.1:9090\/Dashboard\/owner<\/code> \(this computer only/);
+  assert.match(none, /the name changes when it restarts/); assert.match(none, /No bond yet\. Send it to <code>tb1pnode<\/code>/);
+  assert.match(none, /href="http:\/\/127\.0\.0\.1:9090\/dashboard\/owner"[\s\S]*This computer only/);
 });
 
 // KANBAN #635 (2026-10-25): testcoins from the Arena faucet or the guided way; the gateway set up while Bitcoin Core still syncs;
@@ -138,6 +140,6 @@ test('#635: the faucet asked and the deposit checked; a refusal opens the guided
   assert.equal(gwText({ ok: true, syncing: true }), 'The gateway runs. It connects to Lightning by itself once Bitcoin Core has synced; your dashboard shows when.');
   const done = renderToStaticMarkup(driven(DoneStep, { st: { reach: { mode: 'direct', url: 'https://n.example', port: 9090 }, service: { boot: true }, seatPort: 9090, coreSync: { interim: true },
     launchers: { app: '/Applications/Bitcoin Arena.app', start: '/h/bin/Bitcoin Arena Start.command' } } }).render());
-  assert.match(done, /Bitcoin Core is still syncing/); assert.match(done, /<code>https:\/\/n\.example\/Dashboard<\/code>/);
-  assert.match(done, /open <b>Bitcoin Arena<\/b> in your Applications/);
+  assert.match(done, /id="done-core"[\s\S]*Still syncing/); assert.match(done, /href="https:\/\/n\.example\/dashboard"/);
+  assert.match(done, /Open <b>Bitcoin Arena<\/b> in your Applications/);
 });
