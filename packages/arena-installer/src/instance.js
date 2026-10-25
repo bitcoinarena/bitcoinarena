@@ -11,6 +11,7 @@
 // ARENA_HOME, else ~/.arena-node - and, for a new node whose arena.conf the wizard has not written yet, from --instance / --port-offset
 // (or the older ARENA_INSTANCE / ARENA_PORT_OFFSET). Neither set: names and ports as before. Read once, when the program starts.
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { parseConf } from '../../arena-node/src/arena-conf.js';
@@ -28,8 +29,19 @@ export function confAt(home) {
  * A new node - no arena.conf yet, no instance or port offset given - looks at the service file of each name in turn: the default, then
  * --2, --3, ... The first that does not exist, or names this node's own folder, is its name; its ports are 100 up per number. Windows
  * keeps the default (its tasks are not files). Answers { instance, offset }.
+ * NOR ANOTHER NODE'S PORTS (the owner's 2026.1.8 playtest 2026-10-25: his node took --2 and so seat port 8570, where the test node
+ * mactest16b - set up by hand with its own name and offset - already listened; the installer's owner login went to that node and was
+ * refused, "that key is not this node's owner"): a name not this node's own is taken only when none of its ports is in use.
  */
-export function freeInstance(home, { platform = process.platform, env: e = process.env, read = (f) => { try { return readFileSync(f, 'utf8'); } catch { return null; } }, tries = 20 } = {}) {
+export const BASE_PORTS = [7800, 8470, 8471, 8476, 8477, 9735, 10009, 10080, 19050, 19051];
+/** The ports among `ports` that are in use on this machine: something answers on 127.0.0.1, or a listener cannot bind it. */
+export function portsInUse(ports) {
+  const probe = `const net=require('net');const one=(p)=>new Promise((ok)=>{const c=net.connect({port:p,host:'127.0.0.1'});c.setTimeout(700);
+c.on('connect',()=>{c.destroy();ok(true)});const free=()=>{c.destroy();const s=net.createServer();s.once('error',()=>ok(true));s.listen(p,()=>s.close(()=>ok(false)))};
+c.on('error',free);c.on('timeout',free)});Promise.all(process.argv.slice(1).map(Number).map(one)).then((r)=>console.log(JSON.stringify(process.argv.slice(1).map(Number).filter((p,i)=>r[i]))))`;
+  try { return JSON.parse(execFileSync(process.execPath, ['-e', probe, ...ports.map(String)], { encoding: 'utf8', timeout: 15000 })); } catch { return []; }
+}
+export function freeInstance(home, { platform = process.platform, env: e = process.env, read = (f) => { try { return readFileSync(f, 'utf8'); } catch { return null; } }, busy = portsInUse, tries = 20 } = {}) {
   const at = (inst) => {
     const suffix = inst ? `--${inst}` : '';
     if (platform === 'darwin') return join(e.HOME || homedir(), 'Library', 'LaunchAgents', `io.bitcoin-arena.node${suffix}.plist`);
@@ -37,13 +49,14 @@ export function freeInstance(home, { platform = process.platform, env: e = proce
     return null;
   };
   for (let n = 1; n <= tries; n++) {
-    const inst = n === 1 ? '' : String(n);
+    const inst = n === 1 ? '' : String(n), offset = (n - 1) * 100;
     const file = at(inst);
     if (!file) return { instance: '', offset: 0 };
     const text = read(file);
-    if (text === null || text.includes(resolve(home))) return { instance: inst, offset: (n - 1) * 100 };
+    if (text !== null && text.includes(resolve(home))) return { instance: inst, offset };
+    if (text === null && !busy(BASE_PORTS.map((p) => p + offset)).length) return { instance: inst, offset };
   }
-  throw new Error(`every Bitcoin Arena service name up to --${tries} belongs to another node on this machine`);
+  throw new Error(`every Bitcoin Arena service name up to --${tries} belongs to another node on this machine, or its ports are in use`);
 }
 
 const homeNow = flag('--home') || env.ARENA_HOME || join(homedir(), '.arena-node');

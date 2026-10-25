@@ -51,14 +51,27 @@ test('a new node whose default service name belongs to another node folder takes
   const mine = '/Users/d/.arena-node', other = '<string>/Users/d/blwp-offload/mactest12/home/arena.conf</string>';
   const files = (m) => (f) => (f in m ? m[f] : null);
   const A = '/Users/d/Library/LaunchAgents/io.bitcoin-arena.node.plist', B = '/Users/d/Library/LaunchAgents/io.bitcoin-arena.node--2.plist';
-  const opts = (m) => ({ platform: 'darwin', env: { HOME: '/Users/d' }, read: files(m) });
+  const opts = (m, inUse = []) => ({ platform: 'darwin', env: { HOME: '/Users/d' }, read: files(m), busy: (ports) => ports.filter((p) => inUse.includes(p)) });
   assert.deepEqual(freeInstance(mine, opts({})), { instance: '', offset: 0 }, 'nothing there: the default name');
   assert.deepEqual(freeInstance(mine, opts({ [A]: other })), { instance: '2', offset: 100 }, 'the default is another node\'s: --2');
   assert.deepEqual(freeInstance(mine, opts({ [A]: other, [B]: other })), { instance: '3', offset: 200 });
   assert.deepEqual(freeInstance(mine, opts({ [A]: `<string>${mine}/arena.conf</string>` })), { instance: '', offset: 0 }, 'its own service: kept');
-  assert.deepEqual(freeInstance('/home/d/.arena-node', { platform: 'linux', env: { HOME: '/home/d' }, read: files({ '/home/d/.config/systemd/user/arena-node.service': 'WorkingDirectory=/opt/other' }) }),
+  // the owner's playtest 2026-10-25: --2's seat port 8570 belonged to mactest16b (its own name): --3; a port of the default in use: --2
+  assert.deepEqual(freeInstance(mine, opts({ [A]: other }, [8570])), { instance: '3', offset: 200 }, 'another node on --2\'s seat port: --3');
+  assert.deepEqual(freeInstance(mine, opts({}, [10009])), { instance: '2', offset: 100 }, 'the default\'s LND port in use: --2');
+  assert.deepEqual(freeInstance(mine, opts({ [A]: `<string>${mine}/arena.conf</string>` }, [8470])), { instance: '', offset: 0 }, 'its own ports are its own');
+  assert.deepEqual(freeInstance('/home/d/.arena-node', { platform: 'linux', env: { HOME: '/home/d' }, busy: () => [], read: files({ '/home/d/.config/systemd/user/arena-node.service': 'WorkingDirectory=/opt/other' }) }),
     { instance: '2', offset: 100 }, 'the same on Linux');
   assert.deepEqual(freeInstance(mine, { platform: 'win32', read: () => 'x' }), { instance: '', offset: 0 }, 'Windows keeps the default');
+});
+
+test('portsInUse finds a listener on this machine, and only it', async () => {
+  const { portsInUse } = await import('../src/instance.js');
+  const { createServer } = await import('node:net');
+  const s = createServer(); await new Promise((ok) => s.listen(0, '127.0.0.1', ok));
+  const taken = s.address().port, free = await new Promise((ok) => { const t = createServer(); t.listen(0, '127.0.0.1', () => { const p = t.address().port; t.close(() => ok(p)); }); });
+  assert.deepEqual(portsInUse([taken, free]), [taken]);
+  s.close();
 });
 
 test('the installer itself chooses: started as arena-install.mjs on a machine whose default unit is another node\'s, it is --2', { skip: process.platform !== 'linux' && process.platform !== 'darwin' }, async () => {
@@ -71,8 +84,14 @@ test('the installer itself chooses: started as arena-install.mjs on a machine wh
     const script = join(home, 'arena-install.mjs');
     wf(script, `const m = await import(${JSON.stringify(new URL('../src/instance.js', import.meta.url).href)}); console.log(JSON.stringify({ i: m.INSTANCE, o: m.PORT_OFFSET }));`);
     const run = () => JSON.parse(execFileSync(process.execPath, [script], { env: { PATH: process.env.PATH, HOME: home, ARENA_HOME: join(home, '.arena-node') }, encoding: 'utf8' }));
-    assert.deepEqual(run(), { i: '', o: 0 }, 'no unit there: the default');
+    // (this machine's own listeners count too: on the test host the live LND and Tor hold the default's 10009 and 19050, so expect what
+    // freeInstance answers for the same files with this machine's ports)
+    const { freeInstance } = await import('../src/instance.js');
+    const expect = (f) => { const r = freeInstance(join(home, '.arena-node'), { env: { HOME: home }, read: (x) => (x === unit ? f : null) }); return { i: r.instance, o: r.offset }; };
+    assert.deepEqual(run(), expect(null), 'no unit there: the default, or the first name with free ports');
     wf(unit, 'ExecStart=/opt/other/node src/main.js\nWorkingDirectory=/opt/other\n');
-    assert.deepEqual(run(), { i: '2', o: 100 }, 'another node\'s unit: --2, ports 100 up');
+    const other = run();
+    assert.deepEqual(other, expect('WorkingDirectory=/opt/other'), 'another node\'s unit: --2 or later, ports 100 up per number');
+    assert.notEqual(other.i, '', 'never the other node\'s name');
   } finally { rm(home, { recursive: true, force: true }); }
 });

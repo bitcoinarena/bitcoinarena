@@ -1,75 +1,56 @@
 #!/bin/bash
-# ARENA NODE ON macOS: THE APP (2026-10-19: "a small gui version of the installer that launches the browser"). Arena
-# Arena.app from bitcoin-arena-node-<version>-darwin-<arch>.dmg, dragged to Applications:
-#   1. its release is copied out of the app to ~/Library/ArenaNode/<release> - the node's services run it from there, never from the
-#      disk image or an app macOS may move (App Translocation) - and its quarantine mark is taken off (the app was opened by the user)
-#   2. no node yet: the installer runs in the background, its one-time link opens in the browser, and a dialog keeps it company:
-#      Open in browser / Stop, and the installer's last line; when it says Done, the node's status
-#   3. a node installed: `arenanode status` in a dialog, with Owner page / Restart / Close
-# Built-in parts only (osascript): nothing more to install.
+# ARENA NODE ON macOS: THE APP'S HELPER (2026-10-19: "a small gui version of the installer that launches the browser"). "Bitcoin
+# Arena.app" from bitcoin-arena-node-<version>-darwin-<arch>.dmg is a stay-open AppleScript applet (pkg/macos/app.applescript): it sits in
+# the Dock, with the running dot, while the installer runs (kanban #635, the owner's playtest 2026-10-25: "doesn't stay open, doesn't have an
+# icon that indicates that it is running"), and asks this script, beside it in Contents/Resources, for each step:
+#   start   copy the release out of the app to ~/Library/ArenaNode/<release> - the node's services run it from there, never from the disk
+#           image or an app macOS may move (App Translocation) - take its quarantine mark off, then print one line: "installed" (a node
+#           is set up), "running <link>" (an installer runs already) or "started <link>" (it started one, in the background); or fails
+#   state   "running", "done" (the installer says Done or a node is set up) or "ended <its last lines>"
+#   link    the installer's one-time link        stop     stop the installer
+#   status  `arenanode status`                    owner    open the owner page       restart   restart the node
+# Built-in parts only (bash, osascript): nothing more to install.
 APP="$(cd "$(dirname "$0")/../.." && pwd)"
-SRC=$(ls -d "$APP/Contents/Resources/release/"*arena-node-* 2>/dev/null | head -1)
-NAME=$(basename "$SRC")
 BASE="$HOME/Library/ArenaNode"
-DEST="$BASE/$NAME"
 H="$HOME/.arena-node"
 CMD="$H/bin/arenanode"
 LOG="$BASE/installer.log"
-say() { osascript -e "on run argv" -e "display dialog (item 1 of argv) with title \"Bitcoin Arena\" buttons {\"OK\"} default button 1" -e "end run" "$1" >/dev/null 2>&1; }
-ask() { # ask <text> <default button> <buttons...> [giving up after N in ASK_WAIT]: the button chosen, or "" when it gave up
-  local text=$1 def=$2; shift 2
-  local list; list=$(printf '"%s", ' "$@"); list="{${list%, }}"
-  osascript -e "on run argv" -e "set r to display dialog (item 1 of argv) with title \"Bitcoin Arena\" buttons $list default button \"$def\"${ASK_WAIT:+ giving up after $ASK_WAIT}" \
-    -e "if gave up of r then return \"\"" -e "return button returned of r" -e "end run" "$text" 2>/dev/null
-}
-
-[ -n "$SRC" ] || { say "This app holds no Bitcoin Arena release. Download the disk image again."; exit 1; }
-if [ ! -x "$DEST/runtime/node" ]; then
-  mkdir -p "$BASE" && rm -rf "$DEST.part" && cp -R "$SRC" "$DEST.part" && mv "$DEST.part" "$DEST" || { say "Could not copy the node to $BASE."; exit 1; }
-  xattr -dr com.apple.quarantine "$DEST" 2>/dev/null
-fi
+PIDF="$BASE/installer.pid"; LINKF="$BASE/installer.link"
 
 installed() { [ -x "$CMD" ] && [ -f "$H/arena.conf" ]; }
-status_dialog() {
-  while :; do
-    st=$("$CMD" status 2>&1 | head -24)
-    case $(ask "$st" "Owner page" "Restart" "Close" "Owner page") in
-      "Owner page") "$CMD" open >/dev/null 2>&1 ;;
-      "Restart") "$CMD" restart >/dev/null 2>&1 ;;
-      *) return ;;
-    esac
-  done
+running() { [ -f "$PIDF" ] && kill -0 "$(cat "$PIDF")" 2>/dev/null; }
+release() {
+  SRC=$(ls -d "$APP/Contents/Resources/release/"*arena-node-* 2>/dev/null | head -1)
+  [ -n "$SRC" ] || { echo "This app holds no Bitcoin Arena release. Download the disk image again." >&2; exit 1; }
+  DEST="$BASE/$(basename "$SRC")"
+  if [ ! -x "$DEST/runtime/node" ]; then
+    mkdir -p "$BASE" && rm -rf "$DEST.part" && cp -R "$SRC" "$DEST.part" && mv "$DEST.part" "$DEST" || { echo "Could not copy the node to $BASE." >&2; exit 1; }
+    xattr -dr com.apple.quarantine "$DEST" 2>/dev/null
+  fi
 }
-if installed; then status_dialog; exit 0; fi
 
-# THE INSTALLER, IN THE BACKGROUND - one per macOS: opened again while it runs, the app shows that one (its pid and link kept beside the log)
-PIDF="$BASE/installer.pid"; LINKF="$BASE/installer.link"
-notify() { osascript -e "on run argv" -e "display notification (item 1 of argv) with title \"Bitcoin Arena\"" -e "end run" "$1" >/dev/null 2>&1; }
-if [ -f "$PIDF" ] && kill -0 "$(cat "$PIDF")" 2>/dev/null; then
-  PID=$(cat "$PIDF"); LINK=$(cat "$LINKF" 2>/dev/null); SHOWN_ONLY=1
-else
-  : > "$LOG"
-  ARENA_NO_BROWSER=1 ARENA_CLOUDFLARED="$DEST/runtime/cloudflared" nohup "$DEST/runtime/node" "$DEST/packages/arena-installer/bin/arena-install.mjs" >> "$LOG" 2>&1 &
-  PID=$!; echo $PID > "$PIDF"
-  LINK=""
-  for _ in $(seq 1 60); do LINK=$(grep -oE 'https?://[^ ]+\?t=[A-Za-z0-9_-]+' "$LOG" | head -1); [ -n "$LINK" ] && break; kill -0 $PID 2>/dev/null || break; sleep 1; done
-  if [ -z "$LINK" ]; then rm -f "$PIDF"; say "The installer did not start: $(tail -3 "$LOG")"; exit 1; fi
-  echo "$LINK" > "$LINKF"
-  open "$LINK"
-fi
-# ONE DIALOG, THEN THE BACKGROUND (kanban #635, the owner's playtest 2026-10-25: "This small app is always in the foreground and is always
-# back in the center of the desktop" - it gave up after 20 s and asked again): shown once; Hide or Open in browser leave it quiet until
-# the installer ends; open the app again to see this dialog
-case $(ask "The installer runs. Its setup page is open in your browser. Keep it running until the page says Done - open Bitcoin Arena again to see this, or to stop it." "Hide" "Stop" "Open in browser" "Hide") in
-  "Open in browser") open "$LINK" ;;
-  "Stop") kill $PID 2>/dev/null; rm -f "$PIDF"; notify "The installer was stopped. Open Bitcoin Arena again to start it."; exit 0 ;;
+case "${1:-}" in
+  start)
+    release
+    if running; then echo "running $(cat "$LINKF" 2>/dev/null)"; exit 0; fi
+    if installed; then echo installed; exit 0; fi
+    : > "$LOG"
+    ARENA_NO_BROWSER=1 ARENA_CLOUDFLARED="$DEST/runtime/cloudflared" nohup "$DEST/runtime/node" "$DEST/packages/arena-installer/bin/arena-install.mjs" >> "$LOG" 2>&1 < /dev/null &
+    PID=$!; echo $PID > "$PIDF"
+    LINK=""
+    for _ in $(seq 1 60); do LINK=$(grep -oE 'https?://[^ ]+\?t=[A-Za-z0-9_-]+' "$LOG" | head -1); [ -n "$LINK" ] && break; kill -0 $PID 2>/dev/null || break; sleep 1; done
+    if [ -z "$LINK" ]; then kill $PID 2>/dev/null; rm -f "$PIDF"; echo "The installer did not start: $(tail -3 "$LOG")" >&2; exit 1; fi
+    echo "$LINK" > "$LINKF"
+    echo "started $LINK" ;;
+  state)
+    if grep -q '^Done\. Your node runs' "$LOG" 2>/dev/null; then rm -f "$PIDF"; echo done
+    elif running; then echo running
+    elif installed; then rm -f "$PIDF"; echo done
+    else rm -f "$PIDF"; echo "ended $(tail -3 "$LOG" 2>/dev/null)"; fi ;;
+  link) cat "$LINKF" 2>/dev/null ;;
+  stop) running && kill "$(cat "$PIDF")" 2>/dev/null; rm -f "$PIDF" ;;
+  status) "$CMD" status 2>&1 | head -24 ;;
+  owner) "$CMD" open >/dev/null 2>&1 ;;
+  restart) "$CMD" restart >/dev/null 2>&1 ;;
+  *) echo "usage: arena-node-app start|state|link|stop|status|owner|restart" >&2; exit 2 ;;
 esac
-# the first launch waits for its installer, quietly; a later launch (it found one running) only showed the dialog
-[ -n "${SHOWN_ONLY:-}" ] && exit 0
-while kill -0 $PID 2>/dev/null; do
-  grep -q '^Done\. Your node runs' "$LOG" && break
-  sleep 5
-done
-rm -f "$PIDF"
-sleep 2
-if installed; then notify "Your node runs. Open Bitcoin Arena to see its status."; else say "The installer ended: $(tail -3 "$LOG")"; fi
