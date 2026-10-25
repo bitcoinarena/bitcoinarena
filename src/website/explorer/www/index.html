@@ -37,6 +37,13 @@
   details.grp > summary .hint { margin-left: auto; font-size: 12px; }
   details.grp[open] > summary { margin-bottom: 8px; }
   th.n, td.n { text-align: right; }
+  /* the Metrics page (kanban #676): the links in the bar, three figures as cards, a bar per day */
+  .links { display: flex; gap: 4px; } .links a { color: var(--dim); padding: 6px 10px; border-radius: 8px; font-weight: 600; }
+  .links a.on, .links a:hover { color: var(--text); background: var(--panel); text-decoration: none; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .stat { display: flex; flex-direction: column; gap: 4px; margin: 0; } .stat span { color: var(--dim); font-size: 13px; }
+  .stat b { font-size: 26px; color: var(--btc); } .stat small { color: var(--dim); }
+  td.barcell { width: 40%; } .vbar { display: block; height: 10px; border-radius: 5px; background: linear-gradient(90deg, var(--btc), #ffd166); }
   /* A PHONE, NO SIDEWAYS SCROLL (kanban #628, 2026-10-24: "make the Explorer mobile friendly, I should not scroll horizontally"):
      every table's rows stacked, long ids and keys wrapped, the bar wrapped */
   @media (max-width: 640px) {

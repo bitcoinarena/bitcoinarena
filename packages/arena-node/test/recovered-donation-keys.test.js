@@ -172,3 +172,16 @@ test('the backfill of markets settled before: a market round with no reserve row
   assert.ok(out.some((r) => toHex(r.recipientPk) === toHex(RESERVE_PK) && String(r.amountMsat) === '333'), 'the reserve row was not kept');
   assert.deepEqual(await s.backfillMarketReserves({ paceMs: 0 }), { checked: 0, indexed: 0 }, 'a round was asked twice');
 });
+
+// THE WEBSITE'S PAYOUT TOO (kanban #676: "total referrer fees accumulated"): a settlement's 'frontend' line is a row under the website's
+// key, listed as 'website', beside the donation keys - the rows GET /referral-fees sums per website
+test('a settlement\'s website payout is indexed under the website\'s key, listed as "website"', () => {
+  const { round, out } = storeWith(new Map());
+  const site = new Uint8Array(33).fill(0x03);
+  const plan = { claims: PLAN.claims, payouts: [...PLAN.payouts, { kind: 'frontend', msat: 1500n, payoutPk: site, pubkey: site.subarray(1) }] };
+  const n = seat(round).indexDonationKeys(RID, TXID, plan);
+  assert.equal(n, 3);
+  const web = out.filter((r) => r.item === 'website');
+  assert.deepEqual(web.map((r) => [`${toHex(r.outpoint.txid)}:${r.outpoint.outIdx}`, String(r.amountMsat), toHex(r.recipientPk)]), [[`${TXID}:3`, '1500', toHex(site)]]);
+  assert.equal(out.filter((r) => !r.item).length, 2, 'the donation keys as before, with no item');
+});

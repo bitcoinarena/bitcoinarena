@@ -51,7 +51,9 @@ import { sendPlanToJson, planKey } from './winnings-send.js';
 import { askerOrder, eligibleAsker } from './payout.js';
 import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate } from './plan-taken.js';
 // the payouts of an accepted settlement kept as rows (GET /donations, GET /reserves): a walk-away's donation keys and a market's reserve
-const SETTLEMENT_ROW_KINDS = new Set(['donation key', 'reserve']);
+// AND THE WEBSITE THAT BROUGHT AN ENTRY (kanban #676: "total referrer fees accumulated" on the explorer's metrics): its 'frontend' payout is a row
+// under the website's payout key, listed as 'website', so the seats can say what each website earned (GET /referral-fees)
+const SETTLEMENT_ROW_KINDS = new Set(['donation key', 'reserve', 'frontend']);
 
 // WHO THE FEE LOCKS PAID: the signer nodes, and a market's donation keys - named apart
 const feeLine = (payouts) => {
@@ -1385,7 +1387,7 @@ export class LockSettlement {
     // row under the reserve key too, its entry id zeros (it is the round's, no one entry's)
     const rows = plan.payouts.map((p, i) => ({ p, i })).filter(({ p, i }) => SETTLEMENT_ROW_KINDS.has(p.kind) && (!only || only.has(i))).map(({ p, i }) => ({
       outpoint: { txid: fromHex(String(txid)), outIdx: BigInt(i) }, entryId: p.donation ? p.donation.id : new Uint8Array(32), roundId: roundIdBytes, federationId,
-      recipientPk: p.payoutPk, amountMsat: p.msat, contractId: `settlement:${i}`,
+      recipientPk: p.payoutPk, amountMsat: p.msat, contractId: `settlement:${i}`, ...(p.kind === 'frontend' ? { item: 'website' } : {}),
       // a market's donation names each filled order's part (kanban #580): its entry, its player key, the fee it paid (the weight)
       ...(p.donation && Array.isArray(p.donation.parts) && p.donation.parts.length ? { parts: p.donation.parts.map((x) => ({ entryId: String(x.entryId), playerPubkey: String(x.playerPubkey), feeMsat: String(x.feeMsat) })) } : {}) }));
     if (rows.length) this.round.putDonationOutputs(rows);

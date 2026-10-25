@@ -234,6 +234,41 @@ function Tx({ id }) {
   </>);
 }
 
+// ---- the metrics --------------------------------------------------------------------------------------------------------------------------
+// THE METRICS PAGE (kanban #676, 2026-10-25: "Explorer also shows volume in Sats / btc per day, current protocol reserve in sats / btc, and
+// total referrer fees accumulated in sats / btc. Moves to btc when it's over 1 million Satoshi", "This is On a metrics page")
+/** An amount as people read it: sats below 1,000,000 sat, BTC from there on. */
+export function amount(msat) {
+  if (msat === null || msat === undefined) return '–';
+  const s = BigInt(msat) / 1000n;
+  if (s < 1000000n) return Number(s).toLocaleString('en-US') + ' sat';
+  return (Number(s) / 1e8).toFixed(8).replace(/0+$/, '').replace(/\.$/, '') + ' BTC';
+}
+export function Metrics({ data = null }) {
+  const [m, setM] = useState(data || given.metrics || null);
+  const [err, setErr] = useState(null);
+  useEffect(() => { if (data || given.metrics) return; fetch('/api/metrics').then((r) => r.json()).then(setM, (e) => setErr(e.message)); }, []);
+  if (!m) return <p className="dim">{err ? 'Could not read the metrics: ' + err : 'Reading …'}</p>;
+  const most = (m.volume || []).reduce((t, d) => (BigInt(d.msat) > t ? BigInt(d.msat) : t), 1n);
+  return (<>
+    <h1>Metrics</h1>
+    <div className="stats">
+      <div className="card stat"><span>Volume today</span><b>{amount(m.volume && m.volume[0] && m.volume[0].day === new Date().toISOString().slice(0, 10) ? m.volume[0].msat : '0')}</b></div>
+      <div className="card stat"><span>Protocol reserve</span><b>{m.reserve ? amount(m.reserve.msat) : '–'}</b>
+        <small>{m.reserve ? m.reserve.federations.length + (m.reserve.federations.length === 1 ? ' federation' : ' federations') : 'not read yet'}</small></div>
+      <div className="card stat"><span>Referral fees paid</span><b>{m.referral ? amount(m.referral.msat) : '–'}</b>
+        <small>{m.referral ? m.referral.sites.length + (m.referral.sites.length === 1 ? ' website' : ' websites') : 'not read yet'}</small></div>
+    </div>
+    <h2>Volume per day <span className="dim">stakes of every transaction, UTC days</span></h2>
+    <div className="card">{(m.volume || []).length ? (<table className="rows"><thead><tr><th>Day</th><th>Transactions</th><th>Volume</th><th /></tr></thead><tbody>
+      {m.volume.map((d) => <tr key={d.day}><td className="nw">{d.day}</td><td>{d.txs.toLocaleString('en-US')}</td><td className="nw"><b>{amount(d.msat)}</b></td>
+        <td className="barcell"><i className="vbar" style={{ width: Math.max(1, Number((BigInt(d.msat) * 100n) / most)) + '%' }} /></td></tr>)}</tbody></table>) : <p className="dim">No transactions yet.</p>}</div>
+    {m.referral && m.referral.sites.length ? (<><h2>Referral fees by website</h2><div className="card"><table className="rows"><thead><tr><th>Website key</th><th>Payouts</th><th>Earned</th></tr></thead><tbody>
+      {m.referral.sites.map((x) => <tr key={x.site}><td className="mono">{x.site.slice(0, 16)}…</td><td>{x.payouts}</td><td className="nw"><b>{amount(x.msat)}</b></td></tr>)}</tbody></table></div></>) : null}
+    {m.readAt ? <p className="dim">Reserve and referral fees read from {m.seats ? m.seats.reserves + ' of ' + m.seats.of : 'the'} nodes {ago(Date.parse(m.readAt))}.</p> : null}
+  </>);
+}
+
 function Find() {
   const [q, setQ] = useState('');
   return (<form onSubmit={(e) => { e.preventDefault(); const v = q.trim().toLowerCase(); if (/^[0-9a-f]{64}$/.test(v)) location.href = '/tx/' + v; }}>
@@ -242,9 +277,11 @@ function Find() {
 
 function App() {
   const m = /^\/tx\/([0-9a-f]{64})\/?$/.exec(location.pathname);
+  const metrics = /^\/metrics\/?$/.test(location.pathname);
   return (<>
-    <nav><div className="in"><a className="brand" href="/"><i>₿</i>Arena Explorer</a><Find /></div></nav>
-    <main>{m ? <Tx id={m[1]} /> : <List />}</main>
+    <nav><div className="in"><a className="brand" href="/"><i>₿</i>Arena Explorer</a>
+      <span className="links"><a href="/" className={!m && !metrics ? 'on' : undefined}>Transactions</a><a href="/metrics" className={metrics ? 'on' : undefined}>Metrics</a></span><Find /></div></nav>
+    <main>{m ? <Tx id={m[1]} /> : metrics ? <Metrics /> : <List />}</main>
   </>);
 }
 
