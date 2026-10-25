@@ -105,18 +105,25 @@ export function createBridge({ electrum, fallbacks = [], home, esplora = ESPLORA
   mkdirSync(blocksDir, { recursive: true });
   const headers = new Map();       // height -> { hash, header (Buffer) }
   const heightOf = new Map();      // hash -> height
-  let tip = null, s = null, opening = null;
+  let tip = null, s = null, opening = null, sAt = 0;
   const conn = async () => {
     if (s) return s;
-    if (!opening) opening = session({ ...current(), timeoutMs: 20000 }).then((x) => { s = x; opening = null; return x; }, (e) => { opening = null; throw e; });
+    if (!opening) { const tried = at; opening = session({ ...current(), timeoutMs: 20000 }).then((x) => { s = x; sAt = tried; opening = null; return x; }, (e) => { opening = null; e.at = tried; throw e; }); }
     return opening;
   };
+  // ONE FAILURE MOVES ON ONCE (the owner's playtest 2026-10-25: the bridge said "blackie.c3-soft.com:57010 failed (mempool.space:40002 did
+  // not answer in 20000 ms)" - every call waiting on one failed server moved the bridge on, so one timeout skipped servers never tried):
+  // only the first failure of the server in use moves to the next one; the others waiting on it just fail with it
   const ask = async (method, params) => {
-    try { return await (await conn()).call(method, params); }
+    let used = at;
+    try { const x = await conn(); used = sAt; return await x.call(method, params); }
     catch (e) {
-      if (s) { try { s.close(); } catch { /* gone */ } } s = null;
-      const failed = current();
-      if (servers.length > 1) { at += 1; log(`[bridge] ${failed.host}:${failed.port} failed (${e.message}); next: ${current().host}:${current().port}`); }
+      if (Number.isInteger(e.at)) used = e.at;
+      const failed = servers[used % servers.length];
+      if (used === at) {
+        if (s) { try { s.close(); } catch { /* gone */ } } s = null;
+        if (servers.length > 1) { at += 1; log(`[bridge] ${failed.host}:${failed.port} failed (${e.message}); next: ${current().host}:${current().port}`); }
+      }
       throw new Error(`the Electrum server ${failed.host}:${failed.port}: ${e.message}`);
     }
   };

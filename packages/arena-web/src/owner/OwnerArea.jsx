@@ -42,6 +42,7 @@ export class OwnerArea extends React.Component {
       <div className="layout">
         <nav className="side" id="side">{SECTIONS.filter(([id]) => id !== 'money' || p.hasDevs).map(([id, t]) => <a key={id} href={'#' + id} data-s={id} className={on === id ? 'on' : undefined}>{t}<span className={'dot' + (dots.has(id) ? ' d-' + dots.get(id) : '')} id={'dot-' + id} /></a>)}</nav>
         <main>
+          <Place id="setup-banner-place" className={null} />
           {sec('overview', <><h2>Overview</h2>
             <Place id="setup-place" className={null} />
             <div className="card" id="needs">{p.needs ? <NeedsPanel items={p.needs} /> : <p className="sub">checking this node…</p>}</div>

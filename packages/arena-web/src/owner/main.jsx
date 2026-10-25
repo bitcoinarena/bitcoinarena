@@ -44,7 +44,7 @@ export function mountAddress(element, { api, initial } = {}) {
   return root;
 }
 // THE SETUP CARD ON THE OVERVIEW (playtest 2026-10-25: the dashboard's card "auch in der owners area")
-export function mountSetup(element, { api, initial } = {}) { const root = createRoot(element); root.render(<SetupCard api={api} initial={initial} />); return root; }
+export function mountSetup(element, { api, initial, banner } = {}) { const root = createRoot(element); root.render(<SetupCard api={api} initial={initial} banner={banner} />); return root; }
 export function mountBond(element, { api, initial } = {}) {
   const root = createRoot(element);
   root.render(<BondPanel api={api} initial={initial} />);
