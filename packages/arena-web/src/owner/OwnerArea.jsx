@@ -11,7 +11,7 @@ import React from 'react';
 import { NeedsPanel, ordered } from './NeedsPanel.jsx';
 
 export const SECTIONS = [['overview', 'Overview'], ['roles', 'Roles'], ['bond', 'Bond'], ['services', 'Services'], ['apps', 'Apps'], ['release', 'Updates'],
-  ['money', 'Donations'], ['emergency', 'Emergency code'], ['leave', 'Leave'], ['developer', 'Developer'], ['login', 'Your login']];
+  ['money', 'Donations'], ['referrer', 'Referrer'], ['emergency', 'Emergency code'], ['leave', 'Leave'], ['developer', 'Developer'], ['login', 'Your login']];
 const HOW = { words: 'your 24 words', nsec: 'Nostr (nsec)', extension: 'Nostr (extension)', bunker: 'Nostr (remote signer)' };
 /** a place a panel is drawn into: React draws it empty and never touches what the page puts in it */
 const Place = ({ id, className = 'card' }) => <div className={className || undefined} id={id} />;
@@ -87,6 +87,8 @@ export class OwnerArea extends React.Component {
               : <p className="sub">You signed in without your 24 words{p.how === 'nsec' ? '' : ' or nsec'}, so this browser can't show the code. Sign in with them to see it, or use the code the installer showed you.</p>}
             <p className="sub">The code only takes your node out. It can't move money or change settings. Never type your 24 words on another node.</p>
             <p className="sub">Site down? Every node has the same page at <a href={p.emergencyLink}>/Dashboard/emergency</a>.</p></div></>)}
+          {/* REFERRAL PROGRAMS (kanban #675): drawn by ReferrerPanel from GET /owner/dev, its clients of kind 'referrer' */}
+          {sec('referrer', <><h2>Referrer</h2><Place id="referrer" className={null} /></>)}
           {sec('leave', <><h2>Leave</h2><Place id="leave" /></>)}
           {sec('developer', <><h2>Developer</h2>
             {/* A DEVELOPER ON THIS NODE (kanban #582): a dev client (a protocol or app recipient) or a game developer's key - then Donations shows */}

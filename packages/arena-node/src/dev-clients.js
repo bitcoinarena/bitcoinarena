@@ -206,8 +206,13 @@ export function createDevClients({ root, donorBin, nodeBin = process.execPath, d
     startAll() { for (const s of readdirSync(root)) if (isClient(s)) start(s); },
     stopAll() { for (const [, h] of running) { h.stopping = true; try { h.child.kill('SIGTERM'); } catch { /* gone */ } } running.clear(); },
 
-    /** A NEW CLIENT: { label, secretHex? , minWithdrawMsat? }. Answers { ok, slug, recipientPk, imported } or { ok: false, why }. */
-    setup({ label, secretHex, minWithdrawMsat } = {}) {
+    /**
+     * A NEW CLIENT: { label, secretHex? , minWithdrawMsat?, kind? }. Answers { ok, slug, recipientPk, imported } or { ok: false, why }.
+     * A REFERRAL PROGRAM (kanban #675) is a client of kind 'referrer': its key is the website key a page names in its entries, and the client
+     * redeems the website's payouts under it as it redeems donations, and withdraws them over Lightning.
+     */
+    setup({ label, secretHex, minWithdrawMsat, kind = 'dev' } = {}) {
+      if (kind !== 'dev' && kind !== 'referrer') return { ok: false, status: 400, why: 'a client is a dev client or a referral program' };
       const slug = slugOf(label);
       if (!SLUG.test(slug)) return { ok: false, status: 400, why: 'a label of letters and digits (up to 32)' };
       if (existsSync(dirOf(slug))) return { ok: false, status: 409, why: `a dev client "${slug}" exists on this node` };
@@ -229,11 +234,18 @@ export function createDevClients({ root, donorBin, nodeBin = process.execPath, d
       writeJson(join(dir, 'donor.json'), {
         label: String(label), recipientPkHex: k.recipientPkHex, seats: defaults.seats || [], invites: defaults.invites || {},
         invitesFrom: defaults.invitesFrom || [], gateways: defaults.gateways || [], wasmPkg: defaults.wasmPkg,
-        minWithdrawMsat: String(minWithdrawMsat || '10000'), intervalSec: 300, imported, setUpBy: 'owner page', setUpAt: new Date().toISOString(),
+        minWithdrawMsat: String(minWithdrawMsat || '10000'), intervalSec: 300, imported, setUpBy: 'owner page', setUpAt: new Date().toISOString(), kind,
       });
       log(`[dev] client ${slug} set up by the owner (${imported ? 'an imported key' : 'a new key'} ${k.recipientPkHex.slice(0, 16)})`);
       start(slug);
       return { ok: true, slug, recipientPk: k.recipientPkHex, imported };
+    },
+
+    /** A client's key and label, to sign with it (a referral program's name, kanban #675): { secretHex, recipientPkHex, label } or null. */
+    keyOf(slug) {
+      if (!isClient(String(slug))) return null;
+      const k = readJson(join(dirOf(String(slug)), 'key.json'));
+      return k && /^[0-9a-f]{64}$/.test(k.secretHex || '') ? { secretHex: k.secretHex, recipientPkHex: k.recipientPkHex, label: k.label } : null;
     },
 
     /** THE OWNER'S WITHDRAWAL: { slug, invoice | lnAddress, msat?, federation? }, left for the client; answered in its state. */
@@ -312,7 +324,14 @@ export function createDevClients({ root, donorBin, nodeBin = process.execPath, d
           const rows = existsSync(join(dir, 'donations.jsonl')) ? readFileSync(join(dir, 'donations.jsonl'), 'utf8').split('\n').filter((l) => l.trim()).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean) : [];
           split = attribute(rows, cfg.recipientPkHex);
         }
-        return { slug, ...snap, imported: !!cfg.imported, running: !!h, pid: h ? h.child.pid : null,
+        // A REFERRAL PROGRAM'S EARNINGS (kanban #675): the website payouts its client found under its key
+        let referral = null;
+        if (cfg.kind === 'referrer') {
+          const rows = existsSync(join(dir, 'donations.jsonl')) ? readFileSync(join(dir, 'donations.jsonl'), 'utf8').split('\n').filter((l) => l.trim()).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean) : [];
+          const web = rows.filter((r) => r.item === 'website');
+          referral = { msat: String(web.reduce((t, r) => t + BigInt(r.amountMsat || 0), 0n)), payouts: web.length };
+        }
+        return { slug, kind: cfg.kind || 'dev', referral, ...snap, imported: !!cfg.imported, running: !!h, pid: h ? h.child.pid : null,
           waiting: existsSync(join(dir, 'withdraw-request.json')), requests: (state.requests || []).slice().reverse(), split };
       });
     },
