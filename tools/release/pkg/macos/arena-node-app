@@ -1,6 +1,6 @@
 #!/bin/bash
 # ARENA NODE ON macOS: THE APP'S HELPER (2026-10-19: "a small gui version of the installer that launches the browser"). "Bitcoin
-# Arena.app" from bitcoin-arena-node-<version>-darwin-<arch>.dmg is a stay-open AppleScript applet (pkg/macos/app.applescript): it sits in
+# Arena.app" from bitcoin-arena-node-<version>-darwin-<arch>.dmg is a native app (pkg/macos/App.swift): it sits in
 # the Dock, with the running dot, while the installer runs (kanban #635, the owner's playtest 2026-10-25: "doesn't stay open, doesn't have an
 # icon that indicates that it is running"), and asks this script, beside it in Contents/Resources, for each step:
 #   start   copy the release out of the app to ~/Library/ArenaNode/<release> - the node's services run it from there, never from the disk
