@@ -32,7 +32,7 @@ export class ChainStep extends React.Component {
     const r = await this.props.post('/api/core/plan');   // a Core installed by an earlier visit: straight to its sync
     if (r && r.core) { this.setState({ kind: 'install', sync: { networks: {} } }); this.watch(); }
   }
-  componentWillUnmount() { this.gone = true; clearTimeout(this.timer); }
+  componentWillUnmount() { this.gone = true; clearTimeout(this.timer); clearInterval(this.progTimer); }
   async kind(k) {
     this.setState({ kind: k, msg: null });
     if (k !== 'install' || this.state.plan) return;
@@ -68,9 +68,18 @@ export class ChainStep extends React.Component {
     if (r.ok) return this.props.reload();
     this.setState({ msg: { ok: false, text: r.result ? chainText(r) : r.why } });
   }
+  // BITCOIN CORE'S INSTALL WITH ITS BAR (the owner's playtest 2026-10-25, "Downloading Bitcoin Core and checking it…": "Füge auch hier
+  // eine Progress Bar hinzu"): GET /api/core/progress every second while POST /api/core/install runs - the download by its megabytes
+  async coreProgress() {
+    if (!this.props.get || this.gone) return;
+    const p = await this.props.get('/api/core/progress');
+    if (!this.gone && p && p.ok) this.setState({ coreProg: p });
+  }
   async install() {
-    this.setState({ installing: true, msg: { ok: true, text: 'Downloading Bitcoin Core and checking it…' } });
+    this.setState({ installing: true, msg: null, coreProg: null });
+    clearInterval(this.progTimer); this.progTimer = setInterval(() => this.coreProgress(), 1000);
     const r = await this.props.post('/api/core/install', { prune: this.state.prune, mainnet: this.state.mainnet, dir: this.state.dir });
+    clearInterval(this.progTimer); await this.coreProgress();
     if (!r.ok) return this.setState({ installing: false, msg: said(r) });
     // THE SYNC RUNS IN THE BACKGROUND (kanban #635): with an Electrum server standing in, setup goes on at once
     if (r.interim) return this.props.reload();
@@ -126,7 +135,8 @@ export class ChainStep extends React.Component {
         <label className="choice"><input type="checkbox" checked={prune} onChange={(e) => this.setState({ prune: e.target.checked })} /><div><b>Pruned</b><p>Keeps only the newest blocks. Uses a few GB instead of the whole chain. Your node works the same.</p></div></label>
         <label className="choice"><input type="checkbox" checked={mainnet} onChange={(e) => this.setState({ mainnet: e.target.checked })} /><div><b>Also mainnet</b><p>A second Bitcoin Core for mainnet, for later. Bitcoin Arena runs on testnet4 for now.</p></div></label>
         <p className="sub">Setup goes on while Bitcoin Core syncs. Until then your node reads the chain from a public server, and it switches to your own Bitcoin Core by itself when the sync is done. Your dashboard shows the progress.</p>
-        <button type="button" disabled={installing} onClick={this.install}>Install Bitcoin Core</button>
+        <button type="button" disabled={installing} onClick={this.install}>{installing ? 'Installing Bitcoin Core…' : 'Install Bitcoin Core'}</button>
+        {this.state.coreProg && this.state.coreProg.elapsedMs !== undefined ? <ServiceProgress id="core-progress" progress={this.state.coreProg} hints={CORE_HINT} budgets={CORE_BUDGET} weights={CORE_WEIGHT} slowAt={{}} /> : null}
       </div>);
   }
   render() {
@@ -262,23 +272,36 @@ const STAGE_HINT = {
   login: 'Setup logs in once with your owner key, to check that the node knows you as its owner.',
 };
 const secs = (ms) => `${Math.round((ms || 0) / 1000)} s`;
+export const CORE_HINT = {
+  download: 'The official release, straight from bitcoincore.org.',
+  check: 'Setup compares the file with the checksum bitcoincore.org publishes, so it runs only the real Bitcoin Core.',
+  unpack: 'The program goes into your node\'s folder.',
+  services: 'Bitcoin Core becomes a service of this computer and starts syncing in the background.',
+  chain: 'Until Bitcoin Core has synced, your node reads the chain from a public server. Setup finds one that answers.',
+};
+const CORE_BUDGET = { download: 120000, check: 3000, unpack: 10000, services: 10000, chain: 20000 };
+const CORE_WEIGHT = { download: 70, check: 3, unpack: 7, services: 12, chain: 8 };
 /** The share of the work done: finished stages, plus a part of the running one (by its usual time: the node's start up to 90 s). */
-export function progressShare(p, budgets = { start: 90000 }) {
+export function progressShare(p, budgets = { start: 90000 }, weights = null) {
   const st = (p && p.stages) || [];
   const counted = st.filter((x) => x.state !== 'skipped');
   if (!counted.length) return 0;
-  const done = counted.filter((x) => x.state === 'done').length;
+  // each stage by its weight where one is given (Bitcoin Core's download is most of its install), else all alike
+  const wt = (x) => (weights && weights[x.id]) || 1;
+  const all = counted.reduce((a, x) => a + wt(x), 0);
+  const done = counted.filter((x) => x.state === 'done').reduce((a, x) => a + wt(x), 0);
   const now = counted.find((x) => x.state === 'now');
-  const part = now ? Math.min(0.95, (now.ms || 0) / (budgets[now.id] || 20000)) : 0;
-  return Math.min(1, (done + part) / counted.length);
+  // a stage that counts its own share (a download by its bytes) says it; any other one by its usual time
+  const part = !now ? 0 : typeof now.part === 'number' ? Math.min(0.99, Math.max(0, now.part)) : Math.min(0.95, (now.ms || 0) / (budgets[now.id] || 20000));
+  return Math.min(1, (done + part * (now ? wt(now) : 0)) / all);
 }
 export class ServiceProgress extends React.Component {
   render() {
     const p = this.props.progress;
     if (!p || !p.stages) return null;
-    const { hints = STAGE_HINT, budgets, slowAt = { start: 45000 }, slowText = 'Your node takes longer than usual. Setup waits up to 90 seconds, then says what stopped it.',
+    const { hints = STAGE_HINT, budgets, weights, slowAt = { start: 45000 }, slowText = 'Your node takes longer than usual. Setup waits up to 90 seconds, then says what stopped it.',
       logOf = 'The node\'s last messages:', id = 'svc-progress' } = this.props;
-    const share = progressShare(p, budgets);
+    const share = progressShare(p, budgets, weights);
     const mark = { done: '✓', now: '…', failed: '✗', skipped: '–', todo: '○' };
     const slow = p.stages.find((x) => x.state === 'now' && slowAt[x.id] && x.ms > slowAt[x.id]);
     return (
@@ -288,7 +311,7 @@ export class ServiceProgress extends React.Component {
         <ol className="stages">
           {p.stages.filter((x) => x.state !== 'skipped').map((x) => (
             <li key={x.id} className={`stage ${x.state}`}>
-              <span className="mark">{mark[x.state] || '○'}</span> <b>{x.label}</b>{x.state === 'now' || x.state === 'done' || x.state === 'failed' ? ` · ${secs(x.ms)}` : ''}
+              <span className="mark">{mark[x.state] || '○'}</span> <b>{x.label}</b>{x.state === 'now' && x.text ? ` · ${x.text}` : ''}{x.state === 'now' || x.state === 'done' || x.state === 'failed' ? ` · ${secs(x.ms)}` : ''}
               {(x.state === 'now' || x.state === 'failed') && hints[x.id] ? <p className="sub">{hints[x.id]}</p> : null}
             </li>))}
         </ol>

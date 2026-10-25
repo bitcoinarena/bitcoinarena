@@ -43,6 +43,7 @@ export class OwnerArea extends React.Component {
         <nav className="side" id="side">{SECTIONS.filter(([id]) => id !== 'money' || p.hasDevs).map(([id, t]) => <a key={id} href={'#' + id} data-s={id} className={on === id ? 'on' : undefined}>{t}<span className={'dot' + (dots.has(id) ? ' d-' + dots.get(id) : '')} id={'dot-' + id} /></a>)}</nav>
         <main>
           {sec('overview', <><h2>Overview</h2>
+            <Place id="setup-place" className={null} />
             <div className="card" id="needs">{p.needs ? <NeedsPanel items={p.needs} /> : <p className="sub">checking this node…</p>}</div>
             {/* THE NODE AT A GLANCE (kanban #565): one card per fact, the label small, the value large */}
             <div className="stats">

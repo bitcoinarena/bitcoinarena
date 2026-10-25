@@ -268,6 +268,7 @@ async function area() {
     devKey: devPub ? C.toHex(devPub) : null,
     signManifest: (text) => { const out = C.signManifestWithSeed(C.bodyFromJson(text, { devPubkey: devPub }), devSeed); window.OWNER_SIGNED = out; return out; } };
   drawArea();
+  setupPanel();
   rolesPanel();
   if (who.how === 'words') keySwitchPanel();   // a node of 24 words may move to their key (kanban #650); a Nostr login has no words here
   donations();
@@ -307,6 +308,8 @@ function releasePanel() {
   mount('release', 'mountRelease', { api: { get: getJson }, onNewer: (v) => need('release', v ? 'warn' : null, `A new release is out: ${v || ''}.`, 'release') });
 }
 // THE BOND AND ITS LOCK (2026-10-18): the bond, locked until its maturity block, withdrawn after it to an address the owner names
+// THE SETUP'S PROGRESS ON THE OVERVIEW (playtest 2026-10-25: the dashboard's Setup card "auch in der owners area")
+function setupPanel() { mount('setup-place', 'mountSetup', { api: { get: getOrNull } }); }
 function bondPanel() { mount('bond', 'mountBond', { api: { get: getOk, post, signed } }); }
 
 // THE CAPACITY PLEA (§23A.3a, kanban #543): when a federation this node guards fills up, or the network does, the seat says how much

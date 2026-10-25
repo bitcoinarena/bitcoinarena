@@ -42,3 +42,25 @@
 .aw.done .done-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin:8px 0 14px}.aw.done .done-card{border:1px solid var(--line);border-radius:14px;padding:14px 16px;background:var(--bg);min-width:0}
 .aw.done .done-card-head{display:flex;gap:8px;align-items:center;margin-bottom:6px}.aw.done .done-card a{word-break:break-all}.aw.done .done-card .big{font-size:20px;font-weight:700;margin:2px 0}.aw.done .done-card p{margin:4px 0}.aw.done .mono{font-family:ui-monospace,monospace;word-break:break-all}
 .aw.done .done-more{margin-top:6px}.aw.done .done-more summary{cursor:pointer;color:var(--muted)}.aw.done .done-more ul{margin:6px 0;padding-left:18px}
+/* the emergency step (playtest 2026-10-25): the code in a coloured box, the rest in two short cards */
+.aw .em-code{border:2px solid var(--gv);background:rgba(247,147,26,.10);border-radius:12px;padding:14px 16px;margin:12px 0 16px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px}
+.aw .em-code .em-label{flex-basis:100%;font:600 12px system-ui;letter-spacing:.06em;text-transform:uppercase;color:var(--gv)}
+.aw .em-code .code{flex:1 1 260px;margin:0;font:700 20px/1.4 ui-monospace,monospace;letter-spacing:.05em;color:var(--text);overflow-wrap:anywhere}
+.aw .em-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:0 0 16px}
+.aw .em-card{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--bg)}
+.aw .em-card p{margin:6px 0 0;font-size:14px;color:var(--dim)}.aw .em-card p b{color:var(--text)}
+/* the gateway's own page (playtest 2026-10-25): LND's state in one line above it */
+.aw .gw-done{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border:1px solid var(--ok);border-radius:999px;font-size:14px;margin:0 0 12px}.aw .gw-done .ok{color:var(--ok)}
+.aw button.link{background:none;border:0;padding:0;color:var(--gv);text-decoration:underline;cursor:pointer;font:inherit}
+/* the bond step (playtest 2026-10-25: "Less wall of text and clearer and more colorful"): numbered step cards, the deposit's parts as tiles */
+.aw ol.steps3{list-style:none;padding:0;margin:10px 0 14px;display:grid;gap:10px}
+.aw ol.steps3>li{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--bg)}
+.aw ol.steps3 .n{flex:0 0 28px;height:28px;border-radius:50%;display:grid;place-items:center;font:700 14px system-ui;background:var(--gv);color:#111}
+.aw ol.steps3>li>div{flex:1;min-width:0}.aw ol.steps3 .sub{margin:6px 0 0}
+.aw .addr-copy{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px}.aw .addr-copy code{flex:1 1 240px;padding:6px 8px;border-radius:8px;background:var(--card);word-break:break-all}
+.aw .faucets{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}.aw a.faucet{padding:5px 12px;border-radius:999px;border:1px solid var(--st);color:var(--st);text-decoration:none;font-size:14px}
+.aw .covers{margin:6px 0 14px}.aw .cover-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px;margin:8px 0 4px}
+.aw .cover{border-radius:12px;padding:10px 12px;border:1px solid var(--line);border-left-width:4px;background:var(--bg);display:flex;flex-direction:column;gap:2px}
+.aw .cover .amt{font:700 16px system-ui}.aw .cover .what{font-weight:600}.aw .cover .why{font-size:13px;color:var(--dim)}
+.aw .cover.c-bond{border-left-color:var(--gv)}.aw .cover.c-pegIn{border-left-color:#a371f7}.aw .cover.c-ring,.aw .cover.c-outside{border-left-color:var(--st)}
+.aw .cover.c-advertUpdate,.aw .cover.c-custodyUpdate{border-left-color:var(--ok)}.aw .cover.c-fees{border-left-color:var(--muted)}
