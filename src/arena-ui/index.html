@@ -6702,8 +6702,23 @@
         if (!cur || cur.slice(0, 16) !== m.phrase || m.to === m.phrase) return;
         const reply = (o) => handover.postMessage(Object.assign({ kind: 'said', id: m.id }, o));
         if (window.ARENA_UNITY_LOBBY && window.ARENA_UNITY_LOBBY.showing === false) return reply({ ok: false, why: 'a round is running in that tab' });
-        const c = window.ARENA_WALLETS && window.ARENA_WALLETS.get(m.fed);
-        if (!c || typeof c.sendAllEcash !== 'function') return reply({ ok: false, why: 'that tab has no wallet open in federation ' + m.fed.slice(0, 8) });
+        let c = window.ARENA_WALLETS && window.ARENA_WALLETS.get(m.fed);
+        // NOT OPEN HERE YET: this tab holds the phrase, so it is the one that may open that federation's wallet - opened with the verified
+        // record's invite, 30 s at most, then handed over (kanban #631, measured on live UI 394: "that tab has no wallet open in federation
+        // 337ae01a" and the merge stayed stuck for good)
+        if (!c || typeof c.sendAllEcash !== 'function') {
+          const st = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.get(m.fed);
+          const inv = (st && st.invite) || (ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(vault(), m.fed) : null);
+          if (inv && ARENACLIENT.openPlayerWallet && window.ARENA_LOCK_WASM) {
+            try {
+              const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
+              c = await Promise.race([ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(m.fed), invite: inv, seed: ARENACLIENT.fromHex(cur), LockClient: wasm.LockClient, storage: vault() }),
+                new Promise((_, no) => setTimeout(() => no(new Error('it did not open in 30 s')), 30000))]);
+              if (c && window.ARENA_KEEP_WALLET) window.ARENA_KEEP_WALLET(m.fed, c);
+            } catch (e) { return reply({ ok: false, why: 'that tab could not open its wallet in federation ' + m.fed.slice(0, 8) + ': ' + (e && e.message ? e.message : e) }); }
+          }
+        }
+        if (!c || typeof c.sendAllEcash !== 'function') return reply({ ok: false, why: 'that tab has no wallet open in federation ' + m.fed.slice(0, 8) + ' and no invite to open one' });
         try {
           const sent = JSON.parse(await c.sendAllEcash());
           if (!sent.ecash) return reply({ ok: true, msat: '0' });
@@ -6715,7 +6730,7 @@
           if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES();
         } catch (e) { reply({ ok: false, why: 'that tab could not send its notes: ' + (e && e.message ? e.message : e) }); }
       });
-      window.ARENA_ASK_HANDOVER = (phrase16, fed, to16, ms = 20000) => new Promise((done) => {
+      window.ARENA_ASK_HANDOVER = (phrase16, fed, to16, ms = 45000) => new Promise((done) => {
         if (!handover) { done({ ok: false, why: 'this browser has no channel between tabs' }); return; }
         const id = Math.random().toString(36).slice(2);
         const on = (ev) => { const m = ev.data || {}; if (m.kind === 'said' && m.id === id) { clearTimeout(t); handover.removeEventListener('message', on); done(m); } };
