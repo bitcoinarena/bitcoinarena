@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-# THE macOS PACKAGE: bitcoin-arena-node-<v>-darwin-<arch>.dmg - "Bitcoin Arena.app" (kanban #635: the name people see; the file keeps its name) (the applet pkg/macos/app.applescript, its helper pkg/macos/arena-node-app and the release inside it)
+# THE macOS PACKAGE: bitcoin-arena-node-<v>-darwin-<arch>.dmg - "Bitcoin Arena.app" (kanban #635: the name people see; the file keeps its name) (the native app pkg/macos/App.swift, its helper pkg/macos/arena-node-app and the release inside it)
 # and a link to Applications, to drag it to. Made with hdiutil, so on a macOS (CI: the macos runner). Its line goes into
 # <out>/SHA256SUMS.packages. Usage: package-mac.sh <version> <out dir with the darwin assets>
 set -euo pipefail
@@ -15,27 +15,36 @@ for s in 16 32 128 256 512; do
   sips -z $((s * 2)) $((s * 2)) "$HERE/pkg/icon/bitcoin-arena-1024.png" --out "$IS/icon_${s}x${s}@2x.png" >/dev/null
 done
 iconutil -c icns "$IS" -o "$WORK/AppIcon.icns"
+# THE APP ITSELF (the owner's playtest 2026-10-25: "It should look like a real app with the options" - "clicking Close seems to restart
+# the app, it never closes/quits, Command+Q doesn't do anything"): pkg/macos/App.swift, a native AppKit window, one universal binary
+swiftc -O -swift-version 5 -target arm64-apple-macos12 -framework AppKit -o "$WORK/app-arm64" "$HERE/pkg/macos/App.swift"
+swiftc -O -swift-version 5 -target x86_64-apple-macos12 -framework AppKit -o "$WORK/app-x64" "$HERE/pkg/macos/App.swift"
+lipo -create "$WORK/app-arm64" "$WORK/app-x64" -output "$WORK/Bitcoin Arena"
 for arch in arm64 x64; do
   R=bitcoin-arena-node-$V-darwin-$arch
   [ -f "$OUT/$R.tar.gz" ] || { echo "no $R.tar.gz: skipped"; continue; }
   D=$WORK/$arch; APP="$D/Bitcoin Arena.app"
-  # A STAY-OPEN APPLET (kanban #635, the owner's playtest 2026-10-25: "doesn't stay open, doesn't have an icon that indicates that it is
-  # running"): pkg/macos/app.applescript, in the Dock while the installer runs; its steps are the helper arena-node-app in Resources
-  mkdir -p "$D"
-  osacompile -s -o "$APP" "$HERE/pkg/macos/app.applescript"
-  mkdir -p "$APP/Contents/Resources/release"
+  mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/release"
+  install -m 0755 "$WORK/Bitcoin Arena" "$APP/Contents/MacOS/Bitcoin Arena"
   tar -xzf "$OUT/$R.tar.gz" -C "$APP/Contents/Resources/release"
   install -m 0755 "$HERE/pkg/macos/arena-node-app" "$APP/Contents/Resources/arena-node-app"
-  cp "$WORK/AppIcon.icns" "$APP/Contents/Resources/applet.icns"
-  rm -f "$APP/Contents/Resources/Assets.car"
-  P="$APP/Contents/Info.plist"
-  for kv in "CFBundleName Bitcoin Arena" "CFBundleDisplayName Bitcoin Arena" "CFBundleIdentifier io.bitcoin-arena.node.setup" \
-    "CFBundleShortVersionString $V" "CFBundleVersion $V" "LSMinimumSystemVersion 12.0" "CFBundleIconFile applet"; do
-    k=${kv%% *}; v=${kv#* }
-    /usr/libexec/PlistBuddy -c "Set :$k \"$v\"" "$P" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :$k string \"$v\"" "$P"
-  done
-  /usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$P" 2>/dev/null || true
-  /usr/libexec/PlistBuddy -c "Delete :LSUIElement" "$P" 2>/dev/null || true
+  cp "$WORK/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+  cat > "$APP/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleName</key><string>Bitcoin Arena</string>
+  <key>CFBundleDisplayName</key><string>Bitcoin Arena</string>
+  <key>CFBundleExecutable</key><string>Bitcoin Arena</string>
+  <key>CFBundleIdentifier</key><string>io.bitcoin-arena.node.setup</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$V</string>
+  <key>CFBundleVersion</key><string>$V</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict></plist>
+PLIST
   # an ad-hoc signature: the app's files sealed (no Developer ID yet - Gatekeeper asks once: right-click > Open)
   codesign --force --deep -s - "$APP" 2>/dev/null || echo "codesign: not signed ad hoc"
   ln -s /Applications "$D/Applications"
