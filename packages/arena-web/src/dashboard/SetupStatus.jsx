@@ -15,13 +15,16 @@ const pct = (a, b) => Math.max(0, Math.min(100, b ? Math.round((100 * a) / b) : 
 export const eta = (ms) => (ms === null || ms === undefined ? '' : ms < 3600000 ? `about ${Math.max(1, Math.round(ms / 60000))} min left` : ms < 172800000 ? `about ${Math.round(ms / 3600000)} h left` : `about ${Math.round(ms / 86400000)} days left`);
 
 /** One line of the card: a label, the state in words, a meter. */
+// ONE PART OF THE SETUP AS A TILE (the owner's playtest 2026-10-25: "Also make this more pretty"): a round icon in its colour, the name,
+// the state under it, a bar where there is one to fill
 class Step extends React.Component {
   render() {
     const { id, label, done, problem, text, meter } = this.props;
+    const st = done ? 'ok' : problem ? 'bad' : 'wait';
     return (
-      <div className="setup-step" id={id}>
-        <span className={done ? 'ok' : problem ? 'bad' : 'wait'}>{done ? '✓' : problem ? '!' : '○'}</span>
-        <div><b>{label}</b> <span className="sub">{text}</span>
+      <div className={`setup-step s-${st}`} id={id}>
+        <span className="setup-ic" aria-hidden="true">{done ? '✓' : problem ? '!' : '…'}</span>
+        <div className="setup-body"><b>{label}</b><span className="setup-text">{text}</span>
           {meter !== undefined ? <div className="bar"><i style={{ width: `${meter}%` }} /></div> : null}</div>
       </div>);
   }
@@ -68,8 +71,11 @@ export function addressLine(a) {
   if (!a) return null;
   return a.ok ? { done: true, text: `others reach your node at ${a.url}` } : { done: false, problem: true, text: `${a.url} does not answer as your node (${a.why})` };
 }
-export function faucetLine(f) {
+export function faucetLine(f, bond = null) {
   if (!f) return null;
+  // the coins the bond was made from: done once that bond is on the chain, whatever the faucet's own transaction shows (playtest
+  // 2026-10-25: "363,000 sat on the way ... not seen on the chain yet" beside a bond with 19 confirmations)
+  if (!f.confirmations && bond && bond.seen && bond.confirmations > 0) return { done: true, text: `${n(f.sats)} sat arrived; your bond was made from them` };
   if (!f.seen) return { done: false, text: `${n(f.sats)} sat on the way, ${shortTx(f.txid)}: not seen on the chain yet` };
   return { done: f.confirmations > 0, text: f.confirmations ? `${n(f.sats)} sat arrived, ${n(f.confirmations)} confirmation${f.confirmations === 1 ? '' : 's'}` : `${n(f.sats)} sat arrived, waiting for its first confirmation` };
 }
@@ -86,7 +92,7 @@ export function oldBondLine(o) {
 /** The setup's rows: [id, label, line] for each part that has something to say. */
 export function setupRowsOf(s) {
   if (!s || !s.ok) return [];
-  return [['setup-core', 'Bitcoin Core', coreLine(s.core)], ['setup-address', 'Public address', addressLine(s.address)], ['setup-faucet', 'Test coins', faucetLine(s.faucet)],
+  return [['setup-core', 'Bitcoin Core', coreLine(s.core)], ['setup-address', 'Public address', addressLine(s.address)], ['setup-faucet', 'Test coins', faucetLine(s.faucet, s.bond)],
       ['setup-bond', 'Bond', bondLine(s.bond)], ['setup-lnd', 'LND', lndLine(s.lnd)], ['setup-gateway', 'Gateway', gatewayLine(s.gateway)], ['setup-pegin', 'Peg-in', pegInLine(s.pegIn)],
       ...(s.updates || []).map((u, i) => [`setup-update-${i}`, 'Update', updateLine(u)]),
       ...(s.oldBonds || []).map((o, i) => [`setup-old-${i}`, 'Old bond', oldBondLine(o)])].filter(([, , l]) => l);
@@ -99,11 +105,14 @@ export class SetupStatus extends React.Component {
     if (!rows.length) return null;
     const all = rows.every(([, , l]) => l.done);
     const problems = rows.filter(([, , l]) => l.problem).length;
+    const done = rows.filter(([, , l]) => l.done).length;
     return (
       <div className="card setup-status" id="setup-status">
-        <h3>Setup {all ? <span className="ok">complete</span> : problems ? <span className="bad">{problems} problem{problems === 1 ? '' : 's'}</span> : <span className="sub">in progress</span>}</h3>
-        {rows.map(([id, label, l]) => <Step key={id} id={id} label={label} done={l.done} problem={l.problem} text={l.text} meter={l.meter} />)}
-        {s.tip ? <p className="sub">Chain tip: block {n(s.tip)}</p> : null}
+        <div className="setup-head"><h3>Setup</h3>
+          <span className={`setup-pill ${all ? 'ok' : problems ? 'bad' : 'wait'}`}>{all ? 'Complete' : problems ? `${problems} problem${problems === 1 ? '' : 's'}` : `${done} of ${rows.length} done`}</span></div>
+        <div className="setup-total" role="progressbar" aria-valuemin="0" aria-valuemax={rows.length} aria-valuenow={done}><i style={{ width: `${Math.round((100 * done) / rows.length)}%` }} /></div>
+        <div className="setup-grid">{rows.map(([id, label, l]) => <Step key={id} id={id} label={label} done={l.done} problem={l.problem} text={l.text} meter={l.meter} />)}</div>
+        {s.tip ? <p className="setup-tip">Chain tip · block {n(s.tip)}</p> : null}
       </div>);
   }
 }

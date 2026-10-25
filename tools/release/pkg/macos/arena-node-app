@@ -10,6 +10,9 @@
 #           2026-10-25: "Wenn ich BitcoinArena.App öffne passiert erstmal gar nichts bis der Browser öffnet"): prepare copies and
 #           answers installed / running <link> / ready; launch starts the installer; wait-link answers its link, "waiting", or fails
 #   state   "running", "done" (the installer says Done or a node is set up) or "ended <its last lines>"
+#   newer   for an installed node: "<node's version> <this app's version>" when this app carries a newer release, else nothing
+#   update  the installed node moved to this app's release (arena-install --update-self): one line, "Updated: ..." or why not
+#           (the owner's playtest 2026-10-25: "When I execute 2.9.2 it doesn't update the node, it just starts the 1.9.1")
 #   link    the installer's one-time link        stop     stop the installer
 #   status  `arenanode status`                    owner    open the owner page       restart   restart the node
 #   node    the node in one line (arenanode state: running / stopped)   dashboard   the node's dashboard in the browser
@@ -71,6 +74,19 @@ case "${1:-}" in
     elif running; then echo running
     elif installed; then rm -f "$PIDF"; echo done
     else rm -f "$PIDF"; echo "ended $(tail -3 "$LOG" 2>/dev/null)"; fi ;;
+  newer)
+    release
+    "$DEST/runtime/node" --input-type=module -e '
+      import { readFileSync } from "node:fs";
+      const [h, mine] = process.argv.slice(1);
+      const { newerVersion } = await import(mine + "/packages/arena-node/src/release-latest.js");
+      const v = (d) => { try { return readFileSync(d + "/VERSION", "utf8").trim(); } catch { return null; } };
+      let from = null; try { from = JSON.parse(readFileSync(h + "/state.json", "utf8")).release.path; } catch {}
+      const have = from ? v(from) : null, own = v(mine);
+      if (from && from !== mine && own && (!have || newerVersion(own, have))) console.log((have || "an older release") + " " + own);' "$H" "$DEST" 2>/dev/null ;;
+  update)
+    release
+    ARENA_CLOUDFLARED="$DEST/runtime/cloudflared" "$DEST/runtime/node" "$DEST/packages/arena-installer/bin/arena-install.mjs" --update-self --home "$H" 2>&1 | grep -E '^(Updated|Up to date|Rolled back|Not updated)' | tail -1 ;;
   link) cat "$LINKF" 2>/dev/null ;;
   stop) stop_it ;;
   status) "$CMD" status 2>&1 | head -24 ;;
@@ -81,5 +97,5 @@ case "${1:-}" in
   node-start) "$CMD" start 2>&1 | tail -3 ;;
   node-stop) "$CMD" stop 2>&1 | tail -3 ;;
   doctor) "$CMD" doctor 2>&1 | head -30 ;;
-  *) echo "usage: arena-node-app prepare|launch|wait-link|start|state|link|stop|status|owner|restart|node|dashboard|node-start|node-stop|doctor" >&2; exit 2 ;;
+  *) echo "usage: arena-node-app prepare|launch|wait-link|start|newer|update|state|link|stop|status|owner|restart|node|dashboard|node-start|node-stop|doctor" >&2; exit 2 ;;
 esac

@@ -72,7 +72,27 @@ $buttons['Doctor'].Add_Click({ Show-Command 'doctor' })
 $buttons['Refresh'].Add_Click({ Show-Installed })
 
 if ((Test-Path $command) -and (Test-Path (Join-Path $nodeHome 'arena.conf'))) {
-  Show-Installed
+  # THIS SETUP'S RELEASE OVER AN OLDER NODE (the owner's playtest 2026-10-25: "When I execute 2.9.2 it doesn't update the node, it just
+  # starts the 1.9.1"): arena-install --update-self moves the node to the release beside this window when it is newer, hidden, its line
+  # read by a timer; then the node's status as before
+  if ($release) {
+    $title.Text = "Checking whether your node runs an older release than $version. If it does, it is updated now: a minute or two."
+    $ulog = Join-Path $here 'update.log'
+    Set-Content -Path $ulog -Value '' -Encoding ascii
+    $unode = Join-Path $release.FullName 'runtime\node.exe'
+    $umjs = Join-Path $release.FullName 'packages\arena-installer\bin\arena-install.mjs'
+    $script:up = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', "`"`"$unode`" `"$umjs`" --update-self >> `"$ulog`" 2>&1`"" -WorkingDirectory $release.FullName -WindowStyle Hidden -PassThru
+    $utimer = New-Object System.Windows.Forms.Timer
+    $utimer.Interval = 1000
+    $utimer.Add_Tick({
+      if (-not $script:up.HasExited) { return }
+      $utimer.Stop()
+      $line = Get-Content $ulog -ErrorAction SilentlyContinue | Where-Object { $_ -match '^(Updated|Up to date|Rolled back|Not updated)' } | Select-Object -Last 1
+      Show-Installed
+      if ($line -and $line -notmatch '^Up to date') { $title.Text = "$line`r`n" + $title.Text }
+    })
+    $utimer.Start()
+  } else { Show-Installed }
 } elseif (-not $release) {
   $title.Text = "The Bitcoin Arena release is missing next to this window ($here). Run the Bitcoin Arena setup again."
 } else {
