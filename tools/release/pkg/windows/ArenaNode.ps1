@@ -10,7 +10,10 @@ Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $release = Get-ChildItem $here -Directory -Filter '*arena-node-*' | Sort-Object Name | Select-Object -Last 1
 $nodeHome = Join-Path $env:USERPROFILE '.arena-node'
-$command = Join-Path $nodeHome 'bin\arenanode.cmd'
+# the node's command carries its instance (arena.conf instance=4: arenanode-4.cmd) - the macOS app looked for the bare name (playtest 2026-10-25)
+$inst = ''
+try { $m = Select-String -Path (Join-Path $nodeHome 'arena.conf') -Pattern '^instance=(.+)$' -ErrorAction Stop | Select-Object -First 1; if ($m) { $inst = '-' + $m.Matches[0].Groups[1].Value.Trim() } } catch { }
+$command = Join-Path $nodeHome ("bin\arenanode" + $inst + ".cmd")
 $version = if ($release) { (Get-Content (Join-Path $release.FullName 'VERSION') -ErrorAction SilentlyContinue) } else { '?' }
 
 $form = New-Object System.Windows.Forms.Form
