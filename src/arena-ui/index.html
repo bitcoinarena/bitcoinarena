@@ -3865,6 +3865,9 @@
     // another tab holds - read by ARENACLIENT.collectLines into the lobby's collect lines
     const collectFailed = window.ARENA_COLLECT_FAILED = new Map();
     const collectHeld = window.ARENA_COLLECT_HELD = new Set();
+    // THE OTHER PHRASES WHOSE LOCK THIS TAB HOLDS ITSELF (kanban #631, measured on preview UI 392 and in the owner's 21:27Z log: the merge found a
+    // phrase's lock taken by this tab's own collect and said "wallet … is open in another tab" - no tab answered, and the merge stayed stuck)
+    const PHRASES_HELD_HERE = window.ARENA_PHRASES_HELD_HERE = new Set();
     function withRecordPhrase(r, fn) {
       if (r.own) return fn();
       const hex = ARENACLIENT.toHex(r.seed);
@@ -3876,7 +3879,8 @@
       return navigator.locks.request('arena.phrase.' + hex.slice(0, 16), { ifAvailable: true }, async (lock) => {
         if (!lock) return null;
         try { vault().setItem(mark, JSON.stringify({ at: Date.now() })); } catch { /* said or not, the lock is held */ }
-        try { return await fn(); } finally { try { vault().removeItem(mark); } catch { /* it goes stale in 30 s */ } }
+        PHRASES_HELD_HERE.add(hex.slice(0, 16));
+        try { return await fn(); } finally { PHRASES_HELD_HERE.delete(hex.slice(0, 16)); try { vault().removeItem(mark); } catch { /* it goes stale in 30 s */ } }
       });
     }
     function newestKept() {
@@ -5098,60 +5102,40 @@
     // apps even have a lobby, find better ways to restore funds"): no lobby round is needed - each other kept phrase is read only in the
     // federations it holds a wallet in (phraseWalletEntries), with that federation's verified invite, 20 s each at most; the Federations tab
     // shows what each holds and how its merge stands, and "Merge now" moves it into this tab's wallet (ARENA_MERGE_NOW). Nothing is spent here.
-    let otherWalletsBusy = false, otherMerging = false, otherWalletsLast = null;
-    async function paintOtherWallets() {
+    // NO WALLET IS OPENED HERE (measured on preview UI 391: the list opened another phrase's wallet in this tab, and the merge sweep then found
+    // that wallet taken and stopped - "wallet 8c860796 is open in another tab"): it shows what the merge knows - the other phrases in this
+    // browser, each federation's merge (merged, merging, waiting and why), the e-cash already on its way - and Merge now runs the merge.
+    let otherMerging = false;
+    function paintOtherWallets() {
       const el = document.getElementById('arena-other-wallets');
-      if (!el || typeof ARENACLIENT === 'undefined' || !ARENACLIENT.phraseWalletEntries || !ARENACLIENT.openPlayerWallet) return;
-      const mergeState = () => window.ARENA_MERGE_STATE || {};
-      const draw = (props) => window.ArenaWallet.drawOthers(el, Object.assign({ note: null, wallets: null, merging: otherMerging,
-        onMerge: async (feds) => {
-          if (otherMerging || !window.ARENA_MERGE_NOW) return;
-          otherMerging = true; if (otherWalletsLast) draw({ wallets: otherWalletsLast });
-          try {
-            const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
-            const seed = walletSeed();
-            await window.ARENA_MERGE_NOW(feds, 90000, { seed, LockClient: wasm.LockClient });
-          } catch (e) { console.log('[arena] merge now: ' + (e && e.message ? e.message : e)); }
-          finally { otherMerging = false; otherWalletsBusy = false; paintOtherWallets(); }
-        } }, props));
-      if (otherWalletsBusy) return;
+      if (!el || typeof ARENACLIENT === 'undefined' || !ARENACLIENT.phraseWalletEntries || !window.ArenaWallet) return;
       const L = vault(); const cur = sessionStorage.getItem('arena.player.seed') || '';
       let kept = []; try { kept = JSON.parse(L.getItem('arena.seeds') || '[]'); } catch { kept = []; }
-      const loads = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.entries ? [...window.ARENA_FED_LOADS.entries()] : [];
-      const inviteOf = (fid) => { const st = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.get(fid); return (st && st.invite) || (ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(L, fid) : null); };
-      const feds = [...new Set([...loads.map(([k]) => k), ...(ARENACLIENT.ledgerFederations ? ARENACLIENT.ledgerFederations(L) : [])])].filter((f) => /^[0-9a-f]{64}$/.test(f));
-      const others = kept.filter((x) => /^[0-9a-f]{64}$/i.test(x.hex) && x.hex !== cur)
-        .map((x) => ({ hex: x.hex, feds: feds.filter((f) => ARENACLIENT.phraseWalletEntries(L, x.hex, f) > 0) })).filter((x) => x.feds.length);
-      if (!others.length) { otherWalletsLast = null; draw({}); return; }
-      otherWalletsBusy = true;
-      if (!otherWalletsLast) draw({ note: 'Reading them \u2026' });
-      try {
-        const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
-        const tab = sessionStorage.getItem('arena.tab.id');
-        const heldElsewhere = (hex) => { try { const h = JSON.parse(L.getItem('arena.seed.held.' + hex.slice(0, 16)) || 'null'); return !!h && Date.now() - h.at <= 12000 && h.tab !== tab; } catch { return false; } };
-        const wallets = [];
-        for (const x of others) {
-          // NEVER A WALLET ANOTHER OPEN TAB HOLDS: two clients on one wallet spent one note twice (2026-10-01)
-          const busy = heldElsewhere(x.hex);
-          const rows = [];
-          for (const fid of x.feds) {
-            let sats = null;
-            const inv = inviteOf(fid);
-            if (!busy && inv) {
-              try {
-                const c = await Promise.race([ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fid), invite: inv, seed: ARENACLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L }),
-                  new Promise((_, no) => setTimeout(() => no(new Error('no answer in 20 s')), 20000))]);
-                sats = Number(BigInt(await c.balanceMsat()) / 1000n);
-              } catch { sats = null; }
-            }
-            rows.push({ federation: fid, sats, merge: mergeState()[fid.slice(0, 16)] || null });
-          }
-          wallets.push({ hex: x.hex, busy, feds: rows });
-        }
-        otherWalletsLast = wallets;
-        draw({ wallets });
-      } catch (e) { draw({ note: 'They could not be read now: ' + (e && e.message ? e.message : e) }); }
-      finally { otherWalletsBusy = false; }
+      const known = new Set([...(window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.keys ? window.ARENA_FED_LOADS.keys() : [])].filter((f) => { const st = window.ARENA_FED_LOADS.get(f); return st && st.invite; }));
+      const tab = sessionStorage.getItem('arena.tab.id');
+      const heldElsewhere = (hex) => { try { const h = JSON.parse(L.getItem('arena.seed.held.' + hex.slice(0, 16)) || 'null'); return !!h && Date.now() - h.at <= 12000 && h.tab !== tab; } catch { return false; } };
+      const wallets = kept.filter((x) => /^[0-9a-f]{64}$/i.test(x.hex) && x.hex !== cur)
+        .map((x) => ({ hex: x.hex, busy: heldElsewhere(x.hex), feds: [...known].filter((f) => ARENACLIENT.phraseWalletEntries(L, x.hex, f) > 0) }))
+        .filter((x) => x.feds.length);
+      const onWay = [];
+      for (const k of Object.keys(L).filter((x) => x.startsWith('arena.ecash.pending.'))) {
+        let rec; try { rec = JSON.parse(L.getItem(k)); } catch { rec = null; }
+        if (!rec || !rec.ecash || !rec.fed) continue;
+        const f = String(rec.fed).toLowerCase(), row = onWay.find((x) => x.federation === f), sats = Math.floor(Number(rec.msat || 0) / 1000);
+        if (row) row.sats += sats; else onWay.push({ federation: f, sats });
+      }
+      const states = window.ARENA_MERGE_STATE || {};
+      const feds = [...new Set([...wallets.flatMap((w) => w.feds), ...onWay.map((x) => x.federation)])]
+        .map((f) => ({ federation: f, merge: states[f.slice(0, 16)] || null, onWaySats: (onWay.find((x) => x.federation === f) || {}).sats || 0 }));
+      const bal = window.ARENA_WALLET_BALANCE;
+      window.ArenaWallet.drawOthers(el, { wallets, feds, merging: otherMerging, mergingSats: bal && bal.merging ? bal.merging : 0,
+        onMerge: async (list) => {
+          if (otherMerging || !window.ARENA_MERGE_NOW) return;
+          otherMerging = true; paintOtherWallets();
+          try { const wasm = await window.ARENA_LOCK_WASM(); await wasm.default(); await window.ARENA_MERGE_NOW(list, 90000, { seed: walletSeed(), LockClient: wasm.LockClient }); }
+          catch (e) { console.log('[arena] merge now: ' + (e && e.message ? e.message : e)); }
+          finally { otherMerging = false; paintOtherWallets(); }
+        } });
     }
     window.ARENA_PAINT_HISTORY = paintHistory;
     // The lobby's own way out: one click to Settings with the words already on screen.
@@ -6956,7 +6940,24 @@
               // this tab's own phrase is held by this tab already; any other is taken under its lock
               if (x.hex !== cur && navigator.locks && navigator.locks.request) {
                 let held = false;
-                await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { ifAvailable: true }, async (lock) => { if (lock) await take(); else held = true; });
+                // HELD BY THIS TAB ITSELF (its collect reading that phrase's rounds): waited for, 60 s at most - never named as another tab
+                const PHRASES_TAKEN = window.ARENA_PHRASES_HELD_HERE || new Set();
+                const ownHold = PHRASES_TAKEN.has(x.hex.slice(0, 16));
+                // AND THIS TAB'S OWN MERGE OF ANOTHER FEDERATION (measured on preview UI 393: the merges of 337ae01a and 4dc88be7 ran together, both
+                // over wallet 8c860796 - the second found the lock taken by the first and stayed "stuck" with "open in another tab")
+                const hold = async () => { const k = x.hex.slice(0, 16); PHRASES_TAKEN.add(k); try { await take(); } finally { PHRASES_TAKEN.delete(k); } };
+                if (ownHold) {
+                  mergeSaid(fedHex, 'merging', 'waiting for this tab to finish with wallet ' + from);
+                  await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { signal: AbortSignal.timeout(60000) }, hold)
+                    .catch((e) => { if (e && e.name === 'TimeoutError') mergeSaid(fedHex, 'stuck', 'wallet ' + from + ' was busy in this tab for a minute - tried again at the next merge'); else throw e; });
+                } else await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { ifAvailable: true }, async (lock) => { if (lock) await hold(); else held = true; });
+                // taken by this tab between the look and the ask: waited for as above, never named as another tab
+                if (held && PHRASES_TAKEN.has(x.hex.slice(0, 16))) {
+                  held = false;
+                  mergeSaid(fedHex, 'merging', 'waiting for this tab to finish with wallet ' + from);
+                  await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { signal: AbortSignal.timeout(60000) }, hold)
+                    .catch((e) => { if (e && e.name === 'TimeoutError') mergeSaid(fedHex, 'stuck', 'wallet ' + from + ' was busy in this tab for a minute - tried again at the next merge'); else throw e; });
+                }
                 // ANOTHER TAB OF THIS BROWSER PLAYS WITH THAT PHRASE (kanban #615, the owner 2026-10-24 playtest: "Ich kann immernoch keine Bets
                 // placen" - 3,285 sat "still merging" for good, his own phrase's wallets empty): the merge skipped the locked phrase without a
                 // word, every time. That tab is asked to hand its notes in this federation over (ARENA_ASK_HANDOVER); a tab that does not
