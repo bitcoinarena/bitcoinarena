@@ -13,8 +13,9 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 // A SMALL ASK IS NOT HELD BEHIND A LARGE ONE (2026-10-25, measured on testnet4 ~22:10Z): a full listing of 9,760 rows (10-25's grids
 // and 10-26's) signed again each window was ~30 s in the worker, and the lobby's `?next=8` asks queued behind it - 22-30 s per
-// lobby listing on four of seven seats while their loops sat idle. A large ask goes to the worker in chunks, one chunk at a time,
-// and an ask of one chunk or less goes before the chunks still waiting.
+// lobby listing on four of seven seats while their loops sat idle. Every ask goes to the worker in chunks, one chunk at a time, and
+// the next chunk is always the one of the ask with the fewest chunks left (the lobby's 281 rows - three chunks - before a full
+// listing's 77; measured: one-chunk priority alone left the lobby 20-30 s behind).
 export const SIGN_CHUNK = 128;
 
 /**
@@ -26,16 +27,19 @@ export function listingSigner(secret, { chunk = SIGN_CHUNK } = {}) {
   let worker = null;
   let nextId = 1;
   let busy = null;                                // the chunk in the worker: { id, ask, at }
-  const small = [], large = [];                   // chunks waiting: { ask, at, messages }
+  const asks = [];                                // asks with chunks waiting, in arrival order: { chunks: [{ at, messages }], ... }
   const failAll = (why) => {
-    const asks = new Set([...(busy ? [busy.ask] : []), ...small.map((c) => c.ask), ...large.map((c) => c.ask)]);
-    busy = null; small.length = 0; large.length = 0;
-    for (const a of asks) a.reject(new Error(why));
+    const all = new Set([...(busy ? [busy.ask] : []), ...asks]);
+    busy = null; asks.length = 0;
+    for (const a of all) a.reject(new Error(why));
   };
   const pump = () => {
     if (busy) return;
-    const next = small.shift() || large.shift();
-    if (!next) return;
+    let pick = null;
+    for (const a of asks) if (!pick || a.chunks.length < pick.chunks.length) pick = a;
+    if (!pick) return;
+    const next = { ask: pick, ...pick.chunks.shift() };
+    if (!pick.chunks.length) asks.splice(asks.indexOf(pick), 1);
     if (!worker) worker = start();
     busy = { id: nextId++, ask: next.ask, at: next.at };
     worker.postMessage({ id: busy.id, messages: next.messages });
@@ -46,7 +50,7 @@ export function listingSigner(secret, { chunk = SIGN_CHUNK } = {}) {
       if (!busy || m.id !== busy.id) return;
       const { ask, at } = busy;
       busy = null;
-      if (!m.ok) { ask.reject(new Error(m.why)); for (const q of [small, large]) for (let i = q.length - 1; i >= 0; i--) if (q[i].ask === ask) q.splice(i, 1); }
+      if (!m.ok) { ask.reject(new Error(m.why)); const i = asks.indexOf(ask); if (i >= 0) asks.splice(i, 1); }
       else {
         m.sigs.forEach((sig, i) => { ask.sigs[at + i] = sig; });
         if (--ask.left === 0) ask.resolve(ask.sigs);
@@ -62,10 +66,9 @@ export function listingSigner(secret, { chunk = SIGN_CHUNK } = {}) {
     sign(messages) {
       if (!messages.length) return Promise.resolve([]);
       return new Promise((resolve, reject) => {
-        const parts = Math.ceil(messages.length / chunk);
-        const ask = { sigs: new Array(messages.length), left: parts, resolve, reject };
-        const q = parts === 1 ? small : large;
-        for (let at = 0; at < messages.length; at += chunk) q.push({ ask, at, messages: messages.slice(at, at + chunk) });
+        const chunks = [];
+        for (let at = 0; at < messages.length; at += chunk) chunks.push({ at, messages: messages.slice(at, at + chunk) });
+        asks.push({ sigs: new Array(messages.length), left: chunks.length, chunks, resolve, reject });
         pump();
       });
     },
