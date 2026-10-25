@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, statSync, existsSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, statSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -228,6 +228,14 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   let walletReady = false;
   lndKit.createLndWallet = async ({ cfg, seed }) => (walletReady ? { ok: true, created: lndCalls.push({ seedLen: seed.length, cfg: cfg.restUrl }) > 0 } : { ok: false, why: 'LND is starting (no TLS certificate yet)' });
   lndKit.testLnd = async () => ({ ok: true, pubkey: '03' + 'cd'.repeat(32), alias: 'arena-node', blockHeight: 156900, syncedToChain: true, network: 'testnet4', version: '0.21.4-beta' });
+  // kanban #664: an LND that does not start says why - the line from LND's own log (logs/bitcoin/testnet4/lnd.log) in the progress
+  const lndLog = join(home, 'lnd', 'logs', 'bitcoin', 'testnet4'); mkdirSync(lndLog, { recursive: true });
+  writeFileSync(join(lndLog, 'lnd.log'), '[ERR] LTND: unable to connect to bitcoind: connection refused\n');
+  const installLnd = lndKit.installLnd;
+  lndKit.installLnd = async () => ({ ok: false, why: 'the download was cut' });
+  assert.equal((await c.post('/api/lightning/own', { boot: true })).json.ok, false);
+  assert.deepEqual((await c.get('/api/lightning/progress')).json.lnd.log, ['[ERR] LTND: unable to connect to bitcoind: connection refused']);
+  lndKit.installLnd = installLnd;
   const own = (await c.post('/api/lightning/own', { boot: true })).json;
   assert.equal(own.ok, true, own.why);
   assert.equal(lndCalls[0].id, 'lnd');
