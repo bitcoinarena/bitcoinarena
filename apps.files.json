@@ -2,7 +2,7 @@
   "about": "What a node downloads of each app at its pinned commit (kanban #575): every file with its SHA-256. Written by tools/pin-apps.mjs from the apps' checkouts; never by hand.",
   "apps": {
     "arena-app-next-block": {
-      "commit": "0977780ed27bf665d5f1504d9622c2c5122e405a",
+      "commit": "ff1677e50002b78c3629f369ea69b97acaeb0538",
       "files": {
         "README.md": "7fc7113426fb4d9d22e36b8000a3693e669f40de4e020c5fb1bf89014dafc482",
         "app.json": "85e362fde9f4177c55237f0eeabbcbc4af5b7b46391277a9556ef757242a314d",
@@ -295,7 +295,7 @@
         "tools/measure-war.mjs": "4f8cb7ce50fc934ef05c71d2f4ff5f4f972621a7c07a8cab1ed28f54556a46ee",
         "tools/measure.js": "72b2e6eb65b2790680117e0fcc9543838d54d9e18e7904f702b72f2071420f84",
         "tools/probe-timer-lobby.mjs": "6e736382a654051502603ab43af7cab91b744e7634d3637ae30ea1e19679975a",
-        "tools/publish-webgl.mjs": "0b307e7b1715e0987ed5bf1711fa2ce761a645663db3a0479fec1a53224bd9ff",
+        "tools/publish-webgl.mjs": "ce8999ae9095ace95eed0f8395fd999aadfa86abdf10e58f1b56168fb67f89e4",
         "tools/replay.js": "e9d63f9dcbebadde4c0e6940b79e30008edb111d5f812866099dd1d2cbba37c3",
         "tools/run-arch.sh": "2f7aad2243c6d1b0c6142cdfc01dc3ec486d49e716bec95701101e6cf340e281",
         "tools/run-engines.sh": "de4426df0523b820baf616d27315f1c2f2b6d22322e5e404b40a420b12966790",
@@ -351,7 +351,7 @@
       "exec": []
     },
     "arena-app-up-or-down": {
-      "commit": "e152e3a79ddecbe756d017bc7245e8f54f47aad6",
+      "commit": "2bac06ef89c4d7f899546fc4a0d8ab78f0f62c49",
       "files": {
         "app.json": "3482954b8dd93640ac044b3b4f82072b0785031f6da0c62ddf62c79437773ad1",
         "brand/updown-icon.svg": "3b6d03a10e6e3173ad19cbfe6c3850b8c78d7c37fdd0f06ad25e1c4299a8ec4b",
@@ -431,7 +431,7 @@
         "tools/sign-manifest-v13.mjs": "ac9e830e8617e51878508c8e2ec5493472ef23d633d94942c72c724ecca1bee3",
         "tools/sign-manifest-v14.mjs": "8d59c8d44d33ad48ca7cbd4d4d8043c55f73ed393aff412544153f30a948e665",
         "tools/sign-manifest-v15.mjs": "2c5fe0d3e066706f36c56b84d449438d94dbe6ca1c13cbf101031249e5f08694",
-        "tools/sign-manifest-v16.mjs": "385a62d91e64e49063d2f913ba59d41abb1e641ddd95f0bd390b593ab24d7495",
+        "tools/sign-manifest-v16.mjs": "845c146e6fd8cc08f738558dacc576b501af05ddaf6a9356a6f02d5ad089e0d5",
         "tools/sign-manifest-v17.mjs": "62295cad1f73408d6358af9cc82c09981c33e42d81c98f12c2f14f0664563341",
         "tools/sign-manifest-v18.mjs": "a289ba37b8e7bbf4620d433085aa234b568b7bdd043e456b5d2fda002e40a24e",
         "tools/sign-manifest-v19.mjs": "d7bd0197e74ff45f39687ad884a01952ddb44c709ecbaeacd448bbfc54646111",
@@ -439,7 +439,7 @@
         "tools/sign-manifest-v21.mjs": "503f93f227f3816909b74b5214b7aee584ed818899becbaf8dc804a94697b775",
         "tools/sign-manifest-v22.mjs": "09925716fb46ad031a943c328b314307d2e380d15630e8fb38883e54466a29b3",
         "tools/sign-manifest-v23.mjs": "ad0d962dcd23e0a87a8baaf89d936a615e2d1b3c78a5f6f60ef1f608d83d8c9e",
-        "tools/sign-manifest-v24.mjs": "bab07058995d372c28a95935b030f5f82849853c4a0ce412a01af6adaabdec62",
+        "tools/sign-manifest-v24.mjs": "3492b2a767a8e421d0450d3111da7ea33afb646a191a077a6158b120fda2cae5",
         "tools/sign-manifest-v3.mjs": "fb1707802e157c8f39feb3fdabf50ce97fac6014f10a5cffe686e92f9072a431",
         "tools/sign-manifest-v4.mjs": "dd790671d0995ae30289fae5cb19077f1f259a03d14160149a20f8a48b05abc3",
         "tools/sign-manifest-v5.mjs": "c2afdf74fd994599467535125b7040679640a62e62a3b3e88ecc35e3dfda5b65",
