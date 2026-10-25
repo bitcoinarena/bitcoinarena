@@ -3,7 +3,9 @@
 // THE SETUP'S PROGRESS, ON BOTH DASHBOARDS (kanban #635, the owner 2026-10-25: "in dem public Node Dashboard ein Panel einblenden mit dem
 // Status der node anzeigen wieviel confirmations Bond und peg in haben. Das selbe auch beim owner Dashboard"): the installer posts the bond
 // and the rest without waiting, so this card says how far each is - Bitcoin Core's background sync, the bond's confirmations and whether it
-// counts, the peg-in's confirmations against the federation's finality. Drawn from GET /setup-status; nothing when there is nothing to show.
+// counts, the peg-in's confirmations against the federation's finality - and (the owner 2026-10-25: "lnd status and everything else that may be
+// in progress") LND, the gateway, the public address, the faucet's coins, advertisement updates and old bonds to take back. Drawn from
+// GET /setup-status; nothing when there is nothing to show.
 import React from 'react';
 
 const n = (x) => Number(x || 0).toLocaleString('en-US');
@@ -15,10 +17,10 @@ export const eta = (ms) => (ms === null || ms === undefined ? '' : ms < 3600000 
 /** One line of the card: a label, the state in words, a meter. */
 class Step extends React.Component {
   render() {
-    const { id, label, done, text, meter } = this.props;
+    const { id, label, done, problem, text, meter } = this.props;
     return (
       <div className="setup-step" id={id}>
-        <span className={done ? 'ok' : 'wait'}>{done ? '✓' : '○'}</span>
+        <span className={done ? 'ok' : problem ? 'bad' : 'wait'}>{done ? '✓' : problem ? '!' : '○'}</span>
         <div><b>{label}</b> <span className="sub">{text}</span>
           {meter !== undefined ? <div className="bar"><i style={{ width: `${meter}%` }} /></div> : null}</div>
       </div>);
@@ -47,17 +49,52 @@ export function pegInLine(p) {
   return { done: false, meter: pct(p.confirmations, p.needed), text: `${n(p.sats)} sat, ${n(p.confirmations)} of ${n(p.needed)} confirmations. The federation credits it at ${n(p.needed)}.` };
 }
 
+export function lndLine(l) {
+  if (!l) return null;
+  if (!l.ok) return { done: false, problem: true, text: `not answering: ${l.why}` };
+  if (!l.synced) return { done: false, text: `running, catching up with the chain (block ${n(l.height)})` };
+  const ch = l.channels === null ? '' : `, ${n(l.channels)} open channel${l.channels === 1 ? '' : 's'}${l.pending ? `, ${n(l.pending)} opening` : ''}`;
+  return { done: !l.pending, text: `synced at block ${n(l.height)}${ch}` };
+}
+export function gatewayLine(g) {
+  if (!g) return null;
+  if (g.ok) return { done: g.federations > 0, text: g.federations > 0 ? `running, in ${n(g.federations)} federation${g.federations === 1 ? '' : 's'}` : 'running, joining its federation' };
+  return { done: false, problem: !g.syncing, text: g.syncing ? 'waiting for LND to sync' : `not answering: ${g.why}` };
+}
+export function addressLine(a) {
+  if (!a) return null;
+  return a.ok ? { done: true, text: `others reach your node at ${a.url}` } : { done: false, problem: true, text: `${a.url} does not answer as your node (${a.why})` };
+}
+export function faucetLine(f) {
+  if (!f) return null;
+  if (!f.seen) return { done: false, text: `${n(f.sats)} sat on the way, ${shortTx(f.txid)}: not seen on the chain yet` };
+  return { done: f.confirmations > 0, text: f.confirmations ? `${n(f.sats)} sat arrived, ${n(f.confirmations)} confirmation${f.confirmations === 1 ? '' : 's'}` : `${n(f.sats)} sat arrived, waiting for its first confirmation` };
+}
+export function updateLine(u) {
+  if (!u.seen) return { done: false, text: `${u.what}: sent, ${shortTx(u.txid)}, not seen on the chain yet` };
+  if (u.counts) return { done: true, text: `${u.what}: ${n(u.confirmations)} confirmations, in force` };
+  return { done: false, meter: pct(u.confirmations, u.needed), text: `${u.what}: ${n(u.confirmations)} of ${n(u.needed)} confirmations, in force at ${n(u.needed)}` };
+}
+export function oldBondLine(o) {
+  return o.back ? { done: false, text: `${n(o.sats)} sat under your old key: unlocked, take it back from the bond panel` }
+    : { done: true, text: `${n(o.sats)} sat under your old key, locked for ${n(o.blocksLeft)} more blocks (until block ${n(o.maturity)}), then yours to take back` };
+}
+
 export class SetupStatus extends React.Component {
   render() {
     const s = this.props.status;
     if (!s || !s.ok) return null;
-    const rows = [['setup-core', 'Bitcoin Core', coreLine(s.core)], ['setup-bond', 'Bond', bondLine(s.bond)], ['setup-pegin', 'Peg-in', pegInLine(s.pegIn)]].filter(([, , l]) => l);
+    const rows = [['setup-core', 'Bitcoin Core', coreLine(s.core)], ['setup-address', 'Public address', addressLine(s.address)], ['setup-faucet', 'Test coins', faucetLine(s.faucet)],
+      ['setup-bond', 'Bond', bondLine(s.bond)], ['setup-lnd', 'LND', lndLine(s.lnd)], ['setup-gateway', 'Gateway', gatewayLine(s.gateway)], ['setup-pegin', 'Peg-in', pegInLine(s.pegIn)],
+      ...(s.updates || []).map((u, i) => [`setup-update-${i}`, 'Update', updateLine(u)]),
+      ...(s.oldBonds || []).map((o, i) => [`setup-old-${i}`, 'Old bond', oldBondLine(o)])].filter(([, , l]) => l);
     if (!rows.length) return null;
     const all = rows.every(([, , l]) => l.done);
+    const problems = rows.filter(([, , l]) => l.problem).length;
     return (
       <div className="card setup-status" id="setup-status">
-        <h3>Setup {all ? <span className="ok">complete</span> : <span className="sub">in progress</span>}</h3>
-        {rows.map(([id, label, l]) => <Step key={id} id={id} label={label} done={l.done} text={l.text} meter={l.meter} />)}
+        <h3>Setup {all ? <span className="ok">complete</span> : problems ? <span className="bad">{problems} need{problems === 1 ? 's' : ''} attention</span> : <span className="sub">in progress</span>}</h3>
+        {rows.map(([id, label, l]) => <Step key={id} id={id} label={label} done={l.done} problem={l.problem} text={l.text} meter={l.meter} />)}
         {s.tip ? <p className="sub">Chain tip: block {n(s.tip)}</p> : null}
       </div>);
   }
