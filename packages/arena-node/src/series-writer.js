@@ -22,6 +22,21 @@ export const GRID_HORIZON_MS = 3n * 3600n * 1000n;
  * One series' writer over a Round store. `write(nowMs)` opens every round of the series starting in
  * [nowMs, nowMs + horizon] that it has not opened yet, and answers what it holds.
  */
+/**
+ * ONE SERIES' PASS, KEPT TO ITSELF (2026-10-25 ~10:20Z: a Next Block series naming a core no seat held - a5c5766a - threw out of
+ * Round.open in the seat's writer, and every seat on both machines crashed at each start; systemd restarted the the test host's seven 30 times,
+ * the test host's stayed down). A series this seat cannot open is left out until the next start, said once; every other series is
+ * written as before. Answers the rounds added.
+ */
+export function writeGuarded(w, nowMs, untilMs, log = (l) => console.error(l)) {
+  if (w.broken) return 0;
+  try { return w.write(nowMs, untilMs); } catch (e) {
+    w.broken = e.message; w.more = false;
+    log(`[series] ${toHex(w.id).slice(0, 16)}: not written here (left out until the next start): ${e.message}`);
+    return 0;
+  }
+}
+
 export function seriesWriter(round, template, { horizonMs: given = SERIES_HORIZON_MS } = {}) {
   const horizonMs = isGridSeries(template) && BigInt(given) > GRID_HORIZON_MS ? GRID_HORIZON_MS : given;
   const lead = seriesLeadIsValid(template);
