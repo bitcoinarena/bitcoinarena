@@ -370,7 +370,7 @@ test('a round whose census root is not the chain\'s is refused, not served', () 
   assert.match(bare.censusFor(goodId).why, /names census root 0000000000000000 and the chain gives/);
 });
 
-test('a census refused for its root is kept with its view: not derived again until the view grows or a minute passes', (t) => {
+test('a census refused for its root is kept with the block at its census height: not derived again while that block stands', () => {
   // measured on testnet4 2026-10-25: the day's rounds posted on a branch the chain left named roots the public chain does not give,
   // and every listing derived their series' census again - all seven test host seats at 100 % CPU with full accept queues
   const bonds = [bondOf(0x11), bondOf(0x12)];
@@ -382,12 +382,12 @@ test('a census refused for its root is kept with its view: not derived again unt
   const first = roster.censusFor(rid);
   assert.match(first.why, /names census root 5a5a5a5a5a5a5a5a and the chain gives/);
   assert.equal(roster.censusFor(rid), first, 'the same view: the refusal kept, not derived again');
-  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 61_000 });
-  const later = roster.censusFor(rid);
-  assert.notEqual(later, first, 'a minute later: derived again');
-  assert.equal(later.why, first.why);
   view = { ...view, blocks: [...view.blocks] };
-  assert.notEqual(roster.censusFor(rid), later, 'a new view: derived again');
+  assert.equal(roster.censusFor(rid), first, 'a view with the same blocks (extended at its tip): still kept');
+  view = { ...view, blocks: view.blocks.map((b) => ({ ...b })) };
+  const again = roster.censusFor(rid);
+  assert.notEqual(again, first, 'other blocks at the census height (a reorganised view): derived again');
+  assert.equal(again.why, first.why);
 });
 
 test('the daemon signer nodes on the beacon\'s seed, and on nothing else', async () => {
