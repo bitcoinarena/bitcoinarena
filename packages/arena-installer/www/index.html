@@ -58,7 +58,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     .rules { display: grid; gap: 10px; margin: 6px 0 14px; } .rule { display: grid; grid-template-columns: 44px 1fr; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 12px; align-items: start; }
     .rule .ic { font-size: 28px; line-height: 1; text-align: center; } .rule p { margin: 4px 0 0; font-size: 14px; } .rule.good { border-color: #2ea043; } .rule.bad { border-color: #da3633; background: rgba(218,54,51,.07); } .red { color: #ff7b72; }
     @media (max-width: 560px) { .fed-explain { grid-template-columns: 1fr; } .fed-ring { margin: 0 auto; } }
-    #custody-explain { border: 1px solid #1f6feb; border-radius: 12px; padding: 12px; margin: 10px 0; background: rgba(31,111,235,.05); }
+    #custody-explain { border: 1px solid #1f6feb; border-radius: 12px; padding: 12px; margin: 24px 0 10px; background: rgba(31,111,235,.05); }   /* room under the button above (kanban #644) */
     .cx-title { font-weight: 700; margin-bottom: 6px; } .cx-flow { width: 100%; height: auto; }
     .cx-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 6px; } .cx { border: 1px solid var(--line); border-radius: 10px; padding: 10px; text-align: center; }
     .cx-ic { font-size: 26px; } .cx p { margin: 4px 0 0; font-size: 12.5px; opacity: .85; line-height: 1.35; }
@@ -198,6 +198,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
   <section id="s-apps"></section>
 
   <section id="s-seed"></section>
+  <section id="s-emergency"></section>
 
   <section id="s-owner"></section>
 
@@ -220,7 +221,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
 <script src="/wizard.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
-const STEPS = [['start', 'New / Restore'], ['chain', 'Bitcoin'], ['roles', 'Roles'], ['apps', 'Apps'], ['seed', 'Seed'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['lightning', 'Lightning'], ['federation', 'Federation'], ['promise', 'Bond rules'], ['bond', 'Bond'], ['done', 'Done']];
+const STEPS = [['start', 'New / Restore'], ['chain', 'Bitcoin'], ['roles', 'Roles'], ['apps', 'Apps'], ['seed', 'Seed'], ['emergency', 'Emergency code'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['lightning', 'Lightning'], ['federation', 'Federation'], ['promise', 'Bond rules'], ['bond', 'Bond'], ['done', 'Done']];
 let st = null;
 // A DONE STEP OPENED AGAIN FROM THE BAR (kanban #635, the owner's playtest 2026-10-25: "ich kann auch nicht zurück gehen und den Zustand
 // prüfen"): `viewing` names it; the current step's own pill, or any save, goes back to where the wizard is

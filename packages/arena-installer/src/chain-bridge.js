@@ -90,7 +90,13 @@ const merkleRoot = (hashes) => {
  * The bridge. `electrum`: { host, port, tls }. `home`: where the cookie and the block cache live. Injectables for the tests:
  * `session` (an Electrum session factory), `fetcher` (Esplora). Answers { listen(port), close(), call(method, params) }.
  */
-export function createBridge({ electrum, home, esplora = ESPLORA_TESTNET4, session = electrumSession, fetcher = fetch, cacheBytes = BLOCK_CACHE_BYTES, log = () => {} }) {
+export function createBridge({ electrum, fallbacks = [], home, esplora = ESPLORA_TESTNET4, session = electrumSession, fetcher = fetch, cacheBytes = BLOCK_CACHE_BYTES, log = () => {} }) {
+  // THE OTHER SERVERS WHEN ONE FAILS (kanban #639, the owner's playtest 2026-10-25: "if the selected electrum server errors, nothing can be
+  // done. there are no options besides retry"): the saved server first, then each known one in turn; a call that fails moves the next
+  // call to the next server, and every block is still checked against its header, whoever serves it
+  const servers = [electrum, ...fallbacks.filter((x) => !(x.host === electrum.host && x.port === electrum.port))];
+  let at = 0;
+  const current = () => servers[at % servers.length];
   const blocksDir = join(home, 'bridge-blocks');
   mkdirSync(blocksDir, { recursive: true });
   const headers = new Map();       // height -> { hash, header (Buffer) }
@@ -98,12 +104,17 @@ export function createBridge({ electrum, home, esplora = ESPLORA_TESTNET4, sessi
   let tip = null, s = null, opening = null;
   const conn = async () => {
     if (s) return s;
-    if (!opening) opening = session({ ...electrum, timeoutMs: 20000 }).then((x) => { s = x; opening = null; return x; }, (e) => { opening = null; throw e; });
+    if (!opening) opening = session({ ...current(), timeoutMs: 20000 }).then((x) => { s = x; opening = null; return x; }, (e) => { opening = null; throw e; });
     return opening;
   };
   const ask = async (method, params) => {
     try { return await (await conn()).call(method, params); }
-    catch (e) { if (s) { try { s.close(); } catch { /* gone */ } } s = null; throw new Error(`the Electrum server ${electrum.host}:${electrum.port}: ${e.message}`); }
+    catch (e) {
+      if (s) { try { s.close(); } catch { /* gone */ } } s = null;
+      const failed = current();
+      if (servers.length > 1) { at += 1; log(`[bridge] ${failed.host}:${failed.port} failed (${e.message}); next: ${current().host}:${current().port}`); }
+      throw new Error(`the Electrum server ${failed.host}:${failed.port}: ${e.message}`);
+    }
   };
   const putHeader = (height, header) => {
     const hash = display(sha256d(header));

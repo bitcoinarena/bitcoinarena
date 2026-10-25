@@ -333,3 +333,22 @@ test('start at boot, one service at a time (kanban #563): Linux - the unit enabl
     assert.deepEqual([win.settable, /at login/.test(win.why)], [false, true]);
   } finally { rmSync(n.root, { recursive: true, force: true }); }
 });
+
+// BITCOIN CORE IS ASKED ON ITS OWN PORT (kanban #640, the owner's playtest: "restarting the electrum server, marks also the bitcoin server as
+// available and running eventho its not installed or running"): on an Electrum node the bridge answers the seat's chain address, never for Core
+test('on an Electrum node the Bitcoin Core row is not answered by the chain bridge', async () => {
+  const { probeOf } = await import('../src/node-services.js');
+  const { mkdtempSync: mk, writeFileSync: wf, rmSync: rm } = await import('node:fs');
+  const { tmpdir: td } = await import('node:os');
+  const dir = mk(join(td(), 'probe-')); wf(join(dir, 'bridge.cookie'), '__cookie__:x');
+  const asked = [];
+  const fetcher = async (url) => { asked.push(String(url)); return new Response(JSON.stringify({ result: { chain: 'testnet4', blocks: 10, headers: 10, initialblockdownload: false }, error: null, id: 1 })); };
+  const node = { conf: { values: { bitcoind_url: 'http://127.0.0.1:8571/', bitcoind_cookie: join(dir, 'bridge.cookie') } }, state: { chain: { kind: 'electrum', host: 'e', port: 1 } } };
+  try {
+    const core = await probeOf({ id: 'bitcoind-testnet4' }, { node, fetcher });
+    assert.deepEqual([core.ok, core.says], [false, 'no Bitcoin Core is set up for this node']);
+    assert.deepEqual(asked, [], 'the bridge was not asked for Core');
+    const bridge = await probeOf({ id: 'chain-bridge' }, { node, fetcher });
+    assert.equal(bridge.ok, true, 'the bridge answers for itself');
+  } finally { rm(dir, { recursive: true, force: true }); }
+});

@@ -7,12 +7,12 @@
 // page draws no step of its own (the owner 2026-10-21: "no fall backs").
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { StartStep, RolesStep, AppsStep, SeedStep, OwnerStep, PromiseStep, StepBar, SetupRefused } from './WizardSteps.jsx';
+import { StartStep, RolesStep, AppsStep, SeedStep, EmergencyStep, OwnerStep, PromiseStep, StepBar, SetupRefused } from './WizardSteps.jsx';
 import { ChainStep, ReachStep, ServiceStep, FederationStep } from './SetupSteps.jsx';
 import { LightningStep, BondStep, DoneStep } from './FinishSteps.jsx';
 import css from './wizard.css';
 
-const STEPS = { start: StartStep, roles: RolesStep, chain: ChainStep, apps: AppsStep, seed: SeedStep, owner: OwnerStep, reach: ReachStep, service: ServiceStep,
+const STEPS = { start: StartStep, roles: RolesStep, chain: ChainStep, apps: AppsStep, seed: SeedStep, emergency: EmergencyStep, owner: OwnerStep, reach: ReachStep, service: ServiceStep,
   lightning: LightningStep, federation: FederationStep, promise: PromiseStep, bond: BondStep, done: DoneStep };
 // the steps that draw their whole section (the roles draw only their list: the pictures around it stay the page's)
 const SECTIONS = Object.keys(STEPS).filter((k) => k !== 'roles');

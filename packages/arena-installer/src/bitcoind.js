@@ -161,7 +161,11 @@ export async function syncStatus({ rpcUrl, cookiePath, samples = [], nowMs = Dat
   try {
     const info = await coreRpc({ url: rpcUrl, cookiePath, fetcher })('getblockchaininfo');
     const progress = Number(info.verificationprogress);
-    const synced = !info.initialblockdownload && info.blocks >= info.headers - 1 && info.headers > 0;
+    // SYNCED WHEN EVERY BLOCK IS IN (kanban #636, the owner's playtest 2026-10-25: "bitcoin core testnet4 pruned downloads to 100% and then
+    // nothing happens"): Core keeps initialblockdownload on while its tip is older than a day, so a node at the tip with all headers and
+    // verification at 99.99 % counts as synced too
+    const atTip = info.blocks >= info.headers - 1 && info.headers > 0;
+    const synced = atTip && (!info.initialblockdownload || progress >= 0.9999);
     const kept = [...samples.filter((x) => nowMs - x.atMs <= ETA_WINDOW_MS), { atMs: nowMs, progress }];
     const first = kept[0];
     let etaMs = null;

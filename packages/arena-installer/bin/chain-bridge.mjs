@@ -8,11 +8,12 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createBridge } from '../src/chain-bridge.js';
+import { TESTNET4_ELECTRUM } from '../src/chain-test.js';
 
 const [port, home] = [Number(process.argv[2]), process.argv[3]];
 const state = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
 if (!state.chain || state.chain.kind !== 'electrum') { console.error('this node is not in Electrum mode (state.json chain.kind)'); process.exit(2); }
-const bridge = createBridge({ electrum: state.chain, home, log: (l) => console.log(l) });
+const bridge = createBridge({ electrum: state.chain, fallbacks: TESTNET4_ELECTRUM, home, log: (l) => console.log(l) });   // the others when it fails (kanban #639)
 const at = await bridge.listen(port);
 console.log(`[bridge] testnet4 through ${state.chain.host}:${state.chain.port} and Esplora, on 127.0.0.1:${at}; cookie ${bridge.cookiePath}`);
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { bridge.close(); process.exit(0); });

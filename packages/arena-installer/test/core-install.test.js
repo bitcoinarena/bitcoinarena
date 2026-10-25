@@ -191,3 +191,19 @@ test('free ports are chosen, a Core whose port is taken says so, and the status 
   assert.deepEqual(installed, ['bitcoind-testnet4', 'bitcoind-testnet4'], 'its service written and started again');
   assert.equal((await w['GET /api/core/status']()).networks.testnet4.ok, true, 'then it answers');
 });
+
+// AT THE TIP IS SYNCED (kanban #636, the owner's playtest: "testnet4 pruned downloads to 100% and then nothing happens"): Core keeps
+// initialblockdownload on while its tip is older than a day; all blocks in and 99.99 % verified count as synced
+test('a Core at the tip counts as synced even while it still says initial block download', async () => {
+  const { syncStatus } = await import('../src/bitcoind.js');
+  const { mkdtempSync: mk, writeFileSync: wf, rmSync: rm } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const dir = mk(join(tmpdir(), 'sync-')); const cookiePath = join(dir, '.cookie'); wf(cookiePath, '__cookie__:x');
+  const at = (info) => syncStatus({ rpcUrl: 'http://127.0.0.1:1/', cookiePath, fetcher: async () => new Response(JSON.stringify({ result: { chain: 'testnet4', ...info }, error: null, id: 1 }), { status: 200 }) });
+  try {
+    assert.equal((await at({ blocks: 157600, headers: 157600, verificationprogress: 0.99998, initialblockdownload: true })).synced, true, 'at the tip, IBD still on: synced');
+    assert.equal((await at({ blocks: 157600, headers: 157600, verificationprogress: 1, initialblockdownload: false })).synced, true);
+    assert.equal((await at({ blocks: 150000, headers: 157600, verificationprogress: 0.95, initialblockdownload: true })).synced, false, 'blocks still coming');
+    assert.equal((await at({ blocks: 157600, headers: 157600, verificationprogress: 0.97, initialblockdownload: true })).synced, false, 'still verifying');
+  } finally { rm(dir, { recursive: true, force: true }); }
+});

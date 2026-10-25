@@ -69,7 +69,15 @@ export class RolesStep extends React.Component {
   }
   componentDidMount() { this.tell(); }
   tell() { if (this.props.onCustody) this.props.onCustody(!!this.state.on.custody); }
-  toggle(k, v) { this.setState((s) => ({ on: { ...s.on, [k]: v } }), () => this.tell()); }
+  toggle(k, v) {
+    this.setState((s) => ({ on: { ...s.on, [k]: v } }), async () => {
+      this.tell();
+      // checked at once (kanban #641): a role this node cannot run says why as it is switched on
+      if (!['custody', 'liquidity'].includes(k)) return;
+      const r = await this.props.post('/api/roles/check', { roles: this.chosen() });
+      this.setState({ msg: r.ok ? null : said(r) });
+    });
+  }
   chosen() { return Object.keys(this.state.on).filter((k) => this.state.on[k]); }
   async save() {
     this.setState({ saving: true, msg: null });
@@ -82,6 +90,7 @@ export class RolesStep extends React.Component {
     const { on, saving, msg } = this.state;
     return (
       <div className="aw">
+        {this.props.st.chainSwitchedFrom ? <p className="msg ok" id="chain-switched">The Electrum server you chose did not answer ({this.props.st.chainSwitchedFrom}), so setup uses {this.props.st.chain ? `${this.props.st.chain.host}:${this.props.st.chain.port}` : 'another one'} instead.</p> : null}
         <div className="tiles">
           {Object.entries(info).map(([k, r]) => (
             <Tile key={k} id={`role-${k}`} icon={ROLE_IC[k] || '•'} name={r.title} state={on[k] ? 'on' : null}
@@ -89,7 +98,7 @@ export class RolesStep extends React.Component {
               highlight={r.does || ''}
               does={<>{(r.chips || []).map((c) => <span key={c} className="chip">{c}</span>)}</>}
               footer={<>
-                <details className="more"><summary>more</summary><p>{ROLE_EARN[k] || ''}</p><p>{r.needs}</p></details>
+                <details className="more"><summary>more</summary><div className="more-pop"><p>{ROLE_EARN[k] || ''}</p><p>{r.needs}</p></div></details>
                 <Switch id={`rl-${k}`} label={r.title} checked={!!on[k]} disabled={r.slice > 1} onChange={(v) => this.toggle(k, v)} />
               </>} />))}
         </div>
@@ -165,20 +174,11 @@ export class StartStep extends React.Component {
     const r = await this.props.post('/api/start', { control, action, words: control === 'words' && action === 'restore' ? words : undefined, nsec: control === 'nostr' ? nsec : undefined });
     this.setState({ busy: false });
     if (!r.ok) return this.setState({ msg: said(r) });
-    this.setState({ words: '', nsec: '' });
-    if (r.emergencyCode) return this.setState({ code: r.emergencyCode, made: null });
-    this.props.reload();
+    this.setState({ words: '', nsec: '', made: null });
+    this.props.reload();   // the emergency code has its own step next (kanban #647)
   }
   render() {
-    const { control, action, words, nsec, made, busy, msg, code } = this.state;
-    if (code) return (
-      <div className="aw">
-        <h2>1. Your emergency code</h2>
-        <p>{control === 'nostr' ? 'Your node now comes from your Nostr key.' : 'Your node is restored from your 24 words.'} Write this code down too:</p>
-        <p className="code" id="start-code">{code}</p>
-        <p>If your node is offline too long, type it on another node's page or the Bitcoin Arena site to take your node out of the network. It can do nothing else.</p>
-        <button type="button" id="start-code-ok" onClick={() => this.props.reload()}>I have written the code down</button>
-      </div>);
+    const { control, action, words, nsec, made, busy, msg } = this.state;
     const n = words.trim() ? words.trim().split(/\s+/).length : 0;
     const pick = (name, value, cur, title, text) => (
       <label className={`choice${cur === value ? ' on' : ''}`}><input type="radio" name={name} id={`start-${name}-${value}`} checked={cur === value} onChange={() => this.setState({ [name]: value, msg: null })} />
@@ -235,12 +235,11 @@ export class SeedStep extends React.Component {
   written() { this.setState({ phase: 'confirm', words: [] }); }
   async confirm() {
     const r = await this.props.post('/api/seed/confirm', { answers: this.state.answers });
-    if (r.ok && r.emergencyCode) return this.setState({ phase: 'emergency', code: r.emergencyCode, msg: null });
     if (r.ok) return this.props.reload();
     this.setState({ msg: said(r), ...(r.wrong ? { phase: 'start', words: [] } : {}) });
   }
   render() {
-    const { phase, words, positions, answers, code, msg } = this.state;
+    const { phase, words, positions, answers, msg } = this.state;
     return (
       <div className="aw">
         <h2>5. Your seed: write it down</h2>
@@ -256,20 +255,42 @@ export class SeedStep extends React.Component {
               <input id={`cw-${p}`} autoComplete="off" spellCheck="false" autoFocus={i === 0} value={answers[p] || ''}
                 onChange={(e) => this.setState({ answers: { ...answers, [p]: e.target.value } })} /></div>))}</div>
           <button type="button" id="seed-confirm" onClick={this.confirm}>Confirm</button></> : null}
-        {phase === 'emergency' ? (
-          // THE EMERGENCY CODE (spec §23A.5a, protocol 17): shown once the words are confirmed, written down beside them
-          <div id="emergency">
-            <h3>Your emergency code: write it down too</h3>
-            <p className="code">{code}</p>
-            <p>If your node will be offline longer than the network allows (about two days on mainnet, 12 blocks on testnet4), type this code on
-              any other node's page (<code>/Dashboard/emergency</code>) or on the Bitcoin Arena site (<code>testnet.bitcoin-arena.io/offline/</code>). It takes your node out of the network and your bond stays yours.
-              A node without the guardian role leaves at once. A guardian leaves at once if the code comes before it counts as abandoned; after that it is slashed.</p>
-            <p>The code can do nothing else: no money, no settings. <b>Never type your 24 words anywhere except your own node.</b></p>
-            <button type="button" onClick={() => this.props.reload()}>I have written the code down</button>
-          </div>) : null}
         <Msg r={msg} />
       </div>
     );
+  }
+}
+
+// THE EMERGENCY CODE, ITS OWN STEP (kanban #647, the owner's playtest 2026-10-25: "the emergency code notice should be an overlay or a separate
+// step ... also the description is confusing" - "extra step it is, and make the text clearer and simpler")
+export class EmergencyStep extends React.Component {
+  constructor(props) { super(props); this.state = { code: null, msg: null, busy: false }; this.done = this.done.bind(this); }
+  async componentDidMount() {
+    const r = await this.props.get('/api/emergency');
+    this.setState(r.ok ? { code: r.code } : { msg: said(r) });
+  }
+  async done() {
+    this.setState({ busy: true });
+    const r = await this.props.post('/api/emergency/written');
+    this.setState({ busy: false });
+    if (!r.ok) return this.setState({ msg: said(r) });
+    this.props.reload();
+  }
+  render() {
+    const { code, msg, busy } = this.state;
+    const nostr = this.props.st && this.props.st.control === 'nostr';
+    return (
+      <div className="aw">
+        <h2>6. Your emergency code</h2>
+        <p>Write this code down and keep it with your {nostr ? 'Nostr key' : '24 words'}.</p>
+        <p className="code" id="emergency-code">{code || '…'}</p>
+        <h3>When you need it</h3>
+        <p>Your computer breaks, or your node will be offline for more than a day or two. Type the code at <b>testnet.bitcoin-arena.io/offline</b> from any phone or computer. Your node then leaves the network cleanly, and you keep your bond.</p>
+        <h3>What it cannot do</h3>
+        <p>It cannot move money or change anything else. So it is safe to type on other devices. Your {nostr ? 'Nostr key' : '24 words'} are not: type {nostr ? 'it' : 'them'} only on your own node.</p>
+        <button type="button" id="emergency-done" disabled={busy || !code} onClick={this.done}>I have written the code down</button>
+        <Msg r={msg} />
+      </div>);
   }
 }
 
@@ -300,7 +321,7 @@ export class OwnerStep extends React.Component {
     const { mode, npub, msg } = this.state;
     return (
       <div className="aw">
-        <h2>6. Owner login</h2>
+        <h2>7. Owner login</h2>
         <p className="sub">How you log in to your node's owner page later.</p>
         <div className="choices">
           {this.choice('seed', 'My 24 words', 'Type them on the owner page in any browser. They stay in that browser.')}
@@ -329,7 +350,7 @@ export class PromiseStep extends React.Component {
     const typed = text.trim().toUpperCase() === PROMISE;
     return (
       <div className="aw">
-        <h2>11. Your bond: the rules</h2>
+        <h2>12. Your bond: the rules</h2>
         <div className="rules">
           <div className="rule"><div className="ic">🔒</div><div><b>Your bond is your promise.</b><p>Bitcoin your node locks on the chain. Cheating would cost more than it could ever win, so players can trust a node they have never met.</p></div></div>
           <div className="rule good"><div className="ic">✅</div><div><b>Stopping? Press LEAVE first.</b><p>Press it on your owner page. Your node finishes its rounds and gives notice to its federation. Then you are free, and your bond comes back when its lock ends.</p></div></div>

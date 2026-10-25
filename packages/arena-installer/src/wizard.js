@@ -184,7 +184,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
 
   const view = () => {
     const s = state.read();
-    return { network: 'testnet4', step: nextStep(s), done: doneOf(s), origin: s.origin || null, control: s.control || null, chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
+    return { network: 'testnet4', step: nextStep(s), done: doneOf(s), origin: s.origin || null, control: s.control || null, chainSwitchedFrom: s.chainSwitchedFrom || null, chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
       chainTest: s.chainTest || null, roles: s.roles || [], roleInfo: ROLES, appInfo: appsView(releaseApps), apps: chosenApps(s, releaseApps), electrum: TESTNET4_ELECTRUM, owner: s.owner || null, service: s.service || null,
       seatPort: portOf(), defaultPort: seatPort, reach: s.reach || null, direct: s.direct || null, login: login ? { url: login.url, result: login.result } : null,
       lightning: s.lightning || null, coreSync: s.core ? { dir: s.core.dir || state.home, interim: !!s.core.interim, prune: !!s.core.prune } : null, gatewaySeat: GATEWAY_SEAT, launchers: s.launchers || null, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, custodyLater: laterCustody(s), wallet: (s.done || {}).seed ? (() => { const parts = withOtherNodes(s, depositParts(s, (s.roles || []).includes('custody') ? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS : 0), { further: !!fundFrom });
@@ -306,15 +306,31 @@ const serviceRun = async (b) => {
 
     'POST /api/chain/test': async (b) => ({ ok: true, result: await test(chainOf(b)) }),
     'POST /api/chain/save': async (b) => {
-      const conn = chainOf(b);
-      const r = await test(conn);
-      if (!r.ok) return { ok: false, why: r.why, result: r };
+      let conn = chainOf(b);
+      let r = await test(conn);
+      // AN ELECTRUM SERVER THAT FAILS BETWEEN THE CHOICE AND THE SAVE (kanban #638, the owner's playtest 2026-10-25: "sometimes the selected
+      // electrum node fails after selecting but before moving to the next stage"): asked once more, then the other known servers in turn;
+      // the first that passes is saved, and the page says which
+      let switchedFrom = null;
+      if (!r.ok && conn.kind === 'electrum') {
+        const again = await test(conn);
+        if (again.ok) r = again;
+        else {
+          for (const x of TESTNET4_ELECTRUM) {
+            if (x.host === conn.host && x.port === conn.port) continue;
+            const c2 = { kind: 'electrum', host: x.host, port: x.port, tls: x.tls };
+            const r2 = await test(c2);
+            if (r2.ok) { switchedFrom = `${conn.host}:${conn.port} (${r.why})`; conn = c2; r = r2; break; }
+          }
+        }
+      }
+      if (!r.ok) return { ok: false, why: conn.kind === 'electrum' ? `${r.why}; no other known Electrum server answered either - try again in a minute, or use Bitcoin Core` : r.why, result: r };
       if (conn.kind === 'core' && conn.user) {        // main.js reads a cookie file: user:password in one of our own, 0600
         state.writeSecret('bitcoind.auth', `${conn.user}:${conn.password}\n`);
         conn.cookiePath = state.path('bitcoind.auth'); delete conn.password;
       }
-      mark('chain', { chain: conn, chainTest: { atMs: Date.now(), why: r.why, latencyMs: r.source.latencyMs, height: r.source.height } });
-      return { ok: true, result: r };
+      mark('chain', { chain: conn, chainTest: { atMs: Date.now(), why: r.why, latencyMs: r.source.latencyMs, height: r.source.height }, chainSwitchedFrom: switchedFrom });
+      return { ok: true, result: r, chain: conn, switchedFrom };
     },
 
     // BITCOIN CORE, INSTALLED WHEN ASKED (ruling 8): the plan (one already here? the disk against what mainnet and testnet4 need),
@@ -391,13 +407,13 @@ const serviceRun = async (b) => {
       return { ok: true, networks: out };
     },
 
+    // THE ROLES CHECKED AS THEY ARE SWITCHED ON (kanban #641, the owner's playtest 2026-10-25: "when selecting custody role, the check of the
+    // bitcoin node should happen at that moment, not only when moving to the next step"): the same check the save runs, nothing saved
+    'POST /api/roles/check': async (b) => { const why = rolesRefusal([...new Set((b.roles || []).map(String))]); return why ? { ok: false, why } : { ok: true }; },
     'POST /api/roles': async (b) => {
       const roles = [...new Set((b.roles || []).map(String))];
-      const unknown = roles.filter((r) => !ROLES[r]);
-      if (unknown.length) return { ok: false, why: `no role ${unknown.join(', ')}` };
-      if (!roles.length) return { ok: false, why: 'choose at least one role' };
-      for (const r of ['custody', 'liquidity']) if (roles.includes(r) && state.read().chain && !ownCoreOf(state.read()))
-        return { ok: false, why: `${r === 'custody' ? 'custody' : 'a liquidity provider'} needs your own Bitcoin Core: LND cannot run on an Electrum server. Connect or install Bitcoin Core in the first step, or leave ${r} out` };
+      const refused = rolesRefusal(roles);
+      if (refused) return { ok: false, why: refused };
       const ln = roles.includes('custody') || roles.includes('liquidity');   // the roles that run LND
       mark('roles', { roles });
       // no custody: no Lightning, federation or bond-rules step (2026-10-18: "No slashing for leaving if you have no custody, so that will only come then")
@@ -503,6 +519,14 @@ const serviceRun = async (b) => {
       return { ok: true, emergencyCode: em.code };
     },
 
+    // THE EMERGENCY CODE'S OWN STEP (kanban #647, the owner's playtest 2026-10-25: "the emergency code notice should be an overlay or a separate
+    // step in the installation process. also the description is confusing" - "extra step it is, and make the text clearer and simpler"):
+    // shown from the seed after the words (or the Nostr key), done once the owner says it is written down
+    'POST /api/emergency/written': async () => {
+      if (!state.exists('seed.hex')) return { ok: false, why: 'no seed yet' };
+      mark('emergency');
+      return { ok: true };
+    },
     // THE EMERGENCY CODE AGAIN (§23A.5a): from the seed on this machine, for the owner at the wizard
     'GET /api/emergency': async () => {
       if (!state.exists('seed.hex')) return { ok: false, why: 'no seed yet' };
@@ -864,6 +888,14 @@ const serviceRun = async (b) => {
     if (!isAbsolute(dir)) return { ok: false, why: `give the whole path of the folder (it starts with / or a drive letter): ${raw}` };
     return { ok: true, dir: resolvePath(dir) };
   };
+  const rolesRefusal = (roles) => {
+    const unknown = roles.filter((r) => !ROLES[r]);
+    if (unknown.length) return `no role ${unknown.join(', ')}`;
+    if (!roles.length) return 'choose at least one role';
+    for (const r of ['custody', 'liquidity']) if (roles.includes(r) && state.read().chain && !ownCoreOf(state.read()))
+      return `${r === 'custody' ? 'custody' : 'a liquidity provider'} needs your own Bitcoin Core: LND cannot run on an Electrum server. Connect or install Bitcoin Core in step 2, or leave ${r} out`;
+    return null;
+  };
   const chainOf = (b) => (b.kind === 'electrum'
     ? { kind: 'electrum', host: String(b.host || ''), port: Number(b.port), tls: b.tls !== false }
     : { kind: 'core', url: String(b.url || ''), ...(b.cookiePath ? { cookiePath: String(b.cookiePath) } : { user: String(b.user || ''), password: String(b.password || '') }) });
@@ -894,7 +926,7 @@ const serviceRun = async (b) => {
       // THE LINK OPENED AGAIN IN A BROWSER THAT HOLDS ITS SESSION (kanban #635, the owner's playtest 2026-10-25: the test host app's "Open in
       // browser" opened the used link, and the page said "that setup link is used or expired" in a browser already logged in)
       if (sessionOk(req)) { res.writeHead(303, { location: '/', 'cache-control': 'no-store' }); return res.end(); }
-      if (!token || nowMs() > tokenUntil || !same(url.searchParams.get('t'), token)) return json(res, 403, { ok: false, why: 'that setup link is used or expired: restart the installer for a new one' });
+      if (!token || nowMs() > tokenUntil || !same(url.searchParams.get('t'), token)) return json(res, 403, { ok: false, why: 'This setup link was used already or is older than 30 minutes. Open the Bitcoin Arena app again (or run arena-install again) to get a new one' });
       token = null;
       const sid = b64u(32);
       sessions.set(hashOf(sid), nowMs()); saveSessions(true);
@@ -902,7 +934,7 @@ const serviceRun = async (b) => {
       res.writeHead(303, { location: '/', 'set-cookie': `arena_wizard=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_IDLE_MS / 1000}${secure}`, 'cache-control': 'no-store' });
       return res.end();
     }
-    if (!sessionOk(req)) return json(res, 401, { ok: false, why: finished ? 'the installer has finished' : 'open the setup link the installer printed' });
+    if (!sessionOk(req)) return json(res, 401, { ok: false, why: finished ? 'Setup is finished. Your node runs: open the Bitcoin Arena app to see it' : 'This page opens from the setup link. Open the Bitcoin Arena app again (or run arena-install again) and it opens the page for you' });
     if (req.method === 'GET' && url.pathname === '/') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY',
         'content-security-policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'" });
