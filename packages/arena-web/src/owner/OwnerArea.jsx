@@ -86,7 +86,7 @@ export class OwnerArea extends React.Component {
               <tr><td>custody, too late</td><td>counted as abandoned</td><td>lost</td></tr></tbody></table>
             {p.emergencyCode ? <><div className="row"><span>Your code</span><b id="emcode">{s.emShown ? p.emergencyCode : 'hidden'}</b></div>
               {s.emShown ? null : <button type="button" id="emshow" onClick={() => this.setState({ emShown: true })}>Show the code</button>}</>
-              : <p className="sub">This browser signed in without the 24 words, so it cannot make the code. The installer showed it at the seed step; it is made from the same words.</p>}
+              : <p className="sub">This browser cannot make the code: it signed in without your 24 words{p.how === 'nsec' ? '' : ' or your nsec'}. The installer showed it at setup. Sign in with the words - or, for a node set up with your Nostr key, with your nsec - to see it here.</p>}
             <p className="sub">The code can only take this node out - no money, no settings. Never type your 24 words on another node.</p>
             <p className="sub">If the Arena site cannot be reached: the same page is on every node, at <a href={p.emergencyLink}>/Dashboard/emergency</a>.</p></div></>)}
           {sec('leave', <><h2>Leave</h2><Place id="leave" /></>)}

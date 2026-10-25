@@ -4,7 +4,7 @@
 // Bundled into pages/owner-client.js by tools/bundle-owner.mjs; test/owner.test.js holds the bundle to this source.
 import { schnorr } from '@noble/curves/secp256k1.js';
 export { phraseFromSeed, seedFromPhrase } from '../../arena-client/src/bip39.js';
-export { ownerSecretFromSeed, signOwnerRequest } from '../src/owner.js';
+export { ownerSecretFromSeed, signOwnerRequest, nodeSeedFromNsecSecret } from '../src/owner.js';
 export { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 export const sign = (message, secret) => schnorr.sign(message, secret);
 export const pubkeyOf = (secret) => schnorr.getPublicKey(secret);

@@ -258,7 +258,9 @@ async function area() {
   // THE EMERGENCY CODE (spec §23A.5a, protocol 17: made from the words when this browser holds them, never kept anywhere) and SIGNING A GAME
   // OR MARKET as the developer's command-line client signs it (the developer key comes from the words or the nsec; a signer never gives its
   // secret out, so it signs no game here) - then draws each panel into its place
-  const seed = readSeed(), devSeed = who.devSeed, devPub = devSeed ? C.devPubkeyOf(devSeed) : null;
+  // a node driven by Nostr (kanban #653): its seed comes from the owner's nsec, so the nsec makes the emergency code the words would
+  const nsecSecret = who.how === 'nsec' && state.nostrSeed ? (readNostr() || {}).secret : null;
+  const seed = readSeed() || (nsecSecret ? C.nodeSeedFromNsecSecret(C.fromHex(nsecSecret)) : null), devSeed = who.devSeed, devPub = devSeed ? C.devPubkeyOf(devSeed) : null;
   areaProps = { node: state.node, owner: state.owner, claimedAtMs: state.claimedAtMs, guardian: !!me.guardian, games, how: who.how,
     onShowWords: () => C.phraseFromSeed(readSeed()).words,
     onForget: () => { if (confirm('Sign out on this browser? You need your 24 words or your Nostr key to come back.')) forget(); },

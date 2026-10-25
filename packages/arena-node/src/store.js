@@ -1235,6 +1235,20 @@ export function openStore(path = ':memory:') {
  * nothing, which is the honest consequence of the two key spaces having been
  * wrong to begin with.
  */
+/**
+ * THE NODE IDENTITY FROM THE OWNER'S SEED (kanban #650/#653, the owner 2026-10-25: "the node identity (without nostr) needs to be tied to the
+ * seed"): the installer hands the key its seed gives (arena-installer/src/seed.js nodeKeyOf) before the node's first start, so the same
+ * 24 words - or the same nsec - restore the same node, its bond included. A node that has an identity keeps it: answers whether `secret`
+ * is now this node's key.
+ */
+export function adoptIdentity(db, secret) {
+  const pubkey = schnorr.getPublicKey(secret);
+  const row = db.prepare('SELECT pubkey FROM identity WHERE one = 0').get();
+  if (row) return Buffer.from(new Uint8Array(row.pubkey)).equals(Buffer.from(pubkey));
+  db.prepare('INSERT INTO identity (one, secret, pubkey) VALUES (0, ?, ?)').run(secret, pubkey);
+  return true;
+}
+
 export function nodeIdentity(db) {
   const row = db.prepare('SELECT secret, pubkey FROM identity WHERE one = 0').get();
   if (row) {

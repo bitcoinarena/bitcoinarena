@@ -20,7 +20,7 @@ import { execFile } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { testConnection, TESTNET4_ELECTRUM } from './chain-test.js';
-import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CONFIRM_WORDS, emergencyOf, seedOfWords } from './seed.js';
+import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CONFIRM_WORDS, emergencyOf, seedOfWords, seedOfNsec, newNsec, nodeKeyOf, signNostrEvent } from './seed.js';
 import { nextStep, doneOf, seatConf, ROLES, guardianSetupOf, ownCoreOf } from './state.js';
 import { appsIn, appsView, chosenApps } from './apps.js';
 import { installService, installProgram } from './service.js';
@@ -48,6 +48,7 @@ import { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, lndFunds, 
 export const GATEWAY_SEAT = Object.freeze({ minInboundSats: 100000, minOutboundSats: 100000, minPegInSats: 50000, availability: 0.95, seats: 2, epochBlocks: 144 });
 import { findGatewayd, configureGateway, testGateway, joinFederation } from './gateway.js';
 import { signOwnerRequest, ownerEventTemplate } from '../../arena-node/src/owner.js';
+import { openStore, adoptIdentity, nodeIdentity } from '../../arena-node/src/store.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { instancesChoice, instancesNote, INSTANCES_MAX, RAM_FROM } from './instances.js';
 import { INSTANCE, PORT_OFFSET } from './instance.js';
@@ -183,7 +184,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
 
   const view = () => {
     const s = state.read();
-    return { network: 'testnet4', step: nextStep(s), done: doneOf(s), origin: s.origin || null, chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
+    return { network: 'testnet4', step: nextStep(s), done: doneOf(s), origin: s.origin || null, control: s.control || null, chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
       chainTest: s.chainTest || null, roles: s.roles || [], roleInfo: ROLES, appInfo: appsView(releaseApps), apps: chosenApps(s, releaseApps), electrum: TESTNET4_ELECTRUM, owner: s.owner || null, service: s.service || null,
       seatPort: portOf(), defaultPort: seatPort, reach: s.reach || null, direct: s.direct || null, login: login ? { url: login.url, result: login.result } : null,
       lightning: s.lightning || null, coreSync: s.core ? { dir: s.core.dir || state.home, interim: !!s.core.interim, prune: !!s.core.prune } : null, gatewaySeat: GATEWAY_SEAT, launchers: s.launchers || null, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, custodyLater: laterCustody(s), wallet: (s.done || {}).seed ? (() => { const parts = withOtherNodes(s, depositParts(s, (s.roles || []).includes('custody') ? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS : 0), { further: !!fundFrom });
@@ -228,6 +229,16 @@ const serviceRun = async (b) => {
     const tunnel = !reach.tunnelMode(s.reach.mode) ? null : reach.tunnelUnit({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
     const tunnelArgs = !reach.tunnelMode(s.reach.mode) ? null : reach.tunnelArgsOf({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
     const installAt = Date.now();                                    // a restarted quick tunnel's name is the one logged after this
+    // THE NODE'S IDENTITY FROM ITS SEED (kanban #650/#653): adopted before its first start, so the same words or nsec restore this node and
+    // its bond; a node folder that has an identity already keeps it (identityFromSeed says which)
+    // a Nostr node signs with its nsec - its identity, adopted at the first step - so setup logs its owner in with that same key, read
+    // from its store before the node holds it
+    let nostrKey = null;
+    if (s.control === 'nostr') { const db = openStore(state.path('node.db')); try { nostrKey = nodeIdentity(db).secret; } finally { db.close(); } }
+    if (state.exists('seed.hex') && s.control !== 'nostr') {   // (a Nostr node's identity is its nsec, adopted at the first step)
+      const db = openStore(state.path('node.db'));
+      try { s = state.save({ identityFromSeed: adoptIdentity(db, nodeKeyOf(fromHex(state.readSecret('seed.hex').trim()))) }); } finally { db.close(); }
+    }
     stage('services');
     const r = await install({ release, home: state.home, port, bridgePort: s.chain.kind === 'electrum' ? bridgePort : null, tunnel, tunnelArgs, boot, onStage: stage });
     if (!r.ok) return { ok: false, why: r.why };
@@ -269,13 +280,17 @@ const serviceRun = async (b) => {
     if (s.reach.mode !== 'direct') reachTest = s.reach.url ? await reach.testPublicUrl({ url: s.reach.url, identity: r.identity, fetcher }) : { ok: false, why: 'the quick tunnel gave no name' };
     let login = null;
     if (s.owner.mode === 'seed') { stage('login'); login = await ownerLogin(signedBySeed(r.identity)); }
+    else if (nostrKey) {
+      stage('login');
+      login = await ownerLogin(signOwnerRequest({ node: r.identity, action: 'login', args: {}, secret: nostrKey, sign: (m, k) => schnorr.sign(m, k), pubkeyOf: (k) => schnorr.getPublicKey(k) }));
+    }
     state.save({ service: { port, identity: r.identity, startedInMs: r.ms, boot: r.boot, linger: r.linger, reachTest, atMs: Date.now() } });
     if (reachTest && !reachTest.ok) return { ok: false, why: `the node runs, but not at its public address: ${reachTest.why}`, identity: r.identity };
     if (login && !login.ok) return { ok: false, why: `the node runs, but the owner login failed: ${login.why}`, identity: r.identity };
     if (login) mark('service', { ownerLoginMs: Date.now() });
     saveLaunchers();
     return { ok: true, identity: r.identity, ms: r.ms, boot: r.boot, linger: r.linger, reachTest, url: s.reach.url, login,
-      template: s.owner.mode === 'nostr' ? ownerEventTemplate({ node: r.identity, action: 'login' }) : null };
+      template: s.owner.mode === 'nostr' && !nostrKey ? ownerEventTemplate({ node: r.identity, action: 'login' }) : null };
   };
 
   // THE STEPS' DOORS. Each answers { ok, ... } and saves only what passed.
@@ -410,31 +425,63 @@ const serviceRun = async (b) => {
       return { ok: true, apps };
     },
 
-    // NEW OR RESTORED (kanban #652, the owner 2026-10-25: "neuer step im installer: New/Restore - setup as a new node / restore from seed"):
-    // the first step. New: the seed step shows new words later. Restore: the 24 words typed here are checked (a wrong word or checksum
-    // refused by name) and become this node's seed - its wallet, owner login, emergency code, Lightning and gateway keys are the old
-    // node's again - and the seed step is done. A node that has a seed already keeps it: only the same words restore it.
+    // NEW OR RESTORED, BY 24 WORDS OR BY NOSTR (kanban #652/#654, the owner 2026-10-25: "neuer step im installer: New/Restore"; "User first
+    // selects Operation Mode: Nostr / New Seed (24 Words)"; #653 "Only allow nsec then"): the first step.
+    //   words + new      the seed step shows new words later
+    //   words + restore  the 24 typed words are checked (a wrong word or checksum refused by name) and become the seed; the seed step is done
+    //   nostr (new or restore)  the nsec is the node's own key on the network (kept in its store, so it runs on it alone), gives the seed
+    //                    (seed.js seedOfNsec) and is the owner: the seed and owner steps are done. The same nsec gives the same node again,
+    //                    so new and restore differ only in what the page says.
+    // With 24 words the node's identity comes from the seed (adopted before its first start). A node that has a seed keeps it: only the
+    // words or nsec that gave it are taken again.
     'POST /api/start': async (b) => {
-      if (b.mode === 'new') {
-        if (state.exists('seed.hex') && (state.read().origin === 'restore')) return { ok: false, why: 'this node was restored from 24 words already' };
-        mark('start', { origin: 'new' });
-        return { ok: true, origin: 'new' };
+      const control = b.control || (b.mode === 'restore' || b.mode === 'new' ? 'words' : null);
+      const action = b.action || b.mode;
+      if (!['words', 'nostr'].includes(control)) return { ok: false, why: 'choose 24 words or Nostr' };
+      if (!['new', 'restore'].includes(action)) return { ok: false, why: 'choose a new node or a restore' };
+      const s0 = state.read();
+      const keep = (hex) => (state.exists('seed.hex') && state.readSecret('seed.hex').trim() !== hex
+        ? { ok: false, why: `this node has other ${s0.control === 'nostr' ? 'Nostr key' : 'words'} already: set up another node folder for that` } : null);
+      if (control === 'words' && action === 'new') {
+        if (state.exists('seed.hex') && (s0.origin === 'restore' || s0.control === 'nostr')) return { ok: false, why: 'this node has its seed already' };
+        mark('start', { origin: 'new', control: 'words' });
+        return { ok: true, control, origin: 'new' };
       }
-      if (b.mode !== 'restore') return { ok: false, why: 'choose a new node or a restore' };
-      const words = String(b.words || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
-      if (words.length !== 24) return { ok: false, why: `type all 24 words, in order (${words.length} typed)` };
-      const r = seedOfWords(words.join(' '));
-      if (!r.ok) return { ok: false, why: r.why };
-      const hex = toHex(r.seed);
-      if (state.exists('seed.hex') && state.readSecret('seed.hex').trim() !== hex) return { ok: false, why: 'this node has other words already: restore on a new node folder' };
+      let seed, owner = null;
+      if (control === 'words') {
+        const words = String(b.words || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+        if (words.length !== 24) return { ok: false, why: `type all 24 words, in order (${words.length} typed)` };
+        const r = seedOfWords(words.join(' '));
+        if (!r.ok) return { ok: false, why: r.why };
+        seed = r.seed;
+      } else {
+        const r = seedOfNsec(b.nsec);
+        if (!r.ok) return { ok: false, why: r.why };
+        seed = r.seed; owner = r.pubkey;
+      }
+      const hex = toHex(seed);
+      const refused = keep(hex);
+      if (refused) return refused;
       state.writeSecret('seed.hex', hex + '\n');
       pendingSeed = null;
-      const { pubkey } = ownerKeyOf(r.seed);
-      const em = emergencyOf(r.seed);
-      const s = state.read();
-      state.save({ origin: 'restore', seedOwnerPubkey: pubkey, emergencyPubkey: em.pubkey, done: { ...(s.done || {}), start: Date.now(), seed: Date.now() } });
-      return { ok: true, origin: 'restore', ownerPubkey: pubkey };
+      const { pubkey } = ownerKeyOf(seed);
+      const em = emergencyOf(seed);
+      const now = Date.now(), done = { ...(s0.done || {}), start: now, seed: now };
+      if (owner) {
+        // THE NODE RUNS ON THE NSEC ITSELF (the owner 2026-10-25: "The node must also operate on its own with the nsec"): the Nostr key is the
+        // node's identity on the network - it signs its proposals and bonds with no one at the page - and its owner
+        const db = openStore(state.path('node.db'));
+        let own;
+        try { own = adoptIdentity(db, seedOfNsec(b.nsec).secret); } finally { db.close(); }
+        if (!own) return { ok: false, why: 'this node folder has another node identity already: set up another node folder for that' };
+        writeFileSync(state.path('node.db.owner.json'), JSON.stringify({ pubkey: owner, claimedAtMs: now, nostrSeed: true }) + '\n', { mode: 0o600 });
+        done.owner = now;
+      }
+      state.save({ origin: action, control, seedOwnerPubkey: pubkey, emergencyPubkey: em.pubkey, done, ...(owner ? { owner: { mode: 'nostr', pubkey: owner } } : {}) });
+      return { ok: true, control, origin: action, ownerPubkey: owner || pubkey, emergencyCode: em.code };
     },
+    // a Nostr key for someone who has none (the owner's wallet screenshot: "New to Nostr? Create an account"): shown once, never kept here
+    'POST /api/start/nsec': async () => ({ ok: true, ...newNsec() }),
 
     // THE SEED: shown once (C.5), kept in memory until the user types back CONFIRM_WORDS words; only then written (0600). A node that
     // already has a seed never makes a second one.
@@ -547,7 +594,16 @@ const serviceRun = async (b) => {
     'POST /api/owner/login': async (b) => {
       const s = state.read();
       if (!s.service) return { ok: false, why: 'the node is not installed yet' };
-      const r = await ownerLogin({ action: 'login', args: {}, nostr: b.nostr });
+      // A NOSTR OWNER WITHOUT A BROWSER SIGNER (kanban #653: nsec only): the nsec typed once more, the login event signed here with it,
+      // never kept - and only the owner's own key is taken
+      let nostr = b.nostr;
+      if (b.nsec) {
+        const k = seedOfNsec(b.nsec);
+        if (!k.ok) return { ok: false, why: k.why };
+        if (!s.owner || k.pubkey !== s.owner.pubkey) return { ok: false, why: 'that nsec is not this node\'s owner key' };
+        nostr = signNostrEvent(ownerEventTemplate({ node: s.service.identity, action: 'login' }), k.secret);
+      }
+      const r = await ownerLogin({ action: 'login', args: {}, nostr });
       if (r.ok) mark('service', { ownerLoginMs: Date.now() });
       return r;
     },
