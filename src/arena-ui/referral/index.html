@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Referral Program · Bitcoin Arena</title>
+<meta name="description" content="Bring players to Bitcoin Arena from your site and earn 10% of the nodes' fee on every game they play.">
+<link rel="icon" href="/favicon.ico">
+<!-- THE REFERRAL PROGRAM, HOW IT WORKS (kanban #675, 2026-10-25: "Also include it in docs and a how to page on the Testnet page called Referral
+     Program"): what a program earns, how to set one up on a node, how to link or host a game, where to see and withdraw the earnings. -->
+<style>
+  :root { --bg: #07090d; --panel: #0e131b; --line: #1d2633; --text: #e8edf3; --soft: #c3ccd6; --dim: #8d99a8; --btc: #f7931a; --gold: #ffd166; --bull: #2fd38a; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: radial-gradient(80% 50% at 50% 0%, rgba(247,147,26,.12), transparent 60%), var(--bg); color: var(--text); font: 400 16px/1.6 Inter, system-ui, -apple-system, sans-serif; }
+  a { color: var(--btc); }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 0 16px; }
+  nav { border-bottom: 1px solid var(--line); }
+  nav .wrap { display: flex; align-items: center; gap: 16px; height: 58px; }
+  .brand { display: flex; align-items: center; gap: 10px; font: 700 18px system-ui; text-decoration: none; color: var(--text); white-space: nowrap; }
+  .brand i { width: 28px; height: 28px; border-radius: 8px; background: conic-gradient(from 210deg, var(--btc), var(--gold), var(--btc)); display: grid; place-items: center; font-style: normal; color: #1a0f00; font-weight: 800; }
+  nav .links { margin-left: auto; display: flex; gap: 16px; font-size: 15px; } nav .links a { color: var(--dim); text-decoration: none; } nav .links a:hover { color: var(--text); }
+  @media (max-width: 520px) { nav .links { gap: 12px; font-size: 14px; } .brand .t { display: none; } }
+  h1 { font: 700 clamp(30px, 5vw, 42px)/1.15 system-ui; margin: 34px 0 8px; letter-spacing: -0.02em; }
+  .lead { color: var(--soft); font-size: 18px; margin: 0 0 24px; }
+  h2 { font: 700 20px system-ui; margin: 34px 0 10px; }
+  .figure { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 20px 0; }
+  .figure div { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+  .figure b { display: block; font: 700 26px system-ui; color: var(--btc); } .figure span { color: var(--dim); font-size: 14px; }
+  ol.steps { counter-reset: s; list-style: none; padding: 0; margin: 0; }
+  ol.steps li { counter-increment: s; position: relative; padding: 14px 16px 14px 56px; margin: 10px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+  ol.steps li::before { content: counter(s); position: absolute; left: 16px; top: 14px; width: 28px; height: 28px; border-radius: 50%; background: rgba(247,147,26,.16); color: var(--btc); display: grid; place-items: center; font-weight: 700; }
+  code { font: 13px "JetBrains Mono", ui-monospace, monospace; background: #0b1017; border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; overflow-wrap: anywhere; }
+  pre { background: #0b1017; border: 1px solid var(--line); border-radius: 10px; padding: 12px; overflow-x: auto; font: 13px/1.5 "JetBrains Mono", ui-monospace, monospace; }
+  .muted { color: var(--dim); }
+  footer { margin: 50px 0 30px; color: var(--dim); font-size: 14px; }
+</style>
+</head>
+<body>
+<nav><div class="wrap"><a class="brand" href="/"><i>&#8383;</i><span class="t">Bitcoin Arena</span></a>
+  <span class="links"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoin-arena.io/">Explorer</a><a href="/health/">Health</a></span></div></nav>
+<main class="wrap">
+  <h1>Referral Program</h1>
+  <p class="lead">Bring players to Bitcoin Arena from your site. Every game they play pays you 10% of the nodes' fee. Your players pay nothing extra.</p>
+
+  <div class="figure">
+    <div><b>10%</b><span>of the nodes' fee on every stake your players place</span></div>
+    <div><b>0 sat</b><span>extra for your players: it comes out of the nodes' part</span></div>
+    <div><b>Lightning</b><span>to withdraw what you earned, whenever you like</span></div>
+  </div>
+
+  <h2>An example</h2>
+  <p>A player you brought stakes 10,000 sat. The nodes' fee on it is 400 sat today (4%). Your program gets 40 sat of that, the nodes keep 360. The player's stake and fee are the same as without you.</p>
+
+  <h2>Set it up</h2>
+  <ol class="steps">
+    <li><b>Run a node.</b> Your program lives on your own node: it holds the program's key and collects what it earns. <a href="https://docs.bitcoin-arena.io/">How to install a node</a>.</li>
+    <li><b>Open your node's owner area and go to Referrer.</b> Give your program a name, for example the name of your site. You can have as many programs as you like, one per site or campaign. Each earns on its own.</li>
+    <li><b>Put your link on your site.</b> The Referrer section shows it: <code>https://testnet.bitcoin-arena.io/?ref=&lt;your program's key&gt;</code>. A visitor who comes through it plays under your program for 30 days.</li>
+    <li><b>Or host a game on your site.</b> Copy the embed from the same section. Players play right on your page:
+      <pre>&lt;iframe src="https://testnet.bitcoin-arena.io/?game=rock-paper-scissors&amp;ref=&lt;your key&gt;"
+        width="100%" height="720"&gt;&lt;/iframe&gt;</pre>
+      See it working on the <a href="/referral-demo/">demo page</a>.</li>
+    <li><b>Withdraw over Lightning.</b> What your program earns is paid to its key in the game's federation, after each round settles. Your node collects it. In Referrer, press Withdraw and paste a Lightning invoice or a Lightning address.</li>
+  </ol>
+
+  <h2>Where you see it</h2>
+  <p>Your node's Referrer section shows what each program earned and what it holds. The network's <a href="https://explorer.bitcoin-arena.io/metrics">Metrics</a> page and <a href="/health/">Health</a> list every program by its name and what it earned.</p>
+
+  <h2>Good to know</h2>
+  <p>The program's name is signed with the program's own key, so nobody else can rename it. The 10% share is a network fee like the others: a passed fee proposal can change it for rounds after it takes effect.</p>
+  <p class="muted">This runs on testnet4. Test coins have no value.</p>
+</main>
+<footer class="wrap"><a href="/">Back to Bitcoin Arena</a></footer>
+</body>
+</html>

@@ -158,6 +158,7 @@
   <a href="#scalar-markets">Scalar markets</a>
   <a href="#money">Where the money goes</a>
   <a href="#reserves">Protocol reserves</a>
+  <a href="#referral">The referral program</a>
   <a href="#proposals">Funding proposals</a>
   <b>Technology</b>
   <a href="#tech">Technologies used</a>
@@ -889,6 +890,16 @@ for (const node of committeeNodes)
     <li><b>How you see them</b>: every node answers <code>GET /reserves</code> with the total, per federation, the payments in and every payment out. bitcoin-arena.io shows the live total under the fees once five nodes name the same one, and the node dashboard shows what each round paid in.</li>
     <li><b>When a federation is drained</b> (it is closing or has lost guardians), its reserves move on their own to a healthy federation: its successor, or else the open federation with the lowest id. No vote is needed for that move; every node records it.</li>
   </ul>
+  <h3 id="referral">The referral program</h3>
+  <p>A website that brings players earns <b>10% of the nodes' fee</b> on every stake they place. It comes out of the nodes' part: the player's stake and fee are the same with or without it. On a 10,000 sat stake the nodes' fee is 400 sat (4%), the website gets 40 sat and the nodes keep 360.</p>
+  <ul>
+    <li><b>A program is a key.</b> Each entry can name a website's payout key (33 bytes, signed into the entry, so no node can swap it). At settlement that key is paid its share in the round's federation, beside the other payouts. From an order book: 10% of the nodes' part of each filled order's fees.</li>
+    <li><b>Run one from your node.</b> In the owner area, <b>Referrer</b>: name a program and your node makes its key. You can have several, each earns on its own. Its name is signed with its own key and shown on the explorer's <a href="https://explorer.bitcoin-arena.io/metrics">Metrics</a> page and on Health.</li>
+    <li><b>Bring players.</b> Link to <code>https://testnet.bitcoin-arena.io/?ref=&lt;key&gt;</code> (the page keeps it 30 days), or host a game on your site in an iframe: <code>/?game=rock-paper-scissors&amp;ref=&lt;key&gt;</code>. The <a href="https://testnet.bitcoin-arena.io/referral-demo/">demo page</a> does exactly that.</li>
+    <li><b>Withdraw over Lightning.</b> Your node collects the program's payouts in the federation. In Referrer, Withdraw pays a Lightning invoice or a Lightning address.</li>
+    <li><b>Where it is counted</b>: every node answers <code>GET /referral-fees</code> with what each program earned and its name.</li>
+  </ul>
+  <p>The 10% is a network fee like the others: a passed fee proposal can set it between 0 and 40% for rounds after it takes effect. It was 20% until 2026-10-25. Step by step: <a href="https://testnet.bitcoin-arena.io/referral/">Referral Program</a>.</p>
   <h3 id="proposals">Funding proposals: how the reserves pay out</h3>
   <p><b>Anyone can propose a payout</b>, not only a developer: a player, a developer or a node operator, for any project and to any Lightning address. A proposal names its purpose, the amount in sat and the Lightning address (LNURL) to pay, and is signed by its author's key. Anyone can comment on it, in threads; comments carry no weight.</p>
   <ol class="steps">

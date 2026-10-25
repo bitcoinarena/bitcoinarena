@@ -257,14 +257,14 @@ export function Metrics({ data = null }) {
       <div className="card stat"><span>Protocol reserve</span><b>{m.reserve ? amount(m.reserve.msat) : '–'}</b>
         <small>{m.reserve ? m.reserve.federations.length + (m.reserve.federations.length === 1 ? ' federation' : ' federations') : 'not read yet'}</small></div>
       <div className="card stat"><span>Referral fees paid</span><b>{m.referral ? amount(m.referral.msat) : '–'}</b>
-        <small>{m.referral ? m.referral.sites.length + (m.referral.sites.length === 1 ? ' website' : ' websites') : 'not read yet'}</small></div>
+        <small>{m.referral ? m.referral.sites.length + (m.referral.sites.length === 1 ? ' program' : ' programs') : 'not read yet'}</small></div>
     </div>
     <h2>Volume per day <span className="dim">stakes of every transaction, UTC days</span></h2>
     <div className="card">{(m.volume || []).length ? (<table className="rows"><thead><tr><th>Day</th><th>Transactions</th><th>Volume</th><th /></tr></thead><tbody>
       {m.volume.map((d) => <tr key={d.day}><td className="nw">{d.day}</td><td>{d.txs.toLocaleString('en-US')}</td><td className="nw"><b>{amount(d.msat)}</b></td>
         <td className="barcell"><i className="vbar" style={{ width: Math.max(1, Number((BigInt(d.msat) * 100n) / most)) + '%' }} /></td></tr>)}</tbody></table>) : <p className="dim">No transactions yet.</p>}</div>
-    {m.referral && m.referral.sites.length ? (<><h2>Referral fees by website</h2><div className="card"><table className="rows"><thead><tr><th>Website key</th><th>Payouts</th><th>Earned</th></tr></thead><tbody>
-      {m.referral.sites.map((x) => <tr key={x.site}><td className="mono">{x.site.slice(0, 16)}…</td><td>{x.payouts}</td><td className="nw"><b>{amount(x.msat)}</b></td></tr>)}</tbody></table></div></>) : null}
+    {m.referral && m.referral.sites.length ? (<><h2>Referral programs</h2><div className="card"><table className="rows"><thead><tr><th>Program</th><th>Key</th><th>Payouts</th><th>Earned</th></tr></thead><tbody>
+      {m.referral.sites.map((x) => <tr key={x.site}><td><b>{x.name || 'unnamed'}</b></td><td className="mono">{x.site.slice(0, 16)}…</td><td>{x.payouts}</td><td className="nw"><b>{amount(x.msat)}</b></td></tr>)}</tbody></table></div></>) : null}
     {m.readAt ? <p className="dim">Reserve and referral fees read from {m.seats ? m.seats.reserves + ' of ' + m.seats.of : 'the'} nodes {ago(Date.parse(m.readAt))}.</p> : null}
   </>);
 }
