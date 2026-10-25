@@ -81,7 +81,7 @@ test('bond: the deposit named whole with its parts, nothing then enough found, t
   assert.deepEqual(posts[0], ['/api/bond/check', { pegInSats: 50000 }]);
   assert.match(c.state.msg.text, /^Nothing has arrived yet\./);
   await c.check();
-  assert.equal(c.state.msg.text, 'Found 366,000 sat in 1 deposit(s) (confirmed at 157192). That is enough: you can post the bond now. The confirmations show on your dashboard. The network asks new nodes for a bond of at least 250,000 sat right now (its federations are filling up), so your node is useful from the start.');
+  assert.equal(c.state.msg.text, 'Found 366,000 sat in 1 deposit(s) (confirmed at 157192). Monitor confirmations on your dashboard. The network asks new nodes for a bond of at least 250,000 sat right now (its federations are filling up), so your node is useful from the start.');
   html = renderToStaticMarkup(c.render());
   assert.match(html, /The bond will be locked until block 157483 - 289 blocks from now/);
   assert.match(html, /<button type="button" id="b-post">Post the bond<\/button>/);
@@ -129,7 +129,7 @@ test('#635: the faucet asked and the deposit checked; a refusal opens the guided
   assert.match(html, /Get test coins automatically[\s\S]*id="coins-auto"/); assert.doesNotMatch(html, /coinfaucet/, 'the guided way folded');
   await c.autoCoins();
   assert.deepEqual(posts.map(([p]) => p), ['/api/coins/auto', '/api/bond/check']);
-  assert.match(c.state.msg.text, /\(sent, not confirmed yet\)\. That is enough: you can post the bond now/);
+  assert.match(c.state.msg.text, /\(sent, not confirmed yet\)\. Monitor confirmations on your dashboard\.$/);
   faucet = { ok: false, why: 'this address got coins from the faucet already', guided: true };
   await c.autoCoins();
   assert.equal(c.state.coins, 'guided');
