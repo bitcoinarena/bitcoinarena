@@ -18,7 +18,7 @@
 // rather than half-built.
 import { gzipSync } from 'node:zlib';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
-import { seriesWriter } from './series-writer.js';
+import { seriesWriter, writeGuarded } from './series-writer.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../arena-protocol/src/old-series.js';
 import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid, findSeriesPublication, seriesPublicationOutput } from '../../arena-protocol/src/series.js';
 import { parseSeriesLine, readSeriesLines, seriesLineOf } from './series-line.js';
@@ -3975,7 +3975,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // A LEAVING SEAT WRITES NO NEW SERIES ROUND: the rounds already written are served
       const leaving = owner && owner.leavingAtMs() !== null;
       for (const w of writers) {
-        const added = leaving ? 0 : w.write(round.now(), until);
+        const added = leaving ? 0 : writeGuarded(w, round.now(), until);   // a series it cannot open stops only itself
         // a table whose certificate this seat took before this start (kanban #604): its rounds seated as it says, once
         if (seating && !tablesSeated.has(toHex(seriesRoundIdOf(w.id, 0)))) {
           const anchor = seriesRoundIdOf(w.id, 0), seated = seating.seatedFor(anchor, 'settlement');
