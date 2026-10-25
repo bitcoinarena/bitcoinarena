@@ -6,6 +6,9 @@
 #   start   copy the release out of the app to ~/Library/ArenaNode/<release> - the node's services run it from there, never from the disk
 #           image or an app macOS may move (App Translocation) - take its quarantine mark off, then print one line: "installed" (a node
 #           is set up), "running <link>" (an installer runs already) or "started <link>" (it started one, in the background); or fails
+#   prepare / launch / wait-link   the same in three steps, so the app shows a progress window between them (the owner's playtest
+#           2026-10-25: "Wenn ich BitcoinArena.App öffne passiert erstmal gar nichts bis der Browser öffnet"): prepare copies and
+#           answers installed / running <link> / ready; launch starts the installer; wait-link answers its link, "waiting", or fails
 #   state   "running", "done" (the installer says Done or a node is set up) or "ended <its last lines>"
 #   link    the installer's one-time link        stop     stop the installer
 #   status  `arenanode status`                    owner    open the owner page       restart   restart the node
@@ -24,6 +27,7 @@ PIDF="$BASE/installer.pid"; LINKF="$BASE/installer.link"
 
 installed() { [ -x "$CMD" ] && [ -f "$H/arena.conf" ]; }
 running() { [ -f "$PIDF" ] && kill -0 "$(cat "$PIDF")" 2>/dev/null; }
+stop_it() { running && kill "$(cat "$PIDF")" 2>/dev/null; rm -f "$PIDF"; }
 release() {
   SRC=$(ls -d "$APP/Contents/Resources/release/"*arena-node-* 2>/dev/null | head -1)
   [ -n "$SRC" ] || { echo "This app holds no Bitcoin Arena release. Download the disk image again." >&2; exit 1; }
@@ -34,26 +38,41 @@ release() {
   fi
 }
 
+launch() {
+  : > "$LOG"
+  ARENA_NO_BROWSER=1 ARENA_CLOUDFLARED="$DEST/runtime/cloudflared" nohup "$DEST/runtime/node" "$DEST/packages/arena-installer/bin/arena-install.mjs" >> "$LOG" 2>&1 < /dev/null &
+  echo $! > "$PIDF"; rm -f "$LINKF"
+}
+# one look for the installer's link: printed once it is there, "waiting" while it starts, a failure once it has ended without one
+wait_link() {
+  LINK=$(grep -oE 'https?://[^ ]+\?t=[A-Za-z0-9_-]+' "$LOG" 2>/dev/null | head -1)
+  if [ -n "$LINK" ]; then echo "$LINK" > "$LINKF"; echo "$LINK"; return 0; fi
+  if running; then echo waiting; return 0; fi
+  rm -f "$PIDF"; echo "The installer did not start: $(tail -3 "$LOG")" >&2; return 1
+}
+
 case "${1:-}" in
+  prepare)
+    release
+    if running; then echo "running $(cat "$LINKF" 2>/dev/null)"; exit 0; fi
+    if installed; then echo installed; exit 0; fi
+    echo ready ;;
+  launch) release; launch; echo launched ;;
+  wait-link) wait_link || exit 1 ;;
   start)
     release
     if running; then echo "running $(cat "$LINKF" 2>/dev/null)"; exit 0; fi
     if installed; then echo installed; exit 0; fi
-    : > "$LOG"
-    ARENA_NO_BROWSER=1 ARENA_CLOUDFLARED="$DEST/runtime/cloudflared" nohup "$DEST/runtime/node" "$DEST/packages/arena-installer/bin/arena-install.mjs" >> "$LOG" 2>&1 < /dev/null &
-    PID=$!; echo $PID > "$PIDF"
-    LINK=""
-    for _ in $(seq 1 60); do LINK=$(grep -oE 'https?://[^ ]+\?t=[A-Za-z0-9_-]+' "$LOG" | head -1); [ -n "$LINK" ] && break; kill -0 $PID 2>/dev/null || break; sleep 1; done
-    if [ -z "$LINK" ]; then kill $PID 2>/dev/null; rm -f "$PIDF"; echo "The installer did not start: $(tail -3 "$LOG")" >&2; exit 1; fi
-    echo "$LINK" > "$LINKF"
-    echo "started $LINK" ;;
+    launch
+    for _ in $(seq 1 60); do L=$(wait_link) || exit 1; [ "$L" != waiting ] && { echo "started $L"; exit 0; }; sleep 1; done
+    stop_it; echo "The installer did not start within a minute: $(tail -3 "$LOG")" >&2; exit 1 ;;
   state)
     if grep -q '^Done\. Your node runs' "$LOG" 2>/dev/null; then rm -f "$PIDF"; echo done
     elif running; then echo running
     elif installed; then rm -f "$PIDF"; echo done
     else rm -f "$PIDF"; echo "ended $(tail -3 "$LOG" 2>/dev/null)"; fi ;;
   link) cat "$LINKF" 2>/dev/null ;;
-  stop) running && kill "$(cat "$PIDF")" 2>/dev/null; rm -f "$PIDF" ;;
+  stop) stop_it ;;
   status) "$CMD" status 2>&1 | head -24 ;;
   owner) "$CMD" open >/dev/null 2>&1 ;;
   restart) "$CMD" restart >/dev/null 2>&1 ;;
@@ -62,5 +81,5 @@ case "${1:-}" in
   node-start) "$CMD" start 2>&1 | tail -3 ;;
   node-stop) "$CMD" stop 2>&1 | tail -3 ;;
   doctor) "$CMD" doctor 2>&1 | head -30 ;;
-  *) echo "usage: arena-node-app start|state|link|stop|status|owner|restart|node|dashboard|node-start|node-stop|doctor" >&2; exit 2 ;;
+  *) echo "usage: arena-node-app prepare|launch|wait-link|start|state|link|stop|status|owner|restart|node|dashboard|node-start|node-stop|doctor" >&2; exit 2 ;;
 esac

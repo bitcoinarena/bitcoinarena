@@ -32,6 +32,12 @@ test('lightning: LND set up and watched until it runs; the gateway started, its 
   await c.own();
   for (let i = 0; i < 20 && !c.state.lnOk; i++) await tick();
   assert.equal(c.state.lnMsg.text, `LND 0.19.2 runs on testnet4: node 03ababababababab…, block 157193, synced. Its wallet comes from your 24 words.`);
+  // the gateway gets its own page once LND runs (playtest 2026-10-25), opened by "Continue to the gateway"
+  let lnHtml = renderToStaticMarkup(c.render());
+  assert.match(lnHtml, /id="ln-next">Continue to the gateway</);
+  assert.doesNotMatch(lnHtml, /id="ln-gw"/, 'LND\'s page holds no gateway');
+  c.setState({ gwPage: true });
+  assert.doesNotMatch(renderToStaticMarkup(c.render()), /id="ln-own"/, 'the gateway page holds no LND setup');
   await c.gwSetup();
   for (let i = 0; i < 20 && !c.state.funds; i++) await tick();
   assert.equal(c.state.gwMsg.text, 'The gateway runs (Running) on LND 03ababababababab…, testnet4, block 157193. No federation joined yet.');
@@ -94,7 +100,9 @@ test('bond: the deposit named whole with its parts, nothing then enough found, t
       : { ok: true, coins: [{ height: 157192 }], totalSats: 366000, needSats: 363000, enough: true, lock, minimum: { sats: 250000 } };
   } });
   let html = renderToStaticMarkup(c.render());
-  assert.match(html, /Send at least <b>363,000 \(bond 50,000, fees 2,000/); assert.match(html, /<code>tb1pnode<\/code>/);
+  // the total in one line, its parts as tiles below (playtest 2026-10-25: "Less wall of text and clearer and more colorful")
+  assert.match(html, /Send at least <b>363,000 sat<\/b>/); assert.match(html, /<code>tb1pnode<\/code>/);
+  assert.match(html, /class="cover c-bond"><span class="amt">50,000 sat<\/span><span class="what">bond<\/span>[\s\S]*class="cover c-ring"><span class="amt">153,000 sat/);
   assert.match(html, /id="b-pegin" value="50000"/); assert.match(html, /<button type="button" id="b-post" disabled="">Post the bond<\/button>/);
   await c.check();
   assert.deepEqual(posts[0], ['/api/bond/check', { pegInSats: 50000 }]);

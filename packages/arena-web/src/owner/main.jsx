@@ -9,6 +9,7 @@ import { KeySwitchPanel } from './KeySwitchPanel.jsx';
 import { ServicesPanel } from './ServicesPanel.jsx';
 import { AddressPanel } from './AddressPanel.jsx';
 import { BondPanel } from './BondPanel.jsx';
+import { SetupCard } from '../dashboard/SetupStatus.jsx';
 import { CustodyPanel, LiquidityPanel } from './CustodyPanels.jsx';
 import { StandingPanel } from './StandingPanel.jsx';
 import { ReleasePanel } from './ReleasePanel.jsx';
@@ -42,6 +43,8 @@ export function mountAddress(element, { api, initial } = {}) {
   root.render(<AddressPanel api={api} initial={initial} />);
   return root;
 }
+// THE SETUP CARD ON THE OVERVIEW (playtest 2026-10-25: the dashboard's card "auch in der owners area")
+export function mountSetup(element, { api, initial } = {}) { const root = createRoot(element); root.render(<SetupCard api={api} initial={initial} />); return root; }
 export function mountBond(element, { api, initial } = {}) {
   const root = createRoot(element);
   root.render(<BondPanel api={api} initial={initial} />);
@@ -87,4 +90,4 @@ export function drawInto(element, kind, props) {
   element._react.render(<C {...props} />);
   return element._react;
 }
-if (typeof window !== 'undefined') window.ArenaOwner = { areaInto, drawInto, mountKeySwitch, mountBondAnswer, mountPlea, mountLeave, mountStart, mountMessage, mountRoles, mountServices, mountAddress, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };
+if (typeof window !== 'undefined') window.ArenaOwner = { areaInto, drawInto, mountKeySwitch, mountBondAnswer, mountPlea, mountLeave, mountStart, mountMessage, mountRoles, mountServices, mountAddress, mountSetup, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };

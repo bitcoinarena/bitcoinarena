@@ -222,6 +222,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
         });
         if (run.stages[at].state !== 'now') Object.assign(run.stages[at], { state: 'now', atMs: now });
       },
+      detail: (id, extra) => { const x = run && !run.endMs && run.stages.find((y) => y.id === id); if (x) Object.assign(x, extra); },
       end: (r) => {
         if (!run || run.endMs) return;
         const now = nowMs();
@@ -250,6 +251,52 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   const GATEWAY_STAGES = [['find', 'Finding the gateway in this release'], ['start', 'Writing its settings and starting it'],
     ['answer', 'Waiting for the gateway\'s first answer']];
   const gwRun = tracker(GATEWAY_STAGES, 'gateway.log');
+  // BITCOIN CORE'S INSTALL, AS IT RUNS (the owner's playtest 2026-10-25: "Downloading Bitcoin Core and checking it…" - "Füge auch hier
+  // eine Progress Bar hinzu"): the download by its bytes, then the check, the unpacking, the services and the interim chain
+  const CORE_STAGES = [['download', 'Downloading Bitcoin Core from bitcoincore.org'], ['check', 'Checking it against the published checksum'],
+    ['unpack', 'Unpacking it'], ['services', 'Setting it up as a service and starting it'], ['chain', 'Finding a chain server for the meantime']];
+  const coreRun = tracker(CORE_STAGES, null);
+  const mb = (n) => Math.round(n / 1e6);
+  // BITCOIN CORE INSTALLED HERE (POST /api/core/install): the checked download, a service per network, then an interim chain
+  const coreInstall = async (b) => {
+    const where = coreDirOf(b);
+    if (!where.ok) return where;
+    const found = await coreKit.detectBitcoind({ home: state.home });
+    if (found && !found.startsWith(state.home)) return { ok: false, why: `Bitcoin Core is installed already (${found}): connect it with its RPC address and cookie file instead` };
+    let disk;
+    try { disk = coreKit.diskCheck(where.dir); } catch (e) { return { ok: false, why: `cannot use ${where.dir}: ${e.code || e.message}` }; }
+    const nets = ['testnet4', ...(b.mainnet ? ['mainnet'] : [])];
+    const prune = Boolean(b.prune);
+    const need = nets.reduce((a, n) => a + (prune ? NEEDS[n].prunedBytes : NEEDS[n].fullBytes), 0);
+    if (disk.freeBytes < need) return { ok: false, why: `${Math.round(disk.freeBytes / 2 ** 30)} GB free, and ${nets.join(' + ')}${prune ? ' pruned' : ''} need about ${Math.round(need / 2 ** 30)} GB`, disk };
+    const got = await coreKit.installCore({ home: state.home, fetcher, onStage: coreRun.stage,
+      onBytes: (got, total) => coreRun.detail('download', { part: total ? got / total : null, text: total ? `${mb(got)} of ${mb(total)} MB` : `${mb(got)} MB` }) });
+    if (!got.ok) return { ok: false, why: got.why };
+    coreRun.stage('services');
+    const networks = {};
+    for (const n of nets) {
+      const c = coreKit.configureCore({ home: where.dir, network: n, prune, ...(coreKit.freeCorePorts ? { ports: await coreKit.freeCorePorts(n) } : {}) });   // free ones (kanban #635)
+      const r = await coreKit.installProgram({ id: `bitcoind-${n}`, description: `Bitcoin Core for Bitcoin Arena (${n})`, args: coreKit.coreArgs({ bitcoind: got.bitcoind, datadir: c.datadir }), home: state.home, boot: b.boot !== false });
+      if (!r.ok) return { ok: false, why: r.why };
+      networks[n] = { rpcUrl: c.rpcUrl, cookiePath: c.cookiePath, datadir: c.datadir };
+    }
+    const core = { bitcoind: got.bitcoind, prune, dir: where.dir, networks, startedMs: nowMs() };
+    state.save({ core });
+    // THE SYNC RUNS IN THE BACKGROUND (kanban #635, 2026-10-25: "Auch der Bitcoin core nicht im Vordergrund machen lassen während
+    // der synced"): a Core still syncing cannot see a fresh deposit nor take a transaction that spends one, so until it is synced the
+    // node reads the chain through a public Electrum server - the first that passes the chain test - and the chain-switch keeper
+    // (bin/chain-switch.mjs, installed with the service) moves it to its own Core once testnet4 is synced. With no server passing,
+    // the wizard waits for the sync as before.
+    coreRun.stage('chain');
+    for (const e of TESTNET4_ELECTRUM) {
+      const conn = chainOf({ kind: 'electrum', host: e.host, port: e.port, tls: e.tls, ws: e.ws, path: e.path });
+      const t = await test(conn).catch((err) => ({ ok: false, why: err.message }));
+      if (!t.ok) { log(`[core] interim chain ${e.host}:${e.port}: ${t.why}`); continue; }
+      mark('chain', { chain: conn, chainTest: { atMs: Date.now(), why: t.why, latencyMs: t.source.latencyMs, height: t.source.height }, core: { ...core, interim: true } });
+      return { ok: true, core, interim: { host: e.host, port: e.port } };
+    }
+    return { ok: true, core, interim: null };
+  };
   // THE SERVICE (C.9): the settings, the unit, started, healthy; then the owner's first login against the running node (C.6 "tested by
   // one login") - signed here with the seed's owner key, or by the browser's Nostr signer (POST /api/owner/login).
 const serviceRun = async (b) => {
@@ -382,41 +429,13 @@ const serviceRun = async (b) => {
       return { ok: true, installed: found, disk, dir: where.dir, defaultDir: state.home, needs: NEEDS, core: state.read().core || null };
     },
     'POST /api/core/install': async (b) => {
-      const where = coreDirOf(b);
-      if (!where.ok) return where;
-      const found = await coreKit.detectBitcoind({ home: state.home });
-      if (found && !found.startsWith(state.home)) return { ok: false, why: `Bitcoin Core is installed already (${found}): connect it with its RPC address and cookie file instead` };
-      let disk;
-      try { disk = coreKit.diskCheck(where.dir); } catch (e) { return { ok: false, why: `cannot use ${where.dir}: ${e.code || e.message}` }; }
-      const nets = ['testnet4', ...(b.mainnet ? ['mainnet'] : [])];
-      const prune = Boolean(b.prune);
-      const need = nets.reduce((a, n) => a + (prune ? NEEDS[n].prunedBytes : NEEDS[n].fullBytes), 0);
-      if (disk.freeBytes < need) return { ok: false, why: `${Math.round(disk.freeBytes / 2 ** 30)} GB free, and ${nets.join(' + ')}${prune ? ' pruned' : ''} need about ${Math.round(need / 2 ** 30)} GB`, disk };
-      const got = await coreKit.installCore({ home: state.home, fetcher });
-      if (!got.ok) return { ok: false, why: got.why };
-      const networks = {};
-      for (const n of nets) {
-        const c = coreKit.configureCore({ home: where.dir, network: n, prune, ...(coreKit.freeCorePorts ? { ports: await coreKit.freeCorePorts(n) } : {}) });   // free ones (kanban #635)
-        const r = await coreKit.installProgram({ id: `bitcoind-${n}`, description: `Bitcoin Core for Bitcoin Arena (${n})`, args: coreKit.coreArgs({ bitcoind: got.bitcoind, datadir: c.datadir }), home: state.home, boot: b.boot !== false });
-        if (!r.ok) return { ok: false, why: r.why };
-        networks[n] = { rpcUrl: c.rpcUrl, cookiePath: c.cookiePath, datadir: c.datadir };
-      }
-      const core = { bitcoind: got.bitcoind, prune, dir: where.dir, networks, startedMs: nowMs() };
-      state.save({ core });
-      // THE SYNC RUNS IN THE BACKGROUND (kanban #635, 2026-10-25: "Auch der Bitcoin core nicht im Vordergrund machen lassen während
-      // der synced"): a Core still syncing cannot see a fresh deposit nor take a transaction that spends one, so until it is synced the
-      // node reads the chain through a public Electrum server - the first that passes the chain test - and the chain-switch keeper
-      // (bin/chain-switch.mjs, installed with the service) moves it to its own Core once testnet4 is synced. With no server passing,
-      // the wizard waits for the sync as before.
-      for (const e of TESTNET4_ELECTRUM) {
-        const conn = chainOf({ kind: 'electrum', host: e.host, port: e.port, tls: e.tls, ws: e.ws, path: e.path });
-        const t = await test(conn).catch((err) => ({ ok: false, why: err.message }));
-        if (!t.ok) { log(`[core] interim chain ${e.host}:${e.port}: ${t.why}`); continue; }
-        mark('chain', { chain: conn, chainTest: { atMs: Date.now(), why: t.why, latencyMs: t.source.latencyMs, height: t.source.height }, core: { ...core, interim: true } });
-        return { ok: true, core, interim: { host: e.host, port: e.port } };
-      }
-      return { ok: true, core, interim: null };
+      coreRun.begin();
+      let r;
+      try { r = await coreInstall(b); } catch (e) { r = { ok: false, why: e.message }; }
+      coreRun.end(r);
+      return r;
     },
+    'GET /api/core/progress': async () => coreRun.view([]),
     'GET /api/core/status': async () => {
       const s = state.read();
       if (!s.core) return { ok: false, why: 'no Bitcoin Core was installed by this installer' };
