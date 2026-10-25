@@ -162,7 +162,7 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   // THE APPS (kanban #569): the release's three, all chosen at first; the node hosts the ones saved
   s = (await c.get('/api/state')).json;
   assert.equal(s.step, 'apps');
-  assert.deepEqual([s.appInfo.map((a) => `${a.id}:${a.versions}`), s.apps], [['nextblock:5', 'btc-updown:23', 'rock-paper-scissors:5'], ['nextblock', 'btc-updown', 'rock-paper-scissors']]);
+  assert.deepEqual([s.appInfo.map((a) => `${a.id}:${a.versions}`), s.apps], [['nextblock:5', 'btc-updown:24', 'rock-paper-scissors:5'], ['nextblock', 'btc-updown', 'rock-paper-scissors']]);
   assert.equal((await c.post('/api/apps', { apps: ['nextblock', 'rock-paper-scissors'] })).json.ok, true);
   assert.equal((await c.get('/api/state')).json.step, 'seed');
 
