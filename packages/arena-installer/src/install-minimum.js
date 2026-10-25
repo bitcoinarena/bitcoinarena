@@ -21,6 +21,11 @@ export async function installMinimum({ seats, fetcher = fetch, want = 2, floor =
     } catch { /* that seat said nothing */ }
   }
   if (!said.length) return { sats: floor, from: [], said, why: `no seat answered GET /capacity: the floor, ${floor} sat` };
-  const sats = Math.max(floor, ...said.map((x) => x.sats));
+  // ONLY UNDER PRESSURE (measured in the installer walk of fd47329c, 2026-10-25: the testnet4 seats said 36,570,000 sat at band CALM - their
+  // reserves grew with the market bots' deposits - and a new node was asked for that, which no faucet gives): the owner's "new installs should
+  // increase their minimum" is the answer to capacity stalling (§23A.3a's bands); while every open federation is CALM the floor stands
+  const pressed = said.filter((x) => x.band && x.band !== 'CALM');
+  if (!pressed.length) return { sats: floor, from: said.map((x) => x.seat), said, why: `the floor, ${floor} sat: the network is CALM (its bond target, ${Math.max(...said.map((x) => x.sats))} sat, applies under capacity pressure)` };
+  const sats = Math.max(floor, ...pressed.map((x) => x.sats));
   return { sats, from: said.map((x) => x.seat), said, why: sats > floor ? `the network's bond target (band ${said[0].band || '?'}): ${sats} sat` : `the floor, ${floor} sat` };
 }
