@@ -307,13 +307,27 @@ export async function versionAnswers({ port, fetcher = fetch, want, waitMs = 900
  * unpacked tree from a test is passed without them). Injectables: `sh` (systemctl / launchctl), `fetcher`, `nowMs`, `wait` (the
  * seating-window wait), `platform`. Answers { ok, from, to, backup, why, rolledBack, moved }.
  */
+/** The seat's last log lines: the user unit's journal on Linux, node.log in the node's home elsewhere (at most `n` lines, 300 characters each). */
+export async function seatLogTail({ home, platform = process.platform, sh = run, n = 12, unit = UNIT }) {
+  let text = '';
+  if (platform === 'linux') {
+    const r = await sh('journalctl', ['--user', '-u', unit, '-n', String(n), '--no-pager', '-o', 'cat']);
+    text = r && r.ok ? r.out || '' : '';
+  } else {
+    try { text = readFileSync(join(home, 'node.log'), 'utf8'); } catch { text = ''; }
+  }
+  return text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(-n).map((l) => l.slice(0, 300));
+}
+
 export async function updateNode({ home, newRelease, port, node = process.execPath, asset = null, sums = null, sig = null, env = process.env, sh = run,
   fetcher = fetch, nowMs = () => Date.now(), waitMs = null, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), platform = process.platform,
   quickUrl = quickTunnelUrl, restartService = (id, o) => control('restart', id, o), installUpdaterFn = null, fetchApps = ensureApps, arch = process.arch,
   lndKit = { installLnd }, refreshGames = async (o) => (await import('./change-roles.js')).refreshHostedGames(o) }) {
   // A WINDOWS SEAT STARTS SLOWER (measured in the Windows VM 2026-10-18, rc.14 -> rc.20: the seat logged "[games] hosting nextblock",
   // its last start-up line, at 23:24:36 - the 90 s wait had ended at 23:24:41 and rolled a sound release back): five minutes there
-  waitMs = waitMs ?? (platform === 'win32' ? 300000 : 90000);
+  // 300 s everywhere (kanban #663, Linux 2026-10-25: "the node did not answer on port 8470 within 90 s" updating to 2026.1.8 and 1.9 - a
+  // node that loads every version of its games, with their cores, can take longer than 90 s to answer on a small machine)
+  waitMs = waitMs ?? 300000;
   if (asset) {
     const c = checkAsset({ file: asset, sums, sig });
     if (!c.ok) return { ok: false, why: c.why };
@@ -467,6 +481,9 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
       ...(leftAfterStop.length ? { endedAfterStop: leftAfterStop } : {}), ...(leftAfterStart.length ? { endedAfterStart: leftAfterStart } : {}),
       ...(reachUrl ? { reach: reachUrl } : {}), ...(started.ok ? {} : { notStarted: started.why }) };
   }
+  // WHY IT DID NOT COME UP, SAID WITH IT (kanban #663: the rollback said only "did not answer on port 8470"): the new release's last log
+  // lines - the journal of the seat's unit on Linux, node.log elsewhere - read before the old release starts again
+  const seatLog = !after.ok ? await seatLogTail({ home, platform, sh, unit: svc.seatFile ? String(svc.seatFile).split(/[\\/]/).pop() : UNIT }).catch(() => []) : [];
   // ROLLED BACK: the old services, the backup, the old release started - started whatever the restore says (measured in the Windows
   // VM: copying the backup back threw while the stopped seat still held its database, and the node was left with nothing running)
   try { await svc.stop(moving, newRelease); } catch { /* the start below is what matters */ }
@@ -477,7 +494,7 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   await svc.start(moving);
   const back = await waitHealthy({ port, fetcher, waitMs });
   return { ok: false, rolledBack: true, from, to: newRelease, backup: backup.dir,
-    why: !after.ok ? `the new release did not come up: ${after.why}`
+    why: !after.ok ? `the new release did not come up: ${after.why}${seatLog.length ? `. Its last log lines: ${seatLog.join(' | ')}` : ''}`
       : !sameKey ? `the new release answered as another node (${after.identity.slice(0, 16)}), not ${before.identity.slice(0, 16)}`
         : !answered.ok ? (answered.version && answered.version === releaseIdOf(from).version ? `the old release still answers (${answered.version}): ${answered.why}` : answered.why)
           : `processes of an older release would not end: ${stillLeft.map((x) => `${x.name} ${x.pid}`).join(', ')}`,
