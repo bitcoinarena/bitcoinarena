@@ -58,7 +58,7 @@ export class OwnerArea extends React.Component {
             <h3 className="sh">Liquidity provider</h3><Place id="liquidity" /></>)}
           {sec('bond', <><h2>Bond</h2>
             <p className="lead">The bitcoin this node locked so it can be drawn for rounds. It earns your share of the fees.</p>
-            <Place id="bond-answer" /><Place id="capacity-plea" className={null} /><Place id="bond" />
+            <Place id="bond-answer" /><Place id="capacity-plea" className={null} /><Place id="bond" /><Place id="keyswitch-place" className={null} />
             <details className="more"><summary>How this node is drawn (details)</summary><Place id="standing" /></details></>)}
           {sec('services', <><h2>Services</h2>
             <p className="lead">The programs this node runs and whether they answer.</p>
