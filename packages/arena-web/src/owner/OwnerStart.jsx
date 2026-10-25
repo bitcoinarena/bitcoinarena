@@ -135,6 +135,14 @@ export class OwnerStart extends React.Component {
         </>);
     }
     return (
+      // A NODE THAT HAS AN OWNER (the owner's playtest 2026-10-25: "if there is already a node owner configured, don't allow create a new 24
+      // word wallet but ask for the words"): new words could never be its owner, so only the owner's words or Nostr key are offered
+      this.props.claimed ? <div className="card"><h3>Sign in as this node's owner</h3>
+        <p>This node already has an owner. Sign in with its 24 words or its Nostr key.</p>
+        {typeof location !== 'undefined' && /\.trycloudflare\.com$/.test(location.hostname)
+          ? <p className="warn" id="tunnel-moved">Logged in before? This address comes from a temporary tunnel, and it changes when your node restarts. Your browser keeps the login per address. On your node's computer, open the owner page from the Bitcoin Arena app instead: its address never changes.</p> : null}
+        <button type="button" className="primary" id="owner-words" onClick={() => this.go('restore')}>Sign in with my 24 words</button>
+        <button type="button" onClick={() => this.go('nostr')}>Login with Nostr</button></div> :
       <div className="card"><h3>Your owner key</h3>
         <p>The owner of this node is a key made from <b>24 words</b>. This browser keeps them; anyone with them is the owner.</p>
         <button type="button" className="primary" onClick={() => this.make()}>Create new 24 words</button>

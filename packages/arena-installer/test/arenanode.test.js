@@ -368,6 +368,6 @@ test('arenanode state: running, running with a service down, stopped; arenanode 
     const [c2, t2] = await run(['state'], ['arena-node.service']);
     assert.equal(c2, 1); assert.match(t2, /^stopped/);
     const [c3, t3] = await run(['dashboard']);
-    assert.equal(c3, 0); assert.match(t3, /\/Dashboard$/);
+    assert.equal(c3, 0); assert.match(t3, /^http:\/\/127\.0\.0\.1:\d+\/dashboard$/, 'the local address: a quick tunnel\'s name changes at a restart, and the login is kept per address');
   } finally { rmSync(n.root, { recursive: true, force: true }); }
 });

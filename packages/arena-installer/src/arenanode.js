@@ -162,16 +162,18 @@ export async function main(args, { home, name = 'arenanode', io = { out: (l) => 
       io.out(seat.running === false ? `stopped${seat.detail ? `: ${seat.detail}` : ''}` : down.length ? `running; not running: ${down.join(', ')}` : 'running');
       return seat.running === false ? 1 : 0;
     }
+    // THE LOCAL ADDRESS, NEVER THE TUNNEL'S (the owner's playtest 2026-10-25: "The owner page is no longer logged in" - a quick tunnel takes
+    // a new name at every restart, and the browser keeps the owner's login per address): on this machine the node's own port never changes
     case 'dashboard': {
       const n = nodeOf(home);
-      const url = `${n.publicUrl || `http://127.0.0.1:${n.port}`}/Dashboard`;
+      const url = `http://127.0.0.1:${n.port}/dashboard`;
       io.out(url);
       if (!deps.noOpen) await openUrl(url, deps.platform);
       return 0;
     }
     case 'open': {
       const n = nodeOf(home);
-      const url = `${n.publicUrl || `http://127.0.0.1:${n.port}`}/Dashboard/owner`;
+      const url = `http://127.0.0.1:${n.port}/dashboard/owner`;
       io.out(url);
       if (!deps.noOpen) await openUrl(url, deps.platform);
       return 0;
