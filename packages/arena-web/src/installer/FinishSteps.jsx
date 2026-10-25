@@ -270,12 +270,26 @@ const REACH_NOTE = { direct: 'Directly, through your open port.', permanent: 'Yo
 export class DoneStep extends React.Component {
   constructor(props) { super(props); this.state = { msg: null, finished: false }; this.finish = this.finish.bind(this); }
   async finish() {
+    // the dashboard's tab opened at the click (a popup opened later is blocked), then handed the owner's key so the owner page opens logged in
+    const open = this.props.open || ((url) => (typeof window !== 'undefined' ? window.open(url, '_blank') : null));
+    const w = open('about:blank');
+    const h = await this.props.get('/api/owner/handoff').catch(() => null);   // before Finish: the setup's session ends with it
     const r = await this.props.post('/api/finish');
-    if (!r.ok) return this.setState({ msg: said(r) });
-    this.setState({ finished: true, msg: { ok: true, text: 'Setup is finished. Opening your dashboard…' } });
-    // Finish goes to the node's dashboard (the installer's own page closes with setup)
-    const go = this.props.go || ((url) => { if (typeof window !== 'undefined') window.location.href = url; });
-    go(this.dashboard());
+    if (!r.ok) { if (w && w.close) w.close(); return this.setState({ msg: said(r) }); }
+    const url = this.dashboard();
+    if (w) {
+      if (h && h.ok && typeof window !== 'undefined') {
+        const origin = new URL(url).origin;
+        const on = (e) => {
+          if (e.source !== w || !e.data || e.data.type !== 'arena-owner-ready') return;
+          w.postMessage({ type: 'arena-owner-key', kind: h.kind, seed: h.seed, secret: h.secret }, origin);
+          window.removeEventListener('message', on);
+        };
+        window.addEventListener('message', on);
+      }
+      w.location.href = `${url}#owner-handoff`;
+    }
+    this.setState({ finished: true, msg: { ok: true, text: w ? 'Setup is finished. Your dashboard opened in a new tab, and the owner area there is logged in.' : `Setup is finished. Open your dashboard: ${url}` } });
   }
   base() { const st = this.props.st; return (st.reach && st.reach.url) || `http://127.0.0.1:${st.seatPort}`; }
   dashboard() { return `${this.base()}/dashboard`; }   // lowercase (playtest 2026-10-25: "ohne grosses D")
@@ -311,8 +325,9 @@ export class DoneStep extends React.Component {
             <p className="sub">{sv.boot ? 'It starts again by itself after a reboot.' : 'It does not start again by itself after a reboot.'} Your dashboard shows everything still in progress.</p></div>
         </div>
         <div className="done-actions">
-          <a className="btn" id="open-dashboard" href={this.dashboard()} target="_blank" rel="noopener noreferrer">Open your dashboard</a>
-          <button type="button" id="finish" className="ghost" disabled={this.state.finished} onClick={this.finish}>Finish</button>
+          {/* one button (playtest 2026-10-25: "Finish soll sagen \"Open Node Dashboard\""): it ends setup and opens the dashboard, owner logged in */}
+          {this.state.finished ? <a className="btn" id="open-dashboard" href={this.dashboard()} target="_blank" rel="noopener noreferrer">Open Node Dashboard</a>
+            : <button type="button" id="finish" onClick={this.finish}>Open Node Dashboard</button>}
         </div>
         <Msg r={this.state.msg} />
         <div className="done-grid">

@@ -247,5 +247,14 @@ async function load(){let D;try{const [d,liq,cap,setup]=await Promise.all([json(
 catch(e){if(shown)return;D={error:e.message}}
 shown=shown||!D.error;window.ArenaDashboard.draw(document.getElementById('app'),D,readResult)}
 load();setInterval(()=>{if(!document.hidden)load()},60000);
+// THE OWNER'S KEY FROM THE INSTALLER (playtest 2026-10-25: "Der Installer soll sich mit meiner Seed schon einloggen so dass ich das nicht
+// extra wieder machen muss"): opened by the installer's last button with #owner-handoff, this page asks its opener for the key - window to
+// window, never in a URL - and keeps it where the owner page reads it (owner.html STORE / NSTORE, per node address), so it opens logged in
+if(location.hash==='#owner-handoff'&&window.opener){const base=location.pathname.replace(/\\/[Dd]ashboard\\/?$/,'');
+addEventListener('message',(e)=>{const d=e.data;if(e.source!==window.opener||!d||d.type!=='arena-owner-key')return;
+try{if(d.kind==='seed'&&/^[0-9a-f]{64}$/.test(d.seed))localStorage.setItem('arena-owner-seed:'+base,d.seed);
+else if(d.kind==='nsec'&&/^[0-9a-f]{64}$/.test(d.secret))localStorage.setItem('arena-owner-nostr:'+base,JSON.stringify({how:'nsec',secret:d.secret}))}catch{}
+history.replaceState(null,'',location.pathname+location.search)});
+window.opener.postMessage({type:'arena-owner-ready'},'*')}
 </script></body></html>`;
 }
