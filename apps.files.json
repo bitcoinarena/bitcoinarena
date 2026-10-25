@@ -2,10 +2,10 @@
   "about": "What a node downloads of each app at its pinned commit (kanban #575): every file with its SHA-256. Written by tools/pin-apps.mjs from the apps' checkouts; never by hand.",
   "apps": {
     "arena-app-next-block": {
-      "commit": "43d97f16c3d01ee1a4943df51e6fccd5a789be57",
+      "commit": "c93fc92e1bdb28916e04a74f0fbd76a6afc37dc8",
       "files": {
         "README.md": "7fc7113426fb4d9d22e36b8000a3693e669f40de4e020c5fb1bf89014dafc482",
-        "app.json": "17ffce3aa50a0c26751072eef5909068ae9a5becb74b19b86fd38d8d2afa0cec",
+        "app.json": "85e362fde9f4177c55237f0eeabbcbc4af5b7b46391277a9556ef757242a314d",
         "brand/README.md": "78902bad98a184aca191062c5476e867baa96dd735d9f6c93808ef91c4e7f293",
         "brand/apple-touch-icon.png": "7fc49db0d64f86ca70395934dc2882444792525ccd73902027cb7874604950a5",
         "brand/favicon.ico": "704eb7107d8f3150da6bb5d6a650651112223a611954e2430bfd43198b16946b",

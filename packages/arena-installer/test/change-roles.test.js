@@ -67,3 +67,40 @@ test('refused: custody switched here, an unknown role, no role at all, the roles
   assert.equal(n.sent.length + p.sent.length, 0);
   assert.deepEqual(stateRolesFor(['game', 'settlement'], ['verify', 'custody', 'liquidity']), ['verify', 'settlement', 'custody', 'liquidity']);
 });
+
+// THE NEWEST GAMES IN THE ADVERTISEMENT (the owner 2026-10-25: "Make sure the installer and the nodes use the newest versions of games"):
+// a node whose advertisement names Next Block's first version alone gets an update naming every version of its apps; once named, nothing
+test('an update names every game of the node\'s apps when its advertisement does not, and nothing when it does', async () => {
+  const { refreshHostedGames } = await import('../src/change-roles.js');
+  const { hostedGameIdsOf } = await import('../src/apps.js');
+  const repo = join(import.meta.dirname, '..', '..', '..');
+  const n = node(['verify', 'settlement']);
+  n.state.save({ apps: ['nextblock', 'btc-updown', 'rock-paper-scissors'] });
+  const want = await hostedGameIdsOf(repo, ['nextblock', 'btc-updown', 'rock-paper-scissors']);
+  assert.ok(want.length > 30, `every version: ${want.length}`);
+  const plan = await refreshHostedGames({ home: n.home, release: repo, state: n.state, chainKit: n.chainKit });
+  assert.deepEqual([plan.ok, plan.plan.before, plan.plan.after], [true, 1, want.length], plan.why);
+  const r = await refreshHostedGames({ home: n.home, release: repo, state: n.state, chainKit: n.chainKit, post: true });
+  assert.equal(r.ok, true, r.why);
+  const read = readAdvertUpdate(fromHex(n.sent[1]), { network: 'testnet4' });
+  assert.deepEqual(read.advert.hostedGames.map((g) => toHex(g)), want, 'the advertisement names them, sorted');
+  assert.deepEqual([...read.advert.roles].sort(), ['game', 'settlement', 'verify'], 'the roles kept');
+  assert.deepEqual(n.state.read().hostedGames, want);
+  const { SUPPORTED_PROTOCOL_VERSIONS } = await import('../../arena-protocol/src/constants.js');
+  assert.deepEqual([...read.advert.protocolVersions], [...SUPPORTED_PROTOCOL_VERSIONS], 'and the newest protocols');
+  assert.deepEqual(n.state.read().advertProtocols, [...SUPPORTED_PROTOCOL_VERSIONS]);
+  assert.deepEqual(await refreshHostedGames({ home: n.home, release: repo, state: n.state, chainKit: n.chainKit, post: true }), { ok: true, unchanged: true });
+  assert.equal(n.sent.length, 2, 'nothing more sent');
+});
+
+test('a node that names its games but declares older protocols is updated to the newest ones', async () => {
+  const { refreshHostedGames } = await import('../src/change-roles.js');
+  const { hostedGameIdsOf } = await import('../src/apps.js');
+  const repo = join(import.meta.dirname, '..', '..', '..');
+  const n = node(['verify']);
+  const want = await hostedGameIdsOf(repo, ['nextblock']);
+  n.state.save({ apps: ['nextblock'], hostedGames: want, advertProtocols: [1, 2, 3] });
+  const r = await refreshHostedGames({ home: n.home, release: repo, state: n.state, chainKit: n.chainKit, post: true });
+  assert.deepEqual([r.ok, r.plan.added, r.plan.protocolsBefore], [true, 0, 3], r.why);
+  assert.equal(n.sent.length, 2);
+});

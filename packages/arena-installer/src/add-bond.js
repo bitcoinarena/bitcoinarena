@@ -37,7 +37,7 @@ export async function addBond({ state, addSats, post = false, chainKit = { coins
   try { nodeSecret = new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
   let built;
   try {
-    built = buildBond({ wallet: w, nodeSecret, coins, tip, bondSats: add, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
+    built = buildBond({ hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats: add, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
       endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate, guardianEndpoint, nowMs, guardianOf,
       emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
   } catch (e) { return { ok: false, why: e.message }; }

@@ -162,7 +162,7 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   // THE APPS (kanban #569): the release's three, all chosen at first; the node hosts the ones saved
   s = (await c.get('/api/state')).json;
   assert.equal(s.step, 'apps');
-  assert.deepEqual([s.appInfo.map((a) => `${a.id}:${a.versions}`), s.apps], [['nextblock:5', 'btc-updown:24', 'rock-paper-scissors:5'], ['nextblock', 'btc-updown', 'rock-paper-scissors']]);
+  assert.deepEqual([s.appInfo.map((a) => `${a.id}:${a.versions}`), s.apps], [['nextblock:6', 'btc-updown:24', 'rock-paper-scissors:5'], ['nextblock', 'btc-updown', 'rock-paper-scissors']]);
   assert.equal((await c.post('/api/apps', { apps: ['nextblock', 'rock-paper-scissors'] })).json.ok, true);
   assert.equal((await c.get('/api/state')).json.step, 'seed');
 
@@ -207,7 +207,7 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.equal(conf.includes('\nbind=0.0.0.0\n'), true, 'a direct node listens on every interface');
   assert.equal(conf.includes(`\npublic_url=http://127.0.0.1:${seatPort}\n`), true, 'and names its public address');
   assert.equal(conf.includes(`\nport=${seatPort}\n`), true, 'and its port');
-  assert.equal(conf.includes(`\napps=${['nextblock.js', 'nextblock-v2.js', 'nextblock-v3.js', 'nextblock-v4.js', 'nextblock-v5.js'].map((f) => join(RELEASE, 'packages/nextblock/plugin', f)).join(',')},${join(RELEASE, 'packages/rock-paper-scissors/plugin/rock-paper-scissors.js')},`), true, 'and hosts the apps chosen, every version (kanban #569)');
+  assert.equal(conf.includes(`\napps=${['nextblock.js', 'nextblock-v2.js', 'nextblock-v3.js', 'nextblock-v4.js', 'nextblock-v5.js', 'nextblock-v6.js'].map((f) => join(RELEASE, 'packages/nextblock/plugin', f)).join(',')},${join(RELEASE, 'packages/rock-paper-scissors/plugin/rock-paper-scissors.js')},`), true, 'and hosts the apps chosen, every version (kanban #569)');
   assert.equal(conf.includes('btc-updown'), false, 'not the one left out');
   assert.equal(existsSync(join(home, 'node.env')), false, 'no environment file');
   assert.equal(statSync(join(home, 'arena.conf')).mode & 0o777, 0o600);

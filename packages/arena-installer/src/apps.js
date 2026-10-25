@@ -39,3 +39,20 @@ export function appsEnvValue(release, chosenIds, apps = appsIn(release)) {
   if (unknown.length) throw new Error(`no app ${unknown.join(', ')} in this release`);
   return apps.filter((a) => chosenIds.includes(a.id)).flatMap((a) => a.registrations).join(',');
 }
+
+/**
+ * THE GAME IDS A NODE HOSTS, FOR ITS ADVERTISEMENT (the owner 2026-10-25: "Make sure the installer and the nodes use the newest versions of
+ * games and protocols"): the census draws a node for a round only when its advertisement names the round's game (census.js hostsGame),
+ * and the installer's advertisement named Next Block's first version alone - an installed node was never drawn for Up/Down, Rock Paper
+ * Scissors or a newer Next Block. These are the chosen apps' registrations as the seat hosts them (arena-node plugins.js hostedPlugins:
+ * a version that does not stand is left out, so the node never names a game it would refuse), as hex, sorted.
+ */
+export async function hostedGameIdsOf(release, chosenIds, apps = appsIn(release)) {
+  const { pathToFileURL } = await import('node:url');
+  const { hostedPlugins } = await import('../../arena-node/src/plugins.js');
+  const files = appsEnvValue(release, chosenIds, apps).split(',').filter(Boolean);
+  const regs = [];
+  for (const f of files) { try { const m = await import(pathToFileURL(f).href); if (m.GAME) regs.push(m.GAME); } catch { /* not hosted either */ } }
+  if (!regs.length) return [];
+  return [...hostedPlugins(regs, { log: () => {} }).keys()].sort();
+}
