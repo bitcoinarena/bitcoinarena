@@ -259,45 +259,74 @@ export function reachLine(r) {
   return <>at {url} through a temporary tunnel. <b>This name changes when the tunnel restarts</b>; set up a permanent tunnel later from your owner page</>;
 }
 
+// THE LAST PAGE (playtest 2026-10-25: "This is a wall of text. Make it more structured, klarer lesbar und der finish link geht auf
+// unser dashboard. Der Tunnel link öffnet in einem neuen fenster. Es muss auch moderner ausschauen"): a headline, the two things to do
+// (the dashboard, Finish - which then opens the dashboard), one card per part, links in a new window, the command line folded away
+const ext = (url, text) => <a href={url} target="_blank" rel="noopener noreferrer">{text || url}</a>;
+const ends = (x, k = 10) => (x ? `${String(x).slice(0, k)}…${String(x).slice(-6)}` : '');
+const REACH_NOTE = { direct: 'Directly, through your open port.', permanent: 'Your Cloudflare tunnel: a permanent name.', workers: 'Your Worker on workers.dev: a permanent name.',
+  tailscale: 'Tailscale Funnel: a permanent name.', quick: 'A temporary tunnel: the name changes when it restarts. Set up a permanent one later on your owner page.' };
+
 export class DoneStep extends React.Component {
   constructor(props) { super(props); this.state = { msg: null, finished: false }; this.finish = this.finish.bind(this); }
   async finish() {
     const r = await this.props.post('/api/finish');
-    this.setState({ msg: said(r, `Finished. Setup has stopped. Your owner page: ${r.owner}`), finished: !!r.ok });
+    if (!r.ok) return this.setState({ msg: said(r) });
+    this.setState({ finished: true, msg: { ok: true, text: 'Setup is finished. Opening your dashboard…' } });
+    // Finish goes to the node's dashboard (the installer's own page closes with setup)
+    const go = this.props.go || ((url) => { if (typeof window !== 'undefined') window.location.href = url; });
+    go(this.dashboard());
   }
-  launchers(l) {
+  base() { const st = this.props.st; return (st.reach && st.reach.url) || `http://127.0.0.1:${st.seatPort}`; }
+  dashboard() { return `${this.base()}/dashboard`; }   // lowercase (playtest 2026-10-25: "ohne grosses D")
+  more(l) {
     if (!l) return null;
     const dir = String(l.start || '').replace(/[\\/][^\\/]+$/, '');
-    const how = l.app ? <>open <b>Bitcoin Arena</b> in your Applications (<code>{l.app}</code>). It starts your node and opens its owner page</>
-      : l.menu && /Start Menu/.test(l.menu) ? <>Start menu &gt; <b>Bitcoin Arena</b> &gt; Start Bitcoin Arena (also Stop, and the owner page)</>
-        : <><b>Bitcoin Arena</b> in your desktop's menu, or <code>{l.start}</code></>;
+    const how = l.app ? <>Open <b>Bitcoin Arena</b> in your Applications. It shows whether your node runs, with Start, Stop, Doctor and the dashboard.</>
+      : l.menu && /Start Menu/.test(l.menu) ? <>Start menu &gt; <b>Bitcoin Arena</b>: whether your node runs, with Start, Stop, Doctor and the dashboard.</>
+        : <><b>Bitcoin Arena</b> in your desktop's menu, or <code>{l.start}</code>.</>;
     const cmd = l.command && l.command.name;
-    return <>
-      <p><b>Starting it again</b> (it also starts by itself after a reboot): {how}. The scripts for start, stop, status and the owner page are in <code>{dir}</code>.</p>
-      {cmd ? <p><b>On the command line</b>: <code>{cmd} status</code> shows every service (your node, its guardian, LND, the gateway, Tor, the tunnel, the chain). <code>{cmd} doctor</code> finds problems and tells you the fix. <code>{cmd} restart lnd</code> restarts one service. <code>{cmd} config</code> shows the settings (<code>arena.conf</code>).{l.command.note ? ` ${l.command.note}.` : ''}</p> : null}</>;
+    return (
+      <details className="done-more"><summary>Start, stop and the command line</summary>
+        <p>{how} The scripts are in <code>{dir}</code>.</p>
+        {cmd ? <ul>
+          <li><code>{cmd} status</code> - every service and what it answers</li>
+          <li><code>{cmd} doctor</code> - finds problems and names the fix</li>
+          <li><code>{cmd} restart lnd</code> - restarts one service</li>
+          <li><code>{cmd} config</code> - the settings ({'arena.conf'})</li>
+        </ul> : null}
+        {l.command && l.command.note ? <p className="sub">{l.command.note}</p> : null}
+      </details>);
   }
   render() {
     const st = this.props.st; const r = st.reach || {}; const sv = st.service || {}; const g = st.gateway; const b = st.bond;
-    const base = r.url || `http://127.0.0.1:${st.seatPort}`;
-    const owner = `${base}/Dashboard/owner`;
+    const owner = `${this.base()}/dashboard/owner`;
     const syncing = !!(st.coreSync && st.coreSync.interim);
+    const card = (id, icon, title, body) => <div className="done-card" id={id}><div className="done-card-head"><span aria-hidden="true">{icon}</span><b>{title}</b></div>{body}</div>;
     return (
-      <div className="aw">
-        <h2>Done</h2>
-        <p>Your node runs as the user service <code>arena-node</code>{sv.boot ? ' and starts again after a reboot' : ' (it does not start again after a reboot)'}.</p>
-        <p>Others reach it {reachLine(r)}.</p>
-        <p>Node key: <code>{sv.identity || ''}</code></p>
-        {syncing ? <p>Bitcoin Core is still syncing. Until it is done, your node reads the chain from a public server, and then it switches to your own Bitcoin Core by itself.</p> : null}
-        <p><b>Your dashboard shows the rest</b>: the Bitcoin Core sync, and the confirmations of your bond and your peg-in. Open <code>{base}/Dashboard</code>, or your owner page.</p>
-        {this.launchers(st.launchers)}
-        <p>Owner page: <code>{owner}</code>{r.url ? '' : ' (this computer only: your node has no public address yet)'}. Log in with {st.owner && st.owner.mode === 'nostr' ? 'your Nostr key' : 'your 24 words'}.</p>
-        {sv.boot && sv.linger === false ? <p className="warn">Run <code>sudo loginctl enable-linger $USER</code> once, so your node keeps running when you log out.</p> : null}
-        {st.lightning ? <p>Lightning: {st.lightning.mode === 'own' ? <>LND set up here (the user service <code>arena-lnd</code>)</> : 'your own LND, connected'}, node <code>{st.lightning.pubkey || ''}</code>. {g && (g.testedMs || g.syncingMs)
-          ? <>The gateway runs (the user service <code>arena-gateway</code>) at <code>{g.publicUrl || ''}</code>{(g.federations || []).length ? `, serving ${g.federations.map((f) => f.name || String(f.federationId).slice(0, 12)).join(', ')}` : ', no federation joined yet'}.</> : 'No gateway yet.'} Your node's guardian runs and waits to be drawn. When ten custody nodes guard no federation, they found one together. Your node then names it, joins its gateway to it and sends the peg-in by itself.</p> : null}
-        {b ? <p>Bond: <code>{b.txid}</code>, {n(b.sats)} sat, <b>locked until block {b.maturity}</b> (about {new Date(b.lock.estimatedMs).toUTCString()}). Until then it cannot be withdrawn. From that block on, you withdraw it from your owner page, or <code>arena-install --rebond &lt;sat&gt;</code> makes it larger in one step.</p>
-          : <p>No bond yet: send it to <code>{st.wallet ? st.wallet.address : ''}</code> and post it from your owner page. Until then your node is not drawn for rounds.</p>}
-        <button type="button" id="finish" disabled={this.state.finished} onClick={this.finish}>Finish</button>
+      <div className="aw done">
+        <div className="done-hero">
+          <div className="done-check" aria-hidden="true">✓</div>
+          <div><h2>Your node runs</h2>
+            <p className="sub">{sv.boot ? 'It starts again by itself after a reboot.' : 'It does not start again by itself after a reboot.'} Your dashboard shows everything still in progress.</p></div>
+        </div>
+        <div className="done-actions">
+          <a className="btn" id="open-dashboard" href={this.dashboard()} target="_blank" rel="noopener noreferrer">Open your dashboard</a>
+          <button type="button" id="finish" className="ghost" disabled={this.state.finished} onClick={this.finish}>Finish</button>
+        </div>
         <Msg r={this.state.msg} />
+        <div className="done-grid">
+          {card('done-address', '🌐', 'Public address', <>{r.url ? ext(r.url) : <span className="sub">none yet</span>}<p className="sub">{REACH_NOTE[r.mode] || REACH_NOTE.quick}</p></>)}
+          {card('done-owner', '🔑', 'Owner page', <>{ext(owner, 'Open your owner page')}<p className="sub">Log in with {st.owner && st.owner.mode === 'nostr' ? 'your Nostr key' : 'your 24 words'}.{r.url ? '' : ' This computer only, until your node has a public address.'}</p></>)}
+          {card('done-bond', '🔒', 'Bond', b ? <><p className="big">{n(b.sats)} sat</p><p className="sub">Locked until block {n(b.maturity)} (about {new Date(b.lock.estimatedMs).toUTCString().slice(0, 16)}). Then you withdraw it on your owner page.</p><p className="sub mono">{ends(b.txid)}</p></>
+            : <p className="sub">No bond yet. Send it to <code>{st.wallet ? st.wallet.address : ''}</code> and post it on your owner page.</p>)}
+          {st.lightning ? card('done-lightning', '⚡', 'Lightning', <><p className="sub">{st.lightning.mode === 'own' ? 'LND runs here.' : 'Your own LND, connected.'} Node <span className="mono">{ends(st.lightning.pubkey)}</span></p>
+            <p className="sub">{g && (g.testedMs || g.syncingMs) ? ((g.federations || []).length ? `Gateway runs, serving ${g.federations.map((f) => f.name || String(f.federationId).slice(0, 12)).join(', ')}.` : 'Gateway runs. It joins a federation once your node is drawn into one.') : 'No gateway yet.'}</p></>) : null}
+          {syncing ? card('done-core', '₿', 'Bitcoin Core', <p className="sub">Still syncing. Until then your node reads the chain from a public server, then it switches by itself.</p>) : null}
+          {card('done-key', '🪪', 'Node key', <p className="sub mono">{ends(sv.identity, 16)}</p>)}
+        </div>
+        {sv.boot && sv.linger === false ? <p className="warn">Run <code>sudo loginctl enable-linger $USER</code> once, so your node keeps running when you log out.</p> : null}
+        {this.more(st.launchers)}
       </div>
     );
   }
