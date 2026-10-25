@@ -236,7 +236,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
         const now = nowMs(), cur = run.stages.find((x) => x.state === 'now');
         const slow = cur && (!slowIds || slowIds.includes(cur.id)) && now - cur.atMs > slowMs;
         return { ok: true, running: !run.endMs, elapsedMs: (run.endMs || now) - run.atMs, why: run.why || null,
-          stages: run.stages.map((x) => ({ ...x, ms: x.state === 'now' ? now - x.atMs : x.ms })), log: slow || run.ok === false ? logTail(logName) : [] };
+          stages: run.stages.map((x) => ({ ...x, ms: x.state === 'now' ? now - x.atMs : x.ms })), log: slow || run.ok === false ? (typeof logName === 'function' ? logName() : logTail(logName)) : [] };
       },
     };
   };
@@ -247,7 +247,17 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   const stage = svc.stage;
   const LND_STAGES = [['download', 'Downloading LND and checking it'], ['reach', 'Testing whether other Lightning nodes reach this computer'],
     ['start', 'Writing its settings and starting it'], ['wallet', 'Making its wallet from your seed'], ['answer', 'Waiting for LND\'s first answer']];
-  const lndRun = tracker(LND_STAGES, 'lnd.log');
+  // LND'S OWN LOG FIRST (kanban #664, 2026-10-25: "Starting LND… (connect ECONNREFUSED 127.0.0.1:10080)" with no reason): LND writes
+  // logs/bitcoin/<network>/lnd.log in its folder on every system - where "unable to connect to bitcoind" stands; the service's own output
+  // (lnd.log in the node's folder on macOS and Windows) when LND stopped before it could write there
+  const lndLogs = () => {
+    for (const net of ['testnet4', 'mainnet']) {
+      const l = logTail(join('lnd', 'logs', 'bitcoin', net, 'lnd.log'));
+      if (l.length) return l;
+    }
+    return logTail('lnd.log');
+  };
+  const lndRun = tracker(LND_STAGES, lndLogs);
   const GATEWAY_STAGES = [['find', 'Finding the gateway in this release'], ['start', 'Writing its settings and starting it'],
     ['answer', 'Waiting for the gateway\'s first answer']];
   const gwRun = tracker(GATEWAY_STAGES, 'gateway.log');
