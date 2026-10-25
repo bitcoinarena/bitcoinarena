@@ -12,6 +12,15 @@ const n = (x) => Number(x || 0).toLocaleString('en-US');
 const shortTx = (t) => `${String(t).slice(0, 12)}…`;
 const pct = (a, b) => Math.max(0, Math.min(100, b ? Math.round((100 * a) / b) : 0));
 /** "about 3 h" for an ETA in ms; '' when there is none yet. */
+/** A time left as people say it: "under a minute", "12 min", "3 h 20 min", "2 days"; '' when there is none. */
+export const dur = (ms) => {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return '';
+  const m = Math.round(ms / 60000);
+  if (m < 1) return 'under a minute';
+  if (m < 60) return `${m} min`;
+  if (m < 48 * 60) return m % 60 && m < 10 * 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${Math.round(m / 60)} h`;
+  return `${Math.round(m / 1440)} days`;
+};
 export const eta = (ms) => (ms === null || ms === undefined ? '' : ms < 3600000 ? `about ${Math.max(1, Math.round(ms / 60000))} min left` : ms < 172800000 ? `about ${Math.round(ms / 3600000)} h left` : `about ${Math.round(ms / 86400000)} days left`);
 
 /** One line of the card: a label, the state in words, a meter. */
@@ -19,13 +28,15 @@ export const eta = (ms) => (ms === null || ms === undefined ? '' : ms < 3600000 
 // the state under it, a bar where there is one to fill
 class Step extends React.Component {
   render() {
-    const { id, label, done, problem, text, meter } = this.props;
+    const { id, label, done, problem, text, meter, left } = this.props;
     const st = done ? 'ok' : problem ? 'bad' : 'wait';
+    const t = !done && left ? dur(left) : '';
     return (
       <div className={`setup-step s-${st}`} id={id}>
         <span className="setup-ic" aria-hidden="true">{done ? '✓' : problem ? '!' : '…'}</span>
         <div className="setup-body"><b>{label}</b><span className="setup-text">{text}</span>
           {meter !== undefined ? <div className="bar"><i style={{ width: `${meter}%` }} /></div> : null}</div>
+        {t ? <span className="setup-eta">{t}</span> : null}
       </div>);
   }
 }
@@ -36,13 +47,15 @@ export function coreLine(c) {
   if (!c.interim) return { done: true, text: 'synced; your node reads the chain from its own Bitcoin Core' };
   const s = c.sync;
   if (!s) return { done: false, text: c.why ? `starting: ${c.why}` : 'starting' };
-  return { done: false, meter: Math.round(s.progress * 100), text: `syncing, block ${n(s.blocks)} of ${n(s.headers)} (${(s.progress * 100).toFixed(1)} %)${eta(s.etaMs) ? `, ${eta(s.etaMs)}` : ''}. Until then your node reads the chain from a public server.` };
+  return { done: false, meter: Math.round(s.progress * 100), text: `syncing, block ${n(s.blocks)} of ${n(s.headers)} (${(s.progress * 100).toFixed(1)} %). Until then your node reads the chain from a public server.` };
 }
 export function bondLine(b) {
   if (!b) return null;
   if (!b.seen) return { done: false, text: `${n(b.sats)} sat, ${shortTx(b.txid)}: not seen on the chain yet` };
-  if (!b.confirmations) return { done: false, meter: 0, text: `${n(b.sats)} sat, sent, waiting for its first confirmation. It must confirm by block ${n(b.confirmBy)} to count.` };
-  if (b.counts === false) return { done: false, text: `${n(b.sats)} sat, ${n(b.confirmations)} confirmations, but it confirmed after block ${n(b.confirmBy)} and does not count. Post a new bond from the bond panel.` };
+  const need = b.needed || 6;
+  if (!b.confirmations) return { done: false, meter: 0, text: `${n(b.sats)} sat, sent, 0 of ${need} confirmations. It counts at ${need} and must first confirm by block ${n(b.confirmBy)}.` };
+  if (b.counts === false) return { done: false, problem: true, text: `${n(b.sats)} sat, ${n(b.confirmations)} confirmations, but it confirmed after block ${n(b.confirmBy)} and does not count. Post a new bond from the bond panel.` };
+  if (b.confirmations < need) return { done: false, meter: pct(b.confirmations, need), text: `${n(b.sats)} sat, ${n(b.confirmations)} of ${need} confirmations. It counts at ${need}.` };
   return { done: true, text: `${n(b.sats)} sat, ${n(b.confirmations)} confirmation${b.confirmations === 1 ? '' : 's'}. It counts; locked for ${n(b.blocksToMaturity)} more blocks.` };
 }
 export function pegInLine(p) {
@@ -65,7 +78,7 @@ export function lndLine(l) {
 export function gatewayLine(g) {
   if (!g) return null;
   if (g.ok) return { done: g.federations > 0, text: g.federations > 0 ? `running, in ${n(g.federations)} federation${g.federations === 1 ? '' : 's'}` : 'running, joining its federation' };
-  return { done: false, problem: !g.syncing, text: g.syncing ? 'waiting for LND to sync' : `not answering: ${g.why}` };
+  return { done: false, problem: !g.syncing, text: g.syncing ? 'waiting for LND to sync. Then its peg-in needs 100 confirmations.' : `not answering: ${g.why}` };
 }
 export function addressLine(a) {
   if (!a) return null;
@@ -92,10 +105,19 @@ export function oldBondLine(o) {
 /** The setup's rows: [id, label, line] for each part that has something to say. */
 export function setupRowsOf(s) {
   if (!s || !s.ok) return [];
-  return [['setup-core', 'Bitcoin Core', coreLine(s.core)], ['setup-address', 'Public address', addressLine(s.address)], ['setup-faucet', 'Test coins', faucetLine(s.faucet, s.bond)],
-      ['setup-bond', 'Bond', bondLine(s.bond)], ['setup-lnd', 'LND', lndLine(s.lnd)], ['setup-gateway', 'Gateway', gatewayLine(s.gateway)], ['setup-pegin', 'Peg-in', pegInLine(s.pegIn)],
-      ...(s.updates || []).map((u, i) => [`setup-update-${i}`, 'Update', updateLine(u)]),
+  const e = s.etas || {};
+  const at = (l, left) => (l ? { ...l, left: left === undefined ? null : left } : l);
+  return [['setup-core', 'Bitcoin Core', at(coreLine(s.core), e.core)], ['setup-address', 'Public address', addressLine(s.address)], ['setup-faucet', 'Test coins', at(faucetLine(s.faucet, s.bond), e.faucet)],
+      ['setup-bond', 'Bond', at(bondLine(s.bond), e.bond)], ['setup-lnd', 'LND', at(lndLine(s.lnd), e.lnd)], ['setup-gateway', 'Gateway', at(gatewayLine(s.gateway), e.gateway)], ['setup-pegin', 'Peg-in', at(pegInLine(s.pegIn), e.pegIn)],
+      ...(s.updates || []).map((u, i) => [`setup-update-${i}`, 'Update', at(updateLine(u), (e.updates || [])[i])]),
       ...(s.oldBonds || []).map((o, i) => [`setup-old-${i}`, 'Old bond', oldBondLine(o)])].filter(([, , l]) => l);
+}
+
+/** The big number: how long until the node is ready, or null when it cannot be told. */
+export function readyIn(s) {
+  const e = s && s.etas;
+  if (!e || e.ready === null || e.ready === undefined || !(e.ready > 0)) return null;
+  return { text: dur(e.ready), atLeast: !!e.partial };
 }
 
 export class SetupStatus extends React.Component {
@@ -106,13 +128,16 @@ export class SetupStatus extends React.Component {
     const all = rows.every(([, , l]) => l.done);
     const problems = rows.filter(([, , l]) => l.problem).length;
     const done = rows.filter(([, , l]) => l.done).length;
+    const ready = readyIn(s);
     return (
       <div className="card setup-status" id="setup-status">
         <div className="setup-head"><h3>Setup</h3>
           <span className={`setup-pill ${all ? 'ok' : problems ? 'bad' : 'wait'}`}>{all ? 'Complete' : problems ? `${problems} problem${problems === 1 ? '' : 's'}` : `${done} of ${rows.length} done`}</span></div>
+        {!all && ready ? <div className="setup-ready" id="setup-ready"><span className="setup-ready-n">{ready.atLeast ? 'at least ' : ''}{ready.text}</span>
+          <span className="setup-ready-l">until your node is ready</span></div> : null}
         <div className="setup-total" role="progressbar" aria-valuemin="0" aria-valuemax={rows.length} aria-valuenow={done}><i style={{ width: `${Math.round((100 * done) / rows.length)}%` }} /></div>
-        <div className="setup-grid">{rows.map(([id, label, l]) => <Step key={id} id={id} label={label} done={l.done} problem={l.problem} text={l.text} meter={l.meter} />)}</div>
-        {s.tip ? <p className="setup-tip">Chain tip · block {n(s.tip)}</p> : null}
+        <div className="setup-grid">{rows.map(([id, label, l]) => <Step key={id} id={id} label={label} done={l.done} problem={l.problem} text={l.text} meter={l.meter} left={l.left} />)}</div>
+        {s.tip ? <p className="setup-tip">Chain tip · block {n(s.tip)}{s.blockMs && s.blockMsMeasured ? ` · lately a block every ${dur(s.blockMs)}` : ''}</p> : null}
       </div>);
   }
 }
@@ -177,7 +202,7 @@ export class SetupBanner extends React.Component {
       <div className="setup-gate" id="setup-gate" role="dialog" aria-modal="true" aria-labelledby="setup-gate-title">
         <div className="setup-gate-in">
           <h2 id="setup-gate-title">Your node is still being set up</h2>
-          <p className="setup-gate-msg">Check back when all services are synchronized. This page opens by itself when they are.</p>
+          <p className="setup-gate-msg">Check back when everything below is synced.</p>
           <SetupStatus status={s} />
           {problems.length ? <div className="setup-gate-fix"><p>{problems.map(([, label]) => label).join(' and ')} {problems.length === 1 ? 'has a problem' : 'have problems'} you can fix in the owner area.</p>
             <button type="button" id="setup-gate-enter" onClick={() => this.enter()}>Open the owner area</button></div> : null}
