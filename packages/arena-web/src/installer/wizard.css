@@ -31,3 +31,4 @@
 /* the gateway seat's card: its earnings bars and its needs under their own names (the page's intro lays out .needs as a grid of cards) */
 .aw .earn .ebar{display:grid;grid-template-columns:70px 1fr 110px;align-items:center;gap:8px;margin:4px 0;font-size:13px}
 .aw .seat-needs{margin:12px 0 6px}.aw .seat .tile{align-items:center;text-align:center;gap:2px;padding:10px 6px}
+.aw .svc-progress{margin-top:12px}.aw .svc-progress .stages{list-style:none;padding:0;margin:8px 0}.aw .svc-progress .stage{margin:6px 0}.aw .svc-progress .stage .mark{display:inline-block;width:1.2em;text-align:center}.aw .svc-progress .stage.done .mark{color:var(--gv)}.aw .svc-progress .stage.failed .mark{color:#d1242f}.aw .svc-progress .stage.todo{opacity:.6}.aw .svc-progress .stage .sub{margin:2px 0 0 1.6em}.aw .svc-progress .log pre{white-space:pre-wrap;word-break:break-all;font-size:12px;max-height:9em;overflow:auto;background:var(--line);padding:6px;border-radius:4px}

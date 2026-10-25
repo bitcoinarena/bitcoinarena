@@ -196,6 +196,88 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   const releaseApps = (() => { try { return appsIn(release); } catch (e) { log(`apps: ${e.message}`); return []; } })();
   const mark = (step, patch = {}) => { const s = state.read(); return state.save({ ...patch, done: { ...(s.done || {}), [step]: Date.now() } }); };
 
+  // THE SERVICE STEP'S PROGRESS (kanban #651, the owner 2026-10-25: "this hangs alot and user doesn't know what it is doing. Provide more
+  // details and context and a progress bar"): POST /api/service moves through these stages; GET /api/service/progress tells the page
+  // which is done, which runs and for how long, and - while the node is slow to answer, or after a failure - the node log's last lines
+  const SERVICE_STAGES = [['settings', 'Writing your node\'s settings'], ['services', 'Installing its services'],
+    ['start', 'Starting your node and waiting for its first answer'], ['address', 'Testing its public address'], ['login', 'Logging you in as its owner']];
+  let svc = null;                            // { atMs, endMs, ok, why, stages: [{ id, label, state: todo|now|done|skipped|failed, atMs, ms }] }
+  const stage = (id) => {
+    if (!svc) return;
+    const now = nowMs(), at = svc.stages.findIndex((x) => x.id === id);
+    if (at < 0) return;
+    svc.stages.forEach((x, i) => {
+      if (i >= at) return;
+      if (x.state === 'now') { x.state = 'done'; x.ms = now - x.atMs; } else if (x.state === 'todo') x.state = 'skipped';
+    });
+    Object.assign(svc.stages[at], { state: 'now', atMs: now });
+  };
+  const logTail = (n = 4) => {
+    try { return readFileSync(join(state.home, 'node.log'), 'utf8').split('\n').map((l) => l.trim()).filter(Boolean).slice(-n).map((l) => l.slice(0, 300)); } catch { return []; }
+  };
+  // THE SERVICE (C.9): the settings, the unit, started, healthy; then the owner's first login against the running node (C.6 "tested by
+  // one login") - signed here with the seed's owner key, or by the browser's Nostr signer (POST /api/owner/login).
+const serviceRun = async (b) => {
+    let s = state.read();
+    for (const k of ['chain', 'roles', 'seed', 'owner', 'reach']) if (!(s.done || {})[k]) return { ok: false, why: `the ${k} step is not done` };
+    const port = s.reach.port;
+    const boot = b.boot !== false;
+    const conf = { ...s, port, bridgePort };
+    stage('settings');
+    state.writeSecret('arena.conf', seatConf(conf, { home: state.home, release }));
+    const tunnel = !reach.tunnelMode(s.reach.mode) ? null : reach.tunnelUnit({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
+    const tunnelArgs = !reach.tunnelMode(s.reach.mode) ? null : reach.tunnelArgsOf({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
+    const installAt = Date.now();                                    // a restarted quick tunnel's name is the one logged after this
+    stage('services');
+    const r = await install({ release, home: state.home, port, bridgePort: s.chain.kind === 'electrum' ? bridgePort : null, tunnel, tunnelArgs, boot, onStage: stage });
+    if (!r.ok) return { ok: false, why: r.why };
+    // THE RELEASE THE NODE RUNS, RECORDED AT THE INSTALL as an update records it (node-services.js nodeOf: its version, the auto update)
+    s = state.save({ release: { path: release, atMs: Date.now() } });
+    // THE CHAIN SWITCH (kanban #635): a Core still syncing behind the interim Electrum chain - its keeper moves the node to it once synced
+    if (s.core && s.core.interim && s.chain.kind === 'electrum') {
+      const k = await gwKit.installProgram({ id: 'chain-switch', description: 'Bitcoin Arena: moves the node to its own Bitcoin Core once it is synced', home: state.home, boot,
+        args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'chain-switch.mjs'), '--home', state.home] });
+      if (!k.ok) log(`[service] the chain switch did not start: ${k.why}`);
+    }
+    // THE PUBLIC ADDRESS, TESTED: a tunnel from outside through Cloudflare's edge (a quick tunnel's name read first, and the node's
+    // settings rewritten with it - it is new at every restart); a direct node was reached by the seats before it started
+    let reachTest = null;
+    if (s.reach.mode !== 'direct') stage('address');
+    if (s.reach.mode === 'quick') {
+      const url = await reach.quickTunnelUrl({ home: state.home, sinceMs: installAt });
+      if (url) {
+        s = state.save({ reach: { ...s.reach, url } });
+        const before = seatConf(conf, { home: state.home, release }), after = seatConf({ ...s, port, bridgePort }, { home: state.home, release });
+        state.writeSecret('arena.conf', after);
+        // THE SEAT READS WHAT ITS SETTINGS NOW SAY (kanban #577, measured 2026-10-22 on the second machine: installer nodes 3-7 ran on the 15 settings
+        // they started with - the quick tunnel's name, and with it the custody node's guardian and founding settings, came only after the start -
+        // so they ran no guardian and could never be drawn into a founding): the seat alone restarted, never its tunnel (a new name)
+        if (seatNeedsRestart(before, after)) { const rs = await restartSeat(state.home); log(`[service] the seat restarted on its new settings: ${rs && rs.ok === false ? rs.why : 'ok'}`); }
+      }
+    }
+    // workers.dev: the Worker forwards to the quick tunnel's first name, and its keeper follows every new one
+    if (s.reach.mode === 'workers') {
+      const target = await reach.quickTunnelUrl({ home: state.home, sinceMs: installAt });
+      if (!target) return { ok: false, why: 'the node runs, but its quick tunnel gave no name for the Worker to forward to', identity: r.identity };
+      const d = await workersKit.deployForwarder({ token: state.readSecret('cf-workers-token'), accountId: s.reach.accountId, name: s.reach.workerName, target, fetcher });
+      if (!d.ok) return { ok: false, why: `the node runs, but ${d.why}`, identity: r.identity };
+      s = state.save({ reach: { ...s.reach, target, targetAtMs: Date.now() } });
+      const k = await gwKit.installProgram({ id: 'workers', description: 'Bitcoin Arena: keeper of the workers.dev address', home: state.home, boot,
+        args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'workers-keeper.mjs'), '--home', state.home] });
+      if (!k.ok) return { ok: false, why: `the Worker forwards, but its keeper did not start: ${k.why}`, identity: r.identity };
+    }
+    if (s.reach.mode !== 'direct') reachTest = s.reach.url ? await reach.testPublicUrl({ url: s.reach.url, identity: r.identity, fetcher }) : { ok: false, why: 'the quick tunnel gave no name' };
+    let login = null;
+    if (s.owner.mode === 'seed') { stage('login'); login = await ownerLogin(signedBySeed(r.identity)); }
+    state.save({ service: { port, identity: r.identity, startedInMs: r.ms, boot: r.boot, linger: r.linger, reachTest, atMs: Date.now() } });
+    if (reachTest && !reachTest.ok) return { ok: false, why: `the node runs, but not at its public address: ${reachTest.why}`, identity: r.identity };
+    if (login && !login.ok) return { ok: false, why: `the node runs, but the owner login failed: ${login.why}`, identity: r.identity };
+    if (login) mark('service', { ownerLoginMs: Date.now() });
+    saveLaunchers();
+    return { ok: true, identity: r.identity, ms: r.ms, boot: r.boot, linger: r.linger, reachTest, url: s.reach.url, login,
+      template: s.owner.mode === 'nostr' ? ownerEventTemplate({ node: r.identity, action: 'login' }) : null };
+  };
+
   // THE STEPS' DOORS. Each answers { ok, ... } and saves only what passed.
   const api = {
     'GET /api/state': async () => ({ ok: true, ...view() }),
@@ -418,64 +500,23 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       return { ok: true, reach: mark('reach', { reach: { mode, port, url: `https://${hostname}`, hostname, tunnel: t.id, config: t.config } }).reach };
     },
 
-    // THE SERVICE (C.9): the settings, the unit, started, healthy; then the owner's first login against the running node (C.6 "tested by
-    // one login") - signed here with the seed's owner key, or by the browser's Nostr signer (POST /api/owner/login).
     'POST /api/service': async (b) => {
-      let s = state.read();
-      for (const k of ['chain', 'roles', 'seed', 'owner', 'reach']) if (!(s.done || {})[k]) return { ok: false, why: `the ${k} step is not done` };
-      const port = s.reach.port;
-      const boot = b.boot !== false;
-      const conf = { ...s, port, bridgePort };
-      state.writeSecret('arena.conf', seatConf(conf, { home: state.home, release }));
-      const tunnel = !reach.tunnelMode(s.reach.mode) ? null : reach.tunnelUnit({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
-      const tunnelArgs = !reach.tunnelMode(s.reach.mode) ? null : reach.tunnelArgsOf({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
-      const installAt = Date.now();                                    // a restarted quick tunnel's name is the one logged after this
-      const r = await install({ release, home: state.home, port, bridgePort: s.chain.kind === 'electrum' ? bridgePort : null, tunnel, tunnelArgs, boot });
-      if (!r.ok) return { ok: false, why: r.why };
-      // THE RELEASE THE NODE RUNS, RECORDED AT THE INSTALL as an update records it (node-services.js nodeOf: its version, the auto update)
-      s = state.save({ release: { path: release, atMs: Date.now() } });
-      // THE CHAIN SWITCH (kanban #635): a Core still syncing behind the interim Electrum chain - its keeper moves the node to it once synced
-      if (s.core && s.core.interim && s.chain.kind === 'electrum') {
-        const k = await gwKit.installProgram({ id: 'chain-switch', description: 'Bitcoin Arena: moves the node to its own Bitcoin Core once it is synced', home: state.home, boot,
-          args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'chain-switch.mjs'), '--home', state.home] });
-        if (!k.ok) log(`[service] the chain switch did not start: ${k.why}`);
+      svc = { atMs: nowMs(), stages: SERVICE_STAGES.map(([id, label]) => ({ id, label, state: 'todo' })) };
+      let r;
+      try { r = await serviceRun(b); } catch (e) { r = { ok: false, why: e.message }; }
+      const now = nowMs();
+      for (const x of svc.stages) {
+        if (x.state === 'now') { x.state = r.ok ? 'done' : 'failed'; x.ms = now - x.atMs; } else if (x.state === 'todo' && r.ok) x.state = 'skipped';
       }
-      // THE PUBLIC ADDRESS, TESTED: a tunnel from outside through Cloudflare's edge (a quick tunnel's name read first, and the node's
-      // settings rewritten with it - it is new at every restart); a direct node was reached by the seats before it started
-      let reachTest = null;
-      if (s.reach.mode === 'quick') {
-        const url = await reach.quickTunnelUrl({ home: state.home, sinceMs: installAt });
-        if (url) {
-          s = state.save({ reach: { ...s.reach, url } });
-          const before = seatConf(conf, { home: state.home, release }), after = seatConf({ ...s, port, bridgePort }, { home: state.home, release });
-          state.writeSecret('arena.conf', after);
-          // THE SEAT READS WHAT ITS SETTINGS NOW SAY (kanban #577, measured 2026-10-22 on the second machine: installer nodes 3-7 ran on the 15 settings
-          // they started with - the quick tunnel's name, and with it the custody node's guardian and founding settings, came only after the start -
-          // so they ran no guardian and could never be drawn into a founding): the seat alone restarted, never its tunnel (a new name)
-          if (seatNeedsRestart(before, after)) { const rs = await restartSeat(state.home); log(`[service] the seat restarted on its new settings: ${rs && rs.ok === false ? rs.why : 'ok'}`); }
-        }
-      }
-      // workers.dev: the Worker forwards to the quick tunnel's first name, and its keeper follows every new one
-      if (s.reach.mode === 'workers') {
-        const target = await reach.quickTunnelUrl({ home: state.home, sinceMs: installAt });
-        if (!target) return { ok: false, why: 'the node runs, but its quick tunnel gave no name for the Worker to forward to', identity: r.identity };
-        const d = await workersKit.deployForwarder({ token: state.readSecret('cf-workers-token'), accountId: s.reach.accountId, name: s.reach.workerName, target, fetcher });
-        if (!d.ok) return { ok: false, why: `the node runs, but ${d.why}`, identity: r.identity };
-        s = state.save({ reach: { ...s.reach, target, targetAtMs: Date.now() } });
-        const k = await gwKit.installProgram({ id: 'workers', description: 'Bitcoin Arena: keeper of the workers.dev address', home: state.home, boot,
-          args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'workers-keeper.mjs'), '--home', state.home] });
-        if (!k.ok) return { ok: false, why: `the Worker forwards, but its keeper did not start: ${k.why}`, identity: r.identity };
-      }
-      if (s.reach.mode !== 'direct') reachTest = s.reach.url ? await reach.testPublicUrl({ url: s.reach.url, identity: r.identity, fetcher }) : { ok: false, why: 'the quick tunnel gave no name' };
-      let login = null;
-      if (s.owner.mode === 'seed') login = await ownerLogin(signedBySeed(r.identity));
-      state.save({ service: { port, identity: r.identity, startedInMs: r.ms, boot: r.boot, linger: r.linger, reachTest, atMs: Date.now() } });
-      if (reachTest && !reachTest.ok) return { ok: false, why: `the node runs, but not at its public address: ${reachTest.why}`, identity: r.identity };
-      if (login && !login.ok) return { ok: false, why: `the node runs, but the owner login failed: ${login.why}`, identity: r.identity };
-      if (login) mark('service', { ownerLoginMs: Date.now() });
-      saveLaunchers();
-      return { ok: true, identity: r.identity, ms: r.ms, boot: r.boot, linger: r.linger, reachTest, url: s.reach.url, login,
-        template: s.owner.mode === 'nostr' ? ownerEventTemplate({ node: r.identity, action: 'login' }) : null };
+      Object.assign(svc, { endMs: now, ok: !!r.ok, why: r.ok ? null : r.why });
+      return r;
+    },
+    'GET /api/service/progress': async () => {
+      if (!svc) return { ok: true, running: false, stages: SERVICE_STAGES.map(([id, label]) => ({ id, label, state: 'todo' })) };
+      const now = nowMs(), cur = svc.stages.find((x) => x.state === 'now');
+      const slow = cur && cur.id === 'start' && now - cur.atMs > 10000;
+      return { ok: true, running: !svc.endMs, elapsedMs: (svc.endMs || now) - svc.atMs, why: svc.why || null,
+        stages: svc.stages.map((x) => ({ ...x, ms: x.state === 'now' ? now - x.atMs : x.ms })), log: slow || svc.ok === false ? logTail() : [] };
     },
     'POST /api/owner/login': async (b) => {
       const s = state.read();
