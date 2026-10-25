@@ -167,7 +167,7 @@ export const needText = (need, parts) => `${n(need)}${parts && Object.keys(parts
 export const lockText = (l) => `The bond will be locked until block ${l.maturity} - ${l.blocks} blocks from now, about ${new Date(l.estimatedMs).toUTCString()}. The block number is the rule; the date is an estimate (testnet4 makes a block about every 10 minutes). Until then the bond cannot be withdrawn. After that, you withdraw it from your owner page.`;
 /** What the deposit check found, in words; with the network's minimum for a new node when it is above the floor (§23A.3a, kanban #543). */
 export const foundText = (r) => (r.coins.length
-  ? `Found ${n(r.totalSats)} sat in ${r.coins.length} deposit(s) (${r.coins.map((c) => (c.height ? `confirmed at ${c.height}` : 'sent, not confirmed yet')).join(', ')}).${r.enough ? ' That is enough: you can post the bond now. The confirmations show on your dashboard.' : ` Needed: ${n(r.needSats)} sat in all (fees included).`}`
+  ? `Found ${n(r.totalSats)} sat in ${r.coins.length} deposit(s) (${r.coins.map((c) => (c.height ? `confirmed at ${c.height}` : 'sent, not confirmed yet')).join(', ')}).${r.enough ? ' Monitor confirmations on your dashboard.' : ` Needed: ${n(r.needSats)} sat in all (fees included).`}`
   : 'Nothing has arrived yet. A deposit shows here as soon as it is sent; it does not need to be confirmed.')
   + (r.minimum && r.minimum.sats > 50000 ? ` The network asks new nodes for a bond of at least ${n(r.minimum.sats)} sat right now (its federations are filling up), so your node is useful from the start.` : '')
   // A FURTHER NODE OF A COUNT (kanban #596): its part paid on from the first node's wallet
