@@ -81,6 +81,8 @@
   <div class="card"><h2>Games and markets</h2><div class="scroll" id="games"></div></div>
   <div class="card"><h2>Apps</h2><div class="scroll" id="apps"></div></div>
   <div class="card"><h2>Fees in force</h2><div id="fees"></div></div>
+  <!-- WHICH SITE EARNED WHAT (kanban #675: "In health there is a section which site earned what") -->
+  <div class="card"><h2>Referral programs</h2><div class="scroll" id="referral"></div></div>
 </main>
 <script>
 (() => {
@@ -196,6 +198,7 @@
       paintGames(games);
       paintApps(games, nodes);
       paintFees(fees);
+      paintReferral(await best(seats, '/referral-fees', (b) => [Number(b.totalMsat) || 0, (b.programs || []).length]));
       say('read ' + new Date().toISOString().slice(11, 19) + ' UTC · ' + nodes.length + ' nodes asked');
       window.ARENA_HEALTH = { atMs: Date.now(), tip, nodes: nodes.length, answered: nodes.filter((n) => n.version && n.version.ok).length };
     } catch (e) { say('could not read the network: ' + e.message, true); }
@@ -483,6 +486,19 @@
       ['Market node fee', (i.marketNodeBps / 100) + ' %'], ['Market donation', (i.marketDonationBps / 100) + ' %'], ['Market reserves', (i.marketReserveBps / 100) + ' %'],
       ['Items: nodes / reserves / devs', i.itemNodesPct + ' / ' + i.itemReservesPct + ' / ' + i.itemDevsPct + ' %'], ['Website share', i.websitePct + ' %']];
     H.draw($('fees'), 'facts', { items: facts.map(([k, v]) => [k, v, '']) });
+  }
+
+  // WHICH SITE EARNED WHAT (kanban #675): every referral program by the name its key said, what its website payouts came to (the seat that
+  // indexed the most), and the share in force
+  function paintReferral(r) {
+    const RH = ['Program', 'Key', 'Payouts', 'Earned (sat)'];
+    if (!r) return drawTable('referral', RH, [], 'no seat answered /referral-fees');
+    const names = new Map((r.body.programs || []).map((p) => [p.site, p.name]));
+    const sites = new Map((r.body.sites || []).map((x) => [x.site, x]));
+    for (const [site] of names) if (!sites.has(site)) sites.set(site, { site, msat: '0', payouts: 0 });
+    const rows = [...sites.values()].sort((a, b) => Number(BigInt(b.msat) - BigInt(a.msat))).map((x) => ({ key: x.site, dot: BigInt(x.msat) > 0n ? 'ok' : 'warn',
+      cells: [names.get(x.site) || x.name || 'unnamed', x.site.slice(0, 16) + '…', String(x.payouts), sat(String(BigInt(x.msat) / 1000n))] }));
+    drawTable('referral', RH, rows, 'no referral program yet', 'a program earns 10 % of the nodes\' fee on what its players stake; set one up in the owner area, Referrer');
   }
 
   $('again').onclick = read;
