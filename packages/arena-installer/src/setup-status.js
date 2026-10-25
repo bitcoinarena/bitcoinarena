@@ -7,6 +7,15 @@
 //   core    Bitcoin Core installed here: syncing (blocks, progress, ETA - the chain-switch keeper's chain-switch.json) or switched to
 //   bond    its transaction, confirmations, the height it must confirm by to count (bond.js bondCounts), whether it counts
 //   pegIn   the gateway's peg-in (custody): confirmations against the federation's finality (PEG_IN_FINALITY)
+// AND EVERYTHING ELSE STILL UNDER WAY (the owner 2026-10-25: "a section of installation status to show confirmations on bond, peg in and lnd
+// status and everything else that may be in progress" - "Fix that"):
+//   lnd       LND set up here: answering, synced to the chain, its height, open and pending channels
+//   gateway   the Lightning gateway: answering, its Lightning node, the federations it joined
+//   address   the node's public address answering as this node
+//   faucet    the test coins the Arena faucet sent: confirmations
+//   updates   advertisement updates and bonds posted since (the newest games and protocols, a roles change, the move to the key from the
+//             words): confirmations against the 6 they need to count
+//   oldBonds  bonds left under a key the node moved away from: the block they can be taken back at
 // Confirmations come from the node's own chain the way its deposit was found (wallet.js): an Electrum server's history of the node's
 // address, or bitcoind (the unspent output, or the mempool). Nothing here is secret: txids, heights, progress.
 import { readFileSync } from 'node:fs';
@@ -47,15 +56,56 @@ const confs = (tip, height) => (height ? tip - height + 1 : 0);
  * The status for the dashboards of the node installed at `home`. Answers { ok, core, bond, pegIn, tip } (each part null when the
  * node has none) or { ok: false, why }.
  */
-export async function setupStatus({ home, reader = chainReader, nowMs = Date.now() }) {
+export async function setupStatus({ home, reader = chainReader, nowMs = Date.now(), services = servicesOf }) {
   const s = readJson(join(home, 'state.json'));
   if (!s) return { ok: false, why: 'no installer state here' };
+  const more = await services(s).catch((e) => ({ lnd: null, gateway: null, address: { ok: false, why: e.message } }));
+  const base = await chainParts({ home, s, reader, nowMs });
+  if (!base.ok) return { ...base, ...more };
+  return { ...base, ...more };
+}
+
+/** LND, the gateway and the public address, asked now (each null when the node has none). */
+export async function servicesOf(s, { fetcher = fetch } = {}) {
+  let lnd = null, gateway = null, address = null;
+  if (s.lightning && s.lightning.restUrl) {
+    try {
+      const { testLnd, lndChannels } = await import('./lnd.js');
+      const t = await testLnd(s.lightning);
+      const c = t.ok ? await lndChannels(s.lightning).catch(() => null) : null;
+      lnd = t.ok ? { ok: true, synced: t.syncedToChain, height: t.blockHeight, channels: c && c.ok ? c.open.length : null, pending: c && c.ok ? c.pending.length : null }
+        : { ok: false, why: t.why };
+    } catch (e) { lnd = { ok: false, why: e.message }; }
+  }
+  if (s.gateway && s.gateway.apiUrl) {
+    try {
+      const { testGateway } = await import('./gateway.js');
+      const t = await testGateway({ apiUrl: s.gateway.apiUrl, passwordFile: s.gateway.passwordFile, fetcher });
+      gateway = t.ok ? { ok: true, federations: (t.federations || []).length } : { ok: false, syncing: !!t.syncing, why: t.why };
+    } catch (e) { gateway = { ok: false, why: e.message }; }
+  }
+  if (s.reach && s.reach.url && s.service && s.service.identity) {
+    try {
+      const r = await fetcher(`${String(s.reach.url).replace(/\/+$/, '')}/identity`, { signal: AbortSignal.timeout(10000) });
+      const id = r.status === 200 ? Buffer.from(await r.arrayBuffer()).toString('hex') : null;
+      address = id && id.endsWith(String(s.service.identity).slice(-64)) ? { ok: true, url: s.reach.url } : { ok: false, url: s.reach.url, why: r.status === 200 ? 'another node answers there' : `it answered ${r.status}` };
+    } catch (e) { address = { ok: false, url: s.reach.url, why: e.cause ? e.cause.code || e.message : e.message }; }
+  }
+  return { lnd, gateway, address };
+}
+
+async function chainParts({ home, s, reader, nowMs }) {
   const sw = readJson(join(home, 'chain-switch.json'));
   const core = s.core ? { dir: s.core.dir || home, interim: !!s.core.interim, switchedAtMs: s.core.switchedAtMs || null,
     state: s.core.interim ? ((sw && sw.state) || 'syncing') : 'done', sync: (sw && sw.sync) || null, why: (sw && sw.why) || null, atMs: (sw && sw.atMs) || null } : null;
   const b = s.bond && s.bond.txid ? s.bond : null;
   const p = s.custody && s.custody.pegIn && s.custody.pegIn.txid ? s.custody.pegIn : null;
-  if (!b && !p) return { ok: true, core, bond: null, pegIn: null, tip: null };
+  // the other transactions setup or the owner page sent, newest first: what each was for and its txid
+  const sent = [['gamesUpdate', 'the newest games and protocols in the advertisement'], ['rolesUpdate', 'the roles change'], ['keySwitch', 'the move to the key from the 24 words']]
+    .map(([k, what]) => (s[k] && (s[k].txid || s[k].bond) ? { kind: k, what, txid: s[k].txid || s[k].bond, atMs: s[k].atMs || null } : null)).filter(Boolean);
+  const faucet = s.faucet && s.faucet.txid ? s.faucet : null;
+  const oldBonds = (s.oldBonds || []).map((o) => ({ txid: o.txid, sats: o.sats, maturity: o.maturity }));
+  if (!b && !p && !faucet) return { ok: true, core, bond: null, pegIn: null, faucet: null, updates: [], oldBonds, tip: null };
   let seed; try { seed = fromHex(readFileSync(join(home, 'seed.hex'), 'utf8').trim()); } catch { seed = null; }
   if (!s.chain || !seed) return { ok: true, core, bond: b ? { txid: b.txid, sats: b.sats, maturity: b.maturity, why: 'the node\'s chain cannot be read here' } : null, pegIn: null, tip: null };
   let r;
@@ -74,6 +124,11 @@ export async function setupStatus({ home, reader = chainReader, nowMs = Date.now
       const c = confs(r.tip, height);
       pegIn = { txid: p.txid, sats: p.sats, federationId: p.federationId, height, confirmations: c, seen: height !== null, needed: PEG_IN_FINALITY, credited: c >= PEG_IN_FINALITY };
     }
-    return { ok: true, core, bond, pegIn, tip: r.tip };
+    let fau = null;
+    if (faucet) { const h = await r.heightOf(faucet.txid); fau = { txid: faucet.txid, sats: faucet.sats, seen: h !== null, confirmations: confs(r.tip, h) }; }
+    const updates = [];
+    for (const u of sent) { const h = await r.heightOf(u.txid); updates.push({ ...u, seen: h !== null, confirmations: confs(r.tip, h), needed: 6, counts: confs(r.tip, h) >= 6 }); }
+    const old = oldBonds.map((o) => ({ ...o, blocksLeft: Math.max(0, Number(o.maturity) - r.tip), back: r.tip >= Number(o.maturity) }));
+    return { ok: true, core, bond, pegIn, faucet: fau, updates, oldBonds: old, tip: r.tip };
   } finally { r.close(); }
 }
