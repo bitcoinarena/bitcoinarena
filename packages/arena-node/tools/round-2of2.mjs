@@ -140,7 +140,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // seats attached, and nothing is published or posted until openGrid / openNext is asked
                                      openFirst = true,
                                      store = ':memory:', rpc = null, cli = null,
-                                     page = 'https://btc-logistics-core.pages.dev',
+                                     page = 'https://testnet.bitcoin-arena.io',
                                      // A PAYING ROUND, for a rehearsal with Lightning. Every
                                      // existing caller asks for none and gets a free round.
                                      stakeMsat = 0n,
@@ -1591,7 +1591,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       pageServer = await servePage(build, { host, port: Number(process.env.ARENA_PAGE_PORT || 8000) });
       page = `http://${host}:${pageServer.port}`;
     } else {
-      page = 'https://btc-logistics-core.pages.dev';
+      page = 'https://testnet.bitcoin-arena.io';
       console.log('NOTE: no build at ' + build + ', so the daily is named instead.');
     }
   }

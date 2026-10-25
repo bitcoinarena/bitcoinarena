@@ -1,4 +1,4 @@
-#: testnet.bitcoin-arena.io -> the arena alias of btc-logistics-core (Workers custom domain: DNS and cert by Cloudflare)
+#: testnet.bitcoin-arena.io -> the Pages project bitcoin-arena-site (Workers custom domain: DNS and cert by Cloudflare)
 name = "bitcoin-arena-testnet"
 main = "worker.js"
 compatibility_date = "2025-09-01"
