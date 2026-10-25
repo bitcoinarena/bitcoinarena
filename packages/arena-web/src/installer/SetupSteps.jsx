@@ -127,7 +127,7 @@ export class ChainStep extends React.Component {
     const kinds = [['core', 'My Bitcoin Core', '₿'], ['electrum', 'Electrum server', '🔌'], ['install', 'Install Bitcoin Core for me', '⬇️']];
     return (
       <div className="aw">
-        <h2>1. Bitcoin</h2>
+        <h2>2. Bitcoin</h2>
         <p className="sub">Your node needs to read the testnet4 chain. Connect your own Bitcoin Core, use an Electrum server, or let setup install Bitcoin Core for you.</p>
         <div className="kinds">{kinds.map(([k, t, ic]) => (
           <button key={k} type="button" id={`k-${k}`} className={`kind${s.kind === k ? ' on' : ''}`} onClick={() => this.kind(k)}><span aria-hidden="true">{ic}</span> {t}</button>))}</div>
@@ -220,7 +220,7 @@ export class ReachStep extends React.Component {
     const rec = defaultMode(direct);
     return (
       <div className="aw">
-        <h2>6. How others reach your node</h2>
+        <h2>7. How others reach your node</h2>
         <p className="sub">Players and other nodes connect to your node. First, setup checks whether the internet can reach this computer directly.</p>
         <div className="row"><div><label htmlFor="r-port">Port for incoming connections</label><input id="r-port" value={port} onChange={(e) => this.setState({ port: e.target.value })} /></div></div>
         <button type="button" className="ghost" id="r-test" disabled={testing} onClick={this.test}>Test direct connection</button>
@@ -323,7 +323,7 @@ export class ServiceStep extends React.Component {
     const { boot, busy, template, msg, progress } = this.state;
     return (
       <div className="aw">
-        <h2>7. Install and start</h2>
+        <h2>8. Install and start</h2>
         <p>Setup installs your node as a service, starts it, checks that it answers at its public address, and logs you in once as its owner.</p>
         <label className={`choice${boot ? ' on' : ''}`}><input type="checkbox" id="boot" checked={boot} onChange={(e) => this.setState({ boot: e.target.checked })} />
           <div><b>Start again after a reboot</b><p>Recommended. It also keeps your node running when you log out.</p></div></label>
@@ -362,7 +362,7 @@ export class FederationStep extends React.Component {
   render() {
     return (
       <div className="aw">
-        <h2>9. Your federation</h2>
+        <h2>10. Your federation</h2>
         <div className="fed-explain">
           <FedRing />
           <div>

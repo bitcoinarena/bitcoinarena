@@ -62,6 +62,7 @@ test('with no Electrum server reachable, the wizard installs Bitcoin Core, watch
   let st = (await c.get('/api/core/status')).json;
   assert.equal(st.networks.testnet4.blocks, 50000);
   assert.equal(st.networks.chainSaved, undefined);
+  assert.equal((await c.post('/api/start', { mode: 'new' })).json.ok, true);   // New / Restore first (kanban #652)
   assert.equal((await c.get('/api/state')).json.step, 'chain', 'still syncing: the chain step waits');
   synced = true;
   st = (await c.get('/api/core/status')).json;
