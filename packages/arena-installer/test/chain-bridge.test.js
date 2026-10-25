@@ -87,3 +87,22 @@ test('when its Electrum server fails, the bridge goes on with the next known one
   assert.deepEqual(asked, ['dead', 'alive'], 'the saved server once in the list');
   assert.match(logs.join('\n'), /dead:1 failed .*next: alive:2/);
 });
+
+test('calls waiting on one failed server move the bridge on once: the next server is tried, none skipped (playtest 2026-10-25)', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'arena-bridge-'));
+  const asked = [];
+  const session = async ({ host }) => {
+    asked.push(host);
+    if (host === 'slow') { await new Promise((ok) => setTimeout(ok, 20)); throw new Error('slow:1 did not answer in 20000 ms'); }
+    return { call: async (m) => (m === 'blockchain.headers.subscribe' ? { height: 0, hex: G_HEADER } : G_HEADER), close: () => {} };
+  };
+  const logs = [];
+  const b = createBridge({ electrum: { host: 'slow', port: 1 }, fallbacks: [{ host: 'second', port: 2 }, { host: 'third', port: 3 }], home, session, fetcher: async () => new Response('{}'), log: (l) => logs.push(l) });
+  t.after(() => { b.close(); rmSync(home, { recursive: true, force: true }); });
+  const three = await Promise.allSettled([b.call('getblockcount'), b.call('getblockcount'), b.call('getblockcount')]);
+  assert.deepEqual(three.map((r) => r.status), ['rejected', 'rejected', 'rejected'], 'all three waited on the slow server');
+  assert.equal(logs.length, 1, 'one failure, one move');
+  assert.match(logs[0], /slow:1 failed .*next: second:2/);
+  assert.equal(await b.call('getblockcount'), 0);
+  assert.deepEqual(asked, ['slow', 'second'], 'the second server is the next one asked, the third never skipped to');
+});

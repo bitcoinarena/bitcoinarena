@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { SetupStatus, SetupCard } from '../dist/test/setup-status.mjs';
+import { SetupStatus, SetupCard, SetupBanner } from '../dist/test/setup-status.mjs';
 
 const card = (status) => renderToStaticMarkup(React.createElement(SetupStatus, { status: { ok: true, ...status } }));
 
@@ -50,4 +50,12 @@ test('the owner\'s Overview reads the setup\'s progress itself and again later (
   assert.ok(c.timer, 'read again later');
   assert.match(renderToStaticMarkup(c.render()), /id="setup-status"/);
   c.componentWillUnmount();
+});
+
+test('"still being set up" above every owner section while a part runs; nothing once all is done (playtest 2026-10-25: roles and bond did not load while Core synced)', () => {
+  const banner = (status) => renderToStaticMarkup(React.createElement(SetupBanner, { status: { ok: true, ...status } }));
+  const h = banner({ core: { interim: true, sync: { blocks: 50070, headers: 157581, progress: 0.059, etaMs: 1920000 } }, address: { ok: true, url: 'https://n.example' } });
+  assert.match(h, /id="setup-banner"[\s\S]*Your node is still being set up\.[\s\S]*Still in progress: Bitcoin Core\. Until Bitcoin Core has synced, parts of this page can load slowly or not at all\.[\s\S]*href="#overview"/);
+  assert.equal(banner({ core: { interim: false }, address: { ok: true, url: 'https://n.example' } }), '', 'all done: no banner');
+  assert.equal(renderToStaticMarkup(React.createElement(SetupBanner, { status: null })), '', 'no answer: no banner');
 });

@@ -83,14 +83,19 @@ export function oldBondLine(o) {
     : { done: true, text: `${n(o.sats)} sat under your old key, locked for ${n(o.blocksLeft)} more blocks (until block ${n(o.maturity)}), then yours to take back` };
 }
 
-export class SetupStatus extends React.Component {
-  render() {
-    const s = this.props.status;
-    if (!s || !s.ok) return null;
-    const rows = [['setup-core', 'Bitcoin Core', coreLine(s.core)], ['setup-address', 'Public address', addressLine(s.address)], ['setup-faucet', 'Test coins', faucetLine(s.faucet)],
+/** The setup's rows: [id, label, line] for each part that has something to say. */
+export function setupRowsOf(s) {
+  if (!s || !s.ok) return [];
+  return [['setup-core', 'Bitcoin Core', coreLine(s.core)], ['setup-address', 'Public address', addressLine(s.address)], ['setup-faucet', 'Test coins', faucetLine(s.faucet)],
       ['setup-bond', 'Bond', bondLine(s.bond)], ['setup-lnd', 'LND', lndLine(s.lnd)], ['setup-gateway', 'Gateway', gatewayLine(s.gateway)], ['setup-pegin', 'Peg-in', pegInLine(s.pegIn)],
       ...(s.updates || []).map((u, i) => [`setup-update-${i}`, 'Update', updateLine(u)]),
       ...(s.oldBonds || []).map((o, i) => [`setup-old-${i}`, 'Old bond', oldBondLine(o)])].filter(([, , l]) => l);
+}
+
+export class SetupStatus extends React.Component {
+  render() {
+    const s = this.props.status;
+    const rows = setupRowsOf(s);
     if (!rows.length) return null;
     const all = rows.every(([, , l]) => l.done);
     const problems = rows.filter(([, , l]) => l.problem).length;
@@ -118,5 +123,26 @@ export class SetupCard extends React.Component {
     this.setState({ status: s });
     clearTimeout(this.timer); this.timer = setTimeout(this.load, this.props.everyMs || 30000);
   }
-  render() { return <SetupStatus status={this.state.status} />; }
+  render() { return this.props.banner ? <SetupBanner status={this.state.status} /> : <SetupStatus status={this.state.status} />; }
+}
+
+/**
+ * STILL BEING SET UP, SAID ON EVERY SECTION (the owner's playtest 2026-10-25: roles and the bond did not load while Bitcoin Core synced -
+ * "make sure the user knows that the node is still being set up"): while any part is in progress, one line above every section that names
+ * what is still running and why a panel may not load yet; nothing once the setup is complete.
+ */
+export class SetupBanner extends React.Component {
+  render() {
+    const rows = setupRowsOf(this.props.status);
+    const open = rows.filter(([, , l]) => !l.done);
+    if (!open.length) return null;
+    const core = this.props.status.core;
+    const names = open.map(([, label]) => label).filter((x, i, a) => a.indexOf(x) === i);
+    return (
+      <div className="setup-banner" id="setup-banner" role="status">
+        <b>🛠 Your node is still being set up.</b>
+        <span> Still in progress: {names.join(', ')}.{core && core.interim ? ' Until Bitcoin Core has synced, parts of this page can load slowly or not at all.' : ' Some parts of this page can load slowly until then.'}</span>
+        {' '}<a href="#overview">See the progress</a>
+      </div>);
+  }
 }
