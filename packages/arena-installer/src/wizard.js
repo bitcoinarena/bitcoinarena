@@ -22,7 +22,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { testConnection, TESTNET4_ELECTRUM } from './chain-test.js';
 import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CONFIRM_WORDS, emergencyOf, seedOfWords, seedOfNsec, newNsec, nodeKeyOf, signNostrEvent } from './seed.js';
 import { nextStep, doneOf, seatConf, ROLES, guardianSetupOf, ownCoreOf } from './state.js';
-import { appsIn, appsView, chosenApps } from './apps.js';
+import { appsIn, appsView, chosenApps, hostedGameIdsOf } from './apps.js';
 import { installService, installProgram } from './service.js';
 import { control } from './node-services.js';
 import { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, freeCorePorts, NEEDS } from './bitcoind.js';
@@ -50,6 +50,7 @@ import { findGatewayd, configureGateway, testGateway, joinFederation } from './g
 import { signOwnerRequest, ownerEventTemplate } from '../../arena-node/src/owner.js';
 import { openStore, adoptIdentity, nodeIdentity } from '../../arena-node/src/store.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.js';
 import { instancesChoice, instancesNote, INSTANCES_MAX, RAM_FROM } from './instances.js';
 import { INSTANCE, PORT_OFFSET } from './instance.js';
 
@@ -225,6 +226,8 @@ const serviceRun = async (b) => {
     const boot = b.boot !== false;
     const conf = { ...s, port, bridgePort };
     stage('settings');
+    // the hosted games again, from this release's apps (an installer updated since the apps step carries newer versions)
+    try { const hg = await hostedGameIdsOf(release, chosenApps(s, releaseApps), releaseApps); if (hg.length) s = state.save({ hostedGames: hg }); } catch (e) { log(`apps: the hosted games could not be read: ${e.message}`); }
     state.writeSecret('arena.conf', seatConf(conf, { home: state.home, release }));
     const tunnel = !reach.tunnelMode(s.reach.mode) ? null : reach.tunnelUnit({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
     const tunnelArgs = !reach.tunnelMode(s.reach.mode) ? null : reach.tunnelArgsOf({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
@@ -437,8 +440,11 @@ const serviceRun = async (b) => {
       const unknown = apps.filter((id) => !releaseApps.some((a) => a.id === id));
       if (unknown.length) return { ok: false, why: `no app ${unknown.join(', ')} in this release` };
       if (!apps.length && releaseApps.length) return { ok: false, why: `choose at least one app: ${releaseApps.map((a) => a.short).join(', ')}` };   // (a release from before app.json: nothing to choose, Next Block as before)
-      mark('apps', { apps });
-      return { ok: true, apps };
+      // the game ids the bond's advertisement names: every version of these apps the seat hosts (newest included), not Next Block's first alone
+      let hostedGames = null;
+      try { hostedGames = await hostedGameIdsOf(release, apps.length ? apps : releaseApps.map((x) => x.id), releaseApps); } catch (e) { log(`apps: the hosted games could not be read: ${e.message}`); }
+      mark('apps', { apps, ...(hostedGames && hostedGames.length ? { hostedGames } : {}) });
+      return { ok: true, apps, hostedGames };
     },
 
     // NEW OR RESTORED, BY 24 WORDS OR BY NOSTR (kanban #652/#654, the owner 2026-10-25: "neuer step im installer: New/Restore"; "User first
@@ -797,7 +803,7 @@ const serviceRun = async (b) => {
       try { nodeSecret = new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
       // custody added to a node with a bond: the bond's advertisement is updated to name custody and the guardian's endpoint (§5A.2)
       if (laterCustody(s)) {
-        const advert = advertFor({ nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles, endpoint: s.reach.url,
+        const advert = advertFor({ hostedGames: s.hostedGames, nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles, endpoint: s.reach.url,
           payoutPubkey: payoutKeyOf(seed), maturity: s.bond.maturity, softwareHash: commitOf(), guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
           emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });   // the census reads the newest advertisement: the key kept
         let u;
@@ -806,7 +812,7 @@ const serviceRun = async (b) => {
         await chainKit.broadcast(s.chain, u.funding.hex);
         const txid = await chainKit.broadcast(s.chain, u.update.hex);
         const bond = { ...s.bond, custodyAdvert: { txid, advertId: u.advertId, atTip: tip, atMs: Date.now() } };
-        mark('bond', { bond });
+        mark('bond', { bond, advertProtocols: [...SUPPORTED_PROTOCOL_VERSIONS] });   // what its advertisement declares (change-roles refreshHostedGames)
         await installAgent();
         return { ok: true, bond, update: txid };
       }
@@ -815,7 +821,7 @@ const serviceRun = async (b) => {
       if (bondSats < minimum) return { ok: false, why: minimum > BOND_MIN_SATS ? `a new node bonds at least ${minimum} sat now: the network's bond target (${(s.bondMinimum || {}).why || 'GET /capacity'})` : `a bond is at least ${BOND_MIN_SATS} sat` };
       let built;
       try {
-        built = buildBond({ wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
+        built = buildBond({ hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
           endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash: commitOf(), feeRate: 2,
           guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
           emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
@@ -824,7 +830,7 @@ const serviceRun = async (b) => {
       const bondTxid = await chainKit.broadcast(s.chain, built.bond.hex);
       const bond = { txid: bondTxid, vout: 0, fundingTxid, sats: String(built.bondSats), maturity: built.maturity, advertId: built.advertId, postedAtTip: tip,
         lock: lockOf(tip, { maturity: built.maturity }), atMs: Date.now() };
-      mark('bond', { bond });
+      mark('bond', { bond, advertProtocols: [...SUPPORTED_PROTOCOL_VERSIONS] });   // what its advertisement declares (change-roles refreshHostedGames)
       // a custody node's agent: guardian_of, the gateway's own federation and the peg-in, once a founding has drawn it (custody-agent.js)
       if ((s.roles || []).includes('custody') || (s.roles || []).includes('liquidity')) await installAgent();
       // THE LIQUIDITY PROVIDER SERVICE (§23A.10): its node key for its claims (0600 beside the node's other secrets), its LND, its claim

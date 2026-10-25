@@ -310,7 +310,7 @@ export async function versionAnswers({ port, fetcher = fetch, want, waitMs = 900
 export async function updateNode({ home, newRelease, port, node = process.execPath, asset = null, sums = null, sig = null, env = process.env, sh = run,
   fetcher = fetch, nowMs = () => Date.now(), waitMs = null, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), platform = process.platform,
   quickUrl = quickTunnelUrl, restartService = (id, o) => control('restart', id, o), installUpdaterFn = null, fetchApps = ensureApps, arch = process.arch,
-  lndKit = { installLnd } }) {
+  lndKit = { installLnd }, refreshGames = async (o) => (await import('./change-roles.js')).refreshHostedGames(o) }) {
   // A WINDOWS SEAT STARTS SLOWER (measured in the Windows VM 2026-10-18, rc.14 -> rc.20: the seat logged "[games] hosting nextblock",
   // its last start-up line, at 23:24:36 - the 90 s wait had ended at 23:24:41 and rolled a sound release back): five minutes there
   waitMs = waitMs ?? (platform === 'win32' ? 300000 : 90000);
@@ -457,7 +457,12 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
       if (name === fromFolder || name === newFolder) continue;
       try { rmSync(d, { recursive: true, force: true }); pruned.push(name); } catch { /* a file still open (Windows): kept, the next update tries again */ }
     }
-    return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()), lnd: lnd ? lnd.to : null, command, migrated: migrating, peerPortsLocal: local, updater, pruned,
+    // THE NEWEST GAMES IN THE ADVERTISEMENT (the owner 2026-10-25: "Make sure the installer and the nodes use the newest versions"): the new
+    // release's app versions named in an advertisement update when the bond's advertisement does not name them yet - never fatal: the node
+    // runs, and is drawn for the new versions once the update counts
+    let games = null;
+    if (refreshGames) { try { games = await refreshGames({ home, release: newRelease, post: true }); } catch (e) { games = { ok: false, why: e.message }; } }
+    return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()), lnd: lnd ? lnd.to : null, command, migrated: migrating, peerPortsLocal: local, updater, pruned, games,
       ...(want.version ? { answered: { version: answered.version, commit: answered.commit } } : {}), ...(updaterBack ? { updaterBack } : {}),
       ...(leftAfterStop.length ? { endedAfterStop: leftAfterStop } : {}), ...(leftAfterStart.length ? { endedAfterStart: leftAfterStart } : {}),
       ...(reachUrl ? { reach: reachUrl } : {}), ...(started.ok ? {} : { notStarted: started.why }) };

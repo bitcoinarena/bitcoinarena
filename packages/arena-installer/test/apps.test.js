@@ -17,24 +17,24 @@ import { envForRelease } from '../src/update.js';
 
 const RELEASE = resolve(fileURLToPath(import.meta.url), '../../../..');
 const reg = (app, ...files) => files.map((f) => join(RELEASE, 'packages', app, 'plugin', f));
-const NEXTBLOCK = reg('nextblock', 'nextblock.js', 'nextblock-v2.js', 'nextblock-v3.js', 'nextblock-v4.js', 'nextblock-v5.js');
+const NEXTBLOCK = reg('nextblock', 'nextblock.js', 'nextblock-v2.js', 'nextblock-v3.js', 'nextblock-v4.js', 'nextblock-v5.js', 'nextblock-v6.js');
 const RPS = reg('rock-paper-scissors', 'rock-paper-scissors.js', 'rock-paper-scissors-v2.js', 'rock-paper-scissors-v3.js', 'rock-paper-scissors-v4.js', 'rock-paper-scissors-v5.js');
 const UPDOWN = reg('btc-updown', 'btc-updown.js', ...Array.from({ length: 23 }, (_, i) => `btc-updown-v${i + 2}.js`));   // app.json lists v2..v24 (v20 since the installer walk of d3b3ddf6: v21's parent)
 
 test('the release\'s apps: Next Block first, then by title, each with every registration it hosts, absolute', () => {
   const apps = appsIn(RELEASE);
   assert.deepEqual(apps.map((a) => [a.id, a.title, a.short, a.registrations.length]), [
-    ['nextblock', 'Tick Tock, Next Block', 'Next Block', 5],
+    ['nextblock', 'Tick Tock, Next Block', 'Next Block', 6],
     ['btc-updown', 'Bitcoin Up or Down', 'Up or Down', 24],
     ['rock-paper-scissors', 'Rock Paper Scissors', 'Rock Paper Scissors', 5]]);
   assert.deepEqual([apps[0].registrations, apps[1].registrations, apps[2].registrations], [NEXTBLOCK, UPDOWN, RPS]);
-  assert.deepEqual(appsView(apps).map((a) => a.versions), [5, 24, 5]);
+  assert.deepEqual(appsView(apps).map((a) => a.versions), [6, 24, 5]);
   assert.deepEqual(appsIn(join(RELEASE, 'none')), [], 'no release folder: no apps');
 });
 
 test('ARENA_APPS: the chosen apps\' registrations, comma-joined; an unknown app refused by name; all chosen when none was saved', () => {
   assert.equal(appsEnvValue(RELEASE, ['rock-paper-scissors', 'nextblock']), [...NEXTBLOCK, ...RPS].join(','));
-  assert.equal(appsEnvValue(RELEASE, ['nextblock', 'btc-updown', 'rock-paper-scissors']).split(',').length, 34);   // (v20 back in the Up/Down app's list)
+  assert.equal(appsEnvValue(RELEASE, ['nextblock', 'btc-updown', 'rock-paper-scissors']).split(',').length, 35);   // (v20 back in the Up/Down app's list, Next Block's v6 in its own)
   assert.throws(() => appsEnvValue(RELEASE, ['nextblock', 'chess']), /no app chess in this release/);
   const apps = appsIn(RELEASE);
   assert.deepEqual(chosenApps({}, apps), ['nextblock', 'btc-updown', 'rock-paper-scissors']);
@@ -78,14 +78,18 @@ test('the door: the release\'s apps in the state, all on; at least one, no unkno
   const s = await go('GET', '/api/state');
   assert.equal(s.step, 'apps');
   assert.deepEqual(s.appInfo, [
-    { id: 'nextblock', title: 'Tick Tock, Next Block', short: 'Next Block', versions: 5 },
+    { id: 'nextblock', title: 'Tick Tock, Next Block', short: 'Next Block', versions: 6 },
     { id: 'btc-updown', title: 'Bitcoin Up or Down', short: 'Up or Down', versions: 24 },
     { id: 'rock-paper-scissors', title: 'Rock Paper Scissors', short: 'Rock Paper Scissors', versions: 5 }]);
   assert.deepEqual(s.apps, ['nextblock', 'btc-updown', 'rock-paper-scissors'], 'all chosen at first');
   assert.deepEqual(await go('POST', '/api/apps', { apps: [] }), { ok: false, why: 'choose at least one app: Next Block, Up or Down, Rock Paper Scissors' });
   assert.deepEqual(await go('POST', '/api/apps', { apps: ['nextblock', 'chess'] }), { ok: false, why: 'no app chess in this release' });
   assert.equal(state.read().done.apps, undefined, 'nothing saved on a refusal');
-  assert.deepEqual(await go('POST', '/api/apps', { apps: ['rock-paper-scissors', 'nextblock', 'nextblock'] }), { ok: true, apps: ['rock-paper-scissors', 'nextblock'] });
+  const saved = await go('POST', '/api/apps', { apps: ['rock-paper-scissors', 'nextblock', 'nextblock'] });
+  assert.deepEqual([saved.ok, saved.apps], [true, ['rock-paper-scissors', 'nextblock']]);
+  // the games its bond names: every version of the chosen apps, sorted (the owner 2026-10-25: "the newest versions of games")
+  assert.equal(saved.hostedGames.length, 11, 'Next Block 6 versions + Rock Paper Scissors 5');
+  assert.deepEqual(saved.hostedGames, [...saved.hostedGames].sort());
   assert.deepEqual(state.read().apps, ['rock-paper-scissors', 'nextblock']);
   const after = await go('GET', '/api/state');
   assert.deepEqual([after.step, after.apps, Boolean(after.done.apps)], ['seed', ['rock-paper-scissors', 'nextblock'], true]);
