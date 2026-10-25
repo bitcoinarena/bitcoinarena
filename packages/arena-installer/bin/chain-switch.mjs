@@ -16,7 +16,7 @@ import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { nodeState, defaultHome } from '../src/state.js';
-import { createWizard } from '../src/wizard.js';
+import { createWizard, repairCorePorts } from '../src/wizard.js';
 import { syncStatus } from '../src/bitcoind.js';
 import { testConnection } from '../src/chain-test.js';
 
@@ -45,6 +45,8 @@ for (;;) {
   {
     const r = await syncStatus({ ...t4, samples, nowMs: Date.now() });
     samples = r.samples || [];
+    // a port another program holds: moved to free ones, the Core started again (kanban #635)
+    if (r.portTaken) { const f = await repairCorePorts({ state, network: 'testnet4' }); say({ state: 'syncing', why: f.ok ? `${r.why}: moved to port ${f.ports.rpc} and started again` : `${r.why}; ${f.why}` }); await sleep(EVERY_MS); continue; }
     const sync = r.ok ? { blocks: r.blocks, headers: r.headers, progress: r.progress, etaMs: r.etaMs, synced: r.synced } : null;
     if (!r.ok || !r.synced) { say({ state: 'syncing', sync, why: r.ok ? null : r.why }); await sleep(EVERY_MS); continue; }
     // SYNCED: tested as the chain step tests it, then saved and the node restarted on it

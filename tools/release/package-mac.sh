@@ -8,6 +8,13 @@ set -euo pipefail
 V=$1; OUT=$(cd "$2" && pwd)
 HERE=$(cd "$(dirname "$0")" && pwd)
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+# THE ICON (kanban #635, the owner's playtest 2026-10-25: "It has no logo"): the site's brand mark, pkg/icon/bitcoin-arena-1024.png, as an .icns
+IS="$WORK/AppIcon.iconset"; mkdir -p "$IS"
+for s in 16 32 128 256 512; do
+  sips -z $s $s "$HERE/pkg/icon/bitcoin-arena-1024.png" --out "$IS/icon_${s}x${s}.png" >/dev/null
+  sips -z $((s * 2)) $((s * 2)) "$HERE/pkg/icon/bitcoin-arena-1024.png" --out "$IS/icon_${s}x${s}@2x.png" >/dev/null
+done
+iconutil -c icns "$IS" -o "$WORK/AppIcon.icns"
 for arch in arm64 x64; do
   R=bitcoin-arena-node-$V-darwin-$arch
   [ -f "$OUT/$R.tar.gz" ] || { echo "no $R.tar.gz: skipped"; continue; }
@@ -15,13 +22,14 @@ for arch in arm64 x64; do
   mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/release"
   tar -xzf "$OUT/$R.tar.gz" -C "$APP/Contents/Resources/release"
   install -m 0755 "$HERE/pkg/macos/arena-node-app" "$APP/Contents/MacOS/arena-node-app"
+  cp "$WORK/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
   cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>CFBundleName</key><string>Bitcoin Arena</string><key>CFBundleDisplayName</key><string>Bitcoin Arena</string>
   <key>CFBundleIdentifier</key><string>io.bitcoin-arena.node.setup</string><key>CFBundleExecutable</key><string>arena-node-app</string>
-  <key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>$V</string><key>CFBundleVersion</key><string>$V</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>$V</string><key>CFBundleVersion</key><string>$V</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string><key>LSUIElement</key><true/>
 </dict></plist>
 EOF

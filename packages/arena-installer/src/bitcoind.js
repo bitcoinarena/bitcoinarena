@@ -16,7 +16,8 @@
 //   status     the sync's progress as bitcoind says it, with an ETA from the progress measured between two readings
 // When the sync is done the chain step is saved with this node (state.chain), and the wizard goes on.
 import { existsSync, mkdirSync, writeFileSync, statfsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { createServer } from 'node:net';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { coreRpc } from './chain-test.js';
@@ -91,10 +92,30 @@ export async function installCore({ home, platform = process.platform, arch = pr
 }
 
 /** One network's datadir and bitcoin.conf under the node's home. Answers { datadir, conf, rpcUrl, cookiePath }. */
-export function configureCore({ home, network = 'testnet4', prune = false, dbcacheMb = 1000 }) {
+/** Is this TCP port free on 127.0.0.1 (nothing listening, nothing refusing the bind)? */
+export const portFree = (port) => new Promise((ok) => {
+  const srv = createServer();
+  srv.once('error', () => ok(false));
+  srv.listen(port, '127.0.0.1', () => srv.close(() => ok(true)));
+});
+/**
+ * THE CORE'S PORTS, FREE ONES (kanban #635, the owner's playtest 2026-10-25: the installer's Core on his test host exited 26 times - "Binding
+ * RPC on address 127.0.0.1 port 48342 failed", another Bitcoin Core held it - and the page said "bitcoind is starting (no cookie yet)"
+ * for ever): the network's pair, else the next pair 10 up, checked on this machine before the config names them.
+ */
+export async function freeCorePorts(network = 'testnet4', { free = portFree, tries = 50 } = {}) {
+  const base = PORTS[network];
+  for (let i = 0; i < tries; i++) {
+    const rpc = base.rpc + 10 * i, p2p = base.p2p + 10 * i;
+    if (await free(rpc) && await free(p2p)) return { rpc, p2p };
+  }
+  throw new Error(`no free ports for Bitcoin Core (${network}) from ${base.rpc} on`);
+}
+
+export function configureCore({ home, network = 'testnet4', prune = false, dbcacheMb = 1000, ports = PORTS[network] }) {
   const datadir = join(home, `bitcoin-${network}`);
   mkdirSync(datadir, { recursive: true });
-  const p = PORTS[network];
+  const p = ports;
   const sect = network === 'mainnet' ? 'main' : network;
   const conf = [
     `# The Arena node's own Bitcoin Core (ruling 8), written by the installer.`,
@@ -122,8 +143,21 @@ export const ETA_MIN_SPAN_MS = 2 * 60000;
  * (`samples`: [{ atMs, progress }], kept by the caller; this reading is added). Answers { ok, blocks, headers, progress, synced, etaMs,
  * samples, why } - etaMs null until ETA_MIN_SPAN_MS of readings.
  */
+/**
+ * WHY A CORE DOES NOT ANSWER, FROM ITS OWN debug.log (beside its cookie): the last "Error:" since its last start, and whether it is a port
+ * another program holds (`portTaken` - the wizard then moves it to free ports). null when the log names no error.
+ */
+export function coreFailure(cookiePath, { read = (f) => readFileSync(f, 'utf8') } = {}) {
+  let text; try { text = read(join(dirname(cookiePath), 'debug.log')); } catch { return null; }
+  const run = text.slice(Math.max(0, text.lastIndexOf('Bitcoin Core version')));
+  const err = run.split('\n').filter((l) => /\[error\]|^Error:/.test(l)).pop();
+  if (!err) return null;
+  const portTaken = /Unable to bind|Binding RPC .* failed|Unable to start HTTP server/i.test(run);
+  return { why: portTaken ? 'Bitcoin Core stopped: another program uses its port' : `Bitcoin Core stopped: ${err.replace(/^.*?(\[error\]|Error:)\s*/, '')}`, portTaken };
+}
+
 export async function syncStatus({ rpcUrl, cookiePath, samples = [], nowMs = Date.now(), fetcher = fetch }) {
-  if (!existsSync(cookiePath)) return { ok: false, why: 'bitcoind is starting (no cookie yet)', samples };
+  if (!existsSync(cookiePath)) { const f = coreFailure(cookiePath); return f ? { ok: false, why: f.why, portTaken: f.portTaken, samples } : { ok: false, why: 'Bitcoin Core is starting', samples }; }
   try {
     const info = await coreRpc({ url: rpcUrl, cookiePath, fetcher })('getblockchaininfo');
     const progress = Number(info.verificationprogress);
@@ -135,5 +169,5 @@ export async function syncStatus({ rpcUrl, cookiePath, samples = [], nowMs = Dat
       etaMs = Math.round((1 - progress) * (nowMs - first.atMs) / (progress - first.progress));
     return { ok: true, chain: info.chain, blocks: info.blocks, headers: info.headers, progress, synced, etaMs: synced ? 0 : etaMs,
       sizeOnDisk: info.size_on_disk, pruned: Boolean(info.pruned), atMs: nowMs, samples: kept };
-  } catch (e) { return { ok: false, why: e.message, samples }; }
+  } catch (e) { const f = coreFailure(cookiePath); return f ? { ok: false, why: f.why, portTaken: f.portTaken, samples } : { ok: false, why: e.message, samples }; }
 }

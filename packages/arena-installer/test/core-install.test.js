@@ -139,3 +139,54 @@ test('the ETA is said only after a few minutes of readings, from the progress ov
     assert.ok(NEEDS.mainnet.fullBytes > NEEDS.testnet4.fullBytes * 10);
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
+
+// THE LINK OPENED AGAIN (kanban #635, the owner's playtest 2026-10-25: the test host app's "Open in browser" opened the used setup link and the
+// page said "that setup link is used or expired" in the browser that was logged in already)
+test('the used setup link in a browser that holds its session goes to the setup page; without the session it is still refused', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'arena-link-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const w = createWizard({ state: nodeState(home), release: '/r' });
+  const server = http.createServer((q, s) => w.handle(q, s)); await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+  t.after(() => server.close());
+  const c = client(server.address().port);
+  const token = w.token;
+  assert.equal((await c.get(`/?t=${token}`)).status, 303, 'the first visit trades the link for a session');
+  const again = await c.get(`/?t=${token}`);
+  assert.deepEqual([again.status, again.headers.location], [303, '/'], 'the same browser, the link again: to the setup page');
+  const stranger = client(server.address().port);
+  assert.equal((await stranger.get(`/?t=${token}`)).status, 403, 'another browser with the used link: refused');
+});
+
+// A PORT ANOTHER PROGRAM HOLDS (kanban #635, the owner's playtest 2026-10-25: his test host's own testnet4 Core held 48342, the installer's Core
+// exited 26 times - "Binding RPC on address 127.0.0.1 port 48342 failed" - and the page said "bitcoind is starting (no cookie yet)")
+test('free ports are chosen, a Core whose port is taken says so, and the status moves it to free ports and starts it again', async (t) => {
+  const { freeCorePorts, coreFailure } = await import('../src/bitcoind.js');
+  const taken = new Set([48342]);
+  assert.deepEqual(await freeCorePorts('testnet4', { free: async (p) => !taken.has(p) }), { rpc: 48352, p2p: 48353 }, 'the next free pair, 10 up');
+  const log = '2026-10-25T11:00:00Z Bitcoin Core version v31.1\n2026-10-25T11:00:01Z [error] old\n2026-10-25T11:06:39Z Bitcoin Core version v31.1\n'
+    + '2026-10-25T11:06:39Z [warning] Binding RPC on address 127.0.0.1 port 48342 failed.\n2026-10-25T11:06:39Z [error] Unable to bind any endpoint for RPC server\nError: Unable to start HTTP server. See debug log for details.\n';
+  assert.deepEqual(coreFailure('/x/testnet4/.cookie', { read: () => log }), { why: 'Bitcoin Core stopped: another program uses its port', portTaken: true });
+  assert.equal(coreFailure('/x/testnet4/.cookie', { read: () => 'Bitcoin Core version v31.1\nall fine\n' }), null);
+
+  const home = mkdtempSync(join(tmpdir(), 'arena-port-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const installed = [];
+  let port = 48342;
+  const coreKit = {
+    detectBitcoind: async () => null, diskCheck: (dir) => diskCheck(home, { statfs: () => ({ bavail: (2000 * 2 ** 30) / 4096, bsize: 4096 }) }),
+    installCore: async () => ({ ok: true, bitcoind: '/b/bitcoind' }),
+    configureCore: (o) => ({ datadir: join(o.home, `bitcoin-${o.network}`), rpcUrl: `http://127.0.0.1:${(o.ports || { rpc: 48342 }).rpc}/`, cookiePath: join(o.home, 'c') }),
+    coreArgs: ({ bitcoind, datadir }) => [bitcoind, `-datadir=${datadir}`], installProgram: async (o) => { installed.push(o.id); return { ok: true }; },
+    freeCorePorts: async () => ({ rpc: port, p2p: port + 1 }),
+    syncStatus: async ({ rpcUrl, samples }) => (rpcUrl.includes(':48342/') ? { ok: false, why: 'Bitcoin Core stopped: another program uses its port', portTaken: true, samples } : { ok: true, blocks: 1, headers: 9, progress: 0.1, synced: false, etaMs: null, samples }),
+  };
+  const st = nodeState(home);
+  const w = createWizard({ state: st, release: '/r', coreKit, test: async () => ({ ok: false, why: 'no server' }) });
+  assert.equal((await w['POST /api/core/install']({ prune: true })).ok, true);
+  port = 48352;   // the Core's port taken after the install: the status finds it and moves it
+  const s1 = await w['GET /api/core/status']();
+  assert.match(s1.networks.testnet4.why, /another program uses its port: moved to port 48352 and started again/);
+  assert.equal(st.read().core.networks.testnet4.rpcUrl, 'http://127.0.0.1:48352/', 'the new address kept');
+  assert.deepEqual(installed, ['bitcoind-testnet4', 'bitcoind-testnet4'], 'its service written and started again');
+  assert.equal((await w['GET /api/core/status']()).networks.testnet4.ok, true, 'then it answers');
+});

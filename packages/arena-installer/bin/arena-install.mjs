@@ -228,8 +228,10 @@ server.listen(port, '127.0.0.1', async () => {
     console.log(`\nOpen this link in your browser (it works once and for 30 minutes):\n\n  ${tunnel.url}/?t=${wizard.token}\n`);
   } else {
     console.log(`\nOpen this link in your browser (it works once and for 30 minutes):\n\n  ${local}\n`);
-    // a desktop: open it there; a server without one: the link above
-    if (process.env.DISPLAY || process.env.WAYLAND_DISPLAY || process.platform !== 'linux') {
+    // a desktop: open it there; a server without one: the link above. A launcher that opens the link itself (the test host app, the Windows
+    // window, the Linux setup) sets ARENA_NO_BROWSER=1 (kanban #635, the owner's playtest 2026-10-25: "It opens two browser windows, one
+    // that works and one that doesn't" - the second came with the link the first had used)
+    if (process.env.ARENA_NO_BROWSER !== '1' && (process.env.DISPLAY || process.env.WAYLAND_DISPLAY || process.platform !== 'linux')) {
       const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
       execFile(cmd, [local], () => {});
     }

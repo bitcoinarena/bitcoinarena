@@ -44,7 +44,7 @@ if installed; then status_dialog; exit 0; fi
 
 # THE INSTALLER, IN THE BACKGROUND
 : > "$LOG"
-ARENA_CLOUDFLARED="$DEST/runtime/cloudflared" nohup "$DEST/runtime/node" "$DEST/packages/arena-installer/bin/arena-install.mjs" >> "$LOG" 2>&1 &
+ARENA_NO_BROWSER=1 ARENA_CLOUDFLARED="$DEST/runtime/cloudflared" nohup "$DEST/runtime/node" "$DEST/packages/arena-installer/bin/arena-install.mjs" >> "$LOG" 2>&1 &
 PID=$!
 LINK=""
 for _ in $(seq 1 60); do LINK=$(grep -oE 'https?://[^ ]+\?t=[A-Za-z0-9_-]+' "$LOG" | head -1); [ -n "$LINK" ] && break; kill -0 $PID 2>/dev/null || break; sleep 1; done
