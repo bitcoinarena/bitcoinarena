@@ -22,6 +22,16 @@ function start(over = {}) {
   return { m, calls, html: () => renderToStaticMarkup(React.createElement(React.Fragment, null, m.render())) };
 }
 
+test('a node that has an owner asks for its words or Nostr key and offers no new words (playtest 2026-10-25)', () => {
+  const { m, html } = start({ claimed: true });
+  const h = html();
+  assert.match(h, /<h3>Sign in as this node.{1,6}s owner<\/h3><p>This node already has an owner\. Sign in with its 24 words or its Nostr key\.<\/p>/);
+  assert.doesNotMatch(h, /Create new 24 words/, 'new words could never be this node\'s owner');
+  assert.match(h, /id="owner-words">Sign in with my 24 words<\/button><button type="button">Login with Nostr<\/button>/);
+  m.go('restore');
+  assert.match(html(), /<h3>Restore from your 24 words<\/h3>/);
+});
+
 test('the welcome: three ways in', () => {
   const h = start().html();
   assert.match(h, /^<div class="card"><h3>Your owner key<\/h3><p>The owner of this node is a key made from <b>24 words<\/b>\./);

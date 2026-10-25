@@ -221,7 +221,8 @@ const mount = (id, how, props) => { const el = $(id); if (el._react) el._react.u
 const startProps = () => ({ client: C, keepSeed, keepNostr, random32: () => globalThis.crypto.getRandomValues(new Uint8Array(32)),
   claim: async (code) => post('/owner/claim', signed('claim', { code })), onIn: () => { me = null; start(); },
   onNostr: (o) => { window.OWNER_NOSTR = o; }, onConnectUri: (u) => { window.OWNER_CONNECT_URI = u; }, onNewNsec: (n) => { window.OWNER_NEW_NSEC = n; } });
-function welcome() { mount('view', 'mountStart', { ...startProps(), screen: 'welcome' }); }
+// a node with an owner asks for that owner's words or Nostr key, never offers new words (playtest 2026-10-25)
+function welcome() { mount('view', 'mountStart', { ...startProps(), screen: 'welcome', claimed: !!(state && state.claimed) }); }
 // (kanban #550, 2026-10-20: "show the complete path to the file instead of showing it cryptic"): the node names the file's full path
 function claim(mine, file) { mount('view', 'mountStart', { ...startProps(), screen: 'claim', mine, claimFile: file }); }
 // A ONE-CARD MESSAGE (no answer, not the owner), drawn by React (OwnerMessage)

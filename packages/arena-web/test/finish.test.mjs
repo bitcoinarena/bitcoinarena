@@ -132,14 +132,14 @@ test('done: a headline, the dashboard and Finish, one card per part with links i
   assert.match(html, /<h2>Your node runs<\/h2>[\s\S]*It starts again by itself after a reboot/);
   assert.match(html, /<button type="button" id="finish">Open Node Dashboard<\/button>/, 'one button: it ends setup and opens the dashboard');
   assert.match(html, /id="done-address"[\s\S]*<a href="https:\/\/node\.example\.com" target="_blank" rel="noopener noreferrer">https:\/\/node\.example\.com<\/a>[\s\S]*Your Cloudflare tunnel/);
-  assert.match(html, /id="done-owner"[\s\S]*href="https:\/\/node\.example\.com\/dashboard\/owner" target="_blank"[\s\S]*Log in with your 24 words/);
+  assert.match(html, /id="done-owner"[\s\S]*href="http:\/\/127\.0\.0\.1:9090\/dashboard\/owner" target="_blank"[\s\S]*Log in with your 24 words/);
   assert.match(html, /id="done-bond"[\s\S]*250,000 sat[\s\S]*Locked until block 157,483/);
   assert.match(html, /id="done-lightning"[\s\S]*Gateway runs, serving T\./);
   assert.match(html, /<details class="done-more"><summary>Start, stop and the command line<\/summary>[\s\S]*<code>arena status<\/code>/);
   assert.match(html, /sudo loginctl enable-linger/);
   await c.finish();
-  assert.deepEqual([opened, tab.location.href], [['about:blank'], 'https://node.example.com/dashboard#owner-handoff'], 'the tab opened at the click, then the dashboard that takes the owner key');
-  assert.match(renderToStaticMarkup(c.render()), /<a class="btn" id="open-dashboard" href="https:\/\/node\.example\.com\/dashboard" target="_blank"[^>]*>Open Node Dashboard<\/a>/, 'afterwards a link to it');
+  assert.deepEqual([opened, tab.location.href], [['about:blank'], 'http://127.0.0.1:9090/dashboard#owner-handoff'], 'the tab opened at the click, then the dashboard on this computer (its address never changes) that takes the owner key');
+  assert.match(renderToStaticMarkup(c.render()), /<a class="btn" id="open-dashboard" href="http:\/\/127\.0\.0\.1:9090\/dashboard" target="_blank"[^>]*>Open Node Dashboard<\/a>/, 'afterwards a link to it');
   const none = renderToStaticMarkup(React.createElement(DoneStep, { st: { seatPort: 9090, reach: { mode: 'quick' }, service: {}, wallet: { address: 'tb1pnode' } }, post: async () => ({}) }));
   assert.match(none, /the name changes when it restarts/); assert.match(none, /No bond yet\. Send it to <code>tb1pnode<\/code>/);
   assert.match(none, /href="http:\/\/127\.0\.0\.1:9090\/dashboard\/owner"[\s\S]*This computer only/);

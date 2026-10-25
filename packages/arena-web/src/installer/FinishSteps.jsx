@@ -364,8 +364,11 @@ export class DoneStep extends React.Component {
     }
     this.setState({ finished: true, msg: { ok: true, text: w ? 'Setup is finished. Your dashboard opened in a new tab, and the owner area there is logged in.' : `Setup is finished. Open your dashboard: ${url}` } });
   }
-  base() { const st = this.props.st; return (st.reach && st.reach.url) || `http://127.0.0.1:${st.seatPort}`; }
-  dashboard() { return `${this.base()}/dashboard`; }   // lowercase (playtest 2026-10-25: "ohne grosses D")
+  base() { const st = this.props.st; return (st.reach && st.reach.url) || this.local(); }
+  // the dashboard and the owner page on this computer at the node's own port: it never changes, so the login handed over stays (the owner's
+  // playtest 2026-10-25: after a restart the quick tunnel had a new name, and the owner page there was logged out)
+  local() { return `http://127.0.0.1:${this.props.st.seatPort}`; }
+  dashboard() { return `${this.local()}/dashboard`; }   // lowercase (playtest 2026-10-25: "ohne grosses D")
   more(l) {
     if (!l) return null;
     const dir = String(l.start || '').replace(/[\\/][^\\/]+$/, '');
@@ -387,7 +390,7 @@ export class DoneStep extends React.Component {
   }
   render() {
     const st = this.props.st; const r = st.reach || {}; const sv = st.service || {}; const g = st.gateway; const b = st.bond;
-    const owner = `${this.base()}/dashboard/owner`;
+    const owner = `${this.local()}/dashboard/owner`;
     const syncing = !!(st.coreSync && st.coreSync.interim);
     const card = (id, icon, title, body) => <div className="done-card" id={id}><div className="done-card-head"><span aria-hidden="true">{icon}</span><b>{title}</b></div>{body}</div>;
     return (
