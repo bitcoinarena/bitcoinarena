@@ -10,6 +10,7 @@ import { installProgram } from './service.js';
 import { torBin, writeTorrc, TOR_PORTS } from './tor.js';
 import * as reachKit from './reach.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
+import { ownCoreOf } from './state.js';
 
 const which = async (x) => {
   const r = await new Promise((ok) => execFile(process.platform === 'win32' ? 'where' : 'which', [x], (e, o) => ok(e ? '' : String(o).split(/\r?\n/)[0].trim())));
@@ -21,11 +22,7 @@ const which = async (x) => {
  * Electrum chain, that Core - LND starts at once and waits for the sync by itself (kanban #635, the owner 2026-10-25: "Du kannst ja
  * bitcoin core schon einrichten und dann direkt lnd danach, und einfach auf den Sync warten"). null when there is no Core.
  */
-export function lndChainOf(s) {
-  if (s.chain && s.chain.kind === 'core') return s.chain;
-  const t4 = s.core && s.core.networks && s.core.networks.testnet4;
-  return t4 ? { kind: 'core', url: t4.rpcUrl, cookiePath: t4.cookiePath } : null;
-}
+export const lndChainOf = (s) => ownCoreOf(s);
 
 /** Install and start LND for the node at `state` (on its own Core, lndChainOf). Answers { ok, lnd, sha256, peers } or { ok: false, why }. */
 export async function setUpOwnLnd({ state, release, fetcher = fetch, reach = reachKit, lndKit = { installLnd, configureLnd, lndArgs, installProgram }, tor: torKit = { torBin, writeTorrc }, boot = true }) {

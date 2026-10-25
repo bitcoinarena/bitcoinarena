@@ -357,7 +357,7 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   // release beside the new one counts, named by a launcher or not (measured 2026-10-20 04:41Z in the Windows VM, .901 -> .902 by hand:
   // the updater's child still ran 2026.1.1, which no launcher named any more, so a check of the release updated from missed it)
   const newFolder = String(newRelease).split(/[\\/]/).filter(Boolean).pop();
-  const besides = (() => { try { return readdirSync(releasesDir).filter((d) => /^arena-node-/.test(d) && d !== newFolder).map((d) => join(releasesDir, d)); } catch { return []; } })();
+  const besides = (() => { try { return readdirSync(releasesDir).filter((d) => /^(bitcoin-)?arena-node-/.test(d) && d !== newFolder).map((d) => join(releasesDir, d)); } catch { return []; } })();
   const oldFolders = [...new Set([from, ...olders, ...besides])];
   const leftAfterStop = svc.leftovers ? await svc.leftovers(oldFolders) : [];
   if (leftAfterStop.length && svc.end) await svc.end(leftAfterStop.map((x) => x.pid));

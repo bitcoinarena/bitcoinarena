@@ -21,7 +21,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { testConnection, TESTNET4_ELECTRUM } from './chain-test.js';
 import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CONFIRM_WORDS, emergencyOf } from './seed.js';
-import { nextStep, doneOf, seatConf, ROLES, guardianSetupOf } from './state.js';
+import { nextStep, doneOf, seatConf, ROLES, guardianSetupOf, ownCoreOf } from './state.js';
 import { appsIn, appsView, chosenApps } from './apps.js';
 import { installService, installProgram } from './service.js';
 import { control } from './node-services.js';
@@ -275,7 +275,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       const unknown = roles.filter((r) => !ROLES[r]);
       if (unknown.length) return { ok: false, why: `no role ${unknown.join(', ')}` };
       if (!roles.length) return { ok: false, why: 'choose at least one role' };
-      for (const r of ['custody', 'liquidity']) if (roles.includes(r) && state.read().chain && state.read().chain.kind !== 'core')
+      for (const r of ['custody', 'liquidity']) if (roles.includes(r) && state.read().chain && !ownCoreOf(state.read()))
         return { ok: false, why: `${r === 'custody' ? 'custody' : 'a liquidity provider'} needs your own Bitcoin Core: LND cannot run on an Electrum server. Connect or install Bitcoin Core in the first step, or leave ${r} out` };
       const ln = roles.includes('custody') || roles.includes('liquidity');   // the roles that run LND
       mark('roles', { roles });
