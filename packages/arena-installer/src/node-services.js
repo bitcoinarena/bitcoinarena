@@ -39,7 +39,7 @@ export const SERVICES = Object.freeze([
   { id: 'liquidity', title: 'Liquidity provider' },
   { id: 'workers', title: 'workers.dev keeper' },
   { id: 'updater', title: 'Auto update' },
-  { id: 'node', title: 'Arena node (seat)' },
+  { id: 'node', title: 'Bitcoin Arena node (seat)' },
   { id: 'guardian', title: 'Guardian (fedimintd)', inside: 'node' },
   { id: 'tunnel', title: 'Tunnel (cloudflared)' },
 ]);
@@ -347,7 +347,7 @@ export async function bootOf(svc, { platform = process.platform, sh = run } = {}
     const r = await sh('/usr/libexec/PlistBuddy', ['-c', 'Print :RunAtLoad', svc.file]);
     return { atBoot: r.ok && r.out.trim() === 'true', settable: true };
   }
-  return { atBoot: null, settable: false, why: 'on Windows the Arena Node launcher starts all of the node\'s services at login' };
+  return { atBoot: null, settable: false, why: 'on Windows the Bitcoin Arena launcher starts all of the node\'s services at login' };
 }
 export async function setBoot(word, on, { home, platform = process.platform, env = process.env, sh = run } = {}) {
   const svcs = installedServices({ home, platform, env });
@@ -363,7 +363,7 @@ export async function setBoot(word, on, { home, platform = process.platform, env
     if (!r.ok) r = await sh('/usr/libexec/PlistBuddy', ['-c', `Add :RunAtLoad bool ${on ? 'true' : 'false'}`, svc.file]);
     return r.ok ? { ok: true, id: svc.id, atBoot: !!on } : { ok: false, why: (r.err || r.out).trim().slice(0, 200) };
   }
-  return { ok: false, why: 'on Windows the Arena Node launcher starts all of the node\'s services at login' };
+  return { ok: false, why: 'on Windows the Bitcoin Arena launcher starts all of the node\'s services at login' };
 }
 
 /** One action on one service: { ok, why }. */

@@ -25,7 +25,7 @@ function client(port) {
   return { get: (p) => req('GET', p), post: (p, b = {}) => req('POST', p, b), get cookie() { return cookie; }, set cookie(c) { cookie = c; } };
 }
 
-test('the wizard installs Bitcoin Core when asked, watches its sync, and saves the chain step once testnet4 is synced', async (t) => {
+test('with no Electrum server reachable, the wizard installs Bitcoin Core, watches its sync, and saves the chain step once testnet4 is synced', async (t) => {
   const home = mkdtempSync(join(tmpdir(), 'arena-core-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const GB = 2 ** 30;
@@ -41,7 +41,7 @@ test('the wizard installs Bitcoin Core when asked, watches its sync, and saves t
     syncStatus: async ({ samples }) => ({ ok: true, blocks: synced ? 156900 : 50000, headers: 156900, progress: synced ? 1 : progress, synced, etaMs: synced ? 0 : 3600000, samples }),
   };
   const tested = [];
-  const w = createWizard({ state: nodeState(home), release: '/r', coreKit, test: async (c) => { tested.push(c); return { ok: true, why: 'fine', source: { latencyMs: 3, height: 156900 } }; } });
+  const w = createWizard({ state: nodeState(home), release: '/r', coreKit, test: async (c) => { tested.push(c); return c.kind === 'electrum' ? { ok: false, why: 'unreachable' } : { ok: true, why: 'fine', source: { latencyMs: 3, height: 156900 } }; } });
   const server = http.createServer((q, s) => w.handle(q, s)); await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
   t.after(() => server.close());
   const c = client(server.address().port);
@@ -66,7 +66,7 @@ test('the wizard installs Bitcoin Core when asked, watches its sync, and saves t
   synced = true;
   st = (await c.get('/api/core/status')).json;
   assert.equal(st.networks.chainSaved, true);
-  assert.deepEqual(tested[0], { kind: 'core', url: 'http://127.0.0.1:48342/', cookiePath: join(home, 'c') }, 'tested like any Bitcoin Core');
+  assert.deepEqual(tested.filter((x) => x.kind === 'core')[0], { kind: 'core', url: 'http://127.0.0.1:48342/', cookiePath: join(home, 'c') }, 'tested like any Bitcoin Core');
   assert.equal((await c.get('/api/state')).json.step, 'roles', 'synced: the wizard goes on');
 
   // THE BOOKMARK AFTER AN INSTALLER RESTART: the same cookie opens a new wizard on the same home
@@ -77,6 +77,43 @@ test('the wizard installs Bitcoin Core when asked, watches its sync, and saves t
   s2.close();
   assert.equal(again.status, 200, 'the bookmarked page opens again');
   assert.equal(readFileSync(join(home, 'sessions.json'), 'utf8').includes(c.cookie.split('=')[1]), false, 'the cookie itself is not on disk');
+});
+
+// KANBAN #635 (the owner 2026-10-25: "Wo BTC core installiert wird sollte auswählbar sein", "Auch der Bitcoin core nicht im Vordergrund machen
+// lassen während der synced"): the blocks go to the owner's folder, and the wizard goes on at once with an Electrum server as the chain
+// until the chain-switch keeper moves the node to its own Core
+test('Bitcoin Core goes to the chosen folder and syncs in the background: the wizard goes on with an interim Electrum chain', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'arena-core-bg-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const configured = [];
+  const coreKit = {
+    detectBitcoind: async () => null,
+    diskCheck: (dir) => diskCheck(home, { statfs: () => ({ bavail: (2000 * 2 ** 30) / 4096, bsize: 4096 }) }),
+    installCore: async () => ({ ok: true, bitcoind: '/b/bitcoind' }),
+    configureCore: (o) => { configured.push(o); return { datadir: join(o.home, `bitcoin-${o.network}`), rpcUrl: 'http://127.0.0.1:48342/', cookiePath: join(o.home, 'c') }; },
+    coreArgs: ({ bitcoind, datadir }) => [bitcoind, `-datadir=${datadir}`],
+    installProgram: async () => ({ ok: true }),
+    syncStatus: async ({ samples }) => ({ ok: true, blocks: 1, headers: 156900, progress: 0.001, synced: false, etaMs: null, samples }),
+  };
+  const tested = [];
+  // the first server is down, the second answers
+  const w = createWizard({ state: nodeState(home), release: '/r', coreKit, test: async (c) => { tested.push(c); return c.kind === 'electrum' && c.port === 40002 ? { ok: false, why: 'down' } : { ok: true, why: 'fine', source: { latencyMs: 9, height: 157544 } }; } });
+  const server = http.createServer((q, s) => w.handle(q, s)); await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+  t.after(() => server.close());
+  const c = client(server.address().port);
+  await c.get(`/?t=${w.token}`);
+  const rel = (await c.post('/api/core/plan', { dir: 'data/btc' })).json;
+  assert.equal(rel.ok, false); assert.match(rel.why, /whole path/, 'a relative folder is refused');
+  const plan = (await c.post('/api/core/plan', { dir: join(home, 'disk2') })).json;
+  assert.equal(plan.dir, join(home, 'disk2'));
+  const r = (await c.post('/api/core/install', { prune: true, dir: join(home, 'disk2') })).json;
+  assert.equal(r.ok, true, r.why);
+  assert.equal(configured[0].home, join(home, 'disk2'), 'the blocks go to the chosen folder');
+  assert.deepEqual(r.interim, { host: 'blackie.c3-soft.com', port: 57010 }, 'the first server that passed');
+  const st = (await c.get('/api/state')).json;
+  assert.equal(st.step, 'roles', 'the wizard goes on while Core syncs');
+  assert.equal(st.chain.kind, 'electrum');
+  assert.deepEqual(st.coreSync, { dir: join(home, 'disk2'), interim: true, prune: true });
 });
 
 test('the ETA is said only after a few minutes of readings, from the progress over the window', async () => {

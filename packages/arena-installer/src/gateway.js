@@ -81,7 +81,9 @@ export async function testGateway({ apiUrl, passwordFile, fetcher = fetch }) {
   const g = r.json;
   // lightning_info is { connected: { public_key, alias, network, block_height, synced_to_chain } } or "not_connected" (serde's enum)
   const li = g.lightning_info && typeof g.lightning_info === 'object' ? (g.lightning_info.connected || g.lightning_info.Connected || null) : null;
-  if (!li) return { ok: false, why: `the gateway runs but has no Lightning node yet (${g.gateway_state || 'starting'})`, state: g.gateway_state || null };
+  // SYNCING (measured 2026-10-25 for kanban #635 on the test host: gatewayd 2026.1.7 on an LND whose Bitcoin Core was at block 0 said
+  // "Syncing" with no Lightning node for 180 s, while LND itself answered getinfo after 6 s): it runs, and connects once LND is synced
+  if (!li) return { ok: false, why: `the gateway runs but has no Lightning node yet (${g.gateway_state || 'starting'})`, state: g.gateway_state || null, syncing: /^syncing$/i.test(String(g.gateway_state || '')) };
   if (li.network && !/testnet4/i.test(String(li.network))) return { ok: false, why: `this gateway's LND runs on ${li.network}, not testnet4` };
   return { ok: true, state: g.gateway_state || null, lightningPubkey: li.public_key, lightningAlias: li.alias, network: li.network, blockHeight: li.block_height,
     syncedToChain: Boolean(li.synced_to_chain), federations: (g.federations || []).map((f) => ({ federationId: f.federation_id, name: f.federation_name || null, balanceMsat: f.balance_msat })) };

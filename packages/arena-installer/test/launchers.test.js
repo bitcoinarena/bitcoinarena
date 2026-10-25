@@ -4,7 +4,7 @@
 // per system the scripts name exactly this node's services, the menu entry / app / Start menu shortcuts are written.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, existsSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, existsSync, statSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { servicesOf, writeLaunchers } from '../src/launchers.js';
@@ -26,22 +26,22 @@ test('Linux: start, stop, status and open scripts, and the desktop menu entry', 
   assert.match(readFileSync(l.start, 'utf8'), /systemctl --user start arena-bitcoind-testnet4.service .* arena-node.service arena-tunnel.service/);
   assert.match(readFileSync(join(home, 'bin', 'arena-node-stop'), 'utf8'), /systemctl --user stop arena-tunnel.service arena-node.service/);
   assert.equal(statSync(l.start).mode & 0o111, 0o111, 'executable');
-  assert.match(readFileSync(join(data, 'applications', 'arena-node.desktop'), 'utf8'), /Name=Arena Node[\s\S]*Exec=.*arena-node-start.*xdg-open https:\/\/x\.trycloudflare\.com\/Dashboard\/owner/);
+  assert.match(readFileSync(join(data, 'applications', 'arena-node.desktop'), 'utf8'), /Name=Bitcoin Arena[\s\S]*Exec=.*arena-node-start.*xdg-open https:\/\/x\.trycloudflare\.com\/Dashboard\/owner/);
   assert.equal(existsSync(join(home, 'bin', 'arena-node-add-custody')), false, 'no "add custody" unless asked for');
   writeLaunchers({ home, s, ownerUrl: owner, platform: 'linux', env: { XDG_DATA_HOME: data }, addCustody: ['/r/node', '/r/arena-install.mjs', '--add-custody', '--home', home] });
   assert.match(readFileSync(join(home, 'bin', 'arena-node-add-custody'), 'utf8'), /'\/r\/node' '\/r\/arena-install\.mjs' '--add-custody' '--home'/, 'a node without custody can add it: the installer\'s custody screens');
 });
 
-test('macOS: the .command scripts and Arena Node.app - it starts the node\'s launchd services and opens the owner page', () => {
+test('macOS: the .command scripts and Bitcoin Arena.app - it starts the node\'s launchd services and opens the owner page', () => {
   const home = mkdtempSync(join(tmpdir(), 'm-')), apps = mkdtempSync(join(tmpdir(), 'a-'));
   const l = writeLaunchers({ home, s, ownerUrl: owner, platform: 'darwin', env: { HOME: home }, applicationsDir: apps });
-  assert.equal(l.app, join(apps, 'Arena Node.app'));
+  assert.equal(l.app, join(apps, 'Bitcoin Arena.app'));
   assert.match(readFileSync(join(l.app, 'Contents', 'Info.plist'), 'utf8'), /<key>CFBundleExecutable<\/key><string>arena-node<\/string>/);
   const exe = readFileSync(join(l.app, 'Contents', 'MacOS', 'arena-node'), 'utf8');
   assert.match(exe, /launchctl kickstart gui\/\$uid\/io\.bitcoin-arena\.node\n/);
   assert.match(exe, /launchctl bootstrap gui\/\$uid '.*LaunchAgents\/io\.bitcoin-arena\.node\.tunnel\.plist'/);
   assert.match(exe, /open 'https:\/\/x\.trycloudflare\.com\/Dashboard\/owner'/);
-  assert.ok(existsSync(join(home, 'bin', 'Arena Node Stop.command')));
+  assert.ok(existsSync(join(home, 'bin', 'Bitcoin Arena Stop.command')));
 });
 
 test('Windows: start, stop and owner-page scripts, and three Start menu shortcuts made by PowerShell', () => {
@@ -49,8 +49,19 @@ test('Windows: start, stop and owner-page scripts, and three Start menu shortcut
   const ran = [];
   const l = writeLaunchers({ home, s, ownerUrl: owner, platform: 'win32', env: { APPDATA: appdata }, run: (c, a) => ran.push([c, a]) });
   assert.match(readFileSync(l.start, 'utf8'), /schtasks \/run \/tn "Arena node"[\s\S]*start "" "https:\/\/x\.trycloudflare\.com\/Dashboard\/owner"/);
-  assert.equal(l.menu, join(appdata, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Arena Node'));
+  assert.equal(l.menu, join(appdata, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Bitcoin Arena'));
   assert.equal(ran[0][0], 'powershell');
   const ps = ran[0][1].at(-1);
-  for (const n of ['Start Arena node.lnk', 'Stop Arena node.lnk', 'Arena node owner page.lnk']) assert.ok(ps.includes(n), n);
+  for (const n of ['Start Bitcoin Arena.lnk', 'Stop Bitcoin Arena.lnk', 'Bitcoin Arena owner page.lnk']) assert.ok(ps.includes(n), n);
+});
+
+// THE NAME PEOPLE SEE (kanban #635, the owner 2026-10-25: "die Plattform sollte immer bitcoin-arena sein, nicht Arena-node"): an install of the
+// old name gets the new launchers, and its old app and scripts are removed
+test('the old "Arena Node" app and scripts give way to "Bitcoin Arena" (kanban #635)', () => {
+  const home = mkdtempSync(join(tmpdir(), 'm-')), apps = mkdtempSync(join(tmpdir(), 'a-'));
+  mkdirSync(join(apps, 'Arena Node.app', 'Contents'), { recursive: true }); mkdirSync(join(home, 'bin'), { recursive: true });
+  writeFileSync(join(home, 'bin', 'Arena Node Start.command'), 'old');
+  writeLaunchers({ home, s, ownerUrl: owner, platform: 'darwin', env: { HOME: home }, applicationsDir: apps });
+  assert.equal(existsSync(join(apps, 'Arena Node.app')), false); assert.equal(existsSync(join(home, 'bin', 'Arena Node Start.command')), false);
+  assert.match(readFileSync(join(apps, 'Bitcoin Arena.app', 'Contents', 'Info.plist'), 'utf8'), /<key>CFBundleDisplayName<\/key><string>Bitcoin Arena<\/string>/);
 });

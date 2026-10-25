@@ -13,7 +13,7 @@ const O = ['Up', 'Down'];
 
 test('an order\'s card: side, amount, limit, window, its chip; cancel only when it can be, held while asked', () => {
   const c = { side: 0, amount: '500 sats', limit: 60, window: '21 Oct · 23:30–23:45 UTC', chip: ['open', 'closes in 26:14'], cancel: { entry: 'e1', busy: false } };
-  assert.equal(r(OrderCard, { c, outcomes: O, onCancel: () => {} }), '<div class="ord"><span class="sd up">▲ Up</span><div class="what"><b>500 sats</b> <span class="lim">≤ 60¢</span><div class="win">21 Oct · 23:30–23:45 UTC</div></div><div class="st"><span class="chip2 open">closes in 26:14</span><button type="button" data-cancel="e1">cancel</button></div></div>');
+  assert.equal(r(OrderCard, { c, outcomes: O, onCancel: () => {} }), '<div class="ord"><span class="sd up">▲ Up</span><div class="what"><b>500 sats</b> <span class="lim">≤ 60¢</span><div class="win">21 Oct · 23:30–23:45 UTC</div><div class="tm"></div></div><div class="st"><span class="chip2 open">closes in 26:14</span><button type="button" data-cancel="e1">cancel</button></div></div>');
   assert.match(r(OrderCard, { c: { ...c, cancel: { entry: 'e1', busy: true } }, outcomes: O }), /<button type="button" data-cancel="e1" disabled="">cancel<\/button>/);
   assert.match(r(OrderCard, { c: { ...c, side: 1, cancel: null, cls: ' flight', chip: ['wait', 'placing…'] }, outcomes: O }), /^<div class="ord flight"><span class="sd down">▼ Down<\/span>.*<span class="chip2 wait">placing…<\/span><\/div><\/div>$/);
 });
@@ -21,14 +21,14 @@ test('an order\'s card: side, amount, limit, window, its chip; cancel only when 
 test('past orders: a card, a table row, nothing yet; the totals in full and short', () => {
   const p = { entry: 'e2', side: 1, window: '21 Oct · 23:00–23:15 UTC', final: false, status: 'pending · final in 4:57', stake: '1,000 sats', limit: 45, result: 'Down won', pl: '+1,100 sats', plCls: 'won' };
   assert.match(r(PastCard, { p, outcomes: O }), /<span class="fin pend">pending · final in 4:57<\/span>.*<b class="won">\+1,100 sats<\/b>/);
-  assert.match(r(PastTable, { past: [p], outcomes: O }), /<tr><td>21 Oct · 23:00–23:15 UTC<\/td><td class="down">▼ Down<\/td><td class="n">1,000 sats <span class="sub">≤ 45¢<\/span><\/td><td>Down won<\/td><td class="n won">\+1,100 sats<\/td><td class="pend">pending · final in 4:57<\/td><\/tr>/);
+  assert.match(r(PastTable, { past: [p], outcomes: O }), /<tr><td>21 Oct · 23:00–23:15 UTC<\/td><td class="down">▼ Down<\/td><td class="n">1,000 sats <span class="sub">≤ 45¢<\/span><\/td><td>Down won<\/td><td class="n won">\+1,100 sats<\/td><td class="pend">pending · final in 4:57<\/td><td class="tm">–<\/td><td class="tm"><\/td><\/tr>/);
   assert.equal(r(PastTable, { past: [], outcomes: O }), '<div class="sub">No past orders yet: an order shows here once its round has a result.</div>');
   const t = { count: 2, won: '1,100 sats', lost: '200 sats', net: '900 sats', netMsat: 900000, wonNum: '1,100', lostNum: '200', netNum: '900', pend: 1 };
   assert.equal(r(TotalsLong, { t }), '2 closed · won <b class="won">+1,100 sats</b> · lost <b class="lost">−200 sats</b> · net <b class="won">+900 sats</b> · 1 pending');
   assert.equal(r(TotalsShort, { t: { ...t, pend: 0 } }), '2 closed · <b class="won">+1,100</b> · <b class="lost">−200</b> · net <b class="won">+900 sats</b>');
 });
 
-const V = { mode: 'market', modeLabel: 'Buy · Market', menuOpen: false, form: { amt: '100', lp: '50', sh: '100', exp: '0' }, sideName: 'Up', mwin: '170 sats', mprice: 'at 58¢',
+const V = { dir: 'buy', mode: 'market', modeLabel: 'Buy · Market', menuOpen: false, form: { amt: '100', lp: '50', sh: '100', exp: '0' }, sideName: 'Up', mwin: '170 sats', mprice: 'at 58¢',
   ltotal: '–', lwin: '–', err: '', go: { disabled: false, text: 'Buy Up' }, status: null, fee: 'Fee 1 %' };
 test('the sheet: Market shown, Limit hidden; Limit the other way; Buy\'s progress', () => {
   const m = r(Sheet, { v: V, on: {} });

@@ -14,7 +14,7 @@ test('the history: in and out, a stake that opens its replay, nothing yet', () =
   const rows = [{ key: 'a', plus: true, when: '2026-10-21 14:00 UTC', what: 'Deposit · 337ae01a', amt: '+1,000 sat', onOpen: null },
     { key: 'b', plus: false, when: '2026-10-21 14:05 UTC', what: 'Stake · round 4d2c7420', amt: '−100 sat', onOpen: () => opened++ }];
   const h = renderToStaticMarkup(React.createElement(WalletHistory, { rows, empty: 'No activity yet.' }));
-  assert.match(h, /^<div class="hist-row plus"><span class="hist-when">2026-10-21 14:00 UTC<\/span><span class="hist-what" title="Deposit · 337ae01a">Deposit · 337ae01a<\/span><span class="hist-amt">\+1,000 sat<\/span><\/div>/);
+  assert.match(h, /^<div class="hist-row plus"><span class="hist-when">2026-10-21 14:00 UTC<\/span><span class="hist-what" title="Deposit · 337ae01a">Deposit · 337ae01a<\/span><span class="hist-tx"><\/span><span class="hist-amt">\+1,000 sat<\/span><\/div>/);
   assert.match(h, /<div class="hist-row minus clickable" title="Open this round&#x27;s replay in a new window">/);
   const tree = new WalletHistory({ rows, empty: '' }).render();
   tree[1].props.onClick(); assert.equal(opened, 1);
