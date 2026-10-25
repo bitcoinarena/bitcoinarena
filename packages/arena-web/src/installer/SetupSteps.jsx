@@ -245,15 +245,67 @@ export class ReachStep extends React.Component {
   }
 }
 
+// THE STEPS OF "INSTALL AND START", AS THEY RUN (kanban #651, the owner 2026-10-25: "this hangs alot and user doesn't know what it is doing.
+// Provide more details and context and a progress bar"): GET /api/service/progress read every second while POST /api/service runs
+const STAGE_HINT = {
+  settings: 'Your choices from the steps before go into the node\'s settings file.',
+  services: 'The node, its chain connection and its tunnel become services of this computer, so they run without this page.',
+  start: 'Your node loads, connects to the chain and to the other nodes. This usually takes 10 to 60 seconds.',
+  address: 'Setup asks your node through its public address, the way other nodes will reach it.',
+  login: 'Setup logs in once with your owner key, to check that the node knows you as its owner.',
+};
+const secs = (ms) => `${Math.round((ms || 0) / 1000)} s`;
+/** The share of the work done: finished stages, plus a part of the running one (the node's start: up to 90 s). */
+export function progressShare(p) {
+  const st = (p && p.stages) || [];
+  const counted = st.filter((x) => x.state !== 'skipped');
+  if (!counted.length) return 0;
+  const done = counted.filter((x) => x.state === 'done').length;
+  const now = counted.find((x) => x.state === 'now');
+  const part = now ? Math.min(0.95, (now.ms || 0) / (now.id === 'start' ? 90000 : 20000)) : 0;
+  return Math.min(1, (done + part) / counted.length);
+}
+export class ServiceProgress extends React.Component {
+  render() {
+    const p = this.props.progress;
+    if (!p || !p.stages) return null;
+    const share = progressShare(p);
+    const mark = { done: '✓', now: '…', failed: '✗', skipped: '–', todo: '○' };
+    const slow = p.stages.find((x) => x.state === 'now' && x.id === 'start' && x.ms > 45000);
+    return (
+      <div className="svc-progress" id="svc-progress">
+        <div className="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(share * 100)}><i style={{ width: `${(share * 100).toFixed(1)}%` }} /></div>
+        <p className="sub">{Math.round(share * 100)} % · {secs(p.elapsedMs)} so far</p>
+        <ol className="stages">
+          {p.stages.filter((x) => x.state !== 'skipped').map((x) => (
+            <li key={x.id} className={`stage ${x.state}`}>
+              <span className="mark">{mark[x.state] || '○'}</span> <b>{x.label}</b>{x.state === 'now' || x.state === 'done' || x.state === 'failed' ? ` · ${secs(x.ms)}` : ''}
+              {x.state === 'now' || x.state === 'failed' ? <p className="sub">{STAGE_HINT[x.id]}</p> : null}
+            </li>))}
+        </ol>
+        {slow ? <p className="sub">Your node takes longer than usual. Setup waits up to 90 seconds, then says what stopped it.</p> : null}
+        {p.log && p.log.length ? <div className="log"><p className="sub">The node's last messages:</p><pre>{p.log.join('\n')}</pre></div> : null}
+      </div>);
+  }
+}
+
 export class ServiceStep extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { boot: true, busy: false, template: null, msg: null, ...(props.initial || {}) };
-    this.start = this.start.bind(this); this.nostrLogin = this.nostrLogin.bind(this);
+    this.state = { boot: true, busy: false, template: null, msg: null, progress: null, ...(props.initial || {}) };
+    this.start = this.start.bind(this); this.nostrLogin = this.nostrLogin.bind(this); this.poll = this.poll.bind(this);
+  }
+  componentWillUnmount() { clearInterval(this.timer); }
+  async poll() {
+    const p = await this.props.get('/api/service/progress');
+    if (p && p.ok) this.setState({ progress: p });
   }
   async start() {
-    this.setState({ busy: true, msg: { ok: true, text: 'Installing and starting your node. This can take a minute…' } });
+    this.setState({ busy: true, msg: null, progress: null });
+    this.timer = setInterval(this.poll, 1000);
     const r = await this.props.post('/api/service', { boot: this.state.boot });
+    clearInterval(this.timer);
+    await this.poll();
     this.setState({ busy: false });
     if (!r.ok) return this.setState({ msg: said(r) });
     if (r.template) return this.setState({ template: r.template, msg: { ok: true, text: `Your node is running (started in ${r.ms} ms). Now log in once with your Nostr key.` } });
@@ -268,7 +320,7 @@ export class ServiceStep extends React.Component {
     this.setState({ msg: said(r) });
   }
   render() {
-    const { boot, busy, template, msg } = this.state;
+    const { boot, busy, template, msg, progress } = this.state;
     return (
       <div className="aw">
         <h2>7. Install and start</h2>
@@ -277,6 +329,7 @@ export class ServiceStep extends React.Component {
           <div><b>Start again after a reboot</b><p>Recommended. It also keeps your node running when you log out.</p></div></label>
         {template ? <button type="button" onClick={this.nostrLogin}>Log in with Nostr</button>
           : <button type="button" id="svc" disabled={busy} onClick={this.start}>{busy ? 'Installing…' : 'Install and start'}</button>}
+        <ServiceProgress progress={progress} />
         <Msg r={msg} />
       </div>
     );

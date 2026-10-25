@@ -66,10 +66,11 @@ const run = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { timeou
  * Write the units, reload, (re)start them, then wait until the seat answers GET /identity. `tunnel` is the reach tunnel's unit text
  * (reach.js tunnelUnit), or none for a direct node. `boot` (the wizard asks, ruling 7): enabled to start at boot, and linger turned
  * on so a user unit runs with nobody logged in; without it the units run now and not after a reboot. `sh` runs a command
- * (injectable: the tests start the seat without systemd). Answers { ok, why, ms, boot, linger }.
+ * (injectable: the tests start the seat without systemd). `onStage('start')` once the services are in and the wait for the seat
+ * begins (the wizard's progress, kanban #651). Answers { ok, why, ms, boot, linger }.
  */
 export async function installService({ node = process.execPath, release, home, port, bridgePort = null, tunnel = null, tunnelArgs = null, boot = true,
-  env = process.env, sh = run, fetcher = fetch, waitMs = 90000, platform = process.platform }) {
+  env = process.env, sh = run, fetcher = fetch, waitMs = 90000, platform = process.platform, onStage = () => {} }) {
   if (platform === 'darwin' || platform === 'win32') {
     // THE CHAIN BRIDGE FIRST (Electrum mode): its own service, so the node finds its chain when it starts - on Linux it is the
     // arena-chain-bridge unit below, which the node's unit starts after
@@ -78,8 +79,8 @@ export async function installService({ node = process.execPath, release, home, p
         args: [node, join(release, 'packages', 'arena-installer', 'bin', 'chain-bridge.mjs'), String(bridgePort), home], home, boot, env, sh, platform });
       if (!b.ok) return b;
     }
-    if (platform === 'darwin') return installLaunchd({ node, release, home, port, tunnelArgs, boot, env, sh, fetcher, waitMs });
-    return installWindows({ node, release, home, port, tunnelArgs, boot, sh, fetcher, waitMs, env });
+    if (platform === 'darwin') return installLaunchd({ node, release, home, port, tunnelArgs, boot, env, sh, fetcher, waitMs, onStage });
+    return installWindows({ node, release, home, port, tunnelArgs, boot, sh, fetcher, waitMs, env, onStage });
   }
   const dir = unitDir(env);
   mkdirSync(dir, { recursive: true });
@@ -92,6 +93,7 @@ export async function installService({ node = process.execPath, release, home, p
     const r = await sh('systemctl', args);
     if (!r.ok) return { ok: false, why: `systemctl ${args.join(' ')} failed: ${(r.err || r.out).trim().slice(0, 300)}` };
   }
+  onStage('start');                                               // the services are in: the wizard's progress shows the wait
   const health = await waitHealthy({ port, fetcher, waitMs });
   if (boot) await sh('loginctl', ['enable-linger', env.USER || '']);
   const linger = await sh('loginctl', ['show-user', env.USER || '', '-p', 'Linger', '--value']);
@@ -169,7 +171,7 @@ export async function bootstrapAgent(sh, uid, file, { tries = 5, pauseMs = 1000 
 }
 
 /** macOS: the agents written to ~/Library/LaunchAgents and loaded (bootout first: an update or a second run replaces them). */
-async function installLaunchd({ node, release, home, port, tunnelArgs, boot, env, sh, fetcher, waitMs }) {
+async function installLaunchd({ node, release, home, port, tunnelArgs, boot, env, sh, fetcher, waitMs, onStage = () => {} }) {
   const dir = join(env.HOME || homedir(), 'Library', 'LaunchAgents');
   mkdirSync(dir, { recursive: true });
   const uid = typeof process.getuid === 'function' ? process.getuid() : 501;
@@ -185,12 +187,13 @@ async function installLaunchd({ node, release, home, port, tunnelArgs, boot, env
     const r = await bootstrapAgent(sh, uid, file);
     if (!r.ok) return { ok: false, why: `launchctl bootstrap ${a.label} failed: ${(r.err || r.out).trim().slice(0, 300)}` };
   }
+  onStage('start');                                               // the services are in: the wizard's progress shows the wait
   const health = await waitHealthy({ port, fetcher, waitMs });
   return { ...health, ms: Date.now() - t0, boot, linger: true };
 }
 
 /** Windows: the launchers written beside the node's home, the scheduled tasks created and run (at logon), or started once. */
-async function installWindows({ node, release, home, port, tunnelArgs, boot, sh, fetcher, waitMs, env = process.env }) {
+async function installWindows({ node, release, home, port, tunnelArgs, boot, sh, fetcher, waitMs, env = process.env, onStage = () => {} }) {
   const t0 = Date.now();
   const tasks = [{ name: WINDOWS_TASK, file: join(home, 'arena-node.cmd'), text: windowsLauncher({ node, release, home, port }) }];
   if (tunnelArgs) tasks.push({ name: `${WINDOWS_TASK} tunnel`, file: join(home, 'arena-tunnel.cmd'),
@@ -204,6 +207,7 @@ async function installWindows({ node, release, home, port, tunnelArgs, boot, sh,
       await sh('cmd', ['/c', 'start', '""', '/b', t.file]);
     }
   }
+  onStage('start');                                               // the services are in: the wizard's progress shows the wait
   const health = await waitHealthy({ port, fetcher, waitMs });
   return { ...health, ms: Date.now() - t0, boot, linger: true };
 }

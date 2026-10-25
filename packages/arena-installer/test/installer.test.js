@@ -120,7 +120,10 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   const fetcher = (url, o) => (/bitcoin-arena\.io/.test(String(url)) ? Promise.resolve(new Response(JSON.stringify(/daily\.json$/.test(String(url))
     ? { testnet: { node: ['https://a.example', 'https://b.example'] } } : { network: { installMinimumBondSats: 50000, band: 'CALM' } }), { status: 200 }))
     : /\.example\/capacity$/.test(String(url)) ? Promise.resolve(new Response(JSON.stringify({ network: { installMinimumBondSats: 50000, band: 'CALM' } }), { status: 200 })) : fetch(url, o));
-  const wizard = createWizard({ state, release: RELEASE, seatPort, reach, chainKit, fetcher, test: (c) => testConnection(c, { probe, list: [{ host: 'second', port: 1 }] }), install: directInstall(children), lndKit, gwKit,
+  // THE PROGRESS WHILE IT RUNS (kanban #651): read through the page's own door once the services are in and the seat is awaited
+  let midway = null;
+  const progressInstall = async (o) => { o.onStage('start'); midway = (await c.get('/api/service/progress')).json; return directInstall(children)(o); };
+  const wizard = createWizard({ state, release: RELEASE, seatPort, reach, chainKit, fetcher, test: (c) => testConnection(c, { probe, list: [{ host: 'second', port: 1 }] }), install: progressInstall, lndKit, gwKit,
     launch: (o) => writeLaunchers({ ...o, platform: 'linux', env: { XDG_DATA_HOME: join(home, 'xdg'), HOME: home } }) });
   const server = http.createServer((q, s) => wizard.handle(q, s));
   await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
@@ -188,6 +191,13 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.equal(svc.ok, true, svc.why);
   assert.match(svc.identity, /^[0-9a-f]{64,66}$/);
   assert.equal(svc.login.ok, true, 'the running seat accepted the owner\'s signed login');
+  assert.equal(midway.running, true, 'while it runs');
+  assert.deepEqual(midway.stages.map((x) => [x.id, x.state]), [['settings', 'done'], ['services', 'done'], ['start', 'now'], ['address', 'todo'], ['login', 'todo']]);
+  const after = (await c.get('/api/service/progress')).json;
+  assert.equal(after.running, false);
+  assert.deepEqual(after.stages.map((x) => [x.id, x.state]), [['settings', 'done'], ['services', 'done'], ['start', 'done'], ['address', 'skipped'], ['login', 'done']],
+    'a direct node has no public address to test through a tunnel');
+  assert.ok(after.stages.every((x) => x.state === 'skipped' || Number.isFinite(x.ms)), 'each stage that ran says how long');
   const conf = readFileSync(join(home, 'arena.conf'), 'utf8');
   assert.equal(conf.includes(`\nbitcoind_url=${btc.url}\n`), true);
   assert.equal(conf.includes('\nbind=0.0.0.0\n'), true, 'a direct node listens on every interface');
