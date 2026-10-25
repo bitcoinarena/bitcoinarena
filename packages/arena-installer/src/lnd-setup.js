@@ -25,15 +25,17 @@ const which = async (x) => {
 export const lndChainOf = (s) => ownCoreOf(s);
 
 /** Install and start LND for the node at `state` (on its own Core, lndChainOf). Answers { ok, lnd, sha256, peers } or { ok: false, why }. */
-export async function setUpOwnLnd({ state, release, fetcher = fetch, reach = reachKit, lndKit = { installLnd, configureLnd, lndArgs, installProgram }, tor: torKit = { torBin, writeTorrc }, boot = true }) {
+export async function setUpOwnLnd({ state, release, fetcher = fetch, reach = reachKit, lndKit = { installLnd, configureLnd, lndArgs, installProgram }, tor: torKit = { torBin, writeTorrc }, boot = true, onStage = () => {} }) {
   const s = state.read();
   const chain = lndChainOf(s);
   if (!chain) return { ok: false, why: 'LND needs your own Bitcoin Core, not an Electrum server' };
+  onStage('download');
   const got = await lndKit.installLnd({ home: state.home, fetcher });
   if (!got.ok) return { ok: false, why: got.why };
   // CAN OTHERS DIAL THIS LND? (2026-10-18: "Measure if lnd is accessible from the outside after installing if not install tor"):
   // two seats connect back to the peer port before LND takes it (reach.checkDirect). Reached: LND announces that address, no Tor.
   // Not reached - the usual case, no open port: Tor (tor.js), and LND gets a permanent onion address others dial instead.
+  onStage('reach');
   const lnReach = await reach.checkDirect({ port: LND_PORTS.p2p, fetcher }).catch((e) => ({ ok: false, reached: false, why: e.message }));
   state.save({ lnReach: { reached: Boolean(lnReach.reached), address: lnReach.address || null, port: LND_PORTS.p2p, why: (lnReach.diagnosis && lnReach.diagnosis.advice) || lnReach.why || null, atMs: Date.now() } });
   const tor = lnReach.reached ? null : await torKit.torBin({ release, which });
@@ -42,6 +44,7 @@ export async function setUpOwnLnd({ state, release, fetcher = fetch, reach = rea
     const t = await lndKit.installProgram({ id: 'tor', description: 'Bitcoin Arena: Tor for Lightning', args: [tor, '-f', torKit.writeTorrc({ home: state.home })], home: state.home, boot });
     torOn = t.ok;
   }
+  onStage('start');
   const cfg = lndKit.configureLnd({ home: state.home, chain, tor: torOn ? TOR_PORTS : null, externalIp: lnReach.reached ? lnReach.address : null });
   const r = await lndKit.installProgram({ id: 'lnd', description: 'LND for Bitcoin Arena (custody)', args: lndKit.lndArgs({ lnd: got.lnd, lnddir: cfg.lnddir }), home: state.home, boot, partOf: torOn ? 'tor' : null });
   if (!r.ok) return { ok: false, why: r.why };
@@ -54,15 +57,17 @@ export async function setUpOwnLnd({ state, release, fetcher = fetch, reach = rea
  * Is the node's LND up? Its wallet made from the seed (an own LND, once), then getinfo; the pubkey kept in the state. Answers
  * { ok, created, pubkey, alias, uris, peers } or { ok: false, why, waiting } - waiting while an own LND is still starting.
  */
-export async function lndReady({ state, lndKit = { createLndWallet, testLnd } }) {
+export async function lndReady({ state, lndKit = { createLndWallet, testLnd }, onStage = () => {} }) {
   const s = state.read(); const l = s.lightning;
   if (!l) return { ok: false, why: 'no Lightning node set up yet' };
   let created = false;
   if (l.mode === 'own') {
+    onStage('wallet');
     const w = await lndKit.createLndWallet({ cfg: l, seed: fromHex(state.readSecret('seed.hex')) });
     if (!w.ok) return { ok: false, why: w.why, waiting: true };
     created = w.created;
   }
+  onStage('answer');
   const t = await lndKit.testLnd(l);
   if (!t.ok) return { ok: false, why: t.why, waiting: l.mode === 'own', created };
   state.save({ lightning: { ...l, pubkey: t.pubkey, alias: t.alias, testedMs: Date.now() } });
