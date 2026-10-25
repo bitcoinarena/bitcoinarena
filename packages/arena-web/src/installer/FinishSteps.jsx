@@ -9,6 +9,7 @@
 // confirmations shown on the dashboards, not waited for here; plain words.
 import React from 'react';
 import { Msg } from './WizardSteps.jsx';
+import { ServiceProgress } from './SetupSteps.jsx';
 
 const said = (r, okText) => ({ ok: !!r.ok, text: r.ok ? okText : (r.why || 'failed') });
 const n = (x) => Number(x || 0).toLocaleString('en');
@@ -16,6 +17,23 @@ const short = (s) => `${String(s || '').slice(0, 16)}…`;
 export const fedList = (fs) => ((fs || []).length ? ` Federations: ${fs.map((f) => f.name || String(f.federationId).slice(0, 12)).join(', ')}.` : ' No federation joined yet.');
 export const lnText = (r) => `LND ${r.version || ''} runs on ${r.network}: node ${short(r.pubkey)}, block ${r.blockHeight}${r.syncedToChain ? ', synced' : ', waiting for Bitcoin Core to sync'}`
   + `${r.peers ? `. Lightning peers: ${r.peers}` : ''}${r.created ? '. Its wallet comes from your 24 words' : ''}.`;
+// THE LIGHTNING STEP'S PROGRESS (kanban #661, 2026-10-25: "Da hätte ich auch gerne mehr debugs und eine progress bar", and for the
+// gateway "Da auch"): GET /api/lightning/progress every second while LND or the gateway starts; the bar, the stages, and the program's
+// last log lines once a stage is slow
+export const LND_HINT = {
+  download: 'LND comes from its official release. Setup checks the file against its published checksum before it runs it.',
+  reach: 'Two other nodes try to reach this computer on Lightning\'s port. If they cannot, LND gets a Tor address instead.',
+  start: 'LND reads its settings, connects to your Bitcoin Core and becomes a service of this computer.',
+  wallet: 'LND\'s wallet comes from your 24 words. LND needs some seconds before it accepts it.',
+  answer: 'Setup asks LND for its node key and block height. The first answer can take a minute.',
+};
+export const GW_HINT = {
+  find: 'The gateway program ships with this release.',
+  start: 'The gateway gets its settings (its wallet from your 24 words, your LND) and becomes a service of this computer.',
+  answer: 'The gateway connects to LND and opens its own database. This usually takes 10 to 60 seconds.',
+};
+const LND_BUDGET = { download: 60000, reach: 20000, start: 10000, wallet: 30000, answer: 60000 };
+const GW_BUDGET = { find: 2000, start: 10000, answer: 60000 };
 /** What the gateway says: running and connected, or running and waiting for the chain (kanban #635). */
 export const gwText = (r) => (r.syncing ? 'The gateway runs. It connects to Lightning by itself once Bitcoin Core has synced; your dashboard shows when.'
   : `The gateway runs (${r.state}) on LND ${short(r.lightningPubkey)}, ${r.network}, block ${r.blockHeight}.${fedList(r.federations)}`);
@@ -37,11 +55,23 @@ export class LightningStep extends React.Component {
     const ln = props.st.lightning;
     this.state = { conn: false, url: '', mac: '', cert: '', busy: false, lnMsg: null, lnOk: !!(ln && ln.pubkey), gwMsg: null, gwOk: false, funds: null, fundsWhy: null,
       peer: '', sats: '200000', ...(props.initial || {}) };
-    for (const f of ['own', 'connect', 'later', 'gwSetup', 'gwLater', 'watchLn', 'watchGw', 'funds', 'openChannel']) this[f] = this[f].bind(this);
+    for (const f of ['own', 'connect', 'later', 'gwSetup', 'gwLater', 'watchLn', 'watchGw', 'funds', 'openChannel', 'progress']) this[f] = this[f].bind(this);
   }
-  componentWillUnmount() { this.gone = true; clearTimeout(this.lnTimer); clearTimeout(this.gwTimer); }
+  componentDidMount() { return this.progress(); }   // after a reload: a start still running shows its progress again
+  componentWillUnmount() { this.gone = true; clearTimeout(this.lnTimer); clearTimeout(this.gwTimer); clearInterval(this.progTimer); }
+  async progress() {
+    if (!this.props.get || this.gone) return;
+    const p = await this.props.get('/api/lightning/progress');
+    if (this.gone || !p || !p.ok) return;
+    this.setState({ prog: p });
+    const running = (p.lnd && p.lnd.running) || (p.gateway && p.gateway.running);
+    if (running && !this.progTimer) this.progTimer = setInterval(this.progress, 1000);
+    if (!running && !this.state.busy && this.progTimer) { clearInterval(this.progTimer); this.progTimer = null; }
+  }
+  follow() { if (this.props.get && !this.progTimer) { this.progTimer = setInterval(this.progress, 1000); } }
   async own() {
-    this.setState({ busy: true, lnMsg: { ok: true, text: 'Downloading LND, checking it and starting it…' } });
+    this.setState({ busy: true, lnMsg: null });
+    this.follow();
     const r = await this.props.post('/api/lightning/own', { boot: true });
     this.setState({ busy: false });
     if (!r.ok) return this.setState({ lnMsg: said(r) });
@@ -51,9 +81,10 @@ export class LightningStep extends React.Component {
     if (this.gone) return;
     const r = await this.props.post('/api/lightning/status');
     if (this.gone) return;
+    if (r.ok || !r.waiting) this.progress();
     if (r.ok) return this.setState({ lnMsg: { ok: true, text: lnText(r) }, lnOk: true });
     this.setState({ lnMsg: { ok: !!r.waiting, text: r.waiting ? `Starting LND… (${r.why})` : r.why } });
-    if (r.waiting) { clearTimeout(this.lnTimer); this.lnTimer = setTimeout(this.watchLn, this.props.pollMs || 5000); }
+    if (r.waiting) { clearTimeout(this.lnTimer); this.lnTimer = setTimeout(this.watchLn, this.props.pollMs || 2000); }
   }
   async connect() {
     const { url, mac, cert } = this.state;
@@ -63,7 +94,8 @@ export class LightningStep extends React.Component {
   }
   async later() { await this.props.post('/api/lightning/later'); this.props.reload(); }
   async gwSetup() {
-    this.setState({ busy: true });
+    this.setState({ busy: true, gwMsg: null });
+    this.follow();
     const r = await this.props.post('/api/gateway/setup', { boot: true });
     this.setState({ busy: false });
     if (!r.ok) return this.setState({ gwMsg: said(r) });
@@ -73,12 +105,13 @@ export class LightningStep extends React.Component {
     if (this.gone) return;
     const r = await this.props.post('/api/gateway/status');
     if (this.gone) return;
+    if (r.ok || !r.waiting) this.progress();
     if (r.ok) {
       this.setState({ gwMsg: { ok: true, text: gwText(r) }, gwOk: true });
       return r.syncing ? null : this.funds();
     }
     this.setState({ gwMsg: { ok: !!r.waiting, text: r.waiting ? `Starting the gateway… (${r.why})` : r.why } });
-    if (r.waiting) { clearTimeout(this.gwTimer); this.gwTimer = setTimeout(this.watchGw, this.props.pollMs || 5000); }
+    if (r.waiting) { clearTimeout(this.gwTimer); this.gwTimer = setTimeout(this.watchGw, this.props.pollMs || 2000); }
   }
   async gwLater() {
     const r = await this.props.post('/api/gateway/later');
@@ -142,6 +175,8 @@ export class LightningStep extends React.Component {
           <label htmlFor="ln-mac">Admin macaroon (hex: <code>xxd -p -c 1000 admin.macaroon</code>)</label><input id="ln-mac" value={s.mac} onChange={(e) => this.setState({ mac: e.target.value })} />
           <label htmlFor="ln-cert">TLS certificate (tls.cert)</label><textarea id="ln-cert" rows="4" placeholder="-----BEGIN CERTIFICATE-----" value={s.cert} onChange={(e) => this.setState({ cert: e.target.value })} />
           <button type="button" onClick={this.connect}>Test and connect</button></div> : null}
+        {s.prog && s.prog.lnd && s.prog.lnd.elapsedMs !== undefined ? <ServiceProgress id="ln-progress" progress={s.prog.lnd} hints={LND_HINT} budgets={LND_BUDGET}
+          slowAt={{ download: 120000, answer: 60000, wallet: 60000 }} slowText="LND takes longer than usual. Setup keeps asking it; the log below says what it is doing." logOf="LND's last messages:" /> : null}
         <Msg r={s.lnMsg} />
         {s.lnOk ? <div id="ln-gw">
           <h3>The gateway</h3>
@@ -154,6 +189,8 @@ export class LightningStep extends React.Component {
           {s.gwOk ? <button type="button" onClick={() => this.props.reload()}>Continue</button> : <>
             <button type="button" id="gw-setup" disabled={s.busy} onClick={this.gwSetup}>Set up the gateway</button>
             <button type="button" className="ghost" onClick={this.gwLater}>Skip the gateway for now</button></>}
+          {s.prog && s.prog.gateway && s.prog.gateway.elapsedMs !== undefined ? <ServiceProgress id="gw-progress" progress={s.prog.gateway} hints={GW_HINT} budgets={GW_BUDGET}
+            slowAt={{ answer: 60000 }} slowText="The gateway takes longer than usual. Setup keeps asking it; the log below says what it is doing." logOf="The gateway's last messages:" /> : null}
           <Msg r={s.gwMsg} />
         </div> : null}
       </div>
