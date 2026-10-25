@@ -43,3 +43,36 @@ test('a second node\'s wizard reads its own quick tunnel\'s name, not the first 
   assert.deepEqual(JSON.parse(asked({ ARENA_INSTANCE: 't471' })), { unit: 'arena-tunnel--t471.service', url: 'https://harris-preventing-experiences-turning.trycloudflare.com' });
   assert.equal(JSON.parse(asked({})).unit, 'arena-tunnel.service', 'one node: as always');
 });
+
+// THE DEFAULT SERVICE NAME TAKEN BY ANOTHER NODE (kanban #635, 2026-10-25: a new install in ~/.arena-node wrote io.bitcoin-arena.node over
+// the agent of mactest12, another node on that test host): a new node takes the first free name, io.bitcoin-arena.node--2, and its own ports
+test('a new node whose default service name belongs to another node folder takes --2 (and ports 100 up); its own name stays its own', async () => {
+  const { freeInstance } = await import('../src/instance.js');
+  const mine = '/Users/d/.arena-node', other = '<string>/Users/d/blwp-offload/mactest12/home/arena.conf</string>';
+  const files = (m) => (f) => (f in m ? m[f] : null);
+  const A = '/Users/d/Library/LaunchAgents/io.bitcoin-arena.node.plist', B = '/Users/d/Library/LaunchAgents/io.bitcoin-arena.node--2.plist';
+  const opts = (m) => ({ platform: 'darwin', env: { HOME: '/Users/d' }, read: files(m) });
+  assert.deepEqual(freeInstance(mine, opts({})), { instance: '', offset: 0 }, 'nothing there: the default name');
+  assert.deepEqual(freeInstance(mine, opts({ [A]: other })), { instance: '2', offset: 100 }, 'the default is another node\'s: --2');
+  assert.deepEqual(freeInstance(mine, opts({ [A]: other, [B]: other })), { instance: '3', offset: 200 });
+  assert.deepEqual(freeInstance(mine, opts({ [A]: `<string>${mine}/arena.conf</string>` })), { instance: '', offset: 0 }, 'its own service: kept');
+  assert.deepEqual(freeInstance('/home/d/.arena-node', { platform: 'linux', env: { HOME: '/home/d' }, read: files({ '/home/d/.config/systemd/user/arena-node.service': 'WorkingDirectory=/opt/other' }) }),
+    { instance: '2', offset: 100 }, 'the same on Linux');
+  assert.deepEqual(freeInstance(mine, { platform: 'win32', read: () => 'x' }), { instance: '', offset: 0 }, 'Windows keeps the default');
+});
+
+test('the installer itself chooses: started as arena-install.mjs on a machine whose default unit is another node\'s, it is --2', { skip: process.platform !== 'linux' && process.platform !== 'darwin' }, async () => {
+  const { mkdtempSync: mk, mkdirSync: md, writeFileSync: wf, rmSync: rm } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const home = mk(join(tmpdir(), 'inst-guard-'));
+  try {
+    const unit = process.platform === 'darwin' ? join(home, 'Library', 'LaunchAgents', 'io.bitcoin-arena.node.plist') : join(home, '.config', 'systemd', 'user', 'arena-node.service');
+    md(join(unit, '..'), { recursive: true });
+    const script = join(home, 'arena-install.mjs');
+    wf(script, `const m = await import(${JSON.stringify(new URL('../src/instance.js', import.meta.url).href)}); console.log(JSON.stringify({ i: m.INSTANCE, o: m.PORT_OFFSET }));`);
+    const run = () => JSON.parse(execFileSync(process.execPath, [script], { env: { PATH: process.env.PATH, HOME: home, ARENA_HOME: join(home, '.arena-node') }, encoding: 'utf8' }));
+    assert.deepEqual(run(), { i: '', o: 0 }, 'no unit there: the default');
+    wf(unit, 'ExecStart=/opt/other/node src/main.js\nWorkingDirectory=/opt/other\n');
+    assert.deepEqual(run(), { i: '2', o: 100 }, 'another node\'s unit: --2, ports 100 up');
+  } finally { rm(home, { recursive: true, force: true }); }
+});
