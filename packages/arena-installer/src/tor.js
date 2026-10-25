@@ -38,6 +38,23 @@ export async function torBin({ release, platform = process.platform, which = nul
   return null;
 }
 
+/**
+ * HOW TOR IS STARTED (playtest 2026-10-25: "lnd and Tor fails on Linux, works on macOS"; measured in a fresh ubuntu:24.04 container:
+ * the release's tor stopped at once - "error while loading shared libraries: libevent-2.1.so.7" - its own libevent, libssl and libcrypto
+ * lie beside it, and the binary names no RUNPATH): on Linux a launcher in the node's home puts tor's own folder on the library path at
+ * every start - worked out from tor's path, which an update rewrites in the service, so it follows every release. Answers the command
+ * that comes before tor's own arguments.
+ */
+export function torCommand({ home, tor, platform = process.platform }) {
+  if (platform !== 'linux') return [tor];
+  const dir = join(home, 'tor');
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const launcher = join(dir, 'run-tor.sh');
+  writeFileSync(launcher, ['#!/bin/sh', '# Tor with its own libraries (libevent, libssl) - written by the installer.', 'TOR="$1"; shift',
+    'LD_LIBRARY_PATH="$(dirname "$TOR")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" exec "$TOR" "$@"', ''].join('\n'), { mode: 0o700 });
+  return [launcher, tor];
+}
+
 /** The node's torrc in <home>/tor: SOCKS for LND's dialling, the control port LND makes its onion service with. Answers its path. */
 export function writeTorrc({ home, ports = TOR_PORTS }) {
   const dir = join(home, 'tor');
