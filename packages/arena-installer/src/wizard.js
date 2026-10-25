@@ -316,15 +316,14 @@ const serviceRun = async (b) => {
       // the first that passes is saved, and the page says which
       let switchedFrom = null;
       if (!r.ok && conn.kind === 'electrum') {
-        const again = await test(conn);
+        // all at once (measured in the walk of 1ebc8cbe: one after another took over 40 s with mempool.space not answering): the chosen
+        // server again beside every other known one; the chosen one when it answers now, else the first of the list that does
+        const others = TESTNET4_ELECTRUM.filter((x) => !(x.host === conn.host && x.port === conn.port)).map((x) => ({ kind: 'electrum', host: x.host, port: x.port, tls: x.tls }));
+        const [again, ...answers] = await Promise.all([conn, ...others].map((c) => test(c).catch((e) => ({ ok: false, why: e.message }))));
         if (again.ok) r = again;
         else {
-          for (const x of TESTNET4_ELECTRUM) {
-            if (x.host === conn.host && x.port === conn.port) continue;
-            const c2 = { kind: 'electrum', host: x.host, port: x.port, tls: x.tls };
-            const r2 = await test(c2);
-            if (r2.ok) { switchedFrom = `${conn.host}:${conn.port} (${r.why})`; conn = c2; r = r2; break; }
-          }
+          const i = answers.findIndex((x) => x.ok);
+          if (i >= 0) { switchedFrom = `${conn.host}:${conn.port} (${r.why})`; conn = others[i]; r = answers[i]; }
         }
       }
       if (!r.ok) return { ok: false, why: conn.kind === 'electrum' ? `${r.why}; no other known Electrum server answered either - try again in a minute, or use Bitcoin Core` : r.why, result: r };
