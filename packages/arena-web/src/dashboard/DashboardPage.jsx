@@ -181,7 +181,7 @@ export class DashboardPage extends React.Component {
     return (
       <div className="dash">
         <header className="dash-head">
-          <div><h1>Node dashboard</h1><p className="sub"><code>{String(D.node).slice(0, 16)}…</code> · active since {short(D.sinceMs, now)} · {D.roundsChecked} rounds checked</p></div>
+          <div><h1>Node dashboard{D.release && (D.release.version || D.release.commit) ? <span className="ver" id="release">{D.release.version || String(D.release.commit).slice(0, 8)}</span> : null}</h1><p className="sub"><code>{String(D.node).slice(0, 16)}…</code> · active since {short(D.sinceMs, now)} · {D.roundsChecked} rounds checked</p></div>
           <a className="btn" href="Dashboard/owner">Owner area →</a>
         </header>
         {D.setup && D.setup.ok ? <section><SetupStatus status={D.setup} /></section> : null}

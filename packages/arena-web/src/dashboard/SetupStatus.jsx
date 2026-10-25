@@ -201,7 +201,7 @@ export class SetupBanner extends React.Component {
     return (
       <div className="setup-gate" id="setup-gate" role="dialog" aria-modal="true" aria-labelledby="setup-gate-title">
         <div className="setup-gate-in">
-          <h2 id="setup-gate-title">Your node is still being set up</h2>
+          <h2 id="setup-gate-title">Your node is still being set up{s && s.release && s.release.version ? <span className="ver" id="setup-gate-ver">{s.release.version}</span> : null}</h2>
           <p className="setup-gate-msg">Check back when everything below is synced.</p>
           <SetupStatus status={s} />
           {problems.length ? <div className="setup-gate-fix"><p>{problems.map(([, label]) => label).join(' and ')} {problems.length === 1 ? 'has a problem' : 'have problems'} you can fix in the owner area.</p>

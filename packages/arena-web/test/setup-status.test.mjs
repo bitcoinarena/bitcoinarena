@@ -101,5 +101,8 @@ test('one big number until the node is ready, and each part\'s own time', async 
   const bond = card({ bond: { txid: 'b0'.repeat(32), sats: '50000', seen: true, confirmations: 2, needed: 6, confirmBy: 157726 }, etas: { bond: 32 * min, ready: 32 * min } });
   assert.match(bond, /Bond<\/b><span class="setup-text">50,000 sat, 2 of 6 confirmations\. It counts at 6\.<\/span><div class="bar"><i style="width:33%"><\/i><\/div><\/div><span class="setup-eta">32 min<\/span>/);
   assert.match(card({ bond: { txid: 'b0'.repeat(32), sats: '50000', seen: true, confirmations: 0, needed: 6, confirmBy: 157726 } }), /0 of 6 confirmations\. It counts at 6 and must first confirm by block 157,726\./);
+  // the release on the setup screen too (kanban #674)
+  const gate = renderToStaticMarkup(React.createElement(SetupBanner, { status: { ok: true, release: { version: '2026.1.9.3' }, core: { interim: true, sync: null } } }));
+  assert.match(gate, /Your node is still being set up<span class="ver" id="setup-gate-ver">2026\.1\.9\.3<\/span><\/h2>/);
   assert.deepEqual([dur(20000), dur(12 * min), dur(200 * min), dur(812 * min), dur(4 * 1440 * min)], ['under a minute', '12 min', '3 h 20 min', '14 h', '4 days']);
 });
