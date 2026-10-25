@@ -6,6 +6,7 @@
 -- and quits. A node already set up: its status, with Owner page / Restart / Close. Each step is the helper arena-node-app beside it.
 property helper : ""
 property installing : false
+property closing : false
 
 on sh(args)
 	return do shell script helper & " " & args
@@ -15,6 +16,9 @@ end sh
 -- der Browser öffnet"): a progress window from the first moment - preparing (the first start copies the node out of the app), starting
 -- the installer, waiting for its page - each step a call to the helper, the window updated between them
 on run
+	-- a fresh start each time: a stay-open applet may keep its properties from the last run
+	set installing to false
+	set closing to false
 	set helper to quoted form of (POSIX path of (path to me) & "Contents/Resources/arena-node-app")
 	set progress total steps to 3
 	set progress completed steps to 0
@@ -27,9 +31,9 @@ on run
 		return
 	end try
 	if r is "installed" then
-		set progress completed steps to 3
+		noProgress()
 		statusDialog()
-		quit
+		closeApp()
 		return
 	end if
 	set installing to true
@@ -37,6 +41,7 @@ on run
 		set progress completed steps to 3
 		set progress additional description to "The installer runs already. Opening its page…"
 		open location (text 9 thru -1 of r)
+		noProgress()
 		installerDialog()
 		return
 	end if
@@ -66,8 +71,25 @@ on run
 	set progress completed steps to 3
 	set progress additional description to "Opening the setup page in your browser…"
 	open location pageLink
+	noProgress()
 	installerDialog()
 end run
+
+-- THE APP CLOSES WHEN CLOSED (the owner's playtest 2026-10-25: "Can't close the BitcoinArena.App, when I click close it re-appears
+-- again"): Close quits for good - a Dock click that waited behind the dialog (reopen) shows nothing any more, the idle check stops, and
+-- the progress window of the start is gone before any dialog
+on closeApp()
+	set closing to true
+	set installing to false
+	quit
+end closeApp
+
+on noProgress()
+	set progress total steps to 0
+	set progress completed steps to 0
+	set progress description to ""
+	set progress additional description to ""
+end noProgress
 
 on fail(msg)
 	display dialog msg with title "Bitcoin Arena" buttons {"OK"} default button 1 with icon stop
@@ -75,14 +97,17 @@ on fail(msg)
 end fail
 
 on reopen
+	if closing then return
 	if installing then
 		installerDialog()
 	else
 		statusDialog()
+		closeApp()
 	end if
 end reopen
 
 on installerDialog()
+	activate
 	set b to button returned of (display dialog "The installer runs. Its setup page is open in your browser. Keep it running until the page says Done." & return & return & "Bitcoin Arena stays in the Dock while it runs: click it to see this again." with title "Bitcoin Arena" buttons {"Stop", "Open in browser", "Keep running"} default button "Keep running")
 	if b is "Open in browser" then
 		open location sh("link")
@@ -98,6 +123,7 @@ end installerDialog
 -- Doctor" - "And also \"Dashboard\" that opens the browser with the dashboard"): the node in one line, then what to do with it
 on statusDialog()
 	repeat
+		activate
 		set nodeLine to sh("node")
 		if nodeLine starts with "running" then
 			set heading to "Server running"
@@ -127,6 +153,7 @@ on statusDialog()
 end statusDialog
 
 on idle
+	if closing then return 5
 	if installing then
 		set s to sh("state")
 		if s is "done" then
