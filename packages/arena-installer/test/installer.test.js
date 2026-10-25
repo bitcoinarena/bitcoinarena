@@ -237,9 +237,16 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.match(state.read().tor.why || 'tor', /no Tor|tor/, 'not reached: Tor (none in this test release and none in PATH: said)');
   const waiting = (await c.post('/api/lightning/status')).json;
   assert.deepEqual([waiting.ok, waiting.waiting], [false, true]);
+  // kanban #661: LND's stages - downloaded, reach measured, started, now waiting for its wallet; the gateway not begun
+  let lp = (await c.get('/api/lightning/progress')).json;
+  assert.deepEqual(lp.lnd.stages.map((x) => x.state), ['done', 'done', 'done', 'now', 'todo']);
+  assert.equal(lp.lnd.running, true);
+  assert.equal(lp.gateway.running, false);
   walletReady = true;
   const ln = (await c.post('/api/lightning/status')).json;
   assert.deepEqual([ln.ok, ln.created, ln.network, lndCalls[1].seedLen], [true, true, 'testnet4', 32], 'the wallet from the 32-byte seed');
+  lp = (await c.get('/api/lightning/progress')).json;
+  assert.deepEqual([lp.lnd.running, lp.lnd.stages.map((x) => x.state)], [false, ['done', 'done', 'done', 'done', 'done']]);
   assert.equal((await c.post('/api/lightning/connect', { restUrl: 'http://x:1', macaroonHex: 'ab', tlsCertPem: '' })).json.why, 'LND\'s REST address is https');
   assert.equal((await c.get('/api/state')).json.step, 'lightning', 'LND alone does not finish the step: the gateway (or "later") does');
   // THE GATEWAY: from the release (faked here), configured for real, a service with the seed's mnemonic, then a federation by invite
@@ -258,8 +265,11 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.ok(gwCalls[0].args.includes(`--lnd-macaroon=${join(home, 'lnd', 'data', 'chain', 'bitcoin', 'testnet4', 'admin.macaroon')}`));
   assert.equal(gwCalls[0].vars.FM_GATEWAY_MNEMONIC.split(' ').length, 24);
   assert.equal((await c.post('/api/gateway/status')).json.waiting, true);
+  lp = (await c.get('/api/lightning/progress')).json;
+  assert.deepEqual([lp.gateway.running, lp.gateway.stages.map((x) => x.state)], [true, ['done', 'done', 'now']]);
   gwUp = true;
   assert.equal((await c.post('/api/gateway/status')).json.state, 'Running');
+  assert.deepEqual((await c.get('/api/lightning/progress')).json.gateway.stages.map((x) => x.state), ['done', 'done', 'done']);
   const joined = (await c.post('/api/gateway/join', { invite: 'fed1testinvite' })).json;
   assert.deepEqual([joined.ok, joined.federations[0].name, gwKit.joined], [true, 'T', 'fed1testinvite']);
   assert.equal((await c.get('/api/state')).json.gateway.passwordFile, undefined, 'the page is not told where the admin password is');

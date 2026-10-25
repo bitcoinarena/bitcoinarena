@@ -203,20 +203,53 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   // which is done, which runs and for how long, and - while the node is slow to answer, or after a failure - the node log's last lines
   const SERVICE_STAGES = [['settings', 'Writing your node\'s settings'], ['services', 'Installing its services'],
     ['start', 'Starting your node and waiting for its first answer'], ['address', 'Testing its public address'], ['login', 'Logging you in as its owner']];
-  let svc = null;                            // { atMs, endMs, ok, why, stages: [{ id, label, state: todo|now|done|skipped|failed, atMs, ms }] }
-  const stage = (id) => {
-    if (!svc) return;
-    const now = nowMs(), at = svc.stages.findIndex((x) => x.id === id);
-    if (at < 0) return;
-    svc.stages.forEach((x, i) => {
-      if (i >= at) return;
-      if (x.state === 'now') { x.state = 'done'; x.ms = now - x.atMs; } else if (x.state === 'todo') x.state = 'skipped';
-    });
-    Object.assign(svc.stages[at], { state: 'now', atMs: now });
+  // THE STAGES OF A LONG STEP, AS THEY RUN (#651 for the service; kanban #661, 2026-10-25, the Lightning step: "Da hätte ich auch gerne
+  // mehr debugs und eine progress bar" - "Da auch" for the gateway): which stage is done, which runs and for how long, and - once one
+  // runs slow, or after a failure - the last lines of that program's log
+  const tracker = (STAGES, logName, slowMs = 10000) => {
+    let run = null;                          // { atMs, endMs, ok, why, stages: [{ id, label, state: todo|now|done|skipped|failed, atMs, ms }] }
+    const fresh = () => STAGES.map(([id, label]) => ({ id, label, state: 'todo' }));
+    return {
+      begin: () => { run = { atMs: nowMs(), stages: fresh() }; },
+      running: () => Boolean(run && !run.endMs),
+      stage: (id) => {
+        if (!run || run.endMs) return;
+        const now = nowMs(), at = run.stages.findIndex((x) => x.id === id);
+        if (at < 0 || run.stages.findIndex((x) => x.state === 'now') > at) return;   // never back to an earlier stage
+        run.stages.forEach((x, i) => {
+          if (i >= at) return;
+          if (x.state === 'now') { x.state = 'done'; x.ms = now - x.atMs; } else if (x.state === 'todo') x.state = 'skipped';
+        });
+        if (run.stages[at].state !== 'now') Object.assign(run.stages[at], { state: 'now', atMs: now });
+      },
+      end: (r) => {
+        if (!run || run.endMs) return;
+        const now = nowMs();
+        for (const x of run.stages) {
+          if (x.state === 'now') { x.state = r.ok ? 'done' : 'failed'; x.ms = now - x.atMs; } else if (x.state === 'todo' && r.ok) x.state = 'skipped';
+        }
+        Object.assign(run, { endMs: now, ok: !!r.ok, why: r.ok ? null : r.why });
+      },
+      view: (slowIds = null) => {
+        if (!run) return { ok: true, running: false, stages: fresh() };
+        const now = nowMs(), cur = run.stages.find((x) => x.state === 'now');
+        const slow = cur && (!slowIds || slowIds.includes(cur.id)) && now - cur.atMs > slowMs;
+        return { ok: true, running: !run.endMs, elapsedMs: (run.endMs || now) - run.atMs, why: run.why || null,
+          stages: run.stages.map((x) => ({ ...x, ms: x.state === 'now' ? now - x.atMs : x.ms })), log: slow || run.ok === false ? logTail(logName) : [] };
+      },
+    };
   };
-  const logTail = (n = 4) => {
-    try { return readFileSync(join(state.home, 'node.log'), 'utf8').split('\n').map((l) => l.trim()).filter(Boolean).slice(-n).map((l) => l.slice(0, 300)); } catch { return []; }
+  const logTail = (name, n = 4) => {
+    try { return readFileSync(join(state.home, name), 'utf8').split('\n').map((l) => l.trim()).filter(Boolean).slice(-n).map((l) => l.slice(0, 300)); } catch { return []; }
   };
+  const svc = tracker(SERVICE_STAGES, 'node.log');
+  const stage = svc.stage;
+  const LND_STAGES = [['download', 'Downloading LND and checking it'], ['reach', 'Testing whether other Lightning nodes reach this computer'],
+    ['start', 'Writing its settings and starting it'], ['wallet', 'Making its wallet from your seed'], ['answer', 'Waiting for LND\'s first answer']];
+  const lndRun = tracker(LND_STAGES, 'lnd.log');
+  const GATEWAY_STAGES = [['find', 'Finding the gateway in this release'], ['start', 'Writing its settings and starting it'],
+    ['answer', 'Waiting for the gateway\'s first answer']];
+  const gwRun = tracker(GATEWAY_STAGES, 'gateway.log');
   // THE SERVICE (C.9): the settings, the unit, started, healthy; then the owner's first login against the running node (C.6 "tested by
   // one login") - signed here with the seed's owner key, or by the browser's Nostr signer (POST /api/owner/login).
 const serviceRun = async (b) => {
@@ -615,23 +648,13 @@ const serviceRun = async (b) => {
     },
 
     'POST /api/service': async (b) => {
-      svc = { atMs: nowMs(), stages: SERVICE_STAGES.map(([id, label]) => ({ id, label, state: 'todo' })) };
+      svc.begin();
       let r;
       try { r = await serviceRun(b); } catch (e) { r = { ok: false, why: e.message }; }
-      const now = nowMs();
-      for (const x of svc.stages) {
-        if (x.state === 'now') { x.state = r.ok ? 'done' : 'failed'; x.ms = now - x.atMs; } else if (x.state === 'todo' && r.ok) x.state = 'skipped';
-      }
-      Object.assign(svc, { endMs: now, ok: !!r.ok, why: r.ok ? null : r.why });
+      svc.end(r);
       return r;
     },
-    'GET /api/service/progress': async () => {
-      if (!svc) return { ok: true, running: false, stages: SERVICE_STAGES.map(([id, label]) => ({ id, label, state: 'todo' })) };
-      const now = nowMs(), cur = svc.stages.find((x) => x.state === 'now');
-      const slow = cur && cur.id === 'start' && now - cur.atMs > 10000;
-      return { ok: true, running: !svc.endMs, elapsedMs: (svc.endMs || now) - svc.atMs, why: svc.why || null,
-        stages: svc.stages.map((x) => ({ ...x, ms: x.state === 'now' ? now - x.atMs : x.ms })), log: slow || svc.ok === false ? logTail() : [] };
-    },
+    'GET /api/service/progress': async () => svc.view(['start']),
     'POST /api/owner/login': async (b) => {
       const s = state.read();
       if (!s.service) return { ok: false, why: 'the node is not installed yet' };
@@ -656,9 +679,19 @@ const serviceRun = async (b) => {
     // from the node's seed) or an LND that already runs connected; either is tested by getinfo before the step is done
     'POST /api/lightning/own': async (b) => {
       if (!(state.read().done || {}).service) return { ok: false, why: 'install the node first' };
-      return setUpOwnLnd({ state, release, fetcher, reach, lndKit, boot: b.boot !== false });   // lnd-setup.js, the owner page's too (kanban #567)
+      lndRun.begin();
+      let r;
+      try { r = await setUpOwnLnd({ state, release, fetcher, reach, lndKit, boot: b.boot !== false, onStage: lndRun.stage }); } catch (e) { r = { ok: false, why: e.message }; }   // lnd-setup.js, the owner page's too (kanban #567)
+      if (r.ok) lndRun.stage('wallet'); else lndRun.end(r);
+      return r;
     },
-    'POST /api/lightning/status': async () => lndReady({ state, lndKit }),   // the step is done with the gateway
+    'POST /api/lightning/status': async () => {   // the step is done with the gateway
+      const r = await lndReady({ state, lndKit, onStage: lndRun.stage });
+      if (r.ok || !r.waiting) lndRun.end(r);
+      return r;
+    },
+    // THE LIGHTNING STEP'S PROGRESS (kanban #661): LND's stages and the gateway's, read every second while either runs
+    'GET /api/lightning/progress': async () => ({ ok: true, lnd: lndRun.view(), gateway: gwRun.view() }),
     'POST /api/lightning/connect': async (b) => {
       if (!(state.read().done || {}).service) return { ok: false, why: 'install the node first' };
       let restUrl;
@@ -696,13 +729,16 @@ const serviceRun = async (b) => {
     'POST /api/gateway/setup': async (b) => {
       const s = state.read(); const l = s.lightning;
       if (!l || !l.pubkey) return { ok: false, why: 'set up and test LND first' };
+      gwRun.begin(); gwRun.stage('find');
       const f = gwKit.findGatewayd({ release });
-      if (!f.ok) return { ok: false, why: f.why, noBinary: true };
+      if (!f.ok) { gwRun.end({ ok: false, why: f.why }); return { ok: false, why: f.why, noBinary: true }; }
+      gwRun.stage('start');
       const g = gwKit.configureGateway({ home: state.home, gatewayd: f.gatewayd, seed: fromHex(state.readSecret('seed.hex')),
         lnd: { rpcHost: l.rpcHost, tlsCert: l.tlsCert, macaroon: l.macaroon }, publicUrl: s.reach && s.reach.url ? `${s.reach.url.replace(/\/+$/, '')}/gateway/` : null });
       const r = await gwKit.installProgram({ id: 'gateway', description: 'Bitcoin Arena: Fedimint gateway (custody)', args: g.args, vars: g.vars, home: state.home, boot: b.boot !== false });
-      if (!r.ok) return { ok: false, why: r.why };
+      if (!r.ok) { gwRun.end(r); return { ok: false, why: r.why }; }
       state.save({ gateway: { apiUrl: g.apiUrl, publicUrl: g.publicUrl, passwordFile: g.passwordFile, dir: g.dir, startedMs: Date.now() } });
+      gwRun.stage('answer');
       return { ok: true };
     },
     'POST /api/gateway/status': async () => {
@@ -711,6 +747,7 @@ const serviceRun = async (b) => {
       const t = await gwKit.testGateway(s.gateway);
       // A GATEWAY WAITING FOR THE CHAIN IS SET UP (kanban #635, 2026-10-25: "Lnd muss nicht auf dem Bitcoin Core Testnet Sync
       // warten"): gatewayd runs and says Syncing until its LND is synced - it connects by itself then, and the dashboards show it
+      if (t.ok || t.syncing) gwRun.end({ ok: true });
       if (!t.ok && t.syncing) { mark('lightning', { gateway: { ...s.gateway, state: t.state, syncingMs: Date.now() } }); return { ok: true, syncing: true, state: t.state, federations: [] }; }
       if (!t.ok) return { ok: false, why: t.why, waiting: true };
       mark('lightning', { gateway: { ...s.gateway, lightningPubkey: t.lightningPubkey, federations: t.federations, testedMs: Date.now() } });

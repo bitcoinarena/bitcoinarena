@@ -262,36 +262,38 @@ const STAGE_HINT = {
   login: 'Setup logs in once with your owner key, to check that the node knows you as its owner.',
 };
 const secs = (ms) => `${Math.round((ms || 0) / 1000)} s`;
-/** The share of the work done: finished stages, plus a part of the running one (the node's start: up to 90 s). */
-export function progressShare(p) {
+/** The share of the work done: finished stages, plus a part of the running one (by its usual time: the node's start up to 90 s). */
+export function progressShare(p, budgets = { start: 90000 }) {
   const st = (p && p.stages) || [];
   const counted = st.filter((x) => x.state !== 'skipped');
   if (!counted.length) return 0;
   const done = counted.filter((x) => x.state === 'done').length;
   const now = counted.find((x) => x.state === 'now');
-  const part = now ? Math.min(0.95, (now.ms || 0) / (now.id === 'start' ? 90000 : 20000)) : 0;
+  const part = now ? Math.min(0.95, (now.ms || 0) / (budgets[now.id] || 20000)) : 0;
   return Math.min(1, (done + part) / counted.length);
 }
 export class ServiceProgress extends React.Component {
   render() {
     const p = this.props.progress;
     if (!p || !p.stages) return null;
-    const share = progressShare(p);
+    const { hints = STAGE_HINT, budgets, slowAt = { start: 45000 }, slowText = 'Your node takes longer than usual. Setup waits up to 90 seconds, then says what stopped it.',
+      logOf = 'The node\'s last messages:', id = 'svc-progress' } = this.props;
+    const share = progressShare(p, budgets);
     const mark = { done: '✓', now: '…', failed: '✗', skipped: '–', todo: '○' };
-    const slow = p.stages.find((x) => x.state === 'now' && x.id === 'start' && x.ms > 45000);
+    const slow = p.stages.find((x) => x.state === 'now' && slowAt[x.id] && x.ms > slowAt[x.id]);
     return (
-      <div className="svc-progress" id="svc-progress">
+      <div className="svc-progress" id={id}>
         <div className="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(share * 100)}><i style={{ width: `${(share * 100).toFixed(1)}%` }} /></div>
         <p className="sub">{Math.round(share * 100)} % · {secs(p.elapsedMs)} so far</p>
         <ol className="stages">
           {p.stages.filter((x) => x.state !== 'skipped').map((x) => (
             <li key={x.id} className={`stage ${x.state}`}>
               <span className="mark">{mark[x.state] || '○'}</span> <b>{x.label}</b>{x.state === 'now' || x.state === 'done' || x.state === 'failed' ? ` · ${secs(x.ms)}` : ''}
-              {x.state === 'now' || x.state === 'failed' ? <p className="sub">{STAGE_HINT[x.id]}</p> : null}
+              {(x.state === 'now' || x.state === 'failed') && hints[x.id] ? <p className="sub">{hints[x.id]}</p> : null}
             </li>))}
         </ol>
-        {slow ? <p className="sub">Your node takes longer than usual. Setup waits up to 90 seconds, then says what stopped it.</p> : null}
-        {p.log && p.log.length ? <div className="log"><p className="sub">The node's last messages:</p><pre>{p.log.join('\n')}</pre></div> : null}
+        {slow ? <p className="sub">{slowText}</p> : null}
+        {p.log && p.log.length ? <div className="log"><p className="sub">{logOf}</p><pre>{p.log.join('\n')}</pre></div> : null}
       </div>);
   }
 }

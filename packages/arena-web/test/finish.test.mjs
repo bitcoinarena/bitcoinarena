@@ -48,6 +48,25 @@ test('lightning: LND set up and watched until it runs; the gateway started, its 
   assert.equal(fedList([{ name: 'T' }, { federationId: 'e8741283f199' + '0'.repeat(52) }]), ' Federations: T, e8741283f199.');
 });
 
+test('lightning: LND\'s and the gateway\'s progress - the bar, the stages with their hints, the log once slow (kanban #661)', async () => {
+  const stages = (now) => ['download', 'reach', 'start', 'wallet', 'answer'].map((id, i) => ({ id, label: `L-${id}`, state: i < now ? 'done' : i === now ? 'now' : 'todo', ms: i === now ? 70000 : 1000 }));
+  let prog = { ok: true, lnd: { ok: true, running: true, elapsedMs: 75000, stages: stages(4), log: ['lnd: waiting for the wallet'] }, gateway: { ok: true, running: false, stages: [] } };
+  const gets = [];
+  const c = driven(LightningStep, { st: {}, pollMs: 1, get: async (p) => { gets.push(p); return prog; }, post: async () => ({ ok: false, waiting: true, why: 'starting' }), reload() {} });
+  await c.componentDidMount();
+  assert.deepEqual(gets, ['/api/lightning/progress']);
+  assert.ok(c.progTimer, 'a running start is followed every second');
+  let html = renderToStaticMarkup(c.render());
+  assert.match(html, /id="ln-progress"[\s\S]*role="progressbar"[\s\S]*aria-valuenow="9\d"/);
+  assert.match(html, /L-answer<\/b> · 70 s<p class="sub">Setup asks LND for its node key/);
+  assert.match(html, /LND takes longer than usual[\s\S]*LND&#x27;s last messages:[\s\S]*lnd: waiting for the wallet/);
+  assert.doesNotMatch(html, /id="gw-progress"/, 'no gateway bar before the gateway starts');
+  prog = { ...prog, lnd: { ...prog.lnd, running: false, log: [] } };
+  await c.progress();
+  assert.equal(c.progTimer, null, 'done: no more polling');
+  c.componentWillUnmount();
+});
+
 test('lightning: an LND of your own connected by REST, macaroon and certificate; later moves on', async () => {
   const posts = []; let reloaded = 0;
   const c = driven(LightningStep, { st: {}, post: async (p, b) => { posts.push([p, b]); return p === '/api/lightning/connect' ? { ok: true, alias: 'mine', pubkey: '02' + 'cd'.repeat(32), blockHeight: 157193 } : { ok: true }; }, reload: () => { reloaded++; } });
