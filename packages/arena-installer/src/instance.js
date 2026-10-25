@@ -22,10 +22,40 @@ const flag = (k) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : u
 export function confAt(home) {
   try { return parseConf(readFileSync(join(resolve(home), 'arena.conf'), 'utf8')).values; } catch { return {}; }
 }
-const conf = confAt(flag('--home') || env.ARENA_HOME || join(homedir(), '.arena-node'));
-const inst = String(conf.instance ?? flag('--instance') ?? env.ARENA_INSTANCE ?? '').trim();
+/**
+ * THE DEFAULT SERVICE NAME TAKEN BY ANOTHER NODE (kanban #635, 2026-10-25: the owner's new install in ~/.arena-node wrote the agent
+ * io.bitcoin-arena.node over the one of mactest12, another node on that test host, and removing his install took mactest12's seat down).
+ * A new node - no arena.conf yet, no instance or port offset given - looks at the service file of each name in turn: the default, then
+ * --2, --3, ... The first that does not exist, or names this node's own folder, is its name; its ports are 100 up per number. Windows
+ * keeps the default (its tasks are not files). Answers { instance, offset }.
+ */
+export function freeInstance(home, { platform = process.platform, env: e = process.env, read = (f) => { try { return readFileSync(f, 'utf8'); } catch { return null; } }, tries = 20 } = {}) {
+  const at = (inst) => {
+    const suffix = inst ? `--${inst}` : '';
+    if (platform === 'darwin') return join(e.HOME || homedir(), 'Library', 'LaunchAgents', `io.bitcoin-arena.node${suffix}.plist`);
+    if (platform === 'linux') return join(e.XDG_CONFIG_HOME || join(e.HOME || homedir(), '.config'), 'systemd', 'user', `arena-node${suffix}.service`);
+    return null;
+  };
+  for (let n = 1; n <= tries; n++) {
+    const inst = n === 1 ? '' : String(n);
+    const file = at(inst);
+    if (!file) return { instance: '', offset: 0 };
+    const text = read(file);
+    if (text === null || text.includes(resolve(home))) return { instance: inst, offset: (n - 1) * 100 };
+  }
+  throw new Error(`every Bitcoin Arena service name up to --${tries} belongs to another node on this machine`);
+}
+
+const homeNow = flag('--home') || env.ARENA_HOME || join(homedir(), '.arena-node');
+const conf = confAt(homeNow);
+const given = conf.instance ?? flag('--instance') ?? env.ARENA_INSTANCE;
+const offGiven = conf.port_offset ?? flag('--port-offset') ?? env.ARENA_PORT_OFFSET;
+// only the installer chooses (bin/arena-install.mjs, which writes the node's services): a node, a test or another tool reads what is set
+const installing = /arena-install\.mjs$/.test(String(argv[1] || ''));
+const auto = installing && given === undefined && offGiven === undefined && !Object.keys(conf).length ? freeInstance(homeNow) : null;
+const inst = String(given ?? (auto ? auto.instance : '')).trim();
 if (inst && !/^[a-z0-9]{1,12}$/.test(inst)) throw new Error('instance is a-z0-9, at most 12 characters');
-const off = Number(conf.port_offset ?? flag('--port-offset') ?? env.ARENA_PORT_OFFSET ?? 0);
+const off = Number(offGiven ?? (auto ? auto.offset : 0));
 if (!Number.isInteger(off) || off < 0 || off > 20000) throw new Error('port_offset is a whole number from 0 to 20000');
 export const INSTANCE = inst;
 export const PORT_OFFSET = off;
