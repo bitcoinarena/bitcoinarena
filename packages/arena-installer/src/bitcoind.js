@@ -72,20 +72,31 @@ export function diskCheck(dir, { statfs = statfsSync } = {}) {
 const run = (cmd, args, opts = {}) => new Promise((resolve) => execFile(cmd, args, { timeout: 600000, ...opts }, (e, out, err) => resolve({ ok: !e, out: String(out), err: String(err) })));
 
 /** Download and unpack Bitcoin Core for this system into <home>/bitcoin-core, checked by SHA-256. Answers { ok, bitcoind, why }. */
-export async function installCore({ home, platform = process.platform, arch = process.arch, fetcher = fetch, sh = run }) {
+export async function installCore({ home, platform = process.platform, arch = process.arch, fetcher = fetch, sh = run, onStage = () => {}, onBytes = () => {} }) {
   const f = CORE_FILES[`${platform}-${arch}`];
   if (!f) return { ok: false, why: `no Bitcoin Core release for ${platform}-${arch}` };
   const dir = join(home, 'bitcoin-core');
   mkdirSync(dir, { recursive: true });
   const bin = join(dir, `bitcoin-${CORE_VERSION}`, 'bin', platform === 'win32' ? 'bitcoind.exe' : 'bitcoind');
   if (existsSync(bin)) return { ok: true, bitcoind: bin, already: true };
+  onStage('download');
   const r = await fetcher(`https://bitcoincore.org/bin/bitcoin-core-${CORE_VERSION}/${f.file}`);
   if (r.status !== 200) return { ok: false, why: `bitcoincore.org answered ${r.status} for ${f.file}` };
-  const bytes = Buffer.from(await r.arrayBuffer());
+  // THE DOWNLOAD COUNTED AS IT COMES (the owner's playtest 2026-10-25, "Downloading Bitcoin Core and checking it…": "Füge auch hier
+  // eine Progress Bar hinzu"): bytes so far of the size bitcoincore.org names
+  const total = Number((r.headers && r.headers.get && r.headers.get('content-length')) || 0);
+  let bytes;
+  if (r.body && typeof r.body.getReader === 'function') {
+    const parts = []; let got = 0; const rd = r.body.getReader();
+    for (;;) { const { done, value } = await rd.read(); if (done) break; parts.push(value); got += value.length; onBytes(got, total); }
+    bytes = Buffer.concat(parts);
+  } else bytes = Buffer.from(await r.arrayBuffer());
+  onStage('check');
   const sha = createHash('sha256').update(bytes).digest('hex');
   if (sha !== f.sha256) return { ok: false, why: `${f.file} is not the published file (sha256 ${sha.slice(0, 16)}, published ${f.sha256.slice(0, 16)})` };
   const archive = join(dir, f.file);
   writeFileSync(archive, bytes);
+  onStage('unpack');
   const x = f.file.endsWith('.zip') ? await sh('tar', ['-xf', archive, '-C', dir]) : await sh('tar', ['-xzf', archive, '-C', dir]);
   if (!x.ok || !existsSync(bin)) return { ok: false, why: `unpacking ${f.file} failed: ${x.err.trim().slice(0, 200)}` };
   return { ok: true, bitcoind: bin, sha256: sha };

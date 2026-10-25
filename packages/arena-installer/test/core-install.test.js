@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createWizard } from '../src/wizard.js';
 import { nodeState, ownCoreOf } from '../src/state.js';
-import { syncStatus, diskCheck, NEEDS, ETA_MIN_SPAN_MS } from '../src/bitcoind.js';
+import { syncStatus, diskCheck, NEEDS, ETA_MIN_SPAN_MS, installCore } from '../src/bitcoind.js';
 
 function client(port) {
   let cookie = '';
@@ -87,10 +87,11 @@ test('Bitcoin Core goes to the chosen folder and syncs in the background: the wi
   const home = mkdtempSync(join(tmpdir(), 'arena-core-bg-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const configured = [];
+  let c, midway;   // the progress read while the download runs (playtest 2026-10-25: a bar for "Downloading Bitcoin Core")
   const coreKit = {
     detectBitcoind: async () => null,
     diskCheck: (dir) => diskCheck(home, { statfs: () => ({ bavail: (2000 * 2 ** 30) / 4096, bsize: 4096 }) }),
-    installCore: async () => ({ ok: true, bitcoind: '/b/bitcoind' }),
+    installCore: async (o) => { o.onStage('download'); o.onBytes(25e6, 50e6); midway = (await c.get('/api/core/progress')).json; o.onStage('check'); o.onStage('unpack'); return { ok: true, bitcoind: '/b/bitcoind' }; },
     configureCore: (o) => { configured.push(o); return { datadir: join(o.home, `bitcoin-${o.network}`), rpcUrl: 'http://127.0.0.1:48342/', cookiePath: join(o.home, 'c') }; },
     coreArgs: ({ bitcoind, datadir }) => [bitcoind, `-datadir=${datadir}`],
     installProgram: async () => ({ ok: true }),
@@ -101,7 +102,7 @@ test('Bitcoin Core goes to the chosen folder and syncs in the background: the wi
   const w = createWizard({ state: nodeState(home), release: '/r', coreKit, test: async (c) => { tested.push(c); return c.kind === 'electrum' && c.port === 40002 ? { ok: false, why: 'down' } : { ok: true, why: 'fine', source: { latencyMs: 9, height: 157544 } }; } });
   const server = http.createServer((q, s) => w.handle(q, s)); await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
   t.after(() => server.close());
-  const c = client(server.address().port);
+  c = client(server.address().port);
   await c.get(`/?t=${w.token}`);
   const rel = (await c.post('/api/core/plan', { dir: 'data/btc' })).json;
   assert.equal(rel.ok, false); assert.match(rel.why, /whole path/, 'a relative folder is refused');
@@ -110,6 +111,9 @@ test('Bitcoin Core goes to the chosen folder and syncs in the background: the wi
   const r = (await c.post('/api/core/install', { prune: true, dir: join(home, 'disk2') })).json;
   assert.equal(r.ok, true, r.why);
   assert.equal(configured[0].home, join(home, 'disk2'), 'the blocks go to the chosen folder');
+  assert.deepEqual([midway.running, midway.stages[0].state, midway.stages[0].part, midway.stages[0].text], [true, 'now', 0.5, '25 of 50 MB'], 'the download by its bytes');
+  const after = (await c.get('/api/core/progress')).json;
+  assert.deepEqual([after.running, after.stages.map((x) => x.state)], [false, ['done', 'done', 'done', 'done', 'done']]);
   assert.deepEqual(r.interim, { host: 'seat.example.com', port: 443 }, 'the first server that passed: ours (kanban #656)');
   assert.deepEqual([tested.find((c) => c.host === 'seat.example.com').ws, tested.find((c) => c.host === 'seat.example.com').path], [true, '/electrum'], 'over its websocket');
   const st = (await c.get('/api/state')).json;
@@ -207,4 +211,15 @@ test('a Core at the tip counts as synced even while it still says initial block 
     assert.equal((await at({ blocks: 150000, headers: 157600, verificationprogress: 0.95, initialblockdownload: true })).synced, false, 'blocks still coming');
     assert.equal((await at({ blocks: 157600, headers: 157600, verificationprogress: 0.97, initialblockdownload: true })).synced, false, 'still verifying');
   } finally { rm(dir, { recursive: true, force: true }); }
+});
+
+test('the Core download is counted as its bytes come, then checked against the published checksum', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'arena-core-dl-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const seen = [];
+  const r = await installCore({ home, platform: 'linux', arch: 'x64', fetcher: async () => new Response(Buffer.alloc(2048, 1), { headers: { 'content-length': '2048' } }),
+    onStage: (s) => seen.push(s), onBytes: (got, total) => seen.push(`${got}/${total}`) });
+  assert.equal(r.ok, false);
+  assert.match(r.why, /is not the published file/, 'a file that is not the release is refused');
+  assert.deepEqual([seen[0], seen.at(-2), seen.at(-1)], ['download', '2048/2048', 'check']);
 });

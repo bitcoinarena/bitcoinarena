@@ -102,3 +102,21 @@ export class SetupStatus extends React.Component {
       </div>);
   }
 }
+
+/**
+ * THE SETUP CARD ON THE OWNER'S OVERVIEW (the owner's playtest 2026-10-25, the dashboard's Setup card: "das soll auch in der owners area
+ * eingefügt werden"): GET /setup-status read at once and every 30 s while anything is still in progress; nothing once all is done.
+ */
+export class SetupCard extends React.Component {
+  constructor(props) { super(props); this.state = { status: props.initial || null }; this.load = this.load.bind(this); }
+  componentDidMount() { return this.load(); }
+  componentWillUnmount() { this.gone = true; clearTimeout(this.timer); }
+  async load() {
+    if (this.gone || !this.props.api) return;
+    let s = null; try { s = await this.props.api.get('/setup-status'); } catch { s = null; }
+    if (this.gone) return;
+    this.setState({ status: s });
+    clearTimeout(this.timer); this.timer = setTimeout(this.load, this.props.everyMs || 30000);
+  }
+  render() { return <SetupStatus status={this.state.status} />; }
+}

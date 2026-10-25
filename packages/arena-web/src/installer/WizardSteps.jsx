@@ -276,18 +276,32 @@ export class EmergencyStep extends React.Component {
     if (!r.ok) return this.setState({ msg: said(r) });
     this.props.reload();
   }
+  async copy() {
+    try { await navigator.clipboard.writeText(this.state.code); this.setState({ copied: true }); } catch { this.setState({ copied: false }); }
+  }
+  // THE CODE STANDS OUT, THE PAGE READS AT A GLANCE (the owner's playtest 2026-10-25: "Mach den Recovery code farblich markiert damit es
+  // auffällt" - "es ist zu sehr eine Wall of Text"): the code in a coloured box with Copy, then two short cards instead of paragraphs
   render() {
-    const { code, msg, busy } = this.state;
+    const { code, msg, busy, copied } = this.state;
     const nostr = this.props.st && this.props.st.control === 'nostr';
+    const secret = nostr ? 'Nostr key' : '24 words';
     return (
       <div className="aw">
         <h2>6. Your emergency code</h2>
-        <p>Write this code down and keep it with your {nostr ? 'Nostr key' : '24 words'}.</p>
-        <p className="code" id="emergency-code">{code || '…'}</p>
-        <h3>When you need it</h3>
-        <p>Your computer breaks, or your node will be offline for more than a day or two. Type the code at <b>testnet.bitcoin-arena.io/offline</b> from any phone or computer. Your node then leaves the network cleanly, and you keep your bond.</p>
-        <h3>What it cannot do</h3>
-        <p>It cannot move money or change anything else. So it is safe to type on other devices. Your {nostr ? 'Nostr key' : '24 words'} are not: type {nostr ? 'it' : 'them'} only on your own node.</p>
+        <p>Write it down and keep it with your {secret}.</p>
+        <div className="em-code">
+          <span className="em-label">Emergency code</span>
+          <p className="code" id="emergency-code">{code || '…'}</p>
+          {code ? <button type="button" className="ghost" id="emergency-copy" onClick={() => this.copy()}>{copied ? 'Copied ✓' : 'Copy'}</button> : null}
+        </div>
+        <div className="em-cards">
+          <div className="em-card"><b>🆘 When you need it</b>
+            <p>Your computer breaks, or your node will be offline for more than a day or two.</p>
+            <p>Type the code at <b>testnet.bitcoin-arena.io/offline</b>. Your node leaves cleanly and you keep your bond.</p></div>
+          <div className="em-card"><b>🔒 Safe to type anywhere</b>
+            <p>It cannot move money or change anything else.</p>
+            <p>Your {secret} {nostr ? 'is' : 'are'} different: type {nostr ? 'it' : 'them'} only on your own node.</p></div>
+        </div>
         <button type="button" id="emergency-done" disabled={busy || !code} onClick={this.done}>I have written the code down</button>
         <Msg r={msg} />
       </div>);

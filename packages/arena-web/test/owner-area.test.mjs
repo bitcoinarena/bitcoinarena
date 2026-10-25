@@ -23,7 +23,7 @@ test('the sidebar marks the sections that need the owner; one section shown; the
   const h = a.html();
   assert.equal((h.match(/<a href="#/g) || []).length, SECTIONS.length);
   assert.match(h, /<a href="#overview" data-s="overview" class="on">Overview<span class="dot" id="dot-overview"><\/span><\/a>/);
-  assert.match(h, /<section id="s-overview"><h2>Overview<\/h2><div class="card" id="needs"><p class="sub">checking this node…<\/p><\/div>/);
+  assert.match(h, /<section id="s-overview"><h2>Overview<\/h2><div id="setup-place"><\/div><div class="card" id="needs"><p class="sub">checking this node…<\/p><\/div>/);
   assert.match(h, /<section id="s-roles" hidden="">/);
   assert.match(h, /<div class="stat"><span>Custody<\/span><b class="ok">Guardian<\/b>/);
   assert.match(h, /<div class="stat"><span>Apps<\/span><b>2<\/b><small>nextblock v5, rock-paper-scissors v4<\/small>/);

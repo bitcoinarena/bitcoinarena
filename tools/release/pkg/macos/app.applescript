@@ -11,24 +11,68 @@ on sh(args)
 	return do shell script helper & " " & args
 end sh
 
+-- NEVER SILENT UNTIL THE BROWSER OPENS (the owner's playtest 2026-10-25: "Wenn ich BitcoinArena.App öffne passiert erstmal gar nichts bis
+-- der Browser öffnet"): a progress window from the first moment - preparing (the first start copies the node out of the app), starting
+-- the installer, waiting for its page - each step a call to the helper, the window updated between them
 on run
 	set helper to quoted form of (POSIX path of (path to me) & "Contents/Resources/arena-node-app")
+	set progress total steps to 3
+	set progress completed steps to 0
+	set progress description to "Starting Bitcoin Arena…"
+	set progress additional description to "Preparing your node. The first start copies it out of the app, which takes up to a minute."
 	try
-		set r to sh("start")
+		set r to sh("prepare")
 	on error msg
-		display dialog msg with title "Bitcoin Arena" buttons {"OK"} default button 1 with icon stop
-		quit
+		fail(msg)
 		return
 	end try
 	if r is "installed" then
+		set progress completed steps to 3
 		statusDialog()
 		quit
 		return
 	end if
 	set installing to true
-	if r starts with "started " then open location (text 9 thru -1 of r)
+	if r starts with "running " then
+		set progress completed steps to 3
+		set progress additional description to "The installer runs already. Opening its page…"
+		open location (text 9 thru -1 of r)
+		installerDialog()
+		return
+	end if
+	set progress completed steps to 1
+	set progress additional description to "Starting the installer…"
+	try
+		sh("launch")
+		set pageLink to "waiting"
+		repeat with i from 1 to 60
+			set pageLink to sh("wait-link")
+			if pageLink is not "waiting" then exit repeat
+			set progress completed steps to 2
+			set progress additional description to "Starting the installer… " & i & " s"
+			delay 1
+		end repeat
+	on error msg
+		set installing to false
+		fail(msg)
+		return
+	end try
+	if pageLink is "waiting" then
+		sh("stop")
+		set installing to false
+		fail("The installer did not start within a minute. Open Bitcoin Arena again; if it happens again, run Doctor.")
+		return
+	end if
+	set progress completed steps to 3
+	set progress additional description to "Opening the setup page in your browser…"
+	open location pageLink
 	installerDialog()
 end run
+
+on fail(msg)
+	display dialog msg with title "Bitcoin Arena" buttons {"OK"} default button 1 with icon stop
+	quit
+end fail
 
 on reopen
 	if installing then

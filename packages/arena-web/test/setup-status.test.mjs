@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { SetupStatus } from '../dist/test/setup-status.mjs';
+import { SetupStatus, SetupCard } from '../dist/test/setup-status.mjs';
 
 const card = (status) => renderToStaticMarkup(React.createElement(SetupStatus, { status: { ok: true, ...status } }));
 
@@ -39,4 +39,15 @@ test('LND: reached directly, over Tor, or not at all (a problem)', () => {
   assert.match(lnd({ how: 'direct', at: '203.0.113.5:9735' }), /reached directly at 203\.0\.113\.5:9735/);
   assert.match(lnd({ how: 'tor', at: 'abc.onion:9735' }), /reached over Tor \(no open port needed\)/);
   assert.match(lnd({ how: 'none', why: 'no Tor: the release has none' }), /<span class="bad">1 needs attention[\s\S]*other nodes cannot reach it \(no Tor: the release has none\)/);
+});
+
+test('the owner\'s Overview reads the setup\'s progress itself and again later (playtest 2026-10-25: "auch in der owners area")', async () => {
+  const asked = [];
+  const c = new SetupCard({ api: { get: async (p) => { asked.push(p); return { ok: true, core: null, address: { ok: true, url: 'https://n.example' } }; } }, everyMs: 60000 });
+  c.setState = (u) => Object.assign(c.state, u);
+  await c.componentDidMount();
+  assert.deepEqual(asked, ['/setup-status']);
+  assert.ok(c.timer, 'read again later');
+  assert.match(renderToStaticMarkup(c.render()), /id="setup-status"/);
+  c.componentWillUnmount();
 });

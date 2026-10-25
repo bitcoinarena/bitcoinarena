@@ -53,7 +53,9 @@ export class LightningStep extends React.Component {
   constructor(props) {
     super(props);
     const ln = props.st.lightning;
-    this.state = { conn: false, url: '', mac: '', cert: '', busy: false, lnMsg: null, lnOk: !!(ln && ln.pubkey), gwMsg: null, gwOk: false, funds: null, fundsWhy: null,
+    // THE GATEWAY ON ITS OWN PAGE once LND runs (the owner's playtest 2026-10-25: "Gateway soll sein eigener Bereich sein wenn LND fertig
+    // sein und nicht nur drunter spawnen"): LND's page ends with "Continue to the gateway"; a step opened again with LND running starts there
+    this.state = { conn: false, url: '', mac: '', cert: '', busy: false, lnMsg: null, lnOk: !!(ln && ln.pubkey), gwPage: !!(ln && ln.pubkey), gwMsg: null, gwOk: false, funds: null, fundsWhy: null,
       peer: '', sats: '200000', ...(props.initial || {}) };
     for (const f of ['own', 'connect', 'later', 'gwSetup', 'gwLater', 'watchLn', 'watchGw', 'funds', 'openChannel', 'progress']) this[f] = this[f].bind(this);
   }
@@ -161,6 +163,7 @@ export class LightningStep extends React.Component {
   }
   render() {
     const s = this.state; const syncing = !!(this.props.st.coreSync && this.props.st.coreSync.interim);
+    if (s.gwPage) return this.gatewayPage();
     return (
       <div className="aw">
         <h2>10. Lightning (custody)</h2>
@@ -178,21 +181,29 @@ export class LightningStep extends React.Component {
         {s.prog && s.prog.lnd && s.prog.lnd.elapsedMs !== undefined ? <ServiceProgress id="ln-progress" progress={s.prog.lnd} hints={LND_HINT} budgets={LND_BUDGET}
           slowAt={{ download: 120000, answer: 60000, wallet: 60000 }} slowText="LND takes longer than usual. Setup keeps asking it; the log below says what it is doing." logOf="LND's last messages:" /> : null}
         <Msg r={s.lnMsg} />
-        {s.lnOk ? <div id="ln-gw">
-          <h3>The gateway</h3>
-          <p>The gateway sends and receives Lightning payments for your federation's players, through this LND. Its wallet also comes from your 24 words.</p>
-          {this.seat()}
-          {s.funds ? <div>
-            <div className="row"><div style={{ flex: 3 }}><label htmlFor="ch-peer">Peer (pubkey@host:port)</label><input id="ch-peer" placeholder="02…@host:9735" value={s.peer} onChange={(e) => this.setState({ peer: e.target.value })} /></div>
-              <div><label htmlFor="ch-sats">Sat</label><input id="ch-sats" value={s.sats} onChange={(e) => this.setState({ sats: e.target.value })} /></div></div>
-            <button type="button" className="ghost" onClick={this.openChannel}>Open a channel</button> <button type="button" className="ghost" onClick={this.funds}>Refresh</button></div> : null}
-          {s.gwOk ? <button type="button" onClick={() => this.props.reload()}>Continue</button> : <>
-            <button type="button" id="gw-setup" disabled={s.busy} onClick={this.gwSetup}>Set up the gateway</button>
-            <button type="button" className="ghost" onClick={this.gwLater}>Skip the gateway for now</button></>}
-          {s.prog && s.prog.gateway && s.prog.gateway.elapsedMs !== undefined ? <ServiceProgress id="gw-progress" progress={s.prog.gateway} hints={GW_HINT} budgets={GW_BUDGET}
-            slowAt={{ answer: 60000 }} slowText="The gateway takes longer than usual. Setup keeps asking it; the log below says what it is doing." logOf="The gateway's last messages:" /> : null}
-          <Msg r={s.gwMsg} />
-        </div> : null}
+        {s.lnOk ? <button type="button" id="ln-next" onClick={() => this.setState({ gwPage: true })}>Continue to the gateway</button> : null}
+      </div>
+    );
+  }
+  gatewayPage() {
+    const s = this.state; const ln = this.props.st.lightning || {};
+    return (
+      <div className="aw" id="ln-gw">
+        <h2>10. Lightning: your gateway</h2>
+        <p className="gw-done"><span className="ok">✓</span> LND runs{ln.pubkey || (s.lnMsg && s.lnMsg.ok) ? <> · node <code>{short(ln.pubkey || '')}</code></> : null}</p>
+        <p>The gateway sends and receives Lightning payments for your federation's players, through your LND. Its wallet also comes from your 24 words.</p>
+        {this.seat()}
+        {s.funds ? <div>
+          <div className="row"><div style={{ flex: 3 }}><label htmlFor="ch-peer">Peer (pubkey@host:port)</label><input id="ch-peer" placeholder="02…@host:9735" value={s.peer} onChange={(e) => this.setState({ peer: e.target.value })} /></div>
+            <div><label htmlFor="ch-sats">Sat</label><input id="ch-sats" value={s.sats} onChange={(e) => this.setState({ sats: e.target.value })} /></div></div>
+          <button type="button" className="ghost" onClick={this.openChannel}>Open a channel</button> <button type="button" className="ghost" onClick={this.funds}>Refresh</button></div> : null}
+        {s.gwOk ? <button type="button" onClick={() => this.props.reload()}>Continue</button> : <>
+          <button type="button" id="gw-setup" disabled={s.busy} onClick={this.gwSetup}>Set up the gateway</button>
+          <button type="button" className="ghost" onClick={this.gwLater}>Skip the gateway for now</button></>}
+        {s.prog && s.prog.gateway && s.prog.gateway.elapsedMs !== undefined ? <ServiceProgress id="gw-progress" progress={s.prog.gateway} hints={GW_HINT} budgets={GW_BUDGET}
+          slowAt={{ answer: 60000 }} slowText="The gateway takes longer than usual. Setup keeps asking it; the log below says what it is doing." logOf="The gateway's last messages:" /> : null}
+        <Msg r={s.gwMsg} />
+        {!s.gwOk ? <p className="sub"><button type="button" className="link" onClick={() => this.setState({ gwPage: false })}>Back to LND</button></p> : null}
       </div>
     );
   }
@@ -200,6 +211,9 @@ export class LightningStep extends React.Component {
 
 // the total the wallet must receive, and its parts when there are more than the bond and its fees
 export const PART = Object.freeze({ bond: 'bond', fees: 'fees', custodyUpdate: 'this update', advertUpdate: 'advertisement update', pegIn: 'peg-in', outside: 'outside channel', ring: 'ring channel', liquidity: 'liquidity deposit (into LND)', otherNodes: 'the other nodes (handed on from this wallet)' });
+/** One line under each part of a custody deposit (the owner's playtest 2026-10-25: "more colorful", fewer words). */
+export const COVER_WHY = Object.freeze({ bond: 'locked; your node earns with it', pegIn: 'into the federation, so your gateway can pay out', ring: 'channel to the next node of your federation',
+  outside: 'channel to a well-connected Lightning node', advertUpdate: 'names your federation once it is founded', custodyUpdate: 'tells the network your node takes custody', fees: 'network fees' });
 export const needText = (need, parts) => `${n(need)}${parts && Object.keys(parts).length > 2 ? ` (${Object.entries(parts).map(([k, v]) => `${PART[k] || k} ${n(v)}`).join(', ')})` : ''}`;
 export const lockText = (l) => `The bond will be locked until block ${l.maturity} - ${l.blocks} blocks from now, about ${new Date(l.estimatedMs).toUTCString()}. The block number is the rule; the date is an estimate (testnet4 makes a block about every 10 minutes). Until then the bond cannot be withdrawn. After that, you withdraw it from your owner page.`;
 /** What the deposit check found, in words; with the network's minimum for a new node when it is above the floor (§23A.3a, kanban #543). */
@@ -244,6 +258,23 @@ export class BondStep extends React.Component {
     this.props.reload();
   }
   async later() { const r = await this.props.post('/api/bond/later'); if (r.ok) this.props.reload(); }
+  async copyAddr() {
+    try { await navigator.clipboard.writeText((this.props.st.wallet || {}).address); this.setState({ copied: true }); } catch { this.setState({ copied: false }); }
+  }
+  /** What a custody node's deposit pays for: one coloured tile per part, with its amount (the wallet's own numbers). */
+  covers() {
+    const w = this.props.st.wallet || {}; const f = this.state.found;
+    const parts = (f && f.parts) || w.parts || {};
+    const order = ['bond', 'pegIn', 'ring', 'outside', 'advertUpdate', 'custodyUpdate', 'liquidity', 'otherNodes', 'fees'];
+    const keys = Object.keys(parts).length ? order.filter((k) => parts[k]).concat(Object.keys(parts).filter((k) => !order.includes(k))) : [];
+    if (!keys.length) return <p className="sub">Custody needs more than the bond: the peg-in, two Lightning channels and a little for the advertisement. It all stays in your node's wallet until it is needed.</p>;
+    return (
+      <div className="covers"><b>What your deposit covers</b>
+        <div className="cover-tiles">{keys.map((k) => (
+          <div key={k} className={`cover c-${k}`}><span className="amt">{n(parts[k])} sat</span><span className="what">{PART[k] || k}</span>{COVER_WHY[k] ? <span className="why">{COVER_WHY[k]}</span> : null}</div>))}</div>
+        <p className="sub">It all stays in your node's wallet until it is needed.</p>
+      </div>);
+  }
   coinChoice() {
     const { coins, busy } = this.state; const w = this.props.st.wallet || {};
     const pick = (k, title, text) => (
@@ -254,10 +285,15 @@ export class BondStep extends React.Component {
         {pick('auto', 'Get test coins automatically', 'The Bitcoin Arena faucet sends exactly what is missing to your node. Free, once per node.')}
         {coins === 'auto' ? <button type="button" id="coins-auto" disabled={busy} onClick={this.autoCoins}>Send me the test coins</button> : null}
         {pick('guided', 'Get them myself', 'From a public testnet4 faucet, in three steps.')}
-        {coins === 'guided' ? <ol className="guided">
-          <li>Copy your node's address: <code>{w.address}</code></li>
-          <li>Open a faucet and paste the address: {FAUCETS.map(([name, url], i) => <React.Fragment key={url}>{i ? ', ' : ''}<a href={url} target="_blank" rel="noopener noreferrer">{name}</a></React.Fragment>)}. Some give less than you need; then use two.</li>
-          <li>Come back and press <b>Check for my deposit</b>. It shows as soon as the coins are sent.</li>
+        {/* THREE STEPS AT A GLANCE (the owner's playtest 2026-10-25: "Less wall of text and clearer and more colorful") */}
+        {coins === 'guided' ? <ol className="guided steps3">
+          <li><span className="n">1</span><div><b>Copy your address</b>
+            <div className="addr-copy"><code>{w.address}</code><button type="button" className="ghost" id="addr-copy" onClick={() => this.copyAddr()}>{this.state.copied ? 'Copied ✓' : 'Copy'}</button></div></div></li>
+          <li><span className="n">2</span><div><b>Paste it at a faucet</b>
+            <div className="faucets">{FAUCETS.map(([name, url]) => <a key={url} className="faucet" href={url} target="_blank" rel="noopener noreferrer">{name} ↗</a>)}</div>
+            <p className="sub">One faucet may give too little. Then use a second one.</p></div></li>
+          <li><span className="n">3</span><div><b>Come back and press "Check for my deposit"</b>
+            <p className="sub">Your coins show as soon as they are sent.</p></div></li>
         </ol> : null}
       </div>);
   }
@@ -269,11 +305,11 @@ export class BondStep extends React.Component {
         <h2>13. The bond</h2>
         {later
           ? <p>Your node already has a bond. Adding custody updates that bond's advertisement to say your node takes custody. <b>You do not post a second bond.</b> You need a little for that update, a reserve for the update that names your federation once it is founded, and the gateway's peg-in. Send <b>{need}</b> sat to your node's wallet:</p>
-          : <p>Your node serves rounds once it has a bond: bitcoin locked on testnet4 under your node's key. Send at least <b>{need}</b> sat (fees included) to your node's own wallet:</p>}
-        <p className="addr"><code>{w.address}</code></p>
+          : <p>Your node serves rounds once it has a bond: bitcoin locked on testnet4 under your node's key. Send at least <b>{this.custody() ? `${n(w.needSats)} sat` : `${need} sat`}</b> to your node's own wallet{this.custody() ? '. What it covers is below.' : ' (fees included).'}</p>}
+        {this.state.coins === 'guided' ? null : <p className="addr"><code>{w.address}</code></p>}
         {this.coinChoice()}
         {this.custody() ? <div>
-          {later ? null : <p>Custody needs more than the bond: a little for the advertisement that names your federation once it is founded, the <b>peg-in</b> (bitcoin your gateway moves into the federation so it can pay out over Lightning), the <b>outside channel</b> (100,000 sat) to a well-connected Lightning node, and the <b>ring channel</b> (150,000 sat) your node opens to the next node of the federation. It all stays in your node's wallet until it is needed.</p>}
+          {later ? null : this.covers()}
           <label htmlFor="b-pegin">Peg-in for the gateway (sat)</label><input id="b-pegin" value={pegIn} onChange={(e) => this.setState({ pegIn: e.target.value })} /></div> : null}
         <button type="button" className="ghost" id="b-check" disabled={busy} onClick={this.check}>Check for my deposit</button>
         <Msg r={msg} />
