@@ -22,7 +22,7 @@ import { WebSocket } from 'ws';
 // 9352; ARENA_CDP_PORT still overrides. Measured against 9351 with the Daily
 // open: 1 pass, 18.2 s.
 const PORT = Number(process.env.ARENA_CDP_PORT || 9351);
-const PAGE = process.env.ARENA_PAGE || 'https://btc-logistics-core.pages.dev/';
+const PAGE = process.env.ARENA_PAGE || 'https://testnet.bitcoin-arena.io/';
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** The few CDP calls this needs, against a browser somebody else is running. */
