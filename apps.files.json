@@ -2,7 +2,7 @@
   "about": "What a node downloads of each app at its pinned commit (kanban #575): every file with its SHA-256. Written by tools/pin-apps.mjs from the apps' checkouts; never by hand.",
   "apps": {
     "arena-app-next-block": {
-      "commit": "c93fc92e1bdb28916e04a74f0fbd76a6afc37dc8",
+      "commit": "0977780ed27bf665d5f1504d9622c2c5122e405a",
       "files": {
         "README.md": "7fc7113426fb4d9d22e36b8000a3693e669f40de4e020c5fb1bf89014dafc482",
         "app.json": "85e362fde9f4177c55237f0eeabbcbc4af5b7b46391277a9556ef757242a314d",
@@ -315,7 +315,7 @@
       ]
     },
     "arena-app-rock-paper-scissors": {
-      "commit": "d1ec06b2b5d931546941296f2f6472d48c579f3f",
+      "commit": "cd7d2d22af9d7e3a53a82b04b579bdc169319672",
       "files": {
         "app.json": "414384d51cb16f11d9733f9edc30d87f28a269acc1e4b2e00fa71c9ae6bdae93",
         "brand/rps-icon.svg": "ae9a1a196e3c3194a269df00eaf94ddcfe22ededad568cd19bebb025b02d8f36",
@@ -351,7 +351,7 @@
       "exec": []
     },
     "arena-app-up-or-down": {
-      "commit": "1655dce19773630c3fc8ecd260ee435d289fd88d",
+      "commit": "e152e3a79ddecbe756d017bc7245e8f54f47aad6",
       "files": {
         "app.json": "3482954b8dd93640ac044b3b4f82072b0785031f6da0c62ddf62c79437773ad1",
         "brand/updown-icon.svg": "3b6d03a10e6e3173ad19cbfe6c3850b8c78d7c37fdd0f06ad25e1c4299a8ec4b",
