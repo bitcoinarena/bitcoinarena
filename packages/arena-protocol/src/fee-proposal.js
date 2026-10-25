@@ -36,7 +36,7 @@ export const FEES = Object.freeze({
   marketNodeBps:     Object.freeze({ code: 7,  today: 40,  min: 10,  max: 100 }),
   marketDonationBps: Object.freeze({ code: 8,  today: 40,  min: 10,  max: 100, donation: true }),
   marketReserveBps:  Object.freeze({ code: 9,  today: 20,  min: 5,   max: 50 }),
-  websitePct:        Object.freeze({ code: 10, today: 20,  min: 0,   max: 40 }),
+  websitePct:        Object.freeze({ code: 10, today: 10,  min: 0,   max: 40 }),   // 20 until 2026-10-25 (kanban #675)
 });
 /** The sums the set must keep: a round at most 10 %, an item's parts exactly 100 %, a market at most 2 %. */
 export const ROUND_TOTAL_MAX_BPS = 1000, ITEM_TOTAL_PCT = 100, MARKET_TOTAL_MAX_BPS = 200;

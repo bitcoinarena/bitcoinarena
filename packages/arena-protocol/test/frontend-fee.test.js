@@ -43,8 +43,8 @@ test('version 9 names it; an entry carries the website\'s key last, signed; ever
   assert.throws(() => decodeEntryContract(bad), /33-byte compressed payout key/);
 });
 
-test('the website is paid 20% of the nodes\' fee on the stakes it brought; the nodes the rest; the player nothing more', () => {
-  assert.equal(FRONTEND_FEE_PERCENT, 20n);
+test('the website is paid 10% of the nodes\' fee on the stakes it brought; the nodes the rest; the player nothing more', () => {
+  assert.equal(FRONTEND_FEE_PERCENT, 10n, "10 % since 2026-10-25 (kanban #675; 20 % before)");
   const entries = [
     { stakeMsat: 2000000n, outcome: DELIVERED, frontendPk: site(0xaa) },
     { stakeMsat: 2000000n, outcome: DELIVERED, frontendPk: site(0xaa) },
@@ -57,20 +57,22 @@ test('the website is paid 20% of the nodes\' fee on the stakes it brought; the n
   const table = { gross, fee: (gross * BigInt(NODE_FEE_BPS)) / 10000n };
   assert.deepEqual([table.gross, table.fee], [8000000n, 400000n], 'the fee is the network\'s 5% of the counted gross, as before');
   const s = frontendShares({ entries, fee: table.fee, gross: table.gross });
-  // site aa brought 4,000,000 of 8,000,000: 20% of half the fee = 40,000; bb 3,000,000 (its void entry brings nothing): 30,000
-  assert.deepEqual([...s.shares].map(([k, v]) => [k.slice(0, 4), v]), [['02aa', 40000n], ['02bb', 30000n]]);
-  assert.equal(s.totalMsat, 70000n);
-  assert.equal(table.fee - s.totalMsat, 330000n, 'the nodes keep 330,000 of their 400,000');
-  // every entry referred: the nodes keep exactly 80%
+  // site aa brought 4,000,000 of 8,000,000: 10% of half the fee = 20,000; bb 3,000,000 (its void entry brings nothing): 15,000
+  assert.deepEqual([...s.shares].map(([k, v]) => [k.slice(0, 4), v]), [['02aa', 20000n], ['02bb', 15000n]]);
+  assert.equal(s.totalMsat, 35000n);
+  assert.equal(table.fee - s.totalMsat, 365000n, 'the nodes keep 365,000 of their 400,000');
+  // every entry referred: the nodes keep exactly 90%
   const all = entries.slice(0, 4).map((e) => ({ ...e, frontendPk: site(0xaa) }));
-  assert.equal(frontendShares({ entries: all, fee: 400000n, gross: 8000000n }).totalMsat, 80000n);
+  assert.equal(frontendShares({ entries: all, fee: 400000n, gross: 8000000n }).totalMsat, 40000n);
+  // a round whose fees in force name another share (a passed fee proposal): that share
+  assert.equal(frontendShares({ entries: all, fee: 400000n, gross: 8000000n, pct: 20n }).totalMsat, 80000n);
   // the player's fee lock is the network's 5% of the stake whether or not a website brought it
   assert.equal(entryFeeMsat(2000000n), 100000n);
 });
 
-// THE SAME 20% ON AN ORDER BOOK (comment 2295): the book's fee lines, at the plan's numbers - two 10,000 sat orders, YES and
+// THE SAME 10% ON AN ORDER BOOK (comment 2295): the book's fee lines, at the plan's numbers - two 10,000 sat orders, YES and
 // NO at 0.50, both filled, Up/Down fees (node 0.5% + donation 0.5%), YES wins.
-test('an order book pays the website 20% of the nodes\' part of the fees; the donation and the players are untouched', async () => {
+test('an order book pays the website 10% of the nodes\' part of the fees; the donation and the players are untouched', async () => {
   const { bookLedger, bookSettlement } = await import('../src/book-ledger.js');
   const { YES, NO } = await import('../src/order-book.js');
   const { bookLockSettlement } = await import('../src/lock-settlement.js');
@@ -101,8 +103,8 @@ test('an order book pays the website 20% of the nodes\' part of the fees; the do
   assert.equal(feeMsat, 100000n);
   assert.equal(table.feesDueMsat, 200000n);
   assert.deepEqual(lines(plain, 'signer node'), [50000n, 50000n]);
-  assert.deepEqual(lines(viaSite, 'signer node'), [40000n, 40000n], 'the nodes earn 20% less');
-  assert.deepEqual(lines(viaSite, 'frontend'), [20000n], 'the website: 20% of the nodes\' 100,000');
+  assert.deepEqual(lines(viaSite, 'signer node'), [45000n, 45000n], 'the nodes earn 10% less');
+  assert.deepEqual(lines(viaSite, 'frontend'), [10000n], 'the website: 10% of the nodes\' 100,000');
   assert.equal(sumOf(lines(plain, 'donation key')), 100000n);
   assert.equal(sumOf(lines(viaSite, 'donation key')), 100000n, 'the donation is untouched');
   const others = (s) => s.payouts.filter((p) => !['signer node', 'frontend', 'donation key'].includes(p.kind)).map((p) => [toHex(p.payoutPk), p.msat]);

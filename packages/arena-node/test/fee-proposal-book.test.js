@@ -71,12 +71,12 @@ test('kept, signalled, voted and accepted with 2 of 3 protocol developers: befor
   assert.deepEqual([after.roundNodeBps, after.roundDonationBps, after.roundReserveBps, after.marketReserveBps], [350, 450, 200, 30]);
   // THE SEAT'S SETTLEMENT INPUTS: a version-11 round of each census height, the order book's market rates
   const seat = { feesFor: (c) => w.b.feesAt(Number(c.censusHeight)) };
-  assert.deepEqual(LockSettlement.prototype.roundFees.call(seat, v11(ACTIVATION - 1)), { websitePct: 20, feeBps: 400 });
-  assert.deepEqual(LockSettlement.prototype.roundFees.call(seat, v11(ACTIVATION)), { websitePct: 20, feeBps: 350 });
-  assert.deepEqual(LockSettlement.prototype.roundFees.call(seat, { protocolVersion: 3, stakeMsat: 1000000n, censusHeight: ACTIVATION }), { websitePct: 20 }, 'an older round keeps its own node fee');
-  assert.deepEqual(marketRates(MANIFEST_V13, w.b.feesAt(ACTIVATION - 1)), { feeBps: 100, nodeBps: 40, donationBps: 60, reserveBps: 20, websitePct: 20 });
-  assert.deepEqual(marketRates(MANIFEST_V13, w.b.feesAt(ACTIVATION)), { feeBps: 110, nodeBps: 40, donationBps: 70, reserveBps: 30, websitePct: 20 });
-  assert.deepEqual(marketRates(MANIFEST_V2, w.b.feesAt(ACTIVATION)), { feeBps: 100, nodeBps: 50, donationBps: 50, reserveBps: 0, websitePct: 20 }, 'v2 pays no reserve: its own terms');
+  assert.deepEqual(LockSettlement.prototype.roundFees.call(seat, v11(ACTIVATION - 1)), { websitePct: 10, feeBps: 400 });
+  assert.deepEqual(LockSettlement.prototype.roundFees.call(seat, v11(ACTIVATION)), { websitePct: 10, feeBps: 350 });
+  assert.deepEqual(LockSettlement.prototype.roundFees.call(seat, { protocolVersion: 3, stakeMsat: 1000000n, censusHeight: ACTIVATION }), { websitePct: 10 }, 'an older round keeps its own node fee');
+  assert.deepEqual(marketRates(MANIFEST_V13, w.b.feesAt(ACTIVATION - 1)), { feeBps: 100, nodeBps: 40, donationBps: 60, reserveBps: 20, websitePct: 10 });
+  assert.deepEqual(marketRates(MANIFEST_V13, w.b.feesAt(ACTIVATION)), { feeBps: 110, nodeBps: 40, donationBps: 70, reserveBps: 30, websitePct: 10 });
+  assert.deepEqual(marketRates(MANIFEST_V2, w.b.feesAt(ACTIVATION)), { feeBps: 100, nodeBps: 50, donationBps: 50, reserveBps: 0, websitePct: 10 }, 'v2 pays no reserve: its own terms');
   // an entry to a version-11 round of that height must pay the new split, and the old one is refused by name
   const split = roundSplitBps(after);
   const key = Uint8Array.from([0x02, ...new Uint8Array(32).fill(0x77)]);

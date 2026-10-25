@@ -73,12 +73,12 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    (the template as its series line) and believes a line only once it hashes to that series id, then the contract must be
    its round byte for byte (`fetchSeriesTemplate`, `seriesRoundCheck`).
 5. **Sponsored pots** (4) and **frontend fees** (7) - money paths, each with its own tests and a regtest rehearsal.
-   **Frontend fees** (7). State: built (protocol 2026.0.9, RULED 2026-10-15, path (a): out of the nodes' 5%, 20% of
+   **Frontend fees** (7). State: built (protocol 2026.0.9, RULED 2026-10-15, path (a): out of the nodes' 5%, 10% (20% until 2026-10-25, #675) of
    it, the player's stake not increased). An entry names its website's payout key (`frontendPk`, marker 0xac, signed); the
-   settlement pays that key 20% of the nodes' fee on the stakes it brought, off the top of the nodes' part of the fee locks
+   settlement pays that key 10% of the nodes' fee on the stakes it brought, off the top of the nodes' part of the fee locks
    (fee.js `frontendShares`, lock-settlement.js), and the nodes share the rest; the player's stake, fee lock and donation are
    unchanged. Only on a version-9 round. The page names its own key from daily.json `frontend` (5b8ae594). Order books pay
-   it too (comment 2295): 20% of the nodes' part of each claimed order's fees, before the seats' lines (`bookLockSettlement`).
+   it too (comment 2295): 10% of the nodes' part of each claimed order's fees, before the seats' lines (`bookLockSettlement`).
 6. Then 8-16 by demand.
    **Developer devnet** (15). State: built. `node packages/arena-node/tools/devnet.mjs up | status | play | replay | down`, everything
    in one directory (DEVNET_DIR) on ports derived from one base (DEVNET_BASE_PORT, default 24000; all below 32768, none of the
