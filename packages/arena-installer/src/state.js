@@ -15,7 +15,7 @@ import { homedir } from 'node:os';
 /** The liquidity provider service's local port (127.0.0.1): its claim, and a new top-up address for the owner page. */
 export const LIQUIDITY_PROVIDER_PORT = port(8477);   // + ARENA_PORT_OFFSET (instance.js)
 // THE APPS STEP (kanban #569, the owner 2026-10-21: "a step in the installer where all apps are automatically selected"): after the roles
-export const STEPS = Object.freeze(['start', 'chain', 'roles', 'apps', 'seed', 'owner', 'reach', 'service', 'lightning', 'federation', 'promise', 'bond', 'done']);
+export const STEPS = Object.freeze(['start', 'chain', 'roles', 'apps', 'seed', 'emergency', 'owner', 'reach', 'service', 'lightning', 'federation', 'promise', 'bond', 'done']);
 
 /** Where a node lives unless told otherwise: $ARENA_HOME, else ~/.arena-node. */
 export const defaultHome = (env = process.env) => env.ARENA_HOME || join(homedir(), '.arena-node');
@@ -95,6 +95,9 @@ export const doneOf = (s) => {
   const d = { ...((s && s.done) || {}) };
   if (!d.apps && d.seed) d.apps = d.seed;
   if (!d.start && (d.chain || d.seed)) d.start = d.chain || d.seed;   // (kanban #652: a state from before New / Restore that is past it)
+  // (kanban #647: an install from before the code's own step - no start step either - that is past the owner, or any past the address)
+  const older = !((s && s.done) || {}).start;
+  if (!d.emergency && (d.reach || d.service || (older && d.owner))) d.emergency = d.reach || d.service || d.owner;
   return d;
 };
 

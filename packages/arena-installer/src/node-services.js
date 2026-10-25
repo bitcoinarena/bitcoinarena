@@ -174,7 +174,7 @@ export async function chainCall({ url, cookie, method, params = [], fetcher = fe
  * What each service serves, asked: { ok, says }, or null when there is nothing to ask beyond its process. `node` from nodeOf.
  * `local` the seat's identity when it answered (the tunnel's must be the same).
  */
-async function probeOf(svc, { node, fetcher, local, dnsRetries = 2, dnsPauseMs = 5000 }) {
+export async function probeOf(svc, { node, fetcher, local, dnsRetries = 2, dnsPauseMs = 5000 }) {
   const v = node.conf.values, s = node.state;
   try {
     if (svc.id === 'node') {
@@ -222,11 +222,17 @@ async function probeOf(svc, { node, fetcher, local, dnsRetries = 2, dnsPauseMs =
       return (await portOpen(p)) ? { ok: true, says: `SOCKS on port ${p}` } : { ok: false, says: `nothing listens on its SOCKS port ${p}` };
     }
     if (svc.id === 'chain-bridge' || svc.id === 'bitcoind-testnet4') {
-      const url = svc.id === 'chain-bridge' || !s.core ? v.bitcoind_url : (s.chain && s.chain.url) || v.bitcoind_url;
-      const cookie = svc.id === 'chain-bridge' || !s.core ? v.bitcoind_cookie : (s.chain && s.chain.cookiePath) || v.bitcoind_cookie;
+      // BITCOIN CORE ASKED ON ITS OWN PORT ONLY (kanban #640, the owner's playtest 2026-10-25: "restarting the electrum server, marks also the
+      // bitcoin server as available and running eventho its not installed or running"): on an Electrum node the seat's bitcoind_url is the
+      // chain bridge, so asking it for Core made the bridge answer for Core
+      const core = (s.core && s.core.networks && s.core.networks.testnet4) || null;
+      const own = core ? { url: core.rpcUrl, cookie: core.cookiePath } : s.chain && s.chain.kind === 'core' ? { url: s.chain.url, cookie: s.chain.cookiePath } : null;
+      if (svc.id === 'bitcoind-testnet4' && !own) return { ok: false, says: 'no Bitcoin Core is set up for this node' };
+      const url = svc.id === 'chain-bridge' ? v.bitcoind_url : own.url;
+      const cookie = svc.id === 'chain-bridge' ? v.bitcoind_cookie : own.cookie;
       if (!url || !cookie) return null;
       const b = await chainCall({ url, cookie, method: 'getblockchaininfo', fetcher });
-      const synced = !b.initialblockdownload && b.blocks >= b.headers - 1;
+      const synced = b.blocks >= b.headers - 1 && b.headers > 0 && (!b.initialblockdownload || Number(b.verificationprogress) >= 0.9999);   // (kanban #636)
       return { ok: synced, says: `${b.chain} block ${b.blocks}${synced ? '' : ` of ${b.headers} (syncing)`}`, height: b.blocks };
     }
     if (svc.id === 'liquidity' && v.liquidity_provider_url) {

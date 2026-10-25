@@ -68,3 +68,22 @@ test('a block Esplora changed is never handed on', async (t) => {
   t.after(() => { b.close(); rmSync(home, { recursive: true, force: true }); });
   await assert.rejects(b.call('getblock', [TESTNET4_GENESIS, 0]), /does not match its header/);
 });
+
+// A FAILING SERVER IS LEFT FOR THE NEXT (kanban #639, the owner's playtest: "if the selected electrum server errors, nothing can be done"):
+// the call that fails says so, the next call goes to the next known server and is answered
+test('when its Electrum server fails, the bridge goes on with the next known one', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'arena-bridge-'));
+  const asked = [];
+  const session = async ({ host }) => {
+    asked.push(host);
+    if (host === 'dead') throw new Error('connect ECONNREFUSED');
+    return { call: async (m) => (m === 'blockchain.headers.subscribe' ? { height: 0, hex: G_HEADER } : G_HEADER), close: () => {} };
+  };
+  const logs = [];
+  const b = createBridge({ electrum: { host: 'dead', port: 1, tls: false }, fallbacks: [{ host: 'dead', port: 1 }, { host: 'alive', port: 2, tls: true }], home, session, fetcher: async () => new Response('{}'), log: (l) => logs.push(l) });
+  t.after(() => { b.close(); rmSync(home, { recursive: true, force: true }); });
+  await assert.rejects(b.call('getblockcount'), /dead:1: connect ECONNREFUSED/);
+  assert.equal(await b.call('getblockcount'), 0, 'the next call: the next server');
+  assert.deepEqual(asked, ['dead', 'alive'], 'the saved server once in the list');
+  assert.match(logs.join('\n'), /dead:1 failed .*next: alive:2/);
+});
