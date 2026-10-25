@@ -38,7 +38,7 @@ function linesOf(w, players) {
   };
 }
 
-test('the website is paid 20% of the nodes\' 5% from the fee locks; the nodes earn that much less; the players pay and get exactly what they would', async () => {
+test('the website is paid 10% of the nodes\' 5% from the fee locks; the nodes earn that much less; the players pay and get exactly what they would', async () => {
   const w = await lockRound({ stakeMsat: STAKE, serveOpts: { plugins: [TALLY], donationSets: [TEST_DONATION_SET_KEYS_REGTEST] }, round: TALLY_ROUND });
   try {
     const play = { adapter: TALLY_CORE.adapter, config: {} };
@@ -65,16 +65,16 @@ test('the website is paid 20% of the nodes\' 5% from the fee locks; the nodes ea
     assert.deepEqual(facts.stakeEach, [[STAKE, STAKE], [STAKE, STAKE]], 'a player\'s stake is not increased');
     assert.deepEqual(facts.playersPaid[0], facts.playersPaid[1], 'the players are paid exactly the same lines');
     assert.equal(plain.lines.website.length, 0);
-    assert.deepEqual(site.lines.website, [fee / 5n], 'the website is paid 20% of the nodes\' fee (the mock federation charges no fee)');
+    assert.deepEqual(site.lines.website, [fee / 10n], 'the website is paid 10% of the nodes\' fee (the mock federation charges no fee; 20 % before kanban #675)');
     assert.equal(facts.nodesPaid[0], fee);
-    assert.equal(facts.nodesPaid[1], fee - fee / 5n, 'the nodes earn exactly that much less');
+    assert.equal(facts.nodesPaid[1], fee - fee / 10n, 'the nodes earn exactly that much less');
     assert.equal(facts.claimed[0], facts.claimed[1], 'the same locks are claimed');
   } finally { await w.close(); }
 });
 
 // THE SAME ON AN ORDER BOOK (comment 2295): the test Up/Down market (node 0.5% + donation 0.5%), two 10,000 sat orders,
 // YES and NO at 0.50, both filled, Up wins - once with no website, once at 2026.0.9 with both orders naming one.
-test('an order book pays the website 20% of the nodes\' part of its fees; the nodes 20% less; donation and players unchanged', { timeout: 170000 }, async () => {
+test('an order book pays the website 10% of the nodes\' part of its fees; the nodes 10% less; donation and players unchanged', { timeout: 170000 }, async () => {
   const { UPDOWN, UPDOWN_TERMS, UPDOWN_PERIOD_MS } = await import('./plugins/updown/index.js');
   const { marketExpiryBlocks } = await import('../../arena-protocol/src/lock-expiry.js');
   const P = Number(UPDOWN_PERIOD_MS);
@@ -131,8 +131,8 @@ test('an order book pays the website 20% of the nodes\' part of its fees; the no
     console.log('  BOOK FRONTEND:', JSON.stringify({ plain: { nodes: plain.nodes, donation: plain.donation, winners: plain.winners, fee: plain.fee, stake: plain.stake },
       site: { nodes: site.nodes, website: site.website, donation: site.donation, winners: site.winners, fee: site.fee, stake: site.stake } }, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
     assert.deepEqual(plain.nodes, [50000n, 50000n]);
-    assert.deepEqual(site.nodes, [40000n, 40000n], 'the nodes earn 20% less');
-    assert.deepEqual(site.website, [20000n]);
+    assert.deepEqual(site.nodes, [45000n, 45000n], 'the nodes earn 10% less');
+    assert.deepEqual(site.website, [10000n]);
     assert.equal(plain.website.length, 0);
     assert.deepEqual([plain.donation, site.donation], [100000n, 100000n]);
     assert.deepEqual([plain.winners, site.winners], [[19800000n], [19800000n]]);

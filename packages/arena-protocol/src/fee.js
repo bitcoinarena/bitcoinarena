@@ -198,13 +198,14 @@ export function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE
 }
 
 /**
- * THE WEBSITE THAT BROUGHT AN ENTRY IS PAID 20% OF THE NODES' FEE ON IT (2026.0.9, roadmap item 7; RULED the owner
+ * THE WEBSITE THAT BROUGHT AN ENTRY IS PAID 10% OF THE NODES' FEE ON IT (20% until 2026-10-25, kanban #675: "improve on referrer
+ * program, reduce fee to 10%"; no website had been paid by then) (2026.0.9, roadmap item 7; RULED the owner
  * 2026-10-15, path (a): "Take it out of the nodes' 5% fee, 20% of that fee, so nodes earn less ... The player's stake is not increased
  * by this fee"). Per website payout key (hex, 33 bytes): `fee` x 20% x the stakes it brought / `gross` - the nodes' fee table's own
  * fee and gross - floored; the nodes share what is left of their fee. Refunded entries bring nothing. Answers
  * { shares: Map key -> msat (keys in ascending order), totalMsat }.
  */
-export const FRONTEND_FEE_PERCENT = 20n;
+export const FRONTEND_FEE_PERCENT = 10n;
 export function frontendShares({ entries, fee, gross, pct = FRONTEND_FEE_PERCENT }) {
   const brought = new Map();
   for (const e of entries || []) {
