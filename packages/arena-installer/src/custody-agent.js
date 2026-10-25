@@ -144,7 +144,7 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
       const { coins } = await chainKit.coinsOf(s.chain, w.spk);
       const nodeSecret = nodeSecretOf();
       const { schnorr } = await import('@noble/curves/secp256k1.js');
-      const advert = { ...advertFor({ nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles, endpoint: s.reach.url,
+      const advert = { ...advertFor({ hostedGames: s.hostedGames, nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles, endpoint: s.reach.url,
         payoutPubkey: payoutKeyOf(seed), maturity: s.bond.maturity, softwareHash: commitOf(), guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
         // THE EMERGENCY KEY KEPT (§23A.5a): the census reads a node's newest advertisement, and an update without the key left a guardian
         // unable to leave by its emergency code ("that node's advertisement names no emergency key") - the guardians it exists for

@@ -14,10 +14,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
-import { advertFor, advertRoles, buildAdvertUpdate, EMERGENCY_IN_ADVERT } from './bond.js';
+import { advertFor, advertRoles, buildAdvertUpdate, EMERGENCY_IN_ADVERT, NEXTBLOCK_GAME_ID } from './bond.js';
 import { emergencyOf } from './seed.js';
 import { nodeState, guardianSetupOf } from './state.js';
-import { fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { fromHex, toHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.js';
 
 export const ADVERT_ROLES = Object.freeze(['game', 'verify', 'settlement', 'relay']);
 
@@ -49,6 +50,23 @@ export async function changeRolesOnNode({ home, release, roles, custody, post = 
   const after = { roles: advertRoles(next).sort(), custody: custodyNow };
   if (!after.roles.length && !custodyNow) return { ok: false, why: 'a node with no role at all serves nothing: keep at least one' };
   if (JSON.stringify(before) === JSON.stringify(after)) return { ok: false, why: 'those are the roles this node already advertises' };
+  const built = await advertUpdateOf({ st, s, release, roles: next, guardianOf, nowMs, chainKit });
+  if (!built.ok) return built;
+  const u = built.update;
+  const plan = { before, after, bond: `${s.bond.txid}:${s.bond.vout || 0}`, feeSats: String(u.fees.funding + u.fees.update), countsAfter: 6 };
+  if (!post) return { ok: true, plan };
+  await chainKit.broadcast(s.chain, u.funding.hex);
+  const txid = await chainKit.broadcast(s.chain, u.update.hex);
+  st.save({ roles: next, rolesUpdate: { txid, advertId: u.advertId, before, after, atMs: nowMs } });
+  return { ok: true, plan, update: { txid } };
+}
+
+/**
+ * THE NODE'S ADVERTISEMENT, REBUILT AND PUT IN AN UPDATE OF ITS BOND (shared by the roles change and the hosted games' refresh): its
+ * endpoint, payout key, guardian endpoint and seats, emergency key and hosted games as the state says, `roles` and `hostedGames` as
+ * asked, a new timestamp; paid from the node's own wallet. Answers { ok, update } (buildAdvertUpdate's) or { ok: false, why }.
+ */
+async function advertUpdateOf({ st, s, release, roles, hostedGames = s.hostedGames, guardianOf = null, nowMs = Date.now(), chainKit }) {
   const seedHex = st.readSecret('seed.hex');
   if (!seedHex) return { ok: false, why: 'the wallet seed is not in this node\'s home' };
   const seed = fromHex(seedHex);
@@ -65,7 +83,7 @@ export async function changeRolesOnNode({ home, release, roles, custody, post = 
         if (g) seats = [{ federationId: fromHex(g.federationId), guardianKey: fromHex(g.guardianKey) }]; } catch { /* none to repeat */ }
     }
   }
-  const advert = advertFor({ nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: next, endpoint: s.reach.url,
+  const advert = advertFor({ hostedGames, nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles, endpoint: s.reach.url,
     payoutPubkey: payoutKeyOf(seed), maturity: s.bond.maturity, softwareHash, guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null, nowMs,
     emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null, guardianOf: seats });
   const w = walletOf(seed);
@@ -73,10 +91,39 @@ export async function changeRolesOnNode({ home, release, roles, custody, post = 
   let u;
   try { u = buildAdvertUpdate({ wallet: w, nodeSecret, coins, bond: { txid: s.bond.txid, vout: s.bond.vout || 0 }, advert }); }
   catch (e) { return { ok: false, why: e.message }; }
-  const plan = { before, after, bond: `${s.bond.txid}:${s.bond.vout || 0}`, feeSats: String(u.fees.funding + u.fees.update), countsAfter: 6 };
+  return { ok: true, update: u };
+}
+
+/**
+ * THE NEWEST GAMES AND PROTOCOLS IN THE ADVERTISEMENT (the owner 2026-10-25: "Make sure the installer and the nodes use the newest versions of games and
+ * protocols"): an update can bring app versions the node's advertisement does not name yet, and the census draws a node only for the
+ * games it names. The node's chosen apps in `release` (apps.js hostedGameIdsOf), against what it advertises (state hostedGames, else
+ * Next Block's first version, as every installer node named before): the same - nothing to do; else an advertisement update naming
+ * them, from the node's wallet. Answers { ok, unchanged } / { ok, plan } / { ok, plan, update } or { ok: false, why }.
+ */
+export async function refreshHostedGames({ home, release, post = false, chainKit = { coinsOf, broadcast }, state = null, nowMs = Date.now() }) {
+  const st = state || nodeState(home);
+  const s = st.read();
+  if (!s.bond || !s.bond.txid) return { ok: false, why: 'no bond yet: its advertisement will name the games when it is posted' };
+  const { appsIn, chosenApps, hostedGameIdsOf } = await import('./apps.js');
+  const apps = appsIn(release);
+  const now = await hostedGameIdsOf(release, chosenApps(s, apps), apps);
+  if (!now.length) return { ok: false, why: 'this release hosts no game of the node\'s apps' };
+  const had = [...new Set(s.hostedGames && s.hostedGames.length ? s.hostedGames : [toHex(NEXTBLOCK_GAME_ID)])].sort();
+  // AND THE NEWEST PROTOCOLS: an advertisement declares the protocol versions its release spoke when it was posted (state advertProtocols;
+  // unknown for a node bonded before it was kept); a release that speaks more is declared with the same update
+  const protocols = [...SUPPORTED_PROTOCOL_VERSIONS];
+  const protocolsHad = Array.isArray(s.advertProtocols) ? s.advertProtocols : null;
+  const sameProtocols = !!protocolsHad && JSON.stringify(protocolsHad) === JSON.stringify(protocols);
+  if (JSON.stringify(had) === JSON.stringify(now) && sameProtocols) return { ok: true, unchanged: true };
+  const built = await advertUpdateOf({ st, s, release, roles: s.roles || [], hostedGames: now, nowMs, chainKit });
+  if (!built.ok) return built;
+  const u = built.update;
+  const plan = { before: had.length, after: now.length, added: now.filter((g) => !had.includes(g)).length, protocols: Math.max(...protocols), protocolsBefore: protocolsHad ? Math.max(...protocolsHad) : null,
+    feeSats: String(u.fees.funding + u.fees.update), countsAfter: 6 };
   if (!post) return { ok: true, plan };
   await chainKit.broadcast(s.chain, u.funding.hex);
   const txid = await chainKit.broadcast(s.chain, u.update.hex);
-  st.save({ roles: next, rolesUpdate: { txid, advertId: u.advertId, before, after, atMs: nowMs } });
+  st.save({ hostedGames: now, advertProtocols: protocols, gamesUpdate: { txid, advertId: u.advertId, before: had.length, after: now.length, protocols: Math.max(...protocols), atMs: nowMs } });
   return { ok: true, plan, update: { txid } };
 }
