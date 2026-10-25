@@ -206,3 +206,43 @@ test('a market donation\'s parts reach the table: each order\'s entry, player an
   assert.deepEqual(page.rows[0].parts, [{ entry: 'e1', player: 'p1', msat: '1000' }, { entry: 'e2', player: 'p2', msat: '3000' }]);
   assert.deepEqual(donationsPage(info, {}, { q: 'p2' }).rows.map((r) => r.outpoint), ['o1']);
 });
+
+// A REFERRAL PROGRAM (kanban #675: "a section in the node called Referrer where he can select a name for his program. He can have multiple ones
+// and each earns the fees"): a client of kind 'referrer' - its own key, its website payouts summed, its key there to sign its name
+test('a referral program is a client of kind referrer: its key, the website payouts it found, and its key to sign its name with', async () => {
+  const { root, d } = make();
+  const a = d.setup({ label: 'Demo RPS', kind: 'referrer' });
+  const b = d.setup({ label: 'My blog', kind: 'referrer' });
+  assert.deepEqual([a.ok, b.ok, a.slug], [true, true, 'demo-rps']);
+  assert.notEqual(a.recipientPk, b.recipientPk, 'each program its own key');
+  assert.equal(d.setup({ label: 'x', kind: 'shop' }).ok, false);
+  writeFileSync(join(root, 'demo-rps', 'donations.jsonl'), [{ outpoint: 'o1', amountMsat: '1500', item: 'website' }, { outpoint: 'o2', amountMsat: '500', item: 'website' },
+    { outpoint: 'o3', amountMsat: '9000' }].map((x) => JSON.stringify(x)).join('\n') + '\n');
+  const list = d.list();
+  const demo = list.find((c) => c.slug === 'demo-rps');
+  assert.deepEqual([demo.kind, demo.referral], ['referrer', { msat: '2000', payouts: 2 }]);
+  d.setup({ label: 'Dev A' });
+  assert.deepEqual(d.list().map((c) => [c.slug, c.kind]), [['demo-rps', 'referrer'], ['dev-a', 'dev'], ['my-blog', 'referrer']]);
+  const k = d.keyOf('demo-rps');
+  assert.equal(k.recipientPkHex, a.recipientPk);
+  assert.equal(keyFromSecret(Buffer.from(k.secretHex, 'hex')).recipientPkHex, a.recipientPk);
+  assert.equal(d.keyOf('nope'), null);
+  // its name, signed by its own key, kept by a seat; another key's signature is refused; a newer name replaces it
+  const { schnorr } = await import('@noble/curves/secp256k1.js');
+  const { encodeReferralName, referralNameId } = await import('../../arena-protocol/src/referral-name.js');
+  const { keepReferralName, referralNames } = await import('../src/referral-names.js');
+  const { openStore } = await import('../src/store.js');
+  const { toHex, fromHex } = await import('../../arena-protocol/src/hash.js');
+  const db = openStore(':memory:');
+  const verify = (s, m, x) => schnorr.verify(s, m, x);
+  const say = (name, atMs, secret = k.secretHex) => { const rec = { site: fromHex(k.recipientPkHex), name, atMs: BigInt(atMs) };
+    return { record: toHex(encodeReferralName(rec)), signature: toHex(schnorr.sign(referralNameId(rec), fromHex(secret))) }; };
+  const now = Date.now();
+  assert.equal(keepReferralName(db, say('Demo RPS', now - 2000), { verify }).kept, 'new');
+  assert.equal(keepReferralName(db, say('Demo RPS', now - 2000), { verify }).kept, 'held');
+  assert.match(keepReferralName(db, say('Stolen', now - 1000, d.keyOf('my-blog').secretHex), { verify }).why, /signature does not verify/);
+  assert.equal(keepReferralName(db, say('Demo Rock Paper Scissors', now - 1000), { verify }).kept, 'new');
+  assert.equal(keepReferralName(db, say('Old', now - 5000), { verify }).kept, 'older');
+  assert.equal(referralNames(db).get(k.recipientPkHex).name, 'Demo Rock Paper Scissors');
+  assert.throws(() => encodeReferralName({ site: fromHex(k.recipientPkHex), name: ' padded', atMs: 1n }), /no space at either end/);
+});

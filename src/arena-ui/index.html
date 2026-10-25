@@ -1695,9 +1695,10 @@
     // daily.json, so its play socket went to the Funnel host alone and failed, 1006): read here at once.
     fetch('daily.json', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (d && d.testnet && d.testnet.alt && typeof d.testnet.alt === 'object') Object.assign(routes, d.testnet.alt);
-        // THIS WEBSITE'S PAYOUT KEY: named on every entry into a round of 2026.0.9 or later, which pays it 20% of
-        // the nodes' fee on that stake (never more for the player); daily.json `frontend`, a 33-byte compressed key in hex
-        if (d && /^0[23][0-9a-f]{64}$/.test(String(d.frontend || ''))) window.ARENA_FRONTEND_PK = d.frontend; })
+        // THIS WEBSITE'S PAYOUT KEY: named on every entry into a round of 2026.0.9 or later, which pays it 10% of
+        // the nodes' fee on that stake (never more for the player); daily.json `frontend`, a 33-byte compressed key in hex -
+        // unless a referral link brought this browser (kanban #675, ARENA_REFERRAL below)
+        if (d && /^0[23][0-9a-f]{64}$/.test(String(d.frontend || '')) && !window.ARENA_REFERRAL) window.ARENA_FRONTEND_PK = d.frontend; })
       .catch(() => { /* the lobby reads it again */ });
     const viaAlt = new Map();
     function routed(url) {
@@ -2238,9 +2239,25 @@
     // restarted browser - opens the same wallet under the same key. The seed a NEW round is
     // played under stays in the tab (two tabs are two players).
     const VAULT_KEYS = ['arena.collect.', 'arena.lock.saved.', 'arena.lockdb.'];
-    // THIS WEBSITE'S PAYOUT KEY, as daily.json names it - entryFor writes it only on a round of 2026.0.9 or later
+    // A REFERRAL LINK (kanban #675: a referral program's key in ?ref=, from a site that hosts a game or links here): kept in this browser
+    // 30 days, and named on its entries instead of this site's own key - the program is paid 10% of the nodes' fee on what its players stake
+    (() => {
+      const HOLD_MS = 30 * 86400000;
+      let ref = null;
+      try { ref = new URLSearchParams(location.search).get('ref'); } catch { ref = null; }
+      ref = ref && /^0[23][0-9a-f]{64}$/i.test(ref) ? ref.toLowerCase() : null;
+      const store = (() => { try { return window.localStorage; } catch { return null; } })();
+      try {
+        if (ref && store) store.setItem('arena.referral', JSON.stringify({ key: ref, atMs: Date.now() }));
+        const kept = !ref && store ? JSON.parse(store.getItem('arena.referral') || 'null') : null;
+        if (!ref && kept && /^0[23][0-9a-f]{64}$/.test(kept.key || '') && Date.now() - Number(kept.atMs) < HOLD_MS) ref = kept.key;
+      } catch { /* this visit only */ }
+      if (ref) { window.ARENA_REFERRAL = ref; window.ARENA_FRONTEND_PK = ref; }
+    })();
+    // THIS WEBSITE'S PAYOUT KEY, as daily.json names it (or a referral link's) - entryFor writes it only on a round of 2026.0.9 or later
     function pageFrontendPk() {
-      try { return window.ARENA_FRONTEND_PK ? ARENACLIENT.fromHex(window.ARENA_FRONTEND_PK) : null; } catch { return null; }
+      const k = window.ARENA_REFERRAL || window.ARENA_FRONTEND_PK;
+      try { return k ? ARENACLIENT.fromHex(k) : null; } catch { return null; }
     }
     // THIS WALLET'S LAST BALANCE, AT ONCE (playtest 2026-10-21 ~19:45Z: "when having a wallet with 0 sats it takes 20-30 seconds to display the
     // balance of 0"): every sum is kept per phrase in this browser (lastBalance); a page that opens shows it from its first paint while its
