@@ -145,41 +145,75 @@ export class AppsStep extends React.Component {
   }
 }
 
-// NEW OR RESTORED (kanban #652, the owner 2026-10-25: "neuer step im installer: New/Restore - setup as a new node / restore from seed")
+// HOW THIS NODE IS CONTROLLED, THEN NEW OR RESTORED (kanban #652/#654, the owner 2026-10-25: "User first selects Operation Mode: Nostr /
+// New Seed (24 Words)", then new or restore; #653 "Only allow nsec then")
 export class StartStep extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { mode: (props.st && props.st.origin) || 'new', words: '', busy: false, msg: null, ...(props.initial || {}) };
-    this.go = this.go.bind(this);
+    const st = props.st || {};
+    this.state = { control: st.control || 'words', action: st.origin || 'new', words: '', nsec: '', made: null, busy: false, msg: null, code: null, ...(props.initial || {}) };
+    this.go = this.go.bind(this); this.makeKey = this.makeKey.bind(this);
+  }
+  async makeKey() {
+    const r = await this.props.post('/api/start/nsec');
+    if (!r.ok) return this.setState({ msg: said(r) });
+    this.setState({ nsec: r.nsec, made: r.nsec, msg: null });
   }
   async go() {
+    const { control, action, words, nsec } = this.state;
     this.setState({ busy: true, msg: null });
-    const r = await this.props.post('/api/start', { mode: this.state.mode, words: this.state.mode === 'restore' ? this.state.words : undefined });
+    const r = await this.props.post('/api/start', { control, action, words: control === 'words' && action === 'restore' ? words : undefined, nsec: control === 'nostr' ? nsec : undefined });
     this.setState({ busy: false });
     if (!r.ok) return this.setState({ msg: said(r) });
-    this.setState({ words: '' });
+    this.setState({ words: '', nsec: '' });
+    if (r.emergencyCode) return this.setState({ code: r.emergencyCode, made: null });
     this.props.reload();
   }
   render() {
-    const { mode, words, busy, msg } = this.state;
+    const { control, action, words, nsec, made, busy, msg, code } = this.state;
+    if (code) return (
+      <div className="aw">
+        <h2>1. Your emergency code</h2>
+        <p>{control === 'nostr' ? 'Your node now comes from your Nostr key.' : 'Your node is restored from your 24 words.'} Write this code down too:</p>
+        <p className="code" id="start-code">{code}</p>
+        <p>If your node is offline too long, type it on another node's page or the Bitcoin Arena site to take your node out of the network. It can do nothing else.</p>
+        <button type="button" id="start-code-ok" onClick={() => this.props.reload()}>I have written the code down</button>
+      </div>);
     const n = words.trim() ? words.trim().split(/\s+/).length : 0;
-    const pick = (m, title, text) => (
-      <label className={`choice${mode === m ? ' on' : ''}`}><input type="radio" name="origin" id={`start-${m}`} checked={mode === m} onChange={() => this.setState({ mode: m, msg: null })} />
+    const pick = (name, value, cur, title, text) => (
+      <label className={`choice${cur === value ? ' on' : ''}`}><input type="radio" name={name} id={`start-${name}-${value}`} checked={cur === value} onChange={() => this.setState({ [name]: value, msg: null })} />
         <div><b>{title}</b><p>{text}</p></div></label>);
+    const ready = control === 'words' ? (action === 'new' || n === 24) : /^nsec1/i.test(nsec.trim());
     return (
       <div className="aw">
-        <h2>1. New node or restore</h2>
+        <h2>1. How you control your node</h2>
         <div className="choices">
-          {pick('new', 'Set up a new node', 'Setup makes new 24 words for it. You write them down in step 5.')}
-          {pick('restore', 'Restore from my 24 words', 'For a node you set up before, on this or another computer. Its wallet, owner login, emergency code and Lightning keys come back from the words.')}
+          {pick('control', 'words', control, '24 words', 'Setup makes or restores 24 words. They hold your node\'s wallet and keys, and log you in as its owner.')}
+          {pick('control', 'nostr', control, 'Nostr key (nsec)', 'Your Nostr key is your node: its identity on the network, its wallet and keys come from it, and you log in with it. No extra words to keep.')}
         </div>
-        {mode === 'restore' ? <>
+        <h3>New or restore</h3>
+        <div className="choices">
+          {control === 'words' ? <>
+            {pick('action', 'new', action, 'Set up a new node', 'Setup makes new 24 words. You write them down in step 5.')}
+            {pick('action', 'restore', action, 'Restore from my 24 words', 'For a node you set up before, on this or another computer. The node comes back from the words.')}
+          </> : <>
+            {pick('action', 'new', action, 'Use my Nostr key for a new node', 'Your Nostr key becomes this node\'s only key.')}
+            {pick('action', 'restore', action, 'Restore my node from my Nostr key', 'For a node you set up before with this Nostr key. It comes back from the key.')}
+          </>}
+        </div>
+        {control === 'words' && action === 'restore' ? <>
           <label htmlFor="start-words">Your 24 words, in order, separated by spaces</label>
-          <textarea id="start-words" rows="4" autoComplete="off" autoCapitalize="off" spellCheck="false" value={words}
-            onChange={(e) => this.setState({ words: e.target.value })} />
-          <p className="sub">{n} of 24 words. Type them only here, on your own computer. A bond your old node posted is not taken over: it stays with the old node until it expires.</p>
+          <textarea id="start-words" rows="4" autoComplete="off" autoCapitalize="off" spellCheck="false" value={words} onChange={(e) => this.setState({ words: e.target.value })} />
+          <p className="sub">{n} of 24 words. Type them only here, on your own computer.</p>
         </> : null}
-        <button type="button" id="start-go" disabled={busy || (mode === 'restore' && n !== 24)} onClick={this.go}>{mode === 'restore' ? 'Restore' : 'Continue'}</button>
+        {control === 'nostr' ? <>
+          <label htmlFor="start-nsec">Your nsec</label>
+          <input id="start-nsec" type="password" autoComplete="off" spellCheck="false" placeholder="nsec1…" value={nsec} onChange={(e) => this.setState({ nsec: e.target.value, made: null })} />
+          <p className="sub">Only on a computer you trust. Your node keeps it: it is your node's own key on the network and signs for it, also when you are away.</p>
+          {action === 'new' && !nsec ? <button type="button" className="ghost" id="start-make" onClick={this.makeKey}>New to Nostr? Create a key</button> : null}
+          {made ? <div className="msg ok" id="start-made"><b>Your new Nostr key.</b> Save it in a password manager or a Nostr app now. Without it you cannot log in to or restore this node:<pre>{made}</pre></div> : null}
+        </> : null}
+        <button type="button" id="start-go" disabled={busy || !ready} onClick={this.go}>{action === 'restore' ? 'Restore' : 'Continue'}</button>
         <Msg r={msg} />
       </div>);
   }

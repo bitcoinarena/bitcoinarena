@@ -26,6 +26,11 @@ const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 /** The owner's secret key from the 32 bytes the 24 words encode. */
 export const ownerSecretFromSeed = (seed) => taggedHash(OWNER_KEY_TAG, seed);
+// A NODE DRIVEN BY NOSTR (kanban #653, the owner 2026-10-25: "Nostr basically drives the entire node" - "Only allow nsec then"): its seed comes
+// from the owner's nsec on this path (the installer, arena-installer/src/seed.js seedOfNsec) and the nsec is its identity, so the owner page signed in with that nsec
+// makes what the words would - the emergency code - and the same nsec restores the node. The owner file says so (nostrSeed).
+export const NOSTR_SEED_TAG = 'arena/nostr-node-seed/v1';
+export const nodeSeedFromNsecSecret = (secret) => taggedHash(NOSTR_SEED_TAG, secret);
 
 /** What the owner signs: [node key hex, action, args, atMs] as JSON, tagged. */
 export const ownerMessage = ({ node, action, args = {}, atMs }) =>
@@ -107,7 +112,7 @@ export function createOwner({ store, verify, node, nowMs = () => Date.now(), log
   };
   return {
     // the claim file's full path while there is no owner (kanban #550): the page names the file, not "<database>.owner-claim"
-    state: () => ({ node, claimed: !!owner, owner: owner ? owner.pubkey : null, claimedAtMs: owner ? owner.claimedAtMs : null, leavingAtMs: owner && owner.leaving ? owner.leaving.atMs : null,
+    state: () => ({ node, claimed: !!owner, owner: owner ? owner.pubkey : null, claimedAtMs: owner ? owner.claimedAtMs : null, nostrSeed: !!(owner && owner.nostrSeed), leavingAtMs: owner && owner.leaving ? owner.leaving.atMs : null,
       claimFile: !owner && store.codePath ? String(store.codePath) : null }),
     /** The first owner, with the claim code from the node's log. */
     claim(req) {

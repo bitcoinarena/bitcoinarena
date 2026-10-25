@@ -47,7 +47,7 @@ test('the emergency code only on a press; none without the words', () => {
   assert.match(a.html(), /<b id="emcode">hidden<\/b><\/div><button type="button" id="emshow">Show the code<\/button>/);
   a.m.setState({ emShown: true });
   assert.match(a.html(), /<b id="emcode">EMER-GENC-YCOD<\/b><\/div><p class="sub">The code can only take this node out/);
-  assert.match(area({ emergencyCode: null }).html(), /This browser signed in without the 24 words, so it cannot make the code\./);
+  assert.match(area({ emergencyCode: null }).html(), /This browser cannot make the code: it signed in without your 24 words or your nsec\./);
 });
 
 test('signing a manifest with the developer key; the error said; no key with a Nostr signer', () => {

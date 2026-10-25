@@ -10,8 +10,10 @@
 import { randomBytes, randomInt } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { phraseFromSeed, seedFromPhrase } from '../../arena-client/src/bip39.js';
-import { ownerSecretFromSeed } from '../../arena-node/src/owner.js';
-import { toHex } from '../../arena-protocol/src/hash.js';
+import { ownerSecretFromSeed, nodeSeedFromNsecSecret, NOSTR_SEED_TAG } from '../../arena-node/src/owner.js';
+export { NOSTR_SEED_TAG };
+import { toHex, taggedHash, sha256 } from '../../arena-protocol/src/hash.js';
+import { bech32Encode, bech32Decode, convertBits } from '../../arena-protocol/src/bech32.js';
 import { emergencyCodeBytes, emergencyCodeText, emergencySecret } from '../../arena-protocol/src/emergency.js';
 
 export const CONFIRM_WORDS = 3;
@@ -49,6 +51,48 @@ export function ownerKeyOf(seed) {
 export function emergencyOf(seed) {
   const bytes = emergencyCodeBytes(seed);
   return { code: emergencyCodeText(bytes), pubkey: toHex(schnorr.getPublicKey(emergencySecret(bytes))) };
+}
+
+/**
+ * THE NODE IDENTITY FROM THE SEED (kanban #650/#653, the owner 2026-10-25: "the node identity (without nostr) needs to be tied to the seed"):
+ * the key the node signs with - its proposals, its bond - from the seed on its own path, adopted before the node's first start
+ * (arena-node/src/store.js adoptIdentity). The same words restore the same node.
+ */
+export const NODE_IDENTITY_TAG = 'arena/node-identity/v1';
+export const nodeKeyOf = (seed) => taggedHash(NODE_IDENTITY_TAG, seed);
+
+/**
+ * A NODE DRIVEN BY NOSTR (kanban #653, the owner 2026-10-25: "the nostr identity can be used to setup the node ... Nostr basically drives
+ * the entire node" - "Only allow nsec then"): the owner's nsec gives the node's seed on its own path, so everything the 24 words give -
+ * wallet, payout, emergency code, LND, gateway, node identity - comes from the nsec, and the same nsec restores the node. The owner logs
+ * in with that Nostr key, and the node runs on it alone ("The node must also operate on its own with the nsec"): the nsec is the node's
+ * identity key, kept in its store like any node key; seed.hex holds only the seed it gives.
+ * Answers { ok, seed, pubkey (x-only hex of the Nostr key), secret (the key, for this call only) } or { ok: false, why }.
+ */
+export function seedOfNsec(text) {
+  const t = String(text || '').trim().toLowerCase();
+  let sk;
+  try {
+    const { hrp, words } = bech32Decode(t);
+    if (hrp !== 'nsec') return { ok: false, why: 'that is not an nsec (it starts with nsec1)' };
+    sk = new Uint8Array(convertBits(words, 5, 8, false));
+  } catch (e) { return { ok: false, why: /^nsec1/.test(t) ? `that nsec is not valid: ${e.message}` : 'that is not an nsec (it starts with nsec1)' }; }
+  if (sk.length !== 32) return { ok: false, why: 'that nsec is not 32 bytes' };
+  let pubkey;
+  try { pubkey = toHex(schnorr.getPublicKey(sk)); } catch { return { ok: false, why: 'that nsec is not a key' }; }
+  return { ok: true, seed: nodeSeedFromNsecSecret(sk), pubkey, secret: sk };
+}
+/** A Nostr event template signed with the key `secret` (NIP-01: id = sha256 of the serialized event, BIP-340 signature). */
+export function signNostrEvent(template, secret) {
+  const pubkey = toHex(schnorr.getPublicKey(secret));
+  const ev = { ...template, pubkey, tags: template.tags || [], content: template.content || '' };
+  const id = sha256(new TextEncoder().encode(JSON.stringify([0, pubkey, ev.created_at, ev.kind, ev.tags, ev.content])));
+  return { ...ev, id: toHex(id), sig: toHex(schnorr.sign(id, secret)) };
+}
+/** A new Nostr key for someone who has none: { nsec, pubkey }. */
+export function newNsec(rand = randomBytes) {
+  const sk = schnorr.utils.randomSecretKey(new Uint8Array(rand(48)));
+  return { nsec: bech32Encode('nsec', convertBits([...sk], 8, 5, true)), pubkey: toHex(schnorr.getPublicKey(sk)) };
 }
 
 /** A typed phrase back to its seed (restore): { ok, seed } or { ok: false, why } - a wrong word or checksum is refused by name. */
