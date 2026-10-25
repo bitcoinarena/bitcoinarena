@@ -195,11 +195,20 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   { const { nodeKeyOf } = await import('../src/seed.js'); const { schnorr } = await import('@noble/curves/secp256k1.js');
     assert.equal(svc.identity, Buffer.from(schnorr.getPublicKey(nodeKeyOf(Buffer.from(state.readSecret('seed.hex').trim(), 'hex')))).toString('hex'), 'the running seat\'s identity is its seed\'s (kanban #650/#653)'); }
   assert.equal(svc.login.ok, true, 'the running seat accepted the owner\'s signed login');
+  // kanban #666: back to the reach step after the install. The same way saved again keeps the address the install gave it; another way
+  // opens "Install and start" again, so the node takes the new address
+  { const keep = state.read();
+    state.save({ reach: { mode: 'quick', port: seatPort, url: 'https://a-b-c-d.trycloudflare.com' } });
+    const again = (await c.post('/api/reach/save', { mode: 'quick' })).json;
+    assert.deepEqual([again.ok, again.reach.url, Boolean(state.read().done.service)], [true, 'https://a-b-c-d.trycloudflare.com', true], 'the quick tunnel\'s name kept, the install stays done');
+    const other = (await c.post('/api/reach/save', { mode: 'direct' })).json;
+    assert.deepEqual([other.ok, other.again, Boolean(state.read().done.service)], [true, 'service', false], 'another way: Install and start again');
+    state.save({ reach: keep.reach, done: keep.done }); }
   assert.equal(midway.running, true, 'while it runs');
-  assert.deepEqual(midway.stages.map((x) => [x.id, x.state]), [['settings', 'done'], ['services', 'done'], ['start', 'now'], ['address', 'todo'], ['login', 'todo']]);
+  assert.deepEqual(midway.stages.map((x) => [x.id, x.state]), [['settings', 'done'], ['services', 'done'], ['start', 'now'], ['tunnel', 'todo'], ['restart', 'todo'], ['address', 'todo'], ['login', 'todo']]);
   const after = (await c.get('/api/service/progress')).json;
   assert.equal(after.running, false);
-  assert.deepEqual(after.stages.map((x) => [x.id, x.state]), [['settings', 'done'], ['services', 'done'], ['start', 'done'], ['address', 'skipped'], ['login', 'done']],
+  assert.deepEqual(after.stages.map((x) => [x.id, x.state]), [['settings', 'done'], ['services', 'done'], ['start', 'done'], ['tunnel', 'skipped'], ['restart', 'skipped'], ['address', 'skipped'], ['login', 'done']],
     'a direct node has no public address to test through a tunnel');
   assert.ok(after.stages.every((x) => x.state === 'skipped' || Number.isFinite(x.ms)), 'each stage that ran says how long');
   const conf = readFileSync(join(home, 'arena.conf'), 'utf8');

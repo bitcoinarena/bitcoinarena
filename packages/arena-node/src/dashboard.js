@@ -256,5 +256,7 @@ try{if(d.kind==='seed'&&/^[0-9a-f]{64}$/.test(d.seed))localStorage.setItem('aren
 else if(d.kind==='nsec'&&/^[0-9a-f]{64}$/.test(d.secret))localStorage.setItem('arena-owner-nostr:'+base,JSON.stringify({how:'nsec',secret:d.secret}))}catch{}
 history.replaceState(null,'',location.pathname+location.search)});
 window.opener.postMessage({type:'arena-owner-ready'},'*')}
-</script></body></html>`;
+// THE RELEASE IN THE FOOTER (kanban #662): what this node runs, from its public owner/version
+fetch(location.pathname.replace(/\\/[Dd]ashboard\\/?$/,'')+'/owner/version',{cache:'no-store'}).then((r)=>r.json()).then((v)=>{if(v&&(v.version||v.commit)){const f=document.createElement('footer');f.className='build';f.textContent=['Bitcoin Arena'+(v.version?' '+v.version:''),v.commit?'build '+String(v.commit).slice(0,8):''].filter(Boolean).join(' · ');document.body.appendChild(f)}}).catch(()=>{});
+</script><style>footer.build{max-width:1100px;margin:28px auto 18px;padding:0 16px;color:#8b949e;font-size:12px;text-align:center}</style></body></html>`;
 }

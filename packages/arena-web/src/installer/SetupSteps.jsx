@@ -182,7 +182,9 @@ export class ReachStep extends React.Component {
   constructor(props) {
     super(props);
     const st = props.st;
-    this.state = { port: String((st.direct && st.direct.port) || st.defaultPort || ''), direct: st.direct || null, mode: defaultMode(st.direct), host: '', cfToken: '',
+    // a step opened again shows the way saved (kanban #666), not the default one
+    const saved = st.reach || {};
+    this.state = { port: String((st.direct && st.direct.port) || st.defaultPort || ''), direct: st.direct || null, mode: saved.mode || defaultMode(st.direct), host: saved.hostname || '', cfToken: '',
       login: st.login || null, testing: false, saving: false, directMsg: null, loginMsg: null, msg: null, ...(props.initial || {}) };
     this.test = this.test.bind(this); this.login = this.login.bind(this); this.save = this.save.bind(this); this.pollLogin = this.pollLogin.bind(this);
   }
@@ -268,7 +270,9 @@ const STAGE_HINT = {
   settings: 'Your choices from the steps before go into the node\'s settings file.',
   services: 'The node, its chain connection and its tunnel become services of this computer, so they run without this page.',
   start: 'Your node loads, connects to the chain and to the other nodes. This usually takes 10 to 60 seconds.',
-  address: 'Setup asks your node through its public address, the way other nodes will reach it. A new temporary tunnel name can take up to a minute before it answers.',
+  tunnel: 'Cloudflare gives your node its address. This usually takes a few seconds.',
+  restart: 'Your node restarts once, so it announces its new address to the other nodes. This takes 10 to 60 seconds.',
+  address: 'Setup asks your node through its public address, the way other nodes will reach it. A new tunnel can take up to a minute before it answers.',
   login: 'Setup logs in once with your owner key, to check that the node knows you as its owner.',
 };
 const secs = (ms) => `${Math.round((ms || 0) / 1000)} s`;
@@ -282,7 +286,7 @@ export const CORE_HINT = {
 const CORE_BUDGET = { download: 120000, check: 3000, unpack: 10000, services: 10000, chain: 20000 };
 const CORE_WEIGHT = { download: 70, check: 3, unpack: 7, services: 12, chain: 8 };
 /** The share of the work done: finished stages, plus a part of the running one (by its usual time: the node's start up to 90 s). */
-export function progressShare(p, budgets = { start: 90000 }, weights = null) {
+export function progressShare(p, budgets = { start: 90000, restart: 60000 }, weights = null) {
   const st = (p && p.stages) || [];
   const counted = st.filter((x) => x.state !== 'skipped');
   if (!counted.length) return 0;
