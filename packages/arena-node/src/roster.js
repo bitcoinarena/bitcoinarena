@@ -113,9 +113,15 @@ const TXIDS_OF_VIEW = new WeakMap();
 // A CENSUS THAT DID NOT MATCH ITS ROUND'S ROOT, kept with the view it was derived from (2026-10-25, measured on testnet4: the
 // day's rounds posted on a branch the chain left named roots the public chain does not give; every listing derived their
 // series' census again, each a few seconds of curve math, and all seven test host seats sat at 100 % CPU with full accept queues).
-// Asked again once the view grows or is replaced, and at most a minute later.
-const REFUSED_OF_VIEW = new WeakMap();
-const REFUSED_KEPT_MS = 60_000;
+// KEPT WITH THE BLOCK AT THE CENSUS HEIGHT, NOT A MINUTE (measured 22:40Z: eight such series, ~3.5 s each, derived again on the next listing
+// after the minute or the next block - a lobby listing took 27-39 s): a census reads the blocks up to its height, so the refusal holds
+// while that block is the same object in the view - a view extended at its tip keeps it; a reorganised one is read anew, and asks again.
+const REFUSED_AT_BLOCK = new WeakMap();
+const blockAtCensus = (view, contract) => {
+  const i = Number(contract.censusHeight) - view.firstHeight;
+  const b = Number.isInteger(i) && i >= 0 && i < view.blocks.length ? view.blocks[i] : null;
+  return b && typeof b === 'object' ? b : null;
+};
 
 // A CENSUS AS STORED: JSON, its bytes and bigints marked (the page keeps an entry the same way)
 export const censusReplacer = (k, v) => (v instanceof Uint8Array ? { u8: toHex(v) } : typeof v === 'bigint' ? { big: String(v) } : v);
@@ -440,9 +446,10 @@ export class Roster {
     // KEPT ACROSS A RESTART (OPEN-LIST-2140 item 4, measured: one derivation held the loop 2.7 s - every transaction of a
     // ~2,000-block view parsed and hashed again - and a restarted seat derived one per series): a census this node checked
     // against its round's own root is read back from the store instead.
-    const refusedHere = REFUSED_OF_VIEW.get(view);
+    const atBlock = blockAtCensus(view, contract);
+    const refusedHere = atBlock && REFUSED_AT_BLOCK.get(atBlock);
     const refused = refusedHere && asRoundsOwn && contract.censusRoot instanceof Uint8Array && refusedHere.get(`${kept}:${toHex(contract.censusRoot)}`);
-    if (refused && refused.length === view.blocks.length && Date.now() - refused.atMs < REFUSED_KEPT_MS) return refused.answer;
+    if (refused) return refused;
     const stored = asRoundsOwn ? readKeptCensus(this.round, kept) : null;
     if (stored && stored.root instanceof Uint8Array && contract.censusRoot instanceof Uint8Array
         && stored.root.length === 32 && stored.root.every((b, i) => b === contract.censusRoot[i])) {
@@ -481,9 +488,10 @@ export class Roster {
         root: census.root,
       };
       // kept per series (or census key), so a series' other rounds naming the same root are answered from it
-      const atRoot = `${kept}:${toHex(contract.censusRoot)}`;
-      if (!REFUSED_OF_VIEW.has(view)) REFUSED_OF_VIEW.set(view, new Map());
-      REFUSED_OF_VIEW.get(view).set(atRoot, { answer, length: view.blocks.length, atMs: Date.now() });
+      if (atBlock) {
+        if (!REFUSED_AT_BLOCK.has(atBlock)) REFUSED_AT_BLOCK.set(atBlock, new Map());
+        REFUSED_AT_BLOCK.get(atBlock).set(`${kept}:${toHex(contract.censusRoot)}`, answer);
+      }
       return answer;
     }
 
