@@ -3624,7 +3624,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // rounds' count or their newest row, which one covering-index read tells.
   let openList = { key: null, ids: [] };
   let dashboardKept = null;   // /dashboard.json, kept 30 s
-  let setupStatusKept = null;   // /setup-status, kept 60 s (kanban #635)
+  let setupStatusKept = null;
+  // THE RELEASE THIS NODE RUNS (kanban #674): the release's VERSION and COMMIT files (tools/release/build-release.sh writes them at its
+  // root), read once; a node run from a checkout has neither
+  let releaseHereKept = null;
+  const releaseHere = () => {
+    if (releaseHereKept) return releaseHereKept;
+    const read = (f) => { try { return readFileSync(new URL(`../../../${f}`, import.meta.url), 'utf8').trim(); } catch { return null; } };
+    return (releaseHereKept = { version: read('VERSION'), commit: read('COMMIT') });
+  };   // /setup-status, kept 60 s (kanban #635)
   // WHAT THE MARKETS PAID THIS SEAT (kanban #600): each ACCEPTED settlement of a market round read once, a few plans every 5 min
   const marketEarnings = createMarketEarnings({ db: round.db, ownPayoutHex: toHex(refundKeyOf(round.pubkey)),
     summaryOf: (rid) => settlements.summaryOf(rid),
@@ -5416,10 +5424,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // THE RELEASE THIS NODE RUNS ("Updates: the installed version"): the release's VERSION and COMMIT files
         // (tools/release/build-release.sh writes them at its root); a node run from a checkout answers null for both
         if (req.method === 'GET' && url.pathname === '/owner/version') {
-          const read = (f) => { try { return readFileSync(new URL(`../../../${f}`, import.meta.url), 'utf8').trim(); } catch { return null; } };
-          const version = read('VERSION');
+          const { version, commit } = releaseHere();
           let latest; try { latest = await latestReleaseFor(version); } catch (e) { latest = { latest: null, newer: false, why: e.message }; }
-          return answer(200, { node: toHex(round.pubkey), version, commit: read('COMMIT'), latest,
+          return answer(200, { node: toHex(round.pubkey), version, commit, latest,
             protocols: SUPPORTED_PROTOCOL_VERSIONS, machine: machineOf({ chain }), update: 'arena-install --update <new release> on this machine (checked, backed up, rolled back if it fails)' });
         }
         // OLD BONDS AFTER A KEY SWITCH (kanban #650: "b but optional"): a node that moved to the key its 24 words give left its bonds under
@@ -6155,11 +6162,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const { setupStatus } = await import('../../arena-installer/src/setup-status.js');
           setupStatusKept = { at: nowMs, body: await setupStatus({ home }).catch((e) => ({ ok: false, why: e.message })) };
         }
-        return send({ ...setupStatusKept.body, atMs: setupStatusKept.at });
+        return send({ ...setupStatusKept.body, atMs: setupStatusKept.at, release: releaseHere() });
       }
       if (req.method === 'GET' && url.pathname === '/dashboard.json') {
         const nowMs = Date.now();
-        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify(dashboardData(round, { nowMs, poolsFor: dashboardPools, marketRows: marketEarnings.rows(), hosts: hosts ? hosts.snapshot() : null, devClient: devClientSnapshot(devClientDir), devClients: devClients ? devClients.list({ attribute: devAttribute }) : null, apps: hosted, matchFor: (rid) => matchOf(round, hosted, rid), reserveKeys: [...reserveKeys.values()].map(toHex) })) };
+        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify({ ...dashboardData(round, { nowMs, poolsFor: dashboardPools, marketRows: marketEarnings.rows(), hosts: hosts ? hosts.snapshot() : null, devClient: devClientSnapshot(devClientDir), devClients: devClients ? devClients.list({ attribute: devAttribute }) : null, apps: hosted, matchFor: (rid) => matchOf(round, hosted, rid), reserveKeys: [...reserveKeys.values()].map(toHex) }), release: releaseHere() }) };
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(dashboardKept.body);
       }
