@@ -127,22 +127,23 @@ export class SetupCard extends React.Component {
 }
 
 /**
- * STILL BEING SET UP, SAID ON EVERY SECTION (the owner's playtest 2026-10-25: roles and the bond did not load while Bitcoin Core synced -
- * "make sure the user knows that the node is still being set up"): while any part is in progress, one line above every section that names
- * what is still running and why a panel may not load yet; nothing once the setup is complete.
+ * THE OWNER AREA WAITS FOR THE SETUP (the owner's playtest 2026-10-25: roles and the bond did not load while Bitcoin Core synced - "make
+ * sure the user knows that the node is still being set up", then: "Instead the whole owners page should show the setup screen so user
+ * can't access the owners area yet, with a message. Check back when all services are synchronized"): while any part of the setup is still
+ * open, a screen over the whole owner area with the message and the Setup card; it lifts by itself once every part is done.
  */
 export class SetupBanner extends React.Component {
   render() {
-    const rows = setupRowsOf(this.props.status);
-    const open = rows.filter(([, , l]) => !l.done);
-    if (!open.length) return null;
-    const core = this.props.status.core;
-    const names = open.map(([, label]) => label).filter((x, i, a) => a.indexOf(x) === i);
+    const s = this.props.status;
+    const rows = setupRowsOf(s);
+    if (!rows.length || rows.every(([, , l]) => l.done)) return null;
     return (
-      <div className="setup-banner" id="setup-banner" role="status">
-        <b>🛠 Your node is still being set up.</b>
-        <span> Still in progress: {names.join(', ')}.{core && core.interim ? ' Until Bitcoin Core has synced, parts of this page can load slowly or not at all.' : ' Some parts of this page can load slowly until then.'}</span>
-        {' '}<a href="#overview">See the progress</a>
+      <div className="setup-gate" id="setup-gate" role="dialog" aria-modal="true" aria-labelledby="setup-gate-title">
+        <div className="setup-gate-in">
+          <h2 id="setup-gate-title">🛠 Your node is still being set up</h2>
+          <p className="setup-gate-msg">Check back when all services are synchronized. This page opens by itself when they are.</p>
+          <SetupStatus status={s} />
+        </div>
       </div>);
   }
 }
