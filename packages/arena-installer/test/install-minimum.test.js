@@ -35,3 +35,12 @@ test('the wizard\'s deposit asks for the minimum the seats said', () => {
   assert.equal(depositParts(s, 0).bond, 120000);
   assert.equal(bondMinimumOf({ bondMinimum: { sats: 10 } }), 50000, 'never below the floor');
 });
+
+// ONLY UNDER PRESSURE (the installer walk of fd47329c: 36,570,000 sat asked at band CALM)
+test('a CALM network asks the floor, whatever its target; a pressed one its target', async () => {
+  const calm = await installMinimum({ seats: ['https://a', 'https://b'], fetcher: async () => answer(36570000, 'CALM') });
+  assert.equal(calm.sats, 50000);
+  assert.match(calm.why, /the network is CALM \(its bond target, 36570000 sat, applies under capacity pressure\)/);
+  const pressed = await installMinimum({ seats: ['https://a', 'https://b'], fetcher: async (u) => answer(u.startsWith('https://a') ? 260000 : 250000, u.startsWith('https://a') ? 'PRESSURE' : 'CALM') });
+  assert.equal(pressed.sats, 260000, 'the pressed seat\'s target');
+});
