@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OWNER PAGE'S LIQUIDITY CARD (§23A.10), drawn only by React since kanban #564 (the owner 2026-10-21: "no fall backs"): what the page
+// THE OWNER PAGE'S LIQUIDITY CARD (§23A.10), drawn only by React since kanban #564 (2026-10-21: "no fall backs"): what the page
 // hands the screen - the claim door and the owner's signed requests, which "New address" (Alice: "a button generate a new address for the
 // lp wallet") sends. The free coins against the deposit minimum, the channels and the new address are arena-web's (test/custody.test.mjs).
 import { test } from 'node:test';

@@ -3,7 +3,7 @@
 <!-- MY NODE IS OFFLINE (spec §23A.5a, protocol 17): /Dashboard/emergency on every node, no login. The owner types the emergency code
      written down at install; the browser makes the emergency key from it, finds the node whose bond advert names that key, and signs a
      leave request at this node's tip. Only the request and its signature leave the browser; this node passes it on to every seat.
-     THE PAGE IS REACT'S (kanban #564, the owner 2026-10-21: "Delete the old html code of those components you have ported, no fall backs"):
+     THE PAGE IS REACT'S (kanban #564, 2026-10-21: "Delete the old html code of those components you have ported, no fall backs"):
      the steps drawn by /emergency/react.js (packages/arena-web/src/emergency) - the code, the key and the signature still made in this
      browser, by this node's /owner/client.js, which the page hands in with its fetches. -->
 <style>

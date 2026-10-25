@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// EVERY DONATION IN EUR, USD, CHF OR GBP, AT ITS OWN HISTORIC RATE (kanban #578, the owner 2026-10-22: "Add EUR/USD/CHF/GBP optional currency
+// EVERY DONATION IN EUR, USD, CHF OR GBP, AT ITS OWN HISTORIC RATE (kanban #578, 2026-10-22: "Add EUR/USD/CHF/GBP optional currency
 // per donation. It needs to fetch the historic rates and apply it to each donation and a filter where the sats can be changed to your
 // favorite currency"). A dev client records USD and EUR at the moment it records a donation (arena-donor rateAt); what a row lacks is
 // filled here from the same provider, one range request per currency for the whole span (hourly points up to 90 days), the price closest

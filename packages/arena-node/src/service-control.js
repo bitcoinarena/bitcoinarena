@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WHAT THE OWNER PAGE CAN DO WITH EACH SERVICE (kanban #563, the owner 2026-10-21): start, stop, restart, and whether it starts with the
+// WHAT THE OWNER PAGE CAN DO WITH EACH SERVICE (kanban #563, 2026-10-21): start, stop, restart, and whether it starts with the
 // machine - for every service the page lists, on a node set up by hand and on an installed one.
 //
 //   inside the node      the guardian, the guardians' P2P tunnel, the address announcements: the node starts and stops them itself,

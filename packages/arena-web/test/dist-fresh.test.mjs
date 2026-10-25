@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE BUNDLES A RELEASE SHIPS ARE THE BUILD OF THIS SOURCE (kanban #564, the owner 2026-10-21: "pack the release"): every page script
+// THE BUNDLES A RELEASE SHIPS ARE THE BUILD OF THIS SOURCE (kanban #564, 2026-10-21: "pack the release"): every page script
 // packages/arena-web builds - the node's owner screens, dashboard, rounds and "my node is offline" pages, the installer's steps, the Arena
 // page's one bundle, its health and proposals views - is built again here with esbuild into a folder of its own (tools/build.mjs,
 // ARENA_WEB_OUT) and must be byte for byte what dist/ and the pages' own copies hold. A view changed without its build fails here, not

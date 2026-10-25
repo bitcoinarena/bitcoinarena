@@ -38,7 +38,7 @@ export const NODE_FILES = Object.freeze(['node.db', 'node.db-wal', 'node.db-shm'
 export const inSeatingWindow = (nowMs = Date.now()) => { const q = Math.floor(nowMs / 1000) % 900; return q >= 660 && q < 840; };
 
 /**
- * THE NODE'S LND, WHEN IT IS NOT THE ONE THIS RELEASE PINS (kanban #584, the owner 2026-10-22: "tu die releases und unsere Implementierung
+ * THE NODE'S LND, WHEN IT IS NOT THE ONE THIS RELEASE PINS (kanban #584, 2026-10-22: "tu die releases und unsere Implementierung
  * updaten" - LND built with Go 1.27.3, CVE-2026-111943): LND lives beside the releases (<home>/lnd-bin/<its release file>), so moving a
  * service's release paths never moved it. `texts` the service files' texts. Answers { index, from, to, swap(text) } or null.
  */
@@ -457,7 +457,7 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
       if (name === fromFolder || name === newFolder) continue;
       try { rmSync(d, { recursive: true, force: true }); pruned.push(name); } catch { /* a file still open (Windows): kept, the next update tries again */ }
     }
-    // THE NEWEST GAMES IN THE ADVERTISEMENT (the owner 2026-10-25: "Make sure the installer and the nodes use the newest versions"): the new
+    // THE NEWEST GAMES IN THE ADVERTISEMENT (2026-10-25: "Make sure the installer and the nodes use the newest versions"): the new
     // release's app versions named in an advertisement update when the bond's advertisement does not name them yet - never fatal: the node
     // runs, and is drawn for the new versions once the update counts
     let games = null;

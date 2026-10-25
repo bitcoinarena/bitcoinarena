@@ -62,7 +62,7 @@ test('chain: Core installed here - the disk said, pruned ticked when the full ch
   assert.equal(dur(null), 'working out how long (give it a few minutes)'); assert.equal(dur(3 * 86400000), 'about 3 days');
 });
 
-// KANBAN #635 (the owner 2026-10-25): the folder for the blocks chosen and checked; with an interim Electrum server the wizard goes on at once
+// KANBAN #635 (2026-10-25): the folder for the blocks chosen and checked; with an interim Electrum server the wizard goes on at once
 test('chain: the folder checked for space, and the install moves on at once while Bitcoin Core syncs in the background', async () => {
   const plan = (dir) => ({ ok: true, dir: dir || '/home/me/.arena', defaultDir: '/home/me/.arena', disk: { freeBytes: 900 * 2 ** 30, warn: null, networks: { testnet4: { full: true } } },
     needs: { testnet4: { fullBytes: 25 * 2 ** 30, prunedBytes: 6 * 2 ** 30 }, mainnet: { fullBytes: 800 * 2 ** 30, prunedBytes: 10 * 2 ** 30 } } });
@@ -112,17 +112,19 @@ test('reach: the direct test picks the default, Cloudflare\'s login waited for, 
 test('install: the user service started (after a reboot too by default); a Nostr owner logs in once after it', async () => {
   const posts = []; let reloaded = 0;
   const c = driven(ServiceStep, { post: async (p, b) => { posts.push([p, b]); return p === '/api/service' ? { ok: true, ms: 840, template: { kind: 27235, content: 'login', tags: [] } } : { ok: true }; },
+    get: async () => ({ ok: true, running: false, stages: [] }),   // the progress door (kanban #651)
     reload: () => { reloaded++; }, nostr: { signEvent: async (t) => ({ ...t, sig: 'ab' }) } });
   assert.match(renderToStaticMarkup(c.render()), /<input type="checkbox" id="boot" checked=""\/>/);
   await c.start();
   assert.deepEqual(posts[0], ['/api/service', { boot: true }]);
   const after = renderToStaticMarkup(c.render());
-  assert.match(after, /<button type="button">Log in with Nostr<\/button>/); assert.doesNotMatch(after, /id="svc"/, 'the install button gives way to the login');
+  assert.match(after, /<button type="button" id="svc-nostr">Log in with Nostr<\/button>/); assert.doesNotMatch(after, /id="svc"/, 'the install button gives way to the login');
+  assert.match(after, /<input id="svc-nsec" type="password"/, 'or the nsec typed once (kanban #653)');
   assert.match(after, /Your node is running \(started in 840 ms\)\. Now log in once with your Nostr key\./);
   await c.nostrLogin();
   assert.equal(posts[1][0], '/api/owner/login'); assert.equal(posts[1][1].nostr.sig, 'ab'); assert.equal(typeof posts[1][1].nostr.created_at, 'number');
   assert.equal(reloaded, 1);
-  const s = driven(ServiceStep, { post: async () => ({ ok: false, why: 'the seat did not answer at its public address' }), reload() {} });
+  const s = driven(ServiceStep, { post: async () => ({ ok: false, why: 'the seat did not answer at its public address' }), get: async () => ({ ok: true, stages: [] }), reload() {} });
   await s.start();
   assert.match(renderToStaticMarkup(s.render()), /class="msg bad"[^>]*>the seat did not answer at its public address/);
 });

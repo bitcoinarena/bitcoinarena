@@ -14,7 +14,7 @@ import { homedir } from 'node:os';
 
 /** The liquidity provider service's local port (127.0.0.1): its claim, and a new top-up address for the owner page. */
 export const LIQUIDITY_PROVIDER_PORT = port(8477);   // + ARENA_PORT_OFFSET (instance.js)
-// THE APPS STEP (kanban #569, the owner 2026-10-21: "a step in the installer where all apps are automatically selected"): after the roles
+// THE APPS STEP (kanban #569, 2026-10-21: "a step in the installer where all apps are automatically selected"): after the roles
 export const STEPS = Object.freeze(['start', 'chain', 'roles', 'apps', 'seed', 'emergency', 'owner', 'reach', 'service', 'lightning', 'federation', 'promise', 'bond', 'done']);
 
 /** Where a node lives unless told otherwise: $ARENA_HOME, else ~/.arena-node. */

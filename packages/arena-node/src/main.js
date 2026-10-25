@@ -137,7 +137,7 @@ const ownerFiles = { store: {
   write: (o) => writeFileSync(`${path}.owner.json`, JSON.stringify(o) + '\n', { mode: 0o600 }),
   writeCode: (code) => { if (code) writeFileSync(`${path}.owner-claim`, code + '\n', { mode: 0o600 }); else rmSync(`${path}.owner-claim`, { force: true }); },
 
-  // the claim file's full path, said on the owner page while the node has no owner (kanban #550, the owner 2026-10-20: "show the complete path")
+  // the claim file's full path, said on the owner page while the node has no owner (kanban #550, 2026-10-20: "show the complete path")
   codePath: resolvePath(`${path}.owner-claim`),
 } };
 // THE OPERATOR UI'S TOKENS (spec §27A.7.7): kept as hashes beside the database; the first-start pairing URI written
@@ -294,7 +294,7 @@ if (url) {
   // synchronously, and the signer nodes' addresses are in it.
   const views = new Map();                     // view key -> the view
   const blocksKept = blockCache();             // block hash -> its one parsed copy, shared by every view
-  // THE CHAIN'S CENSUS AT A HEIGHT, KEPT ACROSS A RESTART (the owner 2026-10-20: "the bonds take a long time to show up, if they show up at all";
+  // THE CHAIN'S CENSUS AT A HEIGHT, KEPT ACROSS A RESTART (2026-10-20: "the bonds take a long time to show up, if they show up at all";
   // measured all day: a restarted seat read 2,017 blocks again for every census height it was asked - minutes under load, while its
   // federation records, gateway operators and bonds waited): the census a height gives, kept in this node's store (census_kept, as the
   // roster keeps a round's), keyed by the network, the height and that block's hash - another block at the height is another key, never
@@ -419,14 +419,14 @@ if (url) {
     chainBlockTxids: async (h) => (await call('getblock', [await call('getblockhash', [h]), 1])).tx,
     // AND WHETHER ONE WAITS IN THIS NODE'S MEMPOOL
     chainInMempool: async (txid) => { try { await call('getmempoolentry', [txid]); return true; } catch { return false; } },
-    // THE NETWORK'S TRANSACTIONS ON THEIR WAY (the owner 2026-10-20: "Make sure that both show the same number of transactions at all
+    // THE NETWORK'S TRANSACTIONS ON THEIR WAY (2026-10-20: "Make sure that both show the same number of transactions at all
     // times"): this node's mempool, a transaction in it, its unconfirmed ancestors, and the last blocks' transactions - GET /pending
     // lists from them every transaction that pays the bond marker (bonds, advert updates) with the parents it waits on
     chainMempoolIds: async () => (await call('getrawmempool', [])).map(String),
     chainRawTx: async (txid) => fromHex(String(await call('getrawtransaction', [txid]))),
     chainMempoolAncestors: async (txid) => { try { return (await call('getmempoolancestors', [txid])).map(String); } catch { return []; } },
     chainRecentBlocks: async (from, to) => { const v = await blocksOver(call, from, to, { cache: blocksKept }); return v.blocks.map((b, i) => ({ height: from + i, transactions: b.transactions })); },
-    // THE CHAIN'S TIPS NEAR THE TOP (the owner 2026-10-20, "Mining view mismatch, what is true": the seats followed our own block at 157,133
+    // THE CHAIN'S TIPS NEAR THE TOP (2026-10-20, "Mining view mismatch, what is true": the seats followed our own block at 157,133
     // while the public explorer followed another miner's of the same work): the active tip, and every other tip within 12 blocks of it
     // with its work against the active one's and the height it forks from - a tie is decided by the next block, not by this node
     chainTips: async () => {

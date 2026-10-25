@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// THE LIVE SLASH ON TESTNET4 (FEDERATION.md rehearsal 14 live, kanban #326, the owner 2026-10-15 17:39: "liquidations and slashing must be
+// THE LIVE SLASH ON TESTNET4 (FEDERATION.md rehearsal 14 live, kanban #326, 2026-10-15 17:39: "liquidations and slashing must be
 // tested on testnet. Regtest is not enough"; option 1: the throwaway federation T2, never A or B). rehearsal-14.mjs builds the same
 // transaction on a private regtest; this reads everything from the live network instead:
 //

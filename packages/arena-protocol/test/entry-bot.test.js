@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A BOT'S ENTRY (kanban #581, the owner 2026-10-22: "The bots are also marked as bots, so they are excluded from the leaderboard. There is a
+// A BOT'S ENTRY (kanban #581, 2026-10-22: "The bots are also marked as bots, so they are excluded from the leaderboard. There is a
 // flag in the API and protocol to mark them as bots"): the bot mark rides last of all, its marker alone, in the entry's signed bytes; an
 // entry without it keeps exactly its bytes and its id; anything else after the entry is refused.
 import test from 'node:test';

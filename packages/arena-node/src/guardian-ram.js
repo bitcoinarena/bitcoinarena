@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// FEDIMINT ON A RAM DISK (kanban #596, the owner 2026-10-23: "bei mehr als 5 nodes ... RAM disk für fedimint aktivieren? Default ja"), the
+// FEDIMINT ON A RAM DISK (kanban #596, 2026-10-23: "bei mehr als 5 nodes ... RAM disk für fedimint aktivieren? Default ja"), the
 // installer's nodes doing what federation A's guardians do since #587 (ops/guardian-ram.sh: "Yes do the RAM disk and sync it every minute",
 // "zeitlich versetzt", the risk accepted): the guardian's RocksDB (database/) and Fedimint's session checkpoints (db_checkpoints/) live in
 // RAM (/dev/shm), the data dir keeps symlinks to them, and once a minute - at this node's own second of it, so the nodes of one machine

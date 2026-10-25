@@ -98,7 +98,7 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
     const watched = await gatewayWatch(s);
     if (watched) return watched;
     // A QUICK TUNNEL'S NEW NAME, followed first (kanban #562): the seat then answers at it and announces it itself, off chain
-    // (address-book.js; the owner 2026-10-21 "1 default, 2 for updates so no needed updates" - no advertisement update for an address)
+    // (address-book.js; 2026-10-21 "1 default, 2 for updates so no needed updates" - no advertisement update for an address)
     if (s.reach && s.reach.mode === 'quick') {
       const t = await followTunnel().catch((e) => ({ url: null, restarted: [], why: e.message }));
       if (t && t.restarted && t.restarted.length) { log(`the quick tunnel came back as ${t.url}: ${t.restarted.join(', ')} restarted`); return { ok: true, did: 'tunnel-name', url: t.url, restarted: t.restarted }; }

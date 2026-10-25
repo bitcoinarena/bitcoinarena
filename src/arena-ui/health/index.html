@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Network health</title>
 <meta name="description" content="Every node of the Bitcoin Arena network: its version, roles, bond, Lightning and channels, the federations, gateway seats, liquidity providers, fees and games - read live from the nodes.">
-<!-- THE NETWORK'S HEALTH (kanban #526, the owner 2026-10-19 ~14:15Z: "a health dashboard showing the network, all nodes with their
+<!-- THE NETWORK'S HEALTH (kanban #526, 2026-10-19 ~14:15Z: "a health dashboard showing the network, all nodes with their
      versions, federations, capacity, lnd, channels, liquidity providers und alles was ich vergessen hab"; ~14:17Z "Unter Arena-ui").
      Nothing new to trust and nothing kept: daily.json names the seats to start from, one seat's census (/roles) names every node,
      and each node is asked its own public doors - /owner/version, /owner/bond, /dashboard.json (its LND), /liquidity-claim,
      /gateway-claim. The federations, gateway seats, liquidity seatings, fees, reserves and games come from the seats. Six requests
      at a time, every 60 s; a node that does not answer in 10 s is red.
      THE MODERN PAGE (kanban #564): every section drawn by React (./react.js, packages/arena-web/src/health), loaded before the first
-     read; this page reads everything itself and hands each section its data - no drawing of its own (the owner 2026-10-21: "no fall backs"). -->
+     read; this page reads everything itself and hands each section its data - no drawing of its own (2026-10-21: "no fall backs"). -->
 <style>
   :root { --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --muted: #8b949e; --ok: #3fb950; --warn: #d29922; --bad: #f85149; --accent: #f7931a; color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -94,7 +94,7 @@
   const cut = (h, n = 8) => (h ? String(h).slice(0, n) : '-');
   const fedCell = (fid) => { const n = fedNoOf(fid); return n ? [`Federation ${n}`, { t: cut(fid, 8), c: 'muted mono' }] : { t: cut(fid, 12), c: 'mono' }; };
   const drawTable = (id, head, rows, empty, foot) => H.draw($(id), 'table', { head, rows, empty, foot });
-  // FEDERATIONS BY NUMBER (kanban #557, the owner 2026-10-20: "give the federation a running number starting with 1, and in the node list say where
+  // FEDERATIONS BY NUMBER (kanban #557, 2026-10-20: "give the federation a running number starting with 1, and in the node list say where
   // it belongs, federation 1,2,3 or more"): 1, 2, 3 ... by the oldest record first, then by id - the same number on every card of the page
   let FED_NO = new Map();
   const numberFeds = (list) => { FED_NO = new Map([...(list || [])].sort((a, b) => (Number(a.height) - Number(b.height)) || String(a.federation).localeCompare(String(b.federation))).map((f, i) => [String(f.federation).toLowerCase(), i + 1])); };
@@ -143,7 +143,7 @@
       const net = daily.testnet || daily;
       ROUTES = net.alt || daily.alt || {};
       const seats = [...new Set((net.node || []).map(viaAlt))];
-      // EVERY NODE OF THE CENSUS (the owner 2026-10-20: "On each automatic background refresh it is loosing the protocol reserve ... Make sure the
+      // EVERY NODE OF THE CENSUS (2026-10-20: "On each automatic background refresh it is loosing the protocol reserve ... Make sure the
       // data is being updated properly"): every seat is asked and the newest census kept - not the first seat's, which after a restart or by the
       // rounds it holds can be days older (measured: 156,968 / 156,813 / 156,220 on three seats at once)
       const roles = await best(seats, '/roles', (b) => [Number(b.censusHeight) || 0, (b.nodes || []).length]);
@@ -157,7 +157,7 @@
       const [feesP, fedsP, gamesP, reservesP, fundingP, capP] = [['/fees', (b) => [Number(b.tip) || 0]], ['/federations', (b) => [(b.federations || []).length, Math.max(0, ...(b.federations || []).map((f) => Number(f.height) || 0))]],
         ['/network-games', null], ['/reserves', (b) => [Number(b.entries) || 0, Number(b.totalMsat) || 0]], ['/funding', (b) => [(b.proposals || []).length]], ['/capacity', (b) => [(b.federations || []).length]]]
         .map(([p, score]) => (score ? best(seats, p, score) : first(seats, p)));
-      // ACTIVE IN THE LAST 24 HOURS (the owner 2026-10-20: "mark it as active in the last 24 hours and inactive"): the census nodes that signed a
+      // ACTIVE IN THE LAST 24 HOURS (2026-10-20: "mark it as active in the last 24 hours and inactive"): the census nodes that signed a
       // round result in that window, from every seat's GET /served (each holds its own results, so they are merged)
       { const to = Date.now(), from = to - 86400000;
         const got = await Promise.all(seats.map((s) => ask(s, `/served?to=${to}&from=${from}`)));
@@ -242,7 +242,7 @@
   function paintFeds(list) {
     const rows = list.map((f) => {
       const load = f.exposureCapSats ? Number(f.load || 0) : null;
-      // the dot is the worse of its status and its load (the owner 2026-10-20: "Why is Federation 1 green when the load is 433 %?"): an OPEN
+      // the dot is the worse of its status and its load (2026-10-20: "Why is Federation 1 green when the load is 433 %?"): an OPEN
       // federation at 100 % or more takes no deposits, so it is red and says FULL, as the capacity card does; from 70 % it is yellow
       const st = String(f.status || ''), byStatus = st === 'OPEN' || st === 'ACTIVE' ? 'ok' : st ? 'warn' : 'bad';
       const byLoad = load == null ? 'ok' : load >= 1 ? 'bad' : load >= 0.7 ? 'warn' : 'ok';
@@ -254,7 +254,7 @@
     drawTable('feds', ['Federation', 'Status', 'Record height', 'Signers', 'Reserve (sat)', 'Cap (sat)', 'Load'], rows, 'no federation record read');
   }
 
-  // WAITING FOR A FOUNDING (kanban #585, the owner 2026-10-22: "shows the 10 nodes waiting for a founding event so we know in the future if
+  // WAITING FOR A FOUNDING (kanban #585, 2026-10-22: "shows the 10 nodes waiting for a founding event so we know in the future if
   // they're ready to be founded" - and "Tu das Dashboard so umbauen dass es solchen Diskrepanzen nicht geben kann ... Wenn 8 von 10 ready
   // sind müssen auch 8 da stehen"): ONE LIST, from one seat - every node the cohort can draw, each asked by that seat (GET /founding?members=1:
   // the page cannot reach nodes on private addresses) - and every number on the card is counted from those rows
@@ -280,7 +280,7 @@
     for (const k of seated.keys()) if (!byKey.has(k)) byKey.set(k, { node: k, endpoint: '', state: 'not listed' });
     const WORD = { setup: ['ready', 'ok'], running: ['its guardian runs a federation', 'warn'], none: ['no guardian in setup', 'bad'], off: ['founding is off on this node', 'bad'],
       'older release': ['an older release (says nothing)', 'warn'], 'no answer': ['no answer', 'bad'], 'not listed': ['not in the seat\'s list', 'warn'] };
-    // ONLY THE NODES THAT CAN BE FOUNDED (kanban #599, the owner 2026-10-23: "founding is off on this node, an older release, its guardian runs a
+    // ONLY THE NODES THAT CAN BE FOUNDED (kanban #599, 2026-10-23: "founding is off on this node, an older release, its guardian runs a
     // federation raus und auch in den zusammenfassungen nicht anzeigen damit es konsistent bleibt"): those three are left out of the rows, and
     // every number on the card is counted from the rows shown
     const CANNOT = new Set(['off', 'older release', 'running']);
@@ -302,7 +302,7 @@
       mem ? `as seat-counted at block ${sat(mem.height)} - each node asked by that seat` : null);
   }
 
-  // WHAT THE NETWORK WAITS FOR (kanban #560, the owner 2026-10-20: "Make sure that /health is also showing this table by asking the nodes"):
+  // WHAT THE NETWORK WAITS FOR (kanban #560, 2026-10-20: "Make sure that /health is also showing this table by asking the nodes"):
   // every seat's GET /pending, merged - a grid by its publication, a peg-in by its outpoint, the furthest reading of each kept
   async function paintPending(seats) {
     const answers = (await Promise.all(seats.map((s) => ask(s, '/pending')))).filter((a) => a && a.ok && a.body && a.body.ok).map((a) => a.body);
@@ -316,7 +316,7 @@
     // each row as table data (kanban #564): what, tx, confirmations, how far (a bar), what it waits for
     const W = [null, 'mono', null, null, 'wrap'];
     const rows = [];
-    // THE CHAIN SPLIT (the owner 2026-10-20, "Mining view mismatch, what is true"): each node names its tip and the rival tips of the same
+    // THE CHAIN SPLIT (2026-10-20, "Mining view mismatch, what is true"): each node names its tip and the rival tips of the same
     // (or more) work it knows; nodes on different tips, or a rival of the same work, mean the next block decides - and everything below
     // is read on each node's own branch
     { const tips = new Map(), rivals = new Map();
@@ -350,7 +350,7 @@
       rows.push({ key: 'ad' + x.node, dot: 'warn', cls: W, cells: [[`advertisement of ${cut(x.node, 10)}`, { t: String(x.endpoint).replace(/^wss?:\/\//, ''), c: 'muted' }], '-', '-', '',
         `${x.changes.join('; ')} - the census takes it by block ${sat(x.takenByTip)} (${left ? `in ${left} block${left === 1 ? '' : 's'}` : 'now'})`] });
     }
-    // THE ONE TRANSACTION LIST (the owner 2026-10-20: "Make sure that both show the same number of transactions at all times"): every
+    // THE ONE TRANSACTION LIST (2026-10-20: "Make sure that both show the same number of transactions at all times"): every
     // node's txs, one row per transaction, its furthest confirmation kept, and how many of the answering nodes name it
     { const all = new Map();
       for (const a of answers) for (const t of a.txs || []) {
@@ -374,7 +374,7 @@
 
   async function paintGateways(feds, seats, nodes) {
     const rows = [], pending = [];
-    // PENDING GATEWAYS (kanban #552, the owner 2026-10-20: "display the pending gateways that still have pegins confirming (along with their
+    // PENDING GATEWAYS (kanban #552, 2026-10-20: "display the pending gateways that still have pegins confirming (along with their
     // confirmation) or are pending in some other way"): every gateway a federation's seat measured that is not seated, or holds its seat
     // below the minimums, with what it waits for; a peg-in still confirming shows its confirmations against the federation's finality
     // (as its operator's claim states them) and about when it counts, a block taken as 10 minutes
@@ -396,7 +396,7 @@
       // A GUARDIAN SEAT RANKS ITS OWN FEDERATION ONLY (gateway-watch.js; the ?federation= is not read): the answer counts only from a
       // seat whose federationId is this one - the first seat that answers may guard the other federation
       let g = null;
-      // EVERY SEAT OF THE FEDERATION ASKED, THE ONE WITH THE MOST SEATED KEPT (the owner 2026-10-20 "is this correct?": the first seat had just
+      // EVERY SEAT OF THE FEDERATION ASKED, THE ONE WITH THE MOST SEATED KEPT (2026-10-20 "is this correct?": the first seat had just
       // restarted and judged with no census); a seat that has read no census yet answers 503 and is left out
       { const got = (await Promise.all(seats.map(async (s) => { const a = await ask(s, '/gateway-seats?federation=' + f.federation); return a.ok && a.body && a.body.federationId === f.federation ? { seat: s, ...a } : null; }))).filter(Boolean);
         got.sort((x, y) => ((y.body.seated || []).length - (x.body.seated || []).length) || ((x.body.ineligible || []).length - (y.body.ineligible || []).length));

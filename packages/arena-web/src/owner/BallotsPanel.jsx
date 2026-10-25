@@ -16,7 +16,7 @@ const Row = ({ k, v }) => <div className="row"><span>{k}</span><b>{v}</b></div>;
 const field = { autoComplete: 'off', spellCheck: false };
 
 /**
- * THE SHARES TO SIGN FROM THE SPLIT AS PICTURED (the owner 2026-10-22: 50 / 30 / 10 growing to 20 "should be a valid proposal"): the
+ * THE SHARES TO SIGN FROM THE SPLIT AS PICTURED (2026-10-22: 50 / 30 / 10 growing to 20 "should be a valid proposal"): the
  * owner enters each developer's share at full vesting - a vesting row its start and its target - and those add up to 100 %. The
  * protocol wants the shares at the start to add up to 100 % and scales the rows that do not vest into what the vesting rows leave
  * (donation.js vestedShares), so the rows that do not vest are signed scaled into what the vesting rows hold at the start, in the
@@ -110,7 +110,7 @@ export class BallotsPanel extends React.Component {
       : part === 'open' ? null : <div className="card"><p>No protocol developers' set is in force on this node.</p></div>}
         {part === 'rest' ? null : openBallots.map(ballotCard)}
         {part !== 'open' && proposers.length && set ? (() => {
-      // PROPOSE A NEW SPLIT, PRETTY (the owner 2026-10-22: "Make the UI more pretty including selects for existing devs"): a row per developer -
+      // PROPOSE A NEW SPLIT, PRETTY (2026-10-22: "Make the UI more pretty including selects for existing devs"): a row per developer -
       // pick a known developer (the set in force and this node's dev clients) or another key, the share in %, an optional vesting - and
       // the total live as a bar, one colour per developer, saying what is left until 100 %
       const known = [...new Map([...set.recipients.map((r) => [r.key, r.label || r.key.slice(0, 12) + '…']), ...mine.map((m) => [m.key, m.label])]).entries()].map(([key, label]) => ({ key, label }));
@@ -161,7 +161,7 @@ export class BallotsPanel extends React.Component {
         </div>);
         })() : null}
         {part === 'rest' ? null : openFees.map(feeCard)}
-        {/* PAST PROPOSALS FOLDED (the owner 2026-10-22: "past proposals should be hidden by default") */}
+        {/* PAST PROPOSALS FOLDED (2026-10-22: "past proposals should be hidden by default") */}
         {part !== 'open' && pastBallots.length + pastFees.length ? <details className="past-props"><summary>Past proposals · {pastBallots.length + pastFees.length}</summary>
       {pastBallots.map(ballotCard)}{pastFees.map(feeCard)}</details> : null}
       </>);

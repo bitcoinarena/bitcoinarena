@@ -804,7 +804,7 @@ impl LockClient {
         .to_string())
     }
 
-    /// AN AMOUNT AS E-CASH (kanban #614, the owner 2026-10-24: "Kein Lightning swap, sondern übertragen in die andere federation"): the stock
+    /// AN AMOUNT AS E-CASH (kanban #614, 2026-10-24: "Kein Lightning swap, sondern übertragen in die andere federation"): the stock
     /// mint module's send of exactly `amount_msat`, as the prefixed base32 string a seat's exchange takes - the player's side of an e-cash
     /// exchange into another federation. Answers {"msat", "ecash"}; the caller keeps the string until the exchange answered.
     #[wasm_bindgen(js_name = sendEcash)]

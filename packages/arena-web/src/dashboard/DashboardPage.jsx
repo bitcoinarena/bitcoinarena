@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODE DASHBOARD, IN REACT (kanban #566, the owner 2026-10-21: "this looks very off and doesn't even fit. Make it look much more modern,
+// THE NODE DASHBOARD, IN REACT (kanban #566, 2026-10-21: "this looks very off and doesn't even fit. Make it look much more modern,
 // the entire page as well"): the same /dashboard.json drawn as cards that size to their content - what the node earned in the period
 // chosen as one large number with its roles as a bar, what it is owed, its profit; the 30 days as a stacked chart; the dev clients
 // each in a card whose table fits (short dates, one line each); the hosts and the games; the rounds, settlements and federations as
 // tables that scroll inside their card. Empty rows are left out; nothing runs past its card on a desktop or a phone.
-// THE ONLY DRAWING (kanban #564, the owner 2026-10-21: "Delete the old html code of those components you have ported, no fall backs"): what
+// THE ONLY DRAWING (kanban #564, 2026-10-21: "Delete the old html code of those components you have ported, no fall backs"): what
 // the page's own script drew is here too - a round opened to its players with their replays (readResult), the notes, every host row,
 // the capacity plea and the liquidity card (the page hands in liquidity-claim and capacity?node=me), and the words for an unreadable node.
 import React from 'react';

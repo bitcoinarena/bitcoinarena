@@ -9,7 +9,7 @@
 //            opening it starts the node's services and opens its owner page
 //   Windows  <home>\bin\Bitcoin Arena {start,stop,owner page}.cmd   + Start menu > Bitcoin Arena: the same three as shortcuts
 //
-// THE NAME PEOPLE SEE IS "Bitcoin Arena" (kanban #635, the owner 2026-10-25: "die Plattform sollte immer bitcoin-arena sein, nicht
+// THE NAME PEOPLE SEE IS "Bitcoin Arena" (kanban #635, 2026-10-25: "die Plattform sollte immer bitcoin-arena sein, nicht
 // Arena-node" - what users see only; the services, the command and the release files keep their names). The files of the old name are
 // removed when these are written (an update writes them again).
 //

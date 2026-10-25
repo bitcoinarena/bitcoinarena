@@ -2825,7 +2825,7 @@ even under one key. From protocol 19:
   capacity view's B*, a node's standing.
 
 Below protocol 19 the floor stays each output's, as before. **Add to bond is
-the default way to raise a bond** (the owner 2026-10-19: "e.g. increase your bond
+the default way to raise a bond** (2026-10-19: "e.g. increase your bond
 by 32000 sats"): `arena-install --add-bond <sat>` or the owner page's "Add to
 bond" shows the amount, the fees, the new total and the added output's
 maturity, and posts it with the node's current advertisement; the warnings

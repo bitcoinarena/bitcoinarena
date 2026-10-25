@@ -176,7 +176,7 @@ test('a hidden move is the tab\'s once the seats took its entry: onEntries befor
   assert.equal(order.filter((x) => x === '/lock').length, 2, 'the lock handed to both seats after acceptance');
 });
 
-// PLACED ONCE ONE SEAT HOLDS IT (the owner 2026-10-23 "Ja, nach 1 Seat"; the lock still comes back when fewer than 5 seats hold it): the
+// PLACED ONCE ONE SEAT HOLDS IT (2026-10-23 "Ja, nach 1 Seat"; the lock still comes back when fewer than 5 seats hold it): the
 // order answers as soon as the federation accepted its lock and the first seat holds the entry and both locks - a slow seat is not waited
 // on, and gets its entry and locks in the background
 test('a pick is placed once the first seat holds its entry and locks; a slow seat gets them in the background', async () => {

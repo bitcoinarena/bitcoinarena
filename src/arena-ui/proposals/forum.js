@@ -1,9 +1,9 @@
-// THE PROPOSALS FORUM (kanban #397, the owner 2026-10-17: "Proposals are on a separate page and look like a forum"). Three views, by the
+// THE PROPOSALS FORUM (kanban #397, 2026-10-17: "Proposals are on a separate page and look like a forum"). Three views, by the
 // address's hash: the thread list (#), one thread (#p=<proposal id>) and a new proposal (#new). What is shown is what five of the
 // testnet's nodes hold (GET /funding); a thread or a reply is signed and handed to every node (POST /funding). It lives beside the
-// Arena page (testnet.bitcoin-arena.io/proposals/) so it signs with THE PLAYER'S IN-GAME KEY (the owner 2026-10-17: "Users can sign in with
+// Arena page (testnet.bitcoin-arena.io/proposals/) so it signs with THE PLAYER'S IN-GAME KEY (2026-10-17: "Users can sign in with
 // their ingame key and their custom name or their generated name"): the identity key of the wallet phrase this browser keeps - the key
-// the lobby and the board name a player by - and nothing else (the owner 2026-10-17: "no other options"). Everyone is shown by name: the one the player set (a
+// the lobby and the board name a player by - and nothing else (2026-10-17: "no other options"). Everyone is shown by name: the one the player set (a
 // signed name record the nodes keep, player-name.js), else the one made from the key. Each proposal is a PIP, numbered by
 // publication. A new proposal shows the reserves and is refused before posting when it asks more than 10 % of them (rule 4).
 (function () {
@@ -14,7 +14,7 @@
   var view = document.getElementById('view');
   var $ = function (q) { return forum.querySelector(q); };
   var state = { nodes: [], tip: null, network: null, key: null, keyFrom: null, list: null, reserves: null, names: {} };
-  // EVERY VIEW IN REACT (kanban #564, the owner 2026-10-21: "no fall backs"): the list, a thread and the three new-proposal forms drawn by
+  // EVERY VIEW IN REACT (kanban #564, 2026-10-21: "no fall backs"): the list, a thread and the three new-proposal forms drawn by
   // ./react.js (packages/arena-web/src/proposals) from view data made here; this script reads, signs and posts, and draws none of them
   var R = null;
   var reactReady = import('./react.js').then(function () { R = window.ArenaForum; });
@@ -22,7 +22,7 @@
   function npub(hex) { return ARENACLIENT.npubOfKey(hex); }
   function sats(n) { return Number(n).toLocaleString('en-US') + ' sat'; }
   function title(p) { var t = parts(p.purpose).title; return t.length > 90 ? t.slice(0, 88) + '…' : t; }
-  // A PIP'S THREE PARTS (kanban #432, the owner 2026-10-17: "Separate title field. Content on what the proposal does, in markdown including
+  // A PIP'S THREE PARTS (kanban #432, 2026-10-17: "Separate title field. Content on what the proposal does, in markdown including
   // tables. Separate text field how does it improve bitcoin arena"): kept in the proposal's one signed text (purpose, at most 4,000
   // characters) as its title line, the content, and a last section under IMPROVES - so the seats and the record stay as they are. An
   // older proposal has no such section: all of it after the title is its content.
@@ -106,7 +106,7 @@
       return ARENACLIENT.forumIdentity(best.hex, window.ARENA_CURVE).secret;   // the in-game identity key (PIP)
     } catch (e) { return null; }
   }
-  // ONLY THE IN-GAME KEY (the owner 2026-10-17: "Proposals always use the ingame key and name, no other options"): no nsec, no other key
+  // ONLY THE IN-GAME KEY (2026-10-17: "Proposals always use the ingame key and name, no other options"): no nsec, no other key
   function pickKey() {
     var a = arenaKey();
     state.key = a; state.keyFrom = a ? 'arena' : null;
@@ -115,7 +115,7 @@
   function showKey() {
     R.draw($('.key .id'), 'key', state.key ? { name: who(mine()), npub: ARENACLIENT.npubOf(state.key) } : {});
   }
-  // THE BALANCE ON TOP (the owner 2026-10-17): the reserves the nodes agree on, and the most one PIP may ask
+  // THE BALANCE ON TOP (2026-10-17): the reserves the nodes agree on, and the most one PIP may ask
   function showBalance() {
     var b = document.getElementById('balance'); if (!b) return;
     R.draw(b, 'balance', { reserves: state.reserves, why: state.reservesWhy, capPct: CAP_PCT, open: location.hash === '#reserves' });
@@ -194,7 +194,7 @@
       purposeLength: function (t, c, i) { return purposeOf(t, c, i).length; }, onPublish: publish });
   }
 
-  // CHANGE FEES (kanban #462, the owner 2026-10-17: "Proposal type change fees. Any of the fees, all combinations can be changed with a
+  // CHANGE FEES (kanban #462, 2026-10-17: "Proposal type change fees. Any of the fees, all combinations can be changed with a
   // proposal"): the fees in force as the nodes answer them (GET /fees), one field per fee with its limit; any of them, in any
   // combination, is one proposal - checked by the seats' own rule (every limit and every sum of the whole set, an activation after
   // its signal and its vote) before it is signed, then handed to every node. Below, every fee proposal with its signal, its vote,
@@ -240,7 +240,7 @@
       window.ARENA_FEES_VIEW = { inForce: r.fees, tip: r.tip, proposals: r.proposals.length, agreeing: r.agreeing };
     }).catch(function (e) { R.draw(view, 'fees', Object.assign({}, common, { data: null, error: e.message })); });
   }
-  // A LEADERBOARD PAYOUT REQUEST (kanban #460, the owner 2026-10-17: "distribution of X sats for the best 10 p&l of last week"; 2026-10-18:
+  // A LEADERBOARD PAYOUT REQUEST (kanban #460, 2026-10-17: "distribution of X sats for the best 10 p&l of last week"; 2026-10-18:
   // "YES >= 25 % of the voting weight is enough on its own"): which game, market or all, the top N, the amount from one federation's
   // reserves (at most 10 % of them), equal or per place, the last 7 / 14 days or month, and the payment date. Its vote: 2 weeks from
   // publication, bond-weighted, no signal; it passes at YES >= 25 % of the voting weight. The winners' payouts land in their wallets as

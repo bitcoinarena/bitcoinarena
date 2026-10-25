@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SETUP'S PROGRESS, ON BOTH DASHBOARDS (kanban #635, the owner 2026-10-25: "in dem public Node Dashboard ein Panel einblenden mit dem
+// THE SETUP'S PROGRESS, ON BOTH DASHBOARDS (kanban #635, 2026-10-25: "in dem public Node Dashboard ein Panel einblenden mit dem
 // Status der node anzeigen wieviel confirmations Bond und peg in haben. Das selbe auch beim owner Dashboard"): the installer posts the bond
 // and the rest without waiting, so this card says how far each is - Bitcoin Core's background sync, the bond's confirmations and whether it
-// counts, the peg-in's confirmations against the federation's finality - and (the owner 2026-10-25: "lnd status and everything else that may be
+// counts, the peg-in's confirmations against the federation's finality - and (2026-10-25: "lnd status and everything else that may be
 // in progress") LND, the gateway, the public address, the faucet's coins, advertisement updates and old bonds to take back. Drawn from
 // GET /setup-status; nothing when there is nothing to show.
 import React from 'react';

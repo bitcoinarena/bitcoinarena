@@ -217,7 +217,7 @@ export function forgetPhrase(storage, seedHex) {
 }
 
 /**
- * OLD WALLET DATABASES OUT OF THE BROWSER'S STORAGE (kanban #616, the owner 2026-10-24 playtest: "Order not placed: ... Setting the value of
+ * OLD WALLET DATABASES OUT OF THE BROWSER'S STORAGE (kanban #616, 2026-10-24 playtest: "Order not placed: ... Setting the value of
  * 'arena.lock.saved.42835aaa…' exceeded the quota" - "You need to clean up old storages"). Measured: a player wallet's database is ~115 KB
  * per federation (its config, every guardian's endpoint) and one order adds ~50 KB; a browser that kept phrase after phrase filled its
  * 5 MB. Removed, one federation's database at a time:
@@ -249,7 +249,7 @@ export function tidyStorage(storage, { seeds = [], current = null, federations =
     if (m && fed16.has(m[2])) { if (!groups.has(m[1])) groups.set(m[1], []); groups.get(m[1]).push(k); }
   }
   let removed = 0, bytes = 0, wallets = 0;
-  // A COLLECTED ROUND'S LOCK WALLET (kanban #625 follow-up, the owner 2026-10-24 ~18:2xZ: "exceeded the quota" again on
+  // A COLLECTED ROUND'S LOCK WALLET (kanban #625 follow-up, 2026-10-24 ~18:2xZ: "exceeded the quota" again on
   // arena.lock.saved.bd53423e; measured: each round a tab collects opens a lock wallet of its own, arena.lockdb.<round16>.<secret16>.*, 36 entries
   // and ~150 KB, and none was ever removed - a window every 15 min fills a phone's storage within a day): removed once the round's collect is
   // done and an hour old - its money is in the player wallet; a rescan that needs it again joins it anew (its key is the seed's and the round's)
@@ -551,7 +551,7 @@ export function gatewayOrder(named = [], listed = []) {
   for (const u of [...(named || []), ...(listed || [])]) { const k = gwKey(u); if (!k || seen.has(k)) continue; seen.add(k); out.push(String(u).trim()); }
   return out;
 }
-// THE FEDERATION'S SEATED GATEWAYS FIRST (spec §23A.9: "clients use those two first"; kanban #559, the owner 2026-10-20: "Fix all of it"):
+// THE FEDERATION'S SEATED GATEWAYS FIRST (spec §23A.9: "clients use those two first"; kanban #559, 2026-10-20: "Fix all of it"):
 // the page names a lookup - async (federation hex) -> the seated gateways' URLs, as the federation's guardians rank them - and every
 // deposit, and both legs of a swap, try those before the lobby's named gateway and the federation's list
 let seatedLookup = null;
@@ -668,7 +668,7 @@ export function roundsDepositMsat(n, locks, LockClient) {
   return BigInt(n) * oneRoundDepositMsat(locks, LockClient);
 }
 /**
- * WHERE A ROUND'S STAKE COMES FROM, BEFORE ANY DEPOSIT IS ASKED (the owner 2026-10-22 playtest: 2,901 sat shown with ⇄, a 100 sat Up/Down order
+ * WHERE A ROUND'S STAKE COMES FROM, BEFORE ANY DEPOSIT IS ASKED (2026-10-22 playtest: 2,901 sat shown with ⇄, a 100 sat Up/Down order
  * in a 337ae01a round asked "Not enough sats ... Deposit with Lightning?"; "Deposits from different federations must work"). The balance the
  * page shows counts money still merging in from this browser's other wallets (other phrases, e-cash between a send and its receive), and
  * this phrase's own wallets in other federations. `parts` = the page's [{ federation (64 or 16 hex), sats, merging? }], `roundFederation`
@@ -698,7 +698,7 @@ export function joinFundingPlan({ parts = [], roundFederation, needMsat }) {
   const elsewhere = others.reduce((t, [, a]) => t + a.own + a.merging, 0n);
   const ownElsewhere = others.reduce((t, [, a]) => t + a.own, 0n);
   const swapFrom = others.filter(([, a]) => a.own + a.merging > 0n).sort((x, y) => (y[1].own + y[1].merging > x[1].own + x[1].merging ? 1 : -1)).map(([f]) => f);
-  // SPENDABLE MONEY FIRST, THE MERGE ONLY WHEN NOTHING ELSE PAYS (the owner 2026-10-22: "Placing a market order takes 10+ seconds" - every order
+  // SPENDABLE MONEY FIRST, THE MERGE ONLY WHEN NOTHING ELSE PAYS (2026-10-22: "Placing a market order takes 10+ seconds" - every order
   // waited for the merge whenever anything was merging): the round's wallet, else a swap from the player's own notes elsewhere, and only
   // then the money still merging in - the federations to merge named only in that case
   const coveredBy = at.own >= need ? 'here' : at.own + ownElsewhere >= need ? 'swap' : at.own + ownElsewhere + at.merging + elsewhere - ownElsewhere >= need ? 'merge' : null;
@@ -847,7 +847,7 @@ export function resumeDeposits({ client, storage, federationId, onClaimed = () =
     return from ? `${final} (in wallet ${from.label})` : final;
   };
   return Promise.all(pendingDeposits(storage, federationId).map((p) => client.awaitReceive(p.operation).then((final) => ended(p, final),
-    // A DEPOSIT ANOTHER OF THIS BROWSER'S WALLETS MADE (the owner 2026-10-20 17:5xZ: "unknown (operation 3d41502f316a: Operation not found)" - the
+    // A DEPOSIT ANOTHER OF THIS BROWSER'S WALLETS MADE (2026-10-20 17:5xZ: "unknown (operation 3d41502f316a: Operation not found)" - the
     // pending list is per federation, the wallet database per federation and phrase; the invoice was made under another phrase this browser
     // keeps): every other kept wallet of the federation (`others()`: [{ client, label }]) is asked for it, and the one that holds it claims it
     async (e) => {
@@ -2668,7 +2668,7 @@ export async function swapPlayerWalletForRound({ round, toInvite, fromInvite, fr
 export function ledgerFederations(storage) {
   const out = [];
   for (const k of storageKeys(storage)) {
-    // AND EVERY FEDERATION A DEPOSIT IS STILL PENDING IN (the owner 2026-10-20 16:46Z: 1,000 sat paid into b18947f0 "was not reflected" -
+    // AND EVERY FEDERATION A DEPOSIT IS STILL PENDING IN (2026-10-20 16:46Z: 1,000 sat paid into b18947f0 "was not reflected" -
     // the gateway funded the incoming contract, but a deposit gets its ledger row only once claimed, and a page reloaded or
     // suspended before the claim opened wallets only where the ledger had rows: the pending deposit was never resumed, claimed or
     // summed). A federation this browser made a deposit invoice in is one it holds a wallet in.

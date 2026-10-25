@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ROUND OF THE MONEY'S FEDERATION FIRST (kanban #614, the owner 2026-10-24 playtest: an Up/Down order took federation 4dc88be7's round while the
+// THE ROUND OF THE MONEY'S FEDERATION FIRST (kanban #614, 2026-10-24 playtest: an Up/Down order took federation 4dc88be7's round while the
 // money was in 337ae01a, and asked to swap): the page's own moneyFirst (index.html) hands a game client the rows of one window with the round
 // of the federation that holds the most SPENDABLE sats first - a part still merging names its federation by 16 hex, and is not spendable.
 import { test } from 'node:test';

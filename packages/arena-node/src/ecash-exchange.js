@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// MONEY MOVED BETWEEN FEDERATIONS WITHOUT LIGHTNING (kanban #614, the owner 2026-10-24: "Kein Lightning swap, sondern übertragen in die andere
+// MONEY MOVED BETWEEN FEDERATIONS WITHOUT LIGHTNING (kanban #614, 2026-10-24: "Kein Lightning swap, sondern übertragen in die andere
 // federation was viel schneller gehen muss"): a player whose notes are in one federation and whose round is in another hands this seat
 // e-cash of the first; the seat reissues it into its own client there and hands back the same amount of its own notes of the second.
 // No gateway, no invoice: two reissues, one in each federation.

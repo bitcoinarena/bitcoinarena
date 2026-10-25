@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE GAME DEVELOPERS ON THIS NODE (kanban #582, the owner 2026-10-22: "es soll unter donations für game devs erscheinen, wenn ein private key
+// THE GAME DEVELOPERS ON THIS NODE (kanban #582, 2026-10-22: "es soll unter donations für game devs erscheinen, wenn ein private key
 // eines game devs auf dem Node installiert ist und neue Apps signieren kann. Nur dann. Dann gibt es eine Übersicht ähnlich des protocol devs
 // mit allen donations und proposals"): shown only when the owner installed a game developer's key here (GET /owner/app-devs) - per app it
 // signs: the split in force, Change split (the node signs the app's next version with that key, POST /owner/apps/split), every earlier

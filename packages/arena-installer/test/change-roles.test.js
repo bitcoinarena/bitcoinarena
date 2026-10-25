@@ -68,7 +68,7 @@ test('refused: custody switched here, an unknown role, no role at all, the roles
   assert.deepEqual(stateRolesFor(['game', 'settlement'], ['verify', 'custody', 'liquidity']), ['verify', 'settlement', 'custody', 'liquidity']);
 });
 
-// THE NEWEST GAMES IN THE ADVERTISEMENT (the owner 2026-10-25: "Make sure the installer and the nodes use the newest versions of games"):
+// THE NEWEST GAMES IN THE ADVERTISEMENT (2026-10-25: "Make sure the installer and the nodes use the newest versions of games"):
 // a node whose advertisement names Next Block's first version alone gets an update naming every version of its apps; once named, nothing
 test('an update names every game of the node\'s apps when its advertisement does not, and nothing when it does', async () => {
   const { refreshHostedGames } = await import('../src/change-roles.js');

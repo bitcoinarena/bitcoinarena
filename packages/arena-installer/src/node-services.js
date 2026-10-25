@@ -339,7 +339,7 @@ export async function followTunnelNow({ home, platform = process.platform, env =
 }
 
 /**
- * START AT BOOT, one service at a time (kanban #563, the owner 2026-10-21): Linux - its user unit enabled (`systemctl --user is-enabled`);
+ * START AT BOOT, one service at a time (kanban #563, 2026-10-21): Linux - its user unit enabled (`systemctl --user is-enabled`);
  * macOS - its launch agent's RunAtLoad; Windows - the Arena Node launcher starts the node's services together at login, so not one by
  * one. bootOf answers { atBoot: true | false | null, settable, why }; setBoot(word, on) changes it - without starting or stopping it now.
  */

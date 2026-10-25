@@ -15,7 +15,7 @@ import { createHash } from 'node:crypto';
 export const TESTNET4_GENESIS = '00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043';
 
 // THE BUILT-IN LIST: testnet4 Electrum servers, each measured to serve the testnet4 genesis (2026-10-18). A user may add their own.
-// OURS FIRST (kanban #656, the owner 2026-10-25: "also do our own API for the testnet installer"; measured that day: mempool.space answered
+// OURS FIRST (kanban #656, 2026-10-25: "also do our own API for the testnet installer"; measured that day: mempool.space answered
 // for hours on neither its Electrum port nor its Esplora API): Fulcrum on the Arena's public-chain testnet4 node, over a websocket.
 // The public servers stay as fallbacks.
 export const ARENA_ELECTRUM = Object.freeze({ host: 'seat.example.com', port: 443, tls: true, ws: true, path: '/electrum', note: 'Bitcoin Arena' });

@@ -45,7 +45,7 @@ export async function keepItemPurchase({ p, manifest, networkSet, gameSet, serve
   const reserve = reserveRowOf(p, id, (outIdx) => heldIds.get(outIdx));
   if (reserve && keepReserve) keepReserve(reserve);
   // AND EVERY OTHER OUTPUT - the protocol developers', the game developers' - indexed for its recipient, naming the game and the item
-  // (kanban #578, the owner 2026-10-22: "add the item that is being purchased so we can group by it later. Group it by game and item
+  // (kanban #578, 2026-10-22: "add the item that is being purchased so we can group by it later. Group it by game and item
   // name"): before, only the reserve's output was indexed, so no dev client ever saw an item's donation or which item it was for
   const donations = donationRowsOf(p, id, (outIdx) => heldIds.get(outIdx)).filter((r) => !reserve || toHex(r.recipientPk) !== toHex(reserve.recipientPk));
   if (donations.length && keepDonations) keepDonations(donations);

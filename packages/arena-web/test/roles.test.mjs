@@ -58,7 +58,7 @@ test('a node not in the census yet: no switches, the reason said; the seat refus
   assert.deepEqual(askOf({ play: false, settlement: true, relay: false, custody: false }), { roles: ['settlement'], custody: false });
 });
 
-test('an unanswered /roles is not "not in the census": asked three times, then said, and Try again reads it (the owner 2026-10-22, guardian-6)', async () => {
+test('an unanswered /roles is not "not in the census": asked three times, then said, and Try again reads it (2026-10-22, guardian-6)', async () => {
   let calls = 0, down = true;
   const api = { get: async (p) => { if (p === '/roles') { calls++; if (down) throw new Error('502'); } return answers[p]; } };
   const c = new RolesPanel({ api, node: 'me', pause: async () => {} });

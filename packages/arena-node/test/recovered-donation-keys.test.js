@@ -137,7 +137,7 @@ test('backfill: a try counts only when the round\'s last counted try is 6 h old;
   assert.equal(out.length, 0);
 });
 
-// A MARKET'S PROTOCOL RESERVE IN THE RESERVES' BOOK (the owner 2026-10-20 #502, measured on round 6c68396b: its settlement paid 333 msat
+// A MARKET'S PROTOCOL RESERVE IN THE RESERVES' BOOK (2026-10-20 #502, measured on round 6c68396b: its settlement paid 333 msat
 // to 337ae01a's reserve key and GET /reserves never listed it - only an entry's reserve output at its lock was kept as a row)
 const RESERVE_PK = Uint8Array.from([0x02, ...new Uint8Array(32).fill(0x33)]);
 const MARKET_PLAN = { claims: [lockAt(1), lockAt(2)], payouts: [

@@ -17,7 +17,7 @@
 // The peg-in is the gateway's own e-cash in the federation (what it pegged in), read from its gatewayd (`gateway-cli info`) when
 // --gateway-cli is named - measured 22:0xZ: gateway A held 248,999 sat in federation A while the hand-signed claim said 0.
 //
-// PEG-INS STILL CONFIRMING (kanban #552, the owner 2026-10-20: "display the pending gateways that still have pegins confirming (along with
+// PEG-INS STILL CONFIRMING (kanban #552, 2026-10-20: "display the pending gateways that still have pegins confirming (along with
 // their confirmation)"): --peg-in-pending names the outputs paid to the gateway's peg-in addresses in this federation; each one not yet
 // final is listed in the claim's `pending` with its confirmations and the federation's finality (its client config's finality_delay, read
 // from the gatewayd). `pending` is what the operator states, beside the signed fields and not under the signature (the claim's format

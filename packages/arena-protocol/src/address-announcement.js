@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A NODE SAYS WHERE IT IS NOW, OFF CHAIN (kanban #562, the owner 2026-10-21 ~07:35Z: "1 default, 2 for updates so no needed updates").
+// A NODE SAYS WHERE IT IS NOW, OFF CHAIN (kanban #562, 2026-10-21 ~07:35Z: "1 default, 2 for updates so no needed updates").
 // A node's census entry names its endpoint, committed in its bond's advertisement (§25: "A committed endpoint cannot change cheaply").
 // The default is an address that does not change - a named tunnel or the operator's own domain. When it does change (a quick
 // tunnel's new name after a restart), the node signs an ADDRESS ANNOUNCEMENT with its node key - its endpoint now and when it said

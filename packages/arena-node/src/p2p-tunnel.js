@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE GUARDIANS' P2P, THROUGH THE NODES (kanban #562, the owner 2026-10-21 ~07:00Z: "Lieber Tunneln damit wir nicht immer neue
+// THE GUARDIANS' P2P, THROUGH THE NODES (kanban #562, 2026-10-21 ~07:00Z: "Lieber Tunneln damit wir nicht immer neue
 // ads brauchen"). Fedimint's guardians run their consensus over a P2P link of their own - TLS over TCP to each peer's P2P
 // URL - and every guardian of a node set up by hand or by the installer named `fedimint://127.0.0.1:<port>`: measured
 // 2026-10-21, federation B's config (node-1.db.guardian/local.json) lists its seven peers at 127.0.0.1:8221..8281. That

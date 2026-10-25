@@ -1239,7 +1239,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
   };
 }
 
-// ADD TO BOND (spec §5A "Multiple bond outputs", kanban #544, the owner 2026-10-19: "this is also the default way. E.g increase your
+// ADD TO BOND (spec §5A "Multiple bond outputs", kanban #544, 2026-10-19: "this is also the default way. E.g increase your
 // bond by 32000 sats"): a node raises its bond by posting a second bond output beside the first, each valid on its own; from
 // protocol 19 the census counts them as their sum.
 export const sumsBonds = (contract) => !!contract && Number(contract.protocolVersion) >= BOND_SUM_VERSION;

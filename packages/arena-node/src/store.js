@@ -1236,7 +1236,7 @@ export function openStore(path = ':memory:') {
  * wrong to begin with.
  */
 /**
- * THE NODE IDENTITY FROM THE OWNER'S SEED (kanban #650/#653, the owner 2026-10-25: "the node identity (without nostr) needs to be tied to the
+ * THE NODE IDENTITY FROM THE OWNER'S SEED (kanban #650/#653, 2026-10-25: "the node identity (without nostr) needs to be tied to the
  * seed"): the installer hands the key its seed gives (arena-installer/src/seed.js nodeKeyOf) before the node's first start, so the same
  * 24 words - or the same nsec - restore the same node, its bond included. A node that has an identity keeps it: answers whether `secret`
  * is now this node's key.

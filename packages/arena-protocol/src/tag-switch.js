@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE LAST BLWP/v1 TAGS BECOME ARENA/v1 AT ONE POINT (kanban #525, protocol 18; the owner 2026-10-19 ~14:00Z: "both domains accepted
+// THE LAST BLWP/v1 TAGS BECOME ARENA/v1 AT ONE POINT (kanban #525, protocol 18; 2026-10-19 ~14:00Z: "both domains accepted
 // during the switch, the new one required from the upgrade height"). Eleven tags the 10-08 rename left behind - the duty, guardian,
 // gateway and liquidity tickets, the founding's id and setup code, the gateway and liquidity claims, the coin proofs and the two
 // seatings - move together. The point is one block height H per network and that block's time T (ms): a tag computed at a height
@@ -25,7 +25,7 @@ export const TAG_PAIRS = Object.freeze({
   foundingSetup: Object.freeze(['BLWP/v1/FOUNDING_SETUP', 'ARENA/v1/FOUNDING_SETUP']),
 });
 
-/** The point per network: { height, timeMs } or null (not named yet: the old tags everywhere). testnet4: the owner 2026-10-19 ~20:45Z,
+/** The point per network: { height, timeMs } or null (not named yet: the old tags everywhere). testnet4: 2026-10-19 ~20:45Z,
  *  "Launch it as soon as possible" - H 157,064 (~00:50Z at one block per 20 min, after every seat, provider and installer node runs it),
  *  T 2026-10-20 01:00:00Z. */
 export const TAG_SWITCH = Object.freeze({

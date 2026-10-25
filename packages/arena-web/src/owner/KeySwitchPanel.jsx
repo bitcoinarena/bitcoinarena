@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODE KEY FROM THE 24 WORDS (kanban #650, the owner 2026-10-25: "b but optional"): a node installed before 2026.1.8 signs with a random
+// THE NODE KEY FROM THE 24 WORDS (kanban #650, 2026-10-25: "b but optional"): a node installed before 2026.1.8 signs with a random
 // key kept only on this computer. Optional: move it to the key its words give (POST /owner/key-from-words, signed by the owner) - the plan
-// first, then the move. Shown only while the node still signs with the key in its node.db that the words cannot give (the owner 2026-10-25:
+// first, then the move. Shown only while the node still signs with the key in its node.db that the words cannot give (2026-10-25:
 // "Only display the option to switch when we still have a node.db otherwise it won't show"): checked on load (a words login signs here,
 // no prompt), nothing drawn when the key is the words' already or the move is not open to this node. `api` = { post(path, body), signed(action, args) }.
 import React from 'react';

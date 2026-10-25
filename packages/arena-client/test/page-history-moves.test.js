@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE HISTORY NAMES A MOVE AS A MOVE, AND SHOWS EVERY FEDERATION (the owner 2026-10-20 18:4xZ: "it doesn't show the complete history. Not sure what the
+// THE HISTORY NAMES A MOVE AS A MOVE, AND SHOWS EVERY FEDERATION (2026-10-20 18:4xZ: "it doesn't show the complete history. Not sure what the
 // -1000 even is" - his 1,000 sat moved out of the CRITICAL b18947f0 into 337ae01a showed "Stake · round undefine · not entered -1,000 sat", and
 // only the chip's federation was listed). The page's own row rule, run on rows.
 import { test } from 'node:test';

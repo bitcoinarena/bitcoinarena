@@ -49,7 +49,7 @@ test('the point: before it the old tag, from it the new one; heights, epochs and
 
 test('mainnet and regtest name no point; testnet4 names H 157,064 and T 2026-10-20 01:00Z', () => {
   for (const net of ['mainnet', 'regtest']) { assert.equal(TAG_SWITCH[net], null, net); setTagNetwork(net); assert.equal(tagSwitch(), null); }
-  // testnet4's point (the owner 2026-10-19 ~20:45Z): H 157,064, T 2026-10-20 01:00:00Z
+  // testnet4's point (2026-10-19 ~20:45Z): H 157,064, T 2026-10-20 01:00:00Z
   setTagNetwork('testnet4');
   assert.deepEqual(tagSwitch(), { height: 157064, timeMs: Date.parse('2026-10-20T01:00:00Z') });
   assert.equal(tagAt('duty', { height: 157063 }), 'BLWP/v1/DUTY');

@@ -38,7 +38,7 @@ test('guardian_capable and guardian_endpoint are under the advert id, so under t
   assert.notEqual(Buffer.from(advertId(elsewhere)).toString('hex'), id, 'guardian_endpoint is not in the id');
 });
 
-// A FREE FOUNDING SLOT (kanban #599, the owner 2026-10-23 "Nur mit freiem Slot"): guardian_capable 2 - a guardian whose guardian-next waits
+// A FREE FOUNDING SLOT (kanban #599, 2026-10-23 "Nur mit freiem Slot"): guardian_capable 2 - a guardian whose guardian-next waits
 // in setup. It reads back as capable with foundingSlot, is under the advert id, and an advert without it keeps its bytes.
 test('guardian_capable 2: a free founding slot, through encode and decode; an advert without it keeps its bytes', () => {
   const a = advert(), slot = { ...a, foundingSlot: true };

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// OLD WALLET DATABASES OUT OF THE BROWSER'S STORAGE (kanban #616, the owner 2026-10-24: an order refused with "exceeded the quota"; "You need
+// OLD WALLET DATABASES OUT OF THE BROWSER'S STORAGE (kanban #616, 2026-10-24: an order refused with "exceeded the quota"; "You need
 // to clean up old storages"). tidyStorage removes a database no kept phrase can open, and one of another kept phrase that its merge
 // emptied; this tab's own, one with money (not noted empty), one another tab plays with, and one of a federation not named stay.
 import test from 'node:test';

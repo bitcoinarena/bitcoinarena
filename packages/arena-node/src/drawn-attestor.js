@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SEAT AS ONE OF ITS ROUND'S DRAWN ATTESTORS (kanban #630, protocol 21; the owner 2026-10-24: "Atteststiom should also be pre deterministic
+// THE SEAT AS ONE OF ITS ROUND'S DRAWN ATTESTORS (kanban #630, protocol 21; 2026-10-24: "Atteststiom should also be pre deterministic
 // and be drawed randomly, not a fixed set of nodes ... 5 of 7 is needed"). A game whose manifest names a draw (manifest.js attestDraw) has
 // no attestor daemons: each round's 7 attestors are node keys of its census (sortition.js drawAttestors), and a seat drawn for a round
 // does what arena-attestor's daemon does for a fixed key:

@@ -117,7 +117,7 @@ function settledFor(round, roundIdBytes, entryIdBytes, playerPubkey) {
 }
 
 /**
- * WHERE ONE ORDER'S MONEY STANDS IN AN ATTESTED MARKET (the owner 2026-10-20, live UI 269: "The pending balance doesn't appear in the
+ * WHERE ONE ORDER'S MONEY STANDS IN AN ATTESTED MARKET (2026-10-20, live UI 269: "The pending balance doesn't appear in the
  * wallet but does in the prediction market" - measured: the market showed "Up won · +99 sats · pending · final in 8:44" while
  * every committee seat's /standing answered that entry as a replay game, "0 of 5 agree on any one run", pendingMsat null, so the
  * wallet's Pending read 0 sat). A market round is decided by its attestation, not by signed runs: from the round's outcome

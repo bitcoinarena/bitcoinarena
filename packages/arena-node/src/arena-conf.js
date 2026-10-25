@@ -58,7 +58,7 @@ export function parseConf(text) {
 }
 
 /** The keys a file holds that this release does not list (each still reaches the seat as ARENA_<KEY>). */
-// KEYS THAT TOOK A NEW NAME (kanban #569, the owner 2026-10-21: "Rename it so apps in the code and envs"): an update rewrites them once in
+// KEYS THAT TOOK A NEW NAME (kanban #569, 2026-10-21: "Rename it so apps in the code and envs"): an update rewrites them once in
 // an installed node's arena.conf (arena-installer/src/update.js) - the seat reads only the new name
 export const RENAMED_KEYS = Object.freeze({ games: 'apps' });
 /** arena.conf's text with every renamed key written under its new name (the rest of the file as it was). */

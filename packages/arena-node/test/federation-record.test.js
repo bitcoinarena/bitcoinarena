@@ -523,7 +523,7 @@ test('the owner\'s emergency departure of a guardian (§23A.5a, protocol 17): in
   assert.match(said.why, /emergency departure does not stand here, or came after abandon_blocks/);
 });
 
-// kanban #549 (the owner 2026-10-20 ~06:55Z: "federation shows as draining on b18947f085d4 but no new federation is created ... it may not be a
+// kanban #549 (2026-10-20 ~06:55Z: "federation shows as draining on b18947f085d4 but no new federation is created ... it may not be a
 // manual step"): a DRAINING federation's successor, named in its guardians' adverts only after the held rounds' census froze, gets its own
 // record from the chain's census by itself - and the drained one keeps the record its round census gives it
 test('a draining federation\'s successor, unknown to the held rounds\' census, gets its record from the chain\'s census with no setting (kanban #549)', async () => {
@@ -616,7 +616,7 @@ test('the records outlive a restart: a seat with a store keeps what it gathered,
     newest: () => ({ rid: new Uint8Array(32).fill(7), contract: { censusHeight: 156873, networkId: NET } }), roster: { censusFor: () => roundCensus }, inviteFor: (fid) => `fed:${fid}`, networkId: NET,
     censusAt: async () => chainCensus, chainTip: async () => 157090 });
   assert.equal((await fresh2.restore(inviteFederationId)).restored, 0);
-  // NO CENSUS YET (the owner 2026-10-20, measured 12:48Z: six restarted seats held no record for minutes, their chain view not built): the
+  // NO CENSUS YET (2026-10-20, measured 12:48Z: six restarted seats held no record for minutes, their chain view not built): the
   // seat's own kept records come back at once, checked against their own guardian lists - every signature and the threshold
   const blind = (store) => federationRecords({ store, round: { pubkey: n0.pubkey, identity: { secret: n0.secret } }, newest: () => null,
     roster: { censusFor: () => ({ ok: false, why: 'no census yet' }) }, inviteFor: (fid) => `fed:${fid}`, networkId: NET,

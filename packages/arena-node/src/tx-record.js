@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// EVERY ORDER'S TRANSACTION, KEPT AT THE SEAT (kanban #624, the owner 2026-10-24: "each order that was executed gets a transaction id in upordown
+// EVERY ORDER'S TRANSACTION, KEPT AT THE SEAT (kanban #624, 2026-10-24: "each order that was executed gets a transaction id in upordown
 // and in the account history. They point to explorer.bitcoin-arena.io which records all transactions ... Also records the timing info we
 // already display there and all relevant data"; "In the logs we need the txid too so tracing delays is 100% possible"). A transaction's id is
 // its entry id - the hash of the entry contract, the same at every seat. Kept per id:
@@ -8,7 +8,7 @@
 //   steps        each door the transaction passed at this seat (handout, entry, lock, fee-lock): arrival (UTC ms), each step's
 //                offset, the answer's status and the whole time - the [steps] lines of step-log.js, as rows. A handout is kept under its
 //                own id; the entry names it (vssSharesRef), so GET /tx joins the two.
-//   round        what this seat did to settle the transaction's round (the owner 2026-10-24: "Also show who processed the round, e.g for
+//   round        what this seat did to settle the transaction's round (2026-10-24: "Also show who processed the round, e.g for
 //                settlement and verify"): committed to its settlement, gave its signature share, combined it, took it from a peer,
 //                saw it accepted - each with its time; GET /tx names the committees and the outcome's attestors beside them.
 //   client       the page's own timings of the order (from the press: submitted, placed, lock, and its steps before the lock), handed

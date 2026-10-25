@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WHICH OF THE NODE'S OWN SERVICES START WITH IT (kanban #563, the owner 2026-10-21): the services that run inside the node - its guardian,
+// WHICH OF THE NODE'S OWN SERVICES START WITH IT (kanban #563, 2026-10-21): the services that run inside the node - its guardian,
 // the guardians' P2P tunnel, the address announcements - each started at the node's start unless the owner turned that off on the owner
 // page. Kept in the node's store, so a node set up by hand has the same switch as an installed one. A service never set starts.
 export const OWN_SERVICES = Object.freeze(['guardian', 'guardian-next', 'p2p-tunnel', 'announcements']);

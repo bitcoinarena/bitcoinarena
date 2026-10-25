@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ONE DOOR A GAME IMPORTS THE ARENA THROUGH (kanban #568, the owner 2026-10-21: "Make the games in a way that they are stand alone and can be
+// THE ONE DOOR A GAME IMPORTS THE ARENA THROUGH (kanban #568, 2026-10-21: "Make the games in a way that they are stand alone and can be
 // outsourced to its own GitHub repository. Arena loads them"): every arena-sdk subpath is the protocol's own module - the same bindings,
 // so a game and the seat that hosts it share one manifest codec and one hash - and a game moved onto it imports nothing else of the Arena,
 // its id unchanged.

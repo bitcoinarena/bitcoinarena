@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// EVERY SERVICE, ON EVERY NODE (kanban #563, the owner 2026-10-21: "563 must contain all services even if it's custom installed"): what the
+// EVERY SERVICE, ON EVERY NODE (kanban #563, 2026-10-21: "563 must contain all services even if it's custom installed"): what the
 // seat itself runs and reaches, each probed from here - the seat, the chain it reads, its guardian and guardian-next, the gateway it
 // carries, its public address seen from outside, the guardians' P2P tunnel and the address announcements. A node set up by hand shows
 // these; an installed node shows them beside the installer's services (node-services.js overview). Rows as the installer's:

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OWNER PAGE'S WAY IN, IN REACT (kanban #564, the owner 2026-10-21: "fix ... the owner page"): what owner.html drew by hand before the
+// THE OWNER PAGE'S WAY IN, IN REACT (kanban #564, 2026-10-21: "fix ... the owner page"): what owner.html drew by hand before the
 // owner area - the welcome (make 24 words, restore them, or log in with Nostr), the new words shown once with three typed back, the restore
 // from the words, Login with Nostr (an extension, a phone signer's code, a bunker link, an nsec, or a new account with its key shown once),
 // the claim with the code from the node's log, and the one-card messages (no answer, not the owner). The page keeps every rule and hands

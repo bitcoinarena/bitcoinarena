@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// ONE GUARDIAN DOWN NO LONGER KEEPS A WALLET OUT (the owner 2026-10-20 18:0xZ): 4dc88be7's invite named only fed2-8, whose guardian had stopped,
+// ONE GUARDIAN DOWN NO LONGER KEEPS A WALLET OUT (2026-10-20 18:0xZ): 4dc88be7's invite named only fed2-8, whose guardian had stopped,
 // and every join failed "Failed to download client config". A join that cannot read the config is tried once more with an invite naming
 // every guardian this client has seen named for the federation (each seat's record invite, verified or not; every invite it joined with).
 import { test } from 'node:test';

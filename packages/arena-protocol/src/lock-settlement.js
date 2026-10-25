@@ -743,7 +743,7 @@ export function bookLockSettlement({ roundId, table, entries, locks, feeLocks, f
     const split = splitDonation({ donationMsat: giftMsat, recipients: donation.recipients });
     if (!split.owed) return refuse(`the market's donation set does not stand: ${split.why}`);
     const rid = roundId;
-    // EACH ORDER'S PART OF THE DONATION (kanban #580, the owner 2026-10-22: "change the protocol so we can get the player hash for each market
+    // EACH ORDER'S PART OF THE DONATION (kanban #580, 2026-10-22: "change the protocol so we can get the player hash for each market
     // order"): a market pays its donation once per recipient, out of every filled order's fee together - so the payout names its parts,
     // each filled order's entry, its player key and the fee it paid (its weight: an order's share of any donation output of this round is
     // that output times its fee over the fees due). Kept beside the payout and in the seats' donation index; the transaction is unchanged

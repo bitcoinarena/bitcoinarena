@@ -121,7 +121,7 @@ test('an attested round: picks in, no replay, the outcome\'s refusals by name, t
     assert.equal(got[0].label, 'above 100k');
     for (const r of t.rows) assert.equal(BigInt(r.payoutMsat), want.get(r.entryId), `entry ${r.entryId.slice(0, 8)}`);
     assert.equal(BigInt(t.feesMsat) + BigInt(t.donationsMsat) + BigInt(t.payoutsMsat), BigInt(t.grossMsat), 'a msat of the gross went to nobody');
-    // THE WALLET'S PENDING LINE READS THE SAME TABLE (the owner 2026-10-20: "The pending balance doesn't appear in the wallet but does in
+    // THE WALLET'S PENDING LINE READS THE SAME TABLE (2026-10-20: "The pending balance doesn't appear in the wallet but does in
     // the prediction market" - /standing answered a market order as a replay game, "0 of 5 agree on any one run", nothing pending):
     // every entry's /standing at both seats is its table row - a winner's payout, a loser's 0 - provisional until the outcome is final
     // (each seat's final time is its own: 600 s from when IT held the attestation)

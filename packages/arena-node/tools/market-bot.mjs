@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /**
- * ONE MARKET-MAKER BOT, A SCRIPT, NO BROWSER (kanban #581, the owner 2026-10-22: "es darf kein Chrome sein sondern nur ein Script pro
+ * ONE MARKET-MAKER BOT, A SCRIPT, NO BROWSER (kanban #581, 2026-10-22: "es darf kein Chrome sein sondern nur ein Script pro
  * Instanz was den Bot macht. Soll die API verwenden"). One process is one bot: its own wallet (the page's wasm lock client, its
  * notes kept in BOT_DIR/wallet.json across restarts), its own price source, and the seats' own doors - the same API a player's page
  * uses. Every LOOP_S it reads the open Bitcoin Up or Down windows, takes the fair chance of Up from the price to beat and the last
@@ -45,7 +45,7 @@ const NAME = env.BOT_NAME || 'bot', DIR = env.BOT_DIR, DRY = !!env.DRY;
 const nodes = env.NODES.split(',').map((u) => u.trim().replace(/\/+$/, '')).filter(Boolean);
 const LEVELS = Number(env.LEVELS || 2), STEP = Number(env.STEP_CENTS || 2), EDGE = Number(env.EDGE_CENTS || 1), SHARES = Number(env.SHARES || 100);
 const MAX_ORDERS = Number(env.MAX_ORDERS || 4), LOOP_MS = Number(env.LOOP_S || 120) * 1000, AHEAD_MS = Number(env.AHEAD_S || 120) * 1000;
-// THE TAKER (kanban #586, the owner 2026-10-23: "if it's clear that up is winning more bots click up ... There must be always action"):
+// THE TAKER (kanban #586, 2026-10-23: "if it's clear that up is winning more bots click up ... There must be always action"):
 // TAKES taker buys a window at most, each of TAKE_SHARES on the side the fair chance favours, its limit TAKE_CENTS above that
 // side's fair value - past the makers' bids, which rest EDGE_CENTS inside it, so it crosses the other side's resting bids and
 // the batch trades. A bot takes in a pass with chance TAKE_BASE + (1 - TAKE_BASE) x |2 fair - 1|: some action always, nearly
@@ -238,7 +238,7 @@ async function takeFromSpool(needMsat) {
   }
   return have;
 }
-// ---- REBALANCING BETWEEN BOTS (kanban #586, the owner 2026-10-23: "if bot a has won and bot b has lost, there will be an imbalance.
+// ---- REBALANCING BETWEEN BOTS (kanban #586, 2026-10-23: "if bot a has won and bot b has lost, there will be an imbalance.
 // You need to balance it again"): a bot keeps TARGET_MSAT. One that runs short asks the others first - it makes a deposit invoice for
 // what brings it back to TARGET and posts it as a request (`need-<ms>-<bot>.json`, claimed by an atomic rename like the spool's files);
 // a bot holding more than TARGET pays any request its surplus above TARGET covers (its withdraw, through the federation's gateway:
@@ -346,7 +346,7 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
   // measured 22:53Z: "that stake lock's lock height 155634 (its expiration 157469 less the round's 1835 blocks)"
   const tLock = Date.now();
   const io0 = { ...io };
-  // SUBMITTED BEFORE THE GUARDIANS AGREE (kanban #601, the owner 2026-10-23 "Sofort eingereicht"): the locks sent, the entry handed to the seats
+  // SUBMITTED BEFORE THE GUARDIANS AGREE (kanban #601, 2026-10-23 "Sofort eingereicht"): the locks sent, the entry handed to the seats
   // while the federation accepts them, the locks to the seats once it did
   const locks = await lockEntry({ lc: w, c: oc, split, stakePoint: point, player, claimPk: att.claimPk, gate, rand, expiry: Number(c.stakeExpiryBlocks), submitOnly: true });
   const lockMs = Date.now() - tLock;
@@ -365,7 +365,7 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
     stakePoint: dealt.handout.commitments[0], ...locks.entryFields, claimKeyAttestationRef: att.ref,
     pick: Number(rung.outcome), limitPrice: Number(rung.price), orderExpiryMs: 0n, bot: true };
   const eid = entryId(entry);
-  // EVERY SEAT AT ONCE (the owner 2026-10-23 ~19:45Z: "Wie lange dauert nun eine btc up down Order über die api?"): the seats were handed the
+  // EVERY SEAT AT ONCE (2026-10-23 ~19:45Z: "Wie lange dauert nun eine btc up down Order über die api?"): the seats were handed the
   // order one after another - handout, entry, fee lock, lock, each lock checked by that seat with the federation - so an order waited for
   // seven seats in a row. Each seat's four posts stay in order; the seats run side by side. `ms`: the whole order, the locks at the
   // federation (lockMs), and the seats (seatsMs, firstSeatMs when the first one held the lock)
@@ -386,7 +386,7 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
       const en = await fetch(`${n}/entry`, { method: 'POST', body: encodeEntryContract(entry), signal: limit() });
       const enWhy = en.status >= 300 ? (await en.text()).trim().slice(0, 200) : null;
       if (en.status >= 200 && en.status < 300 && submittedMs === null) submittedMs = Date.now() - t0;
-      // A SEAT THAT REFUSED THE ENTRY GETS NO LOCKS (the owner 2026-10-24, the explorer: "Some show 404"): a node not seated for the round
+      // A SEAT THAT REFUSED THE ENTRY GETS NO LOCKS (2026-10-24, the explorer: "Some show 404"): a node not seated for the round
       // holds no entry, so its lock doors could only answer 404
       if (en.status < 200 || en.status >= 300) { said.push({ seat: n.replace(/^https?:\/\//, ''), entry: en.status, why: enWhy }); return; }
       await accepted;

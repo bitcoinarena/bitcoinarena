@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A ROUND IS PAID FROM WHATEVER THE PLAYER HOLDS, IN ANY CONFIGURED FEDERATION, BEFORE ANY DEPOSIT IS ASKED (the owner 2026-10-22 playtest: 2,901
+// A ROUND IS PAID FROM WHATEVER THE PLAYER HOLDS, IN ANY CONFIGURED FEDERATION, BEFORE ANY DEPOSIT IS ASKED (2026-10-22 playtest: 2,901
 // sat shown with ⇄ - 2,201 in 4dc88be7, 700 in 337ae01a, part of it still merging in from another phrase's wallet - and a 100 sat Up/Down order
 // in a 337ae01a round showed "Not enough sats ... Deposit with Lightning?"; "add a test that this can't happen again. Deposits from different
 // federations must work with the configured app configuration"). For every app the Arena is configured with (apps.lock.json) and every
@@ -84,7 +84,7 @@ test('only a phrase this browser keeps counts as merging: a remembered balance o
   assert.deepEqual(exec({ [`arena.wallet.known.${F}.${'aa'.repeat(8)}`]: '700000' }, 'aa'.repeat(8)), [], 'this tab\'s own phrase is never counted twice');
 });
 
-test('spendable money first: no order waits for a merge while the round wallet or a swap from the player\'s own notes pays it (the owner 2026-10-22: "Placing a market order takes 10+ seconds")', () => {
+test('spendable money first: no order waits for a merge while the round wallet or a swap from the player\'s own notes pays it (2026-10-22: "Placing a market order takes 10+ seconds")', () => {
   const [A, B2] = ['337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e', '4dc88be70830d3619fd8742eaf639ab297774850cc68a203aad5b10a21e1fe98'];
   const plan = (parts) => joinFundingPlan({ parts, roundFederation: A, needMsat: 101000n });
   assert.deepEqual(plan([{ federation: A, sats: 900, merging: 700 }]).mergeFirst, [], '200 sat of its own here pay it: nothing merged first');

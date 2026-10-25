@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // LEAVE WITHOUT BEING SLASHED, IN REACT (kanban #564): what owner.html's leavePanel() drew by hand. From the moment the owner signs Leave this
 // seat takes no new round and serves the ones it holds to their end; it is free once the last is past its objection window and settled.
-// Custody: only if the federation keeps its threshold without this guardian. WHEN THE BOND IS FREE (kanban #553, the owner 2026-10-20: "his
+// Custody: only if the federation keeps its threshold without this guardian. WHEN THE BOND IS FREE (kanban #553, 2026-10-20: "his
 // bond will not immediatly be released, be sure to display the number of blocks left AND the estimated times in days and hours"): the
 // bond's lock - its maturity block - is the rule, the time an estimate. The page reads the seat and hands over `leave` (GET /owner/leave),
 // `bond` (GET /owner/bond, null when it did not answer), `why` (when the leave state could not be read) and `act('leave' | 'stay')`.

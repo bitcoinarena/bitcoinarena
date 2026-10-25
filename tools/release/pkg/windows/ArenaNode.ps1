@@ -2,7 +2,7 @@
 # version of the installer that launches the browser etc"). The Start menu's "Arena Node" and the end of ArenaNodeSetup.exe open it:
 #   no node yet      the installer runs (hidden), its one-time link opens in the browser, its lines show here; Stop ends it
 #   a node installed "Server running" or "Server stopped" (arenanode state) and its services, with Dashboard / Owner page / Stop node or
-#                    Start node / Doctor / Refresh (kanban #658, the owner 2026-10-25: "show when it's installed \"Server running\" with options to
+#                    Start node / Doctor / Refresh (kanban #658, 2026-10-25: "show when it's installed \"Server running\" with options to
 #                    Stop Node, Start Node, Doctor" - "And also \"Dashboard\" that opens the browser with the dashboard")
 # Built-in parts only (WinForms in Windows PowerShell): nothing more to install.
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing

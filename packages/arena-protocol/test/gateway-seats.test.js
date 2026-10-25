@@ -40,7 +40,7 @@ test('the best two: routed volume first, then capacity, availability, bond, the 
   assert.equal(cap.seated[0], toHex(k(7)), 'equal capacity: the one up 99 % before the one up 97 %');
 });
 
-test('the seats rotate every epoch (the owner 2026-10-20: "rotate ... daily every 144 blocks among those that want to be gateways"); an empty seat is said', () => {
+test('the seats rotate every epoch (2026-10-20: "rotate ... daily every 144 blocks among those that want to be gateways"); an empty seat is said', () => {
   const c = [ok(1, { volumeSats: 50_000n }), ok(2, { volumeSats: 30_000n }), ok(3, { volumeSats: 10_000n }), ok(4, { volumeSats: 5_000n })];
   const e1 = seat(c);
   assert.deepEqual(e1.seated, [toHex(k(1)), toHex(k(2))], 'no epoch before: the best two');
@@ -57,7 +57,7 @@ test('the seats rotate every epoch (the owner 2026-10-20: "rotate ... daily ever
   assert.deepEqual([gone.seated, gone.empty], [[toHex(k(2))], 1], 'an ineligible holder goes; one seat empty, said');
   assert.match(gone.why, /1 of 2 gateway seats filled/);
 });
-test('at least one gateway (the owner 2026-10-20): no operator eligible, the best that can still serve holds one seat', () => {
+test('at least one gateway (2026-10-20): no operator eligible, the best that can still serve holds one seat', () => {
   // the measured case: Federation 2 (draining, 1 seat), its gateway up 92 % on one guardian's probes, the other one holding no e-cash there
   const one = seatGateways({ candidates: [ok(1, { availabilityPct: 92, pegInSats: 95_393n }), ok(2, { pegInSats: 0n })], beacon, network: 'testnet4', bondMinGuardian: 50_000n, seats: 1 });
   assert.deepEqual(one.seated, [toHex(k(1))]);

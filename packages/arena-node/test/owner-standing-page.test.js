@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OWNER PAGE'S STANDING, CAPACITY PLEA AND BOND OFFER: the standing is drawn only by React since kanban #564 (the owner 2026-10-21: "no
+// THE OWNER PAGE'S STANDING, CAPACITY PLEA AND BOND OFFER: the standing is drawn only by React since kanban #564 (2026-10-21: "no
 // fall backs") - its figures and warnings are arena-web's (test/standing.test.mjs) - so the page is checked for what it hands the screen;
 // the capacity plea and the bond offer are still the page's own, run on the doors' answers.
 import { test } from 'node:test';

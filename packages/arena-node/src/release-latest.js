@@ -7,7 +7,7 @@ const LATEST_URL = 'https://testnet.bitcoin-arena.io/release/latest.json';
 const TTL_MS = 6 * 3600_000;
 
 /**
- * WHERE THE NEWEST RELEASE IS READ (kanban #546, the owner 2026-10-20: "a signed, unlisted latest.json, read only when ARENA_LATEST_URL is set,
+ * WHERE THE NEWEST RELEASE IS READ (kanban #546, 2026-10-20: "a signed, unlisted latest.json, read only when ARENA_LATEST_URL is set,
  * and only when that URL is limited to testnet.bitcoin-arena.io"): the production latest.json unless ARENA_LATEST_URL (or the node's
  * arena.conf `latest_url`, which an update keeps where a launcher's env would be rewritten) names an https latest.json on the Arena
  * testnet site - a test channel, still believed only under the release key's signature. Anything else is refused and the production

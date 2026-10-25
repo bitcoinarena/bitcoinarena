@@ -371,7 +371,7 @@ if (env.PAID_DUTY_DAILY === '1') {
     if (!forced.ok) throw new Error(`no donation set in force at census height ${round.contract.censusHeight}: ${forced.why}`);
     return idOfDonationSet(forced.recipients);
   };
-  // A DRAINING FEDERATION'S DAYS GO TO ITS SUCCESSOR (kanban #502/#549, the owner 2026-10-20: "it may not be a manual step"): before each
+  // A DRAINING FEDERATION'S DAYS GO TO ITS SUCCESSOR (kanban #502/#549, 2026-10-20: "it may not be a manual step"): before each
   // posting the seats' signed records are read (GET /federations, the first seat that answers); a federation named here whose record is
   // DRAINING (or CRITICAL while draining) and names an OPEN successor is posted as that successor - no round names a draining one
   // the seats' public addresses through ARENA_ROUTE_MAP when it is set (a machine that cannot reach its own Funnel)
@@ -670,7 +670,7 @@ if (env.PAID_UPDOWN_GRID === '1') {
         stakeExpiryFor: (t) => { const n = marketExpiryBlocks(t, UPDOWN.manifest.marketTerms); if (!n.ok) throw new Error(n.why); return n.blocks; } },
         { slots, tables: 1, windowMs: period, entryAfterStartMs: 0n, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee), feeRate, maxFeeRate,
           onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `updown-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ updownGrid: 'published', ...p });
-            // AND WHAT IS ON ITS WAY, for the seats' GET /expected (kanban #559 aside, the owner 2026-10-20: "Add an estimated message to markets
+            // AND WHAT IS ON ITS WAY, for the seats' GET /expected (kanban #559 aside, 2026-10-20: "Add an estimated message to markets
             // when it's currently no rounds but a new round is expected"): the market's page says when the first window opens and which block it waits for
             if (env.ARENA_EXPECTED_FILE) { try { writeFileSync(env.ARENA_EXPECTED_FILE, JSON.stringify({ game: UPDOWN.manifest.name || 'btc-updown-15m', gameId: toHex(UPDOWN.gameId),
               firstWindowMs: firstClose - Number(period), firstCloseMs: firstClose, lastCloseMs: firstClose + (slots - 1) * Number(period), slots, committeeTimeMs: committee,

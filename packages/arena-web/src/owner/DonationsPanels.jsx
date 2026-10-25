@@ -24,7 +24,7 @@ const Row = ({ k, v, sub }) => <div className={'row' + (sub ? ' sub' : '')}><spa
 const field = { autoComplete: 'off', autoCapitalize: 'none', spellCheck: false };
 
 export class WaitingDonations extends React.Component {
-  // AT ONE PEEK (the owner 2026-10-22: "lots of entries with 0 ... make it more modern and easy to see at one peek"): one line - what waits at
+  // AT ONE PEEK (2026-10-22: "lots of entries with 0 ... make it more modern and easy to see at one peek"): one line - what waits at
   // this seat for the dev clients to collect - and the sets only where something waits, folded; a set or recipient at 0 is not drawn
   render() {
     const { donations: r, why } = this.props;
@@ -68,7 +68,7 @@ function Earnings({ split: S }) {
 }
 
 /**
- * EVERY DONATION, FILTERED AND PAGED (kanban #578, the owner 2026-10-22: "Da schaut hässlich aus. Füge Filter hinzu, App, Protocol, Paging,
+ * EVERY DONATION, FILTERED AND PAGED (kanban #578, 2026-10-22: "Da schaut hässlich aus. Füge Filter hinzu, App, Protocol, Paging,
  * Rows displayed etc"): one client's donations from GET /owner/dev/donations - by app (or items only), the whole amount or only the
  * protocol's or the app's part, a search over player, round, entry and item, 10 to 100 rows a page; a row opens its full record.
  */
@@ -91,7 +91,7 @@ export class DonationsTable extends React.Component {
     const curOf = (f) => (cur !== 'sat' && f && f[s.part] && f[s.part][cur] !== undefined ? money(f[s.part][cur], cur) : null);
     const short = (x) => (x ? x.slice(0, 8) + '…' + x.slice(-4) : '–');
     const when = (ms) => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') : '?');
-    // A MARKET'S WINDOW BY NAME (kanban #580, the owner 2026-10-22: "on markets, it should show the market name e.g 18:45 - 19:00"), UTC
+    // A MARKET'S WINDOW BY NAME (kanban #580, 2026-10-22: "on markets, it should show the market name e.g 18:45 - 19:00"), UTC
     const hm = (ms) => new Date(ms).toISOString().slice(11, 16);
     const span = (w) => `${hm(w.fromMs)} – ${hm(w.toMs)}`;
     const pages = r ? Math.max(1, Math.ceil(r.total / s.limit)) : 1, page = Math.floor(s.offset / s.limit) + 1;
@@ -160,7 +160,7 @@ export class DevClients extends React.Component {
   async remove(slug) {
     try { await this.props.remove(slug); this.props.reread(); } catch (e) { this.setState({ removeWhy: e.message }); }
   }
-  // WITHDRAW, RIGHT IN THE CARD (the owner 2026-10-22: the card's button did nothing visible - it opened a folded panel far below)
+  // WITHDRAW, RIGHT IN THE CARD (2026-10-22: the card's button did nothing visible - it opened a folded panel far below)
   withdrawForm(V) {
     const s = this.state, said = s.said[V.slug];
     return (
@@ -208,7 +208,7 @@ export class DevClients extends React.Component {
           <button type="button" className="primary" id="dsetup" onClick={() => this.setup()}>Set up</button>
           <div className="err" id="derr">{s.setupSaid ? (s.setupSaid.ok ? <span className="ok">{s.setupSaid.text}</span> : s.setupSaid.text) : ''}</div></div></details>);
   }
-  // AT ONE PEEK (the owner 2026-10-22: "modern and pretty looking, and visible at a glance"): one wide card per client - what it can
+  // AT ONE PEEK (2026-10-22: "modern and pretty looking, and visible at a glance"): one wide card per client - what it can
   // withdraw now in whole sats, Withdraw beside it, four stat chips, and the split as one bar (protocol, each game, items) with counts
   render() {
     const { dev: r, why } = this.props, s = this.state;
@@ -220,11 +220,11 @@ export class DevClients extends React.Component {
     const holds = (V) => (V.balances || []).reduce((t, b) => t + BigInt(b.msat || 0), 0n);
     const ago = (ms) => { if (!ms) return ''; const m = Math.round((Date.now() - ms) / 60000); return m < 60 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
     const COLORS = ['var(--st)', 'var(--gv)', 'var(--ok)', '#a77bf3', '#e57ab0', '#4fd1c5'];
-    // THE SHARE AT THE TOP (the owner 2026-10-22: "Display the current share of this dev client in % at the top"): one number when the
+    // THE SHARE AT THE TOP (2026-10-22: "Display the current share of this dev client in % at the top"): one number when the
     // protocol set and every game set give it the same share, else each
     const shareOf = (V) => { const sh = V.split && V.split.shares; if (!sh) return null;
       const all = [{ t: 'protocol', bps: sh.protocolBps }, ...(sh.games || []).map((g) => ({ t: g.title, bps: g.bps }))];
-      // every set by name, always (the owner 2026-10-22: "what is this 33%, is it just the protocol?" - one number for all hid that)
+      // every set by name, always (2026-10-22: "what is this 33%, is it just the protocol?" - one number for all hid that)
       return <div className="dh-share"><span className="sub">Your share</span>{all.map((x) => <span key={x.t} className={Number(x.bps) >= 10000 ? 'own' : undefined}><b>{pct(x.bps)}</b> {x.t === 'protocol' ? 'Protocol' : x.t}</span>)}</div>; };
     const parts = (V) => {
       const S = V.split; if (!S) return [];
@@ -268,7 +268,7 @@ export class DevClients extends React.Component {
                 <div><span>Donations</span><b>{Number(V.donations).toLocaleString('en-US')}</b></div>
               </div>
               {total > 0n ? <>
-                {/* HOVER, A REAL READOUT (the owner 2026-10-22: "Hover is not working" - a title tooltip on a 10 px bar barely shows) */}
+                {/* HOVER, A REAL READOUT (2026-10-22: "Hover is not working" - a title tooltip on a 10 px bar barely shows) */}
                 <div className="dh-bar" onMouseLeave={() => this.setState({ hov: { ...(s.hov || {}), [V.slug]: null } })}>{P.map((p, i) => <i key={p.label}
                   className={(s.hov || {})[V.slug] === i ? 'on' : undefined} onMouseEnter={() => this.setState({ hov: { ...(s.hov || {}), [V.slug]: i } })}
                   style={{ width: `${Number((p.msat * 10000n) / total) / 100}%`, background: p.color }} />)}</div>

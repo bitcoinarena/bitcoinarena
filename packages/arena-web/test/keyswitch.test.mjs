@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODE KEY FROM THE 24 WORDS (kanban #650): shown only while the node still signs with a key its words cannot give (the owner 2026-10-25:
+// THE NODE KEY FROM THE 24 WORDS (kanban #650): shown only while the node still signs with a key its words cannot give (2026-10-25:
 // "Only display the option to switch when we still have a node.db otherwise it won't show") - checked on load, the move on its button.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

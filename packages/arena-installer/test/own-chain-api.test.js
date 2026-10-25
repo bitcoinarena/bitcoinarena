@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// OUR OWN TESTNET4 API (kanban #656, the owner 2026-10-25: "also do our own API for the testnet installer"): the block API's three routes
+// OUR OWN TESTNET4 API (kanban #656, 2026-10-25: "also do our own API for the testnet installer"): the block API's three routes
 // from bitcoind, the Electrum protocol over a websocket, ours first in the installer's lists, and the bridge going on to the next block
 // API when one does not answer.
 import { test } from 'node:test';

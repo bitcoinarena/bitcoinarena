@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE APPS ARE DOWNLOADED, NOT BUNDLED (kanban #575, the owner 2026-10-21: "We said the installer downloads the 3 apps automatically, no
+// THE APPS ARE DOWNLOADED, NOT BUNDLED (kanban #575, 2026-10-21: "We said the installer downloads the 3 apps automatically, no
 // longer built in"). The release carries apps.lock.json (each app's repository and commit) and apps.files.json (every file a node takes
 // of the app at that commit, with its SHA-256 - tools/pin-apps.mjs writes it from the copies, which apps-pinned holds to the pins). Each
 // app missing from the release is fetched file by file from its public repository at the pinned commit (raw.githubusercontent.com: no

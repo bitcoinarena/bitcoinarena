@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// NO "WAITING FOR THE RESULT" FLASH AT PAGE LOAD (the owner 2026-10-20 23:13 local, phone, UI 269: "At page load it shows waiting for
+// NO "WAITING FOR THE RESULT" FLASH AT PAGE LOAD (2026-10-20 23:13 local, phone, UI 269: "At page load it shows waiting for
 // result, then it disappears. Nothing is paid out" - his two orders of 20:45-21:00, settled and paid two hours before, were listed
 // under My orders as "waiting for the result" until the page's first outcome read moved them to History): an order whose window
 // closed before the page loaded is kept out of sight until its round's outcome was asked once; one that closes while the page is

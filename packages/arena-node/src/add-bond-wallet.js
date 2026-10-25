@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// ADD TO BOND FROM A BOND WALLET (kanban #553, the owner 2026-10-20: "Add bond needs to be posted from within the interface"): a seat set up
+// ADD TO BOND FROM A BOND WALLET (kanban #553, 2026-10-20: "Add bond needs to be posted from within the interface"): a seat set up
 // by hand has no installer home (no arena.conf, no installer wallet), so the owner page could only tell its owner to run a command. Such a
 // seat names the Bitcoin Core wallet its bonds were paid from - ARENA_BOND_CLI, a bitcoin-cli command line with its -datadir and
 // -rpcwallet - and the owner page adds to its bond as on an installed node: a SECOND bond output beside the first (protocol 19 counts both
@@ -96,7 +96,7 @@ export const walletAddress = (cli) => cli('getnewaddress', 'add-bond', 'bech32m'
 export const ADVERT_ROLES = Object.freeze(['game', 'verify', 'settlement', 'relay']);
 const UPDATE_CARRIER_SATS = 3000n;
 /**
- * THE NODE'S ROLES CHANGED FROM THE OWNER PAGE (kanban #553, the owner 2026-10-20: "It also offers no options to setup the role of the node";
+ * THE NODE'S ROLES CHANGED FROM THE OWNER PAGE (kanban #553, 2026-10-20: "It also offers no options to setup the role of the node";
  * "I should be still able to setup the roles"): an advertisement update (§5A.2) of the node's newest bond - its advertisement as it stands,
  * with `roles` (a subset of ADVERT_ROLES) and `custody` (guardian_capable) as asked and a new timestamp - its carrier funded from the bond
  * wallet. No bond is spent and no maturity clock starts. Without `post` both transactions are built and checked (testmempoolaccept);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OWNER PAGE'S CUSTODY CARD (2026-10-18: "if custody is setup later in the UI we need the same screens"), drawn only by React since
-// kanban #564 (the owner 2026-10-21: "no fall backs"): what the page hands the screen. What it says - how to add custody, a guardian's
+// kanban #564 (2026-10-21: "no fall backs"): what the page hands the screen. What it says - how to add custody, a guardian's
 // endpoint - is arena-web's (test/custody.test.mjs).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -91,7 +91,7 @@ test('the Capacity card: each federation\'s band, who is below B* and by how muc
   assert.equal(drawn.length, 2);
 });
 
-test('Waiting for a founding: one list from one seat, and every number counted from its rows (kanban #585, the owner: "Wenn 8 von 10 ready sind müssen auch 8 da stehen")', () => {
+test('Waiting for a founding: one list from one seat, and every number counted from its rows (kanban #585, Alice: "Wenn 8 von 10 ready sind müssen auch 8 da stehen")', () => {
   const at = script.indexOf('  function paintFounding(nodes, feds, mem) {');
   const src = script.slice(at, script.indexOf('\n  }\n', at) + 4);
   const drawn = [];

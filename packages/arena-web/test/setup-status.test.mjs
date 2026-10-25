@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE SETUP CARD ON BOTH DASHBOARDS (kanban #635; the owner 2026-10-25: "lnd status and everything else that may be in progress"): a row for
+// THE SETUP CARD ON BOTH DASHBOARDS (kanban #635; 2026-10-25: "lnd status and everything else that may be in progress"): a row for
 // each part under way, a problem marked and counted in the heading, "complete" when all are done.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -20,7 +20,7 @@ test('/owner/react.js and /owner/react.css: the React bundle and its stylesheet'
   } finally { await seat.close(); }
 });
 
-// NO FALL BACKS (kanban #564, the owner 2026-10-21: "Delete the old html code of those components you have ported, no fall backs"): the
+// NO FALL BACKS (kanban #564, 2026-10-21: "Delete the old html code of those components you have ported, no fall backs"): the
 // owner page loads the bundle once, at the top of its script, outside any try, and draws every ported panel with it alone - each screen
 // it mounts is one the bundle hands out
 test('owner.html: the React bundle loaded once and unconditionally; every screen it mounts is one window.ArenaOwner offers', () => {

@@ -221,7 +221,7 @@ async function pass() {
         say({ step: 'unclaimed: check failed', federation: f16, why: e.message, nextAt: new Date(state.unclaimedNextAt[fed]).toISOString() });
       }
     }
-    // A DRAINING FEDERATION'S MONEY FOLLOWS ITS SUCCESSOR (kanban #578, the owner 2026-10-22: "federations that are draining and are
+    // A DRAINING FEDERATION'S MONEY FOLLOWS ITS SUCCESSOR (kanban #578, 2026-10-22: "federations that are draining and are
     // re-created keep their dev settings, it seems that was not the case" - dev b held 9,285 msat in draining B, which would have
     // been stuck once B is CLOSED): the page's own migrateFromDraining (§23A.6 step 3) - a send from this wallet paying an invoice
     // of this dev's wallet in the successor the signed record names, in chunks, each waited for until claimed

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ARENA FAUCET'S RULES (kanban #635, the owner 2026-10-25: testcoins "Automatisch oder geführt", the automatic way an Arena faucet
+// THE ARENA FAUCET'S RULES (kanban #635, 2026-10-25: testcoins "Automatisch oder geführt", the automatic way an Arena faucet
 // from our own testnet4 coins). A new node's installer asks for exactly what its bond step needs, sent to the node's own address. The
 // faucet pays an address once, an IP a few times a day, and no more than a daily cap in all; when it says no, the installer shows the
 // guided way (public faucets) instead. These are the rules alone - the server (tools/faucet.mjs) pays through its bitcoind wallet.

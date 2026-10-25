@@ -209,7 +209,7 @@ test('positions backed by locks: placement, an agreed match, a failed one (void)
     const body = { roundId: w.rid, outcome: YES, observedAtMs: w.c.entryCloseMs + 1n };
     await Promise.all(w.nodes.map((d) => fetch(`${base(d)}/outcome?round=${rid}`, { method: 'POST', body: encodeAttestation({ ...body, signatures: [A0, A1].map((a) => attestorSign(a, body)) }) })));
     const o = await (await fetch(`${base(w.nodes[0])}/outcome?round=${rid}`)).json();
-    // LIMIT ORDERS IN THE WALLET'S PENDING LINE (the owner 2026-10-20: "Also verify if limit orders leave a pending"): a filled order's
+    // LIMIT ORDERS IN THE WALLET'S PENDING LINE (2026-10-20: "Also verify if limit orders leave a pending"): a filled order's
     // /standing is its line of the book's settlement - winnings plus the rest of its budget it did not spend; an order with no fill
     // names no figure (kind refund) - its locks come back whole by the return door, which the page counts as a stake owed back
     {

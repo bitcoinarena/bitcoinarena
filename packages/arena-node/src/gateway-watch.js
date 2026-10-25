@@ -26,7 +26,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
   // THE FEDERATION'S OWN COINS (gateway-volume.js federationCoins): async () -> Map(outpoint -> sat) | null - a claim's peg-in outpoint found
   // among them is a proved peg-in (§23A.3a); none given: no peg-in is proved
   federationCoins = async () => null,
-  // THE SEATS A FEDERATION NEEDS (the owner 2026-10-20, hard rule: "All federations need 2 of 2 gateways, draining gateways at least 1"): async (fid) -> n
+  // THE SEATS A FEDERATION NEEDS (2026-10-20, hard rule: "All federations need 2 of 2 gateways, draining gateways at least 1"): async (fid) -> n
   seatsFor = async () => GATEWAY_SEATS,
   // THE FEDERATION'S RESERVE AND CAP from its record (§23A.3a part 2): async (fid) -> { reserveSats, exposureCapSats } | null; with them,
   // under peg-in pressure the proved peg-in ranks before volume
@@ -45,10 +45,10 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
   async function probe() {
     try { return await probeOnce(); } catch (e) { lastProbe = { atMs: Date.now(), why: String(e && e.message || e).slice(0, 200) }; throw e; }
   }
-  // THE EPOCH'S PROBES OUTLIVE A RESTART (kanban #552, the owner 2026-10-20: "Shows 0 of 2 again. Why is this so hard to fix?" - every seat
+  // THE EPOCH'S PROBES OUTLIVE A RESTART (kanban #552, 2026-10-20: "Shows 0 of 2 again. Why is this so hard to fix?" - every seat
   // restart cleared them and the seats said "0 of 2" until new probes came in): `keep` { load(fid) -> { epoch: { node: row } }, save(fid,
   // epoch, rows) } - the seat's own database; a claim is kept as the node signed it and is checked again when it is read back
-  // AND THE REST OUTLIVES IT TOO (kanban #559, the owner 2026-10-20: "Fix all of it"): the seats this guardian ranked per epoch (the next
+  // AND THE REST OUTLIVES IT TOO (kanban #559, 2026-10-20: "Fix all of it"): the seats this guardian ranked per epoch (the next
   // epoch's holders step back), the epoch's routed volume and the contract stream's index - `keep.state` { load(fid), save(fid, state) }
   let loaded = false;
   const stateOut = () => ({ cursor, seatedBy: Object.fromEntries(seatedBy), volumes: Object.fromEntries([...volumes].map(([e, m]) => [e, Object.fromEntries([...m].map(([k, v]) => [k, String(v)]))])) });
@@ -134,7 +134,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     const epoch = Math.floor(h / epochBlocks);
     const at = epochs.has(epoch - 1) ? epoch - 1 : epoch;
     const all = (await entries()) || [];
-    // NO CENSUS READ, NO RANKING (the owner 2026-10-20 "is this correct?" - a seat right after its restart ranked with no census and said both of
+    // NO CENSUS READ, NO RANKING (2026-10-20 "is this correct?" - a seat right after its restart ranked with no census and said both of
     // Federation 1's gateways had a "bond below bond_min_guardian"): a seat that holds no census yet says so, and judges nothing
     if (!all.length) return { ok: false, federationId: fid, why: 'this seat has not read its census yet (just restarted): ask again in a few minutes' };
     const seatedNow = new Set((await seated(fid)) || []);

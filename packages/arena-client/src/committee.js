@@ -64,7 +64,7 @@ const originOf = (u) => { try { const x = new URL(u); const head = x.pathname.sp
 export const anchorHeightFor = (networkId) => (networkId instanceof Uint8Array && toHex(networkId) === toHex(NETWORK_ID_TESTNET4) ? TESTNET4_ANCHOR_HEIGHT : 0);
 
 async function chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, explorer = null }) {
-  // ONE AGREED CHAIN FOR EVERY ROUND IT HOLDS (kanban #618, the owner 2026-10-24: "Order submitted in 16.78 s"; measured on UI 363: 16.2 s of
+  // ONE AGREED CHAIN FOR EVERY ROUND IT HOLDS (kanban #618, 2026-10-24: "Order submitted in 16.78 s"; measured on UI 363: 16.2 s of
   // a first order were this read, done again for every round - the lobby's round and the order's, same census and beacon - because the
   // kept chain was keyed by the round's committee time): a chain read in the last CHAIN_KEPT_MS serves any round whose census height it
   // holds and whose beacon - the first block after committee_time (beacon.js) - is already in it; else it is read again

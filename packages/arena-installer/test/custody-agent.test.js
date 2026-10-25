@@ -151,7 +151,7 @@ test('the gateway Disconnected while LND answers: restarted on the second tick i
   assert.equal(restarts.length, 1);
 });
 
-test('a quick tunnel\'s new name is followed, the seat restarted on it - and no advertisement update is posted for an address (kanban #562, the owner 2026-10-21: "no needed updates")', async () => {
+test('a quick tunnel\'s new name is followed, the seat restarted on it - and no advertisement update is posted for an address (kanban #562, 2026-10-21: "no needed updates")', async () => {
   const home = mkdtempSync(join(tmpdir(), 'custody-addr-'));
   const state = nodeState(home);
   writeFileSync(join(home, 'seed.hex'), '11'.repeat(32));

@@ -1379,7 +1379,7 @@ export class LockSettlement {
     if (!plan || !Array.isArray(plan.payouts) || !this.round.putDonationOutputs || !/^[0-9a-f]{64}$/.test(String(txid))) return 0;
     const row = this.round.get(roundIdBytes);
     const federationId = row ? decodeRoundContract(new Uint8Array(row.contract)).federationId : new Uint8Array(32);
-    // AND A MARKET'S PROTOCOL RESERVE (the owner 2026-10-20 #502, measured on round 6c68396b: its settlement paid 333 msat to
+    // AND A MARKET'S PROTOCOL RESERVE (2026-10-20 #502, measured on round 6c68396b: its settlement paid 333 msat to
     // 337ae01a's reserve key - 20 % of the 1,666 msat of fees due - and GET /reserves never listed it: the reserves' book held only
     // the reserve outputs a game entry makes at its lock; a market pays its reserve at settlement): each 'reserve' payout is a
     // row under the reserve key too, its entry id zeros (it is the round's, no one entry's)

@@ -9,7 +9,7 @@
 #     tools/release/build-release.sh <version> <linux|darwin|windows> <x64|arm64> <out dir> [commit]
 #
 # Writes <out>/bitcoin-arena-node-<version>-<os>-<arch>.tar.gz (.zip on Windows) and appends its line to <out>/SHA256SUMS.
-# THE NAME (kanban #635, the owner 2026-10-25: "Es muss bitcoin-arena-node heissen"): ARENA_RELEASE_PREFIX=arena-node builds the
+# THE NAME (kanban #635, 2026-10-25: "Es muss bitcoin-arena-node heissen"): ARENA_RELEASE_PREFIX=arena-node builds the
 # files under the name releases before 2026.1.8 had, for the update channel a node before 2026.1.8 reads (auto-update.js).
 set -euo pipefail
 VER="$1"; OS="$2"; ARCH="$3"; OUT="$(mkdir -p "$4" && cd "$4" && pwd)"; REF="${5:-HEAD}"
@@ -49,7 +49,7 @@ fetch() { # url sha file
 # 1. the code, from the commit (git archive: tracked files only, nothing of a working tree)
 # (all of packages/arena-web/dist: every page script the node serves, packed by esbuild - its pages draw only with React, kanban #564;
 # arena-web/test/dist-fresh checks each is the build of its source, arena-installer/test/release-bundles that each is tracked)
-# THE APPS ARE NOT IN IT (kanban #575, the owner 2026-10-21: "the installer downloads the 3 apps automatically, no longer built in"): only
+# THE APPS ARE NOT IN IT (kanban #575, 2026-10-21: "the installer downloads the 3 apps automatically, no longer built in"): only
 # their pins - apps.lock.json (repository, commit) and apps.files.json (each file's SHA-256) - from which the installer, an update and the
 # seat's start fetch and check them (arena-node/src/app-fetch.js) into packages/<app>. arena-sdk stays, which their registrations import
 # as arena-sdk/<name> through the tracked link packages/node_modules/arena-sdk (arena-installer/test/release-bundles checks this line)
@@ -109,7 +109,7 @@ fi
 # tools/release/custody-build.sh (stripped; Linux against glibc 2.31), pinned here by SHA-256 and fetched from this repo's release
 # custody-76012ad9 (ARENA_CUSTODY_DIR: a local copy instead). A system without a pinned binary gets a release without custody - the
 # wizard says so (gateway.js findGatewayd).
-CUSTODY_TAG=custody-5fa01c5d   # kanban #584 (the owner 2026-10-22, urgent): fork 5fa01c5d7e6 = upstream v0.12.2 (the LNv2 gateway fund-loss fixes) + the BLWP commits of 7e8caa9fd3a
+CUSTODY_TAG=custody-5fa01c5d   # kanban #584 (2026-10-22, urgent): fork 5fa01c5d7e6 = upstream v0.12.2 (the LNv2 gateway fund-loss fixes) + the BLWP commits of 7e8caa9fd3a
 # the pinned binaries, "<bin>:<os>-<arch>" -> SHA-256 (out/SHA256SUMS.custody of tools/release/custody-build.sh)
 declare -A CUSTODY_SHA=(
   [gatewayd:windows-x64]=ee4a435f13fdc62c65a39625b0ab7f563a0b3eeffcd790e0b25076631e57a6bb

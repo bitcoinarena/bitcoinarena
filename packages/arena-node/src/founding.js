@@ -22,7 +22,7 @@
 //               the order given (`seatedFirst`, census entries), and draws only the missing seats (drawGuardians). A seated-first
 //               node is held to the same window and fifth as a drawn one: no code a fifth after the beacon, and the next alternate
 //               takes its position.
-//   TEN ARE ENOUGH (the owner 2026-10-22: "we need 10 nodes not 14", "On mainnet we also want 10": as soon as 10 nodes want to found a
+//   TEN ARE ENOUGH (2026-10-22: "we need 10 nodes not 14", "On mainnet we also want 10": as soon as 10 nodes want to found a
 //               federation it is allowed): a late seated node that no alternate can replace keeps its seat and may post its code
 //               until the window's end - only the no-shows an alternate takes over are dropped, and the founding is void only when
 //               the window passes. Measured 3d30afd4: 10 eligible, 0 alternates, and three installers that saw the draw only after a

@@ -174,7 +174,7 @@ test('every phrase\'s BLWP-era wallet is swept once into this tab\'s Arena walle
   assert.equal(b.main.msat, 291000n, 'nothing counted twice');
 });
 
-// the owner 2026-10-20 18:5xZ ("Go and find the 200"; "The wallet must be automatically be merged and be shown"): every federation is merged, not
+// 2026-10-20 18:5xZ ("Go and find the 200"; "The wallet must be automatically be merged and be shown"): every federation is merged, not
 // only the lobby round's - and a kept e-cash copy is only ever offered to its own federation's wallet
 test('another federation is merged on its own; e-cash kept for one federation is never offered to another', async () => {
   const OTHER = 'ab'.repeat(32);

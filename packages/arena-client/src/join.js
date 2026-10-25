@@ -762,7 +762,7 @@ export function bondProvider(where, { fetcher = fetch, body = null } = {}) {
  * anywhere is the single-player daily, which is what almost every visitor
  * opens. Only a URL that NAMES a round changes that.
  */
-// READ ONCE PER ROUND, NOT PER ORDER (kanban #601, the owner 2026-10-23: "601 target is below 300ms on web"; measured on UI 344: the press to the
+// READ ONCE PER ROUND, NOT PER ORDER (kanban #601, 2026-10-23: "601 target is below 300ms on web"; measured on UI 344: the press to the
 // join's first step was 99-132 ms, the round, its advert and its committee's bonds read from the seats again for every order; on UI 345,
 // 8 s whenever the kept answer had run out - committeeBonds waits 8 s for a seat that does not answer): a round's contract is its id's,
 // so the answer is kept up to JOIN_KEPT_MS per query and read again behind it once it is JOIN_FRESH_MS old - a press never waits for that

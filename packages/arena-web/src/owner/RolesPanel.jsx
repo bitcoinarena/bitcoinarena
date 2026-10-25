@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OWNER DASHBOARD'S ROLES, IN REACT (kanban #564, first screen ported; the tiles of kanban #563, the owner 2026-10-21: "vamp it up so it
+// THE OWNER DASHBOARD'S ROLES, IN REACT (kanban #564, first screen ported; the tiles of kanban #563, 2026-10-21: "vamp it up so it
 // looks modern"). A class component: what the node does read from its seat (GET /roles, /guardian, /gateway-claim, /liquidity-claim), one
 // tile per role, a switch where the role is changed from here, the save bar once something changed, then the fee and Confirm
 // (POST /owner/roles, signed by the owner). `api` = { get(path), post(path, body), signed(action, args) }; `node` the node's key.
@@ -34,7 +34,7 @@ export class RolesPanel extends React.Component {
   retry() { this.setState({ loaded: false, unread: false }); return this.load(); }
   async load() {
     const get = async (p) => { try { return await this.props.api.get(p); } catch { return null; } };
-    // THE ROLES READ AGAIN BEFORE ANYTHING IS SAID (the owner 2026-10-22, guardian-6's owner page during a seat restart: every role "Off" and
+    // THE ROLES READ AGAIN BEFORE ANYTHING IS SAID (2026-10-22, guardian-6's owner page during a seat restart: every role "Off" and
     // "not in the census yet" for a node in the census, serving three roles): an unanswered /roles is no census row - asked up to three
     // times, then said as unread, with Try again
     const pause = this.props.pause || ((ms) => new Promise((ok) => setTimeout(ok, ms)));

@@ -97,7 +97,7 @@ export const OVERLOADED = 1;
  * WHY AN OPERATOR IS NOT FREE (kanban #585): its nodes' adverts that name a federation guardingOpenOf counts as OPEN - one held OPEN
  * (and not overloaded), or one this seat holds no record of. [{ node, federation, status }], status 'OPEN' or 'not held'.
  */
-// HELD BACK BY A FEDERATION (kanban #599, the owner 2026-10-23 "Nur mit freiem Slot"): an OPEN one, one not held, or an overloaded one when
+// HELD BACK BY A FEDERATION (kanban #599, 2026-10-23 "Nur mit freiem Slot"): an OPEN one, one not held, or an overloaded one when
 // the node advertises no free founding slot (guardian_capable 2) - drawn without one, it can never take part (founding 4d4c9cac: test host
 // seats of A at load 4.33 drawn #1 and #10, founding off, every draw void)
 const holdsBack = (e, st) => st === undefined || st === 'OPEN' || (st === 'OVERLOADED' && !(e && e.advert && e.advert.foundingSlot === true));
@@ -116,7 +116,7 @@ export function guardingWhy({ entries = [], held = [], op, except = null }) {
 }
 
 export function guardingOpenOf({ entries = [], held = [], except = null }) {
-  // AN OVERLOADED FEDERATION HOLDS NOBODY BACK (the owner 2026-10-22: "Also when federation is over loaded? That is causing the current
+  // AN OVERLOADED FEDERATION HOLDS NOBODY BACK (2026-10-22: "Also when federation is over loaded? That is causing the current
   // conflict"): an OPEN federation at load >= 1 - deposits refused (load ruling A) - frees its guardians for a founding, which they
   // serve through their guardian-next; measured 3d30afd4: A at load 4.33 kept 4 of the 14 test nodes out, 10 eligible, no alternates.
   // ONLY A NODE WITH A FREE SLOT (kanban #599): one that advertises its guardian-next (holdsBack)
@@ -339,7 +339,7 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     if (st && st.void) voided.add(current.key);   // the next tick draws on the next trigger
     return { ok: true, trigger: current.trigger, state: st };
   }
-  // IS THIS NODE READY TO BE FOUNDED? (kanban #585, the owner 2026-10-22: "shows the 10 nodes waiting for a founding event so we know in
+  // IS THIS NODE READY TO BE FOUNDED? (kanban #585, 2026-10-22: "shows the 10 nodes waiting for a founding event so we know in
   // the future if they're ready to be founded"): its guardian waiting in setup (ready), running a federation, or none; the seat's newest
   // count of free operators against the cohort's ten; and why its last tick started no founding. Asked of the guardian at most every 30 s.
   let lastTick = null, ready = null;
@@ -353,7 +353,7 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     ready = { atMs: nowMs, value };
     return value;
   }
-  // THE NODES THAT CAN BE DRAWN, EACH ASKED (kanban #585, the owner 2026-10-22: "Tu das Dashboard so umbauen dass es solchen
+  // THE NODES THAT CAN BE DRAWN, EACH ASKED (kanban #585, 2026-10-22: "Tu das Dashboard so umbauen dass es solchen
   // Diskrepanzen nicht geben kann"): the newest row's free nodes, each at its announced address - ready (its guardian waits in setup),
   // running, none, founding off, an older release, or no answer - so a page shows one list and counts its own rows. Every 60 s at most.
   // answered at once from the last list, read again in the background when it is older than 60 s (asking thirty nodes takes longer

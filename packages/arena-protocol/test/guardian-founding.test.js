@@ -146,7 +146,7 @@ test('a founding that went void is passed over: the next trigger draws again; a 
   assert.equal(none.ok, false); assert.match(none.why, /went void/);
 });
 
-test('a cohort is drawn again every 6 blocks (the owner 2026-10-22: "every 6 blocks on all instead of 19")', () => {
+test('a cohort is drawn again every 6 blocks (2026-10-22: "every 6 blocks on all instead of 19")', () => {
   assert.equal(FOUNDING_WINDOW, 5);
   const capable = Array.from({ length: 30 }, (_, i) => ({ height: 100 + i, operators: 14, free: 12, federations: 2 }));
   const at = (tip) => foundingTrigger({ capable, federationExists: true, nominal: 10, abandonBlocks: 12, tip, foundingWindow: FOUNDING_WINDOW }).height;

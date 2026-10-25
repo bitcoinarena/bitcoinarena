@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A ROUND'S ATTESTORS ARE DRAWN (kanban #630, the owner 2026-10-24: "pre deterministic and drawed randomly, not a fixed set of nodes ... 5 of 7"):
+// A ROUND'S ATTESTORS ARE DRAWN (kanban #630, 2026-10-24: "pre deterministic and drawed randomly, not a fixed set of nodes ... 5 of 7"):
 // seven node keys of the census per round, the same at every node, different from round to round and from the settlement draw.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

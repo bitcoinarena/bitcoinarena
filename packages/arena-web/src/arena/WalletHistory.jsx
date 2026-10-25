@@ -4,10 +4,10 @@
 // (with its federation when there are several), the amount in or out - newest first; a stake that was entered opens its round's replay
 // (the page's own handler, `onOpen(row)`, which opens the window on the click itself). The page reads the ledger; this class component
 // draws the rows it hands over, or the words when there are none; a slow order's row says so, with its log to copy. A row of an order names its transaction, short, linked to the explorer
-// in a new window (the owner 2026-10-24: "Die UI braucht die tx ids, stark verkürzt mit link zum Explorer (in a new window)").
+// in a new window (2026-10-24: "Die UI braucht die tx ids, stark verkürzt mit link zum Explorer (in a new window)").
 import React from 'react';
 
-/** A SLOW ORDER (the owner 2026-10-24: "Store the client log for delayed orders locally with a button copy log and a label slow tx"): its time and the
+/** A SLOW ORDER (2026-10-24: "Store the client log for delayed orders locally with a button copy log and a label slow tx"): its time and the
  *  page's log of it, kept in this browser, copied on a press. */
 function SlowTx({ slow }) {
   const [said, setSaid] = React.useState('');

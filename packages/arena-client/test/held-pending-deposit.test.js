@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A DEPOSIT PENDING IN A FEDERATION WITH NO LEDGER ROW YET IS STILL HELD (the owner 2026-10-20 16:46Z: 1,000 sat paid into b18947f0 "was not
+// A DEPOSIT PENDING IN A FEDERATION WITH NO LEDGER ROW YET IS STILL HELD (2026-10-20 16:46Z: 1,000 sat paid into b18947f0 "was not
 // reflected", and after a reload still not credited). gw-b funded the incoming contract; the page that made the invoice was suspended,
 // and the reloaded page opened wallets only where the ledger had rows - a deposit gets its row only once claimed. Now a pending deposit
 // makes its federation held, a held federation's wallet opens from the invite it was last opened with when no status names one, and

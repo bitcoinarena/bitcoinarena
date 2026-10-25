@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN APP'S DONATION SPLIT, CHANGED BY ITS DEVELOPER (kanban #582, the owner 2026-10-22: "die Game dev splits darf nur dann gelten, wenn der
+// AN APP'S DONATION SPLIT, CHANGED BY ITS DEVELOPER (kanban #582, 2026-10-22: "die Game dev splits darf nur dann gelten, wenn der
 // game dev eingeloggt ist"): an app names its developers' split in its signed manifest (gameDonationSetId), so a new split is the app's
 // next version - the same body, version + 1, the version it replaces as its parent, the new set's id - signed with the app's developer
 // key. That key stays with its developer: the owner page signs in the developer's browser, a node only checks and hosts the signed

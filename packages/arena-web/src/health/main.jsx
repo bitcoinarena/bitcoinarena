@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE HEALTH PAGE'S REACT VIEWS, MOUNTED (kanban #564): window.ArenaHealth.draw(element, kind, props) - kind 'facts', 'nodes', 'table' or
 // 'capacity', 'machines', or 'line' (the reading state, a count) - one root per element, with nodeView / capacityView making their props from the page's data -, drawn again at every read; the page has
-// no drawing of its own (the owner 2026-10-21: "no fall backs").
+// no drawing of its own (2026-10-21: "no fall backs").
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { Facts, NodesTable, Capacity, Table, Line, Machines, nodeView, capacityView, machinesView, appsView } from './HealthViews.jsx';

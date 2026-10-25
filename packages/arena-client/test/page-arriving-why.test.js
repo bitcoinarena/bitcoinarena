@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WHY MONEY IS ARRIVING, AND WHEN (kanban #617, the owner 2026-10-24: "When is it arriving? Has said this for an hour" - "write it in the Wallet
+// WHY MONEY IS ARRIVING, AND WHEN (kanban #617, 2026-10-24: "When is it arriving? Has said this for an hour" - "write it in the Wallet
 // screen why is it arriving and WHEN it is arriving with an ETA"): the page's own ARENA_NOTE_ARRIVING / ARENA_ARRIVING_LINE, run as written.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

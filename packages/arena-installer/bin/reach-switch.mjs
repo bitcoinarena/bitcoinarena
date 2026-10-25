@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODE'S ADDRESS, SWITCHED FROM THE OWNER PAGE (kanban #563 and #562 2C; the owner 2026-10-21: "1 default, 2 for updates so no
+// THE NODE'S ADDRESS, SWITCHED FROM THE OWNER PAGE (kanban #563 and #562 2C; 2026-10-21: "1 default, 2 for updates so no
 // needed updates", "Fix 1 and 2"): the installer wizard's reach and service steps run again on an installed node - the same code the
 // install ran - started by the seat on POST /owner/reach and detached from it, because the service step restarts the seat. The request
 // is <home>/reach-switch.req (written by the seat, 0600, deleted once read: it may hold a Cloudflare token); the progress

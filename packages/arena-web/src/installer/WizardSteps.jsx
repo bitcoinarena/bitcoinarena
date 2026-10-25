@@ -110,7 +110,7 @@ export class RolesStep extends React.Component {
   }
 }
 
-// THE APPS (kanban #569, the owner 2026-10-21: "The node still comes with the 3 apps pre installed, that is a step in the installer where
+// THE APPS (kanban #569, 2026-10-21: "The node still comes with the 3 apps pre installed, that is a step in the installer where
 // all apps are automatically selected"): one tile per app the release carries, every one switched on at first; the node hosts the ones
 // left on (each version still played: "N versions")
 export const APP_IC = Object.freeze({ nextblock: '⏱️', 'rock-paper-scissors': '✊', 'btc-updown': '📈' });
@@ -154,7 +154,7 @@ export class AppsStep extends React.Component {
   }
 }
 
-// HOW THIS NODE IS CONTROLLED, THEN NEW OR RESTORED (kanban #652/#654, the owner 2026-10-25: "User first selects Operation Mode: Nostr /
+// HOW THIS NODE IS CONTROLLED, THEN NEW OR RESTORED (kanban #652/#654, 2026-10-25: "User first selects Operation Mode: Nostr /
 // New Seed (24 Words)", then new or restore; #653 "Only allow nsec then")
 export class StartStep extends React.Component {
   constructor(props) {

@@ -10,11 +10,11 @@
 //             at least bond_min_guardian
 //   ranked    routed volume (floored to 1,000 sat), then two-way capacity - the smaller of inbound and outbound (floored to 100,000 sat), availability (whole percent), bond, then the
 //             ticket H('BLWP/v1/GATEWAY' || beacon || node key), lowest first
-//   seated    `seats` operators (one seat per operator), ROTATING EVERY EPOCH (the owner 2026-10-20: "rotate the guardians daily every 144
+//   seated    `seats` operators (one seat per operator), ROTATING EVERY EPOCH (2026-10-20: "rotate the guardians daily every 144
 //             blocks among those that want to be gateways in the federation"): the eligible operators that did not hold a seat in the
 //             epoch before take the seats first, in rank order; last epoch's holders fill what is left, in rank order. With no other
 //             eligible operator a holder keeps its seat.
-//   at least one  a federation is never without a gateway (the owner 2026-10-20: "There needs to be at least 1 gateway"): when no operator
+//   at least one  a federation is never without a gateway (2026-10-20: "There needs to be at least 1 gateway"): when no operator
 //             is eligible, the best candidate that can still serve - a seated guardian, its gateway registered, holding e-cash in the
 //             federation - takes one seat, ranked as above and named in `belowMinimums`
 import { Writer } from './encode.js';

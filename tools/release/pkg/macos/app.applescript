@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 -- Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 -- "Bitcoin Arena.app": a stay-open applet (osacompile -s, package-mac.sh). While its installer runs it stays open, in the Dock with the
--- running dot (kanban #635, the owner's playtest 2026-10-25: "doesn't stay open, doesn't have an icon that indicates that it is running").
+-- running dot (kanban #635, playtest 2026-10-25: "doesn't stay open, doesn't have an icon that indicates that it is running").
 -- A click on its Dock icon shows the dialog again; Quit asks whether the installer keeps running. When the installer is done it says so
 -- and quits. A node already set up: its status, with Owner page / Restart / Close. Each step is the helper arena-node-app beside it.
 property helper : ""
@@ -50,7 +50,7 @@ on installerDialog()
 	end if
 end installerDialog
 
--- A NODE INSTALLED (kanban #658, the owner 2026-10-25: "show when it's installed \"Server running\" with options to Stop Node, Start Node,
+-- A NODE INSTALLED (kanban #658, 2026-10-25: "show when it's installed \"Server running\" with options to Stop Node, Start Node,
 -- Doctor" - "And also \"Dashboard\" that opens the browser with the dashboard"): the node in one line, then what to do with it
 on statusDialog()
 	repeat
