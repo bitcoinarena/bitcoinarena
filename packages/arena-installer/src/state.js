@@ -67,9 +67,20 @@ export function bondsOf(s) {
 /** The node's guardian endpoint: its public address as a websocket, /guardian (the seat carries it to its fedimintd). */
 export const guardianUrlOf = (url) => (url ? `${url.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:').replace(/\/+$/, '')}/guardian` : null);
 
+/**
+ * THIS NODE'S OWN BITCOIN CORE: its chain when that is a Core; while the Core the installer put here still syncs behind the interim
+ * Electrum chain, that Core (kanban #635 - measured 2026-10-25 in the owner's playtest: custody was refused right after "Install Bitcoin
+ * Core for me", the chain being the interim Electrum server). LND, the guardian and custody read it. null: no Core of its own.
+ */
+export function ownCoreOf(s) {
+  if (s && s.chain && s.chain.kind === 'core') return s.chain;
+  const t4 = s && s.core && s.core.networks && s.core.networks.testnet4;
+  return t4 ? { kind: 'core', url: t4.rpcUrl, cookiePath: t4.cookiePath } : null;
+}
+
 /** A custody node's guardian: its binaries from the release and its endpoint, or null (no custody, no Core, no public address, no binaries). */
 export function guardianSetupOf(s, { release, platform = process.platform }) {
-  if (!(s.roles || []).includes('custody') || !s.chain || s.chain.kind !== 'core' || !s.reach || !s.reach.url) return null;
+  if (!(s.roles || []).includes('custody') || !ownCoreOf(s) || !s.reach || !s.reach.url) return null;
   const x = platform === 'win32' ? '.exe' : '';
   const fedimintd = join(release, 'runtime', 'custody', `fedimintd${x}`), cli = join(release, 'runtime', 'custody', `fedimint-cli${x}`);
   if (!existsSync(fedimintd) || !existsSync(cli)) return null;
@@ -124,6 +135,8 @@ export function seatEnv(s, { home, release }) {
   const custody = guardianSetupOf(s, { release });
   if ((s.roles || []).includes('custody')) lines.push(`ARENA_GATEWAY_PORT=${port(8476)}`, `ARENA_GATEWAY_CLAIM_FILE=${join(home, 'gateway-claim.json')}`);
   if ((s.roles || []).includes('liquidity')) lines.push(`ARENA_LIQUIDITY_CLAIM_FILE=${join(home, 'liquidity-claim.json')}`, `ARENA_LIQUIDITY_PROVIDER_URL=http://127.0.0.1:${LIQUIDITY_PROVIDER_PORT}`);   // its provider's claim (§23A.10)   // the gateway seat's claim (custody-agent.js)   // the seat carries <public>/gateway/ to the node's gateway (gateway.js GATEWAY_PORT)
+  // the guardian reads the node's own Core even while the node reads the interim Electrum chain (kanban #635)
+  if (custody && s.chain && s.chain.kind === 'electrum') { const own = ownCoreOf(s); lines.push(`ARENA_GUARDIAN_BITCOIND_URL=${own.url}`, `ARENA_GUARDIAN_BITCOIND_COOKIE=${own.cookiePath}`); }
   if (custody) lines.push('ARENA_FOUNDING=1', `ARENA_FEDIMINTD=${custody.fedimintd}`, `ARENA_FEDIMINT_CLI=${custody.cli}`, `ARENA_GUARDIAN_ENDPOINT_${s.port}=${custody.endpoint}`);
   // Fedimint on a RAM disk (kanban #596): chosen for more than 5 nodes on this machine (guardian-ram.js)
   if (custody && s.instances && s.instances.ram) lines.push('ARENA_FEDIMINT_RAM=1');

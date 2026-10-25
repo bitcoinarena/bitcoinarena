@@ -12,7 +12,7 @@ import { readFileSync, writeFileSync, openSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fromHex } from '../../arena-protocol/src/hash.js';
 import { walletOf, coinsOf } from './wallet.js';
-import { nodeState, guardianSetupOf } from './state.js';
+import { nodeState, guardianSetupOf, ownCoreOf } from './state.js';
 import { BOND_MIN_SATS } from './bond.js';
 import { depositParts, CUSTODY_PEG_IN_SATS } from './wizard.js';
 
@@ -35,7 +35,7 @@ export async function custodyPlan({ home, release, state = null, kit = { coinsOf
   const s = st.read();
   const progress = custodyProgress(st.home || home);
   if ((s.roles || []).includes('custody') && (s.bond || {}).custodyAdvert) return { ok: true, done: true, progress };
-  if (!s.chain || s.chain.kind !== 'core') return { ok: false, why: 'custody needs your own Bitcoin Core: LND cannot run on an Electrum server' };
+  if (!s.chain || !ownCoreOf(s)) return { ok: false, why: 'custody needs your own Bitcoin Core: LND cannot run on an Electrum server' };
   if (!s.bond || !s.bond.txid) return { ok: false, why: 'this node has no bond yet: post its bond first (custody is added to the bond\'s advertisement, no second bond)' };
   const asCustody = { ...s, roles: [...new Set([...(s.roles || []), 'custody'])], custodyLater: s.custodyLater || { atMs: 0 } };
   const guardian = guardianSetupOf(asCustody, { release });

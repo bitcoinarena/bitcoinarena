@@ -135,5 +135,12 @@ test('the steps along the top: done ticked, the current one marked; the page\'s 
   const steps = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['apps', 'Apps']];
   assert.equal(renderToStaticMarkup(React.createElement(StepBar, { steps, done: { chain: true }, now: 'roles' })),
     '<li class="done">Bitcoin</li><li class="now">Roles</li><li class="">Apps</li>');
+  // KANBAN #635 (the owner's playtest 2026-10-25: "ich kann auch nicht zurück gehen und den Zustand prüfen"): a done step opens again
+  const picked = [];
+  const bar = new StepBar({ steps, done: { chain: true }, now: 'chain', current: 'roles', onPick: (k) => picked.push(k) }).render();
+  assert.equal(renderToStaticMarkup(React.createElement(React.Fragment, null, bar)),
+    '<li class="done now" role="button" tabindex="0" title="Look at this step again">Bitcoin</li><li class="current" role="button" tabindex="0" title="Back to the current step">Roles</li><li class="">Apps</li>');
+  bar[0].props.onClick(); bar[1].props.onClick(); assert.equal(bar[2].props.onClick, undefined, 'a step not reached yet is not opened');
+  assert.deepEqual(picked, ['chain', 'roles']);
   assert.equal(renderToStaticMarkup(React.createElement(SetupRefused, { why: 'no disk <here>' })), '<h1>Bitcoin Arena setup</h1><p>no disk &lt;here&gt;</p>');
 });

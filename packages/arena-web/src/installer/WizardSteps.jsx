@@ -33,9 +33,17 @@ export class StepBar extends React.Component {
     const li = this.now.current, bar = li && li.parentElement;
     if (bar) bar.scrollLeft = Math.max(0, li.offsetLeft - bar.offsetLeft - 40);
   }
+  // A DONE STEP OPENS AGAIN (kanban #635, the owner's playtest 2026-10-25: "ich kann auch nicht zurück gehen und den Zustand prüfen"):
+  // `onPick(key)` for a done step and for the current one (`current`, which takes the wizard back); `now` is the step shown
   render() {
-    const { steps, done = {}, now } = this.props;
-    return steps.map(([k, t]) => <li key={k} ref={k === now ? this.now : null} className={done[k] ? 'done' : k === now ? 'now' : ''}>{t}</li>);
+    const { steps, done = {}, now, current = now, onPick } = this.props;
+    return steps.map(([k, t]) => {
+      const open = onPick && (done[k] || k === current);
+      const cls = [done[k] ? 'done' : '', k === now ? 'now' : '', k === current && k !== now ? 'current' : ''].filter(Boolean).join(' ');
+      return <li key={k} ref={k === now ? this.now : null} className={cls}
+        {...(open ? { role: 'button', tabIndex: 0, title: k === current ? 'Back to the current step' : 'Look at this step again',
+          onClick: () => onPick(k), onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPick(k); } } } : {})}>{t}</li>;
+    });
   }
 }
 

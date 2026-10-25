@@ -8,7 +8,9 @@
 #
 #     tools/release/build-release.sh <version> <linux|darwin|windows> <x64|arm64> <out dir> [commit]
 #
-# Writes <out>/arena-node-<version>-<os>-<arch>.tar.gz (.zip on Windows) and appends its line to <out>/SHA256SUMS.
+# Writes <out>/bitcoin-arena-node-<version>-<os>-<arch>.tar.gz (.zip on Windows) and appends its line to <out>/SHA256SUMS.
+# THE NAME (kanban #635, the owner 2026-10-25: "Es muss bitcoin-arena-node heissen"): ARENA_RELEASE_PREFIX=arena-node builds the
+# files under the name releases before 2026.1.8 had, for the update channel a node before 2026.1.8 reads (auto-update.js).
 set -euo pipefail
 VER="$1"; OS="$2"; ARCH="$3"; OUT="$(mkdir -p "$4" && cd "$4" && pwd)"; REF="${5:-HEAD}"
 NODE_VER=24.22.1   # kanban #574: the 2026-10-21 security release (Brotli RCE, TLS hostname bypasses); hashes from nodejs.org SHASUMS256.txt
@@ -32,7 +34,7 @@ KEY="$OS-$ARCH"
 [[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?(-[a-z0-9.]+)?$ ]] || { echo "version is like 2026.1.0 (a fix: 2026.1.0.1)" >&2; exit 2; }
 
 ROOT="$(git rev-parse --show-toplevel)"
-NAME="arena-node-$VER-$OS-$ARCH"
+NAME="${ARENA_RELEASE_PREFIX:-bitcoin-arena-node}-$VER-$OS-$ARCH"
 STAGE="$OUT/$NAME"
 [ -e "$STAGE" ] && { echo "$STAGE exists: a release is built once" >&2; exit 1; }
 mkdir -p "$STAGE/runtime"

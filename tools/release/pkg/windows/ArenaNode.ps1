@@ -6,13 +6,13 @@
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$release = Get-ChildItem $here -Directory -Filter 'arena-node-*' | Sort-Object Name | Select-Object -Last 1
+$release = Get-ChildItem $here -Directory -Filter '*arena-node-*' | Sort-Object Name | Select-Object -Last 1
 $nodeHome = Join-Path $env:USERPROFILE '.arena-node'
 $command = Join-Path $nodeHome 'bin\arenanode.cmd'
 $version = if ($release) { (Get-Content (Join-Path $release.FullName 'VERSION') -ErrorAction SilentlyContinue) } else { '?' }
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "Arena Node $version"; $form.Width = 720; $form.Height = 520; $form.StartPosition = 'CenterScreen'
+$form.Text = "Bitcoin Arena $version"; $form.Width = 720; $form.Height = 520; $form.StartPosition = 'CenterScreen'
 $form.Font = New-Object System.Drawing.Font('Segoe UI', 10)
 $title = New-Object System.Windows.Forms.Label
 $title.AutoSize = $false; $title.Left = 14; $title.Top = 12; $title.Width = 680; $title.Height = 66
@@ -41,7 +41,7 @@ function Show-Command([string]$what) {
   $box.Text = ($out -join "`r`n"); $box.SelectionStart = 0; $box.SelectionLength = 0; $form.Cursor = 'Default'
 }
 function Show-Installed {
-  $title.Text = "Your Arena node is installed. Its services, as 'arenanode status' shows them (also in a new console: arenanode help):"
+  $title.Text = "Your Bitcoin Arena node is installed. Its services, as 'arenanode status' shows them (also in a new console: arenanode help):"
   foreach ($b in 'Open in browser', 'Stop') { $buttons[$b].Visible = $false }
   foreach ($b in 'Owner page', 'Restart', 'Doctor', 'Refresh') { $buttons[$b].Visible = $true }
   Show-Command 'status'
@@ -54,7 +54,7 @@ $buttons['Refresh'].Add_Click({ Show-Command 'status' })
 if ((Test-Path $command) -and (Test-Path (Join-Path $nodeHome 'arena.conf'))) {
   Show-Installed
 } elseif (-not $release) {
-  $title.Text = "The Arena node release is missing next to this window ($here). Run ArenaNodeSetup.exe again."
+  $title.Text = "The Bitcoin Arena release is missing next to this window ($here). Run the Bitcoin Arena setup again."
 } else {
   # THE INSTALLER, HIDDEN: its lines go to a log file beside this window, read by a timer (an event handler cannot run while the
   # window holds the PowerShell thread)
@@ -71,7 +71,7 @@ if ((Test-Path $command) -and (Test-Path (Join-Path $nodeHome 'arena.conf'))) {
   function Stop-Installer { if (-not $proc.HasExited) { & taskkill /PID $proc.Id /T /F | Out-Null } }
   $buttons['Stop'].Visible = $true
   $buttons['Open in browser'].Add_Click({ if ($script:link) { Start-Process $script:link } })
-  $buttons['Stop'].Add_Click({ Stop-Installer; $title.Text = 'The installer was stopped. Open Arena Node from the Start menu to start it again.'; $buttons['Stop'].Visible = $false })
+  $buttons['Stop'].Add_Click({ Stop-Installer; $title.Text = 'The installer was stopped. Open Bitcoin Arena from the Start menu to start it again.'; $buttons['Stop'].Visible = $false })
   $timer = New-Object System.Windows.Forms.Timer
   $timer.Interval = 300
   $timer.Add_Tick({

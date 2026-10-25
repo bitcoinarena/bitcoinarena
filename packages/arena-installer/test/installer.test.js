@@ -429,10 +429,10 @@ test('the roles step shows each role in one line, its needs as chips, the long t
 test('the wizard page draws no step itself: the roles into their list, every other step into its section, the bar of steps and a refusal, by window.ArenaWizard', () => {
   const html = readFileSync(new URL('../www/index.html', import.meta.url), 'utf8');
   assert.ok(html.indexOf('<script src="/wizard.js"></script>') > 0 && html.indexOf('<script src="/wizard.js"></script>') < html.indexOf('<script>\n'), 'the steps load first');
-  assert.match(html, /const R = window\.ArenaWizard;\n  if \(!st\.ok\) \{ R\.refused\(document\.querySelector\('main'\), \{ why: st\.why \}\); return; \}\n  R\.bar\(\$\('steps'\), \{ steps: STEPS, done: st\.done, now: st\.step \}\);/, 'the bar of steps and the refusal drawn by React too');
-  assert.match(html, /const ctx = \{ st, post, get: async \(path\) => \(await fetch\(path\)\)\.json\(\), reload: load \};/);
-  assert.match(html, /if \(st\.step === 'roles'\) R\.mount\('roles', \$\('roles'\), \{ \.\.\.ctx, onCustody: \(on\) => \{ \$\('custody-explain'\)\.hidden = !on; \} \}\);/);
-  assert.match(html, /R\.show\(st\.step, \(k\) => \$\('s-' \+ k\), ctx\);/);
+  assert.match(html, /const R = window\.ArenaWizard;\n  if \(!st\.ok\) \{ R\.refused\(document\.querySelector\('main'\), \{ why: st\.why \}\); return; \}\n  const shown = viewing && st\.done\[viewing\] \? viewing : st\.step;\n  R\.bar\(\$\('steps'\), \{ steps: STEPS, done: st\.done, now: shown, current: st\.step, onPick: pick \}\);/, 'the bar of steps (a done one opens again, kanban #635) and the refusal drawn by React too');
+  assert.match(html, /const ctx = \{ st, post, get: async \(path\) => \(await fetch\(path\)\)\.json\(\), reload: \(\) => \{ viewing = null; return load\(\); \} \};/, 'a save goes back to the current step');
+  assert.match(html, /if \(shown === 'roles'\) R\.mount\('roles', \$\('roles'\), \{ \.\.\.ctx, onCustody: \(on\) => \{ \$\('custody-explain'\)\.hidden = !on; \} \}\);/);
+  assert.match(html, /R\.show\(shown, \(k\) => \$\('s-' \+ k\), ctx\);/);
   for (const k of ['chain', 'seed', 'owner', 'reach', 'service', 'lightning', 'federation', 'promise', 'bond', 'done']) assert.ok(html.includes(`<section id="s-${k}"></section>`), `${k}: an empty section for React`);
   for (const gone of ['ArenaWizard ||', '!reactStep', '!reactRoles', "$('b-check').onclick", "$('seed-show').onclick", 'function watchSync', 'roles-save', 'class="rc"', 'innerHTML', 'const esc']) assert.ok(!html.includes(gone), gone);
 });

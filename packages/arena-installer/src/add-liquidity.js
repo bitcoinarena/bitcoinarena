@@ -15,7 +15,7 @@ import { walletOf, coinsOf } from './wallet.js';
 import { testLnd } from './lnd.js';
 import { setUpOwnLnd, lndReady } from './lnd-setup.js';
 import { installProgram } from './service.js';
-import { nodeState, seatConf, LIQUIDITY_PROVIDER_PORT } from './state.js';
+import { nodeState, seatConf, LIQUIDITY_PROVIDER_PORT, ownCoreOf } from './state.js';
 
 /** The deposit's fee allowance: the send the custody agent builds (one input or a few, one output and change). */
 export const DEPOSIT_FEE_SATS = 1000;
@@ -25,7 +25,7 @@ export async function addLiquidityOnNode({ home, release, post = false, state = 
   const st = state || nodeState(home);
   let s = st.read();
   if ((s.roles || []).includes('liquidity')) return { ok: false, why: 'this node is a liquidity provider already' };
-  if (!s.chain || s.chain.kind !== 'core') return { ok: false, why: 'a liquidity provider needs your own Bitcoin Core: LND cannot run on an Electrum server' };
+  if (!s.chain || !ownCoreOf(s)) return { ok: false, why: 'a liquidity provider needs your own Bitcoin Core: LND cannot run on an Electrum server' };
   // its LND: to install here, installed and still starting (no pubkey yet), or running and answering
   const lightning = !s.lightning || !s.lightning.lnddir ? 'install' : !s.lightning.pubkey ? 'starting' : 'running';
   let t = { ok: true, pubkey: null };
