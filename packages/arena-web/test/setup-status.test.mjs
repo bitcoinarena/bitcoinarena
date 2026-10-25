@@ -33,3 +33,10 @@ test('all done: complete; nothing to show: nothing', () => {
   assert.match(html, /<h3>Setup <span class="ok">complete<\/span><\/h3>/);
   assert.equal(card({}), '');
 });
+
+test('LND: reached directly, over Tor, or not at all (a problem)', () => {
+  const lnd = (via) => card({ lnd: { ok: true, synced: true, height: 5, channels: 1, pending: 0, via } });
+  assert.match(lnd({ how: 'direct', at: '203.0.113.5:9735' }), /reached directly at 203\.0\.113\.5:9735/);
+  assert.match(lnd({ how: 'tor', at: 'abc.onion:9735' }), /reached over Tor \(no open port needed\)/);
+  assert.match(lnd({ how: 'none', why: 'no Tor: the release has none' }), /<span class="bad">1 needs attention[\s\S]*other nodes cannot reach it \(no Tor: the release has none\)/);
+});
