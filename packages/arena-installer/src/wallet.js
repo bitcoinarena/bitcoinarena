@@ -35,6 +35,29 @@ export const payoutKeyOf = (seed) => schnorr.getPublicKey(taggedHash(PAYOUT_KEY_
 /** The Electrum script hash of an output script: sha256, reversed, hex. */
 export const scriptHash = (spk) => Buffer.from(createHash('sha256').update(spk).digest()).reverse().toString('hex');
 
+// A DEPOSIT COUNTS ONCE IT IS IN THE MEMPOOL (kanban #635, the owner 2026-10-25: "sobald die Transaktion da ist weiter erlauben"): with
+// Bitcoin Core the wallet read only the UTXO set, so the installer waited for the deposit's first block. bitcoind has no address
+// index, so its mempool is read transaction by transaction - each one once per bitcoind (kept here; a later read asks only for the
+// ones that are new) - and the outputs to this script are coins at height 0.
+const mempoolSeen = new Map();   // bitcoind url -> Map(txid -> [{ vout, sats, spkHex }])
+async function mempoolOutputs(rpc, key, spkHex, { batch = 16 } = {}) {
+  const seen = mempoolSeen.get(key) || new Map(); mempoolSeen.set(key, seen);
+  const now = (await rpc('getrawmempool')) || [];
+  const live = new Set(now);
+  for (const t of [...seen.keys()]) if (!live.has(t)) seen.delete(t);
+  const fresh = now.filter((t) => !seen.has(t));
+  for (let i = 0; i < fresh.length; i += batch) {
+    await Promise.all(fresh.slice(i, i + batch).map(async (txid) => {
+      let tx = null;
+      try { tx = await rpc('getrawtransaction', [txid, true]); } catch { return; }   // left the mempool meanwhile: read again next time
+      if (tx) seen.set(txid, (tx.vout || []).map((o) => ({ vout: o.n, sats: Math.round(o.value * 1e8), spkHex: o.scriptPubKey.hex })));
+    }));
+  }
+  const out = [];
+  for (const [txid, outs] of seen) for (const o of outs) if (o.spkHex === spkHex) out.push({ txid, vout: o.vout, sats: o.sats, height: 0 });
+  return out;
+}
+
 /**
  * The coins at the wallet's address: [{ txid, vout, sats, height (0 = unconfirmed) }] and the tip, from the chain the node uses
  * (state.chain: { kind: 'core', ... } or { kind: 'electrum', ... }).
@@ -52,7 +75,8 @@ export async function coinsOf(chain, spk, { session = electrumSession, fetcher =
       catch (e) { if (!/scan already in progress/i.test(String(e && e.message)) || i + 1 >= scanTries) throw e; await new Promise((ok) => setTimeout(ok, scanPauseMs)); }
     }
     const found = (r.unspents || []).map((u) => ({ txid: u.txid, vout: u.vout, sats: Math.round(u.amount * 1e8), height: u.height }));
-    // scantxoutset reads the UTXO set only: a deposit still in the mempool is found by the address's mempool entries
+    // scantxoutset reads the UTXO set only: a deposit still in the mempool is found by reading the mempool (kanban #635)
+    for (const c of await mempoolOutputs(rpc, chain.url, toHex(spk))) if (!found.some((f) => f.txid === c.txid && f.vout === c.vout)) found.push(c);
     // A COIN THE MEMPOOL ALREADY SPENDS IS NO COIN (kanban #577, measured 2026-10-22 on the three installers after founding
     // a997abf1: the custody agent's peg-in picked the coins its own unconfirmed guardian_of update had just spent, and bitcoind
     // refused it every minute - "insufficient fee, rejecting replacement"): gettxout with the mempool says null for it

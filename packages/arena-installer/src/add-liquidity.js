@@ -62,13 +62,13 @@ export async function addLiquidityOnNode({ home, release, post = false, state = 
   const db = new DatabaseSync(st.path('node.db'), { readOnly: true });
   let secret; try { secret = Buffer.from(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret).toString('hex'); } finally { db.close(); }
   st.writeSecret('liquidity.key', secret);
-  const p = await kit.installProgram({ id: 'liquidity', description: 'The liquidity provider of the Arena node', home: st.home || home, boot: true,
+  const p = await kit.installProgram({ id: 'liquidity', description: 'Bitcoin Arena: liquidity provider', home: st.home || home, boot: true,
     args: [node, join(release, 'packages', 'arena-installer', 'bin', 'liquidity-provider.mjs'), '--rest', s.lightning.restUrl, '--lnddir', s.lightning.lnddir,
       '--key', st.path('liquidity.key'), '--state', st.path('liquidity-state.json'), '--claim-file', st.path('liquidity-claim.json'), '--listen', String(LIQUIDITY_PROVIDER_PORT)] });
   if (!p.ok) return { ok: false, why: `the provider service did not start: ${p.why}`, plan };
   // the custody agent sends the deposit (a custody node runs it already)
   if (!s.custodyAgent || !s.custodyAgent.installedMs) {
-    const a = await kit.installProgram({ id: 'custody', description: 'The custody agent of the Arena node', home: st.home || home, boot: true,
+    const a = await kit.installProgram({ id: 'custody', description: 'Bitcoin Arena: custody agent', home: st.home || home, boot: true,
       args: [node, join(release, 'packages', 'arena-installer', 'bin', 'custody-agent.mjs'), '--home', st.home || home] });
     if (!a.ok) return { ok: false, why: `the agent that sends the deposit did not start: ${a.why}`, plan };
     st.save({ custodyAgent: { installedMs: nowMs } });

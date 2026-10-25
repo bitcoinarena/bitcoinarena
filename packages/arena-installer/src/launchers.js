@@ -5,9 +5,13 @@
 // for exactly the services this node has (the node, its tunnel, its chain bridge, its Bitcoin Core, LND, the gateway, the custody agent):
 //
 //   Linux    <home>/bin/arena-node-{start,stop,status,open}   + ~/.local/share/applications/arena-node.desktop (the desktop's menu)
-//   macOS    <home>/bin/Arena Node {Start,Stop,Status,Open}.command   + "Arena Node.app" in /Applications (else ~/Applications):
+//   macOS    <home>/bin/Bitcoin Arena {Start,Stop,Status,Open}.command   + "Bitcoin Arena.app" in /Applications (else ~/Applications):
 //            opening it starts the node's services and opens its owner page
-//   Windows  <home>\bin\Arena node {start,stop,owner page}.cmd   + Start menu > Arena Node: the same three as shortcuts
+//   Windows  <home>\bin\Bitcoin Arena {start,stop,owner page}.cmd   + Start menu > Bitcoin Arena: the same three as shortcuts
+//
+// THE NAME PEOPLE SEE IS "Bitcoin Arena" (kanban #635, the owner 2026-10-25: "die Plattform sollte immer bitcoin-arena sein, nicht
+// Arena-node" - what users see only; the services, the command and the release files keep their names). The files of the old name are
+// removed when these are written (an update writes them again).
 //
 // Every script names the services it acts on, so a user can read what it does. A node without custody also gets "add custody": it opens
 // the installer's custody screens again (arena-install --add-custody, wizard.js beginAddCustody).
@@ -54,35 +58,37 @@ export function writeLaunchers({ home, s, ownerUrl, addCustody = null, platform 
   const files = [];
   const put = (path, text, mode = 0o755) => { writeFileSync(path, text, { mode }); try { chmodSync(path, mode); } catch { /* Windows */ } files.push(path); return path; };
   if (platform === 'linux') {
-    const start = put(join(bin, 'arena-node-start'), sh([`# Start the Arena node's services: ${svc.join(', ')}`, `systemctl --user start ${svc.join(' ')}`, `echo "Started. Owner page: ${ownerUrl}"`]));
-    put(join(bin, 'arena-node-stop'), sh([`# Stop the Arena node's services`, `systemctl --user stop ${[...svc].reverse().join(' ')}`]));
+    const start = put(join(bin, 'arena-node-start'), sh([`# Start Bitcoin Arena's services: ${svc.join(', ')}`, `systemctl --user start ${svc.join(' ')}`, `echo "Started. Owner page: ${ownerUrl}"`]));
+    put(join(bin, 'arena-node-stop'), sh([`# Stop Bitcoin Arena's services`, `systemctl --user stop ${[...svc].reverse().join(' ')}`]));
     put(join(bin, 'arena-node-status'), sh([`systemctl --user --no-pager status ${svc.join(' ')}`]));
     put(join(bin, 'arena-node-open'), sh([`xdg-open ${q(ownerUrl)}`]));
     if (addCustody) put(join(bin, 'arena-node-add-custody'), sh(['# Add custody to this node: the installer\'s custody screens open in the browser', addCustody.map(q).join(' ')]));
     const apps = join(env.XDG_DATA_HOME || join(env.HOME || homedir(), '.local', 'share'), 'applications');
     mkdirSync(apps, { recursive: true });
-    const menu = put(join(apps, 'arena-node.desktop'), ['[Desktop Entry]', 'Type=Application', 'Name=Arena Node', 'Comment=Start the Arena node and open its owner page',
+    const menu = put(join(apps, 'arena-node.desktop'), ['[Desktop Entry]', 'Type=Application', 'Name=Bitcoin Arena', 'Comment=Start your Bitcoin Arena node and open its owner page',
       `Exec=sh -c '${start} && xdg-open ${ownerUrl}'`, 'Terminal=false', 'Categories=Network;', ''].join('\n'), 0o644);
     return { files, menu, app: null, start, command };
   }
   if (platform === 'darwin') {
     const uid = typeof process.getuid === 'function' ? process.getuid() : 501;
     const agents = join(env.HOME || homedir(), 'Library', 'LaunchAgents');
-    const startLines = [`# Start the Arena node's services: ${svc.join(', ')}`, `uid=${uid}`,
+    const startLines = [`# Start Bitcoin Arena's services: ${svc.join(', ')}`, `uid=${uid}`,
       ...svc.map((l) => `launchctl print gui/$uid/${l} >/dev/null 2>&1 || launchctl bootstrap gui/$uid ${q(join(agents, `${l}.plist`))}; launchctl kickstart gui/$uid/${l}`)];
-    const start = put(join(bin, 'Arena Node Start.command'), sh([...startLines, `echo "Started. Owner page: ${ownerUrl}"`]));
-    put(join(bin, 'Arena Node Stop.command'), sh([`# Stop the Arena node's services`, `uid=${uid}`, ...[...svc].reverse().map((l) => `launchctl bootout gui/$uid/${l} 2>/dev/null`), 'echo Stopped.']));
-    put(join(bin, 'Arena Node Status.command'), sh([`uid=${uid}`, ...svc.map((l) => `launchctl print gui/$uid/${l} 2>/dev/null | grep -E '^\\s*(state|pid) =' | sed "s/^/${l}: /" || echo "${l}: not loaded"`)]));
-    put(join(bin, 'Arena Node Open.command'), sh([`open ${q(ownerUrl)}`]));
-    if (addCustody) put(join(bin, 'Arena Node Add Custody.command'), sh(['# Add custody to this node: the installer\'s custody screens open in the browser', addCustody.map(q).join(' ')]));
+    for (const old of ['Start', 'Stop', 'Status', 'Open', 'Add Custody']) rmSync(join(bin, `Arena Node ${old}.command`), { force: true });
+    const start = put(join(bin, 'Bitcoin Arena Start.command'), sh([...startLines, `echo "Started. Owner page: ${ownerUrl}"`]));
+    put(join(bin, 'Bitcoin Arena Stop.command'), sh([`# Stop Bitcoin Arena's services`, `uid=${uid}`, ...[...svc].reverse().map((l) => `launchctl bootout gui/$uid/${l} 2>/dev/null`), 'echo Stopped.']));
+    put(join(bin, 'Bitcoin Arena Status.command'), sh([`uid=${uid}`, ...svc.map((l) => `launchctl print gui/$uid/${l} 2>/dev/null | grep -E '^\\s*(state|pid) =' | sed "s/^/${l}: /" || echo "${l}: not loaded"`)]));
+    put(join(bin, 'Bitcoin Arena Open.command'), sh([`open ${q(ownerUrl)}`]));
+    if (addCustody) put(join(bin, 'Bitcoin Arena Add Custody.command'), sh(['# Add custody to this node: the installer\'s custody screens open in the browser', addCustody.map(q).join(' ')]));
     // THE APP: /Applications when the user may write there (an admin's macOS), else ~/Applications - Launchpad and Spotlight find both
     const appsDir = applicationsDir || (writable('/Applications') ? '/Applications' : join(env.HOME || homedir(), 'Applications'));
-    const app = join(appsDir, 'Arena Node.app');
+    rmSync(join(appsDir, 'Arena Node.app'), { recursive: true, force: true });
+    const app = join(appsDir, 'Bitcoin Arena.app');
     mkdirSync(join(app, 'Contents', 'MacOS'), { recursive: true });
     writeFileSync(join(app, 'Contents', 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleName</key><string>Arena Node</string><key>CFBundleDisplayName</key><string>Arena Node</string>
+  <key>CFBundleName</key><string>Bitcoin Arena</string><key>CFBundleDisplayName</key><string>Bitcoin Arena</string>
   <key>CFBundleIdentifier</key><string>io.bitcoin-arena.node.app</string><key>CFBundleExecutable</key><string>arena-node</string>
   <key>CFBundlePackageType</key><string>APPL</string><key>CFBundleVersion</key><string>1</string><key>LSUIElement</key><true/>
 </dict></plist>
@@ -94,17 +100,20 @@ export function writeLaunchers({ home, s, ownerUrl, addCustody = null, platform 
   const cmd = (lines) => ['@echo off', ...lines, ''].join('\r\n');
   // each service is a logon task, or - without administrator rights - a script in the Startup folder (service.js windowsAutostart)
   const sd = startupDir(env);
-  const start = put(join(bin, 'Arena node start.cmd'), cmd([`rem Start the Arena node's services: ${svc.join(', ')}`,
+  for (const old of ['start', 'stop', 'owner page', 'add custody']) rmSync(join(bin, `Arena node ${old}.cmd`), { force: true });
+  const start = put(join(bin, 'Bitcoin Arena start.cmd'), cmd([`rem Start Bitcoin Arena's services: ${svc.join(', ')}`,
     ...svc.map((t) => `schtasks /run /tn "${t}" >nul 2>&1 || if exist "${join(sd, `${t}.vbs`)}" wscript "${join(sd, `${t}.vbs`)}"`), `echo Started. Owner page: ${ownerUrl}`, `start "" "${ownerUrl}"`]));
   // stopped: the tasks ended, and every process of this node - each names its home in its command line (node.db, lnd, tor, ...)
-  const stop = put(join(bin, 'Arena node stop.cmd'), cmd([`rem Stop the Arena node's services`, ...[...svc].reverse().map((t) => `schtasks /end /tn "${t}" >nul 2>&1`),
-    `powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${home.replace(/'/g, "''")}*' -and $_.CommandLine -notlike '*\\bin\\Arena node*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`,
+  const stop = put(join(bin, 'Bitcoin Arena stop.cmd'), cmd([`rem Stop Bitcoin Arena's services`, ...[...svc].reverse().map((t) => `schtasks /end /tn "${t}" >nul 2>&1`),
+    `powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${home.replace(/'/g, "''")}*' -and $_.CommandLine -notlike '*\\bin\\Bitcoin Arena*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`,
     'echo Stopped.', 'pause']));
-  const open = put(join(bin, 'Arena node owner page.cmd'), cmd([`start "" "${ownerUrl}"`]));
-  const custody = addCustody ? put(join(bin, 'Arena node add custody.cmd'), cmd(['rem Add custody to this node: the installer\'s custody screens open in the browser', addCustody.map((a) => `"${a}"`).join(' ')])) : null;
-  const menu = join(env.APPDATA || join(env.USERPROFILE || homedir(), 'AppData', 'Roaming'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Arena Node');
+  const open = put(join(bin, 'Bitcoin Arena owner page.cmd'), cmd([`start "" "${ownerUrl}"`]));
+  const custody = addCustody ? put(join(bin, 'Bitcoin Arena add custody.cmd'), cmd(['rem Add custody to this node: the installer\'s custody screens open in the browser', addCustody.map((a) => `"${a}"`).join(' ')])) : null;
+  const programs = join(env.APPDATA || join(env.USERPROFILE || homedir(), 'AppData', 'Roaming'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+  rmSync(join(programs, 'Arena Node'), { recursive: true, force: true });
+  const menu = join(programs, 'Bitcoin Arena');
   mkdirSync(menu, { recursive: true });
-  const ps = [[start, 'Start Arena node'], [stop, 'Stop Arena node'], [open, 'Arena node owner page'], ...(custody ? [[custody, 'Add custody to the Arena node']] : [])]
+  const ps = [[start, 'Start Bitcoin Arena'], [stop, 'Stop Bitcoin Arena'], [open, 'Bitcoin Arena owner page'], ...(custody ? [[custody, 'Add custody to Bitcoin Arena']] : [])]
     .map(([target, name]) => `$s = $w.CreateShortcut('${join(menu, `${name}.lnk`).replace(/'/g, "''")}'); $s.TargetPath = '${target.replace(/'/g, "''")}'; $s.WorkingDirectory = '${bin.replace(/'/g, "''")}'; $s.Save()`);
   if (run) run('powershell', ['-NoProfile', '-NonInteractive', '-Command', ['$w = New-Object -ComObject WScript.Shell', ...ps].join('; ')]);
   return { files, menu, app: null, start, command };
@@ -176,5 +185,5 @@ export function updaterLauncherStale(file, platform = process.platform) {
 }
 export function installUpdater({ home, installProgram, platform = process.platform, env = process.env, sh = undefined, boot = true }) {
   const cmd = join(home, 'bin', platform === 'win32' ? `${commandName()}.cmd` : commandName());
-  return installProgram({ id: 'updater', description: 'The Arena node\'s auto update', args: [cmd, 'auto-update'], home, boot, platform, env, againOn: 75, ...(sh ? { sh } : {}) });
+  return installProgram({ id: 'updater', description: 'Bitcoin Arena: automatic updates', args: [cmd, 'auto-update'], home, boot, platform, env, againOn: 75, ...(sh ? { sh } : {}) });
 }

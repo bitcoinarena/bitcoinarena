@@ -16,10 +16,22 @@ const which = async (x) => {
   return r || null;
 };
 
-/** Install and start LND for the node at `state` (its chain must be its own Core). Answers { ok, lnd, sha256, peers } or { ok: false, why }. */
+/**
+ * The Bitcoin Core LND reads: the node's chain when it is a Core; while the Core installed here still syncs behind the interim
+ * Electrum chain, that Core - LND starts at once and waits for the sync by itself (kanban #635, the owner 2026-10-25: "Du kannst ja
+ * bitcoin core schon einrichten und dann direkt lnd danach, und einfach auf den Sync warten"). null when there is no Core.
+ */
+export function lndChainOf(s) {
+  if (s.chain && s.chain.kind === 'core') return s.chain;
+  const t4 = s.core && s.core.networks && s.core.networks.testnet4;
+  return t4 ? { kind: 'core', url: t4.rpcUrl, cookiePath: t4.cookiePath } : null;
+}
+
+/** Install and start LND for the node at `state` (on its own Core, lndChainOf). Answers { ok, lnd, sha256, peers } or { ok: false, why }. */
 export async function setUpOwnLnd({ state, release, fetcher = fetch, reach = reachKit, lndKit = { installLnd, configureLnd, lndArgs, installProgram }, tor: torKit = { torBin, writeTorrc }, boot = true }) {
   const s = state.read();
-  if (!s.chain || s.chain.kind !== 'core') return { ok: false, why: 'LND needs your own Bitcoin Core, not an Electrum server' };
+  const chain = lndChainOf(s);
+  if (!chain) return { ok: false, why: 'LND needs your own Bitcoin Core, not an Electrum server' };
   const got = await lndKit.installLnd({ home: state.home, fetcher });
   if (!got.ok) return { ok: false, why: got.why };
   // CAN OTHERS DIAL THIS LND? (2026-10-18: "Measure if lnd is accessible from the outside after installing if not install tor"):
@@ -30,11 +42,11 @@ export async function setUpOwnLnd({ state, release, fetcher = fetch, reach = rea
   const tor = lnReach.reached ? null : await torKit.torBin({ release, which });
   let torOn = false;
   if (tor) {
-    const t = await lndKit.installProgram({ id: 'tor', description: 'Tor for the Arena node\'s Lightning', args: [tor, '-f', torKit.writeTorrc({ home: state.home })], home: state.home, boot });
+    const t = await lndKit.installProgram({ id: 'tor', description: 'Bitcoin Arena: Tor for Lightning', args: [tor, '-f', torKit.writeTorrc({ home: state.home })], home: state.home, boot });
     torOn = t.ok;
   }
-  const cfg = lndKit.configureLnd({ home: state.home, chain: s.chain, tor: torOn ? TOR_PORTS : null, externalIp: lnReach.reached ? lnReach.address : null });
-  const r = await lndKit.installProgram({ id: 'lnd', description: 'LND for the Arena node (custody)', args: lndKit.lndArgs({ lnd: got.lnd, lnddir: cfg.lnddir }), home: state.home, boot, partOf: torOn ? 'tor' : null });
+  const cfg = lndKit.configureLnd({ home: state.home, chain, tor: torOn ? TOR_PORTS : null, externalIp: lnReach.reached ? lnReach.address : null });
+  const r = await lndKit.installProgram({ id: 'lnd', description: 'LND for Bitcoin Arena (custody)', args: lndKit.lndArgs({ lnd: got.lnd, lnddir: cfg.lnddir }), home: state.home, boot, partOf: torOn ? 'tor' : null });
   if (!r.ok) return { ok: false, why: r.why };
   state.save({ tor: torOn ? { bin: tor, ports: TOR_PORTS } : { why: lnReach.reached ? `not needed: others reach LND at ${lnReach.address}:${LND_PORTS.p2p}` : tor ? 'Tor did not start' : 'no Tor: the release has none for this system (linux-arm64: apt install tor)' },
     lightning: { mode: 'own', restUrl: cfg.restUrl, tlsCert: cfg.tlsCert, macaroon: cfg.macaroon, passwordFile: cfg.passwordFile, lnddir: cfg.lnddir, startedMs: Date.now() } });

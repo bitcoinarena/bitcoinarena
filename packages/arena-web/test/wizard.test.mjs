@@ -135,5 +135,5 @@ test('the steps along the top: done ticked, the current one marked; the page\'s 
   const steps = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['apps', 'Apps']];
   assert.equal(renderToStaticMarkup(React.createElement(StepBar, { steps, done: { chain: true }, now: 'roles' })),
     '<li class="done">Bitcoin</li><li class="now">Roles</li><li class="">Apps</li>');
-  assert.equal(renderToStaticMarkup(React.createElement(SetupRefused, { why: 'no disk <here>' })), '<h1>Arena node setup</h1><p>no disk &lt;here&gt;</p>');
+  assert.equal(renderToStaticMarkup(React.createElement(SetupRefused, { why: 'no disk <here>' })), '<h1>Bitcoin Arena setup</h1><p>no disk &lt;here&gt;</p>');
 });

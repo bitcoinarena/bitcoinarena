@@ -38,7 +38,8 @@ import * as workersKitDefault from './workers.js';
 import { RING_RESERVE_SATS, OUTSIDE_RESERVE_SATS } from './custody-agent.js';
 import { LIQUIDITY_TERMS } from '../../arena-protocol/src/liquidity.js';
 import { LIQUIDITY_PROVIDER_PORT } from './state.js';
-import { join } from 'node:path';
+import { join, isAbsolute, resolve as resolvePath } from 'node:path';
+import { homedir } from 'node:os';
 /** A custody node's extra deposit: the advertisement update's reserve, and the default peg-in for its gateway (the owner can change it). */
 export const CUSTODY_UPDATE_RESERVE_SATS = 5000;
 export const CUSTODY_PEG_IN_SATS = 50000;
@@ -102,6 +103,9 @@ export function depositParts(s, pegInSats) {
 // einzahlen, das wird automatisch multipliziert und aus N Instanzen auf gesplittet"): node 1 asks for its own deposit and the others' -
 // each as much as its own, plus the payment that hands it on - and each further node's bond step is paid from node 1's wallet
 export const SPLIT_FEE_SATS = 500;
+
+/** The Arena faucet (kanban #635): testnet4 coins for a new node, from our own coins - ARENA_FAUCET_URL to point elsewhere. */
+export const FAUCET_URL = process.env.ARENA_FAUCET_URL || 'https://seat.example.com/faucet';
 export function withOtherNodes(s, parts, { further = false } = {}) {
   const n = s && s.instances ? Number(s.instances.count) || 1 : 1;
   if (n <= 1 || further) return parts;
@@ -163,7 +167,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     return { network: 'testnet4', step: nextStep(s), done: doneOf(s), chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
       chainTest: s.chainTest || null, roles: s.roles || [], roleInfo: ROLES, appInfo: appsView(releaseApps), apps: chosenApps(s, releaseApps), electrum: TESTNET4_ELECTRUM, owner: s.owner || null, service: s.service || null,
       seatPort: portOf(), defaultPort: seatPort, reach: s.reach || null, direct: s.direct || null, login: login ? { url: login.url, result: login.result } : null,
-      lightning: s.lightning || null, gatewaySeat: GATEWAY_SEAT, launchers: s.launchers || null, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, custodyLater: laterCustody(s), wallet: (s.done || {}).seed ? (() => { const parts = withOtherNodes(s, depositParts(s, (s.roles || []).includes('custody') ? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS : 0), { further: !!fundFrom });
+      lightning: s.lightning || null, coreSync: s.core ? { dir: s.core.dir || state.home, interim: !!s.core.interim, prune: !!s.core.prune } : null, gatewaySeat: GATEWAY_SEAT, launchers: s.launchers || null, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, custodyLater: laterCustody(s), wallet: (s.done || {}).seed ? (() => { const parts = withOtherNodes(s, depositParts(s, (s.roles || []).includes('custody') ? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS : 0), { further: !!fundFrom });
         return { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(Object.values(parts).reduce((a, x) => a + x, 0)), parts }; })() : null,
       confirm: pendingSeed ? { positions: pendingSeed.positions } : null, confirmWords: CONFIRM_WORDS,
       // kanban #596: how many nodes on this machine, and Fedimint on a RAM disk from more than 5
@@ -200,14 +204,23 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     // BITCOIN CORE, INSTALLED WHEN ASKED (ruling 8): the plan (one already here? the disk against what mainnet and testnet4 need),
     // the install (checked download, a datadir and config per network, a service each), and the sync's progress with an ETA - and once
     // testnet4 is synced, the chain step is saved with it and the wizard goes on
-    'POST /api/core/plan': async () => {
+    // WHERE ITS BLOCKS GO IS THE OWNER'S CHOICE (kanban #635, the owner 2026-10-25: "Wo BTC core installiert wird sollte auswählbar
+    // sein"): a folder on any disk - the node's own folder when none is given - checked for space before anything is written
+    'POST /api/core/plan': async (b = {}) => {
+      const where = coreDirOf(b);
+      if (!where.ok) return where;
       const found = await coreKit.detectBitcoind({ home: state.home });
-      return { ok: true, installed: found, disk: coreKit.diskCheck(state.home), needs: NEEDS, core: state.read().core || null };
+      let disk;
+      try { disk = coreKit.diskCheck(where.dir); } catch (e) { return { ok: false, why: `cannot use ${where.dir}: ${e.code || e.message}` }; }
+      return { ok: true, installed: found, disk, dir: where.dir, defaultDir: state.home, needs: NEEDS, core: state.read().core || null };
     },
     'POST /api/core/install': async (b) => {
+      const where = coreDirOf(b);
+      if (!where.ok) return where;
       const found = await coreKit.detectBitcoind({ home: state.home });
       if (found && !found.startsWith(state.home)) return { ok: false, why: `Bitcoin Core is installed already (${found}): connect it with its RPC address and cookie file instead` };
-      const disk = coreKit.diskCheck(state.home);
+      let disk;
+      try { disk = coreKit.diskCheck(where.dir); } catch (e) { return { ok: false, why: `cannot use ${where.dir}: ${e.code || e.message}` }; }
       const nets = ['testnet4', ...(b.mainnet ? ['mainnet'] : [])];
       const prune = Boolean(b.prune);
       const need = nets.reduce((a, n) => a + (prune ? NEEDS[n].prunedBytes : NEEDS[n].fullBytes), 0);
@@ -216,14 +229,26 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       if (!got.ok) return { ok: false, why: got.why };
       const networks = {};
       for (const n of nets) {
-        const c = coreKit.configureCore({ home: state.home, network: n, prune });
-        const r = await coreKit.installProgram({ id: `bitcoind-${n}`, description: `Bitcoin Core for the Arena node (${n})`, args: coreKit.coreArgs({ bitcoind: got.bitcoind, datadir: c.datadir }), home: state.home, boot: b.boot !== false });
+        const c = coreKit.configureCore({ home: where.dir, network: n, prune });
+        const r = await coreKit.installProgram({ id: `bitcoind-${n}`, description: `Bitcoin Core for Bitcoin Arena (${n})`, args: coreKit.coreArgs({ bitcoind: got.bitcoind, datadir: c.datadir }), home: state.home, boot: b.boot !== false });
         if (!r.ok) return { ok: false, why: r.why };
         networks[n] = { rpcUrl: c.rpcUrl, cookiePath: c.cookiePath, datadir: c.datadir };
       }
-      const core = { bitcoind: got.bitcoind, prune, networks, startedMs: nowMs() };
+      const core = { bitcoind: got.bitcoind, prune, dir: where.dir, networks, startedMs: nowMs() };
       state.save({ core });
-      return { ok: true, core };
+      // THE SYNC RUNS IN THE BACKGROUND (kanban #635, the owner 2026-10-25: "Auch der Bitcoin core nicht im Vordergrund machen lassen während
+      // der synced"): a Core still syncing cannot see a fresh deposit nor take a transaction that spends one, so until it is synced the
+      // node reads the chain through a public Electrum server - the first that passes the chain test - and the chain-switch keeper
+      // (bin/chain-switch.mjs, installed with the service) moves it to its own Core once testnet4 is synced. With no server passing,
+      // the wizard waits for the sync as before.
+      for (const e of TESTNET4_ELECTRUM) {
+        const conn = chainOf({ kind: 'electrum', host: e.host, port: e.port, tls: e.tls });
+        const t = await test(conn).catch((err) => ({ ok: false, why: err.message }));
+        if (!t.ok) { log(`[core] interim chain ${e.host}:${e.port}: ${t.why}`); continue; }
+        mark('chain', { chain: conn, chainTest: { atMs: Date.now(), why: t.why, latencyMs: t.source.latencyMs, height: t.source.height }, core: { ...core, interim: true } });
+        return { ok: true, core, interim: { host: e.host, port: e.port } };
+      }
+      return { ok: true, core, interim: null };
     },
     'GET /api/core/status': async () => {
       const s = state.read();
@@ -385,6 +410,12 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       if (!r.ok) return { ok: false, why: r.why };
       // THE RELEASE THE NODE RUNS, RECORDED AT THE INSTALL as an update records it (node-services.js nodeOf: its version, the auto update)
       s = state.save({ release: { path: release, atMs: Date.now() } });
+      // THE CHAIN SWITCH (kanban #635): a Core still syncing behind the interim Electrum chain - its keeper moves the node to it once synced
+      if (s.core && s.core.interim && s.chain.kind === 'electrum') {
+        const k = await gwKit.installProgram({ id: 'chain-switch', description: 'Bitcoin Arena: moves the node to its own Bitcoin Core once it is synced', home: state.home, boot,
+          args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'chain-switch.mjs'), '--home', state.home] });
+        if (!k.ok) log(`[service] the chain switch did not start: ${k.why}`);
+      }
       // THE PUBLIC ADDRESS, TESTED: a tunnel from outside through Cloudflare's edge (a quick tunnel's name read first, and the node's
       // settings rewritten with it - it is new at every restart); a direct node was reached by the seats before it started
       let reachTest = null;
@@ -407,7 +438,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
         const d = await workersKit.deployForwarder({ token: state.readSecret('cf-workers-token'), accountId: s.reach.accountId, name: s.reach.workerName, target, fetcher });
         if (!d.ok) return { ok: false, why: `the node runs, but ${d.why}`, identity: r.identity };
         s = state.save({ reach: { ...s.reach, target, targetAtMs: Date.now() } });
-        const k = await gwKit.installProgram({ id: 'workers', description: 'The keeper of the Arena node\'s workers.dev address', home: state.home, boot,
+        const k = await gwKit.installProgram({ id: 'workers', description: 'Bitcoin Arena: keeper of the workers.dev address', home: state.home, boot,
           args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'workers-keeper.mjs'), '--home', state.home] });
         if (!k.ok) return { ok: false, why: `the Worker forwards, but its keeper did not start: ${k.why}`, identity: r.identity };
       }
@@ -481,7 +512,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       if (!f.ok) return { ok: false, why: f.why, noBinary: true };
       const g = gwKit.configureGateway({ home: state.home, gatewayd: f.gatewayd, seed: fromHex(state.readSecret('seed.hex')),
         lnd: { rpcHost: l.rpcHost, tlsCert: l.tlsCert, macaroon: l.macaroon }, publicUrl: s.reach && s.reach.url ? `${s.reach.url.replace(/\/+$/, '')}/gateway/` : null });
-      const r = await gwKit.installProgram({ id: 'gateway', description: 'The Fedimint gateway of the Arena node (custody)', args: g.args, vars: g.vars, home: state.home, boot: b.boot !== false });
+      const r = await gwKit.installProgram({ id: 'gateway', description: 'Bitcoin Arena: Fedimint gateway (custody)', args: g.args, vars: g.vars, home: state.home, boot: b.boot !== false });
       if (!r.ok) return { ok: false, why: r.why };
       state.save({ gateway: { apiUrl: g.apiUrl, publicUrl: g.publicUrl, passwordFile: g.passwordFile, dir: g.dir, startedMs: Date.now() } });
       return { ok: true };
@@ -490,6 +521,9 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       const s = state.read();
       if (!s.gateway) return { ok: false, why: 'no gateway set up yet' };
       const t = await gwKit.testGateway(s.gateway);
+      // A GATEWAY WAITING FOR THE CHAIN IS SET UP (kanban #635, the owner 2026-10-25: "Lnd muss nicht auf dem Bitcoin Core Testnet Sync
+      // warten"): gatewayd runs and says Syncing until its LND is synced - it connects by itself then, and the dashboards show it
+      if (!t.ok && t.syncing) { mark('lightning', { gateway: { ...s.gateway, state: t.state, syncingMs: Date.now() } }); return { ok: true, syncing: true, state: t.state, federations: [] }; }
       if (!t.ok) return { ok: false, why: t.why, waiting: true };
       mark('lightning', { gateway: { ...s.gateway, lightningPubkey: t.lightningPubkey, federations: t.federations, testedMs: Date.now() } });
       return t;
@@ -562,6 +596,23 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       return { ok: true, address: w.address, tip, coins, totalSats: total, needSats, parts, fundedFrom, fundWhy, enough: total >= needSats, lock: laterCustody(s) ? null : lockOf(tip), update: laterCustody(s),
         minimum: state.read().bondMinimum || null };
     },
+    // TESTCOINS, AUTOMATICALLY (kanban #635, the owner 2026-10-25: "Automatisch oder geführt an testcoins"): the Arena faucet sends what
+    // the bond step still lacks to this node's address; the deposit then counts as soon as it is in the mempool. The guided way (public
+    // faucets) is the page's other choice, and the one it points to when the faucet says no.
+    'POST /api/coins/auto': async (b) => {
+      const c = await api['POST /api/bond/check'](b || {});
+      if (!c.ok) return c;
+      const missing = Math.max(0, c.needSats - c.totalSats);
+      if (!missing) return { ok: true, already: true, check: c };
+      let r;
+      try {
+        const res = await fetcher(FAUCET_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ address: c.address, sats: missing }), signal: AbortSignal.timeout(60000) });
+        r = await res.json().catch(() => ({ ok: false, why: `the faucet answered ${res.status}` }));
+      } catch (e) { r = { ok: false, why: `the faucet did not answer (${e.message})` }; }
+      if (!r.ok) return { ok: false, why: r.why, guided: true };
+      state.save({ faucet: { txid: r.txid, sats: r.sats, atMs: nowMs() } });
+      return { ok: true, txid: r.txid, sats: r.sats };
+    },
     'POST /api/bond/post': async (b) => {
       const s = state.read();
       if (!(s.done || {}).service) return { ok: false, why: 'install the node first' };
@@ -609,7 +660,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       // file the seat serves (ARENA_LIQUIDITY_CLAIM_FILE)
       if ((s.roles || []).includes('liquidity') && s.lightning && s.lightning.lnddir) {
         state.writeSecret('liquidity.key', toHex(nodeSecret));
-        await gwKit.installProgram({ id: 'liquidity', description: 'The liquidity provider of the Arena node', home: state.home, boot: true,
+        await gwKit.installProgram({ id: 'liquidity', description: 'Bitcoin Arena: liquidity provider', home: state.home, boot: true,
           args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'liquidity-provider.mjs'), '--rest', s.lightning.restUrl, '--lnddir', s.lightning.lnddir,
             '--key', state.path('liquidity.key'), '--state', state.path('liquidity-state.json'), '--claim-file', state.path('liquidity-claim.json'), '--listen', String(LIQUIDITY_PROVIDER_PORT)] });
       }
@@ -634,7 +685,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
 
   // a posted bond whose advertisement does not name custody yet, on a node that chose custody (beginAddCustody)
   const installAgent = async () => {
-    const a = await gwKit.installProgram({ id: 'custody', description: 'The custody agent of the Arena node', home: state.home, boot: true,
+    const a = await gwKit.installProgram({ id: 'custody', description: 'Bitcoin Arena: custody agent', home: state.home, boot: true,
       args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'custody-agent.mjs'), '--home', state.home] });
     state.save({ custodyAgent: a.ok ? { installedMs: Date.now() } : { why: a.why } });
   };
@@ -658,6 +709,14 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     } catch (e) { log(`launchers: ${e.message}`); return null; }
   };
 
+  /** The folder Bitcoin Core's blocks go to: the owner's (absolute, or ~/...), else the node's own folder. */
+  const coreDirOf = (b) => {
+    const raw = String((b && b.dir) || '').trim();
+    if (!raw) return { ok: true, dir: state.home };
+    const dir = raw === '~' || raw.startsWith('~/') ? join(homedir(), raw.slice(1)) : raw;
+    if (!isAbsolute(dir)) return { ok: false, why: `give the whole path of the folder (it starts with / or a drive letter): ${raw}` };
+    return { ok: true, dir: resolvePath(dir) };
+  };
   const chainOf = (b) => (b.kind === 'electrum'
     ? { kind: 'electrum', host: String(b.host || ''), port: Number(b.port), tls: b.tls !== false }
     : { kind: 'core', url: String(b.url || ''), ...(b.cookiePath ? { cookiePath: String(b.cookiePath) } : { user: String(b.user || ''), password: String(b.password || '') }) });

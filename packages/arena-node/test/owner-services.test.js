@@ -45,7 +45,7 @@ test('on a running seat: the owner\'s signed ask answers every service of the no
     assert.equal(r.status, 200);
     const j = await r.json();
     assert.deepEqual([j.ok, j.port, j.roles, j.settings, j.command], [true, s.d.port, 'verify', 'arena.conf', 'arenanode']);
-    assert.deepEqual(j.services[0].id, 'node'); assert.equal(j.services[0].title, 'Arena node (seat)');
+    assert.deepEqual(j.services[0].id, 'node'); assert.equal(j.services[0].title, 'Bitcoin Arena node (seat)');
     assert.ok(j.services.some((x) => x.id === 'address'), 'beside the installer\'s: the seat\'s own rows it does not know');
     assert.equal(typeof j.services[0].running, 'boolean');
     assert.ok(!JSON.stringify(j).includes(root), 'no local paths in the answer');

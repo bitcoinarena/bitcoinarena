@@ -229,6 +229,7 @@ th{color:var(--dim);font-weight:600}.ok{color:var(--ok)}.bad{color:var(--bad)}.w
 .chart-head{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:0 0 6px}.chart .sub{margin:0}
 .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}.two h2{margin-top:26px}
 @media (max-width:560px){.stat.wide{grid-column:auto}.cards{grid-template-columns:1fr}}
+/* the setup's progress (kanban #635) */.setup-status h3{margin:0 0 8px}.setup-step{display:flex;gap:10px;align-items:flex-start;margin:8px 0}.setup-step>span{font-weight:700;width:1.2em;flex:none}.setup-step .ok,.setup-status h3 .ok{color:var(--ok)}.setup-step .wait{color:var(--dim)}.setup-step .bar{height:6px;background:var(--line);border-radius:3px;margin-top:5px;overflow:hidden;max-width:420px}.setup-step .bar>i{display:block;height:100%;background:var(--ok)}
 </style></head><body>
 <div id="app"></div>
 <script type="module">
@@ -241,7 +242,8 @@ const opt=(u)=>json(u).catch(()=>null);
 // (so /guardian-N/ works); the liquidity card (§23A.10) and the capacity plea when this node has them
 const readResult=(id)=>json('api/round-result?round='+encodeURIComponent(id));
 let shown=false;
-async function load(){let D;try{const [d,liq,cap]=await Promise.all([json('dashboard.json'),opt('liquidity-claim'),opt('capacity?node=me')]);D={...d,liquidity:liq,capacity:(cap&&cap.plea)||null}}
+// the setup's progress (kanban #635): Bitcoin Core's background sync, the bond's and the peg-in's confirmations
+async function load(){let D;try{const [d,liq,cap,setup]=await Promise.all([json('dashboard.json'),opt('liquidity-claim'),opt('capacity?node=me'),opt('setup-status')]);D={...d,liquidity:liq,capacity:(cap&&cap.plea)||null,setup}}
 catch(e){if(shown)return;D={error:e.message}}
 shown=shown||!D.error;window.ArenaDashboard.draw(document.getElementById('app'),D,readResult)}
 load();setInterval(()=>{if(!document.hidden)load()},60000);

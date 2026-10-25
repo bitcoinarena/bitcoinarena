@@ -5,6 +5,7 @@
 // /owner/bond-withdraw, signed; the node leaves the network). Read from GET /owner/bond.
 import React from 'react';
 import { Button } from '../design/components.jsx';
+import { SetupStatus } from '../dashboard/SetupStatus.jsx';
 
 const n = (x) => Number(x).toLocaleString('en-US');
 /** "3 d 4 h" / "5 h 20 min" for a span in ms. */
@@ -21,13 +22,15 @@ export function lockText(l, nowMs = Date.now()) {
 export class BondPanel extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { loaded: false, bond: null, address: '', busy: false, message: null, ...(props.initial || {}) };
+    this.state = { loaded: false, bond: null, setup: null, address: '', busy: false, message: null, ...(props.initial || {}) };
     this.withdraw = this.withdraw.bind(this);
   }
   async componentDidMount() {
     if (this.state.loaded || !this.props.api) return;
     let b = null; try { b = await this.props.api.get('/owner/bond'); } catch { b = null; }
-    this.setState({ loaded: true, bond: b });
+    // the setup's progress (kanban #635): the bond's and the peg-in's confirmations, Bitcoin Core's background sync
+    let setup = null; try { setup = await this.props.api.get('/setup-status'); } catch { setup = null; }
+    this.setState({ loaded: true, bond: b, setup });
   }
   async withdraw() {
     const address = this.state.address.trim();
@@ -45,13 +48,15 @@ export class BondPanel extends React.Component {
     const { loaded, bond: b, address, busy, message } = this.state;
     if (!loaded) return <p className="sub">reading this node's bond…</p>;
     if (!b) return <p className="sub">This node did not answer about its bond.</p>;
-    if (!b.bond) return <p>No bond yet. Until it has one, this node is not drawn for rounds.</p>;
+    const setup = <SetupStatus status={this.state.setup} />;
+    if (!b.bond) return <div>{setup}<p>No bond yet. Until it has one, this node is not drawn for rounds.</p></div>;
     const l = b.lock;
     const outs = Array.isArray(b.outputs) && b.outputs.length > 1 ? b.outputs : null;
     const nowMs = this.props.nowMs ? this.props.nowMs() : Date.now();
     const open = !!(l && l.withdrawable);
     return (
       <div>
+        {setup}
         {/* THE BOND AT A GLANCE (kanban #565): the amount, the lock, the wallet - one stat card each, as the overview */}
         <div className="stats">
           <div className="stat"><span>Bond</span><b>{n(b.total || b.bond.sats)} sat</b><small>{outs ? `in ${outs.length} parts on the chain` : 'one output on the chain'}</small></div>
