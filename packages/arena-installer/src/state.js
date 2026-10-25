@@ -15,7 +15,7 @@ import { homedir } from 'node:os';
 /** The liquidity provider service's local port (127.0.0.1): its claim, and a new top-up address for the owner page. */
 export const LIQUIDITY_PROVIDER_PORT = port(8477);   // + ARENA_PORT_OFFSET (instance.js)
 // THE APPS STEP (kanban #569, the owner 2026-10-21: "a step in the installer where all apps are automatically selected"): after the roles
-export const STEPS = Object.freeze(['chain', 'roles', 'apps', 'seed', 'owner', 'reach', 'service', 'lightning', 'federation', 'promise', 'bond', 'done']);
+export const STEPS = Object.freeze(['start', 'chain', 'roles', 'apps', 'seed', 'owner', 'reach', 'service', 'lightning', 'federation', 'promise', 'bond', 'done']);
 
 /** Where a node lives unless told otherwise: $ARENA_HOME, else ~/.arena-node. */
 export const defaultHome = (env = process.env) => env.ARENA_HOME || join(homedir(), '.arena-node');
@@ -89,9 +89,14 @@ export function guardianSetupOf(s, { release, platform = process.platform }) {
 
 /**
  * The steps done. A state from before the apps step (kanban #569) that is past it - its seed confirmed - counts the apps as done: its node
- * hosts what it was given (seatEnv: every app), and the wizard does not go back to ask.
+ * hosts what it was given (seatEnv: every app), and the wizard does not go back to ask. The same for New / Restore (kanban #652).
  */
-export const doneOf = (s) => { const d = { ...((s && s.done) || {}) }; if (!d.apps && d.seed) d.apps = d.seed; return d; };
+export const doneOf = (s) => {
+  const d = { ...((s && s.done) || {}) };
+  if (!d.apps && d.seed) d.apps = d.seed;
+  if (!d.start && (d.chain || d.seed)) d.start = d.chain || d.seed;   // (kanban #652: a state from before New / Restore that is past it)
+  return d;
+};
 
 /** The first step not done yet. */
 export const nextStep = (s) => { const d = doneOf(s); return STEPS.find((k) => !d[k]) || 'done'; };

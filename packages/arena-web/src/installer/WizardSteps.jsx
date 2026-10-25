@@ -129,7 +129,7 @@ export class AppsStep extends React.Component {
     const n = this.chosen().length;
     return (
       <div className="aw">
-        <h2>3. Your apps</h2>
+        <h2>4. Your apps</h2>
         <p className="sub">The games your node hosts. It checks and settles their rounds. All are on; switch off any you do not want.</p>
         <div className="tiles">
           {info.map((a) => (
@@ -142,6 +142,46 @@ export class AppsStep extends React.Component {
         <Msg r={msg} />
       </div>
     );
+  }
+}
+
+// NEW OR RESTORED (kanban #652, the owner 2026-10-25: "neuer step im installer: New/Restore - setup as a new node / restore from seed")
+export class StartStep extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { mode: (props.st && props.st.origin) || 'new', words: '', busy: false, msg: null, ...(props.initial || {}) };
+    this.go = this.go.bind(this);
+  }
+  async go() {
+    this.setState({ busy: true, msg: null });
+    const r = await this.props.post('/api/start', { mode: this.state.mode, words: this.state.mode === 'restore' ? this.state.words : undefined });
+    this.setState({ busy: false });
+    if (!r.ok) return this.setState({ msg: said(r) });
+    this.setState({ words: '' });
+    this.props.reload();
+  }
+  render() {
+    const { mode, words, busy, msg } = this.state;
+    const n = words.trim() ? words.trim().split(/\s+/).length : 0;
+    const pick = (m, title, text) => (
+      <label className={`choice${mode === m ? ' on' : ''}`}><input type="radio" name="origin" id={`start-${m}`} checked={mode === m} onChange={() => this.setState({ mode: m, msg: null })} />
+        <div><b>{title}</b><p>{text}</p></div></label>);
+    return (
+      <div className="aw">
+        <h2>1. New node or restore</h2>
+        <div className="choices">
+          {pick('new', 'Set up a new node', 'Setup makes new 24 words for it. You write them down in step 5.')}
+          {pick('restore', 'Restore from my 24 words', 'For a node you set up before, on this or another computer. Its wallet, owner login, emergency code and Lightning keys come back from the words.')}
+        </div>
+        {mode === 'restore' ? <>
+          <label htmlFor="start-words">Your 24 words, in order, separated by spaces</label>
+          <textarea id="start-words" rows="4" autoComplete="off" autoCapitalize="off" spellCheck="false" value={words}
+            onChange={(e) => this.setState({ words: e.target.value })} />
+          <p className="sub">{n} of 24 words. Type them only here, on your own computer. A bond your old node posted is not taken over: it stays with the old node until it expires.</p>
+        </> : null}
+        <button type="button" id="start-go" disabled={busy || (mode === 'restore' && n !== 24)} onClick={this.go}>{mode === 'restore' ? 'Restore' : 'Continue'}</button>
+        <Msg r={msg} />
+      </div>);
   }
 }
 
@@ -169,7 +209,7 @@ export class SeedStep extends React.Component {
     const { phase, words, positions, answers, code, msg } = this.state;
     return (
       <div className="aw">
-        <h2>4. Your seed: write it down</h2>
+        <h2>5. Your seed: write it down</h2>
         <p>These 24 words are your node's wallet and your owner login. <b>Write them on paper, in order.</b> Anyone who has them owns your node. Without them, a lost computer means a lost node.</p>
         {phase === 'start' ? <button type="button" id="seed-show" onClick={this.show}>Show my 24 words</button> : null}
         {phase === 'shown' ? <>
@@ -226,7 +266,7 @@ export class OwnerStep extends React.Component {
     const { mode, npub, msg } = this.state;
     return (
       <div className="aw">
-        <h2>5. Owner login</h2>
+        <h2>6. Owner login</h2>
         <p className="sub">How you log in to your node's owner page later.</p>
         <div className="choices">
           {this.choice('seed', 'My 24 words', 'Type them on the owner page in any browser. They stay in that browser.')}
@@ -255,7 +295,7 @@ export class PromiseStep extends React.Component {
     const typed = text.trim().toUpperCase() === PROMISE;
     return (
       <div className="aw">
-        <h2>10. Your bond: the rules</h2>
+        <h2>11. Your bond: the rules</h2>
         <div className="rules">
           <div className="rule"><div className="ic">🔒</div><div><b>Your bond is your promise.</b><p>Bitcoin your node locks on the chain. Cheating would cost more than it could ever win, so players can trust a node they have never met.</p></div></div>
           <div className="rule good"><div className="ic">✅</div><div><b>Stopping? Press LEAVE first.</b><p>Press it on your owner page. Your node finishes its rounds and gives notice to its federation. Then you are free, and your bond comes back when its lock ends.</p></div></div>

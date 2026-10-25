@@ -131,10 +131,11 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     </div>
     <button id="intro-go">Set up my node</button>
   </section>
+  <section id="s-start"></section>
   <section id="s-chain"></section>
 
   <section id="s-roles">
-    <h2>2. What your node does</h2>
+    <h2>3. What your node does</h2>
     <div id="fee-flow">
       <div class="cx-title">Where your earnings come from</div>
       <p class="ff-lead">Every paid round: <b>4&nbsp;%</b> of its stakes to the nodes, <b>1&nbsp;%</b> per service.</p>
@@ -219,7 +220,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
 <script src="/wizard.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
-const STEPS = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['apps', 'Apps'], ['seed', 'Seed'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['lightning', 'Lightning'], ['federation', 'Federation'], ['promise', 'Bond rules'], ['bond', 'Bond'], ['done', 'Done']];
+const STEPS = [['start', 'New / Restore'], ['chain', 'Bitcoin'], ['roles', 'Roles'], ['apps', 'Apps'], ['seed', 'Seed'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['lightning', 'Lightning'], ['federation', 'Federation'], ['promise', 'Bond rules'], ['bond', 'Bond'], ['done', 'Done']];
 let st = null;
 // A DONE STEP OPENED AGAIN FROM THE BAR (kanban #635, the owner's playtest 2026-10-25: "ich kann auch nicht zurück gehen und den Zustand
 // prüfen"): `viewing` names it; the current step's own pill, or any save, goes back to where the wizard is
@@ -236,7 +237,7 @@ async function load() {
   const shown = viewing && st.done[viewing] ? viewing : st.step;
   R.bar($('steps'), { steps: STEPS, done: st.done, now: shown, current: st.step, onPick: pick });   // the step shown scrolled into view
   // THE INTRO: before the first step is done, until "Set up my node" (remembered in this browser where it can be)
-  const intro = st.step === 'chain' && !st.done.chain && !introSeen();
+  const intro = st.step === 'start' && !st.done.start && !introSeen();
   if (intro && st.instances) { $('intro-count').value = st.instances.count; $('intro-ram').checked = st.instances.count < 6 || st.instances.ram !== false; $('intro-name').value = st.instances.name || ''; paintInst(); }
   $('s-intro').classList.toggle('on', intro); $('steps').hidden = intro;
   for (const [k] of STEPS) $('s-' + k).classList.toggle('on', !intro && shown === k);
