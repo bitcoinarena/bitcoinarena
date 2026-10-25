@@ -9,6 +9,8 @@
 #   state   "running", "done" (the installer says Done or a node is set up) or "ended <its last lines>"
 #   link    the installer's one-time link        stop     stop the installer
 #   status  `arenanode status`                    owner    open the owner page       restart   restart the node
+#   node    the node in one line (arenanode state: running / stopped)   dashboard   the node's dashboard in the browser
+#   node-start / node-stop   start or stop the node's services          doctor      `arenanode doctor`
 # Built-in parts only (bash, osascript): nothing more to install.
 APP="$(cd "$(dirname "$0")/../.." && pwd)"
 BASE="$HOME/Library/ArenaNode"
@@ -52,5 +54,10 @@ case "${1:-}" in
   status) "$CMD" status 2>&1 | head -24 ;;
   owner) "$CMD" open >/dev/null 2>&1 ;;
   restart) "$CMD" restart >/dev/null 2>&1 ;;
-  *) echo "usage: arena-node-app start|state|link|stop|status|owner|restart" >&2; exit 2 ;;
+  node) "$CMD" state 2>&1 | head -1 ;;
+  dashboard) "$CMD" dashboard >/dev/null 2>&1 ;;
+  node-start) "$CMD" start 2>&1 | tail -3 ;;
+  node-stop) "$CMD" stop 2>&1 | tail -3 ;;
+  doctor) "$CMD" doctor 2>&1 | head -30 ;;
+  *) echo "usage: arena-node-app start|state|link|stop|status|owner|restart|node|dashboard|node-start|node-stop|doctor" >&2; exit 2 ;;
 esac

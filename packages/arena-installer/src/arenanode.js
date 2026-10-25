@@ -32,6 +32,8 @@ export const HELP = (name) => `${name}: your Bitcoin Arena node on this machine
   ${name} config unset <key>
   ${name} update                    update this node now to the newest signed release (auto update does it by itself)
   ${name} open                      the owner page in the browser
+  ${name} dashboard                 the node's dashboard in the browser
+  ${name} state                     one line: running, or stopped and why (the desktop app's)
   ${name} version
 `;
 
@@ -149,6 +151,22 @@ export async function main(args, { home, name = 'arenanode', io = { out: (l) => 
       const { runAutoUpdate } = await import('./auto-update.js');
       if (!deps.latest) { io.err('this command reads no release list (run it from a release)'); return 1; }
       await runAutoUpdate({ home, latest: deps.latest });
+      return 0;
+    }
+    // THE DESKTOP APP'S LINE (kanban #658, the owner 2026-10-25: "show when it's installed \"Server running\""): the seat's own state in a word
+    case 'state': {
+      const v = await overview({ ...ctx, probes: false });
+      const seat = v.services.find((s) => s.id === 'node');
+      if (!seat) { io.out('none'); return 1; }
+      const down = v.services.filter((s) => s.running === false).map((s) => s.title);
+      io.out(seat.running === false ? `stopped${seat.detail ? `: ${seat.detail}` : ''}` : down.length ? `running; not running: ${down.join(', ')}` : 'running');
+      return seat.running === false ? 1 : 0;
+    }
+    case 'dashboard': {
+      const n = nodeOf(home);
+      const url = `${n.publicUrl || `http://127.0.0.1:${n.port}`}/Dashboard`;
+      io.out(url);
+      if (!deps.noOpen) await openUrl(url, deps.platform);
       return 0;
     }
     case 'open': {

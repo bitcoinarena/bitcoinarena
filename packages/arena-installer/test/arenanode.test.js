@@ -352,3 +352,22 @@ test('on an Electrum node the Bitcoin Core row is not answered by the chain brid
     assert.equal(bridge.ok, true, 'the bridge answers for itself');
   } finally { rm(dir, { recursive: true, force: true }); }
 });
+
+// THE DESKTOP APP'S LINE AND ITS DASHBOARD BUTTON (kanban #658): `state` says running or stopped in one line, `dashboard` names the page
+test('arenanode state: running, running with a service down, stopped; arenanode dashboard: the node\'s dashboard', async () => {
+  const n = linuxNode({ port: 8470 });
+  try {
+    const run = async (args, stopped = []) => {
+      const out = [];
+      const code = await main(args, { home: n.home, io: { out: (l) => out.push(l), err: (l) => out.push(`ERR ${l}`) }, deps: { platform: 'linux', env: n.env, sh: fakeSh({ stopped }).sh, noOpen: true } });
+      return [code, out.join('\n')];
+    };
+    assert.deepEqual(await run(['state']), [0, 'running']);
+    const [c1, t1] = await run(['state'], ['arena-tor.service']);
+    assert.equal(c1, 0); assert.match(t1, /^running; not running: Tor/);
+    const [c2, t2] = await run(['state'], ['arena-node.service']);
+    assert.equal(c2, 1); assert.match(t2, /^stopped/);
+    const [c3, t3] = await run(['dashboard']);
+    assert.equal(c3, 0); assert.match(t3, /\/Dashboard$/);
+  } finally { rmSync(n.root, { recursive: true, force: true }); }
+});
