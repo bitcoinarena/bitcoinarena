@@ -11,7 +11,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, symlinkSy
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { updateNode, releaseOfUnit, inSeatingWindow, backupNode, envForRelease, restoreNode, staleLnd } from '../src/update.js';
+import { updateNode, releaseOfUnit, inSeatingWindow, backupNode, envForRelease, restoreNode, staleLnd, seatLogTail } from '../src/update.js';
 import { LND_FILES } from '../src/lnd.js';
 import { unitDir, UNIT, waitHealthy } from '../src/service.js';
 
@@ -29,7 +29,7 @@ const freePort = () => new Promise((ok) => { const s = net.createServer().listen
  *  #569): the apps' registrations import arena-sdk/<name> - without it the seat did not start ("Cannot find package 'arena-sdk'"). */
 function releaseFrom(dir) {
   mkdirSync(dir, { recursive: true });
-  execFileSync('sh', ['-c', `git -C "${REPO}" archive HEAD packages/arena-node/src packages/arena-node/pages packages/arena-node/package.json packages/arena-protocol packages/arena-client/src packages/arena-sdk packages/node_modules/arena-sdk | tar -x -C "${dir}"`]);
+  execFileSync('sh', ['-c', `git -C "${REPO}" archive HEAD packages/arena-node/src packages/arena-node/pages packages/arena-node/package.json packages/arena-protocol packages/arena-client/src packages/arena-sdk packages/arena-attestor packages/node_modules/arena-sdk | tar -x -C "${dir}"`]);
   // and Next Block as a node has it once fetched (kanban #575: no app is tracked here; tools/fetch-apps.mjs placed it at its pin)
   cpSync(join(REPO, 'packages/nextblock'), join(dir, 'packages/nextblock'), { recursive: true });
   symlinkSync(join(REPO, 'packages/arena-node/node_modules'), join(dir, 'packages/arena-node/node_modules'));
@@ -517,4 +517,15 @@ test('a healthy update removes the releases older than the one it came from', as
   assert.ok(!existsSync(v0), 'the release before the one it came from is gone');
   assert.ok(existsSync(v1) && existsSync(v2), 'the release it came from (the way back) and the new one stay');
   assert.ok(existsSync(join(rel, 'downloads')), 'a folder that is no release is left alone');
+});
+
+test('a rollback says why: the new release\'s last log lines, from the unit\'s journal on Linux and node.log elsewhere (kanban #663)', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'arena-logtail-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const asked = [];
+  const sh = async (cmd, args) => { asked.push([cmd, ...args]); return { ok: true, out: 'line 1\nError: Cannot find module x\n', err: '' }; };
+  assert.deepEqual(await seatLogTail({ home, platform: 'linux', sh, unit: 'arena-node--2.service' }), ['line 1', 'Error: Cannot find module x']);
+  assert.deepEqual(asked[0], ['journalctl', '--user', '-u', 'arena-node--2.service', '-n', '12', '--no-pager', '-o', 'cat'], 'the node\'s own unit');
+  writeFileSync(join(home, 'node.log'), Array.from({ length: 20 }, (_, i) => `l${i}`).join('\n') + '\n');
+  assert.deepEqual(await seatLogTail({ home, platform: 'darwin', n: 3 }), ['l17', 'l18', 'l19']);
 });
