@@ -144,7 +144,9 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.equal((await c.req('POST', '/api/roles', { roles: ['verify'] })).status, 403, 'a POST without x-arena-wizard is refused');
 
   let s = (await c.get('/api/state')).json;
-  assert.equal(s.step, 'chain');
+  assert.equal(s.step, 'start', 'New / Restore first (kanban #652)');
+  assert.equal((await c.post('/api/start', { mode: 'new' })).json.ok, true);
+  assert.equal((await c.get('/api/state')).json.step, 'chain');
   const bad = (await c.post('/api/chain/save', { kind: 'core', url: btc.url.replace(/\d+\/$/, '1/'), cookiePath })).json;
   assert.equal(bad.ok, false, 'nothing answers there: not saved');
   const saved = (await c.post('/api/chain/save', { kind: 'core', url: btc.url, cookiePath })).json;
@@ -414,7 +416,7 @@ test('the intro: what a node is, one picture, what it earns and needs, then step
   assert.match(intro, /4 %<\/b> of every paid round goes to the nodes, <b>1 % for each service<\/b>/);
   assert.match(intro, /100 rounds of 1,000 sat → 4,000 sat to the nodes/);
   for (const need of ['A computer that stays on', 'About 3 GB of disk', 'Home internet', 'A bond of 50,000 sat']) assert.ok(intro.includes(need), need);
-  assert.match(html, /const intro = st\.step === 'chain' && !st\.done\.chain && !introSeen\(\);/, 'shown only before the first step is done');
+  assert.match(html, /const intro = st\.step === 'start' && !st\.done\.start && !introSeen\(\);/, 'shown only before the first step is done');
   assert.match(html, /\$\('intro-go'\)\.onclick = async \(\) => \{[^]*?introSkipped = true; try \{ localStorage\.setItem/, '"Set up my node" goes on, remembered where the browser allows');
   // HOW MANY NODES (kanban #596): the count, its note, and the RAM disk checkbox from more than 5, posted before the steps
   assert.match(intro, /<input id="intro-count" type="number" min="1" max="20" value="1"/);
@@ -443,8 +445,45 @@ test('the wizard page draws no step itself: the roles into their list, every oth
   assert.match(html, /const ctx = \{ st, post, get: async \(path\) => \(await fetch\(path\)\)\.json\(\), reload: \(\) => \{ viewing = null; return load\(\); \} \};/, 'a save goes back to the current step');
   assert.match(html, /if \(shown === 'roles'\) R\.mount\('roles', \$\('roles'\), \{ \.\.\.ctx, onCustody: \(on\) => \{ \$\('custody-explain'\)\.hidden = !on; \} \}\);/);
   assert.match(html, /R\.show\(shown, \(k\) => \$\('s-' \+ k\), ctx\);/);
-  for (const k of ['chain', 'seed', 'owner', 'reach', 'service', 'lightning', 'federation', 'promise', 'bond', 'done']) assert.ok(html.includes(`<section id="s-${k}"></section>`), `${k}: an empty section for React`);
+  for (const k of ['start', 'chain', 'seed', 'owner', 'reach', 'service', 'lightning', 'federation', 'promise', 'bond', 'done']) assert.ok(html.includes(`<section id="s-${k}"></section>`), `${k}: an empty section for React`);
   for (const gone of ['ArenaWizard ||', '!reactStep', '!reactRoles', "$('b-check').onclick", "$('seed-show').onclick", 'function watchSync', 'roles-save', 'class="rc"', 'innerHTML', 'const esc']) assert.ok(!html.includes(gone), gone);
+});
+
+// NEW OR RESTORED (kanban #652, the owner 2026-10-25: "neuer step im installer: New/Restore"): the first step; a restore writes the typed
+// words' seed and skips the seed step, a wrong word is refused by name, a node with other words keeps its own
+test('the first step: a new node goes on to the seed step, a restore takes the 24 words as its seed (kanban #652)', async () => {
+  const { newSeed, ownerKeyOf } = await import('../src/seed.js');
+  const run = async (fn) => {
+    const home = mkdtempSync(join(tmpdir(), 'arena-install-'));
+    const w = createWizard({ state: nodeState(home), release: RELEASE, seatPort: 1 });
+    const server = http.createServer((q, s) => w.handle(q, s));
+    try {
+      await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+      const c = client(server.address().port);
+      await c.get(`/?t=${w.token}`);
+      await fn(c, nodeState(home));
+    } finally { server.close(); rmSync(home, { recursive: true, force: true }); }
+  };
+  await run(async (c) => {
+    assert.equal((await c.get('/api/state')).json.step, 'start', 'the first step');
+    assert.deepEqual((await c.post('/api/start', { mode: 'new' })).json, { ok: true, origin: 'new' });
+    const st = (await c.get('/api/state')).json;
+    assert.deepEqual([st.step, st.origin, !!st.done.seed], ['chain', 'new', false], 'a new node: on to Bitcoin, its words come at the seed step');
+  });
+  const old = newSeed();
+  await run(async (c, state) => {
+    assert.match((await c.post('/api/start', { mode: 'restore', words: old.words.slice(0, 23).join(' ') })).json.why, /all 24 words.*23 typed/);
+    const wrong = [...old.words]; wrong[4] = 'bitcoinx';
+    assert.equal((await c.post('/api/start', { mode: 'restore', words: wrong.join(' ') })).json.ok, false, 'a word not in the list');
+    const r = (await c.post('/api/start', { mode: 'restore', words: `  ${old.words.join('  ').toUpperCase()} ` })).json;
+    assert.deepEqual(r, { ok: true, origin: 'restore', ownerPubkey: ownerKeyOf(old.seed).pubkey }, 'case and spaces do not count');
+    assert.equal(state.readSecret('seed.hex').trim(), Buffer.from(old.seed).toString('hex'), 'the old seed, written');
+    const st = (await c.get('/api/state')).json;
+    assert.deepEqual([st.origin, !!st.done.start, !!st.done.seed], ['restore', true, true], 'the seed step is done');
+    assert.equal((await c.post('/api/seed/new')).json.ok, false, 'no new words over restored ones');
+    assert.equal((await c.post('/api/start', { mode: 'restore', words: newSeed().words.join(' ') })).json.why, 'this node has other words already: restore on a new node folder');
+    assert.equal((await c.post('/api/start', { mode: 'restore', words: old.words.join(' ') })).json.ok, true, 'the same words again: fine');
+  });
 });
 
 // HOW MANY NODES FROM THE INTRO (kanban #596): POST /api/instances checked and kept; the state says it back

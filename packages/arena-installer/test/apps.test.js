@@ -51,7 +51,7 @@ test('seatEnv: the saved choice; every app with none saved (an older state); Nex
 });
 
 test('the step: after the roles; a state from before it that is past the seed does not go back to it', () => {
-  assert.deepEqual(STEPS.slice(0, 4), ['chain', 'roles', 'apps', 'seed']);
+  assert.deepEqual(STEPS.slice(0, 5), ['start', 'chain', 'roles', 'apps', 'seed']);
   assert.equal(nextStep({ done: { chain: 1, roles: 2 } }), 'apps');
   assert.equal(nextStep({ done: { chain: 1, roles: 2, apps: 3 } }), 'seed');
   assert.equal(nextStep({ done: { chain: 1, roles: 2, seed: 3, owner: 4 } }), 'reach', 'an older state, mid-install');

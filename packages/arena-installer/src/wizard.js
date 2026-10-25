@@ -20,7 +20,7 @@ import { execFile } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { testConnection, TESTNET4_ELECTRUM } from './chain-test.js';
-import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CONFIRM_WORDS, emergencyOf } from './seed.js';
+import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CONFIRM_WORDS, emergencyOf, seedOfWords } from './seed.js';
 import { nextStep, doneOf, seatConf, ROLES, guardianSetupOf, ownCoreOf } from './state.js';
 import { appsIn, appsView, chosenApps } from './apps.js';
 import { installService, installProgram } from './service.js';
@@ -183,7 +183,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
 
   const view = () => {
     const s = state.read();
-    return { network: 'testnet4', step: nextStep(s), done: doneOf(s), chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
+    return { network: 'testnet4', step: nextStep(s), done: doneOf(s), origin: s.origin || null, chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
       chainTest: s.chainTest || null, roles: s.roles || [], roleInfo: ROLES, appInfo: appsView(releaseApps), apps: chosenApps(s, releaseApps), electrum: TESTNET4_ELECTRUM, owner: s.owner || null, service: s.service || null,
       seatPort: portOf(), defaultPort: seatPort, reach: s.reach || null, direct: s.direct || null, login: login ? { url: login.url, result: login.result } : null,
       lightning: s.lightning || null, coreSync: s.core ? { dir: s.core.dir || state.home, interim: !!s.core.interim, prune: !!s.core.prune } : null, gatewaySeat: GATEWAY_SEAT, launchers: s.launchers || null, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, custodyLater: laterCustody(s), wallet: (s.done || {}).seed ? (() => { const parts = withOtherNodes(s, depositParts(s, (s.roles || []).includes('custody') ? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS : 0), { further: !!fundFrom });
@@ -408,6 +408,32 @@ const serviceRun = async (b) => {
       if (!apps.length && releaseApps.length) return { ok: false, why: `choose at least one app: ${releaseApps.map((a) => a.short).join(', ')}` };   // (a release from before app.json: nothing to choose, Next Block as before)
       mark('apps', { apps });
       return { ok: true, apps };
+    },
+
+    // NEW OR RESTORED (kanban #652, the owner 2026-10-25: "neuer step im installer: New/Restore - setup as a new node / restore from seed"):
+    // the first step. New: the seed step shows new words later. Restore: the 24 words typed here are checked (a wrong word or checksum
+    // refused by name) and become this node's seed - its wallet, owner login, emergency code, Lightning and gateway keys are the old
+    // node's again - and the seed step is done. A node that has a seed already keeps it: only the same words restore it.
+    'POST /api/start': async (b) => {
+      if (b.mode === 'new') {
+        if (state.exists('seed.hex') && (state.read().origin === 'restore')) return { ok: false, why: 'this node was restored from 24 words already' };
+        mark('start', { origin: 'new' });
+        return { ok: true, origin: 'new' };
+      }
+      if (b.mode !== 'restore') return { ok: false, why: 'choose a new node or a restore' };
+      const words = String(b.words || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+      if (words.length !== 24) return { ok: false, why: `type all 24 words, in order (${words.length} typed)` };
+      const r = seedOfWords(words.join(' '));
+      if (!r.ok) return { ok: false, why: r.why };
+      const hex = toHex(r.seed);
+      if (state.exists('seed.hex') && state.readSecret('seed.hex').trim() !== hex) return { ok: false, why: 'this node has other words already: restore on a new node folder' };
+      state.writeSecret('seed.hex', hex + '\n');
+      pendingSeed = null;
+      const { pubkey } = ownerKeyOf(r.seed);
+      const em = emergencyOf(r.seed);
+      const s = state.read();
+      state.save({ origin: 'restore', seedOwnerPubkey: pubkey, emergencyPubkey: em.pubkey, done: { ...(s.done || {}), start: Date.now(), seed: Date.now() } });
+      return { ok: true, origin: 'restore', ownerPubkey: pubkey };
     },
 
     // THE SEED: shown once (C.5), kept in memory until the user types back CONFIRM_WORDS words; only then written (0600). A node that
