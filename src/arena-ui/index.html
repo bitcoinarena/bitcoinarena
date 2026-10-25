@@ -2697,6 +2697,7 @@
             window.ARENA_FED_TRIED = true;   // checked, whatever it said: no longer "loading"
             window.ARENA_FED_STATUS = { ...fs, federation: fedHex }; window.ARENA_FED_STATUS_AT = Date.now();
             window.ARENA_FED_LOADS = all;   // every listed federation's verified status - the lobby says each round's load
+            if (window.ARENA_KEEP_FED_LOADS) window.ARENA_KEEP_FED_LOADS(all);
             if (window.ARENA_REPAINT_SPLIT) window.ARENA_REPAINT_SPLIT();
             if (window.ARENA_SUM_HELD) window.ARENA_SUM_HELD();   // a held federation's funds summed once its status is known
             if (window.ARENA_EVACUATE) window.ARENA_EVACUATE(all);   // notes out of a DRAINING / CRITICAL federation, by themselves
@@ -6661,6 +6662,7 @@
               window.ARENA_FED_TRIED = true;
               window.ARENA_FED_STATUS = { ...fs, federation: fs.federation || fedHex }; window.ARENA_FED_STATUS_AT = Date.now();
               window.ARENA_FED_LOADS = all;
+              if (window.ARENA_KEEP_FED_LOADS) window.ARENA_KEEP_FED_LOADS(all);
               if (window.ARENA_SUM_HELD) window.ARENA_SUM_HELD();   // a held federation's funds summed once its status is known
               if (window.ARENA_EVACUATE) window.ARENA_EVACUATE(all);
               if (window.ARENA_PAINT_CUSTODY) window.ARENA_PAINT_CUSTODY();
@@ -7164,7 +7166,30 @@
       const splitEl = () => document.getElementById('arena-bal-split');
       // A FEDERATION'S HEALTH FROM ITS VERIFIED RECORD, one rule for every dot on the page (the history's chip uses it too: it showed a green
       // dot for 337ae01a while this split said "Full · load 433 %", measured 2026-10-21 on UI 275)
-      const healthOf = (st) => {
+      // THE LAST VERIFIED STATUSES, KEPT IN THIS BROWSER FOR SHOWING ONLY (kanban #631, measured on live UI 394 2026-10-25: with no round of the
+      // day drawn (#633) no record could be read, and every federation said "Not checked yet" for hours): each one's status and load as last
+      // read, with the time; shown - "· checked 23:40" - only while no fresh read stands. Nothing is decided on them: joins, deposits and moves
+      // read ARENA_FED_LOADS, the live statuses, as before.
+      const FED_KEPT_KEY = 'arena.fed.statuses.kept';
+      window.ARENA_KEEP_FED_LOADS = (all) => {
+        try {
+          const rows = [...all.entries()].filter(([, v]) => v && v.status).map(([k, v]) => [k, { status: v.status, load: typeof v.load === 'number' ? v.load : null }]);
+          if (rows.length) localStorage.setItem(FED_KEPT_KEY, JSON.stringify({ at: Date.now(), rows }));
+        } catch { /* kept only where the browser keeps it */ }
+      };
+      const keptFedStatus = (fed) => {
+        try {
+          const k = JSON.parse(localStorage.getItem(FED_KEPT_KEY) || 'null');
+          if (!k || Date.now() - k.at > 48 * 3600000) return null;
+          const row = (k.rows || []).find(([f]) => f === fed);
+          return row ? { ...row[1], keptAt: k.at } : null;
+        } catch { return null; }
+      };
+      const healthOf = (st, fed = null) => {
+        if (!st && fed) {
+          const kept = keptFedStatus(fed);
+          if (kept) { const h = healthOf(kept); return { ...h, label: h.label + ' · checked ' + new Date(kept.keptAt).toISOString().slice(11, 16) + ' UTC', kept: true }; }
+        }
         const CL = typeof ARENACLIENT !== 'undefined' ? ARENACLIENT : {};
         // AN OPEN FEDERATION BY ITS LOAD (kanban #556: "the health indicator should be color coded: healthy: green, then amber and finally red when
         // approaching high risk levels"; the popup said "Healthy" at 433 %): green under 70 %, amber from 70 %, red from 90 %
@@ -7173,7 +7198,7 @@
             : st.load >= 0.7 ? { level: 'warn', label: 'Filling up', note: '' } : { level: 'ok', label: 'Healthy', note: '' };
         return CL.federationHealth ? CL.federationHealth(st) : { level: 'idle', label: st ? st.status : 'Not checked yet', note: '' };
       };
-      window.ARENA_FED_HEALTH = (fed) => healthOf((window.ARENA_FED_LOADS || new Map()).get(fed));
+      window.ARENA_FED_HEALTH = (fed) => healthOf((window.ARENA_FED_LOADS || new Map()).get(fed), fed);
       // THE SPLIT PAINTED AGAIN WHEN THE FEDERATIONS' STATUSES LAND (kanban #631: its rows said "Not checked yet" while the custody card above
       // them already held every status - the wallet had opened while a status read was on its way)
       window.ARENA_REPAINT_SPLIT = () => { const el = splitEl(); if (el && el.style.display !== 'none') paintSplit(); };
@@ -7189,7 +7214,7 @@
           // ITS HEALTH (kanban #545): a dot and a word from its verified record, what happens to the funds, and for a HALTED one when they
           // are paid back - in blocks and in time at the chain's recent pace (balance-view.js)
           const CL = typeof ARENACLIENT !== 'undefined' ? ARENACLIENT : {};
-          const hl = healthOf(st);
+          const hl = healthOf(st, x.federation);
           const back = st && st.status === 'HALTED' && CL.reimbursementOf ? CL.reimbursementOf({ status: st, ...(chainFor(st) || {}) }) : null;
           return { federation: x.federation, level: hl.level, label: hl.label + (st && typeof st.load === 'number' ? ' · load ' + Math.round(st.load * 100) + ' %' : ''),
             note: back && back.ok ? back.line : back ? 'When it is paid back is read from the chain …' : hl.note, value: sat(x.sats) };
