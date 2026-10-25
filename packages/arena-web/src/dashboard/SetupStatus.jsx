@@ -54,7 +54,10 @@ export function lndLine(l) {
   if (!l.ok) return { done: false, problem: true, text: `not answering: ${l.why}` };
   if (!l.synced) return { done: false, text: `running, catching up with the chain (block ${n(l.height)})` };
   const ch = l.channels === null ? '' : `, ${n(l.channels)} open channel${l.channels === 1 ? '' : 's'}${l.pending ? `, ${n(l.pending)} opening` : ''}`;
-  return { done: !l.pending, text: `synced at block ${n(l.height)}${ch}` };
+  // how other Lightning nodes reach it: an open port, Tor's onion address, or not at all (then it only dials out: a problem for custody)
+  const v = l.via || null;
+  const reach = !v ? '' : v.how === 'direct' ? `; reached directly at ${v.at}` : v.how === 'tor' ? `; reached over Tor (no open port needed)` : `; other nodes cannot reach it${v.why ? ` (${v.why})` : ''}`;
+  return { done: !l.pending && (!v || v.how !== 'none'), problem: !!v && v.how === 'none', text: `synced at block ${n(l.height)}${ch}${reach}` };
 }
 export function gatewayLine(g) {
   if (!g) return null;

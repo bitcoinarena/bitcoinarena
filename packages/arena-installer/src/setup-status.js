@@ -73,7 +73,10 @@ export async function servicesOf(s, { fetcher = fetch } = {}) {
       const { testLnd, lndChannels } = await import('./lnd.js');
       const t = await testLnd(s.lightning);
       const c = t.ok ? await lndChannels(s.lightning).catch(() => null) : null;
-      lnd = t.ok ? { ok: true, synced: t.syncedToChain, height: t.blockHeight, channels: c && c.ok ? c.open.length : null, pending: c && c.ok ? c.pending.length : null }
+      // HOW OTHER LIGHTNING NODES REACH IT: the open port measured from outside, else the onion address Tor gives it, else not at all
+      const r = s.lnReach || {}, onion = (t.uris || []).find((u) => /\.onion:/.test(u));
+      const via = r.reached ? { how: 'direct', at: `${r.address}:${r.port}` } : onion ? { how: 'tor', at: onion.split('@')[1] } : { how: 'none', why: (s.tor || {}).why || r.why || null };
+      lnd = t.ok ? { ok: true, synced: t.syncedToChain, height: t.blockHeight, channels: c && c.ok ? c.open.length : null, pending: c && c.ok ? c.pending.length : null, via }
         : { ok: false, why: t.why };
     } catch (e) { lnd = { ok: false, why: e.message }; }
   }
