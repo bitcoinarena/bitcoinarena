@@ -85,13 +85,15 @@ export class ChainStep extends React.Component {
       this.setState({ sync: r });
       if (r.chainSaved) return this.props.reload();
     }
-    clearTimeout(this.timer); this.timer = setTimeout(this.watch, this.props.pollMs || 15000);
+    // near the end, every 5 s (kanban #636: at 100 % the page must move on by itself, not a quarter of a minute later)
+    const t4 = r && r.networks && r.networks.testnet4;
+    clearTimeout(this.timer); this.timer = setTimeout(this.watch, this.props.pollMs || (t4 && t4.progress >= 0.99 ? 5000 : 15000));
   }
   syncRows() {
     const nets = Object.entries((this.state.sync && this.state.sync.networks) || {}).filter(([k]) => k === 'testnet4' || k === 'mainnet');
     return nets.map(([n, x]) => (
       <div key={n} className="role"><div style={{ flex: 1 }}>{x.ok ? <>
-        <b>{n}</b> - block {x.blocks.toLocaleString('en')} of {x.headers.toLocaleString('en')} · {(x.progress * 100).toFixed(2)} % · {x.synced ? <b>synced</b> : `${dur(x.etaMs)} left`}
+        <b>{n}</b> - block {x.blocks.toLocaleString('en')} of {x.headers.toLocaleString('en')} · {(x.progress * 100).toFixed(2)} % · {x.synced ? <b>synced</b> : x.progress >= 0.9995 ? 'finishing the last blocks' : `${dur(x.etaMs)} left`}
         <div className="bar"><i style={{ width: `${(x.progress * 100).toFixed(2)}%` }} /></div></> : <><b>{n}</b> - {x.why}</>}</div></div>));
   }
   installForm() {
@@ -105,6 +107,11 @@ export class ChainStep extends React.Component {
           ? <p className="sub">Until the sync is done, your node reads the chain from a public Electrum server ({this.props.st.chain ? `${this.props.st.chain.host}:${this.props.st.chain.port}` : 'chosen by setup'}) and switches to this Bitcoin Core by itself. Setup does not wait for it.</p>
           : <p className="warn">No public Electrum server answered, so setup has to wait for the sync this time. That takes hours on testnet4. <b>Bookmark this page</b> and keep the installer running. Setup goes on here by itself once testnet4 is synced.</p>}
         {this.syncRows()}
+        {/* SYNCED BUT NOT SAVED (kanban #636): why, and a way to try again - never a silent 100 % */}
+        {sync.networks && sync.networks.testnet4 && sync.networks.testnet4.synced && sync.chainSaved === false
+          ? <div className="msg bad" id="sync-why">Bitcoin Core is synced, but setup could not use it yet: {sync.chainWhy || 'no answer'}.
+            <button type="button" className="ghost" id="sync-retry" onClick={() => { clearTimeout(this.timer); this.watch(); }}>Try again</button></div>
+          : <p className="sub">Setup checks again by itself every few seconds.</p>}
       </div>);
     if (!plan) return <p className="sub">Checking this computer…</p>;
     if (plan.installed) return <p className="sub">Bitcoin Core is already installed here (<code>{plan.installed}</code>). Choose <b>My Bitcoin Core</b> and connect it.</p>;
@@ -220,7 +227,7 @@ export class ReachStep extends React.Component {
     const rec = defaultMode(direct);
     return (
       <div className="aw">
-        <h2>7. How others reach your node</h2>
+        <h2>8. How others reach your node</h2>
         <p className="sub">Players and other nodes connect to your node. First, setup checks whether the internet can reach this computer directly.</p>
         <div className="row"><div><label htmlFor="r-port">Port for incoming connections</label><input id="r-port" value={port} onChange={(e) => this.setState({ port: e.target.value })} /></div></div>
         <button type="button" className="ghost" id="r-test" disabled={testing} onClick={this.test}>Test direct connection</button>
@@ -330,7 +337,7 @@ export class ServiceStep extends React.Component {
     const { boot, busy, template, msg, progress } = this.state;
     return (
       <div className="aw">
-        <h2>8. Install and start</h2>
+        <h2>9. Install and start</h2>
         <p>Setup installs your node as a service, starts it, checks that it answers at its public address, and logs you in once as its owner.</p>
         <label className={`choice${boot ? ' on' : ''}`}><input type="checkbox" id="boot" checked={boot} onChange={(e) => this.setState({ boot: e.target.checked })} />
           <div><b>Start again after a reboot</b><p>Recommended. It also keeps your node running when you log out.</p></div></label>
@@ -372,7 +379,7 @@ export class FederationStep extends React.Component {
   render() {
     return (
       <div className="aw">
-        <h2>10. Your federation</h2>
+        <h2>11. Your federation</h2>
         <div className="fed-explain">
           <FedRing />
           <div>

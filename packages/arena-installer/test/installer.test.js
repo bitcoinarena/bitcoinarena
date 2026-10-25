@@ -506,7 +506,10 @@ test('a node set up with an nsec runs on it: the seat signs as the Nostr key, it
   assert.equal((await c.post('/api/chain/save', { kind: 'core', url: btc.url, cookiePath })).json.ok, true);
   assert.equal((await c.post('/api/roles', { roles: ['verify', 'settlement'] })).json.ok, true);
   assert.equal((await c.post('/api/apps', { apps: ['nextblock', 'rock-paper-scissors'] })).json.ok, true);
-  assert.equal((await c.get('/api/state')).json.step, 'reach', 'no seed or owner step: the nsec gave both');
+  assert.equal((await c.get('/api/state')).json.step, 'emergency', 'no seed or owner step: the nsec gave both; the emergency code next (kanban #647)');
+  assert.match((await c.get('/api/emergency')).json.code, /^ARN-/);
+  assert.equal((await c.post('/api/emergency/written')).json.ok, true);
+  assert.equal((await c.get('/api/state')).json.step, 'reach');
   assert.equal((await c.post('/api/reach/direct', { port: seatPort })).json.result.reached, true);
   assert.equal((await c.post('/api/reach/save', { mode: 'direct' })).json.ok, true);
   const svc = (await c.post('/api/service', { boot: true })).json;
@@ -709,4 +712,54 @@ test('an owner login event signed with the nsec passes the node\'s owner check; 
   const { nodeSeedFromNsecSecret } = await import('../../arena-node/src/owner.js');
   const { emergencyOf } = await import('../src/seed.js');
   assert.equal(emergencyOf(nodeSeedFromNsecSecret(seedOfNsec(key.nsec).secret)).code, emergencyOf(seedOfNsec(key.nsec).seed).code);
+});
+
+// AN ELECTRUM SERVER THAT FAILS AT THE SAVE (kanban #638, the owner's playtest: "sometimes the selected electrum node fails after selecting but
+// before moving to the next stage"): asked again, then the next known server is saved, and the next step says so
+test('saving an Electrum server that has just failed saves the next known one that answers, and says so', async () => {
+  const { TESTNET4_ELECTRUM } = await import('../src/chain-test.js');
+  const home = mkdtempSync(join(tmpdir(), 'arena-install-'));
+  const asked = [];
+  const test2 = async (c) => { asked.push(`${c.host}:${c.port}`); return c.host === TESTNET4_ELECTRUM[0].host ? { ok: false, why: 'timed out' } : { ok: true, why: 'ok', source: { latencyMs: 5, height: 157600 } }; };
+  const w = createWizard({ state: nodeState(home), release: RELEASE, seatPort: 1, test: test2 });
+  const server = http.createServer((q, s) => w.handle(q, s));
+  try {
+    await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+    const c = client(server.address().port);
+    await c.get(`/?t=${w.token}`);
+    const first = TESTNET4_ELECTRUM[0];
+    const r = (await c.post('/api/chain/save', { kind: 'electrum', host: first.host, port: first.port, tls: first.tls })).json;
+    assert.equal(r.ok, true, r.why);
+    assert.deepEqual(asked.slice(0, 3), [`${first.host}:${first.port}`, `${first.host}:${first.port}`, `${TESTNET4_ELECTRUM[1].host}:${TESTNET4_ELECTRUM[1].port}`], 'asked twice, then the next');
+    const st = (await c.get('/api/state')).json;
+    assert.deepEqual([st.chain.host, st.chain.port], [TESTNET4_ELECTRUM[1].host, TESTNET4_ELECTRUM[1].port]);
+    assert.match(st.chainSwitchedFrom, new RegExp(`${first.host}:${first.port} \\(timed out\\)`));
+  } finally { server.close(); rmSync(home, { recursive: true, force: true }); }
+});
+
+// THE ROLES CHECKED AS THEY ARE SWITCHED ON (kanban #641), AND THE EMERGENCY CODE'S OWN STEP (kanban #647)
+test('custody on an Electrum node is refused as it is switched on; the emergency code is its own step after the words', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'arena-install-'));
+  const state = nodeState(home);
+  const w = createWizard({ state, release: RELEASE, seatPort: 1, test: async () => ({ ok: true, why: 'ok', source: { latencyMs: 1, height: 1 } }) });
+  const server = http.createServer((q, s) => w.handle(q, s));
+  try {
+    await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+    const c = client(server.address().port);
+    await c.get(`/?t=${w.token}`);
+    assert.equal((await c.post('/api/chain/save', { kind: 'electrum', host: 'e.example', port: 1 })).json.ok, true);
+    assert.match((await c.post('/api/roles/check', { roles: ['verify', 'custody'] })).json.why, /custody needs your own Bitcoin Core/);
+    assert.deepEqual((await c.post('/api/roles/check', { roles: ['verify', 'settlement'] })).json, { ok: true });
+    assert.equal(state.read().roles, undefined, 'a check saves nothing');
+    const { newSeed } = await import('../src/seed.js');
+    assert.equal((await c.post('/api/start', { control: 'words', action: 'restore', words: newSeed().words.join(' ') })).json.ok, true);
+    assert.equal((await c.post('/api/roles', { roles: ['verify'] })).json.ok, true);
+    await c.post('/api/apps', { apps: [] });
+    const st = (await c.get('/api/state')).json;
+    assert.equal(st.done.seed > 0, true);
+    if (st.step === 'apps') await c.post('/api/apps', { apps: st.appInfo.map((a) => a.id) });
+    assert.equal((await c.get('/api/state')).json.step, 'emergency', 'after the words: the emergency code');
+    assert.equal((await c.post('/api/emergency/written')).json.ok, true);
+    assert.equal((await c.get('/api/state')).json.step, 'owner');
+  } finally { server.close(); rmSync(home, { recursive: true, force: true }); }
 });

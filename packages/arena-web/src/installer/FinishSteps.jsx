@@ -130,7 +130,7 @@ export class LightningStep extends React.Component {
     const s = this.state; const syncing = !!(this.props.st.coreSync && this.props.st.coreSync.interim);
     return (
       <div className="aw">
-        <h2>9. Lightning (custody)</h2>
+        <h2>10. Lightning (custody)</h2>
         <p>Custody needs a Lightning node. Setup can install <b>LND</b> here. It runs on your Bitcoin Core, starts as a service, and makes its wallet from your 24 words, so one seed covers everything. You can also connect an LND you already run.</p>
         {syncing ? <p className="sub">Bitcoin Core is still syncing. That is fine: LND starts now and catches up by itself.</p> : null}
         {!s.lnOk ? <div className="kinds">
@@ -229,7 +229,7 @@ export class BondStep extends React.Component {
     const { pegIn, need, found, busy, msg } = this.state;
     return (
       <div className="aw">
-        <h2>12. The bond</h2>
+        <h2>13. The bond</h2>
         {later
           ? <p>Your node already has a bond. Adding custody updates that bond's advertisement to say your node takes custody. <b>You do not post a second bond.</b> You need a little for that update, a reserve for the update that names your federation once it is founded, and the gateway's peg-in. Send <b>{need}</b> sat to your node's wallet:</p>
           : <p>Your node serves rounds once it has a bond: bitcoin locked on testnet4 under your node's key. Send at least <b>{need}</b> sat (fees included) to your node's own wallet:</p>}
