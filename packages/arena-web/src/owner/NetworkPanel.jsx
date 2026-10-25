@@ -108,7 +108,7 @@ export class NetworkPanel extends React.Component {
             <div className="row"><span>Series</span><b>{(offer.m.series || []).length} · {(offer.m.series || []).map((x) => `${x.slice(0, 10)}…`).join(', ')}</b></div>
             <div className="row"><span>Federation</span><b>{String(offer.m.federationId).slice(0, 12)}…</b></div>
             <Report report={report} />
-            {take ? <><Button primary disabled={taking} onClick={this.take}>{taking ? 'the seat is checking…' : offer.installed ? 'Update' : 'Install'}</Button><p className="sub">The seat checks it again and tries its series at its own doors first.</p></> : null}
+            {take ? <><Button primary disabled={taking} onClick={this.take}>{taking ? 'the seat is checking…' : offer.installed ? 'Update' : 'Install'}</Button><p className="sub">Your node checks it again before using it.</p></> : null}
             {done ? <p className="ok">{done}</p> : null}
           </div>) : null}
         {error ? <p className="err">{error}</p> : null}

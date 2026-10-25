@@ -31,8 +31,8 @@ test('the sidebar marks the sections that need the owner; one section shown; the
   const n = area({ needs: [{ level: 'warn', text: 'A new release is out: 2026.1.2.', section: 'release' }, { level: 'bad', text: 'Your bond is too small.', section: 'bond' }] }).html();
   assert.match(n, /data-s="bond">Bond<span class="dot d-bad" id="dot-bond"><\/span>/);
   assert.match(n, /data-s="release">Updates<span class="dot d-warn" id="dot-release"><\/span>/);
-  assert.match(n, /<h3>What needs you<\/h3><p class="err">🔴 Your bond is too small\. <a href="#bond">Open<\/a><\/p><p class="warnline">/);
-  assert.match(area({ needs: [] }).html(), /Nothing needs you ✓/);
+  assert.match(n, /<h3>To do<\/h3><p class="err">🔴 Your bond is too small\. <a href="#bond">Open<\/a><\/p><p class="warnline">/);
+  assert.match(area({ needs: [] }).html(), /All good ✓/);
 });
 
 test('every panel\'s place is there and empty, for the page to draw into', () => {
@@ -46,8 +46,8 @@ test('the emergency code only on a press; none without the words', () => {
   const a = area();
   assert.match(a.html(), /<b id="emcode">hidden<\/b><\/div><button type="button" id="emshow">Show the code<\/button>/);
   a.m.setState({ emShown: true });
-  assert.match(a.html(), /<b id="emcode">EMER-GENC-YCOD<\/b><\/div><p class="sub">The code can only take this node out/);
-  assert.match(area({ emergencyCode: null }).html(), /This browser cannot make the code: it signed in without your 24 words or your nsec\./);
+  assert.match(a.html(), /<b id="emcode">EMER-GENC-YCOD<\/b><\/div><p class="sub">The code only takes your node out/);
+  assert.match(area({ emergencyCode: null }).html(), /You signed in without your 24 words or nsec, so this browser can.{1,6}t show the code\./);
 });
 
 test('signing a manifest with the developer key; the error said; no key with a Nostr signer', () => {

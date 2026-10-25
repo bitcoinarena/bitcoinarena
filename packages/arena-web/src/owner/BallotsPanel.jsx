@@ -106,7 +106,7 @@ export class BallotsPanel extends React.Component {
         {part === 'open' ? null : set ? <div className="card"><h3>In force: serial {String(set.serial)}</h3>
       <div className="split-bar">{set.recipients.map((r, i) => <i key={r.key} title={`${r.label || r.key.slice(0, 12)}: ${pct(r.shareBps)}`} style={{ width: `${Number(r.shareBps) / 100}%`, background: ['var(--st)', 'var(--gv)', 'var(--ok)', '#a77bf3', '#e57ab0', '#4fd1c5'][i % 6] }} />)}</div>
       {set.recipients.map((r) => <Row key={r.key} k={<>{r.label || r.key.slice(0, 12)} <span className="sub">{r.key.slice(0, 12)}…</span></>} v={pct(r.shareBps)} />)}
-      <p className="sub">Any developer here can propose a new split. It is in force for new rounds once developers holding more than half of this set accept it; rounds already published keep theirs.</p></div>
+      <p className="sub">Any developer can propose a new split. It applies to new rounds once developers holding more than half accept it.</p></div>
       : part === 'open' ? null : <div className="card"><p>No protocol developers' set is in force on this node.</p></div>}
         {part === 'rest' ? null : openBallots.map(ballotCard)}
         {part !== 'open' && proposers.length && set ? (() => {
@@ -127,7 +127,7 @@ export class BallotsPanel extends React.Component {
         const k = known.find((x) => x.key === v); const rows = s.rows.slice(); rows[i] = { ...rows[i], key: v, label: k ? k.label : rows[i].label, other: false }; this.setState({ rows }); };
       return (
         <div className="card split"><h3>Propose a new split</h3>
-          <p className="sub">Pick each developer and their share; the shares add up to 100 %. A share can grow day by day to a target (vesting): it counts with its target, and until it is reached the part not yet vested stays with the others.</p>
+          <p className="sub">Pick the developers and their shares (100 % in total). A share can grow day by day up to a target.</p>
           {/* the bar shows the split at full vesting; a vesting row's part still to grow is drawn faint */}
           <div className="split-bar">{s.rows.map((r, i) => final(r) > 0 ? <React.Fragment key={i}>
             <i title={`${r.label || 'developer'}: ${vests(r) ? `${num(r.share)} % now` : `${final(r)} %`}`} style={{ width: `${Math.min(100, vests(r) ? num(r.share) : final(r))}%`, background: COLORS[i % COLORS.length] }} />

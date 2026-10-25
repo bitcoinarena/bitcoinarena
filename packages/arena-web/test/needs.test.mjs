@@ -12,5 +12,5 @@ test('urgent first with its link; a calm node told so', () => {
   assert.deepEqual(ordered(items).map((x) => x.section), ['services', 'release']);
   const html = renderToStaticMarkup(React.createElement(NeedsPanel, { items }));
   assert.match(html, /<p class="err">🔴 Your node missed 3 draws in a row: check its services\. <a href="#services">Open<\/a><\/p><p class="warnline">🟡 A new release/);
-  assert.match(renderToStaticMarkup(React.createElement(NeedsPanel, { items: [] })), /Nothing needs you ✓/);
+  assert.match(renderToStaticMarkup(React.createElement(NeedsPanel, { items: [] })), /All good ✓/);
 });

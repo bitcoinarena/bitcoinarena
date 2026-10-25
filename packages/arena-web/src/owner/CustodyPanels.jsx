@@ -84,7 +84,7 @@ export class CustodyPanel extends React.Component {
             <p><input value={understood} onChange={(e) => this.setState({ understood: e.target.value })} placeholder="I UNDERSTAND" /> <Button primary disabled={busy || p.bondBelowFloor || understood.trim().toUpperCase() !== 'I UNDERSTAND'} onClick={this.start}>Add custody</Button> <span className="sub">{message}</span></p>
           </div>)
           : <p><Button primary disabled={busy} onClick={this.review}>Add custody</Button> <span className="sub">{message}</span></p>}
-        <p className="sub">Custody needs your own Bitcoin Core (not Electrum). The node installs Lightning and its gateway itself and restarts once with its guardian.</p>
+        <p className="sub">Custody needs your own Bitcoin Core, not Electrum. The node then installs Lightning and the gateway and restarts once.</p>
       </div>);
   }
   render() {

@@ -92,7 +92,7 @@ export class OwnerStart extends React.Component {
     const back = (to) => <button type="button" onClick={() => this.go(to)}>Back</button>;
     if (s.screen === 'make') return (
       <div className="card"><h3>Write these 24 words down</h3>
-        <div className="warn">On paper, in this order. They are the only way back to this node's owner area: from another browser, or after this one is cleared. Nobody can recover them for you.</div>
+        <div className="warn">Write them on paper, in order. They're the only way back into this owner area from another browser. Nobody can recover them for you.</div>
         <div className="words">{s.words.map((w, i) => <span key={i}>{w}</span>)}</div>
         <p>Then type three of them back:</p>
         {s.ask.map((i) => <React.Fragment key={i}><label>{`Word ${i + 1}`}</label><input {...field} value={s.typed[i] || ''} onChange={(e) => this.setState({ typed: { ...s.typed, [i]: e.target.value } })} /></React.Fragment>)}

@@ -63,7 +63,7 @@ export class BondAnswer extends React.Component {
   render() {
     const a = bondAnswerOf(this.props), s = this.state, o = a.offer;
     const drawn = <p className={a.drawn.tone}>{a.drawn.text}</p>;
-    if (!o) return <><h3>Your bond</h3>{drawn}<p className="sub">No federation you guard pays extra for a bigger bond right now. This page tells you when one does.</p></>;
+    if (!o) return <><h3>Your bond</h3>{drawn}<p className="sub">No federation you guard pays extra for a bigger bond right now. It shows up here when one does.</p></>;
     const p = s.plan;
     return (
       <>
@@ -102,6 +102,6 @@ export class CapacityPlea extends React.Component {
     if (!p) return null;
     return (
       <div className="card"><h3>A federation you guard is filling up</h3><p className="warnline">{p.says}</p>
-        {p.addSats ? <p className="sub">This is optional and separate from whether your node is drawn: a larger bond lets that federation take more deposits (it lowers its load) and earns you a larger share. Add to bond is below.</p> : null}</div>);
+        {p.addSats ? <p className="sub">Optional. A bigger bond lets this federation take more deposits and earns you a bigger share. Add to your bond below.</p> : null}</div>);
   }
 }

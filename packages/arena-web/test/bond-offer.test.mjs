@@ -60,6 +60,6 @@ test('nothing to earn: no offer; a bond below what rounds ask: red with the amou
 test('the capacity plea: the seat\'s words when a federation fills; nothing when calm or carried by the offer', () => {
   const h = renderToStaticMarkup(React.createElement(CapacityPlea, { capacity: { ok: true, plea: { addSats: '36667', says: 'Federation aaaaaaaa holds 87 % of what its bonds cover (PRESSURE). Increase your bond by 36,667 sat (Add to bond) to bring it to 86,667 sat.' } } }));
   assert.match(h, /^<div class="card"><h3>A federation you guard is filling up<\/h3><p class="warnline">Federation aaaaaaaa holds 87 %.*Increase your bond by 36,667 sat \(Add to bond\)/);
-  assert.match(h, /lowers its load/);
+  assert.match(h, /take more deposits/);
   for (const capacity of [null, { ok: true }, { ok: true, plea: null }, { plea: { says: 'x' }, mine: [m] }]) assert.equal(renderToStaticMarkup(React.createElement(CapacityPlea, { capacity })), '');
 });
