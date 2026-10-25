@@ -110,6 +110,12 @@ const whereOf = new WeakMap();                 // chain view -> its txid index (
 
 /** A chain view's transactions by txid, indexed once per view object (censusFor). */
 const TXIDS_OF_VIEW = new WeakMap();
+// A CENSUS THAT DID NOT MATCH ITS ROUND'S ROOT, kept with the view it was derived from (2026-10-25, measured on testnet4: the
+// day's rounds posted on a branch the chain left named roots the public chain does not give; every listing derived their
+// series' census again, each a few seconds of curve math, and all seven test host seats sat at 100 % CPU with full accept queues).
+// Asked again once the view grows or is replaced, and at most a minute later.
+const REFUSED_OF_VIEW = new WeakMap();
+const REFUSED_KEPT_MS = 60_000;
 
 // A CENSUS AS STORED: JSON, its bytes and bigints marked (the page keeps an entry the same way)
 export const censusReplacer = (k, v) => (v instanceof Uint8Array ? { u8: toHex(v) } : typeof v === 'bigint' ? { big: String(v) } : v);
@@ -434,6 +440,9 @@ export class Roster {
     // KEPT ACROSS A RESTART (OPEN-LIST-2140 item 4, measured: one derivation held the loop 2.7 s - every transaction of a
     // ~2,000-block view parsed and hashed again - and a restarted seat derived one per series): a census this node checked
     // against its round's own root is read back from the store instead.
+    const refusedHere = REFUSED_OF_VIEW.get(view);
+    const refused = refusedHere && asRoundsOwn && contract.censusRoot instanceof Uint8Array && refusedHere.get(`${kept}:${toHex(contract.censusRoot)}`);
+    if (refused && refused.length === view.blocks.length && Date.now() - refused.atMs < REFUSED_KEPT_MS) return refused.answer;
     const stored = asRoundsOwn ? readKeptCensus(this.round, kept) : null;
     if (stored && stored.root instanceof Uint8Array && contract.censusRoot instanceof Uint8Array
         && stored.root.length === 32 && stored.root.every((b, i) => b === contract.censusRoot[i])) {
@@ -464,13 +473,19 @@ export class Roster {
     if (!asRoundsOwn) return census;
     if (!(contract.censusRoot instanceof Uint8Array) || contract.censusRoot.length !== 32)
       return { ok: false, why: 'that round names no census root to check against the chain' };
-    if (!census.root.every((b, i) => b === contract.censusRoot[i]))
-      return {
+    if (!census.root.every((b, i) => b === contract.censusRoot[i])) {
+      const answer = {
         ok: false,
         why: `that round names census root ${toHex(contract.censusRoot).slice(0, 16)} and the `
           + `chain gives ${toHex(census.root).slice(0, 16)} at height ${contract.censusHeight}`,
         root: census.root,
       };
+      // kept per series (or census key), so a series' other rounds naming the same root are answered from it
+      const atRoot = `${kept}:${toHex(contract.censusRoot)}`;
+      if (!REFUSED_OF_VIEW.has(view)) REFUSED_OF_VIEW.set(view, new Map());
+      REFUSED_OF_VIEW.get(view).set(atRoot, { answer, length: view.blocks.length, atMs: Date.now() });
+      return answer;
+    }
 
     // KEPT ONLY WHEN IT IS THIS ROUND'S OWN: a refusal above is never kept, so a view that grows into the answer is
     // still derived when it can be.
