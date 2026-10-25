@@ -28,7 +28,7 @@ import { decodePurchase } from '../../arena-protocol/src/purchase.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
 import { keepItemPurchase, itemsOwned } from './item-purchase-seat.js';
 import { keepDonationGift, giftsOf } from './donation-gift-seat.js';
-import { decodeDonationGift, GIFT_TO_GAME, GIFT_TO_PLAYER, playerGiftRecipients } from '../../arena-protocol/src/donation-gift.js';
+import { decodeDonationGift, GIFT_TO_GAME, GIFT_TO_PLAYER, GIFT_TO_BOTH, playerGiftRecipients } from '../../arena-protocol/src/donation-gift.js';
 import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
 import { guardianThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
@@ -5583,7 +5583,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           let rates = {};
           try { rates = await Promise.race([fillFiatRates(got.dir, got.rows), new Promise((ok) => setTimeout(() => ok({}), 12000))]); } catch { rates = {}; }
           return answer(200, { ok: true, slug, ...donationsPage(devAttribute(got.rows, got.pk, { perRow: true }), rates,
-            { app: url.searchParams.get('app'), q: url.searchParams.get('q'), limit: url.searchParams.get('limit'), offset: url.searchParams.get('offset') }) });
+            { app: url.searchParams.get('app'), origin: url.searchParams.get('origin'), q: url.searchParams.get('q'), limit: url.searchParams.get('limit'), offset: url.searchParams.get('offset') }) });
         }
         if (req.method === 'GET' && url.pathname === '/owner/dev') {
           // the games of the rounds other seats hold, looked up first
@@ -6955,26 +6955,33 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a donation gift is JSON { gift, signature } in hex'); }
         let g; try { g = { ...decodeDonationGift(fromHex(String(j.gift || '').toLowerCase())), signature: fromHex(String(j.signature || '').toLowerCase()) }; }
         catch (e) { return text(res, 400, `that is not a donation gift: ${e.message}`); }
-        let recipients = null;
-        // A ZAP TO A PLAYER: its one output to the player's identity key, refundKeyOf - no set to hold
-        if (g.target === GIFT_TO_PLAYER) recipients = playerGiftRecipients(g.gameDevPubkey);
-        else if (g.target === GIFT_TO_GAME) {
+        let recipients = null, networkSet = null, gameSet = null;
+        // the game's set this seat hosts, and the network's set in force - each answers { set } or { status, why }
+        const gameSetOf = () => {
           const dev = toHex(g.gameDevPubkey);
           const game = [...hosted.values()].find((x) => x && x.manifest && toHex(x.manifest.gameDevPubkey) === dev && x.manifest.gameName === g.gameName && Array.isArray(x.donationSet));
-          if (!game) return text(res, 404, `this seat hosts no game "${g.gameName}" by ${dev.slice(0, 16)} with a donation set`);
-          recipients = game.donationSet;
-        } else {
+          return game ? { set: game.donationSet } : { status: 404, why: `this seat hosts no game "${g.gameName}" by ${dev.slice(0, 16)} with a donation set` };
+        };
+        const networkSetOf = async () => {
           let latest = null; try { latest = round.db.prepare('SELECT contract FROM rounds ORDER BY rowid DESC LIMIT 1').get(); } catch { latest = null; }
           const net = latest ? decodeRoundContract(new Uint8Array(latest.contract)) : null;
           const keys = net ? donationKeysForNetworkId(net.networkId) : null;
-          if (!keys) return text(res, 503, 'this seat knows no network donation authority to check a gift to the protocol developers against');
+          if (!keys) return { status: 503, why: 'this seat knows no network donation authority to check a gift to the protocol developers against' };
           let height = net.censusHeight; try { if (typeof chainTip === 'function') height = Number(await chainTip()); } catch { /* the newest round's height */ }
           const forced = donationSetInForce({ networkId: net.networkId, authority: keys.authority, recovery: keys.recovery, sets: donationSets,
             rotations: donationRotations, height, verify: verifyDonation, approved: approvedSets() });
-          if (!forced.ok) return text(res, 503, `no network donation set in force here: ${forced.why}`);
-          recipients = vestedShares(forced.recipients, height);
-        }
-        const got = await keepDonationGift({ g, recipients, port: await portOfFederation(g.federationId), db: round.db,
+          return forced.ok ? { set: vestedShares(forced.recipients, height) } : { status: 503, why: `no network donation set in force here: ${forced.why}` };
+        };
+        // A ZAP TO A PLAYER: its one output to the player's identity key, refundKeyOf - no set to hold
+        if (g.target === GIFT_TO_PLAYER) recipients = playerGiftRecipients(g.gameDevPubkey);
+        else if (g.target === GIFT_TO_GAME) { const x = gameSetOf(); if (!x.set) return text(res, x.status, x.why); recipients = x.set; }
+        // HALF TO EACH (kanban #672): a Donate inside an app - both sets, as a round's donation
+        else if (g.target === GIFT_TO_BOTH) {
+          const x = gameSetOf(); if (!x.set) return text(res, x.status, x.why);
+          const y = await networkSetOf(); if (!y.set) return text(res, y.status, y.why);
+          gameSet = x.set; networkSet = y.set;
+        } else { const y = await networkSetOf(); if (!y.set) return text(res, y.status, y.why); recipients = y.set; }
+        const got = await keepDonationGift({ g, recipients, networkSet, gameSet, port: await portOfFederation(g.federationId), db: round.db,
           verify: (sg, m, k) => schnorr.verify(sg, m, k), keepRows: (rows) => round.putDonationOutputs(rows) });
         if (!got.ok) return text(res, got.status || 422, got.why);
         if (got.kept === 'new') {

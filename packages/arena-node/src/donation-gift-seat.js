@@ -6,7 +6,7 @@
 // pre-expired payout contract to that key for exactly that msat with the donor's key as its image. One transaction is one gift.
 // Kept, each output is indexed under its recipient key (donation_outputs), where GET /donations?key= serves a round's donations, so
 // the developer's own client redeems it as it redeems those.
-import { giftStands, encodeDonationGift } from '../../arena-protocol/src/donation-gift.js';
+import { giftStands, encodeDonationGift, GIFT_TO_BOTH } from '../../arena-protocol/src/donation-gift.js';
 import { donationContractFields } from './stake-lock-signer-node.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
@@ -19,9 +19,9 @@ export const DONATION_GIFTS_SQL = `CREATE TABLE IF NOT EXISTS donation_gifts (
  * the federation's lock port (status, contractId); `db` the seat's store; `verify` BIP340; `keepRows(rows)` the store's
  * putDonationOutputs. Answers { ok, id, kept: 'new' | 'held' } or { ok: false, status, why }.
  */
-export async function keepDonationGift({ g, recipients, port, db, verify, keepRows, nowMs = Date.now() }) {
+export async function keepDonationGift({ g, recipients, networkSet = null, gameSet = null, port, db, verify, keepRows, nowMs = Date.now() }) {
   const no = (status, why) => ({ ok: false, status, why });
-  const st = giftStands(g, { recipients, verify, nowMs });
+  const st = giftStands(g, { recipients, networkSet, gameSet, verify, nowMs });
   if (!st.ok) return no(422, st.why);
   const id = toHex(st.id);
   db.exec(DONATION_GIFTS_SQL);
@@ -37,12 +37,22 @@ export async function keepDonationGift({ g, recipients, port, db, verify, keepRo
     if (!stored || !stored.stored) return no(409, `the federation holds nothing at ${at} (not accepted yet, or never)`);
     if (String(stored.stored.contractId) !== String(want)) return no(422, `the output at ${at} is not ${o.msat} msat to key ${toHex(o.pk).slice(0, 16)}… from the donor`);
     rows.push({ outpoint, entryId: st.id, roundId: new Uint8Array(32), federationId: g.federationId, recipientPk: o.pk, amountMsat: o.msat,
-      contractId: String(stored.stored.contractId), senderOnContract: true, image: toHex(g.donor), item: g.target === 2 ? 'zap' : g.gameName ? `donation · ${g.gameName}` : 'donation · protocol' });
+      contractId: String(stored.stored.contractId), senderOnContract: true, image: toHex(g.donor), item: giftItem(g) });
   }
   db.prepare('INSERT OR IGNORE INTO donation_gifts (id, donor, target, game_dev, game_name, txid, total_msat, bytes, signature, kept_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(id, toHex(g.donor), g.target, toHex(g.gameDevPubkey), g.gameName || '', toHex(g.txid), String(g.totalMsat), Buffer.from(encodeDonationGift(g)), Buffer.from(g.signature), nowMs);
   if (keepRows) keepRows(rows);
   return { ok: true, id, kept: 'new', outputs: rows.length };
+}
+
+/**
+ * WHAT A GIFT'S OUTPUTS ARE LISTED AS (GET /donations `item`): a zap, or the set and - from version 2 (kanban #672) - where it was given:
+ * "donation · protocol · from site", "donation · protocol + rock-paper-scissors · from app:rock-paper-scissors".
+ */
+export function giftItem(g) {
+  if (g.target === 2) return 'zap';
+  const set = g.target === GIFT_TO_BOTH ? `protocol + ${g.gameName}` : g.gameName ? g.gameName : 'protocol';
+  return `donation · ${set}${g.origin ? ` · from ${g.origin}` : ''}`;
 }
 
 /** The gifts a donor made, as this seat kept them, newest first: [{ id, target, gameName, txid, totalMsat, keptMs }]. */

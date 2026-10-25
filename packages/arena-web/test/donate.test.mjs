@@ -14,7 +14,7 @@ function box({ bestSat = 3000n, setOk = true, give = async () => ({ ok: true, tx
   const calls = { read: 0, give: [], closed: 0 };
   const m = new DonateBox({ who: 'the Bitcoin Arena protocol developers', choices: [1000, 5000, 21000],
     amountOf: (t) => (/^\d+$/.test(t.trim()) ? { ok: true, sat: Number(t) } : { ok: false, why: 'Whole sats only.' }),
-    read: async () => { calls.read++; return { sharesLine: 'Shares: devs 50 % · nodes 50 %', setOk, bestSat }; },
+    read: async () => { calls.read++; return { sharesLine: '', setOk, bestSat }; },
     give: async (sat) => { calls.give.push(sat); return give(sat); }, onClose: () => { calls.closed++; } });
   m.setState = (u) => Object.assign(m.state, typeof u === 'function' ? u(m.state) : u);
   return { m, calls, html: () => renderToStaticMarkup(m.render()) };
@@ -23,11 +23,13 @@ function box({ bestSat = 3000n, setOk = true, give = async () => ({ ok: true, tx
 test('while reading: the same lines with placeholders; then the shares and the balance; no wallet says so', async () => {
   const b = box();
   const h = b.html();
-  assert.match(h, /^<div class="box"><div class="top"><h3>Donate to the developers<\/h3><button type="button" class="x" aria-label="Close">×<\/button><\/div><p class="to">To the Bitcoin Arena protocol developers, in e-cash from your wallet, split by the shares of their donation set\.<\/p><p class="split muted">Shares: reading the donation set …<\/p>/);
+  assert.match(h, /^<div class="box"><div class="top"><h3>Donate to the developers<\/h3><button type="button" class="x" aria-label="Close">×<\/button><\/div><p class="to">To the Bitcoin Arena protocol developers, in e-cash from your wallet\.<\/p><p class="split muted"><\/p>/);
   assert.match(h, /<button type="button" data-sat="1000" aria-pressed="false">1,000 sat<\/button>.*21,000 sat/);
   assert.match(h, /<p class="bal muted">Your wallet: … sat \(checking\)<\/p><div class="row"><button type="button" class="go primary" disabled="">Donate<\/button><\/div>/);
   await b.m.componentDidMount();
-  assert.match(b.html(), /<p class="split muted">Shares: devs 50 % · nodes 50 %<\/p>.*<p class="bal muted">Your wallet: 3,000 sat<\/p>/);
+  // no developer's share in the box (kanban #672: only the owner area's Donations shows them)
+  assert.match(b.html(), /<p class="split muted"><\/p>.*<p class="bal muted">Your wallet: 3,000 sat<\/p>/);
+  assert.doesNotMatch(b.html(), /Shares|%/);
   const none = box({ bestSat: null });
   await none.m.componentDidMount();
   assert.match(none.html(), /<p class="bal muted">Open your wallet and deposit first\.<\/p>/);
