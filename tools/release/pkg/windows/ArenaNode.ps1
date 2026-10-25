@@ -64,6 +64,7 @@ if ((Test-Path $command) -and (Test-Path (Join-Path $nodeHome 'arena.conf'))) {
   $node = Join-Path $release.FullName 'runtime\node.exe'
   $mjs = Join-Path $release.FullName 'packages\arena-installer\bin\arena-install.mjs'
   $env:ARENA_CLOUDFLARED = Join-Path $release.FullName 'runtime\cloudflared.exe'
+  $env:ARENA_NO_BROWSER = '1'   # this window opens the link itself (kanban #635: two browser windows)
   $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', "`"`"$node`" `"$mjs`" >> `"$log`" 2>&1`"" -WorkingDirectory $release.FullName -WindowStyle Hidden -PassThru
   $script:read = 0
   $script:link = $null

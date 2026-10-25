@@ -20,7 +20,7 @@ for what in $WHAT; do
     windows)
       R=bitcoin-arena-node-$V-windows-x64
       mkdir -p "$WORK/win" && unzip -q "$OUT/$R.zip" -d "$WORK/win"
-      cp "$HERE/pkg/windows/ArenaNode.ps1" "$HERE/pkg/windows/arena-node.nsi" "$WORK/win/"
+      cp "$HERE/pkg/windows/ArenaNode.ps1" "$HERE/pkg/windows/arena-node.nsi" "$HERE/pkg/icon/bitcoin-arena.ico" "$WORK/win/"
       EXE=bitcoin-arena-node-setup-$V-windows-x64.exe
       MAKENSIS=${MAKENSIS:-makensis}
       (cd "$WORK/win" && "$MAKENSIS" -V2 -DVERSION="$V" -DRELEASE="$R" -DSTAGE="$WORK/win/$R" -DOUT="$OUT/$EXE" arena-node.nsi)

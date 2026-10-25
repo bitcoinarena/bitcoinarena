@@ -25,7 +25,7 @@ import { nextStep, doneOf, seatConf, ROLES, guardianSetupOf, ownCoreOf } from '.
 import { appsIn, appsView, chosenApps } from './apps.js';
 import { installService, installProgram } from './service.js';
 import { control } from './node-services.js';
-import { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, NEEDS } from './bitcoind.js';
+import { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, freeCorePorts, NEEDS } from './bitcoind.js';
 import { createHash } from 'node:crypto';
 import * as reachKit from './reach.js';
 import { DatabaseSync } from 'node:sqlite';
@@ -116,11 +116,30 @@ export function withOtherNodes(s, parts, { further = false } = {}) {
 /** A SEAT RESTARTS when its settings file changed after it started (kanban #577): the text written at its start against the one now. */
 export const seatNeedsRestart = (before, after) => String(before || '') !== String(after || '');
 
+/**
+ * A CORE WHOSE PORT ANOTHER PROGRAM HOLDS (kanban #635, the owner's playtest 2026-10-25: his test host's own testnet4 Core held 48342, and
+ * the installer's Core exited at every start): free ports chosen, its bitcoin.conf written again, its service started again, the new
+ * address kept in the state. Used by the Bitcoin step's status and by the chain-switch keeper.
+ */
+export async function repairCorePorts({ state, network, coreKit = { freeCorePorts, configureCore, coreArgs, installProgram } }) {
+  const s = state.read();
+  const net = s.core && s.core.networks && s.core.networks[network];
+  if (!net) return { ok: false, why: `no Bitcoin Core for ${network} was installed here` };
+  let ports;
+  try { ports = await coreKit.freeCorePorts(network); } catch (e) { return { ok: false, why: e.message }; }
+  const c = coreKit.configureCore({ home: s.core.dir || state.home, network, prune: !!s.core.prune, ports });
+  const r = await coreKit.installProgram({ id: `bitcoind-${network}`, description: `Bitcoin Core for Bitcoin Arena (${network})`, args: coreKit.coreArgs({ bitcoind: s.core.bitcoind, datadir: c.datadir }), home: state.home, boot: true });
+  if (!r.ok) return { ok: false, why: r.why };
+  const now = state.read();
+  state.save({ core: { ...now.core, networks: { ...now.core.networks, [network]: { ...now.core.networks[network], rpcUrl: c.rpcUrl, cookiePath: c.cookiePath } }, portsMovedMs: Date.now() } });
+  return { ok: true, ports };
+}
+
 export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_PORT, bridgePort = null, test = testConnection, install = installService,
   // tailscale: the test host app's own CLI when it is installed, else the one in PATH
   fetcher = fetch, reach = reachKit, cloudflared = 'cloudflared', tailscale = process.env.ARENA_TAILSCALE || (process.platform === 'darwin' && existsSync('/Applications/Tailscale.app/Contents/MacOS/Tailscale') ? '/Applications/Tailscale.app/Contents/MacOS/Tailscale' : 'tailscale'),
   tailscaleSh = undefined, workersKit = workersKitDefault, chainKit = { coinsOf, broadcast },
-  coreKit = { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, installProgram },
+  coreKit = { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, freeCorePorts, installProgram },
   lndKit = { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, installProgram, lndFunds, lndOpenChannel, lndChannels },
   gwKit = { findGatewayd, configureGateway, testGateway, joinFederation, installProgram }, launch = writeLaunchers, nowMs = () => Date.now(), onDone = () => {}, log = () => {},
   restartSeat = (home) => control('restart', 'node', { home }), fundFrom = null }) {
@@ -229,7 +248,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       if (!got.ok) return { ok: false, why: got.why };
       const networks = {};
       for (const n of nets) {
-        const c = coreKit.configureCore({ home: where.dir, network: n, prune });
+        const c = coreKit.configureCore({ home: where.dir, network: n, prune, ...(coreKit.freeCorePorts ? { ports: await coreKit.freeCorePorts(n) } : {}) });   // free ones (kanban #635)
         const r = await coreKit.installProgram({ id: `bitcoind-${n}`, description: `Bitcoin Core for Bitcoin Arena (${n})`, args: coreKit.coreArgs({ bitcoind: got.bitcoind, datadir: c.datadir }), home: state.home, boot: b.boot !== false });
         if (!r.ok) return { ok: false, why: r.why };
         networks[n] = { rpcUrl: c.rpcUrl, cookiePath: c.cookiePath, datadir: c.datadir };
@@ -255,7 +274,12 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       if (!s.core) return { ok: false, why: 'no Bitcoin Core was installed by this installer' };
       const out = {};
       for (const [n, c] of Object.entries(s.core.networks)) {
-        const r = await coreKit.syncStatus({ ...c, samples: coreSamples.get(n) || [], nowMs: nowMs(), fetcher });
+        let r = await coreKit.syncStatus({ ...c, samples: coreSamples.get(n) || [], nowMs: nowMs(), fetcher });
+        // A PORT ANOTHER PROGRAM HOLDS (kanban #635): moved to free ones and started again - the page says so, never "starting" for ever
+        if (r.portTaken) {
+          const fixed = await repairCorePorts({ state, network: n, coreKit });
+          r = { ok: false, why: fixed.ok ? `${r.why}: moved to port ${fixed.ports.rpc} and started again` : `${r.why}; ${fixed.why}`, samples: [] };
+        }
         coreSamples.set(n, r.samples || []);
         out[n] = { ...r, samples: undefined };
       }
@@ -744,6 +768,9 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     if (!hostOk(req)) return json(res, 421, { ok: false, why: 'this host is not the installer' });
     // THE TOKEN, ONCE: traded for a session and gone
     if (req.method === 'GET' && url.pathname === '/' && url.searchParams.has('t')) {
+      // THE LINK OPENED AGAIN IN A BROWSER THAT HOLDS ITS SESSION (kanban #635, the owner's playtest 2026-10-25: the test host app's "Open in
+      // browser" opened the used link, and the page said "that setup link is used or expired" in a browser already logged in)
+      if (sessionOk(req)) { res.writeHead(303, { location: '/', 'cache-control': 'no-store' }); return res.end(); }
       if (!token || nowMs() > tokenUntil || !same(url.searchParams.get('t'), token)) return json(res, 403, { ok: false, why: 'that setup link is used or expired: restart the installer for a new one' });
       token = null;
       const sid = b64u(32);

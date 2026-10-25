@@ -28,7 +28,7 @@ fi
 
 LOG="$HOME/.cache/arena-node-setup.log"
 mkdir -p "$(dirname "$LOG")"; : > "$LOG"
-ARENA_CLOUDFLARED="$REL/runtime/cloudflared" "$REL/runtime/node" "$REL/packages/arena-installer/bin/arena-install.mjs" "$@" >> "$LOG" 2>&1 &
+ARENA_NO_BROWSER=1 ARENA_CLOUDFLARED="$REL/runtime/cloudflared" "$REL/runtime/node" "$REL/packages/arena-installer/bin/arena-install.mjs" "$@" >> "$LOG" 2>&1 &
 PID=$!
 trap 'kill $PID 2>/dev/null' INT TERM
 LINK=""
