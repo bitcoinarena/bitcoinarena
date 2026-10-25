@@ -2457,7 +2457,7 @@ function encodeEntryContract(e) {
     w.u8(RESERVE_ENTRY_MARKER);
     writeOutpoint(w, e.reserveOutpoint, 'reserveOutpoint');
   }
-  // A BOT'S ENTRY (kanban #581, the owner 2026-10-22: "The bots are also marked as bots, so they are excluded from the leaderboard. There is
+  // A BOT'S ENTRY (kanban #581, 2026-10-22: "The bots are also marked as bots, so they are excluded from the leaderboard. There is
   // a flag in the API and protocol to mark them as bots"): the market maker bots sign it in their own entry, so no seat can add or take it
   // away; the leaderboard leaves such entries out. WRITTEN ONLY FOR A BOT, last of all, its marker alone: every other entry keeps exactly
   // its bytes and its id.
@@ -5362,7 +5362,7 @@ const compareGuardian = (a, b) =>
 // this node is willing to hold custody as a guardian, and the fedimintd API endpoint the client and the seats use. Both
 // or neither: capable needs a ws:// or wss:// endpoint, not capable needs the empty string. An advert that says nothing
 // about it (the field left out) is a node that is not a guardian.
-// guardian_capable: 0 no, 1 yes, 2 yes WITH A FREE FOUNDING SLOT (kanban #599, the owner 2026-10-23 "Nur mit freiem Slot"): its guardian-next
+// guardian_capable: 0 no, 1 yes, 2 yes WITH A FREE FOUNDING SLOT (kanban #599, 2026-10-23 "Nur mit freiem Slot"): its guardian-next
 // waits in setup, so a federation it guards being overloaded frees it for a founding (founding-seat.js guardingOpenOf). Every advertisement
 // before it keeps its bytes. A node before this refuses an advertisement saying 2, so no node advertises it before every node reads it.
 function guardianRole(capable, endpoint) {
@@ -9246,7 +9246,7 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
   };
 }
 
-// ADD TO BOND (spec §5A "Multiple bond outputs", kanban #544, the owner 2026-10-19: "this is also the default way. E.g increase your
+// ADD TO BOND (spec §5A "Multiple bond outputs", kanban #544, 2026-10-19: "this is also the default way. E.g increase your
 // bond by 32000 sats"): a node raises its bond by posting a second bond output beside the first, each valid on its own; from
 // protocol 19 the census counts them as their sum.
 const sumsBonds = (contract) => !!contract && Number(contract.protocolVersion) >= BOND_SUM_VERSION;
@@ -14626,7 +14626,7 @@ function bondProvider(where, { fetcher = fetch, body = null } = {}) {
  * anywhere is the single-player daily, which is what almost every visitor
  * opens. Only a URL that NAMES a round changes that.
  */
-// READ ONCE PER ROUND, NOT PER ORDER (kanban #601, the owner 2026-10-23: "601 target is below 300ms on web"; measured on UI 344: the press to the
+// READ ONCE PER ROUND, NOT PER ORDER (kanban #601, 2026-10-23: "601 target is below 300ms on web"; measured on UI 344: the press to the
 // join's first step was 99-132 ms, the round, its advert and its committee's bonds read from the seats again for every order; on UI 345,
 // 8 s whenever the kept answer had run out - committeeBonds waits 8 s for a seat that does not answer): a round's contract is its id's,
 // so the answer is kept up to JOIN_KEPT_MS per query and read again behind it once it is JOIN_FRESH_MS old - a press never waits for that
@@ -15307,7 +15307,7 @@ const newestRecord = (verified) => verified.filter((v) => v && v.ok).sort((a, b)
 // ---- arena-client/src/guardian-invites.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// EVERY GUARDIAN A FEDERATION'S INVITES NAME, ONE INVITE FOR A JOIN THAT COULD NOT READ THE CONFIG (the owner 2026-10-20 18:0xZ: "Fix the issue that it
+// EVERY GUARDIAN A FEDERATION'S INVITES NAME, ONE INVITE FOR A JOIN THAT COULD NOT READ THE CONFIG (2026-10-20 18:0xZ: "Fix the issue that it
 // connects to a wallet/guardian that is offline" - federation 4dc88be7's invite named only fed2-8, whose guardian had stopped at 07:56Z, so
 // every new wallet there failed with "Failed to download client config" while 6 of its 7 guardians ran). Every invite this client sees -
 // a round's, a remembered one, each seat's federation record (read here even before the record can be verified: only the config is
@@ -16451,7 +16451,7 @@ function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, co
     const split = splitDonation({ donationMsat: giftMsat, recipients: donation.recipients });
     if (!split.owed) return refuse(`the market's donation set does not stand: ${split.why}`);
     const rid = roundId;
-    // EACH ORDER'S PART OF THE DONATION (kanban #580, the owner 2026-10-22: "change the protocol so we can get the player hash for each market
+    // EACH ORDER'S PART OF THE DONATION (kanban #580, 2026-10-22: "change the protocol so we can get the player hash for each market
     // order"): a market pays its donation once per recipient, out of every filled order's fee together - so the payout names its parts,
     // each filled order's entry, its player key and the fee it paid (its weight: an order's share of any donation output of this round is
     // that output times its fee over the fees due). Kept beside the payout and in the seats' donation index; the transaction is unchanged
@@ -16878,7 +16878,7 @@ function forgetPhrase(storage, seedHex) {
 }
 
 /**
- * OLD WALLET DATABASES OUT OF THE BROWSER'S STORAGE (kanban #616, the owner 2026-10-24 playtest: "Order not placed: ... Setting the value of
+ * OLD WALLET DATABASES OUT OF THE BROWSER'S STORAGE (kanban #616, 2026-10-24 playtest: "Order not placed: ... Setting the value of
  * 'arena.lock.saved.42835aaa…' exceeded the quota" - "You need to clean up old storages"). Measured: a player wallet's database is ~115 KB
  * per federation (its config, every guardian's endpoint) and one order adds ~50 KB; a browser that kept phrase after phrase filled its
  * 5 MB. Removed, one federation's database at a time:
@@ -16910,7 +16910,7 @@ function tidyStorage(storage, { seeds = [], current = null, federations = [], he
     if (m && fed16.has(m[2])) { if (!groups.has(m[1])) groups.set(m[1], []); groups.get(m[1]).push(k); }
   }
   let removed = 0, bytes = 0, wallets = 0;
-  // A COLLECTED ROUND'S LOCK WALLET (kanban #625 follow-up, the owner 2026-10-24 ~18:2xZ: "exceeded the quota" again on
+  // A COLLECTED ROUND'S LOCK WALLET (kanban #625 follow-up, 2026-10-24 ~18:2xZ: "exceeded the quota" again on
   // arena.lock.saved.bd53423e; measured: each round a tab collects opens a lock wallet of its own, arena.lockdb.<round16>.<secret16>.*, 36 entries
   // and ~150 KB, and none was ever removed - a window every 15 min fills a phone's storage within a day): removed once the round's collect is
   // done and an hour old - its money is in the player wallet; a rescan that needs it again joins it anew (its key is the seed's and the round's)
@@ -17212,7 +17212,7 @@ function gatewayOrder(named = [], listed = []) {
   for (const u of [...(named || []), ...(listed || [])]) { const k = gwKey(u); if (!k || seen.has(k)) continue; seen.add(k); out.push(String(u).trim()); }
   return out;
 }
-// THE FEDERATION'S SEATED GATEWAYS FIRST (spec §23A.9: "clients use those two first"; kanban #559, the owner 2026-10-20: "Fix all of it"):
+// THE FEDERATION'S SEATED GATEWAYS FIRST (spec §23A.9: "clients use those two first"; kanban #559, 2026-10-20: "Fix all of it"):
 // the page names a lookup - async (federation hex) -> the seated gateways' URLs, as the federation's guardians rank them - and every
 // deposit, and both legs of a swap, try those before the lobby's named gateway and the federation's list
 let seatedLookup = null;
@@ -17329,7 +17329,7 @@ function roundsDepositMsat(n, locks, LockClient) {
   return BigInt(n) * oneRoundDepositMsat(locks, LockClient);
 }
 /**
- * WHERE A ROUND'S STAKE COMES FROM, BEFORE ANY DEPOSIT IS ASKED (the owner 2026-10-22 playtest: 2,901 sat shown with ⇄, a 100 sat Up/Down order
+ * WHERE A ROUND'S STAKE COMES FROM, BEFORE ANY DEPOSIT IS ASKED (2026-10-22 playtest: 2,901 sat shown with ⇄, a 100 sat Up/Down order
  * in a 337ae01a round asked "Not enough sats ... Deposit with Lightning?"; "Deposits from different federations must work"). The balance the
  * page shows counts money still merging in from this browser's other wallets (other phrases, e-cash between a send and its receive), and
  * this phrase's own wallets in other federations. `parts` = the page's [{ federation (64 or 16 hex), sats, merging? }], `roundFederation`
@@ -17359,7 +17359,7 @@ function joinFundingPlan({ parts = [], roundFederation, needMsat }) {
   const elsewhere = others.reduce((t, [, a]) => t + a.own + a.merging, 0n);
   const ownElsewhere = others.reduce((t, [, a]) => t + a.own, 0n);
   const swapFrom = others.filter(([, a]) => a.own + a.merging > 0n).sort((x, y) => (y[1].own + y[1].merging > x[1].own + x[1].merging ? 1 : -1)).map(([f]) => f);
-  // SPENDABLE MONEY FIRST, THE MERGE ONLY WHEN NOTHING ELSE PAYS (the owner 2026-10-22: "Placing a market order takes 10+ seconds" - every order
+  // SPENDABLE MONEY FIRST, THE MERGE ONLY WHEN NOTHING ELSE PAYS (2026-10-22: "Placing a market order takes 10+ seconds" - every order
   // waited for the merge whenever anything was merging): the round's wallet, else a swap from the player's own notes elsewhere, and only
   // then the money still merging in - the federations to merge named only in that case
   const coveredBy = at.own >= need ? 'here' : at.own + ownElsewhere >= need ? 'swap' : at.own + ownElsewhere + at.merging + elsewhere - ownElsewhere >= need ? 'merge' : null;
@@ -17508,7 +17508,7 @@ function resumeDeposits({ client, storage, federationId, onClaimed = () => {}, o
     return from ? `${final} (in wallet ${from.label})` : final;
   };
   return Promise.all(pendingDeposits(storage, federationId).map((p) => client.awaitReceive(p.operation).then((final) => ended(p, final),
-    // A DEPOSIT ANOTHER OF THIS BROWSER'S WALLETS MADE (the owner 2026-10-20 17:5xZ: "unknown (operation 3d41502f316a: Operation not found)" - the
+    // A DEPOSIT ANOTHER OF THIS BROWSER'S WALLETS MADE (2026-10-20 17:5xZ: "unknown (operation 3d41502f316a: Operation not found)" - the
     // pending list is per federation, the wallet database per federation and phrase; the invoice was made under another phrase this browser
     // keeps): every other kept wallet of the federation (`others()`: [{ client, label }]) is asked for it, and the one that holds it claims it
     async (e) => {
@@ -19329,7 +19329,7 @@ async function swapPlayerWalletForRound({ round, toInvite, fromInvite, fromFeder
 function ledgerFederations(storage) {
   const out = [];
   for (const k of storageKeys(storage)) {
-    // AND EVERY FEDERATION A DEPOSIT IS STILL PENDING IN (the owner 2026-10-20 16:46Z: 1,000 sat paid into b18947f0 "was not reflected" -
+    // AND EVERY FEDERATION A DEPOSIT IS STILL PENDING IN (2026-10-20 16:46Z: 1,000 sat paid into b18947f0 "was not reflected" -
     // the gateway funded the incoming contract, but a deposit gets its ledger row only once claimed, and a page reloaded or
     // suspended before the claim opened wallets only where the ledger had rows: the pending deposit was never resumed, claimed or
     // summed). A federation this browser made a deposit invoice in is one it holds a wallet in.
@@ -23044,7 +23044,7 @@ async function tallyDonationProposal({ proposal, approvals = [], parent, verifyS
     const bps = shareOf.get(a.key);
     counted.push({ key: a.key, accept: a.accept, atHeight: a.atHeight, bps });
     if (a.accept) acceptBps += bps; else denyBps += bps;
-    // A PROPOSER WHO DENIES THEIR OWN PROPOSAL WITHDRAWS IT (the owner 2026-10-22, on a proposal its proposer had denied: "This is no longer open")
+    // A PROPOSER WHO DENIES THEIR OWN PROPOSAL WITHDRAWS IT (2026-10-22, on a proposal its proposer had denied: "This is no longer open")
     if (!a.accept && a.key === toHex(p.proposer)) return out('refused', { acceptBps, denyBps, counted, proposalId: pid, why: 'withdrawn by its proposer' });
     if (acceptBps * 2 > DONATION_BPS_TOTAL) return out('approved', { validFrom: a.atHeight + 1, acceptBps, denyBps, counted, proposalId: pid });
     if (denyBps * 2 >= DONATION_BPS_TOTAL) return out('refused', { acceptBps, denyBps, counted, proposalId: pid, why: 'recipients holding half the parent set or more denied it' });
@@ -26312,6 +26312,16 @@ const TYPE_DONATION_GIFT = 0x44;          // 'D'
 const DONATION_GIFT_VERSION = 1;
 const GIFT_TO_NETWORK = 0, GIFT_TO_GAME = 1;
 /**
+ * HALF TO THE PROTOCOL DEVELOPERS, HALF TO THE APP'S (kanban #672, 2026-10-25: "when clicking donate on the main Testnet site the donation
+ * goes too 100% to protocol devs. If it's within an app 50% to protocol devs, 50% to game devs. That donation is tagged so we know its
+ * origin"): a gift naming the app as a game gift does, split over both sets as a round's donation is (splitTwoSets).
+ */
+const GIFT_TO_BOTH = 3;
+/** A record with an origin (or to both sets) is version 2: the origin follows its time. Version 1 records keep their bytes and ids. */
+const DONATION_GIFT_VERSION_ORIGIN = 2;
+/** Where a gift was given, said by the page: "site", "app:<name>" - at most this many characters. */
+const GIFT_ORIGIN_MAX = 64;
+/**
  * A ZAP FROM THE SEASON BOARD (2026-10-17: "zaps in the leaderboard go to the federation's account of the user not
  * an external lightning payment"): a gift whose 32-byte target is the player's identity key - the key the board names - and whose
  * one output is a pre-expired payout contract to refundKeyOf(identity) in the donor's federation, which only that player's page
@@ -26330,31 +26340,39 @@ const giftIs33 = (b) => b instanceof Uint8Array && b.length === 33;
 const GIFT_ZERO32 = new Uint8Array(32);
 
 function encodeDonationGift(g) {
-  if (g.target !== GIFT_TO_NETWORK && g.target !== GIFT_TO_GAME && g.target !== GIFT_TO_PLAYER) throw new Error('a gift is to the network\'s developers (0), a game\'s (1) or a player (2)');
+  if (g.target !== GIFT_TO_NETWORK && g.target !== GIFT_TO_GAME && g.target !== GIFT_TO_PLAYER && g.target !== GIFT_TO_BOTH)
+    throw new Error('a gift is to the network\'s developers (0), a game\'s (1), a player (2) or the network\'s and a game\'s, half each (3)');
+  const origin = String(g.origin || '');
+  if (origin.length > GIFT_ORIGIN_MAX || /[\u0000-\u001f]/.test(origin)) throw new Error(`a gift's origin is at most ${GIFT_ORIGIN_MAX} printable characters`);
+  const version = origin || g.target === GIFT_TO_BOTH ? DONATION_GIFT_VERSION_ORIGIN : DONATION_GIFT_VERSION;
   const dev = g.target === GIFT_TO_NETWORK ? GIFT_ZERO32 : g.gameDevPubkey;
   if (g.target === GIFT_TO_PLAYER && (!giftIs32(dev) || dev.every((b) => b === 0) || g.gameName)) throw new Error('a zap names its player by a 32-byte identity key, and no game');
-  const name = g.target === GIFT_TO_GAME ? String(g.gameName || '') : '';
-  if (!giftIs32(dev) || (g.target === GIFT_TO_GAME && !name)) throw new Error('a gift to a game names its developer by 32 bytes and its name');
+  const toGame = g.target === GIFT_TO_GAME || g.target === GIFT_TO_BOTH;
+  const name = toGame ? String(g.gameName || '') : '';
+  if (!giftIs32(dev) || (toGame && !name)) throw new Error('a gift to a game names its developer by 32 bytes and its name');
   if (!giftIs32(g.donor) || !giftIs32(g.federationId) || !giftIs32(g.txid)) throw new Error('a gift names its donor, its federation and its transaction by 32 bytes each');
   if (typeof g.totalMsat !== 'bigint' || g.totalMsat < 1000n) throw new Error('a gift is at least 1 sat, in msat as a BigInt');
   if (!Array.isArray(g.outputs) || g.outputs.length < 1 || g.outputs.length > 255) throw new Error('a gift pays 1 to 255 outputs');
   for (const o of g.outputs) if (!Number.isInteger(o.outIdx) || o.outIdx < 0 || !giftIs33(o.pk) || typeof o.msat !== 'bigint' || o.msat < 1n)
     throw new Error('an output names its index, its recipient\'s 33-byte key and its msat');
   const w = new Writer();
-  w.u8(TYPE_DONATION_GIFT); w.u16(DONATION_GIFT_VERSION);
+  w.u8(TYPE_DONATION_GIFT); w.u16(version);
   w.u8(g.target); w.bytes32(dev); w.str(name);
   w.bytes32(g.donor); w.bytes32(g.federationId); w.bytes32(g.txid); w.u64(g.totalMsat);
   w.vec(g.outputs, (o, ww) => { ww.u32(o.outIdx); ww.bytes(o.pk, 33); ww.u64(o.msat); }, { sortedBy: (a, b) => a.outIdx - b.outIdx });
   w.u64(BigInt(g.atMs));
+  if (version === DONATION_GIFT_VERSION_ORIGIN) w.str(origin);
   return w.finish();
 }
 
 function decodeDonationGift(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_DONATION_GIFT) throw new Error('not a donation gift');
-  const v = r.u16(); if (v !== DONATION_GIFT_VERSION) throw new Error(`a donation gift of version ${v}`);
+  const v = r.u16(); if (v !== DONATION_GIFT_VERSION && v !== DONATION_GIFT_VERSION_ORIGIN) throw new Error(`a donation gift of version ${v}`);
   const g = { target: r.u8(), gameDevPubkey: r.bytes32(), gameName: r.str(), donor: r.bytes32(), federationId: r.bytes32(), txid: r.bytes32(), totalMsat: r.u64(),
     outputs: r.vec((rr) => ({ outIdx: rr.u32(), pk: rr.bytes(33), msat: rr.u64() })), atMs: r.u64() };
+  if (v === DONATION_GIFT_VERSION_ORIGIN) g.origin = r.str();
+  if (v === DONATION_GIFT_VERSION_ORIGIN && !g.origin && g.target !== GIFT_TO_BOTH) throw new Error('a version 2 gift names its origin');
   if (r.at !== bytes.length) throw new Error('trailing bytes after the donation gift');
   encodeDonationGift(g);                       // the same rules on the way in
   return g;
@@ -26362,9 +26380,12 @@ function decodeDonationGift(bytes) {
 
 const donationGiftId = (g) => taggedHash(TAG_DONATION_GIFT, encodeDonationGift(g));
 
-/** The outputs a gift of `totalMsat` must pay over a set of keys, in the set's order: [{ pk, msat }], none of 0 msat. */
-function giftOutputs({ totalMsat, recipients }) {
-  const split = splitDonation({ donationMsat: totalMsat, recipients });
+/**
+ * The outputs a gift of `totalMsat` must pay over a set of keys, in the set's order: [{ pk, msat }], none of 0 msat. A gift to both sets
+ * (`networkSet` and `gameSet`) pays half over each, a key in both once (splitTwoSets, as a round's donation).
+ */
+function giftOutputs({ totalMsat, recipients, networkSet = null, gameSet = null }) {
+  const split = networkSet && gameSet ? splitTwoSets({ donationMsat: totalMsat, networkSet, gameSet }) : splitDonation({ donationMsat: totalMsat, recipients });
   if (!split.owed) throw new Error(`the gift cannot be split over this set: ${split.why}`);
   const out = [];
   for (const s of split.shares) {
@@ -26380,14 +26401,15 @@ function giftOutputs({ totalMsat, recipients }) {
  * the split of its total over that set - the same keys, the same amounts, in the set's order, output index i the i-th. Answers
  * { ok, id } or { ok: false, why }. The federation's own check of each output is the seat's (it reaches the federation).
  */
-function giftStands(g, { recipients, verify, nowMs = Date.now() }) {
+function giftStands(g, { recipients, networkSet = null, gameSet = null, verify, nowMs = Date.now() }) {
   let id;
   try { id = donationGiftId(g); } catch (e) { return { ok: false, why: e.message }; }
   if (Number(g.atMs) > nowMs + GIFT_SKEW_MS) return { ok: false, why: 'that gift is dated ahead of this seat\'s clock' };
   let good = false; try { good = verify(g.signature, id, g.donor) === true; } catch { good = false; }
   if (!good) return { ok: false, why: 'the donor\'s signature does not verify' };
   let want;
-  try { want = giftOutputs({ totalMsat: g.totalMsat, recipients }); } catch (e) { return { ok: false, why: e.message }; }
+  if (g.target === GIFT_TO_BOTH && !(networkSet && gameSet)) return { ok: false, why: 'a gift to both sets is checked against both' };
+  try { want = g.target === GIFT_TO_BOTH ? giftOutputs({ totalMsat: g.totalMsat, networkSet, gameSet }) : giftOutputs({ totalMsat: g.totalMsat, recipients }); } catch (e) { return { ok: false, why: e.message }; }
   const got = [...g.outputs].sort((a, b) => a.outIdx - b.outIdx);
   if (got.length !== want.length) return { ok: false, why: `the gift pays ${got.length} output(s), and its total split over the set is ${want.length}` };
   for (let i = 0; i < want.length; i++) {
@@ -26424,15 +26446,18 @@ const giftRecipientsLine = (set) => (Array.isArray(set) ? set : []).map((r) => `
  * PAY AND RECORD ONE GIFT. `game` { gameDevPubkey, gameName } for a game's developers, or null for the protocol developers (the
  * network's set); `recipients` that set; `sat` the amount; `wallet` the player wallet's lock client in `federationId` (hex);
  * `donor` { pubkey, sign }; `seats` the base URLs. Answers { ok, id, txid, sat, outputs, keptBy } or { ok: false, step, why }.
+ * A GIFT INSIDE AN APP (kanban #672: "If it's within an app 50% to protocol devs, 50% to game devs"): `game` with `networkSet` - the
+ * protocol developers' set beside the app's `recipients` - pays half over each. `origin` tags where it was given ("site", "app:<name>").
  */
-async function giftDonation({ game = null, player = null, recipients, sat, wallet, federationId, donor, seats, fetch, nowMs = () => Date.now() }) {
+async function giftDonation({ game = null, player = null, recipients, networkSet = null, origin = '', sat, wallet, federationId, donor, seats, fetch, nowMs = () => Date.now() }) {
   const no = (step, why) => ({ ok: false, step, why });
   // A ZAP: the player's identity key is the target and the whole set
   if (player) { if (!(player instanceof Uint8Array) || player.length !== 32) return no('player', 'a zap names its player by a 32-byte identity key'); recipients = playerGiftRecipients(player); }
   const amt = giftAmountOf(sat); if (!amt.ok) return no('amount', amt.why);
   const totalMsat = BigInt(amt.sat) * 1000n;
   let outs;
-  try { outs = giftOutputs({ totalMsat, recipients }); } catch (e) { return no('split', e.message); }
+  const both = !player && game && Array.isArray(networkSet);
+  try { outs = both ? giftOutputs({ totalMsat, networkSet, gameSet: recipients }) : giftOutputs({ totalMsat, recipients }); } catch (e) { return no('split', e.message); }
   if (!wallet || typeof wallet.paySubmit !== 'function') return no('wallet', 'this page\'s wallet cannot pay keys (its lock client has no paySubmit)');
   let submitted, accepted;
   try {
@@ -26441,7 +26466,8 @@ async function giftDonation({ game = null, player = null, recipients, sat, walle
   } catch (e) { return no('payment', String(e && e.message || e)); }
   const held = accepted.donations || [];
   if (held.length !== outs.length || !held.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
-  const record = { target: player ? GIFT_TO_PLAYER : game ? GIFT_TO_GAME : GIFT_TO_NETWORK, gameDevPubkey: player || (game ? game.gameDevPubkey : new Uint8Array(32)), gameName: !player && game ? game.gameName : '',
+  const record = { target: player ? GIFT_TO_PLAYER : both ? GIFT_TO_BOTH : game ? GIFT_TO_GAME : GIFT_TO_NETWORK, gameDevPubkey: player || (game ? game.gameDevPubkey : new Uint8Array(32)), gameName: !player && game ? game.gameName : '',
+    ...(!player && origin ? { origin: String(origin).slice(0, 64) } : {}),
     donor: donor.pubkey, federationId: fromHex(federationId), txid: fromHex(submitted.txid), totalMsat,
     outputs: held.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), atMs: BigInt(nowMs()) };
   const id = donationGiftId(record);
@@ -27547,7 +27573,7 @@ const originOf = (u) => { try { const x = new URL(u); const head = x.pathname.sp
 const anchorHeightFor = (networkId) => (networkId instanceof Uint8Array && toHex(networkId) === toHex(NETWORK_ID_TESTNET4) ? TESTNET4_ANCHOR_HEIGHT : 0);
 
 async function chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, explorer = null }) {
-  // ONE AGREED CHAIN FOR EVERY ROUND IT HOLDS (kanban #618, the owner 2026-10-24: "Order submitted in 16.78 s"; measured on UI 363: 16.2 s of
+  // ONE AGREED CHAIN FOR EVERY ROUND IT HOLDS (kanban #618, 2026-10-24: "Order submitted in 16.78 s"; measured on UI 363: 16.2 s of
   // a first order were this read, done again for every round - the lobby's round and the order's, same census and beacon - because the
   // kept chain was keyed by the round's committee time): a chain read in the last CHAIN_KEPT_MS serves any round whose census height it
   // holds and whose beacon - the first block after committee_time (beacon.js) - is already in it; else it is read again
@@ -33471,7 +33497,7 @@ async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries 
     }
   };
   const holds = (n) => kinds.every((k) => tookLock.get(k.door).has(n));
-  // PLACED ONCE ONE SEAT HOLDS IT (the owner 2026-10-23 ~19:15Z, "Ja, nach 1 Seat"; "Der lock wird immernoch refunded wenn es keine 5
+  // PLACED ONCE ONE SEAT HOLDS IT (2026-10-23 ~19:15Z, "Ja, nach 1 Seat"; "Der lock wird immernoch refunded wenn es keine 5
   // bestätigen"): the order counts as placed as soon as the federation accepted its lock and the first seat holds its entry and its
   // locks - the money is in the lock, and no seat can say so without it. The other seats get theirs in the background (`handing`); an order
   // fewer than 5 seats hold never trades, and its lock comes back as an unfilled order's does. Each seat's own chain: its entry, then -
@@ -33687,7 +33713,7 @@ function scalarValueLine(value, unit) {
  * THE ORDERS KEPT OUT OF SIGHT WHILE THEIR RESULT IS READ: of the lines (marketLines), the entries still 'waiting' or 'unknown'
  * whose order is
  *   - one whose window closed before this page loaded (`loadedMs`) and whose round's outcome this page has not asked for yet
- *     (`read`: the round ids asked at least once) - the owner 2026-10-20 23:13 local, phone, UI 269: "At page load it shows waiting
+ *     (`read`: the round ids asked at least once) - 2026-10-20 23:13 local, phone, UI 269: "At page load it shows waiting
  *     for result, then it disappears" - his two orders of 20:45-21:00, settled and paid two hours before, were listed under
  *     My orders as "waiting for the result" until the page's first outcome read, 10 s after load, moved them to History;
  *   - or, as before (2026-10-17, UI 211), an order read back from the seats whose window closed more than 10 min ago, for its

@@ -73,7 +73,7 @@ function Earnings({ split: S }) {
  * protocol's or the app's part, a search over player, round, entry and item, 10 to 100 rows a page; a row opens its full record.
  */
 export class DonationsTable extends React.Component {
-  constructor(props) { super(props); this.state = { slug: (props.clients[0] || {}).slug || '', app: '', part: 'all', q: '', limit: 10, offset: 0, r: null, why: null, open: null }; }
+  constructor(props) { super(props); this.state = { slug: (props.clients[0] || {}).slug || '', app: '', origin: '', part: 'all', q: '', limit: 10, offset: 0, r: null, why: null, open: null }; }
   componentDidMount() { this.load(); }
   componentDidUpdate(prev) { if (prev.stamp !== this.props.stamp) this.load(); }
   set(change) { this.setState({ ...change, ...('offset' in change ? {} : { offset: 0 }), open: null }, () => this.load()); }
@@ -81,7 +81,7 @@ export class DonationsTable extends React.Component {
     const s = this.state, n = (this.n = (this.n || 0) + 1);
     if (!s.slug) return;
     try {
-      const r = await this.props.query({ slug: s.slug, app: s.app, q: s.q.trim(), limit: s.limit, offset: s.offset });
+      const r = await this.props.query({ slug: s.slug, app: s.app, origin: s.origin, q: s.q.trim(), limit: s.limit, offset: s.offset });
       if (n === this.n) this.setState({ r, why: r.ok === false ? r.why : null });
     } catch (e) { if (n === this.n) this.setState({ why: e.message }); }
   }
@@ -104,6 +104,9 @@ export class DonationsTable extends React.Component {
           {clients.length > 1 ? <label>Client<select value={s.slug} onChange={(e) => this.set({ slug: e.target.value, app: '' })}>{clients.map((c) => <option key={c.slug} value={c.slug}>{c.label || c.slug}</option>)}</select></label> : null}
           <label>App<select id="dt-app" value={s.app} onChange={(e) => this.set({ app: e.target.value })}><option value="">All apps</option>
             {((r && r.apps) || []).map((a) => <option key={a.app} value={a.app}>{a.title}{a.market ? ' (market)' : ''} · {a.count}</option>)}</select></label>
+          {/* WHERE IT CAME FROM (kanban #672): Donate on the site, in an app, rounds, items */}
+          <label>From<select id="dt-origin" value={s.origin} onChange={(e) => this.set({ origin: e.target.value })}><option value="">Everywhere</option>
+            {((r && r.origins) || []).map((o) => <option key={o.origin} value={o.origin}>{o.title} · {o.count}</option>)}</select></label>
           <label>Part<div className="seg">{[['all', 'Whole'], ['protocol', 'Protocol'], ['app', 'App']].map(([k, t]) => <button type="button" key={k} className={s.part === k ? 'on' : undefined} onClick={() => this.setState({ part: k })}>{t}</button>)}</div></label>
           <label className="grow">Search<input {...field} id="dt-q" type="search" placeholder="player, round, entry or item" value={s.q} onChange={(e) => { const q = e.target.value; clearTimeout(this.t); this.setState({ q }); this.t = setTimeout(() => this.set({ q }), 300); }} /></label>
           <label>Rows<select id="dt-rows" value={s.limit} onChange={(e) => this.set({ limit: Number(e.target.value) })}>{[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}</select></label>

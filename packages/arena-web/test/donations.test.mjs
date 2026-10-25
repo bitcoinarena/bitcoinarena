@@ -102,6 +102,7 @@ test('the donations table: filters for app, part, search and rows; paging; a row
     market: false, item: null, round: '80b976dc184e5e9a'.padEnd(64, '0'), entry: 'e' + i, player: 'c8a6af2023b9194c'.padEnd(64, '1'), outpoint: 'o:' + i,
     fiat: { all: { chf: 0.0021 }, protocol: { chf: 0.0014 }, app: { chf: 0.0007 } }, ...extra });
   const answer = (q) => ({ ok: true, total: 60, offset: q.offset, limit: q.limit, apps: [{ app: 'nextblock', title: 'Tick Tock, Next Block', count: 50 }, { app: 'items', title: 'Items', count: 10 }],
+    origins: [{ origin: 'round', title: 'Rounds', count: 48 }, { origin: 'site', title: 'Donate on the site', count: 2 }],
     sums: { msat: '180000', protocolMsat: '120000', appMsat: '60000', fiat: { all: { chf: 0.13 }, protocol: { chf: 0.08 }, app: { chf: 0.05 } } },
     rows: [row(0), row(1, { item: 'turbo', round: null, app: 'nextblock' })] });
   const t = new DonationsTable({ clients: [{ slug: 'deva', label: 'dev a' }], cur: 'sat', query: async (q) => { asked.push(q); return answer(q); } });
@@ -109,7 +110,7 @@ test('the donations table: filters for app, part, search and rows; paging; a row
   await t.load();
   const html = () => renderToStaticMarkup(t.render());
   let h = html();
-  assert.deepEqual(asked[0], { slug: 'deva', app: '', q: '', limit: 10, offset: 0 }, 'ten rows by default (2026-10-22)');
+  assert.deepEqual(asked[0], { slug: 'deva', app: '', origin: '', q: '', limit: 10, offset: 0 }, 'ten rows by default (2026-10-22)');
   t.set({ limit: 25 }); await t.load();
   assert.match(h, /<div class="dt-sum"><b>60<\/b> donations · <b>180 sat<\/b><\/div>/);
   assert.match(h, /<option value="" selected="">All apps<\/option><option value="nextblock">Tick Tock, Next Block · 50<\/option><option value="items">Items · 10<\/option>/);
@@ -117,10 +118,15 @@ test('the donations table: filters for app, part, search and rows; paging; a row
   assert.match(h, /<span class="tag item">item<\/span><\/td><td class="mono">turbo<\/td>/, 'an item donation names its item');
   assert.match(h, /<button type="button" disabled="">‹ Prev<\/button><span>1–10 of 60 · page 1 of 6<\/span><button type="button">Next ›<\/button>/);
   t.set({ offset: 25 }); await t.load();
-  assert.deepEqual(asked.at(-1), { slug: 'deva', app: '', q: '', limit: 25, offset: 25 });
+  assert.deepEqual(asked.at(-1), { slug: 'deva', app: '', origin: '', q: '', limit: 25, offset: 25 });
   assert.match(html(), /<span>26–50 of 60 · page 2 of 3<\/span>/);
+  // WHERE IT CAME FROM (kanban #672): a filter by origin, its counts from the node
+  assert.match(h, /<label>From<select id="dt-origin"><option value="" selected="">Everywhere<\/option><option value="round">Rounds · 48<\/option><option value="site">Donate on the site · 2<\/option><\/select><\/label>/);
+  t.set({ origin: 'site' }); await t.load();
+  assert.deepEqual(asked.at(-1), { slug: 'deva', app: '', origin: 'site', q: '', limit: 25, offset: 0 });
+  t.set({ origin: '' });
   t.set({ app: 'items', limit: 50 }); await t.load();
-  assert.deepEqual(asked.at(-1), { slug: 'deva', app: 'items', q: '', limit: 50, offset: 0 }, 'a new filter starts at the first page');
+  assert.deepEqual(asked.at(-1), { slug: 'deva', app: 'items', origin: '', q: '', limit: 50, offset: 0 }, 'a new filter starts at the first page');
   t.state.part = 'protocol'; t.state.open = 0;
   h = html();
   assert.match(h, /<th class="n">Protocol part<\/th>/);
