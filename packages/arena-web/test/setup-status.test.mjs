@@ -19,18 +19,18 @@ test('every part under way, in words; a problem counted in the heading', () => {
     gateway: { ok: false, syncing: true, why: 'syncing' },
     updates: [{ what: 'the newest games and protocols in the advertisement', txid: '9a'.repeat(32), seen: true, confirmations: 3, needed: 6, counts: false }],
     oldBonds: [{ sats: '50000', maturity: 157600, blocksLeft: 41, back: false }] });
-  assert.match(html, /<h3>Setup <span class="bad">1 problem<\/span><\/h3>/);
-  assert.match(html, /id="setup-address"><span class="bad">!<\/span>[\s\S]*https:\/\/n\.example does not answer as your node \(ENOTFOUND\)/);
-  assert.match(html, /Test coins<\/b> <span class="sub">52,000 sat arrived, 2 confirmations/);
-  assert.match(html, /LND<\/b> <span class="sub">synced at block 157,559, 1 open channel, 1 opening/);
-  assert.match(html, /Gateway<\/b> <span class="sub">waiting for LND to sync/);
+  assert.match(html, /<h3>Setup<\/h3><span class="setup-pill bad">1 problem<\/span>/);
+  assert.match(html, /class="setup-step s-bad" id="setup-address"><span class="setup-ic" aria-hidden="true">!<\/span>[\s\S]*https:\/\/n\.example does not answer as your node \(ENOTFOUND\)/);
+  assert.match(html, /Test coins<\/b><span class="setup-text">52,000 sat arrived, 2 confirmations/);
+  assert.match(html, /LND<\/b><span class="setup-text">synced at block 157,559, 1 open channel, 1 opening/);
+  assert.match(html, /Gateway<\/b><span class="setup-text">waiting for LND to sync/);
   assert.match(html, /the newest games and protocols in the advertisement: 3 of 6 confirmations, in force at 6/);
   assert.match(html, /50,000 sat under your old key, locked for 41 more blocks \(until block 157,600\)/);
 });
 
 test('all done: complete; nothing to show: nothing', () => {
   const html = card({ address: { ok: true, url: 'https://n.example' }, lnd: { ok: true, synced: true, height: 1, channels: 2, pending: 0 }, gateway: { ok: true, federations: 1 } });
-  assert.match(html, /<h3>Setup <span class="ok">complete<\/span><\/h3>/);
+  assert.match(html, /<h3>Setup<\/h3><span class="setup-pill ok">Complete<\/span>/);
   assert.equal(card({}), '');
 });
 
@@ -38,7 +38,7 @@ test('LND: reached directly, over Tor, or not at all (a problem)', () => {
   const lnd = (via) => card({ lnd: { ok: true, synced: true, height: 5, channels: 1, pending: 0, via } });
   assert.match(lnd({ how: 'direct', at: '203.0.113.5:9735' }), /reached directly at 203\.0\.113\.5:9735/);
   assert.match(lnd({ how: 'tor', at: 'abc.onion:9735' }), /reached over Tor \(no open port needed\)/);
-  assert.match(lnd({ how: 'none', why: 'no Tor: the release has none' }), /<span class="bad">1 problem[\s\S]*other nodes cannot reach it \(no Tor: the release has none\)/);
+  assert.match(lnd({ how: 'none', why: 'no Tor: the release has none' }), /<span class="setup-pill bad">1 problem[\s\S]*other nodes cannot reach it \(no Tor: the release has none\)/);
 });
 
 test('the owner\'s Overview reads the setup\'s progress itself and again later (playtest 2026-10-25: "auch in der owners area")', async () => {
@@ -67,4 +67,13 @@ test('the owner area waits behind the setup screen while a part runs; it opens o
   g.setState({ entered: true });
   assert.match(renderToStaticMarkup(g.render()), /id="setup-banner"[\s\S]*Setup is still running\.[\s\S]*you can only use Overview, Services, Updates, Emergency code and Your login/);
   assert.deepEqual([...SETUP_OPEN_SECTIONS], ['overview', 'services', 'release', 'emergency', 'login']);
+});
+
+test('the coins the bond was made from count once the bond is on the chain; the card says how far the setup is (playtest 2026-10-25)', () => {
+  const html = card({ faucet: { seen: false, sats: 363000, txid: 'c6aeaba4bb3c' + '0'.repeat(52) }, bond: { seen: true, sats: 50000, confirmations: 19, counts: true, blocksToMaturity: 266, confirmBy: 157700 },
+    core: { interim: false }, address: { ok: true, url: 'https://n.example' } });
+  assert.match(html, /id="setup-faucet"[\s\S]*363,000 sat arrived; your bond was made from them/);
+  assert.match(html, /<span class="setup-pill ok">Complete<\/span>/, 'all four parts done');
+  const part = card({ core: { interim: true, sync: { blocks: 1, headers: 2, progress: 0.5 } }, address: { ok: true, url: 'https://n.example' } });
+  assert.match(part, /<span class="setup-pill wait">1 of 2 done<\/span><\/div><div class="setup-total" role="progressbar" aria-valuemin="0" aria-valuemax="2" aria-valuenow="1"><i style="width:50%"><\/i>/);
 });

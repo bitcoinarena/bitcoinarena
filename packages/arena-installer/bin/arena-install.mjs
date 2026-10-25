@@ -5,6 +5,7 @@
 //
 //     arena-install [--tunnel] [--port 7800] [--seat-port 8470] [--home ~/.arena-node]
 //     arena-install --update <arena-node-<version>-<os>-<arch>.tar.gz> [--home ~/.arena-node]
+//     arena-install --update-self [--home ~/.arena-node]   (the node to this release, when it is newer: the desktop app)
 //     arena-install --add-bond <sats> [--yes] [--home ~/.arena-node]
 //     arena-install --rebond <sats> [--yes] [--home ~/.arena-node]
 //     arena-install --join-federation <invite code> [--home ~/.arena-node]
@@ -55,6 +56,33 @@ const cloudflared = process.env.ARENA_CLOUDFLARED || 'cloudflared';   // the rel
 // (measured in the Windows VM, rc.21 --update: after "Updated: ... the same node answers", an immediate process.exit aborted on
 // "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c, line 76"). Awaited: nothing after the command runs.
 const finish = (code) => new Promise(() => { setTimeout(() => process.exit(code), 1500); });
+
+// THE APP'S OWN RELEASE OVER AN OLDER NODE (the owner's playtest 2026-10-25: "When I execute 2.9.2 it doesn't update the node, it just
+// starts the 1.9.1"): `--update-self` moves the installed node to the release this installer runs from - the one the app copied out of
+// itself - when it is newer than the node's; the same update as --update (update.js), without a download to check (the release is here)
+if (args.includes('--update-self')) {
+  const { updateNode } = await import('../src/update.js');
+  const { newerVersion } = await import('../../arena-node/src/release-latest.js');
+  const { readFileSync, existsSync } = await import('node:fs');
+  const s = state.read();
+  const versionOf = (dir) => { try { return readFileSync(`${dir}/VERSION`, 'utf8').trim(); } catch { return null; } };
+  const from = s.release && s.release.path;
+  const have = from ? versionOf(from) : null, mine = versionOf(release);
+  if (!s.service) { console.log('Not updated: no node is installed here'); await finish(1); }
+  else if (from === release || !mine || (have && !newerVersion(mine, have))) { console.log(`Up to date: the node runs ${have || from || 'this release'}`); await finish(0); }
+  else {
+    const { installUpdater, updaterLauncherStale } = await import('../src/launchers.js');
+    const { installProgram } = await import('../src/service.js');
+    const { serviceFile } = await import('../src/node-services.js');
+    const installUpdaterFn = async (o) => { const file = serviceFile('updater', { home, platform: process.platform, env: process.env });
+      return existsSync(file) && !updaterLauncherStale(file) ? { ok: true, already: true } : installUpdater({ ...o, installProgram }); };
+    const r = await updateNode({ home, newRelease: release, port: (s.reach && s.reach.port) || (s.service && s.service.port) || seatPort,
+      node: `${release}/runtime/${process.platform === 'win32' ? 'node.exe' : 'node'}`, installUpdaterFn });
+    console.log(r.ok ? `Updated: ${have || r.from} -> ${mine}; the same node answers (${r.identity.slice(0, 16)}...)`
+      : `${r.rolledBack ? 'Rolled back' : 'Not updated'}: ${r.why}`);
+    await finish(r.ok ? 0 : 1);
+  }
+}
 
 // AN UPDATE: checked, unpacked beside the running release, the node moved to it (update.js)
 if (args.includes('--update')) {

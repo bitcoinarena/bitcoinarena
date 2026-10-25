@@ -31,6 +31,7 @@ on run
 		return
 	end try
 	if r is "installed" then
+		updateIfNewer()
 		noProgress()
 		statusDialog()
 		closeApp()
@@ -90,6 +91,36 @@ on noProgress()
 	set progress description to ""
 	set progress additional description to ""
 end noProgress
+
+-- THIS APP'S RELEASE OVER AN OLDER NODE (the owner's playtest 2026-10-25: "When I execute 2.9.2 it doesn't update the node, it just
+-- starts the 1.9.1"): when the app carries a newer release than the node runs, the node is updated to it first, in the progress window
+on updateIfNewer()
+	set newer to ""
+	try
+		set newer to sh("newer")
+	end try
+	if newer is "" then return
+	set AppleScript's text item delimiters to " "
+	set parts to text items of newer
+	set AppleScript's text item delimiters to ""
+	set progress total steps to 3
+	set progress completed steps to 2
+	set progress description to "Updating your node…"
+	set progress additional description to "From " & (item 1 of parts) & " to " & (item -1 of parts) & ". This takes a minute or two."
+	set u to ""
+	try
+		set u to sh("update")
+	on error msg
+		set u to msg
+	end try
+	noProgress()
+	if u starts with "Updated" then
+		display notification "Your node runs " & (item -1 of parts) & " now." with title "Bitcoin Arena"
+	else if u does not start with "Up to date" then
+		activate
+		display dialog "Your node was not updated: " & u with title "Bitcoin Arena" buttons {"OK"} default button 1 with icon caution
+	end if
+end updateIfNewer
 
 on fail(msg)
 	display dialog msg with title "Bitcoin Arena" buttons {"OK"} default button 1 with icon stop
