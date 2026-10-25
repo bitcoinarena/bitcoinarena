@@ -115,7 +115,7 @@ test('done: how the node runs and is reached, the owner page, Lightning and the 
   assert.match(none, /http:\/\/127\.0\.0\.1:9090\/Dashboard\/owner<\/code> \(this computer only/);
 });
 
-// KANBAN #635 (the owner 2026-10-25): testcoins from the Arena faucet or the guided way; the gateway set up while Bitcoin Core still syncs;
+// KANBAN #635 (2026-10-25): testcoins from the Arena faucet or the guided way; the gateway set up while Bitcoin Core still syncs;
 // the Done page names Bitcoin Arena and sends the owner to the dashboard for the confirmations
 test('#635: the faucet asked and the deposit checked; a refusal opens the guided way; a syncing gateway counts; the dashboard named', async () => {
   const posts = [];

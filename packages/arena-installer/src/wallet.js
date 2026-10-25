@@ -35,7 +35,7 @@ export const payoutKeyOf = (seed) => schnorr.getPublicKey(taggedHash(PAYOUT_KEY_
 /** The Electrum script hash of an output script: sha256, reversed, hex. */
 export const scriptHash = (spk) => Buffer.from(createHash('sha256').update(spk).digest()).reverse().toString('hex');
 
-// A DEPOSIT COUNTS ONCE IT IS IN THE MEMPOOL (kanban #635, the owner 2026-10-25: "sobald die Transaktion da ist weiter erlauben"): with
+// A DEPOSIT COUNTS ONCE IT IS IN THE MEMPOOL (kanban #635, 2026-10-25: "sobald die Transaktion da ist weiter erlauben"): with
 // Bitcoin Core the wallet read only the UTXO set, so the installer waited for the deposit's first block. bitcoind has no address
 // index, so its mempool is read transaction by transaction - each one once per bitcoind (kept here; a later read asks only for the
 // ones that are new) - and the outputs to this script are coins at height 0.

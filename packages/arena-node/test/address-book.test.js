@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WHERE A NODE IS NOW, OFF CHAIN (kanban #562, the owner 2026-10-21 "1 default, 2 for updates so no needed updates"): a node's signed
+// WHERE A NODE IS NOW, OFF CHAIN (kanban #562, 2026-10-21 "1 default, 2 for updates so no needed updates"): a node's signed
 // address announcement - checked, the newest kept across a restart, preferred to the census endpoint, and pushed to the other seats.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

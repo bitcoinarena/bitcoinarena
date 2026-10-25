@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// OUR OWN TESTNET4 BLOCK API FOR INSTALLER NODES (kanban #656, the owner 2026-10-25: "also do our own API for the testnet installer"): an
+// OUR OWN TESTNET4 BLOCK API FOR INSTALLER NODES (kanban #656, 2026-10-25: "also do our own API for the testnet installer"): an
 // installer node in Electrum mode reads headers and its addresses from an Electrum server and whole blocks from an Esplora API
 // (arena-installer/src/chain-bridge.js); on 2026-10-25 mempool.space answered neither for hours. This serves the Esplora routes the
 // bridge reads, from a testnet4 bitcoind on the public chain - read only, nothing about any node stored:

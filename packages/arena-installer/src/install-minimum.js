@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE INSTALLER'S MINIMUM BOND (spec §23A.3a, kanban #543, the owner 2026-10-19: "new installs should increase their minimum so the new
+// THE INSTALLER'S MINIMUM BOND (spec §23A.3a, kanban #543, 2026-10-19: "new installs should increase their minimum so the new
 // node remains useful from the start"): max(bond_min_guardian, B*_net) rounded up to 10,000 sat, as the seats compute it from the
 // census and the federation records (GET /capacity: network.installMinimumBondSats). Asked of two seats; when they differ, the larger
 // (a node bonded above the network's target loses nothing); when no seat answers, the floor - said by name, never silently.

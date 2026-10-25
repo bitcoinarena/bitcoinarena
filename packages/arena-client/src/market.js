@@ -183,7 +183,7 @@ export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onE
     }
   };
   const holds = (n) => kinds.every((k) => tookLock.get(k.door).has(n));
-  // PLACED ONCE ONE SEAT HOLDS IT (the owner 2026-10-23 ~19:15Z, "Ja, nach 1 Seat"; "Der lock wird immernoch refunded wenn es keine 5
+  // PLACED ONCE ONE SEAT HOLDS IT (2026-10-23 ~19:15Z, "Ja, nach 1 Seat"; "Der lock wird immernoch refunded wenn es keine 5
   // bestätigen"): the order counts as placed as soon as the federation accepted its lock and the first seat holds its entry and its
   // locks - the money is in the lock, and no seat can say so without it. The other seats get theirs in the background (`handing`); an order
   // fewer than 5 seats hold never trades, and its lock comes back as an unfilled order's does. Each seat's own chain: its entry, then -
@@ -399,7 +399,7 @@ export function scalarValueLine(value, unit) {
  * THE ORDERS KEPT OUT OF SIGHT WHILE THEIR RESULT IS READ: of the lines (marketLines), the entries still 'waiting' or 'unknown'
  * whose order is
  *   - one whose window closed before this page loaded (`loadedMs`) and whose round's outcome this page has not asked for yet
- *     (`read`: the round ids asked at least once) - the owner 2026-10-20 23:13 local, phone, UI 269: "At page load it shows waiting
+ *     (`read`: the round ids asked at least once) - 2026-10-20 23:13 local, phone, UI 269: "At page load it shows waiting
  *     for result, then it disappears" - his two orders of 20:45-21:00, settled and paid two hours before, were listed under
  *     My orders as "waiting for the result" until the page's first outcome read, 10 s after load, moved them to History;
  *   - or, as before (2026-10-17, UI 211), an order read back from the seats whose window closed more than 10 min ago, for its

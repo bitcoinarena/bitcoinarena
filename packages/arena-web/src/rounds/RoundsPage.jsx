@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NODE'S ROUNDS PAGE IN REACT (kanban #564): what pages/rounds.html draws from /api/rounds - the upcoming rounds with their start,
 // end, entry and the committees drawn for them; the finished ones opened one by one for who played and who won (/api/round-result) -
-// as stat cards and round cards. A class component; the page's only drawing (kanban #564, the owner 2026-10-21: "no fall backs").
+// as stat cards and round cards. A class component; the page's only drawing (kanban #564, 2026-10-21: "no fall backs").
 import React from 'react';
 
 export const sat = (msat) => `${(BigInt(msat || '0') / 1000n).toLocaleString('en-US')} sat`;

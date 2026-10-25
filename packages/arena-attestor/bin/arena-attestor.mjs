@@ -68,7 +68,7 @@ const keepSamples = () => {
 };
 const words = new Map();               // round hex -> this attestor's word (or { none: why })
 const posted = new Map();              // round hex -> Set of seats that hold its attestation
-// A SEAT THAT HOLDS NO SUCH ROUND (the owner 2026-10-20 "Also fix this" - measured: the test host-only rounds went to the 7 second-host seats every
+// A SEAT THAT HOLDS NO SUCH ROUND (2026-10-20 "Also fix this" - measured: the test host-only rounds went to the 7 second-host seats every
 // 5 s, 7,834 refusals "404 this node holds no such round" in attestor A's log): asked again only after NO_ROUND_RETRY_MS, logged once
 const NO_ROUND_RETRY_MS = Number(arg('no-round-retry-ms', '300000'));
 const noRound = new Map();             // round hex -> Map seat -> ms it is asked again

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE GAME DEVELOPERS' KEYS INSTALLED ON A NODE (kanban #582, the owner 2026-10-22: "es soll unter donations für game devs erscheinen, wenn ein
+// THE GAME DEVELOPERS' KEYS INSTALLED ON A NODE (kanban #582, 2026-10-22: "es soll unter donations für game devs erscheinen, wenn ein
 // private key eines game devs auf dem Node installiert ist und neue Apps signieren kann. Nur dann."): the owner installs a developer's
 // Ed25519 key (the PKCS#8 file arena-donor writes, or its seed); the node keeps it beside its store, readable by the node only, and signs an
 // app's next version with it - for the apps whose manifest names that key, and no other. Nothing here ever answers a secret.

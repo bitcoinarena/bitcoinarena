@@ -287,7 +287,7 @@ async fn main() -> anyhow::Result<()> {
         // reserve key - a 5-of-7 key nobody holds alone - can claim; and that claim, FROST-signed by the seats, into a reserve output
         "receive-to-key" => receive_to_key(&a, &client, lnv2).await,
         "claim-incoming" => claim_incoming(&a, &client, lnv2, &api).await,
-        // THE SEAT'S SIDE OF AN E-CASH EXCHANGE BETWEEN FEDERATIONS (kanban #614, the owner 2026-10-24: "Kein Lightning swap, sondern übertragen
+        // THE SEAT'S SIDE OF AN E-CASH EXCHANGE BETWEEN FEDERATIONS (kanban #614, 2026-10-24: "Kein Lightning swap, sondern übertragen
         // in die andere federation"): the player's notes of one federation reissued into the seat's client there (ecash-receive), the seat's
         // notes of the other federation handed back (ecash-send), and what the seat's client holds (balance)
         "ecash-send" => ecash_send(&a, &client).await,

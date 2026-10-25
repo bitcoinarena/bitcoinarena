@@ -22,7 +22,7 @@ test('an empty node: every category and period is there, at 0, with 30 days of c
   assert.equal(typeof d.node, 'string');
 });
 
-// THE PAGE IS REACT'S (kanban #564, the owner 2026-10-21: "Delete the old html code of those components you have ported, no fall backs"): the
+// THE PAGE IS REACT'S (kanban #564, 2026-10-21: "Delete the old html code of those components you have ported, no fall backs"): the
 // page reads dashboard.json and hands it to /dashboard/react.js; how every category is drawn is packages/arena-web's dashboard test.
 test('the page reads dashboard.json and hands it to the React dashboard, with no drawing of its own', () => {
   const h = dashboardHtml();

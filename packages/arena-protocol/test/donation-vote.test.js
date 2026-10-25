@@ -74,7 +74,7 @@ test('in force for new rounds only: before validFrom the parent, from it the app
   assert.ok(now.approvedBy);
 });
 
-test('a proposer who denies their own proposal withdraws it: refused, whoever has not voted yet (the owner 2026-10-22: "This is no longer open")', async () => {
+test('a proposer who denies their own proposal withdraws it: refused, whoever has not voted yet (2026-10-22: "This is no longer open")', async () => {
   const p = proposal(2);
   const t = await tallyDonationProposal({ proposal: p, approvals: [approval(p, 2, 157289, false)], parent: PARENT, verifySecp256k1 });
   assert.deepEqual([t.state, t.why, t.denyBps], ['refused', 'withdrawn by its proposer', 3333]);

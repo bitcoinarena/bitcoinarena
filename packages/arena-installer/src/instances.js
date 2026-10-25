@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// HOW MANY NODES ON THIS MACHINE (kanban #596, the owner 2026-10-23: "installer command line option und Option in der UI n Instanzen zu
+// HOW MANY NODES ON THIS MACHINE (kanban #596, 2026-10-23: "installer command line option und Option in der UI n Instanzen zu
 // installieren, Standard 1, und es wird angezeigt dass ab 10 die nodes eigene federation anlegen werden. Alles nur gültig für Testnet4";
 // "bei mehr als 5 nodes eine checkbox anzeigen, bzw. in der console automatisch anzeigen: RAM disk für fedimint aktivieren? Default ja").
 // The count and the RAM disk choice, checked the same for `arena-install --instances N` and the wizard's intro; each further node is
@@ -13,7 +13,7 @@ export const PORT_STEP = 100;
 
 export const MACHINE_NAME_MAX = 40;
 /**
- * THIS MACHINE'S NAME, THE OPERATOR'S OWN (kanban #621, the owner 2026-10-24: "give your machine a custom name when installing multiple
+ * THIS MACHINE'S NAME, THE OPERATOR'S OWN (kanban #621, 2026-10-24: "give your machine a custom name when installing multiple
  * instances, and that name is displayed in health - machines. This is asked in the installer, all platforms"): every node of the install
  * names it (ARENA_MACHINE_NAME, machine.js), and the health page's machines section shows it. Trimmed, at most MACHINE_NAME_MAX
  * characters, no line break, quote, backslash or '=' (it is one line of an environment file). Empty: no name. { ok, name } or { ok: false, why }.

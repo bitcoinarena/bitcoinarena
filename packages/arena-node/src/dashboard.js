@@ -233,7 +233,7 @@ th{color:var(--dim);font-weight:600}.ok{color:var(--ok)}.bad{color:var(--bad)}.w
 </style></head><body>
 <div id="app"></div>
 <script type="module">
-// THE PAGE IS REACT'S (kanban #564, the owner 2026-10-21: "Delete the old html code of those components you have ported, no fall backs"): the
+// THE PAGE IS REACT'S (kanban #564, 2026-10-21: "Delete the old html code of those components you have ported, no fall backs"): the
 // bundle beside it (/dashboard/react.js, packages/arena-web/src/dashboard) draws all of it; this script reads and hands in what it draws
 import './dashboard/react.js';
 const json=async(u)=>{const r=await fetch(u,{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);return r.json()};

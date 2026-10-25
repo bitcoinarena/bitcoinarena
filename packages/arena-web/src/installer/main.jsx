@@ -4,7 +4,7 @@
 // current step into its section and answers true - every other step is taken down, so its timers stop - and answers false for the roles,
 // which mount(step, element, props) draws into their list (with onCustody). One root per element, drawn again on every load() with the
 // new state. The page loads this file before its own script (a plain script, not a module), so the first load() already finds it; the
-// page draws no step of its own (the owner 2026-10-21: "no fall backs").
+// page draws no step of its own (2026-10-21: "no fall backs").
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { StartStep, RolesStep, AppsStep, SeedStep, EmergencyStep, OwnerStep, PromiseStep, StepBar, SetupRefused } from './WizardSteps.jsx';

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ARENA PAGE, BUILT BY THE ARENA (kanban #569, the owner 2026-10-21: "The Arena keeps only its own page"; it was Unity's WebGL template,
+// THE ARENA PAGE, BUILT BY THE ARENA (kanban #569, 2026-10-21: "The Arena keeps only its own page"; it was Unity's WebGL template,
 // a copy of src/arena-ui inside Next Block's Unity project, filled by Unity or by hand at each deploy). The page is src/arena-ui, each
 // app's own page parts at games/<app>/ (packages/<app>/page/*-page.{js,css,html}), and Next Block's WebGL client as the app published it
 // (its release, pinned by tools/pin-app-webgl.mjs) at the paths its build names (Build/, ServerData/, StreamingAssets/,

@@ -1,4 +1,4 @@
--- THE EXPLORER'S STORE (kanban #624, the owner 2026-10-24: "It should all be cached not be fetched from a node"): every transaction as the
+-- THE EXPLORER'S STORE (kanban #624, 2026-10-24: "It should all be cached not be fetched from a node"): every transaction as the
 -- nodes last described it, merged; written by the minute's read only when it changed
 CREATE TABLE IF NOT EXISTS txs (
   id          TEXT PRIMARY KEY,

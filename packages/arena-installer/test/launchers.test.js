@@ -55,7 +55,7 @@ test('Windows: start, stop and owner-page scripts, and three Start menu shortcut
   for (const n of ['Start Bitcoin Arena.lnk', 'Stop Bitcoin Arena.lnk', 'Bitcoin Arena owner page.lnk']) assert.ok(ps.includes(n), n);
 });
 
-// THE NAME PEOPLE SEE (kanban #635, the owner 2026-10-25: "die Plattform sollte immer bitcoin-arena sein, nicht Arena-node"): an install of the
+// THE NAME PEOPLE SEE (kanban #635, 2026-10-25: "die Plattform sollte immer bitcoin-arena sein, nicht Arena-node"): an install of the
 // old name gets the new launchers, and its old app and scripts are removed
 test('the old "Arena Node" app and scripts give way to "Bitcoin Arena" (kanban #635)', () => {
   const home = mkdtempSync(join(tmpdir(), 'm-')), apps = mkdtempSync(join(tmpdir(), 'a-'));

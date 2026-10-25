@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ARENA BUILDS ITS OWN PAGE (kanban #569, the owner 2026-10-21: "The Arena keeps only its own page"; it was Unity's WebGL template, kept a
+// THE ARENA BUILDS ITS OWN PAGE (kanban #569, 2026-10-21: "The Arena keeps only its own page"; it was Unity's WebGL template, kept a
 // copy of src/arena-ui by tools/sync-arena-ui.mjs): the page is src/arena-ui and each app's page parts, Next Block's Unity project holds
 // no copy of it, and the page is filled with the app's pinned client - its names, versions, sizes and every file's hash.
 import { test } from 'node:test';
@@ -18,7 +18,7 @@ test('the page is src/arena-ui and the apps\' page parts; Next Block\'s Unity pr
   assert.ok(s['games/nextblock/unity-page.js'].endsWith('packages/nextblock/page/unity-page.js'));
   assert.ok(s['games/btc-updown/market-page.js'].endsWith('packages/btc-updown/page/market-page.js'));
   assert.ok(!Object.keys(s).some((k) => CLIENT_PATHS.some((p) => k === p || k.startsWith(p + '/'))), 'no client file comes from the Arena\'s source');
-  // THE UNITY PROJECT IS THE APP'S REPOSITORY'S (the owner 2026-10-21: "Do not leave the Unity project in bitcoin-arena")
+  // THE UNITY PROJECT IS THE APP'S REPOSITORY'S (2026-10-21: "Do not leave the Unity project in bitcoin-arena")
   assert.equal(existsSync(new URL('unity-proto', ROOT)), false, 'no unity-proto');
   assert.equal(existsSync(new URL('packages/nextblock/unity', ROOT)), false, 'no copy of it in packages/nextblock');
   const lock = JSON.parse(readFileSync(new URL('apps.lock.json', ROOT), 'utf8'));

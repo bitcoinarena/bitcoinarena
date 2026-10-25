@@ -77,7 +77,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // THE CHAIN'S CENSUS FIRST: a seat that runs no series - federation T2's relay seats hold 8 old rounds, census 156768
   // with 14 nodes, before T2's own bonds, so they never built T2's record - takes the chain's census before any held round's
   chainFirst = false,
-  // THE RECORDS OUTLIVE A RESTART (kanban #552/#557, the owner 2026-10-20: "Federation 337ae01a is missing now" - a seat held its records in
+  // THE RECORDS OUTLIVE A RESTART (kanban #552/#557, 2026-10-20: "Federation 337ae01a is missing now" - a seat held its records in
   // memory only, and after a roll of all seats the first gathering found too few of A's guardians up to sign): `store` { load() ->
   // [{ federation, record hex }], save(federation, record hex) }; restore() checks each saved record against the census at its own
   // height before it is kept again, as a mirrored one is
@@ -191,7 +191,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     if (b.ok) return b;
     return chainBasis(atHeight) || b;
   }
-  // A FEDERATION THE BASIS DOES NOT NAME IS READ FROM THE CHAIN'S CENSUS (kanban #549, the owner 2026-10-20 ~06:55Z: "federation shows as
+  // A FEDERATION THE BASIS DOES NOT NAME IS READ FROM THE CHAIN'S CENSUS (kanban #549, 2026-10-20 ~06:55Z: "federation shows as
   // draining on b18947f085d4 but no new federation is created ... This needs to be fixed automatically each time a federation is shown as
   // draining, it may not be a manual step"): measured, every round the seats held named a census frozen before the successor's guardian
   // adverts (confirmed ~157,071), so no seat's basis named 4dc88be7 and its guardians never gathered its record. Per federation: the
@@ -372,7 +372,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
           const entries = await Promise.race([Promise.resolve(censusAt(h)).catch(() => null), new Promise((ok) => setTimeout(() => ok(null), 5000))]);
           if (entries) v = verifyFederationRecord(bytes, { census: entries, verify, inviteFederationId });
         }
-        // NO CENSUS YET (the owner 2026-10-20: "It is also not reading the federations at all reliably so everything gateway related is never
+        // NO CENSUS YET (2026-10-20: "It is also not reading the federations at all reliably so everything gateway related is never
         // shown" - measured 12:48Z: six test host seats restarted one by one under load 18 held no record for minutes, their chain view not
         // built at the 20 s restore, and gathering asked guardians that had restarted too): a record this seat kept was checked in full
         // when it was kept, so it is read back against its own guardian list - every signature and the threshold checked again, the

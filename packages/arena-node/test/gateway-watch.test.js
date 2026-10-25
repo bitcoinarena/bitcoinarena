@@ -111,7 +111,7 @@ test('routed volume: incoming contracts credited to the gateway whose module key
   assert.equal(v.ranked[0].node, keys[1].hex, 'more routed volume ranks first, before the larger capacity of gateway 0');
 });
 
-// kanban #552 (the owner 2026-10-20: "Shows 0 of 2 again. Why is this so hard to fix?"): every restart cleared the epoch's probes
+// kanban #552 (2026-10-20: "Shows 0 of 2 again. Why is this so hard to fix?"): every restart cleared the epoch's probes
 test('the epoch\'s probes outlive a restart: a new watch reads what the last one kept and seats the same gateway without a probe', async () => {
   const kept = new Map();
   const keep = { load: async (f) => Object.fromEntries([...kept].filter(([k]) => k.startsWith(f)).map(([k, v]) => [k.split(':')[1], v])), save: async (f, e, rows) => { kept.set(`${f}:${e}`, JSON.parse(JSON.stringify(rows))); } };
@@ -136,7 +136,7 @@ test('the epoch\'s probes outlive a restart: a new watch reads what the last one
   assert.deepEqual((await make().view()).seated, []);
 });
 
-// the owner 2026-10-20, hard rule: "All federations need 2 of 2 gateways, draining gateways at least 1"
+// 2026-10-20, hard rule: "All federations need 2 of 2 gateways, draining gateways at least 1"
 test('a draining federation needs one gateway seat: "1 of 1" seated from one operator; an open one still two', async () => {
   const claims = { 0: claimOf(0) };
   const entries = keys.map((k, i) => ({ pubkey: Uint8Array.from(Buffer.from(k.hex, 'hex')), bondSats: 50000n, advert: { endpoint: `https://seat${i}.example`, operatorId: `op${i}` } }));
@@ -156,7 +156,7 @@ test('a draining federation needs one gateway seat: "1 of 1" seated from one ope
   assert.deepEqual([w.seats, w.seated.length, w.empty], [2, 1, 1]);
 });
 
-// kanban #559 (the owner 2026-10-20: "Fix all of it. and also rotate the guardians daily every 144 blocks"): the routed volume, the stream's
+// kanban #559 (2026-10-20: "Fix all of it. and also rotate the guardians daily every 144 blocks"): the routed volume, the stream's
 // index and the seats ranked per epoch outlive a restart; the seats rotate, last epoch's holders stepping back
 test('volume, stream index and the seats of each epoch outlive a restart; the seats rotate every epoch', async () => {
   const probes = new Map(); let state = null;

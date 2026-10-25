@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OWNER PAGE'S ROLES (kanban #563 tiles, drawn only by React since kanban #564, the owner 2026-10-21: "Delete the old html code of those
+// THE OWNER PAGE'S ROLES (kanban #563 tiles, drawn only by React since kanban #564, 2026-10-21: "Delete the old html code of those
 // components you have ported, no fall backs"): what the page hands the React screen - its element, the node, the doors it reads and the
 // owner's signed requests. The tiles, the switches and the save bar themselves are arena-web's (test/roles.test.mjs).
 import { test } from 'node:test';

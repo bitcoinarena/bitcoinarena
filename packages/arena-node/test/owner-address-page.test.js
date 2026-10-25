@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OWNER PAGE'S ADDRESS CARD (kanban #563 / #562 2C), drawn only by React since kanban #564 (the owner 2026-10-21: "no fall backs"):
+// THE OWNER PAGE'S ADDRESS CARD (kanban #563 / #562 2C), drawn only by React since kanban #564 (2026-10-21: "no fall backs"):
 // what the page hands the screen - the owner's signed requests to /owner/reach. How the node is reached, the warning while it changes at
 // every restart, the ways to switch and the Cloudflare login link are arena-web's (test/address.test.mjs).
 import { test } from 'node:test';

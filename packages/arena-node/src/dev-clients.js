@@ -37,7 +37,7 @@ export function gameOfRow(r, { gameOf = () => null, itemOf = null, gameByName = 
   if (r.itemGame && gameByName) { const g = gameByName(String(r.itemGame)); if (g) return g; }
   return itemOf ? itemOf(String(r.entryId || '')) : null;
 }
-// THE COUNTS AT ONE PEEK (kanban #578, the owner 2026-10-22: "also display the number of donations for protocol devs and number of ingame
+// THE COUNTS AT ONE PEEK (kanban #578, 2026-10-22: "also display the number of donations for protocol devs and number of ingame
 // items, number of market rounds"; "add the item that is being purchased ... group it by game and item name"): `protocolDonations`, and
 // per game its donations, its distinct rounds (`rounds`; a market's are market rounds, `market: true`), its items bought (`items`) and
 // those items grouped by item (`itemsBy`: [{ item, donations, msat }], the most given first)

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// EVERY GUARDIAN A FEDERATION'S INVITES NAME, ONE INVITE FOR A JOIN THAT COULD NOT READ THE CONFIG (the owner 2026-10-20 18:0xZ: "Fix the issue that it
+// EVERY GUARDIAN A FEDERATION'S INVITES NAME, ONE INVITE FOR A JOIN THAT COULD NOT READ THE CONFIG (2026-10-20 18:0xZ: "Fix the issue that it
 // connects to a wallet/guardian that is offline" - federation 4dc88be7's invite named only fed2-8, whose guardian had stopped at 07:56Z, so
 // every new wallet there failed with "Failed to download client config" while 6 of its 7 guardians ran). Every invite this client sees -
 // a round's, a remembered one, each seat's federation record (read here even before the record can be verified: only the config is

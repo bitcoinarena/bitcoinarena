@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A GRID ANNOUNCED TO ANY SEAT (kanban #560, the owner 2026-10-20: "it will work on future testnet and mainnet with nodes not operated by us"):
+// A GRID ANNOUNCED TO ANY SEAT (kanban #560, 2026-10-20: "it will work on future testnet and mainnet with nodes not operated by us"):
 // POST /expected takes the grid's signed series line and its publication transaction; the seat keeps it, and GET /expected and GET /pending
 // name it, only when the line is a grid its creator signed and the transaction carries that series' publication output.
 import test from 'node:test';

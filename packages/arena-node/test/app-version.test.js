@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN APP'S DONATION SPLIT, SIGNED BY ITS DEVELOPER (kanban #582, the owner 2026-10-22: only when the game dev is logged in): the browser signs the next version - version + 1, the
+// AN APP'S DONATION SPLIT, SIGNED BY ITS DEVELOPER (kanban #582, 2026-10-22: only when the game dev is logged in): the browser signs the next version - version + 1, the
 // version it replaces as its parent, the new set - with the app's developer key from its app-keys folder, and hosts it at once; it
 // stands as an update. Only the newest version, only with the app's own key, only a set that stands and is new.
 import test from 'node:test';

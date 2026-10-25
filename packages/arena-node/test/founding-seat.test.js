@@ -146,13 +146,13 @@ test('the notice trigger: a standing notice that leaves F CRITICAL (four) or DRA
   assert.equal(statusFor({ nominal: 10, seated: 9 }).status, 'OPEN');
 });
 
-test('guardingOpenOf: an OPEN federation at load >= 1 holds nobody back (the owner 2026-10-22: "Also when federation is over loaded?")', () => {
+test('guardingOpenOf: an OPEN federation at load >= 1 holds nobody back (2026-10-22: "Also when federation is over loaded?")', () => {
   const both = (lf, lg) => [...guardingOpenOf({ entries: sEntries, held: [{ federation: toHex(F), status: 'OPEN', load: lf }, { federation: toHex(G), status: 'OPEN', load: lg }], except: null })].sort();
   const all = both(0.5, 0.5);
   assert.ok(all.length >= 1, 'under load: its guardians guard it');
   assert.deepEqual(both(4.33, 4.33), all, 'overloaded, but no node advertises a free founding slot: nobody is freed (kanban #599)');
   assert.deepEqual(both(0.99, 0.99), all, 'just under 1 is not overloaded');
-  // WITH A FREE SLOT (kanban #599, the owner 2026-10-23 "Nur mit freiem Slot"): every node advertising guardian_capable 2 is freed by an overloaded federation
+  // WITH A FREE SLOT (kanban #599, 2026-10-23 "Nur mit freiem Slot"): every node advertising guardian_capable 2 is freed by an overloaded federation
   const slotted = sEntries.map((e) => ({ ...e, advert: { ...e.advert, foundingSlot: true } }));
   const bothSlot = (lf, lg) => [...guardingOpenOf({ entries: slotted, held: [{ federation: toHex(F), status: 'OPEN', load: lf }, { federation: toHex(G), status: 'OPEN', load: lg }], except: null })].sort();
   assert.deepEqual(bothSlot(4.33, 4.33), [], 'both overloaded and every node has a free slot: every guardian is free for a founding');

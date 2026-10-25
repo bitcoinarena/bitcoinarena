@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ARENA PINS AN APP'S WEBGL CLIENT (kanban #569, the owner 2026-10-21: "The Arena page loads that build like any other app client,
+// THE ARENA PINS AN APP'S WEBGL CLIENT (kanban #569, 2026-10-21: "The Arena page loads that build like any other app client,
 // hash-pinned"). Next Block publishes its WebGL client as a GitHub release of a tester/arena-app-next-block (its
 // tools/publish-webgl.mjs: the files, and webgl.json naming each one's SHA-256). This takes that release, recomputes every file's SHA-256
 // - and for a brotli .unityweb the SHA-256 of its unpacked bytes, which is what a browser hands the page - refuses any file that is not

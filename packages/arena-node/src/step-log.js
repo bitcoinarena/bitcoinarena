@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// EVERY STEP OF AN ORDER, WITH ITS TIME, IN THE SEAT'S LOG (kanban #618, the owner 2026-10-24: "Bei der Node musst du jeden logischen Step mit
+// EVERY STEP OF AN ORDER, WITH ITS TIME, IN THE SEAT'S LOG (kanban #618, 2026-10-24: "Bei der Node musst du jeden logischen Step mit
 // Timestamps dokumentieren im Log damit wir Delays in zukunft besser analysieren können - bei jeder Order (bzw Lock)"). One line per
 // request, written when its answer leaves - every return path, refusals too:
 //

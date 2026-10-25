@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ROUNDS PAGE HANDS ITS DATA TO REACT (plan comment 298, Go 2026-10-05; kanban #564, the owner 2026-10-21: "Delete the old html code of
+// THE ROUNDS PAGE HANDS ITS DATA TO REACT (plan comment 298, Go 2026-10-05; kanban #564, 2026-10-21: "Delete the old html code of
 // those components you have ported, no fall backs"). The page's script runs as it is, on a small fake page (no jsdom, by decision), with
 // window.ArenaRounds faked: what is measured is what it hands the React page - /api/rounds as read, the words of an unreadable node, and a
 // readResult that reads api/round-result for one round and says why it could not. How the rounds, players and sats are drawn is

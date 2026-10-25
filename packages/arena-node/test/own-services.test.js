@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// EVERY SERVICE, ON EVERY NODE (kanban #563, the owner 2026-10-21: "563 must contain all services even if it's custom installed"): the
+// EVERY SERVICE, ON EVERY NODE (kanban #563, 2026-10-21: "563 must contain all services even if it's custom installed"): the
 // seat's own view of what it runs and reaches, each probed - for a node set up by hand as much as for an installed one.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

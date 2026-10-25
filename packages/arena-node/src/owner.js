@@ -26,7 +26,7 @@ const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 /** The owner's secret key from the 32 bytes the 24 words encode. */
 export const ownerSecretFromSeed = (seed) => taggedHash(OWNER_KEY_TAG, seed);
-// A NODE DRIVEN BY NOSTR (kanban #653, the owner 2026-10-25: "Nostr basically drives the entire node" - "Only allow nsec then"): its seed comes
+// A NODE DRIVEN BY NOSTR (kanban #653, 2026-10-25: "Nostr basically drives the entire node" - "Only allow nsec then"): its seed comes
 // from the owner's nsec on this path (the installer, arena-installer/src/seed.js seedOfNsec) and the nsec is its identity, so the owner page signed in with that nsec
 // makes what the words would - the emergency code - and the same nsec restores the node. The owner file says so (nostrSeed).
 export const NOSTR_SEED_TAG = 'arena/nostr-node-seed/v1';

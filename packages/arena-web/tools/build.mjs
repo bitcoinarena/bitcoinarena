@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-// THE RELEASE'S CHECK (kanban #564, the owner 2026-10-21: "pack the release"): ARENA_WEB_OUT builds every bundle into that folder and
+// THE RELEASE'S CHECK (kanban #564, 2026-10-21: "pack the release"): ARENA_WEB_OUT builds every bundle into that folder and
 // nothing else - no copies into the pages' folders, no test modules - so a test can compare them with the dist/ a release ships
 const ALONE = process.env.ARENA_WEB_OUT || null;
 const dist = ALONE || join(root, 'dist');
@@ -18,7 +18,7 @@ await build({ entryPoints: [join(root, 'src/owner/main.jsx')], bundle: true, for
   define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(dist, 'owner.js'), legalComments: 'none' });
 // THE ARENA PAGE'S ONE BUNDLE: the market's pick sheet and the games screen's tiles, React once - into src/arena-ui, the page's own
 // folder (tools/build-arena-page.mjs takes it into the page with the rest)
-// a CLASSIC script, loaded before the page's main script (kanban #564, the owner 2026-10-21: "Delete the old html code of those components
+// a CLASSIC script, loaded before the page's main script (kanban #564, 2026-10-21: "Delete the old html code of those components
 // you have ported, no fall backs"): every React view is there when the page's first line runs
 await build({ entryPoints: [join(root, 'src/arena/main.jsx')], bundle: true, format: 'iife', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
   define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(dist, 'arena.js'), legalComments: 'none' });

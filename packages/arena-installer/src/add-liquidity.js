@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// AN INSTALLED NODE BECOMES A LIQUIDITY PROVIDER FROM ITS OWNER PAGE (kanban #567, the owner 2026-10-21: the Liquidity provider card still
+// AN INSTALLED NODE BECOMES A LIQUIDITY PROVIDER FROM ITS OWNER PAGE (kanban #567, 2026-10-21: the Liquidity provider card still
 // said "run arena-install again"; owner actions happen in the browser): what the wizard's bond step does for a node that chose the role
 // (wizard.js) - the provider service on the node's LND (bin/liquidity-provider.mjs, its node key beside the node's other secrets), the
 // custody agent that sends the deposit (5 x L from the node's wallet into LND's, custody-agent.js), 'liquidity' in the node's roles and

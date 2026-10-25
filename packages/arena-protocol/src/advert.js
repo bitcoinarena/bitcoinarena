@@ -47,7 +47,7 @@ const compareGuardian = (a, b) =>
 // this node is willing to hold custody as a guardian, and the fedimintd API endpoint the client and the seats use. Both
 // or neither: capable needs a ws:// or wss:// endpoint, not capable needs the empty string. An advert that says nothing
 // about it (the field left out) is a node that is not a guardian.
-// guardian_capable: 0 no, 1 yes, 2 yes WITH A FREE FOUNDING SLOT (kanban #599, the owner 2026-10-23 "Nur mit freiem Slot"): its guardian-next
+// guardian_capable: 0 no, 1 yes, 2 yes WITH A FREE FOUNDING SLOT (kanban #599, 2026-10-23 "Nur mit freiem Slot"): its guardian-next
 // waits in setup, so a federation it guards being overloaded frees it for a founding (founding-seat.js guardingOpenOf). Every advertisement
 // before it keeps its bytes. A node before this refuses an advertisement saying 2, so no node advertises it before every node reads it.
 function guardianRole(capable, endpoint) {

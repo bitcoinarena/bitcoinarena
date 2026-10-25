@@ -153,7 +153,7 @@ export async function main(args, { home, name = 'arenanode', io = { out: (l) => 
       await runAutoUpdate({ home, latest: deps.latest });
       return 0;
     }
-    // THE DESKTOP APP'S LINE (kanban #658, the owner 2026-10-25: "show when it's installed \"Server running\""): the seat's own state in a word
+    // THE DESKTOP APP'S LINE (kanban #658, 2026-10-25: "show when it's installed \"Server running\""): the seat's own state in a word
     case 'state': {
       const v = await overview({ ...ctx, probes: false });
       const seat = v.services.find((s) => s.id === 'node');

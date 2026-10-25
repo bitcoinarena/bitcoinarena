@@ -60,7 +60,7 @@ test('the month: the earned number, its roles as a bar, the profit after costs',
   assert.match(h, /<span>Profit<\/span><b class="ok">20.8 sat<\/b><small>after 7 sat of Lightning and gateway costs<\/small>/);
 });
 
-// WHAT THE PAGE'S OWN SCRIPT DREW, NOW HERE (kanban #564, the owner 2026-10-21: "Delete the old html code of those components you have ported,
+// WHAT THE PAGE'S OWN SCRIPT DREW, NOW HERE (kanban #564, 2026-10-21: "Delete the old html code of those components you have ported,
 // no fall backs"): a round opened to its players (the nets of the 2026-10-05 follow-up on comment 318), the notes, every host row, the
 // capacity plea, the liquidity card, and the words for a dashboard.json that could not be read.
 test('an opened round\'s players: the net with its sign, ok / bad by its sign, pending blank, each with its replay', () => {

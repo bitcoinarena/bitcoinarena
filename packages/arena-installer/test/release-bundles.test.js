@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE RELEASE CARRIES EVERY PAGE SCRIPT ITS NODE SERVES (kanban #564, the owner 2026-10-21: "pack the release"): the node's pages draw
+// THE RELEASE CARRIES EVERY PAGE SCRIPT ITS NODE SERVES (kanban #564, 2026-10-21: "pack the release"): the node's pages draw
 // only with React now (no fallbacks), so a release without one of packages/arena-web's built bundles is a node with a blank page.
 // tools/release/build-release.sh archives the whole of packages/arena-web/dist; each bundle the node and the installer read is tracked
 // there (or beside the installer's page), so `git archive` puts it in the asset.
@@ -33,7 +33,7 @@ test('every bundle the node and the installer serve is tracked, so the release c
   assert.ok(tracked.has('packages/arena-installer/www/wizard.js'), 'the installer\'s steps are tracked');
 });
 
-// THE APPS (kanban #575, the owner 2026-10-21: "the installer downloads the 3 apps automatically, no longer built in"): the release carries
+// THE APPS (kanban #575, 2026-10-21: "the installer downloads the 3 apps automatically, no longer built in"): the release carries
 // none of the apps, only their pins (apps.lock.json, apps.files.json), and arena-sdk with its link packages/node_modules/arena-sdk, which
 // the downloaded apps' registrations import as arena-sdk/<name>
 test('build-release.sh archives the apps\' pins, not the apps, and arena-sdk with its link', () => {

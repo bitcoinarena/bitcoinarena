@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OWNER DASHBOARD'S ADDRESS, IN REACT (kanban #564; the address card of kanban #563 / #562 2C, the owner 2026-10-21 "1 default"): where
+// THE OWNER DASHBOARD'S ADDRESS, IN REACT (kanban #564; the address card of kanban #563 / #562 2C, 2026-10-21 "1 default"): where
 // the node is reached and how, a warning while it changes at every restart, and the switch to another way - the node runs the installer's
 // own steps for it (POST /owner/reach, signed) and restarts; the progress is read again until done, with the Cloudflare login link while
 // it waits for it. A stable address is the default.

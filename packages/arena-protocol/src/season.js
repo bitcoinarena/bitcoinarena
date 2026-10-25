@@ -150,7 +150,7 @@ export function season(rounds, { games, fromMs, toMs } = {}) {
     // signed amount is not settled here yet - left out, never guessed at.
     const per = new Map();
     for (const e of r.entries) {
-      // A BOT'S ENTRY IS NO PLAYER'S (kanban #581, the owner 2026-10-22: the market maker bots "are excluded from the leaderboard"): its entry
+      // A BOT'S ENTRY IS NO PLAYER'S (kanban #581, 2026-10-22: the market maker bots "are excluded from the leaderboard"): its entry
       // carries the bot mark (contracts.js BOT_MARKER), so no board and no leaderboard payout counts it
       if (e.bot === true) { excluded.push({ round: r.id, player: e.player, why: 'a bot\'s entry: no player of the leaderboard' }); continue; }
       if (e.outcome !== null && REFUNDS.has(e.outcome)) {

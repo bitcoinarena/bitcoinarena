@@ -32,7 +32,7 @@ export class OwnerArea extends React.Component {
   }
   copy() { navigator.clipboard.writeText(this.state.signed.hex).then(() => this.setState({ copied: true }), () => { if (this.hex) this.hex.select(); }); }
   render() {
-    // DONATIONS ONLY WITH A DEVELOPER ON THIS NODE (the owner 2026-10-22: "donations soll nur angezeigt werden wenn game devs oder protocol devs
+    // DONATIONS ONLY WITH A DEVELOPER ON THIS NODE (2026-10-22: "donations soll nur angezeigt werden wenn game devs oder protocol devs
     // installiert sind"): the section and its menu entry need a dev client or a game developer's key here (hasDevs); installing one is in Developer
     const p = this.props, s = this.state, on = s.section === 'money' && !p.hasDevs ? 'overview' : s.section;
     const dots = new Map(); for (const n of ordered(p.needs || [])) if (!dots.has(n.section)) dots.set(n.section, n.level);

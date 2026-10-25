@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE BOND AS AN OFFER, AND THE CAPACITY PLEA, IN REACT (kanban #564): what owner.html's bondAnswer() and capacityPlea() drew by hand.
-// DO I NEED TO ADD TO MY BOND? (kanban #553, the owner 2026-10-20: "The operator does not need to add a bond, he can if he wants to earn more.
+// DO I NEED TO ADD TO MY BOND? (kanban #553, 2026-10-20: "The operator does not need to add a bond, he can if he wants to earn more.
 // Less text, more graphics and more direct instructions"; "earn 350% more e.g"): whether this node is drawn (its standing: its bond against
 // what most rounds ask) and, apart from that, the federation it guards that pays most for a bigger bond while it fills up - one headline, a
 // bar from the bond now to the bond that pays most, and two steps with the numbers worked out: send the rest to the bond wallet (its

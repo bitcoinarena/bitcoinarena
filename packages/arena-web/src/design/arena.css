@@ -8,7 +8,7 @@ button{font:600 15px system-ui;border-radius:10px;padding:11px 16px;border:1px s
 button.primary{background:var(--gv);border-color:var(--gv);color:#1a1200}button:disabled{opacity:.5;cursor:default}
 .sub{color:var(--dim)}.ok{color:var(--ok)}.err{color:var(--bad)}
 .warn{border-left:3px solid var(--gv);padding:8px 12px;background:rgba(242,169,59,.08);border-radius:0 8px 8px 0;margin:10px 0}
-/* THE ROLES AS TILES (kanban #563, the owner 2026-10-21: "you must vamp it up so it looks modern"): one card per role, its earning in one
+/* THE ROLES AS TILES (kanban #563, 2026-10-21: "you must vamp it up so it looks modern"): one card per role, its earning in one
    line, a switch where it can be changed, the save bar only once something changed */
 .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
 .tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;transition:border-color .15s,box-shadow .15s}

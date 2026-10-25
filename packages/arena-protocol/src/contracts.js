@@ -726,7 +726,7 @@ export function encodeEntryContract(e) {
     w.u8(RESERVE_ENTRY_MARKER);
     writeOutpoint(w, e.reserveOutpoint, 'reserveOutpoint');
   }
-  // A BOT'S ENTRY (kanban #581, the owner 2026-10-22: "The bots are also marked as bots, so they are excluded from the leaderboard. There is
+  // A BOT'S ENTRY (kanban #581, 2026-10-22: "The bots are also marked as bots, so they are excluded from the leaderboard. There is
   // a flag in the API and protocol to mark them as bots"): the market maker bots sign it in their own entry, so no seat can add or take it
   // away; the leaderboard leaves such entries out. WRITTEN ONLY FOR A BOT, last of all, its marker alone: every other entry keeps exactly
   // its bytes and its id.

@@ -4,7 +4,7 @@
 // the gateway and its seat (what it earns, what it needs - inbound, outbound, peg-in, online - and the channels), the bond (the deposit
 // named whole with its parts, found, its lock, posted) and the summary at the end. Each gets the wizard's `st`, `post` and `reload`; the
 // watchers stop when the wizard leaves the step (the page unmounts it).
-// KANBAN #635 (the owner 2026-10-25): testcoins from the Arena faucet or a guided way; a deposit counts once it is sent, not once it is
+// KANBAN #635 (2026-10-25): testcoins from the Arena faucet or a guided way; a deposit counts once it is sent, not once it is
 // confirmed; LND and the gateway set up while Bitcoin Core still syncs ("Lnd muss nicht auf dem Bitcoin Core Testnet Sync warten"); the
 // confirmations shown on the dashboards, not waited for here; plain words.
 import React from 'react';

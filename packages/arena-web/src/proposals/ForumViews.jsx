@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PROPOSALS FORUM'S VIEWS IN REACT (kanban #564, src/arena-ui/proposals): the thread list, one thread and the three new-proposal
-// forms - the only drawing of the forum (the owner 2026-10-21: "no fall backs"). The forum's own script (forum.js) reads the nodes, keeps
+// forms - the only drawing of the forum (2026-10-21: "no fall backs"). The forum's own script (forum.js) reads the nodes, keeps
 // the player's in-game key and signs and posts; it hands these class components plain view data - names, stages, amounts, and a
 // proposal's text as the HTML its own Markdown made (escaped there) - and gets the reply or the form back.
 import React from 'react';

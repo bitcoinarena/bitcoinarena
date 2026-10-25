@@ -438,7 +438,7 @@ test('the roles step shows each role in one line, its needs as chips, the long t
   assert.ok(ROLES.liquidity.chips.includes('💰 500,000 sat') && ROLES.custody.chips.includes('🚪 port 9735'));
 });
 
-// EVERY STEP IS REACT'S (kanban #564, the owner 2026-10-21: "no fall backs"): the page loads the steps (/wizard.js) before its own script,
+// EVERY STEP IS REACT'S (kanban #564, 2026-10-21: "no fall backs"): the page loads the steps (/wizard.js) before its own script,
 // hands each step the wizard's state, post and reload, and draws none of them itself - no step's old markup or handlers are left
 test('the wizard page draws no step itself: the roles into their list, every other step into its section, the bar of steps and a refusal, by window.ArenaWizard', () => {
   const html = readFileSync(new URL('../www/index.html', import.meta.url), 'utf8');
@@ -451,7 +451,7 @@ test('the wizard page draws no step itself: the roles into their list, every oth
   for (const gone of ['ArenaWizard ||', '!reactStep', '!reactRoles', "$('b-check').onclick", "$('seed-show').onclick", 'function watchSync', 'roles-save', 'class="rc"', 'innerHTML', 'const esc']) assert.ok(!html.includes(gone), gone);
 });
 
-// A NODE RUN BY ITS NSEC, END TO END (kanban #653, the owner 2026-10-25: "The node must also operate on its own with the nsec" - "That means
+// A NODE RUN BY ITS NSEC, END TO END (kanban #653, 2026-10-25: "The node must also operate on its own with the nsec" - "That means
 // signing etc"): the running seat's identity is the Nostr key, setup logs the owner in with it, and the seat says its seed is Nostr's
 test('a node set up with an nsec runs on it: the seat signs as the Nostr key, its owner is that key, and setup logs in without asking again', async (t) => {
   const home = mkdtempSync(join(tmpdir(), 'arena-install-'));
@@ -524,7 +524,7 @@ test('a node set up with an nsec runs on it: the seat signs as the Nostr key, it
   assert.equal(id.slice(-64), key.pubkey);
 });
 
-// NEW OR RESTORED (kanban #652, the owner 2026-10-25: "neuer step im installer: New/Restore"): the first step; a restore writes the typed
+// NEW OR RESTORED (kanban #652, 2026-10-25: "neuer step im installer: New/Restore"): the first step; a restore writes the typed
 // words' seed and skips the seed step, a wrong word is refused by name, a node with other words keeps its own
 test('the first step: a new node goes on to the seed step, a restore takes the 24 words as its seed (kanban #652)', async () => {
   const { newSeed, ownerKeyOf } = await import('../src/seed.js');
@@ -626,7 +626,7 @@ test('the intro\'s count of nodes and the RAM disk choice are checked and kept (
   } finally { server.close(); rmSync(home, { recursive: true, force: true }); }
 });
 
-// ONE DEPOSIT FOR ALL NODES (kanban #596, the owner 2026-10-23: "nur 1 Bond einzahlen, das wird automatisch multipliziert und aus N Instanzen
+// ONE DEPOSIT FOR ALL NODES (kanban #596, 2026-10-23: "nur 1 Bond einzahlen, das wird automatisch multipliziert und aus N Instanzen
 // auf gesplittet"): node 1 asks for every node's deposit, each further node's bond step is paid from node 1's wallet - once
 test('one deposit for all nodes: node 1 asks for N parts, a further node is paid from node 1\'s wallet once (kanban #596)', async () => {
   const { withOtherNodes, SPLIT_FEE_SATS } = await import('../src/wizard.js');
@@ -663,7 +663,7 @@ test('one deposit for all nodes: node 1 asks for N parts, a further node is paid
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-// TESTCOINS, AUTOMATICALLY (kanban #635, the owner 2026-10-25: "Automatisch oder geführt an testcoins"): the Arena faucet is asked for what
+// TESTCOINS, AUTOMATICALLY (kanban #635, 2026-10-25: "Automatisch oder geführt an testcoins"): the Arena faucet is asked for what
 // the bond step still lacks, at the node's own address; its no comes back with the guided way named
 test('the faucet door asks for exactly what is missing, nothing when enough is there, and says the guided way when the faucet refuses', async () => {
   const { FAUCET_URL } = await import('../src/wizard.js');
