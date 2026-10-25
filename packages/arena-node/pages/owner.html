@@ -476,6 +476,13 @@ async function gameDevs() {
 async function devClients() {
   let r = null, why = null;
   try { r = await (await fetch(at('/owner/dev'), { cache: 'no-store' })).json(); } catch (e) { why = e.message; }
+  // REFERRAL PROGRAMS (kanban #675) are the clients of kind 'referrer': drawn in Referrer, kept out of Donations
+  const programs = r && Array.isArray(r.clients) ? r.clients.filter((c) => c.kind === 'referrer') : [];
+  if (r && Array.isArray(r.clients)) r = { ...r, clients: r.clients.filter((c) => c.kind !== 'referrer') };
+  if ($('referrer')) O.drawInto($('referrer'), 'ReferrerPanel', { programs, why: r ? null : why, site: 'https://testnet.bitcoin-arena.io', reread: devClients,
+    create: (name) => post('/owner/referrer/setup', signed('referrer/setup', { name })),
+    withdraw: (args) => post('/owner/dev/withdraw', signed('dev/withdraw', args)),
+    follow: (slug) => { let n = 0; const poll = () => { devClients(); if (++n < 20) setTimeout(poll, 3000); }; setTimeout(poll, 3000); } });
   devsHere.clients = !!(r && ((r.clients || []).length || r.beside)); showDonations();
   if ($('dev-add')) O.drawInto($('dev-add'), 'DevClients', { dev: r, why, part: 'add', reread: devClients, setup: (args) => post('/owner/dev/setup', signed('dev/setup', args)) });
   O.drawInto($('devs'), 'DevClients', { dev: r, why, part: 'main', reread: devClients,
@@ -514,5 +521,6 @@ async function start() {
 start();
 </script>
 <footer class="build" id="build"></footer>
-<style>h1 .ver,h2 .ver{font:600 13px system-ui;color:var(--dim,#8b949e);border:1px solid var(--line,#30363d);border-radius:999px;padding:2px 10px;vertical-align:middle;margin-left:6px}h1 .ver:empty{display:none}footer.build{max-width:1100px;margin:28px auto 18px;padding:0 16px;color:var(--dim,#8b949e);font-size:12px;text-align:center}</style>
+<style>/* the Referrer section (kanban #675): a program per card, its two figures, its links to copy */.ref-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}.ref-head h3{margin:0}.ref-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:12px 0}.ref-stats>div{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border:1px solid var(--line,#30363d);border-radius:10px}.ref-stats span{font-size:12px;color:var(--dim,#8b949e)}.ref-stats b{font-size:20px;color:#f7931a}.ref-stats small{color:var(--dim,#8b949e)}.ref-link{display:flex;gap:8px;align-items:center;margin-bottom:8px}.ref-link code{flex:1;min-width:0;overflow-wrap:anywhere;font-size:12px;padding:6px 8px;border:1px solid var(--line,#30363d);border-radius:8px}
+h1 .ver,h2 .ver{font:600 13px system-ui;color:var(--dim,#8b949e);border:1px solid var(--line,#30363d);border-radius:999px;padding:2px 10px;vertical-align:middle;margin-left:6px}h1 .ver:empty{display:none}footer.build{max-width:1100px;margin:28px auto 18px;padding:0 16px;color:var(--dim,#8b949e);font-size:12px;text-align:center}</style>
 </body></html>

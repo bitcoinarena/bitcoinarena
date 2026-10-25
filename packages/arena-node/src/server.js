@@ -6030,6 +6030,36 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (r.ok) dashboardKept = null;
           return answer(r.ok ? 200 : 502, r);
         }
+        // A REFERRAL PROGRAM (kanban #675: "a section in the node called Referrer where he can select a name for his program. He can have
+        // multiple ones and each earns the fees"): a client of kind 'referrer' with a new key; its name signed by that key and sent to the
+        // seats, so the explorer and Health name it. 'referrer/name' says a program's name again (a new name, or to seats that missed it).
+        if (url.pathname === '/owner/referrer/setup' || url.pathname === '/owner/referrer/name') {
+          const action = url.pathname.slice('/owner/'.length);
+          const a = owner.authorize(body, action);
+          if (!a.ok) return answer(a.status || 401, a);
+          if (!devClients) return answer(501, { ok: false, why: 'this node runs no clients (start it with ARENA_DEV_WASM_PKG)' });
+          const args = body.args || {};
+          const name = String(args.name || '').trim();
+          let slug = String(args.slug || '');
+          if (action === 'referrer/setup') {
+            const r = devClients.setup({ label: name, kind: 'referrer' });
+            if (!r.ok) return answer(r.status || 400, r);
+            slug = r.slug;
+          }
+          const k = devClients.keyOf(slug);
+          if (!k) return answer(404, { ok: false, why: 'no such referral program on this node' });
+          const { encodeReferralName, referralNameId } = await import('../../arena-protocol/src/referral-name.js');
+          const rec = { site: fromHex(k.recipientPkHex), name: name || k.label, atMs: BigInt(Date.now()) };
+          let record; try { record = encodeReferralName(rec); } catch (e) { return answer(400, { ok: false, why: e.message }); }
+          const signature = schnorr.sign(referralNameId(rec), fromHex(k.secretHex));
+          const msg = JSON.stringify({ record: toHex(record), signature: toHex(signature) });
+          const { keepReferralName } = await import('./referral-names.js');
+          keepReferralName(round.db, JSON.parse(msg), { verify: (sg, m, kk) => schnorr.verify(sg, m, kk) });
+          let told = 0;
+          await Promise.all(networkSeats().map(async (s2) => { try { const r2 = await seasonFetch(`${s2}/referral-name`, { method: 'POST', body: msg, signal: AbortSignal.timeout(20000) }); if (r2.ok) told++; } catch { /* the next pass */ } }));
+          dashboardKept = null;
+          return answer(200, { ok: true, slug, site: k.recipientPkHex, name: rec.name, told });
+        }
         if (url.pathname === '/owner/dev/setup' || url.pathname === '/owner/dev/withdraw' || url.pathname === '/owner/dev/remove') {
           const action = url.pathname.slice('/owner/'.length);
           const a = owner.authorize(body, action);
@@ -8767,9 +8797,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/referral-fees') {
         let rows = [];
         try { rows = round.db.prepare("SELECT recipient_pk AS site, SUM(CAST(amount_msat AS INTEGER)) AS msat, COUNT(*) AS n FROM donation_outputs WHERE item = 'website' GROUP BY recipient_pk").all(); } catch { rows = []; }
-        const sites = rows.map((r) => ({ site: String(r.site), msat: String(r.msat || 0), payouts: Number(r.n) })).sort((a, b) => (BigInt(b.msat) > BigInt(a.msat) ? 1 : -1));
+        // each with its program's name, where its key has said one (kanban #675)
+        const { referralNames } = await import('./referral-names.js');
+        const names = referralNames(round.db);
+        const sites = rows.map((r) => ({ site: String(r.site), name: names.has(String(r.site)) ? names.get(String(r.site)).name : null, msat: String(r.msat || 0), payouts: Number(r.n) }))
+          .sort((a, b) => (BigInt(b.msat) > BigInt(a.msat) ? 1 : -1));
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), totalMsat: String(sites.reduce((t, s) => t + BigInt(s.msat), 0n)), sites }));
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), totalMsat: String(sites.reduce((t, s) => t + BigInt(s.msat), 0n)), sites,
+          programs: [...names].map(([site, x]) => ({ site, name: x.name, atMs: x.atMs })) }));
+      }
+      // A REFERRAL PROGRAM'S NAME (kanban #675): kept when its site key signed it, and handed on to every seat once
+      if (req.method === 'POST' && url.pathname === '/referral-name') {
+        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a referral name is JSON { record, signature } in hex'); }
+        const { keepReferralName } = await import('./referral-names.js');
+        const got = keepReferralName(round.db, j, { verify: (sg, m, k) => schnorr.verify(sg, m, k) });
+        if (!got.ok) return text(res, got.status, got.why);
+        if (got.kept === 'new') { const body = JSON.stringify({ record: j.record, signature: j.signature }); for (const s2 of networkSeats()) seasonFetch(`${s2}/referral-name`, { method: 'POST', body, signal: AbortSignal.timeout(30000) }).catch(() => {}); }
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify(got));
       }
       if (req.method === 'GET' && url.pathname === '/donation-ballots') {
         const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
