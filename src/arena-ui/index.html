@@ -5220,9 +5220,9 @@
     function paintSettings() {
       // WHO RECEIVES IT, once a round names its donation set - and nothing otherwise: never "no donation set" under a
       // dropdown that plainly shows the choice (2026-09-29 12:47)
-      const line = ARENACLIENT.donationRecipientsLine ? ARENACLIENT.donationRecipientsLine(window.ARENA_ROUND) : '';
+      // no recipients line (kanban #672: what each developer gets shows only in the owner area's Donations)
       window.ArenaSettings.donation(document.getElementById('arena-set-advanced'), { pct: Math.round(donationBps() / 100),
-        recipients: /no donation/i.test(line || '') ? '' : (line || ''), onChange: setDonation });
+        recipients: '', onChange: setDonation });
       // (the shop code that keeps the share runs later in this script: a paint before it shows the choice alone)
       const share = window.ARENA_ITEMS_SHARE ? window.ARENA_ITEMS_SHARE() : 50;
       // THE CHOICES OF THE SHOP'S TERMS: 40 .. 0 % where the items pay the protocol reserves
@@ -8238,7 +8238,9 @@
         nodes: (row.said || []).map((c) => c.node).filter(Boolean), verifyEd25519: pageEd25519Verify, keepBySet: true });
       if (!ds.ok || !ds.target) return { ok: false, why: ds.why || 'the round names no donation sets' };
       const g = games.filter((x) => x.manifest && (x.name === gameName || x.manifest.gameName === gameName)).sort((a, b) => Number(b.manifest.version) - Number(a.manifest.version))[0];
-      return { ok: true, set: gameName ? ds.target.game : ds.target.network, game: gameName && g ? { gameDevPubkey: g.manifest.gameDevPubkey, gameName: g.manifest.gameName } : null,
+      // INSIDE AN APP, HALF TO EACH (kanban #672): the app's set, and the protocol developers' set beside it
+      return { ok: true, set: gameName ? ds.target.game : ds.target.network, networkSet: gameName ? ds.target.network : null,
+        game: gameName && g ? { gameDevPubkey: g.manifest.gameDevPubkey, gameName: g.manifest.gameName } : null,
         seats: (g && g.nodes) || ((games[0] || {}).nodes) || (row.said || []).map((c) => c.node).filter(Boolean) };
     }
     async function donateWallets() {
@@ -8291,7 +8293,10 @@
       let el = document.getElementById('arena-donate');
       if (!el) { el = document.createElement('div'); el.id = 'arena-donate'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); document.body.appendChild(el); }
       const game = gameName ? ((window.ARENA_GAMES_FULL || []).find((g) => g.name === gameName || (g.manifest && g.manifest.gameName === gameName)) || null) : null;
-      const who = gameName ? 'the developers of ' + ((game && (game.title || game.manifest && game.manifest.title)) || gameName) : 'the Bitcoin Arena protocol developers';
+      // ON THE SITE ALL TO THE PROTOCOL DEVELOPERS, IN AN APP HALF TO ITS DEVELOPERS (kanban #672), tagged with where it was given
+      const appTitle = gameName ? ((game && (game.title || game.manifest && game.manifest.title)) || gameName) : null;
+      const who = gameName ? 'the developers of ' + appTitle + ' and of Bitcoin Arena' : 'the Bitcoin Arena protocol developers';
+      const origin = gameName ? 'app:' + String((game && game.manifest && game.manifest.gameName) || gameName).slice(0, 60) : 'site';
       // THE BOX (kanban #564: drawn by React, window.ArenaDonate - DonateBox): the page hands over to whom, the amounts, and its rules - the
       // donation set and the wallets read (the box says the most one federation holds), the gift paid from the federation that holds it.
       // Only its × or its own button closes it (kanban #534, #537), a click beside it does nothing.
@@ -8302,14 +8307,15 @@
         read: async () => {
           [sets, wallets] = await Promise.all([sets && sets.ok ? sets : donateSets(gameName).catch((e) => ({ ok: false, why: e.message })), donateWallets()]);
           window.ARENA_DONATE_STATE = { gameName, set: sets.ok ? sets.set.length : 0, why: sets.ok ? null : sets.why, balanceSat: String(best()) };
-          return { sharesLine: sets.ok ? 'Shares: ' + ARENACLIENT.giftRecipientsLine(sets.set) : 'The donation set could not be read: ' + sets.why, setOk: !!sets.ok,
+          // no shares line (kanban #672: what each developer gets shows only in the owner area's Donations)
+          return { sharesLine: sets.ok ? '' : 'The donation set could not be read: ' + sets.why, setOk: !!sets.ok,
             bestSat: wallets.length ? best() : null };
         },
         give: async (sat) => {
           const key = itemsKey(); if (!key) return { ok: false, tell: 'Open your wallet first.' };
           const w = wallets.find((x) => x.msat >= BigInt(sat) * 1000n);
           if (!w) return { ok: false, tell: 'No federation of your wallet holds ' + sat.toLocaleString('en-US') + ' sat.' };
-          const got = await ARENACLIENT.giftDonation({ game: sets.game, recipients: sets.set, sat, wallet: w.c, federationId: w.fid,
+          const got = await ARENACLIENT.giftDonation({ game: sets.game, recipients: sets.set, networkSet: sets.game ? sets.networkSet : null, origin, sat, wallet: w.c, federationId: w.fid,
             donor: { pubkey: key.pubkey, sign: key.sign }, seats: sets.seats, fetch: (u, o) => fetch(u, o) }).catch((e) => ({ ok: false, step: 'page', why: e.message }));
           window.ARENA_DONATE_LAST = got;
           console.log('[arena] donation ' + (got.ok ? sat + ' sat, transaction ' + got.txid + ', ' + got.outputs + ' outputs, kept by ' + got.keptBy : 'refused (' + got.step + '): ' + got.why));

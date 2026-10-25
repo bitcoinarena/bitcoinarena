@@ -49,8 +49,9 @@ export class DonateBox extends React.Component {
     return (
       <div className="box">
         <div className="top"><h3>Donate to the developers</h3><button type="button" className="x" aria-label="Close" onClick={onClose}>{'×'}</button></div>
-        <p className="to">{`To ${who}, in e-cash from your wallet, split by the shares of their donation set.`}</p>
-        <p className="split muted">{read ? read.sharesLine : 'Shares: reading the donation set …'}</p>
+        <p className="to">{`To ${who}, in e-cash from your wallet.`}</p>
+        {/* only a set that cannot be read is said here - no shares (kanban #672: they show in the owner area's Donations alone) */}
+        <p className="split muted">{read ? read.sharesLine : ''}</p>
         <div className="amounts" role="group" aria-label="amount">
           {choices.map((sat) => <button key={sat} type="button" data-sat={String(sat)} aria-pressed={String(chosen === sat && !typed)} onClick={() => this.pick(sat)}>{n(sat) + ' sat'}</button>)}
         </div>

@@ -82,3 +82,43 @@ test('a zap: its one output to the player\'s identity refund key, kept and index
   const sg = { ...skim, signature: schnorr.sign(donationGiftId(skim), SECRET) };
   assert.equal((await keepDonationGift({ g: sg, recipients, port: fedWith(heldFor(sg)), db, verify, nowMs: NOW })).ok, false);
 });
+
+// ON THE SITE ALL TO THE PROTOCOL DEVELOPERS, IN AN APP HALF EACH, TAGGED WITH WHERE (kanban #672: "when clicking donate on the main
+// Testnet site the donation goes too 100% to protocol devs. If it's within an app 50% to protocol devs, 50% to game devs. That donation is
+// tagged so we know its origin and we can filter by it in the donation owner dashboard")
+test('a gift inside an app pays half over each set and says its origin; one on the site says "site"; version 1 records keep their bytes', async () => {
+  const { GIFT_TO_BOTH } = await import('../../arena-protocol/src/donation-gift.js');
+  const { donationsPage, donationOrigin } = await import('../src/dev-clients.js');
+  const NET = [{ recipientPk: pk33(0x21), label: 'protocol a', shareBps: 5000 }, { recipientPk: pk33(0x22), label: 'protocol b', shareBps: 5000 }];
+  const totalMsat = 1000000n;
+  const outs = giftOutputs({ totalMsat, networkSet: NET, gameSet: SET });
+  assert.deepEqual(outs.map((o) => [toHex(o.pk).slice(0, 4), o.msat]), [['0221', 250000n], ['0222', 250000n], ['0211', 333350n], ['0212', 166650n]], 'half over the protocol set, half over the app\'s');
+  const body = { target: GIFT_TO_BOTH, gameDevPubkey: b32(0xde), gameName: 'rock-paper-scissors', origin: 'app:rock-paper-scissors', donor: DONOR, federationId: b32(0xfe),
+    txid: b32(0x7b), totalMsat, outputs: outs.map((o, i) => ({ outIdx: i, pk: o.pk, msat: o.msat })), atMs: BigInt(NOW) };
+  assert.deepEqual(decodeDonationGift(encodeDonationGift(body)), body, 'version 2 round-trips with its origin');
+  const g = { ...body, signature: schnorr.sign(donationGiftId(body), SECRET) };
+  const db = openStore(':memory:'); const rows = [];
+  assert.match(giftStands(g, { recipients: SET, verify, nowMs: NOW }).why, /checked against both/);
+  const kept = await keepDonationGift({ g, networkSet: NET, gameSet: SET, port: fedWith(heldFor(g)), db, verify, keepRows: (r) => rows.push(...r), nowMs: NOW });
+  assert.deepEqual([kept.ok, kept.outputs], [true, 4]);
+  assert.deepEqual([...new Set(rows.map((r) => r.item))], ['donation · protocol + rock-paper-scissors · from app:rock-paper-scissors']);
+  const wrong = await keepDonationGift({ g: { ...g, txid: b32(0x7c) }, networkSet: SET, gameSet: NET, port: fedWith(heldFor(g)), db, verify, nowMs: NOW });
+  assert.equal(wrong.ok, false, 'the halves over the wrong sets: refused');
+  // the site's: to the protocol set alone, tagged
+  const site = { target: GIFT_TO_NETWORK, gameDevPubkey: new Uint8Array(32), gameName: '', origin: 'site', donor: DONOR, federationId: b32(0xfe), txid: b32(0x7d), totalMsat,
+    outputs: giftOutputs({ totalMsat, recipients: NET }).map((o, i) => ({ outIdx: i, pk: o.pk, msat: o.msat })), atMs: BigInt(NOW) };
+  assert.equal(decodeDonationGift(encodeDonationGift(site)).origin, 'site');
+  const v1 = gift(500); const { signature, ...v1body } = v1;
+  assert.equal(encodeDonationGift(v1body)[2], 1, 'no origin: still version 1, the same bytes and id as before');
+  assert.equal(signature.length, 64);
+  // the owner's table: each donation's origin, and a filter by it
+  const info = [{ r: { item: 'donation · protocol · from site', amountMsat: '1000', verifiedMs: 3 }, protocolMsat: 1000n, appMsat: 0n },
+    { r: { item: 'donation · protocol + rock-paper-scissors · from app:rock-paper-scissors', amountMsat: '2000', verifiedMs: 2 }, protocolMsat: 1000n, appMsat: 1000n },
+    { r: { item: 'donation · protocol', amountMsat: '500', verifiedMs: 1 }, protocolMsat: 500n, appMsat: 0n },
+    { r: { roundId: 'ab', amountMsat: '700', verifiedMs: 4 }, game: 'nextblock', title: 'Tick Tock', protocolMsat: 350n, appMsat: 350n }];
+  assert.deepEqual(info.map(donationOrigin), ['site', 'app:rock-paper-scissors', 'gift', 'round']);
+  const all = donationsPage(info, {}, {});
+  assert.deepEqual(all.origins.map((o) => [o.origin, o.title, o.count]), [['site', 'Donate on the site', 1], ['app:rock-paper-scissors', 'Donate in rock-paper-scissors', 1], ['gift', 'Donate (before tags)', 1], ['round', 'Rounds', 1]]);
+  const fromSite = donationsPage(info, {}, { origin: 'site' });
+  assert.deepEqual([fromSite.total, fromSite.rows[0].origin, fromSite.sums.msat], [1, 'site', '1000']);
+});

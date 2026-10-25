@@ -4,7 +4,7 @@
 // from 100, 500, 1000, 5000 satoshis or custom"; "B e cash"): the player's wallet pays the amount split over a donation set's keys in
 // one federation transaction (paySubmit, the item shop's payment), the donor signs the record (protocol donation-gift.js) and the
 // first seat that keeps it hands it on to every other. Nothing is paid before the split stands; every step that fails says which.
-import { encodeDonationGift, donationGiftId, giftOutputs, GIFT_TO_GAME, GIFT_TO_NETWORK, GIFT_TO_PLAYER, playerGiftRecipients, GIFT_MIN_SAT, GIFT_MAX_SAT } from '../../arena-protocol/src/donation-gift.js';
+import { encodeDonationGift, donationGiftId, giftOutputs, GIFT_TO_GAME, GIFT_TO_NETWORK, GIFT_TO_PLAYER, GIFT_TO_BOTH, playerGiftRecipients, GIFT_MIN_SAT, GIFT_MAX_SAT } from '../../arena-protocol/src/donation-gift.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 /** Whether a typed amount is one the popup may pay: a whole number of sat from 1 to 10,000,000. Answers { ok, sat } or { ok: false, why }. */
@@ -24,15 +24,18 @@ export const giftRecipientsLine = (set) => (Array.isArray(set) ? set : []).map((
  * PAY AND RECORD ONE GIFT. `game` { gameDevPubkey, gameName } for a game's developers, or null for the protocol developers (the
  * network's set); `recipients` that set; `sat` the amount; `wallet` the player wallet's lock client in `federationId` (hex);
  * `donor` { pubkey, sign }; `seats` the base URLs. Answers { ok, id, txid, sat, outputs, keptBy } or { ok: false, step, why }.
+ * A GIFT INSIDE AN APP (kanban #672: "If it's within an app 50% to protocol devs, 50% to game devs"): `game` with `networkSet` - the
+ * protocol developers' set beside the app's `recipients` - pays half over each. `origin` tags where it was given ("site", "app:<name>").
  */
-export async function giftDonation({ game = null, player = null, recipients, sat, wallet, federationId, donor, seats, fetch, nowMs = () => Date.now() }) {
+export async function giftDonation({ game = null, player = null, recipients, networkSet = null, origin = '', sat, wallet, federationId, donor, seats, fetch, nowMs = () => Date.now() }) {
   const no = (step, why) => ({ ok: false, step, why });
   // A ZAP: the player's identity key is the target and the whole set
   if (player) { if (!(player instanceof Uint8Array) || player.length !== 32) return no('player', 'a zap names its player by a 32-byte identity key'); recipients = playerGiftRecipients(player); }
   const amt = giftAmountOf(sat); if (!amt.ok) return no('amount', amt.why);
   const totalMsat = BigInt(amt.sat) * 1000n;
   let outs;
-  try { outs = giftOutputs({ totalMsat, recipients }); } catch (e) { return no('split', e.message); }
+  const both = !player && game && Array.isArray(networkSet);
+  try { outs = both ? giftOutputs({ totalMsat, networkSet, gameSet: recipients }) : giftOutputs({ totalMsat, recipients }); } catch (e) { return no('split', e.message); }
   if (!wallet || typeof wallet.paySubmit !== 'function') return no('wallet', 'this page\'s wallet cannot pay keys (its lock client has no paySubmit)');
   let submitted, accepted;
   try {
@@ -41,7 +44,8 @@ export async function giftDonation({ game = null, player = null, recipients, sat
   } catch (e) { return no('payment', String(e && e.message || e)); }
   const held = accepted.donations || [];
   if (held.length !== outs.length || !held.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
-  const record = { target: player ? GIFT_TO_PLAYER : game ? GIFT_TO_GAME : GIFT_TO_NETWORK, gameDevPubkey: player || (game ? game.gameDevPubkey : new Uint8Array(32)), gameName: !player && game ? game.gameName : '',
+  const record = { target: player ? GIFT_TO_PLAYER : both ? GIFT_TO_BOTH : game ? GIFT_TO_GAME : GIFT_TO_NETWORK, gameDevPubkey: player || (game ? game.gameDevPubkey : new Uint8Array(32)), gameName: !player && game ? game.gameName : '',
+    ...(!player && origin ? { origin: String(origin).slice(0, 64) } : {}),
     donor: donor.pubkey, federationId: fromHex(federationId), txid: fromHex(submitted.txid), totalMsat,
     outputs: held.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), atMs: BigInt(nowMs()) };
   const id = donationGiftId(record);

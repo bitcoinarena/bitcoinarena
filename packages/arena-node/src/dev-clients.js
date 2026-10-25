@@ -140,13 +140,29 @@ export function donationParts(rows, { protocolBps = 0, gameOf = () => null, item
  * of one app, its items with it ('items' for the items of all apps, 'unknown' for rounds no longer held) matching `q` in player, round, entry, item or outpoint, newest
  * first, `offset` .. `offset + limit` (5 .. 200); the sums of all matching rows, in msat and in each currency at each donation's own rate.
  */
-export function donationsPage(info, rates = {}, { app = '', q = '', limit = 25, offset = 0 } = {}) {
+/**
+ * WHERE A DONATION CAME FROM (kanban #672: "That donation is tagged so we know its origin and we can filter by it in the donation owner
+ * dashboard"): a gift's tag from its item ("donation · protocol · from site" - donation-gift-seat.js giftItem), "gift" for one given before
+ * the tags, "item" for an item purchase, "round" for a round's own donation.
+ */
+export function donationOrigin(x) {
+  const it = String((x.r && x.r.item) || '');
+  const m = / · from (.+)$/.exec(it);
+  if (m) return m[1];
+  if (/^donation · /.test(it)) return 'gift';
+  return x.item ? 'item' : 'round';
+}
+const ORIGIN_TITLE = (o) => (o === 'site' ? 'Donate on the site' : o.startsWith('app:') ? `Donate in ${o.slice(4)}` : o === 'gift' ? 'Donate (before tags)' : o === 'item' ? 'Item purchases' : o === 'round' ? 'Rounds' : o);
+
+export function donationsPage(info, rates = {}, { app = '', origin = '', q = '', limit = 25, offset = 0 } = {}) {
   const at = (r) => Number(r.verifiedMs || r.recordedAt || 0);
   const apps = new Map();
   const count = (k, title, market) => { const a = apps.get(k) || { app: k, title, market, count: 0 }; a.count++; apps.set(k, a); };
   for (const x of info) { count(x.game || 'unknown', x.game ? x.title : 'Older rounds', !!x.market); if (x.item) count('items', 'Items (all apps)', false); }
-  app = String(app || ''); q = String(q || '').toLowerCase().trim();
-  const rows = info.filter((x) => (!app || (app === 'items' ? x.item : app === 'unknown' ? !x.game : x.game === app))
+  const origins = new Map();
+  for (const x of info) { const o = donationOrigin(x); origins.set(o, (origins.get(o) || 0) + 1); }
+  app = String(app || ''); origin = String(origin || ''); q = String(q || '').toLowerCase().trim();
+  const rows = info.filter((x) => (!app || (app === 'items' ? x.item : app === 'unknown' ? !x.game : x.game === app)) && (!origin || donationOrigin(x) === origin)
     && (!q || [x.player || x.r.playerKey, x.r.roundId, x.r.entryId, x.r.item, x.r.outpoint, ...(x.parts || []).flatMap((y) => [y.player, y.entry])].some((v) => String(v || '').toLowerCase().includes(q)))).sort((a, b) => at(b.r) - at(a.r));
   limit = Math.max(5, Math.min(200, Number(limit) || 25)); offset = Math.max(0, Number(offset) || 0);
   const msatOf = (x, part) => (part === 'protocol' ? x.protocolMsat : part === 'app' ? x.appMsat : BigInt(x.r.amountMsat || 0));
@@ -155,10 +171,10 @@ export function donationsPage(info, rates = {}, { app = '', q = '', limit = 25, 
   const sums = { msat: '0', protocolMsat: '0', appMsat: '0', fiat: Object.fromEntries(parts.map((p) => [p, {}])) };
   for (const [k, p] of [['msat', 'all'], ['protocolMsat', 'protocol'], ['appMsat', 'app']]) sums[k] = String(rows.reduce((t, x) => t + msatOf(x, p), 0n));
   for (const p of parts) { const t = sums.fiat[p]; for (const x of rows) for (const [c, v] of Object.entries(fiat(x, p))) t[c] = (t[c] || 0) + v; for (const c of Object.keys(t)) t[c] = Math.round(t[c] * 10000) / 10000; }
-  return { total: rows.length, offset, limit, apps: [...apps.values()], sums,
+  return { total: rows.length, offset, limit, apps: [...apps.values()], origins: [...origins].map(([o, count]) => ({ origin: o, title: ORIGIN_TITLE(o), count })), sums,
     rows: rows.slice(offset, offset + limit).map((x) => ({ atMs: at(x.r), amountMsat: String(x.r.amountMsat || '0'), protocolMsat: String(x.protocolMsat), appMsat: String(x.appMsat),
       app: x.game, title: x.title, market: !!x.market, item: x.item, round: x.item ? null : String(x.r.roundId || ''),
-      entry: String(x.r.entryId || ''), player: x.player !== undefined ? x.player : (x.r.playerKey ? String(x.r.playerKey) : null), window: x.window || null, parts: x.parts || null, outpoint: String(x.r.outpoint || ''),
+      origin: donationOrigin(x), entry: String(x.r.entryId || ''), player: x.player !== undefined ? x.player : (x.r.playerKey ? String(x.r.playerKey) : null), window: x.window || null, parts: x.parts || null, outpoint: String(x.r.outpoint || ''),
       fiat: Object.fromEntries(parts.map((p) => [p, fiat(x, p)])) })) };
 }
 
