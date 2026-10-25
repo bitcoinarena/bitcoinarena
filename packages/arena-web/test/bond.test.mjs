@@ -40,3 +40,24 @@ test('what it does: unlocked, an address, confirmed - the withdrawal signed and 
   const no = new BondPanel({ api, confirm: () => false }); no.setState = c.setState.bind(no); no.state.address = 'tb1q'; no.state.loaded = true;
   await no.withdraw(); assert.equal(sent.length, 1, 'not confirmed: nothing sent');
 });
+
+test('old bonds after a key switch (kanban #650): listed with their lock; an unlocked one taken back to an address, signed', async () => {
+  const olds = [{ txid: 'dd'.repeat(32), vout: 1, sats: '50000', maturity: 157700, held: true, lock: { withdrawable: true, blocksLeft: 0 } },
+    { txid: 'ee'.repeat(32), vout: 0, sats: '20000', maturity: 157900, held: true, lock: { withdrawable: false, blocksLeft: 200 } }];
+  const html = renderToStaticMarkup(React.createElement(BondPanel, { nowMs: () => T, initial: { loaded: true, bond: { ...locked, oldBonds: olds } } }));
+  assert.match(html, /id="old-bonds"[\s\S]*<b>50,000 sat<\/b> · unlocked[\s\S]*Take it back[\s\S]*<b>20,000 sat<\/b> · locked for 200 more blocks \(until block 157,900\)/);
+  assert.equal((html.match(/Take it back/g) || []).length, 1, 'only the unlocked one');
+  const sent = [];
+  const api = { get: async () => ({ ...locked, oldBonds: olds }), signed: async (a, args) => ({ a, args }),
+    post: async (p, b) => { sent.push([p, b.a, b.args]); return { ok: true, txid: 'cc'.repeat(32), value: 49738 }; } };
+  const c = new BondPanel({ api, confirm: () => true });
+  c.setState = (u) => { Object.assign(c.state, typeof u === 'function' ? u(c.state) : u); };
+  await c.componentDidMount();
+  const k = `${olds[0].txid}:1`;
+  await c.takeBack(olds[0]);
+  assert.equal(c.state.oldSaid[k], 'Type the address it goes to.');
+  c.setState({ oldTo: { [k]: ' tb1qold ' } });
+  await c.takeBack(olds[0]);
+  assert.deepEqual(sent, [['/owner/old-bond-withdraw', 'old-bond-withdraw', { txid: olds[0].txid, vout: 1, address: 'tb1qold', feeRate: 2 }]]);
+  assert.match(c.state.oldSaid[k], /^Sent: c{64} \(49,738 sat\)$/);
+});
