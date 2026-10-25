@@ -64,7 +64,7 @@ test('lightning: LND\'s and the gateway\'s progress - the bar, the stages with t
   assert.ok(c.progTimer, 'a running start is followed every second');
   let html = renderToStaticMarkup(c.render());
   assert.match(html, /id="ln-progress"[\s\S]*role="progressbar"[\s\S]*aria-valuenow="9\d"/);
-  assert.match(html, /L-answer<\/b> · 70 s<p class="sub">Setup asks LND for its node key/);
+  assert.match(html, /L-answer<\/b> · 70 s<p class="sub">LND answers once it has connected to your Bitcoin Core/);
   assert.match(html, /LND takes longer than usual[\s\S]*LND&#x27;s last messages:[\s\S]*lnd: waiting for the wallet/);
   assert.doesNotMatch(html, /id="gw-progress"/, 'no gateway bar before the gateway starts');
   prog = { ...prog, lnd: { ...prog.lnd, running: false, log: [] } };
