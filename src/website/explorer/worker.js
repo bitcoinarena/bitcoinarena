@@ -9,6 +9,8 @@
 //   GET /api/recent       the newest, from D1
 //   GET /api/tx/<id>      from D1; one the minute has not read yet is read from the seats once and kept
 //   /, /tx/<id>           the pages (www/), with what D1 holds built into the page, so they draw at once
+//   GET /api/metrics      the Metrics page's figures (kanban #676): volume per day from D1, the protocol reserve and the websites' fees
+//   /metrics              that page, its figures built in
 const SEATS = [1, 2, 3, 4, 5, 6, 7].map((i) => `https://tn4.bitcoin-arena.io/guardian-${i}`)
   .concat([1, 2, 3, 4, 5, 6, 7].map((i) => `https://tn4.bitcoin-arena.io/fed2-${i}`));
 const RECENT_MAX = 1000;
@@ -92,9 +94,45 @@ async function backfill(env) {
   console.log(JSON.stringify({ backfill: { from: new Date(from).toISOString(), to: new Date(at).toISOString(), ...n } }));
 }
 
+// THE METRICS (kanban #676, 2026-10-25: "Explorer also shows volume in Sats / btc per day, current protocol reserve in sats / btc, and total
+// referrer fees accumulated in sats / btc", "This is On a metrics page"): each minute every seat's GET /reserves and GET /referral-fees, kept in
+// KV - per federation the reserve the most up-to-date seat holds (the largest), per website the most any seat indexed; the volume per day
+// is read from D1's transactions when asked
+async function readMetrics(env) {
+  const [res, ref] = await Promise.all([
+    Promise.all(SEATS.map((seat) => ask(`${seat}/reserves`, READ_MS))),
+    Promise.all(SEATS.map((seat) => ask(`${seat}/referral-fees`, READ_MS)))]);
+  const feds = new Map(), sites = new Map();
+  for (const a of res) for (const f of (a.body && Array.isArray(a.body.federations) ? a.body.federations : [])) {
+    const m = BigInt(f.heldMsat || 0); if (!feds.has(f.federationId) || m > feds.get(f.federationId)) feds.set(f.federationId, m);
+  }
+  for (const a of ref) for (const x of (a.body && Array.isArray(a.body.sites) ? a.body.sites : [])) {
+    const m = BigInt(x.msat || 0); if (!sites.has(x.site) || m > sites.get(x.site).msat) sites.set(x.site, { msat: m, payouts: x.payouts });
+  }
+  const sum = (it) => [...it].reduce((t, m) => t + m, 0n);
+  const m = { readAt: new Date().toISOString(), seats: { reserves: res.filter((a) => a.body).length, referral: ref.filter((a) => a.body).length, of: SEATS.length },
+    reserve: { msat: String(sum(feds.values())), federations: [...feds].map(([federation, msat]) => ({ federation, msat: String(msat) })) },
+    referral: { msat: String(sum([...sites.values()].map((x) => x.msat))), sites: [...sites].map(([site, x]) => ({ site, msat: String(x.msat), payouts: x.payouts })) } };
+  await env.EXPLORER.put('metrics', JSON.stringify(m));
+  return m;
+}
+
+const DAY_MS = 86400000, VOLUME_DAYS = 30;
+async function metrics(env) {
+  const kept = JSON.parse((await env.EXPLORER.get('metrics')) || 'null');
+  const since = Math.floor(Date.now() / DAY_MS) * DAY_MS - (VOLUME_DAYS - 1) * DAY_MS;
+  const r = await env.DB.prepare(`SELECT (stored_ms / ${DAY_MS}) AS d, COUNT(*) AS n, SUM(CAST(json_extract(json, '$.entry.stakeMsat') AS INTEGER)) AS msat
+    FROM txs WHERE stored_ms >= ? GROUP BY d ORDER BY d DESC`).bind(since).all();
+  const volume = (r.results || []).map((x) => ({ day: new Date(Number(x.d) * DAY_MS).toISOString().slice(0, 10), txs: Number(x.n), msat: String(x.msat || 0) }));
+  return { volume, reserve: kept ? kept.reserve : null, referral: kept ? kept.referral : null, readAt: kept ? kept.readAt : null, seats: kept ? kept.seats : null };
+}
+
 async function poll(env) {
   const n = await readWindow(env, Date.now() - READ_BACK_MS, 500, null);
   console.log(JSON.stringify({ poll: n }));
+  // every fifth minute: the figures change slowly, and each read asks every seat twice
+  if (Math.floor(Date.now() / 60000) % 5 === 0 || !(await env.EXPLORER.get('metrics')))
+    await readMetrics(env).catch((e) => console.log(JSON.stringify({ metricsError: String(e && e.message ? e.message : e) })));
   await backfill(env).catch((e) => console.log(JSON.stringify({ backfillError: String(e && e.message ? e.message : e) })));
 }
 
@@ -161,6 +199,8 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === '/robots.txt') return new Response('User-agent: *\nAllow: /\n', { headers: { 'content-type': 'text/plain' } });
     if (url.pathname === '/api/recent') return json({ txs: await recent(env) }, { maxAge: 10 });
+    if (url.pathname === '/api/metrics') return json(await metrics(env), { maxAge: 30 });
+    if (url.pathname === '/metrics' || url.pathname === '/metrics/') return inline(env, request, { metrics: await metrics(env) });
     const m = /^\/api\/tx\/([0-9a-f]{64})$/.exec(url.pathname);
     if (m) {
       const tx = url.searchParams.has('fresh') ? await readTx(m[1]) : await txOf(env, ctx, m[1]);

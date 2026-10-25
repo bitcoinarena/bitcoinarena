@@ -8762,6 +8762,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           lnurl: x.plan ? x.plan.lnurl : null, txid: x.txid, paymentHash: x.plan ? x.plan.paymentHash : null, preimage: x.preimage, refundTxid: x.refundTxid, why: x.why })) : [];
         return res.end(JSON.stringify({ node: toHex(round.pubkey), totalMsat, entries: federations.reduce((t, f) => t + f.entries, 0), federations, paidIn, payouts }));
       }
+      // WHAT EACH WEBSITE EARNED (kanban #676, the explorer's metrics: "total referrer fees accumulated"): the 'website' payouts of the
+      // settlements this seat indexed, per website payout key - their sum and count, and the total
+      if (req.method === 'GET' && url.pathname === '/referral-fees') {
+        let rows = [];
+        try { rows = round.db.prepare("SELECT recipient_pk AS site, SUM(CAST(amount_msat AS INTEGER)) AS msat, COUNT(*) AS n FROM donation_outputs WHERE item = 'website' GROUP BY recipient_pk").all(); } catch { rows = []; }
+        const sites = rows.map((r) => ({ site: String(r.site), msat: String(r.msat || 0), payouts: Number(r.n) })).sort((a, b) => (BigInt(b.msat) > BigInt(a.msat) ? 1 : -1));
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), totalMsat: String(sites.reduce((t, s) => t + BigInt(s.msat), 0n)), sites }));
+      }
       if (req.method === 'GET' && url.pathname === '/donation-ballots') {
         const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
         return ans(200, { ballots: donationBallots ? donationBallots.list() : [], approved: approvedSets().map((x) => ({ serial: String(x.serial), validFrom: x.validFrom,
