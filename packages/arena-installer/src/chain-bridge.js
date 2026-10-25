@@ -19,7 +19,11 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, statSy
 import { join } from 'node:path';
 import { electrumSession, TESTNET4_GENESIS } from './chain-test.js';
 
+// OURS FIRST (kanban #656): the Arena's block API (tools/chain-api.mjs on its public-chain testnet4 node), then mempool.space - each
+// block checked against its header whichever answers
+export const ARENA_ESPLORA = 'https://seat.example.com/esplora';
 export const ESPLORA_TESTNET4 = 'https://mempool.space/testnet4/api';
+export const ESPLORAS_TESTNET4 = Object.freeze([ARENA_ESPLORA, ESPLORA_TESTNET4]);
 export const BLOCK_CACHE_BYTES = 200 * 1048576;
 
 const sha256d = (b) => createHash('sha256').update(createHash('sha256').update(b).digest()).digest();
@@ -90,7 +94,7 @@ const merkleRoot = (hashes) => {
  * The bridge. `electrum`: { host, port, tls }. `home`: where the cookie and the block cache live. Injectables for the tests:
  * `session` (an Electrum session factory), `fetcher` (Esplora). Answers { listen(port), close(), call(method, params) }.
  */
-export function createBridge({ electrum, fallbacks = [], home, esplora = ESPLORA_TESTNET4, session = electrumSession, fetcher = fetch, cacheBytes = BLOCK_CACHE_BYTES, log = () => {} }) {
+export function createBridge({ electrum, fallbacks = [], home, esplora = ESPLORAS_TESTNET4, session = electrumSession, fetcher = fetch, cacheBytes = BLOCK_CACHE_BYTES, log = () => {} }) {
   // THE OTHER SERVERS WHEN ONE FAILS (kanban #639, the owner's playtest 2026-10-25: "if the selected electrum server errors, nothing can be
   // done. there are no options besides retry"): the saved server first, then each known one in turn; a call that fails moves the next
   // call to the next server, and every block is still checked against its header, whoever serves it
@@ -133,10 +137,18 @@ export function createBridge({ electrum, fallbacks = [], home, esplora = ESPLORA
     return headers.get(height);
   };
   const tipNow = async () => { const t = await ask('blockchain.headers.subscribe', []); tip = t.height; putHeader(t.height, Buffer.from(t.hex, 'hex')); return t.height; };
+  // each block API in turn until one answers 200 (a string is one API, as before)
+  const esploras = Array.isArray(esplora) ? esplora : [esplora];
+  const fromEsplora = async (route, ms) => {
+    for (const base of esploras) {
+      try { const r = await fetcher(`${base}${route}`, { signal: AbortSignal.timeout(ms) }); if (r.status === 200) return r; } catch { /* the next one */ }
+    }
+    return null;
+  };
   const heightOfHash = async (hash) => {
     if (heightOf.has(hash)) return heightOf.get(hash);
-    const r = await fetcher(`${esplora}/block/${hash}/status`, { signal: AbortSignal.timeout(15000) });
-    const st = await r.json().catch(() => null);
+    const r = await fromEsplora(`/block/${hash}/status`, 15000);
+    const st = r ? await r.json().catch(() => null) : null;
     if (!st || !st.in_best_chain || !Number.isInteger(st.height)) throw Object.assign(new Error('Block not found'), { code: -5 });
     const h = await headerAt(st.height);
     if (h.hash !== hash) throw Object.assign(new Error('Block not found'), { code: -5 });   // the header source decides, not Esplora
@@ -158,8 +170,8 @@ export function createBridge({ electrum, fallbacks = [], home, esplora = ESPLORA
   const rawBlock = async (hash) => {
     if (existsSync(blockFile(hash))) return readFileSync(blockFile(hash));
     await heightOfHash(hash);                          // the header source knows this block on its best chain
-    const r = await fetcher(`${esplora}/block/${hash}/raw`, { signal: AbortSignal.timeout(30000) });
-    if (r.status !== 200) throw new Error(`Esplora answered ${r.status} for block ${hash}`);
+    const r = await fromEsplora(`/block/${hash}/raw`, 30000);
+    if (!r) throw new Error(`no block API answered for block ${hash}`);
     const raw = Buffer.from(await r.arrayBuffer());
     if (!blockMatches(raw, hash)) throw new Error(`Esplora's block ${hash} does not match its header`);
     writeFileSync(blockFile(hash), raw);

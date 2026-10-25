@@ -318,7 +318,7 @@ const serviceRun = async (b) => {
       if (!r.ok && conn.kind === 'electrum') {
         // all at once (measured in the walk of 1ebc8cbe: one after another took over 40 s with mempool.space not answering): the chosen
         // server again beside every other known one; the chosen one when it answers now, else the first of the list that does
-        const others = TESTNET4_ELECTRUM.filter((x) => !(x.host === conn.host && x.port === conn.port)).map((x) => ({ kind: 'electrum', host: x.host, port: x.port, tls: x.tls }));
+        const others = TESTNET4_ELECTRUM.filter((x) => !(x.host === conn.host && x.port === conn.port)).map((x) => ({ kind: 'electrum', host: x.host, port: x.port, tls: x.tls, ...(x.ws ? { ws: true, path: x.path } : {}) }));
         const [again, ...answers] = await Promise.all([conn, ...others].map((c) => test(c).catch((e) => ({ ok: false, why: e.message }))));
         if (again.ok) r = again;
         else {
@@ -376,7 +376,7 @@ const serviceRun = async (b) => {
       // (bin/chain-switch.mjs, installed with the service) moves it to its own Core once testnet4 is synced. With no server passing,
       // the wizard waits for the sync as before.
       for (const e of TESTNET4_ELECTRUM) {
-        const conn = chainOf({ kind: 'electrum', host: e.host, port: e.port, tls: e.tls });
+        const conn = chainOf({ kind: 'electrum', host: e.host, port: e.port, tls: e.tls, ws: e.ws, path: e.path });
         const t = await test(conn).catch((err) => ({ ok: false, why: err.message }));
         if (!t.ok) { log(`[core] interim chain ${e.host}:${e.port}: ${t.why}`); continue; }
         mark('chain', { chain: conn, chainTest: { atMs: Date.now(), why: t.why, latencyMs: t.source.latencyMs, height: t.source.height }, core: { ...core, interim: true } });
@@ -902,7 +902,7 @@ const serviceRun = async (b) => {
     return null;
   };
   const chainOf = (b) => (b.kind === 'electrum'
-    ? { kind: 'electrum', host: String(b.host || ''), port: Number(b.port), tls: b.tls !== false }
+    ? { kind: 'electrum', host: String(b.host || ''), port: Number(b.port), tls: b.tls !== false, ...(b.ws ? { ws: true, path: String(b.path || '/') } : {}) }
     : { kind: 'core', url: String(b.url || ''), ...(b.cookiePath ? { cookiePath: String(b.cookiePath) } : { user: String(b.user || ''), password: String(b.password || '') }) });
 
   const signedBySeed = (identityHex) => {

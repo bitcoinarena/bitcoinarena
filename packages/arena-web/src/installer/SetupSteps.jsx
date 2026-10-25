@@ -23,7 +23,7 @@ export class ChainStep extends React.Component {
   constructor(props) {
     super(props);
     const e = (props.st.electrum || [])[0] || { host: '', port: '', tls: true };
-    this.state = { kind: 'core', url: 'http://127.0.0.1:48332/', cookie: '', user: '', pass: '', pick: '0', host: e.host, port: String(e.port), tls: e.tls !== false,
+    this.state = { kind: 'core', url: 'http://127.0.0.1:48332/', cookie: '', user: '', pass: '', pick: '0', host: e.host, port: String(e.port), tls: e.tls !== false, ws: !!e.ws, path: e.path || '',
       plan: null, dir: '', prune: false, mainnet: false, installing: false, sync: null, busy: false, msg: null, ...(props.initial || {}) };
     this.test = this.test.bind(this); this.save = this.save.bind(this); this.install = this.install.bind(this); this.watch = this.watch.bind(this); this.checkDir = this.checkDir.bind(this);
   }
@@ -48,13 +48,13 @@ export class ChainStep extends React.Component {
   }
   pickServer(v) {
     const s = (this.props.st.electrum || [])[v];
-    this.setState(s ? { pick: v, host: s.host, port: String(s.port), tls: s.tls !== false } : { pick: v });
+    this.setState(s ? { pick: v, host: s.host, port: String(s.port), tls: s.tls !== false, ws: !!s.ws, path: s.path || '' } : { pick: v, ws: false, path: '' });
   }
   body() {
     const s = this.state;
     return s.kind === 'core'
       ? { kind: 'core', url: s.url.trim(), ...(s.cookie.trim() ? { cookiePath: s.cookie.trim() } : { user: s.user, password: s.pass }) }
-      : { kind: 'electrum', host: s.host.trim(), port: Number(s.port), tls: s.tls };
+      : { kind: 'electrum', host: s.host.trim(), port: Number(s.port), tls: s.tls, ...(s.ws ? { ws: true, path: s.path } : {}) };   // ours over a websocket (kanban #656)
   }
   async test() {
     this.setState({ busy: true, msg: { ok: true, text: 'Testing…' } });
@@ -147,11 +147,11 @@ export class ChainStep extends React.Component {
         {s.kind === 'electrum' ? <div>
           <label htmlFor="e-pick">Server</label>
           <select id="e-pick" value={s.pick} onChange={(e) => this.pickServer(e.target.value)}>
-            {servers.map((x, i) => <option key={i} value={String(i)}>{x.host}:{x.port}{x.tls ? ' (TLS)' : ''} - {x.note}</option>)}<option value="own">another server</option></select>
+            {servers.map((x, i) => <option key={i} value={String(i)}>{x.ws ? `${x.note} (recommended)` : `${x.host}:${x.port}${x.tls ? ' (TLS)' : ''} - ${x.note}`}</option>)}<option value="own">another server</option></select>
           <div className="row"><div><label htmlFor="e-host">Host</label><input id="e-host" value={s.host} onChange={(e) => this.setState({ host: e.target.value })} /></div>
             <div><label htmlFor="e-port">Port</label><input id="e-port" value={s.port} onChange={(e) => this.setState({ port: e.target.value })} /></div></div>
           <label className="choice"><input type="checkbox" checked={s.tls} onChange={(e) => this.setState({ tls: e.target.checked })} /><div><b>TLS</b></div></label>
-          <p className="sub">With an Electrum server, a small bridge on this computer reads block headers from the server and checked blocks from Esplora.</p>
+          <p className="sub">With an Electrum server, a small bridge on this computer reads block headers from the server and whole blocks from a block API; it checks every block itself.</p>
         </div> : null}
         {s.kind === 'install' ? this.installForm() : <div>
           <button type="button" className="ghost" disabled={s.busy} onClick={this.test}>Test</button>
@@ -258,7 +258,7 @@ const STAGE_HINT = {
   settings: 'Your choices from the steps before go into the node\'s settings file.',
   services: 'The node, its chain connection and its tunnel become services of this computer, so they run without this page.',
   start: 'Your node loads, connects to the chain and to the other nodes. This usually takes 10 to 60 seconds.',
-  address: 'Setup asks your node through its public address, the way other nodes will reach it.',
+  address: 'Setup asks your node through its public address, the way other nodes will reach it. A new temporary tunnel name can take up to a minute before it answers.',
   login: 'Setup logs in once with your owner key, to check that the node knows you as its owner.',
 };
 const secs = (ms) => `${Math.round((ms || 0) / 1000)} s`;
