@@ -167,3 +167,14 @@ test('7e2123d1 rounds are replayed by the frozen 7e2123d1 core under both its co
   }
   assert.match(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(S7E, 'hex')), configHash: GENESIS_CONFIG_HASH, blockTicks: 4920 }).why, /not the config/);
 });
+
+// ONE VERSION THAT DOES NOT STAND IS LEFT OUT, THE NODE STILL STARTS (the installer walk of d3b3ddf6: btc-updown-v21's parent missing)
+test('a registration that does not stand is left out with its reason; the rest are hosted; none at all still refuses', () => {
+  const broken = { ...NEXTBLOCK, gameId: new Uint8Array(32).fill(7) };
+  const logs = [];
+  const games = hostedPlugins([NEXTBLOCK, broken], { log: (l) => logs.push(l) });
+  assert.equal(games.size, 1, 'nextblock hosted');
+  assert.equal(games.refused.length, 1);
+  assert.match(logs[0], /^\[games\] left out: /);
+  assert.throws(() => hostedPlugins([broken], { log: () => {} }), /no game this node can host/);
+});
