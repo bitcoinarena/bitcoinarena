@@ -269,6 +269,7 @@ async function area() {
     signManifest: (text) => { const out = C.signManifestWithSeed(C.bodyFromJson(text, { devPubkey: devPub }), devSeed); window.OWNER_SIGNED = out; return out; } };
   drawArea();
   rolesPanel();
+  if (who.how === 'words') keySwitchPanel();   // a node of 24 words may move to their key (kanban #650); a Nostr login has no words here
   donations();
   devClients();
   ballotsPanel();
@@ -289,6 +290,8 @@ async function area() {
 // THE PORTED PANELS, EACH ONLY ITS REACT SCREEN (kanban #564, the owner 2026-10-21: "no fall backs"): the page hands each the doors it
 // reads, its signed-request helpers and, where it reports to the Overview, the need() line
 // THE ROLES (kanban #553 / #563): what this node does and earns, a switch where a role is changed from here
+// THE NODE KEY FROM THE 24 WORDS (kanban #650, "b but optional"): the plan on Check, the move on its own button
+function keySwitchPanel() { mount('keyswitch-place', 'mountKeySwitch', { api: { post, signed } }); }
 function rolesPanel() { mount('roles', 'mountRoles', { api: { get: getOrNull, post, signed }, node: state.node }); }
 // CUSTODY, ADDED LATER (2026-10-18) and THE LIQUIDITY CARD (§23A.10): a guardian or not; the provider's coins and its top-up address
 function custodyPanel() { mount('custody', 'mountCustody', { api: { get: getOk, post, signed } }); }
