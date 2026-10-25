@@ -762,3 +762,36 @@ test('custody on an Electrum node is refused as it is switched on; the emergency
     assert.equal((await c.get('/api/state')).json.step, 'owner');
   } finally { server.close(); rmSync(home, { recursive: true, force: true }); }
 });
+
+// THE OWNER'S KEY FOR THE BROWSER (playtest 2026-10-25: "Der Installer soll sich mit meiner Seed schon einloggen"): to this setup's session,
+// the seed of a words owner, the node's nsec of a Nostr node; the node's dashboard takes it from the Done page's tab, window to window
+test('the owner key handed to the dashboard: the seed for a words owner, the nsec for a Nostr node; the dashboard keeps it for the owner page', async () => {
+  const { newSeed, newNsec, seedOfNsec } = await import('../src/seed.js');
+  for (const control of ['words', 'nostr']) {
+    const home = mkdtempSync(join(tmpdir(), 'arena-install-'));
+    const w = createWizard({ state: nodeState(home), release: RELEASE, seatPort: 1 });
+    const server = http.createServer((q, s) => w.handle(q, s));
+    try {
+      await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+      const c = client(server.address().port);
+      await c.get(`/?t=${w.token}`);
+      if (control === 'words') {
+        const words = newSeed().words;
+        assert.equal((await c.post('/api/start', { control, action: 'restore', words: words.join(' ') })).json.ok, true);
+        assert.equal((await c.post('/api/owner', { mode: 'seed' })).json.ok, true);
+        const h = (await c.get('/api/owner/handoff')).json;
+        assert.deepEqual([h.ok, h.kind, h.seed], [true, 'seed', nodeState(home).readSecret('seed.hex').trim()]);
+      } else {
+        const k = newNsec();
+        assert.equal((await c.post('/api/start', { control, action: 'new', nsec: k.nsec })).json.ok, true);
+        const h = (await c.get('/api/owner/handoff')).json;
+        assert.deepEqual([h.ok, h.kind, h.secret], [true, 'nsec', Buffer.from(seedOfNsec(k.nsec).secret).toString('hex')]);
+      }
+    } finally { server.close(); rmSync(home, { recursive: true, force: true }); }
+  }
+  const { dashboardHtml } = await import('../../arena-node/src/dashboard.js');
+  const page = typeof dashboardHtml === 'function' ? dashboardHtml() : dashboardHtml;
+  assert.match(page, /location\.hash==='#owner-handoff'&&window\.opener/);
+  assert.match(page, /localStorage\.setItem\('arena-owner-seed:'\+base,d\.seed\)/, 'where owner.html reads it (STORE)');
+  assert.match(page, /e\.source!==window\.opener/, 'only from the tab that opened it');
+});

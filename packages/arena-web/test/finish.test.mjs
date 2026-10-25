@@ -98,11 +98,12 @@ test('done: a headline, the dashboard and Finish, one card per part with links i
     launchers: { start: '/home/u/.local/share/arena/bin/arena-start', command: { name: 'arena' } }, owner: { mode: 'seed' },
     lightning: { mode: 'own', pubkey: '03' + 'ab'.repeat(32) }, gateway: { testedMs: 1, publicUrl: 'https://node.example.com/gateway/', federations: [{ name: 'T' }] },
     bond: { txid: 'ef'.repeat(32), sats: 250000, maturity: 157483, lock: { estimatedMs: Date.UTC(2026, 9, 23, 8) } } };
-  const went = [];
-  const c = driven(DoneStep, { st, post: async () => ({ ok: true, owner: 'https://node.example.com/dashboard/owner' }), reload() {}, go: (u) => went.push(u) });
+  const tab = { location: { href: '' }, postMessage() {} }; const opened = [];
+  const c = driven(DoneStep, { st, post: async () => ({ ok: true, owner: 'https://node.example.com/dashboard/owner' }), get: async () => ({ ok: true, kind: 'seed', seed: 'ab'.repeat(32) }), reload() {},
+    open: (u) => { opened.push(u); return tab; } });
   const html = renderToStaticMarkup(c.render());
   assert.match(html, /<h2>Your node runs<\/h2>[\s\S]*It starts again by itself after a reboot/);
-  assert.match(html, /<a class="btn" id="open-dashboard" href="https:\/\/node\.example\.com\/dashboard" target="_blank"/, 'the dashboard, lowercase, in a new window');
+  assert.match(html, /<button type="button" id="finish">Open Node Dashboard<\/button>/, 'one button: it ends setup and opens the dashboard');
   assert.match(html, /id="done-address"[\s\S]*<a href="https:\/\/node\.example\.com" target="_blank" rel="noopener noreferrer">https:\/\/node\.example\.com<\/a>[\s\S]*Your Cloudflare tunnel/);
   assert.match(html, /id="done-owner"[\s\S]*href="https:\/\/node\.example\.com\/dashboard\/owner" target="_blank"[\s\S]*Log in with your 24 words/);
   assert.match(html, /id="done-bond"[\s\S]*250,000 sat[\s\S]*Locked until block 157,483/);
@@ -110,8 +111,8 @@ test('done: a headline, the dashboard and Finish, one card per part with links i
   assert.match(html, /<details class="done-more"><summary>Start, stop and the command line<\/summary>[\s\S]*<code>arena status<\/code>/);
   assert.match(html, /sudo loginctl enable-linger/);
   await c.finish();
-  assert.deepEqual(went, ['https://node.example.com/dashboard'], 'Finish opens the dashboard');
-  assert.match(renderToStaticMarkup(c.render()), /id="finish"[^>]*disabled=""/);
+  assert.deepEqual([opened, tab.location.href], [['about:blank'], 'https://node.example.com/dashboard#owner-handoff'], 'the tab opened at the click, then the dashboard that takes the owner key');
+  assert.match(renderToStaticMarkup(c.render()), /<a class="btn" id="open-dashboard" href="https:\/\/node\.example\.com\/dashboard" target="_blank"[^>]*>Open Node Dashboard<\/a>/, 'afterwards a link to it');
   const none = renderToStaticMarkup(React.createElement(DoneStep, { st: { seatPort: 9090, reach: { mode: 'quick' }, service: {}, wallet: { address: 'tb1pnode' } }, post: async () => ({}) }));
   assert.match(none, /the name changes when it restarts/); assert.match(none, /No bond yet\. Send it to <code>tb1pnode<\/code>/);
   assert.match(none, /href="http:\/\/127\.0\.0\.1:9090\/dashboard\/owner"[\s\S]*This computer only/);
@@ -140,6 +141,6 @@ test('#635: the faucet asked and the deposit checked; a refusal opens the guided
   assert.equal(gwText({ ok: true, syncing: true }), 'The gateway runs. It connects to Lightning by itself once Bitcoin Core has synced; your dashboard shows when.');
   const done = renderToStaticMarkup(driven(DoneStep, { st: { reach: { mode: 'direct', url: 'https://n.example', port: 9090 }, service: { boot: true }, seatPort: 9090, coreSync: { interim: true },
     launchers: { app: '/Applications/Bitcoin Arena.app', start: '/h/bin/Bitcoin Arena Start.command' } } }).render());
-  assert.match(done, /id="done-core"[\s\S]*Still syncing/); assert.match(done, /href="https:\/\/n\.example\/dashboard"/);
+  assert.match(done, /id="done-core"[\s\S]*Still syncing/); assert.match(done, /id="finish">Open Node Dashboard</);
   assert.match(done, /Open <b>Bitcoin Arena<\/b> in your Applications/);
 });
