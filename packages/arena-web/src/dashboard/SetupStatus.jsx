@@ -126,23 +126,52 @@ export class SetupCard extends React.Component {
   render() { return this.props.banner ? <SetupBanner status={this.state.status} /> : <SetupStatus status={this.state.status} />; }
 }
 
+/** The owner sections that help while the setup runs (a problem to fix, an update, the emergency code, the login); the rest waits for it. */
+export const SETUP_OPEN_SECTIONS = Object.freeze(['overview', 'services', 'release', 'emergency', 'login']);
 /**
  * THE OWNER AREA WAITS FOR THE SETUP (the owner's playtest 2026-10-25: roles and the bond did not load while Bitcoin Core synced - "make
  * sure the user knows that the node is still being set up", then: "Instead the whole owners page should show the setup screen so user
- * can't access the owners area yet, with a message. Check back when all services are synchronized"): while any part of the setup is still
- * open, a screen over the whole owner area with the message and the Setup card; it lifts by itself once every part is done.
+ * can't access the owners area yet, with a message. Check back when all services are synchronized", and: "those things are fine if we
+ * need the owners page. Disable things that might confuse the user"): while any part of the setup is still open, a screen over the whole
+ * owner area with the message and the Setup card; it lifts by itself once every part is done. When a part has a problem the owner fixes
+ * here, the screen lets the owner in - to the sections that help (SETUP_OPEN_SECTIONS); the others stay off until the setup is done
+ * (body[data-setup="open"], owner.html), with one line above that says why.
  */
 export class SetupBanner extends React.Component {
+  constructor(props) { super(props); this.state = { entered: false }; }
+  componentDidMount() { this.mark(); }
+  componentDidUpdate() { this.mark(); }
+  componentWillUnmount() { if (typeof document !== 'undefined') delete document.body.dataset.setup; }
+  enter() {
+    // a section that waits for the setup is never the one shown: the Overview instead
+    if (typeof location !== 'undefined' && !SETUP_OPEN_SECTIONS.includes(location.hash.slice(1))) location.hash = '#overview';
+    this.setState({ entered: true });
+  }
+  phase() {
+    const rows = setupRowsOf(this.props.status);
+    if (!rows.length || rows.every(([, , l]) => l.done)) return { phase: 'done', rows };
+    return { phase: this.state.entered ? 'open' : 'gate', rows };
+  }
+  mark() {
+    if (typeof document === 'undefined') return;
+    const { phase } = this.phase();
+    if (phase === 'done') delete document.body.dataset.setup; else document.body.dataset.setup = phase;
+  }
   render() {
     const s = this.props.status;
-    const rows = setupRowsOf(s);
-    if (!rows.length || rows.every(([, , l]) => l.done)) return null;
+    const { phase, rows } = this.phase();
+    if (phase === 'done') return null;
+    if (phase === 'open') return (
+      <div className="setup-banner" id="setup-banner" role="status"><b>🛠 Your node is still being set up.</b> Only the parts that help now are open: Overview, Services, Updates, Emergency code and Your login. The rest opens when all services are synchronized.</div>);
+    const problems = rows.filter(([, , l]) => l.problem);
     return (
       <div className="setup-gate" id="setup-gate" role="dialog" aria-modal="true" aria-labelledby="setup-gate-title">
         <div className="setup-gate-in">
           <h2 id="setup-gate-title">🛠 Your node is still being set up</h2>
           <p className="setup-gate-msg">Check back when all services are synchronized. This page opens by itself when they are.</p>
           <SetupStatus status={s} />
+          {problems.length ? <div className="setup-gate-fix"><p>{problems.map(([, label]) => label).join(', ')} need{problems.length === 1 ? 's' : ''} you. Open the owner area to fix {problems.length === 1 ? 'it' : 'them'}: only the parts that help are open until the setup is done.</p>
+            <button type="button" id="setup-gate-enter" onClick={() => this.enter()}>Open the owner area</button></div> : null}
         </div>
       </div>);
   }
