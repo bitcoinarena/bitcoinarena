@@ -42,23 +42,34 @@ status_dialog() {
 }
 if installed; then status_dialog; exit 0; fi
 
-# THE INSTALLER, IN THE BACKGROUND
-: > "$LOG"
-ARENA_NO_BROWSER=1 ARENA_CLOUDFLARED="$DEST/runtime/cloudflared" nohup "$DEST/runtime/node" "$DEST/packages/arena-installer/bin/arena-install.mjs" >> "$LOG" 2>&1 &
-PID=$!
-LINK=""
-for _ in $(seq 1 60); do LINK=$(grep -oE 'https?://[^ ]+\?t=[A-Za-z0-9_-]+' "$LOG" | head -1); [ -n "$LINK" ] && break; kill -0 $PID 2>/dev/null || break; sleep 1; done
-if [ -z "$LINK" ]; then say "The installer did not start: $(tail -3 "$LOG")"; exit 1; fi
-open "$LINK"
+# THE INSTALLER, IN THE BACKGROUND - one per macOS: opened again while it runs, the app shows that one (its pid and link kept beside the log)
+PIDF="$BASE/installer.pid"; LINKF="$BASE/installer.link"
+notify() { osascript -e "on run argv" -e "display notification (item 1 of argv) with title \"Bitcoin Arena\"" -e "end run" "$1" >/dev/null 2>&1; }
+if [ -f "$PIDF" ] && kill -0 "$(cat "$PIDF")" 2>/dev/null; then
+  PID=$(cat "$PIDF"); LINK=$(cat "$LINKF" 2>/dev/null); SHOWN_ONLY=1
+else
+  : > "$LOG"
+  ARENA_NO_BROWSER=1 ARENA_CLOUDFLARED="$DEST/runtime/cloudflared" nohup "$DEST/runtime/node" "$DEST/packages/arena-installer/bin/arena-install.mjs" >> "$LOG" 2>&1 &
+  PID=$!; echo $PID > "$PIDF"
+  LINK=""
+  for _ in $(seq 1 60); do LINK=$(grep -oE 'https?://[^ ]+\?t=[A-Za-z0-9_-]+' "$LOG" | head -1); [ -n "$LINK" ] && break; kill -0 $PID 2>/dev/null || break; sleep 1; done
+  if [ -z "$LINK" ]; then rm -f "$PIDF"; say "The installer did not start: $(tail -3 "$LOG")"; exit 1; fi
+  echo "$LINK" > "$LINKF"
+  open "$LINK"
+fi
+# ONE DIALOG, THEN THE BACKGROUND (kanban #635, the owner's playtest 2026-10-25: "This small app is always in the foreground and is always
+# back in the center of the desktop" - it gave up after 20 s and asked again): shown once; Hide or Open in browser leave it quiet until
+# the installer ends; open the app again to see this dialog
+case $(ask "The installer runs. Its setup page is open in your browser. Keep it running until the page says Done - open Bitcoin Arena again to see this, or to stop it." "Hide" "Stop" "Open in browser" "Hide") in
+  "Open in browser") open "$LINK" ;;
+  "Stop") kill $PID 2>/dev/null; rm -f "$PIDF"; notify "The installer was stopped. Open Bitcoin Arena again to start it."; exit 0 ;;
+esac
+# the first launch waits for its installer, quietly; a later launch (it found one running) only showed the dialog
+[ -n "${SHOWN_ONLY:-}" ] && exit 0
 while kill -0 $PID 2>/dev/null; do
-  if grep -q '^Done\. Your node runs' "$LOG"; then break; fi
-  last=$(grep -v '^\s*$' "$LOG" | tail -1)
-  case $(ASK_WAIT=20 ask "The installer runs. Its setup page is open in your browser (the link works once, for 30 minutes). Keep this running until the page says Done.
-
-Last: $last" "Open in browser" "Stop" "Open in browser") in
-    "Open in browser") open "$LINK" ;;
-    "Stop") kill $PID 2>/dev/null; say "The installer was stopped. Open Bitcoin Arena again to start it."; exit 0 ;;
-  esac
+  grep -q '^Done\. Your node runs' "$LOG" && break
+  sleep 5
 done
+rm -f "$PIDF"
 sleep 2
-if installed; then status_dialog; else say "The installer ended: $(tail -3 "$LOG")"; fi
+if installed; then notify "Your node runs. Open Bitcoin Arena to see its status."; else say "The installer ended: $(tail -3 "$LOG")"; fi
