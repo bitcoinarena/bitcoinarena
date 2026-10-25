@@ -55,7 +55,7 @@ test('the owner\'s Overview reads the setup\'s progress itself and again later (
 test('the owner area waits behind the setup screen while a part runs; it opens once all is done (playtest 2026-10-25)', () => {
   const gate = (status) => renderToStaticMarkup(React.createElement(SetupBanner, { status: status && { ok: true, ...status } }));
   const h = gate({ core: { interim: true, sync: { blocks: 50070, headers: 157581, progress: 0.059, etaMs: 1920000 } }, address: { ok: true, url: 'https://n.example' } });
-  assert.match(h, /id="setup-gate" role="dialog"[\s\S]*Your node is still being set up[\s\S]*Check back when all services are synchronized\.[\s\S]*id="setup-status"[\s\S]*Bitcoin Core/);
+  assert.match(h, /id="setup-gate" role="dialog"[\s\S]*Your node is still being set up[\s\S]*Check back when everything below is synced\.<\/p>[\s\S]*id="setup-status"[\s\S]*Bitcoin Core/);
   assert.equal(gate({ core: { interim: false }, address: { ok: true, url: 'https://n.example' } }), '', 'all done: the owner area opens');
   assert.equal(gate(null), '', 'no answer: the owner area as before');
   assert.doesNotMatch(h, /setup-gate-enter/, 'nothing to fix: no way in');
@@ -76,4 +76,30 @@ test('the coins the bond was made from count once the bond is on the chain; the 
   assert.match(html, /<span class="setup-pill ok">Complete<\/span>/, 'all four parts done');
   const part = card({ core: { interim: true, sync: { blocks: 1, headers: 2, progress: 0.5 } }, address: { ok: true, url: 'https://n.example' } });
   assert.match(part, /<span class="setup-pill wait">1 of 2 done<\/span><\/div><div class="setup-total" role="progressbar" aria-valuemin="0" aria-valuemax="2" aria-valuenow="1"><i style="width:50%"><\/i>/);
+});
+
+// HOW LONG IT STILL TAKES (the owner's playtest 2026-10-25: "We need one big number on top until the node is ready, and for each item
+// individual etas"): the big number is the slowest part's; each part still under way says its own time; a done part none
+test('one big number until the node is ready, and each part\'s own time', async () => {
+  const { dur } = await import('../dist/test/setup-status.mjs');
+  const min = 60000;
+  const html = card({ tip: 157605, blockMs: 8 * min, blockMsMeasured: true,
+    core: { interim: true, sync: { blocks: 148944, headers: 157605, progress: 0.945, etaMs: 10 * min } },
+    address: { ok: true, url: 'https://n.example' },
+    lnd: { ok: true, synced: false, height: 149091 }, gateway: { ok: false, syncing: true },
+    etas: { core: 10 * min, lnd: 12 * min, gateway: 12 * min + 800 * min, address: 0, updates: [], ready: 812 * min, partial: false } });
+  assert.match(html, /<div class="setup-ready" id="setup-ready"><span class="setup-ready-n">14 h<\/span><span class="setup-ready-l">until your node is ready<\/span><\/div>/);
+  assert.match(html, /id="setup-core">[\s\S]*?<span class="setup-eta">10 min<\/span><\/div>/);
+  assert.match(html, /id="setup-lnd">[\s\S]*?<span class="setup-eta">12 min<\/span><\/div>/);
+  assert.match(html, /id="setup-gateway">[\s\S]*?<span class="setup-eta">14 h<\/span><\/div>/);
+  assert.doesNotMatch(html.split('id="setup-address"')[1].split('id="setup-')[0], /setup-eta/, 'a part that is done shows no time');
+  assert.doesNotMatch(html, /min left/, 'Core\'s time is in its corner, not in its line as well');
+  assert.match(html, /Chain tip · block 157,605 · lately a block every 8 min/);
+  assert.match(card({ lnd: { ok: false, why: 'x' }, etas: { lnd: null, ready: 30 * min, partial: true } }), /<span class="setup-ready-n">at least 30 min<\/span>/);
+  assert.doesNotMatch(card({ address: { ok: true, url: 'u' }, etas: { address: 0, ready: 0 } }), /setup-ready/, 'all done: no number');
+  // the bond counts at 6 confirmations: said, with a bar, and its time is the blocks still needed
+  const bond = card({ bond: { txid: 'b0'.repeat(32), sats: '50000', seen: true, confirmations: 2, needed: 6, confirmBy: 157726 }, etas: { bond: 32 * min, ready: 32 * min } });
+  assert.match(bond, /Bond<\/b><span class="setup-text">50,000 sat, 2 of 6 confirmations\. It counts at 6\.<\/span><div class="bar"><i style="width:33%"><\/i><\/div><\/div><span class="setup-eta">32 min<\/span>/);
+  assert.match(card({ bond: { txid: 'b0'.repeat(32), sats: '50000', seen: true, confirmations: 0, needed: 6, confirmBy: 157726 } }), /0 of 6 confirmations\. It counts at 6 and must first confirm by block 157,726\./);
+  assert.deepEqual([dur(20000), dur(12 * min), dur(200 * min), dur(812 * min), dur(4 * 1440 * min)], ['under a minute', '12 min', '3 h 20 min', '14 h', '4 days']);
 });

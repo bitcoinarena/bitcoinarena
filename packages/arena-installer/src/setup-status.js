@@ -16,6 +16,9 @@
 //   updates   advertisement updates and bonds posted since (the newest games and protocols, a roles change, the move to the key from the
 //             words): confirmations against the 6 they need to count
 //   oldBonds  bonds left under a key the node moved away from: the block they can be taken back at
+// AND HOW LONG EACH STILL TAKES (the owner's playtest 2026-10-25: "Include an ETA how long it'll take ... one big number on top until the
+// node is ready, and for each item individual etas"): `etas` - Core's sync from its own ETA, LND from how fast it caught up since the
+// last read, confirmations from how fast blocks came lately, the gateway from LND plus the peg-in's 100 blocks until it pegs in.
 // Confirmations come from the node's own chain the way its deposit was found (wallet.js): an Electrum server's history of the node's
 // address, or bitcoind (the unspent output, or the mempool). Nothing here is secret: txids, heights, progress.
 import { readFileSync } from 'node:fs';
@@ -26,10 +29,21 @@ import { bondCounts, lockOf } from './bond.js';
 
 /** The confirmations a federation waits for before it credits a peg-in (Fedimint's testnet4 default, on both of ours: measured on #326). */
 export const PEG_IN_FINALITY = 100;
+/** The confirmations a bond and an advertisement update need before the node counts with them (the owner's playtest 2026-10-25: "Say how
+ *  many confirmations the bond takes, 10 min is not enough"). */
+export const COUNTS_AT = 6;
 
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
 
-/** { tip, heightOf(txid) -> height | 0 (in the mempool) | null (not seen) } from the node's chain. */
+/** How many blocks the block speed is read over. */
+export const BLOCK_SPEED_SPAN = 12;
+/** The block time assumed while none was measured: testnet4's target. */
+export const TARGET_BLOCK_MS = 600000;
+
+/** The time a block header names (bytes 68-71, little endian), in ms. */
+const headerTimeMs = (hex) => Buffer.from(hex, 'hex').readUInt32LE(68) * 1000;
+
+/** { tip, heightOf(txid) -> height | 0 (in the mempool) | null (not seen), blockMs() -> the mean time between the last blocks } from the node's chain. */
 async function chainReader(chain, spk, { session = electrumSession, fetcher = fetch } = {}) {
   if (chain.kind === 'core') {
     const rpc = coreRpc({ ...chain, fetcher, timeoutMs: 30000 });
@@ -41,13 +55,17 @@ async function chainReader(chain, spk, { session = electrumSession, fetcher = fe
       }
       try { await rpc('getmempoolentry', [txid]); return 0; } catch { return null; }
     };
-    return { tip, heightOf, close: () => {} };
+    const timeAt = async (h) => Number((await rpc('getblockheader', [await rpc('getblockhash', [h])])).time) * 1000;
+    const blockMs = async () => (await timeAt(tip) - await timeAt(tip - BLOCK_SPEED_SPAN)) / BLOCK_SPEED_SPAN;
+    return { tip, heightOf, blockMs, close: () => {} };
   }
   const s = await session({ ...chain, timeoutMs: 20000 });
   const tip = (await s.call('blockchain.headers.subscribe', [])).height;
   const history = await s.call('blockchain.scripthash.get_history', [scriptHash(spk)]);
   const heightOf = async (txid) => { const h = history.find((x) => x.tx_hash === txid); return h ? Math.max(0, h.height) : null; };
-  return { tip, heightOf, close: () => s.close() };
+  const timeAt = async (h) => headerTimeMs(await s.call('blockchain.block.header', [h]));
+  const blockMs = async () => (await timeAt(tip) - await timeAt(tip - BLOCK_SPEED_SPAN)) / BLOCK_SPEED_SPAN;
+  return { tip, heightOf, blockMs, close: () => s.close() };
 }
 
 const confs = (tip, height) => (height ? tip - height + 1 : 0);
@@ -62,7 +80,62 @@ export async function setupStatus({ home, reader = chainReader, nowMs = Date.now
   const more = await services(s).catch((e) => ({ lnd: null, gateway: null, address: { ok: false, why: e.message } }));
   const base = await chainParts({ home, s, reader, nowMs });
   if (!base.ok) return { ...base, ...more };
-  return { ...base, ...more };
+  const lndPerMs = lndSpeed(home, more.lnd, nowMs);
+  const blockMs = base.blockMs || TARGET_BLOCK_MS;
+  return { ...base, ...more, blockMs, blockMsMeasured: !!base.blockMs, etas: setupEtas({ ...base, ...more }, { blockMs, lndPerMs }) };
+}
+
+// LND's last heights read (per node home), to tell how fast it catches up: blocks per ms between two reads at least a minute apart
+const LND_SEEN = new Map();
+function lndSpeed(home, l, nowMs) {
+  if (!l || !l.ok || !Number.isFinite(Number(l.height))) return null;
+  const seen = LND_SEEN.get(home) || [];
+  const old = seen.find((x) => nowMs - x.atMs >= 60000 && Number(l.height) > x.height);
+  LND_SEEN.set(home, [...seen.filter((x) => nowMs - x.atMs < 15 * 60000), { height: Number(l.height), atMs: nowMs }].slice(-30));
+  return old ? (Number(l.height) - old.height) / (nowMs - old.atMs) : null;
+}
+
+/**
+ * HOW LONG EACH PART STILL TAKES, in ms: 0 when done, null when it cannot be told (a problem, or nothing measured yet); `ready` the
+ * longest of them - the node is ready when its slowest part is.
+ */
+export function setupEtas(st, { blockMs = TARGET_BLOCK_MS, lndPerMs = null } = {}) {
+  const blocks = (k) => Math.max(0, k) * blockMs;
+  const c = st.core || null;
+  const core = !c ? null : !c.interim ? 0 : c.sync && Number.isFinite(c.sync.etaMs) ? c.sync.etaMs : null;
+  const l = st.lnd || null;
+  let lnd = null;
+  if (l && l.ok) {
+    if (l.synced) lnd = 0;
+    else {
+      // LND reads its blocks from this node's Bitcoin Core: it cannot be through before Core is
+      const top = c && c.interim && c.sync ? Number(c.sync.headers) : Number(st.tip || 0);
+      const own = lndPerMs > 0 && top > Number(l.height) ? (top - Number(l.height)) / lndPerMs : null;
+      lnd = own === null ? core : Math.max(own, core || 0);
+    }
+  }
+  const p = st.pegIn || null;
+  const pegIn = !p ? null : p.credited ? 0 : blocks(p.needed - p.confirmations);
+  const g = st.gateway || null;
+  // the gateway is ready once its peg-in is credited: not started yet, it waits for LND and then the peg-in's 100 blocks
+  let gateway = null;
+  if (g) {
+    if (g.ok && g.federations > 0) gateway = 0;
+    else if (p) gateway = pegIn;                                   // started: its peg-in's blocks
+    else if (g.ok) gateway = blocks(PEG_IN_FINALITY);              // running, its peg-in not sent yet
+    else if (g.syncing && lnd !== null) gateway = lnd + blocks(PEG_IN_FINALITY);
+  }
+  const b = st.bond || null;
+  const bond = !b ? null : b.counts === false ? null : blocks((b.needed || COUNTS_AT) - (b.confirmations || 0));
+  const f = st.faucet || null;
+  const faucet = !f ? null : f.confirmations > 0 || (b && b.confirmations > 0) ? 0 : blockMs;
+  const updates = (st.updates || []).map((u) => (u.counts ? 0 : blocks(u.needed - u.confirmations)));
+  const address = !st.address ? null : st.address.ok ? 0 : null;
+  const parts = [[c, core], [l, lnd], [p, pegIn], [g, gateway], [b, bond], [f, faucet], [st.address, address], ...updates.map((u) => [true, u])].filter(([has]) => has);
+  const known = parts.map(([, e]) => e).filter((e) => e !== null);
+  return { core, lnd, gateway, pegIn, bond, faucet, address, updates, ready: known.length ? Math.max(...known) : null,
+    // a part whose time cannot be told (a problem, or nothing measured yet): `ready` is then at least that long
+    partial: parts.some(([, e]) => e === null) };
 }
 
 /** LND, the gateway and the public address, asked now (each null when the node has none). */
@@ -120,7 +193,7 @@ async function chainParts({ home, s, reader, nowMs }) {
       const offset = lockOf(r.tip, { nowMs, maturity: b.maturity }).offset;
       const counted = height ? bondCounts({ maturity: b.maturity, confirmedAt: height }) : null;
       bond = { txid: b.txid, sats: b.sats, maturity: b.maturity, height, confirmations: confs(r.tip, height), seen: height !== null,
-        confirmBy: b.maturity - offset, counts: counted ? counted.counts : null, blocksToMaturity: Math.max(0, b.maturity - r.tip) };
+        confirmBy: b.maturity - offset, counts: counted ? counted.counts : null, blocksToMaturity: Math.max(0, b.maturity - r.tip), needed: COUNTS_AT };
     }
     if (p) {
       const height = await r.heightOf(p.txid);
@@ -130,8 +203,9 @@ async function chainParts({ home, s, reader, nowMs }) {
     let fau = null;
     if (faucet) { const h = await r.heightOf(faucet.txid); fau = { txid: faucet.txid, sats: faucet.sats, seen: h !== null, confirmations: confs(r.tip, h) }; }
     const updates = [];
-    for (const u of sent) { const h = await r.heightOf(u.txid); updates.push({ ...u, seen: h !== null, confirmations: confs(r.tip, h), needed: 6, counts: confs(r.tip, h) >= 6 }); }
+    for (const u of sent) { const h = await r.heightOf(u.txid); updates.push({ ...u, seen: h !== null, confirmations: confs(r.tip, h), needed: COUNTS_AT, counts: confs(r.tip, h) >= COUNTS_AT }); }
     const old = oldBonds.map((o) => ({ ...o, blocksLeft: Math.max(0, Number(o.maturity) - r.tip), back: r.tip >= Number(o.maturity) }));
-    return { ok: true, core, bond, pegIn, faucet: fau, updates, oldBonds: old, tip: r.tip };
+    let blockMs = null; try { blockMs = r.blockMs ? await r.blockMs() : null; } catch { blockMs = null; }
+    return { ok: true, core, bond, pegIn, faucet: fau, updates, oldBonds: old, tip: r.tip, blockMs: blockMs > 0 ? Math.round(blockMs) : null };
   } finally { r.close(); }
 }
