@@ -533,6 +533,18 @@ const serviceRun = async (b) => {
       return { ok: true };
     },
     // THE EMERGENCY CODE AGAIN (§23A.5a): from the seed on this machine, for the owner at the wizard
+    // THE OWNER'S KEY FOR THE BROWSER (playtest 2026-10-25: "Der Installer soll sich mit meiner Seed schon einloggen so dass ich das nicht
+    // extra wieder machen muss"): the Done page hands it to the node's dashboard it opens (window to window, never in a URL), which keeps it
+    // where the owner page reads it - the owner page opens logged in. Only to this setup's own session, before Finish ends it.
+    'GET /api/owner/handoff': async () => {
+      const s = state.read();
+      if (s.control === 'nostr') {
+        const db = new DatabaseSync(state.path('node.db'), { readOnly: true });
+        try { return { ok: true, kind: 'nsec', secret: toHex(new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret)) }; } finally { db.close(); }
+      }
+      if ((s.owner || {}).mode === 'seed' && state.exists('seed.hex')) return { ok: true, kind: 'seed', seed: state.readSecret('seed.hex').trim() };
+      return { ok: false, why: 'this node\'s owner is a Nostr key from a signer: log in with it on the owner page' };
+    },
     'GET /api/emergency': async () => {
       if (!state.exists('seed.hex')) return { ok: false, why: 'no seed yet' };
       const em = emergencyOf(fromHex(state.readSecret('seed.hex')));
