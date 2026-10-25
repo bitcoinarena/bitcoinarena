@@ -60,3 +60,32 @@ test('no module of the installer or the seat imports an app', () => {
   const importsApp = files.filter((f) => /(from|import\()\s*['"][./]*\/(nextblock|rock-paper-scissors|btc-updown|hello-world)\//.test(readFileSync(join(repo, f), 'utf8')));
   assert.deepEqual(importsApp, []);
 });
+
+// EVERY MODULE THE RELEASE STARTS FINDS WHAT IT IMPORTS (the owner's 2026.1.8 playtest 2026-10-25: the seat's drawn attestor imports
+// ../../arena-attestor/src/attestor.js, the archive did not carry it, and the node stopped at ERR_MODULE_NOT_FOUND on every start while
+// the installer showed "Installing and starting your node"): from the installer's programs and the seat's main, every relative import
+// (static or import()) resolves to a file the archive carries. Not followed: the apps (fetched), and the dev clients' donor, which
+// main.js loads only on a node the owner gave ARENA_DEV_WASM_PKG (a developer's node, run from a checkout)
+test('every module the node and the installer load is in the archive', () => {
+  const sh = readFileSync(join(repo, 'tools/release/build-release.sh'), 'utf8');
+  const lines = sh.split('\n'); const start = lines.findIndex((l) => l.startsWith('git -C "$ROOT" archive "$REF"'));
+  let archive = '';
+  for (let i = start; i < lines.length; i++) { archive += ` ${lines[i].replace(/\\$/, '')} `; if (!lines[i].endsWith('\\')) break; }
+  const roots = archive.split(/\s+/).filter((w) => w.startsWith('packages/'));
+  const carried = new Set(execFileSync('git', ['ls-files', ...roots], { cwd: repo, encoding: 'utf8' }).split('\n').filter((f) => f && !/^packages\/[^/]+\/test\//.test(f)));
+  const skip = /^packages\/(nextblock|rock-paper-scissors|btc-updown|hello-world|arena-donor\/src\/donor\.js$)/;
+  const entries = execFileSync('git', ['ls-files', 'packages/arena-installer/bin', 'packages/arena-installer/src'], { cwd: repo, encoding: 'utf8' }).split('\n').filter((f) => /\.m?js$/.test(f));
+  const todo = [...entries, 'packages/arena-node/src/main.js']; const seen = new Set(); const missing = [];
+  while (todo.length) {
+    const f = todo.pop(); if (seen.has(f)) continue; seen.add(f);
+    if (!carried.has(f)) { missing.push(f); continue; }
+    // code only: a page script inside a template string is the browser's (its own import of ./x is served, not loaded)
+    const src = readFileSync(join(repo, f), 'utf8').replace(/`(?:\\[\s\S]|\$\{[^}]*\}|[^`\\])*`/g, '``');
+    for (const m of src.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|^\s*import\s+)['"](\.{1,2}\/[^'"]+\.m?js)['"]/gm)) {
+      const to = join(f, '..', m[1]);
+      if (!skip.test(to)) todo.push(to);
+    }
+  }
+  assert.ok(seen.has('packages/arena-node/src/drawn-attestor.js'), 'the walk reaches the seat');
+  assert.deepEqual(missing, [], 'modules the release does not carry');
+});
