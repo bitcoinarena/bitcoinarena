@@ -20,10 +20,13 @@ test('the page: today\'s volume, the reserve, the referral fees; a bar per day; 
   const h = renderToStaticMarkup(React.createElement(Metrics, { data }));
   assert.match(h, /<span>Volume today<\/span><b>0\.025 BTC<\/b>/);
   assert.match(h, /<span>Protocol reserve<\/span><b>889 sat<\/b><small>1 federation<\/small>/);
-  assert.match(h, /<span>Referral fees paid<\/span><b>0 sat<\/b><small>0 websites<\/small>/);
+  assert.match(h, /<span>Referral fees paid<\/span><b>0 sat<\/b><small>0 programs<\/small>/);
   assert.match(h, new RegExp(`<td class="nw">${today}</td><td>812</td><td class="nw"><b>0.025 BTC</b></td><td class="barcell"><i class="vbar" style="width:100%"></i>`));
   assert.match(h, /<td class="nw">2026-10-24<\/td><td>40<\/td><td class="nw"><b>400,000 sat<\/b><\/td><td class="barcell"><i class="vbar" style="width:16%"><\/i>/);
   assert.match(h, /read from 13 of 14 nodes/);
-  const withSite = renderToStaticMarkup(React.createElement(Metrics, { data: { ...data, referral: { msat: '1500000', sites: [{ site: '03' + 'ab'.repeat(32), msat: '1500000', payouts: 2 }] } } }));
-  assert.match(withSite, /<h2>Referral fees by website<\/h2>.*<td class="mono">03ababababababab…<\/td><td>2<\/td><td class="nw"><b>1,500 sat<\/b>/);
+  const withSite = renderToStaticMarkup(React.createElement(Metrics, { data: { ...data, referral: { msat: '1500000', sites: [{ site: '03' + 'ab'.repeat(32), name: 'Demo RPS', msat: '1500000', payouts: 2 },
+    { site: '02' + 'cd'.repeat(32), name: null, msat: '0', payouts: 0 }] } } }));
+  // each program by the name its key said (kanban #675)
+  assert.match(withSite, /<h2>Referral programs<\/h2>.*<td><b>Demo RPS<\/b><\/td><td class="mono">03ababababababab…<\/td><td>2<\/td><td class="nw"><b>1,500 sat<\/b>.*<td><b>unnamed<\/b><\/td>/);
+  assert.match(withSite, /<small>2 programs<\/small>/);
 });
