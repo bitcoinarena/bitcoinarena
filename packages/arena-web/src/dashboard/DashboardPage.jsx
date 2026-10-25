@@ -9,6 +9,7 @@
 // the page's own script drew is here too - a round opened to its players with their replays (readResult), the notes, every host row,
 // the capacity plea and the liquidity card (the page hands in liquidity-claim and capacity?node=me), and the words for an unreadable node.
 import React from 'react';
+import { SetupStatus } from './SetupStatus.jsx';
 
 /** msat to the page's sat: three decimals under 10, one under 1,000, none above. */
 export const sat = (m) => { const n = Number(m || 0) / 1000; return `${(n < 10 ? n.toFixed(3) : n.toFixed(n < 1000 ? 1 : 0)).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')} sat`; };
@@ -183,6 +184,7 @@ export class DashboardPage extends React.Component {
           <div><h1>Node dashboard</h1><p className="sub"><code>{String(D.node).slice(0, 16)}…</code> · active since {short(D.sinceMs, now)} · {D.roundsChecked} rounds checked</p></div>
           <a className="btn" href="Dashboard/owner">Owner area →</a>
         </header>
+        {D.setup && D.setup.ok ? <section><SetupStatus status={D.setup} /></section> : null}
         {D.capacity ? <section><h2>Capacity</h2><div className="card"><p className={D.capacity.level === 'bad' ? 'bad' : 'warn'}>{String(D.capacity.says)}</p></div></section> : null}
         <section><h2>Earnings</h2><Earnings totals={D.totals} period={period} onPeriod={(p) => this.setState({ period: p })} /></section>
         <section><div className="card"><Chart days={D.days || []} /></div></section>

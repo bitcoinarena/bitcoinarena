@@ -139,7 +139,7 @@ test('the doctor: a stopped service, a stale announced address and a missing bon
     const by = Object.fromEntries(checks.map((c) => [c.check, c]));
     assert.equal(by['arena.conf'].ok, true);
     assert.deepEqual([by['Lightning (LND)'].ok, by['Lightning (LND)'].fix], [false, 'arenanode start lnd   (then: arenanode logs lnd)']);
-    assert.match(by['Arena node (seat)'].says, new RegExp(`answers on port ${s.port} as abababab`));
+    assert.match(by['Bitcoin Arena node (seat)'].says, new RegExp(`answers on port ${s.port} as abababab`));
     assert.equal(by['Tunnel (cloudflared)'].ok, true, by['Tunnel (cloudflared)'].says);
     assert.equal(by['Guardian (fedimintd)'].ok, false, 'nothing on its API port');
     assert.equal(by['Quick tunnel name'].ok, false, 'the tunnel logs another name than the node names');

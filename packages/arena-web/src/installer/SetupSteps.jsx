@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE INSTALLER'S SETUP STEPS, IN REACT (kanban #564, installer slice 2): the Bitcoin connection (your Core, an Electrum server, or Core
-// installed here and its sync watched), how others reach the node (the direct test, a Cloudflare login, the tunnel kinds), the install as
-// a user service (and the Nostr login after it), and the federation explained. Each gets the wizard's `st`, `post`, `get` and `reload`;
-// a step's timers stop when the wizard leaves it (the page unmounts it).
+// installed here in a folder you choose, syncing in the background - kanban #635), how others reach the node (the direct test, a
+// Cloudflare login, the tunnel kinds), the install as a user service (and the Nostr login after it), and the federation explained. Each
+// gets the wizard's `st`, `post`, `get` and `reload`; a step's timers stop when the wizard leaves it (the page unmounts it).
+// THE WORDS (kanban #635, the owner 2026-10-25: "Texte ... sollen klarer werden und weniger AI Like"): short, plain, one idea a sentence.
 import React from 'react';
 import { Msg } from './WizardSteps.jsx';
 
 const said = (r, okText) => ({ ok: !!r.ok, text: r.ok ? okText : (r.why || 'failed') });
 const gb = (b) => `${Math.round(b / 2 ** 30).toLocaleString('en')} GB`;
-export const dur = (ms) => (ms === null || ms === undefined ? 'estimating… (a few minutes of syncing first)' : ms < 3600000 ? `about ${Math.max(1, Math.round(ms / 60000))} min`
+export const dur = (ms) => (ms === null || ms === undefined ? 'working out how long (give it a few minutes)' : ms < 3600000 ? `about ${Math.max(1, Math.round(ms / 60000))} min`
   : ms < 172800000 ? `about ${Math.round(ms / 3600000)} h` : `about ${Math.round(ms / 86400000)} days`);
 /** The chain test's answer in the owner's words: this source, and the second one it was compared with. */
 export const chainText = (r) => {
@@ -23,8 +24,8 @@ export class ChainStep extends React.Component {
     super(props);
     const e = (props.st.electrum || [])[0] || { host: '', port: '', tls: true };
     this.state = { kind: 'core', url: 'http://127.0.0.1:48332/', cookie: '', user: '', pass: '', pick: '0', host: e.host, port: String(e.port), tls: e.tls !== false,
-      plan: null, prune: false, mainnet: false, installing: false, sync: null, busy: false, msg: null, ...(props.initial || {}) };
-    this.test = this.test.bind(this); this.save = this.save.bind(this); this.install = this.install.bind(this); this.watch = this.watch.bind(this);
+      plan: null, dir: '', prune: false, mainnet: false, installing: false, sync: null, busy: false, msg: null, ...(props.initial || {}) };
+    this.test = this.test.bind(this); this.save = this.save.bind(this); this.install = this.install.bind(this); this.watch = this.watch.bind(this); this.checkDir = this.checkDir.bind(this);
   }
   async componentDidMount() {
     if (this.props.initial || !this.props.post) return;
@@ -37,7 +38,13 @@ export class ChainStep extends React.Component {
     if (k !== 'install' || this.state.plan) return;
     const r = await this.props.post('/api/core/plan');
     if (r.core) { this.setState({ sync: { networks: {} } }); return this.watch(); }
-    this.setState({ plan: r, prune: !!(r.disk && !r.disk.networks.testnet4.full) });
+    this.setState({ plan: r, dir: r.dir || '', prune: !!(r.disk && !r.disk.networks.testnet4.full) });
+  }
+  /** The free space of the folder typed in (kanban #635: the owner chooses where the blocks go). */
+  async checkDir() {
+    const r = await this.props.post('/api/core/plan', { dir: this.state.dir });
+    if (!r.ok) return this.setState({ msg: said(r) });
+    this.setState({ plan: r, dir: r.dir, msg: null, prune: !!(r.disk && !r.disk.networks.testnet4.full) });
   }
   pickServer(v) {
     const s = (this.props.st.electrum || [])[v];
@@ -50,7 +57,7 @@ export class ChainStep extends React.Component {
       : { kind: 'electrum', host: s.host.trim(), port: Number(s.port), tls: s.tls };
   }
   async test() {
-    this.setState({ busy: true, msg: { ok: true, text: 'Testing...' } });
+    this.setState({ busy: true, msg: { ok: true, text: 'Testing…' } });
     const r = await this.props.post('/api/chain/test', this.body());
     this.setState({ busy: false, msg: r.ok ? { ok: !!(r.result && r.result.ok), text: chainText(r) } : said(r) });
   }
@@ -62,10 +69,12 @@ export class ChainStep extends React.Component {
     this.setState({ msg: { ok: false, text: r.result ? chainText(r) : r.why } });
   }
   async install() {
-    this.setState({ installing: true, msg: { ok: true, text: 'Downloading and checking Bitcoin Core…' } });
-    const r = await this.props.post('/api/core/install', { prune: this.state.prune, mainnet: this.state.mainnet });
+    this.setState({ installing: true, msg: { ok: true, text: 'Downloading Bitcoin Core and checking it…' } });
+    const r = await this.props.post('/api/core/install', { prune: this.state.prune, mainnet: this.state.mainnet, dir: this.state.dir });
     if (!r.ok) return this.setState({ installing: false, msg: said(r) });
-    this.setState({ msg: { ok: true, text: 'Bitcoin Core runs and syncs.' }, sync: { networks: {} } });
+    // THE SYNC RUNS IN THE BACKGROUND (kanban #635): with an Electrum server standing in, setup goes on at once
+    if (r.interim) return this.props.reload();
+    this.setState({ msg: { ok: true, text: 'Bitcoin Core is running and syncing.' }, sync: { networks: {} } });
     this.watch();
   }
   async watch() {
@@ -86,23 +95,27 @@ export class ChainStep extends React.Component {
         <div className="bar"><i style={{ width: `${(x.progress * 100).toFixed(2)}%` }} /></div></> : <><b>{n}</b> - {x.why}</>}</div></div>));
   }
   installForm() {
-    const { plan, prune, mainnet, installing, sync } = this.state;
+    const { plan, dir, prune, mainnet, installing, sync } = this.state;
     if (sync) return (
       <div id="sync">
-        <p className="sub">Bitcoin Core is installed on this machine and syncs.</p>
-        <p className="warn"><b>Bookmark this page.</b> The first sync can take hours on testnet4 and days on mainnet. You can close this page and come back; setup continues here once testnet4 is synced. Keep the installer running (this terminal), or start it again later.</p>
+        <p className="sub">Bitcoin Core is installed and syncing.</p>
+        <p className="warn">No public Electrum server answered, so setup has to wait for the sync this time. That takes hours on testnet4. <b>Bookmark this page</b> and keep the installer running. Setup goes on here by itself once testnet4 is synced.</p>
         {this.syncRows()}
       </div>);
-    if (!plan) return <p className="sub">Checking this machine…</p>;
-    if (plan.installed) return <p className="sub">Bitcoin Core is installed here already (<code>{plan.installed}</code>): choose <b>My Bitcoin Core</b> and connect it.</p>;
+    if (!plan) return <p className="sub">Checking this computer…</p>;
+    if (plan.installed) return <p className="sub">Bitcoin Core is already installed here (<code>{plan.installed}</code>). Choose <b>My Bitcoin Core</b> and connect it.</p>;
     const d = plan.disk, n = plan.needs;
     return (
       <div>
-        <p className="sub">Free on this disk: <b>{gb(d.freeBytes)}</b>. Needed: testnet4 {gb(n.testnet4.fullBytes)} (pruned {gb(n.testnet4.prunedBytes)}), mainnet {gb(n.mainnet.fullBytes)} (pruned {gb(n.mainnet.prunedBytes)}).</p>
-        {d.warn ? <p className="warn">{d.warn}</p> : <p className="sub">Enough for both full nodes.</p>}
-        <label className="choice"><input type="checkbox" checked={prune} onChange={(e) => this.setState({ prune: e.target.checked })} /><div><b>Pruned</b><p>Keeps the chain state and only the newest blocks: a few GB instead of the whole chain. Your node works the same.</p></div></label>
-        <label className="choice"><input type="checkbox" checked={mainnet} onChange={(e) => this.setState({ mainnet: e.target.checked })} /><div><b>Also mainnet</b><p>A second Bitcoin Core for mainnet, for later. The Arena runs on testnet4 now.</p></div></label>
-        <button type="button" disabled={installing} onClick={this.install}>Install and start syncing</button>
+        <label htmlFor="core-dir">Folder for the blocks</label>
+        <div className="row"><div style={{ flex: 3 }}><input id="core-dir" placeholder={plan.defaultDir} value={dir} onChange={(e) => this.setState({ dir: e.target.value })} /></div>
+          <div><button type="button" className="ghost" onClick={this.checkDir}>Check this folder</button></div></div>
+        <p className="sub">Free in this folder: <b>{gb(d.freeBytes)}</b>. testnet4 needs {gb(n.testnet4.fullBytes)}, or {gb(n.testnet4.prunedBytes)} pruned. Mainnet needs {gb(n.mainnet.fullBytes)}, or {gb(n.mainnet.prunedBytes)} pruned.</p>
+        {d.warn ? <p className="warn">{d.warn}</p> : <p className="sub">Enough space for both.</p>}
+        <label className="choice"><input type="checkbox" checked={prune} onChange={(e) => this.setState({ prune: e.target.checked })} /><div><b>Pruned</b><p>Keeps only the newest blocks. Uses a few GB instead of the whole chain. Your node works the same.</p></div></label>
+        <label className="choice"><input type="checkbox" checked={mainnet} onChange={(e) => this.setState({ mainnet: e.target.checked })} /><div><b>Also mainnet</b><p>A second Bitcoin Core for mainnet, for later. Bitcoin Arena runs on testnet4 for now.</p></div></label>
+        <p className="sub">Setup goes on while Bitcoin Core syncs. Until then your node reads the chain from a public server, and it switches to your own Bitcoin Core by itself when the sync is done. Your dashboard shows the progress.</p>
+        <button type="button" disabled={installing} onClick={this.install}>Install Bitcoin Core</button>
       </div>);
   }
   render() {
@@ -110,13 +123,13 @@ export class ChainStep extends React.Component {
     const kinds = [['core', 'My Bitcoin Core', '₿'], ['electrum', 'Electrum server', '🔌'], ['install', 'Install Bitcoin Core for me', '⬇️']];
     return (
       <div className="aw">
-        <h2>1. Bitcoin connection</h2>
-        <p className="sub">Your node reads the testnet4 chain. Use your own Bitcoin Core, or an Electrum server.</p>
+        <h2>1. Bitcoin</h2>
+        <p className="sub">Your node needs to read the testnet4 chain. Connect your own Bitcoin Core, use an Electrum server, or let setup install Bitcoin Core for you.</p>
         <div className="kinds">{kinds.map(([k, t, ic]) => (
           <button key={k} type="button" id={`k-${k}`} className={`kind${s.kind === k ? ' on' : ''}`} onClick={() => this.kind(k)}><span aria-hidden="true">{ic}</span> {t}</button>))}</div>
         {s.kind === 'core' ? <div>
-          <label htmlFor="c-url">RPC URL</label><input id="c-url" value={s.url} onChange={(e) => this.setState({ url: e.target.value })} />
-          <label htmlFor="c-cookie">Cookie file (or leave empty and give user and password)</label><input id="c-cookie" placeholder="~/.bitcoin/testnet4/.cookie" value={s.cookie} onChange={(e) => this.setState({ cookie: e.target.value })} />
+          <label htmlFor="c-url">RPC address</label><input id="c-url" value={s.url} onChange={(e) => this.setState({ url: e.target.value })} />
+          <label htmlFor="c-cookie">Cookie file (or leave it empty and give a user and password)</label><input id="c-cookie" placeholder="~/.bitcoin/testnet4/.cookie" value={s.cookie} onChange={(e) => this.setState({ cookie: e.target.value })} />
           <div className="row"><div><label htmlFor="c-user">RPC user</label><input id="c-user" value={s.user} onChange={(e) => this.setState({ user: e.target.value })} /></div>
             <div><label htmlFor="c-pass">RPC password</label><input id="c-pass" type="password" value={s.pass} onChange={(e) => this.setState({ pass: e.target.value })} /></div></div>
         </div> : null}
@@ -127,11 +140,11 @@ export class ChainStep extends React.Component {
           <div className="row"><div><label htmlFor="e-host">Host</label><input id="e-host" value={s.host} onChange={(e) => this.setState({ host: e.target.value })} /></div>
             <div><label htmlFor="e-port">Port</label><input id="e-port" value={s.port} onChange={(e) => this.setState({ port: e.target.value })} /></div></div>
           <label className="choice"><input type="checkbox" checked={s.tls} onChange={(e) => this.setState({ tls: e.target.checked })} /><div><b>TLS</b></div></label>
-          <p className="sub">In Electrum mode a small bridge on this machine reads headers from the server and verified blocks from Esplora.</p>
+          <p className="sub">With an Electrum server, a small bridge on this computer reads block headers from the server and checked blocks from Esplora.</p>
         </div> : null}
         {s.kind === 'install' ? this.installForm() : <div>
           <button type="button" className="ghost" disabled={s.busy} onClick={this.test}>Test</button>
-          <button type="button" disabled={s.busy} onClick={this.save}>Save and go on</button></div>}
+          <button type="button" disabled={s.busy} onClick={this.save}>Save and continue</button></div>}
         <Msg r={s.msg} />
       </div>
     );
@@ -141,8 +154,8 @@ export class ChainStep extends React.Component {
 // THE WAYS IN, most permanent first; the direct test picks the default (direct when it reached this machine, the permanent tunnel when not)
 export const REACH_MODES = Object.freeze(['direct', 'permanent', 'tailscale', 'workers', 'quick']);
 export const defaultMode = (direct) => (direct ? (direct.reached ? 'direct' : 'permanent') : null);
-export const directText = (d) => (d.reached ? `Reachable from outside at ${d.address}:${d.port} - direct connection is the default.`
-  : `Not reachable from outside: ${d.diagnosis ? d.diagnosis.advice : d.why}\nThe permanent tunnel is the default.`);
+export const directText = (d) => (d.reached ? `Reachable from the internet at ${d.address}:${d.port}. A direct connection is the default.`
+  : `Not reachable from the internet: ${d.diagnosis ? d.diagnosis.advice : d.why}\nThe permanent tunnel is the default.`);
 
 export class ReachStep extends React.Component {
   constructor(props) {
@@ -154,7 +167,7 @@ export class ReachStep extends React.Component {
   }
   componentWillUnmount() { this.gone = true; clearTimeout(this.timer); }
   async test() {
-    this.setState({ testing: true, directMsg: { ok: true, text: 'Asking Arena nodes to connect back to this machine...' } });
+    this.setState({ testing: true, directMsg: { ok: true, text: 'Asking other nodes to connect to this computer…' } });
     const r = await this.props.post('/api/reach/direct', { port: Number(this.state.port) });
     if (!r.ok) return this.setState({ testing: false, directMsg: said(r) });
     this.setState((s) => ({ testing: false, direct: r.result, mode: s.mode || defaultMode(r.result), directMsg: null }));
@@ -188,7 +201,7 @@ export class ReachStep extends React.Component {
     if (!l) return null;
     if (l.result && l.result.ok) return <div className="msg ok">Logged in to Cloudflare.</div>;
     if (l.result) return <div className="msg bad">{l.result.why}</div>;
-    return l.url ? <div className="msg ok">Open <a href={l.url} target="_blank" rel="noopener noreferrer">this Cloudflare link</a>, sign up or log in, and choose the domain for your node. This page waits for you.</div> : null;
+    return l.url ? <div className="msg ok">Open <a href={l.url} target="_blank" rel="noopener noreferrer">this Cloudflare link</a>, sign up or log in, and pick the domain for your node. This page waits for you.</div> : null;
   }
   option(mode, title, text, extra = null, tag = null) {
     const on = this.state.mode === mode;
@@ -204,24 +217,24 @@ export class ReachStep extends React.Component {
     return (
       <div className="aw">
         <h2>6. How others reach your node</h2>
-        <p className="sub">Players and other nodes connect to your node. First the installer checks whether the internet can reach this machine directly.</p>
-        <div className="row"><div><label htmlFor="r-port">Port for connections from outside</label><input id="r-port" value={port} onChange={(e) => this.setState({ port: e.target.value })} /></div></div>
+        <p className="sub">Players and other nodes connect to your node. First, setup checks whether the internet can reach this computer directly.</p>
+        <div className="row"><div><label htmlFor="r-port">Port for incoming connections</label><input id="r-port" value={port} onChange={(e) => this.setState({ port: e.target.value })} /></div></div>
         <button type="button" className="ghost" id="r-test" disabled={testing} onClick={this.test}>Test direct connection</button>
         {directMsg ? <Msg r={directMsg} /> : direct ? <div className={`msg ${direct.reached ? 'ok' : 'bad'}`}>{directText(direct)}</div> : null}
         <div className="choices">
-          {this.option('direct', 'Direct connection', 'Your node listens on the port above. Needs the port open in the firewall and, behind a router, forwarded to this machine.', null, rec === 'direct' ? 'recommended' : null)}
-          {this.option('permanent', 'Permanent Cloudflare tunnel', 'A fixed https name such as node.example.com, through your own free Cloudflare account and a domain on it (Cloudflare sells one for a few dollars a year). No open ports. No domain? Choose workers.dev or Tailscale Funnel below.', <>
-            <button type="button" className="ghost" onClick={this.login}>Sign up / log in to Cloudflare</button>{this.loginLine()}
+          {this.option('direct', 'Direct connection', 'Your node listens on the port above. The port must be open in your firewall and, behind a router, forwarded to this computer.', null, rec === 'direct' ? 'recommended' : null)}
+          {this.option('permanent', 'Permanent Cloudflare tunnel', 'A fixed https name such as node.example.com, through your own free Cloudflare account and a domain on it (Cloudflare sells one for a few dollars a year). No open ports. No domain? Use workers.dev or Tailscale Funnel below.', <>
+            <button type="button" className="ghost" onClick={this.login}>Sign up or log in to Cloudflare</button>{this.loginLine()}
             <label htmlFor="r-host">Your node's name (under a domain on that account)</label>
             <input id="r-host" placeholder="node.example.com" value={host} onChange={(e) => this.setState({ host: e.target.value })} /></>, rec === 'permanent' ? 'recommended' : null)}
-          {this.option('tailscale', 'Permanent Tailscale Funnel', 'A fixed https name such as my-pc.tail1234.ts.net from your free Tailscale account - no domain needed, no open ports. Install Tailscale and log in (tailscale up) first; Funnel must be allowed for this machine in your tailnet.')}
-          {this.option('workers', 'Permanent Cloudflare name, no domain (workers.dev)', 'A fixed name such as arena-node-1a2b3c.yourname.workers.dev on your own free Cloudflare account, no open ports: a small Worker there forwards to your node\'s tunnel and your node keeps it pointed at it. Free up to 100,000 requests a day (Workers Paid: $5 a month).', <>
-            <p>1. <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener noreferrer">Create an API token</a> from the template <b>Edit Cloudflare Workers</b>, with your account. 2. Paste it here:</p>
+          {this.option('tailscale', 'Permanent Tailscale Funnel', 'A fixed https name such as my-pc.tail1234.ts.net from your free Tailscale account. No domain, no open ports. Install Tailscale and log in (tailscale up) first, and allow Funnel for this computer in your tailnet.')}
+          {this.option('workers', 'Permanent Cloudflare name without a domain (workers.dev)', 'A fixed name such as arena-node-1a2b3c.yourname.workers.dev on your own free Cloudflare account. No open ports. A small Worker there forwards to your node, and your node keeps it pointed at the right place. Free up to 100,000 requests a day (Workers Paid: $5 a month).', <>
+            <p>1. <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener noreferrer">Create an API token</a> from the template <b>Edit Cloudflare Workers</b>, for your account. 2. Paste it here:</p>
             <label htmlFor="r-cftoken">Cloudflare API token</label>
             <input id="r-cftoken" type="password" autoComplete="off" placeholder="the token Cloudflare shows once" value={cfToken} onChange={(e) => this.setState({ cfToken: e.target.value })} /></>)}
-          {this.option('quick', 'Temporary anonymous tunnel', 'A random trycloudflare.com name, no account. It changes whenever the tunnel restarts, so others lose your node until it is announced again.')}
+          {this.option('quick', 'Temporary tunnel', 'A random trycloudflare.com name, no account needed. The name changes when the tunnel restarts, and others cannot find your node until it is announced again.')}
         </div>
-        <button type="button" disabled={saving} onClick={this.save}>Save and go on</button>
+        <button type="button" disabled={saving} onClick={this.save}>Save and continue</button>
         <Msg r={msg} />
       </div>
     );
@@ -235,16 +248,16 @@ export class ServiceStep extends React.Component {
     this.start = this.start.bind(this); this.nostrLogin = this.nostrLogin.bind(this);
   }
   async start() {
-    this.setState({ busy: true, msg: { ok: true, text: 'Installing and starting the node (this can take a minute)...' } });
+    this.setState({ busy: true, msg: { ok: true, text: 'Installing and starting your node. This can take a minute…' } });
     const r = await this.props.post('/api/service', { boot: this.state.boot });
     this.setState({ busy: false });
     if (!r.ok) return this.setState({ msg: said(r) });
-    if (r.template) return this.setState({ template: r.template, msg: { ok: true, text: `The node runs (started in ${r.ms} ms). Now log in once with your Nostr key.` } });
+    if (r.template) return this.setState({ template: r.template, msg: { ok: true, text: `Your node is running (started in ${r.ms} ms). Now log in once with your Nostr key.` } });
     this.props.reload();
   }
   async nostrLogin() {
     const nostr = this.props.nostr || (typeof window !== 'undefined' ? window.nostr : null);
-    if (!nostr) return this.setState({ msg: said({ ok: false, why: 'no Nostr extension in this browser: use one that has your key' }) });
+    if (!nostr) return this.setState({ msg: said({ ok: false, why: 'no Nostr extension in this browser: use one that holds your key' }) });
     const ev = await nostr.signEvent({ ...this.state.template, created_at: Math.floor(Date.now() / 1000) });
     const r = await this.props.post('/api/owner/login', { nostr: ev });
     if (r.ok) return this.props.reload();
@@ -255,9 +268,9 @@ export class ServiceStep extends React.Component {
     return (
       <div className="aw">
         <h2>7. Install and start</h2>
-        <p>The node is installed as a user service, started, checked at its public address, and then you are logged in once as its owner.</p>
+        <p>Setup installs your node as a service, starts it, checks that it answers at its public address, and logs you in once as its owner.</p>
         <label className={`choice${boot ? ' on' : ''}`}><input type="checkbox" id="boot" checked={boot} onChange={(e) => this.setState({ boot: e.target.checked })} />
-          <div><b>Start the node again after a reboot</b><p>Recommended. It also keeps the node running when you log out.</p></div></label>
+          <div><b>Start again after a reboot</b><p>Recommended. It also keeps your node running when you log out.</p></div></label>
         {template ? <button type="button" onClick={this.nostrLogin}>Log in with Nostr</button>
           : <button type="button" id="svc" disabled={busy} onClick={this.start}>{busy ? 'Installing…' : 'Install and start'}</button>}
         <Msg r={msg} />
@@ -296,17 +309,17 @@ export class FederationStep extends React.Component {
         <div className="fed-explain">
           <FedRing />
           <div>
-            <p className="big">A <b>federation</b> is a group of <b>10 nodes</b> that hold the players' bitcoin <b>together</b>.</p>
-            <p>🔒 Moving any of it takes <b>7 of the 10</b>. No single node - not yours either - can take it.</p>
-            <p>⚡ Its two gateways connect it to Lightning; every guardian earns a share of each round.</p>
+            <p className="big">A <b>federation</b> is <b>10 nodes</b> that hold the players' bitcoin <b>together</b>.</p>
+            <p>🔒 Moving any of it takes <b>7 of the 10</b>. No single node can take it, yours included.</p>
+            <p>⚡ Two of its nodes run the Lightning gateways. Every guardian earns a share of each round.</p>
           </div>
         </div>
-        <p className="big">How your node gets its seat - <b>automatically</b>, whichever comes first:</p>
+        <p className="big">Your node gets a seat <b>by itself</b>, in one of two ways:</p>
         <div className="choices">
           <div className="choice"><div><b>✨ A new federation</b><p>Your node and <b>9 other new nodes</b> are drawn to start one together.</p></div></div>
-          <div className="choice"><div><b>🔄 A seat in a successor</b><p>When a federation shrinks (a guardian leaves), a new one takes over its players' bitcoin: its remaining guardians first, the missing seats <b>drawn</b> from nodes like yours.</p></div></div>
+          <div className="choice"><div><b>🔄 A seat in a successor</b><p>When a guardian leaves a federation, a new federation takes over its players' bitcoin. Its remaining guardians stay, and the empty seats are <b>drawn</b> from nodes like yours.</p></div></div>
         </div>
-        <p className="sub">Nobody is invited and nobody picks: the draw is fixed by the chain, so no one can choose who guards the money. A full federation takes no new guardian.</p>
+        <p className="sub">Nobody invites and nobody picks. The chain decides the draw, so no one can choose who guards the money. A full federation takes no new guardians.</p>
         <button type="button" disabled={this.state.busy} onClick={this.go}>Continue</button>
         <Msg r={this.state.msg} />
       </div>

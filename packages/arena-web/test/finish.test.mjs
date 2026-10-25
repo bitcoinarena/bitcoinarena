@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { LightningStep, BondStep, DoneStep, needText, foundText, fedList } from '../dist/test/finish.mjs';
+import { LightningStep, BondStep, DoneStep, needText, foundText, fedList, gwText } from '../dist/test/finish.mjs';
 
 function driven(Step, props) {
   const c = new Step(props);
@@ -31,7 +31,7 @@ test('lightning: LND set up and watched until it runs; the gateway started, its 
   assert.doesNotMatch(renderToStaticMarkup(c.render()), /id="ln-gw"/, 'no gateway before LND runs');
   await c.own();
   for (let i = 0; i < 20 && !c.state.lnOk; i++) await tick();
-  assert.equal(c.state.lnMsg.text, `LND 0.19.2 runs on testnet4: node 03ababababababab…, block 157193, synced; its wallet was made from your words.`);
+  assert.equal(c.state.lnMsg.text, `LND 0.19.2 runs on testnet4: node 03ababababababab…, block 157193, synced. Its wallet comes from your 24 words.`);
   await c.gwSetup();
   for (let i = 0; i < 20 && !c.state.funds; i++) await tick();
   assert.equal(c.state.gwMsg.text, 'The gateway runs (Running) on LND 03ababababababab…, testnet4, block 157193. No federation joined yet.');
@@ -81,7 +81,7 @@ test('bond: the deposit named whole with its parts, nothing then enough found, t
   assert.deepEqual(posts[0], ['/api/bond/check', { pegInSats: 50000 }]);
   assert.match(c.state.msg.text, /^Nothing has arrived yet\./);
   await c.check();
-  assert.equal(c.state.msg.text, 'Found 366,000 sat in 1 deposit(s) (confirmed at 157192). The network asks a new node to bond at least 250,000 sat now (its federations are filling up), so your node is useful from the start.');
+  assert.equal(c.state.msg.text, 'Found 366,000 sat in 1 deposit(s) (confirmed at 157192). That is enough: you can post the bond now. The confirmations show on your dashboard. The network asks new nodes for a bond of at least 250,000 sat right now (its federations are filling up), so your node is useful from the start.');
   html = renderToStaticMarkup(c.render());
   assert.match(html, /The bond will be locked until block 157483 - 289 blocks from now/);
   assert.match(html, /<button type="button" id="b-post">Post the bond<\/button>/);
@@ -90,7 +90,7 @@ test('bond: the deposit named whole with its parts, nothing then enough found, t
   const plain = driven(BondStep, { st: { roles: ['verify'], wallet: { address: 'x', needSats: 52000 } }, post: async (p, b) => { posts.push([p, b]); return { ok: true, coins: [], enough: false }; }, reload() {} });
   await plain.check();
   assert.deepEqual(posts.at(-1), ['/api/bond/check', {}], 'no peg-in asked of a node without custody');
-  assert.equal(foundText({ coins: [{}], totalSats: 10000, needSats: 52000, enough: false }), 'Found 10,000 sat in 1 deposit(s) (unconfirmed). Needed: 52,000 sat in all (fees included).');
+  assert.equal(foundText({ coins: [{}], totalSats: 10000, needSats: 52000, enough: false }), 'Found 10,000 sat in 1 deposit(s) (sent, not confirmed yet). Needed: 52,000 sat in all (fees included).');
 });
 
 test('done: how the node runs and is reached, the owner page, Lightning and the gateway, the bond and its lock; Finish', async () => {
@@ -102,15 +102,42 @@ test('done: how the node runs and is reached, the owner page, Lightning and the 
   const html = renderToStaticMarkup(c.render());
   assert.match(html, /the user service <code>arena-node<\/code> and starts again after a reboot/);
   assert.match(html, /at <code>https:\/\/node\.example\.com<\/code> through your Cloudflare tunnel/);
-  assert.match(html, /Owner page: <code>https:\/\/node\.example\.com\/Dashboard\/owner<\/code> - log in with your 24 words/);
+  assert.match(html, /Owner page: <code>https:\/\/node\.example\.com\/Dashboard\/owner<\/code>. Log in with your 24 words/);
   assert.match(html, /<b>On the command line<\/b>: <code>arena status<\/code> shows every service/);
   assert.match(html, /sudo loginctl enable-linger/);
   assert.match(html, /The gateway runs \(the user service <code>arena-gateway<\/code>\) at <code>https:\/\/node\.example\.com\/gateway\/<\/code>, serving T\./);
   assert.match(html, /250,000 sat, <b>locked until block 157483<\/b>/);
   await c.finish();
-  assert.equal(c.state.msg.text, 'Finished. The installer has stopped. Your owner page: https://node.example.com/Dashboard/owner');
+  assert.equal(c.state.msg.text, 'Finished. Setup has stopped. Your owner page: https://node.example.com/Dashboard/owner');
   assert.match(renderToStaticMarkup(c.render()), /id="finish" disabled=""/);
   const none = renderToStaticMarkup(React.createElement(DoneStep, { st: { seatPort: 9090, reach: { mode: 'quick' }, service: {}, wallet: { address: 'tb1pnode' } }, post: async () => ({}) }));
-  assert.match(none, /this name changes when the tunnel restarts/); assert.match(none, /No bond yet: send it to <code>tb1pnode<\/code>/);
-  assert.match(none, /http:\/\/127\.0\.0\.1:9090\/Dashboard\/owner<\/code> \(this machine only/);
+  assert.match(none, /This name changes when the tunnel restarts/); assert.match(none, /No bond yet: send it to <code>tb1pnode<\/code>/);
+  assert.match(none, /http:\/\/127\.0\.0\.1:9090\/Dashboard\/owner<\/code> \(this computer only/);
+});
+
+// KANBAN #635 (the owner 2026-10-25): testcoins from the Arena faucet or the guided way; the gateway set up while Bitcoin Core still syncs;
+// the Done page names Bitcoin Arena and sends the owner to the dashboard for the confirmations
+test('#635: the faucet asked and the deposit checked; a refusal opens the guided way; a syncing gateway counts; the dashboard named', async () => {
+  const posts = [];
+  let faucet = { ok: true, txid: 'ab'.repeat(32), sats: 52000 };
+  const c = driven(BondStep, { st: { roles: ['verify'], wallet: { address: 'tb1pnode', needSats: 52000 } }, post: async (p, b) => {
+    posts.push([p, b]);
+    if (p === '/api/coins/auto') return faucet;
+    return { ok: true, coins: [{ height: 0 }], totalSats: 52000, needSats: 52000, enough: true };
+  } });
+  let html = renderToStaticMarkup(c.render());
+  assert.match(html, /Get test coins automatically[\s\S]*id="coins-auto"/); assert.doesNotMatch(html, /coinfaucet/, 'the guided way folded');
+  await c.autoCoins();
+  assert.deepEqual(posts.map(([p]) => p), ['/api/coins/auto', '/api/bond/check']);
+  assert.match(c.state.msg.text, /\(sent, not confirmed yet\)\. That is enough: you can post the bond now/);
+  faucet = { ok: false, why: 'this address got coins from the faucet already', guided: true };
+  await c.autoCoins();
+  assert.equal(c.state.coins, 'guided');
+  html = renderToStaticMarkup(c.render());
+  assert.match(html, /mempool\.space\/testnet4\/faucet[\s\S]*coinfaucet\.eu/); assert.match(html, /<code>tb1pnode<\/code>/);
+  assert.equal(gwText({ ok: true, syncing: true }), 'The gateway runs. It connects to Lightning by itself once Bitcoin Core has synced; your dashboard shows when.');
+  const done = renderToStaticMarkup(driven(DoneStep, { st: { reach: { mode: 'direct', url: 'https://n.example', port: 9090 }, service: { boot: true }, seatPort: 9090, coreSync: { interim: true },
+    launchers: { app: '/Applications/Bitcoin Arena.app', start: '/h/bin/Bitcoin Arena Start.command' } } }).render());
+  assert.match(done, /Bitcoin Core is still syncing/); assert.match(done, /<code>https:\/\/n\.example\/Dashboard<\/code>/);
+  assert.match(done, /open <b>Bitcoin Arena<\/b> in your Applications/);
 });

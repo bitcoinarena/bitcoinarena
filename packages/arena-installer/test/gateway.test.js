@@ -47,6 +47,10 @@ test('info read (lightning_info as serde writes it), not connected said so; join
   assert.equal(asked[0].url, 'http://127.0.0.1:8476/v1/info');
   assert.equal(asked[0].o.headers.authorization, `Bearer ${pw}`);
   assert.match((await testGateway({ ...g, fetcher: answer(200, { gateway_state: 'Connecting', lightning_info: 'not_connected' }) })).why, /no Lightning node yet \(Connecting\)/);
+  // kanban #635: measured on the test host - gatewayd says Syncing (no Lightning node) while its LND's Bitcoin Core is not synced
+  const syncing = await testGateway({ ...g, fetcher: answer(200, { gateway_state: 'Syncing', lightning_info: 'not_connected' }) });
+  assert.equal(syncing.ok, false); assert.equal(syncing.syncing, true, 'running, waiting for the chain');
+  assert.equal((await testGateway({ ...g, fetcher: answer(200, { gateway_state: 'Connecting', lightning_info: 'not_connected' }) })).syncing, false);
   assert.match((await testGateway({ ...g, fetcher: answer(200, { ...info, lightning_info: { connected: { ...info.lightning_info.connected, network: 'bitcoin' } } }) })).why, /runs on bitcoin, not testnet4/);
   assert.match((await testGateway({ ...g, fetcher: async () => { throw Object.assign(new Error('x'), { cause: { code: 'ECONNREFUSED' } }); } })).why, /does not answer yet \(ECONNREFUSED\)/);
   asked = [];

@@ -3623,6 +3623,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // rounds' count or their newest row, which one covering-index read tells.
   let openList = { key: null, ids: [] };
   let dashboardKept = null;   // /dashboard.json, kept 30 s
+  let setupStatusKept = null;   // /setup-status, kept 60 s (kanban #635)
   // WHAT THE MARKETS PAID THIS SEAT (kanban #600): each ACCEPTED settlement of a market round read once, a few plans every 5 min
   const marketEarnings = createMarketEarnings({ db: round.db, ownPayoutHex: toHex(refundKeyOf(round.pubkey)),
     summaryOf: (rid) => settlements.summaryOf(rid),
@@ -6086,6 +6087,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             games: [...hosted.values()].map((g) => ({ id: toHex(g.gameId), name: g.name, title: g.title || null, version: g.manifest && g.manifest.version != null ? Number(g.manifest.version) : null })) });
         }
         return text(res, 404, 'no such owner door');
+      }
+      // THE SETUP'S PROGRESS (kanban #635, the owner 2026-10-25: "der Status und completion ist dann im Dashboards"): the installer no longer
+      // waits for Bitcoin Core's sync or for confirmations, so the dashboards show them - Core's background sync, the bond's and the
+      // peg-in's confirmations (arena-installer/src/setup-status.js). Public: txids, heights and progress only. Read at most once a minute.
+      if (req.method === 'GET' && url.pathname === '/setup-status') {
+        const send = (body) => { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
+        const home = process.env.ARENA_HOME;
+        if (!home) return send({ ok: false, why: 'this node was not set up by the Bitcoin Arena installer' });
+        const nowMs = Date.now();
+        if (!setupStatusKept || nowMs - setupStatusKept.at > 60000) {
+          const { setupStatus } = await import('../../arena-installer/src/setup-status.js');
+          setupStatusKept = { at: nowMs, body: await setupStatus({ home }).catch((e) => ({ ok: false, why: e.message })) };
+        }
+        return send({ ...setupStatusKept.body, atMs: setupStatusKept.at });
       }
       if (req.method === 'GET' && url.pathname === '/dashboard.json') {
         const nowMs = Date.now();

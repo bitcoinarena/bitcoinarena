@@ -49,17 +49,35 @@ test('chain: Core installed here - the disk said, pruned ticked when the full ch
   await c.kind('install');
   assert.equal(c.state.prune, true);
   let html = renderToStaticMarkup(c.render());
-  assert.match(html, /Free on this disk: <b>20 GB<\/b>\. Needed: testnet4 25 GB \(pruned 6 GB\), mainnet 800 GB \(pruned 10 GB\)\./);
+  assert.match(html, /Free in this folder: <b>20 GB<\/b>\. testnet4 needs 25 GB, or 6 GB pruned\. Mainnet needs 800 GB, or 10 GB pruned\./);
   assert.match(html, /Not enough for a full testnet4 node/);
   await c.install();
-  assert.deepEqual(posts.at(-1), ['/api/core/install', { prune: true, mainnet: false }]);
+  assert.deepEqual(posts.at(-1), ['/api/core/install', { prune: true, mainnet: false, dir: '' }]);
   html = renderToStaticMarkup(c.render());
   assert.match(html, /<b>testnet4<\/b> - block 90,000 of 157,193 · 40\.00 % · about 2 h left/);
-  assert.match(html, /<b>Bookmark this page\.<\/b>/);
+  assert.match(html, /<b>Bookmark this page<\/b> and keep the installer running/);
   for (let i = 0; i < 20 && !reloaded; i++) await tick();
   assert.equal(reloaded, 1, 'the chain saved by the installer once synced: the wizard moves on');
   c.componentWillUnmount();
-  assert.equal(dur(null), 'estimating… (a few minutes of syncing first)'); assert.equal(dur(3 * 86400000), 'about 3 days');
+  assert.equal(dur(null), 'working out how long (give it a few minutes)'); assert.equal(dur(3 * 86400000), 'about 3 days');
+});
+
+// KANBAN #635 (the owner 2026-10-25): the folder for the blocks chosen and checked; with an interim Electrum server the wizard goes on at once
+test('chain: the folder checked for space, and the install moves on at once while Bitcoin Core syncs in the background', async () => {
+  const plan = (dir) => ({ ok: true, dir: dir || '/home/me/.arena', defaultDir: '/home/me/.arena', disk: { freeBytes: 900 * 2 ** 30, warn: null, networks: { testnet4: { full: true } } },
+    needs: { testnet4: { fullBytes: 25 * 2 ** 30, prunedBytes: 6 * 2 ** 30 }, mainnet: { fullBytes: 800 * 2 ** 30, prunedBytes: 10 * 2 ** 30 } } });
+  const posts = []; let reloaded = 0;
+  const c = driven(ChainStep, { st: { electrum }, post: async (p, b) => { posts.push([p, b]); return p === '/api/core/plan' ? plan(b && b.dir) : { ok: true, interim: { host: 'e1', port: 50002 } }; },
+    get: async () => ({ ok: false }), reload: () => { reloaded++; } });
+  await c.kind('install');
+  assert.equal(c.state.dir, '/home/me/.arena');
+  c.setState({ dir: '/mnt/big' }); await c.checkDir();
+  assert.deepEqual(posts.at(-1), ['/api/core/plan', { dir: '/mnt/big' }]);
+  const html = renderToStaticMarkup(c.render());
+  assert.match(html, /id="core-dir"[^>]*value="\/mnt\/big"/); assert.match(html, /Setup goes on while Bitcoin Core syncs/);
+  await c.install();
+  assert.deepEqual(posts.at(-1), ['/api/core/install', { prune: false, mainnet: false, dir: '/mnt/big' }]);
+  assert.equal(reloaded, 1, 'no waiting for the sync');
 });
 
 test('reach: the direct test picks the default, Cloudflare\'s login waited for, the chosen way posted with its fields', async () => {
@@ -76,7 +94,7 @@ test('reach: the direct test picks the default, Cloudflare\'s login waited for, 
   assert.deepEqual(posts[0], ['/api/reach/direct', { port: 9090 }]);
   assert.equal(c.state.mode, 'permanent');
   let html = renderToStaticMarkup(c.render());
-  assert.match(html, /Not reachable from outside: behind NAT: forward port 9090\nThe permanent tunnel is the default\./);
+  assert.match(html, /Not reachable from the internet: behind NAT: forward port 9090\nThe permanent tunnel is the default\./);
   assert.match(html, /<b>Permanent Cloudflare tunnel<\/b><span class="tag">recommended<\/span>/);
   await c.login();
   assert.match(renderToStaticMarkup(c.render()), /Open <a href="https:\/\/dash\.cloudflare\.com\/argotunnel\?x=1"/);
@@ -100,7 +118,7 @@ test('install: the user service started (after a reboot too by default); a Nostr
   assert.deepEqual(posts[0], ['/api/service', { boot: true }]);
   const after = renderToStaticMarkup(c.render());
   assert.match(after, /<button type="button">Log in with Nostr<\/button>/); assert.doesNotMatch(after, /id="svc"/, 'the install button gives way to the login');
-  assert.match(after, /The node runs \(started in 840 ms\)\. Now log in once with your Nostr key\./);
+  assert.match(after, /Your node is running \(started in 840 ms\)\. Now log in once with your Nostr key\./);
   await c.nostrLogin();
   assert.equal(posts[1][0], '/api/owner/login'); assert.equal(posts[1][1].nostr.sig, 'ab'); assert.equal(typeof posts[1][1].nostr.created_at, 'number');
   assert.equal(reloaded, 1);

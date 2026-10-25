@@ -157,7 +157,7 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   // THE APPS (kanban #569): the release's three, all chosen at first; the node hosts the ones saved
   s = (await c.get('/api/state')).json;
   assert.equal(s.step, 'apps');
-  assert.deepEqual([s.appInfo.map((a) => `${a.id}:${a.versions}`), s.apps], [['nextblock:5', 'btc-updown:19', 'rock-paper-scissors:5'], ['nextblock', 'btc-updown', 'rock-paper-scissors']]);
+  assert.deepEqual([s.appInfo.map((a) => `${a.id}:${a.versions}`), s.apps], [['nextblock:5', 'btc-updown:23', 'rock-paper-scissors:5'], ['nextblock', 'btc-updown', 'rock-paper-scissors']]);
   assert.equal((await c.post('/api/apps', { apps: ['nextblock', 'rock-paper-scissors'] })).json.ok, true);
   assert.equal((await c.get('/api/state')).json.step, 'seed');
 
@@ -412,7 +412,7 @@ test('the intro: what a node is, one picture, what it earns and needs, then step
   assert.match(html, /\$\('intro-ram-row'\)\.hidden = n < 6/);
   assert.match(html, /\.choice\[hidden\] \{ display: none; \}/, 'hidden wins over the choice\'s flex: no RAM disk checkbox up to 5 nodes');
   assert.match(html, /n >= 10 \? ' 10 or more nodes found their own federation\.'/);
-  assert.match(html, /await post\('\/api\/instances', \{ count: n, ram: n >= 6 \? \$\('intro-ram'\)\.checked : false \}\)/);
+  assert.match(html, /await post\('\/api\/instances', \{ count: n, ram: n >= 6 \? \$\('intro-ram'\)\.checked : false, name: n >= 2 \? \$\('intro-name'\)\.value : '' \}\)/);
 });
 
 test('the roles step shows each role in one line, its needs as chips, the long text behind "more" ("a wall of text that nobody reads")', () => {
@@ -440,22 +440,25 @@ test('the wizard page draws no step itself: the roles into their list, every oth
 // HOW MANY NODES FROM THE INTRO (kanban #596): POST /api/instances checked and kept; the state says it back
 test('the intro\'s count of nodes and the RAM disk choice are checked and kept (kanban #596)', async () => {
   const home = mkdtempSync(join(tmpdir(), 'arena-install-'));
+  const w = createWizard({ state: nodeState(home), release: RELEASE, seatPort: 1 });
+  const server = http.createServer((q, s) => w.handle(q, s));
+  // closed whatever happens: an assertion that fails with the server open kept the whole file running until its timeout
   try {
-    const w = createWizard({ state: nodeState(home), release: RELEASE, seatPort: 1 });
-    const server = http.createServer((q, s) => w.handle(q, s));
     await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
     const c = client(server.address().port);
     await c.get(`/?t=${w.token}`);
+    const pick = (x) => ({ count: x.count, ram: x.ram });
     assert.deepEqual((await c.get('/api/state')).json.instances, { count: 1, ram: false }, 'one node unless chosen');
     assert.match((await c.post('/api/instances', { count: 25 })).json.why, /from 1 to 20/);
-    const ten = (await c.post('/api/instances', { count: 10, ram: true })).json;
-    assert.deepEqual([ten.ok, ten.instances], [true, { count: 10, ram: true }]);
+    const ten = (await c.post('/api/instances', { count: 10, ram: true, name: 'mac-mini' })).json;
+    assert.deepEqual([ten.ok, pick(ten.instances), ten.instances.name], [true, { count: 10, ram: true }, 'mac-mini'], 'the machine\'s name kept with the count (kanban #621)');
     assert.match(ten.note, /10 or more nodes found their own federation/);
-    assert.deepEqual((await c.get('/api/state')).json.instances, { count: 10, ram: true, first: { instance: '', portOffset: 0 } }, 'node 1\'s name and ports kept beside the count');
-    assert.deepEqual((await c.post('/api/instances', { count: 7, ram: false })).json.instances, { count: 7, ram: false }, 'declined');
-    server.close();
-    assert.deepEqual(nodeState(home).read().instances, { count: 7, ram: false, first: { instance: '', portOffset: 0 } }, 'kept on disk');
-  } finally { rmSync(home, { recursive: true, force: true }); }
+    const st = (await c.get('/api/state')).json.instances;
+    assert.deepEqual([pick(st), st.first], [{ count: 10, ram: true }, { instance: '', portOffset: 0 }], 'node 1\'s name and ports kept beside the count');
+    assert.deepEqual(pick((await c.post('/api/instances', { count: 7, ram: false })).json.instances), { count: 7, ram: false }, 'declined');
+    const kept = nodeState(home).read().instances;
+    assert.deepEqual([pick(kept), kept.first], [{ count: 7, ram: false }, { instance: '', portOffset: 0 }], 'kept on disk');
+  } finally { server.close(); rmSync(home, { recursive: true, force: true }); }
 });
 
 // ONE DEPOSIT FOR ALL NODES (kanban #596, the owner 2026-10-23: "nur 1 Bond einzahlen, das wird automatisch multipliziert und aus N Instanzen
@@ -492,5 +495,37 @@ test('one deposit for all nodes: node 1 asks for N parts, a further node is paid
     assert.equal(sent.length, 1, 'paid once, not at every check');
     assert.equal(again.fundedFrom.txid, 'ef'.repeat(32));
     server.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// TESTCOINS, AUTOMATICALLY (kanban #635, the owner 2026-10-25: "Automatisch oder geführt an testcoins"): the Arena faucet is asked for what
+// the bond step still lacks, at the node's own address; its no comes back with the guided way named
+test('the faucet door asks for exactly what is missing, nothing when enough is there, and says the guided way when the faucet refuses', async () => {
+  const { FAUCET_URL } = await import('../src/wizard.js');
+  const root = mkdtempSync(join(tmpdir(), 'arena-faucet-'));
+  try {
+    const st = nodeState(join(root, 'n'));
+    st.writeSecret('seed.hex', 'cc'.repeat(32));
+    st.save({ roles: ['verify'], chain: { kind: 'core', url: 'http://x/' }, done: { chain: 1, roles: 1, apps: 1, seed: 1, owner: 1, reach: 1, service: 1 } });
+    let have = 0; const asked = []; let faucetSays = null;
+    const chainKit = { coinsOf: async () => ({ tip: 157544, coins: have ? [{ txid: 'ab'.repeat(32), vout: 0, sats: have, height: 0 }] : [] }), broadcast: async () => 'ef'.repeat(32) };
+    const fetcher = async (url, init) => {
+      if (url !== FAUCET_URL) throw new Error('offline');
+      asked.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(faucetSays || { ok: true, txid: '12'.repeat(32), sats: asked.at(-1).sats }));
+    };
+    const w = createWizard({ state: st, release: RELEASE, seatPort: 1, chainKit, fetcher });
+    const need = (await w['POST /api/bond/check']({})).needSats;
+    have = 10000;
+    const r = await w['POST /api/coins/auto']({});
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(asked[0].sats, need - 10000, 'only what is missing');
+    assert.match(asked[0].address, /^tb1p/, 'the node\'s own address');
+    assert.equal(st.read().faucet.txid, '12'.repeat(32));
+    have = need;
+    assert.equal((await w['POST /api/coins/auto']({})).already, true); assert.equal(asked.length, 1, 'enough: the faucet is not asked');
+    have = 0; faucetSays = { ok: false, why: 'this address got coins from the faucet already' };
+    const no = await w['POST /api/coins/auto']({});
+    assert.deepEqual([no.ok, no.guided], [false, true]); assert.match(no.why, /already/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

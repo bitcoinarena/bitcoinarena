@@ -40,7 +40,7 @@ export class StepBar extends React.Component {
 }
 
 /** The installer cannot set up here (GET /api/state not ok): the page's heading and why, in place of the steps. */
-export const SetupRefused = ({ why }) => <><h1>Arena node setup</h1><p>{why}</p></>;
+export const SetupRefused = ({ why }) => <><h1>Bitcoin Arena setup</h1><p>{why}</p></>;
 
 /** The wizard's message line: green when it passed, red with the reason when not. */
 export class Msg extends React.Component {
@@ -85,8 +85,8 @@ export class RolesStep extends React.Component {
                 <Switch id={`rl-${k}`} label={r.title} checked={!!on[k]} disabled={r.slice > 1} onChange={(v) => this.toggle(k, v)} />
               </>} />))}
         </div>
-        <p className="sub">{this.chosen().length ? `${this.chosen().length} role${this.chosen().length === 1 ? '' : 's'} on · each earns its own 1 %` : 'No role on: the node would only watch.'}</p>
-        <button type="button" disabled={saving} onClick={this.save}>{saving ? 'Saving…' : 'Save and go on'}</button>
+        <p className="sub">{this.chosen().length ? `${this.chosen().length} role${this.chosen().length === 1 ? '' : 's'} on · each earns its own 1 %` : 'No role on: your node would only watch.'}</p>
+        <button type="button" disabled={saving} onClick={this.save}>{saving ? 'Saving…' : 'Save and continue'}</button>
         <Msg r={msg} />
       </div>
     );
@@ -122,14 +122,14 @@ export class AppsStep extends React.Component {
     return (
       <div className="aw">
         <h2>3. Your apps</h2>
-        <p className="sub">The games your node hosts: it replays and settles their rounds. All are on; switch off one you do not want.</p>
+        <p className="sub">The games your node hosts. It checks and settles their rounds. All are on; switch off any you do not want.</p>
         <div className="tiles">
           {info.map((a) => (
             <Tile key={a.id} id={`app-${a.id}`} icon={APP_IC[a.id] || '🎮'} name={a.title} state={on[a.id] ? 'on' : null}
               pill={`${a.versions} version${a.versions === 1 ? '' : 's'}`} highlight={a.short !== a.title ? a.short : ''}
               footer={<Switch id={`ap-${a.id}`} label={a.title} checked={!!on[a.id]} onChange={(v) => this.toggle(a.id, v)} />} />))}
         </div>
-        <p className="sub">{info.length ? (n ? `${n} of ${info.length} app${info.length === 1 ? '' : 's'} on` : 'No app on: choose at least one.') : 'This release lists no apps: the node hosts Next Block.'}</p>
+        <p className="sub">{info.length ? (n ? `${n} of ${info.length} app${info.length === 1 ? '' : 's'} on` : 'No app on: choose at least one.') : 'This release lists no apps: your node hosts Next Block.'}</p>
         <button type="button" disabled={saving || (info.length > 0 && !n)} onClick={this.save}>{saving ? 'Saving…' : 'Continue'}</button>
         <Msg r={msg} />
       </div>
@@ -162,13 +162,13 @@ export class SeedStep extends React.Component {
     return (
       <div className="aw">
         <h2>4. Your seed: write it down</h2>
-        <p>These 24 words are your node's wallet and your owner login. <b>Write them on paper, in order.</b> Anyone with them owns the node; without them a lost machine is a lost node.</p>
+        <p>These 24 words are your node's wallet and your owner login. <b>Write them on paper, in order.</b> Anyone who has them owns your node. Without them, a lost computer means a lost node.</p>
         {phase === 'start' ? <button type="button" id="seed-show" onClick={this.show}>Show my 24 words</button> : null}
         {phase === 'shown' ? <>
           <div className="words">{words.map((w, i) => <span key={i}><b>{i + 1}</b>{w}</span>)}</div>
           <button type="button" id="seed-written" onClick={this.written}>I have written them down</button></> : null}
         {phase === 'confirm' ? <>
-          <p>Now type back these words from your paper:</p>
+          <p>Now type these words from your paper:</p>
           <div className="row">{positions.map((p, i) => (
             <div key={p}><label htmlFor={`cw-${p}`}>word {p}</label>
               <input id={`cw-${p}`} autoComplete="off" spellCheck="false" autoFocus={i === 0} value={answers[p] || ''}
@@ -179,10 +179,10 @@ export class SeedStep extends React.Component {
           <div id="emergency">
             <h3>Your emergency code: write it down too</h3>
             <p className="code">{code}</p>
-            <p>If this node will be offline longer than the network allows - about two days on mainnet, 12 blocks on testnet4 - type this code on
-              any other node's page (<code>/Dashboard/emergency</code>) or on the Arena site (<code>testnet.bitcoin-arena.io/offline/</code>) to take it out of the network. Its bond stays yours: a node with
-              no guardian role leaves at once; a guardian leaves at once if the request comes before it counts as abandoned, later it is slashed.</p>
-            <p>The code can do nothing else: no money, no settings. <b>Never type your 24 words anywhere but your own node.</b></p>
+            <p>If your node will be offline longer than the network allows (about two days on mainnet, 12 blocks on testnet4), type this code on
+              any other node's page (<code>/Dashboard/emergency</code>) or on the Bitcoin Arena site (<code>testnet.bitcoin-arena.io/offline/</code>). It takes your node out of the network and your bond stays yours.
+              A node without the guardian role leaves at once. A guardian leaves at once if the code comes before it counts as abandoned; after that it is slashed.</p>
+            <p>The code can do nothing else: no money, no settings. <b>Never type your 24 words anywhere except your own node.</b></p>
             <button type="button" onClick={() => this.props.reload()}>I have written the code down</button>
           </div>) : null}
         <Msg r={msg} />
@@ -219,15 +219,15 @@ export class OwnerStep extends React.Component {
     return (
       <div className="aw">
         <h2>5. Owner login</h2>
-        <p className="sub">How you sign in to your node's owner page later.</p>
+        <p className="sub">How you log in to your node's owner page later.</p>
         <div className="choices">
-          {this.choice('seed', 'My 24 words', 'Type them on the owner page in any browser (they stay in that browser).')}
-          {this.choice('nostr', 'Nostr', 'Sign in with your Nostr key (a browser extension such as Alby or nos2x, or paste your npub).', mode === 'nostr' ? <>
+          {this.choice('seed', 'My 24 words', 'Type them on the owner page in any browser. They stay in that browser.')}
+          {this.choice('nostr', 'Nostr', 'Log in with your Nostr key: a browser extension such as Alby or nos2x, or paste your npub.', mode === 'nostr' ? <>
             <label htmlFor="npub">npub</label><input id="npub" placeholder="npub1..." value={npub} onChange={(e) => this.setState({ npub: e.target.value })} />
           </> : null)}
         </div>
         <button type="button" className="ghost" onClick={this.fromExtension}>Read from my Nostr extension</button>
-        <button type="button" onClick={this.save}>Save and go on</button>
+        <button type="button" onClick={this.save}>Save and continue</button>
         <Msg r={msg} />
       </div>
     );
@@ -249,9 +249,9 @@ export class PromiseStep extends React.Component {
       <div className="aw">
         <h2>10. Your bond: the rules</h2>
         <div className="rules">
-          <div className="rule"><div className="ic">🔒</div><div><b>Your bond is your promise.</b><p>Bitcoin your node locks on the chain. It makes cheating cost more than it could ever win - that is why players can trust a node they have never met.</p></div></div>
-          <div className="rule good"><div className="ic">✅</div><div><b>Stopping? Press LEAVE first.</b><p>On your owner page. Your node finishes the rounds it holds and gives notice to its federation, then you are free. Your bond comes back when its lock ends.</p></div></div>
-          <div className="rule bad"><div className="ic">⚠️</div><div><b>Just switching off - without LEAVE:</b><p><b className="red">Your bond is slashed: you lose it.</b> A guardian that vanishes leaves its federation short, and the bitcoin it guards at risk.</p></div></div>
+          <div className="rule"><div className="ic">🔒</div><div><b>Your bond is your promise.</b><p>Bitcoin your node locks on the chain. Cheating would cost more than it could ever win, so players can trust a node they have never met.</p></div></div>
+          <div className="rule good"><div className="ic">✅</div><div><b>Stopping? Press LEAVE first.</b><p>Press it on your owner page. Your node finishes its rounds and gives notice to its federation. Then you are free, and your bond comes back when its lock ends.</p></div></div>
+          <div className="rule bad"><div className="ic">⚠️</div><div><b>Switching off without LEAVE:</b><p><b className="red">Your bond is slashed: you lose it.</b> A guardian that disappears leaves its federation short and puts the bitcoin it guards at risk.</p></div></div>
         </div>
         <label htmlFor="promise-text">Type <b>{PROMISE}</b> to go on</label>
         <input id="promise-text" autoComplete="off" placeholder={PROMISE} value={text} onChange={(e) => this.setState({ text: e.target.value })} />

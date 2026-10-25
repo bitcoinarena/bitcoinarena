@@ -23,7 +23,7 @@ export const unitDir = (env = process.env) => join(env.XDG_CONFIG_HOME || join(h
 export function seatUnit({ node, release, home, port }) {
   return `# The Arena node, written by the installer. An update rewrites this file; the settings live in ${join(home, 'arena.conf')} (arenanode config).
 [Unit]
-Description=Arena node (testnet4) on port ${port}
+Description=Bitcoin Arena node (testnet4) on port ${port}
 After=network-online.target ${BRIDGE_UNIT}
 Wants=network-online.target
 
@@ -44,7 +44,7 @@ WantedBy=default.target
 export function bridgeUnit({ node, release, home, bridgePort }) {
   return `# The Arena node's chain bridge (Electrum mode), written by the installer.
 [Unit]
-Description=Arena chain bridge (Electrum + Esplora, testnet4) on 127.0.0.1:${bridgePort}
+Description=Bitcoin Arena chain bridge (Electrum + Esplora, testnet4) on 127.0.0.1:${bridgePort}
 After=network-online.target
 Wants=network-online.target
 
@@ -74,7 +74,7 @@ export async function installService({ node = process.execPath, release, home, p
     // THE CHAIN BRIDGE FIRST (Electrum mode): its own service, so the node finds its chain when it starts - on Linux it is the
     // arena-chain-bridge unit below, which the node's unit starts after
     if (bridgePort) {
-      const b = await installProgram({ id: 'chain-bridge', description: 'The Arena node\'s chain bridge (Electrum + Esplora, testnet4)',
+      const b = await installProgram({ id: 'chain-bridge', description: 'Bitcoin Arena: chain bridge (Electrum + Esplora, testnet4)',
         args: [node, join(release, 'packages', 'arena-installer', 'bin', 'chain-bridge.mjs'), String(bridgePort), home], home, boot, env, sh, platform });
       if (!b.ok) return b;
     }

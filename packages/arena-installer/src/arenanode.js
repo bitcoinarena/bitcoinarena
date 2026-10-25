@@ -19,7 +19,7 @@ import { execFile } from 'node:child_process';
 import { overview, control, doctor, logsOf, nodeOf, SERVICES } from './node-services.js';
 import { parseConf, setInConf, unsetInConf, CONF_KEYS } from '../../arena-node/src/arena-conf.js';
 
-export const HELP = (name) => `${name}: the Arena node on this machine
+export const HELP = (name) => `${name}: your Bitcoin Arena node on this machine
 
   ${name} status                    every service: running, pid, what it answers
   ${name} start | stop | restart    all of them, in order
@@ -40,7 +40,7 @@ const pad = (s, n) => { s = String(s ?? ''); return s.length >= n ? s : s + ' '.
 
 /** The status table's lines. */
 export function statusLines(v) {
-  const lines = [`Arena node ${v.version || '(version unknown)'}${v.instance ? `, instance ${v.instance}` : ''}`,
+  const lines = [`Bitcoin Arena node ${v.version || '(version unknown)'}${v.instance ? `, instance ${v.instance}` : ''}`,
     `  home      ${v.home}`, `  settings  ${v.conf || (v.legacyEnv ? `${v.home}/node.env (an older release; an update moves it into arena.conf)` : 'arena.conf missing')}`,
     `  seat      ${v.port ? `127.0.0.1:${v.port}` : '-'}${v.publicUrl ? `   public ${v.publicUrl}` : ''}`, ...(v.roles ? [`  roles     ${v.roles}`] : []), ''];
   const w = Math.max(8, ...v.services.map((s) => s.title.length));
@@ -74,7 +74,7 @@ export async function main(args, { home, name = 'arenanode', io = { out: (l) => 
     case 'status': {
       const v = await overview(ctx);
       if (a === 'json' || a === '--json') { io.out(JSON.stringify(v, null, 2)); return 0; }
-      if (!v.services.length) { io.err(`No service of an Arena node is installed for ${home}. Install one: arena-install`); return 1; }
+      if (!v.services.length) { io.err(`No Bitcoin Arena node is installed for ${home}. Install one: arena-install`); return 1; }
       for (const l of statusLines(v)) io.out(l);
       return v.services.every((s) => s.running !== false) ? 0 : 1;
     }

@@ -191,7 +191,7 @@ export function tunnelUnit({ bin, mode, config, port }) {
   const exec = tunnelArgsOf({ bin, mode, config, port }).join(' ');
   return `# The Arena node's ${mode} Cloudflare tunnel, written by the installer.
 [Unit]
-Description=Arena node ${mode} tunnel
+Description=Bitcoin Arena ${mode} tunnel
 After=network-online.target arena-node.service
 Wants=network-online.target
 
