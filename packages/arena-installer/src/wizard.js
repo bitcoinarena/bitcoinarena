@@ -183,11 +183,13 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     req.on('end', () => { try { ok(b ? JSON.parse(b) : {}); } catch { no(new Error('not JSON')); } });
   });
 
+  // THE RELEASE IN THE FOOTER (kanban #662, 2026-10-25: "footer with build/version on install, node owner, and node dashboard pages")
+  const buildOf = () => { const r = (f) => { try { return readFileSync(join(release, f), 'utf8').trim(); } catch { return null; } }; return { version: r('VERSION'), commit: (r('COMMIT') || '').slice(0, 8) || null }; };
   const view = () => {
     const s = state.read();
     return { network: 'testnet4', step: nextStep(s), done: doneOf(s), origin: s.origin || null, control: s.control || null, chainSwitchedFrom: s.chainSwitchedFrom || null, chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
       chainTest: s.chainTest || null, roles: s.roles || [], roleInfo: ROLES, appInfo: appsView(releaseApps), apps: chosenApps(s, releaseApps), electrum: TESTNET4_ELECTRUM, owner: s.owner || null, service: s.service || null,
-      seatPort: portOf(), defaultPort: seatPort, reach: s.reach || null, direct: s.direct || null, login: login ? { url: login.url, result: login.result } : null,
+      build: buildOf(), seatPort: portOf(), defaultPort: seatPort, reach: s.reach || null, direct: s.direct || null, login: login ? { url: login.url, result: login.result } : null,
       lightning: s.lightning || null, coreSync: s.core ? { dir: s.core.dir || state.home, interim: !!s.core.interim, prune: !!s.core.prune } : null, gatewaySeat: GATEWAY_SEAT, launchers: s.launchers || null, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, custodyLater: laterCustody(s), wallet: (s.done || {}).seed ? (() => { const parts = withOtherNodes(s, depositParts(s, (s.roles || []).includes('custody') ? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS : 0), { further: !!fundFrom });
         return { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(Object.values(parts).reduce((a, x) => a + x, 0)), parts }; })() : null,
       confirm: pendingSeed ? { positions: pendingSeed.positions } : null, confirmWords: CONFIRM_WORDS,
@@ -202,7 +204,8 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   // details and context and a progress bar"): POST /api/service moves through these stages; GET /api/service/progress tells the page
   // which is done, which runs and for how long, and - while the node is slow to answer, or after a failure - the node log's last lines
   const SERVICE_STAGES = [['settings', 'Writing your node\'s settings'], ['services', 'Installing its services'],
-    ['start', 'Starting your node and waiting for its first answer'], ['address', 'Testing its public address'], ['login', 'Logging you in as its owner']];
+    ['start', 'Starting your node and waiting for its first answer'], ['tunnel', 'Getting your tunnel\'s address'],
+    ['restart', 'Restarting your node on its new address'], ['address', 'Testing its public address'], ['login', 'Logging you in as its owner']];
   // THE STAGES OF A LONG STEP, AS THEY RUN (#651 for the service; kanban #661, 2026-10-25, the Lightning step: "Da hätte ich auch gerne
   // mehr debugs und eine progress bar" - "Da auch" for the gateway): which stage is done, which runs and for how long, and - once one
   // runs slow, or after a failure - the last lines of that program's log
@@ -346,7 +349,9 @@ const serviceRun = async (b) => {
     // THE PUBLIC ADDRESS, TESTED: a tunnel from outside through Cloudflare's edge (a quick tunnel's name read first, and the node's
     // settings rewritten with it - it is new at every restart); a direct node was reached by the seats before it started
     let reachTest = null;
-    if (s.reach.mode !== 'direct') stage('address');
+    // each part its own stage (kanban #667, 2026-10-25: "the loader is stuck at testing the tunnel but its doing other stuff"): the tunnel's
+    // name, the node restarted on it, then the test
+    if (s.reach.mode === 'quick' || s.reach.mode === 'workers') stage('tunnel');
     if (s.reach.mode === 'quick') {
       const url = await reach.quickTunnelUrl({ home: state.home, sinceMs: installAt });
       if (url) {
@@ -356,7 +361,7 @@ const serviceRun = async (b) => {
         // THE SEAT READS WHAT ITS SETTINGS NOW SAY (kanban #577, measured 2026-10-22 on the second machine: installer nodes 3-7 ran on the 15 settings
         // they started with - the quick tunnel's name, and with it the custody node's guardian and founding settings, came only after the start -
         // so they ran no guardian and could never be drawn into a founding): the seat alone restarted, never its tunnel (a new name)
-        if (seatNeedsRestart(before, after)) { const rs = await restartSeat(state.home); log(`[service] the seat restarted on its new settings: ${rs && rs.ok === false ? rs.why : 'ok'}`); }
+        if (seatNeedsRestart(before, after)) { stage('restart'); const rs = await restartSeat(state.home); log(`[service] the seat restarted on its new settings: ${rs && rs.ok === false ? rs.why : 'ok'}`); }
       }
     }
     // workers.dev: the Worker forwards to the quick tunnel's first name, and its keeper follows every new one
@@ -370,6 +375,7 @@ const serviceRun = async (b) => {
         args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'workers-keeper.mjs'), '--home', state.home] });
       if (!k.ok) return { ok: false, why: `the Worker forwards, but its keeper did not start: ${k.why}`, identity: r.identity };
     }
+    if (s.reach.mode !== 'direct') stage('address');
     if (s.reach.mode !== 'direct') reachTest = s.reach.url ? await reach.testPublicUrl({ url: s.reach.url, identity: r.identity, fetcher }) : { ok: false, why: 'the quick tunnel gave no name' };
     let login = null;
     if (s.owner.mode === 'seed') { stage('login'); login = await ownerLogin(signedBySeed(r.identity)); }
@@ -645,37 +651,48 @@ const serviceRun = async (b) => {
     'POST /api/reach/save': async (b) => {
       const mode = String(b.mode || '');
       if (!reach.REACH_MODES.includes(mode)) return { ok: false, why: 'direct, permanent, quick, tailscale or workers' };
-      const s = state.read();
-      const port = mode === 'direct' ? ((s.direct || {}).port || seatPort) : (Number(b.port) || seatPort);
-      if (mode === 'direct') {
-        if (!s.direct || !s.direct.reached) return { ok: false, why: 'the direct check did not reach this machine: open the port as it says and test again, or choose a tunnel' };
-        return { ok: true, reach: mark('reach', { reach: { mode, port, url: `http://${s.direct.address.includes(':') ? `[${s.direct.address}]` : s.direct.address}:${port}` } }).reach };
-      }
-      if (mode === 'quick') return { ok: true, reach: mark('reach', { reach: { mode, port, url: null } }).reach };
-      // workers.dev (2026-10-18: "Implement workers dev tunnel"): the operator's own token, account and subdomain; the Worker itself
-      // is uploaded at the install, once the quick tunnel behind it has a name
-      if (mode === 'workers') {
-        const token = String(b.cfToken || '').trim();
-        const name = (s.reach && s.reach.mode === 'workers' && s.reach.workerName) || workersKit.workerNameOf(randomBytes(3).toString('hex'));
-        const w = await workersKit.workersSetup({ token, name, wantSubdomain: b.cfSubdomain || null, fetcher });
-        if (!w.ok) return { ok: false, why: w.why };
-        state.writeSecret('cf-workers-token', token);
-        return { ok: true, reach: mark('reach', { reach: { mode, port, url: w.url, workerName: name, accountId: w.accountId, subdomain: w.subdomain } }).reach };
-      }
-      if (mode === 'tailscale') {
-        const t = await reach.tailscaleFunnel({ bin: tailscale, port, sh: tailscaleSh });
+      const was = state.read();
+      const r = await (async () => {
+        const s = state.read();
+        const port = mode === 'direct' ? ((s.direct || {}).port || seatPort) : (Number(b.port) || seatPort);
+        if (mode === 'direct') {
+          if (!s.direct || !s.direct.reached) return { ok: false, why: 'the direct check did not reach this machine: open the port as it says and test again, or choose a tunnel' };
+          return { ok: true, reach: mark('reach', { reach: { mode, port, url: `http://${s.direct.address.includes(':') ? `[${s.direct.address}]` : s.direct.address}:${port}` } }).reach };
+        }
+        if (mode === 'quick') return { ok: true, reach: mark('reach', { reach: { mode, port, url: null } }).reach };
+        // workers.dev (2026-10-18: "Implement workers dev tunnel"): the operator's own token, account and subdomain; the Worker itself
+        // is uploaded at the install, once the quick tunnel behind it has a name
+        if (mode === 'workers') {
+          const token = String(b.cfToken || '').trim();
+          const name = (s.reach && s.reach.mode === 'workers' && s.reach.workerName) || workersKit.workerNameOf(randomBytes(3).toString('hex'));
+          const w = await workersKit.workersSetup({ token, name, wantSubdomain: b.cfSubdomain || null, fetcher });
+          if (!w.ok) return { ok: false, why: w.why };
+          state.writeSecret('cf-workers-token', token);
+          return { ok: true, reach: mark('reach', { reach: { mode, port, url: w.url, workerName: name, accountId: w.accountId, subdomain: w.subdomain } }).reach };
+        }
+        if (mode === 'tailscale') {
+          const t = await reach.tailscaleFunnel({ bin: tailscale, port, sh: tailscaleSh });
+          if (!t.ok) return { ok: false, why: t.why };
+          return { ok: true, reach: mark('reach', { reach: { mode, port, url: t.url, host: t.host, httpsPort: t.httpsPort } }).reach };
+        }
+        // permanent: logged in, then the tunnel and its name
+        if (!login || !login.result || !login.result.ok) return { ok: false, why: 'log in to Cloudflare first (the link above), then save' };
+        const hostname = String(b.hostname || '').trim().toLowerCase();
+        if (!/^([a-z0-9-]+\.)+[a-z]{2,}$/.test(hostname)) return { ok: false, why: 'a name such as node.example.com, under a domain on your Cloudflare account' };
+        const t = await reach.cloudflareTunnel({ bin: cloudflared, name: `arena-node-${hostname.split('.')[0]}`, hostname, port, home: state.home });
         if (!t.ok) return { ok: false, why: t.why };
-        return { ok: true, reach: mark('reach', { reach: { mode, port, url: t.url, host: t.host, httpsPort: t.httpsPort } }).reach };
-      }
-      // permanent: logged in, then the tunnel and its name
-      if (!login || !login.result || !login.result.ok) return { ok: false, why: 'log in to Cloudflare first (the link above), then save' };
-      const hostname = String(b.hostname || '').trim().toLowerCase();
-      if (!/^([a-z0-9-]+\.)+[a-z]{2,}$/.test(hostname)) return { ok: false, why: 'a name such as node.example.com, under a domain on your Cloudflare account' };
-      const t = await reach.cloudflareTunnel({ bin: cloudflared, name: `arena-node-${hostname.split('.')[0]}`, hostname, port, home: state.home });
-      if (!t.ok) return { ok: false, why: t.why };
-      return { ok: true, reach: mark('reach', { reach: { mode, port, url: `https://${hostname}`, hostname, tunnel: t.id, config: t.config } }).reach };
+        return { ok: true, reach: mark('reach', { reach: { mode, port, url: `https://${hostname}`, hostname, tunnel: t.id, config: t.config } }).reach };
+      })();
+      // THE ADDRESS SURVIVES GOING BACK (kanban #666, 2026-10-25: "going back to any previous step after setting reach breaks reach. the
+      // setting is lost and cant recover"): the same way saved again keeps the address the install gave it (a quick tunnel's name comes only
+      // from "Install and start", which does not run again); another way on an installed node opens "Install and start" again, so its
+      // tunnel or Worker is set up and the node takes the new address
+      if (!r || !r.ok || !was.reach) return r;
+      const s = state.read();
+      if (was.reach.mode === mode && was.reach.url && !s.reach.url) return { ...r, reach: state.save({ reach: { ...s.reach, url: was.reach.url, ...(was.reach.host ? { host: was.reach.host } : {}) } }).reach };
+      if (was.reach.mode !== mode && (s.done || {}).service) { const { service, ...rest } = s.done; state.save({ done: rest }); return { ...r, again: 'service' }; }
+      return r;
     },
-
     'POST /api/service': async (b) => {
       svc.begin();
       let r;

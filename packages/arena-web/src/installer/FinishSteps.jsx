@@ -25,7 +25,7 @@ export const LND_HINT = {
   reach: 'Two other nodes try to reach this computer on Lightning\'s port. If they cannot, LND gets a Tor address instead.',
   start: 'LND reads its settings, connects to your Bitcoin Core and becomes a service of this computer.',
   wallet: 'LND\'s wallet comes from your 24 words. LND needs some seconds before it accepts it.',
-  answer: 'Setup asks LND for its node key and block height. The first answer can take a minute.',
+  answer: 'LND answers once it has connected to your Bitcoin Core. While Bitcoin Core is still downloading the chain, this waits for it and can take a long time.',
 };
 export const GW_HINT = {
   find: 'The gateway program ships with this release.',

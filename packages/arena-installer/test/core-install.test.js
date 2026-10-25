@@ -118,6 +118,7 @@ test('Bitcoin Core goes to the chosen folder and syncs in the background: the wi
   assert.deepEqual([tested.find((c) => c.host === 'seat.example.com').ws, tested.find((c) => c.host === 'seat.example.com').path], [true, '/electrum'], 'over its websocket');
   const st = (await c.get('/api/state')).json;
   assert.equal(st.step, 'roles', 'the wizard goes on while Core syncs');
+  assert.deepEqual(st.build, { version: null, commit: null }, 'the release for the footer (kanban #662): none in this test release');
   assert.equal(st.chain.kind, 'electrum');
   assert.deepEqual(st.coreSync, { dir: join(home, 'disk2'), interim: true, prune: true });
   // CUSTODY ON THE CORE INSTALLED HERE (the owner's playtest 2026-10-25: custody was refused right after "Install Bitcoin Core for me" -

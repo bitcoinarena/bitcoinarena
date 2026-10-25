@@ -35,6 +35,7 @@ button:disabled { opacity: .5; cursor: default; }
 #emergency .code { font: 600 18px/1.4 ui-monospace, monospace; letter-spacing: .04em; margin: 6px 0 10px; overflow-wrap: anywhere; }
 .role { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0; display: flex; gap: 10px; align-items: flex-start; }
 [hidden] { display: none !important; }
+footer.build { max-width: 860px; margin: 24px auto 16px; padding: 0 16px; color: var(--muted); font-size: 12px; text-align: center; }
 .role input { width: auto; margin-top: 4px; } .role p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
 code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-all; }
 .warn { color: var(--accent); }
@@ -216,6 +217,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
 
   <section id="s-done"></section>
 </main>
+<footer class="build" id="build"></footer>
 <!-- EVERY STEP IN REACT (kanban #564, packages/arena-web; 2026-10-21: "no fall backs"): window.ArenaWizard, loaded before this
      page's script - each step draws its whole section, the roles their list (the pictures around it stay the page's) -->
 <script src="/wizard.js"></script>
@@ -233,6 +235,8 @@ let introSkipped = false;
 const introSeen = () => { if (introSkipped) return true; try { return localStorage.getItem('arena-intro-seen') === '1'; } catch { return false; } };
 async function load() {
   st = await (await fetch('/api/state')).json();
+  // the release in the footer (kanban #662)
+  if (st.build && st.build.version) document.getElementById('build').textContent = `Bitcoin Arena ${st.build.version}${st.build.commit ? ` · build ${st.build.commit}` : ''}`;
   const R = window.ArenaWizard;
   if (!st.ok) { R.refused(document.querySelector('main'), { why: st.why }); return; }
   const shown = viewing && st.done[viewing] ? viewing : st.step;
