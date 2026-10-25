@@ -744,6 +744,24 @@
       font: 600 13px/1 system-ui, sans-serif; white-space: nowrap; cursor: pointer; }
     #arena-wallet-bar #arena-wb-gear, body #arena-settings-go { width: 38px; padding: 0; font-size: 20px; }   /* body: #arena-settings-go's own later rule (padding 6px 10px) put its glyph 1 px lower */
     #arena-wallet-bar #arena-wb-deposit, #arena-hdr-deposit { background: #f7931a; border-color: #f7931a; color: #1a1000; }
+    /* the header's links (kanban #673): in the row from 900 px, behind ☰ below it */
+    .arena-nav { position: relative; flex: none; display: flex; }
+    .arena-nav-go { display: none; height: 32px; width: 38px; box-sizing: border-box; padding: 0; border-radius: 6px; border: 1px solid #3a4452;
+      background: rgba(22,27,34,0.94); color: #e8eaed; font: 600 18px/1 system-ui, sans-serif; cursor: pointer; }
+    .arena-nav-menu { display: flex; gap: 6px; }
+    .arena-nav-menu a { height: 32px; box-sizing: border-box; display: inline-flex; align-items: center; padding: 0 10px; border-radius: 6px;
+      border: 1px solid #3a4452; background: rgba(22,27,34,0.94); color: #e8eaed; font: 600 13px/1 system-ui, sans-serif; text-decoration: none; white-space: nowrap; }
+    .arena-nav-menu a:hover { color: #f7931a; border-color: #f7931a; }
+    @media (max-width: 899px) {
+      .arena-nav-go { display: inline-block; }
+      .arena-nav-menu { display: none; position: absolute; top: 38px; right: 0; flex-direction: column; gap: 0; min-width: 170px; padding: 6px;
+        background: rgba(13,16,20,0.98); border: 1px solid #3a4452; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.5); z-index: 70; }
+      .arena-nav.open .arena-nav-menu { display: flex; }
+      .arena-nav-menu a { border: 0; background: none; height: 40px; font-size: 15px; }
+    }
+    /* over a game and in the lobby the wallet bar is the header: its links sit beside the brand */
+    #arena-wb-nav { margin-right: auto; }
+    @media (max-width: 899px) { #arena-wb-nav .arena-nav-menu { right: auto; left: 0; } #arena-wallet-bar .arena-nav-go { padding: 0; } }
     /* THE BALANCE IS A BUTTON (2026-10-19: "the balance in the header should also have the layout of a button") */
     #arena-wallet-bar .wb-bal, #arena-hdr-bal { display: inline-flex; align-items: center; gap: 4px; }
     #arena-wallet-bar .wb-bal b, #arena-hdr-bal b { color: #f7931a; font-weight: 700; }
@@ -1366,6 +1384,10 @@
     <!-- BUILD ON BITCOIN ARENA, RUN A NODE (2026-10-08 11:38): the platform page, beside the gear -->
     <!-- THE WALLET IN EVERY HEADER (2026-10-19: "the header is missing balance, deposit and withdrawls"):
          the same balance button, Deposit and Withdraw as the games screen's bar, the same handlers -->
+    <!-- PROPOSALS, EXPLORER, HEALTH IN THE HEADER (kanban #673: "add a link to proposals and explorer to the Testnet site in the top header
+         bar. You may need to use a burger menu", "also include Health"): the links in the row on a wide screen, behind ☰ on a narrow one -->
+    <div id="arena-nav" class="arena-nav"><button id="arena-nav-go" class="arena-nav-go" type="button" aria-label="Menu" aria-expanded="false" aria-controls="arena-nav-menu">&#9776;</button>
+      <nav id="arena-nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoin-arena.io/" target="_blank" rel="noopener">Explorer</a><a href="/health/">Health</a></nav></div>
     <button id="arena-hdr-bal" class="wb-bal" type="button" title="Your balance by federation"><b id="arena-hdr-sats">&ndash; sat</b></button>
     <button id="arena-hdr-deposit" type="button" title="Deposit" aria-label="Deposit"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v7.5M4.8 6.5 8 9.7l3.2-3.2M2.5 11.5v2h11v-2"/></svg><span class="word">Deposit</span></button>
     <button id="arena-hdr-withdraw" type="button" title="Withdraw" aria-label="Withdraw"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 10V2.5M4.8 5.7 8 2.5l3.2 3.2M2.5 11.5v2h11v-2"/></svg><span class="word">Withdraw</span></button>
@@ -1383,6 +1405,8 @@
   <div id="arena-wallet-bar" role="toolbar" aria-label="wallet">
     <a id="arena-wb-home" href="https://bitcoin-arena.io/" title="bitcoin-arena.io" aria-label="Bitcoin Arena - bitcoin-arena.io"><i aria-hidden="true">&#8383;</i><span>Bitcoin Arena</span></a>
     <button id="arena-wb-back" type="button" title="Back to Bitcoin Arena" aria-label="Back to Bitcoin Arena"><span aria-hidden="true">&larr;</span><span class="word">Arena</span></button>
+    <div id="arena-wb-nav" class="arena-nav"><button id="arena-wb-nav-go" class="arena-nav-go" type="button" aria-label="Menu" aria-expanded="false" aria-controls="arena-wb-nav-menu">&#9776;</button>
+      <nav id="arena-wb-nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoin-arena.io/" target="_blank" rel="noopener">Explorer</a><a href="/health/">Health</a></nav></div>
     <button class="wb-bal" type="button" title="Your balance by federation"><b id="arena-wb-sats">&ndash; sat</b><span id="arena-wb-pending"></span></button>
     <button id="arena-wb-deposit" type="button">Deposit</button>
     <button id="arena-wb-withdraw" type="button">Withdraw</button>
@@ -1482,6 +1506,15 @@
     document.getElementById('arena-settings').style.display = '';
     if (window.ARENA_PAINT_SETTINGS) window.ARENA_PAINT_SETTINGS(); else window.ARENA_SETTINGS_EARLY = true;
   });
+  // THE ☰ MENU (kanban #673), in the lobby's strip and in the wallet bar: opens and closes on its button, closes on a click anywhere
+  // else or on Escape
+  for (const nav of document.querySelectorAll('.arena-nav')) {
+    const go = nav.querySelector('.arena-nav-go');
+    const set = (open) => { nav.classList.toggle('open', open); go.setAttribute('aria-expanded', String(open)); };
+    go.addEventListener('click', (e) => { e.stopPropagation(); set(!nav.classList.contains('open')); });
+    document.addEventListener('click', (e) => { if (!nav.contains(e.target)) set(false); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') set(false); });
+  }
   </script>
   <!-- A FEDERATION NOT ON THE KNOWN-GOOD LIST (§23.6): shown with its guardians, confirmed or not used -->
   <!-- THE CONFIRMATIONS (kanban #564): "Trust this federation?", "Before you stake", "Enter by swap" - drawn by React (ConfirmCard,
