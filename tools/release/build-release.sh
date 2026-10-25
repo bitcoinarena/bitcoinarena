@@ -53,8 +53,10 @@ fetch() { # url sha file
 # their pins - apps.lock.json (repository, commit) and apps.files.json (each file's SHA-256) - from which the installer, an update and the
 # seat's start fetch and check them (arena-node/src/app-fetch.js) into packages/<app>. arena-sdk stays, which their registrations import
 # as arena-sdk/<name> through the tracked link packages/node_modules/arena-sdk (arena-installer/test/release-bundles checks this line)
+# (arena-attestor's src: the seat's drawn attestor imports it, kanban #630 - 2026.1.8 shipped without it and its node never started;
+# release-bundles checks that every relative import of an archived module lands inside the archive)
 git -C "$ROOT" archive "$REF" LICENSE apps.lock.json apps.files.json packages/arena-installer packages/arena-node packages/arena-protocol packages/arena-client/src packages/arena-web/dist \
-  packages/arena-sdk packages/node_modules/arena-sdk packages/arena-donor/src/manifest-sign.js \
+  packages/arena-sdk packages/node_modules/arena-sdk packages/arena-donor/src/manifest-sign.js packages/arena-attestor/package.json packages/arena-attestor/src \
   | tar -x -C "$STAGE"
 for p in arena-node arena-protocol arena-installer arena-sdk; do
   rm -rf "$STAGE/packages/$p/test"
