@@ -32,3 +32,33 @@ test('the bond\'s and the peg-in\'s confirmations, whether the bond counts, and 
     assert.equal((await setupStatus({ home, reader })).bond.counts, false, 'confirmed too late for its maturity: it does not count');
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
+
+// EVERYTHING ELSE UNDER WAY (the owner 2026-10-25: "lnd status and everything else that may be in progress"): LND, the gateway and the address
+// as their checks answer; the faucet's coins, advertisement updates and old bonds from the chain
+test('LND, the gateway, the address, the faucet, advertisement updates and old bonds', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'arena-setup-status-'));
+  try {
+    writeFileSync(join(home, 'seed.hex'), 'cc'.repeat(32));
+    const faucet = { txid: 'fa'.repeat(32), sats: 52000 }, games = { txid: '9a'.repeat(32), atMs: 1 }, key = { from: 'aa', to: 'bb', bond: 'bb'.repeat(32), atMs: 2 };
+    writeFileSync(join(home, 'state.json'), JSON.stringify({ chain: { kind: 'electrum', host: 'h', port: 1 }, faucet, gamesUpdate: games, keySwitch: key,
+      oldBonds: [{ txid: '77'.repeat(32), sats: '50000', maturity: 157600 }] }));
+    const heights = { [faucet.txid]: 157550, [games.txid]: 157557, [key.bond]: 0 };
+    const reader = async () => ({ tip: 157559, heightOf: async (t) => (t in heights ? heights[t] : null), close: () => {} });
+    const services = async () => ({ lnd: { ok: true, synced: true, height: 157559, channels: 1, pending: 0 }, gateway: { ok: false, syncing: true, why: 'syncing' }, address: { ok: true, url: 'https://n.example' } });
+    const r = await setupStatus({ home, reader, services });
+    assert.equal(r.ok, true, r.why);
+    assert.deepEqual([r.faucet.confirmations, r.faucet.seen], [10, true]);
+    assert.deepEqual(r.updates.map((u) => [u.kind, u.confirmations, u.counts]), [['gamesUpdate', 3, false], ['keySwitch', 0, false]]);
+    assert.deepEqual(r.oldBonds.map((o) => [o.blocksLeft, o.back]), [[41, false]]);
+    assert.deepEqual([r.lnd.synced, r.gateway.syncing, r.address.ok], [true, true, true]);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('the address check: this node answers there, another one does not count', async () => {
+  const { servicesOf } = await import('../src/setup-status.js');
+  const s = { reach: { url: 'https://n.example' }, service: { identity: 'ab'.repeat(32) } };
+  const ok = await servicesOf(s, { fetcher: async () => new Response(Buffer.from('ab'.repeat(32), 'hex')) });
+  assert.deepEqual(ok.address, { ok: true, url: 'https://n.example' });
+  const other = await servicesOf(s, { fetcher: async () => new Response(Buffer.from('cd'.repeat(32), 'hex')) });
+  assert.deepEqual([other.address.ok, other.address.why], [false, 'another node answers there']);
+});
