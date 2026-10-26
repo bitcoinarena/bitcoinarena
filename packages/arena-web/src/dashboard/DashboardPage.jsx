@@ -9,7 +9,7 @@
 // the page's own script drew is here too - a round opened to its players with their replays (readResult), the notes, every host row,
 // the capacity plea and the liquidity card (the page hands in liquidity-claim and capacity?node=me), and the words for an unreadable node.
 import React from 'react';
-import { SetupStatus, FoundingWait } from './SetupStatus.jsx';
+import { SetupStatus, FoundingWait, PegInCard } from './SetupStatus.jsx';
 
 /** msat to the page's sat: three decimals under 10, one under 1,000, none above. */
 export const sat = (m) => { const n = Number(m || 0) / 1000; return `${(n < 10 ? n.toFixed(3) : n.toFixed(n < 1000 ? 1 : 0)).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')} sat`; };
@@ -133,6 +133,15 @@ export function noteRows(D) {
   if (n.gateway) rows.push(['Gateway', h.gateway ? `${h.gateway.name || 'its own'} · costs this node nothing` : 'none used', n.gateway]);
   return rows;
 }
+// THE OWNER AREA ON THE ARENA SITE (2026-10-26, the owner on 2026.1.9.9: "It works via owner page but not Open Dashboard"): the link opened
+// this node's own page at 127.0.0.1, another origin than the site's, which keeps the owner key the installer and the update hand over -
+// so it asked for the 24 words. Now the site's page for this node's key, with this page's address when it is the node's own (127.0.0.1)
+export const OWNER_SITE = 'https://testnet.bitcoin-arena.io/owner/';
+export function ownerHref(node, loc) {
+  if (!/^[0-9a-f]{64}$/.test(String(node || ''))) return 'Dashboard/owner';
+  const local = loc && /^(127\.0\.0\.1|localhost)$/.test(loc.hostname) ? `&local=${encodeURIComponent(loc.origin)}` : '';
+  return `${OWNER_SITE}#node=${node}${local}`;
+}
 export const keep = (t) => String(t).replace(/-/g, '‑');
 const tone = (m) => (m === null || m === undefined || m === '' ? '' : Number(m) > 0 ? 'ok' : Number(m) < 0 ? 'bad' : '');
 
@@ -200,9 +209,10 @@ export class DashboardPage extends React.Component {
               <span className="fact"><span className="fact-k">Active since</span>{D.sinceMs ? short(D.sinceMs, now) : <span className="dim">no round checked yet</span>}</span>
               <span className="fact"><span className="fact-k">Rounds checked</span>{Number(D.roundsChecked || 0).toLocaleString('en-US')}</span>
             </div></div>
-          <a className="btn" href="Dashboard/owner">Owner area →</a>
+          <a className="btn" href={ownerHref(D.node, typeof location === 'undefined' ? null : location)}>Owner area →</a>
         </header>
-        {D.setup && D.setup.ok ? <section><SetupStatus status={D.setup} /></section> : null}
+        {D.setup && D.setup.ok && D.setup.pegIn && D.setup.pegIn.txid ? <section><PegInCard status={D.setup} /></section> : null}
+        {D.setup && D.setup.ok ? <section><SetupStatus status={D.setup} node={D.node} /></section> : null}
         {D.setup && D.setup.ok && D.setup.founding && D.setup.founding.waiting ? <section><FoundingWait status={D.setup} /></section> : null}
         {D.capacity ? <section><h2>Capacity</h2><div className="card"><p className={D.capacity.level === 'bad' ? 'bad' : 'warn'}>{String(D.capacity.says)}</p></div></section> : null}
         <section><h2>Earnings</h2><Earnings totals={D.totals} period={period} onPeriod={(p) => this.setState({ period: p })} /></section>

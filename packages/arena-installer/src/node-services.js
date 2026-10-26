@@ -115,10 +115,17 @@ async function unixProcesses(sh) {
 const uidOf = () => (typeof process.getuid === 'function' ? process.getuid() : 501);
 
 /** One service's state: { running, pid, detail }. `procs` the machine's processes (Windows, the guardian). */
-async function stateOf(svc, { platform, sh, procs, nodePid, nodeRunning }) {
+async function stateOf(svc, { platform, sh, procs, nodePid, nodeRunning, home = null }) {
   if (svc.inside) {
     const g = procs.find((p) => /fedimintd(\.exe)?$/i.test(p.name) && nodePid && p.ppid === nodePid);
     if (g) return { running: true, pid: g.pid, detail: 'runs inside the node' };
+    // A GUARDIAN KEPT BEYOND THE SEAT (2026-10-26, the owner's services card on 2026.1.9.9: "Guardian (fedimintd) - the node runs without it"
+    // while it waited in setup): one waiting for a founding is started apart so a restart or an update does not end it (guardian.js keep) -
+    // its parent is not the seat, its pid is in node.db.guardian/fedimintd.pid
+    let kept = null;
+    try { kept = Number(readFileSync(join(home, 'node.db.guardian', 'fedimintd.pid'), 'utf8').trim()) || null; } catch { kept = null; }
+    const k = kept && procs.find((p) => p.pid === kept && /fedimintd(\.exe)?$/i.test(p.name));
+    if (k) return { running: true, pid: k.pid, detail: 'runs beside the node, kept through its restarts' };
     // the node's own process not visible to this user (the Windows window, v0.1.1 in the VM): neither is its guardian - its API decides
     if (nodeRunning === null) return { running: null, pid: null, detail: 'its process is not visible to this user' };
     return { running: false, pid: null, detail: nodePid ? 'the node runs without it' : 'the node is not running' };
@@ -282,7 +289,7 @@ export async function overview({ home, platform = process.platform, env = proces
   let nodePid = null, nodeRunning = false;
   for (const svc of svcs) {
     const t0 = performance.now();
-    const st = await stateOf(svc, { platform, sh, procs, nodePid, nodeRunning });
+    const st = await stateOf(svc, { platform, sh, procs, nodePid, nodeRunning, home });
     log.verbose(`${svc.id}: ${svc.inside ? `inside the ${svc.inside}` : platform === 'linux' ? `systemd unit ${svc.name}` : platform === 'darwin' ? `launchd agent ${svc.name}` : `launcher ${svc.file}`} is ${st.running === null ? 'unknown' : st.running ? 'running' : 'stopped'}${st.pid ? `, pid ${st.pid}` : ''}: ${st.detail} (${log.since(t0)})`);
     if (svc.id === 'node') { nodePid = st.pid; nodeRunning = st.running; }
     rows.push({ id: svc.id, title: svc.title, name: svc.name, file: svc.file, inside: svc.inside || null, ...st });

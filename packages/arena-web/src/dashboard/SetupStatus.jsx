@@ -129,17 +129,29 @@ export function FoundingWait({ status: s }) {
   return (
     <div className="card founding-wait" id="founding-wait">
       <div className="setup-head"><h3>Federation</h3><span className="setup-pill wait">Waiting for a founding</span></div>
-      <p>Your node waits to be drawn into a new federation. Ten ready nodes found one together, so this can take a while; there is no fixed time.</p>
+      {/* HOW MANY ARE READY, BIG (2026-10-26, the owner: "how many other nodes are waiting in the format e.g 3/10 ... in big letters") */}
+      {Number.isFinite(s.founding.ready) && s.founding.needed ? <div className="founding-count" id="founding-count">
+        <span className="founding-n">{s.founding.ready}/{s.founding.needed}</span><span className="founding-l">nodes ready for the next federation</span></div> : null}
+      <p>Your node waits to be drawn into a new federation. {s.founding.needed || 'Ten'} ready nodes found one together, so this can take a while; there is no fixed time.</p>
       <p className="dim">Meanwhile your node runs as usual: it checks rounds and earns its share. Its guardian and its gateway join the new federation as soon as it is founded.{s.founding.sinceMs ? ` Waiting since ${new Date(s.founding.sinceMs).toISOString().slice(0, 16).replace('T', ' ')} UTC.` : ''}</p>
     </div>);
 }
 
+// A COMPLETE SETUP HIDDEN ON THIS DEVICE (2026-10-26, the owner: "Setup needs a Don't show again link if it's complete so it's hidden on the
+// device (stored in browser)"): kept per node in this browser; a step that stops being done brings the card back by itself
+export const SETUP_HIDDEN = 'arena-setup-hidden';
+const hiddenFor = (node) => { try { return !!node && localStorage.getItem(`${SETUP_HIDDEN}:${node}`) === '1'; } catch { return false; } };
+
 export class SetupStatus extends React.Component {
+  constructor(props) { super(props); this.state = { hidden: hiddenFor(this.nodeOf(props)) }; }
+  nodeOf(props = this.props) { return props.node || (props.status && props.status.node) || null; }
+  hide() { try { localStorage.setItem(`${SETUP_HIDDEN}:${this.nodeOf()}`, '1'); } catch { /* storage blocked: hidden until the page reloads */ } this.setState({ hidden: true }); }
   render() {
     const s = this.props.status;
     const rows = setupRowsOf(s);
     if (!rows.length) return null;
     const all = rows.every(([, , l]) => l.done);
+    if (all && (this.state.hidden || hiddenFor(this.nodeOf()))) return null;
     const problems = rows.filter(([, , l]) => l.problem).length;
     const done = rows.filter(([, , l]) => l.done).length;
     const ready = readyIn(s);
@@ -151,9 +163,25 @@ export class SetupStatus extends React.Component {
           <span className="setup-ready-l">until your node is ready</span></div> : null}
         <div className="setup-total" role="progressbar" aria-valuemin="0" aria-valuemax={rows.length} aria-valuenow={done}><i style={{ width: `${Math.round((100 * done) / rows.length)}%` }} /></div>
         <div className="setup-grid">{rows.map(([id, label, l]) => <Step key={id} id={id} label={label} done={l.done} problem={l.problem} text={l.text} meter={l.meter} left={l.left} />)}</div>
-        {s.tip ? <p className="setup-tip">Chain tip · block {n(s.tip)}{s.blockMs && s.blockMsMeasured ? ` · lately a block every ${dur(s.blockMs)}` : ''}</p> : null}
+        {s.tip || (all && this.nodeOf()) ? <p className="setup-tip">{s.tip ? <>Chain tip · block {n(s.tip)}{s.blockMs && s.blockMsMeasured ? ` · lately a block every ${dur(s.blockMs)}` : ''}</> : null}
+          {all && this.nodeOf() ? <button type="button" className="setup-hide" onClick={() => this.hide()}>Don't show again</button> : null}</p> : null}
       </div>);
   }
+}
+
+// THE PEG-IN, PROMINENT (2026-10-26, the owner: "It needs to show the status of the peg in prominently if we have a peg in"): the gateway's
+// coins moving into its federation, by their confirmations against the federation's finality, big - until they are credited
+export function PegInCard({ status: s }) {
+  const p = s && s.pegIn;
+  if (!p || !p.txid) return null;
+  const c = Math.max(0, Number(p.confirmations) || 0), need = Number(p.needed) || 100, done = !!p.credited || c >= need;
+  return (
+    <div className="card pegin-card" id="pegin-card">
+      <div className="setup-head"><h3>Peg-in</h3><span className={`setup-pill ${done ? 'ok' : 'wait'}`}>{done ? 'Credited' : p.seen ? 'Confirming' : 'Waiting to be mined'}</span></div>
+      <div className="founding-count"><span className={`founding-n${done ? ' ok' : ''}`}>{Math.min(c, need)}/{need}</span><span className="founding-l">confirmations{p.sats ? ` · ${n(p.sats)} sat into the federation for your gateway` : ''}</span></div>
+      <div className="setup-total" role="progressbar" aria-valuemin="0" aria-valuemax={need} aria-valuenow={Math.min(c, need)}><i style={{ width: `${Math.min(100, Math.round((100 * c) / need))}%` }} /></div>
+      <p className="dim">{done ? 'Your gateway holds its e-cash and can serve deposits and withdrawals.' : `About ${dur((need - c) * (s.blockMs || 600000))} to go. Transaction ${String(p.txid).slice(0, 12)}…`}</p>
+    </div>);
 }
 
 /**
@@ -171,7 +199,7 @@ export class SetupCard extends React.Component {
     this.setState({ status: s });
     clearTimeout(this.timer); this.timer = setTimeout(this.load, this.props.everyMs || 30000);
   }
-  render() { return this.props.banner ? <SetupBanner status={this.state.status} /> : <><SetupStatus status={this.state.status} /><FoundingWait status={this.state.status} /></>; }
+  render() { return this.props.banner ? <SetupBanner status={this.state.status} /> : <><PegInCard status={this.state.status} /><SetupStatus status={this.state.status} /><FoundingWait status={this.state.status} /></>; }
 }
 
 /** The owner sections that help while the setup runs (a problem to fix, an update, the emergency code, the login); the rest waits for it. */

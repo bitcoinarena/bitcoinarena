@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync, lstatSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync, lstatSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { installedServices, overview, control, bootOf, setBoot, followTunnelNow, doctor, servicesNamed, serviceId } from '../src/node-services.js';
@@ -72,6 +72,74 @@ test('the services of this node, from its files: in start order, another node\'s
     assert.deepEqual([by.node.running, by.node.pid], [true, 104]);
     assert.deepEqual([by.guardian.running, by.guardian.pid], [true, 777], 'the fedimintd whose parent is the seat, not another one');
     assert.equal(v.publicUrl, `https://${NOW}`);
+  } finally { rmSync(n.root, { recursive: true, force: true }); }
+});
+
+// A GUARDIAN KEPT BEYOND THE SEAT (2026-10-26, the owner's services card on 2026.1.9.9: "Guardian (fedimintd) - the node runs without it" while
+// it waited in setup): started apart so a restart does not end it, its parent is not the seat - its pid file names it
+test('a guardian waiting in setup runs beside the seat: found by its pid file, and only that one', async () => {
+  const n = linuxNode({ port: 8471 });
+  try {
+    const ps = (out) => async (cmd, args) => (cmd === 'ps' ? { ok: true, out, err: '' } : fakeSh({}).sh(cmd, args));
+    const kept = '  104     1 node\n  888     1 /r/runtime/custody/fedimintd\n  999     1 fedimintd\n';
+    const before = Object.fromEntries((await overview({ home: n.home, platform: 'linux', env: n.env, sh: ps(kept), probes: false })).services.map((s) => [s.id, s]));
+    assert.deepEqual([before.guardian.running, before.guardian.detail], [false, 'the node runs without it'], 'no pid file: as before');
+    mkdirSync(join(n.home, 'node.db.guardian'), { recursive: true });
+    writeFileSync(join(n.home, 'node.db.guardian', 'fedimintd.pid'), '888\n');
+    const by = Object.fromEntries((await overview({ home: n.home, platform: 'linux', env: n.env, sh: ps(kept), probes: false })).services.map((s) => [s.id, s]));
+    assert.deepEqual([by.guardian.running, by.guardian.pid, by.guardian.detail], [true, 888, 'runs beside the node, kept through its restarts']);
+    writeFileSync(join(n.home, 'node.db.guardian', 'fedimintd.pid'), '555\n');
+    const gone = Object.fromEntries((await overview({ home: n.home, platform: 'linux', env: n.env, sh: ps(kept), probes: false })).services.map((s) => [s.id, s]));
+    assert.equal(gone.guardian.running, false, 'a pid file naming no running fedimintd: not running');
+  } finally { rmSync(n.root, { recursive: true, force: true }); }
+});
+
+// THE CHAIN BRIDGE TAKEN AWAY (the owner on 2026.1.9.9: "Do I need electrum when I have bitcoin core installed and running?")
+test('removeProgram: the bridge\'s unit stopped and removed; nothing to do when there is none', async () => {
+  const { removeProgram, unitName } = await import('../src/service.js');
+  const n = linuxNode({ port: 8472 });
+  try {
+    const f = join(n.units, unitName('chain-bridge'));
+    writeFileSync(f, '[Service]\nExecStart=/r/bridge\n');
+    const calls = []; const sh = async (cmd, args) => { calls.push([cmd, ...args].join(' ')); return { ok: true, out: '', err: '' }; };
+    assert.deepEqual(await removeProgram({ id: 'chain-bridge', home: n.home, env: n.env, sh, platform: 'linux' }), { ok: true, removed: true });
+    assert.ok(!existsSync(f));
+    assert.deepEqual(calls, [`systemctl --user disable --now ${unitName('chain-bridge')}`, 'systemctl --user daemon-reload']);
+    assert.deepEqual(await removeProgram({ id: 'chain-bridge', home: n.home, env: n.env, sh, platform: 'linux' }), { ok: true, removed: false });
+  } finally { rmSync(n.root, { recursive: true, force: true }); }
+});
+
+// THE UPDATE SIGNS THE OWNER PAGE IN (2026-10-26, the owner on 2026.1.9.9: "The updater MUST fix my credentials in the browser so it works.
+// This is very important" - "It works via owner page but not Open Dashboard"): once, until the key was handed over
+test('sign-in-once and the dashboard: the one-time sign-in page opened while the key was never handed over, never after', async () => {
+  const n = linuxNode({ port: 8773 });
+  try {
+    const st = join(n.home, 'state.json');
+    writeFileSync(st, JSON.stringify({ ...JSON.parse(readFileSync(st, 'utf8')), owner: { mode: 'seed' }, service: { identity: 'ab'.repeat(32) } }));
+    writeFileSync(join(n.home, 'seed.hex'), '11'.repeat(32));
+    const opened = [], handoffs = [];
+    const run = async (args) => {
+      const out = [];
+      const code = await main(args, { home: n.home, io: { out: (l) => out.push(l), err: (l) => out.push(`ERR ${l}`) },
+        deps: { platform: 'linux', env: n.env, sh: fakeSh({}).sh, openUrl: async (u) => { opened.push(u); },
+          handoff: async ({ target }) => { handoffs.push(target); return 'http://127.0.0.1:41000/tok'; } } });
+      return [code, out.join('\n')];
+    };
+    const [c1, t1] = await run(['sign-in-once']);
+    assert.equal(c1, 0); assert.match(t1, /Signing you in on your owner page once: http:\/\/127\.0\.0\.1:41000\/tok/);
+    assert.deepEqual(handoffs, [`https://testnet.bitcoin-arena.io/owner/#node=${'ab'.repeat(32)}&local=http%3A%2F%2F127.0.0.1%3A8773&owner-handoff`]);
+    const [c2, t2] = await run(['dashboard']);
+    assert.equal(c2, 0); assert.match(t2, /Signing you in[\s\S]*\nhttp:\/\/127\.0\.0\.1:8773\/dashboard$/, 'the dashboard: signed in first, then opened');
+    assert.deepEqual(opened, ['http://127.0.0.1:41000/tok', 'http://127.0.0.1:41000/tok', 'http://127.0.0.1:8773/dashboard']);
+    // handed over (owner-handoff.json): nothing more opens
+    writeFileSync(join(n.home, 'owner-handoff.json'), JSON.stringify({ atMs: 1 }));
+    opened.length = 0; handoffs.length = 0;
+    const [, t3] = await run(['sign-in-once']);
+    assert.match(t3, /has your key already/);
+    await run(['dashboard']);
+    assert.deepEqual([handoffs, opened], [[], ['http://127.0.0.1:8773/dashboard']]);
+    // the update calls the same once it moved the node (bitcoinarena.js case 'update')
+    assert.match(readFileSync(new URL('../src/bitcoinarena.js', import.meta.url), 'utf8'), /if \(r\.ok && !r\.upToDate\) await signInOnce\(home, deps, io\);/);
   } finally { rmSync(n.root, { recursive: true, force: true }); }
 });
 
