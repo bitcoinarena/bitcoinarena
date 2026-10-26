@@ -171,7 +171,9 @@ async function payLiquidations() {
         record, donation: forced.recipients });
       if (!got.ok) throw new Error(got.why);
       // a payout is a lock to a refund key (the tool's `pay`, as 's): the 33-byte form of each x-only key
-      return got.payees.map((x) => ({ ...x, key: `02${x.key}` }));
+      // - node keys are x-only; the donation set's recipients are 33 bytes already (measured 2026-10-26, rehearsal 17: "02" before
+      // them made 34 and the tool refused the whole remainder, "malformed public key")
+      return got.payees.map((x) => ({ ...x, key: x.key.length === 64 ? `02${x.key}` : x.key }));
     };
     let r; try { r = await payOutLiquidation({ fid, v, claims, height: async () => Number(await rpc('getblockcount')), run, spendEscrow, remainderPayees, keep, say }); } catch (e) { r = { why: e.message }; }
     if (r.why) say({ liquidation: fid.slice(0, 16), waits: r.why });
