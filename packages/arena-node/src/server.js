@@ -73,7 +73,7 @@ import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX } from '../../arena-protocol/src/donations-read.js';
 import { WebSocketServer } from 'ws';
 import { createP2pTunnels, carryP2p, carryApi, P2P_TUNNEL_PATHS, GUARDIAN_API_RELAY_PATH } from './p2p-tunnel.js';
-import { createAddressBook, announceOwn } from './address-book.js';
+import { createAddressBook, announceOwn, pullAnnouncements } from './address-book.js';
 import { ownServices } from './own-services.js';
 import { serviceSettings } from './service-settings.js';
 import { controlsOf, installerIdOf, INSIDE } from './service-control.js';
@@ -9644,10 +9644,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THIS NODE'S OWN ADDRESS, ANNOUNCED (kanban #562, 2026-10-21 "1 default, 2 for updates so no needed updates"): signed for the
   // address it names itself and pushed to every census node's seat every ARENA_ADDRESS_ANNOUNCE_MS (10 min) - no advertisement update
   const announceAddress = async () => {
-    if (!publicEndpoint) return null;
     let list = null;
     try { if (ballot && typeof ballot.censusEntriesAt === 'function' && chainNetworkId()) list = await ballot.censusEntriesAt(chainNetworkId(), Number(await chainTip())); } catch { list = null; }
     if (!list) { try { const cn = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null; list = cn ? cn.entries : null; } catch { list = null; } }
+    // THE OTHERS' NEWEST ADDRESSES, PULLED as well (address-book.js pullAnnouncements, kanban #577): a node a push missed learns them here
+    try {
+      const get = async (u) => { const r = await fetch(u, { signal: AbortSignal.timeout(15000) }); return r.ok ? r.json() : null; };
+      const p = await pullAnnouncements({ entries: list || [], book: addressBook, ownKey: toHex(round.pubkey), get });
+      if (p.kept) console.log(`[address] ${p.kept} newer address(es) taken from ${p.answered} of ${p.asked} seat(s)`);
+    } catch { /* the next round */ }
+    if (!publicEndpoint) return null;
     const a = addressBook.own({ node: toHex(round.pubkey), endpoint: publicEndpoint, sign: (d) => schnorr.sign(d, round.identity.secret) });
     const post = async (u, body) => (await fetch(u, { method: 'POST', body: JSON.stringify(body), signal: AbortSignal.timeout(15000) })).ok;
     const r = await announceOwn({ announcement: a, entries: list || [], book: addressBook, ownKey: toHex(round.pubkey), post });

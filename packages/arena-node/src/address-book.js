@@ -49,3 +49,31 @@ export async function announceOwn({ announcement, entries, book, ownKey, post })
   await Promise.all([...roots].map(async (root) => { try { if (await post(`${root}/address-announcement`, announcement)) took++; } catch { /* the next round */ } }));
   return { roots: roots.size, took };
 }
+
+/**
+ * AND PULLED, NOT ONLY PUSHED (kanban #577, measured 2026-10-26: after the 1.9.8 update inst577-2 and -3 took new quick tunnels and
+ * announced them to the seats they reached - 30 of 51 - and inst577-1, not among them, kept relaying its guardian's API to their old
+ * addresses: "connection closed" for those peers, the federation's consensus stalled). Up to `count` census seats asked for their
+ * GET /address-announcements; each entry taken as a pushed one is (checked, the node's newest kept). Answers { asked, answered, kept }.
+ */
+export async function pullAnnouncements({ entries, book, ownKey, get, count = 8, random = Math.random }) {
+  const own = String(ownKey).toLowerCase();
+  const roots = [];
+  for (const e of entries || []) {
+    const key = Buffer.from(e.pubkey).toString('hex');
+    if (key === own) continue;
+    const at = book.endpointOf(e);
+    if (at) roots.push(String(at).replace(/^ws(s?):/i, 'http$1:').replace(/\/+$/, ''));
+  }
+  const picked = [...new Set(roots)].map((r) => [random(), r]).sort((a, b) => a[0] - b[0]).slice(0, count).map(([, r]) => r);
+  let answered = 0, kept = 0;
+  await Promise.all(picked.map(async (root) => {
+    try {
+      const body = await get(`${root}/address-announcements`);
+      const list = body && Array.isArray(body.announcements) ? body.announcements : [];
+      answered++;
+      for (const a of list) { try { if (book.take(a).kept) kept++; } catch { /* the next one */ } }
+    } catch { /* the next round */ }
+  }));
+  return { asked: picked.length, answered, kept };
+}
