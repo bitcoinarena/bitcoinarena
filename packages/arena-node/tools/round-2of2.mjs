@@ -525,6 +525,15 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // own chain can make the beacon he wants - which is fine for a free regtest round and is not fine for
     // one holding money. Measured on testnet4: 723.3 s a block, so six is about 72 minutes.
     censusHeight = rt.height() - bondHeight + 1 >= 7 ? rt.height() : rt.bury(bondHeight + 6 - rt.height());
+    // AND OFF REGTEST NOT THE TIP ITSELF BUT ARENA_CENSUS_DEPTH (6) BELOW IT (kanban #633, measured 2026-10-25/26 on testnet4: the
+    // runners stood their census at the tip - 157,476, 157,609, 157,616 - and each of those blocks was replaced by a reorg within
+    // hours, so every day they posted named a census root the chain no longer gives, and no page could join a round of it).
+    // Only while the bonds stay seven deep at that height: a census the bonds are too shallow for keeps the height above.
+    if (network !== 'regtest') {
+      const depth = Number(process.env.ARENA_CENSUS_DEPTH ?? 6);
+      const deeper = rt.height() - depth;
+      if (Number.isInteger(depth) && depth > 0 && deeper < censusHeight && deeper - bondHeight + 1 >= 7) censusHeight = deeper;
+    }
     if (censusHeight - bondHeight + 1 < 7)
       throw new Error('the bonds are not deep enough at the census height');
     // ATTACHED, THE CENSUS IS READ OVER THE NODES' OWN WINDOW - main.js's CENSUS_LOOKBACK, 2016 blocks below the census
