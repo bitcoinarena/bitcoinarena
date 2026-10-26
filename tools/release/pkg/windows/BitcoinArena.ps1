@@ -1,7 +1,7 @@
-# ARENA NODE ON WINDOWS: THE SMALL WINDOW (2026-10-19: "for windows we want an exe ... That also includes a small gui
-# version of the installer that launches the browser etc"). The Start menu's "Arena Node" and the end of ArenaNodeSetup.exe open it:
+# BITCOIN ARENA ON WINDOWS: THE SMALL WINDOW (2026-10-19: "for windows we want an exe ... That also includes a small gui
+# version of the installer that launches the browser etc"). The Start menu's "Bitcoin Arena" and the end of the setup exe open it:
 #   no node yet      the installer runs (hidden), its one-time link opens in the browser, its lines show here; Stop ends it
-#   a node installed "Server running" or "Server stopped" (arenanode state) and its services, with Dashboard / Owner page / Stop node or
+#   a node installed "Server running" or "Server stopped" (bitcoinarena state) and its services, with Dashboard / Owner page / Stop node or
 #                    Start node / Doctor / Refresh (kanban #658, 2026-10-25: "show when it's installed \"Server running\" with options to
 #                    Stop Node, Start Node, Doctor" - "And also \"Dashboard\" that opens the browser with the dashboard")
 # Built-in parts only (WinForms in Windows PowerShell): nothing more to install.
@@ -9,11 +9,19 @@ Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $release = Get-ChildItem $here -Directory -Filter '*arena-node-*' | Sort-Object Name | Select-Object -Last 1
-$nodeHome = Join-Path $env:USERPROFILE '.arena-node'
-# the node's command carries its instance (arena.conf instance=4: arenanode-4.cmd) - the macOS app looked for the bare name (playtest 2026-10-25)
+# THE NAMES SINCE 2026.1.9.8 (kanban #688, 2026-10-26: "Rename the directories and binaries to bitcoinarena, not arenanode everywhere in the
+# installer, the packages etc."): the node in %USERPROFILE%\.bitcoinarena, the command bitcoinarena.cmd. A node set up before stays in
+# .arena-node and is found there, its command arenanode.cmd until its update writes bitcoinarena.cmd (instance.js homeDefault)
+function Test-Node([string]$d) { (Test-Path (Join-Path $d 'state.json')) -or (Test-Path (Join-Path $d 'arena.conf')) }
+$nodeHome = Join-Path $env:USERPROFILE '.bitcoinarena'
+$oldHome = Join-Path $env:USERPROFILE '.arena-node'
+if (-not (Test-Node $nodeHome) -and (Test-Node $oldHome)) { $nodeHome = $oldHome }
+# the node's command carries its instance (arena.conf instance=4: bitcoinarena-4.cmd) - the macOS app looked for the bare name (playtest 2026-10-25)
 $inst = ''
 try { $m = Select-String -Path (Join-Path $nodeHome 'arena.conf') -Pattern '^instance=(.+)$' -ErrorAction Stop | Select-Object -First 1; if ($m) { $inst = '-' + $m.Matches[0].Groups[1].Value.Trim() } } catch { }
-$command = Join-Path $nodeHome ("bin\arenanode" + $inst + ".cmd")
+$command = Join-Path $nodeHome ("bin\bitcoinarena" + $inst + ".cmd")
+$oldCommand = Join-Path $nodeHome ("bin\arenanode" + $inst + ".cmd")
+if (-not (Test-Path $command) -and (Test-Path $oldCommand)) { $command = $oldCommand }
 $version = if ($release) { (Get-Content (Join-Path $release.FullName 'VERSION') -ErrorAction SilentlyContinue) } else { '?' }
 
 # THE WINDOW (the owner's playtest 2026-10-25: "make this more pretty ... It should look like a real app with the options" - "Also on
@@ -74,10 +82,10 @@ function Set-State([string]$heading, [string]$line, [System.Drawing.Color]$color
 Set-Buttons @('Close')
 $buttons['Close'].Add_Click({ $form.Close() })
 
-# a command's output, shown in the box (arenanode: status, doctor, restart)
+# a command's output, shown in the box (bitcoinarena: status, doctor, restart)
 function Show-Command([string]$what) {
-  $form.Cursor = 'WaitCursor'; $box.Visible = $true; $box.Text = "arenanode $what ..."; $form.Refresh()
-  # arenanode writes UTF-8 (its check marks): the console page set to it, and read as it (measured in the Windows VM: mojibake for the check mark)
+  $form.Cursor = 'WaitCursor'; $box.Visible = $true; $box.Text = "bitcoinarena $what ..."; $form.Refresh()
+  # bitcoinarena writes UTF-8 (its check marks): the console page set to it, and read as it (measured in the Windows VM: mojibake for the check mark)
   $was = [Console]::OutputEncoding; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
   $out = & cmd /c "chcp 65001 >nul & `"$command`" $what 2>&1"
   [Console]::OutputEncoding = $was

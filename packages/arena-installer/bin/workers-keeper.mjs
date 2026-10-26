@@ -4,7 +4,7 @@
 // THE WORKERS KEEPER'S SERVICE (workers.js): every 20 s the quick tunnel's name; a new one goes into the node's Worker on
 // the operator's workers.dev at once, so its permanent address keeps answering. Lines in <home>/workers.log.
 //
-//     workers-keeper --home ~/.arena-node
+//     workers-keeper --home ~/.bitcoinarena
 import { resolve } from 'node:path';
 import { nodeState, defaultHome } from '../src/state.js';
 import { createWorkersKeeper } from '../src/workers.js';

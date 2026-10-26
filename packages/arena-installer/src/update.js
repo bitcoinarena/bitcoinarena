@@ -71,8 +71,13 @@ const run = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { timeou
 export function envForRelease(text, newRelease, exists = existsSync) {
   // ONE PATH OR A LIST (kanban #569: apps= names every registration of every app, comma-joined): each path of a value moved on its own -
   // the whole line read as one path kept only the part after its last release folder (measured: 22 registrations became 1)
+  // AN ADDRESS IS NO PATH (kanban #688, measured 2026-10-26: a workers.dev node's public_url=https://arena-node-3fa9c1.me.workers.dev,
+  // its name starting with a digit, read as a release folder and became the new release's path - the node lost its public address)
   const moveOne = (v) => {
-    const m = /^(.*[\\/]arena-node-\d[^\\/\s,]*)([\\/].*)?$/.exec(v);
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) return v;
+    // a release folder of either name (measured with kanban #688: since 2026.1.8 the folders are bitcoin-arena-node-<v>-..., and their
+    // paths in arena.conf stayed on the release updated from - pruned by the next update)
+    const m = /^(.*[\\/](?:bitcoin-)?arena-node-\d[^\\/\s,]*)([\\/].*)?$/.exec(v);
     if (!m || m[1] === newRelease) return v;
     const moved = newRelease + (m[2] || '');
     return exists(moved) ? moved : v;
@@ -343,7 +348,7 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   const oldSeat = svc.seatText();
   const from = svc.releaseOf(oldSeat);
   step(`the seat's service ${svc.where} ${oldSeat === null ? 'is missing' : `runs ${from || '(no release named)'}`}; moving to ${newRelease}, seat port ${port}`);
-  if (!from) return { ok: false, why: `no arena-node service names a release (${svc.where})` };
+  if (!from) return { ok: false, why: `no Bitcoin Arena service names a release (${svc.where})` };
   if (from === newRelease) return { ok: false, why: 'that release is the one running' };
   // THE NEW RELEASE'S APPS (kanban #575): downloaded and checked before anything is stopped - an app that cannot be fetched leaves the
   // node running as it is
@@ -366,7 +371,8 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   // (measured 2026-10-19 in the Windows VM: arena-custody.cmd still named rc.25 after updates to 0.1.1, 2026.1.0 and 2026.1.1 - each update
   // moved only the launchers naming the release it updated from, so the custody agent, its guardian and gateway stayed on rc.25)
   const releasesDir = from.replace(/[\\/][^\\/]+[\\/]?$/, '');
-  const olderRe = new RegExp(`${releasesDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\\\/]arena-node-[^\\\\/"'\\s]+`, 'g');
+  // a release of either name (kanban #688: since 2026.1.8 the folders are bitcoin-arena-node-<v>-..., and this matched none of them)
+  const olderRe = new RegExp(`${releasesDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\\\/](?:bitcoin-)?arena-node-[^\\\\/"'\\s]+`, 'g');
   const oldersIn = (t) => [...new Set(t.match(olderRe) || [])].filter((x) => x !== from && x !== newRelease && !String(newRelease).startsWith(x));
   const moving = svcFiles.filter((f) => { const t = readFileSync(f, 'utf8'); return f === svc.seatFile || f === lndFile || t.includes(from) || oldersIn(t).length > 0; });
   const oldTexts = new Map(moving.map((f) => [f, readFileSync(f, 'utf8')]));
@@ -477,13 +483,13 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
     if (installUpdaterFn) {
       try { updater = await installUpdaterFn({ home, platform, env, sh }); } catch (e) { updater = { ok: false, why: e.message }; }
     }
-    // the arenanode command runs the new release from now on
+    // the bitcoinarena command (and arenanode, the small script that runs it) runs the new release from now on
     let command = null;
     try {
       command = writeCommand({ home, release: newRelease, node, platform, env, run: sh });
       if (command.pathSet) { const r = await command.pathSet; delete command.pathSet; if (r && r.ok === false) command.why = `the user PATH was not changed: ${(r.err || r.out || '').trim().slice(0, 160)}`; }
     } catch (e) { command = { why: e.message }; }
-    // and on Windows the updater running again - after the arenanode command names the new release, which its loop CALLs (kanban #546)
+    // and on Windows the updater running again - after the bitcoinarena command names the new release, which its loop CALLs (kanban #546)
     let updaterBack = null;
     if (svc.updater) { try { updaterBack = await svc.updater(); } catch (e) { updaterBack = { ok: false, why: e.message }; } }
     // THE OLDER RELEASES REMOVED (kanban #576, measured 2026-10-22: an installed node kept every release it ever ran - 12 folders, 5 GB

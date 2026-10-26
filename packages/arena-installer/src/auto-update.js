@@ -10,8 +10,8 @@
 //   3. unpacked beside the running release and the node moved to it by update.js - outside a market seating window, backed up, the same
 //      node answering after, rolled back by itself if not.
 //
-// `arenanode update` does it once, now; `arenanode auto-update` is the service that checks every few hours. That service names the
-// node's own arenanode command, not a release, so an update never stops it mid-way; after an update it ends and its service starts it
+// `bitcoinarena update` does it once, now; `bitcoinarena auto-update` is the service that checks every few hours. That service names the
+// node's own command (<home>/bin/bitcoinarena; <home>/bin/arenanode on a node installed before 2026.1.9.8, which runs it since), not a release, so an update never stops it mid-way; after an update it ends and its service starts it
 // again from the new release.
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, renameSync, appendFileSync } from 'node:fs';
@@ -36,7 +36,7 @@ const record = (home, r) => { try { writeFileSync(join(home, 'auto-update.json')
 
 /**
  * One check, and an update when a newer release is out. `latest(ownVersion)` the release reader's read; `force` updates even when
- * auto_update is off (`arenanode update`). Answers { ok, upToDate?, skipped?, from?, to?, why? }.
+ * auto_update is off (`bitcoinarena update`). Answers { ok, upToDate?, skipped?, from?, to?, why? }.
  */
 export async function checkOnce({ home, latest, fetcher = fetch, platform = process.platform, arch = process.arch, apply = updateNode, force = false, log = () => {},
   verifyAsset = checkAsset, trace: given = QUIET,
@@ -100,7 +100,7 @@ export async function checkOnce({ home, latest, fetcher = fetch, platform = proc
   else trace.verbose(`${join(releases, base)} is there already: not unpacked again`);
   const newRelease = join(releases, base);
   log(`${name} checked and unpacked: updating the node ${node.version} -> ${v}`);
-  // the auto update service comes with the update where the node has none yet (a node updated by `arenanode update` keeps updating itself)
+  // the auto update service comes with the update where the node has none yet (a node updated by `bitcoinarena update` keeps updating itself)
   const installUpdaterFn = async (o) => {
     const [{ installUpdater, updaterLauncherStale }, { installProgram }, { serviceFile }] = await Promise.all([import('./launchers.js'), import('./service.js'), import('./node-services.js')]);
     const file = serviceFile('updater', { home, platform, env: process.env });
