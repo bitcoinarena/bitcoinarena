@@ -119,6 +119,10 @@ export function createP2pTunnels({ ownKey, host = '127.0.0.1', say = () => {}, o
     const server = listen((sock) => {
       const target = ports.get(port);
       if (!target || !target.root) { sock.destroy(); return; }
+      // AN ERROR BEFORE THE TUNNEL IS OPEN (kanban #677, measured 2026-10-26 on inst577-2: "read ECONNRESET ... Unhandled 'error' event"
+      // ended the node): fedimintd may reset its connection while the websocket to a slow or dead tunnel is still opening, and a socket
+      // with no error listener throws - it is listened to from the start, and its websocket closed with it
+      sock.on('error', () => { try { ws.terminate(); } catch { /* not open */ } });
       const ws = openWs(`${target.root}${P2P_TUNNEL_PATHS[target.slot]}`);
       sock.pause();
       ws.on('open', () => {

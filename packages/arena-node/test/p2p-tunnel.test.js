@@ -164,3 +164,24 @@ test('a peer\'s API asked at the seat\'s relay reaches that peer\'s guardian at 
     await assert.rejects(call(`${GUARDIAN_API_RELAY_PATH}${'33'.repeat(8)}`, 'x'), 'a name no census guardian has: nothing carried');
   } finally { t.close(); for (const c of wss.clients) c.terminate(); http.close(); p1.close(); p2.close(); }
 });
+
+// A RESET BEFORE THE TUNNEL OPENS (kanban #677, measured 2026-10-26 on inst577-2: "read ECONNRESET ... Unhandled 'error' event" ended the
+// node): the guardian's connection is reset while the websocket to a dead tunnel is still opening - the node keeps running, the websocket is closed
+test('a connection reset while its tunnel is still opening ends that connection, not the node', async () => {
+  const thrown = []; const onThrow = (e) => thrown.push(e); process.on('uncaughtException', onThrow);
+  const key = 'ef'.repeat(32);
+  let terminated = 0;
+  const { EventEmitter } = await import('node:events');
+  const tunnels = createP2pTunnels({ ownKey: 'cd'.repeat(32), openWs: () => Object.assign(new EventEmitter(), { terminate: () => { terminated++; } }) });   // never opens
+  tunnels.sync([{ pubkey: Buffer.from(key, 'hex'), advert: { guardianCapable: true, endpoint: 'http://127.0.0.1:9' } }]);
+  await wait(100);
+  const sock = connect({ host: '127.0.0.1', port: p2pTunnelPort(key) });
+  await new Promise((r) => sock.on('connect', r));
+  await wait(50);
+  sock.resetAndDestroy();                            // an RST: the node's side reads ECONNRESET
+  await wait(200);
+  process.off('uncaughtException', onThrow);
+  tunnels.close();
+  assert.deepEqual(thrown.map((e) => e.code), [], 'nothing thrown');
+  assert.equal(terminated, 1, 'the opening websocket was closed with it');
+});
