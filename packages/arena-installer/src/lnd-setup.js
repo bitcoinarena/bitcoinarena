@@ -7,18 +7,28 @@
 import { execFile } from 'node:child_process';
 import { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, LND_PORTS } from './lnd.js';
 import { installProgram } from './service.js';
-import { torBin, writeTorrc, torCommand, TOR_PORTS } from './tor.js';
-import { connect } from 'node:net';
+import { torBin, writeTorrc, torCommand, freeTorPorts, torControlInfo, torComplaint, ownTorCookie, TOR_PORTS } from './tor.js';
 
-/** Does Tor's control port answer (Tor up and listening)? Asked every second for up to `waitMs`. */
-export async function torUp({ port = TOR_PORTS.control, waitMs = 30000 } = {}) {
+/**
+ * Is THIS NODE'S Tor up? Its control port asked every second for up to `waitMs`: up once it answers with this node's cookie file
+ * (torControlInfo) - another program on the port is not this Tor (kanban #670); a Tor that stopped says so in its log ([err]) and is
+ * not waited for. Answers { ok } or { ok: false, why } with Tor's own line.
+ */
+export async function torUp({ port = TOR_PORTS.control, home = null, waitMs = 30000, everyMs = 1000, info = torControlInfo, complaint = torComplaint } = {}) {
   const until = Date.now() + waitMs;
-  while (Date.now() < until) {
-    const ok = await new Promise((done) => { const c = connect(port, '127.0.0.1'); c.once('connect', () => { c.destroy(); done(true); }); c.once('error', () => done(false)); });
-    if (ok) return true;
-    await new Promise((r) => setTimeout(r, 1000));
+  let foreign = null;   // a program that answers on the port, not this Tor: { cookieFile } (null for a program that is no Tor)
+  for (;;) {
+    const r = await info(port);
+    if (r.answers && (!home || ownTorCookie(home, r.cookieFile))) return { ok: true };
+    if (r.answers) foreign = { cookieFile: r.cookieFile };
+    const said = home ? complaint(home) : null;
+    if (said && said.stopped) return { ok: false, why: `Tor stopped: ${said.line}` };
+    if (Date.now() >= until) break;
+    await new Promise((ok) => setTimeout(ok, everyMs));
   }
-  return false;
+  const said = home ? complaint(home) : null;
+  return { ok: false, why: [foreign ? `another program answers on its control port ${port}${foreign.cookieFile ? ` (a Tor with ${foreign.cookieFile})` : ''}`
+    : `its control port ${port} did not answer within ${Math.round(waitMs / 1000)} s`, said ? `Tor says: ${said.line}` : null].filter(Boolean).join('; ') };
 }
 import * as reachKit from './reach.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
@@ -37,7 +47,7 @@ const which = async (x) => {
 export const lndChainOf = (s) => ownCoreOf(s);
 
 /** Install and start LND for the node at `state` (on its own Core, lndChainOf). Answers { ok, lnd, sha256, peers } or { ok: false, why }. */
-export async function setUpOwnLnd({ state, release, fetcher = fetch, reach = reachKit, lndKit = { installLnd, configureLnd, lndArgs, installProgram }, tor: torKit = { torBin, writeTorrc, torCommand, torUp }, boot = true, onStage = () => {} }) {
+export async function setUpOwnLnd({ state, release, fetcher = fetch, reach = reachKit, lndKit = { installLnd, configureLnd, lndArgs, installProgram }, tor: torKit = { torBin, writeTorrc, torCommand, freeTorPorts, torUp }, boot = true, onStage = () => {} }) {
   const s = state.read();
   const chain = lndChainOf(s);
   if (!chain) return { ok: false, why: 'LND needs your own Bitcoin Core, not an Electrum server' };
@@ -51,22 +61,29 @@ export async function setUpOwnLnd({ state, release, fetcher = fetch, reach = rea
   const lnReach = await reach.checkDirect({ port: LND_PORTS.p2p, fetcher }).catch((e) => ({ ok: false, reached: false, why: e.message }));
   state.save({ lnReach: { reached: Boolean(lnReach.reached), address: lnReach.address || null, port: LND_PORTS.p2p, why: (lnReach.diagnosis && lnReach.diagnosis.advice) || lnReach.why || null, atMs: Date.now() } });
   const tor = lnReach.reached ? null : await torKit.torBin({ release, which });
-  let torOn = false, torWhy = null;
+  let torOn = false, torWhy = null, torPorts = TOR_PORTS;
   if (tor) {
+    // FREE PORTS, AND THIS NODE'S OWN TOR ANSWERING (kanban #670, 2026-10-26: "tor is not starting and could be the reason lnd also doesnt
+    // start"): a port another program holds stops Tor at once ("Could not bind ... Is Tor already running?"), and a control port that
+    // answers may be another Tor's - LND told to use it does not start. So the pair is chosen free, Tor's answer is checked to be its own
+    // (its cookie file), and when it does not come Tor's own line says why on the Lightning step
+    if (torKit.freeTorPorts) torPorts = await torKit.freeTorPorts({ home: state.home }).catch(() => TOR_PORTS);
     const cmd = torKit.torCommand ? torKit.torCommand({ home: state.home, tor }) : [tor];
-    const t = await lndKit.installProgram({ id: 'tor', description: 'Bitcoin Arena: Tor for Lightning', args: [...cmd, '-f', torKit.writeTorrc({ home: state.home })], home: state.home, boot });
+    const t = await lndKit.installProgram({ id: 'tor', description: 'Bitcoin Arena: Tor for Lightning', args: [...cmd, '-f', torKit.writeTorrc({ home: state.home, ports: torPorts })], home: state.home, boot });
     // TOR ANSWERING, NOT ONLY STARTED (2026-10-25): LND told to use a Tor that is not there shuts down - so LND gets Tor only once its
     // control port answers; else LND runs without it (clearnet only) and the node's state says why
-    torOn = t.ok && (torKit.torUp ? await torKit.torUp() : true);
-    if (t.ok && !torOn) torWhy = 'Tor did not start (its control port did not answer within 30 s): LND runs without it';
+    const up = !t.ok ? false : torKit.torUp ? await torKit.torUp({ port: torPorts.control, home: state.home }) : true;
+    torOn = up === true || Boolean(up && up.ok);
+    if (!t.ok) torWhy = `Tor could not be set up as a service: ${t.why}: LND runs without it`;
+    else if (!torOn) torWhy = `Tor did not start (${(up && up.why) || 'its control port did not answer within 30 s'}): LND runs without it`;
   }
   onStage('start');
-  const cfg = lndKit.configureLnd({ home: state.home, chain, tor: torOn ? TOR_PORTS : null, externalIp: lnReach.reached ? lnReach.address : null });
+  const cfg = lndKit.configureLnd({ home: state.home, chain, tor: torOn ? torPorts : null, externalIp: lnReach.reached ? lnReach.address : null });
   const r = await lndKit.installProgram({ id: 'lnd', description: 'LND for Bitcoin Arena (custody)', args: lndKit.lndArgs({ lnd: got.lnd, lnddir: cfg.lnddir }), home: state.home, boot, partOf: torOn ? 'tor' : null });
   if (!r.ok) return { ok: false, why: r.why };
-  state.save({ tor: torOn ? { bin: tor, ports: TOR_PORTS } : { why: torWhy ? torWhy : lnReach.reached ? `not needed: others reach LND at ${lnReach.address}:${LND_PORTS.p2p}` : tor ? 'Tor did not start' : 'no Tor: the release has none for this system (linux-arm64: apt install tor)' },
+  state.save({ tor: torOn ? { bin: tor, ports: torPorts } : { why: torWhy ? torWhy : lnReach.reached ? `not needed: others reach LND at ${lnReach.address}:${LND_PORTS.p2p}` : tor ? 'Tor did not start' : 'no Tor: the release has none for this system (linux-arm64: apt install tor)' },
     lightning: { mode: 'own', restUrl: cfg.restUrl, tlsCert: cfg.tlsCert, macaroon: cfg.macaroon, passwordFile: cfg.passwordFile, lnddir: cfg.lnddir, startedMs: Date.now() } });
-  return { ok: true, lnd: got.lnd, sha256: got.sha256 || null, peers: lnReach.reached ? `reachable from outside at ${lnReach.address}:${LND_PORTS.p2p}` : torOn ? 'not reachable from outside: Tor gives LND an onion address' : 'not reachable from outside and no Tor: only nodes it dials reach it' };
+  return { ok: true, lnd: got.lnd, sha256: got.sha256 || null, peers: lnReach.reached ? `reachable from outside at ${lnReach.address}:${LND_PORTS.p2p}` : torOn ? 'not reachable from outside: Tor gives LND an onion address' : `not reachable from outside and no Tor: only nodes it dials reach it${torWhy ? ` (${torWhy})` : ''}` };
 }
 
 /**
