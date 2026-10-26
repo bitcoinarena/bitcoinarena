@@ -1043,8 +1043,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // hosted here - same developer, the hosted one as its parent, a higher version - and it is taken as an update would be
   const autoUpdate = async () => {
     if (!owner || !pluginsDir) return;
+    // ALWAYS ON (2026-10-26, the owner on the Apps section's switch "Update apps automatically": "Should always be enabled")
     const set = owner.storeSettings();
-    if (!set.autoUpdate) return;
     // NAMED SOURCES, ELSE THE NETWORK'S OWN SEATS (found by this seat, not typed in)
     const sources = set.sources.length ? set.sources : networkSeats();
     for (const from of sources) {
@@ -1094,6 +1094,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (c && c.ok && Array.isArray(c.entries) && c.entries.length) { for (const e of endpointsOf(c.entries, round.pubkey)) found.add(baseOf(e)); break; }
     }
     if (owner) for (const s of owner.storeSettings().sources || []) found.add(baseOf(s));
+    // A NODE WITH NO PEERS AND NO ROUND OF ITS OWN (2026-10-26, the owner's installed node: "Found on the network - No other node answered:
+    // 0 of 0 nodes answered", and Search again did nothing): an installed node names no peers and had checked no round yet, so it knew no
+    // seat at all - the chain's newest census and the address announcements it holds name them
+    if (!found.size) {
+      try { for (const e of endpointsOf(fedRecords && fedRecords.censusNewest ? fedRecords.censusNewest() : [], round.pubkey)) found.add(baseOf(e)); } catch { /* none read yet */ }
+      try { const me = toHex(round.pubkey); for (const a of (addressBook && addressBook.list ? addressBook.list() : [])) if (a && a.endpoint && a.node !== me) found.add(baseOf(a.endpoint)); } catch { /* none held */ }
+    }
     return [...found].filter((u) => /^https?:\/\//.test(u));
   };
   // EVERY SEAT THIS ONE CAN NAME: networkSeats() and every endpoint of the chain's newest census - the census observers and spent
