@@ -19,16 +19,16 @@ test('hours and minutes', () => {
   assert.equal(inHoursMinutes(20000), 'less than a minute');
 });
 
-test('before its draw block: the committee time plus 6 blocks, later than its first window', () => {
+test('before its committee block: the committee time plus 6 blocks, later than its first window', () => {
   const r = nextRoundLine({ grids: [grid()], game: 'btc-updown-15m', nowMs: NOW });
-  assert.equal(r.text, 'Next round in 1 h 38 min (about 11:54 UTC) · its draw block is the first after 10:54 UTC, then 6 confirmations.');
+  assert.equal(r.text, 'Next round in 1 h 38 min (about 11:54 UTC) · its committee block is the first after 10:54 UTC, then 6 confirmations.');
 });
 
-test('the draw block confirming: N of 6, and the window when it is later', () => {
+test('the committee block confirming: N of 6, and the window when it is later', () => {
   const r = nextRoundLine({ grids: [grid({ beacon: { height: 157661, depth: 4, needed: 6 } })], game: 'btc-updown-15m', nowMs: NOW });
-  assert.equal(r.text, 'Next round in 1 h 14 min (about 11:30 UTC) · its draw block has 4 of 6 confirmations.');
+  assert.equal(r.text, 'Next round in 1 h 14 min (about 11:30 UTC) · its committee block has 4 of 6 confirmations.');
   const late = nextRoundLine({ grids: [grid({ firstWindowMs: String(NOW - 60000), beacon: { height: 157661, depth: 2, needed: 6 } })], game: 'btc-updown-15m', nowMs: NOW });
-  assert.equal(late.text, 'Next round in 40 min (about 10:56 UTC) · its draw block has 2 of 6 confirmations.');
+  assert.equal(late.text, 'Next round in 40 min (about 10:56 UTC) · its committee block has 2 of 6 confirmations.');
 });
 
 test('not mined yet; a posted grid and another game\'s are not named; the soonest first', () => {

@@ -158,7 +158,7 @@ test('the APPS table\'s rounds: posted (N), delayed, failed - only the newest ve
   const grid = (txid, from, to, ct, fed, pub, beacon) => ({ game: 'x', firstWindowMs: String(from), lastCloseMs: String(to), committeeTimeMs: String(ct), federation: fed,
     publication: { txid, ...pub }, beacon: { needed: 6, ...beacon } });
   const ex = (g, gameId) => ({ gameId, publication: { txid: g.publication.txid, height: null }, committeeTimeMs: g.committeeTimeMs, federation: g.federation });
-  // rps v2: posted today (8 deep), and the next day's grid published, its draw block 2 of 6; rps v1 is not the newest and does not count
+  // rps v2: posted today (8 deep), and the next day's grid published, its committee block 2 of 6; rps v1 is not the newest and does not count
   const p1 = grid('aa'.repeat(32), now - 10 * H, now + 14 * H, 1, F1, { height: 100, confirmations: 20 }, { height: 102, depth: 8 });
   const p2 = grid('ab'.repeat(32), now + 14 * H, now + 38 * H, 2, F1, { height: 110, confirmations: 10 }, { height: 115, depth: 2 });
   const old = grid('ac'.repeat(32), now - 10 * H, now + 38 * H, 3, F1, { height: 90, confirmations: 30 }, { height: 92, depth: 28 });
@@ -173,14 +173,14 @@ test('the APPS table\'s rounds: posted (N), delayed, failed - only the newest ve
   const rps = got.get('rps'), up = got.get('updown');
   // the rest of today: v2's posted grid, the furthest seat's reading (8, not 7)
   assert.deepEqual([rps.today.t, rps.today.c], ['posted (8)', 'ok']);
-  assert.match(rps.today.tip, /^version 2; in \(\) the confirmations of the draw block/);
-  assert.match(rps.today.tip, /Federation 1, rounds 10-26 00:00 to 10-27 00:00 UTC: posted: its draw block 102 has 8 confirmations/);
+  assert.match(rps.today.tip, /^version 2; in \(\) the confirmations of the committee block/);
+  assert.match(rps.today.tip, /Federation 1, rounds 10-26 00:00 to 10-27 00:00 UTC: posted: its committee block 102 has 8 confirmations/);
   assert.doesNotMatch(rps.today.tip, /block 92/, 'the old version is not counted');
   // the next 24 h: the next day's grid draws in 2 of 6
   // its round table 10 deep: the confirmations in () (2026-10-26: "delayed(1) for example for 1 confirmation")
   assert.deepEqual([rps.next.t, rps.next.c], ['delayed (10)', 'warn']);
   assert.match(rps.next.tip, /^version 2; in \(\) the confirmations of the round table/);
-  assert.match(rps.next.tip, /its draw block 115 has 2 of 6 confirmations: posted in about 40 min/);
+  assert.match(rps.next.tip, /its committee block 115 has 2 of 6 confirmations: posted in about 40 min/);
   // tomorrow is the next UTC day, not the next 24 h (2026-10-26 ~15:20Z: "Why does it show today's rounds when I click tomorrow?")
   assert.deepEqual(rps.next.items.map((x) => x.when), ['tomorrow 00:00–24:00']);
   // updown: posted but undrawable, and the hours no grid covers - failed, with the seat's reason
