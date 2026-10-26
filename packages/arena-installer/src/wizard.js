@@ -950,7 +950,10 @@ const serviceRun = async (b) => {
       sessions.clear(); saveSessions(true);
       setTimeout(() => onDone(), 200);
       const reachNow = state.read().reach || {};
-      return { ok: true, owner: `${reachNow.url || `http://127.0.0.1:${portOf()}`}/Dashboard/owner`, url: reachNow.url || null, mode: reachNow.mode || null };
+      // the owner page where the installer hands the key over (kanban #687): the Arena site's, by this node's key
+      const idNow = (state.read().service || {}).identity;
+      return { ok: true, owner: /^[0-9a-f]{64}$/.test(String(idNow || '')) ? `https://testnet.bitcoin-arena.io/owner/#node=${idNow}&local=${encodeURIComponent(`http://127.0.0.1:${portOf()}`)}`
+        : `http://127.0.0.1:${portOf()}/Dashboard/owner`, url: reachNow.url || null, mode: reachNow.mode || null };
     },
   };
 
@@ -965,7 +968,9 @@ const serviceRun = async (b) => {
   const saveLaunchers = () => {
     const s = state.read();
     if (!s.service) return null;
-    const ownerUrl = `${(s.reach && s.reach.url) || `http://127.0.0.1:${portOf()}`}/Dashboard/owner`;
+    // the local owner page, which goes on to the Arena site's page for this node where the owner key is kept (kanban #687): a quick
+    // tunnel's address changes at every restart, and a .desktop Exec line or cmd would cut the site page's #node=...&local=...
+    const ownerUrl = `http://127.0.0.1:${portOf()}/Dashboard/owner`;
     try {
       const addCustody = (s.roles || []).includes('custody') ? null
         : [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'arena-install.mjs'), '--add-custody', '--home', state.home];
