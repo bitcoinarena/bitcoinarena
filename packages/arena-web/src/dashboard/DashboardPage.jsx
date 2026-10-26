@@ -9,7 +9,7 @@
 // the page's own script drew is here too - a round opened to its players with their replays (readResult), the notes, every host row,
 // the capacity plea and the liquidity card (the page hands in liquidity-claim and capacity?node=me), and the words for an unreadable node.
 import React from 'react';
-import { SetupStatus } from './SetupStatus.jsx';
+import { SetupStatus, FoundingWait } from './SetupStatus.jsx';
 
 /** msat to the page's sat: three decimals under 10, one under 1,000, none above. */
 export const sat = (m) => { const n = Number(m || 0) / 1000; return `${(n < 10 ? n.toFixed(3) : n.toFixed(n < 1000 ? 1 : 0)).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')} sat`; };
@@ -123,6 +123,16 @@ export const score = (v) => (v === null || v === undefined ? '-' : `${Math.trunc
 /** A net with its sign: "+286 sat", "-4 sat", blank while pending. */
 export const signedSat = (m) => (m === null || m === undefined || m === '' ? '' : `${Number(m) > 0 ? '+' : ''}${sat(m)}`);
 /** A note's hyphens do not break (measured at 1280 px: "test-host- / testnet4"): a name in a note stays one word. */
+// THE NOTES AS THREE SHORT ROWS (2026-10-26, the owner on the Money card's notes: "This is also a wall of text"): what, then a few words;
+// the node's whole sentence stays as the row's tooltip
+export function noteRows(D) {
+  const n = D.notes || {}, h = D.hosts || {};
+  const rows = [];
+  if (n.guardian) rows.push(['Guardian fees', 'go to the nodes guarding the round\'s federation; yours show here once it guards one', n.guardian]);
+  if (n.lightning) rows.push(['Lightning', h.lnd ? `LND ${h.lnd.alias || ''}`.trim() + ' · costs: the fees of its own payments' : 'no channel on this node', n.lightning]);
+  if (n.gateway) rows.push(['Gateway', h.gateway ? `${h.gateway.name || 'its own'} · costs this node nothing` : 'none used', n.gateway]);
+  return rows;
+}
 export const keep = (t) => String(t).replace(/-/g, '‑');
 const tone = (m) => (m === null || m === undefined || m === '' ? '' : Number(m) > 0 ? 'ok' : Number(m) < 0 ? 'bad' : '');
 
@@ -176,15 +186,24 @@ export class DashboardPage extends React.Component {
     const H = D.hosts || {}; const L = H.lnd, G = H.gateway;
     const devs = [...(D.devClient ? [D.devClient] : []), ...(D.devClients || [])];
     const states = Object.entries(D.settlementsByState || {});
-    const notes = D.notes ? [D.notes.guardian, D.notes.lightning, D.notes.gateway].filter(Boolean) : [];
+    const notes = noteRows(D);
     const hostsRead = Math.max((L && L.readAtMs) || 0, (G && G.readAtMs) || 0);
     return (
       <div className="dash">
         <header className="dash-head">
-          <div><h1>Node dashboard{D.release && (D.release.version || D.release.commit) ? <span className="ver" id="release">{D.release.version || String(D.release.commit).slice(0, 8)}</span> : null}</h1><p className="sub"><code>{String(D.node).slice(0, 16)}…</code> · active since {short(D.sinceMs, now)} · {D.roundsChecked} rounds checked</p></div>
+          <div><h1>Node dashboard{D.release && (D.release.version || D.release.commit) ? <span className="ver" id="release">{D.release.version || String(D.release.commit).slice(0, 8)}</span> : null}</h1>
+            {/* THE NODE IN THREE CHIPS (2026-10-26, the owner on "b36828faa1570202… · active since - · 0 rounds checked": "This also looks pretty
+                bad, make it more pretty"): its key short with a copy button, since when it checks rounds, how many - words, not "-", while none */}
+            <div className="dash-facts">
+              <span className="fact" title={String(D.node)}><span className="fact-k">Node</span><code>{String(D.node).slice(0, 8)}…{String(D.node).slice(-6)}</code>
+                <button type="button" className="fact-copy" aria-label="Copy the node key" onClick={() => { try { navigator.clipboard.writeText(String(D.node)); } catch { /* no clipboard */ } }}>Copy</button></span>
+              <span className="fact"><span className="fact-k">Active since</span>{D.sinceMs ? short(D.sinceMs, now) : <span className="dim">no round checked yet</span>}</span>
+              <span className="fact"><span className="fact-k">Rounds checked</span>{Number(D.roundsChecked || 0).toLocaleString('en-US')}</span>
+            </div></div>
           <a className="btn" href="Dashboard/owner">Owner area →</a>
         </header>
         {D.setup && D.setup.ok ? <section><SetupStatus status={D.setup} /></section> : null}
+        {D.setup && D.setup.ok && D.setup.founding && D.setup.founding.waiting ? <section><FoundingWait status={D.setup} /></section> : null}
         {D.capacity ? <section><h2>Capacity</h2><div className="card"><p className={D.capacity.level === 'bad' ? 'bad' : 'warn'}>{String(D.capacity.says)}</p></div></section> : null}
         <section><h2>Earnings</h2><Earnings totals={D.totals} period={period} onPeriod={(p) => this.setState({ period: p })} /></section>
         <section><div className="card"><Chart days={D.days || []} /></div></section>
@@ -204,7 +223,7 @@ export class DashboardPage extends React.Component {
                 <div className="card"><h3>By game</h3>
                   <Rows rows={D.byGame.map((g) => { const owed = g.owed ? earningsOf({ ...g.owed, otherMsat: 0 }).earned : 0n;
                     return [g.name || (g.game ? g.game.slice(0, 12) : '(no game)'), `${g.rounds} round${g.rounds === 1 ? '' : 's'} · ${sat(earningsOf(g.earned || {}).earned)}${owed > 0n ? ` · ${sat(owed)} owed` : ''}`]; })} /></div>) : null}
-              {notes.length ? <div className="card"><h3>Notes</h3><div className="notes">{notes.map((n, i) => <p key={i}>{keep(n)}</p>)}</div></div> : null}
+              {notes.length ? <div className="card"><h3>Notes</h3><dl className="note-rows">{notes.map(([k, v, full]) => <React.Fragment key={k}><dt>{k}</dt><dd title={full}>{keep(v)}</dd></React.Fragment>)}</dl></div> : null}
             </div>
           </section>) : null}
         {D.liquidity ? <Liquidity claim={D.liquidity} /> : null}
