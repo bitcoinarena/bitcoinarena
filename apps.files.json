@@ -2,7 +2,7 @@
   "about": "What a node downloads of each app at its pinned commit (kanban #575): every file with its SHA-256. Written by tools/pin-apps.mjs from the apps' checkouts; never by hand.",
   "apps": {
     "arena-app-next-block": {
-      "commit": "9047b0b6ef6befe29f0330e6b897f422e476cdec",
+      "commit": "5c19be53e78008e2b79a08d6d2472f536219e8d6",
       "files": {
         "README.md": "7fc7113426fb4d9d22e36b8000a3693e669f40de4e020c5fb1bf89014dafc482",
         "app.json": "85e362fde9f4177c55237f0eeabbcbc4af5b7b46391277a9556ef757242a314d",
@@ -209,7 +209,7 @@
         "frozen/f0cc7b7b/tables.js": "a31fb090da9e128af868abd9195f8f8d4b4a6890cccf23317be95c13db5b5ca3",
         "frozen/f0cc7b7b/tick.js": "33a753169214658cff6656ac20e4abcc2f3ebee1bc5856b0d088e0d865e82fdf",
         "frozen/f0cc7b7b/trig.js": "18c8d7c3b5fdb44f790b5ed04f9d55c5f4ec535aec0ec770a0f6b89163c14f40",
-        "package.json": "2193503927706824fa55934789361997dfeeee0e8945cc7b51de235196c1878f",
+        "package.json": "c26d31b21371bef8e87250b695c13af2730450ba04c2533b031094e24e7d40d3",
         "page/ghost-field.js": "4d1e41391e8daed504cd02a0bf9735d66116918ea793703e29b8a05ddb4af4e2",
         "page/ghost-page.js": "45b2ec62cfe8c5642d8d4ac29d0e9f2caf7d73620eef0a891c6eef54ffd51553",
         "page/loading-page.js": "b989205712e0454b304d31a307f00de7c8584f3d5ff54df76b375acbe6bbcd18",
@@ -278,7 +278,7 @@
         "tools/concat-bundle.js": "e0fdcbc9e4d6c095183868bf1e91066ff04dec432f5bf9e63c1eb5baefe28934",
         "tools/gen-tables.js": "4115f1f4fc0262de5715110faa5d51be325373253ff1ef54d1c2b77e02ec8024",
         "tools/gen-unity-layout.js": "ae4168ce3046fc11970635f5eeb9d65db277286f5f14f74afce6ca069de13410",
-        "tools/hash-core.js": "59fb288103d453f34cd421c2f47943df479c05cbdf9c381e12d47522d6b3a1a7",
+        "tools/hash-core.js": "d8df0e82f6550681c146b0d148bdcc0bf45fabaaeb20f8d88bc60d506088e4ff",
         "tools/make-vectors.js": "73c72e67bad4fff40afe1763424681c0269044888b7bee3af4967ea45256493f",
         "tools/measure-air.js": "190c2db1edafb1e7e7e47e8f8281a2e50ca95680adb2f4681bce43a15c14476e",
         "tools/measure-army.js": "9c31a09fc90baee2cbcd3434c688a4f9c25610fc354d039337de398a6ab5b44a",
@@ -315,7 +315,7 @@
       ]
     },
     "arena-app-rock-paper-scissors": {
-      "commit": "f3f0c0bc78a2b0660e73f6f104cfa4bda264eb17",
+      "commit": "9b1f72a983fe2aec821d09efa1f89316fcd7ccb9",
       "files": {
         "app.json": "414384d51cb16f11d9733f9edc30d87f28a269acc1e4b2e00fa71c9ae6bdae93",
         "brand/rps-icon.svg": "ae9a1a196e3c3194a269df00eaf94ddcfe22ededad568cd19bebb025b02d8f36",
@@ -325,7 +325,7 @@
         "client/index.html": "1242d7d39c8a218dff54a34b92bde5b4a25704a92e09d8fc9fecb2c7b52f3f85",
         "dist/rps-view-v5.js": "0f70d437492bd79c024c56457257208218d78c0d6a546aaeec625061f3775f49",
         "dist/rps-view.js": "a9d958a26ceafa1580e5c17a3c41160d03b243d5f4d28ab79ce0d0ae6f43825b",
-        "package.json": "a3035a32aa9f8bec49b07ddb4f65369abe2863bb95308a4e65974299973ade42",
+        "package.json": "e80b987aef7cb96e0973db7b25bd1bbdab9125351ff571d0098b2b7e2bf870b9",
         "plugin/decide-v4.js": "f86afd62734989cca3004021d00879af5d57008958908ca28973100625d7f031",
         "plugin/decide.js": "d65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434",
         "plugin/info.js": "807281ea2eb05bb56bac1f579c901bdc33c2f1391071d82cceaca48d2a6f9c07",
@@ -351,7 +351,7 @@
       "exec": []
     },
     "arena-app-up-or-down": {
-      "commit": "ba0c393e12c5c3d11afeacee2383e2e375747b9a",
+      "commit": "1f14b89f6861763146fb55690ab93d89f5ebcd1f",
       "files": {
         "app.json": "3482954b8dd93640ac044b3b4f82072b0785031f6da0c62ddf62c79437773ad1",
         "brand/updown-icon.svg": "3b6d03a10e6e3173ad19cbfe6c3850b8c78d7c37fdd0f06ad25e1c4299a8ec4b",
@@ -383,7 +383,7 @@
         "client/src-v22.js": "b3e1062c2df112a3b776721709ef8bf0e3081a38467862e07ee016383650e739",
         "client/src-v23.js": "5298d558397a8d32e3a539aba2f6d623dada892c1ea831a94b6989ab9075a901",
         "dist/updown-view.js": "d83fdf4a287635635d0f851c7cf16b5368815dec0f5e529a8527384fa83df285",
-        "package.json": "1e66fac37fc76176ef718912298b7a0ba2ac9419389cdc51b98eb59a3cd7fed7",
+        "package.json": "4f0a5c68bcc233f6d3b7ae93f52e47ef874d9ea4f9e1935c0115a63eaf609bec",
         "page/book-bot.js": "c5ad215e49559425cc4183fa3fc3a1510542277bb42190195f228ad1f09576d0",
         "page/market-page.css": "e711b857a639bfdb0b174847fcca8504072637a600c50b036af8b75a9e5f7d23",
         "page/market-page.js": "93b3635f060e2502c302eb9c4f61ce5c87920cb29ee808e190dac7fe48010dcd",
