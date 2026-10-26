@@ -90,8 +90,10 @@ if (args.includes('--update-self')) {
     const { serviceFile } = await import('../src/node-services.js');
     const installUpdaterFn = async (o) => { const file = serviceFile('updater', { home, platform: process.platform, env: process.env });
       return existsSync(file) && !updaterLauncherStale(file) ? { ok: true, already: true } : installUpdater({ ...o, installProgram }); };
+    // its progress, one line per step (the desktop apps read them, update-progress.js); redrawn in place in a terminal
+    const { progressBar } = await import('../src/update-progress.js');
     const r = await updateNode({ home, newRelease: release, port: (s.reach && s.reach.port) || (s.service && s.service.port) || seatPort,
-      node: `${release}/runtime/${process.platform === 'win32' ? 'node.exe' : 'node'}`, installUpdaterFn, trace: log });
+      node: `${release}/runtime/${process.platform === 'win32' ? 'node.exe' : 'node'}`, installUpdaterFn, trace: log, progress: progressBar({ tty: !!process.stdout.isTTY }).report });
     console.log(r.ok ? `Updated: ${have || r.from} -> ${mine}; the same node answers (${r.identity.slice(0, 16)}...)`
       : `${r.rolledBack ? 'Rolled back' : 'Not updated'}: ${r.why}`);
     await finish(r.ok ? 0 : 1);
@@ -109,13 +111,17 @@ if (args.includes('--update')) {
   let sums, sig;
   try { sums = readFileSync(`${at}/SHA256SUMS`); sig = readFileSync(`${at}/SHA256SUMS.sig`, 'utf8'); }
   catch { console.error(`SHA256SUMS and SHA256SUMS.sig belong beside ${asset} (download them from the same release)`); process.exit(2); }
+  const { progressBar, within } = await import('../src/update-progress.js');
+  const bar = progressBar({ tty: !!process.stdout.isTTY });
+  bar.report({ pct: 0, step: 'Checking the signature' });
   const c = checkAsset({ file: asset, sums, sig });
   log.tag('update').verbose(`${asset}: SHA256SUMS and its signature beside it against the Arena release key: ${c.ok ? 'ok' : c.why}`);
-  if (!c.ok) { console.error(`Refused: ${c.why}`); process.exit(2); }
+  if (!c.ok) { bar.report({ failed: true, pct: 0, step: 'Checking the signature', why: c.why }); console.error(`Refused: ${c.why}`); process.exit(2); }
   const name = asset.split(/[\\/]/).pop().replace(/\.(tar\.gz|zip)$/, '');
   const dir = `${home}/releases`;
   mkdirSync(dir, { recursive: true });
   // the Windows asset is a .zip: Windows 10+ has tar (bsdtar), which reads zip too
+  bar.report({ pct: 3, step: 'Unpacking', detail: name });
   if (!existsSync(`${dir}/${name}`)) execFileSync('tar', [asset.endsWith('.zip') ? '-xf' : '-xzf', asset, '-C', dir]);
   const s = state.read();
   // the auto update service for a node that has none yet
@@ -126,7 +132,7 @@ if (args.includes('--update')) {
   const installUpdaterFn = async (o) => { const file = serviceFile('updater', { home, platform: process.platform, env: process.env });
     return existsSync(file) && !updaterLauncherStale(file) ? { ok: true, already: true } : installUpdater({ ...o, installProgram }); };
   const r = await updateNode({ home, newRelease: `${dir}/${name}`, port: (s.reach && s.reach.port) || (s.service && s.service.port) || seatPort,
-    node: `${dir}/${name}/runtime/${process.platform === 'win32' ? 'node.exe' : 'node'}`, installUpdaterFn, trace: log });
+    node: `${dir}/${name}/runtime/${process.platform === 'win32' ? 'node.exe' : 'node'}`, installUpdaterFn, trace: log, progress: within(bar.report, 10, 100) });
   console.log(r.ok ? `Updated: ${r.from} -> ${r.to}; the same node answers (${r.identity.slice(0, 16)}...). Backup: ${r.backup}${r.notStarted ? `\nNot running: ${r.notStarted}` : ''}`
     : `${r.rolledBack ? 'Rolled back' : 'Not updated'}: ${r.why}${r.backup ? ` (backup ${r.backup})` : ''}`);
   await finish(r.ok ? 0 : 1);

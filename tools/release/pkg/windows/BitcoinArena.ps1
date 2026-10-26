@@ -48,6 +48,10 @@ $title.Font = New-Object System.Drawing.Font('Segoe UI', 13, [System.Drawing.Fon
 $title.AutoSize = $false; $title.Left = 48; $title.Top = 90; $title.Width = 490; $title.Height = 28; $form.Controls.Add($title)
 $sub = New-Object System.Windows.Forms.Label
 $sub.ForeColor = $dim; $sub.AutoSize = $false; $sub.Left = 26; $sub.Top = 122; $sub.Width = 510; $sub.Height = 42; $form.Controls.Add($sub)
+# an update's real progress, 0 to 100 % (kanban #706): shown only while the node is updated
+$bar = New-Object System.Windows.Forms.ProgressBar
+$bar.Minimum = 0; $bar.Maximum = 100; $bar.Style = 'Continuous'; $bar.Left = 26; $bar.Top = 164; $bar.Width = 510; $bar.Height = 8; $bar.Visible = $false
+$form.Controls.Add($bar)
 $box = New-Object System.Windows.Forms.TextBox
 $box.Multiline = $true; $box.ReadOnly = $true; $box.ScrollBars = 'Vertical'; $box.Left = 24; $box.Width = 512; $box.Height = 150; $box.Visible = $false
 $box.Font = New-Object System.Drawing.Font('Consolas', 9); $box.BackColor = $card; $box.ForeColor = $fg; $box.BorderStyle = 'None'
@@ -100,7 +104,7 @@ function Show-Installed {
   $line = $(if ($running) { 'Your node runs and serves the network.' } else { 'Your node does not run.' })
   if ("$state" -match 'not running: (.+)$') { $line = 'Not running: ' + $Matches[1] } elseif ("$state" -match '^stopped: (.+)$') { $line = 'Stopped: ' + $Matches[1] }
   Set-State $(if ($running) { 'Server running' } else { 'Server stopped' }) $line $(if ($running) { $green } else { $red })
-  $box.Visible = $false
+  $box.Visible = $false; $bar.Visible = $false
   Set-Buttons @('Dashboard', 'Owner page', $(if ($running) { 'Stop node' } else { 'Start node' }), 'Doctor')
 }
 $buttons['Dashboard'].Add_Click({ & cmd /c "`"$command`" dashboard" | Out-Null })
@@ -126,6 +130,12 @@ if ((Test-Path $command) -and (Test-Path (Join-Path $nodeHome 'arena.conf'))) {
     $utimer = New-Object System.Windows.Forms.Timer
     $utimer.Interval = 1000
     $utimer.Add_Tick({
+      # THE UPDATE'S PROGRESS LINES (kanban #706): "[#####-----]  45 %  Unpacking 2026.1.9.9" - the last one moves the bar and says the step
+      $p = Get-Content $ulog -ErrorAction SilentlyContinue | Where-Object { $_ -match '^\[[#-]+\]\s+\d{1,3} %  ' } | Select-Object -Last 1
+      if ($p -and $p -match '^\[[#-]+\]\s+(\d{1,3}) %  (.*)$') {
+        $title.Text = "Updating your node to $version..."; $bar.Value = [math]::Min(100, [int]$Matches[1]); $bar.Visible = $true
+        $sub.Text = "$($Matches[1]) %  $($Matches[2])"
+      }
       if (-not $script:up.HasExited) { return }
       $utimer.Stop()
       $line = Get-Content $ulog -ErrorAction SilentlyContinue | Where-Object { $_ -match '^(Updated|Up to date|Rolled back|Not updated)' } | Select-Object -Last 1

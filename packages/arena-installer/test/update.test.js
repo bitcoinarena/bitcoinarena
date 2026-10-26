@@ -89,8 +89,16 @@ test('an update keeps the node, its settings and data; a broken release is rolle
   assert.equal(releaseOfUnit(readFileSync(join(unitDir(env), UNIT), 'utf8')), v1);
 
   // to 0.1.1: the same node, the same settings - moved into arena.conf - its database and owner kept, a backup taken
-  const up = await updateNode({ home, newRelease: v2, port, env, sh: sys.sh, nowMs: () => 0 });
+  const told = [];
+  const up = await updateNode({ home, newRelease: v2, port, env, sh: sys.sh, nowMs: () => 0, progress: (p) => told.push(p) });
   assert.equal(up.ok, true, up.why);
+  // ITS PROGRESS (kanban #706): each real step in order, never backwards, and Done at 100 %
+  const steps = [...new Set(told.map((p) => p.step).filter(Boolean))];
+  for (const s of ['Checking the new release', 'Getting the apps of', 'Stopping your node', 'Backing up your node', 'Writing the settings for', 'Starting your node',
+    "Waiting for your node's first answer", 'Finishing up']) assert.ok(steps.some((x) => x.startsWith(s)), `the step "${s}" is said (${steps.join(' / ')})`);
+  assert.ok(steps.indexOf('Stopping your node') < steps.indexOf('Starting your node'));
+  assert.ok(told.every((p, i) => i === 0 || p.pct >= told[i - 1].pct), 'the percent never goes back');
+  assert.deepEqual(told.at(-1), { done: true, pct: 100 });
   assert.deepEqual([up.from, up.to, up.identity], [v1, v2, first.identity], 'the same node answers from the new release');
   assert.equal(up.migrated, true);
   const { parseConf } = await import('../../arena-node/src/arena-conf.js');
@@ -106,8 +114,14 @@ test('an update keeps the node, its settings and data; a broken release is rolle
   assert.equal(JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).release.path, v2);
 
   // to a release that does not start: rolled back to 0.1.1 by itself, and said why
-  const bad = await updateNode({ home, newRelease: broken, port, env, sh: sys.sh, nowMs: () => 0, waitMs: 8000 });
+  const badTold = [];
+  const bad = await updateNode({ home, newRelease: broken, port, env, sh: sys.sh, nowMs: () => 0, waitMs: 8000, progress: (p) => badTold.push(p) });
   assert.deepEqual([bad.ok, bad.rolledBack, bad.restored], [false, true, true]);
+  // the failure said at the step it failed at - not the going back after it - with why, and that the old release runs again
+  assert.ok(badTold.some((p) => /^Going back to /.test(p.step)), 'the rollback is a step');
+  const fail = badTold.at(-1);
+  assert.deepEqual([fail.failed, fail.step], [true, "Waiting for your node's first answer"]);
+  assert.match(fail.why, /did not come up.*The old release runs again\.$/s);
   assert.match(bad.why, /did not come up/);
   assert.equal(releaseOfUnit(readFileSync(join(unitDir(env), UNIT), 'utf8')), v2, 'the unit names the old release again');
   const after = await waitHealthy({ port, waitMs: 30000, everyMs: 300 });

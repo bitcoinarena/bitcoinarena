@@ -11,7 +11,8 @@
 #           answers installed / running <link> / ready; launch starts the installer; wait-link answers its link, "waiting", or fails
 #   state   "running", "done" (the installer says Done or a node is set up) or "ended <its last lines>"
 #   newer   for an installed node: "<node's version> <this app's version>" when this app carries a newer release, else nothing
-#   update  the installed node moved to this app's release (arena-install --update-self): one line, "Updated: ..." or why not
+#   update  the installed node moved to this app's release (arena-install --update-self): its progress lines as they come,
+#           "[#####-----]  45 %  Unpacking 2026.1.9.9" (kanban #706), then one line, "Updated: ..." or why not
 #           (the owner's playtest 2026-10-25: "When I execute 2.9.2 it doesn't update the node, it just starts the 1.9.1")
 #   link    the installer's one-time link        stop     stop the installer
 #   status  `bitcoinarena status`                 owner    open the owner page       restart   restart the node
@@ -94,7 +95,7 @@ case "${1:-}" in
       if (from && from !== mine && own && (!have || newerVersion(own, have))) console.log((have || "an older release") + " " + own);' "$H" "$DEST" 2>/dev/null ;;
   update)
     release
-    ARENA_CLOUDFLARED="$DEST/runtime/cloudflared" "$DEST/runtime/node" "$DEST/packages/arena-installer/bin/arena-install.mjs" --update-self --home "$H" 2>&1 | grep -E '^(Updated|Up to date|Rolled back|Not updated)' | tail -1 ;;
+    ARENA_CLOUDFLARED="$DEST/runtime/cloudflared" "$DEST/runtime/node" "$DEST/packages/arena-installer/bin/arena-install.mjs" --update-self --home "$H" 2>&1 | grep --line-buffered -E '^(\[[#-]+\] |Updated|Up to date|Rolled back|Not updated)' ;;
   link) cat "$LINKF" 2>/dev/null ;;
   stop) stop_it ;;
   status) "$CMD" status 2>&1 | head -24 ;;

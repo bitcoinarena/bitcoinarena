@@ -172,7 +172,10 @@ export async function main(args, { home, name = 'bitcoinarena', io = { out: (l) 
       // NOW: the newest signed release fetched, checked and the node moved to it - whatever auto_update says
       const { checkOnce } = await import('./auto-update.js');
       if (!deps.latest) { io.err('this command reads no release list (run it from a release)'); return 1; }
-      const r = await checkOnce({ home, latest: deps.latest, force: true, log: (l) => io.out(l), trace: log, ...(deps.fetcher ? { fetcher: deps.fetcher } : {}) });
+      // ITS PROGRESS (kanban #706): one line redrawn in a terminal, one line per step otherwise (update-progress.js)
+      const { progressBar } = await import('./update-progress.js');
+      const bar = progressBar({ tty: deps.tty ?? !!process.stdout.isTTY, line: (l) => io.out(l) });
+      const r = await checkOnce({ home, latest: deps.latest, force: true, log: bar.line, progress: bar.report, trace: log, ...(deps.fetcher ? { fetcher: deps.fetcher } : {}) });
       io.out(r.upToDate ? `Up to date: ${r.version} is the newest release.` : r.ok ? `Updated ${r.from} -> ${r.to}. Backup: ${r.backup}` : `Not updated: ${r.why}`);
       return r.ok ? 0 : 1;
     }

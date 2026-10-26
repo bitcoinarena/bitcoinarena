@@ -32,6 +32,45 @@ final class Helper {
       DispatchQueue.main.async { done(t, ok) }
     }
   }
+  /// The same, each line of its output handed to `line` on the main thread as it comes (the update's progress lines, kanban #706).
+  static func stream(_ args: [String], line: @escaping (String) -> Void, done: @escaping (String, Bool) -> Void) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      let p = Process()
+      p.executableURL = URL(fileURLWithPath: path)
+      p.arguments = args
+      var env = ProcessInfo.processInfo.environment
+      env["PATH"] = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+      p.environment = env
+      let out = Pipe(); p.standardOutput = out; p.standardError = out
+      var text = "", ok = false, buf = Data()
+      do {
+        try p.run()
+        let h = out.fileHandleForReading
+        while true {
+          let d = h.availableData
+          if d.isEmpty { break }
+          buf.append(d)
+          while let i = buf.firstIndex(of: 10) {
+            let l = String(data: buf.subdata(in: buf.startIndex..<i), encoding: .utf8) ?? ""
+            buf = buf.subdata(in: buf.index(after: i)..<buf.endIndex)
+            text += l + "\n"
+            DispatchQueue.main.async { line(l) }
+          }
+        }
+        text += String(data: buf, encoding: .utf8) ?? ""
+        p.waitUntilExit()
+        ok = p.terminationStatus == 0
+      } catch { text = error.localizedDescription }
+      let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+      DispatchQueue.main.async { done(t, ok) }
+    }
+  }
+  /// A progress line read: "[#####-----]  45 %  Unpacking 2026.1.9.9" is (45, "Unpacking 2026.1.9.9"); any other line nil.
+  static func progress(_ l: String) -> (Double, String)? {
+    guard l.hasPrefix("["), let close = l.firstIndex(of: "]"), let mark = l.range(of: " %", options: [], range: close..<l.endIndex),
+      let pct = Double(l[l.index(after: close)..<mark.lowerBound].trimmingCharacters(in: .whitespaces)) else { return nil }
+    return (pct, l[mark.upperBound...].trimmingCharacters(in: .whitespaces))
+  }
 }
 
 final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
@@ -149,8 +188,15 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
   func phase(_ h: String, _ d: String, busy: Bool, color: NSColor = .systemOrange) {
     heading.stringValue = h; detail.stringValue = d
     dot.layer?.backgroundColor = color.cgColor
+    progress.isIndeterminate = true
     progress.isHidden = !busy; if busy { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
     fit()
+  }
+  /// The bar at `pct` of 100, with what it does under the heading (an update's real progress, kanban #706).
+  func step(_ pct: Double, _ text: String) {
+    if progress.isIndeterminate { progress.stopAnimation(nil); progress.isIndeterminate = false; progress.minValue = 0; progress.maxValue = 100 }
+    progress.isHidden = false; progress.doubleValue = pct
+    detail.stringValue = "\(Int(pct)) %  \(text)"
   }
   func failed(_ why: String) {
     installing = false
@@ -200,9 +246,14 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
     Helper.run(["newer"]) { out, _ in
       let parts = out.split(separator: " ").map(String.init)
       if parts.count < 2 { return self.status() }
-      self.phase("Updating your node…", "From \(parts[0]) to \(parts[parts.count - 1]). This takes a minute or two.", busy: true)
-      Helper.run(["update"]) { u, _ in
-        if !u.hasPrefix("Updated") && !u.hasPrefix("Up to date") { self.status(note: "Your node was not updated: " + u) } else { self.status() }
+      // THE UPDATE'S OWN PROGRESS (kanban #706, the owner's screenshot: "Updating your node..." over a bar that meant nothing): each
+      // progress line the update prints moves the bar and says the step; its last other line is the result
+      self.phase("Updating your node to \(parts[parts.count - 1])…", "From \(parts[0]) to \(parts[parts.count - 1]).", busy: true)
+      Helper.stream(["update"], line: { l in
+        if let p = Helper.progress(l) { self.step(p.0, p.1) }
+      }) { out, _ in
+        let u = out.split(separator: "\n").map(String.init).last(where: { !$0.hasPrefix("[") }) ?? ""
+        if !u.hasPrefix("Updated") && !u.hasPrefix("Up to date") { self.status(note: "Your node was not updated: " + (u.isEmpty ? "the update said nothing." : u)) } else { self.status() }
       }
     }
   }
