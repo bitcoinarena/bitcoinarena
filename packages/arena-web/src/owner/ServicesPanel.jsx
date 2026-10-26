@@ -24,10 +24,13 @@ export class ServicesPanel extends React.Component {
     this.reload = this.reload.bind(this);
   }
   componentDidMount() { if (!this.state.loaded && this.props.api) this.reload(); }
-  componentWillUnmount() { clearTimeout(this.timer); }
+  componentWillUnmount() { clearTimeout(this.timer); clearTimeout(this.fixTimer); }
   async reload() {
     let r; try { r = await this.props.api.post('/owner/services', await this.props.api.signed('services')); } catch (e) { r = { ok: false, why: e.message }; }
     this.setState({ loaded: true, answer: r, busy: null });
+    // a fix running (kanban #711: the gateway being set up): asked again every 10 s until it is done
+    clearTimeout(this.fixTimer);
+    if (r && r.ok && r.services.some((x) => x.fix && x.fix.busy)) this.fixTimer = setTimeout(this.reload, 10000);
     // the page's own badge for the section (its sidebar dot), told how many need attention
     if (this.props.onAttention && r && r.ok) this.props.onAttention(needsAttention(r.services));
   }
@@ -37,6 +40,14 @@ export class ServicesPanel extends React.Component {
     if (!x || !x.ok) return this.setState({ busy: null, message: `${id}: ${(x && x.why) || 'not done'}` });
     clearTimeout(this.timer);
     this.timer = setTimeout(this.reload, x.restarting ? 8000 : 800);
+  }
+  // A FIX ON THE CARD (kanban #711): what is missing set up by the node itself (POST /owner/<action>), never a command to type
+  async fix(s) {
+    this.setState({ busy: `${s.id}:fix`, message: null });
+    let x; try { x = await this.props.api.post(`/owner/${s.fix.action}`, await this.props.api.signed(s.fix.action)); } catch (e) { x = { ok: false, why: e.message }; }
+    if (!x || !x.ok) return this.setState({ busy: null, message: `${s.title}: ${(x && x.why) || 'not done'}` });
+    clearTimeout(this.timer);
+    this.timer = setTimeout(this.reload, 1500);
   }
   /** One service as a card: its light, its name, running or not, what it answers, its actions and whether it starts at boot. */
   card(s) {
@@ -52,6 +63,7 @@ export class ServicesPanel extends React.Component {
             <span className="svc-btns">{(s.controls || []).map((c) => <button key={c} type="button" className="mini" disabled={busy === `${s.id}:${c}`} onClick={() => this.act(s.id, c)}>{LABEL[c]}</button>)}</span>
             {s.bootSettable ? <label className="boot"><span>At boot</span><Switch id={`boot-${s.id}`} label={`${s.title}: start at boot`} checked={!!s.atBoot} onChange={(on) => this.act(s.id, on ? 'boot-on' : 'boot-off')} /></label> : null}
           </div>) : s.why ? <p className="svc-why">{s.why}</p> : null}
+        {s.fix ? <div className="svc-foot"><span className="svc-btns"><button type="button" className="mini" disabled={s.fix.busy || busy === `${s.id}:fix`} onClick={() => this.fix(s)}>{s.fix.label}</button></span></div> : null}
       </div>
     );
   }
