@@ -150,6 +150,87 @@ export function roundPosting({ games = [], pending = [], expected = [], rounds =
   return out;
 }
 
+// WHO POSTS EACH DAY'S ROUNDS, AND WHO DID (kanban #702, 2026-10-26, the owner: "In health also say who posted that round" - "Since its pre
+// deterministic"). A seat's GET /duty names, for the day whose posting covers today and the one covering the next 24 h, the duty order the
+// census at that day's anchor gives and, per app, every posting seen with the node whose key signed it (the series' creator). TWO GRIDS A
+// DAY (the owner's ruling, 2026-10-26 ~11:4xZ): the PRIMARY from rank 1 (rank 2 an hour later if nothing is posted, then rank 3), and a
+// BACKUP from rank 2 (from 02:00 UTC of the duty day, rank 3 from 03:00) - only one is played per window, the primary while its committee
+// is drawn. A posting by a node ranked below the role's own (primary 1, backup 2) is a fallback, said as one. An app entry that names no
+// role (a seat before the backup) is the primary. A node is named as the page names seats: the last part of its address (node-3), else its
+// host, else its key's first 8 characters.
+// dutyNotes(duty body) -> Map(app name -> { today, next }), each { t, tip } - the short words for the cell and the whole story for its tooltip
+export const nodeLabel = (key, endpoint) => {
+  if (endpoint) {
+    try {
+      const u = new URL(String(endpoint).replace(/^ws(s?):/, 'http$1:'));
+      const last = u.pathname.split('/').filter(Boolean).pop();
+      if (last) return last;
+      return u.hostname.split('.')[0];
+    } catch { /* not an address: the key */ }
+  }
+  return key ? String(key).slice(0, 8) : 'an unknown node';
+};
+const fullName = (key, endpoint, rank = null) => (endpoint ? `${String(endpoint).replace(/^(wss?|https?):\/\//, '')} (key ${String(key || '').slice(0, 8)}${rank ? `, rank ${rank}` : ''})`
+  : `key ${String(key || '').slice(0, 16)}${rank ? ` (rank ${rank})` : ''}`);
+const ROLE_RANK = Object.freeze({ primary: 1, backup: 2 });
+export function dutyNotes(duty) {
+  const out = new Map();
+  if (!duty || !Array.isArray(duty.days)) return out;
+  const hmUtc = (iso) => { const t = Date.parse(iso); return Number.isFinite(t) ? `${new Date(t).toISOString().slice(11, 16)} UTC` : '?'; };
+  for (const d of duty.days) {
+    const period = d.period === 'today' ? 'today' : d.period === 'next' ? 'next' : null;
+    if (!period) continue;
+    const order = d.order || [];
+    const byKey = new Map(order.map((o) => [String(o.key).toLowerCase(), o]));
+    const endpointOf = (key, given) => given || (byKey.get(String(key || '').toLowerCase()) || {}).endpoint;
+    const name = (key, endpoint) => nodeLabel(key, endpointOf(key, endpoint));
+    const head = [`The rounds of ${d.covers} are posted the day before by the nodes on duty${d.anchor != null ? `, drawn from the census at block ${Number(d.anchor).toLocaleString('en-US')}` : ''}:`,
+      ...order.map((o) => `${o.rank}. ${fullName(o.key, o.endpoint)}: ${o.rank === 1 ? `the primary grid from ${hmUtc(o.dueFrom)}`
+        : `${o.backupDueFrom ? `the backup grid from ${hmUtc(o.backupDueFrom)}${o.rank > 2 ? ' if rank 2 has not posted it' : ''}; ` : ''}the primary from ${hmUtc(o.dueFrom)} if nobody before it has posted`}`)];
+    if (!order.length) head.push('no duty order yet: the day\'s anchor block is not there');
+    // each app's primary and backup entries (an entry without a role is the primary)
+    const apps = new Map();
+    for (const a of d.apps || []) { const k = a.name || a.app; const m = apps.get(k) || {}; m[a.role === 'backup' ? 'backup' : 'primary'] = a; apps.set(k, m); }
+    for (const [key, roles] of apps) {
+      const lines = [...head], short = [];
+      for (const role of ['primary', 'backup']) {
+        const a = roles[role];
+        if (!a) continue;
+        const own = ROLE_RANK[role], Role = role === 'primary' ? 'Primary' : 'Backup';
+        const owner = order.find((o) => o.rank === own) || null;
+        const ps = a.postings || [];
+        const main = ps.find((p) => !p.emergency) || ps[0] || null;
+        const late = (p) => !!p.fallback || (Number(p.posterRank) > own);
+        const due = owner ? (role === 'backup' && owner.backupDueFrom ? owner.backupDueFrom : owner.dueFrom) : null;
+        const ownerSays = owner ? fullName(owner.key, owner.endpoint, own) : `rank ${own} (none in this census)`;
+        for (const p of ps) {
+          const who = p.poster ? fullName(p.poster, endpointOf(p.poster, p.posterEndpoint), p.posterRank) : 'a key outside the census';
+          const where = p.height != null ? `block ${Number(p.height).toLocaleString('en-US')}` : 'the mempool';
+          lines.push(`${Role}: ${p.emergency ? 'emergency grid' : 'posted'} by ${who} in ${String(p.txid).slice(0, 10)}, ${where}${late(p) ? `, a fallback: rank ${own} did not post in its hour` : ''}`);
+        }
+        if (main) {
+          const who = main.poster ? name(main.poster, main.posterEndpoint) : 'a key outside the census';
+          const fb = late(main) && main.posterRank ? ` (fallback, rank ${main.posterRank})` : '';
+          short.push(role === 'primary' ? `${main.emergency ? 'emergency grid by' : 'by'} ${who}${fb}` : `backup ${main.emergency ? 'emergency grid ' : ''}by ${who}${fb}`);
+        } else if (owner) {
+          const missed = a.state === 'missed' ? ' (missed)' : '';
+          short.push(role === 'primary' ? `on duty: ${name(owner.key, owner.endpoint)}${missed}` : `backup: ${name(owner.key, owner.endpoint)}${missed}`);
+          lines.push(`${Role}: ${a.state === 'missed' ? `${ownerSays} did not post it in its hour: the next node on duty posts it.` : a.state === 'due' ? `due from ${hmUtc(due)} from ${ownerSays}, not posted yet.` : `${ownerSays}, from ${hmUtc(due)}: not due yet.`}`);
+        } else { short.push(role === 'primary' ? 'no duty order yet' : 'backup: nobody yet'); lines.push(`${Role}: no node of this census holds rank ${own}.`); }
+      }
+      const was = out.get(key) || {};
+      out.set(key, { ...was, [period]: { t: short.join(' · '), tip: lines.join('\n') } });
+    }
+  }
+  return out;
+}
+/** A round-posting cell (roundPosting) with who is on duty or who posted beside it, the duty's story added to its tooltip. */
+export function withDuty(cell, note) {
+  if (!note) return cell;
+  const base = cell && typeof cell === 'object' ? cell : { t: cell == null ? '-' : String(cell) };
+  return [{ ...base, tip: base.tip ? `${base.tip}\n\n${note.tip}` : note.tip }, { t: note.t, c: 'muted', tip: note.tip }];
+}
+
 /** How old a kept copy is: its oldest answer's time (a copy is as old as the oldest thing it shows). */
 export const ageOf = (snap) => {
   const t = Object.values((snap && snap.answers) || {}).map((a) => Number(a.atMs) || 0).filter(Boolean);
@@ -263,10 +344,12 @@ export function makeHealth({ H, $, window = {} }) {
       await paintGateways(fedList, seats, nodes);
       // THE SEATS' GET /pending beside the rest (kanban #686, 2026-10-26 measurement: a node that reads its chain through a bridge takes
       // 7 s warm and past 20 s cold): its two tables come when it does, the cards below are not held for it
-      pendingRead = null; postings = null;
+      pendingRead = null; postings = null; duties = null;
       const pendingP = paintPending(seats);
       // the rounds posted for each app (kanban #692): the grids' versions from the seat that expects the most, the committees from one seat's rounds
       const expectedP = best(seats, '/expected', (b) => [(b.expected || []).length]), roundsP = first(seats, '/rounds?next=1');
+      // and who is on duty for each day, who posted it (kanban #702): the seat that has seen the most postings
+      const dutyP = best(seats, '/duty', (b) => [(b.days || []).reduce((s, d) => s + (d.apps || []).reduce((x, y) => x + (y.postings || []).length, 0), 0), (b.days || []).length]);
       await paintLiquidity(fedList, nodes, tip);
       paintLnd(nodes);
       paintMachines(nodes);
@@ -277,7 +360,8 @@ export function makeHealth({ H, $, window = {} }) {
       paintReferral(await best(seats, '/referral-fees', (b) => [Number(b.totalMsat) || 0, (b.programs || []).length]));
       say('read ' + new Date().toISOString().slice(11, 19) + ' UTC · ' + nodes.length + ' nodes asked');
       await pendingP;
-      const [ex, rd] = await Promise.all([expectedP, roundsP]);
+      const [ex, rd, dt] = await Promise.all([expectedP, roundsP, dutyP]);
+      duties = dutyNotes(dt ? dt.body : null);
       postings = roundPosting({ games: games ? games.body.games : [], pending: pendingRead || [], expected: ex ? ex.body.expected || [] : [],
         rounds: rd ? rd.body.rounds || [] : [], nowMs: Date.now(), fedNo: fedNoOf });
       paintApps(games, nodes);
@@ -547,13 +631,15 @@ export function makeHealth({ H, $, window = {} }) {
   // app's newest version and what the nodes earned from it (HealthViews.jsx machinesView / appsView)
   function paintMachines(nodes) { H.draw($('machines'), 'machines', { view: H.machinesView(nodes) }); }
   // ROUNDS POSTED (kanban #692): the newest version's, today and the next 24 h (roundPosting above), once the seats' grids are read
-  let pendingRead = null, postings = null;
+  // AND WHO IS ON DUTY FOR THEM, WHO POSTED THEM (kanban #702): beside each cell, the whole story in its tooltip
+  let pendingRead = null, postings = null, duties = null;
   function paintApps(g, nodes) {
     const AH = ['App', 'Type', 'Newest version', 'Rounds today', 'Next 24 h', 'Earned by nodes (sat)', 'This month (sat)'];
     const wait = { t: 'reading …', c: 'muted' };
-    const rows = H.appsView(g ? g.body.games : [], nodes).map((a) => { const p = postings && postings.get(a.name);
+    const rows = H.appsView(g ? g.body.games : [], nodes).map((a) => { const p = postings && postings.get(a.name), d = duties && duties.get(a.name);
+      const at = (k) => (p ? withDuty(p[k], d && d[k]) : postings ? withDuty('-', d && d[k]) : wait);
       return { key: a.name, dot: a.newest != null ? 'ok' : 'warn',
-        cells: [a.title, a.type, a.newest == null ? '-' : String(a.newest), p ? p.today : postings ? '-' : wait, p ? p.next : postings ? '-' : wait, sat(a.total), sat(a.month)] }; });
+        cells: [a.title, a.type, a.newest == null ? '-' : String(a.newest), at('today'), at('next'), sat(a.total), sat(a.month)] }; });
     drawTable('apps', AH, rows, 'no app read', 'summed from every answering node\'s dashboard - each node counts only its own share');
   }
 
