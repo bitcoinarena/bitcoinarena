@@ -178,9 +178,16 @@ test('the APPS table\'s rounds: posted (N), delayed, failed - only the newest ve
   assert.doesNotMatch(rps.today.tip, /block 92/, 'the old version is not counted');
   // the next 24 h: the next day's grid draws in 2 of 6
   // its round table 10 deep: the confirmations in () (2026-10-26: "delayed(1) for example for 1 confirmation")
-  assert.deepEqual([rps.next.t, rps.next.c], ['delayed (10)', 'warn']);
+  // its first round not started yet: on time, not delayed (2026-10-26 ~16:40Z: "I wouldn't call that delayed")
+  assert.deepEqual([rps.next.t, rps.next.c], ['scheduled (10)', 'ok']);
   assert.match(rps.next.tip, /^version 2; in \(\) the confirmations of the round table/);
-  assert.match(rps.next.tip, /its committee block 115 has 2 of 6 confirmations: posted in about 40 min/);
+  assert.match(rps.next.tip, /scheduled: published in block 110; its committee block 115 has 2 of 6 confirmations, before its first round at 10-27 00:00 UTC/);
+  assert.equal(rps.next.summary, 'The rounds are mined and start on time.');
+  // a round's start passed and its committee block is not 6 deep: delayed
+  const late = grid('ba'.repeat(32), now - H, now + 20 * H, 7, F1, { height: 110, confirmations: 10 }, { height: 115, depth: 2 });
+  const d = roundPosting({ games: [{ name: 'rps', version: 2, id: V2 }], pending: [{ grids: [late] }], expected: [ex(late, V2)], nowMs: now, fedNo }).get('rps');
+  assert.deepEqual([d.today.t, d.today.c], ['delayed (10)', 'warn']);
+  assert.match(d.today.tip, /its committee block 115 has 2 of 6 confirmations: posted in about 40 min/);
   // tomorrow is the next UTC day, not the next 24 h (2026-10-26 ~15:20Z: "Why does it show today's rounds when I click tomorrow?")
   assert.deepEqual(rps.next.items.map((x) => x.when), ['tomorrow 00:00–24:00']);
   // updown: posted but undrawable, and the hours no grid covers - failed, with the seat's reason
