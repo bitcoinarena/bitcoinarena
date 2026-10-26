@@ -195,20 +195,34 @@ export async function testConnection(conn, { probe = { core: probeCore, electrum
   const ask = (c, opts) => (c.kind === 'core' ? probe.core(c, opts) : probe.electrum(c, opts));
   let own = await ask(conn);
   if (!own.ok) return { ok: false, source: own, why: own.why };
-  let second = null;
+  // A SECOND SOURCE THAT LAGS IS ASKED NO FURTHER, the next one is (kanban #684, 2026-10-26: "bitcoinarena install waiting for bitcoin core /
+  // electrum sync" - Core synced at 157,655, the page at 100 % for good; the first server of the list, ours, stood 11 blocks behind and failed
+  // every test it was the second source of, the interim Electrum's and the synced Core's alike; measured the same day: ours 157,645, the three
+  // public ones 157,657): every server of the list in turn until one agrees, never only the first that answers
+  let second = null, agree = null;
+  const behind = [], disagreed = [];
   for (const s of list) {
     if (conn.kind === 'electrum' && s.host === conn.host && Number(s.port) === Number(conn.port)) continue;
-    second = { endpoint: `${s.host}:${s.port}`, ...(await ask({ kind: 'electrum', ...s })) };
-    if (second.ok) {
-      // both asked again for the block at the common height (each answers its tip again too)
-      const at = agreeHeights(own, second);
-      own = await ask(conn, { at });
-      second = { endpoint: second.endpoint, ...(await ask({ kind: 'electrum', ...s }, { at })) };
-      if (own.ok && second.ok) break;
-    }
+    const first = { endpoint: `${s.host}:${s.port}`, ...(await ask({ kind: 'electrum', ...s })) };
+    if (!first.ok) { second = second || first; continue; }
+    // both asked again for the block at the common height (each answers its tip again too)
+    const at = agreeHeights(own, first);
+    const again = await ask(conn, { at });
+    if (!again.ok) return { ok: false, source: again, why: again.why };
+    own = again;
+    second = { endpoint: first.endpoint, ...(await ask({ kind: 'electrum', ...s }, { at })) };
+    if (!second.ok) continue;
+    agree = tipsAgree(own, second);
+    if (agree.ok) break;
+    disagreed.push(second);
+    if (second.height < own.height - 2) behind.push(second);
   }
-  if (!own.ok) return { ok: false, source: own, why: own.why };
-  const agree = second && second.ok ? tipsAgree(own, second) : { ok: false, why: 'no second source answered' };
+  if (!agree) agree = { ok: false, why: second && !second.ok ? `no second source answered (${second.endpoint}: ${second.why})` : 'no second source answered' };
   const synced = conn.kind === 'core' ? own.synced : true;
+  // A SYNCED BITCOIN CORE IS NOT HELD BACK BY A SERVER BEHIND IT (kanban #684): when every server that answered is behind it, Core is the one
+  // ahead - its own peers gave it the headers it validated - so the lagging server is not trusted over it
+  if (!agree.ok && synced && conn.kind === 'core' && behind.length && behind.length === disagreed.length) {
+    agree = { ok: true, behind: true, why: `tip ${own.height}, synced; ${behind.map((b) => `${b.endpoint} is ${own.height - b.height} blocks behind`).join(', ')}` };
+  }
   return { ok: agree.ok && synced, source: own, second, agree, why: !synced ? `bitcoind is still syncing (${own.height} of ${own.headers})` : agree.why };
 }
