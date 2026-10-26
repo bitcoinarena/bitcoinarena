@@ -259,6 +259,25 @@ if (url) {
         const firstHeight = Number((await call('getblockheader', [firstHash])).height);
         const have = firstHeight + base.length / 80 - 1;
         const tip = Number(await call('getblockcount'));
+        // A REORGANISED CHAIN IS FOLLOWED (kanban #631, measured 2026-10-26 00:4xZ: every seat's /headers ended at 2026-10-25 08:32Z,
+        // block 00000000749b of the branch the chain left - the kept file held that branch, so each 30 s read found the next header
+        // not linking, dropped to the file and stopped again; no client could build a 10-26 round's committee, "no beacon"): the held
+        // headers are cut back to the last one this node's chain still holds at its height, and extended from there
+        const hashAt = (i) => Buffer.from(blockHashOf(base.subarray(i * 80, i * 80 + 80))).reverse().toString('hex');
+        const onChain = async (i) => (await call('getblockhash', [firstHeight + i])) === hashAt(i);
+        let keep = base.length / 80;
+        if (!(await onChain(Math.min(keep, tip - firstHeight + 1) - 1))) {
+          let i = Math.min(keep, tip - firstHeight + 1) - 1;
+          const floor = Math.max(0, i - 2000);
+          while (i > floor && !(await onChain(i))) i--;
+          keep = i + 1;
+          const cut = base.subarray(0, keep * 80);
+          console.log(`[headers] the chain reorganised: ${base.length / 80 - keep} held header(s) left, ${keep} kept, to height ${firstHeight + keep - 1}`);
+          writeFileSync(`${dir}/headers.bin.tmp`, cut);
+          renameSync(`${dir}/headers.bin.tmp`, `${dir}/headers.bin`);
+          live = new Uint8Array(cut); liveTip = firstHeight + keep - 1;
+          return;
+        }
         if (tip <= have) { live = base; liveTip = have; return; }
         const parts = [base];
         let prev = blockHashOf(base.subarray(base.length - 80));
