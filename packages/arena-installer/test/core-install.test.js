@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { createWizard } from '../src/wizard.js';
 import { nodeState, ownCoreOf } from '../src/state.js';
 import { syncStatus, diskCheck, NEEDS, ETA_MIN_SPAN_MS, installCore } from '../src/bitcoind.js';
+import { testConnection, TESTNET4_ELECTRUM, TESTNET4_GENESIS } from '../src/chain-test.js';
 
 function client(port) {
   let cookie = '';
@@ -61,12 +62,12 @@ test('with no Electrum server reachable, the wizard installs Bitcoin Core, watch
 
   let st = (await c.get('/api/core/status')).json;
   assert.equal(st.networks.testnet4.blocks, 50000);
-  assert.equal(st.networks.chainSaved, undefined);
+  assert.equal(st.chainSaved, undefined);
   assert.equal((await c.post('/api/start', { mode: 'new' })).json.ok, true);   // New / Restore first (kanban #652)
   assert.equal((await c.get('/api/state')).json.step, 'chain', 'still syncing: the chain step waits');
   synced = true;
   st = (await c.get('/api/core/status')).json;
-  assert.equal(st.networks.chainSaved, true);
+  assert.equal(st.chainSaved, true, 'said beside the networks, where the page reads it (kanban #684)');
   assert.deepEqual(tested.filter((x) => x.kind === 'core')[0], { kind: 'core', url: 'http://127.0.0.1:48342/', cookiePath: join(home, 'c') }, 'tested like any Bitcoin Core');
   assert.equal((await c.get('/api/state')).json.step, 'roles', 'synced: the wizard goes on');
 
@@ -223,4 +224,56 @@ test('the Core download is counted as its bytes come, then checked against the p
   assert.equal(r.ok, false);
   assert.match(r.why, /is not the published file/, 'a file that is not the release is refused');
   assert.deepEqual([seen[0], seen.at(-2), seen.at(-1)], ['download', '2048/2048', 'check']);
+});
+
+// A SYNCED CORE BESIDE A LAGGING SERVER (kanban #684, 2026-10-26: "bitcoinarena install waiting for bitcoin core / electrum sync" - the page
+// said "block 157,655 of 157,655 · 100.00 % · synced" and "Setup checks again by itself every few seconds" for good, the log said "interim
+// chain blackie.c3-soft.com:57009: tips 157655 and 157644 are 11 blocks apart"; measured the same day: our Electrum server 157,645, the
+// three public ones 157,657)
+test('a synced Bitcoin Core finishes the chain step though the first Electrum server of the list lags 11 blocks behind it', async (t) => {
+  const TIP = 157655, LAG = 157644;
+  const hashes = (at) => Object.fromEntries((at || []).map((h) => [h, h === 0 ? TESTNET4_GENESIS : `b${h}`]));   // one chain: the lagging server's blocks are Core's
+  const lagging = (c) => c.host === TESTNET4_ELECTRUM[0].host;
+  const probe = {
+    core: async (_c, o = {}) => ({ ok: true, height: TIP, headers: TIP, synced: true, atHashes: hashes(o.at), latencyMs: 2 }),
+    electrum: async (c, o = {}) => ({ ok: true, height: lagging(c) ? LAG : TIP, atHashes: hashes(o.at), latencyMs: 5 }),
+  };
+  const core = { kind: 'core', url: 'http://127.0.0.1:48342/', cookiePath: '/x/c' };
+  const r = await testConnection(core, { probe });
+  assert.equal(r.ok, true, r.why);
+  assert.equal(r.second.endpoint, 'mempool.space:40002', 'the next server, which agrees');
+  const onlyLagging = await testConnection(core, { probe, list: [TESTNET4_ELECTRUM[0]] });
+  assert.equal(onlyLagging.ok, true, `only a lagging server: Core is the one ahead (${onlyLagging.why})`);
+  assert.match(onlyLagging.why, /11 blocks behind/);
+  const ahead = await testConnection(core, { probe: { ...probe, electrum: async (_c, o = {}) => ({ ok: true, height: TIP + 11, atHashes: hashes(o.at), latencyMs: 5 }) }, list: [TESTNET4_ELECTRUM[1]] });
+  assert.equal(ahead.ok, false, 'a server ahead of a "synced" Core still fails it');
+  // the interim Electrum chain at the install: c3-soft at the tip passes, the lagging server is not its second source
+  const interim = await testConnection({ kind: 'electrum', ...TESTNET4_ELECTRUM[3] }, { probe });
+  assert.equal(interim.ok, true, interim.why);
+
+  // THE PAGE'S WAY: install, status at 100 %, the wizard goes on
+  const home = mkdtempSync(join(tmpdir(), 'arena-core-lag-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const coreKit = {
+    detectBitcoind: async () => null, diskCheck: () => diskCheck(home, { statfs: () => ({ bavail: (2000 * 2 ** 30) / 4096, bsize: 4096 }) }),
+    installCore: async () => ({ ok: true, bitcoind: '/b/bitcoind' }),
+    configureCore: (o) => ({ datadir: join(o.home, `bitcoin-${o.network}`), rpcUrl: 'http://127.0.0.1:48342/', cookiePath: join(o.home, 'c') }),
+    coreArgs: ({ bitcoind, datadir }) => [bitcoind, `-datadir=${datadir}`], installProgram: async () => ({ ok: true }),
+    syncStatus: async ({ samples }) => ({ ok: true, blocks: TIP, headers: TIP, progress: 1, synced: true, etaMs: 0, samples }),
+  };
+  // no Electrum server passes at the install (all down then), so setup waits for the sync as the owner's did
+  let down = true;
+  const w = createWizard({ state: nodeState(home), release: '/r', coreKit, test: (c) => (down && c.kind === 'electrum' ? Promise.resolve({ ok: false, why: 'down' }) : testConnection(c, { probe })) });
+  const server = http.createServer((q, s) => w.handle(q, s)); await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+  t.after(() => server.close());
+  const c = client(server.address().port);
+  await c.get(`/?t=${w.token}`);
+  assert.equal((await c.post('/api/start', { mode: 'new' })).json.ok, true);
+  const inst = (await c.post('/api/core/install', { prune: true })).json;
+  assert.deepEqual([inst.ok, inst.interim], [true, null]);
+  down = false;
+  const st = (await c.get('/api/core/status')).json;
+  assert.equal(st.networks.testnet4.synced, true);
+  assert.equal(st.chainSaved, true, `the page reads chainSaved beside the networks (${st.chainWhy})`);
+  assert.equal((await c.get('/api/state')).json.step, 'roles', 'synced: the wizard goes on');
 });

@@ -467,14 +467,18 @@ const serviceRun = async (b) => {
         out[n] = { ...r, samples: undefined };
       }
       // TESTNET4 SYNCED: the chain step saved with this node, as the Bitcoin Core option would save it, tested the same way
+      // - said beside the networks, where the page reads it (kanban #684, 2026-10-26: "bitcoinarena install waiting for bitcoin core / electrum
+      // sync": chainSaved stood inside `networks`, so the page at 100 % "synced" never went on and never said why)
       const t4 = out.testnet4;
+      let saved = {};
       if (t4 && t4.ok && t4.synced && !(s.done || {}).chain) {
         const conn = { kind: 'core', url: s.core.networks.testnet4.rpcUrl, cookiePath: s.core.networks.testnet4.cookiePath };
-        const r = await test(conn);
+        const r = await test(conn).catch((e) => ({ ok: false, why: e.message }));
         if (r.ok) mark('chain', { chain: conn, chainTest: { atMs: Date.now(), why: r.why, latencyMs: r.source.latencyMs, height: r.source.height } });
-        out.chainSaved = r.ok; out.chainWhy = r.why;
+        else log(`[core] testnet4 is synced, but its chain test failed: ${r.why}`);
+        saved = { chainSaved: r.ok, chainWhy: r.why };
       }
-      return { ok: true, networks: out };
+      return { ok: true, networks: out, ...saved };
     },
 
     // THE ROLES CHECKED AS THEY ARE SWITCHED ON (kanban #641, the owner's playtest 2026-10-25: "when selecting custody role, the check of the
