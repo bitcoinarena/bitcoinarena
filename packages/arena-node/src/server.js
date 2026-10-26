@@ -4756,29 +4756,26 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const advertSelf = async () => {
       const mine = [guardian, guardianNext].filter((g) => g && g.dataDir).map((g) => entryOf(g.dataDir)).filter(Boolean);
       if (!mine.length) return;
-      const { bondCliFrom, guardianOfFromWallet } = await import('./add-bond-wallet.js');
-      const b = bondCliFrom(); if (!b) return;
       let last = null; try { last = selfFile ? JSON.parse(readFileSync(selfFile, 'utf8')) : null; } catch { last = null; }
-      if (last && last.txid) { try { b.cli('getmempoolentry', last.txid); return; } catch { /* confirmed or gone: look again */ } }
-      // what the advertisement names, with this seat's own guardians added (or their keys made current) - never fewer
-      const { regtest } = await import('../tools/regtest-bond.mjs');
-      const network = process.env.ARENA_DONATION_NETWORK || 'testnet4';
-      const rt = regtest(b.cli, { network, wallet: b.wallet || 'arena' });
-      const bonds = rt.bondsOf(round.identity.secret);
-      if (!bonds.length) return;
-      const now = (rt.newestUpdateOf(bonds[0]) || {}).advert || bonds[0].advert;
-      const want = new Map(((now && now.guardianOf) || []).map((g) => [toHex(g.federationId), g]));
-      for (const e of mine) want.set(toHex(e.federationId), e);
       const dry = process.env.ARENA_ADVERT_SELF === 'dry';
-      const r = await guardianOfFromWallet({ cli: b.cli, wallet: b.wallet, network, secret: round.identity.secret, guardianOf: [...want.values()], post: !dry });
+      // bitcoin-cli runs synchronously: in a worker, never on the seat's thread (#705)
+      const { advertSelfInWorker } = await import('./advert-self.js');
+      const r = await advertSelfInWorker({ mine, secret: round.identity.secret, last, network: process.env.ARENA_DONATION_NETWORK || 'testnet4', dry });
+      if (!r) return;
       if (r.same) return;
       if (!r.ok) { console.log(`[advert] guardian_of not posted: ${r.why}`); return; }
       console.log(`[advert] guardian_of ${dry ? 'would be' : 'posted'}: ${r.plan.after.split(',').map((x) => x.slice(0, 8)).join(' ')} (was ${r.plan.before.split(',').map((x) => x.slice(0, 8)).join(' ') || 'none'})${r.update ? `, ${r.update.txid}` : ''}`);
       if (r.update && selfFile) { try { writeFileSync(selfFile, JSON.stringify({ txid: r.update.txid, after: r.plan.after, atMs: Date.now() })); } catch { /* checked on chain next time */ } }
     };
-    const selfStart = setTimeout(() => { advertSelf().catch((e) => console.log(`[advert] guardian_of: ${e.message}`)); }, 60000);
+    let selfBusy = false;          // one check at a time: a slow wallet never stacks them
+    const selfRun = () => {
+      if (selfBusy) return;
+      selfBusy = true;
+      advertSelf().catch((e) => console.log(`[advert] guardian_of: ${e.message}`)).finally(() => { selfBusy = false; });
+    };
+    const selfStart = setTimeout(selfRun, 60000);
     if (selfStart.unref) selfStart.unref();
-    const selfTimer = setInterval(() => { advertSelf().catch((e) => console.log(`[advert] guardian_of: ${e.message}`)); }, 600000);
+    const selfTimer = setInterval(selfRun, 600000);
     if (selfTimer.unref) selfTimer.unref();
   }
   if (guardian && guardian.dataDir && (process.env.ARENA_SPENT_SET_CLIENT_DIR || guardian.endpoint)) {
