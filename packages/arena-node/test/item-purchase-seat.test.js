@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../src/store.js';
-import { keepItemPurchase, itemsOwned } from '../src/item-purchase-seat.js';
+import { keepItemPurchase, itemsOwned, purchasesSince } from '../src/item-purchase-seat.js';
 import { purchaseOutputs, purchaseId } from '../../arena-protocol/src/purchase.js';
 import { ITEMS_VERSION } from '../../arena-protocol/src/constants.js';
 import { SERVED_WINDOW_MS } from '../../arena-protocol/src/served-nodes.js';
@@ -93,4 +93,23 @@ test('every output of a purchase is a donation row naming its game and item, gro
   assert.deepEqual(rows.map((r) => [r.item, r.contractId, r.amountMsat, r.roundId.every((x) => x === 0)]), [['Tick Tock, Next Block · turbo', 'c0', 4000n, true], ['Tick Tock, Next Block · turbo', 'c1', 6000n, true]]);
   assert.deepEqual(itemOfRow(itemLabel('Tick Tock, Next Block', 'turbo')), { game: 'Tick Tock, Next Block', item: 'turbo' });
   assert.equal(itemOfRow('no separator'), null);
+});
+
+// EVERY ITEM BOUGHT, FOR THE EXPLORER (kanban #683, 2026-10-26: "I don't see item purchases in the explorer"): what GET /payments lists
+test('the explorer\'s list: purchases kept after a time, oldest first, at most a limit, each with its item, price, federation and outputs', async () => {
+  const db = openStore(':memory:');
+  assert.deepEqual(purchasesSince(db, { since: 0 }), [], 'none kept: the table made, nothing listed');
+  const p = bought(), q = bought(b32(0x7b));
+  const base = { manifest: MANIFEST, networkSet: NET, gameSet: NET, served: SERVED, db, verify };
+  assert.equal((await keepItemPurchase({ ...base, p, port: fedWith(heldFor(p)), nowMs: 1000 })).ok, true);
+  assert.equal((await keepItemPurchase({ ...base, p: q, port: fedWith(heldFor(q)), nowMs: 2000 })).ok, true);
+  const all = purchasesSince(db, { since: 0 });
+  const total = String(p.outputs.reduce((t, o) => t + o.msat, 0n));
+  assert.equal(total, '500000', 'the outputs pay the price');
+  assert.deepEqual(all.map((x) => [x.id, x.kind, x.item, x.gameName, x.itemId, x.priceSat, x.totalMsat, x.txid, x.keptMs]),
+    [[toHex(purchaseId(p)), 'item', 'nextblock · large-truck', 'nextblock', 'large-truck', '500', total, '7a'.repeat(32), 1000],
+      [toHex(purchaseId(q)), 'item', 'nextblock · large-truck', 'nextblock', 'large-truck', '500', total, '7b'.repeat(32), 2000]]);
+  assert.deepEqual([all[0].player, all[0].federation, all[0].outputs.length, all[0].atMs], [toHex(BUYER), 'fe'.repeat(32), p.outputs.length, Number(p.boughtAtMs)]);
+  assert.deepEqual(purchasesSince(db, { since: 1000 }).map((x) => x.keptMs), [2000], 'after the time, not at it');
+  assert.deepEqual(purchasesSince(db, { since: 0, limit: 1 }).map((x) => x.keptMs), [1000]);
 });

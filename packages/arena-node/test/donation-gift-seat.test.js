@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../src/store.js';
-import { keepDonationGift, giftsOf } from '../src/donation-gift-seat.js';
+import { keepDonationGift, giftsOf, giftsSince } from '../src/donation-gift-seat.js';
 import { encodeDonationGift, decodeDonationGift, donationGiftId, giftOutputs, giftStands, GIFT_TO_GAME, GIFT_TO_NETWORK, GIFT_CHOICES_SAT } from '../../arena-protocol/src/donation-gift.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
@@ -121,4 +121,29 @@ test('a gift inside an app pays half over each set and says its origin; one on t
   assert.deepEqual(all.origins.map((o) => [o.origin, o.title, o.count]), [['site', 'Donate on the site', 1], ['app:rock-paper-scissors', 'Donate in rock-paper-scissors', 1], ['gift', 'Donate (before tags)', 1], ['round', 'Rounds', 1]]);
   const fromSite = donationsPage(info, {}, { origin: 'site' });
   assert.deepEqual([fromSite.total, fromSite.rows[0].origin, fromSite.sums.msat], [1, 'site', '1000']);
+});
+
+// EVERY GIFT AND ZAP FOR THE EXPLORER (kanban #683, 2026-10-26; #682: a gift "doesn't show in the explorer"): what GET /payments lists,
+// kept after `since`, oldest first, at most `limit`, each read back from its bytes
+test('the explorer\'s list: gifts kept after a time, oldest first, at most a limit, each with its federation, outputs and kind', async () => {
+  const { playerGiftRecipients, GIFT_TO_PLAYER } = await import('../../arena-protocol/src/donation-gift.js');
+  const db = openStore(':memory:');
+  assert.deepEqual(giftsSince(db, { since: 0 }), [], 'none kept: the table made, nothing listed');
+  const a = gift(500), b = gift(100, { txid: b32(0x7b), target: GIFT_TO_NETWORK });
+  await keepDonationGift({ g: a, recipients: SET, port: fedWith(heldFor(a)), db, verify, nowMs: NOW });
+  await keepDonationGift({ g: b, recipients: SET, port: fedWith(heldFor(b)), db, verify, nowMs: NOW + 1000 });
+  const player = schnorr.getPublicKey(b32(0x42)), recipients = playerGiftRecipients(player);
+  const zb = { target: GIFT_TO_PLAYER, gameDevPubkey: player, gameName: '', donor: DONOR, federationId: b32(0xfe), txid: b32(0x7c), totalMsat: 21000n,
+    outputs: giftOutputs({ totalMsat: 21000n, recipients }).map((o, i) => ({ outIdx: i, pk: o.pk, msat: o.msat })), atMs: BigInt(NOW) };
+  const z = { ...zb, signature: schnorr.sign(donationGiftId(zb), SECRET) };
+  await keepDonationGift({ g: z, recipients, port: fedWith(heldFor(z)), db, verify, nowMs: NOW + 2000 });
+  const all = giftsSince(db, { since: 0 });
+  assert.deepEqual(all.map((x) => [x.kind, x.item, x.gameName, x.totalMsat, x.keptMs]), [['donation', 'donation · nextblock', 'nextblock', '500000', NOW],
+    ['donation', 'donation · protocol', null, '100000', NOW + 1000], ['zap', 'zap', null, '21000', NOW + 2000]]);
+  assert.deepEqual([all[0].id, all[0].donor, all[0].federation, all[0].txid, all[0].gameDev, all[1].gameDev],
+    [toHex(donationGiftId(a)), toHex(DONOR), 'fe'.repeat(32), '7a'.repeat(32), 'de'.repeat(32), null]);
+  assert.deepEqual(all[0].outputs, [{ outIdx: 0, pk: toHex(pk33(0x11)), msat: '333350' }, { outIdx: 1, pk: toHex(pk33(0x12)), msat: '166650' }]);
+  assert.equal(all[2].gameDev, toHex(player), 'a zap names its player');
+  assert.deepEqual(giftsSince(db, { since: NOW }).map((x) => x.totalMsat), ['100000', '21000'], 'after the time, not at it');
+  assert.deepEqual(giftsSince(db, { since: 0, limit: 1 }).map((x) => x.totalMsat), ['500000']);
 });

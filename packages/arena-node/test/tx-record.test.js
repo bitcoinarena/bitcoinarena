@@ -52,6 +52,9 @@ test('a transaction: its entry, its locks\' txids, each door with its steps, and
     const row = fullList.txs.find((t) => t.id === id);
     assert.deepEqual(row.detail.entry, again.entry);
     assert.equal(row.detail.client.submittedMs, 28900);
+    // and its gifts and items bought beside them (kanban #683): none here yet, both lists there
+    const pay = await (await fetch(`${base}/payments?since=0&limit=5`)).json();
+    assert.deepEqual([pay.seat, pay.gifts, pay.items], [list.seat, [], []]);
   } finally { await s.close(); }
 });
 
