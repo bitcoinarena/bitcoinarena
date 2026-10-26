@@ -26,4 +26,5 @@ database_id = "988ad7ad-6d01-4413-a644-a71030dd332f"
 migrations_dir = "migrations"
 
 [triggers]
-crons = ["* * * * *"]
+#: the transactions every minute; the Network health page's copy (kanban #686, health.js readHealth) on its own trigger, so a run of its own
+crons = ["* * * * *", "*/1 * * * *"]
