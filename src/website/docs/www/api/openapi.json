@@ -2,7 +2,7 @@
  "openapi": "3.0.3",
  "info": {
   "title": "Bitcoin Arena node API",
-  "version": "2026-10-24",
+  "version": "2026-10-26",
   "description": "Every request a Bitcoin Arena node (`arena-node`) answers, generated from `packages/arena-node/src/server.js` by `src/website/docs/gen-docs.py`. Concepts and guides: https://docs.bitcoin-arena.io/"
  },
  "servers": [
@@ -2031,6 +2031,30 @@
      }
     },
     "x-changes-state": true
+   }
+  },
+  "/duty": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "Who posts the rounds",
+    "description": "Who posts the rounds (spec 5A.5, kanban #702): for the day covering today and the one covering the next 24 h, the duty order's first three nodes (rank 1 posts the primary grid from 00:00 UTC, rank 2 the backup grid from 02:00), for each app and grid who posted it (the series' creator key, its rank, whether a fallback node did), what this node posted or would post, whether its wallet can pay, and its last error. From the node's last look, so it is cheap.\n\nAccess: none\n\nReturns: 200 JSON {ok, node, nowMs, setting, on, wallet{canPay, why, confirmedSats, wallet}, feeRate, maxFeeRate, rankCap, days[{slot, covers, period, anchor, order[{rank, key, endpoint, self, dueFrom, backupDueFrom}], apps[{app, name, role, state, postings[{txid, height, emergency, role, poster, posterEndpoint, posterRank, fallback}]}]}], mine{posted, wouldPost}, lastError}; 404 when the node runs no round poster\n\nSource: `packages/arena-node/src/server.js` line 5298.",
+    "operationId": "get_duty",
+    "responses": {
+     "200": {
+      "description": "The duty as this node sees it.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "{ok:false, why:\"this node runs no round poster\"}.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
    }
   },
   "/emergency-departure": {
@@ -7346,6 +7370,44 @@
     "responses": {
      "200": {
       "description": "{node, version (e.g. 0.1.0-rc.17) or null, commit or null, latest {latest, why, checkedMs, newer} from the signed release/latest.json, protocols: [1..16], update: how to update}.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/payments": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "Gifts, zaps and items bought since a time",
+    "description": "Every donation, zap and item purchase this seat kept after a time, oldest first - what the explorer reads besides /txs. Each seat keeps every one of its network.\n\nAccess: none\n\nReturns: 200 JSON {seat, gifts[], items[]}\n\nSource: `packages/arena-node/src/server.js` line 7531.",
+    "operationId": "get_payments",
+    "parameters": [
+     {
+      "name": "since",
+      "in": "query",
+      "required": false,
+      "description": "Kept after this time, ms since 1970. Default 0.",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "description": "At most this many of each list, 1 to 500. Default 200.",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{seat, gifts: [{id, kind, item, donor, gameName, federation, txid, totalMsat, outputs, atMs, keptMs}], items: [{id, kind, item, player, gameName, itemId, priceSat, federation, txid, totalMsat, outputs, atMs, keptMs}]}.",
       "content": {
        "application/json": {}
       }
