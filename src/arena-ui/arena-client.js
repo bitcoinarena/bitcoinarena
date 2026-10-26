@@ -26528,17 +26528,25 @@ const hhmm = (ms) => new Date(Number(ms)).toISOString().slice(11, 16) + ' UTC';
  * Answers { text, grid, opensMs } or null when no grid of the game is on its way.
  */
 function nextRoundLine({ grids, game, nowMs = Date.now(), blockMs = 600000 }) {
+  const opensOf = (g) => {
+    const beacon = g.beacon || {}, needed = Number(beacon.needed) || NEEDED, depth = Number(beacon.depth) || 0;
+    // the draw block 6 deep: the blocks still missing at the average block time; before the beacon, the committee time plus 6 blocks
+    const deepMs = beacon.height !== null && beacon.height !== undefined ? nowMs + Math.max(0, needed - depth) * blockMs
+      : Math.max(nowMs, Number(g.committeeTimeMs)) + needed * blockMs;
+    return Math.max(Number(g.firstWindowMs), deepMs);
+  };
+  // A LIVE GRID FIRST (measured 2026-10-26 11:3xZ: the line named an emergency grid whose round table a replaced coin had conflicted -
+  // "not on chain yet", 11:54 - while its reposted grid waited in the mempool): one in a block or in the mempool, the soonest to open;
+  // a round table in neither only when nothing else is on its way
+  const live = (g) => { const p = g.publication || {}; return (p.height !== null && p.height !== undefined) || !!p.inMempool; };
   const mine = (Array.isArray(grids) ? grids : []).filter((g) => g && g.game === game && Number(g.lastCloseMs) > nowMs && g.stage !== 'posted')
-    .sort((a, b) => Number(a.firstWindowMs) - Number(b.firstWindowMs));
-  const g = mine[0];
-  if (!g) return null;
+    .map((g) => ({ g, opens: opensOf(g), live: live(g) }))
+    .sort((a, b) => Number(b.live) - Number(a.live) || a.opens - b.opens);
+  if (!mine.length) return null;
+  const { g, opens: opensMs } = mine[0];
   const pub = g.publication || {}, beacon = g.beacon || {};
   const needed = Number(beacon.needed) || NEEDED, depth = Number(beacon.depth) || 0;
   const confirmed = pub.height !== null && pub.height !== undefined;
-  // the draw block 6 deep: the blocks still missing at the average block time; before the beacon, the committee time plus 6 blocks
-  const deepMs = beacon.height !== null && beacon.height !== undefined ? nowMs + Math.max(0, needed - depth) * blockMs
-    : Math.max(nowMs, Number(g.committeeTimeMs)) + needed * blockMs;
-  const opensMs = Math.max(Number(g.firstWindowMs), deepMs);
   const when = opensMs > nowMs ? `Next round in ${inHoursMinutes(opensMs - nowMs)} (about ${hhmm(opensMs)})` : 'Next round: any minute now';
   const draw = !confirmed ? (pub.inMempool ? 'its round table is waiting to be mined' : 'its round table is not on chain yet')
     : beacon.height === null || beacon.height === undefined ? `its draw block is the first after ${hhmm(g.committeeTimeMs)}, then ${needed} confirmations`
