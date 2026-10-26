@@ -553,5 +553,6 @@ export function lobbyRowOffered(r) {
   if (!r) return false;
   if (r.free) return true;
   const said = (r.said || []).map((c) => c && c.committee).filter(Boolean);
-  return !said.length || said.some((c) => c.drawn === true);
+  // a seat names a drawn committee by its members ({ drawn: { game: [...], settlement: [...] } }), an undrawn one drawn: false and why
+  return !said.length || said.some((c) => !!c.drawn);
 }

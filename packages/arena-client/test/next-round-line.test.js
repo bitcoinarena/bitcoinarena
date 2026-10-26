@@ -44,4 +44,6 @@ test('an app is offered a free round, or a paid one a seat has drawn - not one n
   assert.equal(lobbyRowOffered({ said: [{ committee: { drawn: false, why: 'this node has no chain view for that round' } }, { committee: { drawn: true } }] }), true);
   assert.equal(lobbyRowOffered({ committeeTimeMs: String(NOW - 60000), said: [{ committee: { drawn: false } }, { committee: { drawn: false } }] }), false, 'no 2 h grace');
   assert.equal(lobbyRowOffered({ said: [{}] }), true, 'seats that say nothing of the committee');
+  assert.equal(lobbyRowOffered({ said: [{ committee: { drawn: false } }, { committee: { drawn: { game: ['c6d5'], settlement: ['c6d5'] } } }] }), true,
+    'as the seats list it: a drawn committee by its members (measured on the page700 preview: === true offered no round at all)');
 });
