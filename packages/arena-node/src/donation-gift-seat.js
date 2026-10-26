@@ -6,7 +6,7 @@
 // pre-expired payout contract to that key for exactly that msat with the donor's key as its image. One transaction is one gift.
 // Kept, each output is indexed under its recipient key (donation_outputs), where GET /donations?key= serves a round's donations, so
 // the developer's own client redeems it as it redeems those.
-import { giftStands, encodeDonationGift, GIFT_TO_BOTH } from '../../arena-protocol/src/donation-gift.js';
+import { giftStands, encodeDonationGift, decodeDonationGift, GIFT_TO_BOTH } from '../../arena-protocol/src/donation-gift.js';
 import { donationContractFields } from './stake-lock-signer-node.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
@@ -60,4 +60,19 @@ export function giftsOf(db, donorHex) {
   db.exec(DONATION_GIFTS_SQL);
   return db.prepare('SELECT id, target, game_name, txid, total_msat, kept_ms FROM donation_gifts WHERE donor = ? ORDER BY kept_ms DESC LIMIT 200').all(String(donorHex).toLowerCase())
     .map((r) => ({ id: r.id, target: r.target, gameName: r.game_name, txid: r.txid, totalMsat: r.total_msat, keptMs: r.kept_ms }));
+}
+
+// EVERY GIFT AND ZAP FOR THE EXPLORER (kanban #683, 2026-10-26: "I don't see item purchases in the explorer"; #682: a gift "doesn't show in
+// the explorer"): the gifts this seat kept after `since` (ms), oldest first, at most `limit` - a seat keeps every gift of its network (each
+// is handed on to all), so one seat's list is the network's. By kept_ms, indexed: the explorer asks every minute.
+export const DONATION_GIFTS_KEPT_SQL = 'CREATE INDEX IF NOT EXISTS donation_gifts_kept ON donation_gifts (kept_ms)';
+export function giftsSince(db, { since = 0, limit = 200 } = {}) {
+  db.exec(DONATION_GIFTS_SQL); db.exec(DONATION_GIFTS_KEPT_SQL);
+  return db.prepare('SELECT id, bytes, kept_ms FROM donation_gifts WHERE kept_ms > ? ORDER BY kept_ms, id LIMIT ?').all(Number(since), Number(limit)).map((r) => {
+    let g; try { g = decodeDonationGift(new Uint8Array(r.bytes)); } catch { return null; }
+    return { id: r.id, kind: g.target === 2 ? 'zap' : 'donation', item: giftItem(g), target: g.target, donor: toHex(g.donor),
+      gameDev: g.target === 0 ? null : toHex(g.gameDevPubkey), gameName: g.gameName || null, origin: g.origin || null, federation: toHex(g.federationId),
+      txid: toHex(g.txid), totalMsat: String(g.totalMsat), outputs: g.outputs.map((o) => ({ outIdx: o.outIdx, pk: toHex(o.pk), msat: String(o.msat) })),
+      atMs: Number(g.atMs), keptMs: Number(r.kept_ms) };
+  }).filter(Boolean);
 }
