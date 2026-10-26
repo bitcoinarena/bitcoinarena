@@ -150,11 +150,15 @@ function TipRows({ p }) {
 let closeOpenTip = null;
 function Tip({ p }) {
   const [open, setOpenState] = React.useState(false);
+  const [top, setTop] = React.useState(false);
   const btn = React.useRef(null), pop = React.useRef(null);
   const close = React.useCallback(() => { setOpenState(false); if (closeOpenTip === close) closeOpenTip = null; }, []);
   const toggle = () => {
     if (open) return close();
     if (closeOpenTip) closeOpenTip();
+    // opened from the lower half of the screen, the panel stands at the top, so it does not cover the statuses below it
+    const r = btn.current ? btn.current.getBoundingClientRect() : null;
+    setTop(!!r && r.top > window.innerHeight / 2);
     closeOpenTip = close; setOpenState(true);
   };
   React.useEffect(() => () => { if (closeOpenTip === close) closeOpenTip = null; }, [close]);
@@ -167,7 +171,7 @@ function Tip({ p }) {
   }, [open, close]);
   return (<>
     <button ref={btn} type="button" className={`tip ${p.c || ''}`} title={p.tip} aria-expanded={open} onClick={toggle}>{p.t}</button>
-    {open ? <div ref={pop} className="tip-pop" role="dialog">
+    {open ? <div ref={pop} className={top ? 'tip-pop top' : 'tip-pop'} role="dialog">
       {/* a close button top right (2026-10-26, the owner: "the modal should get a regular X button on the top right corner") */}
       <button type="button" className="tip-x" aria-label="Close" onClick={close}>×</button>
       <b className={p.c || undefined}>{p.t}</b>
