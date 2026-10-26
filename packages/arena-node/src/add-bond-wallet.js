@@ -116,7 +116,9 @@ export async function changeRolesFromWallet({ cli, wallet, network = 'testnet4',
   const before = { roles: [...(now.roles || [])].sort(), custody: !!now.guardianCapable };
   const after = { roles: want.sort(), custody: custody === undefined ? before.custody : !!custody };
   if (JSON.stringify(before) === JSON.stringify(after)) return { ok: false, why: 'those are the roles this node already advertises' };
-  const advert = { ...now, roles: after.roles, guardianCapable: after.custody, timestamp: BigInt(Date.now()) };
+  // CUSTODY OFF NAMES NO GUARDIAN ENDPOINT (advert.js guardianRole: "a node that is not guardian-capable names no guardian_endpoint";
+  // measured 2026-10-26, kanban #577: turning the n495 test nodes out of the founding draw was refused before anything was built)
+  const advert = { ...now, roles: after.roles, guardianCapable: after.custody, ...(after.custody ? {} : { guardianEndpoint: '' }), timestamp: BigInt(Date.now()) };
   const sent = sendUpdateFromWallet({ cli, rt, secret, bond, advert, post });
   if (!sent.ok) return sent;
   const plan = { before, after, bond: `${bond.txid}:${bond.vout}`, feeSats: sent.feeSats, countsAfter: 6 };
