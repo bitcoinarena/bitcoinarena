@@ -122,11 +122,11 @@ export function Capacity({ view }) {
 }
 
 // A TABLE FROM THE PAGE'S DATA (slice 2: federations, liquidity providers, LND, games): { head: [titles], rows: [{ key, dot, cells,
-// cls }], empty, foot }. A cell is text, { t, c } (text in a class), { bar: [have, need] } (how far, as a bar) or a list of those,
-// joined by spaces - plain strings, never HTML.
+// cls }], empty, foot }. A cell is text, { t, c } (text in a class), { t, c, tip } (with a tooltip, kanban #692), { bar: [have, need] }
+// (how far, as a bar) or a list of those, joined by spaces - plain strings, never HTML.
 export const barPct = (have, need) => (need ? Math.min(100, Math.round((100 * have) / need)) : 0);
 const Part = ({ p }) => (p && typeof p === 'object'
-  ? (p.bar ? <span className="tbar"><i className={barPct(...p.bar) >= 100 ? 'ok' : 'warn'} style={{ width: `${barPct(...p.bar)}%` }} /></span> : <span className={p.c || undefined}>{p.t}</span>)
+  ? (p.bar ? <span className="tbar"><i className={barPct(...p.bar) >= 100 ? 'ok' : 'warn'} style={{ width: `${barPct(...p.bar)}%` }} /></span> : <span className={p.c || undefined} title={p.tip || undefined}>{p.t}</span>)
   : <>{p == null ? '' : String(p)}</>);
 const Cell = ({ c }) => (Array.isArray(c) ? <>{c.map((p, i) => <React.Fragment key={i}>{i ? ' ' : null}<Part p={p} /></React.Fragment>)}</> : <Part p={c} />);
 export function Table({ head, rows, empty, foot }) {

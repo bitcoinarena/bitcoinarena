@@ -64,6 +64,9 @@ test('a table from the page\'s data: the dot in the first cell, parts in their c
   assert.match(h, /<td>&lt;img src=x&gt;<\/td><td>-<\/td><td>7<\/td>/);
   assert.match(h, /<tr><td colspan="3" class="muted">13 of 14 seats answered<\/td><\/tr>/i);
   assert.match(renderToStaticMarkup(React.createElement(Table, { head: ['A', 'B'], rows: [], empty: 'no node serves a liquidity claim' })), /<td colspan="2" class="muted">no node serves a liquidity claim<\/td>/i);
+  // a status with its why as a tooltip (kanban #692: "with a tooltip why it's delayed or failed")
+  assert.match(renderToStaticMarkup(React.createElement(Table, { head: ['App', 'Rounds today'], rows: [{ key: 'u', cells: ['Up/Down', { t: 'failed', c: 'bad', tip: 'Federation 1: no seat can draw its committee' }] }] })),
+    /<span class="bad" title="Federation 1: no seat can draw its committee">failed<\/span>/);
 });
 
 test('a bar cell: how far, green when done', async () => {
