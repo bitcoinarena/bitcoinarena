@@ -71,6 +71,23 @@ const cloudflared = process.env.ARENA_CLOUDFLARED || 'cloudflared';   // the rel
 // "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c, line 76"). Awaited: nothing after the command runs.
 const finish = (code) => new Promise(() => { setTimeout(() => process.exit(code), 1500); });
 
+// MORE NODES, ASKED AT A CONSOLE (kanban #713, 2026-10-26: "When I update an existing node via the CLI ... There, I can setup additional
+// nodes" - "If I execute the installer without updating the version, there is the option to Add Nodes"): after an update and on a node
+// that is set up, a console asks how many more; testnet4 only. The answer runs this installer again with --add-nodes; 0 or Enter: none.
+async function askMoreNodes() {
+  const s = state.read();
+  if (!process.stdin.isTTY || !(s.done && s.done.service) || (s.network && s.network !== 'testnet4') || args.includes('--from-home')) return 0;
+  const { createInterface } = await import('node:readline/promises');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const a = (await rl.question('Add more nodes on this machine (testnet4)? How many (Enter: none): ')).trim(); rl.close();
+  return /^\d+$/.test(a) ? Number(a) : 0;
+}
+const addMoreNodes = (n) => new Promise((ok) => {
+  const c = spawn(process.execPath, [fileURLToPath(import.meta.url), '--home', home, '--add-nodes', String(n), ...['--ram', '--no-ram', '--tunnel', '--local'].filter((f) => args.includes(f))],
+    { stdio: 'inherit', env: process.env });
+  c.on('exit', (code) => ok(code ?? 0)); c.on('error', () => ok(1));
+});
+
 // THE APP'S OWN RELEASE OVER AN OLDER NODE (the owner's playtest 2026-10-25: "When I execute 2.9.2 it doesn't update the node, it just
 // starts the 1.9.1"): `--update-self` moves the installed node to the release this installer runs from - the one the app copied out of
 // itself - when it is newer than the node's; the same update as --update (update.js), without a download to check (the release is here)
@@ -83,7 +100,11 @@ if (args.includes('--update-self')) {
   const from = s.release && s.release.path;
   const have = from ? versionOf(from) : null, mine = versionOf(release);
   if (!s.service) { console.log('Not updated: no node is installed here'); await finish(1); }
-  else if (from === release || !mine || (have && !newerVersion(mine, have))) { console.log(`Up to date: the node runs ${have || from || 'this release'}`); await finish(0); }
+  else if (from === release || !mine || (have && !newerVersion(mine, have))) {
+    console.log(`Up to date: the node runs ${have || from || 'this release'}`);
+    const more = await askMoreNodes();
+    await finish(more ? await addMoreNodes(more) : 0);
+  }
   else {
     const { installUpdater, updaterLauncherStale } = await import('../src/launchers.js');
     const { installProgram } = await import('../src/service.js');
@@ -96,7 +117,9 @@ if (args.includes('--update-self')) {
       node: `${release}/runtime/${process.platform === 'win32' ? 'node.exe' : 'node'}`, installUpdaterFn, trace: log, progress: progressBar({ tty: !!process.stdout.isTTY }).report });
     console.log(r.ok ? `Updated: ${have || r.from} -> ${mine}; the same node answers (${r.identity.slice(0, 16)}...)`
       : `${r.rolledBack ? 'Rolled back' : 'Not updated'}: ${r.why}`);
-    await finish(r.ok ? 0 : 1);
+    // then more nodes, at a console (kanban #713); the desktop apps offer it in their own window
+    const more = r.ok ? await askMoreNodes() : 0;
+    await finish(more ? await addMoreNodes(more) : r.ok ? 0 : 1);
   }
 }
 
@@ -183,6 +206,47 @@ if (args.includes('--join-federation')) {
   await finish(0);
 }
 
+// MORE NODES ON A MACHINE THAT HAS SOME (kanban #713, 2026-10-26: "There, I can setup additional nodes (with the ramdisk option). This runs
+// the steps that we already do run" - testnet only): the further nodes planned from this installed node (machine-nodes.js addNodesPlan),
+// kept in its state as the count's plan, and the first one's wizard started here - each one starts the next when it is done, as a count's
+// do; each takes this node's chain, roles and apps and is funded from its wallet (prefillFrom, fundFrom). The RAM disk: --ram / --no-ram,
+// asked at a console from six nodes in all, else as a count's default
+if (args.includes('--add-nodes')) {
+  const { nodesHere, addNodesPlan } = await import('../src/machine-nodes.js');
+  const { RAM_FROM, RAM_QUESTION, ramAnswer } = await import('../src/instances.js');
+  const s = state.read();
+  if (!(s.done && s.done.service)) { console.error(`No node is set up in ${home} yet: install it first, then add more.`); process.exit(1); }
+  const here = nodesHere({ extra: [home] });
+  const base = here.find((x) => x.home === home) || here[0];
+  const ordered = [base, ...here.filter((x) => x !== base)];
+  const plan = addNodesPlan(ordered, opt('--add-nodes', '1'));
+  if (!plan.ok) { console.error(plan.why); process.exit(1); }
+  const total = here.length + plan.nodes.length;
+  let ram = args.includes('--no-ram') ? false : args.includes('--ram') ? true : undefined;
+  if (ram === undefined && total >= RAM_FROM) {
+    if (process.stdin.isTTY) {
+      const { createInterface } = await import('node:readline/promises');
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      ram = ramAnswer(await rl.question(RAM_QUESTION)); rl.close();
+    } else ram = true;
+  }
+  const was = s.instances || {};
+  state.save({ instances: { ...was, count: total, ram: ram === undefined ? !!was.ram : ram, first: was.first || { instance: INSTANCE, portOffset: PORT_OFFSET }, adding: plan.nodes } });
+  console.log(`${here.length} node(s) on this machine; adding ${plan.nodes.length}: ${plan.nodes.map((x) => `${x.home} (instance ${x.instance}, ports +${x.portOffset})`).join(', ')}${ram ? '. Fedimint on a RAM disk.' : ''}`);
+  const first = plan.nodes[0];
+  const pass = [...['--tunnel', '--local'].filter((f) => args.includes(f)), ...(flags.level ? [`--${flags.level}`] : [])];
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), '--home', first.home, '--instance', first.instance, '--port-offset', String(first.portOffset),
+    '--from-home', home, '--node-of', String(here.length + 1), ...pass], { stdio: 'inherit', env: process.env });
+  child.on('exit', (code) => process.exit(code ?? 0));
+  await new Promise(() => {});   // the further nodes' wizards run in the child; this one only waits for it
+}
+
+// A PLAIN RUN ON A NODE THAT IS SET UP (kanban #713): "Add more nodes?" first; none, and the setup page opens as before
+if (!['--add-nodes', '--instances', '--add-custody'].some((f) => args.includes(f))) {
+  const more = await askMoreNodes();
+  if (more) await finish(await addMoreNodes(more));
+}
+
 // HOW MANY NODES (kanban #596): the count checked, the RAM disk asked from more than 5 when not given, both kept for the wizard
 if (args.includes('--instances')) {
   const { instancesChoice, instancesNote, RAM_FROM, RAM_QUESTION, ramAnswer } = await import('../src/instances.js');
@@ -247,7 +311,7 @@ const wizard = createWizard({ state, release, seatPort, bridgePort, cloudflared,
   // THE NEXT NODE OF A COUNT (kanban #596): its own wizard, in its own home with its own instance and ports, started here
   import('../src/instances.js').then(({ nextInstance }) => {
     const base = resolve(fromHome || home), plan = nodeState(base).read().instances || { count: 1 };
-    const next = nextInstance(plan.count, base, home, plan.first || {});
+    const next = nextInstance(plan.count, base, home, plan.first || {}, plan.adding || null);
     if (!next) { setTimeout(() => process.exit(0), 300); return; }
     console.log(`\nNext: node ${next.index} of ${next.count} (instance ${next.instance}, ports +${next.portOffset}).`);
     const pass = [...['--tunnel', '--local'].filter((f) => args.includes(f)), ...(flags.level ? [`--${flags.level}`] : [])];

@@ -61,7 +61,12 @@ export const RAM_QUESTION = 'Enable RAM disk for Fedimint? [Y/n] ';
 export const ramAnswer = (line) => !/^\s*n/i.test(String(line || ''));
 
 /** The node after `home` in a count's list (instancesOf from `baseHome` and node 1's `first` name and offset), or null: the last one, or a home not in the list. */
-export function nextInstance(count, baseHome, home, first = {}) {
+export function nextInstance(count, baseHome, home, first = {}, adding = null) {
+  // NODES ADDED TO A MACHINE THAT HAS SOME (kanban #713, machine-nodes.js addNodesPlan): the plan's list, after the nodes already there
+  if (Array.isArray(adding) && adding.length) {
+    const i = adding.findIndex((x) => x.home === home), had = Number(count) - adding.length;
+    return i >= 0 && i + 1 < adding.length ? { ...adding[i + 1], index: had + i + 2, count: Number(count) } : null;
+  }
   const list = instancesOf(count, baseHome, first), i = list.findIndex((x) => x.home === home);
   return i >= 0 && i + 1 < list.length ? { ...list[i + 1], index: i + 2, count: list.length } : null;
 }

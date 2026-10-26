@@ -18,6 +18,12 @@
 #   status  `bitcoinarena status`                 owner    open the owner page       restart   restart the node
 #   node    the node in one line (bitcoinarena state: running / stopped)   dashboard   the node's dashboard in the browser
 #   node-start / node-stop   start or stop the node's services          doctor      `bitcoinarena doctor`
+#   nodes   every node on this macOS as JSON (`bitcoinarena nodes --json`)   (kanban #713: "The App shows the status of ALL OF OUR nodes")
+#   addnodes <n> ram|noram   more nodes on this macOS (testnet4): the installer's --add-nodes in the background, each node's setup page
+#           opening in the browser in turn; its lines in installer.log
+#   adding  "running <how many nodes there are now>" while it runs, else "done <how many>" or "ended <its last lines>"
+#   dashboard-of / owner-of <home>   that node's dashboard / owner page (each node's own command, in its home)
+#   signinall   every node's owner page signed in at once (`bitcoinarena sign-in-all`); its lines: one link per node
 # Built-in parts only (bash, osascript): nothing more to install.
 APP="$(cd "$(dirname "$0")/../.." && pwd)"
 # THE NAMES SINCE 2026.1.9.8 (kanban #688, 2026-10-26: "Rename the directories and binaries to bitcoinarena, not arenanode everywhere in the
@@ -63,6 +69,13 @@ wait_link() {
   rm -f "$PIDF"; echo "The installer did not start: $(tail -3 "$LOG")" >&2; return 1
 }
 
+# A node's own command, in its home (bin/bitcoinarena-<instance>, or arenanode of an older one)
+cmd_of() {
+  local i; i=$(sed -n 's/^instance=//p' "$1/arena.conf" 2>/dev/null | head -1)
+  if [ -x "$1/bin/bitcoinarena${i:+-$i}" ]; then echo "$1/bin/bitcoinarena${i:+-$i}"; else echo "$1/bin/arenanode${i:+-$i}"; fi
+}
+ADDF="$BASE/adding.pid"; ADDLOG="$BASE/adding.log"
+
 case "${1:-}" in
   prepare)
     release
@@ -100,6 +113,21 @@ case "${1:-}" in
   stop) stop_it ;;
   status) "$CMD" status 2>&1 | head -24 ;;
   owner) "$CMD" open >/dev/null 2>&1 ;;
+  nodes) "$CMD" nodes --json 2>/dev/null ;;
+  signinall) "$CMD" sign-in-all 2>/dev/null ;;
+  addnodes)
+    release
+    case "${3:-}" in ram) R=--ram ;; noram) R=--no-ram ;; *) R= ;; esac
+    : > "$ADDLOG"
+    ARENA_CLOUDFLARED="$DEST/runtime/cloudflared" nohup "$DEST/runtime/node" "$DEST/packages/arena-installer/bin/arena-install.mjs" --home "$H" --add-nodes "${2:-1}" $R >> "$ADDLOG" 2>&1 < /dev/null &
+    echo $! > "$ADDF"; echo started ;;
+  adding)
+    N=$("$CMD" nodes --json 2>/dev/null | grep -o '"home"' | wc -l | tr -d ' ')
+    if [ -f "$ADDF" ] && kill -0 "$(cat "$ADDF")" 2>/dev/null; then echo "running $N"
+    elif grep -qE '^Done\. Your node runs' "$ADDLOG" 2>/dev/null; then rm -f "$ADDF"; echo "done $N"
+    else rm -f "$ADDF"; echo "ended $(tail -3 "$ADDLOG" 2>/dev/null)"; fi ;;
+  dashboard-of) [ -f "${2:-}/arena.conf" ] && "$(cmd_of "$2")" dashboard >/dev/null 2>&1 ;;
+  owner-of) [ -f "${2:-}/arena.conf" ] && "$(cmd_of "$2")" open >/dev/null 2>&1 ;;
   signin) "$CMD" sign-in-once >/dev/null 2>&1 ;;
   restart) "$CMD" restart >/dev/null 2>&1 ;;
   node) "$CMD" state 2>&1 | head -1 ;;
@@ -107,5 +135,5 @@ case "${1:-}" in
   node-start) "$CMD" start 2>&1 | tail -3 ;;
   node-stop) "$CMD" stop 2>&1 | tail -3 ;;
   doctor) "$CMD" doctor 2>&1 | head -30 ;;
-  *) echo "usage: bitcoin-arena-app prepare|launch|wait-link|start|newer|update|state|link|stop|status|owner|signin|restart|node|dashboard|node-start|node-stop|doctor" >&2; exit 2 ;;
+  *) echo "usage: bitcoin-arena-app prepare|launch|wait-link|start|newer|update|state|link|stop|status|owner|signin|signinall|nodes|addnodes|adding|dashboard-of|owner-of|restart|node|dashboard|node-start|node-stop|doctor" >&2; exit 2 ;;
 esac
