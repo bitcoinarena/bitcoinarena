@@ -6,14 +6,15 @@
 //
 //   every minute (cron)   each seat's GET /txs?full=1 over the last READ_BACK_MS: every transaction it holds with its whole record;
 //                         merged across the seats and written to D1 (txs) for EVERY transaction, only where it changed
-//   GET /api/recent       the newest, from D1
+//   every minute (cron)   each seat's GET /payments: the gifts, zaps and items bought (kanban #683), each a row of its own kind
+//   GET /api/recent       a page of them, newest first, from D1: ?app= &kind= &fed= &since= &q=, &before= / &after= a row's cursor (kanban #683)
 //   GET /api/tx/<id>      from D1; one the minute has not read yet is read from the seats once and kept
 //   /, /tx/<id>           the pages (www/), with what D1 holds built into the page, so they draw at once
 //   GET /api/metrics      the Metrics page's figures (kanban #676): volume per day from D1, the protocol reserve and the websites' fees
 //   /metrics              that page, its figures built in
 const SEATS = [1, 2, 3, 4, 5, 6, 7].map((i) => `https://tn4.bitcoin-arena.io/guardian-${i}`)
   .concat([1, 2, 3, 4, 5, 6, 7].map((i) => `https://tn4.bitcoin-arena.io/fed2-${i}`));
-const RECENT_MAX = 1000;
+const PAGE = 200, PAGE_MAX = 1000;
 const ASK_MS = 6000, READ_MS = 20000;
 const READ_BACK_MS = 3 * 3600000;    // a transaction's record still changes until its round settles: read again for 3 h
 const hex64 = /^[0-9a-f]{64}$/;
@@ -74,11 +75,77 @@ async function keep(env, tx, had) {
   const h = await sha(JSON.stringify(stable));
   if (had === h) return null;
   const e = tx.entry || {};
-  return env.DB.prepare(`INSERT INTO txs (id, round, app, federation, stored_ms, settled, hash, json, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  return env.DB.prepare(`INSERT INTO txs (id, round, app, federation, stored_ms, settled, hash, json, updated_ms, kind, fed_txid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET round = excluded.round, app = excluded.app, federation = excluded.federation, stored_ms = excluded.stored_ms,
-    settled = excluded.settled, hash = excluded.hash, json = excluded.json, updated_ms = excluded.updated_ms`)
+    settled = excluded.settled, hash = excluded.hash, json = excluded.json, updated_ms = excluded.updated_ms, kind = excluded.kind, fed_txid = excluded.fed_txid`)
     .bind(tx.id, e.round || null, e.app || null, e.federation || null, tx.storedFirst ? Date.parse(tx.storedFirst) : Date.now(),
-      tx.settlement ? tx.settlement.state : null, h, JSON.stringify(tx), Date.now());
+      tx.settlement ? tx.settlement.state : null, h, JSON.stringify(tx), Date.now(), tx.kind || 'order', tx.payment ? tx.payment.txid : null);
+}
+
+// THE GIFTS, ZAPS AND ITEMS BOUGHT (kanban #683, 2026-10-26: "I don't see item purchases in the explorer"; #682: a gift "doesn't show in
+// the explorer"): each a row of its own kind beside the orders - what it paid for, from whom, its federation transaction and its outputs,
+// and which seats keep it. A seat keeps every one of its network (each is handed on to all), and a kept one never changes.
+const PAYMENT_KINDS = ['item', 'donation', 'zap'];
+function paymentTx(id, answers) {
+  const held = answers.filter((a) => a.row);
+  const r = held[0].row;
+  const { keptMs, ...payment } = r; void keptMs;
+  const kept = held.map((a) => Number(a.row.keptMs)).filter(Number.isFinite).sort((a, b) => a - b);
+  return { id, kind: PAYMENT_KINDS.includes(r.kind) ? r.kind : 'donation', found: true, readAt: new Date().toISOString(), readMs: null,
+    entry: { app: r.gameName || null, federation: r.federation, player: r.kind === 'item' ? r.player : r.donor }, amountMsat: r.totalMsat, payment,
+    settlement: null, client: null, processed: null, result: null, storedFirst: kept.length ? new Date(kept[0]).toISOString() : null,
+    seats: answers.map((a) => ({ seat: seatName(a.seat), key: a.key || null, status: a.status, known: !!a.row,
+      storedAt: a.row && Number.isFinite(Number(a.row.keptMs)) ? new Date(Number(a.row.keptMs)).toISOString() : null, why: a.why || null })) };
+}
+
+/** Every seat's gifts and items kept after `since` (at most `limit` of each), merged into D1; and where a further read goes on from. */
+async function readPayments(env, since, limit) {
+  const t0 = Date.now();
+  const got = await Promise.all(SEATS.map(async (seat) => ({ seat, ...(await ask(`${seat}/payments?since=${since}&limit=${limit}`, READ_MS)) })));
+  const byId = new Map();
+  // GOES ON FROM: the earliest last row of a list a seat filled to its limit (the rest of it after that), else nothing is left
+  let next = null;
+  for (const g of got) {
+    if (!g.body || !Array.isArray(g.body.gifts) || !Array.isArray(g.body.items)) continue;
+    for (const list of [g.body.gifts, g.body.items]) {
+      if (list.length >= limit) { const last = Number(list[list.length - 1].keptMs); if (Number.isFinite(last) && (next === null || last < next)) next = last; }
+      for (const r of list) {
+        if (!hex64.test(String(r.id)) || !hex64.test(String(r.txid))) continue;
+        if (!byId.has(r.id)) byId.set(r.id, new Map());
+        byId.get(r.id).set(g.seat, { row: r, key: g.body.seat || null });
+      }
+    }
+  }
+  // a seat that answered and did not list it does not keep it; a seat before GET /payments (404) or that did not answer is said so
+  const answered = new Map(got.map((g) => [g.seat, !!(g.body && Array.isArray(g.body.gifts))]));
+  const ids = [...byId.keys()];
+  const hashes = new Map();
+  for (let i = 0; i < ids.length; i += 90) {
+    const part = ids.slice(i, i + 90);
+    const r = await env.DB.prepare(`SELECT id, hash FROM txs WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
+    for (const x of r.results || []) hashes.set(x.id, x.hash);
+  }
+  const writes = [];
+  for (const id of ids) {
+    const per = byId.get(id);
+    const answers = SEATS.map((seat) => (per.has(seat) ? { seat, status: 200, ...per.get(seat) }
+      : answered.get(seat) ? { seat, status: 404 } : { seat, status: got.find((g) => g.seat === seat).status, why: 'did not list its payments' }));
+    const w = await keep(env, paymentTx(id, answers), hashes.get(id));
+    if (w) writes.push(w);
+  }
+  for (let i = 0; i < writes.length; i += 50) await env.DB.batch(writes.slice(i, i + 50));
+  return { seats: [...answered.values()].filter(Boolean).length, payments: ids.length, written: writes.length, next, ms: Date.now() - t0 };
+}
+
+// THE OLDER ONES TOO: from the first a seat kept, a page each minute (KV 'payments-walk'), until a read leaves nothing over; the
+// minute's own read covers the newest READ_BACK_MS from then on
+async function paymentsWalk(env) {
+  const at = await env.EXPLORER.get('payments-walk');
+  if (at === 'done') return;
+  const n = await readPayments(env, Number(at) || 0, BACKFILL_ROWS);
+  if (!n.seats) return;   // no seat lists payments yet (before their roll): asked again next minute
+  await env.EXPLORER.put('payments-walk', n.next === null ? 'done' : String(n.next));
+  console.log(JSON.stringify({ paymentsWalk: { from: Number(at) || 0, ...n } }));
 }
 
 // THE OLDER TRANSACTIONS TOO (2026-10-24: "You should do that for each tx"): besides the newest READ_BACK_MS, each minute reads one
@@ -128,15 +195,21 @@ const DAY_MS = 86400000, VOLUME_DAYS = 30;
 async function metrics(env) {
   const kept = JSON.parse((await env.EXPLORER.get('metrics')) || 'null');
   const since = Math.floor(Date.now() / DAY_MS) * DAY_MS - (VOLUME_DAYS - 1) * DAY_MS;
+  // the stakes of the orders (kanban #683: the gifts and items bought are rows too, not stakes)
   const r = await env.DB.prepare(`SELECT (stored_ms / ${DAY_MS}) AS d, COUNT(*) AS n, SUM(CAST(json_extract(json, '$.entry.stakeMsat') AS INTEGER)) AS msat
-    FROM txs WHERE stored_ms >= ? GROUP BY d ORDER BY d DESC`).bind(since).all();
+    FROM txs WHERE stored_ms >= ? AND kind = 'order' GROUP BY d ORDER BY d DESC`).bind(since).all();
   const volume = (r.results || []).map((x) => ({ day: new Date(Number(x.d) * DAY_MS).toISOString().slice(0, 10), txs: Number(x.n), msat: String(x.msat || 0) }));
   return { volume, reserve: kept ? kept.reserve : null, referral: kept ? kept.referral : null, readAt: kept ? kept.readAt : null, seats: kept ? kept.seats : null };
 }
 
 async function poll(env) {
   const n = await readWindow(env, Date.now() - READ_BACK_MS, 500, null);
-  console.log(JSON.stringify({ poll: n }));
+  const pay = await readPayments(env, Date.now() - READ_BACK_MS, 500).catch((e) => ({ error: String(e && e.message ? e.message : e) }));
+  console.log(JSON.stringify({ poll: n, payments: pay }));
+  await paymentsWalk(env).catch((e) => console.log(JSON.stringify({ paymentsWalkError: String(e && e.message ? e.message : e) })));
+  // every quarter hour: each app's, kind's and federation's count for the list's filters (a read of every row)
+  if (Math.floor(Date.now() / 60000) % 15 === 0 || !(await env.EXPLORER.get('facets')))
+    await readFacets(env).catch((e) => console.log(JSON.stringify({ facetsError: String(e && e.message ? e.message : e) })));
   // every fifth minute: the figures change slowly, and each read asks every seat twice
   if (Math.floor(Date.now() / 60000) % 5 === 0 || !(await env.EXPLORER.get('metrics')))
     await readMetrics(env).catch((e) => console.log(JSON.stringify({ metricsError: String(e && e.message ? e.message : e) })));
@@ -177,16 +250,67 @@ async function readWindow(env, since, limit, before) {
   return { seats: [...answered.values()].filter(Boolean).length, txs: ids.length, written: writes.length, ms: Date.now() - t0 };
 }
 
-async function recent(env) {
-  // with its amount (2026-10-24: "Also add the amount to the list page in sats"): the entry's stake, msat
-  const r = await env.DB.prepare(`SELECT id, round, app, federation, stored_ms, json_extract(json, '$.entry.stakeMsat') AS stake, json_extract(json, '$.result.state') AS rstate,
-    json_extract(json, '$.result.netMsat') AS rnet, json_extract(json, '$.result.payoutMsat') AS rpaid FROM txs ORDER BY stored_ms DESC LIMIT ?`).bind(RECENT_MAX).all();
-  return (r.results || []).map((x) => ({ id: x.id, round: x.round, app: x.app, federation: x.federation, storedMs: Number(x.stored_ms), stakeMsat: x.stake === null ? null : String(x.stake),
-    result: x.rstate ? { state: x.rstate, netMsat: x.rnet === null ? null : String(x.rnet), payoutMsat: x.rpaid === null ? null : String(x.rpaid) } : null }));
+// THE LIST'S FILTERS (kanban #683, 2026-10-26: "I don't see other apps in the explorer"): the apps, kinds and federations over every row D1
+// holds, not over the newest 1000 - kept in KV, read again each quarter hour
+async function readFacets(env) {
+  const r = await env.DB.prepare('SELECT kind, app, federation, COUNT(*) AS n FROM txs GROUP BY kind, app, federation').all();
+  const sum = (key) => { const m = new Map(); for (const x of r.results || []) { const k = x[key] === null ? '-' : x[key]; m.set(k, (m.get(k) || 0) + Number(x.n)); }
+    return [...m].map(([v, n]) => ({ [key]: v, n })).sort((a, b) => b.n - a.n); };
+  const f = { apps: sum('app'), kinds: sum('kind'), feds: sum('federation').filter((x) => x.federation !== '-'), total: (r.results || []).reduce((t, x) => t + Number(x.n), 0), readAt: new Date().toISOString() };
+  await env.EXPLORER.put('facets', JSON.stringify(f));
+  return f;
+}
+async function facets(env) { return JSON.parse((await env.EXPLORER.get('facets')) || 'null') || readFacets(env); }
+
+// A ROW'S CURSOR: its time and id, "<ms>_<id>" - a page goes on before or after it (kanban #683: "Add paging to the explorer to display more
+// than a 1000")
+const cursorOf = (x) => `${Number(x.stored_ms)}_${x.id}`;
+const cursorIn = (c) => { const m = /^(\d{1,16})_([0-9a-f]{64})$/.exec(String(c || '')); return m ? { ms: Number(m[1]), id: m[2] } : null; };
+/** The filters a page is asked with, as SQL: app (- for none), kind, fed, since (seconds back), q (hex: part of an id, round or federation transaction). */
+function filterSql(q, now = Date.now()) {
+  const where = [], binds = [];
+  const app = String(q.get('app') || '');
+  if (app === '-') where.push('app IS NULL'); else if (app) { where.push('app = ?'); binds.push(app.slice(0, 80)); }
+  const kind = String(q.get('kind') || '');
+  if (kind) { where.push('kind = ?'); binds.push(kind.slice(0, 20)); }
+  const fed = String(q.get('fed') || '').toLowerCase();
+  if (hex64.test(fed)) { where.push('federation = ?'); binds.push(fed); }
+  const since = Number(q.get('since'));
+  if (Number.isFinite(since) && since > 0) { where.push('stored_ms >= ?'); binds.push(now - since * 1000); }
+  const part = String(q.get('q') || '').toLowerCase();
+  if (/^[0-9a-f]{1,64}$/.test(part)) { where.push('(id LIKE ? OR round LIKE ? OR fed_txid LIKE ?)'); binds.push(`%${part}%`, `%${part}%`, `%${part}%`); }
+  return { where, binds };
+}
+const ROW_SQL = `SELECT id, round, app, federation, stored_ms, kind, json_extract(json, '$.entry.stakeMsat') AS stake, json_extract(json, '$.amountMsat') AS amount,
+  json_extract(json, '$.payment.item') AS item, json_extract(json, '$.result.state') AS rstate, json_extract(json, '$.result.netMsat') AS rnet,
+  json_extract(json, '$.result.payoutMsat') AS rpaid FROM txs`;
+const rowOut = (x) => ({ id: x.id, kind: x.kind || 'order', round: x.round, app: x.app, federation: x.federation, storedMs: Number(x.stored_ms),
+  // with its amount (2026-10-24: "Also add the amount to the list page in sats"): an order's stake, msat; a gift's or purchase's total
+  stakeMsat: x.stake !== null && x.stake !== undefined ? String(x.stake) : x.amount !== null && x.amount !== undefined ? String(x.amount) : null, item: x.item || null,
+  result: x.rstate ? { state: x.rstate, netMsat: x.rnet === null ? null : String(x.rnet), payoutMsat: x.rpaid === null ? null : String(x.rpaid) } : null });
+
+/** One page of the list, newest first: { txs, older, newer, total, facets } - older/newer the cursors of the pages beside it, or null. */
+async function recent(env, q = new URLSearchParams()) {
+  const limit = Math.min(PAGE_MAX, Math.max(1, Number(q.get('limit')) || PAGE));
+  const { where, binds } = filterSql(q);
+  const before = cursorIn(q.get('before')), after = before ? null : cursorIn(q.get('after'));
+  const at = before || after;
+  const w = at ? [...where, after ? '(stored_ms > ? OR (stored_ms = ? AND id > ?))' : '(stored_ms < ? OR (stored_ms = ? AND id < ?))'] : where;
+  const sql = `${ROW_SQL}${w.length ? ' WHERE ' + w.join(' AND ') : ''} ORDER BY stored_ms ${after ? 'ASC' : 'DESC'}, id ${after ? 'ASC' : 'DESC'} LIMIT ?`;
+  const got = ((await env.DB.prepare(sql).bind(...binds, ...(at ? [at.ms, at.ms, at.id] : []), limit + 1).all()).results) || [];
+  const more = got.length > limit;
+  let rows = got.slice(0, limit);
+  // NEWER THAN A ROW, UP TO THE NEWEST: read upwards and turned round; at the top, the first page itself (a full page, no cursor)
+  if (after && !more) return recent(env, new URLSearchParams([...q].filter(([k]) => k !== 'after')));
+  if (after) rows = rows.reverse();
+  const count = await env.DB.prepare(`SELECT COUNT(*) AS n FROM txs${where.length ? ' WHERE ' + where.join(' AND ') : ''}`).bind(...binds).first();
+  return { txs: rows.map(rowOut), older: rows.length && (after || more) ? cursorOf(rows[rows.length - 1]) : null,
+    newer: rows.length && (after || before) ? cursorOf(rows[0]) : null, total: count ? Number(count.n) : null, limit, facets: await facets(env) };
 }
 
 async function txOf(env, ctx, id) {
-  const row = await env.DB.prepare('SELECT json FROM txs WHERE id = ?').bind(id).first();
+  // by its id, or a gift's or purchase's by its federation transaction - what the wallet history names (kanban #682)
+  const row = await env.DB.prepare('SELECT json FROM txs WHERE id = ? OR fed_txid = ? LIMIT 1').bind(id, id).first();
   if (row) return { ...JSON.parse(row.json), cached: true };
   const tx = await readTx(id);
   if (tx.found) { const w = await keep(env, tx, null); if (w) ctx.waitUntil(w.run()); }
@@ -205,7 +329,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === '/robots.txt') return new Response('User-agent: *\nAllow: /\n', { headers: { 'content-type': 'text/plain' } });
-    if (url.pathname === '/api/recent') return json({ txs: await recent(env) }, { maxAge: 10 });
+    if (url.pathname === '/api/recent') return json(await recent(env, url.searchParams), { maxAge: 10 });
     if (url.pathname === '/api/metrics') return json(await metrics(env), { maxAge: 30 });
     if (url.pathname === '/metrics' || url.pathname === '/metrics/') return inline(env, request, { metrics: await metrics(env) });
     const m = /^\/api\/tx\/([0-9a-f]{64})$/.exec(url.pathname);
@@ -215,7 +339,7 @@ export default {
     }
     const p = /^\/tx\/([0-9a-f]{64})\/?$/.exec(url.pathname);
     if (p) return inline(env, request, { tx: await txOf(env, ctx, p[1]) });
-    if (url.pathname === '/' || url.pathname === '/index.html') return inline(env, request, { recent: await recent(env) });
+    if (url.pathname === '/' || url.pathname === '/index.html') return inline(env, request, { recent: await recent(env, url.searchParams) });
     return env.ASSETS.fetch(request);
   },
 };
