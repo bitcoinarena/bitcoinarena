@@ -1456,6 +1456,8 @@
     </section>
     <!-- THE NAME, GRAPHICS, CLIENT LOGS, SEED PHRASE AND ACCOUNT CARDS (kanban #564): drawn by React (SettingsCards, window.ArenaSettings) -->
     <section class="settings-card" id="arena-set-name"></section>
+    <!-- YOUR REFERRAL LINK (kanban #681): this wallet's own referral program, drawn by React (ReferralCard, window.ArenaSettings) -->
+    <section class="settings-card" id="arena-set-referral"></section>
     <!-- GRAPHICS: its frame here, Tick Tock's quality select put before the switch (packages/nextblock/page/unity-page.js), the FPS switch React's -->
     <section class="settings-card" id="arena-set-graphics">
       <h3>Graphics</h3>
@@ -1693,6 +1695,8 @@
         // THIS WEBSITE'S PAYOUT KEY: named on every entry into a round of 2026.0.9 or later, which pays it 10% of
         // the nodes' fee on that stake (never more for the player); daily.json `frontend`, a 33-byte compressed key in hex -
         // unless a referral link brought this browser (kanban #675, ARENA_REFERRAL below)
+        // (kept apart as ARENA_SITE_FRONTEND_PK too: a player's own link in their own wallet falls back to it, kanban #681)
+        if (d && /^0[23][0-9a-f]{64}$/.test(String(d.frontend || ''))) window.ARENA_SITE_FRONTEND_PK = d.frontend;
         if (d && /^0[23][0-9a-f]{64}$/.test(String(d.frontend || '')) && !window.ARENA_REFERRAL) window.ARENA_FRONTEND_PK = d.frontend; })
       .catch(() => { /* the lobby reads it again */ });
     const viaAlt = new Map();
@@ -2250,8 +2254,12 @@
       if (ref) { window.ARENA_REFERRAL = ref; window.ARENA_FRONTEND_PK = ref; }
     })();
     // THIS WEBSITE'S PAYOUT KEY, as daily.json names it (or a referral link's) - entryFor writes it only on a round of 2026.0.9 or later
+    // NEVER A PLAYER'S OWN LINK (kanban #681): a player's program is their identity key (ARENA_MY_REFERRAL); their own link opened in their
+    // own wallet names this site's key instead, so nobody is paid a share of their own fee
     function pageFrontendPk() {
-      const k = window.ARENA_REFERRAL || window.ARENA_FRONTEND_PK;
+      let mine = null; try { mine = window.ARENA_MY_REFERRAL ? window.ARENA_MY_REFERRAL() : null; } catch { mine = null; }
+      const ref = window.ARENA_REFERRAL && !(mine && mine.key === window.ARENA_REFERRAL) ? window.ARENA_REFERRAL : null;
+      const k = ref || window.ARENA_SITE_FRONTEND_PK || (window.ARENA_FRONTEND_PK !== window.ARENA_REFERRAL ? window.ARENA_FRONTEND_PK : null);
       try { return k ? ARENACLIENT.fromHex(k) : null; } catch { return null; }
     }
     // THIS WALLET'S LAST BALANCE, AT ONCE (playtest 2026-10-21 ~19:45Z: "when having a wallet with 0 sats it takes 20-30 seconds to display the
@@ -5036,6 +5044,8 @@
       // a gift's app by its title, as the donate box names it (kanban #682)
       const gameTitleOf = (n) => { const g = (window.ARENA_GAMES_FULL || []).find((x) => x.name === n || (x.manifest && x.manifest.gameName === n)); return (g && (g.title || (g.manifest && g.manifest.title))) || n; };
       const WHAT = (r, sat) => r.kind === 'deposit' ? 'Deposit' : r.kind === 'winnings' ? `Winnings${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}` : r.kind === 'donation' ? (String(r.to || '').startsWith('player:') ? 'Zap' : `Donation${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : String(r.to || '').startsWith('app:') ? ' \u00b7 ' + gameTitleOf(String(r.to).slice(4)) + ' developers' : r.to === 'network' ? ' \u00b7 protocol developers' : ''}`)
+          // WHAT CAME IN TO THIS PLAYER'S KEY (kanban #681): 10 % of the nodes' fee on an entry its referral link brought; a zap from another player
+          : r.kind === 'referral' ? `Referral${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}` : r.kind === 'zap-in' ? 'Zap received'
           : r.kind === 'refund' ? `Refund \u00b7 round ${String(r.round || '').slice(0, 8)} \u00b7 stake back`
           : r.kind === 'slash-payout' ? `Slash payout \u00b7 round ${String(r.round || '').slice(0, 8)}`
           : r.kind === 'withdrawal' ? `Withdrawal${r.state && r.state !== 'Success' ? ' (' + r.state + ')' : ''}`
@@ -5093,7 +5103,7 @@
       const txOfRound = new Map(rows.filter((r) => r.kind === 'stake' && r.entry && r.round).map((r) => [r.round, r.entry]));
       const slow = window.ARENA_SLOW_TX ? window.ARENA_SLOW_TX() : new Map();
       const view = rows.map((r, i) => {
-        const plus = r.kind === 'deposit' || r.kind === 'winnings' || r.kind === 'refund' || r.kind === 'slash-payout' || r.kind === 'moved-in' || r.kind === 'swapped-in';
+        const plus = r.kind === 'deposit' || r.kind === 'winnings' || r.kind === 'refund' || r.kind === 'slash-payout' || r.kind === 'moved-in' || r.kind === 'swapped-in' || r.kind === 'referral' || r.kind === 'zap-in';
         const when = r.atMs ? new Date(r.atMs).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'earlier';
         const what = WHAT(r, sat);
         return { key: `${r.fed}:${r.atMs || 'x'}:${r.kind}:${i}`, plus, when, what: what + (feds.length > 1 ? ' · ' + String(r.fed).slice(0, 8) : ''), amt: (plus ? '+' : '−') + sat(r.msat),
@@ -5231,6 +5241,42 @@
     // drawn by React (kanban #564, window.ArenaSettings): the field keeps what is typed, and shows the current name otherwise
     const drawName = () => window.ArenaSettings.name(document.getElementById('arena-set-name'), { current: currentName(),
       onUpdate: (t) => { const said = window.ARENA_LOBBY_ACT && window.ARENA_LOBBY_ACT.setName ? window.ARENA_LOBBY_ACT.setName(t) : 'the lobby is not up yet'; setTimeout(paintSettings, 0); return said; } });
+    // YOUR REFERRAL LINK (kanban #681, 2026-10-26: "A user may also use a referrer code and link to testnet.bitcoin-arena.io. He gets 10%
+    // of the node's income"): this wallet's own program, keyed by its identity key (ARENACLIENT.referralOf) - never a seed minted for it.
+    // What it earned is what the zap collector last read on the seats (window.ARENA_REFERRAL_EARNED); Copy also names the program on the
+    // seats with the player's name, once per name (arena.referral.named), so the explorer and Health show a name, not a key.
+    const myReferral = () => {
+      try {
+        if (!window.ARENA_CURVE || typeof ARENACLIENT === 'undefined' || !ARENACLIENT.referralOf || !window.sessionStorage.getItem('arena.player.seed')) return null;
+        return ARENACLIENT.referralOf({ storage: window.sessionStorage, random: () => { throw new Error('no wallet'); }, curve: window.ARENA_CURVE, origin: location.origin });
+      } catch { return null; }
+    };
+    window.ARENA_MY_REFERRAL = myReferral;
+    async function copyReferral() {
+      const me = myReferral();
+      if (!me) return 'Open or create your wallet first.';
+      let copied = false;
+      try { await navigator.clipboard.writeText(me.link); copied = true; } catch { copied = false; }
+      const name = currentName();
+      let named = null; try { named = window.ARENA_BROWSER_STORE().getItem('arena.referral.named'); } catch { named = null; }
+      if (name && named !== me.key + ':' + name && typeof zapSeats === 'function') {
+        try {
+          const body = JSON.stringify(ARENACLIENT.referralNameFor({ name, storage: window.sessionStorage, random: () => { throw new Error('no wallet'); }, curve: window.ARENA_CURVE }));
+          const told = await Promise.all(zapSeats().slice(0, 3).map((s) => fetch(String(s).replace(/\/$/, '') + '/referral-name', { method: 'POST', body, signal: AbortSignal.timeout(15000) })
+            .then((r) => r.ok, () => false)));
+          if (told.some(Boolean)) try { window.ARENA_BROWSER_STORE().setItem('arena.referral.named', me.key + ':' + name); } catch { /* said again next time */ }
+        } catch (e) { console.warn('[arena] referral name: ' + e.message); }
+      }
+      return copied ? 'Copied.' : 'Select the link and copy it.';
+    }
+    const drawReferral = () => {
+      const me = myReferral(), e = window.ARENA_REFERRAL_EARNED;
+      const sat = (msat) => Number(BigInt(msat || 0) / 1000n).toLocaleString('en-US') + ' sat';
+      const earned = !me ? '' : !e ? '' : e.payouts ? 'Earned so far: ' + sat(e.msat) + ' from ' + e.payouts + (e.payouts === 1 ? ' payout' : ' payouts') + '. It lands in your wallet on its own.'
+        : 'Nothing earned yet.';
+      window.ArenaSettings.referral(document.getElementById('arena-set-referral'), { link: me ? me.link : '', earned, onCopy: copyReferral });
+    };
+    window.ARENA_PAINT_REFERRAL = () => { try { drawReferral(); } catch { /* Settings draws it when opened */ } };
     function paintSettings() {
       // WHO RECEIVES IT, once a round names its donation set - and nothing otherwise: never "no donation set" under a
       // dropdown that plainly shows the choice (2026-09-29 12:47)
@@ -5251,6 +5297,7 @@
       window.ArenaSettings.itemsShare(document.getElementById('arena-set-items-share'), { share, shares: terms ? terms.shares : [40, 30, 20, 10, 0], lead, what,
         onChange: (v) => { if (window.ARENA_ITEMS_SHARE_SET) window.ARENA_ITEMS_SHARE_SET(v); setTimeout(paintSettings, 0); } });
       drawName();
+      drawReferral();
       paintMoney();
     }
     // SETTINGS OPENED BEFORE THIS SCRIPT RAN: filled now, once
@@ -5983,6 +6030,15 @@
         const clients = new Map([...window.ARENA_WALLETS].map(([fid, c]) => [String(fid).toLowerCase(), c]));
         const got = await ARENACLIENT.collectZaps({ storage: store(), keep: window.ARENA_BROWSER_STORE(), random: noSeed, curve: window.ARENA_CURVE, clients, seats: zapSeats() });
         window.ARENA_ZAPS_IN = { at: Date.now(), ...got };
+        // AND THIS PLAYER'S REFERRAL EARNINGS (kanban #681): the website payouts under the same key, collected here too - each a row of the
+        // wallet history ("Referral"), a zap from another player one too ("Zap received"); the Settings card says the total the seats list
+        const was = window.ARENA_REFERRAL_EARNED;
+        if (got.referral) window.ARENA_REFERRAL_EARNED = got.referral;
+        if (got.referral && (!was || was.msat !== got.referral.msat) && window.ARENA_PAINT_REFERRAL) window.ARENA_PAINT_REFERRAL();
+        if (got.collected.length && ARENACLIENT.recordReceived) {
+          for (const c of got.collected) ARENACLIENT.recordReceived(vault(), c.federationId, { kind: c.item === 'website' ? 'referral' : 'zap-in', msat: c.amountMsat, round: c.item === 'website' ? c.roundId : null, outpoint: c.outpoint });
+          try { paintHistory(); } catch { /* history only */ }
+        }
         if (got.collected.length) { console.log('[arena] zaps collected: ' + got.collected.length + ', ' + got.totalMsat + ' msat'); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); }
       };
       setTimeout(() => collect().catch(() => {}), 20000);

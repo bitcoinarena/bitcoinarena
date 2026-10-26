@@ -134,6 +134,28 @@ export class CommunityCard extends React.Component {
   }
 }
 
+// YOUR REFERRAL LINK (kanban #681, 2026-10-26: "A user may also use a referrer code and link to testnet.bitcoin-arena.io. He gets 10% of
+// the node's income"): this wallet's own link - its key is the player's identity key, nothing to set up - Copy, and what it earned so
+// far as the page read it from the seats. Copy is the page's (it also names the program on the seats); the card says its answer.
+export class ReferralCard extends React.Component {
+  constructor(props) { super(props); this.state = { said: '' }; }
+  async copy() { this.setState({ said: await this.props.onCopy() }); }
+  render() {
+    const { link, earned = '' } = this.props;
+    return (<>
+      <h3>Referral link</h3>
+      <div className="muted">Share this link. For 30 days, the players who come through it pay you 10 % of the nodes' fee on every paid entry, into this wallet. It costs them nothing extra.</div>
+      {link ? <div className="name-row">
+        <input id="arena-referral-link" type="text" readOnly value={link} onFocus={(e) => e.target.select()} />
+        <button id="arena-referral-copy" type="button" className="primary" onClick={() => this.copy()}>Copy</button>
+      </div> : <div className="muted">Open or create your wallet first.</div>}
+      <div className="muted" id="arena-referral-earned">{earned}</div>
+      <div className="muted">{this.state.said}</div>
+      <a href="/referral/" target="_blank" rel="noopener" style={{ color: '#c9a8ff' }}>How the referral program works →</a>
+    </>);
+  }
+}
+
 // ADVANCED SETTINGS' CARDS (2026-10-16): the donation share of each paid entry, the in-game items' developers' share, the debug switch -
 // each a choice the page keeps and prices by; drawn here with what the page reads
 export class DonationCard extends React.Component {

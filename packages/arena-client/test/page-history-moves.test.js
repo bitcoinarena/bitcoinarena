@@ -28,3 +28,11 @@ test('every federation\'s rows are listed, each tagged with its federation when 
   assert.match(HTML, /const feds = \[\.\.\.new Set\(\[fed, \.\.\.\(ARENACLIENT\.ledgerFederations \? ARENACLIENT\.ledgerFederations\(st\) : \[\]\)\]\)\];/);
   assert.match(HTML, /what: what \+ \(feds\.length > 1 \? ' (?:\\u00b7|·) ' \+ String\(r\.fed\)\.slice\(0, 8\) : ''\)/);
 });
+
+// WHAT CAME IN TO THE PLAYER'S KEY (kanban #681): a referral payout names the round that paid it, a zap from another player is said as such;
+// both add to the wallet
+test('a referral payout and a received zap are rows that add, named as such', () => {
+  assert.deepEqual(row({ kind: 'referral', msat: '800', round: '91'.repeat(32) }), { plus: true, what: 'Referral · round 91919191' });
+  assert.deepEqual(row({ kind: 'referral', msat: '800', round: null }), { plus: true, what: 'Referral' });
+  assert.deepEqual(row({ kind: 'zap-in', msat: '21000' }), { plus: true, what: 'Zap received' });
+});

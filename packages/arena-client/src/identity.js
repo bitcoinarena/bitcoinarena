@@ -29,6 +29,7 @@ import { encodeLobbyName, decodeLobbyName, lobbyNameId, lobbyNameIsValid, LOBBY_
 import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 import { signEvent } from './nwc.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
+import { encodeReferralName, referralNameId } from '../../arena-protocol/src/referral-name.js';
 
 /** Where a tab keeps the name its player chose. */
 export const CUSTOM_NAME_KEY = 'arena.player.name';
@@ -214,12 +215,40 @@ export function presenceProofFor({ roundIdHex, storage, random, curve } = {}) {
 }
 
 /**
+ * A PLAYER'S OWN REFERRAL PROGRAM (kanban #681, 2026-10-26: "Add user support for referrer program, not just websites. A user may also
+ * use a referrer code and link to testnet.bitcoin-arena.io. He gets 10% of the node's income"): the program's key IS this tab's identity
+ * refund key - 02 and the identity key, the key a zap to this player is paid to - so nothing new is kept or backed up: the 24 words make
+ * it again. An entry names it as its website key (frontend_pk), the settlement pays it 10 % of the nodes' fee on that entry as it pays a
+ * node's program, the seats list the payout under it ('website'), and collectZaps spends it into this wallet with the identity secret.
+ * `origin` is the page's own (https://testnet.bitcoin-arena.io). Answers { key, link }.
+ */
+export function referralOf({ storage, random, curve, origin = '' } = {}) {
+  if (!curve || typeof curve.pointX !== 'function') throw new Error('a referral key is the identity key, and no curve was injected');
+  const key = toHex(refundKeyOf(curve.pointX(identitySecretFor(tabSeed({ storage, random })))));
+  return { key, link: `${String(origin).replace(/\/$/, '')}/?ref=${key}` };
+}
+
+/**
+ * ITS NAME, SAID BY ITS KEY (protocol referral-name.js, as a node's program says its own): { record, signature } in hex for POST
+ * /referral-name - the explorer and Health then name the program, not its key. Signed with the identity secret, which never leaves here.
+ */
+export function referralNameFor({ name, storage, random, curve, nowMs = Date.now() } = {}) {
+  if (!curve || typeof curve.signSchnorr !== 'function') throw new Error('a program\'s name is signed with the identity key, and no signer was injected');
+  const secret = identitySecretFor(tabSeed({ storage, random }));
+  const rec = { site: refundKeyOf(curve.pointX(secret)), name: String(name || '').trim(), atMs: BigInt(nowMs) };
+  return { record: toHex(encodeReferralName(rec)), signature: toHex(curve.signSchnorr(referralNameId(rec), secret)) };
+}
+
+/**
  * THE ZAPS THIS PLAYER WAS SENT, COLLECTED INTO ITS OWN WALLET (2026-10-17: "zaps in the leaderboard go to the
  * federation's account of the user"): every seat asked what was paid to this tab's identity refund key (GET /donations?key=), merged
  * by outpoint; each one in a federation this page holds a wallet client of (`clients`: Map federation id hex -> lock client) is spent
  * by `Refund` under the identity secret - which never leaves this module - into that wallet. A contract the federation no longer
  * holds was spent by this key, the only one that can, and is final. Collected outpoints are noted in `storage` (arena.zaps.collected)
- * and not asked again. Answers { key, collected: [{ outpoint, federationId, amountMsat }], spent, failed, waiting, totalMsat }.
+ * and not asked again. Answers { key, collected: [{ outpoint, federationId, amountMsat, item, roundId }], spent, failed, waiting, totalMsat,
+ * referral }.
+ * AND WHAT THIS PLAYER'S REFERRAL LINK EARNED (kanban #681): the website payouts under the same key ('website' rows, referralOf) are
+ * collected the same way; `referral` is every one the seats list - { msat, payouts } - collected or not.
  */
 export const ZAPS_COLLECTED_KEY = 'arena.zaps.collected';
 export async function collectZaps({ storage, keep = storage, random, curve, clients, seats, fetcher = fetch } = {}) {
@@ -248,11 +277,13 @@ export async function collectZaps({ storage, keep = storage, random, curve, clie
     const fields = JSON.stringify({ paymentImage: { kind: 'hash', bytes: image }, amountMsat: String(d.amountMsat), claimPk: pk, refundPk: pk, expiration: 0 });
     let said;
     try { said = JSON.parse(await client.refund(m[1], Number(m[2]), fields, toHex(secret))); } catch (e) { failed.push({ ...d, why: String(e && e.message || e) }); continue; }
-    if (said.accepted === true) collected.push({ outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat) });
+    if (said.accepted === true) collected.push({ outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat), item: d.item || null, roundId: d.roundId || null });
     else if (said.stored_before === null || said.stored_before === undefined) spent.push(d);
     else { failed.push({ ...d, why: said.error || 'the federation did not accept the collect' }); continue; }
     seen.add(d.outpoint);
   }
   try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...seen].slice(-500))); } catch { /* not kept: asked again, then found spent */ }
-  return { key: pk, collected, spent, failed, waiting, totalMsat: String(collected.reduce((t, c) => t + BigInt(c.amountMsat), 0n)) };
+  const web = [...found.values()].filter((d) => d.item === 'website');
+  return { key: pk, collected, spent, failed, waiting, totalMsat: String(collected.reduce((t, c) => t + BigInt(c.amountMsat), 0n)),
+    referral: { msat: String(web.reduce((t, d) => t + BigInt(d.amountMsat || 0), 0n)), payouts: web.length } };
 }

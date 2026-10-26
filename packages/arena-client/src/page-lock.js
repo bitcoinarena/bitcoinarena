@@ -905,6 +905,12 @@ export const restInvoiceMsat = (restMsat) => (BigInt(restMsat) < REST_FLOOR_MSAT
 export function recordDonation(storage, federationId, { msat, round, txid = null, to = null }) {
   ledgerAppend(storage, federationId, { kind: 'donation', msat: String(msat), round: round ? String(round) : null, ...(txid ? { txid: String(txid) } : {}), ...(to ? { to: String(to) } : {}) });
 }
+/** WHAT CAME IN TO THIS PLAYER'S KEY, a history row once collected (kanban #681): 'referral' - 10 % of the nodes' fee on an entry its
+ *  referral link brought, `round` the round that paid it - or 'zap-in', a zap from another player. `outpoint` is the payout collected. */
+export function recordReceived(storage, federationId, { kind, msat, round = null, outpoint = null }) {
+  if (kind !== 'referral' && kind !== 'zap-in') return;
+  ledgerAppend(storage, federationId, { kind, msat: String(msat), round: round ? String(round) : null, ...(outpoint ? { outpoint: String(outpoint) } : {}) });
+}
 /** The rest: the smallest whole sat whose whole notes cover what the wallet is short. */
 export function restOfFeesMsat(shortMsat) {
   const short = shortMsat > 0n ? BigInt(shortMsat) : 1n;

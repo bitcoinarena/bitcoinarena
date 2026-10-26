@@ -25,7 +25,7 @@ import { ShopItems } from './ShopItems.jsx';
 import { DonateBox } from './DonateBox.jsx';
 import { OtherWallets } from './OtherWallets.jsx';
 import { RefundKey, BackToArena, Text, FedChip, BackupBox } from './PageBits.jsx';
-import { NameCard, GraphicsCard, LogsCard, SeedCard, AccountCard, ConfirmedFederationsCard, CommunityCard, DonationCard, ItemsShareCard, DebugCard, RescanCard } from './SettingsCards.jsx';
+import { NameCard, GraphicsCard, LogsCard, SeedCard, AccountCard, ConfirmedFederationsCard, CommunityCard, DonationCard, ItemsShareCard, DebugCard, RescanCard, ReferralCard } from './SettingsCards.jsx';
 
 export function drawTiles(list, props) {
   const host = document.createElement('div');
@@ -121,4 +121,5 @@ if (typeof window !== 'undefined') window.ArenaSettings = {
   account: (host, props) => into(host, <AccountCard {...props} />),
   federations: (host, props) => into(host, <ConfirmedFederationsCard {...props} />), community: (host, props) => into(host, <CommunityCard {...props} />),
   donation: (host, props) => into(host, <DonationCard {...props} />), itemsShare: (host, props) => into(host, <ItemsShareCard {...props} />),
-  debug: (host, props) => into(host, <DebugCard {...props} />), rescan: (host, props) => into(host, <RescanCard {...props} />) };
+  debug: (host, props) => into(host, <DebugCard {...props} />), rescan: (host, props) => into(host, <RescanCard {...props} />),
+  referral: (host, props) => into(host, <ReferralCard {...props} />) };

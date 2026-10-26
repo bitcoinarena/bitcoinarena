@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { NameCard, LogsCard, SeedCard, AccountCard, ConfirmedFederationsCard, CommunityCard, DonationCard, ItemsShareCard, DebugCard, RescanCard } from '../dist/test/settings.mjs';
+import { NameCard, LogsCard, SeedCard, AccountCard, ConfirmedFederationsCard, CommunityCard, DonationCard, ItemsShareCard, DebugCard, RescanCard, ReferralCard } from '../dist/test/settings.mjs';
 
 const live = (C, props) => { const c = new C(props); c.setState = (u) => Object.assign(c.state, typeof u === 'function' ? u(c.state) : u); return c; };
 const html = (c) => renderToStaticMarkup(React.createElement(React.Fragment, null, c.render()));
@@ -83,4 +83,21 @@ test('the rescan: progress on the button and the bar while it runs, then what ca
   assert.match(h, /<button id="arena-rescan" type="button">Rescan<\/button>/);
   assert.match(h, /<div class="muted" id="arena-rescan-line">4 orders looked at · 100 sat brought back<\/div>/);
   assert.match(h, /<li>Round 8464c5fd: 100 sat brought back<\/li>/);
+});
+
+// YOUR REFERRAL LINK (kanban #681): the wallet's own link with Copy, what it earned as the page says it, and the page's answer to Copy;
+// no wallet yet, no link
+test('the referral link: the link, Copy, what it earned, the answer; none before a wallet', async () => {
+  const link = 'https://testnet.bitcoin-arena.io/?ref=02' + 'ab'.repeat(32);
+  const c = live(ReferralCard, { link, earned: 'Earned so far: 12 sat from 3 payouts.', onCopy: async () => 'Copied.' });
+  let h = html(c);
+  assert.match(h, /<h3>Referral link<\/h3>/);
+  assert.ok(h.includes(`<input id="arena-referral-link" type="text" readOnly="" value="${link}"/>`));
+  assert.match(h, /<button id="arena-referral-copy" type="button" class="primary">Copy<\/button>/);
+  assert.match(h, /<div class="muted" id="arena-referral-earned">Earned so far: 12 sat from 3 payouts\.<\/div>/);
+  await c.copy();
+  assert.match(html(c), /<div class="muted">Copied\.<\/div>/);
+  h = html(live(ReferralCard, { link: '', onCopy: async () => '' }));
+  assert.doesNotMatch(h, /arena-referral-copy/);
+  assert.match(h, /Open or create your wallet first\./);
 });
