@@ -9,7 +9,7 @@ import { makeHealth, live, keyOf, ageOf, keepable, AT_ONCE } from '../../arena-u
 // asked, the oldest first, at most HEALTH_BUDGET a run, and the read runs again for the doors those answers name (a new node, a new
 // federation), up to four times. A door the run could not ask keeps its last answer, with its time: the copy is as old as its oldest answer
 // (ageOf), which the page shows. A Worker that may fetch fewer times (the free plan's 50) still goes round all doors, a part each minute.
-export const HEALTH_DAILY = 'https://testnet.bitcoin-arena.io/daily.json', HEALTH_CRON = '*/1 * * * *';
+export const HEALTH_DAILY = 'https://testnet.bitcoin-arena.io/daily.json', HEALTH_CRON = '*/2 * * * *';   // every 2 min: "*/1" is the poll's own schedule to Cloudflare, which ran it once (kanban #686)
 const HEALTH_FRESH_MS = 45000, HEALTH_PASSES = 4;
 const NOTHING_DRAWN = new Proxy({}, { get: (_, k) => (k === 'draw' ? () => {} : () => []) });
 export async function readHealth(env, fetchImpl = fetch) {
