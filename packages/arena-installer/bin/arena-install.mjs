@@ -27,6 +27,8 @@
 //              custody steps (Lightning, federation, the bond's rules); the posted bond's advertisement is updated, no second bond
 // --join-federation  the node's gateway (set up in the wizard's Lightning step) joins a federation by its invite code (gateway.js)
 // --machine-name  this machine's name for the health page's machines (kanban #621); asked at a console when --instances is over 1
+// --verbose    (-v) each step said in this terminal as it runs: the addresses, files, services and ports it checks, what answered, how long
+// --debug      that and the insides: full errors, the status and start of a failed answer, every program it runs with its exit code (kanban #693)
 // --instances  how many nodes on this machine, 1 by default (testnet4 only; kanban #596): each its own seed, owner key and bond, in
 //              <home>-b, -c, ... with its ports 100 apart (instance.js); from 10 they found their own federation. With more than 5:
 //              --ram / --no-ram puts Fedimint on a RAM disk or not; neither given, the console asks "Enable RAM disk for Fedimint? [Y/n]"
@@ -41,8 +43,20 @@ import { createWizard } from '../src/wizard.js';
 import { nodeState, defaultHome } from '../src/state.js';
 import { openQuickTunnel } from '../src/tunnel.js';
 import { setupLinkMode } from '../src/session.js';
+import { levelFlags, levelOf, createLog, traceRuntime } from '../../arena-node/src/log-level.js';
 
-const args = process.argv.slice(2);
+// HOW MUCH IT SAYS (kanban #693, 2026-10-26: "add a --debug and --verbose flag that shows more info on what its doing, what is going wrong
+// etc"): the flags taken out first, the level's lines on stderr; without them the installer prints what it always printed
+const flags = levelFlags(process.argv.slice(2));
+if (flags.bad) { console.error(flags.bad); process.exit(2); }
+const args = flags.rest;
+const level = levelOf({ flag: flags.level, env: process.env });
+if (level.bad) console.error(level.bad);
+const log = createLog({ level: level.level });
+traceRuntime(log);
+log.tag('install').verbose(`log level ${level.level} (${level.from})`);
+log.tag('install').env(['ARENA_HOME', 'ARENA_INSTANCE', 'ARENA_PORT_OFFSET', 'ARENA_CLOUDFLARED', 'ARENA_TAILSCALE', 'ARENA_NO_BROWSER', 'DISPLAY', 'WAYLAND_DISPLAY', 'SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY'],
+  'the settings it reads from its environment (the home and ports, its programs, whether a browser opens, a remote session)');
 const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
 const port = Number(opt('--port', offsetPort(7800)));   // + ARENA_PORT_OFFSET (instance.js)
 const seatPort = Number(opt('--seat-port', offsetPort(8470)));   // + ARENA_PORT_OFFSET: a second node's seat on its own port (measured: 8470 was the first's)
@@ -77,7 +91,7 @@ if (args.includes('--update-self')) {
     const installUpdaterFn = async (o) => { const file = serviceFile('updater', { home, platform: process.platform, env: process.env });
       return existsSync(file) && !updaterLauncherStale(file) ? { ok: true, already: true } : installUpdater({ ...o, installProgram }); };
     const r = await updateNode({ home, newRelease: release, port: (s.reach && s.reach.port) || (s.service && s.service.port) || seatPort,
-      node: `${release}/runtime/${process.platform === 'win32' ? 'node.exe' : 'node'}`, installUpdaterFn });
+      node: `${release}/runtime/${process.platform === 'win32' ? 'node.exe' : 'node'}`, installUpdaterFn, trace: log });
     console.log(r.ok ? `Updated: ${have || r.from} -> ${mine}; the same node answers (${r.identity.slice(0, 16)}...)`
       : `${r.rolledBack ? 'Rolled back' : 'Not updated'}: ${r.why}`);
     await finish(r.ok ? 0 : 1);
@@ -96,6 +110,7 @@ if (args.includes('--update')) {
   try { sums = readFileSync(`${at}/SHA256SUMS`); sig = readFileSync(`${at}/SHA256SUMS.sig`, 'utf8'); }
   catch { console.error(`SHA256SUMS and SHA256SUMS.sig belong beside ${asset} (download them from the same release)`); process.exit(2); }
   const c = checkAsset({ file: asset, sums, sig });
+  log.tag('update').verbose(`${asset}: SHA256SUMS and its signature beside it against the Arena release key: ${c.ok ? 'ok' : c.why}`);
   if (!c.ok) { console.error(`Refused: ${c.why}`); process.exit(2); }
   const name = asset.split(/[\\/]/).pop().replace(/\.(tar\.gz|zip)$/, '');
   const dir = `${home}/releases`;
@@ -111,7 +126,7 @@ if (args.includes('--update')) {
   const installUpdaterFn = async (o) => { const file = serviceFile('updater', { home, platform: process.platform, env: process.env });
     return existsSync(file) && !updaterLauncherStale(file) ? { ok: true, already: true } : installUpdater({ ...o, installProgram }); };
   const r = await updateNode({ home, newRelease: `${dir}/${name}`, port: (s.reach && s.reach.port) || (s.service && s.service.port) || seatPort,
-    node: `${dir}/${name}/runtime/${process.platform === 'win32' ? 'node.exe' : 'node'}`, installUpdaterFn });
+    node: `${dir}/${name}/runtime/${process.platform === 'win32' ? 'node.exe' : 'node'}`, installUpdaterFn, trace: log });
   console.log(r.ok ? `Updated: ${r.from} -> ${r.to}; the same node answers (${r.identity.slice(0, 16)}...). Backup: ${r.backup}${r.notStarted ? `\nNot running: ${r.notStarted}` : ''}`
     : `${r.rolledBack ? 'Rolled back' : 'Not updated'}: ${r.why}${r.backup ? ` (backup ${r.backup})` : ''}`);
   await finish(r.ok ? 0 : 1);
@@ -212,7 +227,7 @@ if (args.includes('--add-custody')) {
 }
 
 let tunnel = null, server = null;
-const wizard = createWizard({ state, release, seatPort, bridgePort, cloudflared, log: (l) => console.log(l),
+const wizard = createWizard({ state, release, seatPort, bridgePort, cloudflared, log: (l) => console.log(l), trace: log,
   fundFrom: fromHome ? nodeState(resolve(fromHome)) : null,   // kanban #596: a further node's deposit paid from node 1's wallet
   onDone: () => {
   // the public address when the node has one (2026-10-18: "Always show the public address and not 127.0.0.1 when it's not localhost only")
@@ -229,7 +244,7 @@ const wizard = createWizard({ state, release, seatPort, bridgePort, cloudflared,
     const next = nextInstance(plan.count, base, home, plan.first || {});
     if (!next) { setTimeout(() => process.exit(0), 300); return; }
     console.log(`\nNext: node ${next.index} of ${next.count} (instance ${next.instance}, ports +${next.portOffset}).`);
-    const pass = ['--tunnel', '--local'].filter((f) => args.includes(f));
+    const pass = [...['--tunnel', '--local'].filter((f) => args.includes(f)), ...(flags.level ? [`--${flags.level}`] : [])];
     const child = spawn(process.execPath, [fileURLToPath(import.meta.url), '--home', next.home, '--instance', next.instance, '--port-offset', String(next.portOffset),
       '--from-home', base, '--node-of', String(next.index), ...pass], { stdio: 'inherit', env: process.env });
     child.on('exit', (code) => process.exit(code ?? 0));
@@ -243,10 +258,12 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { try {
 server = http.createServer((req, res) => wizard.handle(req, res));
 server.listen(port, '127.0.0.1', async () => {
   const local = `http://127.0.0.1:${port}/?t=${wizard.token}`;
+  log.tag('install').verbose(`the setup page listens on 127.0.0.1:${port} (--port, else 7800${port !== 7800 ? ' + this node\'s port offset' : ''}); the node's seat will be on port ${seatPort}, its home ${home}`);
   console.log(`Bitcoin Arena setup (testnet4). Node home: ${home}`);
   // A REMOTE SESSION: an ssh login or a Linux machine without a display gets no window and no browser here - the setup
   // page through a temporary Cloudflare link, to open on a phone or laptop (session.js); --local keeps the 127.0.0.1 link
   const mode = setupLinkMode(args);
+  log.tag('install').verbose(`the setup link: ${mode.tunnel ? `through a Cloudflare quick tunnel (${mode.why})` : 'on this machine (127.0.0.1)'}`);
   if (mode.tunnel) {
     if (mode.why !== '--tunnel') console.log(`\n${mode.why[0].toUpperCase()}${mode.why.slice(1)}, so the setup page opens on another device: through a temporary Cloudflare link (no account, nothing to set up). Open it on your phone or laptop; this terminal shows each step's progress. Keep this session open until the page says Done (or run the installer in tmux or screen). (--local keeps a link for this machine only.)\n`);
     console.log('Opening a Cloudflare quick tunnel (no account)...');

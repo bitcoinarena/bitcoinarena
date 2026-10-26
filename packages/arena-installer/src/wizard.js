@@ -53,6 +53,7 @@ import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.js';
 import { instancesChoice, instancesNote, INSTANCES_MAX, RAM_FROM } from './instances.js';
 import { INSTANCE, PORT_OFFSET } from './instance.js';
+import { QUIET } from '../../arena-node/src/log-level.js';
 
 export const TOKEN_MS = 30 * 60000;        // the setup token's life
 // A SESSION LASTS A WEEK IDLE AND OUTLIVES AN INSTALLER RESTART (ruling 8: "Tells user to bookmark this page as it can take days on
@@ -144,7 +145,9 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   coreKit = { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, freeCorePorts, installProgram },
   lndKit = { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, installProgram, lndFunds, lndOpenChannel, lndChannels },
   gwKit = { findGatewayd, configureGateway, testGateway, joinFederation, installProgram }, launch = writeLaunchers, nowMs = () => Date.now(), onDone = () => {}, log = () => {},
-  restartSeat = (home) => control('restart', 'node', { home }), fundFrom = null }) {
+  restartSeat = (home) => control('restart', 'node', { home }), fundFrom = null, trace: given = QUIET }) {
+  // EACH STEP AND STAGE SAID AT --verbose, WITH ITS TIME; WHAT EACH STEP WAS HANDED (its field names) AND FULL ERRORS AT --debug (kanban #693)
+  const trace = given.tag('wizard');
   let token = b64u(32);
   const tokenUntil = nowMs() + TOKEN_MS;
   const hashOf = (sid) => createHash('sha256').update(String(sid)).digest('hex');
@@ -223,7 +226,11 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
           if (i >= at) return;
           if (x.state === 'now') { x.state = 'done'; x.ms = now - x.atMs; } else if (x.state === 'todo') x.state = 'skipped';
         });
-        if (run.stages[at].state !== 'now') Object.assign(run.stages[at], { state: 'now', atMs: now });
+        if (run.stages[at].state !== 'now') {
+          const was = run.stages.find((x) => x.state === 'done' && x.ms !== undefined && run.stages.indexOf(x) === at - 1);
+          trace.verbose(`stage ${id}: ${run.stages[at].label}${was ? ` (${was.id} took ${was.ms} ms)` : ''}`);
+          Object.assign(run.stages[at], { state: 'now', atMs: now });
+        }
       },
       detail: (id, extra) => { const x = run && !run.endMs && run.stages.find((y) => y.id === id); if (x) Object.assign(x, extra); },
       end: (r) => {
@@ -233,6 +240,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
           if (x.state === 'now') { x.state = r.ok ? 'done' : 'failed'; x.ms = now - x.atMs; } else if (x.state === 'todo' && r.ok) x.state = 'skipped';
         }
         Object.assign(run, { endMs: now, ok: !!r.ok, why: r.ok ? null : r.why });
+        trace.verbose(`stages ${r.ok ? 'done' : `failed: ${r.why}`} after ${now - run.atMs} ms (${run.stages.map((x) => `${x.id} ${x.state}${x.ms !== undefined ? ` ${x.ms} ms` : ''}`).join(', ')})`);
       },
       view: (slowIds = null) => {
         if (!run) return { ok: true, running: false, stages: fresh() };
@@ -1059,12 +1067,16 @@ const serviceRun = async (b) => {
     const door = api[`${req.method} ${url.pathname}`];
     if (!door) return json(res, 404, { ok: false, why: 'no such door' });
     if (req.method === 'POST' && req.headers['x-arena-wizard'] !== '1') return json(res, 403, { ok: false, why: 'missing x-arena-wizard' });
+    const t0 = performance.now();
     try {
       const body = req.method === 'POST' ? await readBody(req) : {};
+      // the fields it was handed, by name only: a step takes seed words, keys and tokens, and none of their values is printed
+      if (req.method === 'POST') trace.debug(() => `${req.method} ${url.pathname} with field(s) ${Object.keys(body || {}).join(', ') || 'none'}`);
       const r = await door(body);
       log(`[wizard] ${req.method} ${url.pathname} -> ${r.ok ? 'ok' : r.why}`);
+      trace.verbose(`${req.method} ${url.pathname} took ${trace.since(t0)}`);
       return json(res, 200, r);
-    } catch (e) { return json(res, 400, { ok: false, why: e.message }); }
+    } catch (e) { trace.fail(`${req.method} ${url.pathname} failed after ${trace.since(t0)}`, e); return json(res, 400, { ok: false, why: e.message }); }
   }
 
   // ITS STEPS, CALLABLE BY NAME (kanban #563): the runners that do a step again on an installed node - bin/reach-switch.mjs (the address

@@ -506,6 +506,7 @@ node packages/nextblock/bin/node.mjs 31221 node.db</pre>
     <tr><td><code>arenanode open</code></td><td>Opens the owner page.</td></tr>
   </table>
   <p>A node on a temporary quick tunnel gets a new tunnel name each time the tunnel restarts. <code>arenanode restart tunnel</code> (or <code>arenanode restart</code>) reads the new name and writes it everywhere the node names it: <code>arena.conf</code> (its public address and guardian endpoint), its state, and the gateway's announced address. It then restarts the services that name it.</p>
+  <p><b>When something goes wrong: <code>--verbose</code> and <code>--debug</code>.</b> Add <code>--verbose</code> (or <code>-v</code>) to any <code>arenanode</code> command, to <code>arena-install</code> or to an update, and it tells you each step as it does it: which file it reads, which service, port or address it checks, what answered and how long it took. <code>--debug</code> shows all of that and more: the full error, the status and the start of an answer that failed, and every program it runs with how it ended. These lines go to the terminal's error output, so the normal output stays the same. Passwords, macaroons, cookies, keys, tokens and seed words are never shown. For the node's own services: <code>arenanode config set log_level verbose</code> (or <code>debug</code>), then <code>arenanode restart</code>, and their logs (<code>arenanode logs</code>) say more. <code>arenanode config unset log_level</code> puts it back.</p>
   <p><b>Settings: <code>arena.conf</code>.</b> Every setting of an installed node is in one file, <code>arena.conf</code> in the node's folder: one <code>key=value</code> per line with <code>#</code> comments, like <code>bitcoin.conf</code>. The installer writes it, and the node's services start from it and nothing else, with no environment variables to set. Its keys:</p>
   <ul>
     <li><code>network</code></li>
@@ -519,6 +520,7 @@ node packages/nextblock/bin/node.mjs 31221 node.db</pre>
     <li><code>donation_network</code> and <code>close_at_end</code></li>
     <li>for custody: <code>gateway_port</code>, <code>founding</code>, <code>fedimintd</code>, <code>fedimint_cli</code> and <code>guardian_endpoint</code></li>
     <li>for a liquidity provider: <code>liquidity_claim_file</code> and <code>liquidity_provider_url</code></li>
+    <li><code>log_level</code>: <code>info</code> (the default), <code>verbose</code> or <code>debug</code>, how much the node's services log</li>
   </ul>
   <p>LND and Tor keep their own files: <code>lnd/lnd.conf</code> and <code>tor/torrc</code> in the same folder. A node installed before <code>arena.conf</code> existed kept its settings in <code>node.env</code>. The next <code>arena-install --update</code> moves them into <code>arena.conf</code> once and keeps the old file as <code>node.env.migrated</code>.</p>
   <h3 id="dashboard">The dashboard</h3>

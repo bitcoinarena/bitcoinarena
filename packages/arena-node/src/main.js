@@ -67,8 +67,16 @@ import { readSeriesLines } from './series-line.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../arena-protocol/src/test-donation-sets.js';
 import { TEST_DONATION_SET_KEYS_REGTEST } from '../../arena-protocol/src/test-donation-set-keys-regtest.js';
 import { installFetchRoutes } from './fetch-routes.js';
+import { serviceLog } from './log-level.js';
 // THE SEAT'S OWN FETCHES ROUTED AND CAPPED, before anything is asked of a peer (fetch-routes.js)
 { const f = installFetchRoutes(process.env); console.log(`[fetch] ${f.routes} route(s), at most ${f.maxPerOrigin} request(s) in flight per origin, ${f.timeoutMs} ms timeout`); }
+// HOW MUCH THE SEAT LOGS (kanban #693, 2026-10-26: "add a --debug and --verbose flag that shows more info on what its doing, what is going
+// wrong etc"): ARENA_LOG_LEVEL - arena.conf log_level becomes it (run.js) - read once, here. info: as always. verbose: its failed requests
+// and the settings that shaped its start; debug: every request it makes and answers, and every program it runs with its exit code
+const seatLog = serviceLog({ env: process.env, tag: 'log' });
+seatLog.tag('log').env(['ARENA_BITCOIND_URL', 'ARENA_BITCOIND_COOKIE', 'ARENA_LNCLI', 'ARENA_LND_DIR', 'ARENA_LND_RPC', 'ARENA_LND_NETWORK', 'ARENA_STAKE_LOCK_BIN',
+  'ARENA_FEDERATION_CLIENT_DIR', 'ARENA_FEDIMINTD', 'ARENA_FOUNDING', 'ARENA_APPS', 'ARENA_DONATION_NETWORK', 'ARENA_BIND', 'ARENA_TLS_CERT', 'ARENA_CLOSE_AT_END', 'ARENA_PRICE_FEED'],
+  'the settings that decide how this seat starts (chain, Lightning, custody, apps, network, address)');
 
 const port = Number(process.argv[2] || 8080);
 const path = process.argv[3] || 'round.db';
@@ -595,3 +603,8 @@ if (tlsFiles && node.http && typeof node.http.setSecureContext === 'function') {
 }
 console.log(`arena-node on ${tlsFiles ? 'https' : 'http'}://${host}:${node.port}  (${path})${url ? `, chain ${url}` : ''}`
   + `${ln.given ? `, lnd ${ln.rpc} (${ln.network})` : ''}`);
+// AT debug, EVERY REQUEST THE SEAT ANSWERS: method, path (its query left out: a link can carry a token), status, time
+if (seatLog.debugOn && node.http && typeof node.http.on === 'function') {
+  const req = seatLog.tag('request');
+  node.http.on('request', (rq, rs) => { const t0 = performance.now(); rs.once('finish', () => req.debug(`${rq.method} ${String(rq.url || '').split('?')[0]} -> ${rs.statusCode} in ${req.since(t0)}`)); });
+}

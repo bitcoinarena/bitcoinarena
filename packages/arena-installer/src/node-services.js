@@ -26,6 +26,7 @@ import { testGateway } from './gateway.js';
 import { quickTunnelUrl } from './reach.js';
 import { parseConf, unknownKeys } from '../../arena-node/src/arena-conf.js';
 import { bondCounts } from './bond.js';
+import { QUIET } from '../../arena-node/src/log-level.js';
 
 /** Every service an installed node can have, in start order. */
 export const SERVICES = Object.freeze([
@@ -174,11 +175,21 @@ export async function chainCall({ url, cookie, method, params = [], fetcher = fe
  * What each service serves, asked: { ok, says }, or null when there is nothing to ask beyond its process. `node` from nodeOf.
  * `local` the seat's identity when it answered (the tunnel's must be the same).
  */
-export async function probeOf(svc, { node, fetcher, local, dnsRetries = 2, dnsPauseMs = 5000 }) {
+export async function probeOf(svc, { node, fetcher, local, dnsRetries = 2, dnsPauseMs = 5000, log = QUIET }) {
+  // WHAT IS ASKED AND WHAT ANSWERED, WITH ITS TIME (kanban #693, 2026-10-26: "shows more info on what its doing, what is going wrong etc"):
+  // at --verbose, each probe's target before it is asked and its answer after
+  const t0 = performance.now();
+  const said = await probeAsk(svc, { node, fetcher, local, dnsRetries, dnsPauseMs, log });
+  if (said) log.verbose(`${svc.id}: ${said.ok ? 'ok' : 'NOT ok'} - ${said.says} (${log.since(t0)})`);
+  else log.debug(`${svc.id}: nothing to ask beyond its process`);
+  return said;
+}
+async function probeAsk(svc, { node, fetcher, local, dnsRetries, dnsPauseMs, log }) {
   const v = node.conf.values, s = node.state;
   try {
     if (svc.id === 'node') {
       if (!node.port) return { ok: false, says: 'no port in arena.conf' };
+      log.verbose(`node: asking http://127.0.0.1:${node.port}/identity`);
       const id = await getIdentity(`http://127.0.0.1:${node.port}`, fetcher);
       return { ok: true, says: `answers on port ${node.port} as ${id.slice(0, 16)}…`, identity: id };
     }
@@ -187,10 +198,12 @@ export async function probeOf(svc, { node, fetcher, local, dnsRetries = 2, dnsPa
       // A QUICK TUNNEL'S NEW NAME TAKES A FEW SECONDS INTO DNS (measured on macOS node A, 10 s after an update restarted its tunnel:
       // ENOTFOUND, then answering): a name not found yet is asked again, twice, 5 s apart, before it counts
       let id = null;
+      log.verbose(`tunnel: asking ${node.publicUrl.replace(/\/+$/, '')}/identity (it must answer with the seat's key${local ? ` ${local.slice(0, 16)}…` : ''})`);
       for (let i = 0; ; i++) {
         try { id = await getIdentity(node.publicUrl, fetcher); break; } catch (e) {
           const code = e.cause ? e.cause.code : e.code;
           if (code !== 'ENOTFOUND' || i >= dnsRetries) throw e;
+          log.verbose(`tunnel: ${new URL(node.publicUrl).host} is not in DNS yet; asking again in ${Math.round(dnsPauseMs / 1000)} s (${i + 1} of ${dnsRetries})`);
           await new Promise((ok) => setTimeout(ok, dnsPauseMs));
         }
       }
@@ -199,11 +212,13 @@ export async function probeOf(svc, { node, fetcher, local, dnsRetries = 2, dnsPa
     }
     if (svc.id === 'guardian') {
       const api = node.port + 1000;   // guardian.js guardianPorts: api = node port + 1000
+      log.verbose(`guardian: is anything listening on 127.0.0.1:${api} (the seat's port ${node.port} + 1000)?`);
       return (await portOpen(api)) ? { ok: true, says: `API on port ${api}` } : { ok: false, says: `nothing listens on its API port ${api}` };
     }
     if (svc.id === 'lnd') {
       const l = s.lightning || {};
-      if (!l.restUrl || !l.tlsCert || !l.macaroon) return null;
+      if (!l.restUrl || !l.tlsCert || !l.macaroon) { log.debug('lnd: state.json lightning names no restUrl, tlsCert and macaroon: not asked'); return null; }
+      log.verbose(`lnd: asking ${l.restUrl.replace(/\/+$/, '')}/v1/getinfo (its cert ${l.tlsCert}, macaroon file ${l.macaroon})`);
       const g = await lndRest({ restUrl: l.restUrl, tlsCertPem: readFileSync(l.tlsCert), macaroonHex: readFileSync(l.macaroon).toString('hex'), path: '/v1/getinfo', timeoutMs: 10000 });
       const j = g.json || g;
       if (g.status !== 200) return { ok: false, says: g.status ? `getinfo answered ${g.status}: ${JSON.stringify(j).slice(0, 120)}` : `LND does not answer (${j.error})` };
@@ -211,14 +226,16 @@ export async function probeOf(svc, { node, fetcher, local, dnsRetries = 2, dnsPa
     }
     if (svc.id === 'gateway') {
       const g = s.gateway || {};
-      if (!g.apiUrl || !g.passwordFile) return null;
+      if (!g.apiUrl || !g.passwordFile) { log.debug('gateway: state.json gateway names no apiUrl and passwordFile: not asked'); return null; }
+      log.verbose(`gateway: asking ${g.apiUrl} (its password read from ${g.passwordFile})`);
       const t = await testGateway({ apiUrl: g.apiUrl, passwordFile: g.passwordFile, fetcher });
       if (!t.ok) return { ok: false, says: t.why };
       return { ok: true, says: `${t.state || 'running'}, Lightning ${t.syncedToChain ? 'synced' : 'NOT synced'}, ${t.federations.length} federation(s)`, federations: t.federations.length };
     }
     if (svc.id === 'tor') {
       const p = s.tor && s.tor.ports && s.tor.ports.socks;
-      if (!p) return null;
+      if (!p) { log.debug('tor: state.json tor names no SOCKS port: not asked'); return null; }
+      log.verbose(`tor: is anything listening on its SOCKS port 127.0.0.1:${p}?`);
       return (await portOpen(p)) ? { ok: true, says: `SOCKS on port ${p}` } : { ok: false, says: `nothing listens on its SOCKS port ${p}` };
     }
     if (svc.id === 'chain-bridge' || svc.id === 'bitcoind-testnet4') {
@@ -230,16 +247,18 @@ export async function probeOf(svc, { node, fetcher, local, dnsRetries = 2, dnsPa
       if (svc.id === 'bitcoind-testnet4' && !own) return { ok: false, says: 'no Bitcoin Core is set up for this node' };
       const url = svc.id === 'chain-bridge' ? v.bitcoind_url : own.url;
       const cookie = svc.id === 'chain-bridge' ? v.bitcoind_cookie : own.cookie;
-      if (!url || !cookie) return null;
+      if (!url || !cookie) { log.debug(`${svc.id}: no RPC address and cookie ${svc.id === 'chain-bridge' ? 'in arena.conf (bitcoind_url, bitcoind_cookie)' : 'in state.json'}: not asked`); return null; }
+      log.verbose(`${svc.id}: asking ${url} getblockchaininfo (cookie file ${cookie})${svc.id === 'bitcoind-testnet4' && core ? ' - Bitcoin Core\'s own port, never the bridge (kanban #640)' : ''}`);
       const b = await chainCall({ url, cookie, method: 'getblockchaininfo', fetcher });
       const synced = b.blocks >= b.headers - 1 && b.headers > 0 && (!b.initialblockdownload || Number(b.verificationprogress) >= 0.9999);   // (kanban #636)
       return { ok: synced, says: `${b.chain} block ${b.blocks}${synced ? '' : ` of ${b.headers} (syncing)`}`, height: b.blocks };
     }
     if (svc.id === 'liquidity' && v.liquidity_provider_url) {
       const u = new URL(v.liquidity_provider_url);
+      log.verbose(`liquidity: is anything listening on port ${u.port} (arena.conf liquidity_provider_url)?`);
       return (await portOpen(Number(u.port))) ? { ok: true, says: `answers on port ${u.port}` } : { ok: false, says: `nothing listens on port ${u.port}` };
     }
-  } catch (e) { return { ok: false, says: e.cause ? e.cause.code || e.message : e.message }; }
+  } catch (e) { log.fail(`${svc.id}: the probe failed`, e); return { ok: false, says: e.cause ? e.cause.code || e.message : e.message }; }
   return null;
 }
 
@@ -247,14 +266,24 @@ export async function probeOf(svc, { node, fetcher, local, dnsRetries = 2, dnsPa
  * THE OVERVIEW: { home, conf, version, instance, port, publicUrl, services: [{ id, title, name, running, pid, detail, probe }] }.
  * `probes` false: the states only (fast).
  */
-export async function overview({ home, platform = process.platform, env = process.env, sh = run, fetcher = fetch, probes = true, dnsPauseMs = 5000 }) {
+export async function overview({ home, platform = process.platform, env = process.env, sh = run, fetcher = fetch, probes = true, dnsPauseMs = 5000, log: given = QUIET }) {
+  // EACH STEP SAID AT --verbose, THE DECISIONS AT --debug (kanban #693): which files were read, which services found where, each state and probe
+  const log = given.tag('status');
   const node = nodeOf(home);
+  log.verbose(`home ${home}: arena.conf ${node.conf.present ? `${Object.keys(node.conf.values).length} setting(s)${node.conf.errors.length ? `, ${node.conf.errors.length} line(s) that do not read` : ''}` : 'missing'}, state.json ${Object.keys(node.state).length ? 'read' : 'missing or empty'}, release ${node.release || '(none)'}${node.version ? ` (${node.version})` : ''}`);
+  log.debug(`the seat's port ${node.port || '-'}, from ${node.conf.values.port ? 'arena.conf port' : node.state.reach && node.state.reach.port ? 'state.json reach.port' : node.state.service && node.state.service.port ? 'state.json service.port' : 'nowhere'}`);
+  log.env(platform === 'darwin' ? ['HOME'] : platform === 'win32' ? [] : ['XDG_CONFIG_HOME', 'HOME', 'ARENA_INSTANCE'],
+    `the service files are looked for in ${platform === 'linux' ? unitDir(env) : platform === 'darwin' ? join(env.HOME || homedir(), 'Library', 'LaunchAgents') : home}, decided by`, env);
   const svcs = installedServices({ home, platform, env, node });
+  log.verbose(`${svcs.length} service(s) installed: ${svcs.map((x) => x.id).join(', ') || 'none'}`);
+  log.debug(() => `not installed (no file): ${SERVICES.filter((s) => !s.inside && !svcs.some((x) => x.id === s.id)).map((s) => `${s.id} (${serviceFile(s.id, { home, platform, env })})`).join(', ') || 'none'}`);
   const procs = platform === 'win32' ? await windowsProcesses(sh) : svcs.some((x) => x.inside) ? await unixProcesses(sh) : [];
   const rows = [];
   let nodePid = null, nodeRunning = false;
   for (const svc of svcs) {
+    const t0 = performance.now();
     const st = await stateOf(svc, { platform, sh, procs, nodePid, nodeRunning });
+    log.verbose(`${svc.id}: ${svc.inside ? `inside the ${svc.inside}` : platform === 'linux' ? `systemd unit ${svc.name}` : platform === 'darwin' ? `launchd agent ${svc.name}` : `launcher ${svc.file}`} is ${st.running === null ? 'unknown' : st.running ? 'running' : 'stopped'}${st.pid ? `, pid ${st.pid}` : ''}: ${st.detail} (${log.since(t0)})`);
     if (svc.id === 'node') { nodePid = st.pid; nodeRunning = st.running; }
     rows.push({ id: svc.id, title: svc.title, name: svc.name, file: svc.file, inside: svc.inside || null, ...st });
   }
@@ -263,15 +292,15 @@ export async function overview({ home, platform = process.platform, env = proces
     for (const r of rows) {
       if (r.running === null) {
         // not visible: running when it answers (a service with nothing to ask stays unknown)
-        r.probe = await probeOf(r, { node, fetcher, local: local.identity, dnsPauseMs });
+        r.probe = await probeOf(r, { node, fetcher, local: local.identity, dnsPauseMs, log });
         if (r.probe) r.running = r.probe.ok ? true : null;
         if (r.probe && r.probe.ok) r.detail = 'answers (its process is not visible to this user)';
         else if (r.probe) r.detail = `its process is not visible to this user, and ${r.probe.says}`;
         if (r.id === 'node' && r.probe && r.probe.identity) local.identity = r.probe.identity;
         continue;
       }
-      if (!r.running) { r.probe = null; continue; }
-      r.probe = await probeOf(r, { node, fetcher, local: local.identity, dnsPauseMs });
+      if (!r.running) { r.probe = null; log.verbose(`${r.id}: not asked (not running)`); continue; }
+      r.probe = await probeOf(r, { node, fetcher, local: local.identity, dnsPauseMs, log });
       if (r.id === 'node' && r.probe && r.probe.identity) local.identity = r.probe.identity;
     }
   }
@@ -420,12 +449,17 @@ async function act(action, svc, { platform, sh, home }) {
  * START / STOP / RESTART `word` (a service, or all of them): in start order, stop in reverse. A restarted quick tunnel's new name is
  * followed (followQuickTunnel). Answers { ok, done: [{ id, action, ok, why }], note, tunnel }.
  */
-export async function control(action, word, { home, platform = process.platform, env = process.env, sh = run, quickUrl = quickTunnelUrl } = {}) {
+export async function control(action, word, { home, platform = process.platform, env = process.env, sh: given = run, quickUrl = quickTunnelUrl, log: lg = QUIET } = {}) {
   if (!['start', 'stop', 'restart'].includes(action)) return { ok: false, done: [], why: `no action "${action}"` };
+  const log = lg.tag(action);
   const svcs = installedServices({ home, platform, env });
   if (!svcs.length) return { ok: false, done: [], why: `no service of a node at ${home} is installed` };
   const { list, why, note } = servicesNamed(word, svcs);
   if (!list.length) return { ok: false, done: [], why };
+  log.verbose(`${word ? `"${word}" names` : 'all of them:'} ${list.map((s) => `${s.id} (${s.name})`).join(', ')}${list.length > 1 ? `; ${action === 'stop' ? 'stopped last first' : action === 'restart' ? 'stopped last first, then started in order' : 'started in order'}` : ''}`);
+  // each system command said with its answer and time (the command lines themselves at --debug, log-level.js traceRuntime)
+  const sh = !log.verboseOn ? given : async (cmd, args) => { const t0 = performance.now(); const r = await given(cmd, args);
+    log.verbose(`${cmd} ${args.filter((x) => !/^(-NoProfile|-NonInteractive|-Command)$/.test(x)).join(' ').slice(0, 160)} -> ${r.ok ? 'ok' : `failed: ${String(r.err || r.out || '').trim().split(/\r?\n/).pop() || r.code}`} (${log.since(t0)})`); return r; };
   const done = [];
   const ordered = action === 'stop' ? [...list].reverse() : list;
   let tunnelAt = null;
@@ -438,7 +472,9 @@ export async function control(action, word, { home, platform = process.platform,
   }
   let tunnel = null;
   if (tunnelAt) {
+    log.verbose('the tunnel (re)started: reading its name from its log, to follow it into the node\'s files');
     tunnel = await followQuickTunnel({ home, svcs, platform, env, sh, sinceMs: tunnelAt - 2000, quickUrl });
+    log.verbose(tunnel.url ? `the tunnel answers as ${tunnel.url}; ${tunnel.changed.length ? `changed ${tunnel.changed.join(', ')}; restarting ${tunnel.restart.join(', ')}` : 'no file named another name'}` : 'no quick tunnel name to follow');
     // in start order: the gateway before the seat
     for (const id of (tunnel.restart || []).sort((x, y) => svcs.findIndex((s) => s.id === x) - svcs.findIndex((s) => s.id === y))) {
       const s = svcs.find((x) => x.id === id);
@@ -449,10 +485,12 @@ export async function control(action, word, { home, platform = process.platform,
 }
 
 /** The last `lines` of a service's log: { file | unit, text }. */
-export async function logsOf(word, { home, platform = process.platform, env = process.env, sh = run, lines = 60 } = {}) {
+export async function logsOf(word, { home, platform = process.platform, env = process.env, sh = run, lines = 60, log: lg = QUIET } = {}) {
+  const log = lg.tag('logs');
   const id = serviceId(word || 'node');
   if (!id) return { ok: false, why: `no service "${word}"` };
   const tail = (file) => {
+    log.verbose(`reading the last ${lines} lines of ${file}`);
     if (!existsSync(file)) return { ok: false, why: `${file} does not exist yet` };
     const fd = openSync(file, 'r'); const size = fstatSync(fd).size; const n = Math.min(size, 256 * 1024);
     const b = Buffer.alloc(n); readSync(fd, b, 0, n, size - n); closeSync(fd);
@@ -463,6 +501,7 @@ export async function logsOf(word, { home, platform = process.platform, env = pr
   if (id === 'tor' && existsSync(join(home, 'tor', 'tor.log'))) return tail(join(home, 'tor', 'tor.log'));
   if (platform === 'linux') {
     const unit = serviceName(id, platform);
+    log.verbose(`reading the last ${lines} lines of the journal of the user unit ${unit}`);
     const r = await sh('journalctl', ['--user', '-u', unit, '-n', String(lines), '--no-pager', '-o', 'short-iso']);
     return { ok: r.ok, unit, text: r.out || r.err };
   }
@@ -477,9 +516,10 @@ const freeBytes = (dir) => { try { const s = statfsSync(dir); return Number(s.ba
  * release ({ latest, newer }) or throws; `esplora` the chain explorer for the bond.
  */
 export async function doctor({ home, platform = process.platform, env = process.env, sh = run, fetcher = fetch, latest = null,
-  esplora = 'https://mempool.space/testnet4/api', name = 'arenanode' } = {}) {
+  esplora = 'https://mempool.space/testnet4/api', name = 'arenanode', log: lg = QUIET } = {}) {
+  const log = lg.tag('doctor');
   const out = [];
-  const add = (check, ok, says, fix = null) => out.push({ check, ok, says, fix });
+  const add = (check, ok, says, fix = null) => { out.push({ check, ok, says, fix }); log.verbose(`${check}: ${ok === true ? 'ok' : ok === false ? 'PROBLEM' : 'note'} - ${says}`); };
   const node = nodeOf(home);
   if (!existsSync(join(home, 'state.json'))) { add('node', false, `no node is installed at ${home}`, 'arena-install'); return out; }
   // the settings
@@ -491,7 +531,7 @@ export async function doctor({ home, platform = process.platform, env = process.
     }
   } else if (node.legacyEnv) add('arena.conf', false, 'this node still runs from node.env (an older release)', 'update the node (arena-install --update): it moves the settings into arena.conf');
   else add('arena.conf', false, `${node.conf.file} is missing`, 'arena-install (the installer writes it)');
-  const view = await overview({ home, platform, env, sh, fetcher });
+  const view = await overview({ home, platform, env, sh, fetcher, log: lg });
   for (const s of view.services) {
     const fix = s.inside ? `${name} restart node` : `${name} restart ${s.id}`;
     if (s.running === null) { add(s.title, null, `${s.detail}${s.probe ? `; ${s.probe.says}` : ''}`); continue; }
@@ -520,22 +560,24 @@ export async function doctor({ home, platform = process.platform, env = process.
   if (!bond || !bond.txid) add('Bond', null, 'no bond posted yet: the node is not seated until it has one', 'arena-install (the installer\'s bond step)');
   else {
     try {
+      log.verbose(`the bond: asking ${esplora}/tx/${bond.txid}/status`);
       const st = await (await fetcher(`${esplora}/tx/${bond.txid}/status`, { signal: AbortSignal.timeout(10000) })).json();
       // A BOND CONFIRMED TOO LATE NEVER COUNTS (bond.js BOND_SLACK_BLOCKS): its maturity is short of its confirmation plus the offset
       const late = st.confirmed && Number.isInteger(bond.maturity) ? bondCounts({ maturity: bond.maturity, confirmedAt: st.block_height }) : { counts: true };
       if (!late.counts) add('Bond', false, `${bond.txid.slice(0, 16)}… confirmed in block ${st.block_height}, too late: its maturity ${bond.maturity} is ${late.short} block(s) short of that plus the lock, so the census never counts it`,
         `post a new bond: arena-install (the bond step); this one is locked until block ${bond.maturity}`);
       else add('Bond', st.confirmed ? true : null, st.confirmed ? `${bond.txid.slice(0, 16)}… confirmed in block ${st.block_height}` : `${bond.txid.slice(0, 16)}… not confirmed yet`);
-    } catch (e) { add('Bond', null, `${bond.txid.slice(0, 16)}…: the explorer did not answer (${e.message})`); }
+    } catch (e) { log.fail('the bond\'s explorer', e); add('Bond', null, `${bond.txid.slice(0, 16)}…: the explorer did not answer (${e.message})`); }
   }
   // the release
   if (latest && node.version) {
     try {
+      log.verbose(`the release: reading the newest signed release (this node runs ${node.version})`);
       const l = await latest(node.version);
       const lv = l.latest && l.latest.version;
       if (!lv) add('Release', null, `${node.version}; ${l.why || 'the newest could not be read'}`);
       else add('Release', l.newer ? null : true, l.newer ? `${node.version} runs; ${lv} is out` : `${node.version} (the newest)`, l.newer ? `update the node: arena-install --update <the ${lv} asset>` : null);
-    } catch (e) { add('Release', null, `${node.version}; the newest could not be read (${e.message})`); }
+    } catch (e) { log.fail('the newest release', e); add('Release', null, `${node.version}; the newest could not be read (${e.message})`); }
   } else add('Release', null, node.version || 'unknown');
   return out;
 }

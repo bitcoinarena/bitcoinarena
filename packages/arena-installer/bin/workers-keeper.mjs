@@ -12,6 +12,9 @@ import { quickTunnelUrl } from '../src/reach.js';
 const args = process.argv.slice(2);
 const i = args.indexOf('--home');
 const home = resolve(i >= 0 ? args[i + 1] : defaultHome());
+// its log level: ARENA_LOG_LEVEL, else arena.conf log_level, read at its start (kanban #693; log-level.js)
+const { serviceLog } = await import('../../arena-node/src/log-level.js');
+serviceLog({ home, write: (l) => console.log(`${new Date().toISOString()} ${l}`) });
 const keeper = createWorkersKeeper({ state: nodeState(home), tunnelUrl: () => quickTunnelUrl({ home, waitMs: 3000 }) });
 let last = '';
 const run = async () => {
