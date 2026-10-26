@@ -38,33 +38,36 @@ import { GAME as UPDOWN_V2 } from '../../btc-updown/plugin/btc-updown-v2.js';
 import { marketExpiryBlocks } from '../../arena-protocol/src/lock-expiry.js';
 // THE UP/DOWN VERSION THE RUNNER POSTS (2026-10-17: the market's protocol reserve fee): DUTY_UPDOWN_PLUGIN names a
 // btc-updown plugin file - btc-updown-v13.js, whose terms pay 0.4 % nodes + 0.4 % donation + 0.2 % protocol reserve; unset, version 2
+// A PIN THAT DOES NOT LOAD IS NO PIN (kanban #689, measured 2026-10-24 22:35Z: btc-updown-v24.js copied beside an older arena-protocol threw
+// "trailing bytes: 6" at import and the Up/Down runner died at its start): said loudly, and the newest version the seats hold is posted
+const pinOrNull = async (name, load) => { try { return await load(); } catch (e) { console.log(JSON.stringify({ at: new Date().toISOString(), dutyVersion: 'PIN UNREADABLE', pin: name, why: e.message })); return null; } };
 const UPDOWN_PLUGIN = process.env.DUTY_UPDOWN_PLUGIN || '';
 if (UPDOWN_PLUGIN && !/^btc-updown(-v\d+)?\.js$/.test(UPDOWN_PLUGIN)) throw new Error(`DUTY_UPDOWN_PLUGIN names a btc-updown plugin file, not ${UPDOWN_PLUGIN}`);
-const UPDOWN_CHOSEN = UPDOWN_PLUGIN ? (await import(`../../btc-updown/plugin/${UPDOWN_PLUGIN}`)).GAME : null;
+const UPDOWN_CHOSEN = UPDOWN_PLUGIN ? await pinOrNull(UPDOWN_PLUGIN, async () => (await import(`../../btc-updown/plugin/${UPDOWN_PLUGIN}`)).GAME) : null;
 if (UPDOWN_CHOSEN) console.log(`[duty] Up/Down rounds of ${UPDOWN_PLUGIN}: game ${Buffer.from(UPDOWN_CHOSEN.gameId).toString('hex').slice(0, 16)}`);
 // AND THE NEXT UP/DOWN VERSION FROM A NAMED DAY ON (kanban #523): DUTY_UPDOWN_NEXT_PLUGIN (btc-updown-v20.js) from DUTY_UPDOWN_NEXT_FROM_SLOT
 // on; the days before it keep DUTY_UPDOWN_PLUGIN from DUTY_UPDOWN_FROM_SLOT as before
 const UPDOWN_NEXT_PLUGIN = process.env.DUTY_UPDOWN_NEXT_PLUGIN || '';
 if (UPDOWN_NEXT_PLUGIN && !/^btc-updown(-v\d+)?\.js$/.test(UPDOWN_NEXT_PLUGIN)) throw new Error(`DUTY_UPDOWN_NEXT_PLUGIN names a btc-updown plugin file, not ${UPDOWN_NEXT_PLUGIN}`);
-const UPDOWN_NEXT = UPDOWN_NEXT_PLUGIN ? (await import(`../../btc-updown/plugin/${UPDOWN_NEXT_PLUGIN}`)).GAME : null;
+const UPDOWN_NEXT = UPDOWN_NEXT_PLUGIN ? await pinOrNull(UPDOWN_NEXT_PLUGIN, async () => (await import(`../../btc-updown/plugin/${UPDOWN_NEXT_PLUGIN}`)).GAME) : null;
 if (UPDOWN_NEXT) console.log(`[duty] Up/Down rounds from slot ${process.env.DUTY_UPDOWN_NEXT_FROM_SLOT || 0} of ${UPDOWN_NEXT_PLUGIN}: game ${Buffer.from(UPDOWN_NEXT.gameId).toString('hex').slice(0, 16)}`);
 // THE TICK TOCK VERSION THE RUNNER POSTS (kanban #523): DUTY_NEXTBLOCK_PLUGIN names a nextblock plugin file (nextblock-v5.js) and
 // DUTY_NEXTBLOCK_CORE the core its rounds run on (0847c99f, version 5's larger truck); unset, DUTY_NEXTBLOCK_V3=1 as before (tools/duty-nextblock.mjs)
-const NB_PLUGIN_FIELDS = process.env.DUTY_NEXTBLOCK_PLUGIN ? await (async () => {
+const NB_PLUGIN_FIELDS = process.env.DUTY_NEXTBLOCK_PLUGIN ? await pinOrNull(process.env.DUTY_NEXTBLOCK_PLUGIN, async () => {
   const r = nextblockDutyFields(await loadNextblockPlugin(process.env.DUTY_NEXTBLOCK_PLUGIN), process.env.DUTY_NEXTBLOCK_CORE || '');
   if (!r.ok) throw new Error(`DUTY_NEXTBLOCK_PLUGIN ${process.env.DUTY_NEXTBLOCK_PLUGIN}: ${r.why}`);
   console.log(`[duty] Tick Tock rounds of ${process.env.DUTY_NEXTBLOCK_PLUGIN}: game ${Buffer.from(r.fields.gameId).toString('hex').slice(0, 16)}, core ${Buffer.from(r.fields.simCoreHash).toString('hex').slice(0, 16)}`);
   return r.fields;
-})() : null;
+}) : null;
 // AND THE NEXT TICK TOCK VERSION FROM A NAMED DAY ON (kanban #523: a day's committee is drawn from the census at its anchor, so a new game
 // id can be posted only for a day whose anchor comes after the advertisements naming it): DUTY_NEXTBLOCK_NEXT_PLUGIN (nextblock-v6.js)
 // from DUTY_NEXTBLOCK_FROM_SLOT on, on the same DUTY_NEXTBLOCK_CORE; a day before it keeps DUTY_NEXTBLOCK_PLUGIN
-const NB_NEXT_FIELDS = process.env.DUTY_NEXTBLOCK_NEXT_PLUGIN ? await (async () => {
+const NB_NEXT_FIELDS = process.env.DUTY_NEXTBLOCK_NEXT_PLUGIN ? await pinOrNull(process.env.DUTY_NEXTBLOCK_NEXT_PLUGIN, async () => {
   const r = nextblockDutyFields(await loadNextblockPlugin(process.env.DUTY_NEXTBLOCK_NEXT_PLUGIN), process.env.DUTY_NEXTBLOCK_CORE || '');
   if (!r.ok) throw new Error(`DUTY_NEXTBLOCK_NEXT_PLUGIN ${process.env.DUTY_NEXTBLOCK_NEXT_PLUGIN}: ${r.why}`);
   console.log(`[duty] Tick Tock rounds from slot ${process.env.DUTY_NEXTBLOCK_FROM_SLOT || 0} of ${process.env.DUTY_NEXTBLOCK_NEXT_PLUGIN}: game ${Buffer.from(r.fields.gameId).toString('hex').slice(0, 16)}, core ${Buffer.from(r.fields.simCoreHash).toString('hex').slice(0, 16)}`);
   return r.fields;
-})() : null;
+}) : null;
 // PAID_MARKET=1: the paid round is a round of the regtest market the page pins - its seats host nextblock
 // and the market, their bonds advertise both, and the round names the market's game with no core and no config
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
@@ -95,14 +98,14 @@ const toHexOf = (b) => Buffer.from(b).toString('hex');
 // RPS_ROUND_FIELDS_V<n> (its decide core and config, its game id) - from DUTY_RPS_FROM_SLOT on; unset, version 2 as before
 const RPS_PLUGIN = process.env.DUTY_RPS_PLUGIN || '';
 if (RPS_PLUGIN && !/^rock-paper-scissors(-v\d+)?\.js$/.test(RPS_PLUGIN)) throw new Error(`DUTY_RPS_PLUGIN names a rock-paper-scissors plugin file, not ${RPS_PLUGIN}`);
-const RPS_CHOSEN_FIELDS = RPS_PLUGIN ? await (async () => {
+const RPS_CHOSEN_FIELDS = RPS_PLUGIN ? await pinOrNull(RPS_PLUGIN, async () => {
   const m = await import(`../../rock-paper-scissors/plugin/${RPS_PLUGIN}`);
   const v = (RPS_PLUGIN.match(/-v(\d+)\.js$/) || [])[1];
   const fields = v ? m[`RPS_ROUND_FIELDS_V${v}`] : m.RPS_ROUND_FIELDS;
   if (!fields || toHexOf(fields.gameId) !== toHexOf(m.GAME.gameId)) throw new Error(`DUTY_RPS_PLUGIN ${RPS_PLUGIN}: no round fields for its own game`);
   console.log(`[duty] Rock Paper Scissors rounds of ${RPS_PLUGIN}: game ${toHexOf(fields.gameId).slice(0, 16)}, core ${toHexOf(fields.simCoreHash).slice(0, 16)}`);
   return fields;
-})() : null;
+}) : null;
 const env = process.env;
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
 const home = env.ARENA_TESTNET4_DIR || `${env.HOME}/blwp-testnet4`;
@@ -237,6 +240,106 @@ if (env.PAID_KEEP !== '0') round.keepOpen({ leadMs: 4 * 3600 * 1000, onOpen: (id
 // (the Tick Tock duty runner moves to version 5 and keeps naming its creator).
 const CREATOR = Number(env.ARENA_PROTOCOL_VERSION || 1) >= 3 && env.ARENA_CREATOR_KEY_FILE
   ? { creatorSecret: Uint8Array.from(Buffer.from(readFileSync(env.ARENA_CREATOR_KEY_FILE, 'utf8').trim(), 'hex')) } : {};
+// THE NEWEST VERSION, THE DAY'S OWN CENSUS, AND THE SEATS ASKED FIRST (kanban #689, 2026-10-26: "Make sure that we always post rounds properly
+// for the next day. Harden it. Always the newest app version. We had too many failures."). Every grid this runner publishes - the day duty's,
+// an emergency grid, the Up/Down, RPS and Tick Tock grid keepers - takes the census ARENA_CENSUS_DEPTH (6) below the tip at the time it is
+// built (not the one this runner stood up at its start: 10-20 and 10-26 days named a census from before their version's adverts), the
+// newest version of its app that census can draw a committee for (src/duty-guard.js pickNewestVersion: GET /games of the seats for the
+// manifests, the census's adverts for who hosts them - a DUTY_*_PLUGIN pin older than that is refused, loudly), and is published only when
+// a majority of the seats asked follow the chain that census block is on (GET /headers) and the census carries enough game and settlement
+// nodes for it (round-2of2.mjs openGrid `mustDraw`).
+const guard = await import('../src/duty-guard.js');
+const { decodeManifest, gameIdOf } = await import('../../arena-protocol/src/manifest.js');
+const { blockHashOf } = await import('../../arena-protocol/src/chain.js');
+const PROTOCOL = Number(env.ARENA_PROTOCOL_VERSION || 1);
+const CENSUS_DEPTH = Number(env.ARENA_CENSUS_DEPTH ?? 6);
+const ZERO32 = new Uint8Array(32);
+// THE DEVELOPER KEY EACH APP'S VERSIONS ARE SIGNED BY: a game of the same name under another key is not a version of it
+const DEV_OF = { updown: toHex(UPDOWN_TN4.manifest.gameDevPubkey), rps: toHex(RPS_V1.manifest.gameDevPubkey), nextblock: toHex(NEXTBLOCK.manifest.gameDevPubkey) };
+const updownOf = (g) => ({ gameId: g.gameId, fields: { gameId: g.gameId, simCoreHash: ZERO32, configHash: ZERO32, minScore: 0 }, periodMs: Number(g.manifest.roundPeriodMs), marketTerms: g.manifest.marketTerms });
+// THE PIN FOR A DAY SLOT (DUTY_*_PLUGIN / _NEXT_PLUGIN / _FROM_SLOT, as before #689) - now an override the newest version refuses when older
+const pinnedFor = (game, slot) => {
+  if (game === 'updown') {
+    const g = UPDOWN_NEXT && slot >= Number(env.DUTY_UPDOWN_NEXT_FROM_SLOT || 0) ? UPDOWN_NEXT : UPDOWN_CHOSEN && slot >= Number(env.DUTY_UPDOWN_FROM_SLOT || 0) ? UPDOWN_CHOSEN : null;
+    return g ? updownOf(g) : null;
+  }
+  if (game === 'rps') return RPS_CHOSEN_FIELDS && slot >= Number(env.DUTY_RPS_FROM_SLOT || 0) ? { gameId: RPS_CHOSEN_FIELDS.gameId, fields: RPS_CHOSEN_FIELDS } : null;
+  const nb = (NB_NEXT_FIELDS && slot >= Number(env.DUTY_NEXTBLOCK_FROM_SLOT || 0) ? NB_NEXT_FIELDS : NB_PLUGIN_FIELDS)
+    || (env.DUTY_NEXTBLOCK_V3 === '1' || env.NB90_V3 === '1' ? { gameId: NEXTBLOCK_V3.gameId, simCoreHash: fromHex(TRUCK_F0CC_HASH) } : null);
+  return nb ? { gameId: nb.gameId, fields: nb } : null;
+};
+// AND THE BUILT-IN ONE: no pin, and neither the seats nor the census read
+const builtinFor = (game) => (game === 'updown' ? updownOf(PROTOCOL >= 2 ? UPDOWN_V2 : UPDOWN_TN4)
+  : game === 'rps' ? { gameId: RPS_ROUND_FIELDS.gameId, fields: RPS_ROUND_FIELDS } : { gameId: null, fields: {} });
+const seatJson = async (url, ms = 20000) => { const r = await fetch(url, { signal: AbortSignal.timeout(ms) }); if (!r.ok) throw new Error(`${url}: ${r.status}`); return r.json(); };
+const localSeats = () => ports.map((p) => `http://${NODE_HOST}:${p}`);
+const keptFor = (ms, read) => { let at = 0, v = null; return async (fresh = false) => { if (fresh || !v || Date.now() - at > ms) { v = await read(); at = Date.now(); } return v; }; };
+// THE APPS THE SEATS HOLD (GET /games of this runner's seats, every manifest checked against its id), read again every 5 min
+const seatCatalog = keptFor(5 * 60000, async () => guard.catalogOf((await Promise.all(localSeats().map((u) => seatJson(`${u}/games`).catch(() => null)))).filter(Boolean),
+  { decode: decodeManifest, idOf: gameIdOf }));
+// THE SEATS' CHAINS (GET /headers): this runner's seats and the census's others, DUTY_CHECK_SEATS (16) at most, read again every 15 min
+const seatChains = keptFor(15 * 60000, async () => ({ local: ports.length, sets: await Promise.all(round.dutyChain.seatUrls().slice(0, Number(env.DUTY_CHECK_SEATS || 16)).map(async (u) => {
+  try { const r = await fetch(`${u}/headers`, { signal: AbortSignal.timeout(30000) }); return r.ok ? guard.headerHashes(new Uint8Array(await r.arrayBuffer()), blockHashOf) : null; } catch { return null; }
+})) }));
+// A MAJORITY OF ALL THE SEATS ASKED - and of the OTHER machines' seats when three or more of them answer: this runner's own seven read the
+// same bitcoind it does, so on a branch of its own they agree with it whatever the rest of the network follows (10-26, 157625)
+const agreementOf = (hash, c) => {
+  const all = guard.chainAgreement({ hash, answers: c.sets });
+  const others = guard.chainAgreement({ hash, answers: c.sets.slice(c.local) });
+  return all.ok && !others.ok && others.of >= 3 ? { ...others, why: `${others.why} (the other machines' seats)` } : all;
+};
+const censusAgreed = async (hash) => {
+  let got = agreementOf(hash, await seatChains());
+  if (!got.ok) got = agreementOf(hash, await seatChains(true));   // asked again once: the seats move
+  return got;
+};
+const donationSetAt = (height) => {
+  const keys = donationKeysForNetworkId(round.contract.networkId);
+  const forced = donationSetInForce({ networkId: round.contract.networkId, authority: keys.authority, recovery: keys.recovery,
+    sets: [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS],
+    rotations: [], height, verify: (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } } });
+  if (!forced.ok) throw new Error(`no donation set in force at census height ${height}: ${forced.why}`);
+  return idOfDonationSet(forced.recipients);
+};
+/** The newest drawable version of `game` in the census at `censusHeight` - its round fields - or the pin / built-in, said loudly. */
+async function newestFields(game, { censusHeight, slot }) {
+  let cat = null, entries = null, why = '';
+  try { cat = await seatCatalog(); } catch { cat = null; }
+  try { entries = round.dutyChain.censusEntriesAt(censusHeight); } catch (e) { why = e.message; }
+  const contract = { ...round.contract, censusHeight };
+  const picked = cat && cat.size && entries
+    ? guard.pickNewestVersion({ name: guard.DUTY_APP_NAMES[game], dev: DEV_OF[game], catalog: cat, protocol: PROTOCOL, hosts: (id) => guard.hostsOf(entries, contract, fromHex(id)) })
+    : { ok: false, tried: [], why: !cat || !cat.size ? 'no seat answered GET /games' : why };
+  const pin = pinnedFor(game, slot);
+  const v = guard.pinVerdict({ pinId: pin && pin.gameId ? toHex(pin.gameId) : null, picked, catalog: cat });
+  if (v.loud) say({ dutyVersion: v.use === 'pick' ? 'PIN REFUSED' : v.use === 'pin' ? 'PIN USED, NEWEST UNKNOWN' : 'BUILT-IN USED, NEWEST UNKNOWN', game, why: v.why, tried: picked.tried });
+  if (v.use === 'pick') {
+    const f = guard.dutyFieldsOf(game, picked.pick, { core: game === 'nextblock' ? env.DUTY_NEXTBLOCK_CORE : env.DUTY_RPS_CORE,
+      preferCore: pin && pin.fields.simCoreHash ? toHex(pin.fields.simCoreHash) : '',
+      base: { blockTicks: RPS_FIELDS_V1.blockTicks, startDeadlineTicks: RPS_FIELDS_V1.startDeadlineTicks }, fromHex });
+    if (!f.ok) return { ok: false, why: f.why };
+    return { ok: true, fields: f.fields, periodMs: f.periodMs, marketTerms: f.marketTerms, version: picked.pick.version, id: picked.pick.id, hosts: `${picked.have}/${picked.need}` };
+  }
+  const use = v.use === 'pin' ? pin : builtinFor(game);
+  const id = use.gameId ? toHex(use.gameId) : null;
+  return { ok: true, fields: use.fields, periodMs: use.periodMs, marketTerms: use.marketTerms, version: id && cat && cat.get(id) ? cat.get(id).version : null, id, fallback: true };
+}
+/**
+ * WHAT A GRID OF `game` IS BUILT ON NOW: the census ARENA_CENSUS_DEPTH below the tip, its block hash, the newest version's fields, the
+ * donation set in force there - refused (ok false, why) when the seats do not follow that block's chain or no version is drawable.
+ */
+async function gridBase(game, slot = Math.floor(Date.now() / 86400000)) {
+  const tip = Number(await chainCall('getblockcount', []));
+  const censusHeight = tip - CENSUS_DEPTH;
+  await round.dutyChain.viewFor(censusHeight);
+  const censusHash = String(await chainCall('getblockhash', [censusHeight]));
+  const agreed = await censusAgreed(censusHash);
+  if (!agreed.ok) return { ok: false, why: `census ${censusHeight} (${censusHash.slice(0, 16)}): ${agreed.why}` };
+  const v = await newestFields(game, { censusHeight, slot });
+  if (!v.ok) return v;
+  say({ dutyVersion: v.fallback ? 'fallback' : 'newest', game, version: v.version, gameId: v.id ? v.id.slice(0, 16) : null, hosts: v.hosts, censusHeight, seatsOnChain: `${agreed.agree}/${agreed.of}` });
+  return { ...v, censusHeight, censusHash, seatsOnChain: `${agreed.agree}/${agreed.of}`, donationSetId: donationSetAt(censusHeight) };
+}
 // THE DUTY TO POST THE NEXT 24 H (2026-10-13 ~18:35Z; arena-protocol/src/duty.js, spec §5A.5): PAID_DUTY=1 runs ONE
 // plan item - DUTY_APP (rps | updown) in DUTY_FEDERATION (federation id hex), named DUTY_ITEM - on every machine of the network. Every
 // 30 s it reads the chain: the slot's anchor, the census there, the duty order; when the node on duty for the current slot is one this
@@ -339,38 +442,41 @@ if (env.PAID_DUTY === '1') {
 // federation - RPS 2 tables of 8 s rounds each, Up/Down its 96 x 15 min, Tick Tock 960 x 90 s - plus the day's marker, at DUTY_FEE_RATE
 // (default 0.1 sat/vB, the network's relay floor). Committee time: the day's start less 6 h. The series lines are kept and posted to
 // every seat once the publication confirms (asked again each minute until every seat holds them).
+// HARDENED (kanban #689, 2026-10-26: "Make sure that we always post rounds properly for the next day"): the committee 12 h before the day,
+// the post no later than rank DUTY_DAY_RANK_CAP, the newest version on the census of the moment the seats follow (gridBase); every look
+// judges today's and tomorrow's postings (publication below the beacon, beacon 6 deep, committee drawn on the seats), says a status line
+// per day, re-posts no dead posting, and posts an emergency grid of what is left of a day that is dead or not drawable 4 h before it starts.
 if (env.PAID_DUTY_DAILY === '1') {
-  const { daySlotOf, dayStartMs, targetDay, anchorHeight, dutyOrder, dutyMarkerOutput, dutyMarkersOf, itemTag, dayPostDue, DUTY_DAY_MS, DUTY_COMMITTEE_LEAD_MS }
+  const { daySlotOf, targetDay, anchorHeight, dutyOrder, dutyMarkerOutput, dutyMarkersOf, itemTag, DUTY_DAY_MS, DUTY_COMMITTEE_LEAD_MS }
     = await import('../../arena-protocol/src/duty.js');
   const { medianTimePast } = await import('../../arena-protocol/src/beacon.js');
   const { parseTransaction } = await import('../../arena-protocol/src/tx.js');
-  const game = env.DUTY_APP;
+  const { beaconBlockIn } = await import('../src/publication-wait.js');
+  // DUTY_APP, OR THE NAME THE LIVE ENV FILES STILL CARRY (main 20dab1a renamed DUTY_GAME; the the test host's updown/rps env files name only DUTY_GAME)
+  const game = env.DUTY_APP || env.DUTY_GAME;
   const feds = String(env.DUTY_FEDERATIONS || toHex(round.contract.federationId)).split(',').map((x) => x.trim().toLowerCase()).filter((x) => /^[0-9a-f]{64}$/.test(x));
   if (!['rps', 'updown', 'nextblock'].includes(game) || !feds.length) throw new Error('PAID_DUTY_DAILY=1 needs DUTY_APP rps|updown|nextblock and DUTY_FEDERATIONS');
   const item = env.DUTY_ITEM || `${game}-day`;
   const tag = toHex(itemTag(item));
+  // AN EMERGENCY GRID CARRIES ITS OWN MARKER (kanban #689): every machine sees one is on its way, and none is mistaken for the day's posting
+  const emergencyItem = `${item}-emergency`, emergencyTag = toHex(itemTag(emergencyItem));
   const local = new Set((env.DUTY_LOCAL_KEYS ? env.DUTY_LOCAL_KEYS.split(',') : round.daemons.map((d) => toHex(d.round.pubkey))).map((k) => k.trim().toLowerCase()));
   const feeRate = Number(env.DUTY_FEE_RATE || 0.1), maxFeeRate = Number(env.DUTY_MAX_FEE_RATE || 1);
   const dry = env.DUTY_DRY === '1';
   const fromDay = Number(env.DUTY_FROM_DAY || 0);              // the first day this duty posts for (days before it are covered)
   const dir = join(home, 'paid', 'duty-day'); mkdirSync(dir, { recursive: true });
   const fileOf = (slot) => join(dir, `${item}-${slot}.json`);
-  const UPDOWN_BASE = Number(env.ARENA_PROTOCOL_VERSION || 1) >= 2 ? UPDOWN_V2 : UPDOWN_TN4;
-  // THE CHOSEN VERSION FROM A NAMED DAY ON: DUTY_UPDOWN_FROM_SLOT - the first day slot posted as DUTY_UPDOWN_PLUGIN; a day
-  // before it keeps the version its seats' census advertisements name (an Up/Down game no census entry hosts has no committee)
-  const UPDOWN_FROM_SLOT = Number(env.DUTY_UPDOWN_FROM_SLOT || 0);
-  const RPS_FROM_SLOT = Number(env.DUTY_RPS_FROM_SLOT || 0);   // the first day slot posted as DUTY_RPS_PLUGIN (kanban #523)
+  // THE DAY'S TIMELINE (kanban #689 d; src/duty-guard.js): the committee DUTY_DAY_COMMITTEE_LEAD_MS (12 h) before the day, the post from at most
+  // rank DUTY_DAY_RANK_CAP (2) of the duty order, drawable on the seats DUTY_DRAWABLE_BY_MS (4 h) before the day or an emergency grid;
+  // DUTY_EMERGENCY=0 turns emergency grids off (said, never posted)
+  const committeeLeadMs = Number(env.DUTY_DAY_COMMITTEE_LEAD_MS || guard.DUTY_DAY_COMMITTEE_LEAD_MS);
+  const rankCap = Number(env.DUTY_DAY_RANK_CAP ?? guard.DUTY_DAY_RANK_CAP);
+  const drawableByMs = Number(env.DUTY_DRAWABLE_BY_MS || guard.DUTY_DRAWABLE_BY_MS);
+  const emergencyOn = env.DUTY_EMERGENCY !== '0';
+  say({ dutyDay: 'timeline', item, committeeLeadH: committeeLeadMs / 3600000, rankCap, drawableByH: drawableByMs / 3600000, emergency: emergencyOn,
+    next: (() => { const t = guard.dayTimeline(daySlotOf(Date.now()), { committeeLeadMs, cap: rankCap, drawableByMs }); return Object.fromEntries(Object.entries(t).map(([k, v]) => [k, k === 'slot' ? v : new Date(v).toISOString()])); })() });
   const censusAt = new Map();
   let busy = false, lastSaid = '';
-  const donationSet = () => {
-    const keys = donationKeysForNetworkId(round.contract.networkId);
-    const forced = donationSetInForce({ networkId: round.contract.networkId, authority: keys.authority, recovery: keys.recovery,
-      sets: [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS],
-      rotations: [], height: round.contract.censusHeight,
-      verify: (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } } });
-    if (!forced.ok) throw new Error(`no donation set in force at census height ${round.contract.censusHeight}: ${forced.why}`);
-    return idOfDonationSet(forced.recipients);
-  };
   // A DRAINING FEDERATION'S DAYS GO TO ITS SUCCESSOR (kanban #502/#549, 2026-10-20: "it may not be a manual step"): before each
   // posting the seats' signed records are read (GET /federations, the first seat that answers); a federation named here whose record is
   // DRAINING (or CRITICAL while draining) and names an OPEN successor is posted as that successor - no round names a draining one
@@ -398,78 +504,212 @@ if (env.PAID_DUTY_DAILY === '1') {
     }
     return feds;
   };
-  const post = async (slot) => {
+  // THE POSTINGS KEPT FOR A DAY SLOT: the day's own (<item>-<slot>.json) and its emergency grids (<item>-<slot>-e<n>.json)
+  const keptOf = (slot) => readdirSync(dir).filter((f) => f === `${item}-${slot}.json` || new RegExp(`^${item}-${slot}-e\\d+\\.json$`).test(f)).sort()
+    .map((f) => { try { return { file: join(dir, f), ...JSON.parse(readFileSync(join(dir, f), 'utf8')) }; } catch { return null; } }).filter(Boolean);
+  const keep = (k) => { const { file, ...rest } = k; writeFileSync(file, JSON.stringify(rest) + '\n'); };
+  /**
+   * ONE GRID FOR THE DAY SLOT `slot` POSTS: the whole next day at the day's timeline - or, `plan` given, an emergency grid of the rest of it.
+   * Built on the census of now and the newest version (gridBase), published only if the seats follow that census's chain and it can draw
+   * a committee (openGrid mustDraw); kept with what the checks after it need (its census block, committee time, game and version).
+   */
+  const publish = async (slot, emergency = null) => {
     const postFeds = await fedsNow();
-    const UPDOWN = UPDOWN_NEXT && slot >= Number(env.DUTY_UPDOWN_NEXT_FROM_SLOT || 0) ? UPDOWN_NEXT
-      : UPDOWN_CHOSEN && slot >= UPDOWN_FROM_SLOT ? UPDOWN_CHOSEN : UPDOWN_BASE;
-    const rpsFields = RPS_CHOSEN_FIELDS && slot >= RPS_FROM_SLOT ? RPS_CHOSEN_FIELDS : RPS_ROUND_FIELDS;
     const { startMs, endMs } = targetDay(slot);
-    const committee = BigInt(startMs - DUTY_COMMITTEE_LEAD_MS);
-    const ds = donationSet();
-    const common = { feeRate, maxFeeRate, committeeTimeMs: committee, extraOutputs: [dutyMarkerOutput(slot, item)], waitBeacon: false };
-    const per = (extra) => postFeds.map((f) => ({ donationSetId: ds, federationId: fromHex(f), ...extra }));
-    // DUTY_NEXTBLOCK_V3=1: Tick Tock's version 3 - the game that sells the larger truck - on its core f0cc7b7b; its rounds
-    // need protocol 10 (ARENA_PROTOCOL_VERSION=10) and seats whose census advertisements name its game id
-    const NB_FIELDS = (NB_NEXT_FIELDS && slot >= Number(env.DUTY_NEXTBLOCK_FROM_SLOT || 0) ? NB_NEXT_FIELDS : NB_PLUGIN_FIELDS)
-      || (env.DUTY_NEXTBLOCK_V3 === '1' ? { gameId: NEXTBLOCK_V3.gameId, simCoreHash: fromHex(TRUCK_F0CC_HASH) } : {});
-    const got = game === 'nextblock'
-      ? await round.openGrid({ ...CREATOR, fields: NB_FIELDS, tableFields: per({}), stakeMsat },
-        { ...common, slots: (endMs - startMs) / 90000, windowMs: 90000n, entryAfterStartMs: 45000n, firstCloseMs: BigInt(startMs + 45000) })
-      : game === 'rps'
-      ? await round.openGrid({ ...CREATOR, fields: { ...rpsFields }, tableFields: [...per({}), ...per({})], stakeMsat },
-        { ...common, slots: (endMs - startMs) / 8000, windowMs: 8000n, entryAfterStartMs: 80000n, firstCloseMs: BigInt(startMs + 80000) })
-      : await round.openGrid({ ...CREATOR, fields: { gameId: UPDOWN.gameId, simCoreHash: new Uint8Array(32), configHash: new Uint8Array(32), minScore: 0 },
-        tableFields: per({}), stakeMsat,
-        stakeExpiryFor: (t) => { const n = marketExpiryBlocks(t, UPDOWN.manifest.marketTerms); if (!n.ok) throw new Error(n.why); return n.blocks; } },
-        { ...common, slots: (endMs - startMs) / Number(UPDOWN.manifest.roundPeriodMs), windowMs: BigInt(UPDOWN.manifest.roundPeriodMs), entryAfterStartMs: 0n,
-          firstCloseMs: BigInt(startMs) });
-    if (got.dry) { say({ dutyDay: 'grid dry', item, slot, accepted: got.accepted, reject: got.reject, rounds: got.rounds, bytes: got.bytes, feeSat: got.feeSat,
-      series: got.series.length, firstStart: got.firstStart, lastClose: got.lastClose, committeeTime: got.committeeTime }); return; }
+    const base = await gridBase(game, slot);
+    if (!base.ok) throw new Error(`nothing published: ${base.why}`);
+    const shape = guard.dayShape(game, base.periodMs);
+    // AN EMERGENCY GRID'S TIMES from the tip's median now (duty-guard.js emergencyPlan), the day's own from its timeline
+    const plan = emergency ? guard.emergencyPlan({ nowMs: Date.now(), mtpMs: emergency.mtpMs, day: { startMs, endMs }, shape, committeeLeadMs: emergency.committeeLeadMs, seedWaitMs: emergency.seedWaitMs }) : null;
+    if (plan && !plan.ok) throw new Error(`no emergency grid: ${plan.why}`);
+    const times = plan || { committeeMs: startMs - committeeLeadMs, firstStartMs: startMs, slots: (endMs - startMs) / shape.periodMs };
+    const marker = dutyMarkerOutput(slot, plan ? emergencyItem : item);
+    const per = (extra) => postFeds.map((f) => ({ donationSetId: base.donationSetId, federationId: fromHex(f), ...extra }));
+    const kind = { ...CREATOR, fields: { ...base.fields, censusHeight: base.censusHeight }, tableFields: game === 'rps' ? [...per({}), ...per({})] : per({}), stakeMsat, mustDraw: true,
+      ...(game === 'updown' ? { stakeExpiryFor: (t) => { const n = marketExpiryBlocks(t, base.marketTerms); if (!n.ok) throw new Error(n.why); return n.blocks; } } : {}) };
+    const got = await round.openGrid(kind, { feeRate, maxFeeRate, committeeTimeMs: BigInt(times.committeeMs), extraOutputs: [marker], waitBeacon: false,
+      slots: times.slots, windowMs: BigInt(shape.periodMs), entryAfterStartMs: BigInt(shape.entryAfterStartMs), firstCloseMs: BigInt(times.firstStartMs + shape.entryAfterStartMs) });
+    if (got.dry) { say({ dutyDay: 'grid dry', item, slot, emergency: !!plan, version: base.version, accepted: got.accepted, reject: got.reject, rounds: got.rounds, bytes: got.bytes, feeSat: got.feeSat,
+      series: got.series.length, firstStart: got.firstStart, lastClose: got.lastClose, committeeTime: got.committeeTime }); return null; }
     if (!got.ok) throw new Error(got.why || 'the grid was not published');
-    writeFileSync(fileOf(slot), JSON.stringify({ item, slot, target: new Date(startMs).toISOString(), txid: got.txid, series: got.series, lines: got.lines, posted: null }) + '\n');
-    say({ dutyDay: 'published', item, slot, target: new Date(startMs).toISOString(), txid: got.txid, series: got.series.map((x) => x.slice(0, 16)), rounds: got.rounds });
+    const n = plan ? keptOf(slot).filter((k) => k.emergency).length + 1 : 0;
+    const k = { file: plan ? join(dir, `${item}-${slot}-e${n}.json`) : fileOf(slot), item, slot, target: new Date(startMs).toISOString(), txid: got.txid, series: got.series, lines: got.lines,
+      posted: null, emergency: !!plan, committeeMs: times.committeeMs, firstStartMs: times.firstStartMs, censusHeight: base.censusHeight, censusHash: base.censusHash,
+      gameId: base.id, version: base.version, publishedAtMs: Date.now() };
+    keep(k);
+    say({ dutyDay: plan ? 'EMERGENCY PUBLISHED' : 'published', item, slot, target: k.target, txid: got.txid, series: got.series.map((x) => x.slice(0, 16)), rounds: got.rounds,
+      version: base.version, gameId: String(base.id || '').slice(0, 16), censusHeight: base.censusHeight, committeeTime: new Date(times.committeeMs).toISOString(), firstStart: new Date(times.firstStartMs).toISOString() });
+    return k;
   };
-  // THE SERIES TO THE SEATS once the publication confirms: every kept day of this item whose lines not every seat holds yet
-  const postKept = async (view) => {
-    const inChain = new Set();
-    for (const b of view.blocks.slice(-200)) for (const raw of b.transactions || []) { try { inChain.add(toHex(Uint8Array.from(parseTransaction(raw).txid).reverse())); } catch { /* not one */ } }   // display order, as sendrawtransaction names it
+  // THE BLOCKS OF THE LAST 300: which transactions are in which block, and the day markers in them - read once a look
+  const chainIndex = (view) => {
+    const tip = view.firstHeight + view.blocks.length - 1;
+    const at = new Map(), markers = [];
+    const from = Math.max(0, view.blocks.length - 300);
+    for (let i = from; i < view.blocks.length; i++) for (const raw of view.blocks[i].transactions || []) {
+      let txid = null;
+      try { txid = toHex(Uint8Array.from(parseTransaction(raw).txid).reverse()); at.set(txid, view.firstHeight + i); } catch { /* not one */ }   // display order, as sendrawtransaction names it
+      for (const m of dutyMarkersOf(raw)) markers.push({ ...m, height: view.firstHeight + i, txid });
+    }
+    return { tip, at, markers };
+  };
+  // AND THE MEMPOOL'S MARKERS - one transaction gone between the list and the read no longer hides the others (10-26 01:37Z: every runner
+  // published its day a second time, 35 min after the first). Each transaction is read once while it stays in the mempool.
+  const poolSeen = new Map();
+  const mempoolMarkers = async () => {
+    let txids = [];
+    try { txids = await chainCall('getrawmempool', []); } catch { return [...poolSeen.values()].flat(); }
+    const now = new Set(txids);
+    for (const t of [...poolSeen.keys()]) if (!now.has(t)) poolSeen.delete(t);
+    for (const txid of txids) {
+      if (poolSeen.has(txid)) continue;
+      try { poolSeen.set(txid, dutyMarkersOf(fromHex(await chainCall('getrawtransaction', [txid]))).map((m) => ({ ...m, height: null, txid }))); } catch { /* gone meanwhile */ }
+    }
+    return [...poolSeen.values()].flat();
+  };
+  // THE SERIES TO THE SEATS once the publication confirms: every kept day whose lines not every seat holds yet - NOT one that is dead, NOT
+  // past its day's end, and NOT more often than every DUTY_REPOST_EVERY_MS (10-26: three dead days were re-posted to 52 seats every ~3.5 min)
+  const postKept = async (idx) => {
+    const nowMs = Date.now();
     for (const f of readdirSync(dir).filter((x) => x.startsWith(`${item}-`) && x.endsWith('.json'))) {
-      let k; try { k = JSON.parse(readFileSync(join(dir, f), 'utf8')); } catch { continue; }
+      let k; try { k = { file: join(dir, f), ...JSON.parse(readFileSync(join(dir, f), 'utf8')) }; } catch { continue; }
       if (k.posted && k.posted.every((p) => p.took === p.of)) continue;
-      if (!inChain.has(k.txid)) continue;                     // posted to the seats once the publication is in the chain
+      if (!idx.at.has(k.txid)) continue;                     // posted to the seats once the publication is in the chain
+      if (k.verdict && k.verdict.state === 'dead') continue;
+      if (Date.parse(k.target) + DUTY_DAY_MS <= nowMs) continue;
+      if (k.postedAtMs && nowMs - k.postedAtMs < guard.DUTY_REPOST_EVERY_MS) continue;
       const posted = [];
       for (const line of k.lines) posted.push(await round.postSeries(line));
       k.posted = posted.map((p) => ({ took: p.took, of: p.of }));
-      writeFileSync(join(dir, f), JSON.stringify(k) + '\n');
-      say({ dutyDay: 'posted', item, slot: k.slot, seats: posted.map((p) => `${p.took}/${p.of}`), refused: posted.flatMap((p) => p.refused).slice(0, 3) });
+      k.postedAtMs = nowMs;
+      keep(k);
+      say({ dutyDay: 'posted', item, slot: k.slot, emergency: !!k.emergency, seats: posted.map((p) => `${p.took}/${p.of}`), refused: posted.flatMap((p) => p.refused).slice(0, 3) });
     }
+  };
+  // THE SEATS' ROUNDS (GET /rounds?next=1&ahead=50h): this runner's seats and the census's others, 12 at most, read again every 10 min
+  const seatRounds = keptFor(10 * 60000, async () => Promise.all(round.dutyChain.seatUrls().slice(0, Number(env.DUTY_DRAW_SEATS || 12))
+    .map((u) => seatJson(`${u}/rounds?next=1&ahead=50h`, 60000).catch(() => null))));
+  // THE APP'S VERSIONS AS THE SEATS LIST THEM, and the best drawn of them in [fromMs, toMs) - any posting's, this machine's or not
+  const familyIds = async () => new Set([...((await seatCatalog().catch(() => null)) || new Map()).values()]
+    .filter((g) => g.name === guard.DUTY_APP_NAMES[game] && g.dev === DEV_OF[game]).map((g) => g.id));
+  const familyDraw = async (fromMs, toMs) => {
+    let best = { drawn: 0, undrawn: 0, of: 0, why: '' };
+    for (const id of await familyIds()) { const d = guard.drawCount(await seatRounds(), { gameId: id, fromMs, toMs }); if (d.drawn > best.drawn || (!best.of && d.of)) best = d; }
+    return best;
+  };
+  /** One kept posting judged (src/duty-guard.js postingVerdict), its fee raised once if it is still unconfirmed close to its committee time. */
+  const judge = async (k, view, idx, mtpMs) => {
+    const day = targetDay(k.slot), nowMs = Date.now();
+    const committeeMs = Number(k.committeeMs ?? (day.startMs - DUTY_COMMITTEE_LEAD_MS));
+    let censusOnChain = true;
+    if (k.censusHash && Number.isInteger(k.censusHeight)) { try { censusOnChain = String(await chainCall('getblockhash', [k.censusHeight])) === k.censusHash; } catch { censusOnChain = true; } }
+    const seatsAgree = k.censusHash ? agreementOf(k.censusHash, await seatChains()) : null;
+    const pubHeight = idx.at.has(k.txid) ? idx.at.get(k.txid) : null;
+    const cut = { firstHeight: Math.max(view.firstHeight, idx.tip - 299), blocks: view.blocks.slice(-300) };
+    const beaconAt = beaconBlockIn({ committeeTimeMs: BigInt(committeeMs) }, cut);
+    const deep = beaconAt !== null && pubHeight !== null && pubHeight < beaconAt && idx.tip - beaconAt + 1 >= guard.DUTY_BEACON_DEPTH;
+    // A POSTING KEPT BEFORE #689 NAMES NO GAME: the best of the app's versions on the seats
+    const draw = !deep ? null : k.gameId ? guard.drawCount(await seatRounds(), { gameId: k.gameId, fromMs: Number(k.firstStartMs ?? day.startMs), toMs: day.endMs })
+      : await familyDraw(day.startMs, day.endMs);
+    const v = guard.postingVerdict({ censusOnChain, seatsAgree, pubHeight, beaconAt, tip: idx.tip, draw, postedAtMs: k.postedAtMs ?? null, nowMs });
+    // STILL UNCONFIRMED DUTY_BUMP_WITHIN_MS (3 h) BEFORE ITS COMMITTEE TIME (10-25 #633: confirmed after its beacon): its fee raised to
+    // DUTY_MAX_FEE_RATE, once - the publication is replaceable (fund-at-rate.js)
+    let changed = !k.verdict || k.verdict.state !== v.state || k.verdict.stage !== v.stage;
+    if (v.stage === 'unconfirmed' && !k.bumped && mtpMs >= committeeMs - guard.DUTY_BUMP_WITHIN_MS && !dry) {
+      try { const b = await rpc('bumpfee', [k.txid, { fee_rate: maxFeeRate }]); say({ dutyDay: 'fee raised', item, slot: k.slot, from: k.txid.slice(0, 16), to: String(b.txid).slice(0, 16), feeRate: maxFeeRate }); k.txid = b.txid; }
+      catch (e) { say({ dutyDay: 'fee not raised', item, slot: k.slot, txid: k.txid.slice(0, 16), why: e.message }); }
+      k.bumped = true; changed = true;
+    }
+    k.verdict = v;
+    if (changed) keep(k);
+    return v;
+  };
+  // THE DAY'S STATE AND ITS EMERGENCY GRID (kanban #689 c, e): for today's day and tomorrow's, every look - a status line in the journal when
+  // it changes (and every 30 min), the status file the operator's tools/duty-status.mjs reads, and an emergency grid of what is left of a day
+  // that is dead or not drawable in time. Machines stagger: this one waits its capped duty rank x 20 min after the grid fell due.
+  const saidStatus = new Map(), dueSince = new Map();
+  const watch = async (view, idx, mempool, rank) => {
+    const nowMs = Date.now();
+    const headers = view.blocks.map((b) => b.header);
+    const mtpMs = (medianTimePast(headers, view.firstHeight, idx.tip) || 0) * 1000;
+    const status = {};
+    for (const slot of [daySlotOf(nowMs) - 1, daySlotOf(nowMs)]) {
+      const day = targetDay(slot);
+      const ks = keptOf(slot);
+      const verdicts = [];
+      for (const k of ks) { try { verdicts.push(k.verdict = await judge(k, view, idx, mtpMs)); } catch (e) { verdicts.push(k.verdict = { state: 'pending', stage: 'unread', why: e.message }); } }
+      // WHAT THE SEATS DRAW OF THE APP IN WHAT IS LEFT OF THE DAY, whoever posted it - another machine's day, a grid posted by hand: drawn
+      // on a majority of the seats asked, the day is drawable whatever this machine's own postings say
+      const seen = await familyDraw(Math.max(day.startMs, nowMs), day.endMs);
+      if (seen.of && seen.drawn * 2 > seen.of) verdicts.push({ state: 'drawable', stage: 'drawn', why: `rounds of it drawn on ${seen.drawn} of ${seen.of} seats` });
+      // AND ANOTHER MACHINE'S POSTING OF IT (its marker, no kept file here): pending until the seats draw it
+      const foreign = [...idx.markers, ...mempool].filter((m) => m.slot === slot && (m.tag === tag || m.tag === emergencyTag) && !ks.some((k) => k.txid === m.txid));
+      if (foreign.some((m) => m.tag === tag)) verdicts.push({ state: 'pending', stage: 'foreign', why: `posted by another machine; drawn on ${seen.drawn} of ${seen.of} seats` });
+      const verdict = guard.dayVerdict(verdicts);
+      const emergencies = ks.filter((k) => k.emergency).length + foreign.filter((m) => m.tag === emergencyTag).length;
+      const inFlight = ks.some((k) => k.emergency && k.verdict && k.verdict.state === 'pending')
+        || foreign.some((m) => m.tag === emergencyTag && (m.height === null || idx.tip - m.height < 15));
+      const postedAny = ks.length > 0 || foreign.length > 0;
+      const pending = ks.filter((k) => k.verdict && k.verdict.state === 'pending').map((k) => Number(k.committeeMs ?? (day.startMs - DUTY_COMMITTEE_LEAD_MS)));
+      const due = guard.emergencyDue({ nowMs, day, verdict, emergencies, inFlight, postedAny, dutyOverMs: guard.dayTimeline(slot, { committeeLeadMs, cap: rankCap }).postByMs + 3600000, drawableByMs,
+        pendingCommitteeMs: pending.length ? Math.max(...pending) : foreign.some((m) => m.tag === tag) ? day.startMs - DUTY_COMMITTEE_LEAD_MS : null });
+      let emergency = null;
+      if (due.due) {
+        if (!dueSince.has(slot)) dueSince.set(slot, nowMs);
+        const waitMs = Math.min(Math.max(rank, 0), rankCap) * 20 * 60000;
+        const how = { mtpMs, committeeLeadMs: Number(env.DUTY_EMERGENCY_COMMITTEE_LEAD_MS || guard.DUTY_EMERGENCY_COMMITTEE_LEAD_MS), seedWaitMs: Number(env.DUTY_SEED_WAIT_MS || guard.DUTY_SEED_WAIT_MS) };
+        // what the grid would be (an Up/Down day's period is 15 min in every version; publish() works it out again from the version it posts)
+        const plan = guard.emergencyPlan({ nowMs, day, shape: guard.dayShape(game, 900000), ...how });
+        emergency = { why: due.why, plan: plan.ok ? { committee: new Date(plan.committeeMs).toISOString(), firstStart: new Date(plan.firstStartMs).toISOString(), slots: plan.slots, lostMin: Math.round(plan.lostMs / 60000) } : plan.why };
+        if (!emergencyOn) emergency.off = 'DUTY_EMERGENCY=0: not posted';
+        else if (nowMs - dueSince.get(slot) < waitMs) emergency.waits = `${Math.round((waitMs - (nowMs - dueSince.get(slot))) / 60000)} min (rank ${rank})`;
+        else if (plan.ok) {
+          say({ dutyDay: 'EMERGENCY DUE', item, slot, target: new Date(day.startMs).toISOString(), why: due.why, ...emergency });
+          try { const k = await publish(slot, how); if (k) emergency.posted = k.txid; dueSince.delete(slot); }
+          catch (e) { emergency.failed = e.message; say({ dutyDay: 'EMERGENCY NOT POSTED', item, slot, why: e.message }); }
+        }
+      } else dueSince.delete(slot);
+      const line = guard.statusLine({ item, day, verdict, postings: ks.map((k) => ({ ...k, verdict: k.verdict })), emergency });
+      status[line.day] = { ...line, checkedAt: new Date(nowMs).toISOString() };
+      const key = JSON.stringify(line), last = saidStatus.get(slot);
+      if (!last || last.key !== key || nowMs - last.at > 30 * 60000) { say(line); saidStatus.set(slot, { key, at: nowMs }); }
+    }
+    try { writeFileSync(join(dir, `status-${item}.json`), JSON.stringify({ item, game, at: new Date(nowMs).toISOString(), days: status }, null, 1) + '\n'); } catch { /* the journal has it */ }
   };
   const look = async () => {
     if (busy) return;
     busy = true;
     try {
       const view = await round.dutyChain.view();
-      await postKept(view);
+      const idx = chainIndex(view);
+      await postKept(idx);
+      const mempool = await mempoolMarkers();
       const headers = view.blocks.map((b) => b.header);
-      const tip = view.firstHeight + headers.length - 1;
       const mtpAt = async (h) => { const m = medianTimePast(headers, view.firstHeight, h); return m === null ? -1 : m; };
       const nowMs = Date.now(), slot = daySlotOf(nowMs);
-      if (slot + 1 < fromDay) return;
-      const anchor = await anchorHeight(slot, { mtpAt, tip, low: view.firstHeight + 11, slotMs: DUTY_DAY_MS });
-      if (anchor === null) { if (lastSaid !== `wait ${slot}`) say({ dutyDay: 'no anchor yet', item, slot }); lastSaid = `wait ${slot}`; return; }
-      if (!censusAt.has(anchor)) censusAt.set(anchor, round.dutyChain.censusKeysAt(anchor));
-      const order = dutyOrder({ networkId: round.contract.networkId, slot, nodeKeys: censusAt.get(anchor) });
-      // DUTY_DRY_RANK0=1 with ARENA_GRID_DRY=1: build today's post as if this machine were first in order - a dry run, nothing published
-      const rank = env.DUTY_DRY_RANK0 === '1' && env.ARENA_GRID_DRY === '1' ? 0 : order.findIndex((k) => local.has(toHex(k)));
-      let posted = false;
-      for (const b of view.blocks.slice(-200)) for (const raw of b.transactions || []) for (const m of dutyMarkersOf(raw)) if (m.tag === tag && m.slot === slot) posted = true;
-      if (!posted) try { for (const txid of await chainCall('getrawmempool', [])) { const hex = await chainCall('getrawtransaction', [txid]); for (const m of dutyMarkersOf(fromHex(hex))) if (m.tag === tag && m.slot === slot) posted = true; } } catch { /* the chain's say only */ }
-      const due = dayPostDue({ nowMs, slot, rank, posted });
-      const said = `${slot} ${rank} ${posted} ${due}`;
-      if (said !== lastSaid) say({ dutyDay: due ? 'due' : posted ? 'posted' : 'not due', item, slot, target: new Date(targetDay(slot).startMs).toISOString(), anchor,
-        dutyNode: toHex(order[0] || new Uint8Array(32)).slice(0, 16), rank, census: order.length, federations: feds.map((f) => f.slice(0, 8)) });
-      lastSaid = said;
-      if (due) await post(slot);
+      let rank = -1;
+      const anchor = slot + 1 < fromDay ? null : await anchorHeight(slot, { mtpAt, tip: idx.tip, low: view.firstHeight + 11, slotMs: DUTY_DAY_MS });
+      if (anchor === null) { if (lastSaid !== `wait ${slot}`) say({ dutyDay: 'no anchor yet', item, slot }); lastSaid = `wait ${slot}`; }
+      else {
+        if (!censusAt.has(anchor)) censusAt.set(anchor, round.dutyChain.censusKeysAt(anchor));
+        const order = dutyOrder({ networkId: round.contract.networkId, slot, nodeKeys: censusAt.get(anchor) });
+        // DUTY_DRY_RANK0=1 with ARENA_GRID_DRY=1: build today's post as if this machine were first in order - a dry run, nothing published
+        rank = env.DUTY_DRY_RANK0 === '1' && env.ARENA_GRID_DRY === '1' ? 0 : order.findIndex((k) => local.has(toHex(k)));
+        // POSTED: the day's marker in the chain or the mempool, or this runner's own kept posting while the wallet still holds its transaction
+        let posted = [...idx.markers, ...mempool].some((m) => m.tag === tag && m.slot === slot);
+        if (!posted) for (const k of keptOf(slot).filter((x) => !x.emergency)) {
+          try { const t = await rpc('gettransaction', [k.txid]); if (Number(t.confirmations) >= 0) posted = true; } catch { /* not the wallet's */ }
+        }
+        const due = guard.dayDueCapped({ nowMs, slot, rank, posted, cap: rankCap });
+        const said = `${slot} ${rank} ${posted} ${due}`;
+        if (said !== lastSaid) say({ dutyDay: due ? 'due' : posted ? 'posted' : 'not due', item, slot, target: new Date(targetDay(slot).startMs).toISOString(), anchor,
+          dutyNode: toHex(order[0] || new Uint8Array(32)).slice(0, 16), rank, rankCap, census: order.length, federations: feds.map((f) => f.slice(0, 8)) });
+        lastSaid = said;
+        if (due && slot + 1 >= fromDay) {
+          try { await publish(slot); } catch (e) { say({ dutyDay: 'NOT PUBLISHED', item, slot, why: e.message }); }
+        }
+      }
+      await watch(view, idx, await mempoolMarkers(), rank);
     } catch (e) { say({ dutyDay: 'look failed', item, why: e.message }); } finally { busy = false; }
   };
   look(); setInterval(look, 60000);
@@ -491,18 +731,13 @@ if (env.PAID_NB90_GRID === '1') {
   // AT MOST ONE DAY: a grid series runs at most 24 h (series.js gridIsValid) - the duty takes over where it ends
   const slots = Math.min(Math.floor((until - firstStart) / 90000), 960);
   if (slots < 1) throw new Error(`no 90 s round fits between ${new Date(firstStart).toISOString()} and ${new Date(until).toISOString()}`);
-  const keys = donationKeysForNetworkId(round.contract.networkId);
-  const forced = donationSetInForce({ networkId: round.contract.networkId, authority: keys.authority, recovery: keys.recovery,
-    sets: [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS],
-    rotations: [], height: round.contract.censusHeight,
-    verify: (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } } });
-  if (!forced.ok) throw new Error(`no donation set in force at census height ${round.contract.censusHeight}: ${forced.why}`);
-  say({ nb90: 'asked', federation: fed.slice(0, 16), game: env.NB90_V3 === '1' ? toHex(NEXTBLOCK_V3.gameId).slice(0, 16) : 'the runner\'s', committeeTime: new Date(committee).toISOString(), firstStart: new Date(firstStart).toISOString(),
+  // THE NEWEST TICK TOCK THE CENSUS CAN DRAW (kanban #689; 10-25: this path posted the built-in core a5c5766a no seat held, and NB90_V3=1
+  // an old version): the day's census and version as the duty's own (gridBase) - NB90_V3 / DUTY_NEXTBLOCK_PLUGIN a pin it refuses when older
+  const base = await gridBase('nextblock');
+  if (!base.ok) throw new Error(`PAID_NB90_GRID: nothing published: ${base.why}`);
+  say({ nb90: 'asked', federation: fed.slice(0, 16), game: String(base.id || 'the runner\'s').slice(0, 16), version: base.version, censusHeight: base.censusHeight, committeeTime: new Date(committee).toISOString(), firstStart: new Date(firstStart).toISOString(),
     until: new Date(until).toISOString(), slots });
-  // NB90_V3=1: the grid is Tick Tock's version 3 - the game that sells the larger truck - on its core f0cc7b7b, beside the
-  // duty's day of version 2 (versions run parallel); it needs ARENA_PROTOCOL_VERSION=10 and seats whose census adverts name its game id
-  const V3 = env.NB90_V3 === '1' ? { gameId: NEXTBLOCK_V3.gameId, simCoreHash: fromHex(TRUCK_F0CC_HASH) } : {};
-  const got = await round.openGrid({ ...CREATOR, fields: { ...V3, donationSetId: idOfDonationSet(forced.recipients), federationId: fromHex(fed) }, stakeMsat },
+  const got = await round.openGrid({ ...CREATOR, fields: { ...base.fields, censusHeight: base.censusHeight, donationSetId: base.donationSetId, federationId: fromHex(fed) }, stakeMsat, mustDraw: true },
     { slots, tables: 1, windowMs: 90000n, entryAfterStartMs: 45000n, firstCloseMs: BigInt(firstStart + 45000), committeeTimeMs: BigInt(committee),
       feeRate: Number(env.NB90_FEE_RATE || 1), maxFeeRate: Number(env.NB90_MAX_FEE_RATE || 4),
       onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `nb90-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ nb90: 'published', ...p }); },
@@ -531,10 +766,13 @@ if (env.PAID_RPS_GRID === '1') {
   // 8 s after it, so a restart does not lay a second grid over the running one
   let lastCloseMs = Number(env.RPS_GRID_AFTER_MS || 0), busy = false, now1 = env.RPS_GRID_NOW === '1';
   const gid = toHex(RPS_GRID_FIELDS.gameId);
+  // A PAGE'S ASK FOR ANY VERSION OF THE GAME (kanban #689): the lobby asks for the version it shows, the newest, not the built-in one
+  const rpsIds = async () => new Set([gid, ...[...((await seatCatalog().catch(() => null)) || new Map()).values()].filter((g) => g.name === guard.DUTY_APP_NAMES.rps && g.dev === DEV_OF.rps).map((g) => g.id)]);
   const look = async () => {
     if (busy) return;
     let wantAt = 0;
-    try { wantAt = (await (await fetch(`http://${NODE_HOST}:${pa}/h2h-want`, { signal: AbortSignal.timeout(5000) })).json()).wants[gid] || 0; } catch { if (!now1) return; }
+    try { const w = (await (await fetch(`http://${NODE_HOST}:${pa}/h2h-want`, { signal: AbortSignal.timeout(5000) })).json()).wants || {}; const ids = await rpsIds();
+      wantAt = Math.max(0, ...Object.entries(w).filter(([k]) => ids.has(k)).map(([, v]) => Number(v) || 0)); } catch { if (!now1) return; }
     if (now1) { wantAt = Date.now(); now1 = false; }
     // RPS_GRID_ALWAYS=1 (2026-10-13 ~21:45Z: paid rounds of all 3 games in both federations by 10:00): tables are kept
     // published ahead whether or not a page asked - since pick (c) an empty table makes no claim key and is seated once
@@ -563,15 +801,13 @@ if (env.PAID_RPS_GRID === '1') {
       // THE DONATION SET IN FORCE AT THE GRID'S CENSUS HEIGHT, as every seat checks it (server.js donationSetFor; measured
       // 17:54Z: grid 474c23f1 named the harness's older set and seat 31281 refused its first round - "at census height
       // 156098 this network's donation set in force is serial 3")
-      const keys = donationKeysForNetworkId(round.contract.networkId);
-      const forced = donationSetInForce({ networkId: round.contract.networkId, authority: keys.authority, recovery: keys.recovery,
-        sets: [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS],
-        rotations: [], height: round.contract.censusHeight,
-        verify: (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } } });
-      if (!forced.ok) throw new Error(`no donation set in force at census height ${round.contract.censusHeight}: ${forced.why}`);
-      const donationSetId = idOfDonationSet(forced.recipients);
-      say({ rpsGrid: 'asked', wantAt: new Date(wantAt).toISOString(), slots, tables, committeeTime: new Date(committee).toISOString(), firstClose: new Date(firstClose).toISOString() });
-      say({ rpsGrid: 'donation set', serial: String(forced.serial), id: toHex(donationSetId).slice(0, 16), censusHeight: round.contract.censusHeight });
+      // AND THE NEWEST VERSION ON THE CENSUS OF NOW (kanban #689: this path built the built-in version and ignored DUTY_RPS_PLUGIN - the
+      // Up/Down grid's fault of cff99fe5 again): gridBase, as every grid of this runner
+      const base = await gridBase('rps');
+      if (!base.ok) throw new Error(`nothing published: ${base.why}`);
+      const donationSetId = base.donationSetId;
+      say({ rpsGrid: 'asked', wantAt: new Date(wantAt).toISOString(), slots, tables, version: base.version, game: String(base.id || '').slice(0, 16), committeeTime: new Date(committee).toISOString(), firstClose: new Date(firstClose).toISOString() });
+      say({ rpsGrid: 'donation set', id: toHex(donationSetId).slice(0, 16), censusHeight: base.censusHeight });
       // THE FEDERATION THIS GRID NAMES (§23A.3,: "A seat opening a round names the OPEN federation with the
       // lowest load among those its own bond qualifies it to serve"): the seats' signed records (GET /federations), over the
       // federations this opener holds an invite for - its own, and ARENA_OTHER_FEDERATION_INVITES (comma-separated)
@@ -584,7 +820,7 @@ if (env.PAID_RPS_GRID === '1') {
         fedPick = openingFederation({ listed: fl.federations || [], serves, own });
       } catch { /* its own, said above */ }
       say({ rpsGrid: 'federation', ...fedPick, serves: serves.map((f) => f.slice(0, 16)) });
-      const got = await round.openGrid({ ...CREATOR, fields: { ...RPS_GRID_FIELDS, donationSetId, federationId: fromHex(fedPick.federationId) }, stakeMsat }, { slots, tables, feeRate, maxFeeRate, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee),
+      const got = await round.openGrid({ ...CREATOR, fields: { ...base.fields, censusHeight: base.censusHeight, donationSetId, federationId: fromHex(fedPick.federationId) }, stakeMsat, mustDraw: true }, { slots, tables, feeRate, maxFeeRate, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee),
         onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `rps-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ rpsGrid: 'published', ...p }); }, onPosted: (p) => say({ rpsGrid: 'posted', ...p }) });
       if (got.dry) { say({ rpsGrid: 'dry', ...got }); return; }
       say({ rpsGrid: got.ok ? 'up' : 'not up', ok: got.ok, why: got.why, txid: got.txid, publishedAt: got.publishedAt, beacon: got.beacon,
@@ -610,15 +846,12 @@ if (env.PAID_NEXTBLOCK_GRID === '1') {
       const mtp = Number((await chainCall('getblockchaininfo', [])).mediantime) * 1000;
       const committee = mtp + Number(env.NB_GRID_COMMITTEE_LEAD_MS || 4 * 3600000) + 500;
       const firstClose = Math.max(committee + 45 * 60000 + period + 1000, Date.now() + 60000, lastCloseMs + period);
-      const keys = donationKeysForNetworkId(round.contract.networkId);
-      const forced = donationSetInForce({ networkId: round.contract.networkId, authority: keys.authority, recovery: keys.recovery,
-        sets: [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS],
-        rotations: [], height: round.contract.censusHeight,
-        verify: (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } } });
-      if (!forced.ok) throw new Error(`no donation set in force at census height ${round.contract.censusHeight}: ${forced.why}`);
+      // THE NEWEST TICK TOCK ON THE CENSUS OF NOW (kanban #689), as every grid of this runner
+      const base = await gridBase('nextblock');
+      if (!base.ok) throw new Error(`nothing published: ${base.why}`);
       const own = toHex(round.contract.federationId);
-      say({ nbGrid: 'asked', slots, committeeTime: new Date(committee).toISOString(), firstClose: new Date(firstClose).toISOString(), federation: own.slice(0, 16) });
-      const got = await round.openGrid({ ...CREATOR, fields: { donationSetId: idOfDonationSet(forced.recipients), federationId: fromHex(own) }, stakeMsat },
+      say({ nbGrid: 'asked', slots, version: base.version, game: String(base.id || '').slice(0, 16), committeeTime: new Date(committee).toISOString(), firstClose: new Date(firstClose).toISOString(), federation: own.slice(0, 16) });
+      const got = await round.openGrid({ ...CREATOR, fields: { ...base.fields, censusHeight: base.censusHeight, donationSetId: base.donationSetId, federationId: fromHex(own) }, stakeMsat, mustDraw: true },
         { slots, tables: 1, windowMs: BigInt(period), entryAfterStartMs: BigInt(period), firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee), feeRate, maxFeeRate,
           onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `nb-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ nbGrid: 'published', ...p }); },
           onPosted: (p) => say({ nbGrid: 'posted', ...p }) });
@@ -637,32 +870,25 @@ if (env.PAID_NEXTBLOCK_GRID === '1') {
 // through the grid's last window (lock-expiry.js marketExpiryBlocks), and keeps the next one UPDOWN_GRID_AHEAD_MS ahead.
 if (env.PAID_UPDOWN_GRID === '1') {
   // THE VERSION A DAY OF TODAY WOULD POST (2026-10-26 08:4xZ, the owner: "We should always play the newest version not v13"): the 10-26
-  // emergency grid took DUTY_UPDOWN_PLUGIN (v13) and ignored DUTY_UPDOWN_NEXT_PLUGIN (v24 from day 20751) - today's day slot decides here too
-  const todaySlot = Math.floor(Date.now() / 86400000);
-  const UPDOWN = (UPDOWN_NEXT && todaySlot >= Number(env.DUTY_UPDOWN_NEXT_FROM_SLOT || 0) ? UPDOWN_NEXT : null)
-    || UPDOWN_CHOSEN || (Number(env.ARENA_PROTOCOL_VERSION || 1) >= 2 ? UPDOWN_V2 : UPDOWN_TN4);
-  console.log(JSON.stringify({ at: new Date().toISOString(), updownGrid: 'version', game: Buffer.from(UPDOWN.gameId).toString('hex').slice(0, 16), version: UPDOWN.manifest.version }));
-  const period = BigInt(UPDOWN.manifest.roundPeriodMs);
+  // emergency grid took DUTY_UPDOWN_PLUGIN (v13) and ignored DUTY_UPDOWN_NEXT_PLUGIN (v24 from day 20751). Since kanban #689 every grid
+  // takes the newest version its census can draw (gridBase), read again for each grid - a version released while this keeper runs is posted
   const slots = Number(env.UPDOWN_GRID_SLOTS || 96);
   const aheadMs = Number(env.UPDOWN_GRID_AHEAD_MS || 3 * 3600000);
   const feeRate = Number(env.UPDOWN_GRID_FEE_RATE || 2), maxFeeRate = Number(env.UPDOWN_GRID_MAX_FEE_RATE || 4);
-  const ZERO = new Uint8Array(32);
   let lastCloseMs = Number(env.UPDOWN_GRID_AFTER_MS || 0), busy = false;
   const keep = async () => {
     if (busy || lastCloseMs > Date.now() + aheadMs) return;
     busy = true;
     try {
+      const base = await gridBase('updown');
+      if (!base.ok) throw new Error(`nothing published: ${base.why}`);
+      const UPDOWN = { gameId: base.fields.gameId, manifest: { name: 'btc-updown-15m', version: base.version, roundPeriodMs: base.periodMs, marketTerms: base.marketTerms } };
+      const period = BigInt(base.periodMs);
       const mtp = Number((await chainCall('getblockchaininfo', [])).mediantime) * 1000;
       const committee = mtp + Number(env.UPDOWN_GRID_COMMITTEE_LEAD_MS || env.RPS_GRID_COMMITTEE_LEAD_MS || 45 * 60000) + 500;
       // the first close on the 15-minute UTC grid, at least 45 min past the committee time and right after the last grid's
       const p = Number(period);
       const firstClose = Math.ceil(Math.max(committee + 45 * 60000 + 1000, Date.now() + 60000, lastCloseMs + p) / p) * p;
-      const keys = donationKeysForNetworkId(round.contract.networkId);
-      const forced = donationSetInForce({ networkId: round.contract.networkId, authority: keys.authority, recovery: keys.recovery,
-        sets: [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS],
-        rotations: [], height: round.contract.censusHeight,
-        verify: (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } } });
-      if (!forced.ok) throw new Error(`no donation set in force at census height ${round.contract.censusHeight}: ${forced.why}`);
       const own = toHex(round.contract.federationId);
       const serves = [own, ...String(env.ARENA_OTHER_FEDERATION_INVITES || '').split(',').map((x) => x.trim()).filter(Boolean)
         .map((inv) => { try { return String(readInvite(inv).federationId); } catch { return null; } }).filter(Boolean)];
@@ -671,10 +897,10 @@ if (env.PAID_UPDOWN_GRID === '1') {
         const fl = await (await fetch(`http://${NODE_HOST}:${pa}/federations`, { signal: AbortSignal.timeout(15000) })).json();
         fedPick = openingFederation({ listed: fl.federations || [], serves, own });
       } catch { /* its own */ }
-      say({ updownGrid: 'asked', game: toHex(UPDOWN.gameId).slice(0, 16), slots, committeeTime: new Date(committee).toISOString(),
+      say({ updownGrid: 'asked', game: toHex(UPDOWN.gameId).slice(0, 16), version: base.version, censusHeight: base.censusHeight, slots, committeeTime: new Date(committee).toISOString(),
         firstClose: new Date(firstClose).toISOString(), federation: fedPick.federationId.slice(0, 16) });
-      const got = await round.openGrid({ ...CREATOR, fields: { gameId: UPDOWN.gameId, simCoreHash: ZERO, configHash: ZERO, minScore: 0,
-        donationSetId: idOfDonationSet(forced.recipients), federationId: fromHex(fedPick.federationId) }, stakeMsat,
+      const got = await round.openGrid({ ...CREATOR, fields: { ...base.fields, censusHeight: base.censusHeight,
+        donationSetId: base.donationSetId, federationId: fromHex(fedPick.federationId) }, stakeMsat, mustDraw: true,
         stakeExpiryFor: (t) => { const n = marketExpiryBlocks(t, UPDOWN.manifest.marketTerms); if (!n.ok) throw new Error(n.why); return n.blocks; } },
         { slots, tables: 1, windowMs: period, entryAfterStartMs: 0n, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee), feeRate, maxFeeRate,
           onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `updown-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ updownGrid: 'published', ...p });

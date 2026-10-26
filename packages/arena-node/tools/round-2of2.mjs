@@ -66,7 +66,7 @@ import { hash256, parseTransaction } from '../../arena-protocol/src/tx.js';
 import { advertId } from '../../arena-protocol/src/advert.js';
 import { bondTransaction, blockOf } from '../../arena-protocol/tools/bond.js';
 import { encodeRoundContract, decodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
-import { deriveCensus } from '../../arena-protocol/src/census.js';
+import { deriveCensus, meetsCensusMinimum } from '../../arena-protocol/src/census.js';
 import { bondSetFor, tweakPoint, combine } from '../src/curve.js';
 import { bondOutputKey, bondInternalKey } from '../../arena-protocol/src/bond-script.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
@@ -1260,6 +1260,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     if (Array.isArray(kind.tableFields) && kind.tableFields.length) tables = kind.tableFields.length;
     const committee = BigInt(committeeTimeMs), first = BigInt(firstCloseMs);
     if (first - BigInt(entryAfterStartMs) - committee < MIN_ENTRY_WINDOW_MS) throw new Error('the grid starts before its committee time plus the minimum entry window');
+    // A GRID OF ITS OWN CENSUS HEIGHT (kanban #689: the duty names the census of the day it posts, not the one this tool stood up at its
+    // start - 10-20 and 10-26 days named a census from before their version's adverts): the view's window moves with it
+    if (kind.fields && kind.fields.censusHeight !== undefined) censusFloorTo(Number(kind.fields.censusHeight));
     censusView = await viewToTip();
     const start = first - BigInt(entryAfterStartMs);
     const templates = [];
@@ -1287,6 +1290,13 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     const root = censusRootFor(templates[0]);
     if (toHex(censusRootFor(seriesRound(templates[tables - 1], slots - 1))) !== toHex(root)) throw new Error('the grid first and last rounds derive different census roots');
     for (const t of templates) t.censusRoot = root;
+    // A GRID NO COMMITTEE CAN SERVE IS NOT PUBLISHED (kanban #689, 2026-10-26: "Harden it" - the 10-26 Up/Down day named a census with 0
+    // game nodes hosting its version, and nobody saw it until the seats refused to draw): `kind.mustDraw` checks, before any coin is spent,
+    // that the census the root was derived from carries enough game nodes hosting each table's game, and enough settlement nodes (census.js)
+    if (kind.mustDraw) for (const t of templates) for (const role of ['game', 'settlement']) {
+      const m = meetsCensusMinimum(lastCensusEntries, decodeRoundContract(encodeRoundContract(t)), role);
+      if (!m.ok) throw new Error(`no committee can be drawn for this grid at census ${t.censusHeight}: ${m.why}`);
+    }
     // THE RULES IT IS SETTLED UNDER (§6): a v3 grid names this build's four rule hashes, the last-mark disconnect rule, a
     // claim window of 1 day and each role's floor at the round's bond_min - unless `kind.rules` is false
     for (const t of templates) if (Number(t.protocolVersion) >= 3 && kind.rules !== false && !t.rules)
@@ -1475,6 +1485,28 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       invoice: donationRecipients.invoice || (ln.given ? (o) => ln.lightning.invoice(o) : null) })
     : null;
 
+  // THE VIEW'S WINDOW FOR A CENSUS AT `height` (attached): the nodes read a census over the 2016 blocks below its height (main.js
+  // CENSUS_LOOKBACK, as at the start above), so a later census height moves the window up - the blocks below it are dropped, nothing is
+  // read again; a lower one reads its window afresh at the next viewToTip
+  function censusFloorTo(height) {
+    if (!attach || !Number.isInteger(height)) return;
+    const floor = Math.max(20, height - 2016 + 20), from = Math.max(0, floor - 20);
+    if (floor === bondFloor) return;
+    if (censusView && Array.isArray(censusView.blocks) && from > censusView.firstHeight && from < censusView.firstHeight + censusView.blocks.length)
+      censusView = { ...censusView, firstHeight: from, blocks: censusView.blocks.slice(from - censusView.firstHeight) };
+    bondFloor = floor;
+  }
+  // THE CENSUS AT A HEIGHT, derived as the seats derive it, from this tool's view
+  function censusEntriesAt(height) {
+    const byTxid = new Map();
+    for (const block of censusView.blocks) for (const raw of block.transactions || []) { try { byTxid.set(toHex(parseTransaction(raw).txid), raw); } catch { /* not one */ } }
+    const at = decodeRoundContract(encodeRoundContract({ ...contract, censusHeight: height }));
+    const c = deriveCensus(censusView, { contract: at, bond: bondSetFor(network),
+      verifyUpdate: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
+      resolve: (e) => { const raw = byTxid.get(toHex(e.txid)); return raw ? { transaction: raw } : null; } });
+    if (!c.ok) throw new Error('no census at ' + height + ': ' + c.why);
+    return c.entries;
+  }
   return {
     id, url, lobbyUrl, contract, openNext, openGrid, keepOpen,
     // A SERIES LINE TO EVERY SEAT THIS TOOL RUNS AND EVERY OTHER NODE OF THE CENSUS (as openGrid posts a grid's): the
@@ -1496,16 +1528,13 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // THE CHAIN, FOR THE DUTY KEEPER: the view to the tip, and the census's node keys at a height - derived as the seats do
     dutyChain: {
       view: async () => (censusView = await viewToTip()),
-      censusKeysAt: (height) => {
-        const byTxid = new Map();
-        for (const block of censusView.blocks) for (const raw of block.transactions || []) { try { byTxid.set(toHex(parseTransaction(raw).txid), raw); } catch { /* not one */ } }
-        const at = decodeRoundContract(encodeRoundContract({ ...contract, censusHeight: height }));
-        const c = deriveCensus(censusView, { contract: at, bond: bondSetFor(network),
-          verifyUpdate: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
-          resolve: (e) => { const raw = byTxid.get(toHex(e.txid)); return raw ? { transaction: raw } : null; } });
-        if (!c.ok) throw new Error('no census at ' + height + ': ' + c.why);
-        return c.entries.map((e) => e.pubkey);
-      },
+      censusKeysAt: (height) => censusEntriesAt(height).map((e) => e.pubkey),
+      // AND THE ENTRIES THEMSELVES (kanban #689: which versions the census's game nodes host - roles and hostedGames per entry)
+      censusEntriesAt: (height) => censusEntriesAt(height),
+      // the view's window for a census at that height, then the view to the tip
+      viewFor: async (height) => { censusFloorTo(Number(height)); return (censusView = await viewToTip()); },
+      // THE SEATS TO ASK whether they follow the chain a census was taken on: this tool's own and every other node of the last census
+      seatUrls: () => [...[a, b, ...rest].map((n) => `http://${host}:${n.port}`), ...[...otherCensusSeats()].map(([, url]) => url)],
     },
     // THE ADVERTS THIS START BONDED, one per signer node, in member order.
     adverts: bonded.map((m) => m.advert),
