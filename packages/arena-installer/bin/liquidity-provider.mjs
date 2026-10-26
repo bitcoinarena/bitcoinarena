@@ -22,6 +22,9 @@ import { lndChannels, lndFunds, lndConnect, lndOpenTo, lndCoins, lndSignWithAddr
 import { createLiquidityProvider } from '../src/liquidity-provider.js';
 import { setTagNetwork } from '../../arena-protocol/src/tag-switch.js';
 const a = process.argv.slice(2); const opt = (k, d = null) => { const i = a.indexOf(k); return i >= 0 ? a[i + 1] : d; };
+// its log level: ARENA_LOG_LEVEL, read at its start (kanban #693; log-level.js) - it names no node home, so not arena.conf's
+const { serviceLog } = await import('../../arena-node/src/log-level.js');
+serviceLog({});
 const lnddir = opt('--lnddir'), net = opt('--network', 'testnet4');
 setTagNetwork(net);   // whose BLWP/v1 -> ARENA/v1 point its claims and coin proofs follow (tag-switch.js, kanban #525)
 const cfg = { restUrl: opt('--rest'), tlsCert: join(lnddir, 'tls.cert'), macaroon: join(lnddir, `data/chain/bitcoin/${net}/admin.macaroon`) };

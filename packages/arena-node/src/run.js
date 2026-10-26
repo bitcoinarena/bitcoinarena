@@ -19,6 +19,10 @@ for (const [k, v] of Object.entries(run.env)) process.env[k] = v;
 process.env.ARENA_HOME = dirname(file);
 const other = unknownKeys(values);
 console.log(`[arena.conf] ${file}: ${Object.keys(values).length} settings, seat on port ${run.port}${other.length ? `; not listed by this release (passed on): ${other.join(', ')}` : ''}`);
+// AT log_level verbose OR debug (kanban #693): which variable each setting became - its name only, never its value
+if (['verbose', 'debug'].includes(String(values.log_level || process.env.ARENA_LOG_LEVEL || '').toLowerCase())) {
+  console.log(`[arena.conf] the seat's variables from it: ${Object.keys(run.env).sort().join(', ') || 'none'}`);
+}
 // THE APPS, before the seat loads them (kanban #575): a release carries only their pins; one missing here - a node moved to this release
 // by an older updater, which does not fetch them - is downloaded and checked now (app-fetch.js). Without them the seat does not start.
 {

@@ -20,6 +20,7 @@ import { execFileSync } from 'node:child_process';
 import { checkAsset } from './release-verify.js';
 import { updateNode } from './update.js';
 import { nodeOf } from './node-services.js';
+import { QUIET } from '../../arena-node/src/log-level.js';
 
 /** The release files' name (kanban #635, 2026-10-25: "Es muss bitcoin-arena-node heissen"); before 2026.1.8, arena-node. */
 export const ASSET_PREFIX = 'bitcoin-arena-node';
@@ -38,17 +39,25 @@ const record = (home, r) => { try { writeFileSync(join(home, 'auto-update.json')
  * auto_update is off (`arenanode update`). Answers { ok, upToDate?, skipped?, from?, to?, why? }.
  */
 export async function checkOnce({ home, latest, fetcher = fetch, platform = process.platform, arch = process.arch, apply = updateNode, force = false, log = () => {},
-  verifyAsset = checkAsset,
+  verifyAsset = checkAsset, trace: given = QUIET,
   unpack = (archive, dir) => execFileSync('tar', [archive.endsWith('.zip') ? '-xf' : '-xzf', archive, '-C', dir]) }) {
+  // EACH STEP OF THE UPDATE SAID AT --verbose (kanban #693): what is read, fetched and checked, with its time; the decisions at --debug
+  const trace = given.tag('update');
   const node = nodeOf(home);
+  trace.verbose(`this node: ${home}, release ${node.release || '(none)'} (${node.version || 'no VERSION'}), seat port ${node.port || '-'}`);
+  trace.debug(`auto_update in arena.conf: ${node.conf.values.auto_update ?? '(not set: on)'}${force ? '; this update was asked for by hand, so it runs either way' : ''}`);
   if (!force && !autoUpdateOn(node.conf.values)) return { ok: true, skipped: 'auto_update is off in arena.conf' };
   if (!node.version) return { ok: false, why: 'this node does not know the release it runs (no VERSION in its release)' };
+  let t0 = performance.now();
+  trace.verbose('reading the newest signed release (latest.json and its signature)');
   const l = await latest(node.version);
+  trace.verbose(l.latest ? `the newest release is ${l.latest.version}${l.latest.commit ? ` (${l.latest.commit.slice(0, 12)})` : ''}; this node runs ${node.version}: ${l.newer ? 'newer' : 'not newer'} (${trace.since(t0)})` : `the newest release could not be read: ${l.why} (${trace.since(t0)})`);
   if (!l.latest) return { ok: false, why: l.why || 'the newest release could not be read' };
   if (!l.newer) return { ok: true, upToDate: true, version: node.version, latest: l.latest.version };
   const v = l.latest.version;
   // the new name first; a release that still carries the old one (its update channel, for nodes before 2026.1.8) under that
   const name = [assetNameFor(v, platform, arch), assetNameFor(v, platform, arch, LEGACY_ASSET_PREFIX)].find((n) => (l.latest.assets || {})[n]) || assetNameFor(v, platform, arch);
+  trace.debug(`this system's asset: ${name} (${platform}-${arch}; ${name.startsWith(`${ASSET_PREFIX}-`) ? 'the new name' : 'the release carries only the name before 2026.1.8'}); the release names ${Object.keys(l.latest.assets || {}).length} asset(s)`);
   const want = (l.latest.assets || {})[name];
   const d = l.latest.download;
   if (!want || !d || !d.base || !d.parts || !Array.isArray(d.parts[name]) || !d.parts[name].length) return { ok: false, why: `release ${v} names no download of ${name} for this system` };
@@ -57,10 +66,14 @@ export async function checkOnce({ home, latest, fetcher = fetch, platform = proc
   mkdirSync(dir, { recursive: true });
   const file = join(dir, name);
   const get = async (piece) => {
+    const at = performance.now();
     const r = await fetcher(new URL(piece, d.base).href, { signal: AbortSignal.timeout(300000), cache: 'no-store' });
     if (r.status !== 200) throw new Error(`${piece} answered ${r.status}`);
-    return Buffer.from(await r.arrayBuffer());
+    const b = Buffer.from(await r.arrayBuffer());
+    trace.verbose(`got ${new URL(piece, d.base).href}: ${b.length} bytes in ${trace.since(at)}`);
+    return b;
   };
+  trace.debug(`the download: ${d.base}, ${d.parts[name].length} piece(s) into ${file}${existsSync(file) ? ' (a file is there from before: used when its SHA-256 is the one named)' : ''}`);
   // THE PIECES JOINED, THE WHOLE CHECKED: nothing is unpacked unless its SHA-256 is the one the signed latest.json names
   if (!existsSync(file) || createHash('sha256').update(readFileSync(file)).digest('hex') !== want) {
     const part = `${file}.download`;
@@ -68,8 +81,9 @@ export async function checkOnce({ home, latest, fetcher = fetch, platform = proc
     const hash = createHash('sha256');
     try {
       for (const piece of d.parts[name]) { const b = await get(piece); hash.update(b); appendFileSync(part, b); }
-    } catch (e) { rmSync(part, { force: true }); return { ok: false, why: `the download stopped: ${e.message}` }; }
+    } catch (e) { trace.fail('the download', e); rmSync(part, { force: true }); return { ok: false, why: `the download stopped: ${e.message}` }; }
     const got = hash.digest('hex');
+    trace.verbose(`${name}: SHA-256 ${got.slice(0, 16)}... ${got === want ? 'is' : 'is NOT'} the one the signed latest.json names`);
     if (got !== want) { rmSync(part, { force: true }); return { ok: false, why: `${name} downloaded with SHA-256 ${got.slice(0, 16)}..., not the ${want.slice(0, 16)}... the signed latest.json names: not used` }; }
     renameSync(part, file);
   }
@@ -77,10 +91,13 @@ export async function checkOnce({ home, latest, fetcher = fetch, platform = proc
   try { sums = await get(d.sums || 'SHA256SUMS'); sig = (await get(d.sig || 'SHA256SUMS.sig')).toString('utf8'); } catch (e) { return { ok: false, why: `SHA256SUMS could not be read: ${e.message}` }; }
   writeFileSync(join(dir, 'SHA256SUMS'), sums); writeFileSync(join(dir, 'SHA256SUMS.sig'), sig);
   const c = verifyAsset({ file, sums, sig });
+  trace.verbose(`SHA256SUMS and its signature against the Arena release key: ${c.ok ? 'ok' : `refused (${c.why})`}`);
   if (!c.ok) return { ok: false, why: `refused: ${c.why}` };
   const base = name.replace(/\.(tar\.gz|zip)$/, '');
   const releases = join(home, 'releases');
-  if (!existsSync(join(releases, base))) unpack(file, releases);
+  t0 = performance.now();
+  if (!existsSync(join(releases, base))) { unpack(file, releases); trace.verbose(`unpacked into ${join(releases, base)} (${trace.since(t0)})`); }
+  else trace.verbose(`${join(releases, base)} is there already: not unpacked again`);
   const newRelease = join(releases, base);
   log(`${name} checked and unpacked: updating the node ${node.version} -> ${v}`);
   // the auto update service comes with the update where the node has none yet (a node updated by `arenanode update` keeps updating itself)
@@ -89,7 +106,9 @@ export async function checkOnce({ home, latest, fetcher = fetch, platform = proc
     const file = serviceFile('updater', { home, platform, env: process.env });
     return existsSync(file) && !updaterLauncherStale(file, platform) ? { ok: true, already: true } : installUpdater({ ...o, installProgram });
   };
-  const r = await apply({ home, newRelease, port: node.port, node: join(newRelease, 'runtime', platform === 'win32' ? 'node.exe' : 'node'), installUpdaterFn });
+  t0 = performance.now();
+  const r = await apply({ home, newRelease, port: node.port, node: join(newRelease, 'runtime', platform === 'win32' ? 'node.exe' : 'node'), installUpdaterFn, trace: given });
+  trace.verbose(`the node moved: ${r.ok ? 'ok' : r.rolledBack ? 'rolled back' : 'not updated'} (${trace.since(t0)})`);
   const out = r.ok ? { ok: true, from: node.version, to: v, backup: r.backup } : { ok: false, from: node.version, to: v, why: r.why, rolledBack: !!r.rolledBack };
   record(home, out);
   return out;
@@ -100,12 +119,12 @@ export async function checkOnce({ home, latest, fetcher = fetch, platform = proc
  * starts it again from the new release. `sleep` and `exit` injectable for the tests.
  */
 export async function runAutoUpdate({ home, latest, everyMs = 6 * 3600_000, firstMs = 10 * 60_000, log = (l) => console.log(`${new Date().toISOString()} ${l}`),
-  sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), exit = (code) => process.exit(code), once = checkOnce, rounds = Infinity }) {
+  sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), exit = (code) => process.exit(code), once = checkOnce, rounds = Infinity, trace = QUIET }) {
   log(`auto update: on for ${home}; first check in ${Math.round(firstMs / 60000)} min, then every ${Math.round(everyMs / 3600000)} h`);
   await sleep(firstMs);
   for (let i = 0; i < rounds; i++) {
     let r;
-    try { r = await once({ home, latest, log }); } catch (e) { r = { ok: false, why: e.message }; }
+    try { r = await once({ home, latest, log, trace }); } catch (e) { trace.tag('update').fail('the check', e); r = { ok: false, why: e.message }; }
     log(r.upToDate ? `up to date (${r.version})` : r.skipped ? r.skipped : r.ok ? `updated ${r.from} -> ${r.to}` : `no update: ${r.why}`);
     if (r.ok && r.to) { log('ending: this service starts again from the new release'); return exit(75); }
     await sleep(everyMs);

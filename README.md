@@ -45,6 +45,8 @@ The game page is at [testnet.bitcoin-arena.io](https://testnet.bitcoin-arena.io)
    | `arenanode logs` | shows a service's log |
    | `arenanode config` | shows and changes the settings |
 
+   Add `--verbose` (or `-v`) to any of them, or to `arena-install`, to see each step as it runs; `--debug` also shows full errors, failed answers and the programs it runs. Passwords, keys and seed words are never shown. For the node's own services: `arenanode config set log_level debug`, then `arenanode restart`.
+
    Every setting is in one file, `arena.conf`. The owner page (`/dashboard/owner`, signed with your owner key) shows the same services, plus the bond, earnings and updates.
 4. **Update** in place with `arena-install --update <new release>`. It checks the release's signature, backs the node up, and rolls back by itself if the new release does not come up.
 

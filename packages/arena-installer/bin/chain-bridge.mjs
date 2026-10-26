@@ -11,6 +11,9 @@ import { createBridge } from '../src/chain-bridge.js';
 import { TESTNET4_ELECTRUM } from '../src/chain-test.js';
 
 const [port, home] = [Number(process.argv[2]), process.argv[3]];
+// its log level: ARENA_LOG_LEVEL, else arena.conf log_level, read at its start (kanban #693; log-level.js)
+const { serviceLog } = await import('../../arena-node/src/log-level.js');
+serviceLog({ home });
 const state = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
 if (!state.chain || state.chain.kind !== 'electrum') { console.error('this node is not in Electrum mode (state.json chain.kind)'); process.exit(2); }
 const bridge = createBridge({ electrum: state.chain, fallbacks: TESTNET4_ELECTRUM, home, log: (l) => console.log(l) });   // the others when it fails (kanban #639)
