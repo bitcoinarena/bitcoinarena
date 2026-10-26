@@ -85,7 +85,7 @@ export class OrderBook {
     // (V - low) / (high - low) of a sat and a SHORT share the rest (book-ledger.js bookSettlement `scalar`)
     const m = found.plugin.manifest;
     return { ok: true, contract, manifest: m, ...marketRates(m, typeof this.feesFor === 'function' ? this.feesFor(contract) : null),
-      needed: receiptsNeeded(contract.nodes.length), seats: contract.nodes.map(toHex) };
+      needed: receiptsNeeded(contract.gameVerifySlots), seats: contract.nodes.map(toHex) };
   }
 
   /** Whether that round is an order book at this seat: a market whose entries are orders. */

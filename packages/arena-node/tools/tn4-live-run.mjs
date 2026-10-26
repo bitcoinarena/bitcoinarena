@@ -110,12 +110,20 @@ try {
     const c0 = decodeRoundContract(new Uint8Array(Buffer.from(copies[0], 'hex')));
     const close = Number(seatingCloseMs(c0)) + 5000;
     if (Date.now() < close) { log({ step: 'waiting for the seating', closeAt: new Date(close).toISOString() }); await new Promise((r) => setTimeout(r, close - Date.now())); }
-    try {
-      const got = await clientSettlementSignerNodes(env.ROUND, c0, nodes, { curve: pageCurve });
-      const st = got.derived.seating || {};
-      log({ step: 'seated', signerNodes: got.signerNodes.length, agreed: got.agreed,
-        game: st.game && st.game.seated ? st.game.seated.length : null, settlement: st.settlement && st.settlement.seated ? st.settlement.seated.length : null });
-    } catch (e) { throw new Error(`preflight: the round is not seated, nothing is paid: ${e.message}`); }
+    // ASKED AGAIN EVERY 5 S FOR UP TO 60 S (kanban #675, measured 2026-10-26 06:52Z and 06:56Z: the certificate stood on the seats a few
+    // seconds after seating_close + 5 s, and one ask stopped two runs that had ~110 s left before the start)
+    let lastWhy = null;
+    for (const until = Date.now() + 60000; ;) {
+      try {
+        const got = await clientSettlementSignerNodes(env.ROUND, c0, nodes, { curve: pageCurve });
+        const st = got.derived.seating || {};
+        log({ step: 'seated', signerNodes: got.signerNodes.length, agreed: got.agreed,
+          game: st.game && st.game.seated ? st.game.seated.length : null, settlement: st.settlement && st.settlement.seated ? st.settlement.seated.length : null });
+        break;
+      } catch (e) { lastWhy = e.message; }
+      if (Date.now() >= until) throw new Error(`preflight: the round is not seated, nothing is paid: ${lastWhy}`);
+      await new Promise((r) => setTimeout(r, 5000));
+    }
   }
   if (env.DRY) { log({ step: 'dry run: nothing paid' }); process.exit(0); }
   // THE ROUND, AS ITS OWN SIGNER NODES HOLD IT
@@ -126,7 +134,7 @@ try {
   if (toHex(rid) !== env.ROUND) throw new Error('the node answered another round');
   const STAKE = BigInt(c.stakeMsat);
   log({ step: 'round', id: env.ROUND.slice(0, 16), stakeMsat: STAKE, custody: c.custody, federation: toHex(c.federationId).slice(0, 16),
-    nodes: c.nodes.length, needed: receiptsNeeded(c.nodes.length), entryClose: new Date(Number(c.entryCloseMs)).toISOString() });
+    nodes: c.nodes.length, needed: receiptsNeeded(c.gameVerifySlots), entryClose: new Date(Number(c.entryCloseMs)).toISOString() });
 
   const att = await attestedClaimKey({ round: { ...c, id: rid }, signerNodes: c.nodes, nodes, curve: pageCurve });
   if (!att.ok) throw new Error(`claim key: ${att.why}`);
@@ -175,7 +183,7 @@ try {
   log({ step: 'locked', outpoint: `${toHex(lk.outpoint.txid)}:${lk.outpoint.outIdx}`, msat: net, ms: Date.now() - t2, ...(locks.txid ? { tx: locks.txid.slice(0, 16), donationOutputs: (locks.entryFields.donationOutpoints || []).length, reserveOutput: !!locks.entryFields.reserveOutpoint } : {}) });
   const fee = locks.fee, hand = fee ? fee.fields : null;
   if (fee) log({ step: 'fee locked', outpoint: `${toHex(fee.outpoint.txid)}:${fee.outpoint.outIdx}` });
-  const needed = receiptsNeeded(c.nodes.length);
+  const needed = receiptsNeeded(c.gameVerifySlots);
   const e = rand(32);
   const dealt = await dealHandout({ preimage: s.p, signerNodes: c.nodes, roundId: rid, playerPubkey: s.player,
     ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),

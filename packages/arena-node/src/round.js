@@ -736,7 +736,7 @@ export class Round {
     if ((b.attests && b.attests.length) || (requirePrices && ((b.samples && b.samples.length) || (b.tapes && b.tapes.length)))) {
       const c = decodeRoundContract(new Uint8Array(round.contract));
       // the ROUND's version picks the scheme: from protocol 5 the median of the seats' own signed readings
-      const prices = checkBatchPrices({ batch: b, roundId: b.roundId, committee: c.nodes, threshold: (() => { try { return receiptsNeeded(c.nodes.length); } catch { return c.nodes.length; } })(),
+      const prices = checkBatchPrices({ batch: b, roundId: b.roundId, committee: c.nodes, threshold: (() => { try { return receiptsNeeded(c.gameVerifySlots); } catch { return c.nodes.length; } })(),
         verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } }, require: requirePrices, median: mediansPrices(c) });
       if (!prices.ok) throw new Error(prices.why);
     }
