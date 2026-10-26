@@ -348,8 +348,11 @@ function Find() {
 function App() {
   const m = /^\/tx\/([0-9a-f]{64})\/?$/.exec(location.pathname);
   const metrics = /^\/metrics\/?$/.test(location.pathname);
+  // THE ARENA'S HEADER ABOVE (kanban #694, 2026-10-26: "the header of those pages does not match the style of the arena and games pages"): the
+  // page draws it with testnet.bitcoin-arena.io's site-chrome.js - the logo, "← Arena" and the menu; this bar keeps the explorer's own parts,
+  // its name, Transactions, Metrics and the search
   return (<>
-    <nav><div className="in"><a className="brand" href="/"><i>₿</i>Arena Explorer</a>
+    <nav><div className="in"><a className="brand" href="/">Explorer</a>
       <span className="links"><a href="/" className={!m && !metrics ? 'on' : undefined}>Transactions</a><a href="/metrics" className={metrics ? 'on' : undefined}>Metrics</a></span><Find /></div></nav>
     <main>{m ? <Tx id={m[1]} /> : metrics ? <Metrics /> : <List />}</main>
   </>);
