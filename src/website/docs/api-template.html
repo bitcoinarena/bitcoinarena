@@ -20,14 +20,9 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: radial-gradient(120% 50% at 50% 0%, rgba(226,103,42,.10), transparent 60%), var(--bg); color: var(--text); font: 400 16px/1.6 Inter, system-ui, sans-serif; }
   a { color: var(--btc); text-decoration: none; } a:hover { text-decoration: underline; }
-  nav.top { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px); background: rgba(15,10,16,.88); border-bottom: 1px solid var(--line); }
-  nav.top .in { display: flex; align-items: center; gap: 16px; height: 60px; width: min(1280px, calc(100% - 32px)); margin: 0 auto; }
-  .brand { display: flex; align-items: center; gap: 10px; font: 700 18px "Space Grotesk"; color: var(--text); white-space: nowrap; }
-  .brand i { width: 28px; height: 28px; border-radius: 8px; background: conic-gradient(from 210deg, var(--btc), var(--gold), var(--btc)); display: grid; place-items: center; font-style: normal; color: #1a0f00; }
-  .brand span { color: var(--dim); font-weight: 500; }
-  nav.top .r { margin-left: auto; display: flex; align-items: center; gap: 16px; font-size: 14px; white-space: nowrap; }
-  nav.top .r a { color: var(--text); }
-  nav.top .play { padding: 7px 13px; border-radius: 10px; background: linear-gradient(135deg, var(--btc), #ffb347); color: #1a0f00 !important; font-weight: 600; }
+  /* THE ARENA'S HEADER AND FOOTER (kanban #700, 2026-10-26: "docs missing footer"; #694, #701): https://testnet.bitcoin-arena.io/site-chrome.js -
+     the logo, "← Arena" (it was "Play on testnet") and the menu, the build line and Donate; the way back to the docs above the title */
+  .crumb { margin: 0 0 6px; font-size: 14px; } .crumb a { color: var(--dim); }
   .wrap { width: min(1280px, calc(100% - 32px)); margin: 0 auto; }
   header.intro { padding: 34px 0 10px; }
   h1 { font: 700 clamp(30px, 4.6vw, 48px)/1.1 "Space Grotesk", Inter, sans-serif; letter-spacing: -0.015em; margin: 0 0 10px; }
@@ -46,18 +41,16 @@
   .swagger-ui .opblock-tag { border-bottom-color: #e6d9cc; }
   .swagger-ui .topbar { display: none; }
   .swagger-ui .opblock .opblock-summary-path { word-break: break-all; }
-  footer { border-top: 1px solid var(--line); padding: 26px 0 40px; color: var(--dim); font-size: 14px; }
-  footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 22px; }
-  @media (max-width: 640px) { nav.top .r .hide { display: none; } nav.top .r { gap: 10px; font-size: 13px; } .brand span { display: none; } .paper { border-radius: 12px; } }
+  .api-foot { border-top: 1px solid var(--line); padding: 26px 0 40px; color: var(--dim); font-size: 14px; }
+  .api-foot .wrap { display: flex; flex-wrap: wrap; gap: 10px 22px; }
+  @media (max-width: 640px) { .paper { border-radius: 12px; } }
 </style>
 </head>
 <body>
-<nav class="top"><div class="in">
-  <a class="brand" href="https://bitcoin-arena.io/" title="bitcoin-arena.io"><i>₿</i>Bitcoin Arena <span>Node API</span></a>
-  <div class="r"><a href="/">← Docs</a><a class="hide" href="https://bitcoin-arena.io/">bitcoin-arena.io</a><a class="play" href="https://testnet.bitcoin-arena.io/">Play on testnet</a></div>
-</div></nav>
+<script src="https://testnet.bitcoin-arena.io/site-chrome.js"></script>
 
 <header class="intro wrap">
+  <p class="crumb"><a href="/">← Bitcoin Arena docs</a></p>
   <h1>Node API reference</h1>
   <p class="lead">Every request a Bitcoin Arena node answers, {{NALL}} in all, as an OpenAPI 3 document generated from the node's source (<code>packages/arena-node/src/server.js</code>). Open a request, press <b>Try it out</b> and <b>Execute</b> to ask a live testnet4 node. The prose, the concepts and how to build a game are in <a href="/">the docs</a>.</p>
   <div class="facts">
@@ -71,7 +64,7 @@
 
 <main class="wrap"><div class="paper"><div id="swagger"></div></div></main>
 
-<footer><div class="wrap"><a href="/">← Bitcoin Arena docs</a><a href="https://bitcoin-arena.io/">bitcoin-arena.io</a><a href="https://testnet.bitcoin-arena.io/">Play on testnet</a><a href="openapi.json">openapi.json</a></div></footer>
+<div class="api-foot"><div class="wrap"><a href="/">← Bitcoin Arena docs</a><a href="https://bitcoin-arena.io/">bitcoin-arena.io</a><a href="openapi.json">openapi.json</a></div></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.17.14/swagger-ui-bundle.min.js"></script>
 <script>
