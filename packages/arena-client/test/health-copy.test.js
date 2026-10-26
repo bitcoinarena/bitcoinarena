@@ -187,6 +187,11 @@ test('the APPS table\'s rounds: posted (N), delayed, failed - only the newest ve
   const g2 = roundPosting({ games: [{ name: 'rps', version: 2, id: V2 }], pending: [{ grids: [m] }], expected: [ex(m, V2)], nowMs: now, fedNo }).get('rps');
   // in the mempool: unconfirmed, in yellow (2026-10-26: "it needs to show as unconfirmed and yellow")
   assert.deepEqual([g2.today.t, g2.today.c, g2.today.tip.split('\n')[1]], ['unconfirmed', 'warn', 'Federation 1, rounds 10-26 09:00 to 10-27 16:00 UTC: its round table aeaeaeaeae waits in the mempool to be mined']);
+  // the owner's phone, 11:33: a dead day grid (in no block, not in the mempool) and a live one waiting in the mempool from later on - not
+  // "failed": unconfirmed, with the gap before it said
+  const later = grid('ab'.repeat(32), now + 2 * H, now + 30 * H, 5, F1, { height: null, confirmations: 0, inMempool: true }, { height: null, depth: 0 });
+  const both = roundPosting({ games: [{ name: 'rps', version: 2, id: V2 }], pending: [{ grids: [gone, later] }], expected: [ex(gone, V2), ex(later, V2)], nowMs: now, fedNo }).get('rps');
+  assert.deepEqual([both.today.t, both.today.c], ['unconfirmed · gap', 'warn']);
   const g3 = roundPosting({ games: [{ name: 'rps', version: 2, id: V2 }], pending: [{ grids: [gone] }], expected: [ex(gone, V2)], nowMs: now, fedNo }).get('rps');
   assert.match(g3.today.tip, /its round table afafafafaf is in no block and not in the mempool/);
   assert.equal(g3.today.t, 'failed');
