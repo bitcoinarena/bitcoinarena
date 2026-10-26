@@ -56,8 +56,11 @@ export function statusLines(v) {
   return lines;
 }
 
-const openUrl = (url, platform = process.platform) => new Promise((ok) => execFile(platform === 'darwin' ? 'open' : platform === 'win32' ? 'cmd' : 'xdg-open',
-  platform === 'win32' ? ['/c', 'start', '""', url] : [url], () => ok()));
+/** The Arena site's owner page (kanban #687), as the installer's FinishSteps names it. */
+export const OWNER_SITE = 'https://testnet.bitcoin-arena.io/owner/';
+// on Windows through the URL handler, not `cmd /c start`: cmd cuts a URL at its & (the owner page's #node=...&local=..., kanban #687)
+const openUrl = (url, platform = process.platform) => new Promise((ok) => execFile(platform === 'darwin' ? 'open' : platform === 'win32' ? 'rundll32' : 'xdg-open',
+  platform === 'win32' ? ['url.dll,FileProtocolHandler', url] : [url], () => ok()));
 
 /**
  * Run one command. `io`: { out(line), err(line) }; `deps` injectable for the tests ({ sh, fetcher, platform, env, latest, quickUrl }).
@@ -171,9 +174,18 @@ export async function main(args, { home, name = 'arenanode', io = { out: (l) => 
       if (!deps.noOpen) await openUrl(url, deps.platform);
       return 0;
     }
+    // THE OWNER PAGE ON THE ARENA SITE (kanban #687, the owner's playtest 2026-10-26 on 1.9.7: "the owner page still points to
+    // http://127.0.0.1:8770/dashboard/owner which doesn't have my secret"): the installer hands the owner key to the site's page, kept there
+    // per node key; the local page keeps a login per address and had none. The site finds the node by its key, else at local=
     case 'open': {
       const n = nodeOf(home);
-      const url = `http://127.0.0.1:${n.port}/dashboard/owner`;
+      const local = `http://127.0.0.1:${n.port}`;
+      let key = n.state && n.state.service && n.state.service.identity;
+      if (!/^[0-9a-f]{64}$/.test(String(key || ''))) {
+        try { const r = await (deps.fetch || fetch)(`${local}/identity`, { signal: AbortSignal.timeout(5000) }); const b = Buffer.from(await r.arrayBuffer()); key = r.status === 200 && b.length >= 32 ? b.subarray(0, 32).toString('hex') : null; }
+        catch { key = null; }
+      }
+      const url = /^[0-9a-f]{64}$/.test(String(key || '')) ? `${OWNER_SITE}#node=${key}&local=${encodeURIComponent(local)}` : `${local}/dashboard/owner`;
       io.out(url);
       if (!deps.noOpen) await openUrl(url, deps.platform);
       return 0;
