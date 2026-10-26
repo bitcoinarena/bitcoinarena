@@ -14,7 +14,8 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 
 // the two that are not the protocol's: manifest signing (the developer's tools) and its ed25519
-const FROM = { 'manifest-sign': '../../arena-donor/src/manifest-sign.js', ed25519: '../../arena-node/src/ed25519.js', host: '../../arena-node/src/plugins.js' };
+const FROM = { 'manifest-sign': '../../arena-donor/src/manifest-sign.js', ed25519: '../../arena-node/src/ed25519.js', host: '../../arena-node/src/plugins.js',
+  'core-hash': '../../arena-node/src/core-hash.js' };
 
 test('every subpath is the Arena module itself', async () => {
   for (const sub of Object.keys(pkg.exports)) {
@@ -31,7 +32,8 @@ const filesOf = (dir) => readdirSync(dir).flatMap((f) => { const p = join(dir, f
   return statSync(p).isDirectory() ? filesOf(p) : /\.(m?js|jsx)$/.test(f) ? [p] : []; });
 const outside = (game, sub = '') => {
   const base = join(root, '..', game);
-  return filesOf(join(base, sub)).flatMap((f) => [...readFileSync(f, 'utf8').matchAll(/(?:from|import\()\s*'([^']+)'/g)].map((m) => m[1])
+  // the import and export statements and import() calls, as pack.mjs reads them - not a "from '" inside a string or a comment's prose
+  return filesOf(join(base, sub)).flatMap((f) => [...readFileSync(f, 'utf8').matchAll(/(?:^|\n)\s*(?:import|export)\s[^;]*?from\s+'([^']+)'|import\(\s*'([^']+)'\s*\)/g)].map((m) => m[1] || m[2])
     .filter((s) => (s.startsWith('.') ? !join(f, '..', s).startsWith(base + '/') : !s.startsWith('arena-sdk/') && !s.startsWith('node:')))
     .map((s) => `${f.slice(base.length + 1)}: ${s}`));
 };
@@ -57,4 +59,21 @@ test('bitcoin up or down imports only itself and arena-sdk (plugin, tools, tests
   assert.deepEqual(outside('btc-updown', 'page'), []);
   const { GAME } = await import('../../btc-updown/plugin/btc-updown.js');
   assert.equal(Buffer.from(GAME.gameId).toString('hex').slice(0, 16), '672415c814e61b47', 'the frozen testnet4 market');
+});
+
+// NEXT BLOCK'S CORE HASH IS THE NODE'S RULE (kanban #691, 2026-10-26: "All apps should reference the SDK and not use local copies"): its
+// tools/hash-core.js wrote the tree rule out a second time beside the sandbox's; it now takes arena-sdk/core-hash, and every core it
+// keeps still hashes to its name. A core's own files (src/, frozen/<hash>/) import only each other - a core runs in the sandbox, where
+// no package resolves - so its sha256.js stays the core's own copy, held to the engine's digests by its engine-shared test.
+test('next block imports only itself, arena-sdk and its npm packages (acorn, React); its cores hash by the node\'s rule, to their names', async () => {
+  const npm = /: (acorn|react|react-dom)(\/|$)/;
+  for (const d of ['plugin', 'tools', 'test', 'page', 'config', 'view']) assert.deepEqual(outside('nextblock', d).filter((s) => !npm.test(s)), [], d);
+  assert.deepEqual(outside('nextblock', 'src'), [], 'src: the core imports only itself');
+  const { coreHashHex } = await import('../../nextblock/tools/hash-core.js');
+  const { coreTreeHashHex } = await import('arena-sdk/core-hash');
+  const src = fileURLToPath(new URL('../../nextblock/src', import.meta.url));
+  assert.equal(coreHashHex(), coreTreeHashHex(src));
+  assert.ok(coreHashHex().startsWith('a5c5766a'), 'core/src is a5c5766a');
+  const frozen = fileURLToPath(new URL('../../nextblock/frozen', import.meta.url));
+  for (const h of readdirSync(frozen)) assert.ok(coreHashHex(join(frozen, h)).startsWith(h), `frozen/${h}`);
 });

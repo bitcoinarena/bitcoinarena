@@ -8,8 +8,8 @@
 // ghost - with every right the process has. Now every one of those loads comes here:
 //
 // 1. FILES, READ BY THE NODE. The node reads the core's files itself and checks them against the core's hash before a
-//    line of it runs: a tree (every .js under `root`, hashed as nextblock's tools/hash-core.js does) or one file (sha256
-//    of its bytes). The core gets source text only; it never opens a file.
+//    line of it runs: a tree (every .js under `root`) or one file (sha256 of its bytes), by core-hash.js - the rule an app
+//    takes from arena-sdk/core-hash (kanban #691). The core gets source text only; it never opens a file.
 // 2. AN EMPTY CONTEXT. A fresh vm context with a global of its own (no node object behind it), code generation off (no eval, no Function, no
 //    wasm). Before the core is evaluated its own intrinsics lose Date, Math.random, Intl, WebAssembly, SharedArrayBuffer,
 //    Atomics, eval, Function, WeakRef, FinalizationRegistry and V8's own console; fetch, process, require, Buffer, timers,
@@ -28,10 +28,9 @@
 //    == (0)").
 import { Worker, MessageChannel, receiveMessageOnPort } from 'node:worker_threads';
 import { C, ANSWERED, EXITED } from './core-supervisor.js';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { createHash } from 'node:crypto';
-import { join, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { coreTree, coreRelPath, coreBytesHashHex } from './core-hash.js';
 
 /** The longest a replay may run: a whole replay of the longest run (10800 ticks) is a few seconds; this is the ceiling. */
 export const CALL_MS = 120000;
@@ -57,26 +56,10 @@ const BACKSTOP_MARGIN_MB = 96;
 const EXIT_WAIT_MS = 3000;
 const DEADLINE = { replay: 'callMs', stepTo: 'stepMs' };
 
-/** A core's files as nextblock's hash-core.js hashes a tree: every .js below root, sorted, `rel \0 bytes \0`. */
+/** A core's files as core-hash.js hashes a tree (the rule an app takes from arena-sdk/core-hash, kanban #691): the hash, and each file's text by path. */
 function treeOf(root) {
-  const files = [];
-  (function walk(dir) {
-    for (const name of readdirSync(dir).sort()) {
-      const p = join(dir, name);
-      if (statSync(p).isDirectory()) walk(p);
-      else if (name.endsWith('.js')) files.push(p);
-    }
-  })(root);
-  files.sort();
-  const h = createHash('sha256');
-  const out = new Map();
-  for (const f of files) {
-    const rel = relative(root, f).split('\\').join('/');
-    const bytes = readFileSync(f);
-    h.update(rel); h.update('\0'); h.update(bytes); h.update('\0');
-    out.set(rel, bytes.toString('utf8'));
-  }
-  return { hash: h.digest('hex'), files: out };
+  const { hash, files } = coreTree(root);
+  return { hash, files: new Map([...files].map(([rel, bytes]) => [rel, bytes.toString('utf8')])) };
 }
 
 /**
@@ -92,12 +75,12 @@ export function coreFiles(core) {
     const root = core.root instanceof URL || String(core.root).startsWith('file:') ? fileURLToPath(core.root) : String(core.root);
     const { hash, files } = treeOf(root);
     if (hash !== want) throw new Error(`core ${String(core.hash).slice(0, 16)}: its files hash to ${hash.slice(0, 16)}, not ${want.slice(0, 16)}`);
-    const entry = relative(root, entryPath).split('\\').join('/');
+    const entry = coreRelPath(root, entryPath);
     if (!files.has(entry)) throw new Error(`core ${String(core.hash).slice(0, 16)}: its entry ${entry} is not one of its files`);
     return { files, entry };
   }
   const bytes = readFileSync(entryPath);
-  const hash = createHash('sha256').update(bytes).digest('hex');
+  const hash = coreBytesHashHex(bytes);
   if (hash !== want) throw new Error(`core ${String(core.hash).slice(0, 16)}: its file hashes to ${hash.slice(0, 16)}, not ${want.slice(0, 16)}`);
   const entry = entryPath.split(/[\\/]/).pop();
   return { files: new Map([[entry, bytes.toString('utf8')]]), entry };
