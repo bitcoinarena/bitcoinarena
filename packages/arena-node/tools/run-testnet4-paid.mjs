@@ -633,7 +633,12 @@ if (env.PAID_NEXTBLOCK_GRID === '1') {
 // the 15 min before (attested.js marketWindowOf) - on the lowest-load OPEN federation this opener serves, its locks lasting
 // through the grid's last window (lock-expiry.js marketExpiryBlocks), and keeps the next one UPDOWN_GRID_AHEAD_MS ahead.
 if (env.PAID_UPDOWN_GRID === '1') {
-  const UPDOWN = UPDOWN_CHOSEN || (Number(env.ARENA_PROTOCOL_VERSION || 1) >= 2 ? UPDOWN_V2 : UPDOWN_TN4);
+  // THE VERSION A DAY OF TODAY WOULD POST (2026-10-26 08:4xZ, the owner: "We should always play the newest version not v13"): the 10-26
+  // emergency grid took DUTY_UPDOWN_PLUGIN (v13) and ignored DUTY_UPDOWN_NEXT_PLUGIN (v24 from day 20751) - today's day slot decides here too
+  const todaySlot = Math.floor(Date.now() / 86400000);
+  const UPDOWN = (UPDOWN_NEXT && todaySlot >= Number(env.DUTY_UPDOWN_NEXT_FROM_SLOT || 0) ? UPDOWN_NEXT : null)
+    || UPDOWN_CHOSEN || (Number(env.ARENA_PROTOCOL_VERSION || 1) >= 2 ? UPDOWN_V2 : UPDOWN_TN4);
+  console.log(JSON.stringify({ at: new Date().toISOString(), updownGrid: 'version', game: Buffer.from(UPDOWN.gameId).toString('hex').slice(0, 16), version: UPDOWN.manifest.version }));
   const period = BigInt(UPDOWN.manifest.roundPeriodMs);
   const slots = Number(env.UPDOWN_GRID_SLOTS || 96);
   const aheadMs = Number(env.UPDOWN_GRID_AHEAD_MS || 3 * 3600000);
