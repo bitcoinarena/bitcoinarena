@@ -2797,7 +2797,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const attempt = async () => {
       if (shuttingDown) { claimKeyRuns.delete(key); return; }
       let said;
-      try { said = await dkg.run(signerNodes, peersOf()); } catch (e) { said = { ok: false, why: e.message }; }
+      // the threshold of the round's settlement slots, not of how many nodes it names (kanban #675)
+      try { said = await dkg.run(signerNodes, peersOf(), { needed: roundThreshold(contract.settlementSlots) }); } catch (e) { said = { ok: false, why: e.message }; }
       tries++;
       if (dkg.signerNodeFor(signerNodes).ok) {
         claimKeyRuns.delete(key);

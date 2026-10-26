@@ -76,7 +76,7 @@ export class Dkg {
    * every signer node must use the same ones. `epochId` sorts to make its hash; this
    * sorts for the same reason and it is the same order.
    */
-  async deal(signerNodes) {
+  async deal(signerNodes, { needed: given = null } = {}) {
     if (!this.canDeal) return { ok: false, why: 'this node cannot make key material' };
     const where = this.epochFor(signerNodes);
     if (!where.ok) return where;
@@ -89,9 +89,15 @@ export class Dkg {
     // stake follows (`receiptsNeeded`). One `needed` of 5 for every committee
     // this daemon was ever on refused a two-signer-node one outright - "a threshold of
     // 5 cannot be dealt to 2 signer nodes" - and its round's pool had no key at all.
-    let needed;
-    try { needed = this.thresholdOf(signerNodes.length); }
-    catch (e) { return { ok: false, why: e.message }; }
+    // OR THE ROUND'S OWN, when the caller names it (kanban #675, measured 2026-10-26 07:4xZ: a round naming 5 or 6 nodes for 7 slots got
+    // "no key after 158 runs - no committee threshold for 6 slots", so no claim key and no entry): the threshold of its committee's
+    // slots, which every signer node reads the same off the contract
+    let needed = given;
+    if (!(Number.isInteger(needed) && needed > 0)) {
+      try { needed = this.thresholdOf(signerNodes.length); }
+      catch (e) { return { ok: false, why: e.message }; }
+    }
+    if (needed > signerNodes.length) return { ok: false, why: `a threshold of ${needed} cannot be dealt to ${signerNodes.length} signer nodes` };
 
     const order = [...signerNodes].sort((a, b) => (toHex(a) < toHex(b) ? -1 : toHex(a) > toHex(b) ? 1 : 0));
     // A SECRET BELOW THE ORDER, or it is not a scalar of the group. The same
@@ -331,8 +337,8 @@ export class Dkg {
    * never start. Running it twice is harmless: the deal is made once and the
    * contributions are keyed by dealer.
    */
-  async run(signerNodes, peers = this.peers) {
-    const dealt = await this.deal(signerNodes);
+  async run(signerNodes, peers = this.peers, opts = {}) {
+    const dealt = await this.deal(signerNodes, opts);
     if (!dealt.ok) return dealt;
     const bytes = encodeContribution(dealt.contribution);
     const id = toHex(dealt.contribution.epochId);

@@ -136,7 +136,14 @@ try {
   log({ step: 'round', id: env.ROUND.slice(0, 16), stakeMsat: STAKE, custody: c.custody, federation: toHex(c.federationId).slice(0, 16),
     nodes: c.nodes.length, needed: receiptsNeeded(c.gameVerifySlots), entryClose: new Date(Number(c.entryCloseMs)).toISOString() });
 
-  const att = await attestedClaimKey({ round: { ...c, id: rid }, signerNodes: c.nodes, nodes, curve: pageCurve });
+  // ASKED AGAIN WHILE THE SIGNER NODES ARE STILL MAKING IT (kanban #675, measured 2026-10-26 07:16Z: "holds no claim key for that round
+  // yet: it is making it now, ask again in a few seconds" from three of them, right after the seating; still so after 60 s at 07:21Z), every 5 s for up to 100 s
+  let att;
+  for (const until = Date.now() + 100000; ;) {
+    att = await attestedClaimKey({ round: { ...c, id: rid }, signerNodes: c.nodes, nodes, curve: pageCurve });
+    if (att.ok || !/making it now/.test(String(att.why)) || Date.now() >= until) break;
+    await new Promise((r) => setTimeout(r, 5000));
+  }
   if (!att.ok) throw new Error(`claim key: ${att.why}`);
   log({ step: 'claim key', claimPk: toHex(att.claimPk).slice(0, 16) });
 
