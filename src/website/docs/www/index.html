@@ -138,6 +138,7 @@
   <a href="#seats">Seats and committees</a>
   <a href="#bond">Bond and advertisement</a>
   <a href="#census">The census</a>
+  <a href="#duty">Who posts the rounds</a>
   <a href="#run">Run a node</a>
   <a href="#bitcoinarena">bitcoinarena and arena.conf</a>
   <a href="#dashboard">The dashboard</a>
@@ -445,6 +446,16 @@
   <h3 id="census">The census</h3>
   <p>The <b>census</b> is the set of bonds that are confirmed and old enough, read from the chain. Every node computes it the same way; the committees are drawn from it. Ask a node for a round's census with <code>GET /census</code> (the evidence a client needs to draw the committee itself), for the stake ceiling that census supports with <code>GET /census-health</code>, and for the bond-weighted medians of what its nodes declare with <code>GET /census-median</code>. Anyone can object to a round's census (<code>POST /census-objection</code>); if the objection holds, the round takes no new entries there. A spent bond leaves the census, and with it every future committee.</p>
 
+  <h3 id="duty">Who posts the rounds</h3>
+  <p>Every day's rounds are posted by the nodes themselves, the day before, by a rule every node computes the same way. Each UTC day has a <b>duty order</b>: the nodes of the census at the day's anchor block, sorted by a hash of the network, the day and each node's key. Any node shows the first three at <code>GET /duty</code>, and the Health page shows who posted each day.</p>
+  <ul>
+    <li><b>The primary grid.</b> The first node posts the next day's rounds of every app in every open federation, one transaction per app, from 00:00 UTC. If it has not by 01:00, the second node does; by 02:00, the third.</li>
+    <li><b>The backup grid.</b> The second node posts a second grid of the same day from 02:00 UTC (the third from 03:00 if it has not), never the node that posted the primary. It uses its own coins, an older census block and a later committee time, so one reorg or one bad coin cannot take both.</li>
+    <li><b>One is played.</b> In each round window the primary is played while its committee can be drawn; otherwise the backup. Nodes and pages offer only the played one, and a stake never sits in both.</li>
+    <li><b>When a posting dies</b> (a reorg, a fork the network left, a coin spent elsewhere) or a day cannot be drawn 4 hours before it starts, the node on duty posts an emergency grid for the rest of the day.</li>
+    <li><b>Paying.</b> Your node pays from its Bitcoin Core wallet, confirmed coins first, at 0.1 sat/vB (at most 1 sat/vB if it has to raise the fee). The fee comes back to your node's key from the series' node fee. A node without a wallet, without confirmed coins, or reading the chain through Electrum skips its turn and says why on its owner page; the next node posts instead.</li>
+    <li><b>Turning it off.</b> <code>duty_post=off</code> in <code>arena.conf</code>. The default, <code>auto</code>, posts while the wallet holds confirmed coins. <code>duty_wallet</code> names the wallet, <code>duty_fee_rate</code> and <code>duty_max_fee_rate</code> set the fees.</li>
+  </ul>
   <h3 id="run">Run a node</h3>
   <h4 id="installer">With the installer (Linux, macOS, Windows)</h4>
   <p>The releases are on GitHub in the <b>invite-only</b> repository <code>a tester/bitcoin-arena</code> (Releases; ask for an invite). The simplest way is the package for your system. Each package contains Node.js, the node, the installer, <code>cloudflared</code> and Tor. Each opens a small Bitcoin Arena window that starts the installer and opens its setup page in your browser.</p>
