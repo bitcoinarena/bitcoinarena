@@ -72,7 +72,11 @@ test('a table from the page\'s data: the dot in the first cell, parts in their c
 
 test('the reasons panel has a close button top right (2026-10-26: "a regular X button on the top right corner")', () => {
   const src = readFileSync(new URL('../src/health/HealthViews.jsx', import.meta.url), 'utf8');
-  assert.match(src, /className="tip-pop" role="dialog"[\s\S]{0,260}<button type="button" className="tip-x" aria-label="Close" onClick=\{\(e\) => \{ e\.stopPropagation\(\); setOpen\(false\); \}\}>×<\/button>/);
+  assert.match(src, /className="tip-pop" role="dialog">[\s\S]{0,260}<button type="button" className="tip-x" aria-label="Close" onClick=\{close\}>×<\/button>/);
+  // closed by a click outside or Esc, never by a click inside; one panel at a time (2026-10-26 ~15:10Z)
+  assert.match(src, /addEventListener\('pointerdown', outside\)/);
+  assert.match(src, /if \(closeOpenTip\) closeOpenTip\(\);/);
+  assert.doesNotMatch(src, /tap to close/);
   assert.match(readFileSync(new URL('../../../src/arena-ui/health/index.html', import.meta.url), 'utf8'), /\.tip-x \{ position: sticky; top: 0; float: right;/);
 });
 

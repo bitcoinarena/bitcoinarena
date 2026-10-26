@@ -277,6 +277,17 @@ test('the APPS table names the primary and the backup: who owes each, who posted
   assert.equal(up.t, 'on duty: node-1 · backup: node-2');
   assert.match(up.tip, /Primary: due from 00:00 UTC from tn4\.example\/node-1 \(key 11111111, rank 1\), not posted yet\./);
   assert.match(up.tip, /Backup: tn4\.example\/node-2 \(key 22222222, rank 2\), from 02:00 UTC: not due yet\./);
+  // THE SAME AS ROWS, as the rounds' panel (2026-10-26 ~15:00Z: "tomorrow is still the old format"): primary and backup, the order folded
+  assert.equal(rps.summary, 'The rounds of 2026-10-27 are posted the day before by the nodes on duty (census at block 157,700).');
+  assert.deepEqual(rps.items.filter((x) => x.live).map((x) => [x.s, x.when, x.say]), [['ok', 'Primary', 'posted by node-1 in block 157,700'],
+    ['ok', 'Backup', 'posted by node-3 in block 157,700 (fallback: rank 2 did not post)']]);
+  assert.deepEqual(rps.items.filter((x) => !x.live).map((x) => x.when), ['1. node-1', '2. node-2', '3. node-3']);
+  assert.equal(rps.fold, 'Duty order');
+  assert.deepEqual(up.items.filter((x) => x.live).map((x) => [x.s, x.say]), [['warn', 'due from 00:00 UTC by node-1, not posted yet'], ['warn', 'node-2 posts it from 02:00 UTC']]);
+  // the "by …" cell opens the rows too, and so does a posting cell that has none of its own
+  const [c0, c1] = withDuty('-', rps);
+  assert.equal(c1.items, rps.items); assert.equal(c0.items, rps.items);
+  assert.equal(withDuty({ t: 'posted (3)', items: [] }, rps)[0].items.length, 0);
 });
 
 test('the read asks the seats\' GET /duty, keeps the best answer in the copy, and the replay asks nobody for it', async () => {
