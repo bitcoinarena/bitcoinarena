@@ -106,15 +106,17 @@ export function roundPosting({ games = [], pending = [], expected = [], rounds =
         const head = `${n ? `Federation ${n}` : String(g.federation || '').slice(0, 8)}, rounds ${dhm(g.firstWindowMs)} to ${dhm(g.lastCloseMs)} UTC: `;
         const d = drawn.get(`${id}:${g.committeeTimeMs}:${g.federation}`);
         if (!p.height && !p.inMempool) { states.push('failed'); lines.push(head + (p.unread ? 'announced, but no seat reads its round table on its chain' : `its round table ${String(p.txid).slice(0, 10)} is in no block and not in the mempool`)); }
-        else if (!p.height) { states.push('delayed'); lines.push(head + `its round table ${String(p.txid).slice(0, 10)} waits in the mempool to be mined`); }
+        else if (!p.height) { states.push('unconfirmed'); lines.push(head + `its round table ${String(p.txid).slice(0, 10)} waits in the mempool to be mined`); }
         else if (bc.height == null) { states.push('delayed'); lines.push(head + `published in block ${p.height}; its draw block is the first whose median time passes ${hm(g.committeeTimeMs)} UTC (the median time runs about an hour behind), then 6 confirmations`); }
         else if ((bc.depth || 0) < (bc.needed || 6)) { states.push('delayed'); lines.push(head + `its draw block ${bc.height} has ${bc.depth} of ${bc.needed || 6} confirmations: posted in about ${((bc.needed || 6) - bc.depth) * BLOCK_MS / 60000} min`); }
         else if (d && !d.yes && d.no) { states.push('failed'); lines.push(head + `posted, but no seat can draw its committee: ${d.why || 'no reason given'}`); }
         else { states.push('posted'); depths.push(bc.depth); lines.push(head + `posted: its draw block ${bc.height} has ${bc.depth} confirmations (6 needed)`); }
       }
       if (!states.length) return { t: '-', c: 'muted', tip: 'nothing to post' };
-      const st = states.includes('failed') ? 'failed' : states.includes('delayed') ? 'delayed' : 'posted';
-      return { t: st === 'posted' ? `posted (${Math.min(...depths)})` : st, c: st === 'posted' ? 'ok' : st === 'delayed' ? 'warn' : 'bad',
+      // UNCONFIRMED, IN YELLOW (2026-10-26, the owner: "If it's the rounds are in the mempool and unconfirmed it needs to show as unconfirmed
+      // and yellow"): a round table waiting in the mempool is named so, after failed and before delayed
+      const st = states.includes('failed') ? 'failed' : states.includes('unconfirmed') ? 'unconfirmed' : states.includes('delayed') ? 'delayed' : 'posted';
+      return { t: st === 'posted' ? `posted (${Math.min(...depths)})` : st, c: st === 'posted' ? 'ok' : st === 'delayed' || st === 'unconfirmed' ? 'warn' : 'bad',
         // one line per reading (several series share a round table and a draw block): the same words once, with how many
         tip: (st === 'posted' ? `version ${app.version}; in () the confirmations of the draw block - the block whose hash draws each round's committee\n` : `version ${app.version}\n`)
           + [...lines.reduce((m, l) => m.set(l, (m.get(l) || 0) + 1), new Map())].map(([l, k]) => (k > 1 ? `${l} (${k} grids)` : l)).join('\n') };
