@@ -59,6 +59,50 @@ export function carryP2p(ws, port, { host = '127.0.0.1', connect = netConnect, k
   return { close: done };
 }
 
+// THE GUARDIANS' API, THROUGH THE NODES TOO (kanban #577, measured 2026-10-26 on federation e2f42eea): a federation's config names
+// each guardian's API at the address its node had at the key ceremony - for the installer nodes a quick tunnel, gone at the next
+// restart. A guardian that falls one session behind catches up by asking its peers' API for the signed session, so once the
+// tunnels had changed six of ten guardians sat in session 736 for good ("Failed to fetch consensus version from peer" for every
+// peer), and the federation halted with two peg-outs unsigned. So the seat hands its guardian FM_WS_API_CONNECT_OVERRIDES that
+// send each peer's config address to the seat itself, `<seat>/guardian-api/<the peer's name>`, and the seat carries the
+// websocket to that peer's CURRENT census endpoint `<endpoint>/guardian` - the same address the P2P tunnel follows. The
+// overrides never change; only where the seat carries them does.
+export const GUARDIAN_API_RELAY_PATH = '/guardian-api/';
+
+/**
+ * The overrides a guardian is started with: each peer's API URL in the federation's config (`apiEndpoints`, the client config's
+ * `api_endpoints`: { peerId: { url, name } }) -> the seat's relay for that peer's name; its own -> its local API port. `seatRoot`
+ * the seat's own ws://host:port. Kept: the entries of `existing` for an address not named here. Answers the variable's value.
+ */
+export function guardianApiOverrides({ apiEndpoints, ownName = null, seatRoot, ownApiPort = null, existing = '' }) {
+  const out = new Map();
+  for (const p of Object.values(apiEndpoints || {})) {
+    if (!p || typeof p.url !== 'string' || typeof p.name !== 'string' || !/^[0-9a-f]{8,64}$/i.test(p.name)) continue;
+    const to = ownName && p.name.toLowerCase() === String(ownName).toLowerCase() && ownApiPort ? `ws://127.0.0.1:${ownApiPort}/`
+      : `${seatRoot}${GUARDIAN_API_RELAY_PATH}${p.name.toLowerCase()}`;
+    const url = p.url.replace(/\/+$/, '');
+    for (const v of [url, `${url}/`]) out.set(v, to);
+  }
+  for (const pair of String(existing || '').split(',')) {
+    const i = pair.indexOf('=');
+    if (i > 0 && !out.has(pair.slice(0, i).replace(/\/+$/, '')) && !out.has(pair.slice(0, i))) out.set(pair.slice(0, i), pair.slice(i + 1));
+  }
+  return [...out].map(([from, to]) => `${from}=${to}`).join(',');
+}
+
+/** The relay: a websocket the seat accepted on /guardian-api/<name>, its messages carried both ways to `<root>/guardian`. */
+export function carryApi(ws, root, { openWs = (url) => new WebSocket(url, { maxPayload: 64 * 1024 * 1024 }), keepAliveMs = P2P_KEEPALIVE_MS } = {}) {
+  const up = openWs(`${root}/guardian`);
+  const held = [];
+  const stopDown = keepAlive(ws, keepAliveMs);
+  const done = () => { stopDown(); try { up.close(); } catch { /* gone */ } try { ws.close(); } catch { /* gone */ } };
+  ws.on('message', (m, binary) => { if (up.readyState === 1) up.send(m, { binary }); else held.push([m, binary]); });
+  up.on('open', () => { keepAlive(up, keepAliveMs); for (const [m, binary] of held.splice(0)) up.send(m, { binary }); });
+  up.on('message', (m, binary) => { if (ws.readyState === 1) ws.send(m, { binary }); });
+  up.on('close', done); up.on('error', done); ws.on('close', done); ws.on('error', done);
+  return { close: done };
+}
+
 /** A census endpoint as the root its websocket paths hang off: ws(s), no trailing slash. */
 export const tunnelRoot = (endpoint) => String(endpoint || '').trim().replace(/^http(s?):/i, 'ws$1:').replace(/\/+$/, '');
 
@@ -113,5 +157,12 @@ export function createP2pTunnels({ ownKey, host = '127.0.0.1', say = () => {}, o
   }
   function close() { for (const row of ports.values()) if (row.server) row.server.close(); ports.clear(); }
   const state = () => [...ports].map(([port, r]) => ({ port, node: r.key, slot: r.slot, root: r.root, state: r.state, connections: r.connections }));
-  return { sync, close, state };
+  /** The current endpoint root of the census node whose key begins with `name` (a guardian's name in the federation config), or null. */
+  const rootOf = (name) => {
+    const n = String(name || '').toLowerCase();
+    if (!/^[0-9a-f]{8,64}$/.test(n)) return null;
+    for (const r of ports.values()) if (r.slot === 'guardian' && r.key.startsWith(n) && r.root) return r.root;
+    return null;
+  };
+  return { sync, close, state, rootOf };
 }
