@@ -138,7 +138,11 @@ export function guardingOpenOf({ entries = [], held = [], except = null }) {
 export function execCli(execFileCb, bin, args, { timeout = 120000 } = {}) {
   return new Promise((res, rej) => execFileCb(bin, args, { timeout }, (e, out, err) => {
     if (!e) return res(String(out));
-    e.message = [e.message, String(out || '').trim(), String(err || '').trim()].filter(Boolean).join('\n');
+    // THE PASSWORD NEVER IN A LOG LINE (measured 2026-10-26 on n495-1: "Command failed: fedimint-cli --password <the guardian's> ..." in
+    // every refused tick, 1,034 times): the command line in the error says only that a password was given
+    const hide = (s) => String(s).replace(/(--password[ =])\S+/g, '$1<hidden>');
+    e.message = [hide(e.message), hide(String(out || '').trim()), hide(String(err || '').trim())].filter(Boolean).join('\n');
+    if (Array.isArray(e.cmd)) e.cmd = e.cmd.map(hide); else if (typeof e.cmd === 'string') e.cmd = hide(e.cmd);
     rej(e);
   }));
 }

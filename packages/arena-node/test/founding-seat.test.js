@@ -433,8 +433,12 @@ test('a refusal fedimint-cli prints on stdout is in the error the founding reads
   const bin = join(dir, 'fedimint-cli');
   writeFileSync(bin, "#!/bin/sh\necho '{ \"error\": \"Config Gen Error: Federation rpc error { method => set_local_params, 1024 => Unspecified server error: Local parameters have already been set }\" }'\nexit 1\n");
   chmodSync(bin, 0o755);
-  const setup = cliSetup({ run: (args) => execCli(execFile, bin, args), apiPort: 7551, password: 'pw', guardianName: 'ab'.repeat(8) });
+  const setup = cliSetup({ run: (args) => execCli(execFile, bin, args), apiPort: 7551, password: 'pw-6463e63e', guardianName: 'ab'.repeat(8) });
   await assert.rejects(setup.localParams({ leader: true, name: 'arena', size: 10 }), /Local parameters have already been set/);
+  // and the refusal, which the seat logs, never carries the guardian's password (measured 2026-10-26 on n495-1)
+  const said = await setup.localParams({ leader: true, name: 'arena', size: 10 }).catch((e) => e);
+  assert.doesNotMatch(`${said.message} ${JSON.stringify(said.cmd)}`, /pw-6463e63e/);
+  assert.match(said.message, /--password <hidden>/);
   const ok = join(dir, 'ok-cli');
   writeFileSync(ok, "#!/bin/sh\necho '\"code123\"'\n");
   chmodSync(ok, 0o755);

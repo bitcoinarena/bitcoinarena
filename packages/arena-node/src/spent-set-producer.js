@@ -19,8 +19,9 @@ import { encodeSpentSet, signSpentSet } from '../../arena-protocol/src/spent-set
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { wsGuardianCall } from './halts.js';
 
+// the guardian's password never in a reason (an exec error's message is the whole command line, --password with it)
 const runCli = (bin, args, env) => new Promise((done) => execFile(bin, args, { timeout: 120000, maxBuffer: 1 << 26, env },
-  (err, out, errOut) => done({ ok: !err, out: String(out), err: String(errOut || (err && err.message) || '') })));
+  (err, out, errOut) => done({ ok: !err, out: String(out), err: String(errOut || (err && err.message) || '').replace(/(--password[ =])\S+/g, '$1<hidden>') })));
 
 /** What `dev api` printed: the JSON value, or its `value` field where the CLI wraps it. */
 const valueOf = (out) => { const j = JSON.parse(out); return j && typeof j === 'object' && !Array.isArray(j) && 'value' in j ? j.value : j; };
