@@ -44,7 +44,82 @@ export function keepable(answers, spare = new Set()) {
     if (a.ok && a.body && /\/dashboard\.json$/.test(k)) {
       const d = a.body, last = Math.max(0, ...(d.settlements || []).map((x) => Number(x.madeMs) || 0));
       out[k] = { ...a, body: { node: d.node, totals: d.totals, byGame: d.byGame, hosts: d.hosts, settlements: last ? [{ madeMs: last }] : [] } };
+    } else if (a.ok && a.body && /\/rounds\?/.test(k)) {
+      // a seat's rounds (kanban #692, 346 kB at ?next=1): each round's app, committee time, federation and whether its committee is drawn
+      out[k] = { ...a, body: { rounds: (a.body.rounds || []).map((r) => ({ game: { id: r.game && r.game.id }, committeeTimeMs: r.committeeTimeMs, federation: r.federation,
+        committee: { drawn: !!(r.committee && r.committee.drawn), why: r.committee && !r.committee.drawn ? r.committee.why || null : null } })) } };
     } else out[k] = a;
+  }
+  return out;
+}
+
+// THE ROUNDS POSTED FOR EACH APP (kanban #692, 2026-10-26, on the APPS table: "Should also show the round posting status for the today and
+// the next 24 hours. Status posted, delayed, failed with a tooltip why it's delayed or failed. After posted add confirmations in ()"). Only
+// the NEWEST version of each app counts (the owner's rule). For each period - the rest of today (UTC) and the next 24 h - every grid of that
+// version whose rounds fall in it, from the seats' GET /pending (a grid's publication and draw block, as each seat reads its chain; the
+// furthest kept) with its version from GET /expected, and from one seat's GET /rounds whether its committee can be drawn:
+//   posted (N)   the draw block is 6 deep and the seats can draw the committee; N = the draw block's confirmations (the least of its grids)
+//   delayed      its round table not mined yet, or its draw block not there yet or not 6 deep - the tooltip says which and when
+//   failed       part of the period no grid of the newest version covers, a publication on no chain, or a grid whose committee no seat
+//                draws - the tooltip names the seat's reason
+// roundPosting({ games, pending, expected, rounds, nowMs, fedNo }) -> Map(app name -> { today, next }), each a table cell { t, c, tip }
+const BLOCK_MS = 600000, GAP_MS = 15 * 60000;
+const hm = (ms) => new Date(Number(ms)).toISOString().slice(11, 16), dhm = (ms) => new Date(Number(ms)).toISOString().slice(5, 16).replace('T', ' ');
+export function roundPosting({ games = [], pending = [], expected = [], rounds = [], nowMs = Date.now(), fedNo = () => null }) {
+  const keyOf3 = (x) => `${x.publication ? x.publication.txid : ''}:${x.committeeTimeMs}:${x.federation}`;
+  const versionOf = new Map(expected.map((e) => [keyOf3(e), String(e.gameId).toLowerCase()]));
+  // every seat's grids, one per series (its publication, committee time and federation), the furthest reading kept
+  const grids = new Map();
+  for (const a of pending) for (const g of a.grids || []) {
+    const k = keyOf3(g), was = grids.get(k);
+    if (!was || (g.beacon.depth || 0) > (was.beacon.depth || 0) || (g.publication.confirmations || 0) > (was.publication.confirmations || 0)) grids.set(k, g);
+  }
+  // a grid one seat expects and none reads on its chain yet
+  for (const e of expected) if (!grids.has(keyOf3(e))) grids.set(keyOf3(e), { ...e, publication: { ...e.publication, confirmations: 0, inMempool: false, unread: true }, beacon: { height: null, depth: 0, needed: 6 } });
+  // each grid's rounds as one seat lists them: drawn or not, and why not
+  const drawn = new Map();
+  for (const r of rounds) {
+    const k = `${String(r.game && r.game.id).toLowerCase()}:${r.committeeTimeMs}:${r.federation}`, d = drawn.get(k) || { yes: 0, no: 0, why: null };
+    if (r.committee && r.committee.drawn) d.yes++; else { d.no++; d.why = d.why || (r.committee && r.committee.why) || null; }
+    drawn.set(k, d);
+  }
+  const newest = new Map();
+  for (const x of games) { const k = x.name || x.title; const w = newest.get(k); if (x.version != null && (!w || Number(x.version) > Number(w.version))) newest.set(k, x); }
+  const endOfDay = Math.floor(nowMs / 86400000) * 86400000 + 86400000;
+  const out = new Map();
+  for (const [name, app] of newest) {
+    const id = String(app.id).toLowerCase();
+    const mine = [...grids.entries()].filter(([k]) => versionOf.get(k) === id).map(([, g]) => g);
+    const cell = (a, b) => {
+      if (b - a < 60000) return { t: '-', c: 'muted', tip: 'the day is over' };
+      if (!pending.length && !expected.length) return { t: '-', c: 'muted', tip: 'no seat answered GET /pending or GET /expected' };
+      const inside = mine.filter((g) => Number(g.firstWindowMs) < b && Number(g.lastCloseMs) > a);
+      const lines = [], states = [];
+      // the stretches of the period no grid of the newest version covers
+      const spans = inside.map((g) => [Math.max(a, Number(g.firstWindowMs)), Math.min(b, Number(g.lastCloseMs))]).sort((x, y) => x[0] - y[0]);
+      let at = a;
+      for (const [f, t] of spans) { if (f - at > GAP_MS) { states.push('failed'); lines.push(`${dhm(at)} to ${dhm(f)} UTC: no grid of version ${app.version} posted for it`); } at = Math.max(at, t); }
+      if (b - at > GAP_MS) { states.push('failed'); lines.push(`${dhm(at)} to ${dhm(b)} UTC: no grid of version ${app.version} posted for it`); }
+      const depths = [];
+      for (const g of inside.sort((x, y) => Number(x.firstWindowMs) - Number(y.firstWindowMs))) {
+        const n = fedNo(g.federation), p = g.publication, bc = g.beacon;
+        const head = `${n ? `Federation ${n}` : String(g.federation || '').slice(0, 8)}, rounds ${dhm(g.firstWindowMs)} to ${dhm(g.lastCloseMs)} UTC: `;
+        const d = drawn.get(`${id}:${g.committeeTimeMs}:${g.federation}`);
+        if (!p.height && !p.inMempool) { states.push('failed'); lines.push(head + (p.unread ? 'announced, but no seat reads its round table on its chain' : `its round table ${String(p.txid).slice(0, 10)} is in no block and not in the mempool`)); }
+        else if (!p.height) { states.push('delayed'); lines.push(head + `its round table ${String(p.txid).slice(0, 10)} waits in the mempool to be mined`); }
+        else if (bc.height == null) { states.push('delayed'); lines.push(head + `published in block ${p.height}; its draw block is the first whose median time passes ${hm(g.committeeTimeMs)} UTC (the median time runs about an hour behind), then 6 confirmations`); }
+        else if ((bc.depth || 0) < (bc.needed || 6)) { states.push('delayed'); lines.push(head + `its draw block ${bc.height} has ${bc.depth} of ${bc.needed || 6} confirmations: posted in about ${((bc.needed || 6) - bc.depth) * BLOCK_MS / 60000} min`); }
+        else if (d && !d.yes && d.no) { states.push('failed'); lines.push(head + `posted, but no seat can draw its committee: ${d.why || 'no reason given'}`); }
+        else { states.push('posted'); depths.push(bc.depth); lines.push(head + `posted: its draw block ${bc.height} has ${bc.depth} confirmations (6 needed)`); }
+      }
+      if (!states.length) return { t: '-', c: 'muted', tip: 'nothing to post' };
+      const st = states.includes('failed') ? 'failed' : states.includes('delayed') ? 'delayed' : 'posted';
+      return { t: st === 'posted' ? `posted (${Math.min(...depths)})` : st, c: st === 'posted' ? 'ok' : st === 'delayed' ? 'warn' : 'bad',
+        // one line per reading (several series share a round table and a draw block): the same words once, with how many
+        tip: (st === 'posted' ? `version ${app.version}; in () the confirmations of the draw block - the block whose hash draws each round's committee\n` : `version ${app.version}\n`)
+          + [...lines.reduce((m, l) => m.set(l, (m.get(l) || 0) + 1), new Map())].map(([l, k]) => (k > 1 ? `${l} (${k} grids)` : l)).join('\n') };
+    };
+    out.set(name, { today: cell(nowMs, endOfDay), next: cell(nowMs, nowMs + 86400000) });
   }
   return out;
 }
@@ -162,7 +237,10 @@ export function makeHealth({ H, $, window = {} }) {
       await paintGateways(fedList, seats, nodes);
       // THE SEATS' GET /pending beside the rest (kanban #686, 2026-10-26 measurement: a node that reads its chain through a bridge takes
       // 7 s warm and past 20 s cold): its two tables come when it does, the cards below are not held for it
+      pendingRead = null; postings = null;
       const pendingP = paintPending(seats);
+      // the rounds posted for each app (kanban #692): the grids' versions from the seat that expects the most, the committees from one seat's rounds
+      const expectedP = best(seats, '/expected', (b) => [(b.expected || []).length]), roundsP = first(seats, '/rounds?next=1');
       await paintLiquidity(fedList, nodes, tip);
       paintLnd(nodes);
       paintMachines(nodes);
@@ -173,6 +251,10 @@ export function makeHealth({ H, $, window = {} }) {
       paintReferral(await best(seats, '/referral-fees', (b) => [Number(b.totalMsat) || 0, (b.programs || []).length]));
       say('read ' + new Date().toISOString().slice(11, 19) + ' UTC · ' + nodes.length + ' nodes asked');
       await pendingP;
+      const [ex, rd] = await Promise.all([expectedP, roundsP]);
+      postings = roundPosting({ games: games ? games.body.games : [], pending: pendingRead || [], expected: ex ? ex.body.expected || [] : [],
+        rounds: rd ? rd.body.rounds || [] : [], nowMs: Date.now(), fedNo: fedNoOf });
+      paintApps(games, nodes);
       window.ARENA_HEALTH = { atMs: how.atMs || Date.now(), tip, nodes: nodes.length, answered: nodes.filter((n) => n.version && n.version.ok).length };
       return true;
     } catch (e) { say('could not read the network: ' + e.message, true); return false; }
@@ -283,6 +365,7 @@ export function makeHealth({ H, $, window = {} }) {
   // every seat's GET /pending, merged - a grid by its publication, a peg-in by its outpoint, the furthest reading of each kept
   async function paintPending(seats) {
     const answers = (await Promise.all(seats.map((s) => ask(s, '/pending')))).filter((a) => a && a.ok && a.body && a.body.ok).map((a) => a.body);
+    pendingRead = answers;
     const grids = new Map(), pegs = new Map(), ads = new Map();
     for (const a of answers) {
       for (const g of a.grids || []) { const k = g.publication.txid, was = grids.get(k); if (!was || (g.beacon.depth || 0) > (was.beacon.depth || 0) || (g.publication.confirmations || 0) > (was.publication.confirmations || 0)) grids.set(k, { ...g, tip: a.tip }); }
@@ -347,6 +430,7 @@ export function makeHealth({ H, $, window = {} }) {
         cells: [cut(t.txid, 10), label(t), t.inMempool ? 'in the mempool' : `${sat(t.confirmations)}${t.height ? ` (block ${sat(t.height)})` : ''}`, `${t.seenBy} of ${answers.length}`] })),
         answers.length ? 'no transaction on its way' : 'no node answers GET /pending yet'); }
     drawTable('pending', ['What', 'Tx', 'Confirmations', '', 'Waits for'], rows, answers.length ? 'nothing pending on ' + answers.length + ' node(s)' : 'no node answers GET /pending yet');
+    return answers;
   }
 
   async function paintGateways(feds, seats, nodes) {
@@ -436,10 +520,14 @@ export function makeHealth({ H, $, window = {} }) {
   // MACHINES AND APPS (kanban #597, testnet4 only): the nodes by the machine each names, with its load and what its nodes earned; every
   // app's newest version and what the nodes earned from it (HealthViews.jsx machinesView / appsView)
   function paintMachines(nodes) { H.draw($('machines'), 'machines', { view: H.machinesView(nodes) }); }
+  // ROUNDS POSTED (kanban #692): the newest version's, today and the next 24 h (roundPosting above), once the seats' grids are read
+  let pendingRead = null, postings = null;
   function paintApps(g, nodes) {
-    const AH = ['App', 'Type', 'Newest version', 'Earned by nodes (sat)', 'This month (sat)'];
-    const rows = H.appsView(g ? g.body.games : [], nodes).map((a) => ({ key: a.name, dot: a.newest != null ? 'ok' : 'warn',
-      cells: [a.title, a.type, a.newest == null ? '-' : String(a.newest), sat(a.total), sat(a.month)] }));
+    const AH = ['App', 'Type', 'Newest version', 'Rounds today', 'Next 24 h', 'Earned by nodes (sat)', 'This month (sat)'];
+    const wait = { t: 'reading …', c: 'muted' };
+    const rows = H.appsView(g ? g.body.games : [], nodes).map((a) => { const p = postings && postings.get(a.name);
+      return { key: a.name, dot: a.newest != null ? 'ok' : 'warn',
+        cells: [a.title, a.type, a.newest == null ? '-' : String(a.newest), p ? p.today : postings ? '-' : wait, p ? p.next : postings ? '-' : wait, sat(a.total), sat(a.month)] }; });
     drawTable('apps', AH, rows, 'no app read', 'summed from every answering node\'s dashboard - each node counts only its own share');
   }
 
