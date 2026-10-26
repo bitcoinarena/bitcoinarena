@@ -459,6 +459,8 @@ export async function logsOf(word, { home, platform = process.platform, env = pr
     return { ok: true, file, text: b.toString('utf8').split(/\r?\n/).slice(-lines - 1).join('\n') };
   };
   if (id === 'guardian') return tail(join(home, 'node.db.guardian', 'fedimintd.log'));
+  // Tor writes its own log beside its torrc (kanban #670): on Linux its launcher sends its output there too, so the journal holds none of it
+  if (id === 'tor' && existsSync(join(home, 'tor', 'tor.log'))) return tail(join(home, 'tor', 'tor.log'));
   if (platform === 'linux') {
     const unit = serviceName(id, platform);
     const r = await sh('journalctl', ['--user', '-u', unit, '-n', String(lines), '--no-pager', '-o', 'short-iso']);
