@@ -145,6 +145,31 @@ test('a running guardian started on an old bitcoind cookie is started again on a
 });
 const require_secret = (file) => { try { return /sekrit|fresh/.test(String(readFileSync(file))); } catch { return false; } };
 
+// kanban #577 (2026-10-26): a guardian started before its seat carried its peers' API keeps the old addresses while it is adopted;
+// the overrides are in the fingerprint, so it is started again once, with them
+test('a running guardian whose federation config names peers is started again once with its peers\' API overrides, then adopted', async () => {
+  const { dir, cookie, bin, call } = setup();
+  const store = join(dir, 'g.db');
+  const run = (pids, log = () => {}, keep = false) => startGuardian({ nodePort: 6551, host: '127.0.0.1', storePath: store, bitcoindUrl: 'http://127.0.0.1:48332',
+    cookiePath: cookie, call, env: { PATH: `${bin}:/usr/bin:/bin` }, tailscale: TS, log, keep, pids, nodeKey: 'cc'.repeat(32) });
+  const first = fakePids();
+  await run(first, () => {}, true);                                              // no federation yet: no overrides
+  assert.equal(first.calls.started[0].env.FM_WS_API_CONNECT_OVERRIDES, undefined);
+  writeFileSync(join(store + '.guardian', 'client.json'), JSON.stringify({ global: { api_endpoints: {
+    0: { url: 'wss://gone.trycloudflare.com/guardian', name: 'aaaaaaaaaaaaaaaa' }, 1: { url: 'ws://198.51.100.7:6571/guardian', name: 'cccccccccccccccc' } } } }));
+  const lines = [];
+  const again = fakePids(5161);
+  await run(again, (l) => lines.push(l));                        // the DKG wrote its config: started again, with them
+  assert.equal(again.calls.stopped, 1); assert.equal(again.calls.started.length, 1);
+  const ov = again.calls.started[0].env.FM_WS_API_CONNECT_OVERRIDES;
+  assert.match(ov, /wss:\/\/gone\.trycloudflare\.com\/guardian=ws:\/\/127\.0\.0\.1:6551\/guardian-api\/aaaaaaaaaaaaaaaa/);
+  assert.match(ov, /ws:\/\/100\.85\.86\.106:6571\/guardian=ws:\/\/127\.0\.0\.1:7551\//, 'its own: its local API port');
+  assert.ok(lines.some((l) => /old peer addresses/.test(l)));
+  const then = fakePids(5161);
+  const g = await run(then);                                     // the same overrides: adopted
+  assert.equal(g.adopted, true); assert.equal(then.calls.started.length, 0);
+});
+
 // THE DASHBOARD'S PORT, FREE (kanban #326: another program held a T2 guardian's dashboard port and fedimintd exited at start)
 test('the dashboard port: the slot\'s when free, the next free one when taken', async () => {
   const { freeLocalPort } = await import('../src/guardian.js');
