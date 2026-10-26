@@ -59,7 +59,7 @@ test('a page of 200 newest first, older and newer pages by a row\'s cursor; ever
 });
 
 test('the gifts, zaps and items bought are rows of their own kind, each found by its id and by its federation transaction; not stakes', async () => {
-  const { env, kv } = store();
+  const { db, env, kv } = store();
   const now = Date.now();
   const gift = { id: hex(0xa1), kind: 'donation', item: 'donation · protocol + rock-paper-scissors · from app:rock-paper-scissors', target: 3, donor: 'd0'.repeat(32), gameDev: 'de'.repeat(32),
     gameName: 'rock-paper-scissors', origin: 'app:rock-paper-scissors', federation: 'fe'.repeat(32), txid: 'aa'.repeat(32), totalMsat: '1000000',
@@ -83,7 +83,9 @@ test('the gifts, zaps and items bought are rows of their own kind, each found by
     let done; await worker.scheduled({}, env, { waitUntil: (p) => { done = p; } }); await done;
   } finally { globalThis.fetch = real; }
   assert.ok(asked.some((p) => p.endsWith('/payments')));
-  assert.equal(kv.get('payments-walk'), 'done', 'the walk from the first: nothing over');
+  // the walk's position in D1, not KV (2026-10-26: the KV free tier's 1,000 puts a day were spent by the minute's writes)
+  assert.equal(db.prepare("SELECT v FROM state WHERE k = 'payments-walk'").get().v, 'done', 'the walk from the first: nothing over');
+  assert.equal(kv.size, 0, 'no KV write');
   const page = await ask(env, '/api/recent');
   assert.deepEqual(page.txs.map((t) => [t.kind, t.app, t.stakeMsat, t.item]), [['item', 'nextblock', '500000', 'nextblock · large-truck'], ['zap', null, '21000', 'zap'],
     ['donation', 'rock-paper-scissors', '1000000', 'donation · protocol + rock-paper-scissors · from app:rock-paper-scissors']]);
