@@ -3,7 +3,7 @@
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # THE INSTALLER PACKAGES (2026-10-19: "For the installer, for windows we want an exe, for macOS OS we want a deb. That also
 # includes a small gui version of the installer that launches the browser etc"). Each wraps a release asset build-release.sh made:
-#   windows  bitcoin-arena-node-setup-<v>-windows-x64.exe   NSIS (makensis): no administrator, %LOCALAPPDATA%\ArenaNode, Start menu "Bitcoin Arena"
+#   windows  bitcoin-arena-node-setup-<v>-windows-x64.exe   NSIS (makensis): no administrator, %LOCALAPPDATA%\BitcoinArena (ArenaNode where an older setup put it), Start menu "Bitcoin Arena"
 #   linux    bitcoin-arena-node_<v>_<amd64|arm64>.deb     /opt/bitcoin-arena-node/<release>, /usr/bin/bitcoin-arena-node-setup, the menu's "Bitcoin Arena"
 #   darwin   bitcoin-arena-node-<v>-darwin-<arch>.dmg      tools/release/package-mac.sh, on a macOS (hdiutil)
 # Each package's line goes into <out>/SHA256SUMS.packages (the release job adds it to SHA256SUMS, which the release key signs).
@@ -20,10 +20,10 @@ for what in $WHAT; do
     windows)
       R=bitcoin-arena-node-$V-windows-x64
       mkdir -p "$WORK/win" && unzip -q "$OUT/$R.zip" -d "$WORK/win"
-      cp "$HERE/pkg/windows/ArenaNode.ps1" "$HERE/pkg/windows/arena-node.nsi" "$HERE/pkg/icon/bitcoin-arena.ico" "$WORK/win/"
+      cp "$HERE/pkg/windows/BitcoinArena.ps1" "$HERE/pkg/windows/bitcoin-arena.nsi" "$HERE/pkg/icon/bitcoin-arena.ico" "$WORK/win/"
       EXE=bitcoin-arena-node-setup-$V-windows-x64.exe
       MAKENSIS=${MAKENSIS:-makensis}
-      (cd "$WORK/win" && "$MAKENSIS" -V2 -DVERSION="$V" -DRELEASE="$R" -DSTAGE="$WORK/win/$R" -DOUT="$OUT/$EXE" arena-node.nsi)
+      (cd "$WORK/win" && "$MAKENSIS" -V2 -DVERSION="$V" -DRELEASE="$R" -DSTAGE="$WORK/win/$R" -DOUT="$OUT/$EXE" bitcoin-arena.nsi)
       sums "$EXE"
       ;;
     linux)
@@ -33,7 +33,7 @@ for what in $WHAT; do
         P=$WORK/deb-$arch
         mkdir -p "$P/opt/bitcoin-arena-node" "$P/usr/bin" "$P/usr/share/applications" "$P/DEBIAN"
         tar -xzf "$OUT/$R.tar.gz" -C "$P/opt/bitcoin-arena-node"
-        install -m 0755 "$HERE/pkg/linux/arena-node-setup" "$P/usr/bin/bitcoin-arena-node-setup"
+        install -m 0755 "$HERE/pkg/linux/bitcoin-arena-node-setup" "$P/usr/bin/bitcoin-arena-node-setup"
         cat > "$P/usr/share/applications/bitcoin-arena-node.desktop" <<EOF
 [Desktop Entry]
 Type=Application
@@ -55,7 +55,7 @@ Priority: optional
 Suggests: zenity, xdg-utils
 Description: Bitcoin Arena node (testnet4): the node, its installer and its runtime
  Run bitcoin-arena-node-setup (or "Bitcoin Arena" in the menu): the installer's setup page
- opens in the browser. Afterwards arenanode status / doctor / restart manage it.
+ opens in the browser. Afterwards bitcoinarena status / doctor / restart manage it.
 EOF
         NAME=bitcoin-arena-node_${V/-/\~}_$deb.deb
         dpkg-deb --root-owner-group -Zxz --build "$P" "$OUT/$NAME" >/dev/null

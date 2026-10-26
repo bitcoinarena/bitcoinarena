@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // HOW MUCH THE NODE SAYS (kanban #693, 2026-10-26: "add a --debug and --verbose flag that shows more info on what its doing, what is
-// going wrong etc"). One level for every program of a node - the arenanode command, the installer, the update, the seat and its services:
+// going wrong etc"). One level for every program of a node - the bitcoinarena command, the installer, the update, the seat and its services:
 //
 //   info      what each program says today, line for line (the default: nothing here changes it)
 //   verbose   each step as it runs: which URL, file, service or port it checks, what answered, how long it took
@@ -9,7 +9,7 @@
 //             command line, exit code and last stderr lines, the names (never the values) of the settings that decided something
 //
 // Where the level comes from: a flag (--verbose / -v, --debug, --log-level <level>) over ARENA_LOG_LEVEL over arena.conf log_level
-// (that one only for the long-running services: `arenanode config set log_level debug`, then a restart). A word that is no level is
+// (that one only for the long-running services: `bitcoinarena config set log_level debug`, then a restart). A word that is no level is
 // said once and read as info.
 //
 // NOTHING SECRET IS PRINTED, at any level: every verbose and debug line goes through redact() - by key name (password, macaroon,

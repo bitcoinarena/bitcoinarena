@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NODE'S SERVICES, ONE VIEW (2026-10-19: "Make a command arenanode that can stop start the service, status and
 // diagnosis commands to detect problems", "arenanode must also control all of its subservices ie gateway lnd Guardian etc", "Also have
-// a service overview in the owners area with the status of all services"). The arenanode command and the seat's /owner/services read
+// a service overview in the owners area with the status of all services"). The bitcoinarena command (arenanode until kanban #688) and the seat's /owner/services read
 // the same answers from here:
 //
 //   installedServices   the services this node has - found as the files the installer wrote (systemd user units on Linux, launchd
@@ -44,7 +44,7 @@ export const SERVICES = Object.freeze([
   { id: 'guardian', title: 'Guardian (fedimintd)', inside: 'node' },
   { id: 'tunnel', title: 'Tunnel (cloudflared)' },
 ]);
-/** Other words for a service: `arenanode restart bitcoind`, `... seat`, `... fedimintd`. */
+/** Other words for a service: `bitcoinarena restart bitcoind`, `... seat`, `... fedimintd`. */
 export const ALIASES = Object.freeze({ bitcoind: 'bitcoind-testnet4', bitcoin: 'bitcoind-testnet4', core: 'bitcoind-testnet4', seat: 'node', fedimintd: 'guardian',
   federation: 'guardian', cloudflared: 'tunnel', bridge: 'chain-bridge', electrum: 'chain-bridge', lightning: 'lnd', gatewayd: 'gateway' });
 export const serviceId = (word) => { const w = String(word || '').toLowerCase(); return SERVICES.some((s) => s.id === w) ? w : ALIASES[w] || null; };
@@ -53,8 +53,8 @@ const run = (cmd, args, { timeout = 60000 } = {}) => new Promise((resolve) => ex
   (e, out, err) => resolve({ ok: !e, code: e ? e.code : 0, out: String(out || ''), err: String(err || '') })));
 
 /** This node's settings: { file, values, errors } (values {} when there is no arena.conf), its state.json, its release. */
-// THE RELEASE THIS CODE IS PART OF (<release>/packages/arena-installer/src): the arenanode command, the seat and the wizard all load it from
-// the node's own release. A node installed fresh had no release in state.json - only an update wrote one - so `arenanode status` said
+// THE RELEASE THIS CODE IS PART OF (<release>/packages/arena-installer/src): the bitcoinarena command, the seat and the wizard all load it from
+// the node's own release. A node installed fresh had no release in state.json - only an update wrote one - so `bitcoinarena status` said
 // "version unknown" and the auto update refused ("this node does not know the release it runs"): measured on the test host 2026-10-19,
 // 2026.1.0 installed fresh through the wizard. A checkout (no VERSION file) is no release.
 const OWN_RELEASE = (() => { const r = resolve(dirname(fileURLToPath(import.meta.url)), '../../..'); return existsSync(join(r, 'VERSION')) ? r : null; })();
@@ -164,7 +164,7 @@ const getIdentity = async (base, fetcher) => {
 export async function chainCall({ url, cookie, method, params = [], fetcher = fetch }) {
   const auth = Buffer.from(readFileSync(cookie, 'utf8').trim()).toString('base64');
   const r = await fetcher(url, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Basic ${auth}` },
-    body: JSON.stringify({ jsonrpc: '1.0', id: 'arenanode', method, params }), signal: AbortSignal.timeout(10000) });
+    body: JSON.stringify({ jsonrpc: '1.0', id: 'bitcoinarena', method, params }), signal: AbortSignal.timeout(10000) });
   const j = await r.json().catch(() => ({}));
   if (j.error) throw new Error(j.error.message || JSON.stringify(j.error));
   if (r.status !== 200) throw new Error(`RPC answered ${r.status}`);
@@ -516,7 +516,7 @@ const freeBytes = (dir) => { try { const s = statfsSync(dir); return Number(s.ba
  * release ({ latest, newer }) or throws; `esplora` the chain explorer for the bond.
  */
 export async function doctor({ home, platform = process.platform, env = process.env, sh = run, fetcher = fetch, latest = null,
-  esplora = 'https://mempool.space/testnet4/api', name = 'arenanode', log: lg = QUIET } = {}) {
+  esplora = 'https://mempool.space/testnet4/api', name = 'bitcoinarena', log: lg = QUIET } = {}) {
   const log = lg.tag('doctor');
   const out = [];
   const add = (check, ok, says, fix = null) => { out.push({ check, ok, says, fix }); log.verbose(`${check}: ${ok === true ? 'ok' : ok === false ? 'PROBLEM' : 'note'} - ${says}`); };

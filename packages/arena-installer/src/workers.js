@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PERMANENT NAME ON THE OPERATOR'S OWN workers.dev (2026-10-18: "Implement workers dev tunnel"). For a node that
 // cannot open a port and has no domain: its quick Cloudflare tunnel (a random name, new at every restart) sits behind a Worker on the
-// operator's own free Cloudflare account, https://arena-node-<id>.<their subdomain>.workers.dev - a name that never changes. The
+// operator's own free Cloudflare account, https://bitcoinarena-<id>.<their subdomain>.workers.dev - a name that never changes. The
 // Worker forwards every request (websockets too) to the tunnel; when the tunnel's name changes, the node uploads the Worker again with
 // the new one (the workers keeper, bin/workers-keeper.mjs), which takes effect at once. The traffic and the account are the operator's
 // (the owner: we do not carry nodes' traffic). The installer acts with an API token the operator makes from Cloudflare's
@@ -11,8 +11,9 @@ const API = 'https://api.cloudflare.com/client/v4';
 export const TOKEN_PAGE = 'https://dash.cloudflare.com/profile/api-tokens';
 export const COMPATIBILITY_DATE = '2025-09-01';
 
-/** The Worker's name: arena-node-<6 hex>, chosen once per node (the node key does not exist yet when the reach is chosen). */
-export const workerNameOf = (suffix) => `arena-node-${String(suffix).toLowerCase()}`;
+/** The Worker's name: bitcoinarena-<6 hex>, chosen once per node (the node key does not exist yet when the reach is chosen) and kept in
+ *  state.json - a node named arena-node-<6 hex> before 2026.1.9.8 keeps its name and its address (kanban #688: "bitcoinarena, not arenanode"). */
+export const workerNameOf = (suffix) => `bitcoinarena-${String(suffix).toLowerCase()}`;
 
 async function cf(token, path, { method = 'GET', body = null, headers = {}, fetcher = fetch } = {}) {
   let r;

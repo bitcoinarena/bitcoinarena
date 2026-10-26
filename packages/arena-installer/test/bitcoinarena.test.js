@@ -1,25 +1,26 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ARENANODE COMMAND: the services of an installed node found from the files the installer wrote, their states, the
+// THE BITCOINARENA COMMAND (arenanode until kanban #688): the services of an installed node found from the files the installer wrote, their states, the
 // guardian inside the seat, start/stop/restart in order (one or all), a restarted quick tunnel's name followed into every file of the
 // node (macOS node B's gateway still announced a name two restarts old), the doctor's checks with their fixes, `config set`, and the
 // command written onto the PATH. systemctl / launchctl / ps are played by a fake `sh`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { installedServices, overview, control, bootOf, setBoot, followTunnelNow, doctor, servicesNamed, serviceId } from '../src/node-services.js';
-import { main } from '../src/arenanode.js';
-import { writeCommand } from '../src/launchers.js';
+import { main } from '../src/bitcoinarena.js';
+import { writeCommand, legacyShim, commandBehind, ensureCommand, SHIM_MARK } from '../src/launchers.js';
 import { formatConf, parseConf } from '../../arena-node/src/arena-conf.js';
 
 const OLD = 'event-shows-dealing-appreciated.trycloudflare.com', NOW = 'muslim-charges-marble-invoice.trycloudflare.com', NEW = 'fresh-name-after-restart.trycloudflare.com';
 
 /** A node as the installer leaves it on Linux: arena.conf, state.json, units for tor, LND, the gateway (announcing an old tunnel name), the seat, its tunnel. */
 function linuxNode({ port }) {
-  const root = mkdtempSync(join(tmpdir(), 'arenanode-'));
+  const root = mkdtempSync(join(tmpdir(), 'bitcoinarena-'));
   const home = join(root, 'home'); mkdirSync(home, { recursive: true });
   const env = { XDG_CONFIG_HOME: join(root, 'config'), HOME: join(root, 'user') };
   const units = join(env.XDG_CONFIG_HOME, 'systemd', 'user'); mkdirSync(units, { recursive: true });
@@ -101,7 +102,7 @@ test('start / stop / restart: all in order, stop in reverse, one by name; a rest
 });
 
 test('macOS: launchd agents found by label, a stopped one bootstrapped, a loaded one kickstarted, a restart booted out and bootstrapped from its file', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'arenanode-mac-'));
+  const root = mkdtempSync(join(tmpdir(), 'bitcoinarena-mac-'));
   try {
     const env = { HOME: join(root, 'user') };
     const agents = join(env.HOME, 'Library', 'LaunchAgents'); mkdirSync(agents, { recursive: true });
@@ -138,20 +139,20 @@ test('the doctor: a stopped service, a stale announced address and a missing bon
     const checks = await doctor({ home: n.home, platform: 'linux', env: n.env, sh, fetcher, latest: async () => ({ latest: { version: '0.1.0-rc.30' }, newer: true }) });
     const by = Object.fromEntries(checks.map((c) => [c.check, c]));
     assert.equal(by['arena.conf'].ok, true);
-    assert.deepEqual([by['Lightning (LND)'].ok, by['Lightning (LND)'].fix], [false, 'arenanode start lnd   (then: arenanode logs lnd)']);
+    assert.deepEqual([by['Lightning (LND)'].ok, by['Lightning (LND)'].fix], [false, 'bitcoinarena start lnd   (then: bitcoinarena logs lnd)']);
     assert.match(by['Bitcoin Arena node (seat)'].says, new RegExp(`answers on port ${s.port} as abababab`));
     assert.equal(by['Tunnel (cloudflared)'].ok, true, by['Tunnel (cloudflared)'].says);
     assert.equal(by['Guardian (fedimintd)'].ok, false, 'nothing on its API port');
     assert.equal(by['Quick tunnel name'].ok, false, 'the tunnel logs another name than the node names');
     assert.match(by['Lightning gateway address'].says, new RegExp(`announces ${OLD.replace(/\./g, '\\.')}`));
-    assert.equal(by['Lightning gateway address'].fix.startsWith('arenanode restart tunnel'), true);
+    assert.equal(by['Lightning gateway address'].fix.startsWith('bitcoinarena restart tunnel'), true);
     assert.deepEqual([by.Bond.ok, by.Bond.fix], [null, 'arena-install (the installer\'s bond step)']);
     assert.equal(by.Release.ok, null);
     // the command prints them and says how many
     const out = [];
     const code = await main(['doctor'], { home: n.home, io: { out: (l) => out.push(l), err: (l) => out.push(l) }, deps: { platform: 'linux', env: n.env, sh, fetcher } });
     assert.equal(code, 1);
-    assert.match(out.join('\n'), /✗ Lightning \(LND\)\s+inactive \(dead\)\n\s+fix: arenanode start lnd/);
+    assert.match(out.join('\n'), /✗ Lightning \(LND\)\s+inactive \(dead\)\n\s+fix: bitcoinarena start lnd/);
     assert.match(out.at(-1), /^\d+ problem\(s\)\.$/);
   } finally { s.close(); rmSync(n.root, { recursive: true, force: true }); }
 });
@@ -172,7 +173,7 @@ test('the doctor: a bond confirmed too late to count says so, with the way out (
   } finally { rmSync(n.root, { recursive: true, force: true }); }
 });
 
-test('arenanode status / config / help: a table of every service, settings read and changed in arena.conf', async () => {
+test('bitcoinarena status / config / help: a table of every service, settings read and changed in arena.conf', async () => {
   const n = linuxNode({ port: 8470 });
   try {
     const { sh } = fakeSh();
@@ -192,33 +193,102 @@ test('arenanode status / config / help: a table of every service, settings read 
     assert.equal(await main(['config', 'set', 'port', 'x'], { home: n.home, io, deps }), 2, 'no port');
     assert.equal(await main(['nonsense'], { home: n.home, io, deps }), 2);
     out.length = 0;
-    await main(['help'], { home: n.home, io, deps, name: 'arenanode-b' });
-    assert.match(out.join('\n'), /arenanode-b restart <service>/);
+    await main(['help'], { home: n.home, io, deps, name: 'bitcoinarena-b' });
+    assert.match(out.join('\n'), /bitcoinarena-b restart <service>/);
+    // the name it is called by, unless told another (kanban #688: "bitcoinarena, not arenanode")
+    out.length = 0;
+    await main(['help'], { home: n.home, io, deps });
+    assert.match(out.join('\n'), /^bitcoinarena: your Bitcoin Arena node on this machine$/m);
+    assert.match(out.join('\n'), /^ {2}bitcoinarena doctor {20}find problems/m);
+    assert.ok(!/arenanode/.test(out.join('\n')), 'the help names only the new command');
   } finally { rmSync(n.root, { recursive: true, force: true }); }
 });
 
-test('the command on the PATH: a script with the node\'s home in it, linked into ~/.local/bin; Windows: a .cmd and the user PATH', () => {
-  const root = mkdtempSync(join(tmpdir(), 'arenanode-cmd-'));
+test('the command on the PATH: bitcoinarena with the node\'s home in it, arenanode beside it running it, both linked into ~/.local/bin; Windows: two .cmd and the user PATH (kanban #688)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'bitcoinarena-cmd-'));
   try {
     const home = join(root, 'home'), H = join(root, 'user');
     const c = writeCommand({ home, release: '/r', node: '/r/runtime/node', platform: 'linux', env: { HOME: H, PATH: '/usr/bin' } });
-    assert.equal(c.name, 'arenanode');
-    assert.equal(readFileSync(join(home, 'bin', 'arenanode'), 'utf8').split('\n')[2], `exec '/r/runtime/node' '/r/packages/arena-installer/bin/arenanode.mjs' --home '${home}' --name arenanode "$@"`);
-    assert.equal(realpathSync(join(H, '.local', 'bin', 'arenanode')), realpathSync(join(home, 'bin', 'arenanode')), 'macOS: /var is /private/var - both sides real');
-    assert.match(readFileSync(join(H, '.profile'), 'utf8'), /export PATH=".*\/\.local\/bin:\$PATH"/, '~/.local/bin was not on the PATH: the login profile puts it there');
+    assert.equal(c.name, 'bitcoinarena');
+    assert.equal(readFileSync(join(home, 'bin', 'bitcoinarena'), 'utf8').split('\n')[2], `exec '/r/runtime/node' '/r/packages/arena-installer/bin/bitcoinarena.mjs' --home '${home}' --name bitcoinarena "$@"`);
+    assert.equal(realpathSync(join(H, '.local', 'bin', 'bitcoinarena')), realpathSync(join(home, 'bin', 'bitcoinarena')), 'macOS: /var is /private/var - both sides real');
+    // THE OLD NAME: a small script that runs the new command, linked beside it
+    assert.deepEqual([c.legacy.name, c.legacy.file], ['arenanode', join(home, 'bin', 'arenanode')]);
+    assert.equal(readFileSync(join(home, 'bin', 'arenanode'), 'utf8'), `#!/bin/sh\n# arenanode: the old name of this node's command, ${SHIM_MARK}\nexec '${join(home, 'bin', 'bitcoinarena')}' "$@"\n`);
+    assert.equal(lstatSync(join(home, 'bin', 'arenanode')).mode & 0o777, 0o755);
+    assert.equal(realpathSync(join(H, '.local', 'bin', 'arenanode')), realpathSync(join(home, 'bin', 'arenanode')));
+    assert.match(readFileSync(join(H, '.profile'), 'utf8'), /# the bitcoinarena command \(Bitcoin Arena node\)\nexport PATH=".*\/\.local\/bin:\$PATH"/, '~/.local/bin was not on the PATH: the login profile puts it there');
     assert.match(c.note, /new terminal/);
-    // a file of that name that is not ours stays
-    writeFileSync(join(root, 'mine'), 'x');
+    // a file of either name that is not ours stays
     mkdirSync(join(root, 'taken'));
-    writeFileSync(join(root, 'taken', 'arenanode'), '#!/bin/sh\necho someone else\n');
+    writeFileSync(join(root, 'taken', 'bitcoinarena'), '#!/bin/sh\necho someone else\n');
     const d = writeCommand({ home, release: '/r', node: '/r/runtime/node', platform: 'linux', env: { HOME: H, PATH: join(root, 'taken') }, pathDirs: [join(root, 'taken')] });
     assert.equal(d.link, null);
-    assert.equal(lstatSync(join(root, 'taken', 'arenanode')).isSymbolicLink(), false);
+    assert.equal(lstatSync(join(root, 'taken', 'bitcoinarena')).isSymbolicLink(), false);
+    mkdirSync(join(root, 'taken2'));
+    writeFileSync(join(root, 'taken2', 'arenanode'), '#!/bin/sh\necho another arenanode\n');
+    const e = writeCommand({ home, release: '/r', node: '/r/runtime/node', platform: 'linux', env: { HOME: H, PATH: join(root, 'taken2') }, pathDirs: [join(root, 'taken2')] });
+    assert.deepEqual([e.link, e.legacy.link], [join(root, 'taken2', 'bitcoinarena'), null], 'the new name linked, the stranger\'s arenanode kept');
+    assert.equal(readFileSync(join(root, 'taken2', 'arenanode'), 'utf8'), '#!/bin/sh\necho another arenanode\n');
     const ran = [];
     const w = writeCommand({ home, release: 'C:\\r', node: 'C:\\r\\runtime\\node.exe', platform: 'win32', env: { HOME: H }, run: (cmd, args) => ran.push([cmd, ...args]) });
-    assert.match(readFileSync(w.file, 'utf8'), /^@echo off\r\nrem .*\r\n"C:\\r\\runtime\\node\.exe" "C:\\r[\\/]packages[\\/]arena-installer[\\/]bin[\\/]arenanode\.mjs" --home ".*" --name arenanode %\*\r\n$/);
+    assert.match(readFileSync(w.file, 'utf8'), /^@echo off\r\nrem .*\r\n"C:\\r\\runtime\\node\.exe" "C:\\r[\\/]packages[\\/]arena-installer[\\/]bin[\\/]bitcoinarena\.mjs" --home ".*" --name bitcoinarena %\*\r\n$/);
+    assert.equal(w.file.split(/[\\/]/).pop(), 'bitcoinarena.cmd');
+    assert.equal(readFileSync(w.legacy.file, 'utf8'), `@echo off\r\nrem arenanode: the old name, ${SHIM_MARK}\r\ncall "%~dp0bitcoinarena.cmd" %*\r\nexit /b %errorlevel%\r\n`);
     assert.match(ran[0].at(-1), /SetEnvironmentVariable\('Path'/);
     assert.ok(w.pathSet instanceof Promise, 'the PATH change is handed back to be awaited (an update would end before it)');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the old name runs the new command: every argument and the exit code through (75 is the auto update\'s "again")', () => {
+  const root = mkdtempSync(join(tmpdir(), 'bitcoinarena-shim-'));
+  try {
+    const file = join(root, 'bitcoinarena');
+    writeFileSync(file, '#!/bin/sh\necho "ran: $*"\nexit 75\n', { mode: 0o755 });
+    writeFileSync(join(root, 'arenanode'), legacyShim({ name: 'arenanode', file, platform: 'linux' }), { mode: 0o755 });
+    const r = spawnSync(join(root, 'arenanode'), ['restart', 'lnd', 'with space'], { encoding: 'utf8' });
+    assert.deepEqual([r.status, r.stdout], [75, 'ran: restart lnd with space\n']);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('Windows: the old name\'s script is shorter than the full command an update rewrites while it runs, so cmd ends it after the node\'s line', () => {
+  // cmd.exe reads a running batch file at its place: the auto update service runs through <home>\bin\arenanode.cmd (the full command of
+  // 2026.1.9.7) and the update writes the shim over it - the place after the line that ran must be past the shim's end
+  const home = 'C:\\Users\\a\\.arena-node';
+  const full = ['@echo off', 'rem The arenanode command, written by the installer: arenanode status, arenanode restart lnd, arenanode doctor, arenanode help',
+    `"${home}\\releases\\bitcoin-arena-node-2026.1.9.8-windows-x64\\runtime\\node.exe" "${home}\\releases\\bitcoin-arena-node-2026.1.9.8-windows-x64\\packages\\arena-installer\\bin\\arenanode.mjs" --home "${home}" --name arenanode %*`].join('\r\n') + '\r\n';
+  for (const name of ['arenanode', 'arenanode-abcdefghijkl']) {
+    const shim = legacyShim({ name, file: `${home}\\bin\\${name.replace('arenanode', 'bitcoinarena')}.cmd`, platform: 'win32' });
+    assert.ok(shim.length < full.length, `${shim.length} < ${full.length}`);
+  }
+});
+
+test('a node the update of 2026.1.9.7 moved: its arenanode names this release, bitcoinarena is missing - the first run writes both, once (kanban #688)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'bitcoinarena-behind-'));
+  try {
+    const home = join(root, '.arena-node'), H = join(root, 'user');
+    const release = join(home, 'releases', 'bitcoin-arena-node-2026.1.9.8-linux-x64'), older = join(home, 'releases', 'bitcoin-arena-node-2026.1.9.7-linux-x64');
+    mkdirSync(join(home, 'bin'), { recursive: true });
+    // what the 2026.1.9.7 writeCommand writes
+    const old197 = (rel) => `#!/bin/sh\n# The arenanode command, written by the installer: arenanode status, arenanode restart lnd, arenanode doctor, arenanode help\nexec '${rel}/runtime/node' '${rel}/packages/arena-installer/bin/arenanode.mjs' --home '${home}' --name arenanode "$@"\n`;
+    writeFileSync(join(home, 'bin', 'arenanode'), old197(older), { mode: 0o755 });
+    assert.equal(commandBehind({ home, release, platform: 'linux' }), false, 'it names another release (this code is not the node\'s): nothing is written');
+    assert.equal(ensureCommand({ home, release, platform: 'linux', env: { HOME: H } }), null);
+    writeFileSync(join(home, 'bin', 'arenanode'), old197(release), { mode: 0o755 });
+    assert.equal(commandBehind({ home, release, platform: 'linux' }), true);
+    const c = ensureCommand({ home, release, node: `${release}/runtime/node`, platform: 'linux', env: { HOME: H, PATH: join(H, '.local', 'bin') } });
+    assert.equal(c.written.name, 'bitcoinarena');
+    assert.match(readFileSync(join(home, 'bin', 'bitcoinarena'), 'utf8'), new RegExp(`exec '${release}/runtime/node' '${release}/packages/arena-installer/bin/bitcoinarena\\.mjs' --home '${home}' --name bitcoinarena "\\$@"`));
+    assert.ok(readFileSync(join(home, 'bin', 'arenanode'), 'utf8').includes(SHIM_MARK));
+    assert.equal(realpathSync(join(H, '.local', 'bin', 'bitcoinarena')), realpathSync(join(home, 'bin', 'bitcoinarena')));
+    assert.equal(commandBehind({ home, release, platform: 'linux' }), false, 'once: the old name is the small script now');
+    assert.equal(ensureCommand({ home, release, platform: 'linux', env: { HOME: H } }), null);
+    // Windows: the same, by the release's folder whatever the slashes
+    const wh = join(root, 'win');
+    mkdirSync(join(wh, 'bin'), { recursive: true });
+    writeFileSync(join(wh, 'bin', 'arenanode.cmd'), '@echo off\r\nrem The arenanode command\r\n"C:\\h\\releases\\bitcoin-arena-node-2026.1.9.8-windows-x64\\runtime\\node.exe" "C:\\h\\releases\\bitcoin-arena-node-2026.1.9.8-windows-x64\\packages\\arena-installer\\bin\\arenanode.mjs" --home "C:\\h" --name arenanode %*\r\n');
+    assert.equal(commandBehind({ home: wh, release: 'C:/h/releases/bitcoin-arena-node-2026.1.9.8-windows-x64', platform: 'win32' }), true);
+    assert.equal(commandBehind({ home: wh, release: 'C:\\h\\releases\\bitcoin-arena-node-2026.1.9.9-windows-x64', platform: 'win32' }), false);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -246,7 +316,7 @@ test('a quick tunnel whose new name is not in DNS yet is asked again before it c
 test('Windows, processes this user cannot see into (the Arena Node window in the desktop session): what answers counts as running, the rest unknown, never "stopped"', async () => {
   const id = 'ef'.repeat(32);
   const s = await seat(id);
-  const root = mkdtempSync(join(tmpdir(), 'arenanode-win-'));
+  const root = mkdtempSync(join(tmpdir(), 'bitcoinarena-win-'));
   try {
     const home = join(root, 'home'); mkdirSync(home, { recursive: true });
     writeFileSync(join(home, 'arena.conf'), formatConf({ port: String(s.port) }));
@@ -354,7 +424,7 @@ test('on an Electrum node the Bitcoin Core row is not answered by the chain brid
 });
 
 // THE DESKTOP APP'S LINE AND ITS DASHBOARD BUTTON (kanban #658): `state` says running or stopped in one line, `dashboard` names the page
-test('arenanode state: running, running with a service down, stopped; arenanode dashboard: the node\'s dashboard', async () => {
+test('bitcoinarena state: running, running with a service down, stopped; bitcoinarena dashboard: the node\'s dashboard', async () => {
   const n = linuxNode({ port: 8470 });
   try {
     const run = async (args, stopped = []) => {
@@ -374,7 +444,7 @@ test('arenanode state: running, running with a service down, stopped; arenanode 
 
 // THE OWNER PAGE BUTTON (kanban #687, 2026-10-26 on 1.9.7: "the owner page still points to http://127.0.0.1:8770/dashboard/owner which
 // doesn't have my secret"): the Arena site's owner page for this node's key, where the installer handed the key over; local= beside it
-test('arenanode open: the site\'s owner page for the node\'s key, from state.json or the node\'s /identity; the local page only with no key', async () => {
+test('bitcoinarena open: the site\'s owner page for the node\'s key, from state.json or the node\'s /identity; the local page only with no key', async () => {
   const n = linuxNode({ port: 8770 });
   const key = 'ab'.repeat(32);
   try {

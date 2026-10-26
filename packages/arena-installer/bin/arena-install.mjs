@@ -3,20 +3,20 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE INSTALLER: start it, open the link it prints, finish in the browser.
 //
-//     arena-install [--tunnel] [--port 7800] [--seat-port 8470] [--home ~/.arena-node]
-//     arena-install --update <arena-node-<version>-<os>-<arch>.tar.gz> [--home ~/.arena-node]
-//     arena-install --update-self [--home ~/.arena-node]   (the node to this release, when it is newer: the desktop app)
-//     arena-install --add-bond <sats> [--yes] [--home ~/.arena-node]
-//     arena-install --rebond <sats> [--yes] [--home ~/.arena-node]
-//     arena-install --join-federation <invite code> [--home ~/.arena-node]
-//     arena-install --add-custody [--home ~/.arena-node]
+//     arena-install [--tunnel] [--port 7800] [--seat-port 8470] [--home ~/.bitcoinarena]
+//     arena-install --update <arena-node-<version>-<os>-<arch>.tar.gz> [--home ~/.bitcoinarena]
+//     arena-install --update-self [--home ~/.bitcoinarena]   (the node to this release, when it is newer: the desktop app)
+//     arena-install --add-bond <sats> [--yes] [--home ~/.bitcoinarena]
+//     arena-install --rebond <sats> [--yes] [--home ~/.bitcoinarena]
+//     arena-install --join-federation <invite code> [--home ~/.bitcoinarena]
+//     arena-install --add-custody [--home ~/.bitcoinarena]
 //
 // --tunnel     open a Cloudflare quick tunnel (no account) and print its https link instead - by itself in a remote session (ssh, or
 //              Linux without a display: session.js)
 // --local      the 127.0.0.1 link even in a remote session (an ssh port forward)
 // --port       the wizard's local port (127.0.0.1 only)
 // --seat-port  the node's port for connections from outside (8470, ruling 7)
-// --home       where the node lives (ARENA_HOME; ~/.arena-node by default)
+// --home       where the node lives (ARENA_HOME; ~/.bitcoinarena by default, ~/.arena-node for a node installed before 2026.1.9.8)
 // --update     update this node to a downloaded release: SHA256SUMS and SHA256SUMS.sig beside the asset are checked against the Arena
 //              release key, the asset unpacked into <home>/releases/, the node backed up, moved and checked - rolled back if it fails
 // --add-bond   add <sats> to the bond as a second bond output beside the first, counted with it (the default way to raise a bond,
@@ -235,7 +235,7 @@ const wizard = createWizard({ state, release, seatPort, bridgePort, cloudflared,
   console.log(`\nDone. Your node runs as the user service arena-node.\nIts owner page: ${pub || `http://127.0.0.1:${seatPort}`}/Dashboard/owner${pub ? '' : ' (this machine only)'}`);
   const l = state.read().launchers;
   if (l && l.command && l.command.name) console.log(`On the command line: ${l.command.name} status | doctor | restart <service> | logs | config${l.command.note ? ` (${l.command.note})` : ''}`);
-  if (l) console.log(`To start it again: ${l.app ? `open "Bitcoin Arena" in Applications (${l.app})` : l.menu && /Start Menu/.test(l.menu) ? 'Start menu > Bitcoin Arena' : 'Arena Node in your desktop menu'}, or run ${l.start}`);
+  if (l) console.log(`To start it again: ${l.app ? `open "Bitcoin Arena" in Applications (${l.app})` : l.menu && /Start Menu/.test(l.menu) ? 'Start menu > Bitcoin Arena' : 'Bitcoin Arena in your desktop menu'}, or run ${l.start}`);
   if (tunnel) tunnel.close();
   server.close();
   // THE NEXT NODE OF A COUNT (kanban #596): its own wizard, in its own home with its own instance and ports, started here

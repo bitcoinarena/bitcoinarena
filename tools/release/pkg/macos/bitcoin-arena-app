@@ -3,7 +3,7 @@
 # Arena.app" from bitcoin-arena-node-<version>-darwin-<arch>.dmg is a native app (pkg/macos/App.swift): it sits in
 # the Dock, with the running dot, while the installer runs (kanban #635, the owner's playtest 2026-10-25: "doesn't stay open, doesn't have an
 # icon that indicates that it is running"), and asks this script, beside it in Contents/Resources, for each step:
-#   start   copy the release out of the app to ~/Library/ArenaNode/<release> - the node's services run it from there, never from the disk
+#   start   copy the release out of the app to ~/Library/BitcoinArena/<release> - the node's services run it from there, never from the disk
 #           image or an app macOS may move (App Translocation) - take its quarantine mark off, then print one line: "installed" (a node
 #           is set up), "running <link>" (an installer runs already) or "started <link>" (it started one, in the background); or fails
 #   prepare / launch / wait-link   the same in three steps, so the app shows a progress window between them (the owner's playtest
@@ -14,17 +14,25 @@
 #   update  the installed node moved to this app's release (arena-install --update-self): one line, "Updated: ..." or why not
 #           (the owner's playtest 2026-10-25: "When I execute 2.9.2 it doesn't update the node, it just starts the 1.9.1")
 #   link    the installer's one-time link        stop     stop the installer
-#   status  `arenanode status`                    owner    open the owner page       restart   restart the node
-#   node    the node in one line (arenanode state: running / stopped)   dashboard   the node's dashboard in the browser
-#   node-start / node-stop   start or stop the node's services          doctor      `arenanode doctor`
+#   status  `bitcoinarena status`                 owner    open the owner page       restart   restart the node
+#   node    the node in one line (bitcoinarena state: running / stopped)   dashboard   the node's dashboard in the browser
+#   node-start / node-stop   start or stop the node's services          doctor      `bitcoinarena doctor`
 # Built-in parts only (bash, osascript): nothing more to install.
 APP="$(cd "$(dirname "$0")/../.." && pwd)"
-BASE="$HOME/Library/ArenaNode"
-H="$HOME/.arena-node"
-# the node's command carries its instance (arena.conf instance=4: arenanode-4), as the installer names it - the bare name only without one
+# THE NAMES SINCE 2026.1.9.8 (kanban #688, 2026-10-26: "Rename the directories and binaries to bitcoinarena, not arenanode everywhere in the
+# installer, the packages etc."): ~/Library/BitcoinArena, the node in ~/.bitcoinarena, the command bitcoinarena. What an older app set up
+# stays where it is and is found there - the release copies in ~/Library/ArenaNode, the node in ~/.arena-node (its services run from them),
+# the command arenanode until the node's update writes bitcoinarena (instance.js homeDefault, launchers.js writeCommand)
+BASE="$HOME/Library/BitcoinArena"
+[ -d "$BASE" ] || [ ! -d "$HOME/Library/ArenaNode" ] || BASE="$HOME/Library/ArenaNode"
+holds() { [ -f "$1/state.json" ] || [ -f "$1/arena.conf" ]; }
+H="$HOME/.bitcoinarena"
+if ! holds "$H" && holds "$HOME/.arena-node"; then H="$HOME/.arena-node"; fi
+# the node's command carries its instance (arena.conf instance=4: bitcoinarena-4), as the installer names it - the bare name only without one
 # (playtest 2026-10-25: a fourth node on the test host, the app looked for arenanode, "No such file or directory", and Go did nothing)
 INST=$(sed -n 's/^instance=//p' "$H/arena.conf" 2>/dev/null | head -1)
-CMD="$H/bin/arenanode${INST:+-$INST}"
+CMD="$H/bin/bitcoinarena${INST:+-$INST}"
+[ -x "$CMD" ] || [ ! -x "$H/bin/arenanode${INST:+-$INST}" ] || CMD="$H/bin/arenanode${INST:+-$INST}"
 LOG="$BASE/installer.log"
 PIDF="$BASE/installer.pid"; LINKF="$BASE/installer.link"
 
@@ -97,5 +105,5 @@ case "${1:-}" in
   node-start) "$CMD" start 2>&1 | tail -3 ;;
   node-stop) "$CMD" stop 2>&1 | tail -3 ;;
   doctor) "$CMD" doctor 2>&1 | head -30 ;;
-  *) echo "usage: arena-node-app prepare|launch|wait-link|start|newer|update|state|link|stop|status|owner|restart|node|dashboard|node-start|node-stop|doctor" >&2; exit 2 ;;
+  *) echo "usage: bitcoin-arena-app prepare|launch|wait-link|start|newer|update|state|link|stop|status|owner|restart|node|dashboard|node-start|node-stop|doctor" >&2; exit 2 ;;
 esac

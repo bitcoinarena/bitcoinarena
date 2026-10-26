@@ -5,20 +5,20 @@
 // One directory holds everything the node is: the wizard state (state.json), the node's settings (arena.conf, what its services start
 // from -), the seed (seed.hex) and the seat's database (node.db and the files main.js keeps beside it). Every file is the user's only
 // (0600, the directory 0700). An update keeps this directory as it is; the release is elsewhere.
-import { port, INSTANCE, PORT_OFFSET } from './instance.js';
+import { port, INSTANCE, PORT_OFFSET, homeDefault } from './instance.js';
 import { envToConfValues, formatConf } from '../../arena-node/src/arena-conf.js';
 import { appsIn, appsEnvValue, chosenApps } from './apps.js';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 
 /** The liquidity provider service's local port (127.0.0.1): its claim, and a new top-up address for the owner page. */
 export const LIQUIDITY_PROVIDER_PORT = port(8477);   // + ARENA_PORT_OFFSET (instance.js)
 // THE APPS STEP (kanban #569, 2026-10-21: "a step in the installer where all apps are automatically selected"): after the roles
 export const STEPS = Object.freeze(['start', 'chain', 'roles', 'apps', 'seed', 'emergency', 'owner', 'reach', 'service', 'lightning', 'federation', 'promise', 'bond', 'done']);
 
-/** Where a node lives unless told otherwise: $ARENA_HOME, else ~/.arena-node. */
-export const defaultHome = (env = process.env) => env.ARENA_HOME || join(homedir(), '.arena-node');
+/** Where a node lives unless told otherwise: $ARENA_HOME, else ~/.bitcoinarena - or ~/.arena-node, where a node from before 2026.1.9.8 is
+ *  (instance.js homeDefault, kanban #688). */
+export const defaultHome = (env = process.env) => homeDefault(env);
 
 // THE ROLES (spec §27A roles; ruling 2: custody on Linux and macOS, and in slice 5): what each needs, said before it is chosen.
 // The roles step shows each as ONE line - `does` - and its needs as `chips`; `needs` is the full text behind "more" (

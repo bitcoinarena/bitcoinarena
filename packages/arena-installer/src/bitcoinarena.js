@@ -1,22 +1,24 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE ARENANODE COMMAND (2026-10-19: "Take a look how openclaw is used using the openclaw command, ie openclaw status,
+// THE BITCOINARENA COMMAND (2026-10-19: "Take a look how openclaw is used using the openclaw command, ie openclaw status,
 // openclaw gateway restart etc. no messing with command line parameters"). One word, then what to act on:
 //
-//   arenanode status                     the node and every service: running, pid, what it answers
-//   arenanode start | stop | restart     all services, in order
-//   arenanode restart lnd                one: node, guardian, lnd, gateway, tor, tunnel, bitcoind, chain-bridge, custody, liquidity, workers
-//   arenanode doctor                     every check, each problem with the command that fixes it
-//   arenanode logs [service]             the last lines of its log
-//   arenanode config [get|set|unset]     arena.conf
-//   arenanode open                       the owner page
-//   arenanode version
+//   bitcoinarena status                     the node and every service: running, pid, what it answers
+//   bitcoinarena start | stop | restart     all services, in order
+//   bitcoinarena restart lnd                one: node, guardian, lnd, gateway, tor, tunnel, bitcoind, chain-bridge, custody, liquidity, workers
+//   bitcoinarena doctor                     every check, each problem with the command that fixes it
+//   bitcoinarena logs [service]             the last lines of its log
+//   bitcoinarena config [get|set|unset]     arena.conf
+//   bitcoinarena open                       the owner page
+//   bitcoinarena version
 //
 // Any of them with --verbose (-v): each step said as it runs; with --debug: that and the insides - error stacks, failed answers, the
 // child processes and their exit codes (kanban #693, log-level.js). Nothing secret is printed at either.
 //
 // The installer writes the command with this node's home in it (launchers.js writeCommand), so it takes no flags; a second node on the
-// machine has its own, arenanode-<instance>.
+// machine has its own, bitcoinarena-<instance>. ITS NAME UNTIL 2026.1.9.8 WAS arenanode (kanban #688, 2026-10-26: "Rename the directories
+// and binaries to bitcoinarena, not arenanode everywhere"): arenanode stays, as a small script that runs bitcoinarena, so the old name,
+// the old app helpers and an auto update service that names it keep working.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { overview, control, doctor, logsOf, nodeOf, SERVICES } from './node-services.js';
@@ -50,7 +52,7 @@ const mark = (ok) => (ok === true ? '✓' : ok === false ? '✗' : '•');
 const pad = (s, n) => { s = String(s ?? ''); return s.length >= n ? s : s + ' '.repeat(n - s.length); };
 
 /** The status table's lines. */
-export function statusLines(v) {
+export function statusLines(v, name = 'bitcoinarena') {
   const lines = [`Bitcoin Arena node ${v.version || '(version unknown)'}${v.instance ? `, instance ${v.instance}` : ''}`,
     `  home      ${v.home}`, `  settings  ${v.conf || (v.legacyEnv ? `${v.home}/node.env (an older release; an update moves it into arena.conf)` : 'arena.conf missing')}`,
     `  seat      ${v.port ? `127.0.0.1:${v.port}` : '-'}${v.publicUrl ? `   public ${v.publicUrl}` : ''}`, ...(v.roles ? [`  roles     ${v.roles}`] : []), ''];
@@ -61,7 +63,7 @@ export function statusLines(v) {
     lines.push(`  ${mark(ok)} ${pad(s.title, w)}  ${pad(s.running === null ? 'unknown' : s.running ? 'running' : 'stopped', 9)}${pad(s.pid || '-', 8)}${s.probe && s.running !== null ? s.probe.says : s.detail}`);
   }
   const bad = v.services.filter((s) => s.running === false || (s.running && s.probe && !s.probe.ok)).length;
-  lines.push('', bad ? `  ${bad} service(s) need attention: arenanode doctor` : '  All services run.');
+  lines.push('', bad ? `  ${bad} service(s) need attention: ${name} doctor` : '  All services run.');
   return lines;
 }
 
@@ -75,10 +77,10 @@ const openUrl = (url, platform = process.platform) => new Promise((ok) => execFi
  * Run one command. `io`: { out(line), err(line) }; `deps` injectable for the tests ({ sh, fetcher, platform, env, latest, quickUrl }).
  * Answers the exit code.
  */
-export async function main(args, { home, name = 'arenanode', io = { out: (l) => console.log(l), err: (l) => console.error(l) }, deps = {}, log = QUIET }) {
+export async function main(args, { home, name = 'bitcoinarena', io = { out: (l) => console.log(l), err: (l) => console.error(l) }, deps = {}, log = QUIET }) {
   const [cmd = 'status', a, b, ...rest] = args;
   const ctx = { home, ...deps, log };
-  log.tag('arenanode').verbose(`${cmd}${a ? ` ${a}` : ''}: home ${home}, log level ${log.level}`);
+  log.tag('bitcoinarena').verbose(`${cmd}${a ? ` ${a}` : ''}: home ${home}, log level ${log.level}`);
   switch (cmd) {
     case 'help': case '-h': case '--help':
       io.out(HELP(name)); return 0;
@@ -90,7 +92,7 @@ export async function main(args, { home, name = 'arenanode', io = { out: (l) => 
       const v = await overview(ctx);
       if (a === 'json' || a === '--json') { io.out(JSON.stringify(v, null, 2)); return 0; }
       if (!v.services.length) { io.err(`No Bitcoin Arena node is installed for ${home}. Install one: arena-install`); return 1; }
-      for (const l of statusLines(v)) io.out(l);
+      for (const l of statusLines(v, name)) io.out(l);
       return v.services.every((s) => s.running !== false) ? 0 : 1;
     }
     case 'start': case 'stop': case 'restart': {

@@ -5,11 +5,11 @@
 // AppKit app. While the installer runs: what it does, with a progress bar and the setup page's link. With a node installed: its state as a
 // coloured dot and a line, and big buttons - Dashboard, Owner page, Stop or Start node, Doctor (its report in the window). An app that
 // carries a newer release than the node runs updates the node first. Closing the window quits the app; Cmd+Q quits it (asking first while
-// the installer still runs). Every step is the helper arena-node-app beside it (Contents/Resources), as the applet's were.
+// the installer still runs). Every step is the helper bitcoin-arena-app beside it (Contents/Resources), as the applet's were.
 import AppKit
 
 final class Helper {
-  static let path = (Bundle.main.resourcePath ?? ".") + "/arena-node-app"
+  static let path = (Bundle.main.resourcePath ?? ".") + "/bitcoin-arena-app"
   /// Runs the helper with one command off the main thread; answers its output (trimmed) and whether it exited 0.
   static func run(_ args: [String], done: @escaping (String, Bool) -> Void) {
     DispatchQueue.global(qos: .userInitiated).async {

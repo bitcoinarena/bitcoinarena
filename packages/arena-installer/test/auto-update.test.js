@@ -94,7 +94,7 @@ test('the service: it ends with 75 after an update (to come back from the new re
   assert.deepEqual(slept, [10, 1000, 1000], 'first wait, then a check each period until the update');
 });
 
-test('the updater as a service: it names the node\'s own arenanode (no release), and starts again after an update on every system', async () => {
+test('the updater as a service: it names the node\'s own bitcoinarena (no release), and starts again after an update on every system', async () => {
   const root = mkdtempSync(join(tmpdir(), 'updater-svc-'));
   try {
     const home = join(root, 'home'); mkdirSync(home, { recursive: true });
@@ -102,11 +102,11 @@ test('the updater as a service: it names the node\'s own arenanode (no release),
     const sh = async () => ({ ok: true, out: '', err: '' });
     await installUpdater({ home, installProgram, platform: 'linux', env, sh });
     const unit = readFileSync(join(root, 'cfg', 'systemd', 'user', 'arena-updater.service'), 'utf8');
-    assert.match(unit, new RegExp(`^ExecStart=${join(home, 'bin', 'arenanode').replace(/[/.]/g, '\\$&')} auto-update$`, 'm'));
+    assert.match(unit, new RegExp(`^ExecStart=${join(home, 'bin', 'bitcoinarena').replace(/[/.]/g, '\\$&')} auto-update$`, 'm'));
     assert.match(unit, /^Restart=on-failure$/m, 'ending with 75 starts it again');
     await installUpdater({ home, installProgram, platform: 'win32', env: { APPDATA: join(root, 'appdata') }, sh });
     const cmd = readFileSync(join(home, 'arena-updater.cmd'), 'utf8');
-    assert.match(cmd, /:again\r\ncall ".*arenanode\.cmd" "auto-update" >> ".*updater\.log" 2>&1\r\nif %errorlevel%==75 goto again\r\n$/);
+    assert.match(cmd, /:again\r\ncall ".*bitcoinarena\.cmd" "auto-update" >> ".*updater\.log" 2>&1\r\nif %errorlevel%==75 goto again\r\n$/);
     const { readFileSync: rf } = await import('node:fs');
     // a Windows update does not end the auto update that runs it: its own process (#546: no longer every auto update - an old updater
     // beside a manual update is ended with its release, and the task runs it again from the new one)

@@ -21,7 +21,7 @@ export const unitDir = (env = process.env) => join(env.XDG_CONFIG_HOME || join(h
 
 /** The seat's unit text. `node` is the runtime the release ships (process.execPath when run from it). */
 export function seatUnit({ node, release, home, port }) {
-  return `# The Arena node, written by the installer. An update rewrites this file; the settings live in ${join(home, 'arena.conf')} (arenanode config).
+  return `# The Arena node, written by the installer. An update rewrites this file; the settings live in ${join(home, 'arena.conf')} (bitcoinarena config).
 [Unit]
 Description=Bitcoin Arena node (testnet4) on port ${port}
 After=network-online.target ${BRIDGE_UNIT}
@@ -110,7 +110,7 @@ export function launchdPlist({ node, release, home, port, boot = true, env = {} 
   const envXml = Object.keys(env).length ? `\n  <key>EnvironmentVariables</key><dict>${Object.entries(env).map(([k, v]) => `<key>${xml(k)}</key><string>${xml(v)}</string>`).join('')}</dict>` : '';
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- The Arena node, written by the installer. An update rewrites this file; the settings live in ${xml(home)}/arena.conf (arenanode config). -->
+<!-- The Arena node, written by the installer. An update rewrites this file; the settings live in ${xml(home)}/arena.conf (bitcoinarena config). -->
 <plist version="1.0">
 <dict>
   <key>Label</key><string>${LAUNCHD_LABEL}</string>
@@ -130,7 +130,7 @@ export function launchdPlist({ node, release, home, port, boot = true, env = {} 
 // at logon (or at start-up with the user's password), restarted on failure, running a .cmd that starts the seat from arena.conf.
 export const WINDOWS_TASK = named('Arena node', ' ');
 export function windowsLauncher({ node, release, home, port }) {
-  return ['@echo off', 'rem The Arena node, written by the installer: the seat started from its settings, arena.conf (arenanode config).',
+  return ['@echo off', 'rem The Arena node, written by the installer: the seat started from its settings, arena.conf (bitcoinarena config).',
     `cd /d "${release}\\packages\\arena-node"`,
     `"${node}" src\\run.js "${home}\\arena.conf" >> "${home}\\node.log" 2>&1`].join('\r\n') + '\r\n';
 }

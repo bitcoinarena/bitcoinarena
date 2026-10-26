@@ -24,20 +24,20 @@ test('Linux: start, stop, status and open scripts, and the desktop menu entry', 
   const home = mkdtempSync(join(tmpdir(), 'l-')), data = mkdtempSync(join(tmpdir(), 'd-'));
   const l = writeLaunchers({ home, s, ownerUrl: owner, platform: 'linux', env: { XDG_DATA_HOME: data } });
   assert.match(readFileSync(l.start, 'utf8'), /systemctl --user start arena-bitcoind-testnet4.service .* arena-node.service arena-tunnel.service/);
-  assert.match(readFileSync(join(home, 'bin', 'arena-node-stop'), 'utf8'), /systemctl --user stop arena-tunnel.service arena-node.service/);
+  assert.match(readFileSync(join(home, 'bin', 'bitcoin-arena-stop'), 'utf8'), /systemctl --user stop arena-tunnel.service arena-node.service/);
   assert.equal(statSync(l.start).mode & 0o111, 0o111, 'executable');
-  assert.match(readFileSync(join(data, 'applications', 'arena-node.desktop'), 'utf8'), /Name=Bitcoin Arena[\s\S]*Exec=.*arena-node-start.*xdg-open https:\/\/x\.trycloudflare\.com\/Dashboard\/owner/);
-  assert.equal(existsSync(join(home, 'bin', 'arena-node-add-custody')), false, 'no "add custody" unless asked for');
+  assert.match(readFileSync(join(data, 'applications', 'bitcoin-arena.desktop'), 'utf8'), /Name=Bitcoin Arena[\s\S]*Exec=.*bitcoin-arena-start.*xdg-open https:\/\/x\.trycloudflare\.com\/Dashboard\/owner/);
+  assert.equal(existsSync(join(home, 'bin', 'bitcoin-arena-add-custody')), false, 'no "add custody" unless asked for');
   writeLaunchers({ home, s, ownerUrl: owner, platform: 'linux', env: { XDG_DATA_HOME: data }, addCustody: ['/r/node', '/r/arena-install.mjs', '--add-custody', '--home', home] });
-  assert.match(readFileSync(join(home, 'bin', 'arena-node-add-custody'), 'utf8'), /'\/r\/node' '\/r\/arena-install\.mjs' '--add-custody' '--home'/, 'a node without custody can add it: the installer\'s custody screens');
+  assert.match(readFileSync(join(home, 'bin', 'bitcoin-arena-add-custody'), 'utf8'), /'\/r\/node' '\/r\/arena-install\.mjs' '--add-custody' '--home'/, 'a node without custody can add it: the installer\'s custody screens');
 });
 
 test('macOS: the .command scripts and Bitcoin Arena.app - it starts the node\'s launchd services and opens the owner page', () => {
   const home = mkdtempSync(join(tmpdir(), 'm-')), apps = mkdtempSync(join(tmpdir(), 'a-'));
   const l = writeLaunchers({ home, s, ownerUrl: owner, platform: 'darwin', env: { HOME: home }, applicationsDir: apps });
   assert.equal(l.app, join(apps, 'Bitcoin Arena.app'));
-  assert.match(readFileSync(join(l.app, 'Contents', 'Info.plist'), 'utf8'), /<key>CFBundleExecutable<\/key><string>arena-node<\/string>/);
-  const exe = readFileSync(join(l.app, 'Contents', 'MacOS', 'arena-node'), 'utf8');
+  assert.match(readFileSync(join(l.app, 'Contents', 'Info.plist'), 'utf8'), /<key>CFBundleExecutable<\/key><string>bitcoin-arena<\/string>/);
+  const exe = readFileSync(join(l.app, 'Contents', 'MacOS', 'bitcoin-arena'), 'utf8');
   assert.match(exe, /launchctl kickstart gui\/\$uid\/io\.bitcoin-arena\.node\n/);
   assert.match(exe, /launchctl bootstrap gui\/\$uid '.*LaunchAgents\/io\.bitcoin-arena\.node\.tunnel\.plist'/);
   assert.match(exe, /open 'https:\/\/x\.trycloudflare\.com\/Dashboard\/owner'/);

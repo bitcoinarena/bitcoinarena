@@ -3,7 +3,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CUSTODY AGENT'S SERVICE (custody-agent.js): one tick a minute, its lines in <home>/custody.log.
 //
-//     custody-agent --home ~/.arena-node
+//     custody-agent --home ~/.bitcoinarena
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import { nodeState, defaultHome } from '../src/state.js';

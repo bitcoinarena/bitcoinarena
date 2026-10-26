@@ -18,7 +18,7 @@ export const CONF_KEYS = Object.freeze([
   ['bind', 'the address the seat listens on: 127.0.0.1 behind a tunnel, 0.0.0.0 for a direct node'],
   ['public_url', 'the node\'s public https address, as it names itself'],
   ['roles', 'what the node does: verify, settlement, custody, liquidity'],
-  ['instance', 'a second node on this machine: its name (arenanode-<instance>, its services named apart)'],
+  ['instance', 'a second node on this machine: its name (bitcoinarena-<instance>, its services named apart)'],
   ['port_offset', 'a second node on this machine: added to every port'],
   ['bitcoind_url', 'the chain: Bitcoin Core\'s RPC, or the chain bridge in Electrum mode'],
   ['bitcoind_cookie', 'the chain\'s RPC cookie file'],
@@ -35,7 +35,7 @@ export const CONF_KEYS = Object.freeze([
   ['guardian_endpoint', 'custody: the guardian\'s public websocket (<public_url>/guardian)'],
   ['liquidity_claim_file', 'liquidity: the provider\'s claim'],
   ['liquidity_provider_url', 'liquidity: the provider service\'s local address'],
-  ['auto_update', '1 (default): the node updates itself to a newer signed release; 0: only by hand (arenanode update)'],
+  ['auto_update', '1 (default): the node updates itself to a newer signed release; 0: only by hand (bitcoinarena update)'],
   ['latest_url', 'a test update channel: a signed latest.json on https://testnet.bitcoin-arena.io/ (empty: the production release)'],
   // kanban #693, 2026-10-26: "add a --debug and --verbose flag that shows more info on what its doing, what is going wrong etc"
   ['log_level', 'how much the node\'s services log: info (default), verbose (each step), debug (and the insides); from their next start'],
@@ -96,7 +96,7 @@ export function envToConfValues(envText, { port, database }) {
 
 /** The file's text: the known settings in order, each under its meaning, then any other. `eol` '\r\n' on Windows. */
 export function formatConf(values, { eol = '\n', header = 'written by the installer' } = {}) {
-  const lines = [`# The Arena node's settings (${header}). Change one with: arenanode config set <key> <value>, then: arenanode restart`,
+  const lines = [`# The Arena node's settings (${header}). Change one with: bitcoinarena config set <key> <value>, then: bitcoinarena restart`,
     '# One key=value per line. A key left out takes the node\'s default.', ''];
   for (const [k, what] of CONF_KEYS) if (values[k] !== undefined && values[k] !== null && values[k] !== '') lines.push(`# ${what}`, `${k}=${values[k]}`);
   const rest = Object.keys(values).filter((k) => !KNOWN.has(k) && values[k] !== undefined && values[k] !== null && values[k] !== '');
