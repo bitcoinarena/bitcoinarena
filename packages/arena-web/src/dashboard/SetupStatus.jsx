@@ -75,8 +75,10 @@ export function lndLine(l) {
   const reach = !v ? '' : v.how === 'direct' ? `; reached directly at ${v.at}` : v.how === 'tor' ? `; reached over Tor (no open port needed)` : `; other nodes cannot reach it${v.why ? ` (${v.why})` : ''}`;
   return { done: !l.pending && (!v || v.how !== 'none'), problem: !!v && v.how === 'none', text: `synced at block ${n(l.height)}${ch}${reach}` };
 }
-export function gatewayLine(g) {
+export function gatewayLine(g, founding = null) {
   if (!g) return null;
+  // waiting for a founding is not setup (2026-10-26): done here, the founding has its own panel (FoundingWait)
+  if (g.ok && !(g.federations > 0) && founding && founding.waiting) return { done: true, text: 'running; it joins your federation once that is founded' };
   if (g.ok) return { done: g.federations > 0, text: g.federations > 0 ? `running, in ${n(g.federations)} federation${g.federations === 1 ? '' : 's'}` : 'running, joining its federation' };
   return { done: false, problem: !g.syncing, text: g.syncing ? 'waiting for LND to sync. Then its peg-in needs 100 confirmations.' : `not answering: ${g.why}` };
 }
@@ -108,7 +110,7 @@ export function setupRowsOf(s) {
   const e = s.etas || {};
   const at = (l, left) => (l ? { ...l, left: left === undefined ? null : left } : l);
   return [['setup-core', 'Bitcoin Core', at(coreLine(s.core), e.core)], ['setup-address', 'Public address', addressLine(s.address)], ['setup-faucet', 'Test coins', at(faucetLine(s.faucet, s.bond), e.faucet)],
-      ['setup-bond', 'Bond', at(bondLine(s.bond), e.bond)], ['setup-lnd', 'LND', at(lndLine(s.lnd), e.lnd)], ['setup-gateway', 'Gateway', at(gatewayLine(s.gateway), e.gateway)], ['setup-pegin', 'Peg-in', at(pegInLine(s.pegIn), e.pegIn)],
+      ['setup-bond', 'Bond', at(bondLine(s.bond), e.bond)], ['setup-lnd', 'LND', at(lndLine(s.lnd), e.lnd)], ['setup-gateway', 'Gateway', at(gatewayLine(s.gateway, s.founding), e.gateway)], ['setup-pegin', 'Peg-in', at(pegInLine(s.pegIn), e.pegIn)],
       ...(s.updates || []).map((u, i) => [`setup-update-${i}`, 'Update', at(updateLine(u), (e.updates || [])[i])]),
       ...(s.oldBonds || []).map((o, i) => [`setup-old-${i}`, 'Old bond', oldBondLine(o)])].filter(([, , l]) => l);
 }
@@ -118,6 +120,18 @@ export function readyIn(s) {
   const e = s && s.etas;
   if (!e || e.ready === null || e.ready === undefined || !(e.ready > 0)) return null;
   return { text: dur(e.ready), atLeast: !!e.partial };
+}
+
+/** THE FOUNDING THE NODE WAITS FOR, apart from the setup (2026-10-26, the owner: "setup is complete but a separate header that it's waiting for
+ *  the foundation"): no time is promised - a founding needs ten ready nodes drawn together. */
+export function FoundingWait({ status: s }) {
+  if (!s || !s.founding || !s.founding.waiting) return null;
+  return (
+    <div className="card founding-wait" id="founding-wait">
+      <div className="setup-head"><h3>Federation</h3><span className="setup-pill wait">Waiting for a founding</span></div>
+      <p>Your node waits to be drawn into a new federation. Ten ready nodes found one together, so this can take a while; there is no fixed time.</p>
+      <p className="dim">Meanwhile your node runs as usual: it checks rounds and earns its share. Its guardian and its gateway join the new federation as soon as it is founded.{s.founding.sinceMs ? ` Waiting since ${new Date(s.founding.sinceMs).toISOString().slice(0, 16).replace('T', ' ')} UTC.` : ''}</p>
+    </div>);
 }
 
 export class SetupStatus extends React.Component {
@@ -157,7 +171,7 @@ export class SetupCard extends React.Component {
     this.setState({ status: s });
     clearTimeout(this.timer); this.timer = setTimeout(this.load, this.props.everyMs || 30000);
   }
-  render() { return this.props.banner ? <SetupBanner status={this.state.status} /> : <SetupStatus status={this.state.status} />; }
+  render() { return this.props.banner ? <SetupBanner status={this.state.status} /> : <><SetupStatus status={this.state.status} /><FoundingWait status={this.state.status} /></>; }
 }
 
 /** The owner sections that help while the setup runs (a problem to fix, an update, the emergency code, the login); the rest waits for it. */

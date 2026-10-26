@@ -5,7 +5,7 @@
 // /owner/bond-withdraw, signed; the node leaves the network). Read from GET /owner/bond.
 import React from 'react';
 import { Button } from '../design/components.jsx';
-import { SetupStatus } from '../dashboard/SetupStatus.jsx';
+import { SetupStatus, FoundingWait } from '../dashboard/SetupStatus.jsx';
 
 const n = (x) => Number(x).toLocaleString('en-US');
 /** "3 d 4 h" / "5 h 20 min" for a span in ms. */
@@ -48,7 +48,7 @@ export class BondPanel extends React.Component {
     const { loaded, bond: b, address, busy, message } = this.state;
     if (!loaded) return <p className="sub">Loading the bond…</p>;
     if (!b) return <p className="sub">Couldn't load the bond.</p>;
-    const setup = <SetupStatus status={this.state.setup} />;
+    const setup = <><SetupStatus status={this.state.setup} /><FoundingWait status={this.state.setup} /></>;
     if (!b.bond) return <div>{setup}<p>No bond yet. Until it has one, this node is not drawn for rounds.</p>{this.oldBonds()}</div>;
     const l = b.lock;
     const outs = Array.isArray(b.outputs) && b.outputs.length > 1 ? b.outputs : null;

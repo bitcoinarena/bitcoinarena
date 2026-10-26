@@ -106,7 +106,8 @@ test('the notes (hyphens kept), every host row, the capacity plea and the liquid
   const h = renderToStaticMarkup(React.createElement(DashboardPage, { data: { ...D, hosts, notes, capacity: { level: 'bad', says: 'this node is full' },
     liquidity: { freeSats: '300000', channels: [{ capacitySats: '100000' }], depositAddress: 'tb1qexample' } } }));
   assert.equal(keep('lnd-testnet4'), 'test-host\u2011testnet4');
-  assert.match(h, /<h3>Notes<\/h3><div class="notes"><p>the guardian third<\/p><p>this node hosts LND test-host\u2011testnet4<\/p>/);
+  // three short rows, the node's sentence as each row's tooltip (2026-10-26: "This is also a wall of text")
+  assert.match(h, /<h3>Notes<\/h3><dl class="note-rows"><dt>Guardian fees<\/dt><dd title="the guardian third">go to the nodes guarding the round&#x27;s federation; yours show here once it guards one<\/dd><dt>Lightning<\/dt><dd title="this node hosts LND lnd-testnet4">LND test-host\u2011testnet4 · costs: the fees of its own payments<\/dd><dt>Gateway<\/dt><dd title="this node pays no gateway">gw\u2011a · costs this node nothing<\/dd><\/dl>/);
   assert.match(h, /<h3>Hosts<\/h3>/);
   for (const [k, v] of [['Node key', '0274e26122c7b8fc…'], ['Fees its payments paid', '8 sat · 2 payments'], ['E-cash in blwp-testnet4', '249000 sat'], ['Lightning balance', '1082087 sat'],
     ['On-chain', '20446 sat'], ['Payments out, 30 days', '0 ok · 2 failed · fees 0 sat'], ['Read', '21 Oct 11:00']])
