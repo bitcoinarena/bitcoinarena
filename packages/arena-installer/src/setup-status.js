@@ -82,7 +82,13 @@ export async function setupStatus({ home, reader = chainReader, nowMs = Date.now
   if (!base.ok) return { ...base, ...more };
   const lndPerMs = lndSpeed(home, more.lnd, nowMs);
   const blockMs = base.blockMs || TARGET_BLOCK_MS;
-  return { ...base, ...more, blockMs, blockMsMeasured: !!base.blockMs, etas: setupEtas({ ...base, ...more }, { blockMs, lndPerMs }) };
+  // WAITING FOR A FOUNDING IS NOT SETUP (2026-10-26, the owner on "Gateway: running, joining its federation · 30 h": "founding a federation
+  // can take forever it doesn't make sense for it to wait forever" - ruling: setup is complete, and a separate header says it waits for the
+  // founding): a node drawn into a founding whose gateway runs in no federation yet, with no peg-in, waits for that founding - not for 100 blocks
+  const founding = (s.federation || {}).mode === 'drawn' && more.gateway && more.gateway.ok && !(more.gateway.federations > 0) && !base.pegIn
+    ? { waiting: true, sinceMs: Number((s.federation || {}).atMs) || null } : null;
+  const all = { ...base, ...more, founding };
+  return { ...all, blockMs, blockMsMeasured: !!base.blockMs, etas: setupEtas(all, { blockMs, lndPerMs }) };
 }
 
 // LND's last heights read (per node home), to tell how fast it catches up: blocks per ms between two reads at least a minute apart
@@ -120,7 +126,7 @@ export function setupEtas(st, { blockMs = TARGET_BLOCK_MS, lndPerMs = null } = {
   // the gateway is ready once its peg-in is credited: not started yet, it waits for LND and then the peg-in's 100 blocks
   let gateway = null;
   if (g) {
-    if (g.ok && g.federations > 0) gateway = 0;
+    if ((g.ok && g.federations > 0) || (st.founding && st.founding.waiting)) gateway = 0;   // in a federation, or waiting for its founding
     else if (p) gateway = pegIn;                                   // started: its peg-in's blocks
     else if (g.ok) gateway = blocks(PEG_IN_FINALITY);              // running, its peg-in not sent yet
     else if (g.syncing && lnd !== null) gateway = lnd + blocks(PEG_IN_FINALITY);
