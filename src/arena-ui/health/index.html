@@ -25,6 +25,12 @@
   main { max-width: 1280px; margin: 0 auto; padding: 18px 16px 40px; }
   h1 { font-size: 22px; margin: 0 0 2px; } .lead { color: var(--muted); margin: 0 0 14px; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 0 0 14px; }
+  /* THE SECTIONS FOLDED (2026-10-26, the owner: "include accordions that are closed except network on pageload") */
+  details.card > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+  details.card > summary::-webkit-details-marker { display: none; }
+  details.card > summary::before { content: '▸'; color: var(--muted); font-size: 13px; transition: transform .15s; }
+  details.card[open] > summary::before { transform: rotate(90deg); }
+  details.card:not([open]) > summary h2 { margin: 0; }
   .card h2 { font-size: 15px; margin: 0 0 8px; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; }
   .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
   .fact { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; } .fact b { display: block; font-size: 18px; } .fact span { color: var(--muted); font-size: 12px; }
@@ -40,6 +46,8 @@
   button.tip { font: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
   .tip-pop { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 50; max-height: 60vh; overflow: auto; padding: 14px 16px; border-radius: 12px;
     background: #10151d; border: 1px solid #2a3442; box-shadow: 0 10px 30px rgba(0,0,0,.55); color: #e8edf3; font-size: 14px; line-height: 1.5; text-align: left; white-space: normal; }
+  .tip-x { position: sticky; top: 0; float: right; width: 32px; height: 32px; margin: -6px -8px 0 8px; border: 0; border-radius: 8px; background: #222c38;
+    color: inherit; font-size: 20px; line-height: 32px; text-align: center; cursor: pointer; } .tip-x:hover { background: #2e3a48; }
   .tip-pop .tip-text { white-space: pre-wrap; margin: 6px 0; overflow-wrap: anywhere; }
   .tip-sum { margin: 6px 0 10px; } .tip-rows { list-style: none; margin: 0 0 8px; padding: 0; }
   .tip-row { display: flex; gap: 10px; align-items: flex-start; padding: 7px 0; border-top: 1px solid #222c38; overflow-wrap: anywhere; }
@@ -83,23 +91,23 @@
   <h1>Network health</h1>
   <p class="lead">Every node of the Bitcoin Arena network (testnet4), read from the nodes themselves - nothing here is trusted beyond what each node signs or answers. The answers are kept, so the page opens at once; it says how old they are.</p>
   <div class="bar"><span id="read">reading …</span><button id="again" type="button">Read again</button><span>asked again when older than 5 min · <span class="dot ok"></span>fine <span class="dot warn"></span>look at it <span class="dot bad"></span>wrong or not answering</span></div>
-  <div class="card"><h2>Network</h2><div id="network"></div></div>
-  <div class="card"><h2>Nodes</h2><div class="scroll" id="nodes"></div></div>
-  <div class="card"><h2>Machines</h2><div class="scroll" id="machines"></div></div>
-  <div class="card"><h2>Capacity</h2><div id="capacity"></div></div>
-  <div class="card"><h2>Federations</h2><div class="scroll" id="feds"></div></div>
-  <div class="card"><h2>Waiting for a founding</h2><div class="muted" style="font-size:12px;margin:-4px 0 8px">guardian-capable nodes that guard no OPEN federation - ten of them found the next one. Ready = its guardian waits in setup</div><div id="founding-facts"></div><div class="scroll" id="founding"></div></div>
-  <div class="card"><h2>Gateway seats</h2><div class="scroll" id="gateways"></div></div>
-  <div class="card"><h2>Pending gateways</h2><div class="scroll" id="gw-pending"></div></div>
-  <div class="card"><h2>What the network waits for</h2><div class="muted" style="font-size:12px;margin:-4px 0 8px">grids waiting for their beacon block, peg-ins confirming - as each node reads its own chain (GET /pending)</div><div class="scroll" id="pending"></div></div>
-  <div class="card"><h2>Transactions on their way <span id="txs-count" class="muted"></span></h2><div class="muted" style="font-size:12px;margin:-4px 0 8px">every grid publication, peg-in, bond and advertisement update the nodes see in their mempool or last 12 blocks, with the unconfirmed or same-block parents they spent - the same list the mining view tracks (GET /pending, txs)</div><div class="scroll" id="pending-txs"></div></div>
-  <div class="card"><h2>Liquidity providers</h2><div class="scroll" id="liquidity"></div></div>
-  <div class="card"><h2>Lightning (LND) per node</h2><div class="scroll" id="lnd"></div></div>
-  <div class="card"><h2>Games and markets</h2><div class="scroll" id="games"></div></div>
-  <div class="card"><h2>Apps</h2><div class="scroll" id="apps"></div></div>
-  <div class="card"><h2>Fees in force</h2><div id="fees"></div></div>
+  <details class="card" open><summary><h2>Network</h2></summary><div id="network"></div></details>
+  <details class="card"><summary><h2>Nodes</h2></summary><div class="scroll" id="nodes"></div></details>
+  <details class="card"><summary><h2>Machines</h2></summary><div class="scroll" id="machines"></div></details>
+  <details class="card"><summary><h2>Capacity</h2></summary><div id="capacity"></div></details>
+  <details class="card"><summary><h2>Federations</h2></summary><div class="scroll" id="feds"></div></details>
+  <details class="card"><summary><h2>Waiting for a founding</h2></summary><div class="muted" style="font-size:12px;margin:-4px 0 8px">guardian-capable nodes that guard no OPEN federation - ten of them found the next one. Ready = its guardian waits in setup</div><div id="founding-facts"></div><div class="scroll" id="founding"></div></details>
+  <details class="card"><summary><h2>Gateway seats</h2></summary><div class="scroll" id="gateways"></div></details>
+  <details class="card"><summary><h2>Pending gateways</h2></summary><div class="scroll" id="gw-pending"></div></details>
+  <details class="card"><summary><h2>What the network waits for</h2></summary><div class="muted" style="font-size:12px;margin:-4px 0 8px">grids waiting for their beacon block, peg-ins confirming - as each node reads its own chain (GET /pending)</div><div class="scroll" id="pending"></div></details>
+  <details class="card"><summary><h2>Transactions on their way <span id="txs-count" class="muted"></span></h2></summary><div class="muted" style="font-size:12px;margin:-4px 0 8px">every grid publication, peg-in, bond and advertisement update the nodes see in their mempool or last 12 blocks, with the unconfirmed or same-block parents they spent - the same list the mining view tracks (GET /pending, txs)</div><div class="scroll" id="pending-txs"></div></details>
+  <details class="card"><summary><h2>Liquidity providers</h2></summary><div class="scroll" id="liquidity"></div></details>
+  <details class="card"><summary><h2>Lightning (LND) per node</h2></summary><div class="scroll" id="lnd"></div></details>
+  <details class="card"><summary><h2>Games and markets</h2></summary><div class="scroll" id="games"></div></details>
+  <details class="card"><summary><h2>Apps</h2></summary><div class="scroll" id="apps"></div></details>
+  <details class="card"><summary><h2>Fees in force</h2></summary><div id="fees"></div></details>
   <!-- WHICH SITE EARNED WHAT (kanban #675: "In health there is a section which site earned what") -->
-  <div class="card"><h2>Referral programs</h2><div class="scroll" id="referral"></div></div>
+  <details class="card"><summary><h2>Referral programs</h2></summary><div class="scroll" id="referral"></div></details>
 </main>
 <script>
 // THE PAGE AT ONCE (kanban #686, 2026-10-26: "health is very very slow to load. Cache all the data in the background and if data is outdated

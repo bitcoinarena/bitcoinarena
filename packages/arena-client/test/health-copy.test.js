@@ -141,10 +141,12 @@ test('GET /api/health: the kept copy, readable from any page (CORS); none yet is
   assert.equal(r.status, 200);
   assert.equal(r.headers.get('access-control-allow-origin'), '*');
   assert.equal((await r.json()).atMs, 5);
-  // the copy's own trigger, beside the transactions' minute (wrangler.toml)
+  // no trigger of its own any more: a machine of ours pushes the copy every 3 min (kanban #686, 2026-10-26: the worker's plan left it 20 min
+  // old) - the transactions' minute alone (wrangler.toml)
   const { readFileSync } = await import('node:fs');
   const toml = readFileSync(new URL('../../../src/website/explorer/wrangler.toml', import.meta.url), 'utf8');
-  assert.match(toml, new RegExp(`crons = \\["\\* \\* \\* \\* \\*", "${HEALTH_CRON.replace(/[*/]/g, '\\$&')}"\\]`));
+  assert.match(toml, /^crons = \["\* \* \* \* \*"\]/m);
+  assert.doesNotMatch(toml, new RegExp(HEALTH_CRON.replace(/[*/]/g, '\\$&')));
 });
 
 // THE ROUNDS POSTED FOR EACH APP (kanban #692): the newest version's grids for the rest of today and the next 24 h, posted (with the draw
@@ -175,7 +177,9 @@ test('the APPS table\'s rounds: posted (N), delayed, failed - only the newest ve
   assert.match(rps.today.tip, /Federation 1, rounds 10-26 00:00 to 10-27 00:00 UTC: posted: its draw block 102 has 8 confirmations/);
   assert.doesNotMatch(rps.today.tip, /block 92/, 'the old version is not counted');
   // the next 24 h: the next day's grid draws in 2 of 6
-  assert.deepEqual([rps.next.t, rps.next.c], ['delayed', 'warn']);
+  // its round table 10 deep: the confirmations in () (2026-10-26: "delayed(1) for example for 1 confirmation")
+  assert.deepEqual([rps.next.t, rps.next.c], ['delayed (10)', 'warn']);
+  assert.match(rps.next.tip, /^version 2; in \(\) the confirmations of the round table/);
   assert.match(rps.next.tip, /its draw block 115 has 2 of 6 confirmations: posted in about 40 min/);
   // updown: posted but undrawable, and the hours no grid covers - failed, with the seat's reason
   assert.deepEqual([up.today.t, up.today.c], ['failed', 'bad']);
