@@ -84,6 +84,7 @@ import { configServesRound } from '../../arena-protocol/src/ballot-chain.js';
 import { createProposals } from './proposals.js';
 import { createBallotTally } from './ballot-tally.js';
 import { createOperatorTokens, operatorUri } from './operator-tokens.js';
+import { isBackupPublication, playedOfWindow } from '../../arena-protocol/src/duty.js';
 import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf, entryFederation } from '../../arena-protocol/src/contracts.js';
 import { revealStands } from '../../arena-protocol/src/head-to-head.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
@@ -393,6 +394,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   hosts = null,
   devClientDir = null,                         //: a dev client's directory, shown on the dashboard (dev-client.js)
   devClients = null,                           //: the dev clients the owner set up on the owner page (dev-clients.js)
+  // THE NODE'S OWN ROUND POSTER (duty-poster.js, kanban #702, 2026-10-26: "The round runners must be an integrated part of the node"):
+  // attached once the seat listens - it reads the series this seat holds and the donation set in force here - and answered at GET /duty
+  duty = null,
   // THIS NODE'S OWN GUARDIAN (§23A.2, RULED 2026-09-26 22:54): `{ apiPort, endpoint }` when the node started one
   // (guardian.js). Its websocket is carried on this server at /guardian, so the guardian's endpoint is the node's own
   // public address; null for a node that is not a guardian.: `{ apiPort, endpoint, dataDir, setup }` - setup when it
@@ -2263,7 +2267,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return w.ok ? w.window : null;
   };
   // only rounds whose committee is drawn count as live (kanban #685); committeeOf is the listing's own draw, set up before any request
-  const liveNow = gameLive(round, { windowOf: marketWindowFor, drawable: (rid) => committeeOf(fromHex(rid)).drawn === true });
+  const liveNow = gameLive(round, { windowOf: marketWindowFor, drawable: (rid) => {
+    if (committeeOf(fromHex(rid)).drawn !== true) return false;
+    // AND PLAYED IN ITS WINDOW (the backup rule, §5A.5): a backup round under a drawn primary is no live round
+    const row = round.get(fromHex(rid)); if (!row) return true;
+    try { return playedHere(fromHex(rid), decodeRoundContract(new Uint8Array(row.contract))).played; } catch { return true; }
+  } });
   const roster = new Roster(round, {
     ...(chainFor ? { chainFor } : {}),
     // The same beacon the verifier reads: one source, so a node cannot assign
@@ -3819,6 +3828,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!row) return null;
     let c;
     try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; }
+    { const p = playedHere(rid, c); if (!p.played) return p.why; }
     return offerRefusal(c);
   };
   // AN ENTRY'S STAKE LOCK AND FEE LOCK, CHECKED WITH THE FEDERATION AND KEPT: what POST /lock and POST /fee-lock do, and what a seat does
@@ -4937,6 +4947,52 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (drawn.drawn && (!seating || (drawn.seated && drawn.seated.game && drawn.seated.settlement))) committeeDrawn.set(toHex(rid), drawn);
     return drawn;
   };
+  // ONE GRID PLAYED PER WINDOW (multiplayer_p2p.md §5A.5, the backup grid - 2026-10-26, the owner: "Yes make it part of the design, in the
+  // spec"; arena-protocol duty.js playedOfWindow): every day has a primary grid and a backup grid, and a round of the backup is offered, and
+  // takes entries, only while no round of the same game, federation and start from another series is drawn here; once the backup round of a
+  // window holds an entry here, the window's other rounds take none. A series is a backup when its publication carries the backup marker
+  // ("ARN" 'B'), read once from this seat's own view of the round's chain and kept.
+  const seriesRole = new Map();                   // series id hex -> true (backup) | false
+  const windowRounds = new Map();                 // game:federation:start -> Set of round ids hex
+  const windowKeyOf = (c) => `${toHex(c.gameId)}:${c.federationId instanceof Uint8Array ? toHex(c.federationId) : '-'}:${c.startTimeMs}`;
+  const isBackupRound = (rid, c) => {
+    if (!(c.seriesId instanceof Uint8Array) || c.stakeMsat === 0n) return false;
+    const sid = toHex(c.seriesId);
+    if (seriesRole.has(sid)) return seriesRole.get(sid);
+    let view; try { view = chainFor ? chainFor({ contract: c, roundIdBytes: rid }) : undefined; } catch { view = undefined; }
+    if (!view) return null;                       // not read yet: not a backup, asked again
+    const pub = findSeriesPublication(view, c.seriesId);
+    if (!pub) return null;
+    const b = isBackupPublication(pub.tx);
+    seriesRole.set(sid, b);
+    return b;
+  };
+  const noteWindow = (rid, c) => {
+    if (c.stakeMsat === 0n) return;
+    const k = windowKeyOf(c);
+    if (!windowRounds.has(k)) windowRounds.set(k, new Set());
+    windowRounds.get(k).add(toHex(rid));
+  };
+  /** Is this paid round played here now (playedOfWindow over the window's rounds this seat holds)? -> { played, backup, why } */
+  const playedHere = (rid, c) => {
+    if (c.stakeMsat === 0n) return { played: true, backup: false };
+    noteWindow(rid, c);
+    // ALONE IN ITS WINDOW (the most of them): played, nothing else read
+    if (windowRounds.get(windowKeyOf(c)).size < 2) return { played: true, backup: isBackupRound(rid, c) };
+    const rows = [];
+    for (const id of windowRounds.get(windowKeyOf(c))) {
+      const row = id === toHex(rid) ? { contract: null } : round.get(fromHex(id));
+      if (!row) continue;
+      let cc = c; if (row.contract) { try { cc = decodeRoundContract(new Uint8Array(row.contract)); } catch { continue; } }
+      const r = fromHex(id);
+      rows.push({ id, backup: isBackupRound(r, cc), drawn: committeeOf(r).drawn === true, entries: round.entriesOf(r).length });
+    }
+    const me = rows.find((x) => x.id === toHex(rid));
+    const played = playedOfWindow(rows).has(toHex(rid));
+    return { played, backup: me ? me.backup : null,
+      why: played ? null : me && me.backup ? 'this window is played on its primary grid, whose committee is drawn (the backup rule, §5A.5)'
+        : 'this window\'s backup round already holds entries on this seat (the backup rule, §5A.5)' };
+  };
   const committeeDraw = (rid) => {
     const game = roster.committeeFor(rid, 'game');
     const settlement = roster.committeeFor(rid, 'settlement');
@@ -5176,6 +5232,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // AN ATTESTED ROUND'S OUTCOME (§0A.7a): OPEN, ATTESTED with its label, or DISPUTED; null for a replayed game
         outcome: outcomeOf(held.roundId, c),
         startTime: iso(c.startTimeMs), endTime: iso(endMs), committee: set.committees.get(id) || (() => { const k = committeeOf(held.roundId); set.committees.set(id, k); return k; })(),
+        // THE BACKUP RULE (§5A.5): whether this round is a day's backup grid's, and whether it is the one played in its window here
+        ...(free ? {} : (() => { const p = playedHere(held.roundId, c); return { backup: p.backup, played: p.played }; })()),
         committeeTimeMs: String(c.committeeTimeMs), startTimeMs: String(c.startTimeMs),
         // THE RUN LENGTH, ANNOUNCED (the 82/90 fork, 2026-10-01: "It must be part of the round announcement"):
         // the contract's blockTicks - in the signed contract this row names - and what it is in seconds.
@@ -5286,6 +5344,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         let tip = null; try { tip = typeof chainTip === 'function' ? Number(await chainTip()) : null; } catch { tip = null; }
         return claimJson(200, { nowMs: String(now), tip, expected: out });
+      }
+      // WHO POSTS THE ROUNDS, AS THIS NODE SEES IT (kanban #702): the day's duty order (top 3), who posted each day and whether a fallback
+      // did, this node's own postings, whether its wallet can pay, its last error - from what its poster last looked at (cheap, no chain read)
+      if (req.method === 'GET' && url.pathname === '/duty') {
+        if (!duty) return claimJson(404, { ok: false, why: 'this node runs no round poster' });
+        return claimJson(200, duty.status());
       }
       if (req.method === 'GET' && url.pathname === '/liquidity-claim') {
         // an installed node that became a provider from its owner page (kanban #567) serves its home's claim before its next restart
@@ -10001,8 +10065,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     });
   });
 
+  // THE ROUND POSTER SEES WHAT THIS SEAT HOLDS (kanban #702): the series' templates (the day's shape, who created a posted series), the
+  // donation set in force at a height, and the series it posts named funded here - as the runner named them in the funded file
+  const dutyAttach = () => {
+    if (!duty) return;
+    const inForce = (networkId, height) => {
+      const keys = donationKeysForNetworkId(networkId);
+      if (!keys) throw new Error('this network has no donation authority this node knows');
+      const forced = donationSetInForce({ networkId, authority: keys.authority, recovery: keys.recovery, sets: donationSets, rotations: donationRotations,
+        height, verify: verifyDonation, approved: approvedSets() });
+      if (!forced.ok) throw new Error(`no donation set in force at census height ${height}: ${forced.why}`);
+      return donationSetId(forced.recipients);
+    };
+    duty.attach({ port: http.address().port, host, endpoint: publicEndpoint, heldTemplates: () => series.slice(),
+      nameFunded: (idHex) => { if (typeof funded.nameRound === 'function') funded.nameRound(idHex); }, donationSetAt: inForce, nodeKey: round.pubkey });
+  };
   return new Promise((resolve) => {
-    http.listen(port, host, () => resolve({
+    http.listen(port, host, () => { dutyAttach(); resolve({
       http, wss, round, host, verifier, ghosts, roster, stakeSecrets,
       dkg, settlements, winnings, orderBook,
       // the protocol reserves' keys: make one with given members and peers, and the DKG of a federation
@@ -10059,9 +10138,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (p2pTunnels) p2pTunnels.close();
         for (const c of p2pWss.clients) c.terminate();
         wss.close();
+        if (duty) duty.stop();
         http.closeAllConnections();
         http.close(r);
       }),
-    }));
+    }); });
   });
 }
