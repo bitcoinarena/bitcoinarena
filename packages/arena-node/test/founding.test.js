@@ -20,8 +20,11 @@ const entries = keys.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/tx',
 const seed = taggedHash('TEST/beacon', Uint8Array.of(1));
 
 function network({ offline = new Set(), done = () => true, stale = new Set(), staleError = 'Local parameters have already been set', freshFails = false,
-  count = keys.length } = {}) {
+  count = keys.length, strictAdd = false, failAddOnce = null } = {}) {
   const log = [];
+  // A GUARDIAN AS FEDIMINT'S SETUP IS (strictAdd): a code it holds is refused when added again - the leader's, which names the federation,
+  // with "Federation name has already been set"; `failAddOnce` [guardian, nth add] fails once as a guardian not up yet does
+  const held = new Map(); let adds = 0;
   const seats = [];
   const fake = (i) => ({
     localParams: async ({ leader, name, size }) => {
@@ -29,7 +32,15 @@ function network({ offline = new Set(), done = () => true, stale = new Set(), st
       if (stale.has(i)) { log.push(['refused', i]); throw new Error(`Config Gen Error: Federation rpc error { method => set_local_params, 1024 => Unspecified server error: ${staleError} }`); }
       log.push(['params', i, leader, leader ? name : null, leader ? size : null]); return `code-${i}`; },
     freshSetup: async () => { log.push(['fresh', i]); if (freshFails) return { ok: false, why: 'the guardian did not start again' }; stale.delete(i); return { ok: true, kept: `database.void-${i}` }; },
-    addPeer: async (code) => { log.push(['add', i, code]); },
+    addPeer: async (code) => {
+      if (strictAdd) {
+        if (!held.has(i)) held.set(i, new Set());
+        if (held.get(i).has(code)) throw new Error(`Config Gen Error: Federation rpc error { method => add_peer_setup_code, 1024 => Unspecified server error: ${log.some((l) => l[0] === 'params' && l[2] && `code-${l[1]}` === code) ? 'Federation name has already been set to arena' : 'Peer already added'} }`);
+        if (failAddOnce && failAddOnce[0] === i && ++adds === failAddOnce[1]) throw new Error('Config Gen Error: Federation rpc error { method => add_peer_setup_code, 1024 => Connection failed: Failed to connect to peer }');
+        held.get(i).add(code);
+      }
+      log.push(['add', i, code]);
+    },
     startDkg: async () => { log.push(['dkg', i]); },
     invite: async () => 'fed11invite',
     done: async () => log.some((l) => l[0] === 'dkg' && l[1] === i) && done(i),     // consensus once its DKG ran (unless told otherwise)
@@ -287,4 +298,21 @@ test('a seated node started again after its code is out posts that same code - n
   await other.advance(101);
   assert.deepEqual(log, ['params']);
   assert.equal(kept.get('saved').code, 'code-new');
+});
+
+test('one add-peer that fails does not stall the DKG: the next tick adds only the peers left, never the leader\'s code twice (kanban #577, d8e88fd3)', async () => {
+  // measured 2026-10-26 on foundings 3976076b and d8e88fd3: all ten codes held, no seat ever started its DKG - every tick re-added the
+  // leader's code and the guardian refused it, "Federation name has already been set to arena"
+  const first = network().seats[0].state().seated.map((x) => idx(x.node));
+  const n = network({ strictAdd: true, failAddOnce: [first[1], 2] });
+  // as the seat's tick runs it: a refusal is said and the next tick asks again (founding-seat.js)
+  const tick = async (tip) => { const said = []; for (const s of n.seats) { try { await s.advance(tip); } catch (e) { said.push(e.message); } } return said; };
+  await tick(101);
+  assert.match((await tick(102)).join(' '), /Failed to connect to peer/);   // first[1]: its second add fails - a guardian not up yet
+  assert.ok(!n.log.some((l) => l[0] === 'dkg' && l[1] === first[1]), 'no DKG while a peer is missing');
+  assert.deepEqual(await tick(103), []);                // the next tick adds only the one left, and starts
+  for (const i of first) assert.ok(n.log.some((l) => l[0] === 'dkg' && l[1] === i), `seat ${i} started its DKG`);
+  const adds = n.log.filter((l) => l[0] === 'add' && l[1] === first[1]).map((l) => l[2]);
+  assert.equal(new Set(adds).size, adds.length, 'no code added twice');
+  assert.equal(adds.length, 3);
 });
