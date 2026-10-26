@@ -22,7 +22,7 @@ import { walletVerdict, dutySetting, planFederations, posterOf, dayTemplate, DUT
 import { catalogOf } from '../src/duty-guard.js';
 
 const H = 3600000, MIN = 60000;
-const DAY = 20753;                                   // 2026-10-26: its duty posts the rounds of 10-27
+const DAY = 20753;                                   // 2026-10-27: its duty posts the rounds of 10-28
 const T0 = dayStartMs(DAY);
 const KEYS = [1, 2, 3, 4, 5].map((n) => new Uint8Array(32).fill(n));
 const ORDER = dutyOrder({ networkId: NETWORK_ID_TESTNET4, slot: DAY, nodeKeys: KEYS });
@@ -45,7 +45,8 @@ const header = (timeS, n) => { const h = new Uint8Array(80); h[0] = n & 0xff; h[
  * wallet. -> the engine's options and what it did (published grids, fee raises).
  */
 function world({ nowMs = T0 + 10 * MIN, local = [ORDER[0]], inBlocks = [], mempool = [], wallet = {}, blockHash = {}, seats = ['http://s1'], seatRounds = null,
-  canPay = async () => ({ ok: true }), role = 'primary', postedPrimary = async () => false, game = 'nextblock', view = null, dir = null } = {}) {
+  canPay = async () => ({ ok: true }), role = 'primary', postedPrimary = async () => false, game = 'nextblock', view = null, dir = null,
+  census = async () => KEYS, mempoolFails = false } = {}) {
   const firstHeight = 1000;
   const blocks = [];
   for (let t = T0 - 40 * H, i = 0; t <= nowMs; t += 10 * MIN, i++) blocks.push({ header: header(Math.floor(t / 1000), i), transactions: [], t });
@@ -55,9 +56,9 @@ function world({ nowMs = T0 + 10 * MIN, local = [ORDER[0]], inBlocks = [], mempo
   const did = { published: [], bumped: [], gridBase: [] };
   const opts = {
     game, item: `${game}-day`, role, postedPrimary, networkId: NETWORK_ID_TESTNET4, local: new Set(local.map(toHex)), dir: dir || mkdtempSync(join(tmpdir(), 'duty-')),
-    chain: { view: view || (async () => ({ blocks, firstHeight })), censusKeysAt: async () => KEYS, seatUrls: async () => seats },
+    chain: { view: view || (async () => ({ blocks, firstHeight })), censusKeysAt: census, seatUrls: async () => seats },
     chainCall: async (m, p) => {
-      if (m === 'getrawmempool') return [...pool.keys()];
+      if (m === 'getrawmempool') { if (mempoolFails) throw new Error('bitcoind did not answer getrawmempool'); return [...pool.keys()]; }
       if (m === 'getrawtransaction') { if (!pool.has(p[0])) throw new Error('gone'); return toHex(pool.get(p[0])); }
       if (m === 'getblockhash') return blockHash[p[0]] || `hash-${p[0]}`;
       if (m === 'getblockcount') return tip;
@@ -274,6 +275,67 @@ test('(d) a day not drawable on the seats for the newest version gets an emergen
   assert.equal(em.marker.tag, tagOf('nextblock-day-emergency'));
 });
 
+// SEAT 4, 2026-10-26 11:38-11:43Z (ARENA_DUTY_POST=on, dry): old rounds' views timed out every few seconds, every census read was held "a
+// block read failed less than a minute ago", the day's anchor census never read - GET /duty "anchor: null, order: []" - and its first pass
+// saw no seat and planned emergency grids for days that were posted and drawn
+test('seat 4: a census at the anchor that does not read gives no order, says why, and posts nothing - the next pass that reads it does', async () => {
+  let reads = 0;
+  const w = world({ local: [ORDER[0]], census: async () => { reads++; if (reads <= 2) throw new Error('a block read failed less than a minute ago: read again after it'); return KEYS; } });
+  const d = createDayDuty(w.opts);
+  const st = await d.look();
+  assert.equal(w.did.published.length, 0);
+  assert.equal(st.order.length, 0);
+  assert.equal(st.ready.ok, false);
+  assert.match(st.ready.why, /no census at the day's anchor \d+ yet: a block read failed/);
+  assert.ok(Number.isInteger(st.orders[DAY].anchor), 'the anchor is said even while its census is not read');
+  await d.look();
+  assert.equal(w.did.published.length, 1);
+  assert.equal(w.did.published[0].marker.slot, DAY);
+});
+
+test('seat 4: no emergency grid on the word of seats that did not answer, nor before the mempool was read; an empty answer is not kept', async () => {
+  // today's grid posted by another node, its rounds drawn - but no seat answers yet: no emergency grid, and the next pass asks again
+  const pub = txOf([dutyMarkerOutput(DAY - 1, 'nextblock-day')]);
+  let answering = false, asked = 0;
+  const w = world({ local: [ORDER[0]], nowMs: T0 + 30 * MIN, inBlocks: [{ atMs: T0 - 20 * H, raw: pub.raw }], seats: ['http://s1', 'http://s2', 'http://s3'],
+    seatRounds: () => { asked++; if (!answering) throw new Error('fetch failed'); return { rounds: [0, 1, 2].map((i) => ({ game: { id: GID }, startTime: new Date(T0 + H + i * 90000).toISOString(),
+      committee: { drawn: { game: ['k'], settlement: ['k'] } } })) }; } });
+  // tomorrow's posted too, so the only thing a pass could post is an emergency grid
+  w.opts.chain.view = (await (async () => { const v = await w.opts.chain.view(); v.blocks[v.blocks.length - 3].transactions.push(txOf([dutyMarkerOutput(DAY, 'nextblock-day')]).raw); return async () => v; })());
+  const d = createDayDuty(w.opts);
+  const st = await d.look();
+  assert.equal(w.did.published.length, 0, JSON.stringify(st.days));
+  assert.match(st.ready.why, /0 of 3 seats answered/);
+  answering = true;
+  const before = asked;
+  const st2 = await d.look();
+  assert.ok(asked > before, 'the empty answer was not kept');
+  assert.equal(w.did.published.length, 0);
+  assert.equal(st2.ready.ok, true);
+  assert.equal(st2.days[new Date(T0).toISOString().slice(0, 10)].state, 'drawable');
+  // a pass that cannot read the mempool posts no day
+  const m = world({ local: [ORDER[0]], mempoolFails: true });
+  const sm = await createDayDuty(m.opts).look();
+  assert.equal(m.did.published.length, 0);
+  assert.match(sm.wouldPost[0].why, /mempool could not be read/);
+});
+
+test('an anchor at the bottom of a short chain view is not taken: the view is widened and the day waits', async () => {
+  const w = world({ local: [ORDER[0]] });
+  const all = await w.opts.chain.view();
+  const cut = all.blocks.findIndex((b) => b.t >= T0 - 20 * H);          // the view starts 20 h before the day: yesterday's anchor is older
+  let widened = 0;
+  w.opts.chain.view = async () => ({ blocks: all.blocks.slice(cut), firstHeight: all.firstHeight + cut });
+  w.opts.chain.widen = () => { widened++; };
+  const st = await createDayDuty(w.opts).look();
+  assert.equal(widened, 1);
+  assert.equal(st.orders[DAY - 1].anchor, null);
+  assert.match(st.orders[DAY - 1].why, /older than the \d+ blocks/);
+  // today's own anchor (03:00 less) is in the view: its order stands and the day is posted
+  assert.deepEqual(st.order.map(toHex), ORDER.map(toHex));
+  assert.equal(w.did.published.length, 1);
+});
+
 test('a seat or a chain read that fails never stops the poster: the pass says why and the next one tries again', async () => {
   const w = world({ view: async () => { throw new Error('fetch failed: connect ETIMEDOUT 198.51.100.7:6281'); } });
   const d = createDayDuty(w.opts);
@@ -295,6 +357,12 @@ test('the federations a node posts in are the OPEN ones its records list, a drai
   const A = 'aa'.repeat(32), B = 'bb'.repeat(32), C = 'cc'.repeat(32);
   assert.deepEqual(planFederations([{ federation: A, status: 'OPEN' }, { federation: B, status: 'DRAINING', successor: C }, { federation: C, status: 'OPEN' }]), [A, C]);
   assert.deepEqual(planFederations([{ federation: A, status: 'CLOSED' }]), []);
+  // SEAT 4, 2026-10-26: four OPEN records, two of them throwaway test federations no day was posted in - the days go where the last days went
+  const T2 = '99'.repeat(32), E = 'e2'.repeat(32);
+  const live = [{ federation: A, status: 'OPEN' }, { federation: B, status: 'OPEN' }, { federation: T2, status: 'OPEN' }, { federation: E, status: 'OPEN' }];
+  assert.deepEqual(planFederations(live, { played: [A, B] }), [A, B]);
+  assert.deepEqual(planFederations(live, { named: [A], played: [A, B] }), [A]);
+  assert.deepEqual(planFederations([{ federation: A, status: 'DRAINING', successor: C }, { federation: C, status: 'OPEN' }], { played: [A] }), [C]);
 });
 
 test('the day\'s template is the last one this node holds of the app, else the built-in shape', () => {

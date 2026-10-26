@@ -36,7 +36,11 @@ import { beaconBlockIn } from './publication-wait.js';
 import * as guard from './duty-guard.js';
 
 export const DUTY_APPS = Object.freeze(['updown', 'rps', 'nextblock']);
-const keptFor = (ms, read, now = Date.now) => { let at = 0, v = null; return async (fresh = false) => { if (fresh || !v || now() - at > ms) { v = await read(); at = now(); } return v; }; };
+/** How many seats must have answered their rounds before an emergency grid is posted on what they say (fewer known: all of them). */
+export const DUTY_MIN_SEATS = 3;
+// KEPT `ms`, BUT NOT AN ANSWER NOBODY GAVE (#702, measured on seat 4 2026-10-26 11:43Z: a first read that found no seat was kept 10 min and
+// judged the days "drawn on 0 of 0 seats"): `empty(v)` true is read again at the next ask
+const keptFor = (ms, read, now = Date.now, empty = () => false) => { let at = 0, v = null; return async (fresh = false) => { if (fresh || !v || empty(v) || now() - at > ms) { v = await read(); at = now(); } return v; }; };
 
 /**
  * WHAT A GRID OF `game` IS BUILT ON NOW (kanban #689): the census `censusDepth` below the tip, its block hash, the newest version's
@@ -58,11 +62,11 @@ export function createGridBase({ chainCall, prepare = null, censusEntriesAt, con
   const seatJson = async (url, ms = 20000) => { const r = await fetchFn(url, { signal: AbortSignal.timeout(ms) }); if (!r.ok) throw new Error(`${url}: ${r.status}`); return r.json(); };
   // THE APPS THE SEATS HOLD (GET /games, every manifest checked against its id), read again every 5 min
   const seatCatalog = keptFor(5 * 60000, async () => guard.catalogOf((await Promise.all((await catalogSeats()).map((u) => seatJson(`${u}/games`).catch(() => null)))).filter(Boolean),
-    { decode, idOf }), now);
+    { decode, idOf }), now, (c) => !c || !c.size);
   // THE SEATS' CHAINS (GET /headers), read again every 15 min
   const seatChains = keptFor(15 * 60000, async () => ({ local: localCount, sets: await Promise.all((await chainSeats()).slice(0, checkSeats).map(async (u) => {
     try { const r = await fetchFn(`${u}/headers`, { signal: AbortSignal.timeout(30000) }); return r.ok ? guard.headerHashes(new Uint8Array(await r.arrayBuffer()), blockHashOf) : null; } catch { return null; }
-  })) }), now);
+  })) }), now, (c) => !c.sets.some(Boolean));
   // A MAJORITY OF ALL THE SEATS ASKED - and of the OTHER machines' seats when three or more of them answer: seats that read the same
   // bitcoind agree with it on a branch of its own whatever the rest of the network follows (10-26, 157625)
   const agreementOf = (hash, c) => {
@@ -208,9 +212,11 @@ export function createDayDuty(o) {
   // AND THE MEMPOOL'S MARKERS - one transaction gone between the list and the read no longer hides the others (10-26 01:37Z). Each
   // transaction is read once while it stays in the mempool.
   const poolSeen = new Map();
+  let poolRead = false;                          // the mempool was read this pass (a pass that could not read it posts nothing)
   const mempoolMarkers = async () => {
     let txids = [];
-    try { txids = await chainCall('getrawmempool', []); } catch { return [...poolSeen.values()].flat(); }
+    try { txids = await chainCall('getrawmempool', []); } catch { poolRead = false; return [...poolSeen.values()].flat(); }
+    poolRead = true;
     const live = new Set(txids);
     for (const t of [...poolSeen.keys()]) if (!live.has(t)) poolSeen.delete(t);
     for (const txid of txids) {
@@ -242,7 +248,10 @@ export function createDayDuty(o) {
   };
   // THE SEATS' ROUNDS (GET /rounds?next=1&ahead=50h), read again every 10 min
   const seatRounds = keptFor(10 * 60000, async () => Promise.all((await chain.seatUrls()).slice(0, drawSeats)
-    .map(async (u) => { try { const r = await fetchFn(`${u}/rounds?next=1&ahead=50h`, { signal: AbortSignal.timeout(60000) }); return r.ok ? await r.json() : null; } catch { return null; } })), now);
+    .map(async (u) => { try { const r = await fetchFn(`${u}/rounds?next=1&ahead=50h`, { signal: AbortSignal.timeout(60000) }); return r.ok ? await r.json() : null; } catch { return null; } })), now,
+    (l) => !l.some(Boolean));
+  // HOW MANY SEATS ANSWERED THEIR ROUNDS: an emergency grid is posted only on the word of DUTY_MIN_SEATS of them (#702, seat 4's first pass)
+  const seatsAnswered = async () => { const l = await seatRounds(); return { answered: l.filter(Boolean).length, asked: l.length }; };
   // ONLY THE NEWEST VERSION COUNTS (2026-10-26, the owner: "We should always play the newest version not v13"): a day an older version's
   // grid covers is not covered, so the emergency grid on the newest one is posted
   const familyIds = async () => {
@@ -290,7 +299,7 @@ export function createDayDuty(o) {
   // every 30 min), the status file tools/duty-status.mjs reads, and an emergency grid of what is left of a day that is dead or not drawable
   // in time. Machines stagger: this one waits its capped duty rank x 20 min after the grid fell due.
   const saidStatus = new Map(), dueSince = new Map();
-  const watch = async (view, idx, mempool, rank) => {
+  const watch = async (view, idx, mempool, rank, ready) => {
     const nowMs = now();
     const headers = view.blocks.map((b) => b.header);
     const mtpMs = (medianTimePast(headers, view.firstHeight, idx.tip) || 0) * 1000;
@@ -312,7 +321,7 @@ export function createDayDuty(o) {
         || foreign.some((m) => m.tag === emergencyTag && (m.height === null || idx.tip - m.height < 15));
       const postedAny = ks.length > 0 || foreign.length > 0;
       const pending = ks.filter((k) => k.verdict && k.verdict.state === 'pending').map((k) => Number(k.committeeMs ?? (day.startMs - DUTY_COMMITTEE_LEAD_MS)));
-      const due = guard.emergencyDue({ nowMs, day, verdict, emergencies, inFlight, postedAny, dutyOverMs: guard.dayTimeline(slot, { committeeLeadMs, cap: rankCap }).postByMs + 3600000, drawableByMs,
+      const due = backup ? { due: false } : guard.emergencyDue({ nowMs, day, verdict, emergencies, inFlight, postedAny, dutyOverMs: guard.dayTimeline(slot, { committeeLeadMs, cap: rankCap }).postByMs + 3600000, drawableByMs,
         pendingCommitteeMs: pending.length ? Math.max(...pending) : foreign.some((m) => m.tag === tag) ? day.startMs - DUTY_COMMITTEE_LEAD_MS : null });
       let emergency = null;
       if (due.due) {
@@ -323,6 +332,7 @@ export function createDayDuty(o) {
         emergency = { why: due.why, plan: plan.ok ? { committee: new Date(plan.committeeMs).toISOString(), firstStart: new Date(plan.firstStartMs).toISOString(), slots: plan.slots, lostMin: Math.round(plan.lostMs / 60000) } : plan.why };
         if (!emergencyGrids) emergency.off = backup ? 'a backup posts no emergency grid: the primary\'s duty does' : 'emergency grids are off: not posted';
         else if (rank < 0) emergency.off = 'this node is not in the day\'s census: not posted';
+        else if (!ready.ok) emergency.waits = ready.why;
         else if (nowMs - dueSince.get(slot) < waitMs) emergency.waits = `${Math.round((waitMs - (nowMs - dueSince.get(slot))) / 60000)} min (rank ${rank + 1})`;
         else if (plan.ok) {
           const pay = await canPay();
@@ -348,7 +358,18 @@ export function createDayDuty(o) {
     const mtpAt = async (h) => { const m = medianTimePast(headers, view.firstHeight, h); return m === null ? -1 : m; };
     const anchor = await anchorHeight(slot, { mtpAt, tip, low: view.firstHeight + 11, slotMs: DUTY_DAY_MS });
     if (anchor === null) return null;
-    if (!censusAt.has(anchor)) { const keys = await chain.censusKeysAt(anchor); if (!keys) throw new Error(`no census at the day's anchor ${anchor}`); censusAt.set(anchor, keys); }
+    // AN ANCHOR AT THE VIEW'S LOWEST BLOCK MAY BE OLDER THAN THE VIEW (testnet4 makes hundreds of blocks a day in bursts): not taken - the
+    // view is widened (chain.widen) and the next pass finds the real one
+    if (anchor <= view.firstHeight + 11 && view.firstHeight > 0) {
+      if (typeof chain.widen === 'function') chain.widen();
+      return { anchor: null, order: null, rank: -1, why: `the day's anchor is older than the ${view.blocks.length} blocks this node reads: reading more` };
+    }
+    if (!censusAt.has(anchor)) {
+      let keys = null, why = '';
+      try { keys = await chain.censusKeysAt(anchor); } catch (e) { why = e.message; }
+      if (!keys || !keys.length) return { anchor, order: null, rank: -1, why: `no census at the day's anchor ${anchor} yet${why ? `: ${why}` : ''}` };
+      censusAt.set(anchor, keys);
+    }
     const order = dutyOrder({ networkId, slot, nodeKeys: censusAt.get(anchor) });
     return { anchor, order, rank: order.findIndex((k) => local.has(toHex(k))) };
   };
@@ -366,11 +387,23 @@ export function createDayDuty(o) {
         .map((m) => ({ slot: m.slot, emergency: m.tag === emergencyTag, role: backup ? 'backup' : 'primary', txid: m.txid, height: m.height, series: m.series || [] }));
       // EVERY DAY THE STATUS NAMES: yesterday's duty (today's rounds) and today's (the next 24 h), each with its order
       seen.orders = {};
-      for (const s of [slot - 1, slot]) { try { const o2 = await orderOf(s, view, idx.tip); if (o2) seen.orders[s] = o2; } catch (e) { fail(e.message); } }
+      for (const s of [slot - 1, slot]) {
+        try { const o2 = await orderOf(s, view, idx.tip); if (o2 && o2.order) seen.orders[s] = o2; else if (o2) { seen.orders[s] = { anchor: o2.anchor, order: [], rank: -1, why: o2.why }; fail(o2.why); } }
+        catch (e) { fail(e.message); }
+      }
       let rank = -1;
-      const got = seen.orders[slot] || null;
+      const got = seen.orders[slot] && seen.orders[slot].order.length ? seen.orders[slot] : null;
       seen.slot = slot;
-      if (slot + 1 < fromDay || !got) { if (lastSaid !== `wait ${slot}`) say({ dutyDay: 'no anchor yet', item, slot }); lastSaid = `wait ${slot}`; seen.anchor = null; seen.order = []; seen.rank = -1; seen.due = false; }
+      // READY TO ACT (#702, seat 4 2026-10-26 11:43Z: its first pass after a restart read no census and no seat, and planned emergency grids
+      // for days that were posted and drawn): the day's order read from its census, the mempool read this pass, and - for an emergency grid
+      // - DUTY_MIN_SEATS seats' rounds; until then a pass judges and says, and posts nothing
+      const seatsRead = await seatsAnswered();
+      const minSeats = Math.min(DUTY_MIN_SEATS, Math.max(1, seatsRead.asked));
+      const ready = !got ? { ok: false, why: seen.orders[slot] && seen.orders[slot].why ? seen.orders[slot].why : 'the day\'s anchor is not in the chain view yet' }
+        : !poolRead ? { ok: false, why: 'the mempool could not be read this pass' }
+        : seatsRead.answered < minSeats ? { ok: false, why: `${seatsRead.answered} of ${seatsRead.asked} seats answered their rounds (${minSeats} needed)` } : { ok: true };
+      seen.ready = ready;
+      if (slot + 1 < fromDay || !got) { const w = `wait ${slot} ${ready.why}`; if (lastSaid !== w) say({ dutyDay: 'not ready', item, slot, why: ready.why }); lastSaid = w; seen.anchor = seen.orders[slot] ? seen.orders[slot].anchor : null; seen.order = []; seen.rank = -1; seen.due = false; }
       else {
         const { anchor, order } = got;
         // DUTY_DRY_RANK0 with a dry grid: build today's post as if this machine were first in order - nothing published
@@ -387,14 +420,15 @@ export function createDayDuty(o) {
         if (said !== lastSaid) say({ dutyDay: due ? 'due' : posted ? 'posted' : 'not due', item, slot, target: new Date(targetDay(slot).startMs).toISOString(), anchor,
           dutyNode: toHex(order[0] || new Uint8Array(32)).slice(0, 16), rank, rankCap, census: order.length });
         lastSaid = said;
-        if (due && slot + 1 >= fromDay) {
+        if (due && slot + 1 >= fromDay && !poolRead) seen.wouldPost.push({ app: game, slot, why: 'due, but the mempool could not be read: not posted this pass' });
+        else if (due && slot + 1 >= fromDay) {
           const pay = await canPay();
           // A NODE THAT CANNOT PAY SAYS SO AND SKIPS: the day falls to the next node in order an hour later (duty.js dayPostDue)
           if (!pay.ok) { seen.wouldPost.push({ app: game, slot, why: pay.why }); if (lastSaid !== `${said} nopay`) say({ dutyDay: 'DUE, CANNOT PAY', item, slot, why: pay.why }); lastSaid = `${said} nopay`; }
           else { try { await publish(slot); } catch (e) { fail(`${game} ${new Date(targetDay(slot).startMs).toISOString().slice(0, 10)}: ${e.message}`); say({ dutyDay: 'NOT PUBLISHED', item, slot, why: e.message }); } }
         }
       }
-      await watch(view, idx, await mempoolMarkers(), rank);
+      await watch(view, idx, await mempoolMarkers(), rank, ready);
       seen.lookedAtMs = now();
     } catch (e) { fail(e.message); say({ dutyDay: 'look failed', item, why: e.message }); } finally { busy = false; }
     return seen;

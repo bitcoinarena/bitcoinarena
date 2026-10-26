@@ -330,12 +330,15 @@ if (url) {
   // A BLOCK READ THAT FAILED HOLDS EVERY CENSUS READ FOR A MINUTE, as it holds the round's view (below): the records' first gathering
   // 45 s after start read the whole census window from a bitcoind whose block reads had just failed (main-process (c), since f554a896)
   let blocksFailedAtMs = 0;
-  const chainCensusKept = async (kind, networkIdHex, height, contract) => {
+  // `hold` false (the duty poster, #702): read even within a minute of another failed block read - measured on seat 4 2026-10-26 11:43Z, old
+  // rounds' views timing out every few seconds held every census read, so the day's anchor census was never read and the node had no duty
+  // order. One census a day, read once and kept; a read that fails is said and asked again at the next pass
+  const chainCensusKept = async (kind, networkIdHex, height, contract, { hold = true } = {}) => {
     const hash = String(await call('getblockhash', [height]));
     const key = `chain:${kind}:${networkIdHex}:${height}:${hash}`;
     try { const row = db.prepare('SELECT body FROM census_kept WHERE key = ?').get(key); if (row) return JSON.parse(row.body, censusReviver); } catch { /* derived below */ }
     if (chainCensusInFlight.has(key)) return chainCensusInFlight.get(key);
-    if (Date.now() - blocksFailedAtMs < 60000) return { ok: false, why: 'a block read failed less than a minute ago: read again after it' };
+    if (hold && Date.now() - blocksFailedAtMs < 60000) return { ok: false, why: 'a block read failed less than a minute ago: read again after it' };
     const p = (async () => {
       // a kept hash from a branch the chain left is dropped and the view read once more (censusWithFreshHashes, kanban #495)
       const read = async () => { try { return await blocksOver(call, Math.max(0, height - CENSUS_LOOKBACK), height, { cache: blocksKept }); } catch (e) { blocksFailedAtMs = Date.now(); throw e; } };
@@ -565,9 +568,16 @@ if (url) {
     const net = process.env.ARENA_DONATION_NETWORK;
     const nid = net === 'testnet4' ? NETWORK_ID_TESTNET4 : net === 'regtest' ? NETWORK_ID_REGTEST : null;
     options.duty = createDutyPoster({ call, walletCall: (name) => bitcoindRpc({ url: `${url.replace(/\/+$/, '')}/wallet/${encodeURIComponent(name)}`, cookiePath }),
-      networkIdHex: () => (nid ? toHexMain(nid) : null), censusEntriesAt: options.ballot.censusEntriesAt,
+      networkIdHex: () => (nid ? toHexMain(nid) : null),
+      // THE CENSUS AT A HEIGHT AS EVERY NODE DERIVES IT (the ballot's, the founding's), not held back by another view's failed block read
+      censusEntriesAt: async (networkIdHex, height) => {
+        const census = await chainCensusKept('ballot', networkIdHex, height, { networkId: fromHex(networkIdHex), censusHeight: height, censusConfirmations: 1,
+          bondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000), protocolVersion: PROTOCOL_VERSION }, { hold: false });
+        if (!census.ok) throw new Error(census.why);
+        return census.entries;
+      },
       // A ROUND'S CENSUS, AS THE SEATS DERIVE IT: kept per its depth, floor and protocol (each changes who is in it)
-      dutyCensus: (c) => chainCensusKept(`duty:${c.censusConfirmations}:${c.bondMinSats}:${c.protocolVersion}`, toHexMain(c.networkId), Number(c.censusHeight), c),
+      dutyCensus: (c) => chainCensusKept(`duty:${c.censusConfirmations}:${c.bondMinSats}:${c.protocolVersion}`, toHexMain(c.networkId), Number(c.censusHeight), c, { hold: false }),
       chainBlocks: (from, to) => blocksOver(call, from, to, { cache: blocksKept }), dir: `${path}.duty`, env: process.env, nodeSecret: nodeIdentity(db).secret });
   }
   // A HELD SERIES' VIEWS ARE READ AT START (TWO-GAMES-1407, measured on testnet4 2026-09-30 12:37Z): the first paying
