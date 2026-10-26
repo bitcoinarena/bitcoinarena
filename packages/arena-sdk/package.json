@@ -1,6 +1,6 @@
 {
   "name": "arena-sdk",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "What a game imports from the Arena (kanban #568): the protocol's manifest, hashes, donation sets, series and encodings - one door, so a game can live in its own repository and take the Arena as a dependency.",
@@ -26,6 +26,7 @@
     "./genesis": "./src/genesis.js",
     "./ballot-chain": "./src/ballot-chain.js",
     "./batch": "./src/batch.js",
-    "./host": "./src/host.js"
+    "./host": "./src/host.js",
+    "./core-hash": "./src/core-hash.js"
   }
 }
