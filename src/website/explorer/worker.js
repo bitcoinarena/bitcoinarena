@@ -12,6 +12,9 @@
 //   /, /tx/<id>           the pages (www/), with what D1 holds built into the page, so they draw at once
 //   GET /api/metrics      the Metrics page's figures (kanban #676): volume per day from D1, the protocol reserve and the websites' fees
 //   /metrics              that page, its figures built in
+//   GET /api/health       the Network health page's kept copy (kanban #686): every door that page asks, asked every minute (its own cron)
+import { readHealth, HEALTH_CRON } from './health.js';
+
 const SEATS = [1, 2, 3, 4, 5, 6, 7].map((i) => `https://tn4.bitcoin-arena.io/guardian-${i}`)
   .concat([1, 2, 3, 4, 5, 6, 7].map((i) => `https://tn4.bitcoin-arena.io/fed2-${i}`));
 const PAGE = 200, PAGE_MAX = 1000;
@@ -325,12 +328,20 @@ async function inline(env, request, data) {
 }
 
 export default {
-  async scheduled(event, env, ctx) { ctx.waitUntil(poll(env)); },
+  // the health copy on its own trigger (kanban #686): its own run, so its fetches do not count against the transactions' read
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(event.cron === HEALTH_CRON ? readHealth(env).catch((e) => console.log(JSON.stringify({ healthError: String(e && e.message ? e.message : e) }))) : poll(env));
+  },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === '/robots.txt') return new Response('User-agent: *\nAllow: /\n', { headers: { 'content-type': 'text/plain' } });
     if (url.pathname === '/api/recent') return json(await recent(env, url.searchParams), { maxAge: 10 });
     if (url.pathname === '/api/metrics') return json(await metrics(env), { maxAge: 30 });
+    if (url.pathname === '/api/health') {
+      const kept = await env.EXPLORER.get('health');
+      return kept ? new Response(kept, { headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=20' } })
+        : json({ why: 'no copy read yet' }, { status: 404 });
+    }
     if (url.pathname === '/metrics' || url.pathname === '/metrics/') return inline(env, request, { metrics: await metrics(env) });
     const m = /^\/api\/tx\/([0-9a-f]{64})$/.exec(url.pathname);
     if (m) {
