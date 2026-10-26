@@ -281,7 +281,7 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
   };
   const ramFollow = (pidOf) => (ramOn && ramSupported()
     ? ramLoop({ dataDir, ram, pidOf, offsetMs: (Math.floor(nodePort / 10) % 12) * 5000 + (slot === 'next' ? 2500 : 0), log }) : null);
-  const cookieSha = cookieFingerprint(cookiePath);
+  let cookieSha = cookieFingerprint(cookiePath);
   // its federation's peers, once there is one: their API addresses as the config names them, carried through this seat
   let apiOverrides = '';
   try {
@@ -290,6 +290,9 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
     if (apiEndpoints) apiOverrides = guardianApiOverrides({ apiEndpoints, ownName: nodeKey ? (typeof nodeKey === 'string' ? nodeKey : Buffer.from(nodeKey).toString('hex')).toLowerCase().slice(0, 16) : null,
       seatRoot: `ws://${!host || host === '0.0.0.0' ? '127.0.0.1' : host}:${nodePort}`, ownApiPort: ports.api, existing: env.FM_WS_API_CONNECT_OVERRIDES || '' });
   } catch { apiOverrides = ''; }
+  // AND THE OVERRIDES IN THE FINGERPRINT (kanban #577): a running guardian is adopted, not restarted, so one started before its seat
+  // carried its peers' API (or with other peers) is started again once - the same rule as a changed bitcoind cookie
+  if (cookieSha && apiOverrides) cookieSha = createHash('sha256').update(`${cookieSha}\n${apiOverrides}`).digest('hex');
   const fmEnv = guardianEnv({ nodePort, dataDir, network, chain, bitcoindUrl, endpoint, ports, p2pUrlPort: nodeKey ? p2pTunnelPort(nodeKey, slot) : null, apiOverrides,
     cookieSecret: readFileSync(cookiePath, 'utf8').trim().split(':').slice(1).join(':'),
     password: readFileSync(pwFile, 'utf8').trim() });
@@ -306,7 +309,7 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
         log(`[guardian] ${unit} already runs: adopted, not restarted; endpoint ${endpoint}, api 127.0.0.1:${ports.api}`);
         return { running: true, kept: true, adopted: true, unit, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot, cookieSha: had || cookieSha, stop: async () => {}, halt: () => units.stop(unit) };
       }
-      log(`[guardian] ${unit} runs with an old bitcoind cookie (bitcoind was restarted): started again`);
+      log(`[guardian] ${unit} runs with an old bitcoind cookie or old peer addresses: started again`);
       await units.stop(unit);
     }
     if (!ramReady()) return not('its database is neither in RAM nor in a snapshot');
@@ -329,7 +332,7 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
         log(`[guardian] fedimintd ${pids.pid(dataDir)} already runs on ${dataDir}: adopted, not restarted; endpoint ${endpoint}, api 127.0.0.1:${ports.api}`);
         return kept(true, pids.pid(dataDir), had || cookieSha);
       }
-      log(`[guardian] fedimintd ${pids.pid(dataDir)} on ${dataDir} runs with an old bitcoind cookie (bitcoind was restarted): started again`);
+      log(`[guardian] fedimintd ${pids.pid(dataDir)} on ${dataDir} runs with an old bitcoind cookie or old peer addresses: started again`);
       await pids.stop(dataDir);
       if (!keep) {
         if (!ramReady()) return not('its database is neither in RAM nor in a snapshot');
