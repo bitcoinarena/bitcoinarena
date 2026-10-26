@@ -87,7 +87,10 @@ let code = 0;
 try {
   // WHICH ROUND: the one named, else the next nextblock round of the series that is open for entries and starts 75 s ahead
   if (!env.ROUND) {
-    const list = (await (await fetch(`${nodes[0]}/rounds`)).json()).rounds;
+    // THE FIRST SEAT THAT ANSWERS (2026-10-26: a seat held for minutes stopped every try at "fetch failed" before any step)
+    let list = null;
+    for (const n of nodes) { try { const r = await fetch(`${n}/rounds`, { signal: AbortSignal.timeout(30000) }); if (r.ok) { list = (await r.json()).rounds; break; } } catch { /* the next seat */ } }
+    if (!list) throw new Error('no seat answered GET /rounds');
     const now = Date.now();
     const next = list.filter((x) => x.entryOpen && x.game && x.game.name === 'nextblock' && Number(x.startTimeMs) - now > 75000
       && (!env.GAME_ID || String(x.game.id).startsWith(env.GAME_ID.toLowerCase())))
