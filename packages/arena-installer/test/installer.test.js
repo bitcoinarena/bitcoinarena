@@ -327,13 +327,15 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.ok(agent && agent.args[1].endsWith(join('bin', 'custody-agent.mjs')) && agent.args.includes(home), 'the custody agent runs as a service of this node');
   s = (await c.get('/api/state')).json;
   assert.equal(s.step, 'done');
-  assert.match(readFileSync(join(home, 'bin', 'arena-node-start'), 'utf8'), /systemctl --user start .*arena-lnd.service .*arena-gateway.service .*arena-node.service/, 'the start script names this node\'s services');
-  assert.ok((await c.get('/api/state')).json.launchers.start.endsWith('arena-node-start'));
-  // THE ARENANODE COMMAND: written with this node's home in it, and on the PATH (~/.local/bin)
-  const cmd = readFileSync(join(home, 'bin', 'arenanode'), 'utf8');
-  assert.match(cmd, /exec '[^']+' '[^']+\/packages\/arena-installer\/bin\/arenanode\.mjs' --home '[^']+' --name arenanode "\$@"/);
-  assert.equal(realpathSync(join(home, '.local', 'bin', 'arenanode')), realpathSync(join(home, 'bin', 'arenanode')), 'linked into ~/.local/bin');
-  assert.equal((await c.get('/api/state')).json.launchers.command.name, 'arenanode');
+  assert.match(readFileSync(join(home, 'bin', 'bitcoin-arena-start'), 'utf8'), /systemctl --user start .*arena-lnd.service .*arena-gateway.service .*arena-node.service/, 'the start script names this node\'s services');
+  assert.ok((await c.get('/api/state')).json.launchers.start.endsWith('bitcoin-arena-start'));
+  // THE BITCOINARENA COMMAND: written with this node's home in it, and on the PATH (~/.local/bin); arenanode beside it runs it (kanban #688)
+  const cmd = readFileSync(join(home, 'bin', 'bitcoinarena'), 'utf8');
+  assert.match(cmd, /exec '[^']+' '[^']+\/packages\/arena-installer\/bin\/bitcoinarena\.mjs' --home '[^']+' --name bitcoinarena "\$@"/);
+  assert.equal(realpathSync(join(home, '.local', 'bin', 'bitcoinarena')), realpathSync(join(home, 'bin', 'bitcoinarena')), 'linked into ~/.local/bin');
+  assert.match(readFileSync(join(home, 'bin', 'arenanode'), 'utf8'), /^exec '.*\/bin\/bitcoinarena' "\$@"$/m, 'the old name runs it');
+  assert.equal(realpathSync(join(home, '.local', 'bin', 'arenanode')), realpathSync(join(home, 'bin', 'arenanode')));
+  assert.equal((await c.get('/api/state')).json.launchers.command.name, 'bitcoinarena');
   const fin = (await c.post('/api/finish')).json;
   // the Arena site's owner page for this node's key, where the installer hands the key over (kanban #687), the local address beside it
   assert.deepEqual([fin.ok, fin.mode], [true, 'direct'], 'the user is told how to reach the node');

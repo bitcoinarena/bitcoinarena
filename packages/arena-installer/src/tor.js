@@ -66,7 +66,7 @@ export function writeTorrc({ home, ports = TOR_PORTS }) {
   const file = join(dir, 'torrc');
   // TOR'S OWN WORDS IN A FILE (kanban #670, 2026-10-26: "tor is not starting and could be the reason lnd also doesnt start"): on Linux
   // Tor's output went only to the journal, so setup could not say why it stopped; tor.log beside the torrc, started empty at every
-  // install, holds its [warn] and [err] lines for the setup (torUp, torComplaint) and for `arenanode logs tor`
+  // install, holds its [warn] and [err] lines for the setup (torUp, torComplaint) and for `bitcoinarena logs tor`
   writeFileSync(torLogOf(home), '');
   writeFileSync(file, ['# The Arena node\'s Tor, written by the installer: LND dials and is dialled through it.',
     `SocksPort 127.0.0.1:${ports.socks}`, `ControlPort 127.0.0.1:${ports.control}`, 'CookieAuthentication 1',

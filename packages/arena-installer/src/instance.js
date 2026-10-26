@@ -8,9 +8,9 @@
 //                        io.bitcoin-arena.node--<name>, "Arena node <name>" - the double dash keeps names like arena-chain-bridge apart
 //   port_offset=<n>      0..20000: added to every fixed port above
 // Both are read from the node's arena.conf (every setting in that file) - the home is the command's --home, else
-// ARENA_HOME, else ~/.arena-node - and, for a new node whose arena.conf the wizard has not written yet, from --instance / --port-offset
+// ARENA_HOME, else homeDefault() below - and, for a new node whose arena.conf the wizard has not written yet, from --instance / --port-offset
 // (or the older ARENA_INSTANCE / ARENA_PORT_OFFSET). Neither set: names and ports as before. Read once, when the program starts.
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -59,7 +59,23 @@ export function freeInstance(home, { platform = process.platform, env: e = proce
   throw new Error(`every Bitcoin Arena service name up to --${tries} belongs to another node on this machine, or its ports are in use`);
 }
 
-const homeNow = flag('--home') || env.ARENA_HOME || join(homedir(), '.arena-node');
+/**
+ * THE NODE'S HOME BY DEFAULT (kanban #688, 2026-10-26: "Rename the directories and binaries to bitcoinarena, not arenanode everywhere in
+ * the installer, the packages etc."): ~/.bitcoinarena for a new node. A node installed before 2026.1.9.8 lives in ~/.arena-node and STAYS
+ * there - its seed, keys, wallets, guardian and LND data and every service file name that folder, so it is found where it is, never moved:
+ * ~/.bitcoinarena when it holds a node (state.json or arena.conf), else ~/.arena-node when that one does, else ~/.bitcoinarena.
+ * ARENA_HOME and --home name it outright. The app helpers (pkg/macos, pkg/windows, pkg/linux) look the same way.
+ */
+export const HOME_DIR = '.bitcoinarena';
+export const LEGACY_HOME_DIR = '.arena-node';
+export function homeDefault(env = process.env, { home = homedir(), exists = existsSync } = {}) {
+  if (env.ARENA_HOME) return env.ARENA_HOME;
+  const holds = (d) => exists(join(d, 'state.json')) || exists(join(d, 'arena.conf'));
+  const now = join(home, HOME_DIR), before = join(home, LEGACY_HOME_DIR);
+  return holds(now) ? now : holds(before) ? before : now;
+}
+
+const homeNow = flag('--home') || homeDefault(env);
 const conf = confAt(homeNow);
 const given = conf.instance ?? flag('--instance') ?? env.ARENA_INSTANCE;
 const offGiven = conf.port_offset ?? flag('--port-offset') ?? env.ARENA_PORT_OFFSET;

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-# THE macOS PACKAGE: bitcoin-arena-node-<v>-darwin-<arch>.dmg - "Bitcoin Arena.app" (kanban #635: the name people see; the file keeps its name) (the native app pkg/macos/App.swift, its helper pkg/macos/arena-node-app and the release inside it)
+# THE macOS PACKAGE: bitcoin-arena-node-<v>-darwin-<arch>.dmg - "Bitcoin Arena.app" (kanban #635: the name people see; the file keeps its name) (the native app pkg/macos/App.swift, its helper pkg/macos/bitcoin-arena-app and the release inside it)
 # and a link to Applications, to drag it to. Made with hdiutil, so on a macOS (CI: the macos runner). Its line goes into
 # <out>/SHA256SUMS.packages. Usage: package-mac.sh <version> <out dir with the darwin assets>
 set -euo pipefail
@@ -27,7 +27,7 @@ for arch in arm64 x64; do
   mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/release"
   install -m 0755 "$WORK/Bitcoin Arena" "$APP/Contents/MacOS/Bitcoin Arena"
   tar -xzf "$OUT/$R.tar.gz" -C "$APP/Contents/Resources/release"
-  install -m 0755 "$HERE/pkg/macos/arena-node-app" "$APP/Contents/Resources/arena-node-app"
+  install -m 0755 "$HERE/pkg/macos/bitcoin-arena-app" "$APP/Contents/Resources/bitcoin-arena-app"
   cp "$WORK/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
   cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

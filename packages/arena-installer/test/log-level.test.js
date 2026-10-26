@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // --VERBOSE AND --DEBUG (kanban #693, 2026-10-26: "add a --debug and --verbose flag that shows more info on what its doing, what is going
 // wrong etc"): the flags read off any place of a command line, the level from a flag over ARENA_LOG_LEVEL over arena.conf log_level, the
-// default output of arenanode unchanged line for line, every step said at --verbose, and a --debug run with secrets in every input - the
+// default output of bitcoinarena unchanged line for line, every step said at --verbose, and a --debug run with secrets in every input - the
 // node's files, a failed answer's body, a child process's command line and stderr - printing none of them.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,14 +12,14 @@ import { tmpdir } from 'node:os';
 import { execFile, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { levelFlags, levelOf, createLog, redact, redactArgs, redactObject, secretName, traceRuntime, serviceLog, QUIET } from '../../arena-node/src/log-level.js';
-import { main } from '../src/arenanode.js';
+import { main } from '../src/bitcoinarena.js';
 import { checkOnce } from '../src/auto-update.js';
 import { formatConf } from '../../arena-node/src/arena-conf.js';
 import http from 'node:http';
 import { createWizard } from '../src/wizard.js';
 import { nodeState } from '../src/state.js';
 
-const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'arenanode.mjs');
+const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'bitcoinarena.mjs');
 // THE SECRETS planted in the inputs: none of them may appear in any line
 const SECRETS = { macaroonHex: '0201036c6e6402f801030a10'.repeat(8), gatewayPw: 'SEKRITgatewaypw693', cookie: '__cookie__:aa11bb22cc33dd44ee55ff66aa11bb22',
   ownerKey: 'f00dfeedf00dfeedf00dfeedf00dfeedf00dfeedf00dfeedf00dfeedf00dfeed', rpcPw: 'rpcSEKRIT693', bodyPw: 'bodySEKRIT693', token: 'tokSEKRIT693',
@@ -99,7 +99,7 @@ test('redaction: by key name and by pattern; a file path, a public key and plain
   assert.deepEqual(redactObject({ a: { password: 'x', seedHex: 'ab', cookie: '/p/.cookie', port: 1 } }), { a: { password: '***', seedHex: '***', cookie: '/p/.cookie', port: 1 } });
 });
 
-test('the default output is as it was: arenanode status and config print the same lines with no log, a quiet log and a verbose one, and nothing else', async () => {
+test('the default output is as it was: bitcoinarena status and config print the same lines with no log, a quiet log and a verbose one, and nothing else', async () => {
   const n = node();
   try {
     const run = async (args, log) => { const out = [], err = []; const code = await main(args, { home: n.home, io: { out: (l) => out.push(l), err: (l) => err.push(l) }, deps: { sh: activeSh, fetcher: leakyFetch, platform: 'linux', env: n.env, dnsPauseMs: 1 }, ...(log ? { log } : {}) }); return { code, out, err }; };
@@ -127,16 +127,16 @@ test('the command itself: no flag prints what it always did and nothing on stder
       assert.equal(plain.err, '', `${cmd.join(' ')}: nothing on stderr`);
       const v = await run([...cmd, '--verbose']);
       assert.equal(v.out, plain.out, `${cmd.join(' ')}: stdout the same at --verbose`);
-      assert.match(v.err, /^\[arenanode\] log level verbose \(--verbose\)$/m);
+      assert.match(v.err, /^\[bitcoinarena\] log level verbose \(--verbose\)$/m);
       const d = await run(['-v', ...cmd, '--debug']);
       assert.equal(d.out, plain.out);
-      assert.match(d.err, /^\[arenanode\] log level debug \(--debug\)$/m);
+      assert.match(d.err, /^\[bitcoinarena\] log level debug \(--debug\)$/m);
       assert.match(d.err, /ARENA_LATEST_URL \(not set\)/);
     }
   } finally { rmSync(n.root, { recursive: true, force: true }); }
 });
 
-test('--verbose says each step of arenanode status: the files read, each service and what it was asked, with times', async () => {
+test('--verbose says each step of bitcoinarena status: the files read, each service and what it was asked, with times', async () => {
   const n = node();
   try {
     const said = [];
@@ -184,7 +184,7 @@ test('a --debug run with secrets in every input prints none of them: the node\'s
   } finally { undo(); globalThis.fetch = realFetch; rmSync(n.root, { recursive: true, force: true }); }
 });
 
-test('the node\'s services: arena.conf log_level set by `arenanode config set`, checked, read at their start, and named above `arenanode logs`', async () => {
+test('the node\'s services: arena.conf log_level set by `bitcoinarena config set`, checked, read at their start, and named above `bitcoinarena logs`', async () => {
   const n = node();
   try {
     const io = () => { const out = [], err = []; return { out, err, io: { out: (l) => out.push(l), err: (l) => err.push(l) } }; };
@@ -193,7 +193,7 @@ test('the node\'s services: arena.conf log_level set by `arenanode config set`, 
     assert.match(bad.err[0], /loud is no log level: info, verbose, debug/);
     const ok = io();
     assert.equal(await main(['config', 'set', 'log_level', 'debug'], { home: n.home, io: ok.io }), 0);
-    assert.deepEqual(ok.out, ['log_level=debug', 'Takes effect at the next start: arenanode restart node']);   // a setting this release lists
+    assert.deepEqual(ok.out, ['log_level=debug', 'Takes effect at the next start: bitcoinarena restart node']);   // a setting this release lists
     assert.match(readFileSync(join(n.home, 'arena.conf'), 'utf8'), /^# how much the node's services log: .*\nlog_level=debug$/m);
     const logs = io();
     writeFileSync(join(n.home, 'node.log'), 'one\ntwo\n');
@@ -241,5 +241,5 @@ test('the quiet log says nothing and the help names both flags in plain words', 
   await main(['help'], { home: '/nowhere', io: { out: (l) => out.push(l), err: () => {} } });
   assert.match(out.join('\n'), /Add --verbose \(or -v\) to any of them/);
   assert.match(out.join('\n'), /Add --debug to see that and more/);
-  assert.match(out.join('\n'), /config set log_level verbose \(or debug\), then arenanode restart/);
+  assert.match(out.join('\n'), /config set log_level verbose \(or debug\), then bitcoinarena restart/);
 });

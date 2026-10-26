@@ -33,7 +33,7 @@ const api = ({ subdomain = 'myname', accounts = [{ id: 'acc1' }] } = {}) => {
 test('setup: the token\'s account and its workers.dev name (made when there is none); a wrong token is said', async () => {
   let a = api();
   let r = await workersSetup({ token: TOKEN, name: workerNameOf('1a2b3c'), fetcher: a.fetcher });
-  assert.deepEqual([r.ok, r.accountId, r.url], [true, 'acc1', 'https://arena-node-1a2b3c.myname.workers.dev']);
+  assert.deepEqual([r.ok, r.accountId, r.url], [true, 'acc1', 'https://bitcoinarena-1a2b3c.myname.workers.dev']);
   a = api({ subdomain: null });
   r = await workersSetup({ token: TOKEN, name: 'arena-node-1a2b3c', wantSubdomain: 'satoshi-node', fetcher: a.fetcher });
   assert.equal(r.url, 'https://arena-node-1a2b3c.satoshi-node.workers.dev', 'no subdomain yet: one is made');
@@ -98,7 +98,7 @@ test('the wizard: workers.dev saved with the operator\'s token (kept 0600, never
   assert.match((await go('POST', '/api/reach/save', { mode: 'workers', cfToken: 'y'.repeat(40) })).why, /not accepted/);
   const r = await go('POST', '/api/reach/save', { mode: 'workers', cfToken: TOKEN });
   assert.equal(r.ok, true, r.why);
-  assert.match(r.reach.url, /^https:\/\/arena-node-[0-9a-f]{6}\.myname\.workers\.dev$/);
+  assert.match(r.reach.url, /^https:\/\/bitcoinarena-[0-9a-f]{6}\.myname\.workers\.dev$/, 'a new node\'s Worker: bitcoinarena-<6 hex> (kanban #688)');
   assert.equal(statSync(join(home, 'cf-workers-token')).mode & 0o777, 0o600);
   assert.equal(readFileSync(join(home, 'cf-workers-token'), 'utf8'), TOKEN);
   assert.ok(!JSON.stringify(await go('GET', '/api/state')).includes(TOKEN), 'the page is never told the token');
