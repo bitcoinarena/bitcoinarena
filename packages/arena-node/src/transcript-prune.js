@@ -10,6 +10,7 @@
 // window (no rules block) keeps its transcript: there is no window to end. The round itself, its entries, receipts and results stay.
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { roundEndMs } from '../../arena-protocol/src/first-mark.js';
+import { toHex } from '../../arena-protocol/src/hash.js';
 
 export const DAY_MS = 86400000;
 /** How often a seat looks (an hour: the windows are a day long). */
@@ -86,7 +87,12 @@ export function pruneUnusedRounds({ db, nowMs = Date.now(), afterRowid = 0, batc
   const at = goesAt || ((row) => {
     let c; try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return Number(row.opened_ms) + UNREADABLE_KEEP_MS; }
     let end; try { end = Number(roundEndMs(c)); } catch { end = Number(c.entryCloseMs); } return unusedRoundGoesAt(c, end); });
-  const markers = usedMarkerTables(db).map((t) => db.prepare(`SELECT 1 FROM ${t} WHERE round_id = ? LIMIT 1`));
+  // THE USED IDS READ ONCE PER PASS (kanban #705, profiled on test host seat 4 2026-10-26 12:55Z: 90 % of its loop, the seat silent for
+  // minutes): a lookup per round and marker table was a full scan of each of the 17 tables without a round_id index - 17,000 scans a
+  // pass. Keyed as SQLite compares them: a text id never equals a blob one.
+  const idKey = (v) => (typeof v === 'string' ? `s${v}` : v instanceof Uint8Array ? `b${toHex(v)}` : `o${String(v)}`);
+  const used = new Set();
+  for (const t of usedMarkerTables(db)) for (const u of db.prepare(`SELECT DISTINCT round_id FROM ${t}`).iterate()) used.add(idKey(u.round_id));
   const present = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name));
   const dels = [...COMMITTEE_TABLES.filter((t) => t !== 'rounds' && present.has(t)), ...TRANSCRIPT_TABLES.filter((t) => present.has(t)), 'rounds']
     .map((t) => db.prepare(`DELETE FROM ${t} WHERE round_id = ?`));
@@ -98,7 +104,7 @@ export function pruneUnusedRounds({ db, nowMs = Date.now(), afterRowid = 0, batc
       lastRowid = r.rowid;
       let when; try { when = at(r); } catch { continue; }
       if (!(nowMs >= when)) continue;
-      if (markers.some((m) => m.get(r.round_id))) continue;
+      if (used.has(idKey(r.round_id))) continue;
       for (const d of dels) rows += Number(d.run(r.round_id).changes);
       deleted += 1; onDeleted(r.round_id);
     }
