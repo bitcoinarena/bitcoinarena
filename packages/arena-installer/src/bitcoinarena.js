@@ -20,7 +20,8 @@
 // and binaries to bitcoinarena, not arenanode everywhere"): arenanode stays, as a small script that runs bitcoinarena, so the old name,
 // the old app helpers and an auto update service that names it keep working.
 import { readFileSync, writeFileSync } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { overview, control, doctor, logsOf, nodeOf, SERVICES } from './node-services.js';
 import { parseConf, setInConf, unsetInConf, CONF_KEYS } from '../../arena-node/src/arena-conf.js';
 import { QUIET, levelWord, levelOf, LEVELS } from '../../arena-node/src/log-level.js';
@@ -70,6 +71,16 @@ export function statusLines(v, name = 'bitcoinarena') {
 /** The Arena site's owner page (kanban #687), as the installer's FinishSteps names it. */
 export const OWNER_SITE = 'https://testnet.bitcoin-arena.io/owner/';
 // on Windows through the URL handler, not `cmd /c start`: cmd cuts a URL at its & (the owner page's #node=...&local=..., kanban #687)
+// the one-time sign-in page (bin/owner-handoff.mjs) started apart, so this command returns at once; its address, or null
+const startHandoff = ({ home, target }) => new Promise((ok) => {
+  const c = spawn(process.execPath, [fileURLToPath(new URL('../bin/owner-handoff.mjs', import.meta.url))], { detached: true, stdio: ['ignore', 'pipe', 'ignore'],
+    env: { ...process.env, ARENA_HANDOFF_HOME: home, ARENA_HANDOFF_TARGET: target } });
+  let out = '';
+  const end = (v) => { try { c.stdout.destroy(); c.unref(); } catch { /* gone */ } ok(v); };
+  c.stdout.on('data', (d) => { out += d; const line = out.split('\n')[0]; if (out.includes('\n')) end(/^http:\/\/127\.0\.0\.1:\d+\//.test(line) ? line : null); });
+  c.on('error', () => end(null)); c.on('exit', () => end(null));
+  setTimeout(() => end(null), 10000).unref();
+});
 const openUrl = (url, platform = process.platform) => new Promise((ok) => execFile(platform === 'darwin' ? 'open' : platform === 'win32' ? 'rundll32' : 'xdg-open',
   platform === 'win32' ? ['url.dll,FileProtocolHandler', url] : [url], () => ok()));
 
@@ -202,6 +213,13 @@ export async function main(args, { home, name = 'bitcoinarena', io = { out: (l) 
         catch { key = null; }
       }
       const url = /^[0-9a-f]{64}$/.test(String(key || '')) ? `${OWNER_SITE}#node=${key}&local=${encodeURIComponent(local)}` : `${local}/dashboard/owner`;
+      // THE KEY HANDED OVER ONCE (the owner's playtest 2026-10-26 on 2026.1.9.8, a node from 1.9.7: the site's page asked for the 24 words):
+      // until this node's key was handed to the site's page (or with --sign-in), a one-time page on 127.0.0.1 opens it and posts it the key
+      const { handedAt, ownerKeyOf } = await import('./owner-handoff.js');
+      if (url.startsWith(OWNER_SITE) && !deps.noOpen && (!handedAt(home) || args.includes('--sign-in')) && ownerKeyOf(home)) {
+        const h = await (deps.handoff || startHandoff)({ home, target: `${url}&owner-handoff` });
+        if (h) { io.out(`${url}\nsigning you in once: ${h}`); await openUrl(h, deps.platform); return 0; }
+      }
       io.out(url);
       if (!deps.noOpen) await openUrl(url, deps.platform);
       return 0;
