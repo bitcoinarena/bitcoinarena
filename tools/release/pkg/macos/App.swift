@@ -256,6 +256,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !u.hasPrefix("Updated") && !u.hasPrefix("Up to date") { self.status(note: "Your node was not updated: " + (u.isEmpty ? "the update said nothing." : u)) } else { self.status() }
         // the owner page signed in once after the update (2026-10-26: "The updater MUST fix my credentials in the browser so it works")
         if u.hasPrefix("Updated") { Helper.run(["signin"]) { _, _ in } }
+        // then more nodes on this macOS (kanban #713: "When I update an existing node ... There, I can setup additional nodes")
+        if u.hasPrefix("Updated") { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.addNodes() } }
       }
     }
   }
@@ -270,11 +272,101 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
       if let n = note { d = n + "\n" + d }
       self.phase(running ? "Server running" : "Server stopped", d, busy: false, color: running ? .systemGreen : .systemRed)
       self.setButtons([[self.big("Open Dashboard", "chart.bar.xaxis", #selector(self.dashboard), primary: true), self.big("Owner page", "person.crop.circle", #selector(self.owner))],
-        [running ? self.big("Stop node", "stop.circle", #selector(self.stopNode)) : self.big("Start node", "play.circle", #selector(self.startNode)), self.big("Doctor", "stethoscope", #selector(self.doctor))]])
+        [running ? self.big("Stop node", "stop.circle", #selector(self.stopNode)) : self.big("Start node", "play.circle", #selector(self.startNode)), self.big("Doctor", "stethoscope", #selector(self.doctor))],
+        [self.big("All nodes", "square.grid.2x2", #selector(self.showNodes)), self.big("Add nodes", "plus.circle", #selector(self.addNodes))]])
       self.timer?.invalidate()
       self.timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: false) { _ in self.status() }
     }
   }
+  // MARK: every node on this macOS (kanban #713, 2026-10-26: "The App shows the status of ALL OF OUR nodes in a grid with links to all owners
+  // dashboards. I must be logged into all of them with my seed so it's important that works")
+  struct Node { let home: String; let instance: String; let version: String; let port: Int; let running: Bool }
+  var nodes: [Node] = []
+  static func parseNodes(_ s: String) -> [Node] {
+    guard let i = s.firstIndex(of: "["), let d = String(s[i...]).data(using: .utf8),
+      let a = try? JSONSerialization.jsonObject(with: d) as? [[String: Any]] else { return [] }
+    return a.map { Node(home: $0["home"] as? String ?? "", instance: $0["instance"] as? String ?? "", version: $0["version"] as? String ?? "?",
+      port: $0["port"] as? Int ?? 0, running: $0["running"] as? Bool ?? false) }
+  }
+  func small(_ title: String, _ action: Selector, _ home: String) -> NSButton {
+    let b = NSButton(title: title, target: self, action: action); b.bezelStyle = .rounded; b.identifier = NSUserInterfaceItemIdentifier(home); return b
+  }
+  func card(_ n: Node) -> NSView {
+    let d = NSView(); d.wantsLayer = true; d.layer?.cornerRadius = 5
+    d.layer?.backgroundColor = (n.running ? NSColor.systemGreen : NSColor.systemRed).cgColor
+    d.widthAnchor.constraint(equalToConstant: 10).isActive = true; d.heightAnchor.constraint(equalToConstant: 10).isActive = true
+    let name = NSTextField(labelWithString: n.instance.isEmpty ? "Node 1" : "Node \(n.instance)"); name.font = .systemFont(ofSize: 14, weight: .semibold)
+    let head = NSStackView(views: [d, name]); head.spacing = 7
+    let line = NSTextField(labelWithString: "\(n.running ? "Running" : "Stopped") · \(n.version) · port \(n.port)"); line.textColor = .secondaryLabelColor
+    let btns = NSStackView(views: [small("Dashboard", #selector(dashboardOf(_:)), n.home), small("Owner page", #selector(ownerOf(_:)), n.home)]); btns.spacing = 6
+    let c = NSStackView(views: [head, line, btns]); c.orientation = .vertical; c.alignment = .leading; c.spacing = 6
+    c.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+    c.wantsLayer = true; c.layer?.cornerRadius = 10; c.layer?.borderWidth = 1; c.layer?.borderColor = NSColor.separatorColor.cgColor
+    c.widthAnchor.constraint(equalToConstant: 246).isActive = true
+    return c
+  }
+  @objc func showNodes() {
+    timer?.invalidate()
+    phase("Your nodes", "Reading every node on this macOS…", busy: true, color: .systemGray)
+    Helper.run(["nodes"]) { out, _ in
+      self.nodes = Controller.parseNodes(out)
+      let up = self.nodes.filter { $0.running }.count
+      self.phase("Your nodes", "\(self.nodes.count) node\(self.nodes.count == 1 ? "" : "s") on this macOS, \(up) running.", busy: false, color: up == self.nodes.count ? .systemGreen : .systemOrange)
+      self.buttons.arrangedSubviews.forEach { $0.removeFromSuperview() }
+      var i = 0
+      while i < self.nodes.count {
+        let row = NSStackView(views: self.nodes[i..<min(i + 2, self.nodes.count)].map { self.card($0) }); row.spacing = 10; row.alignment = .top
+        self.buttons.addArrangedSubview(row); i += 2
+      }
+      let foot = NSStackView(views: [self.big("Back", "chevron.left", #selector(self.back)), self.big("Sign in to all owner pages", "key", #selector(self.signInAll))]); foot.spacing = 10
+      let add = NSStackView(views: [self.big("Add nodes", "plus.circle", #selector(self.addNodes)), self.big("Read again", "arrow.clockwise", #selector(self.showNodes))]); add.spacing = 10
+      self.buttons.addArrangedSubview(foot); self.buttons.addArrangedSubview(add)
+      self.fit()
+    }
+  }
+  @objc func back() { status() }
+  @objc func dashboardOf(_ b: NSButton) { Helper.run(["dashboard-of", b.identifier?.rawValue ?? ""]) { _, _ in } }
+  @objc func ownerOf(_ b: NSButton) { Helper.run(["owner-of", b.identifier?.rawValue ?? ""]) { _, _ in } }
+  /// Every node's owner page signed in at once ("You need to store credentials for *all* owner pages where its needed and provide links"):
+  /// one hand-over carries every node's key to the site's page; the links to all of them shown here
+  @objc func signInAll() {
+    Helper.run(["signinall"]) { out, _ in
+      let links = out.split(separator: "\n").filter { $0.contains("https://") && !$0.hasPrefix("Signing") }.joined(separator: "\n")
+      self.reportScroll.isHidden = false
+      (self.reportScroll.documentView as? NSTextView)?.string = "Signed in on your owner pages in your browser. Their links:\n" + links
+      self.fit()
+    }
+  }
+  /// More nodes on this macOS (kanban #713, testnet4): how many, and Fedimint on a RAM disk; the installer then sets each one up in turn
+  @objc func addNodes() {
+    let a = NSAlert()
+    a.messageText = "Add nodes on this macOS"
+    a.informativeText = "Testnet4 only. Each new node gets its own seed, owner key and bond, paid from your first node's wallet. Their setup pages open in your browser one after another."
+    let label = NSTextField(labelWithString: "How many:"); label.frame = NSRect(x: 0, y: 34, width: 80, height: 22)
+    let count = NSTextField(string: "1"); count.frame = NSRect(x: 84, y: 32, width: 60, height: 24)
+    let ram = NSButton(checkboxWithTitle: "Fedimint on a RAM disk", target: nil, action: nil); ram.frame = NSRect(x: 0, y: 2, width: 280, height: 22); ram.state = .on
+    let v = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 60)); v.addSubview(label); v.addSubview(count); v.addSubview(ram)
+    a.accessoryView = v
+    a.addButton(withTitle: "Add nodes"); a.addButton(withTitle: "Not now")
+    guard a.runModal() == .alertFirstButtonReturn else { return }
+    guard let n = Int(count.stringValue.trimmingCharacters(in: .whitespaces)), n >= 1, n <= 19 else { return failedSoft("How many: a number from 1 to 19.") }
+    timer?.invalidate()
+    phase("Adding \(n) node\(n == 1 ? "" : "s")…", "Each new node's setup page opens in your browser, one after another. Keep this app open.", busy: true)
+    setButtons([[big("All nodes", "square.grid.2x2", #selector(showNodes))]])
+    Helper.run(["addnodes", String(n), ram.state == .on ? "ram" : "noram"]) { out, ok in
+      if !ok { return self.failed(out) }
+      self.installing = true
+      self.timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+        Helper.run(["adding"]) { st, _ in
+          if st.hasPrefix("running ") { self.detail.stringValue = "Each new node's setup page opens in your browser, one after another. \(st.dropFirst(8)) nodes on this macOS now." }
+          else if st.hasPrefix("done") { self.timer?.invalidate(); self.installing = false; self.showNodes(); self.signInAll() }
+          else { self.timer?.invalidate(); self.installing = false; self.failed("Adding nodes ended: " + String(st.dropFirst(6))) }
+        }
+      }
+    }
+  }
+  func failedSoft(_ why: String) { let a = NSAlert(); a.messageText = why; a.runModal() }
+
   @objc func dashboard() { Helper.run(["dashboard"]) { _, _ in } }
   @objc func owner() { Helper.run(["owner"]) { _, _ in } }
   @objc func stopNode() {

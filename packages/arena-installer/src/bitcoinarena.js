@@ -22,6 +22,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { execFile, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { overview, control, doctor, logsOf, nodeOf, SERVICES } from './node-services.js';
 import { parseConf, setInConf, unsetInConf, CONF_KEYS } from '../../arena-node/src/arena-conf.js';
 import { QUIET, levelWord, levelOf, LEVELS } from '../../arena-node/src/log-level.js';
@@ -41,6 +42,9 @@ export const HELP = (name) => `${name}: your Bitcoin Arena node on this machine
   ${name} open                      the owner page in the browser
   ${name} dashboard                 the node's dashboard in the browser
   ${name} state                     one line: running, or stopped and why (the desktop app's)
+  ${name} nodes [--json]            every Bitcoin Arena node on this machine: running or not, version, port, home
+  ${name} add-nodes <n> [--ram]     set up <n> more nodes on this machine (testnet4), each with its own setup page
+  ${name} sign-in-all               every node's owner page signed in, in this browser, at once; their links
   ${name} version
 
   Add --verbose (or -v) to any of them to see each step as it runs: which file, service, port or address it checks, what
@@ -72,9 +76,9 @@ export function statusLines(v, name = 'bitcoinarena') {
 export const OWNER_SITE = 'https://testnet.bitcoin-arena.io/owner/';
 // on Windows through the URL handler, not `cmd /c start`: cmd cuts a URL at its & (the owner page's #node=...&local=..., kanban #687)
 // the one-time sign-in page (bin/owner-handoff.mjs) started apart, so this command returns at once; its address, or null
-const startHandoff = ({ home, target }) => new Promise((ok) => {
+const startHandoff = ({ home, target, all = false }) => new Promise((ok) => {
   const c = spawn(process.execPath, [fileURLToPath(new URL('../bin/owner-handoff.mjs', import.meta.url))], { detached: true, stdio: ['ignore', 'pipe', 'ignore'],
-    env: { ...process.env, ARENA_HANDOFF_HOME: home, ARENA_HANDOFF_TARGET: target } });
+    env: { ...process.env, ARENA_HANDOFF_HOME: home, ARENA_HANDOFF_TARGET: target, ...(all ? { ARENA_HANDOFF_ALL: '1' } : {}) } });
   let out = '';
   const end = (v) => { try { c.stdout.destroy(); c.unref(); } catch { /* gone */ } ok(v); };
   c.stdout.on('data', (d) => { out += d; const line = out.split('\n')[0]; if (out.includes('\n')) end(/^http:\/\/127\.0\.0\.1:\d+\//.test(line) ? line : null); });
@@ -207,6 +211,18 @@ export async function main(args, { home, name = 'bitcoinarena', io = { out: (l) 
       io.out(r.upToDate ? `Up to date: ${r.version} is the newest release.` : r.ok ? `Updated ${r.from} -> ${r.to}. Backup: ${r.backup}` : `Not updated: ${r.why}`);
       // the owner page signed in once after the update (2026-10-26: "The updater MUST fix my credentials in the browser so it works")
       if (r.ok && !r.upToDate) await signInOnce(home, deps, io);
+      // MORE NODES, ASKED AT A CONSOLE (kanban #713: "When I update an existing node via the CLI ... There, I can setup additional nodes"):
+      // the new release's installer, which the update named in state.json, plans and sets them up
+      if (r.ok && (deps.ask || process.stdin.isTTY) && (nodeOf(home).state || {}).network !== 'mainnet') {
+        const ask = deps.ask || (async (q) => { const { createInterface } = await import('node:readline/promises'); const rl = createInterface({ input: process.stdin, output: process.stdout }); const x = await rl.question(q); rl.close(); return x; });
+        const more = String(await ask('Add more nodes on this machine (testnet4)? How many (Enter: none): ')).trim();
+        if (/^[1-9]\d*$/.test(more)) {
+          const rel = ((nodeOf(home).state || {}).release || {}).path;
+          const bin = rel ? join(rel, 'packages', 'arena-installer', 'bin', 'arena-install.mjs') : fileURLToPath(new URL('../bin/arena-install.mjs', import.meta.url));
+          if (deps.runInstaller) return deps.runInstaller(['--home', home, '--add-nodes', more]);
+          return new Promise((ok) => { const c = spawn(process.execPath, [bin, '--home', home, '--add-nodes', more], { stdio: 'inherit', env: process.env }); c.on('exit', (code) => ok(code ?? 0)); c.on('error', () => ok(1)); });
+        }
+      }
       return r.ok ? 0 : 1;
     }
     case 'auto-update': {
@@ -250,6 +266,45 @@ export async function main(args, { home, name = 'bitcoinarena', io = { out: (l) 
     }
     // AFTER AN UPDATE THE DESKTOP APPS RAN (2026-10-26, "The updater MUST fix my credentials in the browser"): the key handed over once, if
     // it never was; nothing opens when it was
+    // EVERY NODE ON THIS MACHINE (kanban #713, 2026-10-26: "The App shows the status of ALL OF OUR nodes in a grid with links to all owners
+    // dashboards"): one line each - or JSON for the desktop apps - with whether it answers on its port
+    case 'nodes': {
+      const { nodesHere, liveNodes } = await import('./machine-nodes.js');
+      const list = await liveNodes(nodesHere({ platform: deps.platform, env: deps.env, extra: [home] }), { fetcher: deps.fetch || fetch });
+      if (args.includes('--json')) { io.out(JSON.stringify(list.map((n) => ({ ...n, dashboard: n.port ? `http://127.0.0.1:${n.port}/dashboard` : null,
+        owner: n.key ? `${OWNER_SITE}#node=${n.key}${n.port ? `&local=${encodeURIComponent(`http://127.0.0.1:${n.port}`)}` : ''}` : null })))); return 0; }
+      if (!list.length) { io.out('No Bitcoin Arena node is set up on this machine.'); return 1; }
+      for (const n of list) io.out(`${n.running ? '●' : '○'} ${pad(n.running ? 'running' : 'stopped', 8)} ${pad(n.version || '?', 12)} ${pad(n.instance || '-', 6)} port ${pad(n.port || '-', 6)} ${n.home}`);
+      return 0;
+    }
+    // MORE NODES ON THIS MACHINE (kanban #713, testnet only): the installer's --add-nodes, which plans them and runs each one's setup in turn
+    case 'add-nodes': {
+      const count = a;
+      if (!/^\d+$/.test(String(count || ''))) { io.err(`${name} add-nodes <how many> [--ram | --no-ram]`); return 2; }
+      const bin = fileURLToPath(new URL('../bin/arena-install.mjs', import.meta.url));
+      const extra = ['--ram', '--no-ram', '--tunnel', '--local'].filter((f) => args.includes(f));
+      if (deps.runInstaller) return deps.runInstaller(['--home', home, '--add-nodes', String(count), ...extra]);
+      return new Promise((ok) => {
+        const c = spawn(process.execPath, [bin, '--home', home, '--add-nodes', String(count), ...extra], { stdio: 'inherit', env: process.env });
+        c.on('exit', (code) => ok(code ?? 0)); c.on('error', (e) => { io.err(e.message); ok(1); });
+      });
+    }
+    // EVERY OWNER PAGE SIGNED IN AT ONCE (kanban #713, 2026-10-26: "You need to store credentials for *all* owner pages where its needed and
+    // provide links"): one hand-over page carries every node's owner key to the site's page, which keeps each under its node; the links
+    // to every owner page printed here and listed on that page
+    case 'sign-in-all': {
+      const { nodesHere } = await import('./machine-nodes.js');
+      const { allOwnerKeys } = await import('./owner-handoff.js');
+      const all = allOwnerKeys(nodesHere({ platform: deps.platform, env: deps.env, extra: [home] }), OWNER_SITE);
+      if (!all.links.length) { io.out('No node here has an owner key the owner page takes (none set up with 24 words or a Nostr key).'); return 1; }
+      if (!deps.noOpen) {
+        const h = await (deps.handoff || startHandoff)({ home, target: `${all.links[0].url}&owner-handoff`, all: true });
+        if (h) { io.out(`Signing you in on ${all.links.length} owner page(s) at once: ${h}`); await (deps.openUrl || openUrl)(h, deps.platform); }
+        else io.out('The sign-in page did not start; the links still work, each asks for its node\'s words.');
+      }
+      for (const l of all.links) io.out(`${l.label}: ${l.url}`);
+      return 0;
+    }
     case 'sign-in-once': {
       const h = await signInOnce(home, deps, io);
       if (!h) io.out('Your owner page has your key already, or this node has none to hand over.');

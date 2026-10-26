@@ -57,7 +57,7 @@ $box.Multiline = $true; $box.ReadOnly = $true; $box.ScrollBars = 'Vertical'; $bo
 $box.Font = New-Object System.Drawing.Font('Consolas', 9); $box.BackColor = $card; $box.ForeColor = $fg; $box.BorderStyle = 'None'
 $form.Controls.Add($box)
 $buttons = @{}
-$order = 'Open in browser', 'Dashboard', 'Owner page', 'Stop node', 'Start node', 'Doctor', 'Refresh', 'Stop', 'Close'
+$order = 'Open in browser', 'Dashboard', 'Owner page', 'Stop node', 'Start node', 'Doctor', 'All nodes', 'Add nodes', 'Refresh', 'Stop', 'Close'
 $labels = @{ 'Open in browser' = 'Open setup page'; 'Dashboard' = 'Open Dashboard'; 'Stop' = 'Stop installer' }
 foreach ($b in $order) {
   $btn = New-Object System.Windows.Forms.Button
@@ -105,8 +105,71 @@ function Show-Installed {
   if ("$state" -match 'not running: (.+)$') { $line = 'Not running: ' + $Matches[1] } elseif ("$state" -match '^stopped: (.+)$') { $line = 'Stopped: ' + $Matches[1] }
   Set-State $(if ($running) { 'Server running' } else { 'Server stopped' }) $line $(if ($running) { $green } else { $red })
   $box.Visible = $false; $bar.Visible = $false
-  Set-Buttons @('Dashboard', 'Owner page', $(if ($running) { 'Stop node' } else { 'Start node' }), 'Doctor')
+  Set-Buttons @('Dashboard', 'Owner page', $(if ($running) { 'Stop node' } else { 'Start node' }), 'Doctor', 'All nodes', 'Add nodes')
 }
+
+# EVERY NODE ON THIS PC (kanban #713, 2026-10-26: "The App shows the status of ALL OF OUR nodes in a grid with links to all owners
+# dashboards. I must be logged into all of them with my seed"): bitcoinarena nodes --json, one card each with its Dashboard and Owner page
+# (each node's own command in its home, so its owner page is signed in with its own key), and every owner page signed in at once
+function Command-Of([string]$nodeHome) {
+  $inst = (Get-Content (Join-Path $nodeHome 'arena.conf') -ErrorAction SilentlyContinue | Where-Object { $_ -match '^instance=(.+)$' } | ForEach-Object { $Matches[1] } | Select-Object -First 1)
+  $c = Join-Path $nodeHome ("bin\bitcoinarena" + $(if ($inst) { "-$inst" } else { '' }) + ".cmd")
+  if (Test-Path $c) { return $c }
+  return Join-Path $nodeHome ("bin\arenanode" + $(if ($inst) { "-$inst" } else { '' }) + ".cmd")
+}
+function Show-Nodes {
+  $json = (& cmd /c "`"$command`" nodes --json 2>nul") -join ''
+  $nodes = @(); try { $nodes = @($json | ConvertFrom-Json) } catch { $nodes = @() }
+  $script:shownNodes = $nodes
+  $w = New-Object System.Windows.Forms.Form
+  $w.Text = 'Your nodes'; $w.BackColor = $dark; $w.ForeColor = $fg; $w.StartPosition = 'CenterParent'; $w.FormBorderStyle = 'FixedDialog'; $w.MaximizeBox = $false
+  $w.Font = New-Object System.Drawing.Font('Segoe UI', 10)
+  $up = @($nodes | Where-Object { $_.running }).Count
+  $head = New-Object System.Windows.Forms.Label; $head.Text = "$($nodes.Count) node(s) on this PC, $up running."; $head.Left = 20; $head.Top = 14; $head.AutoSize = $true
+  $head.Font = New-Object System.Drawing.Font('Segoe UI', 12, [System.Drawing.FontStyle]::Bold); $w.Controls.Add($head)
+  $i = 0
+  foreach ($n in $nodes) {
+    $x = 20 + ($i % 2) * 290; $y = 52 + [math]::Floor($i / 2) * 104
+    $p = New-Object System.Windows.Forms.Panel; $p.Left = $x; $p.Top = $y; $p.Width = 276; $p.Height = 94; $p.BackColor = $card
+    $l = New-Object System.Windows.Forms.Label; $l.Left = 10; $l.Top = 8; $l.AutoSize = $true
+    $l.Text = $(if ($n.instance) { "Node $($n.instance)" } else { 'Node 1' }); $l.Font = New-Object System.Drawing.Font('Segoe UI', 11, [System.Drawing.FontStyle]::Bold)
+    $l.ForeColor = $(if ($n.running) { [System.Drawing.Color]::FromArgb(63, 185, 80) } else { [System.Drawing.Color]::FromArgb(248, 81, 73) })
+    $d = New-Object System.Windows.Forms.Label; $d.Left = 10; $d.Top = 32; $d.AutoSize = $true
+    $d.Text = "$(if ($n.running) { 'Running' } else { 'Stopped' }) - $($n.version) - port $($n.port)"
+    $p.Controls.Add($l); $p.Controls.Add($d)
+    foreach ($what in @('Dashboard', 'Owner page')) {
+      $b = New-Object System.Windows.Forms.Button; $b.Text = $what; $b.Width = 124; $b.Height = 30; $b.Top = 56; $b.Left = $(if ($what -eq 'Dashboard') { 10 } else { 142 })
+      $b.FlatStyle = 'Flat'; $b.BackColor = $blue; $b.ForeColor = $fg; $b.Tag = "$($n.home)|$(if ($what -eq 'Dashboard') { 'dashboard' } else { 'open' })"
+      $b.Add_Click({ $t = "$($this.Tag)".Split('|'); & cmd /c "`"$(Command-Of $t[0])`" $($t[1])" | Out-Null })
+      $p.Controls.Add($b)
+    }
+    $w.Controls.Add($p); $i++
+  }
+  $rows = [math]::Ceiling([math]::Max($i, 1) / 2)
+  $all = New-Object System.Windows.Forms.Button; $all.Text = 'Sign in to all owner pages'; $all.Width = 276; $all.Height = 36; $all.Left = 20; $all.Top = 52 + $rows * 104
+  $all.FlatStyle = 'Flat'; $all.BackColor = $card; $all.ForeColor = $fg
+  # one hand-over for every node's key ("You need to store credentials for *all* owner pages where its needed and provide links"), the links shown
+  $all.Add_Click({ $out = & cmd /c "`"$command`" sign-in-all 2>&1"; [void][System.Windows.Forms.MessageBox]::Show((($out | Where-Object { $_ -match 'https://' -and $_ -notmatch '^Signing' }) -join "`r`n"), 'Your owner pages') })
+  $w.Controls.Add($all)
+  $w.ClientSize = New-Object System.Drawing.Size(600, (52 + $rows * 104 + 56))
+  [void]$w.ShowDialog($form)
+}
+# MORE NODES ON THIS PC (kanban #713, testnet4): how many, and Fedimint on a RAM disk; bitcoinarena add-nodes runs the installer for them,
+# each one's setup page opening in the browser in turn
+function Add-Nodes {
+  Add-Type -AssemblyName Microsoft.VisualBasic
+  $n = [Microsoft.VisualBasic.Interaction]::InputBox("How many more nodes on this PC? Testnet4 only. Each gets its own seed, owner key and bond, paid from your first node's wallet; their setup pages open in your browser one after another.", 'Add nodes', '1')
+  if ($n -notmatch '^[1-9][0-9]?$') { return }
+  $ram = [System.Windows.Forms.MessageBox]::Show('Fedimint on a RAM disk?', 'Add nodes', 'YesNo') -eq 'Yes'
+  $alog = Join-Path $here 'adding.log'
+  Set-State "Adding $n node(s)..." 'Each new node''s setup page opens in your browser, one after another. Keep this window open.' ([System.Drawing.Color]::FromArgb(210, 153, 34))
+  $script:adding = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', "`"`"$command`" add-nodes $n $(if ($ram) { '--ram' } else { '--no-ram' }) >> `"$alog`" 2>&1`"" -WindowStyle Hidden -PassThru
+  $atimer = New-Object System.Windows.Forms.Timer; $atimer.Interval = 5000
+  $atimer.Add_Tick({ if ($script:adding.HasExited) { $this.Stop(); Show-Installed; & cmd /c "`"$command`" sign-in-all" | Out-Null; Show-Nodes } })
+  $atimer.Start()
+}
+$buttons['All nodes'].Add_Click({ Show-Nodes })
+$buttons['Add nodes'].Add_Click({ Add-Nodes })
 $buttons['Dashboard'].Add_Click({ & cmd /c "`"$command`" dashboard" | Out-Null })
 $buttons['Owner page'].Add_Click({ & cmd /c "`"$command`" open" | Out-Null })
 $buttons['Stop node'].Add_Click({
@@ -143,6 +206,8 @@ if ((Test-Path $command) -and (Test-Path (Join-Path $nodeHome 'arena.conf'))) {
       if ($line -and $line -notmatch '^Up to date') { $sub.Text = "$line`r`n" + $sub.Text }
       # THE OWNER PAGE SIGNED IN ONCE AFTER THE UPDATE (2026-10-26: "The updater MUST fix my credentials in the browser so it works")
       if ($line -match '^Updated') { & cmd /c "`"$command`" sign-in-once" | Out-Null }
+      # then more nodes on this PC (kanban #713: "When I update an existing node ... There, I can setup additional nodes")
+      if ($line -match '^Updated' -and [System.Windows.Forms.MessageBox]::Show('Your node is updated. Add more nodes on this PC (testnet4)?', 'Bitcoin Arena', 'YesNo') -eq 'Yes') { Add-Nodes }
     })
     $utimer.Start()
   } else { Show-Installed }

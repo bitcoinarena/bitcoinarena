@@ -184,6 +184,37 @@ async function siteBase() {
   const local = String(HASH.get('local') || '').replace(/\/+$/, '');
   return /^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(local) ? local : null;
 }
+// BEFORE THE NODE IS LOOKED UP (kanban #713, measured 2026-10-26 in Chromium: a node no seat announced - new, or down - never reached the
+// hand-over below the lookup, so its key was never kept): the keys it writes need no address
+const LOCAL_PATH = location.pathname.replace(/\/[Dd]ashboard\/owner\/?$/, '');
+const HSTORE = ON_SITE ? 'arena-owner-seed:node:' + NODE_KEY : 'arena-owner-seed:' + LOCAL_PATH;
+const HNSTORE = ON_SITE ? 'arena-owner-nostr:node:' + NODE_KEY : 'arena-owner-nostr:' + LOCAL_PATH;
+// THE KEY FROM THE INSTALLER (kanban #668): opened by the installer's last button with owner-handoff in its #, this page asks its opener
+// for the owner key - window to window, never in a URL - and keeps it here, so the owner area opens logged in at an address that stays
+const handoff = HASH.has('owner-handoff') && window.opener ? new Promise((done) => {
+  const on = (e) => {
+    const d = e.data;
+    if (e.source !== window.opener || !d || d.type !== 'arena-owner-key') return;
+    try {
+      if (d.kind === 'seed' && /^[0-9a-f]{64}$/.test(d.seed)) localStorage.setItem(HSTORE, d.seed);
+      else if (d.kind === 'nsec' && /^[0-9a-f]{64}$/.test(d.secret)) localStorage.setItem(HNSTORE, JSON.stringify({ how: 'nsec', secret: d.secret }));
+      // EVERY NODE OF THE MACHINE AT ONCE (kanban #713, 2026-10-26: "You need to store credentials for *all* owner pages where its needed and
+      // provide links"): `keys` names each node by its key, and each owner key is kept under that node, as its own page keeps it
+      if (ON_SITE && Array.isArray(d.keys)) for (const k of d.keys) {
+        if (!k || !/^[0-9a-f]{64}$/.test(String(k.node || ''))) continue;
+        if (k.kind === 'seed' && /^[0-9a-f]{64}$/.test(k.seed)) localStorage.setItem('arena-owner-seed:node:' + k.node, k.seed);
+        else if (k.kind === 'nsec' && /^[0-9a-f]{64}$/.test(k.secret)) localStorage.setItem('arena-owner-nostr:node:' + k.node, JSON.stringify({ how: 'nsec', secret: k.secret }));
+      }
+    } catch {}
+    removeEventListener('message', on); HASH.delete('owner-handoff');
+    history.replaceState(null, '', location.pathname + location.search + (HASH.toString() ? '#' + HASH.toString() : ''));
+    done();
+  };
+  addEventListener('message', on);
+  window.opener.postMessage({ type: 'arena-owner-ready' }, '*');
+  setTimeout(done, 8000);
+}) : null;
+if (handoff) await handoff;
 const BASE = ON_SITE ? await siteBase() : location.pathname.replace(/\/[Dd]ashboard\/owner\/?$/, '');
 if (ON_SITE && !BASE) {
   document.getElementById('who').textContent = NODE_KEY ? 'No node announces this key right now (' + NODE_KEY.slice(0, 16) + '…). Is it running?' : 'Open this page from your node\'s dashboard or the installer: it needs your node\'s key.';
@@ -212,25 +243,7 @@ const keepSeed = (seed) => { try { localStorage.setItem(STORE, C.toHex(seed)); r
 // (NIP-07) or a remote signer (NIP-46: bunker://, or a code a phone signer scans) signs each request as a Nostr event.
 // Kept per node address in this browser: { how: 'nsec', secret } | { how: 'extension', pubkey } | { how: 'bunker', bunker, client }
 const NSTORE = ON_SITE ? 'arena-owner-nostr:node:' + NODE_KEY : 'arena-owner-nostr:' + BASE;
-// THE KEY FROM THE INSTALLER (kanban #668): opened by the installer's last button with owner-handoff in its #, this page asks its opener
-// for the owner key - window to window, never in a URL - and keeps it here, so the owner area opens logged in at an address that stays
-const handoff = HASH.has('owner-handoff') && window.opener ? new Promise((done) => {
-  const on = (e) => {
-    const d = e.data;
-    if (e.source !== window.opener || !d || d.type !== 'arena-owner-key') return;
-    try {
-      if (d.kind === 'seed' && /^[0-9a-f]{64}$/.test(d.seed)) localStorage.setItem(STORE, d.seed);
-      else if (d.kind === 'nsec' && /^[0-9a-f]{64}$/.test(d.secret)) localStorage.setItem(NSTORE, JSON.stringify({ how: 'nsec', secret: d.secret }));
-    } catch {}
-    removeEventListener('message', on); HASH.delete('owner-handoff');
-    history.replaceState(null, '', location.pathname + location.search + (HASH.toString() ? '#' + HASH.toString() : ''));
-    done();
-  };
-  addEventListener('message', on);
-  window.opener.postMessage({ type: 'arena-owner-ready' }, '*');
-  setTimeout(done, 8000);
-}) : null;
-if (handoff) await handoff;
+
 const readNostr = () => { try { const j = JSON.parse(localStorage.getItem(NSTORE) || 'null'); return j && j.how ? j : null; } catch { return null; } };
 const keepNostr = (o) => { try { localStorage.setItem(NSTORE, JSON.stringify(o)); return true; } catch { return false; } };
 const forget = () => { try { localStorage.removeItem(STORE); localStorage.removeItem(NSTORE); } catch {} me = null; start(); };
