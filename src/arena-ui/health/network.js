@@ -133,7 +133,9 @@ export function roundPosting({ games = [], pending = [], expected = [], rounds =
       const cuts = [...new Set([a, b, ...per.flatMap(([g]) => [Number(g.firstWindowMs), Number(g.lastCloseMs)]).filter((x) => x > a && x < b)])].sort((x, y) => x - y);
       const segs = cuts.slice(1).map((e, i) => { const f = cuts[i]; return Math.max(0, ...per.filter(([g]) => Number(g.firstWindowMs) < e && Number(g.lastCloseMs) > f).map(([, r]) => r)); });
       const liveRanks = segs.filter((r) => r > 0);
-      const gap = segs.some((r) => r === 0);
+      // A GAP IS LONGER THAN 15 MIN, as a failed stretch is (2026-10-26 ~16:50Z, the owner on tomorrow's "delayed (60) · gap": Up or Down's
+      // day grid runs 23:45 to 23:45 and Tick Tock's 23:59 to 23:59 - the last minutes of a day are the next day's grid's, not a gap)
+      const gap = segs.some((r, i) => r === 0 && cuts[i + 1] - cuts[i] > GAP_MS);
       const st = !liveRanks.length ? 'failed' : ['failed', 'unconfirmed', 'delayed', 'scheduled', 'posted'][Math.min(...liveRanks)];
       // A DELAYED GRID SAYS HOW FAR IT IS MINED (2026-10-26, the owner: "if it is confirmed and says delayed it should say delayed(1) for example
       // for 1 confirmation"): the round table's confirmations in ()

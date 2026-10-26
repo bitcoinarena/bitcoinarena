@@ -183,6 +183,10 @@ test('the APPS table\'s rounds: posted (N), delayed, failed - only the newest ve
   assert.match(rps.next.tip, /^version 2; in \(\) the confirmations of the round table/);
   assert.match(rps.next.tip, /scheduled: published in block 110; its committee block 115 has 2 of 6 confirmations, before its first round at 10-27 00:00 UTC/);
   assert.equal(rps.next.summary, 'The rounds are mined and start on time.');
+  // a day grid from 23:45 to 23:45: tomorrow's last 15 min are the next day's grid's, no gap (2026-10-26 ~16:50Z)
+  const day = Date.UTC(2026, 9, 27), ud = grid('bb'.repeat(32), day - 15 * 60000, day + 86400000 - 15 * 60000, 8, F1, { height: 110, confirmations: 60 }, { height: null, depth: 0 });
+  const u2 = roundPosting({ games: [{ name: 'updown', version: 7, id: W }], pending: [{ grids: [ud] }], expected: [ex(ud, W)], nowMs: now, fedNo }).get('updown');
+  assert.deepEqual([u2.next.t, u2.next.c], ['scheduled (60)', 'ok']);
   // a round's start passed and its committee block is not 6 deep: delayed
   const late = grid('ba'.repeat(32), now - H, now + 20 * H, 7, F1, { height: 110, confirmations: 10 }, { height: 115, depth: 2 });
   const d = roundPosting({ games: [{ name: 'rps', version: 2, id: V2 }], pending: [{ grids: [late] }], expected: [ex(late, V2)], nowMs: now, fedNo }).get('rps');
