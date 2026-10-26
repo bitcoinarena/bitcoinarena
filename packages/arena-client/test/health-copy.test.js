@@ -192,6 +192,12 @@ test('the APPS table\'s rounds: posted (N), delayed, failed - only the newest ve
   const later = grid('ab'.repeat(32), now + 2 * H, now + 30 * H, 5, F1, { height: null, confirmations: 0, inMempool: true }, { height: null, depth: 0 });
   const both = roundPosting({ games: [{ name: 'rps', version: 2, id: V2 }], pending: [{ grids: [gone, later] }], expected: [ex(gone, V2), ex(later, V2)], nowMs: now, fedNo }).get('rps');
   assert.deepEqual([both.today.t, both.today.c], ['unconfirmed · gap', 'warn']);
+  // readable (2026-10-26 11:44 "Wall of text"): a summary, one row per grid, the live first, and what was done about each dead stretch
+  assert.equal(both.today.summary, 'The next rounds wait to be mined. Some hours have no rounds.');
+  assert.deepEqual(both.today.items.map((x) => [x.s, x.live, x.say]), [['warn', true, 'waiting to be mined'], ['bad', false, 'never mined: its transaction was replaced or dropped']]);
+  assert.match(both.today.items[1].fix, /^fixed: a new grid \(Fed 1\) covers today .* - waiting to be mined$/);
+  const alone = roundPosting({ games: [{ name: 'rps', version: 2, id: V2 }], pending: [{ grids: [gone] }], expected: [ex(gone, V2)], nowMs: now, fedNo }).get('rps');
+  assert.equal(alone.today.items[0].fix, 'not fixed yet: no new grid covers these hours');
   const g3 = roundPosting({ games: [{ name: 'rps', version: 2, id: V2 }], pending: [{ grids: [gone] }], expected: [ex(gone, V2)], nowMs: now, fedNo }).get('rps');
   assert.match(g3.today.tip, /its round table afafafafaf is in no block and not in the mempool/);
   assert.equal(g3.today.t, 'failed');

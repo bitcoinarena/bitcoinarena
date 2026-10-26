@@ -127,11 +127,30 @@ export function Capacity({ view }) {
 export const barPct = (have, need) => (need ? Math.min(100, Math.round((100 * have) / need)) : 0);
 // A REASON BY TAP AS WELL AS BY HOVER (2026-10-26 11:33, the owner: "On phone I can't click on failed to see the reason"): a cell with a
 // tooltip is a button; a tap opens its reasons in a panel at the foot of the screen, a tap on the panel closes it
+// THE REASONS, READABLE (2026-10-26 11:44, the owner on the panel: "Wall of text make it more readable and much easier to understand"):
+// what it means in one line, then one short row per grid - status, when, federation, the reason in plain words - the live ones first and
+// the ones that cannot be played folded under one line; the technical detail small under each
+const TipRow = ({ x }) => (<li className="tip-row"><span className={`tip-dot ${x.s}`} />
+  <span><b>{x.when}</b>{x.fed ? <span className="muted"> · {x.fed}</span> : null}{x.n > 1 ? <span className="muted"> · {x.n} grids</span> : null}<br />{x.say}
+    {x.fix ? <><br /><span className={/^fixed/.test(x.fix) ? 'ok' : 'bad'}>→ {x.fix}</span></> : null}
+    {x.detail ? <small className="muted"><br />{x.detail}</small> : null}</span></li>);
+function TipRows({ p }) {
+  const live = p.items.filter((x) => x.live), dead = p.items.filter((x) => !x.live);
+  return (<>
+    <p className="tip-sum">{p.summary}{p.version != null ? <span className="muted"> Version {p.version}.</span> : null}</p>
+    {live.length ? <ul className="tip-rows">{live.map((x, i) => <TipRow key={i} x={x} />)}</ul> : null}
+    {dead.length ? <details className="tip-dead" onClick={(e) => e.stopPropagation()}><summary>{dead.length === 1 ? '1 stretch' : `${dead.length} stretches`} with no playable rounds</summary>
+      <ul className="tip-rows">{dead.map((x, i) => <TipRow key={i} x={x} />)}</ul></details> : null}
+  </>);
+}
 function Tip({ p }) {
   const [open, setOpen] = React.useState(false);
   return (<>
     <button type="button" className={`tip ${p.c || ''}`} title={p.tip} aria-expanded={open} onClick={() => setOpen(!open)}>{p.t}</button>
-    {open ? <div className="tip-pop" role="dialog" onClick={() => setOpen(false)}><b>{p.t}</b><div>{p.tip}</div><span className="muted">tap to close</span></div> : null}
+    {open ? <div className="tip-pop" role="dialog" onClick={() => setOpen(false)}>
+      <b className={p.c || undefined}>{p.t}</b>
+      {p.items ? <TipRows p={p} /> : <div className="tip-text">{p.tip}</div>}
+      <span className="muted">tap to close</span></div> : null}
   </>);
 }
 const Part = ({ p }) => (p && typeof p === 'object'
