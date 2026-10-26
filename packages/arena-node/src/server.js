@@ -72,7 +72,7 @@ import { randomBytes, createPublicKey, verify as ecdsaVerify } from 'node:crypto
 import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX } from '../../arena-protocol/src/donations-read.js';
 import { WebSocketServer } from 'ws';
-import { createP2pTunnels, carryP2p, P2P_TUNNEL_PATHS } from './p2p-tunnel.js';
+import { createP2pTunnels, carryP2p, carryApi, P2P_TUNNEL_PATHS, GUARDIAN_API_RELAY_PATH } from './p2p-tunnel.js';
 import { createAddressBook, announceOwn } from './address-book.js';
 import { ownServices } from './own-services.js';
 import { serviceSettings } from './service-settings.js';
@@ -9610,6 +9610,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (at === '/play') { wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req)); return; }
     const p2pOf = at === P2P_TUNNEL_PATHS.guardian ? guardian : at === P2P_TUNNEL_PATHS.next ? guardianNext : null;
     if (p2pOf && p2pOf.p2pPort) { p2pWss.handleUpgrade(req, socket, head, (ws) => { carryP2p(ws, p2pOf.p2pPort); }); return; }
+    // A PEER GUARDIAN'S API, carried to its node's current endpoint (kanban #577, p2p-tunnel.js GUARDIAN_API_RELAY_PATH): only for a
+    // census node the tunnel follows, so the seat carries nothing but guardians' own public API
+    if (at.startsWith(GUARDIAN_API_RELAY_PATH)) {
+      const root = p2pTunnels ? p2pTunnels.rootOf(at.slice(GUARDIAN_API_RELAY_PATH.length)) : null;
+      if (!root) { socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'); return; }
+      p2pWss.handleUpgrade(req, socket, head, (ws) => { carryApi(ws, root); });
+      return;
+    }
     // /guardian-next is the guardian-next's, carried the same way to its own API port
     const carried = at === '/guardian' ? guardian : at === '/guardian-next' ? guardianNext : null;
     if (carried && carried.apiPort) {
