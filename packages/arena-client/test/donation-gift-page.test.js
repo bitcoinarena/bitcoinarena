@@ -6,6 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
 import { giftDonation, giftAmountOf, giftRecipientsLine } from '../src/donation-gift-page.js';
+import { ledgerRows, ledgerHistory } from '../src/page-lock.js';
 import { decodeDonationGift, donationGiftId, giftStands, GIFT_TO_GAME, GIFT_TO_NETWORK } from '../../arena-protocol/src/donation-gift.js';
 import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
 
@@ -47,4 +48,17 @@ test('to the protocol developers; nothing is paid for a bad amount; a seat that 
   const before = paid.length;
   assert.equal((await giftDonation({ recipients: SET, sat: '0', wallet: wallet(paid), federationId: 'fe'.repeat(32), donor, seats: [], fetch: fail })).step, 'amount');
   assert.equal(paid.length, before, 'nothing paid');
+});
+
+test('a paid gift is a row of the wallet\'s history, with its transaction and to whom, even when no seat keeps the record (kanban #682)', async () => {
+  const kept = new Map(), storage = { getItem: (k) => kept.get(k) ?? null, setItem: (k, v) => kept.set(k, v) };
+  const fed = 'fe'.repeat(32);
+  const ok = async () => new Response('{}', { status: 200 }), fail = async () => new Response('no', { status: 422 });
+  await giftDonation({ game: { gameDevPubkey: b32(0xde), gameName: 'btc-updown-15m' }, recipients: SET, sat: 100, wallet: wallet([]), federationId: fed, donor, seats: ['https://s.example'], fetch: ok, storage });
+  await giftDonation({ recipients: SET, sat: 21, wallet: wallet([]), federationId: fed, donor, seats: ['https://s.example'], fetch: fail, storage });
+  await giftDonation({ recipients: SET, sat: '0', wallet: wallet([]), federationId: fed, donor, seats: [], fetch: ok, storage });
+  const rows = ledgerRows(storage, fed).map(({ atMs, ...r }) => r);
+  assert.deepEqual(rows, [{ kind: 'donation', msat: '100000', round: null, txid: TXID, to: 'app:btc-updown-15m' },
+    { kind: 'donation', msat: '21000', round: null, txid: TXID, to: 'network' }], 'the refused amount paid nothing and wrote nothing');
+  assert.equal(ledgerHistory(ledgerRows(storage, fed)).length, 2, 'drawn as two rows');
 });

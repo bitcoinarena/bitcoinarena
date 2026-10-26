@@ -52,6 +52,7 @@ test('deposits, withdrawals and winnings are untouched; a donation with no stake
 
 test('the wallet history panel draws ledgerHistory, not the raw rows', () => {
   const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url).pathname, 'utf8');
-  assert.match(page, /const rows = ARENACLIENT\.ledgerHistory\(ARENACLIENT\.ledgerRows\(st, fed\)\)\.slice\(\)\.sort\(/);
-  assert.doesNotMatch(page, /const rows = ARENACLIENT\.ledgerRows\(st, fed\)\.slice\(\)\.sort\(/);
+  // every federation's rows since 107d1140 (2026-10-20: "it doesn't show the complete history"), each through ledgerHistory
+  assert.match(page, /return ARENACLIENT\.ledgerHistory\(ARENACLIENT\.ledgerRows\(st, f\)\)\.map\(/);
+  assert.doesNotMatch(page, /ARENACLIENT\.ledgerRows\(st, f(ed)?\)\.(slice|map)\(/);
 });

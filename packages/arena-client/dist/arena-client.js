@@ -7214,13 +7214,14 @@ function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE_FEE_BP
 }
 
 /**
- * THE WEBSITE THAT BROUGHT AN ENTRY IS PAID 20% OF THE NODES' FEE ON IT (2026.0.9, roadmap item 7; RULED the owner
+ * THE WEBSITE THAT BROUGHT AN ENTRY IS PAID 10% OF THE NODES' FEE ON IT (20% until 2026-10-25, kanban #675: "improve on referrer
+ * program, reduce fee to 10%"; no website had been paid by then) (2026.0.9, roadmap item 7; RULED the owner
  * 2026-10-15, path (a): "Take it out of the nodes' 5% fee, 20% of that fee, so nodes earn less ... The player's stake is not increased
  * by this fee"). Per website payout key (hex, 33 bytes): `fee` x 20% x the stakes it brought / `gross` - the nodes' fee table's own
  * fee and gross - floored; the nodes share what is left of their fee. Refunded entries bring nothing. Answers
  * { shares: Map key -> msat (keys in ascending order), totalMsat }.
  */
-const FRONTEND_FEE_PERCENT = 20n;
+const FRONTEND_FEE_PERCENT = 10n;
 function frontendShares({ entries, fee, gross, pct = FRONTEND_FEE_PERCENT }) {
   const brought = new Map();
   for (const e of entries || []) {
@@ -13610,7 +13611,7 @@ const FEES = Object.freeze({
   marketNodeBps:     Object.freeze({ code: 7,  today: 40,  min: 10,  max: 100 }),
   marketDonationBps: Object.freeze({ code: 8,  today: 40,  min: 10,  max: 100, donation: true }),
   marketReserveBps:  Object.freeze({ code: 9,  today: 20,  min: 5,   max: 50 }),
-  websitePct:        Object.freeze({ code: 10, today: 20,  min: 0,   max: 40 }),
+  websitePct:        Object.freeze({ code: 10, today: 10,  min: 0,   max: 40 }),   // 20 until 2026-10-25 (kanban #675)
 });
 /** The sums the set must keep: a round at most 10 %, an item's parts exactly 100 %, a market at most 2 %. */
 const ROUND_TOTAL_MAX_BPS = 1000, ITEM_TOTAL_PCT = 100, MARKET_TOTAL_MAX_BPS = 200;
@@ -17561,9 +17562,10 @@ const REST_MARGIN_MSAT = 1000n;
  * small to cover fees", 5 sat made). A rest under it is invoiced at it; the extra stays in the player wallet. */
 const REST_FLOOR_MSAT = 5000n;   // the smallest deposit the federation takes (measured: 2, 3, 4 sat refused)
 const restInvoiceMsat = (restMsat) => (BigInt(restMsat) < REST_FLOOR_MSAT ? REST_FLOOR_MSAT : BigInt(restMsat));
-/** A donation the player wallet paid, a history row (every deduction is a row - 2026-09-30 16:15). */
-function recordDonation(storage, federationId, { msat, round }) {
-  ledgerAppend(storage, federationId, { kind: 'donation', msat: String(msat), round: round ? String(round) : null });
+/** A donation the player wallet paid, a history row (every deduction is a row - 2026-09-30 16:15). A gift from the page names its
+ *  federation transaction and to whom (kanban #682: "I just did a donation and it doesn't show in the user history"). */
+function recordDonation(storage, federationId, { msat, round, txid = null, to = null }) {
+  ledgerAppend(storage, federationId, { kind: 'donation', msat: String(msat), round: round ? String(round) : null, ...(txid ? { txid: String(txid) } : {}), ...(to ? { to: String(to) } : {}) });
 }
 /** The rest: the smallest whole sat whose whole notes cover what the wallet is short. */
 function restOfFeesMsat(shortMsat) {
@@ -26429,6 +26431,7 @@ function giftStands(g, { recipients, networkSet = null, gameSet = null, verify, 
 // first seat that keeps it hands it on to every other. Nothing is paid before the split stands; every step that fails says which.
 
 
+
 /** Whether a typed amount is one the popup may pay: a whole number of sat from 1 to 10,000,000. Answers { ok, sat } or { ok: false, why }. */
 function giftAmountOf(typed) {
   const s = String(typed == null ? '' : typed).trim().replace(/[,_\s]/g, '');
@@ -26448,8 +26451,10 @@ const giftRecipientsLine = (set) => (Array.isArray(set) ? set : []).map((r) => `
  * `donor` { pubkey, sign }; `seats` the base URLs. Answers { ok, id, txid, sat, outputs, keptBy } or { ok: false, step, why }.
  * A GIFT INSIDE AN APP (kanban #672: "If it's within an app 50% to protocol devs, 50% to game devs"): `game` with `networkSet` - the
  * protocol developers' set beside the app's `recipients` - pays half over each. `origin` tags where it was given ("site", "app:<name>").
+ * `storage` the page's vault: once the federation holds the outputs, the wallet's history gets its row (kanban #682), whether a seat
+ * keeps the record or not - the sats left the wallet either way.
  */
-async function giftDonation({ game = null, player = null, recipients, networkSet = null, origin = '', sat, wallet, federationId, donor, seats, fetch, nowMs = () => Date.now() }) {
+async function giftDonation({ game = null, player = null, recipients, networkSet = null, origin = '', sat, wallet, federationId, donor, seats, fetch, storage = null, nowMs = () => Date.now() }) {
   const no = (step, why) => ({ ok: false, step, why });
   // A ZAP: the player's identity key is the target and the whole set
   if (player) { if (!(player instanceof Uint8Array) || player.length !== 32) return no('player', 'a zap names its player by a 32-byte identity key'); recipients = playerGiftRecipients(player); }
@@ -26466,6 +26471,7 @@ async function giftDonation({ game = null, player = null, recipients, networkSet
   } catch (e) { return no('payment', String(e && e.message || e)); }
   const held = accepted.donations || [];
   if (held.length !== outs.length || !held.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
+  if (storage) recordDonation(storage, federationId, { msat: totalMsat, txid: submitted.txid, to: player ? 'player:' + toHex(player) : game ? 'app:' + game.gameName : 'network' });
   const record = { target: player ? GIFT_TO_PLAYER : both ? GIFT_TO_BOTH : game ? GIFT_TO_GAME : GIFT_TO_NETWORK, gameDevPubkey: player || (game ? game.gameDevPubkey : new Uint8Array(32)), gameName: !player && game ? game.gameName : '',
     ...(!player && origin ? { origin: String(origin).slice(0, 64) } : {}),
     donor: donor.pubkey, federationId: fromHex(federationId), txid: fromHex(submitted.txid), totalMsat,
@@ -26489,7 +26495,7 @@ async function giftDonation({ game = null, player = null, recipients, networkSet
  * external lightning payment, remove the configuration setting"): `sat` from this wallet in `federationId` to the player whose identity
  * key the board names (32 bytes, `player`), as one payout contract to that key's refund key, recorded on the seats like a gift.
  */
-const zapPlayer = ({ player, sat, wallet, federationId, donor, seats, fetch, nowMs }) => giftDonation({ player, sat, wallet, federationId, donor, seats, fetch, nowMs });
+const zapPlayer = ({ player, sat, wallet, federationId, donor, seats, fetch, storage, nowMs }) => giftDonation({ player, sat, wallet, federationId, donor, seats, fetch, storage, nowMs });
 
 // ---- arena-protocol/src/seating.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
@@ -34107,7 +34113,9 @@ async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSWER_MS }
 /**
  * ONE TILE PER GAME, NOT PER VERSION (measured on the v2 page: each game showed twice - its 2026.0.1 manifest
  * and its 2026.0.2 update, the second "No signed description."). Versions of one game share its developer key and name (an
- * update is a new manifest under the same key, §5). Of each, the newest that has a live round; with none live, the newest.
+ * update is a new manifest under the same key, §5). Of each, the newest, always (2026-10-26 08:4xZ, the owner: "Version 24 is the newest
+ * btc up or down, why is version 13 open? We should always play the newest version" - an older version's live round no longer takes
+ * the tile, kanban #685).
  * The others are kept on the tile as `versions` (newest first), so a link naming an older version's id still finds it.
  */
 function oneTilePerGame(games) {
@@ -34120,7 +34128,7 @@ function oneTilePerGame(games) {
   const out = [];
   for (const versions of groups.values()) {
     versions.sort((a, b) => ((b.manifest && b.manifest.version) || 0) - ((a.manifest && a.manifest.version) || 0));
-    const shown = versions.find((g) => g.live && g.live.rounds > 0) || versions[0];
+    const shown = versions[0];
     // `older`: the other versions, each with its own info - a description its developer signed for that version's id, which
     // the tile shows while the shown version carries none that stands (checkedGameInfoOfTile)
     out.push(Object.assign({}, shown, { versions: versions.map((g) => g.id), older: versions.filter((g) => g !== shown) }));

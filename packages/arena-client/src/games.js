@@ -71,7 +71,9 @@ export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSW
 /**
  * ONE TILE PER GAME, NOT PER VERSION (measured on the v2 page: each game showed twice - its 2026.0.1 manifest
  * and its 2026.0.2 update, the second "No signed description."). Versions of one game share its developer key and name (an
- * update is a new manifest under the same key, §5). Of each, the newest that has a live round; with none live, the newest.
+ * update is a new manifest under the same key, §5). Of each, the newest, always (2026-10-26 08:4xZ, the owner: "Version 24 is the newest
+ * btc up or down, why is version 13 open? We should always play the newest version" - an older version's live round no longer takes
+ * the tile, kanban #685).
  * The others are kept on the tile as `versions` (newest first), so a link naming an older version's id still finds it.
  */
 export function oneTilePerGame(games) {
@@ -84,7 +86,7 @@ export function oneTilePerGame(games) {
   const out = [];
   for (const versions of groups.values()) {
     versions.sort((a, b) => ((b.manifest && b.manifest.version) || 0) - ((a.manifest && a.manifest.version) || 0));
-    const shown = versions.find((g) => g.live && g.live.rounds > 0) || versions[0];
+    const shown = versions[0];
     // `older`: the other versions, each with its own info - a description its developer signed for that version's id, which
     // the tile shows while the shown version carries none that stands (checkedGameInfoOfTile)
     out.push(Object.assign({}, shown, { versions: versions.map((g) => g.id), older: versions.filter((g) => g !== shown) }));
