@@ -10059,6 +10059,35 @@
   "pathParams": []
  },
  {
+  "method": "GET",
+  "path": "/duty",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {ok, node, nowMs, setting, on, wallet{canPay, why, confirmedSats, wallet}, feeRate, maxFeeRate, rankCap, days[{slot, covers, period, anchor, order[{rank, key, endpoint, self, dueFrom, backupDueFrom}], apps[{app, name, role, state, postings[{txid, height, emergency, role, poster, posterEndpoint, posterRank, fallback}]}]}], mine{posted, wouldPost}, lastError}; 404 when the node runs no round poster",
+  "purpose": "Who posts the rounds (spec 5A.5, kanban #702): for the day covering today and the one covering the next 24 h, the duty order's first three nodes (rank 1 posts the primary grid from 00:00 UTC, rank 2 the backup grid from 02:00), for each app and grid who posted it (the series' creator key, its rank, whether a fallback node did), what this node posted or would post, whether its wallet can pay, and its last error. From the node's last look, so it is cheap.",
+  "audience": "operator/monitoring",
+  "line": 5298,
+  "summary": "Who posts the rounds",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The duty as this node sees it."
+   },
+   {
+    "status": "404",
+    "contentType": "application/json",
+    "description": "{ok:false, why:\"this node runs no round poster\"}."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
   "method": "POST",
   "path": "/expected",
   "params": "none",
