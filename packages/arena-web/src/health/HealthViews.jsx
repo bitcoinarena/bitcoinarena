@@ -148,6 +148,8 @@ function Tip({ p }) {
   return (<>
     <button type="button" className={`tip ${p.c || ''}`} title={p.tip} aria-expanded={open} onClick={() => setOpen(!open)}>{p.t}</button>
     {open ? <div className="tip-pop" role="dialog" onClick={() => setOpen(false)}>
+      {/* a close button top right (2026-10-26, the owner: "the modal should get a regular X button on the top right corner") */}
+      <button type="button" className="tip-x" aria-label="Close" onClick={(e) => { e.stopPropagation(); setOpen(false); }}>×</button>
       <b className={p.c || undefined}>{p.t}</b>
       {p.items ? <TipRows p={p} /> : <div className="tip-text">{p.tip}</div>}
       <span className="muted">tap to close</span></div> : null}

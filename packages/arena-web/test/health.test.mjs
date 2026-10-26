@@ -5,6 +5,7 @@
 // nodes folded behind one button; each federation's capacity band with its load bar and its plea, a federation not open without one.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { Facts, NodesTable, Capacity, Line, Machines, nodeView, capacityView, machinesView, appsView } from '../dist/test/health.mjs';
@@ -66,7 +67,13 @@ test('a table from the page\'s data: the dot in the first cell, parts in their c
   assert.match(renderToStaticMarkup(React.createElement(Table, { head: ['A', 'B'], rows: [], empty: 'no node serves a liquidity claim' })), /<td colspan="2" class="muted">no node serves a liquidity claim<\/td>/i);
   // a status with its why as a tooltip (kanban #692: "with a tooltip why it's delayed or failed")
   assert.match(renderToStaticMarkup(React.createElement(Table, { head: ['App', 'Rounds today'], rows: [{ key: 'u', cells: ['Up/Down', { t: 'failed', c: 'bad', tip: 'Federation 1: no seat can draw its committee' }] }] })),
-    /<span class="bad" title="Federation 1: no seat can draw its committee">failed<\/span>/);
+    /<button type="button" class="tip bad" title="Federation 1: no seat can draw its committee" aria-expanded="false">failed<\/button>/);   // a tap opens it too (#692)
+});
+
+test('the reasons panel has a close button top right (2026-10-26: "a regular X button on the top right corner")', () => {
+  const src = readFileSync(new URL('../src/health/HealthViews.jsx', import.meta.url), 'utf8');
+  assert.match(src, /className="tip-pop" role="dialog"[\s\S]{0,260}<button type="button" className="tip-x" aria-label="Close" onClick=\{\(e\) => \{ e\.stopPropagation\(\); setOpen\(false\); \}\}>×<\/button>/);
+  assert.match(readFileSync(new URL('../../../src/arena-ui/health/index.html', import.meta.url), 'utf8'), /\.tip-x \{ position: sticky; top: 0; float: right;/);
 });
 
 test('a bar cell: how far, green when done', async () => {

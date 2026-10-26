@@ -105,7 +105,7 @@ export function roundPosting({ games = [], pending = [], expected = [], rounds =
       let at = a;
       for (const [f, t] of spans) { if (f - at > GAP_MS) { states.push('failed'); lines.push(`${dhm(at)} to ${dhm(f)} UTC: no grid of version ${app.version} posted for it`); items.push({ s: 'bad', live: false, f: at, to: f, when: span(at, f), say: 'no rounds posted' }); } at = Math.max(at, t); }
       if (b - at > GAP_MS) { states.push('failed'); lines.push(`${dhm(at)} to ${dhm(b)} UTC: no grid of version ${app.version} posted for it`); items.push({ s: 'bad', live: false, f: at, to: b, when: span(at, b), say: 'no rounds posted' }); }
-      const depths = [], per = [];   // per: [grid, 3 posted | 2 delayed | 1 unconfirmed] - the live ones
+      const depths = [], waits = [], per = [];   // per: [grid, 3 posted | 2 delayed | 1 unconfirmed] - the live ones
       for (const g of inside.sort((x, y) => Number(x.firstWindowMs) - Number(y.firstWindowMs))) {
         const n = fedNo(g.federation), p = g.publication, bc = g.beacon;
         const head = `${n ? `Federation ${n}` : String(g.federation || '').slice(0, 8)}, rounds ${dhm(g.firstWindowMs)} to ${dhm(g.lastCloseMs)} UTC: `;
@@ -113,8 +113,8 @@ export function roundPosting({ games = [], pending = [], expected = [], rounds =
         const item = (st, live, say, detail) => { const f = Math.max(a, Number(g.firstWindowMs)), to = Math.min(b, Number(g.lastCloseMs)); items.push({ s: st, live, f, to, when: span(f, to), fed: n ? `Fed ${n}` : '', say, detail }); };
         if (!p.height && !p.inMempool) { states.push('failed'); lines.push(head + (p.unread ? 'announced, but no seat reads its round table on its chain' : `its round table ${String(p.txid).slice(0, 10)} is in no block and not in the mempool`)); item('bad', false, p.unread ? 'announced, but no node finds its transaction' : 'never mined: its transaction was replaced or dropped', `round table ${String(p.txid).slice(0, 10)}`); }
         else if (!p.height) { states.push('unconfirmed'); per.push([g, 1]); lines.push(head + `its round table ${String(p.txid).slice(0, 10)} waits in the mempool to be mined`); item('warn', true, 'waiting to be mined', `round table ${String(p.txid).slice(0, 10)}`); }
-        else if (bc.height == null) { states.push('delayed'); per.push([g, 2]); lines.push(head + `published in block ${p.height}; its draw block is the first whose median time passes ${hm(g.committeeTimeMs)} UTC (the median time runs about an hour behind), then 6 confirmations`); item('warn', true, `mined; waiting for its draw block (after ${hm(g.committeeTimeMs)} UTC), then 6 confirmations`, `published in block ${p.height}`); }
-        else if ((bc.depth || 0) < (bc.needed || 6)) { states.push('delayed'); per.push([g, 2]); lines.push(head + `its draw block ${bc.height} has ${bc.depth} of ${bc.needed || 6} confirmations: posted in about ${((bc.needed || 6) - bc.depth) * BLOCK_MS / 60000} min`); item('warn', true, `draw block ${bc.depth} of ${bc.needed || 6} confirmations, about ${((bc.needed || 6) - bc.depth) * BLOCK_MS / 60000} min to go`, `draw block ${bc.height}`); }
+        else if (bc.height == null) { states.push('delayed'); per.push([g, 2]); waits.push(Number(p.confirmations) || 0); lines.push(head + `published in block ${p.height}; its draw block is the first whose median time passes ${hm(g.committeeTimeMs)} UTC (the median time runs about an hour behind), then 6 confirmations`); item('warn', true, `mined; waiting for its draw block (after ${hm(g.committeeTimeMs)} UTC), then 6 confirmations`, `published in block ${p.height}`); }
+        else if ((bc.depth || 0) < (bc.needed || 6)) { states.push('delayed'); per.push([g, 2]); waits.push(Number(p.confirmations) || 0); lines.push(head + `its draw block ${bc.height} has ${bc.depth} of ${bc.needed || 6} confirmations: posted in about ${((bc.needed || 6) - bc.depth) * BLOCK_MS / 60000} min`); item('warn', true, `draw block ${bc.depth} of ${bc.needed || 6} confirmations, about ${((bc.needed || 6) - bc.depth) * BLOCK_MS / 60000} min to go`, `draw block ${bc.height}`); }
         else if (d && !d.yes && d.no) { states.push('failed'); lines.push(head + `posted, but no seat can draw its committee: ${d.why || 'no reason given'}`); item('bad', false, plainWhy(d.why), d.why || ''); }
         else { states.push('posted'); per.push([g, 3]); depths.push(bc.depth); lines.push(head + `posted: its draw block ${bc.height} has ${bc.depth} confirmations (6 needed)`); item('ok', true, `playable · draw block ${bc.depth} confirmations`, `draw block ${bc.height}`); }
       }
@@ -130,9 +130,11 @@ export function roundPosting({ games = [], pending = [], expected = [], rounds =
       const liveRanks = segs.filter((r) => r > 0);
       const gap = segs.some((r) => r === 0);
       const st = !liveRanks.length ? 'failed' : ['failed', 'unconfirmed', 'delayed', 'posted'][Math.min(...liveRanks)];
-      return { t: (st === 'posted' ? `posted (${Math.max(...depths)})` : st) + (gap && st !== 'failed' ? ' · gap' : ''), c: st === 'posted' && !gap ? 'ok' : st === 'failed' ? 'bad' : 'warn',
+      // A DELAYED GRID SAYS HOW FAR IT IS MINED (2026-10-26, the owner: "if it is confirmed and says delayed it should say delayed(1) for example
+      // for 1 confirmation"): the round table's confirmations in ()
+      return { t: (st === 'posted' ? `posted (${Math.max(...depths)})` : st === 'delayed' && Math.max(...waits) > 0 ? `delayed (${Math.max(...waits)})` : st) + (gap && st !== 'failed' ? ' · gap' : ''), c: st === 'posted' && !gap ? 'ok' : st === 'failed' ? 'bad' : 'warn',
         // one line per reading (several series share a round table and a draw block): the same words once, with how many
-        tip: (st === 'posted' ? `version ${app.version}; in () the confirmations of the draw block - the block whose hash draws each round's committee\n` : `version ${app.version}\n`)
+        tip: (st === 'posted' ? `version ${app.version}; in () the confirmations of the draw block - the block whose hash draws each round's committee\n` : st === 'delayed' ? `version ${app.version}; in () the confirmations of the round table\n` : `version ${app.version}\n`)
           + [...lines.reduce((m, l) => m.set(l, (m.get(l) || 0) + 1), new Map())].map(([l, k]) => (k > 1 ? `${l} (${k} grids)` : l)).join('\n'),
         // THE SAME, READABLE (2026-10-26 11:44, the owner on the panel: "Wall of text make it more readable and much easier to understand"):
         // one line on what it means, then one short row per grid - the live ones first, the ones that cannot be played folded below
@@ -309,7 +311,7 @@ export function makeHealth({ H, $, window = {} }) {
       // the network's answers from the seat that holds the most: the newest tip, every federation record, every reserve entry (seats hold
       // different parts of the reserve ledger - measured 112,000 / 102,000 / 10,000 msat at once), the most proposals
       const [feesP, fedsP, gamesP, reservesP, fundingP, capP] = [['/fees', (b) => [Number(b.tip) || 0]], ['/federations', (b) => [(b.federations || []).length, Math.max(0, ...(b.federations || []).map((f) => Number(f.height) || 0))]],
-        ['/network-games', null], ['/reserves', (b) => [Number(b.entries) || 0, Number(b.totalMsat) || 0]], ['/funding', (b) => [(b.proposals || []).length]], ['/capacity', (b) => [(b.federations || []).length]]]
+        ['/network-games', (b) => [(b.games || []).length, (b.seats || []).length]], ['/reserves', (b) => [Number(b.entries) || 0, Number(b.totalMsat) || 0]], ['/funding', (b) => [(b.proposals || []).length]], ['/capacity', (b) => [(b.federations || []).length]]]
         .map(([p, score]) => (score ? best(seats, p, score) : first(seats, p)));
       // ACTIVE IN THE LAST 24 HOURS (2026-10-20: "mark it as active in the last 24 hours and inactive"): the census nodes that signed a
       // round result in that window, from every seat's GET /served (each holds its own results, so they are merged)
