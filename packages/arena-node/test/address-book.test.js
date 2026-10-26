@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { signAddressAnnouncement, checkAddressAnnouncement, endpointOf, ADDRESS_FUTURE_MS } from '../../arena-protocol/src/address-announcement.js';
-import { createAddressBook, announceOwn } from '../src/address-book.js';
+import { createAddressBook, announceOwn, pullAnnouncements } from '../src/address-book.js';
 
 const verify = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
 const keyOf = (b) => { const secret = new Uint8Array(32).fill(b); return { secret, hex: Buffer.from(schnorr.getPublicKey(secret)).toString('hex') }; };
@@ -88,4 +88,24 @@ test('a seat takes an announcement at POST /address-announcement, lists it at GE
     const after = await (await fetch(`http://127.0.0.1:${seat.port}/address-announcements`)).json();
     assert.deepEqual(after.announcements.map((x) => x.node), [B.hex], 'kept in the store');
   } finally { await seat.close(); }
+});
+
+// AND PULLED (kanban #577, 2026-10-26: inst577-1 missed the pushed announcements of two peers' new tunnels and relayed to their old ones)
+test('a node a push missed takes the newer addresses from the seats it asks; a forged or older one is not taken', async () => {
+  const C = keyOf(5);
+  const db = new DatabaseSync(':memory:');
+  const book = createAddressBook({ db, verify, nowMs: () => T0 });
+  const entry = (k, endpoint) => ({ pubkey: Buffer.from(k.hex, 'hex'), advert: { endpoint, timestamp: BigInt(T0 - 100000) } });
+  book.take(signAddressAnnouncement({ node: B.hex, endpoint: 'https://traditional-boats-directed-threaded.trycloudflare.com', atMs: T0 - 50000 }, sign(B)));
+  const newB = signAddressAnnouncement({ node: B.hex, endpoint: 'https://columbus-merchant-wagner-the.trycloudflare.com', atMs: T0 - 1000 }, sign(B));
+  const forged = { ...signAddressAnnouncement({ node: C.hex, endpoint: 'https://c.example', atMs: T0 - 1000 }, sign(C)), endpoint: 'https://evil.example' };
+  const oldB = signAddressAnnouncement({ node: B.hex, endpoint: 'https://older.trycloudflare.com', atMs: T0 - 90000 }, sign(B));
+  const asked = [];
+  const get = async (u) => { asked.push(u); if (u.startsWith('https://down')) throw new Error('fetch failed'); return { announcements: [oldB, newB, forged] }; };
+  const entries = [entry(A, 'https://me.example'), entry(B, 'https://traditional-boats-directed-threaded.trycloudflare.com'), entry(C, 'https://down.example')];
+  const r = await pullAnnouncements({ entries, book, ownKey: A.hex, get });
+  assert.deepEqual([r.asked, r.answered, r.kept], [2, 1, 1], 'its own seat not asked; one seat down');
+  assert.equal(book.endpointOf(entries[1]), 'https://columbus-merchant-wagner-the.trycloudflare.com');
+  assert.equal(book.map().get(C.hex), undefined, 'the forged one not taken');
+  assert.ok(!asked.some((u) => u.startsWith('https://me.example')));
 });
