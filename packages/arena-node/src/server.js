@@ -2261,7 +2261,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const w = marketWindowOf(c, f.plugin.manifest);
     return w.ok ? w.window : null;
   };
-  const liveNow = gameLive(round, { windowOf: marketWindowFor });
+  // only rounds whose committee is drawn count as live (kanban #685); committeeOf is the listing's own draw, set up before any request
+  const liveNow = gameLive(round, { windowOf: marketWindowFor, drawable: (rid) => committeeOf(fromHex(rid)).drawn === true });
   const roster = new Roster(round, {
     ...(chainFor ? { chainFor } : {}),
     // The same beacon the verifier reads: one source, so a node cannot assign

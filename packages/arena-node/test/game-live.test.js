@@ -58,3 +58,20 @@ test('a round taking entries for hours after its start is live until its entry c
   const later = gameLive(r, { nowMs: () => now });
   assert.equal((later()[toHex(NEXTBLOCK_GAME_ID)] || { rounds: 0 }).rounds, 0, 'closed and run: not live');
 });
+
+test('a round no committee can be drawn for is not live; a no is asked again after a minute (kanban #685: "Why are no rounds open?")', () => {
+  let now = 1000000;
+  const r = new Round(openStore(), () => now, { plugins: HOSTED });
+  const at = (startMs, root) => ({ ...contract(), censusRoot: b32(root), committeeTimeMs: 500n, startTimeMs: BigInt(startMs), entryCloseMs: BigInt(startMs + 45000) });
+  const good = r.open(at(now + 100000, 2)), dead = r.open(at(now + 100000, 3));
+  r.enter(entryFor(dead));
+  const drawnNow = new Set([toHex(good)]), asked = [];
+  const live = gameLive(r, { nowMs: () => now, drawable: (id) => { asked.push(id); return drawnNow.has(id); } });
+  assert.deepEqual(live()[toHex(NEXTBLOCK_GAME_ID)], { rounds: 1, players: 0 }, 'only the drawn round, and none of the dead one\'s players');
+  drawnNow.add(toHex(dead));
+  now += 20000; assert.equal(live()[toHex(NEXTBLOCK_GAME_ID)].rounds, 1, 'within the minute the no is kept');
+  now += 45000; assert.deepEqual(live()[toHex(NEXTBLOCK_GAME_ID)], { rounds: 2, players: 1 }, 'asked again: drawn now');
+  assert.equal(asked.filter((x) => x === toHex(good)).length, 1, 'a yes is asked once');
+  const unasked = gameLive(r, { nowMs: () => now });
+  assert.equal(unasked()[toHex(NEXTBLOCK_GAME_ID)].rounds, 2, 'without the check, as before');
+});
