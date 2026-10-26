@@ -134,7 +134,8 @@ async function payLiquidations() {
   if (!claims || !env.ARENA_LIQ_PAY_DIR || !env.ARENA_STAKE_LOCK_BIN) return;
   const { execFile } = await import('node:child_process');
   const run = (args) => new Promise((done) => execFile(env.ARENA_STAKE_LOCK_BIN, [...args, '--data-dir', env.ARENA_LIQ_PAY_DIR], { timeout: 900000, maxBuffer: 1 << 24 },
-    (err, out) => { const line = String(out || '').split('\n').find((l) => l.startsWith('{')); done(line ? JSON.parse(line) : { error: String((err && err.message) || 'no answer').slice(0, 200) }); }));
+    // the tool's own words when it fails: its last lines (stderr), not the start of the command line, which alone filled the 200 characters
+    (err, out, errOut) => { const line = String(out || '').split('\n').find((l) => l.startsWith('{')); done(line ? JSON.parse(line) : { error: String((errOut && String(errOut).trim()) || (err && err.message) || 'no answer').slice(-400) }); }));
   state.liquidations = state.liquidations || {};
   for (const [fid, at] of liqEscrows) {
     const v = state.liquidations[fid] = state.liquidations[fid] || {};
@@ -242,4 +243,12 @@ const doors = await serveArbiter({ set, allow, port: Number(env.ARENA_ARBITER_PO
 say({ up: doors.port, network, seats: seats.length, members: set.members.length, k: set.k });
 await pass();
 if (process.argv.includes('--once')) { await doors.close(); process.exit(0); }
-setInterval(() => { pass().catch((e) => say({ error: e.message })); }, Number(env.ARENA_ARBITER_EVERY_MS || 60000));
+// ONE PASS AT A TIME (kanban #326 rehearsal 17, measured 2026-10-26 19:12Z on the test host: a pass waits up to 840 s for its peg-in claim,
+// the timer started one every 60 s, and 15 `pegin-claim` runs held the same client folder at once - each one failed on the other's lock,
+// 2,824 times since 10-24): a pass still running skips the tick
+let passing = false;
+setInterval(() => {
+  if (passing) return;
+  passing = true;
+  pass().catch((e) => say({ error: e.message })).finally(() => { passing = false; });
+}, Number(env.ARENA_ARBITER_EVERY_MS || 60000));
