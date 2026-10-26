@@ -7,7 +7,9 @@ const args = process.argv.slice(2);
 const at = args.indexOf('--home');
 const home = at >= 0 ? args[at + 1] : null;
 const name = (() => { const i = args.indexOf('--name'); return i >= 0 ? args[i + 1] : 'arenanode'; })();
-const rest = args.filter((_, i) => ![at, at + 1].includes(i) && !(args[i] === '--name' || args[i - 1] === '--name'));
+// only a --home that is there takes its two places (measured 2026-10-26, kanban #663: without one, `arenanode update` dropped "update"
+// as the place after --home's -1 and showed the status instead)
+const rest = args.filter((_, i) => !(at >= 0 && (i === at || i === at + 1)) && !(args[i] === '--name' || args[i - 1] === '--name'));
 // the home's arena.conf names this node's instance: instance.js reads it from --home before the service names are made
 const { main } = await import('../src/arenanode.js');
 const { defaultHome } = await import('../src/state.js');
