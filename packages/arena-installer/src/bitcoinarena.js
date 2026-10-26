@@ -166,7 +166,7 @@ export async function main(args, { home, name = 'bitcoinarena', io = { out: (l) 
       return r.ok ? 0 : 1;
     }
     case 'auto-update': {
-      // THE SERVICE: a check every few hours; it ends after an update, and its service starts it again from the new release
+      // THE SERVICE: a check every 30 minutes; it ends after an update, and its service starts it again from the new release
       const { runAutoUpdate } = await import('./auto-update.js');
       if (!deps.latest) { io.err('this command reads no release list (run it from a release)'); return 1; }
       await runAutoUpdate({ home, latest: deps.latest, trace: log });
