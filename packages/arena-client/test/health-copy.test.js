@@ -181,6 +181,8 @@ test('the APPS table\'s rounds: posted (N), delayed, failed - only the newest ve
   assert.deepEqual([rps.next.t, rps.next.c], ['delayed (10)', 'warn']);
   assert.match(rps.next.tip, /^version 2; in \(\) the confirmations of the round table/);
   assert.match(rps.next.tip, /its draw block 115 has 2 of 6 confirmations: posted in about 40 min/);
+  // tomorrow is the next UTC day, not the next 24 h (2026-10-26 ~15:20Z: "Why does it show today's rounds when I click tomorrow?")
+  assert.deepEqual(rps.next.items.map((x) => x.when), ['tomorrow 00:00–24:00']);
   // updown: posted but undrawable, and the hours no grid covers - failed, with the seat's reason
   assert.deepEqual([up.today.t, up.today.c], ['failed', 'bad']);
   assert.match(up.today.tip, /Federation 2, .*posted, but no seat can draw its committee: that census carries 0 game nodes/);

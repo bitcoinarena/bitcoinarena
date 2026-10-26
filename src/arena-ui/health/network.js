@@ -95,9 +95,9 @@ export function roundPosting({ games = [], pending = [], expected = [], rounds =
       if (!pending.length && !expected.length) return { t: '-', c: 'muted', tip: 'no seat answered GET /pending or GET /expected' };
       const inside = mine.filter((g) => Number(g.firstWindowMs) < b && Number(g.lastCloseMs) > a);
       const lines = [], states = [], items = [];   // items: the reasons as short rows for the panel (kanban #692: "Wall of text")
-      const span = (f, t) => { const day = (x) => new Date(x).toISOString().slice(5, 10); const same = day(f) === day(nowMs);
+      const span = (f, t) => { const day = (x) => new Date(x).toISOString().slice(5, 10); const same = day(f) === day(nowMs), next = day(f) === day(nowMs + 86400000);
         const midnight = t % 86400000 === 0 && t - f <= 86400000 && day(t - 1) === day(f);   // a stretch to the end of its day reads 24:00
-        return `${same ? 'today' : day(f)} ${hm(f)}–${midnight ? '24:00' : `${day(t) === day(f) ? '' : day(t) + ' '}${hm(t)}`}`; };
+        return `${same ? 'today' : next ? 'tomorrow' : day(f)} ${hm(f)}–${midnight ? '24:00' : `${day(t) === day(f) ? '' : day(t) + ' '}${hm(t)}`}`; };
       const plainWhy = (why) => /names census root/.test(why || '') ? 'can\'t be played: its census is from a chain branch that was left'
         : /census carries 0 game nodes/.test(why || '') ? 'can\'t be played: no node of this version was in its census' : `can't be played: ${why || 'no seat draws it'}`;
       // the stretches of the period no grid of the newest version covers
@@ -147,7 +147,9 @@ export function roundPosting({ games = [], pending = [], expected = [], rounds =
           return { ...x, fix: by ? `fixed: a new grid${by.fed ? ` (${by.fed})` : ''} covers ${by.when} - ${by.say}` : 'not fixed yet: no new grid covers these hours' }; }).reduce((m, x) => { const k = `${x.s}|${x.when}|${x.fed || ''}|${x.say}`; const w = m.get(k); if (w) w.n++; else m.set(k, { ...x, n: 1 }); return m; }, new Map()).values()]
           .sort((x, y) => Number(y.live) - Number(x.live)) };
     };
-    out.set(name, { today: cell(nowMs, endOfDay), next: cell(nowMs, nowMs + 86400000) });
+    // TOMORROW, NOT THE NEXT 24 H (2026-10-26 ~15:20Z, the owner on that column's panel: "Why does it show today's rounds when I click
+    // tomorrow?"): the next UTC day, 00:00 to 24:00 - the day its duty note names
+    out.set(name, { today: cell(nowMs, endOfDay), next: cell(endOfDay, endOfDay + 86400000) });
   }
   return out;
 }
@@ -379,7 +381,6 @@ export function makeHealth({ H, $, window = {} }) {
       paintLnd(nodes);
       paintMachines(nodes);
       const games = await gamesP;
-      paintGames(games);
       paintApps(games, nodes);
       paintFees(fees);
       paintReferral(await best(seats, '/referral-fees', (b) => [Number(b.totalMsat) || 0, (b.programs || []).length]));
@@ -659,24 +660,16 @@ export function makeHealth({ H, $, window = {} }) {
   // AND WHO IS ON DUTY FOR THEM, WHO POSTED THEM (kanban #702): beside each cell, the whole story in its tooltip
   let pendingRead = null, postings = null, duties = null;
   function paintApps(g, nodes) {
-    const AH = ['App', 'Type', 'Newest version', 'Rounds today', 'Next 24 h', 'Earned by nodes (sat)', 'This month (sat)'];
+    // GAMES AND MARKETS FOLDED IN HERE (2026-10-26 ~15:25Z, the owner: "Games and Markets is also deprecated if we have apps"): the one
+    // number it had that Apps did not, the seats hosting the newest version
+    const AH = ['App', 'Type', 'Newest version', 'Seats hosting', 'Rounds today', 'Tomorrow', 'Earned by nodes (sat)', 'This month (sat)'];
+    const hosting = (name, v) => Math.max(0, ...(g ? g.body.games : []).filter((x) => (x.name || x.title) === name && String(x.version) === String(v)).map((x) => (x.seats || []).length || 0));
     const wait = { t: 'reading …', c: 'muted' };
     const rows = H.appsView(g ? g.body.games : [], nodes).map((a) => { const p = postings && postings.get(a.name), d = duties && duties.get(a.name);
       const at = (k) => (p ? withDuty(p[k], d && d[k]) : postings ? withDuty('-', d && d[k]) : wait);
       return { key: a.name, dot: a.newest != null ? 'ok' : 'warn',
-        cells: [a.title, a.type, a.newest == null ? '-' : String(a.newest), at('today'), at('next'), sat(a.total), sat(a.month)] }; });
+        cells: [a.title, a.type, a.newest == null ? '-' : String(a.newest), a.newest == null ? '-' : hosting(a.name, a.newest), at('today'), at('next'), sat(a.total), sat(a.month)] }; });
     drawTable('apps', AH, rows, 'no app read', 'summed from every answering node\'s dashboard - each node counts only its own share');
-  }
-
-  function paintGames(g) {
-    const GH = ['Game or market', 'Type', 'Versions', 'Seats hosting (most of any version)'];
-    if (!g) return drawTable('games', GH, [], 'no seat answered /network-games');
-    const byName = new Map();
-    for (const x of g.body.games) { const k = x.name || x.title; const a = byName.get(k) || { title: x.title || k, type: x.type, versions: [], seats: 0 }; a.versions.push(x.version); a.seats = Math.max(a.seats, (x.seats || []).length || 0); byName.set(k, a); }
-    const rows = [...byName].map(([k, a]) => ({ key: k, dot: a.seats >= 3 ? 'ok' : a.seats ? 'warn' : 'bad',
-      cells: [a.title, a.type || '-', a.versions.filter((v) => v != null).sort((p, q) => Number(p) - Number(q)).join(', ') || '-', a.seats] }));
-    const answered = (g.body.seats || []).filter((s) => s.answered).length;
-    drawTable('games', GH, rows, 'no game read', `${answered} of ${(g.body.seats || []).length} seats answered the games read`);
   }
 
   function paintFees(f) {
