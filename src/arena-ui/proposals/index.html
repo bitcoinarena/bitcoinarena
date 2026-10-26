@@ -16,17 +16,8 @@
     font: 400 16px/1.55 Inter, system-ui, -apple-system, sans-serif; }
   a { color: inherit; }
   .wrap { max-width: 980px; margin: 0 auto; padding: 0 16px; }
-  nav { position: sticky; top: 0; z-index: 5; background: rgba(7,9,13,.82); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
-  nav .wrap { display: flex; align-items: center; gap: 18px; height: 58px; }
-  .brand { display: flex; align-items: center; gap: 10px; font: 700 18px system-ui; text-decoration: none; white-space: nowrap; flex: none; }
-  .brand i { width: 28px; height: 28px; border-radius: 8px; background: conic-gradient(from 210deg, var(--btc), var(--gold), var(--btc)); display: grid; place-items: center;
-    font-style: normal; color: #1a0f00; font-weight: 800; }
-  nav .links { margin-left: auto; display: flex; gap: 18px; font-size: 15px; color: var(--dim); }
-  nav .links a { text-decoration: none; } nav .links a:hover, nav .links a.on { color: var(--text); }
-  /* ONE LINE ON A PHONE (2026-10-17: "On mobile the title is wrapping"): the brand never wraps; on a narrow
-     screen the menu tightens, and below 410 px the brand keeps its mark only - the four links stay */
-  @media (max-width: 560px) { nav .wrap { gap: 12px; } nav .links { gap: 13px; font-size: 14px; } .brand { font-size: 16px; } .brand i { width: 26px; height: 26px; } }
-  @media (max-width: 410px) { .brand .t { display: none; } }
+  /* THE ARENA'S HEADER AND FOOTER (kanban #694, #695 "the home btn is redundant in functionality to the logo. remove it", #699, #701): drawn by
+     /site-chrome.js - the logo, "← Arena" and the menu, the build line and Donate; the page's own bar with Home, Play and Docs is gone */
   h1 { font: 700 clamp(28px, 5vw, 40px)/1.15 system-ui; margin: 30px 0 6px; letter-spacing: -0.02em; }
   .lead { color: var(--soft); margin: 0 0 18px; max-width: 70ch; }
   .btn { display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel2);
@@ -88,16 +79,13 @@
   .avail-name { font-weight: 600; margin-bottom: 6px; }
   .avail-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; color: var(--soft); font-size: 13px; }
   .avail-row b { color: var(--text, inherit); font-size: 18px; } .avail-row b.max { color: var(--btc); font-size: 22px; }
-  footer { margin: 40px 0 30px; color: var(--dim); font-size: 14px; }
+  .about { margin: 40px 0 30px; color: var(--dim); font-size: 14px; }
   @media (max-width: 680px) { .topics .th { display: none; } .topic { grid-template-columns: minmax(0, 1fr) auto; } .topic .n { display: none; } .topic .amt { text-align: left; }
     .stage { grid-column: 1 / -1; justify-self: start; } .compose .row { grid-template-columns: 1fr; } .reply { margin-left: calc(var(--depth, 0) * 12px); } .post { grid-template-columns: 1fr; } .ava { display: none; } }
 </style>
 </head>
 <body>
-<nav><div class="wrap">
-  <a class="brand" href="https://bitcoin-arena.io/" aria-label="Bitcoin Arena"><i>₿</i><span class="t">Bitcoin Arena</span></a>
-  <div class="links"><a href="https://bitcoin-arena.io/">Home</a><a href="/">Play</a><a href="/proposals/" class="on">Proposals</a><a href="https://docs.bitcoin-arena.io/">Docs</a></div>
-</div></nav>
+<script src="/site-chrome.js"></script>
 
 <main class="wrap" id="forum">
   <!-- THE RESERVES' BALANCE, FIRST THING ON THE PAGE (2026-10-17: "Proposals page shows the current balance on top"): what the
@@ -127,7 +115,7 @@
   </div>
   <div id="view"><div class="empty">Reading the nodes…</div></div>
 </main>
-<footer><div class="wrap">Bitcoin Arena · testnet4 · proposals and replies are signed by their writers and kept by the network's nodes · <a href="https://bitcoin-arena.io/">Home</a> · <a href="https://docs.bitcoin-arena.io/#proposals">How proposals work</a></div></footer>
+<div class="about"><div class="wrap">Bitcoin Arena · testnet4 · proposals and replies are signed by their writers and kept by the network's nodes · <a href="https://docs.bitcoin-arena.io/#proposals">How proposals work</a></div></div>
 <script src="/proposals/forum.js" defer></script>
 </body>
 </html>

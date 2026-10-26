@@ -14,12 +14,8 @@
   body { margin: 0; background: radial-gradient(80% 50% at 50% 0%, rgba(247,147,26,.12), transparent 60%), var(--bg); color: var(--text); font: 400 16px/1.6 Inter, system-ui, -apple-system, sans-serif; }
   a { color: var(--btc); }
   .wrap { max-width: 860px; margin: 0 auto; padding: 0 16px; }
-  nav { border-bottom: 1px solid var(--line); }
-  nav .wrap { display: flex; align-items: center; gap: 16px; height: 58px; }
-  .brand { display: flex; align-items: center; gap: 10px; font: 700 18px system-ui; text-decoration: none; color: var(--text); white-space: nowrap; }
-  .brand i { width: 28px; height: 28px; border-radius: 8px; background: conic-gradient(from 210deg, var(--btc), var(--gold), var(--btc)); display: grid; place-items: center; font-style: normal; color: #1a0f00; font-weight: 800; }
-  nav .links { margin-left: auto; display: flex; gap: 16px; font-size: 15px; } nav .links a { color: var(--dim); text-decoration: none; } nav .links a:hover { color: var(--text); }
-  @media (max-width: 520px) { nav .links { gap: 12px; font-size: 14px; } .brand .t { display: none; } }
+  /* THE ARENA'S HEADER AND FOOTER (kanban #694, #697 "referral pages is missing a option to return to the games", #699): /site-chrome.js -
+     the logo, "← Arena" back to the games and the menu, the build line and Donate */
   h1 { font: 700 clamp(30px, 5vw, 42px)/1.15 system-ui; margin: 34px 0 8px; letter-spacing: -0.02em; }
   .lead { color: var(--soft); font-size: 18px; margin: 0 0 24px; }
   h2 { font: 700 20px system-ui; margin: 34px 0 10px; }
@@ -32,12 +28,11 @@
   code { font: 13px "JetBrains Mono", ui-monospace, monospace; background: #0b1017; border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; overflow-wrap: anywhere; }
   pre { background: #0b1017; border: 1px solid var(--line); border-radius: 10px; padding: 12px; overflow-x: auto; font: 13px/1.5 "JetBrains Mono", ui-monospace, monospace; }
   .muted { color: var(--dim); }
-  footer { margin: 50px 0 30px; color: var(--dim); font-size: 14px; }
+  main { padding-bottom: 30px; }
 </style>
 </head>
 <body>
-<nav><div class="wrap"><a class="brand" href="/"><i>&#8383;</i><span class="t">Bitcoin Arena</span></a>
-  <span class="links"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoin-arena.io/">Explorer</a><a href="/health/">Health</a></span></div></nav>
+<script src="/site-chrome.js"></script>
 <main class="wrap">
   <h1>Referral Program</h1>
   <p class="lead">Bring players to Bitcoin Arena, from your site or just with a link you share. Every game they play pays you 10% of the nodes' fee. Your players pay nothing extra.</p>
@@ -84,6 +79,5 @@
   <p>A program's name is signed with the program's own key, so nobody else can rename it. The 10% share is a network fee like the others: a passed fee proposal can change it for rounds after it takes effect.</p>
   <p class="muted">This runs on testnet4. Test coins have no value.</p>
 </main>
-<footer class="wrap"><a href="/">Back to Bitcoin Arena</a></footer>
 </body>
 </html>
