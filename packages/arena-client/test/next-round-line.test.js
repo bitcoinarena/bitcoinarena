@@ -39,6 +39,15 @@ test('not mined yet; a posted grid and another game\'s are not named; the soones
   assert.equal(two.grid.firstWindowMs, String(at('2026-10-26T11:30:00Z')));
 });
 
+test('a live grid before one in no block and not in the mempool, the soonest to open first (2026-10-26: the line named a conflicted grid)', () => {
+  const dead = grid({ firstWindowMs: String(at('2026-10-26T11:30:00Z')), publication: { txid: 'de', height: null, confirmations: 0, inMempool: false } });
+  const pool = grid({ firstWindowMs: String(at('2026-10-26T13:15:00Z')), committeeTimeMs: String(at('2026-10-26T12:28:00Z')), publication: { txid: 'ee', height: null, confirmations: 0, inMempool: true } });
+  const r = nextRoundLine({ grids: [dead, pool], game: 'btc-updown-15m', nowMs: NOW });
+  assert.equal(r.grid.publication.txid, 'ee');
+  assert.match(r.text, /waiting to be mined\.$/);
+  assert.equal(nextRoundLine({ grids: [dead], game: 'btc-updown-15m', nowMs: NOW }).grid.publication.txid, 'de', 'named when nothing else is on its way');
+});
+
 test('an app is offered a free round, or a paid one a seat has drawn - not one no seat could draw', () => {
   assert.equal(lobbyRowOffered({ free: true, said: [{ committee: { drawn: false } }] }), true);
   assert.equal(lobbyRowOffered({ said: [{ committee: { drawn: false, why: 'this node has no chain view for that round' } }, { committee: { drawn: true } }] }), true);
