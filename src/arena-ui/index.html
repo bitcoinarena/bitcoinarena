@@ -5107,7 +5107,9 @@
         const when = r.atMs ? new Date(r.atMs).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'earlier';
         const what = WHAT(r, sat);
         return { key: `${r.fed}:${r.atMs || 'x'}:${r.kind}:${i}`, plus, when, what: what + (feds.length > 1 ? ' · ' + String(r.fed).slice(0, 8) : ''), amt: (plus ? '+' : '−') + sat(r.msat),
-          onOpen: r.kind === 'stake' && r.entry ? openReplay(r) : null, tx: r.entry || (r.round && r.kind !== 'stake' ? txOfRound.get(r.round) || null : null),
+          // a gift or zap outside a round names its federation transaction, which the explorer finds it by (kanban #682, #683)
+          onOpen: r.kind === 'stake' && r.entry ? openReplay(r) : null, tx: r.entry || (r.round && r.kind !== 'stake' ? txOfRound.get(r.round) || null : null)
+            || (r.kind === 'donation' && !r.round && /^[0-9a-f]{64}$/.test(String(r.txid || '')) ? r.txid : null),
           txAnchor: r.kind !== 'stake' && !r.entry && r.round && txOfRound.has(r.round) ? '#settlement' : '',
           slow: r.kind === 'stake' && r.entry && slow.has(r.entry) ? { ms: slow.get(r.entry).ms, copy: () => window.ARENA_COPY_SLOW_TX_LOG(r.entry) } : null };
       });

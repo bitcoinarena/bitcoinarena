@@ -12,7 +12,12 @@ const keep = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } cat
 const sat = (msat) => (msat === null || msat === undefined ? '–' : (Number(msat) / 1000).toLocaleString('en-US') + ' sat');
 const utc = (ms) => new Date(ms).toISOString().replace('T', ' ').slice(0, 23);
 const ago = (ms) => { const s = Math.round((Date.now() - ms) / 1000); return s < 90 ? s + ' s ago' : s < 5400 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago'; };
-export const appName = (a) => ({ 'btc-updown-15m': 'Bitcoin Up or Down', '-': 'unknown' })[a] || a || 'unknown';
+export const appName = (a) => ({ 'btc-updown-15m': 'Bitcoin Up or Down', nextblock: 'Tick Tock, Next Block', 'rock-paper-scissors': 'Rock Paper Scissors', '-': 'unknown' })[a] || a || 'unknown';
+// EVERY KIND OF PAYMENT (kanban #683, 2026-10-26: "I don't see item purchases in the explorer"; #682: a gift "doesn't show in the explorer")
+export const KINDS = { order: 'Order', item: 'Item bought', donation: 'Donation', zap: 'Zap' };
+const kindOf = (t) => t.kind || 'order';
+/** A row's app as said: an order's or item's game; a donation to the protocol developers alone has none. */
+export const rowApp = (t) => (t.app ? appName(t.app) : kindOf(t) === 'donation' ? 'Protocol' : kindOf(t) === 'zap' ? '–' : appName('-'));
 const given = typeof window !== 'undefined' ? window.EXPLORER_DATA || {} : {};
 
 // THE RESULT (2026-10-24: "Also show the result of the transaction, if won or lost and how much it has won")
@@ -41,44 +46,106 @@ export function resultText(r) {
 const resultCls = (r) => (r && r.state === 'won' ? 'ok' : r && r.state === 'lost' ? 'bad' : 'dim');
 
 // ---- the list --------------------------------------------------------------------------------------------------------------------------
-const FILTER_KEYS = ['app', 'fed', 'since', 'q'];
+// A PAGE AT A TIME, FILTERED IN THE STORE (kanban #683, 2026-10-26: "I don't see other apps in the explorer. Add paging to the explorer to
+// display more than a 1000"): the Worker answers the page the filters and the cursor ask for - newest first, Older and Newer from a row -
+// and every app, kind and federation it holds with its count, so an app below the newest rows is one choice away
+const FILTER_KEYS = ['app', 'kind', 'fed', 'since', 'q'];
+const PAGE_KEYS = ['before', 'after'];
 const PERIODS = [['', 'Any time'], ['900', 'Last 15 min'], ['3600', 'Last hour'], ['86400', 'Last 24 h'], ['604800', 'Last 7 days']];
-const filterOf = () => { const u = new URLSearchParams(location.search); return Object.fromEntries(FILTER_KEYS.map((k) => [k, u.get(k) || ''])); };
-const appOf = (t) => t.app || '-';   // '-': a row read before the seats named apps
+const paramsOf = (search) => { const u = new URLSearchParams(search); return Object.fromEntries([...FILTER_KEYS, ...PAGE_KEYS].map((k) => [k, u.get(k) || ''])); };
+const queryOf = (p) => { const u = new URLSearchParams(); for (const k of [...FILTER_KEYS, ...PAGE_KEYS]) if (p[k]) u.set(k, p[k]); return u.toString(); };
+/** What the Worker built in or answered, as a page: { txs, older, newer, total, facets } (an array: the Worker before pages). */
+export const pageOf = (r) => (Array.isArray(r) ? { txs: r, older: null, newer: null, total: r.length, facets: null } : r && Array.isArray(r.txs) ? r : null);
+const count = (n) => Number(n).toLocaleString('en-US');
 
-function List() {
-  const [txs, setTxs] = useState(Array.isArray(given.recent) ? given.recent : kept('explorer.recent') || []);
-  const [f, setF] = useState(filterOf());
+export function List({ data = null }) {
+  const [page, setPage] = useState(pageOf(data) || pageOf(given.recent) || pageOf(kept('explorer.recent')) || { txs: [], older: null, newer: null, total: null, facets: null });
+  const [p, setP] = useState(typeof location !== 'undefined' ? paramsOf(location.search) : paramsOf(''));
+  const [q, setQ] = useState(p.q);
+  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const load = (next, how) => {
+    const qs = queryOf(next);
+    if (how === 'push') history.pushState(null, '', '/' + (qs ? '?' + qs : '')); else if (how === 'replace') history.replaceState(null, '', '/' + (qs ? '?' + qs : ''));
+    setP(next); setBusy(true);
+    return fetch('/api/recent' + (qs ? '?' + qs : '')).then((r) => r.json()).then((r) => {
+      setPage(pageOf(r)); setErr(null); if (!qs) keep('explorer.recent', r);
+      // Newer up to the newest: that is the first page, its address without a cursor
+      if (next.after && !r.newer) { const top = { ...next, after: '' }; setP(top); const t = queryOf(top); history.replaceState(null, '', '/' + (t ? '?' + t : '')); } },
+      (e) => setErr(e.message)).finally(() => setBusy(false));
+  };
   useEffect(() => {
-    if (Array.isArray(given.recent)) { keep('explorer.recent', given.recent); return; }
-    fetch('/api/recent').then((r) => r.json()).then((r) => { setTxs(r.txs); keep('explorer.recent', r.txs); }, (e) => setErr(e.message));
+    if (!data && !pageOf(given.recent)) load(p, null); else if (!data && !queryOf(p)) keep('explorer.recent', given.recent);
+    const back = () => { const n = paramsOf(location.search); setQ(n.q); load(n, null); };
+    addEventListener('popstate', back);
+    return () => removeEventListener('popstate', back);
   }, []);
-  const set = (k, v) => { const g = { ...f, [k]: v }; const u = new URLSearchParams(); for (const x of FILTER_KEYS) if (g[x]) u.set(x, g[x]);
-    history.replaceState(null, '', '/' + (u.toString() ? '?' + u : '')); setF(g); };
-  const now = Date.now();
-  const apps = useMemo(() => [...new Set(txs.map(appOf))].sort(), [txs]);
-  const feds = useMemo(() => [...new Set(txs.map((t) => t.federation).filter(Boolean))].sort(), [txs]);
-  const shown = txs.filter((t) => (!f.app || appOf(t) === f.app) && (!f.fed || t.federation === f.fed) && (!f.since || now - t.storedMs <= Number(f.since) * 1000)
-    && (!f.q || t.id.includes(f.q.toLowerCase()) || String(t.round).includes(f.q.toLowerCase())));
+  // a filter starts again at the newest; the id box once typing stops
+  const set = (k, v) => load({ ...p, [k]: v, before: '', after: '' }, 'replace');
+  useEffect(() => { if (q === p.q) return undefined; const t = setTimeout(() => set('q', q), 350); return () => clearTimeout(t); }, [q]);
+  const txs = page.txs;
+  const f = page.facets;
+  const apps = f ? f.apps.map((x) => [x.app, x.n]) : [...new Set(txs.map((t) => t.app || '-'))].sort().map((a) => [a, null]);
+  const kinds = f ? f.kinds.map((x) => [x.kind, x.n]) : [];
+  const feds = f ? f.feds.map((x) => [x.federation, x.n]) : [...new Set(txs.map((t) => t.federation).filter(Boolean))].sort().map((x) => [x, null]);
+  const n = (c) => (c === null ? '' : ' (' + count(c) + ')');
   if (err && !txs.length) return <p className="bad">Could not load: {err}</p>;
+  const pager = (<div className="pager">
+    <button type="button" disabled={!page.newer || busy} onClick={() => load({ ...p, before: '', after: '' }, 'push')}>Newest</button>
+    <button type="button" disabled={!page.newer || busy} onClick={() => load({ ...p, before: '', after: page.newer }, 'push')}>Newer</button>
+    <button type="button" disabled={!page.older || busy} onClick={() => load({ ...p, before: page.older, after: '' }, 'push')}>Older</button></div>);
   return (<>
-    <h1>Latest transactions</h1><p className="dim">Orders stored by the nodes. Updated every minute.</p>
+    <h1>Latest transactions</h1><p className="dim">Orders, items bought, donations and zaps stored by the nodes. Updated every minute.</p>
     <div className="filters">
-      <select value={f.app} onChange={(e) => set('app', e.target.value)}><option value="">All apps</option>
-        {apps.map((a) => <option key={a} value={a}>{appName(a)} ({txs.filter((t) => appOf(t) === a).length})</option>)}</select>
-      <select value={f.fed} onChange={(e) => set('fed', e.target.value)}><option value="">All federations</option>
-        {feds.map((x) => <option key={x} value={x}>Federation {x.slice(0, 8)}</option>)}</select>
-      <select value={f.since} onChange={(e) => set('since', e.target.value)}>{PERIODS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
-      <input placeholder="part of an id or round" value={f.q} onChange={(e) => set('q', e.target.value.trim())} autoComplete="off" />
-      <span className="dim">{shown.length.toLocaleString('en-US')} of {txs.length.toLocaleString('en-US')}</span>
+      <select value={p.app} onChange={(e) => set('app', e.target.value)}><option value="">All apps</option>
+        {apps.map(([a, c]) => <option key={a} value={a}>{a === '-' ? 'No app' : appName(a)}{n(c)}</option>)}</select>
+      <select value={p.kind} onChange={(e) => set('kind', e.target.value)}><option value="">All kinds</option>
+        {(kinds.length ? kinds : Object.keys(KINDS).map((k) => [k, null])).map(([k, c]) => <option key={k} value={k}>{KINDS[k] || k}{n(c)}</option>)}</select>
+      <select value={p.fed} onChange={(e) => set('fed', e.target.value)}><option value="">All federations</option>
+        {feds.map(([x, c]) => <option key={x} value={x}>Federation {x.slice(0, 8)}{n(c)}</option>)}</select>
+      <select value={p.since} onChange={(e) => set('since', e.target.value)}>{PERIODS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+      <input placeholder="part of an id or round" value={q} onChange={(e) => setQ(e.target.value.trim().toLowerCase())} autoComplete="off" />
+      <span className="dim">{busy ? 'Loading…' : count(txs.length) + (page.total !== null && page.total !== undefined ? ' of ' + count(page.total) : '')}</span>
     </div>
-    <div className="card"><table className="rows"><thead><tr><th>Transaction</th><th>App</th><th className="n">Amount</th><th>Result</th><th>Federation</th><th>Round</th><th>Stored</th></tr></thead><tbody>
-      {shown.slice(0, 300).map((t) => (<tr key={t.id}><td className="mono"><a href={'/tx/' + t.id}>{t.id.slice(0, 16)}…</a></td><td>{appName(appOf(t))}</td><td className="n nw">{t.stakeMsat !== null && t.stakeMsat !== undefined ? (Number(t.stakeMsat) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 }) + ' sat' : '–'}</td>
-        <td className={'nw ' + resultCls(t.result)}>{t.result ? (t.result.state === 'won' || t.result.state === 'lost' ? signed(t.result.netMsat) : resultText(t.result)) : '–'}</td>
+    <div className="card"><table className="rows"><thead><tr><th>Transaction</th><th>App</th><th>Kind</th><th className="n">Amount</th><th>Result</th><th>Federation</th><th>Round</th><th>Stored</th></tr></thead><tbody>
+      {txs.map((t) => (<tr key={t.id}><td className="mono"><a href={'/tx/' + t.id}>{t.id.slice(0, 16)}…</a></td><td>{rowApp(t)}</td>
+        <td className="nw">{KINDS[kindOf(t)] || kindOf(t)}{kindOf(t) === 'item' && t.item ? <span className="dim"> · {t.item.slice(t.item.lastIndexOf(' · ') + 3)}</span> : null}</td>
+        <td className="n nw">{t.stakeMsat !== null && t.stakeMsat !== undefined ? (Number(t.stakeMsat) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 }) + ' sat' : '–'}</td>
+        <td className={'nw ' + resultCls(t.result)}>{t.result ? (t.result.state === 'won' || t.result.state === 'lost' ? signed(t.result.netMsat) : resultText(t.result)) : kindOf(t) === 'order' ? '–' : 'Paid'}</td>
         <td className="mono">{t.federation ? t.federation.slice(0, 8) : '–'}</td><td className="mono">{String(t.round || '').slice(0, 12)}</td>
         <td>{utc(t.storedMs).slice(0, 19)} UTC <span className="dim">{ago(t.storedMs)}</span></td></tr>))}
-      {!shown.length ? <tr><td colSpan={7} className="dim">No matches.</td></tr> : null}</tbody></table></div>
+      {!txs.length ? <tr><td colSpan={8} className="dim">No matches.</td></tr> : null}</tbody></table></div>
+    {page.older || page.newer ? pager : null}
+  </>);
+}
+
+// ---- a gift, a zap, an item bought ---------------------------------------------------------------------------------------------------------
+// (kanban #683, #682): what it paid for, from whom, its federation transaction and each output, and which nodes keep it
+export function Payment({ tx }) {
+  const x = tx.payment || {}, k = tx.kind;
+  const known = (tx.seats || []).filter((s) => s.known).length;
+  const title = k === 'item' ? 'Item bought' : k === 'zap' ? 'Zap' : 'Donation';
+  const to = k === 'zap' ? 'the player' : x.target === 3 ? `protocol and ${appName(x.gameName)} developers, half each` : x.gameName ? `${appName(x.gameName)} developers` : 'protocol developers';
+  return (<>
+    <h1>{title}</h1><p className="mono">{tx.id}</p>
+    <div className="card"><dl>
+      <dt>App</dt><dd>{rowApp({ ...tx.entry, kind: k })}</dd>
+      {k === 'item' ? <><dt>Item</dt><dd>{x.itemId} <span className="dim">· price {count(x.priceSat)} sat</span></dd></> : <><dt>To</dt><dd>{to}{k === 'zap' && x.gameDev ? <span className="mono dim"> · {x.gameDev}</span> : null}</dd></>}
+      {x.origin ? <><dt>Given on</dt><dd>{x.origin === 'site' ? 'the site' : x.origin.startsWith('app:') ? appName(x.origin.slice(4)) : x.origin}</dd></> : null}
+      <dt>Amount</dt><dd>{sat(tx.amountMsat)}</dd>
+      <dt>{k === 'item' ? 'Buyer' : 'From'}</dt><dd className="mono">{(k === 'item' ? x.player : x.donor) || '–'}</dd>
+      <dt>Federation</dt><dd className="mono">{x.federation || '–'}</dd>
+      <dt>Federation transaction</dt><dd className="mono">{x.txid || '–'}</dd>
+      <dt>Made</dt><dd>{Number.isFinite(Number(x.atMs)) ? utc(Number(x.atMs)) + ' UTC' : '–'}</dd>
+      <dt>Stored</dt><dd>{tx.storedFirst ? utc(Date.parse(tx.storedFirst)) + ' UTC' : '–'}</dd>
+      <dt>Nodes</dt><dd>{known} of {(tx.seats || []).length}</dd></dl></div>
+    <h2>Outputs</h2>
+    <div className="card"><table className="rows"><thead><tr><th>#</th><th>Paid to</th><th className="n">Amount</th></tr></thead><tbody>
+      {(x.outputs || []).map((o) => <tr key={o.outIdx}><td>{o.outIdx}</td><td className="mono">{o.pk}{o.reserve ? <span className="dim"> · protocol reserve</span> : null}</td>
+        <td className="n nw">{sat(o.msat)}</td></tr>)}</tbody></table></div>
+    <details className="grp"><summary><b>Nodes</b> <span className="dim">{known} of {(tx.seats || []).length}</span></summary>
+      <table className="rows"><thead><tr><th>Node</th><th>Has it</th><th>Stored</th></tr></thead><tbody>{(tx.seats || []).map((s) => (<tr key={s.seat}><td>{s.seat}</td>
+        <td className={s.known ? 'ok' : 'dim'}>{s.known ? 'yes' : s.status ? 'no' : 'offline'}</td><td>{s.storedAt ? utc(Date.parse(s.storedAt)).slice(0, 19) + ' UTC' : '–'}</td></tr>))}</tbody></table></details>
   </>);
 }
 
@@ -191,6 +258,7 @@ function Tx({ id }) {
   // #settlement, #lock, ... (a link from the UI's history): that group opened and in view
   useEffect(() => { const h = location.hash.slice(1); const el = h && document.getElementById(h); if (el) { el.open = true; el.scrollIntoView(); } }, [tx && tx.id]);
   if (!tx) return missing ? <><h1>Not found</h1><p className="dim">Transaction {id} is unknown.</p></> : err ? <p className="bad">Could not load: {err}</p> : <p className="dim">Loading…</p>;
+  if (tx.kind && tx.kind !== 'order') return <Payment tx={tx} />;
   const e = tx.entry || {};
   const ev = timelineOf(tx);
   const nodeEv = ev.filter((x) => x.group !== 'page' && !x.away);
