@@ -16,7 +16,7 @@ const seats = Array.from({ length: 9 }, (_, i) => key(`seat${i}`));
 const peer = (i) => Uint8Array.from([2, ...taggedHash('TEST/peer', Uint8Array.of(i))]);
 const fid = toHex(taggedHash('TEST/fed', Uint8Array.of(1)));
 const record = { federationId: taggedHash('TEST/fed', Uint8Array.of(1)), guardians: [0, 1, 2, 3].map((i) => ({ peerKey: peer(i), endpoint: `wss://g${i}` })) };
-const records = { list: () => [{ federation: fid }], recordOf: (f) => (f === fid ? { record, status: 'CRITICAL', height: 1 } : null),
+const records = { list: () => [{ federation: fid }], recordOf: (f) => (f === fid ? { record, status: 'CRITICAL', height: 1, bytes: Uint8Array.of(0xcd, 0xef) } : null),
   haltOf: () => null, haltedFederations: () => [] };
 const clocks = { abandonBlocks: 10, claimBlocks: 10, drainBlocks: 100 };
 
@@ -48,6 +48,7 @@ test('each seat signs once the last session has not moved for abandon_blocks; fi
   const l = liq.list();
   assert.equal(l.length, 1);
   assert.deepEqual([l[0].haltHeight, l[0].haltRecord, l[0].haltProof.session, l[0].haltProof.abandoned.length, l[0].liquidatesAt], [341, null, 41, 2, 351]);
+  assert.equal(l[0].record, 'cdef', 'no HALTED record behind a proven halt: the record held is listed, for the remainder\'s payees');
 });
 
 test('a stranger, a forged observation and a later session do not make or keep a halt', async () => {

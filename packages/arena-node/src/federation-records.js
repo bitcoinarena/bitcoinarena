@@ -547,7 +547,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     censusKeys: () => { const b = basis(); return b.ok ? (b.census.entries || []).map((e) => e.pubkey).filter(Boolean) : []; },
     /** THE CENSUS THIS SEAT READS, its entries and height (GET /roles), or why none. */
     censusNow: () => { const b = basis(); return b.ok ? { ok: true, height: b.height, entries: b.census.entries || [] } : { ok: false, why: b.why }; },
-    recordOf: (fidHex) => { const k = kept.get(String(fidHex).toLowerCase()); return k ? { record: k.record, status: k.status, height: k.height } : null; },
+    recordOf: (fidHex) => { const k = kept.get(String(fidHex).toLowerCase()); return k ? { record: k.record, status: k.status, height: k.height, bytes: k.bytes } : null; },
     /**
      * HOW MANY OF A FEDERATION'S GUARDIAN SEATS HOLD ITS RECORD CLOSED (kanban #577, measured 2026-10-22 on 89ce310e: the first guardian to
      * hold the CLOSED record set its guardian aside at once, and the others, one guardian short, could never close it): each guardian's
