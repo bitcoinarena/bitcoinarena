@@ -251,6 +251,7 @@ import { Forfeit } from './forfeit.js';
 import { LockSettlement, locksStake, SUBMITTING } from './settlement.js';
 import { decodeCommitments, encodeCommitments, encodeShare } from './pool-wire.js';
 import { setTagNetwork } from '../../arena-protocol/src/tag-switch.js';
+import { keptRead } from './kept-read.js';
 
 // who sits at each head-to-head round's table, per seat (POST /here): round hex -> identity key hex -> last said (ms)
 const presenceByRound = new WeakMap();
@@ -4444,7 +4445,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       publication: { txid: toHex(Uint8Array.from(tx.txid).reverse()), height: null }, announcedAtMs: Date.now() };
     announced.set(id, e);
     try { round.db.prepare('INSERT INTO expected_grids (series, body, last_close_ms) VALUES (?, ?, ?) ON CONFLICT(series) DO UPDATE SET body = excluded.body, last_close_ms = excluded.last_close_ms').run(id, JSON.stringify(e), lastClose); } catch { /* kept in memory */ }
-    pendingKept = null;
+    pendingKept.forget();
     return { ok: true, series: id, publication: e.publication.txid, firstCloseMs: String(e.firstCloseMs), slots: count };
   }
   // every grid on its way: the announced ones, and the ones the operator's own publisher names in a file (ARENA_EXPECTED_FILE)
@@ -4457,7 +4458,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return out;
   }
-  let pendingKept = null;
+  // GET /pending KEPT (kanban #686): answered from the last reading - of this tip, under 60 s old - or, older, at once while it is read again
+  // behind it (a node reading its chain through the bridge took 6.7 s warm, past 20 s cold); only the first read after start waits
+  const pendingKept = keptRead({ freshMs: 60000 });
   const TX_BACK = 12;   // a bond or update counts until the seats' census step has taken it: at most 12 blocks deep
   const rawKept = new Map();   // txid -> parsed transaction, mempool reads only (a confirmed one comes with its block)
   const txidOf = (tx) => toHex(Uint8Array.from(tx.txid).reverse());
@@ -4519,9 +4522,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (typeof chainTip !== 'function') return { ok: false, why: 'this node reads no chain' };
     const tip = Number(await chainTip());
     let chain = null; try { chain = typeof chainTips === 'function' ? await chainTips() : null; } catch { chain = null; }
-    if (pendingKept && pendingKept.tip === tip && (!chain || pendingKept.hash === chain.hash) && Date.now() - pendingKept.at < 60000) return pendingKept.r;
+    return pendingKept.get(`${tip}:${chain ? chain.hash : ''}`, () => pendingRead(tip, chain));
+  }
+  // and read once 30 s after start, so not even the first asker waits for the cold read
+  if (typeof chainTip === 'function') { const pw = setTimeout(() => { pendingNow().catch(() => {}); }, 30000); if (pw.unref) pw.unref(); }
+  let pendingHash = null;
+  async function pendingRead(tip, chain) {
     // ANOTHER BRANCH TAKEN (a reorganisation): the blocks read near the top may be the old branch's - read them again
-    if (chain && pendingKept && pendingKept.hash && pendingKept.hash !== chain.hash) for (const m of [blockIds, blockMtp]) for (const k of [...m.keys()]) if (k > tip - 13) m.delete(k);
+    if (chain && pendingHash && pendingHash !== chain.hash) for (const m of [blockIds, blockMtp]) for (const k of [...m.keys()]) if (k > tip - 13) m.delete(k);
+    pendingHash = chain ? chain.hash : null;
     const now = Date.now(), grids = [], pegIns = [];
     // the grids its publishers named (ARENA_EXPECTED_FILE) - each checked here on this node's own chain
     for (const e of expectedEntries()) {
@@ -4581,7 +4590,6 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // not taken (its blocks not here, or invalid to it) - what this node reads below is its own branch's
       chain: chain ? { hash: chain.hash, height: chain.height, rivals: chain.rivals.filter((x) => x.work !== 'less' || x.height >= chain.height) } : null,
       grids, pegIns, adverts };
-    pendingKept = { tip, hash: chain ? chain.hash : null, at: Date.now(), r };
     return r;
   }
   // THE SIGNED SEATINGS, GATHERED BY EVERY SEAT (gateway-seating.js): a 2026.0.15 round's settlement pays the gateway seats only from a
