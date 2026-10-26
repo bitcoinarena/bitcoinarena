@@ -95,9 +95,14 @@ try {
     if (!next) throw new Error('no nextblock round open for entries and starting more than 75 s ahead');
     env.ROUND = next.id;
   }
-  // PREFLIGHT: every seat holds the round, the same bytes
+  // PREFLIGHT: every seat holds the round - a copy that decodes to the round's id, as a page takes it (measured 2026-10-26 00:0xZ: seat 2
+  // held the 10-26 Next Block series rounds with their committee named in `nodes`, the six others without; a series round's id is
+  // H(series id || index) either way, and the byte-for-byte check refused every round)
   const copies = await Promise.all(nodes.map(async (n) => { const x = await fetch(`${n}/round?id=${env.ROUND}`); return x.ok ? toHex(new Uint8Array(await x.arrayBuffer())) : `HTTP ${x.status}`; }));
-  if (new Set(copies).size !== 1 || copies[0].startsWith('HTTP')) throw new Error(`preflight: the seats do not all hold round ${env.ROUND.slice(0, 16)}: ${copies.map((h) => h.slice(0, 12)).join(' ')}`);
+  const idOfCopy = (h) => { if (h.startsWith('HTTP')) return h; try { return toHex(roundId(decodeRoundContract(new Uint8Array(Buffer.from(h, 'hex'))))); } catch (e) { return `undecodable: ${e.message}`; } };
+  const ids = copies.map(idOfCopy);
+  if (!ids.every((x) => x === env.ROUND)) throw new Error(`preflight: the seats do not all hold round ${env.ROUND.slice(0, 16)}: ${ids.map((h) => h.slice(0, 12)).join(' ')}`);
+  if (new Set(copies).size !== 1) log({ step: 'copies differ in bytes, not in id', distinct: new Set(copies).size });
   log({ step: "preflight", round: env.ROUND.slice(0, 16), seats: copies.length });
   // SEATED BEFORE ANYTHING IS PAID (§5A.7): a seat running ARENA_SEATING takes no entry without the round's
   // seating certificate, which exists from seating_close (start - 120 s) - so wait for it, and check it as the page does
