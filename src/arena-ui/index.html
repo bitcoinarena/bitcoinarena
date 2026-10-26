@@ -6622,7 +6622,11 @@
           else {
             const x = window.ARENA_EXPECTED ? await window.ARENA_EXPECTED() : null;
             const e = x && (x.expected || []).filter((v) => v.game === game.name).sort((a, b) => Number(a.firstWindowMs) - Number(b.firstWindowMs))[0];
-            if (e) {
+            // IN HOURS, MINUTES AND CONFIRMATIONS (kanban #690, 2026-10-26: "It should communicate clearly when the next round starts, clear
+            // timing - X hours, Y minutes and N confirmations"): from the seat's own view of each grid, ARENACLIENT.nextRoundLine
+            const said = x && x.grids && ARENACLIENT.nextRoundLine ? ARENACLIENT.nextRoundLine({ grids: x.grids, game: game.name }) : null;
+            if (said) text = said.text;
+            else if (e) {
               const opens = Number(e.firstWindowMs) > now ? `entry opens ${hhmm(e.firstWindowMs)} (${inMin(e.firstWindowMs)})` : 'entry opens with the next window';
               text = `Next round expected: ${opens}. It starts once its draw block is in: a block after ${hhmm(e.committeeTimeMs)}, then 6 confirmations (~1 h).`
                 + (e.publication && e.publication.height ? ` Published in block ${Number(e.publication.height).toLocaleString('en-US')}.` : '');
@@ -7508,7 +7512,11 @@
             try {
               const r = await fetch(base + '/expected', { signal: AbortSignal.timeout(2500) }); if (!r.ok) continue;
               const v = await r.json();
-              if (v && Array.isArray(v.expected) && v.expected.length) { kept = { at: Date.now(), v }; return v; }
+              if (v && Array.isArray(v.expected) && v.expected.length) {
+                // AND WHERE EACH STANDS ON THAT SEAT'S CHAIN (kanban #690): its publication's confirmations, its draw block's depth
+                try { const p = await (await fetch(base + '/pending', { signal: AbortSignal.timeout(4000) })).json(); if (p && Array.isArray(p.grids)) v.grids = p.grids; } catch (e) { /* the times alone */ }
+                kept = { at: Date.now(), v }; return v;
+              }
               empty = empty || v;
             } catch (e) { /* the next seat */ }
           }
@@ -7657,8 +7665,9 @@
         // anything, after 10-20 seconds" - "Order not placed: this round is no longer listed in the lobby"): its committee still not drawn
         // two hours after its committee time (the seat says why, e.g. a census with no node hosting its game) - the game picked it as the
         // soonest open window, and every order in it was refused
-        const drawable = (r) => { const said = (r.said || []).map((c) => c.committee).filter(Boolean); const at = Number(r.committeeTimeMs);
-          return r.free || !said.length || said.some((c) => c.drawn) || !Number.isFinite(at) || now < at + 2 * 3600000; };
+        // AND ONLY ONCE A SEAT HAS DRAWN IT (2026-10-26, "RPS shows that is running a round but I think that is fake right? ... Fix it in
+        // the SDK"): every app reads rows()/allRows() from here - ARENACLIENT.lobbyRowOffered, no 2 h grace after the committee time
+        const drawable = (r) => ARENACLIENT.lobbyRowOffered(r);
         const kept = window.ARENA_LOBBY_KEPT = window.ARENA_LOBBY_KEPT || { mine: [], theirs: [] };
         const mine = kept.mine = ARENACLIENT.lobbyKeepWhenUnanswered(kept.mine,
           { ...got, rows: testnet ? got.rows.filter((r) => r.free) : got.rows.filter((r) => r.free || (paysHere(r) && drawable(r))) }, now);

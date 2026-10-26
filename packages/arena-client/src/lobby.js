@@ -541,3 +541,17 @@ export function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null
   return `${money} · ${when} · ${agree} · ${counts || 'no signer node counts'}${who}${seat}${approval}${ceiling}`
     + (row.disagrees.length ? ` · ${row.disagrees.join(', ')} listed it as ${row.free ? 'paying' : 'free'}` : '');
 }
+
+/**
+ * A ROUND AN APP MAY OFFER (2026-10-26 ~10:2xZ, the owner on Rock Paper Scissors showing a running round while its tile said 0: "I think
+ * that is fake right? ... Fix it in the SDK"): a free round, or a paid one whose committee at least one seat has drawn. Every app reads
+ * its rounds through the page's ARENA_GAME.rows() / allRows(), so none offers a round no committee can be drawn for - after a chain
+ * switch, a census of a branch the chain left, a census no node of the version is in. A row whose seats say nothing of its committee
+ * (seats older than the committee listing) is offered, as before. Before, such a round was offered for 2 h after its committee time.
+ */
+export function lobbyRowOffered(r) {
+  if (!r) return false;
+  if (r.free) return true;
+  const said = (r.said || []).map((c) => c && c.committee).filter(Boolean);
+  return !said.length || said.some((c) => c.drawn === true);
+}
