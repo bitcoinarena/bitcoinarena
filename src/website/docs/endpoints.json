@@ -8899,6 +8899,43 @@
   "pathParams": []
  },
  {
+  "method": "GET",
+  "path": "/payments",
+  "params": "query since (ms), limit (at most 500)",
+  "auth": "none",
+  "returns": "200 JSON {seat, gifts[], items[]}",
+  "purpose": "Every donation, zap and item purchase this seat kept after a time, oldest first - what the explorer reads besides /txs. Each seat keeps every one of its network.",
+  "audience": "operator/monitoring",
+  "line": 7531,
+  "summary": "Gifts, zaps and items bought since a time",
+  "query": [
+   {
+    "name": "since",
+    "required": false,
+    "type": "integer",
+    "description": "Kept after this time, ms since 1970. Default 0."
+   },
+   {
+    "name": "limit",
+    "required": false,
+    "type": "integer",
+    "description": "At most this many of each list, 1 to 500. Default 200."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{seat, gifts: [{id, kind, item, donor, gameName, federation, txid, totalMsat, outputs, atMs, keptMs}], items: [{id, kind, item, player, gameName, itemId, priceSat, federation, txid, totalMsat, outputs, atMs, keptMs}]}."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
   "method": "POST",
   "path": "/donation-gift",
   "params": "body JSON {gift, signature} hex",
