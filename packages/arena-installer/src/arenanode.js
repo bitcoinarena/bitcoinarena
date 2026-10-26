@@ -12,12 +12,16 @@
 //   arenanode open                       the owner page
 //   arenanode version
 //
+// Any of them with --verbose (-v): each step said as it runs; with --debug: that and the insides - error stacks, failed answers, the
+// child processes and their exit codes (kanban #693, log-level.js). Nothing secret is printed at either.
+//
 // The installer writes the command with this node's home in it (launchers.js writeCommand), so it takes no flags; a second node on the
 // machine has its own, arenanode-<instance>.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { overview, control, doctor, logsOf, nodeOf, SERVICES } from './node-services.js';
 import { parseConf, setInConf, unsetInConf, CONF_KEYS } from '../../arena-node/src/arena-conf.js';
+import { QUIET, levelWord, levelOf, LEVELS } from '../../arena-node/src/log-level.js';
 
 export const HELP = (name) => `${name}: your Bitcoin Arena node on this machine
 
@@ -35,6 +39,11 @@ export const HELP = (name) => `${name}: your Bitcoin Arena node on this machine
   ${name} dashboard                 the node's dashboard in the browser
   ${name} state                     one line: running, or stopped and why (the desktop app's)
   ${name} version
+
+  Add --verbose (or -v) to any of them to see each step as it runs: which file, service, port or address it checks, what
+  answered and how long it took. Add --debug to see that and more: full errors, failed answers, the programs it runs and
+  how they ended. Passwords, keys, cookies and seed words are never shown.
+  For the node itself: ${name} config set log_level verbose (or debug), then ${name} restart. Back to normal: ${name} config unset log_level
 `;
 
 const mark = (ok) => (ok === true ? '✓' : ok === false ? '✗' : '•');
@@ -66,9 +75,10 @@ const openUrl = (url, platform = process.platform) => new Promise((ok) => execFi
  * Run one command. `io`: { out(line), err(line) }; `deps` injectable for the tests ({ sh, fetcher, platform, env, latest, quickUrl }).
  * Answers the exit code.
  */
-export async function main(args, { home, name = 'arenanode', io = { out: (l) => console.log(l), err: (l) => console.error(l) }, deps = {} }) {
+export async function main(args, { home, name = 'arenanode', io = { out: (l) => console.log(l), err: (l) => console.error(l) }, deps = {}, log = QUIET }) {
   const [cmd = 'status', a, b, ...rest] = args;
-  const ctx = { home, ...deps };
+  const ctx = { home, ...deps, log };
+  log.tag('arenanode').verbose(`${cmd}${a ? ` ${a}` : ''}: home ${home}, log level ${log.level}`);
   switch (cmd) {
     case 'help': case '-h': case '--help':
       io.out(HELP(name)); return 0;
@@ -106,7 +116,10 @@ export async function main(args, { home, name = 'arenanode', io = { out: (l) => 
     case 'logs': {
       const r = await logsOf(a, { ...ctx, lines: Number(b) || 60 });
       if (!r.ok && !r.text) { io.err(r.why); return 1; }
-      io.out(`--- ${r.file || r.unit}`); io.out(r.text); return 0;
+      io.out(`--- ${r.file || r.unit}`);
+      // THE LEVEL THE SERVICES LOG AT, WHEN IT IS NOT THE DEFAULT (kanban #693): said above their lines, so a quiet log is not taken for a broken one
+      { const lv = levelOf({ env: {}, conf: nodeOf(home).conf.values }); if (lv.level !== 'info') io.out(`--- log level ${lv.level} (${lv.from}; it applies from the service's next start)`); }
+      io.out(r.text); return 0;
     }
     case 'config': {
       const n = nodeOf(home);
@@ -127,6 +140,7 @@ export async function main(args, { home, name = 'arenanode', io = { out: (l) => 
         if (!b || rest.length === 0) { io.err(`${name} config set <key> <value>`); return 2; }
         const key = b.toLowerCase(); const value = rest.join(' ');
         if (key === 'port' && !(Number.isInteger(Number(value)) && Number(value) > 0 && Number(value) < 65536)) { io.err(`${value} is no port`); return 2; }
+        if (key === 'log_level' && !levelWord(value)) { io.err(`${value} is no log level: ${LEVELS.join(', ')}`); return 2; }
         const next = setInConf(text, key, value);
         const parsed = parseConf(next);
         if (parsed.errors.length) { io.err(parsed.errors.join('; ')); return 2; }
@@ -145,7 +159,7 @@ export async function main(args, { home, name = 'arenanode', io = { out: (l) => 
       // NOW: the newest signed release fetched, checked and the node moved to it - whatever auto_update says
       const { checkOnce } = await import('./auto-update.js');
       if (!deps.latest) { io.err('this command reads no release list (run it from a release)'); return 1; }
-      const r = await checkOnce({ home, latest: deps.latest, force: true, log: (l) => io.out(l), ...(deps.fetcher ? { fetcher: deps.fetcher } : {}) });
+      const r = await checkOnce({ home, latest: deps.latest, force: true, log: (l) => io.out(l), trace: log, ...(deps.fetcher ? { fetcher: deps.fetcher } : {}) });
       io.out(r.upToDate ? `Up to date: ${r.version} is the newest release.` : r.ok ? `Updated ${r.from} -> ${r.to}. Backup: ${r.backup}` : `Not updated: ${r.why}`);
       return r.ok ? 0 : 1;
     }
@@ -153,7 +167,7 @@ export async function main(args, { home, name = 'arenanode', io = { out: (l) => 
       // THE SERVICE: a check every few hours; it ends after an update, and its service starts it again from the new release
       const { runAutoUpdate } = await import('./auto-update.js');
       if (!deps.latest) { io.err('this command reads no release list (run it from a release)'); return 1; }
-      await runAutoUpdate({ home, latest: deps.latest });
+      await runAutoUpdate({ home, latest: deps.latest, trace: log });
       return 0;
     }
     // THE DESKTOP APP'S LINE (kanban #658, 2026-10-25: "show when it's installed \"Server running\""): the seat's own state in a word

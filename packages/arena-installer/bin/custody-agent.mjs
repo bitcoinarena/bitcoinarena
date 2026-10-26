@@ -12,6 +12,9 @@ const args = process.argv.slice(2);
 const i = args.indexOf('--home');
 const home = resolve(i >= 0 ? args[i + 1] : defaultHome());
 const release = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+// its log level: ARENA_LOG_LEVEL, else arena.conf log_level, read at its start (kanban #693; log-level.js)
+const { serviceLog } = await import('../../arena-node/src/log-level.js');
+serviceLog({ home, write: (l) => console.log(`${new Date().toISOString()} ${l}`) });
 const agent = createCustodyAgent({ state: nodeState(home), release, log: (l) => console.log(`${new Date().toISOString()} ${l}`) });
 let last = '';
 const run = async () => {
