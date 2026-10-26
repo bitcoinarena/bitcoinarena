@@ -12,11 +12,15 @@
   body { margin: 0; background: var(--bg); color: var(--text); font: 400 15px/1.55 Inter, system-ui, sans-serif; }
   a { color: var(--cyan); text-decoration: none; } a:hover { text-decoration: underline; }
   code, .mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13px; }
-  nav { position: sticky; top: 0; background: rgba(15,10,16,.9); border-bottom: 1px solid var(--line); }
+  /* THE ARENA'S HEADER AND FOOTER (kanban #694, 2026-10-26: "the header of those pages does not match the style of the arena and games pages";
+     #699 "all pages are missing the footer"; #701): https://testnet.bitcoin-arena.io/site-chrome.js, loaded from the Arena site and not copied,
+     so the menu, the look and the build line stay the site's - the logo, "← Arena" and the menu at the top, the build line and Donate at the
+     foot. Under it the explorer's own bar: its name, Transactions, Metrics and the search. */
+  nav { background: rgba(15,10,16,.9); border-bottom: 1px solid var(--line); }
   nav .in, main { width: min(1180px, calc(100% - 32px)); margin: 0 auto; }
   nav .in { display: flex; align-items: center; gap: 14px; height: 56px; }
   .brand { display: flex; align-items: center; gap: 10px; font: 700 17px system-ui; color: var(--text); }
-  .brand i { width: 26px; height: 26px; border-radius: 7px; background: conic-gradient(from 210deg, var(--btc), #ffd166, var(--btc)); display: grid; place-items: center; font-style: normal; color: #1a0f00; }
+  .brand:hover { text-decoration: none; }
   form { margin-left: auto; display: flex; gap: 8px; flex: 1; max-width: 560px; }
   input { flex: 1; min-width: 0; background: #140d12; border: 1px solid var(--line); border-radius: 10px; color: var(--text); padding: 8px 12px; font: 13px "JetBrains Mono", monospace; }
   button { background: var(--btc); color: #1a0f00; border: 0; border-radius: 10px; padding: 8px 14px; font-weight: 700; cursor: pointer; }
@@ -67,6 +71,7 @@
 </style>
 </head>
 <body>
+<script src="https://testnet.bitcoin-arena.io/site-chrome.js"></script>
 <!-- THE EXPLORER (kanban #624): React (packages/arena-web/src/explorer/main.jsx, built to explorer.js); the Worker builds what its store
      holds into the page before this script, so it draws at once -->
 <div id="root"></div>
