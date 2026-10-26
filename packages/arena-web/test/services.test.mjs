@@ -48,3 +48,23 @@ test('what it does: a control asks the seat with the owner\'s signature, then th
   assert.equal(c.state.message, 'chain: set up by hand');
   c.componentWillUnmount();
 });
+
+// A GATEWAY NEVER SET UP (kanban #711, 2026-10-26: "lightning gateway reports error and no hint about reason or how to solve it"): the
+// card says why and sets it up on a click, the signed request its own action; while it runs the button says so and cannot be clicked twice
+test('a gateway left for later in setup: the reason on the card and a button that sets it up', async () => {
+  const gap = { id: 'gateway', title: 'Lightning gateway', running: false, detail: 'x', controls: [], bootSettable: false, why: null,
+    probe: { ok: false, says: 'Not set up: Lightning was left for later in setup, so the gateway was never started.' },
+    fix: { action: 'gateway/setup', label: 'Set up the gateway', busy: false } };
+  const html = renderToStaticMarkup(React.createElement(ServicesPanel, { initial: { loaded: true, answer: { ok: true, command: 'bitcoinarena', services: [gap] } } }));
+  assert.match(html, /<p class="svc-says">Not set up: Lightning was left for later in setup, so the gateway was never started\.<\/p>/);
+  assert.match(html, /<button type="button" class="mini">Set up the gateway<\/button>/);
+  assert.doesNotMatch(html, /runs outside the node|does not answer/);
+  const sent = [];
+  const api = { signed: async (action, args) => ({ action, args }), post: async (path, body) => { sent.push([path, body.action]); return path === '/owner/services' ? { ok: true, services: [{ ...gap, fix: { ...gap.fix, label: 'Setting up…', busy: true } }] } : { ok: true }; } };
+  const c = driven(api, { initial: { loaded: true, answer: { ok: true, services: [gap] } } });
+  await c.fix(gap);
+  assert.deepEqual(sent, [['/owner/gateway/setup', 'gateway/setup']]);
+  clearTimeout(c.timer); await c.reload(); clearTimeout(c.fixTimer);
+  const busy = renderToStaticMarkup(React.createElement(ServicesPanel, { initial: { loaded: true, answer: c.state.answer } }));
+  assert.match(busy, /<button type="button" class="mini" disabled="">Setting up…<\/button>/);
+});

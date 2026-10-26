@@ -49,7 +49,22 @@ test('on a running seat: the owner\'s signed ask answers every service of the no
     assert.ok(j.services.some((x) => x.id === 'address'), 'beside the installer\'s: the seat\'s own rows it does not know');
     assert.equal(typeof j.services[0].running, 'boolean');
     assert.ok(!JSON.stringify(j).includes(root), 'no local paths in the answer');
+    // A CUSTODY NODE WHOSE SETUP LEFT LIGHTNING FOR LATER (kanban #711, 2026-10-26: "lightning gateway reports error and no hint about
+    // reason or how to solve it"): its gateway row says why and offers to set it up, not "does not answer" / "runs outside the node"
+    writeFileSync(join(home, 'state.json'), JSON.stringify({ roles: ['verify', 'custody'], chain: { kind: 'core', url: 'http://127.0.0.1:1/' } }));
+    process.env.ARENA_GATEWAY_PORT = '1';
+    const g = (await (await post(req(secret))).json()).services.find((x) => x.id === 'gateway');
+    assert.deepEqual([g.running, g.probe.says, g.fix, g.why], [false, 'Not set up: Lightning was left for later in setup, so the gateway was never started.',
+      { action: 'gateway/setup', label: 'Set up the gateway', busy: false }, null]);
+    const setupReq = (args) => signOwnerRequest({ node, action: 'gateway/setup', args, secret, sign: (m, x) => schnorr.sign(m, x), pubkeyOf: (x) => schnorr.getPublicKey(x) });
+    const p = await fetch(`${base}/owner/gateway/setup`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(setupReq({ progress: true })) });
+    assert.deepEqual([p.status, (await p.json()).progress], [200, null], 'nothing started yet: no progress');
+    // set up: nothing to say about it
+    writeFileSync(join(home, 'state.json'), JSON.stringify({ roles: ['verify', 'custody'], chain: { kind: 'core', url: 'x' }, gateway: { apiUrl: 'http://127.0.0.1:1' } }));
+    const g2 = (await (await post(req(secret))).json()).services.find((x) => x.id === 'gateway');
+    assert.equal(g2.fix, undefined);
   } finally {
+    delete process.env.ARENA_GATEWAY_PORT;
     for (const [k, v] of [['ARENA_HOME', was.home], ['XDG_CONFIG_HOME', was.xdg]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
     await s.d.close(); rmSync(root, { recursive: true, force: true });
   }

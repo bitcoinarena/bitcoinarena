@@ -101,3 +101,31 @@ test('the runners call the wizard\'s own steps: every one custody-add and reach-
   }
   assert.ok(!existsSync(join(n.home, 'arena.conf')), 'naming the steps runs none');
 });
+
+// THE GATEWAY ALONE (kanban #711, 2026-10-26: "lightning gateway reports error and no hint about reason or how to solve it"): a custody node
+// whose setup left Lightning or the gateway for later is told why, and the owner page starts only those two steps
+test('a custody node without its gateway: the reason, and the runner started for Lightning and the gateway only', async () => {
+  const { gatewayGap, startGatewaySetup } = await import('../src/add-custody.js');
+  assert.equal(gatewayGap({ roles: ['verify'] }), null, 'not custody: nothing to say');
+  assert.equal(gatewayGap({ roles: ['custody'], gateway: { apiUrl: 'http://127.0.0.1:8476' } }), null, 'set up: nothing to say');
+  assert.equal(gatewayGap({ roles: ['custody'], chain: { kind: 'electrum', url: 'x' } }).fix, false, 'an Electrum node cannot run LND');
+  assert.deepEqual(gatewayGap({ roles: ['custody'], chain: { kind: 'core', url: 'x' } }),
+    { why: 'Not set up: Lightning was left for later in setup, so the gateway was never started.', fix: true });
+  assert.deepEqual(gatewayGap({ roles: ['custody'], chain: { kind: 'core', url: 'x' }, lightning: { pubkey: '02'.repeat(33) } }),
+    { why: 'Not set up: the gateway was left for later in setup.', fix: true });
+  const n = node({ roles: ['verify', 'settlement', 'custody'], lightning: null }), rel = release();
+  const runs = [];
+  const run = (cmd, args, opts) => { runs.push([cmd, args, opts.detached]); return { unref() {} }; };
+  const r = startGatewaySetup({ home: n.home, release: rel, state: n.state, run, nowMs: 1000 });
+  assert.equal(r.ok, true);
+  assert.deepEqual(JSON.parse(readFileSync(join(n.home, 'custody-add.req'), 'utf8')), { gatewayOnly: true });
+  if (process.platform !== 'win32') assert.equal(statSync(join(n.home, 'custody-add.req')).mode & 0o777, 0o600);
+  assert.deepEqual([runs.length, runs[0][1].slice(-2), runs[0][2]], [1, ['--home', n.home], true]);
+  assert.equal(custodyProgress(n.home).gatewayOnly, true);
+  const again = startGatewaySetup({ home: n.home, release: rel, state: n.state, run, nowMs: 2000 });
+  assert.deepEqual([again.ok, again.status, runs.length], [false, 409, 1], 'once at a time');
+  // the runner knows the mode: no roles, no bond, no funds - done after the gateway
+  const src = readFileSync(new URL('../bin/custody-add.mjs', import.meta.url), 'utf8');
+  assert.match(src, /const gatewayOnly = req\.gatewayOnly === true;/);
+  assert.match(src, /if \(gatewayOnly\) \{ say\(\{ state: 'done', step: 'gateway set up', gatewayOnly: true \}\)/);
+});
