@@ -5900,7 +5900,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
                 probe: { ok: false, says: busy ? `Setting up: ${busy.step || busy.state}` : p && p.gatewayOnly && p.state === 'failed' ? `${gap.why} The last try stopped at ${p.step}: ${p.why || 'no reason given'}` : gap.why },
                 fix: gap.fix ? { action: 'gateway/setup', label: busy ? 'Setting up…' : 'Set up the gateway', busy: !!busy } : null }));
             }
-            const rows = [...v.services.map((x) => ({ id: x.id, title: x.title, running: x.running, pid: x.pid, detail: x.detail, inside: x.inside, probe: x.probe ? { ok: x.probe.ok, says: x.probe.says } : null })), ...extra];
+            // WHAT RUNS INSIDE THE NODE, AS THE NODE READS IT (the owner's services card on 2026.1.9.9, 2026-10-26: "Guardian (fedimintd) - the
+            // node runs without it" while the seat's own /founding said its guardian waits in setup): the installer finds the guardian by its
+            // parent process, which a launch agent or a wrapper hides; the seat knows its guardian and asks its API port - its row wins
+            const ownOf = new Map(own.map((x) => [x.id, x]));
+            const rows = [...v.services.map((x) => { const o = x.inside ? ownOf.get(x.id) : null;
+              return { id: x.id, title: x.title, running: o ? o.running : x.running, pid: (o && o.pid) || x.pid, detail: o ? o.detail : x.detail, inside: x.inside,
+                probe: o ? o.probe : x.probe ? { ok: x.probe.ok, says: x.probe.says } : null }; }), ...extra];
             return answer(200, { ok: true, version: v.version, instance: v.instance, port: v.port, publicUrl: v.publicUrl, roles: v.roles, settings: v.conf ? 'arena.conf' : v.legacyEnv ? 'node.env' : null,
               services: await decorate(rows, ns, ns.installedServices({ home })), command: v.instance ? `bitcoinarena-${v.instance}` : 'bitcoinarena' });
           } catch (e) { return answer(200, { ok: true, version: null, publicUrl: publicEndpoint || null, services: await decorate(own, null, []), command: null, settings: null, why: `the installer's services could not be read: ${e.message}` }); }
@@ -6289,9 +6295,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const nowMs = Date.now();
         if (!setupStatusKept || nowMs - setupStatusKept.at > 60000) {
           const { setupStatus } = await import('../../arena-installer/src/setup-status.js');
-          setupStatusKept = { at: nowMs, body: await setupStatus({ home }).catch((e) => ({ ok: false, why: e.message })) };
+          const body = await setupStatus({ home }).catch((e) => ({ ok: false, why: e.message }));
+          // HOW MANY NODES ARE READY FOR THE FOUNDING (2026-10-26, the owner on the Federation card: "Also display here how many other nodes
+          // are waiting in the format e.g 3/10 ... in big letters"): the seat's own reading of the cohort it would be drawn from
+          if (body && body.founding && body.founding.waiting && foundingSeat && typeof foundingSeat.readiness === 'function') {
+            const r = await foundingSeat.readiness().catch(() => null);
+            const c = r && r.cohort;
+            if (c && Number.isFinite(Number(c.free)) && Number.isFinite(Number(c.needed))) body.founding = { ...body.founding, ready: Number(c.free), needed: Number(c.needed) };
+          }
+          setupStatusKept = { at: nowMs, body };
         }
-        return send({ ...setupStatusKept.body, atMs: setupStatusKept.at, release: releaseHere() });
+        return send({ ...setupStatusKept.body, node: toHex(round.pubkey), atMs: setupStatusKept.at, release: releaseHere() });
       }
       if (req.method === 'GET' && url.pathname === '/dashboard.json') {
         const nowMs = Date.now();
