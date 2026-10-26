@@ -63,3 +63,21 @@ export class SaveBar extends React.Component {
     );
   }
 }
+
+// A COPY ICON, NOT THE WORD (kanban #717, 2026-10-26, the owner: "add copy button to these items on the dashboard" - "As a copy icon, not
+// as Copy. Same for above. Also in the public dashboard"): two sheets; a tick for a moment once copied
+export class CopyButton extends React.Component {
+  constructor(props) { super(props); this.state = { done: false }; this.copy = this.copy.bind(this); }
+  componentWillUnmount() { clearTimeout(this.timer); }
+  copy() {
+    try { navigator.clipboard.writeText(String(this.props.text)); } catch { /* no clipboard */ }
+    this.setState({ done: true }); clearTimeout(this.timer); this.timer = setTimeout(() => this.setState({ done: false }), 1500);
+  }
+  render() {
+    return (
+      <button type="button" className="fact-copy copy-ic" title={this.state.done ? 'Copied' : 'Copy'} aria-label={this.props.label || 'Copy'} onClick={this.copy}>
+        {this.state.done ? <span aria-hidden="true">✓</span>
+          : <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="5.5" y="5.5" width="8" height="8" rx="1.6" /><path d="M10.5 3.2V3a1.5 1.5 0 0 0-1.5-1.5H3A1.5 1.5 0 0 0 1.5 3v6A1.5 1.5 0 0 0 3 10.5h.2" /></svg>}
+      </button>);
+  }
+}

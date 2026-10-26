@@ -206,8 +206,7 @@ if ((Test-Path $command) -and (Test-Path (Join-Path $nodeHome 'arena.conf'))) {
       if ($line -and $line -notmatch '^Up to date') { $sub.Text = "$line`r`n" + $sub.Text }
       # THE OWNER PAGE SIGNED IN ONCE AFTER THE UPDATE (2026-10-26: "The updater MUST fix my credentials in the browser so it works")
       if ($line -match '^Updated') { & cmd /c "`"$command`" sign-in-once" | Out-Null }
-      # then more nodes on this PC (kanban #713: "When I update an existing node ... There, I can setup additional nodes")
-      if ($line -match '^Updated' -and [System.Windows.Forms.MessageBox]::Show('Your node is updated. Add more nodes on this PC (testnet4)?', 'Bitcoin Arena', 'YesNo') -eq 'Yes') { Add-Nodes }
+      # more nodes: the Add nodes button, never a dialog of its own (2026-10-26: "It automatically opens the modal, don't do that")
     })
     $utimer.Start()
   } else { Show-Installed }

@@ -10,6 +10,7 @@
 // the capacity plea and the liquidity card (the page hands in liquidity-claim and capacity?node=me), and the words for an unreadable node.
 import React from 'react';
 import { SetupStatus, FoundingWait, PegInCard } from './SetupStatus.jsx';
+import { CopyButton } from '../design/components.jsx';
 
 /** msat to the page's sat: three decimals under 10, one under 1,000, none above. */
 export const sat = (m) => { const n = Number(m || 0) / 1000; return `${(n < 10 ? n.toFixed(3) : n.toFixed(n < 1000 ? 1 : 0)).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')} sat`; };
@@ -128,9 +129,11 @@ export const signedSat = (m) => (m === null || m === undefined || m === '' ? '' 
 export function noteRows(D) {
   const n = D.notes || {}, h = D.hosts || {};
   const rows = [];
-  if (n.guardian) rows.push(['Guardian fees', 'go to the nodes guarding the round\'s federation; yours show here once it guards one', n.guardian]);
-  if (n.lightning) rows.push(['Lightning', h.lnd ? `LND ${h.lnd.alias || ''}`.trim() + ' · costs: the fees of its own payments' : 'no channel on this node', n.lightning]);
-  if (n.gateway) rows.push(['Gateway', h.gateway ? `${h.gateway.name || 'its own'} · costs this node nothing` : 'none used', n.gateway]);
+  // ONE SLIM LINE, NOT A CARD (2026-10-26, the owner: "Money Notes looks like a space waster, re arrange it to be more space efficient"):
+  // a word or two each; the node's whole sentence is the tooltip
+  if (n.guardian) rows.push(['Guardian fees', 'none until it guards a federation', n.guardian]);
+  if (n.lightning) rows.push(['Lightning', h.lnd ? `LND ${h.lnd.alias || ''}`.trim() : 'no channel', n.lightning]);
+  if (n.gateway) rows.push(['Gateway', h.gateway ? `${h.gateway.name || 'its own'} · no cost` : 'none used', n.gateway]);
   return rows;
 }
 // THE OWNER AREA ON THE ARENA SITE (2026-10-26, the owner on 2026.1.9.9: "It works via owner page but not Open Dashboard"): the link opened
@@ -205,7 +208,7 @@ export class DashboardPage extends React.Component {
                 bad, make it more pretty"): its key short with a copy button, since when it checks rounds, how many - words, not "-", while none */}
             <div className="dash-facts">
               <span className="fact" title={String(D.node)}><span className="fact-k">Node</span><code>{String(D.node).slice(0, 8)}…{String(D.node).slice(-6)}</code>
-                <button type="button" className="fact-copy" aria-label="Copy the node key" onClick={() => { try { navigator.clipboard.writeText(String(D.node)); } catch { /* no clipboard */ } }}>Copy</button></span>
+                <CopyButton text={D.node} label="Copy the node key" /></span>
               <span className="fact"><span className="fact-k">Active since</span>{D.sinceMs ? short(D.sinceMs, now) : <span className="dim">no round checked yet</span>}</span>
               <span className="fact"><span className="fact-k">Rounds checked</span>{Number(D.roundsChecked || 0).toLocaleString('en-US')}</span>
             </div></div>
@@ -233,8 +236,8 @@ export class DashboardPage extends React.Component {
                 <div className="card"><h3>By game</h3>
                   <Rows rows={D.byGame.map((g) => { const owed = g.owed ? earningsOf({ ...g.owed, otherMsat: 0 }).earned : 0n;
                     return [g.name || (g.game ? g.game.slice(0, 12) : '(no game)'), `${g.rounds} round${g.rounds === 1 ? '' : 's'} · ${sat(earningsOf(g.earned || {}).earned)}${owed > 0n ? ` · ${sat(owed)} owed` : ''}`]; })} /></div>) : null}
-              {notes.length ? <div className="card"><h3>Notes</h3><dl className="note-rows">{notes.map(([k, v, full]) => <React.Fragment key={k}><dt>{k}</dt><dd title={full}>{keep(v)}</dd></React.Fragment>)}</dl></div> : null}
             </div>
+            {notes.length ? <div className="note-strip" id="money-notes">{notes.map(([k, v, full]) => <span key={k} title={full}><b>{k}</b> {keep(v)}</span>)}</div> : null}
           </section>) : null}
         {D.liquidity ? <Liquidity claim={D.liquidity} /> : null}
         <section><h2>Rounds checked</h2>

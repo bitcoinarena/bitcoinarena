@@ -36,7 +36,7 @@ test('game / verify and settlement to settlement and relay: the plan, then the u
   const n = node(['verify', 'settlement']);
   const plan = await changeRolesOnNode({ home: n.home, release: n.home, state: n.state, roles: ['settlement', 'relay'], chainKit: n.chainKit });
   assert.equal(plan.ok, true, plan.why);
-  assert.deepEqual([plan.plan.before.roles, plan.plan.after.roles], [['game', 'settlement', 'verify'], ['relay', 'settlement']]);
+  assert.deepEqual([plan.plan.before.roles, plan.plan.after.roles], [['game', 'relay', 'settlement', 'verify'], ['relay', 'settlement']]);
   assert.ok(Number(plan.plan.feeSats) > 0 && Number(plan.plan.feeSats) < 2000, plan.plan.feeSats);
   assert.equal(n.sent.length, 0, 'the plan sends nothing');
   const r = await changeRolesOnNode({ home: n.home, release: n.home, state: n.state, roles: ['settlement', 'relay'], post: true, chainKit: n.chainKit });
@@ -84,7 +84,7 @@ test('an update names every game of the node\'s apps when its advertisement does
   assert.equal(r.ok, true, r.why);
   const read = readAdvertUpdate(fromHex(n.sent[1]), { network: 'testnet4' });
   assert.deepEqual(read.advert.hostedGames.map((g) => toHex(g)), want, 'the advertisement names them, sorted');
-  assert.deepEqual([...read.advert.roles].sort(), ['game', 'settlement', 'verify'], 'the roles kept');
+  assert.deepEqual([...read.advert.roles].sort(), ['game', 'relay', 'settlement', 'verify'], 'the roles kept');
   assert.deepEqual(n.state.read().hostedGames, want);
   const { SUPPORTED_PROTOCOL_VERSIONS } = await import('../../arena-protocol/src/constants.js');
   assert.deepEqual([...read.advert.protocolVersions], [...SUPPORTED_PROTOCOL_VERSIONS], 'and the newest protocols');

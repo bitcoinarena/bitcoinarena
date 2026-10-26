@@ -15,9 +15,10 @@ test('the version, its protocols as ranges, a new release with its page; up to d
   assert.equal(protoRange(v.protocols), '1-16, 19');
   const html = renderToStaticMarkup(React.createElement(ReleasePanel, { initial: { loaded: true, version: v } }));
   assert.match(html, /2026\.1\.1/); assert.match(html, /593de13e3257/); assert.match(html, /1-16, 19/);
-  assert.match(html, /A new release is available: 2026\.1\.2/); assert.match(html, /href="https:\/\/github\.com\/x\/releases\/tag\/v2026\.1\.2"/);
+  assert.match(html, /<div class="rel-state new" id="release-state"><b>Update available: 2026\.1\.2<\/b>/);   // marked clearly (kanban #714) assert.match(html, /href="https:\/\/github\.com\/x\/releases\/tag\/v2026\.1\.2"/);
   const same = renderToStaticMarkup(React.createElement(ReleasePanel, { initial: { loaded: true, version: { ...v, latest: { newer: false, latest: { version: '2026.1.1' } } } } }));
-  assert.match(same, /this node is up to date/);
+  assert.match(same, /<div class="rel-state ok" id="release-state"><b>✓ Up to date<\/b>/);   // green (kanban #714)
+  assert.doesNotMatch(same, /To update/, 'up to date: no update line');
   const src = { ...v, version: null };
   assert.match(renderToStaticMarkup(React.createElement(ReleasePanel, { initial: { loaded: true, version: src } })), /run from a source checkout/);
   assert.equal(newRelease(src), false, 'a checkout is never told of a new release');

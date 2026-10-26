@@ -5,7 +5,7 @@
 // Remove for an installed one (POST /owner/plugins/remove, signed), and the update settings: update automatically, and the nodes updates
 // come from (POST /owner/settings, signed). Read from GET /owner/plugins. (Found on the network / look at a node: the next slice.)
 import React from 'react';
-import { Button, Switch } from '../design/components.jsx';
+import { Button } from '../design/components.jsx';
 import { SplitBar } from './GameDevsPanel.jsx';
 
 /** Each app once, its newest version, with the older ones under it. */
@@ -47,7 +47,7 @@ export class AppsPanel extends React.Component {
   }
   async save() {
     try {
-      await this.props.api.post('/owner/settings', await this.props.api.signed('settings', { autoUpdate: this.state.auto, sources: this.state.sources.split(/\s+/).filter(Boolean) }));
+      await this.props.api.post('/owner/settings', await this.props.api.signed('settings', { autoUpdate: true, sources: this.state.sources.split(/\s+/).filter(Boolean) }));
       this.setState({ saved: true, error: null });
     } catch (e) { this.setState({ error: e.message }); }
   }
@@ -74,7 +74,7 @@ export class AppsPanel extends React.Component {
       </div>);
   }
   render() {
-    const { loaded, mine, auto, sources, saved, error } = this.state;
+    const { loaded, mine, sources, saved, error } = this.state;
     if (!loaded) return <p className="sub">reading this node's apps…</p>;
     const apps = newestApps(mine.hosted);
     return (
@@ -82,12 +82,13 @@ export class AppsPanel extends React.Component {
         {apps.length ? <div className="app-grid">{apps.map((g) => this.card(g))}</div> : <p className="sub">No app on this node yet.</p>}
         <h3 className="sh">Updates</h3>
         <div className="settings-card">
-          <div className="set-row"><div><b>Update apps automatically</b><p className="sub">Newer versions from other nodes are checked, then installed.</p></div>
-            <Switch id="auto-update" label="Update apps automatically" checked={auto} onChange={(on) => this.setState({ auto: on, saved: false })} /></div>
+          {/* ALWAYS ON (2026-10-26, the owner on the switch: "Should always be enabled"): no switch, the seat updates its apps every time */}
+          <div className="set-row"><div><b>Apps update automatically</b><p className="sub">Newer versions from other nodes are checked, then installed.</p></div>
+            <span className="pill on" id="auto-update">Always on</span></div>
           <details><summary className="sub">Where updates come from</summary>
-            <label htmlFor="sources">Nodes to take updates from (one address per line)</label>
-            <textarea id="sources" rows="2" autoComplete="off" autoCapitalize="none" value={sources} onChange={(e) => this.setState({ sources: e.target.value, saved: false })} /></details>
-          <Button primary={!saved} onClick={this.save}>{saved ? 'Saved ✓' : 'Save'}</Button>
+            <label htmlFor="sources">Nodes to take updates from (one address per line; empty: the network's own nodes)</label>
+            <textarea id="sources" rows="2" autoComplete="off" autoCapitalize="none" value={sources} onChange={(e) => this.setState({ sources: e.target.value, saved: false })} />
+            <Button primary={!saved} onClick={this.save}>{saved ? 'Saved ✓' : 'Save'}</Button></details>
           {error ? <p className="err">{error}</p> : null}
         </div>
       </div>

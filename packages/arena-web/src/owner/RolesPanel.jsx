@@ -9,17 +9,38 @@ import { Tile, Switch, Button, SaveBar } from '../design/components.jsx';
 
 /** The roles the node's advertisement names, a switch each; custody is its guardian_capable flag. */
 export const ROLE_SWITCHES = Object.freeze([['play', ['game', 'verify']], ['settlement', ['settlement']], ['relay', ['relay']]]);
-export const SWITCHABLE = Object.freeze(['play', 'settlement', 'relay', 'custody']);
+// relay is no switch: every node serves round data, always on (2026-10-26: "It should always be on")
+export const SWITCHABLE = Object.freeze(['play', 'settlement', 'custody']);
 
 /** What is on now, from the node's census row. */
 export function switchesOf(mine) {
   const has = (r) => !!(mine && (mine.roles || []).includes(r));
-  return { play: has('verify') || has('game'), settlement: has('settlement'), relay: has('relay'), custody: !!(mine && mine.guardianCapable) };
+  return { play: has('verify') || has('game'), settlement: has('settlement'), relay: true, custody: !!(mine && mine.guardianCapable) };
 }
 /** The switches the owner changed. */
 export const changedOf = (was, now) => SWITCHABLE.filter((k) => !!was[k] !== !!now[k]);
 /** What /owner/roles is asked for. */
 export const askOf = (now) => ({ roles: ROLE_SWITCHES.filter(([k]) => now[k]).flatMap(([, rs]) => rs), custody: !!now.custody });
+
+// MANAGE GOES WHERE IT IS SET UP (2026-10-26, the owner: "Clicking Manage on Lightning Gateway, and clicking Manage on Liquidity Provider
+// doesn't do anything. It should go to the sections where those items can be configured"): the links named card ids (#custody,
+// #liquidity), not sections, so the owner area stayed on its first section. `section:card` - the section opened, then its card scrolled to
+// (after the section's own scroll to the top)
+export const goTo = (target) => (e) => {
+  const [section, card] = String(target).split(':');
+  if (e && e.preventDefault) e.preventDefault();
+  if (typeof location !== 'undefined' && location.hash.slice(1) !== section) location.hash = section;
+  setTimeout(() => { const el = typeof document !== 'undefined' && document.getElementById(card || section); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 120);
+};
+
+/** What a running gateway without a seat waits for, in the order it comes: its federation's founding, then its peg-in. */
+export function gatewayWaitsFor(s) {
+  const f = s && s.founding, p = s && s.pegIn;
+  if (f && f.waiting) return `Waiting for its federation to be founded${Number.isFinite(f.ready) && f.needed ? `: ${f.ready} of ${f.needed} nodes ready` : ''}. Then it pegs in and takes the gateway seat.`;
+  if (p && p.txid && !p.credited) return `Waiting for its peg-in: ${Math.min(Number(p.confirmations) || 0, Number(p.needed) || 100)} of ${Number(p.needed) || 100} confirmations. Then it takes the gateway seat.`;
+  if (p && p.credited) return 'Its peg-in is credited: it takes the gateway seat at the next seating of its federation.';
+  return 'Installed and running: it takes its federation\'s gateway seat once the federation is founded and its peg-in counts.';
+}
 
 export class RolesPanel extends React.Component {
   constructor(props) {
@@ -50,7 +71,10 @@ export class RolesPanel extends React.Component {
     if (!(gateway && gateway.gatewayUrl) && this.props.api.post && this.props.api.signed) {
       try { const sv = await this.props.api.post('/owner/services', await this.props.api.signed('services')); gatewayRuns = !!(sv && sv.ok && (sv.services || []).some((x) => x.id === 'gateway' && x.running)); } catch { gatewayRuns = false; }
     }
-    this.setState({ loaded: true, unread: false, mine, guardian, gateway, gatewayRuns, liquidity, was, now: { ...was } });
+    // WHAT THE GATEWAY WAITS FOR (2026-10-26, the owner on "Waiting - The routing fees of its federation": "What is it waiting for??" -
+    // "Clarify what it is waiting for"): the founding with its count, then the peg-in with its confirmations (GET /setup-status)
+    const setup = gatewayRuns ? await get('/setup-status') : null;
+    this.setState({ loaded: true, unread: false, mine, guardian, gateway, gatewayRuns, liquidity, setup, was, now: { ...was } });
   }
   toggle(k, on) { this.setState((s) => ({ now: { ...s.now, [k]: on }, step: 'idle', plan: null, message: null })); }
   undo() { this.setState((s) => ({ now: { ...s.was }, step: 'idle', plan: null, message: null })); }
@@ -71,16 +95,16 @@ export class RolesPanel extends React.Component {
     } catch (e) { this.setState({ step: 'review', message: e.message }); }
   }
   tiles() {
-    const { mine, guardian, gateway, liquidity, gatewayRuns } = this.state;
+    const { mine, guardian, gateway, liquidity, gatewayRuns, setup } = this.state;
     const guarding = !!(guardian && guardian.guardian);
     const gatewayWaits = !(gateway && gateway.gatewayUrl) && !!gatewayRuns;
     return [
       ['play', '🎮', 'Play and check rounds', 'A share of every round\'s node fee', 'Replays the rounds it is drawn for and signs who won.'],
       ['settlement', '💸', 'Pay out winners', 'A share of every round\'s node fee', 'Co-signs the payout once a result is signed.'],
-      ['relay', '📡', 'Relay for other nodes', 'Keeps rounds reachable', 'Carries round data for players and other nodes.'],
+      ['relay', '📡', 'Relay for other nodes', 'Keeps rounds reachable', 'Every node does this: it serves round data to players and other nodes. Always on.', 'On', true],
       ['custody', '🛡️', 'Guardian (custody)', 'The guardians\' share of every round', guarding ? 'Guards players\' bitcoin in a federation with other guardians.' : 'Ready to be drawn as a guardian when a federation is founded.', guarding ? 'Guarding' : null],
-      ['gateway', '⚡', 'Lightning gateway', 'The routing fees of its federation', gatewayWaits ? 'Installed and running: it takes its federation\'s gateway seat once the federation is founded and its peg-in counts.' : 'Takes deposits and pays winners over Lightning. Up to 2 per federation.', gatewayWaits ? 'Waiting' : null, !!(gateway && gateway.gatewayUrl) || gatewayWaits, 'custody'],
-      ['liquidity', '💧', 'Liquidity provider', 'A share of the 1 % liquidity pool', 'Opens incoming Lightning channels to new nodes.', null, !!liquidity, 'liquidity'],
+      ['gateway', '⚡', 'Lightning gateway', 'The routing fees of its federation', gatewayWaits ? gatewayWaitsFor(setup) : 'Takes deposits and pays winners over Lightning. Up to 2 per federation.', gatewayWaits ? 'Waiting' : null, !!(gateway && gateway.gatewayUrl) || gatewayWaits, 'services:svc-gateway'],
+      ['liquidity', '💧', 'Liquidity provider', 'A share of the 1 % liquidity pool', 'Opens incoming Lightning channels to new nodes.', null, !!liquidity, 'roles:liquidity'],
     ].map(([k, icon, name, highlight, does, label, onOther, section]) => ({ k, icon, name, highlight, does, label, onOther, section, mine }));
   }
   render() {
@@ -99,7 +123,7 @@ export class RolesPanel extends React.Component {
             const footer = switchable
               ? (mine ? [<span key="s" />, <Switch key="w" id={`rl-${t.k}`} label={t.name} checked={!!now[t.k]} disabled={sent} onChange={(v) => this.toggle(t.k, v)} />]
                 : <span className="sub">Changeable once the bond counts</span>)
-              : <a className="go" href={`#${t.section}`}>{on ? 'Manage' : 'Set up'} →</a>;
+              : <a className="go" href={`#${String(t.section).split(':')[0]}`} onClick={goTo(t.section)}>{on ? 'Manage' : 'Set up'} →</a>;
             return <Tile key={t.k} id={`tile-${t.k}`} icon={t.icon} name={t.name} highlight={t.highlight} does={t.does} state={state}
               pill={sent && changed.includes(t.k) ? 'Saving…' : t.label || (on ? 'On' : 'Off')} pillTone={(sent && changed.includes(t.k)) || t.label === 'Waiting' ? 'wait' : on ? 'on' : null} footer={footer} />;
           })}

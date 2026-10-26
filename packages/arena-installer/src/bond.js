@@ -63,7 +63,10 @@ export function lockOf(tip, { nowMs = Date.now(), maturity = maturityAfter(tip) 
 /** The node's roles as its advertisement names them: the wizard's verify is game + verify (§5A.1 roles). Custody is said by the guardian
  *  endpoint, liquidity by the provider's own signed claim (GET /liquidity-claim, §23A.10) - neither is an advertisement role (measured on
  *  macOS node A,: a liquidity node's bond was refused, "unknown role: liquidity"). */
-export const advertRoles = (roles) => [...new Set(roles.flatMap((r) => (r === 'verify' ? ['game', 'verify'] : [r])))].filter((r) => r !== 'custody' && r !== 'liquidity');
+// RELAY ALWAYS (2026-10-26, the owner on the Roles tile "Relay for other nodes - Off": "Clarify why relay is not default on. It should always
+// be on"): every seat serves round data to players and other nodes, and no draw reads the role - it was off only because the installer never
+// offered it. Every advertisement names it.
+export const advertRoles = (roles) => [...new Set([...roles.flatMap((r) => (r === 'verify' ? ['game', 'verify'] : [r])), 'relay'])].filter((r) => r !== 'custody' && r !== 'liquidity');
 
 /** The bond output key of a node key at a maturity height (template 2). */
 export function bondKeyAt(nodeKey, maturity) {

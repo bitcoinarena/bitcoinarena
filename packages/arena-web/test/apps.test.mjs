@@ -24,7 +24,7 @@ test('each app once at its newest version, older ones folded, the signed descrip
   assert.match(html, /Will BTC be up in 15 min\?/); assert.match(html, /href="https:\/\/arena\.example"/);
   assert.match(html, /<b class="app-name">Next Block<\/b><span class="pill">v3<\/span>[\s\S]*?built into this node<\/span><span class="pill on">built in<\/span>/);
   assert.equal((html.match(/class="app-card"/g) || []).length, 2, 'each app once');
-  assert.match(html, /type="checkbox"[^>]*checked=""/);
+  assert.match(html, /<span class="pill on" id="auto-update">Always on<\/span>/); assert.doesNotMatch(html, /type="checkbox"/);   // always on, no switch (2026-10-26: "Should always be enabled")
 });
 
 test('Remove and Save signed and sent; the list read again after a removal; a seat still starting keeps empty lists', async () => {
