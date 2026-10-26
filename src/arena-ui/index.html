@@ -775,6 +775,11 @@
     #arena-hdr-deposit svg, #arena-hdr-withdraw svg { width: 15px; height: 15px; flex: none; }
     @media (min-width: 561px) { #arena-hdr-deposit svg, #arena-hdr-withdraw svg { display: none; } }
     @media (max-width: 560px) { #arena-hdr-deposit .word, #arena-hdr-withdraw .word { display: none; } #arena-hdr-deposit, #arena-hdr-withdraw { padding: 0 9px; } }
+    /* THE WALLET BAR AS THE HEADER (kanban #703, measured 2026-10-26 at 390 px over Rock Paper Scissors: its children needed 428 px - the
+       gear cut off, the menu off the screen): Deposit and Withdraw as their icons on a phone, the words on a wide screen */
+    #arena-wb-deposit svg, #arena-wb-withdraw svg { width: 15px; height: 15px; flex: none; vertical-align: -2px; }
+    @media (min-width: 561px) { #arena-wb-deposit svg, #arena-wb-withdraw svg { display: none; } }
+    @media (max-width: 560px) { #arena-wb-deposit .word, #arena-wb-withdraw .word { display: none; } }
     /* the backup warning in the loading screen: its whole sentence and its button, under the progress, on a phone too */
     #boot #arena-backup-warn { flex: none; width: min(560px, 90vw); box-sizing: border-box; margin: 0; z-index: 3; position: relative; }
     @media (max-width: 480px) { #boot #arena-backup-warn { padding: 6px 10px; border: 2px solid #ff9d2e; background: rgba(58,32,0,0.94); }
@@ -1403,8 +1408,8 @@
     <a id="arena-wb-home" href="https://bitcoin-arena.io/" title="bitcoin-arena.io" aria-label="Bitcoin Arena - bitcoin-arena.io"><i aria-hidden="true">&#8383;</i><span>Bitcoin Arena</span></a>
     <button id="arena-wb-back" type="button" title="Back to Bitcoin Arena" aria-label="Back to Bitcoin Arena"><span aria-hidden="true">&larr;</span><span class="word">Arena</span></button>
     <button class="wb-bal" type="button" title="Your balance by federation"><b id="arena-wb-sats">&ndash; sat</b><span id="arena-wb-pending"></span></button>
-    <button id="arena-wb-deposit" type="button">Deposit</button>
-    <button id="arena-wb-withdraw" type="button">Withdraw</button>
+    <button id="arena-wb-deposit" type="button" title="Deposit" aria-label="Deposit"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v7.5M4.8 6.5 8 9.7l3.2-3.2M2.5 11.5v2h11v-2"/></svg><span class="word">Deposit</span></button>
+    <button id="arena-wb-withdraw" type="button" title="Withdraw" aria-label="Withdraw"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 10V2.5M4.8 5.7 8 2.5l3.2 3.2M2.5 11.5v2h11v-2"/></svg><span class="word">Withdraw</span></button>
     <button id="arena-wb-season" type="button" title="Leaderboard" aria-label="Leaderboard"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg><span class="word">Leaderboard</span></button>
     <button id="arena-wb-gear" type="button" title="Settings">&#9881;</button>
     <div id="arena-wb-nav" class="arena-nav"><button id="arena-wb-nav-go" class="arena-nav-go" type="button" aria-label="Menu" aria-expanded="false" aria-controls="arena-wb-nav-menu">&#9776;</button>
