@@ -17567,6 +17567,12 @@ const restInvoiceMsat = (restMsat) => (BigInt(restMsat) < REST_FLOOR_MSAT ? REST
 function recordDonation(storage, federationId, { msat, round, txid = null, to = null }) {
   ledgerAppend(storage, federationId, { kind: 'donation', msat: String(msat), round: round ? String(round) : null, ...(txid ? { txid: String(txid) } : {}), ...(to ? { to: String(to) } : {}) });
 }
+/** WHAT CAME IN TO THIS PLAYER'S KEY, a history row once collected (kanban #681): 'referral' - 10 % of the nodes' fee on an entry its
+ *  referral link brought, `round` the round that paid it - or 'zap-in', a zap from another player. `outpoint` is the payout collected. */
+function recordReceived(storage, federationId, { kind, msat, round = null, outpoint = null }) {
+  if (kind !== 'referral' && kind !== 'zap-in') return;
+  ledgerAppend(storage, federationId, { kind, msat: String(msat), round: round ? String(round) : null, ...(outpoint ? { outpoint: String(outpoint) } : {}) });
+}
 /** The rest: the smallest whole sat whose whole notes cover what the wallet is short. */
 function restOfFeesMsat(shortMsat) {
   const short = shortMsat > 0n ? BigInt(shortMsat) : 1n;
@@ -29237,6 +29243,50 @@ function matchRecordId({ gameId, roundId, identities, score, previousRoundId = n
 
 const matchHex = toHex;
 
+// ---- arena-protocol/src/referral-name.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// A REFERRAL PROGRAM'S NAME (kanban #675, 2026-10-25: "there will be a section in the node called Referrer where he can select a name for his
+// program. He can have multiple ones and each earns the fees. It also shows in the explorer. In health there is a section which site earned
+// what"). A program is a website payout key (an entry's frontend_pk, 33 bytes); its name is said by the key itself:
+//
+//     ReferralName { site, name, at_ms }   signed (BIP-340) by the site key's secret, verified against its x coordinate
+//
+// The newest record of a key is its name. A seat keeps it only when the signature verifies, and lists it beside what the key earned.
+
+
+const TAG_REFERRAL_NAME = 'ARENA/v1/ReferralName';
+const TYPE_REFERRAL_NAME = 0x52;          // 'R'
+const REFERRAL_NAME_MAX = 48;
+
+function encodeReferralName(r) {
+  if (!(r.site instanceof Uint8Array) || r.site.length !== 33 || (r.site[0] !== 2 && r.site[0] !== 3)) throw new Error('a referral name names its 33-byte compressed site key');
+  const name = String(r.name || '');
+  if (!name || name !== name.trim() || name.length > REFERRAL_NAME_MAX || /[\u0000-\u001f]/.test(name)) throw new Error(`a program's name is 1 to ${REFERRAL_NAME_MAX} printable characters, with no space at either end`);
+  const w = new Writer();
+  w.u8(TYPE_REFERRAL_NAME); w.bytes(r.site, 33); w.str(name); w.u64(BigInt(r.atMs));
+  return w.finish();
+}
+
+function decodeReferralName(bytes) {
+  const rd = new Reader(bytes);
+  if (rd.u8() !== TYPE_REFERRAL_NAME) throw new Error('not a referral name');
+  const r = { site: rd.bytes(33), name: rd.str(), atMs: rd.u64() };
+  if (rd.at !== bytes.length) throw new Error('trailing bytes after the referral name');
+  encodeReferralName(r);
+  return r;
+}
+
+const referralNameId = (r) => taggedHash(TAG_REFERRAL_NAME, encodeReferralName(r));
+
+/** Whether a record stands: its signature by the site key (`verify(sig, msg, xonly)` BIP-340). { ok, id } or { ok: false, why }. */
+function referralNameStands(r, signature, { verify }) {
+  let id;
+  try { id = referralNameId(r); } catch (e) { return { ok: false, why: e.message }; }
+  let good = false; try { good = verify(signature, id, r.site.subarray(1)) === true; } catch { good = false; }
+  return good ? { ok: true, id } : { ok: false, why: 'the site key\'s signature does not verify' };
+}
+
 // ---- arena-client/src/identity.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -29261,6 +29311,7 @@ const matchHex = toHex;
 // (lobby-name.js). The other pages check each record before they draw its name,
 // so a signer node can leave a name out but cannot write one, and nobody is shown a
 // key in place of a name: no record, no name, only a count.
+
 
 
 
@@ -29453,12 +29504,40 @@ function presenceProofFor({ roundIdHex, storage, random, curve } = {}) {
 }
 
 /**
+ * A PLAYER'S OWN REFERRAL PROGRAM (kanban #681, 2026-10-26: "Add user support for referrer program, not just websites. A user may also
+ * use a referrer code and link to testnet.bitcoin-arena.io. He gets 10% of the node's income"): the program's key IS this tab's identity
+ * refund key - 02 and the identity key, the key a zap to this player is paid to - so nothing new is kept or backed up: the 24 words make
+ * it again. An entry names it as its website key (frontend_pk), the settlement pays it 10 % of the nodes' fee on that entry as it pays a
+ * node's program, the seats list the payout under it ('website'), and collectZaps spends it into this wallet with the identity secret.
+ * `origin` is the page's own (https://testnet.bitcoin-arena.io). Answers { key, link }.
+ */
+function referralOf({ storage, random, curve, origin = '' } = {}) {
+  if (!curve || typeof curve.pointX !== 'function') throw new Error('a referral key is the identity key, and no curve was injected');
+  const key = toHex(refundKeyOf(curve.pointX(identitySecretFor(tabSeed({ storage, random })))));
+  return { key, link: `${String(origin).replace(/\/$/, '')}/?ref=${key}` };
+}
+
+/**
+ * ITS NAME, SAID BY ITS KEY (protocol referral-name.js, as a node's program says its own): { record, signature } in hex for POST
+ * /referral-name - the explorer and Health then name the program, not its key. Signed with the identity secret, which never leaves here.
+ */
+function referralNameFor({ name, storage, random, curve, nowMs = Date.now() } = {}) {
+  if (!curve || typeof curve.signSchnorr !== 'function') throw new Error('a program\'s name is signed with the identity key, and no signer was injected');
+  const secret = identitySecretFor(tabSeed({ storage, random }));
+  const rec = { site: refundKeyOf(curve.pointX(secret)), name: String(name || '').trim(), atMs: BigInt(nowMs) };
+  return { record: toHex(encodeReferralName(rec)), signature: toHex(curve.signSchnorr(referralNameId(rec), secret)) };
+}
+
+/**
  * THE ZAPS THIS PLAYER WAS SENT, COLLECTED INTO ITS OWN WALLET (2026-10-17: "zaps in the leaderboard go to the
  * federation's account of the user"): every seat asked what was paid to this tab's identity refund key (GET /donations?key=), merged
  * by outpoint; each one in a federation this page holds a wallet client of (`clients`: Map federation id hex -> lock client) is spent
  * by `Refund` under the identity secret - which never leaves this module - into that wallet. A contract the federation no longer
  * holds was spent by this key, the only one that can, and is final. Collected outpoints are noted in `storage` (arena.zaps.collected)
- * and not asked again. Answers { key, collected: [{ outpoint, federationId, amountMsat }], spent, failed, waiting, totalMsat }.
+ * and not asked again. Answers { key, collected: [{ outpoint, federationId, amountMsat, item, roundId }], spent, failed, waiting, totalMsat,
+ * referral }.
+ * AND WHAT THIS PLAYER'S REFERRAL LINK EARNED (kanban #681): the website payouts under the same key ('website' rows, referralOf) are
+ * collected the same way; `referral` is every one the seats list - { msat, payouts } - collected or not.
  */
 const ZAPS_COLLECTED_KEY = 'arena.zaps.collected';
 async function collectZaps({ storage, keep = storage, random, curve, clients, seats, fetcher = fetch } = {}) {
@@ -29487,13 +29566,15 @@ async function collectZaps({ storage, keep = storage, random, curve, clients, se
     const fields = JSON.stringify({ paymentImage: { kind: 'hash', bytes: image }, amountMsat: String(d.amountMsat), claimPk: pk, refundPk: pk, expiration: 0 });
     let said;
     try { said = JSON.parse(await client.refund(m[1], Number(m[2]), fields, toHex(secret))); } catch (e) { failed.push({ ...d, why: String(e && e.message || e) }); continue; }
-    if (said.accepted === true) collected.push({ outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat) });
+    if (said.accepted === true) collected.push({ outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat), item: d.item || null, roundId: d.roundId || null });
     else if (said.stored_before === null || said.stored_before === undefined) spent.push(d);
     else { failed.push({ ...d, why: said.error || 'the federation did not accept the collect' }); continue; }
     seen.add(d.outpoint);
   }
   try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...seen].slice(-500))); } catch { /* not kept: asked again, then found spent */ }
-  return { key: pk, collected, spent, failed, waiting, totalMsat: String(collected.reduce((t, c) => t + BigInt(c.amountMsat), 0n)) };
+  const web = [...found.values()].filter((d) => d.item === 'website');
+  return { key: pk, collected, spent, failed, waiting, totalMsat: String(collected.reduce((t, c) => t + BigInt(c.amountMsat), 0n)),
+    referral: { msat: String(web.reduce((t, d) => t + BigInt(d.amountMsat || 0), 0n)), payouts: web.length } };
 }
 
 // ---- arena-protocol/src/lobby-listing.js
@@ -34992,13 +35073,13 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          awaitAttestedClaimKey: awaitAttestedClaimKey,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
-         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
+         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, referralOf: referralOf, referralNameFor: referralNameFor, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
          playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
          roundEndMs: roundEndMs,
          ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes, ledgerHistory: ledgerHistory,
-         depositChoices: depositChoices, withdrawChoices: withdrawChoices, invoiceAmountMsat: invoiceAmountMsat, playerWithdrawable: playerWithdrawable, pendingDeposits: pendingDeposits, resumeDeposits: resumeDeposits, restOfFeesMsat: restOfFeesMsat, restInvoiceMsat: restInvoiceMsat, REST_FLOOR_MSAT: REST_FLOOR_MSAT, ceilNote: ceilNote, roundsDepositMsat: roundsDepositMsat, recordDonation: recordDonation, collectIntoPlayerWallet: collectIntoPlayerWallet, donationCostMsat: donationCostMsat, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, issuingMsat: issuingMsat, awaitIssued: awaitIssued, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,
+         depositChoices: depositChoices, withdrawChoices: withdrawChoices, invoiceAmountMsat: invoiceAmountMsat, playerWithdrawable: playerWithdrawable, pendingDeposits: pendingDeposits, resumeDeposits: resumeDeposits, restOfFeesMsat: restOfFeesMsat, restInvoiceMsat: restInvoiceMsat, REST_FLOOR_MSAT: REST_FLOOR_MSAT, ceilNote: ceilNote, roundsDepositMsat: roundsDepositMsat, recordDonation: recordDonation, recordReceived: recordReceived, collectIntoPlayerWallet: collectIntoPlayerWallet, donationCostMsat: donationCostMsat, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, issuingMsat: issuingMsat, awaitIssued: awaitIssued, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,
          findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,
          settlementOf: settlementOf, redeemPayout: redeemPayout, payoutLine: payoutLine,
          redeemSlashPayout: redeemSlashPayout, collectSlashPayout: collectSlashPayout, slashPayoutMine: slashPayoutMine, slashPayoutKept: slashPayoutKept,
