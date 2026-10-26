@@ -208,11 +208,13 @@ th{color:var(--dim);font-weight:600}.ok{color:var(--ok)}.bad{color:var(--bad)}.w
 /* THE MODERN PAGE (kanban #566): what the React page draws - cards that size to their content, stat tiles, a period switch, tables that fit */
 .dash h1{font-size:22px;font-weight:750}.dash h2{font-size:12px;letter-spacing:.07em;margin:26px 0 10px}.dash code{font-family:ui-monospace,monospace;font-size:12.5px}
 .dash-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:18px}.dash-head .sub{margin:2px 0 0}
+.note-strip{display:flex;flex-wrap:wrap;gap:6px 22px;margin:10px 2px 0;font-size:13px;color:var(--dim)}.note-strip b{color:var(--text,#e6edf3);font-weight:600;margin-right:4px}
 .note-rows{display:grid;grid-template-columns:max-content 1fr;gap:8px 16px;margin:8px 0 0;font-size:13.5px}.note-rows dt{color:var(--dim);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding-top:2px}.note-rows dd{margin:0}
 .dash-head h1{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0}.dash-facts{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}
 .fact{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border:1px solid var(--line);border-radius:999px;background:var(--card);font-size:13px;max-width:100%}
 .fact-k{color:var(--dim);font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.07em}.fact .dim{color:var(--dim)}
 .fact-copy{border:0;background:transparent;color:var(--st);font:600 12px system-ui;padding:0;cursor:pointer}.fact-copy:hover{text-decoration:underline}
+.copy-ic{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:6px;color:var(--dim)}.copy-ic:hover{background:rgba(127,127,127,.18);color:inherit;text-decoration:none}
 .btn{display:inline-block;padding:8px 14px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);text-decoration:none;font-weight:600}
 .seg{display:inline-flex;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:3px;margin:0 0 12px}
 .seg button{border:0;background:transparent;color:var(--dim);font:600 13px system-ui;padding:7px 14px;border-radius:9px;cursor:pointer}.seg button.on{background:var(--bg);color:var(--text);box-shadow:0 0 0 1px var(--line) inset}

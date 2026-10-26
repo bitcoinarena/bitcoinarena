@@ -125,14 +125,15 @@ export class RetirePanel extends React.Component {
     const { plan: p, typed, busy, message } = this.state;
     return (
       <div className="retire">
-        <div className="row"><span>Retire its federation</span><b>only one that holds nothing</b></div>
+        {/* plain words (kanban #716, 2026-10-26, the owner: "'only one that holds nothing' is not good english, rephrase it") */}
+        <div className="row"><span>Retire its federation</span><b>Possible only while it holds no bitcoin</b></div>
         {p ? (
           <div>
             <div className="row"><span>Federation</span><b><code>{String(p.federation).slice(0, 16)}…</code> {p.status || ''}</b></div>
             {(p.audit || []).map((m) => <div key={m.kind} className="row"><span>{m.kind}</span><b>{n(m.netAssetsMsat / 1000)} sat</b></div>)}
             {p.consented ? <p className="ok"><b>Your consent is kept ✓</b> The federation is retired once enough of its guardians' owners consented; then this node starts a fresh guardian for the next founding.</p>
               : p.holdsNothing ? (
-                <div><p>It holds nothing. Retiring it closes it for good. Type <b>RETIRE</b>:</p>
+                <div><p>It holds no bitcoin. Retiring it closes it for good. Type <b>RETIRE</b>:</p>
                   <p><input value={typed} onChange={(e) => this.setState({ typed: e.target.value })} placeholder="RETIRE" /> <Button primary disabled={busy || typed.trim() !== 'RETIRE'} onClick={this.consent}>Retire</Button></p></div>)
                 : <p className="warn">It cannot be retired: {p.why}</p>}
           </div>)

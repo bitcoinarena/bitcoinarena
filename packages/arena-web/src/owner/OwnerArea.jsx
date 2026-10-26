@@ -9,6 +9,7 @@
 // `signManifest(text)`.
 import React from 'react';
 import { NeedsPanel, ordered } from './NeedsPanel.jsx';
+import { CopyButton } from '../design/components.jsx';
 
 export const SECTIONS = [['overview', 'Overview'], ['roles', 'Roles'], ['bond', 'Bond'], ['services', 'Services'], ['apps', 'Apps'], ['release', 'Updates'],
   ['money', 'Donations'], ['referrer', 'Referrer'], ['emergency', 'Emergency code'], ['leave', 'Leave'], ['developer', 'Developer'], ['login', 'Your login']];
@@ -48,11 +49,11 @@ export class OwnerArea extends React.Component {
             <div className="card" id="needs">{p.needs ? <NeedsPanel items={p.needs} /> : <p className="sub">checking this node…</p>}</div>
             {/* THE NODE AT A GLANCE (kanban #565): one card per fact, the label small, the value large */}
             <div className="stats">
-              <div className="stat"><span>Node</span><b className="mono">{p.node.slice(0, 12)}…</b></div>
+              <div className="stat"><span>Node</span><b className="mono">{p.node.slice(0, 12)}… <CopyButton text={p.node} label="Copy the node key" /></b></div>
               <div className="stat"><span>Custody</span><b className={p.guardian ? 'ok' : undefined}>{p.guardian ? 'Guardian' : 'No custody'}</b></div>
               <div className="stat"><span>Apps</span><b>{games.length}</b><small>{games.length ? games.map((g) => `${g.name} v${g.version ?? '?'}`).join(', ') : 'none installed'}</small></div>
               <div className="stat"><span>Owner since</span><b>{new Date(p.claimedAtMs).toISOString().slice(0, 10)}</b><small>signed in with {HOW[p.how] || p.how}</small></div>
-              <div className="stat"><span>Owner key</span><b className="mono">{p.owner.slice(0, 12)}…</b></div>
+              <div className="stat"><span>Owner key</span><b className="mono">{p.owner.slice(0, 12)}… <CopyButton text={p.owner} label="Copy the owner key" /></b></div>
             </div></>)}
           {sec('roles', <><h2>Roles</h2>
             <Place id="roles" />

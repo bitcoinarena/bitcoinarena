@@ -225,7 +225,11 @@ export class SetupBanner extends React.Component {
   }
   phase() {
     const rows = setupRowsOf(this.props.status);
-    if (!rows.length || rows.every(([, , l]) => l.done)) return { phase: 'done', rows };
+    // AN UPDATE IS NO SETUP (2026-10-26, the owner on "Your node is still being set up - Update: the roles change: 0 of 6 confirmations":
+    // "When it is just doing an update because a transaction was sent, no need to lock the entire screen. The full owner dashboard remains
+    // available"): an advertisement update on its way never closes the owner area; the Overview's Setup card shows it
+    const setup = rows.filter(([id]) => !String(id).startsWith('setup-update-'));
+    if (!setup.length || setup.every(([, , l]) => l.done)) return { phase: 'done', rows };
     return { phase: this.state.entered ? 'open' : 'gate', rows };
   }
   mark() {

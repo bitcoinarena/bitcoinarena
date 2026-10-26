@@ -92,6 +92,10 @@ test('the owner area waits behind the setup screen while a part runs; it opens o
   assert.match(h, /id="setup-gate" role="dialog"[\s\S]*Your node is still being set up[\s\S]*Check back when everything below is synced\.<\/p>[\s\S]*id="setup-status"[\s\S]*Bitcoin Core/);
   assert.equal(gate({ core: { interim: false }, address: { ok: true, url: 'https://n.example' } }), '', 'all done: the owner area opens');
   assert.equal(gate(null), '', 'no answer: the owner area as before');
+  // an update on its way locks nothing (2026-10-26: "When it is just doing an update because a transaction was sent, no need to lock the
+  // entire screen")
+  assert.equal(gate({ core: { interim: false }, address: { ok: true, url: 'https://n.example' },
+    updates: [{ what: 'the roles change', txid: 'a1'.repeat(32), seen: true, confirmations: 0, needed: 6, counts: false }] }), '', 'only an update: the owner area stays open');
   assert.doesNotMatch(h, /setup-gate-enter/, 'nothing to fix: no way in');
   // a part the owner fixes here: a way in, to the sections that help only ("those things are fine if we need the owners page")
   const status = { ok: true, core: { interim: true, sync: { blocks: 1, headers: 2, progress: 0.5 } }, address: { ok: false, url: 'https://n.example', why: 'no answer' } };
