@@ -367,8 +367,8 @@ for (const d of [a, b]) {
   const checked = records.map((x) => checkPlanTaken(x, { seats: c.nodes, planId: fromHex(cert.planId) }));
   const who = new Set(checked.filter((x) => x.ok).map((x) => x.who));
   say_({ step: 'seats agreed', node: toHex(d.round.pubkey).slice(0, 16), planId: cert.planId.slice(0, 16), signed: records.length,
-    verified: checked.filter((x) => x.ok).length, distinctSeats: who.size, needed: receiptsNeeded(c.nodes.length),
-    threshold: who.size >= receiptsNeeded(c.nodes.length) });
+    verified: checked.filter((x) => x.ok).length, distinctSeats: who.size, needed: receiptsNeeded(c.gameVerifySlots),
+    threshold: who.size >= receiptsNeeded(c.gameVerifySlots) });
 }
 
 const invoiceOf = async (hash) => lncli('alice', 'lookupinvoice', hash);
