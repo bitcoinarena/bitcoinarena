@@ -87,6 +87,8 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
    * codes are in, and whether the federation now runs.
    */
   let refreshed = false;
+  // THE PEERS THIS NODE'S GUARDIAN HAS TAKEN, by node key: the DKG step is asked again on every tick until it starts
+  const added = new Set();
   async function postOwn() {
     if (started || !setup || !isSeated(own) || posted) return;
     try {
@@ -156,7 +158,17 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
     await postOwn();
     // THE KEY GENERATION, once every seated node's code is held
     if (setup && isSeated(own) && posted && seated.every((e) => codes.has(toHex(e.pubkey)))) {
-      for (const e of seated) { const k = toHex(e.pubkey); if (k !== own) await setup.addPeer(codes.get(k).code); }
+      // EACH PEER ADDED ONCE (kanban #577, measured 2026-10-26 on foundings 3976076b and d8e88fd3: one add-peer that failed - a guardian
+      // not up yet - sent the next tick through the whole list again, and the guardian refused the leader's code a second time with
+      // "Federation name has already been set to arena" on every tick after, so no seat ever reached start-dkg and both foundings stalled
+      // with all ten codes held): a peer taken is not asked again, and a guardian that answers that it already holds it counts as taken
+      for (const e of seated) {
+        const k = toHex(e.pubkey);
+        if (k === own || added.has(k)) continue;
+        try { await setup.addPeer(codes.get(k).code); }
+        catch (err) { if (!/already been set|already added|already exists|duplicate/i.test(String(err && err.message))) throw err; }
+        added.add(k);
+      }
       await setup.startDkg();
       started = true;
       try { invite = await setup.invite(); } catch { invite = null; }
