@@ -744,24 +744,19 @@
       font: 600 13px/1 system-ui, sans-serif; white-space: nowrap; cursor: pointer; }
     #arena-wallet-bar #arena-wb-gear, body #arena-settings-go { width: 38px; padding: 0; font-size: 20px; }   /* body: #arena-settings-go's own later rule (padding 6px 10px) put its glyph 1 px lower */
     #arena-wallet-bar #arena-wb-deposit, #arena-hdr-deposit { background: #f7931a; border-color: #f7931a; color: #1a1000; }
-    /* the header's links (kanban #673): in the row from 900 px, behind ☰ below it */
+    /* the header's links (kanban #673), behind ☰ at the right end of the header on every width (kanban #679, 2026-10-26: "those points are
+       not that important. Also put it in a burger menu at the right end even on desktop. Also on mobile") */
     .arena-nav { position: relative; flex: none; display: flex; }
-    .arena-nav-go { display: none; height: 32px; width: 38px; box-sizing: border-box; padding: 0; border-radius: 6px; border: 1px solid #3a4452;
+    .arena-nav-go { display: inline-block; height: 32px; width: 38px; box-sizing: border-box; padding: 0; border-radius: 6px; border: 1px solid #3a4452;
       background: rgba(22,27,34,0.94); color: #e8eaed; font: 600 18px/1 system-ui, sans-serif; cursor: pointer; }
-    .arena-nav-menu { display: flex; gap: 6px; }
-    .arena-nav-menu a { height: 32px; box-sizing: border-box; display: inline-flex; align-items: center; padding: 0 10px; border-radius: 6px;
-      border: 1px solid #3a4452; background: rgba(22,27,34,0.94); color: #e8eaed; font: 600 13px/1 system-ui, sans-serif; text-decoration: none; white-space: nowrap; }
-    .arena-nav-menu a:hover { color: #f7931a; border-color: #f7931a; }
-    @media (max-width: 899px) {
-      .arena-nav-go { display: inline-block; }
-      .arena-nav-menu { display: none; position: absolute; top: 38px; right: 0; flex-direction: column; gap: 0; min-width: 170px; padding: 6px;
-        background: rgba(13,16,20,0.98); border: 1px solid #3a4452; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.5); z-index: 70; }
-      .arena-nav.open .arena-nav-menu { display: flex; }
-      .arena-nav-menu a { border: 0; background: none; height: 40px; font-size: 15px; }
-    }
-    /* over a game and in the lobby the wallet bar is the header: its links sit beside the brand */
-    #arena-wb-nav { margin-right: auto; }
-    @media (max-width: 899px) { #arena-wb-nav .arena-nav-menu { right: auto; left: 0; } #arena-wallet-bar .arena-nav-go { padding: 0; } }
+    .arena-nav-go:hover, .arena-nav.open .arena-nav-go { color: #f7931a; border-color: #f7931a; }
+    .arena-nav-menu { display: none; position: absolute; top: 38px; right: 0; flex-direction: column; gap: 0; min-width: 190px; padding: 6px;
+      background: rgba(13,16,20,0.98); border: 1px solid #3a4452; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.5); z-index: 70; }
+    .arena-nav.open .arena-nav-menu { display: flex; }
+    .arena-nav-menu a { height: 40px; box-sizing: border-box; display: flex; align-items: center; padding: 0 12px; border-radius: 6px;
+      color: #e8eaed; font: 600 15px/1 system-ui, sans-serif; text-decoration: none; white-space: nowrap; }
+    .arena-nav-menu a:hover { color: #f7931a; background: rgba(247,147,26,0.08); }
+    #arena-wallet-bar .arena-nav-go { padding: 0; }
     /* THE BALANCE IS A BUTTON (2026-10-19: "the balance in the header should also have the layout of a button") */
     #arena-wallet-bar .wb-bal, #arena-hdr-bal { display: inline-flex; align-items: center; gap: 4px; }
     #arena-wallet-bar .wb-bal b, #arena-hdr-bal b { color: #f7931a; font-weight: 700; }
@@ -1386,8 +1381,6 @@
          the same balance button, Deposit and Withdraw as the games screen's bar, the same handlers -->
     <!-- PROPOSALS, EXPLORER, HEALTH IN THE HEADER (kanban #673: "add a link to proposals and explorer to the Testnet site in the top header
          bar. You may need to use a burger menu", "also include Health"): the links in the row on a wide screen, behind ☰ on a narrow one -->
-    <div id="arena-nav" class="arena-nav"><button id="arena-nav-go" class="arena-nav-go" type="button" aria-label="Menu" aria-expanded="false" aria-controls="arena-nav-menu">&#9776;</button>
-      <nav id="arena-nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoin-arena.io/" target="_blank" rel="noopener">Explorer</a><a href="/health/">Health</a><a href="/referral/">Referral Program</a></nav></div>
     <button id="arena-hdr-bal" class="wb-bal" type="button" title="Your balance by federation"><b id="arena-hdr-sats">&ndash; sat</b></button>
     <button id="arena-hdr-deposit" type="button" title="Deposit" aria-label="Deposit"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v7.5M4.8 6.5 8 9.7l3.2-3.2M2.5 11.5v2h11v-2"/></svg><span class="word">Deposit</span></button>
     <button id="arena-hdr-withdraw" type="button" title="Withdraw" aria-label="Withdraw"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 10V2.5M4.8 5.7 8 2.5l3.2 3.2M2.5 11.5v2h11v-2"/></svg><span class="word">Withdraw</span></button>
@@ -1396,6 +1389,8 @@
     <!-- THE GAME'S SHOP, beside the Leaderboard once a game that sells items is chosen -->
     <button id="arena-shop-go" type="button" title="Shop: this game's items, bought once and kept" aria-label="Shop"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5.5h11l-1 8h-9z"/><path d="M5.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"/></svg><span class="word">Shop</span></button>
     <button id="arena-settings-go" type="button" title="Settings">&#9881;</button>
+    <div id="arena-nav" class="arena-nav"><button id="arena-nav-go" class="arena-nav-go" type="button" aria-label="Menu" aria-expanded="false" aria-controls="arena-nav-menu">&#9776;</button>
+      <nav id="arena-nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoin-arena.io/" target="_blank" rel="noopener">Explorer</a><a href="/health/">Health</a><a href="/referral/">Referral Program</a></nav></div>
     <div id="arena-hdr-why" role="status"></div>
   </div>
   <!-- SETTINGS, ITS OWN SCREEN (2026-09-25 21:16: "The wallet page belongs in the settings screen. Deposit,
@@ -1405,13 +1400,13 @@
   <div id="arena-wallet-bar" role="toolbar" aria-label="wallet">
     <a id="arena-wb-home" href="https://bitcoin-arena.io/" title="bitcoin-arena.io" aria-label="Bitcoin Arena - bitcoin-arena.io"><i aria-hidden="true">&#8383;</i><span>Bitcoin Arena</span></a>
     <button id="arena-wb-back" type="button" title="Back to Bitcoin Arena" aria-label="Back to Bitcoin Arena"><span aria-hidden="true">&larr;</span><span class="word">Arena</span></button>
-    <div id="arena-wb-nav" class="arena-nav"><button id="arena-wb-nav-go" class="arena-nav-go" type="button" aria-label="Menu" aria-expanded="false" aria-controls="arena-wb-nav-menu">&#9776;</button>
-      <nav id="arena-wb-nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoin-arena.io/" target="_blank" rel="noopener">Explorer</a><a href="/health/">Health</a><a href="/referral/">Referral Program</a></nav></div>
     <button class="wb-bal" type="button" title="Your balance by federation"><b id="arena-wb-sats">&ndash; sat</b><span id="arena-wb-pending"></span></button>
     <button id="arena-wb-deposit" type="button">Deposit</button>
     <button id="arena-wb-withdraw" type="button">Withdraw</button>
     <button id="arena-wb-season" type="button" title="Leaderboard" aria-label="Leaderboard"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg><span class="word">Leaderboard</span></button>
     <button id="arena-wb-gear" type="button" title="Settings">&#9881;</button>
+    <div id="arena-wb-nav" class="arena-nav"><button id="arena-wb-nav-go" class="arena-nav-go" type="button" aria-label="Menu" aria-expanded="false" aria-controls="arena-wb-nav-menu">&#9776;</button>
+      <nav id="arena-wb-nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoin-arena.io/" target="_blank" rel="noopener">Explorer</a><a href="/health/">Health</a><a href="/referral/">Referral Program</a></nav></div>
     <div id="arena-wb-why" role="status"></div>
   </div>
   <div id="arena-withdraw" role="dialog" aria-modal="true" aria-labelledby="arena-withdraw-title"><div class="wd-head"><h3 id="arena-withdraw-title">Withdraw</h3><button type="button" class="wd-close" aria-label="Close">&times;</button></div><div class="wd-body"></div></div>
@@ -5038,7 +5033,9 @@
     const stakeEntered = (r) => { try { const j = JSON.parse(vault().getItem('arena.lock.saved.' + r.round + '.' + r.player) || 'null'); return !!(j && j.committedTo); } catch { return false; } };
     async function paintHistory() {
       // WHAT A HISTORY ROW SAYS (kanban #564: one place, for the page's rows and the React ones)
-      const WHAT = (r, sat) => r.kind === 'deposit' ? 'Deposit' : r.kind === 'winnings' ? `Winnings${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}` : r.kind === 'donation' ? `Donation${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}`
+      // a gift's app by its title, as the donate box names it (kanban #682)
+      const gameTitleOf = (n) => { const g = (window.ARENA_GAMES_FULL || []).find((x) => x.name === n || (x.manifest && x.manifest.gameName === n)); return (g && (g.title || (g.manifest && g.manifest.title))) || n; };
+      const WHAT = (r, sat) => r.kind === 'deposit' ? 'Deposit' : r.kind === 'winnings' ? `Winnings${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}` : r.kind === 'donation' ? (String(r.to || '').startsWith('player:') ? 'Zap' : `Donation${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : String(r.to || '').startsWith('app:') ? ' \u00b7 ' + gameTitleOf(String(r.to).slice(4)) + ' developers' : r.to === 'network' ? ' \u00b7 protocol developers' : ''}`)
           : r.kind === 'refund' ? `Refund \u00b7 round ${String(r.round || '').slice(0, 8)} \u00b7 stake back`
           : r.kind === 'slash-payout' ? `Slash payout \u00b7 round ${String(r.round || '').slice(0, 8)}`
           : r.kind === 'withdrawal' ? `Withdrawal${r.state && r.state !== 'Success' ? ' (' + r.state + ')' : ''}`
@@ -5943,7 +5940,7 @@
         const w = wallets.find((x) => x.msat >= choice);
         if (!w) return { ok: false, why: 'no federation of your wallet holds ' + sat.toLocaleString('en-US') + ' sat' };
         say('Paying ' + ARENACLIENT.zapSatLine(choice) + ' \u2026');
-        const got = await ARENACLIENT.zapPlayer({ player: ARENACLIENT.fromHex(mine.recipient), sat, wallet: w.c, federationId: w.fid,
+        const got = await ARENACLIENT.zapPlayer({ player: ARENACLIENT.fromHex(mine.recipient), sat, wallet: w.c, federationId: w.fid, storage: vault(),
           donor: { pubkey: key.pubkey, sign: key.sign }, seats: zapSeats(), fetch: (u, o) => fetch(u, o) }).catch((e) => ({ ok: false, step: 'page', why: e.message }));
         if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
         return got.ok ? { ok: true, zapped: true, txid: got.txid } : { ok: false, why: (got.step ? got.step + ': ' : '') + got.why };
@@ -6681,19 +6678,23 @@
             // A ROUND WITH ITS COMMITTEE DRAWN (playtest 2026-10-20 05:02Z, the owner: the balance popup said "Not checked yet" for 337ae01a): from
             // protocol 2 a contract no longer names its draw, so every round's signerNodes is 0 and this filter found no round at all - the
             // federations' records were never checked from the games screen
-            for (const r of (rows.rounds || []).filter((x) => !x.free && x.phase === 'open' && (Number(x.signerNodes) > 0 || (x.committee && x.committee.drawn)))
-              .sort((x, y) => Number(y.committeeTimeMs || 0) - Number(x.committeeTimeMs || 0)).slice(0, 6)) {
+            for (const r of (rows.rounds || []).filter((x) => !x.free && x.phase === 'open' && (Number(x.signerNodes) > 0 || (x.committee && x.committee.drawn))
+                && Number(x.startTimeMs || 0) > Date.now() - 300000)
+              .sort((x, y) => Number(x.startTimeMs || 0) - Number(y.startTimeMs || 0)).slice(0, 8)) {
               try {
                 const got = await ARENACLIENT.fetchRound(r.id, nodes);
                 if (got && got.contract && ARENACLIENT.roundLocks(got.contract)) read.push({ r, c: got.contract });
               } catch (e) { console.log('[arena] federation records from the games screen, round ' + r.id.slice(0, 8) + ': ' + (e && e.message ? e.message : e)); }
             }
-            read.sort((x, y) => (Number(y.c.protocolVersion || 1) - Number(x.c.protocolVersion || 1)) || (Number(y.r.committeeTimeMs || 0) - Number(x.r.committeeTimeMs || 0)));
+            // THE ROUNDS BEING PLAYED NOW FIRST (kanban #631, measured 2026-10-26 00:3xZ: the newest committee time was a dead 10-25 grid's, posted
+            // on a branch the chain left, whose committee no client can build - "no beacon" - while the 10-26 rounds starting every 90 s drew
+            // fine; three dead rounds were tried and the Federations tab said "Not checked yet"): the highest protocol, then the soonest start
+            read.sort((x, y) => (Number(y.c.protocolVersion || 1) - Number(x.c.protocolVersion || 1)) || (Number(x.r.startTimeMs || 0) - Number(y.r.startTimeMs || 0)));
             // ITS OWN COMMITTEE AND CENSUS, NOT prepRound's cache (measured 2026-10-13 ~20:05Z: the lobby's warm-up had prepared the same
             // round through the slow federation-B route and its promise never settled, so the games screen learned nothing): up to 3
             // candidates, the census naming the most nodes kept - a market's census counts every node, a run game's only its hosts
             let best = null;
-            for (const x of read.slice(0, 3)) {
+            for (const x of read.slice(0, 6)) {
               try {
                 await Promise.race([ARENACLIENT.clientSettlementSignerNodes(x.r.id, x.c, nodes, { curve: window.ARENA_CURVE, explorer: window.ARENA_EXPLORER_FOR ? window.ARENA_EXPLORER_FOR(x.c) : null }),
                   new Promise((_, no) => setTimeout(() => no(new Error('no committee in 20 s')), 20000))]);
@@ -6701,6 +6702,7 @@
                 const n = census && census.entries ? census.entries.length : 0;
                 console.log('[arena] census of round ' + x.r.id.slice(0, 8) + ' (protocol ' + (x.c.protocolVersion || 1) + '): ' + n + ' nodes');
                 if (census && (!best || n > best.n)) best = { x, census, n };
+                if (best && best.n >= 14) break;   // every node of both federations: no later census names more
               } catch (e) { console.log('[arena] census of round ' + x.r.id.slice(0, 8) + ': ' + (e && e.message ? e.message : e)); }
             }
             if (best) {
@@ -8342,7 +8344,7 @@
           const key = itemsKey(); if (!key) return { ok: false, tell: 'Open your wallet first.' };
           const w = wallets.find((x) => x.msat >= BigInt(sat) * 1000n);
           if (!w) return { ok: false, tell: 'No federation of your wallet holds ' + sat.toLocaleString('en-US') + ' sat.' };
-          const got = await ARENACLIENT.giftDonation({ game: sets.game, recipients: sets.set, networkSet: sets.game ? sets.networkSet : null, origin, sat, wallet: w.c, federationId: w.fid,
+          const got = await ARENACLIENT.giftDonation({ game: sets.game, recipients: sets.set, networkSet: sets.game ? sets.networkSet : null, origin, sat, wallet: w.c, federationId: w.fid, storage: vault(),
             donor: { pubkey: key.pubkey, sign: key.sign }, seats: sets.seats, fetch: (u, o) => fetch(u, o) }).catch((e) => ({ ok: false, step: 'page', why: e.message }));
           window.ARENA_DONATE_LAST = got;
           console.log('[arena] donation ' + (got.ok ? sat + ' sat, transaction ' + got.txid + ', ' + got.outputs + ' outputs, kept by ' + got.keptBy : 'refused (' + got.step + '): ' + got.why));

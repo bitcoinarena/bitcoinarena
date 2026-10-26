@@ -7,13 +7,13 @@ import { oneTilePerGame } from '../src/games.js';
 
 const g = (id, name, version, rounds, devKey = 'dev') => ({ id, name, devKey, manifest: { version }, live: { rounds, players: 0 }, nodes: [] });
 
-test('one tile per game: the newest version with a live round, else the newest; the others listed', () => {
+test('one tile per game: always the newest version, live or not (kanban #685); the others listed', () => {
   const tiles = oneTilePerGame([g('rps1', 'rock-paper-scissors', 1, 3), g('rps2', 'rock-paper-scissors', 2, 0),
     g('nb1', 'nextblock', 1, 2), g('nb2', 'nextblock', 2, 1), g('ud1', 'btc-updown-15m', 1, 0), g('ud2', 'btc-updown-15m', 2, 0)]);
   const by = Object.fromEntries(tiles.map((t) => [t.name, t]));
   console.log('  TILES:', JSON.stringify(tiles.map((t) => [t.name, t.id, t.versions])));
   assert.equal(tiles.length, 3);
-  assert.equal(by['rock-paper-scissors'].id, 'rps1', 'only version 1 has live rounds');
+  assert.equal(by['rock-paper-scissors'].id, 'rps2', 'only version 1 has live rounds: still the newest');
   assert.equal(by.nextblock.id, 'nb2', 'both live: the newest');
   assert.equal(by['btc-updown-15m'].id, 'ud2', 'none live: the newest');
   assert.deepEqual(by.nextblock.versions, ['nb2', 'nb1']);
