@@ -5717,7 +5717,9 @@
     // offline daily it was.
     // AND A GAME LINK: ?game=<name or id> picks the game the lobby opens on (chooseTheGame) - it names no
     // nodes, so the seats still come from daily.json (it skipped it, and a game link opened an empty lobby)
-    const VIEW_ONLY_PARAMS = ['rps-demo', 'game'];
+    // A REFERRAL LINK NAMES NO LOBBY EITHER (kanban #678, measured 2026-10-26 on page697: /?game=rock-paper-scissors&ref=<key> - the referral
+    // demo's own link - read no daily.json, found no seat and said "The game's nodes are not reachable right now")
+    const VIEW_ONLY_PARAMS = ['rps-demo', 'game', 'ref'];
     // THE GAME STAYS IN THE ADDRESS (measured on live UI 136: PLAY on a Tick Tock round ahead wrote the round's link
     // without game=, and a reload held the join to its start on the bare path - the game chooser came up, Unity not loaded): an
     // address that names a round, and the lobby's own address behind it, keep the game= the page is on.
@@ -6357,7 +6359,7 @@
       // game are its family here too; gameClientFile still keeps only those under the same developer key and name.
       const family = (window.ARENA_GAMES_FULL || []).filter((g) => g && g !== game && g.id !== game.id && g.name === game.name && g.manifest);
       const checkedAs = Object.assign({}, game, { older: [...(Array.isArray(game.older) ? game.older : []), ...family] });
-      const file = await ARENACLIENT.gameClientFile({ game: checkedAs, url: 'games/' + encodeURIComponent(game.name) + '/index.html', digest });
+      const file = await ARENACLIENT.gameClientFile({ game: checkedAs, url: new URL('games/' + encodeURIComponent(game.name) + '/index.html', location.href).href, digest });
       if (!file.ok) throw new Error(file.why);
       // WHAT THE CLIENT IS HANDED: the engine's (this page's lobby, pick sheet, wallet and seed), never a second copy of them
       const hereProofs = new Map();   // this tab's signed presence, one per round's table (ARENA_GAME.here)
@@ -6554,7 +6556,10 @@
       // THE BAR'S ←: back to the games, as the client's own did - over the leaderboard or the shop too
       { const wbBack = document.getElementById('arena-wb-back');
         if (wbBack) wbBack.onclick = () => { const sheet = document.querySelector('#arena-season.show .back, #arena-shop.show .back'); if (sheet) sheet.click(); window.ARENA_GAME.back(); }; }
-      const frame = document.createElement('iframe');
+      // A SITE THAT EMBEDS THE GAME (kanban #678, 2026-10-26: "The demo site should take rps and take it as its own, embedding the code.
+      // Not an iframe."): under arena-embed.js the client is mounted in the host page's own DOM, in an element that takes the same
+      // checked bytes (src), says 'load' and hands its document as a frame's would
+      const frame = window.ARENA_EMBED ? window.ARENA_EMBED.clientElement() : document.createElement('iframe');
       frame.id = 'arena-client';
       frame.title = game.title;
       // SHOWN ONCE THE PAGE'S STYLE IS IN IT (kanban #610, 2026-10-24: "Right after loading, and the loading indicator disappears and
