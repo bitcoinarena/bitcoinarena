@@ -89,6 +89,12 @@ export function writeLaunchers({ home, s, ownerUrl, addCustody = null, platform 
     const appsDir = applicationsDir || (writable('/Applications') ? '/Applications' : join(env.HOME || homedir(), 'Applications'));
     rmSync(join(appsDir, 'Arena Node.app'), { recursive: true, force: true });
     const app = join(appsDir, 'Bitcoin Arena.app');
+    // THE DMG'S OWN APP IS LEFT ALONE (kanban #669, found 2026-10-26 by the #688 work): the native app (package-mac.sh, bundle
+    // io.bitcoin-arena.node.setup) lives at the same path, and writing this launcher's Info.plist over it broke that app - its Close, its
+    // update on open. With it there, the .command files above are the launchers and the app is not touched
+    let native = false;
+    try { native = /<string>io\.bitcoin-arena\.node\.setup<\/string>/.test(readFileSync(join(app, 'Contents', 'Info.plist'), 'utf8')); } catch { native = false; }
+    if (native) return { files, menu: null, app, start, command, nativeApp: true };
     mkdirSync(join(app, 'Contents', 'MacOS'), { recursive: true });
     writeFileSync(join(app, 'Contents', 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
