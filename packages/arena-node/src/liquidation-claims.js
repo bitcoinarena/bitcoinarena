@@ -18,6 +18,8 @@
 import { settleClaims } from '../../arena-protocol/src/federation-slash.js';
 
 const isHex = (s, n) => typeof s === 'string' && new RegExp(`^[0-9a-f]{${n}}$`).test(s);
+// left in the paying client for the remainder pay's own fees (one payout's measured 352 msat, room for many payees)
+const REMAINDER_FEE_MARGIN_MSAT = 10_000n;
 
 // PENDING OUTPUTS (spec §23A.5 "Notes still in issuance at the halt", RULED 2026-10-14): `checkPending(federationHex, requestHex)`
 // recomputes an issuance request's note nonce, the hash160 of its blinded message and its amount (the fork's `mintv2 check-pending`)
@@ -156,7 +158,15 @@ export async function payOutLiquidation({ fid, v, claims, height, run, spendEscr
   if (!due.length) {
     // THE REMAINDER, once: only after drain_blocks (settleClaims names a split only then), every note's payout made first
     if (!p.split || v.remainderTxid || !remainderPayees) return { paid: 0, notes: done.size, ...(p.split && !remainderPayees ? { why: 'the remainder waits for its payees' } : {}) };
-    const rest = BigInt(p.remainderMsat);
+    // WHAT THE CLIENT CAN STILL PAY (kanban #326 rehearsal 17, 2026-10-26): the table's remainder is the claim less the notes paid,
+    // but every pay costs the safe federation's fees (352 msat for one payout, measured), so the client holds less than that and a
+    // remainder of the full figure was refused as "balance insufficient" on every pass; it is paid from what is there, less this
+    // margin for its own pay's fees
+    const held = await run(['--mode', 'balance']);
+    if (!(held && held.msat !== undefined)) return { why: `no balance of the paying client: ${(held && held.error) || JSON.stringify(held)}` };
+    const can = BigInt(held.msat) - REMAINDER_FEE_MARGIN_MSAT;
+    const rest = BigInt(p.remainderMsat) < can ? BigInt(p.remainderMsat) : can;
+    if (rest <= 0n) return { why: `the paying client holds ${held.msat} msat, nothing left for the remainder after fees` };
     const to = (await remainderPayees(fid, rest)).filter((x) => BigInt(x.msat) > 0n);
     if (!to.length) return { why: 'no payee for the remainder' };
     if (to.reduce((a, x) => a + BigInt(x.msat), 0n) > rest) return { why: 'the remainder\'s payees come to more than the remainder' };

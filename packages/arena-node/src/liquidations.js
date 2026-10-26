@@ -45,6 +45,9 @@ export function createLiquidations({ records, clocks, verify, claimsUrl = null, 
       const pick = held ? newestSpentSet(all, { record: held.record, verify }) : { copy: null, why: 'no record held' };
       return {
         federation: fid, haltHeight: halt.height, haltRecord: halt.bytes ? toHex(halt.bytes) : null,
+        // THE RECORD HELD, signed (kanban #326 rehearsal 17): a halt PROVEN by the seats has no HALTED record (a federation that lost
+        // 2f + 1 signs none), and the remainder's payees leave out the federation's guardians - read from this
+        record: held && held.bytes ? toHex(held.bytes) : null,
         haltProof: halt.proof ? { session: halt.proof.session, observers: halt.proof.observers, abandoned: halt.proof.abandoned.map(toHex), id: toHex(halt.proof.id) } : null,
         // WHERE CLAIMS GO (§23A.5 step 2: "advertises where claims go ... every seat mirrors them"): the arbitration set's door
         claims: claimsUrl,

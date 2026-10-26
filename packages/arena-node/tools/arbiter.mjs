@@ -156,7 +156,8 @@ async function payLiquidations() {
     const remainderPayees = async (fidHex, msat) => {
       const l = await claims.liquidation(fidHex);
       if (!l) throw new Error('no seat lists that liquidation');
-      const record = splitSignedRecord(fromHex(l.haltRecord)).record;
+      if (!l.record) throw new Error('no seat lists the record of that federation');
+      const record = splitSignedRecord(fromHex(l.record)).record;
       const list = await get(`${seats[0]}/rounds?next=1`);
       const contract = decodeRoundContract(await get(`${seats[0]}/round?id=${list.rounds[0].id}`, 'bytes'));
       const tip = Number(await rpc('getblockcount'));
@@ -212,17 +213,24 @@ if (liqClients.size) {
   const claimsFile = env.ARENA_LIQ_CLAIMS_FILE || null;
   claims = createLiquidationClaims({
     validate: fedimintNoteValidator({ cli: env.ARENA_FEDIMINT_CLI || 'fedimint-cli', dataDirFor: (fid) => liqClients.get(fid) || null, home: env.ARENA_FEDIMINT_HOME || env.HOME }),
+    // THE FIRST SEAT THAT LISTS IT, with the spent set and the record from any seat that has them (kanban #326 rehearsal 17, 2026-10-26:
+    // the test host seats list T2 with its record and no spent set, the one T2 seat still up with the spent set; the first answer
+    // alone left the remainder with no record to read the guardians from)
     liquidationOf: async (fid) => {
+      let first = null, copy = null, record = null;
       for (const s of seats) {
         try {
           const j = await (await fetch(`${s}/liquidations`, { signal: AbortSignal.timeout(15000) })).json();
           const l = (j.liquidations || []).find((x) => x.federation === fid);
           if (!l) continue;
-          const copy = l.spentSet && l.spentSet.copies && l.spentSet.copies[0];
-          return { ...l, spentNonces: copy ? spentNonceSet(decodeSpentSet(fromHex(copy.spentSet))) : null };
+          first = first || l;
+          copy = copy || (l.spentSet && l.spentSet.copies && l.spentSet.copies[0]) || null;
+          record = record || l.haltRecord || l.record || null;
+          if (copy && record) break;
         } catch { /* the next seat */ }
       }
-      return null;
+      if (!first) return null;
+      return { ...first, record, spentNonces: copy ? spentNonceSet(decodeSpentSet(fromHex(copy.spentSet))) : null };
     },
     height: async () => Number(await rpc('getblockcount')),
     escrowMsatOf: async (fid) => {

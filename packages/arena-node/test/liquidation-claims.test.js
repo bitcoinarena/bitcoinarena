@@ -140,6 +140,7 @@ test('after drain_blocks the remainder is paid once to its payees, never before 
     if (args[1] === 'pegin-address') return { address: 'tb1qsafe' };
     if (args[1] === 'pegin-claim') return { balance_before_msat: 0, balance_after_msat: 2_000_000 };
     if (args[1] === 'pay') { pays.push(args[3]); return { txid: `t${pays.length}`, payouts: [] }; }
+    if (args[1] === 'balance') return { msat: 1_300_000 };
     return {}; };
   let h = 1021;
   const remainderPayees = async (_fid, msat) => [{ key: 'aa'.repeat(32), msat: (msat * 75n) / 100n }, { key: 'dd'.repeat(32), msat: msat - (msat * 75n) / 100n }];
@@ -151,6 +152,28 @@ test('after drain_blocks the remainder is paid once to its payees, never before 
   const r = await pass();
   assert.deepEqual([r.remainder, pays.length, pays[1]], ['1232000', 2, `${'aa'.repeat(32)}:924000,${'dd'.repeat(32)}:308000`]);
   await pass(); assert.equal(pays.length, 2, 'once');
+});
+
+test('the remainder is paid from what the paying client holds, less a margin for the fees, when the fees ate into it', async () => {
+  const b = book(); b.at(1012);
+  await b.claims.offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+  const pays = []; const v = {}; let held = 1_000_000;
+  const run = async (args) => {
+    if (args[1] === 'pegin-address') return { address: 'tb1qsafe' };
+    if (args[1] === 'pegin-claim') return { balance_before_msat: 0, balance_after_msat: 2_000_000 };
+    if (args[1] === 'pay') { pays.push(args[3]); return { txid: `t${pays.length}`, payouts: [] }; }
+    if (args[1] === 'balance') return { msat: held };
+    return {}; };
+  let h = 1021;
+  const remainderPayees = async (_fid, msat) => [{ key: 'aa'.repeat(32), msat }];
+  const pass = () => payOutLiquidation({ fid: FED, v, claims: b.claims, height: async () => h, run, spendEscrow: async () => ({ txid: 'x' }), remainderPayees });
+  await pass();
+  b.at(1100); h = 1100;
+  const r = await pass();
+  assert.deepEqual([r.remainder, pays[1]], ['990000', `${'aa'.repeat(32)}:990000`], 'the table says 1232000; the client holds 1000000');
+  held = 5_000; delete v.remainderTxid; pays.length = 1;
+  assert.match((await pass()).why, /holds 5000 msat, nothing left/);
+  assert.equal(pays.length, 1, 'no pay it cannot make');
 });
 
 test('the claim key comes from the seed per federation; the payouts naming it are collected by Refund once; the arbiter lists them', async () => {
