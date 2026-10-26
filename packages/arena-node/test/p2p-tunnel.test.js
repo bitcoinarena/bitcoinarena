@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { createServer as tcpServer, connect } from 'node:net';
 import { createServer as httpServer } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { p2pTunnelPort, createP2pTunnels, carryP2p, tunnelRoot, P2P_TUNNEL_BASE, P2P_TUNNEL_SPAN, P2P_TUNNEL_PATHS, P2P_KEEPALIVE_MS } from '../src/p2p-tunnel.js';
+import { p2pTunnelPort, createP2pTunnels, carryP2p, carryApi, guardianApiOverrides, tunnelRoot, P2P_TUNNEL_BASE, P2P_TUNNEL_SPAN, P2P_TUNNEL_PATHS, P2P_KEEPALIVE_MS, GUARDIAN_API_RELAY_PATH } from '../src/p2p-tunnel.js';
 import { guardianEnv, guardianPorts } from '../src/guardian.js';
 
 const listening = (srv) => new Promise((r) => srv.listen(0, '127.0.0.1', () => r(srv.address().port)));
@@ -103,4 +103,64 @@ test('an idle tunnel is pinged from both ends, well inside a proxy\'s 100 s idle
   assert.ok(seatPings >= 3, `the seat heard the node's pings (${seatPings})`);
   assert.ok(nodePings >= 3, `the node heard the seat's pings (${nodePings})`);
   sock.destroy(); tunnels.close(); for (const c of wss.clients) c.terminate(); http.close(); g.close();
+});
+
+// THE GUARDIANS' API THROUGH THE NODES (kanban #577, measured 2026-10-26 on e2f42eea: the config named each guardian's API at its 10-22 quick
+// tunnel; once those were gone, six guardians that fell one session behind could not fetch it from any peer and the federation halted)
+test('a guardian is started with each peer\'s config address sent to its seat\'s relay, its own to its local API, and other overrides kept', () => {
+  const apiEndpoints = { 0: { url: 'wss://old-a.trycloudflare.com/guardian', name: 'aaaaaaaaaaaaaaaa' }, 1: { url: 'wss://old-b.trycloudflare.com/guardian/', name: 'BBBBBBBBBBBBBBBB' },
+    2: { url: 'ws://198.51.100.7:6571/guardian', name: 'cccccccccccccccc' } };
+  const v = guardianApiOverrides({ apiEndpoints, ownName: 'cccccccccccccccc', seatRoot: 'ws://127.0.0.1:8470', ownApiPort: 9471, existing: 'wss://other.example/x=ws://127.0.0.1:1/,wss://old-a.trycloudflare.com/guardian=wss://stale' });
+  const m = new Map(v.split(',').map((x) => [x.slice(0, x.indexOf('=')), x.slice(x.indexOf('=') + 1)]));
+  assert.equal(m.get('wss://old-a.trycloudflare.com/guardian'), `ws://127.0.0.1:8470${GUARDIAN_API_RELAY_PATH}aaaaaaaaaaaaaaaa`);
+  assert.equal(m.get('wss://old-a.trycloudflare.com/guardian/'), `ws://127.0.0.1:8470${GUARDIAN_API_RELAY_PATH}aaaaaaaaaaaaaaaa`, 'with and without the trailing slash');
+  assert.equal(m.get('wss://old-b.trycloudflare.com/guardian'), `ws://127.0.0.1:8470${GUARDIAN_API_RELAY_PATH}bbbbbbbbbbbbbbbb`);
+  assert.equal(m.get('ws://198.51.100.7:6571/guardian'), 'ws://127.0.0.1:9471/', 'its own: the local API port');
+  assert.equal(m.get('wss://other.example/x'), 'ws://127.0.0.1:1/', 'an override for another address is kept');
+  assert.equal([...m.keys()].filter((k) => k.startsWith('wss://old-a')).length, 2, 'the stale one for a peer\'s address is replaced');
+  const env = guardianEnv({ nodePort: 8470, dataDir: '/x', network: 'testnet4', bitcoindUrl: 'http://b', cookieSecret: 'c', password: 'p', endpoint: 'ws://e', apiOverrides: v });
+  assert.equal(env.FM_WS_API_CONNECT_OVERRIDES, v);
+  assert.equal(guardianEnv({ nodePort: 8470, dataDir: '/x', network: 'testnet4', bitcoindUrl: 'http://b', cookieSecret: 'c', password: 'p', endpoint: 'ws://e' }).FM_WS_API_CONNECT_OVERRIDES, undefined, 'no federation yet: none');
+});
+
+test('a peer\'s API asked at the seat\'s relay reaches that peer\'s guardian at its current address, and follows it when it moves', async () => {
+  const me = '11'.repeat(32), other = '22'.repeat(32);
+  // the peer's seat: /guardian answers each message with its tag (as a guardian's JSON-RPC would answer)
+  const peerSeat = async (tag) => {
+    const http = httpServer((req, res) => res.end('seat'));
+    const wss = new WebSocketServer({ noServer: true });
+    http.on('upgrade', (req, socket, head) => {
+      if (new URL(req.url, 'http://x').pathname !== '/guardian') { socket.destroy(); return; }
+      wss.handleUpgrade(req, socket, head, (ws) => ws.on('message', (m) => ws.send(`${tag}:${m}`)));
+    });
+    const port = await listening(http);
+    return { root: `http://127.0.0.1:${port}`, close: () => { for (const c of wss.clients) c.terminate(); http.close(); } };
+  };
+  const p1 = await peerSeat('first'), p2 = await peerSeat('second');
+  const t = createP2pTunnels({ ownKey: me });
+  // this node's seat: the relay, as server.js carries it
+  const http = httpServer((req, res) => res.end('seat'));
+  const wss = new WebSocketServer({ noServer: true });
+  http.on('upgrade', (req, socket, head) => {
+    const at = new URL(req.url, 'http://x').pathname;
+    const root = at.startsWith(GUARDIAN_API_RELAY_PATH) ? t.rootOf(at.slice(GUARDIAN_API_RELAY_PATH.length)) : null;
+    if (!root) { socket.end('HTTP/1.1 404 Not Found\r\n\r\n'); return; }
+    wss.handleUpgrade(req, socket, head, (ws) => carryApi(ws, root));
+  });
+  const seatPort = await listening(http);
+  const call = (path, msg) => new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${seatPort}${path}`);
+    ws.on('open', () => ws.send(msg)); ws.on('message', (m) => { resolve(String(m)); ws.close(); }); ws.on('error', reject);
+  });
+  const entry = (endpoint) => [{ pubkey: Buffer.from(other, 'hex'), advert: { guardianCapable: true, endpoint } }];
+  try {
+    t.sync(entry(p1.root));
+    await wait(100);
+    assert.equal(t.rootOf(other.slice(0, 16)), tunnelRoot(p1.root));
+    assert.equal(t.rootOf(me.slice(0, 16)), null, 'not this node itself');
+    assert.equal(await call(`${GUARDIAN_API_RELAY_PATH}${other.slice(0, 16)}`, 'session_count'), 'first:session_count');
+    t.sync(entry(p2.root));                          // the node's quick tunnel changed: the census names its new address
+    assert.equal(await call(`${GUARDIAN_API_RELAY_PATH}${other.slice(0, 16)}`, 'session_count'), 'second:session_count', 'the same override, the new address');
+    await assert.rejects(call(`${GUARDIAN_API_RELAY_PATH}${'33'.repeat(8)}`, 'x'), 'a name no census guardian has: nothing carried');
+  } finally { t.close(); for (const c of wss.clients) c.terminate(); http.close(); p1.close(); p2.close(); }
 });

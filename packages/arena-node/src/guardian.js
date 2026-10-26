@@ -32,7 +32,7 @@ import { ramDirOf, ramSupported, ramRestore, ramLoop } from './guardian-ram.js';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, accessSync, unlinkSync, constants } from 'node:fs';
 import { join, delimiter } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
-import { p2pTunnelPort } from './p2p-tunnel.js';
+import { p2pTunnelPort, guardianApiOverrides } from './p2p-tunnel.js';
 import { createServer } from 'node:net';
 
 /**
@@ -124,8 +124,11 @@ export function guardianEndpoint(nodePort, { host = '127.0.0.1', tailscale = nul
 // THE P2P URL (kanban #562): with `p2pUrlPort` - p2p-tunnel.js p2pTunnelPort of the node key - the port every node carries to
 // this node through its seat; without, the local bind port as before (a guardian whose federation is founded keeps the URL
 // its config holds: Fedimint reads FM_P2P_URL at the ceremony only)
+// THE PEERS' API THROUGH THE SEAT (kanban #577, p2p-tunnel.js GUARDIAN_API_RELAY_PATH): with `apiOverrides` (guardianApiOverrides
+// over the federation's own client config), FM_WS_API_CONNECT_OVERRIDES - a guardian that fell behind reaches its peers' API at
+// their current addresses, not at the ones the config wrote at the ceremony
 export function guardianEnv({ nodePort, dataDir, network, chain = network, bitcoindUrl, cookieSecret, password, endpoint, ports = guardianPorts(nodePort),
-  p2pUrlPort = null }) {
+  p2pUrlPort = null, apiOverrides = '' }) {
   const env = {
     FM_DATA_DIR: dataDir,
     FM_BITCOIN_NETWORK: network,
@@ -144,6 +147,7 @@ export function guardianEnv({ nodePort, dataDir, network, chain = network, bitco
     FM_DISABLE_BASE_FEES: '1',
   };
   if (chain === 'testnet4') { env.FM_ENABLE_MODULE_WALLETV2 = 'false'; env.FM_ENABLE_MODULE_WALLET = 'true'; }
+  if (apiOverrides) env.FM_WS_API_CONNECT_OVERRIDES = apiOverrides;
   return env;
 }
 
@@ -278,7 +282,15 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
   const ramFollow = (pidOf) => (ramOn && ramSupported()
     ? ramLoop({ dataDir, ram, pidOf, offsetMs: (Math.floor(nodePort / 10) % 12) * 5000 + (slot === 'next' ? 2500 : 0), log }) : null);
   const cookieSha = cookieFingerprint(cookiePath);
-  const fmEnv = guardianEnv({ nodePort, dataDir, network, chain, bitcoindUrl, endpoint, ports, p2pUrlPort: nodeKey ? p2pTunnelPort(nodeKey, slot) : null,
+  // its federation's peers, once there is one: their API addresses as the config names them, carried through this seat
+  let apiOverrides = '';
+  try {
+    const cfg = JSON.parse(readFileSync(join(dataDir, 'client.json'), 'utf8'));
+    const apiEndpoints = (cfg.global || cfg).api_endpoints;
+    if (apiEndpoints) apiOverrides = guardianApiOverrides({ apiEndpoints, ownName: nodeKey ? (typeof nodeKey === 'string' ? nodeKey : Buffer.from(nodeKey).toString('hex')).toLowerCase().slice(0, 16) : null,
+      seatRoot: `ws://${!host || host === '0.0.0.0' ? '127.0.0.1' : host}:${nodePort}`, ownApiPort: ports.api, existing: env.FM_WS_API_CONNECT_OVERRIDES || '' });
+  } catch { apiOverrides = ''; }
+  const fmEnv = guardianEnv({ nodePort, dataDir, network, chain, bitcoindUrl, endpoint, ports, p2pUrlPort: nodeKey ? p2pTunnelPort(nodeKey, slot) : null, apiOverrides,
     cookieSecret: readFileSync(cookiePath, 'utf8').trim().split(':').slice(1).join(':'),
     password: readFileSync(pwFile, 'utf8').trim() });
   // A GUARDIAN THAT OUTLIVES ITS NODE (2026-10-03, after the restart that held deposits: "2. Separate guardian and
