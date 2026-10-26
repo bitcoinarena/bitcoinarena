@@ -29,6 +29,8 @@
   .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
   .filters select, .filters input { background: #140d12; border: 1px solid var(--line); border-radius: 10px; color: var(--text); padding: 7px 10px; font: 13px system-ui; }
   .filters input { flex: 1; min-width: 160px; max-width: 280px; font-family: "JetBrains Mono", monospace; }
+  .pager { display: flex; gap: 8px; justify-content: flex-end; margin: 12px 0; }
+  .pager button:disabled { opacity: .35; cursor: default; }
   tr.pg td { color: var(--cyan); } td.nw { white-space: nowrap; } tr.away td { color: var(--dim); }
   details.grp { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 10px 16px; margin: 10px 0; overflow-x: auto; }
   details.grp > summary { cursor: pointer; list-style: none; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
