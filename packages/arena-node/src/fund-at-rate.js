@@ -29,8 +29,10 @@ export function serializeUnsigned(coins, outputs, change) {
 export async function fundAtRate(rpc, outputs, feeRate) {
   if (!(feeRate > 0)) throw new Error('a fee rate is sat/vB above zero');
   const sats = (btc) => BigInt(Math.round(Number(btc) * 1e8));
+  // CONFIRMED COINS FIRST (kanban #689, measured 2026-10-26: three emergency grids were built on the unconfirmed change of a publication
+  // that a fee raise then replaced - conflicted, never mined, the day lost again): unconfirmed change only when the confirmed coins do not pay
   const coins = (await rpc('listunspent', [0, 9999999, [], false])).filter((c) => c.spendable && c.safe)
-    .sort((a, b) => Number(sats(b.amount) - sats(a.amount)));
+    .sort((a, b) => (Number(b.confirmations > 0) - Number(a.confirmations > 0)) || Number(sats(b.amount) - sats(a.amount)));
   const changeScript = Buffer.from((await rpc('getaddressinfo', [await rpc('getrawchangeaddress', [])])).scriptPubKey, 'hex');
   const sign = async (hex) => {
     const s = await rpc('signrawtransactionwithwallet', [hex]);
