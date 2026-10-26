@@ -10,7 +10,14 @@ import { SEATING_LEAD_MS } from '../../arena-protocol/src/seating.js';
 
 const KEPT_MS = 10000;
 
-export function gameLive(round, { nowMs = () => Date.now(), windowOf = () => null } = {}) {
+// A ROUND NO COMMITTEE CAN BE DRAWN FOR IS NOT LIVE (kanban #685, 2026-10-26 08:3xZ, the owner: "Why are no rounds open?"): Up/Down's
+// version 24 day grid named a census root of the branch the chain left, so none of its 8 windows could be drawn, yet they counted as
+// live; the chooser shows the newest version with a live round, so the page opened version 24 - "No window is open" - while version
+// 13's emergency grid had a drawn window every 15 min. `drawable(roundHex)` answers whether its committee is drawn; a no is asked
+// again after a minute, a yes is kept.
+const UNDRAWN_ASK_MS = 60000;
+
+export function gameLive(round, { nowMs = () => Date.now(), windowOf = () => null, drawable = null } = {}) {
   const db = round.db;
   const rounds = new Map();        // round id hex -> { game, open: bigint, end: bigint }
   let lastRow = 0;
@@ -41,11 +48,18 @@ export function gameLive(round, { nowMs = () => Date.now(), windowOf = () => nul
     for (const [id, r] of rounds) {
       if (r.end < now - 3600000n) { rounds.delete(id); continue; }      // long over: never live again
       if (now < r.open || now > r.end) continue;
+      if (drawable && r.drawn !== true) {
+        if (r.drawn === undefined || Number(now) - r.askedAt >= UNDRAWN_ASK_MS) {
+          let ok = false; try { ok = !!drawable(id); } catch { ok = false; }
+          r.drawn = ok; r.askedAt = Number(now);
+        }
+        if (!r.drawn) continue;
+      }
       (by[r.game] = by[r.game] || { rounds: 0, players: 0 }).rounds++;
     }
     for (const e of db.prepare('SELECT e.round_id, COUNT(*) AS n FROM entries e JOIN rounds r ON r.round_id = e.round_id WHERE r.closed_ms IS NULL AND e.joined_ms > ? GROUP BY e.round_id').all(Number(now) - 3 * 3600000)) {
       const r = rounds.get(toHex(new Uint8Array(e.round_id)));
-      if (!r || now < r.open || now > r.end) continue;
+      if (!r || now < r.open || now > r.end || (drawable && r.drawn !== true)) continue;
       (by[r.game] = by[r.game] || { rounds: 0, players: 0 }).players += Number(e.n);
     }
     kept = { at: Number(now), by };
