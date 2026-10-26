@@ -96,7 +96,8 @@ export function roundPosting({ games = [], pending = [], expected = [], rounds =
       const inside = mine.filter((g) => Number(g.firstWindowMs) < b && Number(g.lastCloseMs) > a);
       const lines = [], states = [], items = [];   // items: the reasons as short rows for the panel (kanban #692: "Wall of text")
       const span = (f, t) => { const day = (x) => new Date(x).toISOString().slice(5, 10); const same = day(f) === day(nowMs);
-        return `${same ? 'today' : day(f)} ${hm(f)}–${day(t) === day(f) ? '' : day(t) + ' '}${hm(t)}`; };
+        const midnight = t % 86400000 === 0 && t - f <= 86400000 && day(t - 1) === day(f);   // a stretch to the end of its day reads 24:00
+        return `${same ? 'today' : day(f)} ${hm(f)}–${midnight ? '24:00' : `${day(t) === day(f) ? '' : day(t) + ' '}${hm(t)}`}`; };
       const plainWhy = (why) => /names census root/.test(why || '') ? 'can\'t be played: its census is from a chain branch that was left'
         : /census carries 0 game nodes/.test(why || '') ? 'can\'t be played: no node of this version was in its census' : `can't be played: ${why || 'no seat draws it'}`;
       // the stretches of the period no grid of the newest version covers
