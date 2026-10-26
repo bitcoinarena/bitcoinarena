@@ -65,3 +65,18 @@ test('the old "Arena Node" app and scripts give way to "Bitcoin Arena" (kanban #
   assert.equal(existsSync(join(apps, 'Arena Node.app')), false); assert.equal(existsSync(join(home, 'bin', 'Arena Node Start.command')), false);
   assert.match(readFileSync(join(apps, 'Bitcoin Arena.app', 'Contents', 'Info.plist'), 'utf8'), /<key>CFBundleDisplayName<\/key><string>Bitcoin Arena<\/string>/);
 });
+
+// THE DMG'S OWN APP IS LEFT ALONE (kanban #669, 2026-10-26): the native app at the same path keeps its Info.plist and program
+test('macOS: with the native Bitcoin Arena.app installed, the launcher does not write over it; the .command scripts still come', () => {
+  const home = mkdtempSync(join(tmpdir(), 'm-')), apps = mkdtempSync(join(tmpdir(), 'a-'));
+  const app = join(apps, 'Bitcoin Arena.app');
+  mkdirSync(join(app, 'Contents', 'MacOS'), { recursive: true });
+  const plist = '<plist version="1.0"><dict><key>CFBundleExecutable</key><string>Bitcoin Arena</string>\n  <key>CFBundleIdentifier</key><string>io.bitcoin-arena.node.setup</string></dict></plist>\n';
+  writeFileSync(join(app, 'Contents', 'Info.plist'), plist);
+  writeFileSync(join(app, 'Contents', 'MacOS', 'Bitcoin Arena'), 'native');
+  const l = writeLaunchers({ home, s, ownerUrl: owner, platform: 'darwin', env: { HOME: home }, applicationsDir: apps });
+  assert.equal(l.nativeApp, true);
+  assert.equal(readFileSync(join(app, 'Contents', 'Info.plist'), 'utf8'), plist, 'its Info.plist untouched');
+  assert.equal(existsSync(join(app, 'Contents', 'MacOS', 'bitcoin-arena')), false, 'no launcher program put beside it');
+  assert.ok(existsSync(join(home, 'bin', 'Bitcoin Arena Open.command')));
+});
