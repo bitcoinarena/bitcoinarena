@@ -9,7 +9,7 @@ import { pageFunction } from './page-script.js';
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 import { readFileSync } from 'node:fs';
 const TEXT = readFileSync(PAGE, 'utf8');
-const SRC = `    const VIEW_ONLY_PARAMS = ['rps-demo', 'game'];`;
+const SRC = `    const VIEW_ONLY_PARAMS = ['rps-demo', 'game', 'ref'];`;
 const FN = (() => { const at = TEXT.indexOf('    async function dailySearch() {'); return TEXT.slice(at, TEXT.indexOf('\n    }\n', at) + 6); })();
 const lift = (search, daily = { nodes: ['https://a.example'] }) => {
   let asked = 0;
@@ -26,6 +26,10 @@ test('?game=<name> reads daily.json, as the bare root and ?rps-demo do; a link n
     assert.equal(await l.run(), '?nodes=https://a.example', q || '(bare)');
     assert.equal(l.asked(), 1);
   }
+  // and a referral link (kanban #678): /?game=rock-paper-scissors&ref=<key> found no seat
+  const ref = lift('?game=rock-paper-scissors&ref=023a27deba6f71278b777a1ab70e441ba896d34c1d9a3c12e8fbb8a1ae1e9445f6');
+  assert.equal(await ref.run(), '?nodes=https://a.example', 'a referral link');
+  assert.equal(ref.asked(), 1);
   const own = lift('?nodes=https://b.example&game=nextblock');
   assert.equal(await own.run(), null, 'a link that names its nodes is its own lobby');
   assert.equal(own.asked(), 0);

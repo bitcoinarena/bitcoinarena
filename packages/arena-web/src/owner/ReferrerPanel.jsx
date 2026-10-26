@@ -37,6 +37,9 @@ export class ReferrerPanel extends React.Component {
   program(P) {
     const s = this.state, site = (this.props.site || 'https://testnet.bitcoin-arena.io').replace(/\/+$/, '');
     const link = `${site}/?ref=${P.recipientPk}`, demo = `${site}/referral-demo/?ref=${P.recipientPk}`;
+    // THE EMBED KIT, NOT A FRAME (kanban #678, 2026-10-26: "It shouldn't be just an iframe that is basically stealing a game"): the game runs
+    // in the owner's own page (src/arena-ui/arena-embed.js)
+    const embed = `<div id="arena-game" style="height:720px"></div>\n<script src="${site}/arena-embed.js" data-game="rock-paper-scissors" data-ref="${P.recipientPk}" data-target="#arena-game"></script>`;
     const holds = (P.balances || []).reduce((t, b) => t + BigInt(b.msat || 0), 0n);
     const said = s.wsaid[P.slug];
     return (
@@ -49,9 +52,9 @@ export class ReferrerPanel extends React.Component {
         <label>Your link</label>
         <div className="ref-link"><code>{link}</code><button type="button" onClick={() => this.copy(link, P.slug + ':l')}>{s.copied === P.slug + ':l' ? 'Copied ✓' : 'Copy'}</button></div>
         <label>Or host Rock Paper Scissors on your site</label>
-        <div className="ref-link"><code>{`<iframe src="${site}/?game=rock-paper-scissors&ref=${P.recipientPk}" width="100%" height="720" allow="clipboard-write"></iframe>`}</code>
-          <button type="button" onClick={() => this.copy(`<iframe src="${site}/?game=rock-paper-scissors&ref=${P.recipientPk}" width="100%" height="720" allow="clipboard-write"></iframe>`, P.slug + ':e')}>{s.copied === P.slug + ':e' ? 'Copied ✓' : 'Copy'}</button></div>
-        <p className="sub">See it working: <a href={demo} target="_blank" rel="noopener noreferrer">the demo page</a>.</p>
+        <div className="ref-link"><code>{embed}</code>
+          <button type="button" onClick={() => this.copy(embed, P.slug + ':e')}>{s.copied === P.slug + ':e' ? 'Copied ✓' : 'Copy'}</button></div>
+        <p className="sub">The game runs in your page, not in a frame. The player's wallet is kept in your site's browser storage. See it working: <a href={demo} target="_blank" rel="noopener noreferrer">the demo page</a>.</p>
         {s.wd[P.slug] ? (
           <div className="dh-withdraw">
             <label>A Lightning invoice (it names the amount) or a Lightning address</label>
