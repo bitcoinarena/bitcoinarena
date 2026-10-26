@@ -900,9 +900,10 @@ export const REST_MARGIN_MSAT = 1000n;
  * small to cover fees", 5 sat made). A rest under it is invoiced at it; the extra stays in the player wallet. */
 export const REST_FLOOR_MSAT = 5000n;   // the smallest deposit the federation takes (measured: 2, 3, 4 sat refused)
 export const restInvoiceMsat = (restMsat) => (BigInt(restMsat) < REST_FLOOR_MSAT ? REST_FLOOR_MSAT : BigInt(restMsat));
-/** A donation the player wallet paid, a history row (every deduction is a row - 2026-09-30 16:15). */
-export function recordDonation(storage, federationId, { msat, round }) {
-  ledgerAppend(storage, federationId, { kind: 'donation', msat: String(msat), round: round ? String(round) : null });
+/** A donation the player wallet paid, a history row (every deduction is a row - 2026-09-30 16:15). A gift from the page names its
+ *  federation transaction and to whom (kanban #682: "I just did a donation and it doesn't show in the user history"). */
+export function recordDonation(storage, federationId, { msat, round, txid = null, to = null }) {
+  ledgerAppend(storage, federationId, { kind: 'donation', msat: String(msat), round: round ? String(round) : null, ...(txid ? { txid: String(txid) } : {}), ...(to ? { to: String(to) } : {}) });
 }
 /** The rest: the smallest whole sat whose whole notes cover what the wallet is short. */
 export function restOfFeesMsat(shortMsat) {
