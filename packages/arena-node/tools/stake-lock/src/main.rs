@@ -914,6 +914,10 @@ async fn pegin_claim(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
     let waited = async {
         if let Ok(w) = client.get_first_module::<fedimint_wallet_client::WalletClientModule>() {
             let address = fedimint_core::bitcoin::Address::<fedimint_core::bitcoin::address::NetworkUnchecked>::from_str(need(a, "address")?)?;
+            // CHECKED NOW, NOT AT ITS NEXT TURN (kanban #326 rehearsal 17, 2026-10-26: the escrow's peg-in had 100+ confirmations and the
+            // federation's height was past it, and still "no claim within 840s" - the client checks an address again only after a tenth of
+            // its age, so an address allocated two days before waited ~5 h for its next look, past every claim's timeout)
+            w.recheck_pegin_address_by_address(address.clone()).await?;
             w.await_num_deposits_by_address(address, 1).await?;
             return anyhow::Ok("wallet");
         }
