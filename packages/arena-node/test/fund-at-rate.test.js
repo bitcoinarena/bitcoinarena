@@ -48,3 +48,14 @@ test('coins are taken largest first until they pay; a change below dust goes to 
 test('coins that cannot pay are refused by name', async () => {
   await assert.rejects(fundAtRate(wallet([{ txid: '01'.repeat(32), vout: 0, amount: 0.00000100, spendable: true, safe: true }]).rpc, [op], 1), /do not pay 1 outputs at 1 sat\/vB/);
 });
+
+// CONFIRMED COINS FIRST (kanban #689, 2026-10-26: three emergency grids on the unconfirmed change of a publication a fee raise replaced)
+test('confirmed coins are taken before unconfirmed change, however large the change; the change only when they do not pay', async () => {
+  const coins = [{ txid: 'c1'.repeat(32), vout: 1, amount: 0.5, spendable: true, safe: true, confirmations: 0 },
+    { txid: 'c2'.repeat(32), vout: 0, amount: 0.0001, spendable: true, safe: true, confirmations: 3 }];
+  const got = await fundAtRate(wallet(coins).rpc, [op], 1);
+  assert.equal(Buffer.from(got.hex.slice(2), 'hex').subarray(5, 37).reverse().toString('hex'), 'c2'.repeat(32), 'the confirmed coin');
+  const poor = [{ ...coins[0] }, { ...coins[1], amount: 0.00000100 }];
+  const both = await fundAtRate(wallet(poor).rpc, [op], 1);
+  assert.equal(Buffer.from(both.hex.slice(2), 'hex')[4], 2, 'the unconfirmed change joins when the confirmed coin does not pay');
+});

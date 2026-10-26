@@ -181,9 +181,13 @@ export function chainAgreement({ hash, answers, minAnswers = 3 }) {
  *   draw           { drawn, undrawn, of, why } - the seats' GET /rounds rows of the posting's game in its day, or null (not asked)
  *   postedAtMs     when its series were last posted to the seats (the grace before an undrawn posting is dead; null: posted before
  *                  this was kept, no grace)
+ *   conflicted     the wallet's word that a transaction in a block spends what the publication spends (confirmations < 0): it is never mined
  * -> { state: 'dead' | 'drawable' | 'pending', stage, why }
  */
-export function postingVerdict({ censusOnChain = true, seatsAgree = null, pubHeight = null, beaconAt = null, tip, draw = null, postedAtMs = null, nowMs, depth = DUTY_BEACON_DEPTH, graceMs = DUTY_DRAW_GRACE_MS }) {
+export function postingVerdict({ conflicted = false, censusOnChain = true, seatsAgree = null, pubHeight = null, beaconAt = null, tip, draw = null, postedAtMs = null, nowMs, depth = DUTY_BEACON_DEPTH, graceMs = DUTY_DRAW_GRACE_MS }) {
+  // CONFLICTED (kanban #689, measured 2026-10-26: three emergency grids on the change of a replaced publication waited for hours as
+  // "unconfirmed"): dead at once, so the day's emergency grid is not held back by a posting that can never be mined
+  if (conflicted && pubHeight === null) return { state: 'dead', stage: 'publication', why: 'a transaction in a block spends what the publication spends: it is never mined' };
   if (censusOnChain === false) return { state: 'dead', stage: 'census', why: 'the chain left the branch its census was taken on' };
   if (seatsAgree && !seatsAgree.ok && seatsAgree.of >= 3) return { state: 'dead', stage: 'census', why: seatsAgree.why };
   if (beaconAt !== null && (pubHeight === null || pubHeight >= beaconAt))
