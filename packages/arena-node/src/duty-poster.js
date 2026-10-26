@@ -52,11 +52,16 @@ export function successorsOf(feds, list) {
   return { feds: out, moved };
 }
 
-/** THE FEDERATIONS A NODE POSTS IN: every OPEN one its seat's records list, and a draining one's OPEN successor. */
-export function planFederations(list) {
-  const open = (list || []).filter((x) => x && /^[0-9a-f]{64}$/i.test(String(x.federation)) && ['OPEN', 'DRAINING', 'CRITICAL'].includes(x.status));
-  return successorsOf(open.map((x) => String(x.federation).toLowerCase()), list).feds
-    .filter((f) => { const x = (list || []).find((y) => String(y.federation).toLowerCase() === f); return x && x.status === 'OPEN'; });
+/**
+ * THE FEDERATIONS A NODE POSTS IN, from its seat's signed records (`list`): `named` (arena.conf duty_federations) when given; else the ones
+ * the network's last days were posted in (`played`, the federations of the grid series this node holds of the duty's apps) - #702, measured
+ * on seat 4 2026-10-26: its records list four OPEN federations, two of them throwaway test federations (T2 9919a571, e2f42eea) no day was
+ * ever posted in - and only while no such series is held, every OPEN one. A draining (or critical) one is posted as its OPEN successor.
+ */
+export function planFederations(list, { named = [], played = [] } = {}) {
+  const rec = new Map((list || []).filter((x) => x && /^[0-9a-f]{64}$/i.test(String(x.federation))).map((x) => [String(x.federation).toLowerCase(), x]));
+  const base = named.length ? named : played.length ? played : [...rec.values()].filter((x) => x.status === 'OPEN').map((x) => String(x.federation).toLowerCase());
+  return successorsOf(base.map((f) => String(f).toLowerCase()).filter((f) => rec.has(f)), list).feds.filter((f) => rec.get(f) && rec.get(f).status === 'OPEN');
 }
 
 /** arena.conf duty_post (ARENA_DUTY_POST): auto | on | off - anything else is auto, said. */
@@ -170,22 +175,25 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
   const canPay = async () => (wallet.canPay ? { ok: true } : { ok: false, why: setting === 'off' ? 'round posting is off (duty_post=off)' : wallet.why });
 
   // ITS CHAIN, the last DUTY_VIEW_BLOCKS blocks - read again only when the best block changes (a reorg reads the window afresh)
-  let view = null, viewBest = null;
+  let view = null, viewBest = null, viewBlocks = DUTY_VIEW_BLOCKS;
+  // WIDER WHEN A DAY'S ANCHOR LIES BELOW THE WINDOW (duty-day.js orderOf), up to the census lookback
+  const widen = () => { if (viewBlocks < 2016) { viewBlocks = Math.min(2016, viewBlocks * 2); viewBest = null; } };
   const chainView = async () => {
     const best = String(await call('getbestblockhash', []));
     if (view && best === viewBest) return view;
     const tip = Number(await call('getblockcount', []));
-    const from = Math.max(0, tip - DUTY_VIEW_BLOCKS + 1);
+    const from = Math.max(0, tip - viewBlocks + 1);
     const got = await chainBlocks(from, tip);
     view = { blocks: got.blocks, firstHeight: from }; viewBest = best;
     return view;
   };
-  // THE SEATS TO ASK: this node's own first, then every other node of the census at the tip less 6 with an address
+  // THE SEATS TO ASK: this node's own first, then every other node of the census with an address - the census at a height that moves every
+  // 36 blocks (read once there and kept, not a new 2,016-block census at every block)
   const seatUrls = async () => {
     const own = self();
     try {
-      const nid = networkIdHex(); const tip = Number(await call('getblockcount', []));
-      const entries = nid ? (await censusEntriesAt(nid, tip - 6)) || [] : [];
+      const nid = networkIdHex(); const tip = Number(await call('getblockcount', [])) - 6;
+      const entries = nid ? (await censusEntriesAt(nid, tip - (tip % 36))) || [] : [];
       const mine = seat && seat.nodeKey ? toHex(seat.nodeKey) : '';
       lastSeats = [...new Set(entries.filter((e) => toHex(e.pubkey) !== mine && e.advert && e.advert.endpoint).map((e) => reach(e.advert.endpoint)))];
     } catch { /* the last list */ }
@@ -240,7 +248,16 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     return { ok: true, published: true, txid: sent.txid, series: built.ids.map(toHex), lines: built.lines, rounds: built.rounds, lastCloseMs: built.lastCloseMs, firstStartMs: built.start };
   };
   const postSeries = async (line) => postSeriesLine(line, (await seatUrls()).map((u) => [u.replace(/^https?:\/\//, ''), u]), { fetchFn });
-  const fedsNow = async () => { const own = self(); return planFederations((await seatJson(`${own}/federations`)).federations || []); };
+  const fedsNow = async () => {
+    const own = self();
+    const named = String(env.ARENA_DUTY_FEDERATIONS || '').split(',').map((x) => x.trim().toLowerCase()).filter((x) => /^[0-9a-f]{64}$/.test(x));
+    // THE FEDERATIONS THE LAST THREE DAYS' GRIDS OF THE DUTY'S APPS NAMED, as this node holds them
+    const fams = new Set(); for (const g of apps) for (const id of (await familyOf(g, gridBaseOf()))) fams.add(id);
+    const since = BigInt(now() - 3 * 86400000);
+    const played = [...new Set(seat.heldTemplates().filter((t) => t && isGridSeries(t) && t.gameId && fams.has(toHex(t.gameId)) && BigInt(t.startTimeMs) >= since
+      && t.federationId instanceof Uint8Array).map((t) => toHex(t.federationId)))];
+    return planFederations((await seatJson(`${own}/federations`)).federations || [], { named, played });
+  };
 
   // TWO ENGINES PER APP: the day's primary grid (rank 1) and its backup (rank 2, duty.js) - the backup never from the node that posted the primary
   const engineFor = (game, gb, role = 'primary') => {
@@ -250,7 +267,7 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     const e = createDayDuty({ game, role, item: String(env[`ARENA_DUTY_ITEM_${game.toUpperCase()}`] || `${game}-day`), networkId: fromHex(nid),
       postedPrimary: async (slot) => { const p = engines.get(game); return !!p && (p.state().mine || []).some((x) => x.slot === slot && !x.emergency); },
       local: new Set([toHex(seat.nodeKey)]), dir: join(dir, role === 'backup' ? `${game}-backup` : game),
-      chain: { view: chainView, censusKeysAt: async (h) => { const es = await censusEntriesAt(nid, h); remember(es); return es ? es.map((x) => x.pubkey) : null; }, seatUrls },
+      chain: { view: chainView, widen, censusKeysAt: async (h) => { const es = await censusEntriesAt(nid, h); remember(es); return es ? es.map((x) => x.pubkey) : null; }, seatUrls },
       chainCall: call, walletRpc: (m, p) => walletCall(wallet.wallet || '')(m, p), gridBase: gb.gridBase, openGrid: openGrid(game), postSeries, fedsNow,
       seatCatalog: gb.seatCatalog, devOf: new Proxy({}, { get: (_, k) => devOf[k] }), creator: { creatorSecret: nodeSecret }, stakeMsat: undefined, feeRate, maxFeeRate,
       emergencyOn: env.ARENA_DUTY_EMERGENCY !== '0', seatsAgreeOn: async (hash) => gb.agreementOf(hash, await gb.seatChains()), canPay, fetchFn, say, now });
