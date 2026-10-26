@@ -100,23 +100,31 @@ export function roundPosting({ games = [], pending = [], expected = [], rounds =
       let at = a;
       for (const [f, t] of spans) { if (f - at > GAP_MS) { states.push('failed'); lines.push(`${dhm(at)} to ${dhm(f)} UTC: no grid of version ${app.version} posted for it`); } at = Math.max(at, t); }
       if (b - at > GAP_MS) { states.push('failed'); lines.push(`${dhm(at)} to ${dhm(b)} UTC: no grid of version ${app.version} posted for it`); }
-      const depths = [];
+      const depths = [], per = [];   // per: [grid, 3 posted | 2 delayed | 1 unconfirmed] - the live ones
       for (const g of inside.sort((x, y) => Number(x.firstWindowMs) - Number(y.firstWindowMs))) {
         const n = fedNo(g.federation), p = g.publication, bc = g.beacon;
         const head = `${n ? `Federation ${n}` : String(g.federation || '').slice(0, 8)}, rounds ${dhm(g.firstWindowMs)} to ${dhm(g.lastCloseMs)} UTC: `;
         const d = drawn.get(`${id}:${g.committeeTimeMs}:${g.federation}`);
         if (!p.height && !p.inMempool) { states.push('failed'); lines.push(head + (p.unread ? 'announced, but no seat reads its round table on its chain' : `its round table ${String(p.txid).slice(0, 10)} is in no block and not in the mempool`)); }
-        else if (!p.height) { states.push('unconfirmed'); lines.push(head + `its round table ${String(p.txid).slice(0, 10)} waits in the mempool to be mined`); }
-        else if (bc.height == null) { states.push('delayed'); lines.push(head + `published in block ${p.height}; its draw block is the first whose median time passes ${hm(g.committeeTimeMs)} UTC (the median time runs about an hour behind), then 6 confirmations`); }
-        else if ((bc.depth || 0) < (bc.needed || 6)) { states.push('delayed'); lines.push(head + `its draw block ${bc.height} has ${bc.depth} of ${bc.needed || 6} confirmations: posted in about ${((bc.needed || 6) - bc.depth) * BLOCK_MS / 60000} min`); }
+        else if (!p.height) { states.push('unconfirmed'); per.push([g, 1]); lines.push(head + `its round table ${String(p.txid).slice(0, 10)} waits in the mempool to be mined`); }
+        else if (bc.height == null) { states.push('delayed'); per.push([g, 2]); lines.push(head + `published in block ${p.height}; its draw block is the first whose median time passes ${hm(g.committeeTimeMs)} UTC (the median time runs about an hour behind), then 6 confirmations`); }
+        else if ((bc.depth || 0) < (bc.needed || 6)) { states.push('delayed'); per.push([g, 2]); lines.push(head + `its draw block ${bc.height} has ${bc.depth} of ${bc.needed || 6} confirmations: posted in about ${((bc.needed || 6) - bc.depth) * BLOCK_MS / 60000} min`); }
         else if (d && !d.yes && d.no) { states.push('failed'); lines.push(head + `posted, but no seat can draw its committee: ${d.why || 'no reason given'}`); }
-        else { states.push('posted'); depths.push(bc.depth); lines.push(head + `posted: its draw block ${bc.height} has ${bc.depth} confirmations (6 needed)`); }
+        else { states.push('posted'); per.push([g, 3]); depths.push(bc.depth); lines.push(head + `posted: its draw block ${bc.height} has ${bc.depth} confirmations (6 needed)`); }
       }
       if (!states.length) return { t: '-', c: 'muted', tip: 'nothing to post' };
       // UNCONFIRMED, IN YELLOW (2026-10-26, the owner: "If it's the rounds are in the mempool and unconfirmed it needs to show as unconfirmed
       // and yellow"): a round table waiting in the mempool is named so, after failed and before delayed
-      const st = states.includes('failed') ? 'failed' : states.includes('unconfirmed') ? 'unconfirmed' : states.includes('delayed') ? 'delayed' : 'posted';
-      return { t: st === 'posted' ? `posted (${Math.min(...depths)})` : st, c: st === 'posted' ? 'ok' : st === 'delayed' || st === 'unconfirmed' ? 'warn' : 'bad',
+      // EACH STRETCH BY ITS BEST LIVE GRID, THE PERIOD BY ITS WORST LIVE STRETCH (2026-10-26 11:33, the owner on his phone: "I thought they
+      // were unconfirmed now?? Why failed"): the worst of all grids made today's dead day grids (a census of the branch the chain left)
+      // outweigh the live ones - Rock Paper Scissors drew 7/7 and read "failed". A stretch no live grid covers marks the cell "· gap";
+      // failed only when no stretch is live
+      const cuts = [...new Set([a, b, ...per.flatMap(([g]) => [Number(g.firstWindowMs), Number(g.lastCloseMs)]).filter((x) => x > a && x < b)])].sort((x, y) => x - y);
+      const segs = cuts.slice(1).map((e, i) => { const f = cuts[i]; return Math.max(0, ...per.filter(([g]) => Number(g.firstWindowMs) < e && Number(g.lastCloseMs) > f).map(([, r]) => r)); });
+      const liveRanks = segs.filter((r) => r > 0);
+      const gap = segs.some((r) => r === 0);
+      const st = !liveRanks.length ? 'failed' : ['failed', 'unconfirmed', 'delayed', 'posted'][Math.min(...liveRanks)];
+      return { t: (st === 'posted' ? `posted (${Math.max(...depths)})` : st) + (gap && st !== 'failed' ? ' · gap' : ''), c: st === 'posted' && !gap ? 'ok' : st === 'failed' ? 'bad' : 'warn',
         // one line per reading (several series share a round table and a draw block): the same words once, with how many
         tip: (st === 'posted' ? `version ${app.version}; in () the confirmations of the draw block - the block whose hash draws each round's committee\n` : `version ${app.version}\n`)
           + [...lines.reduce((m, l) => m.set(l, (m.get(l) || 0) + 1), new Map())].map(([l, k]) => (k > 1 ? `${l} (${k} grids)` : l)).join('\n') };

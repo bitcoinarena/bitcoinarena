@@ -125,8 +125,18 @@ export function Capacity({ view }) {
 // cls }], empty, foot }. A cell is text, { t, c } (text in a class), { t, c, tip } (with a tooltip, kanban #692), { bar: [have, need] }
 // (how far, as a bar) or a list of those, joined by spaces - plain strings, never HTML.
 export const barPct = (have, need) => (need ? Math.min(100, Math.round((100 * have) / need)) : 0);
+// A REASON BY TAP AS WELL AS BY HOVER (2026-10-26 11:33, the owner: "On phone I can't click on failed to see the reason"): a cell with a
+// tooltip is a button; a tap opens its reasons in a panel at the foot of the screen, a tap on the panel closes it
+function Tip({ p }) {
+  const [open, setOpen] = React.useState(false);
+  return (<>
+    <button type="button" className={`tip ${p.c || ''}`} title={p.tip} aria-expanded={open} onClick={() => setOpen(!open)}>{p.t}</button>
+    {open ? <div className="tip-pop" role="dialog" onClick={() => setOpen(false)}><b>{p.t}</b><div>{p.tip}</div><span className="muted">tap to close</span></div> : null}
+  </>);
+}
 const Part = ({ p }) => (p && typeof p === 'object'
-  ? (p.bar ? <span className="tbar"><i className={barPct(...p.bar) >= 100 ? 'ok' : 'warn'} style={{ width: `${barPct(...p.bar)}%` }} /></span> : <span className={p.c || undefined} title={p.tip || undefined}>{p.t}</span>)
+  ? (p.bar ? <span className="tbar"><i className={barPct(...p.bar) >= 100 ? 'ok' : 'warn'} style={{ width: `${barPct(...p.bar)}%` }} /></span>
+    : p.tip ? <Tip p={p} /> : <span className={p.c || undefined}>{p.t}</span>)
   : <>{p == null ? '' : String(p)}</>);
 const Cell = ({ c }) => (Array.isArray(c) ? <>{c.map((p, i) => <React.Fragment key={i}>{i ? ' ' : null}<Part p={p} /></React.Fragment>)}</> : <Part p={c} />);
 export function Table({ head, rows, empty, foot }) {
