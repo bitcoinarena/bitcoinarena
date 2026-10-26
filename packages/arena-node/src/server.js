@@ -4959,14 +4959,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const seriesRole = new Map();                   // series id hex -> true (backup) | false
   const windowRounds = new Map();                 // game:federation:start -> Set of round ids hex
   const windowKeyOf = (c) => `${toHex(c.gameId)}:${c.federationId instanceof Uint8Array ? toHex(c.federationId) : '-'}:${c.startTimeMs}`;
+  // A MISS IS KEPT A MINUTE (kanban #705, profiled on test host seat 5 2026-10-26 19:2xZ: 7 % of the seat in findSeriesPublication - a series
+  // whose publication its view did not hold was looked for again on every request, each look parsing and hashing every transaction of the
+  // view): asked again after SERIES_MISS_MS
+  const seriesMiss = new Map();                   // series id hex -> when it was last looked for in vain
+  const SERIES_MISS_MS = 60000;
   const isBackupRound = (rid, c) => {
     if (!(c.seriesId instanceof Uint8Array) || c.stakeMsat === 0n) return false;
     const sid = toHex(c.seriesId);
     if (seriesRole.has(sid)) return seriesRole.get(sid);
+    if (Date.now() - (seriesMiss.get(sid) || 0) < SERIES_MISS_MS) return null;
     let view; try { view = chainFor ? chainFor({ contract: c, roundIdBytes: rid }) : undefined; } catch { view = undefined; }
     if (!view) return null;                       // not read yet: not a backup, asked again
     const pub = findSeriesPublication(view, c.seriesId);
-    if (!pub) return null;
+    if (!pub) { if (seriesMiss.size > 20000) seriesMiss.clear(); seriesMiss.set(sid, Date.now()); return null; }
     const b = isBackupPublication(pub.tx);
     seriesRole.set(sid, b);
     return b;
