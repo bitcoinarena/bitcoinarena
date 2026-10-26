@@ -107,7 +107,9 @@ test('the notes (hyphens kept), every host row, the capacity plea and the liquid
     liquidity: { freeSats: '300000', channels: [{ capacitySats: '100000' }], depositAddress: 'tb1qexample' } } }));
   assert.equal(keep('lnd-testnet4'), 'test-host\u2011testnet4');
   // three short rows, the node's sentence as each row's tooltip (2026-10-26: "This is also a wall of text")
-  assert.match(h, /<h3>Notes<\/h3><dl class="note-rows"><dt>Guardian fees<\/dt><dd title="the guardian third">go to the nodes guarding the round&#x27;s federation; yours show here once it guards one<\/dd><dt>Lightning<\/dt><dd title="this node hosts LND lnd-testnet4">LND test-host\u2011testnet4 · costs: the fees of its own payments<\/dd><dt>Gateway<\/dt><dd title="this node pays no gateway">gw\u2011a · costs this node nothing<\/dd><\/dl>/);
+  // one slim line (2026-10-26: "Money Notes looks like a space waster, re arrange it to be more space efficient")
+  assert.match(h, /<div class="note-strip" id="money-notes"><span title="the guardian third"><b>Guardian fees<\/b> none until it guards a federation<\/span><span title="this node hosts LND lnd-testnet4"><b>Lightning<\/b> LND test-host‑testnet4<\/span><span title="this node pays no gateway"><b>Gateway<\/b> gw‑a · no cost<\/span><\/div>/);
+  assert.doesNotMatch(h, /<h3>Notes<\/h3>/);
   assert.match(h, /<h3>Hosts<\/h3>/);
   for (const [k, v] of [['Node key', '0274e26122c7b8fc…'], ['Fees its payments paid', '8 sat · 2 payments'], ['E-cash in blwp-testnet4', '249000 sat'], ['Lightning balance', '1082087 sat'],
     ['On-chain', '20446 sat'], ['Payments out, 30 days', '0 ok · 2 failed · fees 0 sat'], ['Read', '21 Oct 11:00']])
