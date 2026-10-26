@@ -5878,7 +5878,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             return Promise.all(rows.map(async (r) => {
               let boot = null;
               if (ns) { const iid = r.id === 'node' ? 'node' : installerIdOf(r.id, ids); const svc = svcs.find((x) => x.id === iid); if (svc && svc.file) { try { boot = await ns.bootOf(svc); } catch { boot = null; } } }
-              return { ...r, ...controlsOf({ id: r.id, installed: !!ns, installedIds: ids, toggles: ownToggles, settings: svcSettings, boot, running: r.running }) };
+              const c = controlsOf({ id: r.id, installed: !!ns, installedIds: ids, toggles: ownToggles, settings: svcSettings, boot, running: r.running });
+              return { ...r, ...c, ...(r.fix ? { why: null } : {}) };   // a row with a fix says its own why (kanban #711)
             }));
           };
           if (!home) return answer(200, { ok: true, manual: true, version: null, publicUrl: publicEndpoint || null, services: await decorate(own, null, []), command: null, settings: null });
@@ -5886,7 +5887,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             const ns = await import('../../arena-installer/src/node-services.js');
             const v = await ns.overview({ home });
             const known = new Set(v.services.map((x) => x.id));
-            const extra = own.filter((x) => !known.has(x.id) && !(x.id === 'chain' && [...known].some((k) => /^bitcoind|^chain-bridge/.test(k))) && x.id !== 'node');
+            let extra = own.filter((x) => !known.has(x.id) && !(x.id === 'chain' && [...known].some((k) => /^bitcoind|^chain-bridge/.test(k))) && x.id !== 'node');
+            // A GATEWAY THAT WAS NEVER SET UP (kanban #711, the owner after an install: "lightning gateway reports error and no hint about
+            // reason or how to solve it" - it said "does not answer" and "runs outside the node"): why, and a button that sets it up
+            if (!known.has('gateway')) {
+              const { gatewayGap, custodyProgress } = await import('../../arena-installer/src/add-custody.js');
+              const { nodeState } = await import('../../arena-installer/src/state.js');
+              const gap = gatewayGap(nodeState(home).read());
+              const p = custodyProgress(home);
+              const busy = p && p.gatewayOnly && !['done', 'failed'].includes(p.state) ? p : null;
+              if (gap) extra = extra.map((x) => (x.id !== 'gateway' ? x : { ...x, running: false, detail: gap.why,
+                probe: { ok: false, says: busy ? `Setting up: ${busy.step || busy.state}` : p && p.gatewayOnly && p.state === 'failed' ? `${gap.why} The last try stopped at ${p.step}: ${p.why || 'no reason given'}` : gap.why },
+                fix: gap.fix ? { action: 'gateway/setup', label: busy ? 'Setting up…' : 'Set up the gateway', busy: !!busy } : null }));
+            }
             const rows = [...v.services.map((x) => ({ id: x.id, title: x.title, running: x.running, pid: x.pid, detail: x.detail, inside: x.inside, probe: x.probe ? { ok: x.probe.ok, says: x.probe.says } : null })), ...extra];
             return answer(200, { ok: true, version: v.version, instance: v.instance, port: v.port, publicUrl: v.publicUrl, roles: v.roles, settings: v.conf ? 'arena.conf' : v.legacyEnv ? 'node.env' : null,
               services: await decorate(rows, ns, ns.installedServices({ home })), command: v.instance ? `bitcoinarena-${v.instance}` : 'bitcoinarena' });
@@ -6091,6 +6104,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (r.ok) console.log('[custody] the owner started adding custody to this node');
             return answer(r.ok ? 200 : (r.status || 400), r);
           } catch (e) { return answer(500, { ok: false, why: `custody could not be added: ${e.message}` }); }
+        }
+        // THE GATEWAY ALONE (kanban #711): a custody node whose setup left Lightning or the gateway for later sets them up from here -
+        // args { progress: true } reads how far it is; else it starts (add-custody.js startGatewaySetup, the custody runner's two steps)
+        if (url.pathname === '/owner/gateway/setup') {
+          const a = owner.authorize(body, 'gateway/setup');
+          if (!a.ok) return answer(a.status || 401, a);
+          const home = process.env.ARENA_HOME;
+          if (!home) return answer(501, { ok: false, why: 'this node was not set up by the installer: its gateway is set up where it runs' });
+          try {
+            const { custodyProgress, startGatewaySetup } = await import('../../arena-installer/src/add-custody.js');
+            if ((body.args || {}).progress === true) return answer(200, { ok: true, progress: custodyProgress(home) });
+            const r = startGatewaySetup({ home, release: fileURLToPath(new URL('../../../', import.meta.url)) });
+            if (r.ok) console.log('[gateway] the owner started setting up this node\'s gateway');
+            return answer(r.ok ? 200 : (r.status || 400), r);
+          } catch (e) { return answer(500, { ok: false, why: `the gateway could not be set up: ${e.message}` }); }
         }
         if (url.pathname === '/owner/liquidity/new-address') {
           const a = owner.authorize(body, 'liquidity/new-address');

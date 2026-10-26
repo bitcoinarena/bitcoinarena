@@ -47,18 +47,23 @@ const cloudflared = process.env.ARENA_CLOUDFLARED || (existsSync(own) ? own : 'c
 const wizard = createWizard({ state, release, seatPort, bridgePort: s.bridgePort || null, cloudflared, log: (l) => console.log(l) });
 const boot = !(s.service && s.service.boot === false);
 
-say({ state: 'running', step: 'custody chosen' });
-if (!((s.roles || []).includes('custody') && s.custodyLater)) {
+// THE GATEWAY ALONE (kanban #711, add-custody.js startGatewaySetup): a custody node whose setup left Lightning or the gateway for later -
+// only those two steps, then done
+const gatewayOnly = req.gatewayOnly === true;
+if (!gatewayOnly) say({ state: 'running', step: 'custody chosen' });
+if (gatewayOnly) { /* custody, its roles and its service are there already */ } else if (!((s.roles || []).includes('custody') && s.custodyLater)) {
   const b = beginAddCustody(state);
   if (!b.ok) fail('custody chosen', b.why);
 }
-s = state.read();
-const roles = await wizard['POST /api/roles']({ roles: [...new Set([...(s.roles || []), 'custody'])] });
-if (!roles.ok) fail('roles', roles.why);
-// THE SERVICE STEP: arena.conf naming the guardian, the units, the seat restarted (it serves the guardian's endpoint from now on)
-say({ state: 'running', step: 'restarting the node with its guardian' });
-const svc = await wizard['POST /api/service']({ boot });
-if (!svc.ok) fail('service', svc.why);
+if (!gatewayOnly) {
+  s = state.read();
+  const roles = await wizard['POST /api/roles']({ roles: [...new Set([...(s.roles || []), 'custody'])] });
+  if (!roles.ok) fail('roles', roles.why);
+  // THE SERVICE STEP: arena.conf naming the guardian, the units, the seat restarted (it serves the guardian's endpoint from now on)
+  say({ state: 'running', step: 'restarting the node with its guardian' });
+  const svc = await wizard['POST /api/service']({ boot });
+  if (!svc.ok) fail('service', svc.why);
+}
 // LIGHTNING: LND installed here on the node's Bitcoin Core (or the one already set up), then asked until it answers
 s = state.read();
 if (!s.lightning || !s.lightning.pubkey) {
@@ -75,6 +80,7 @@ s = state.read();
 if (!s.gateway) {
   say({ state: 'gateway', step: 'setting up the gateway' });
   const g = await wizard['POST /api/gateway/setup']({ boot });
+  if (!g.ok && g.noBinary && gatewayOnly) fail('gateway', 'this release has no gateway for this system');
   if (!g.ok && g.noBinary) { const later = await wizard['POST /api/gateway/later']({}); if (!later.ok) fail('gateway', later.why); }
   else if (!g.ok) fail('gateway', g.why);
 }
@@ -82,6 +88,7 @@ if (state.read().gateway) {
   const gs = await until('gateway', 'gateway', () => wizard['POST /api/gateway/status']({}), { everyMs: 10000, tries: 60 });
   if (!gs.ok) fail('gateway', gs.why);
 }
+if (gatewayOnly) { say({ state: 'done', step: 'gateway set up', gatewayOnly: true }); setTimeout(() => process.exit(0), 500); await new Promise(() => {}); }
 // THE FEDERATION: drawn (no invitation joins a running one) - and THE BOND'S RULES, understood on the page
 const fed = await wizard['POST /api/federation']({});
 if (!fed.ok) fail('federation', fed.why);

@@ -55,6 +55,39 @@ export async function custodyPlan({ home, release, state = null, kit = { coinsOf
 }
 
 /**
+ * A CUSTODY NODE WITHOUT ITS GATEWAY (kanban #711, 2026-10-26, the owner after an install: "lightning gateway reports error and no hint
+ * about reason or how to solve it"): setup lets Lightning or the gateway be left for later, and the seat then probes a gateway that was
+ * never set up. Null when there is nothing to say (not custody, or the gateway set up); else { why, fix } - `fix` true when the owner
+ * page can set it up (startGatewaySetup), the words plain enough to act on.
+ */
+export function gatewayGap(s) {
+  if (!(s.roles || []).includes('custody') || s.gateway) return null;
+  if (!s.chain || !ownCoreOf(s)) return { why: 'Not set up: the gateway needs Lightning, and Lightning needs your own Bitcoin Core (this node reads an Electrum server).', fix: false };
+  if (!s.lightning || !s.lightning.pubkey) return { why: 'Not set up: Lightning was left for later in setup, so the gateway was never started.', fix: true };
+  return { why: 'Not set up: the gateway was left for later in setup.', fix: true };
+}
+
+/**
+ * THE GATEWAY ALONE (kanban #711): the custody runner's Lightning and gateway steps only - no roles, no bond, no funds - for a custody node
+ * whose setup left them for later. Same progress file as adding custody. Answers { ok, progress } or { ok: false, status, why }.
+ */
+export function startGatewaySetup({ home, release, state = null, nowMs = Date.now(), node = process.execPath, run = spawn }) {
+  const gap = gatewayGap((state || nodeState(home)).read());
+  if (!gap) return { ok: false, status: 409, why: 'this node\'s gateway is set up already' };
+  if (!gap.fix) return { ok: false, status: 409, why: gap.why };
+  const p = custodyProgress(home);
+  if (p && !['done', 'failed'].includes(p.state) && nowMs - Number(p.atMs || 0) < STALE_MS) return { ok: false, status: 409, why: 'already running', progress: p };
+  const bin = join(release, 'packages', 'arena-installer', 'bin', 'custody-add.mjs');
+  if (!existsSync(bin)) return { ok: false, status: 501, why: 'this release cannot set up the gateway from the owner page' };
+  writeFileSync(join(home, 'custody-add.req'), JSON.stringify({ gatewayOnly: true }), { mode: 0o600 });
+  const progress = { state: 'running', step: 'starting', gatewayOnly: true, atMs: nowMs };
+  writeFileSync(join(home, 'custody-add.json'), JSON.stringify(progress) + '\n', { mode: 0o600 });
+  const out = openSync(join(home, 'custody-add.log'), 'a');
+  run(node, [bin, '--home', home], { detached: true, stdio: ['ignore', out, out], env: process.env }).unref();
+  return { ok: true, progress };
+}
+
+/**
  * THE START: the request written and the runner started detached. `understood` must be I UNDERSTAND. Answers { ok, progress } or
  * { ok: false, status, why }.
  */
