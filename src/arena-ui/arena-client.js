@@ -26503,6 +26503,49 @@ async function giftDonation({ game = null, player = null, recipients, networkSet
  */
 const zapPlayer = ({ player, sat, wallet, federationId, donor, seats, fetch, storage, nowMs }) => giftDonation({ player, sat, wallet, federationId, donor, seats, fetch, storage, nowMs });
 
+// ---- arena-client/src/next-round-line.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// WHEN THE NEXT ROUND STARTS, SAID PLAINLY (kanban #690, 2026-10-26, the owner on "Next round expected: entry opens with the next window. It
+// starts once its draw block is in: a block after 18:00 UTC, then 6 confirmations (~1 h)": "It should communicate clearly when the next round
+// starts, clear timing - X hours, Y minutes and N confirmations"). From the grids a seat's GET /pending names for a game - each with its first
+// window, its publication's confirmations and its draw (beacon) block's depth on the seat's own chain - one line: when entry opens, in hours
+// and minutes and at what UTC time, and where the draw block stands. A grid already posted to the seats is skipped: one the page does not
+// list then has no window it can be drawn for. A round's entry opens at its window, but never before its draw block is 6 deep.
+
+const NEEDED = 6;
+/** "2 h 14 min", "45 min", "less than a minute". */
+function inHoursMinutes(ms) {
+  const m = Math.round(Number(ms) / 60000);
+  if (m < 1) return 'less than a minute';
+  const h = Math.floor(m / 60);
+  return h ? `${h} h ${m % 60} min` : `${m} min`;
+}
+const hhmm = (ms) => new Date(Number(ms)).toISOString().slice(11, 16) + ' UTC';
+
+/**
+ * The line for `game` (its name) from /pending's `grids` at `nowMs`. `blockMs` the average block time the estimate uses (testnet4: 10 min).
+ * Answers { text, grid, opensMs } or null when no grid of the game is on its way.
+ */
+function nextRoundLine({ grids, game, nowMs = Date.now(), blockMs = 600000 }) {
+  const mine = (Array.isArray(grids) ? grids : []).filter((g) => g && g.game === game && Number(g.lastCloseMs) > nowMs && g.stage !== 'posted')
+    .sort((a, b) => Number(a.firstWindowMs) - Number(b.firstWindowMs));
+  const g = mine[0];
+  if (!g) return null;
+  const pub = g.publication || {}, beacon = g.beacon || {};
+  const needed = Number(beacon.needed) || NEEDED, depth = Number(beacon.depth) || 0;
+  const confirmed = pub.height !== null && pub.height !== undefined;
+  // the draw block 6 deep: the blocks still missing at the average block time; before the beacon, the committee time plus 6 blocks
+  const deepMs = beacon.height !== null && beacon.height !== undefined ? nowMs + Math.max(0, needed - depth) * blockMs
+    : Math.max(nowMs, Number(g.committeeTimeMs)) + needed * blockMs;
+  const opensMs = Math.max(Number(g.firstWindowMs), deepMs);
+  const when = opensMs > nowMs ? `Next round in ${inHoursMinutes(opensMs - nowMs)} (about ${hhmm(opensMs)})` : 'Next round: any minute now';
+  const draw = !confirmed ? (pub.inMempool ? 'its round table is waiting to be mined' : 'its round table is not on chain yet')
+    : beacon.height === null || beacon.height === undefined ? `its draw block is the first after ${hhmm(g.committeeTimeMs)}, then ${needed} confirmations`
+    : depth >= needed ? `its draw block has all ${needed} confirmations` : `its draw block has ${depth} of ${needed} confirmations`;
+  return { text: `${when} · ${draw}.`, grid: g, opensMs };
+}
+
 // ---- arena-protocol/src/seating.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -30290,6 +30333,20 @@ function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null, tooOl
   const ceiling = !entries || !entries.length || !row.contract ? '' : ceilingWords(stakeWithinCeiling({ entries, stakeSats: row.stakeMsat / 1000n }), row.contract);
   return `${money} · ${when} · ${agree} · ${counts || 'no signer node counts'}${who}${seat}${approval}${ceiling}`
     + (row.disagrees.length ? ` · ${row.disagrees.join(', ')} listed it as ${row.free ? 'paying' : 'free'}` : '');
+}
+
+/**
+ * A ROUND AN APP MAY OFFER (2026-10-26 ~10:2xZ, the owner on Rock Paper Scissors showing a running round while its tile said 0: "I think
+ * that is fake right? ... Fix it in the SDK"): a free round, or a paid one whose committee at least one seat has drawn. Every app reads
+ * its rounds through the page's ARENA_GAME.rows() / allRows(), so none offers a round no committee can be drawn for - after a chain
+ * switch, a census of a branch the chain left, a census no node of the version is in. A row whose seats say nothing of its committee
+ * (seats older than the committee listing) is offered, as before. Before, such a round was offered for 2 h after its committee time.
+ */
+function lobbyRowOffered(r) {
+  if (!r) return false;
+  if (r.free) return true;
+  const said = (r.said || []).map((c) => c && c.committee).filter(Boolean);
+  return !said.length || said.some((c) => c.drawn === true);
 }
 
 // ---- arena-client/src/next-round.js

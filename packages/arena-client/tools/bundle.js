@@ -44,6 +44,8 @@ walk(SRC + 'reserves-page.js');
 // AND PROJECT PROPOSALS: bitcoin-arena.io reads, signs and posts proposals and comments with this bundle
 walk(SRC + 'funding-page.js');
 walk(SRC + 'donation-gift-page.js');
+// WHEN THE NEXT ROUND STARTS (kanban #690): the market page's line under "No window is open"
+walk(SRC + 'next-round-line.js');
 walk(SRC + 'fee-proposal-page.js');
 // THE OWNER'S EMERGENCY CODE (spec §23A.5a, protocol 17): the Arena site's "My node is offline" makes the key from the code and signs the leave request
 walk(ROOT + 'arena-protocol/src/emergency.js');
