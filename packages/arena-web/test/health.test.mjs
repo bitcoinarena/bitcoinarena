@@ -77,6 +77,8 @@ test('a bar cell: how far, green when done', async () => {
 test('the reading state as one line: plain, or red with why', () => {
   assert.equal(renderToStaticMarkup(React.createElement(Line, { text: 'read 21:40:12 UTC · 24 nodes asked' })), 'read 21:40:12 UTC · 24 nodes asked');
   assert.equal(renderToStaticMarkup(React.createElement(Line, { text: 'could not read the network: <x>', bad: true })), '<span class="bad">could not read the network: &lt;x&gt;</span>');
+  // kanban #686: a kept copy older than 5 minutes says so in yellow
+  assert.equal(renderToStaticMarkup(React.createElement(Line, { text: 'Data from 12 min ago (08:41 UTC), refreshing …', warn: true })), '<span class="warn">Data from 12 min ago (08:41 UTC), refreshing …</span>');
 });
 
 // MACHINES AND APPS (kanban #597, testnet4 only): nodes grouped by the machine each names, its load, its nodes' earnings summed; every app's

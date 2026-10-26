@@ -2,14 +2,17 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NETWORK HEALTH PAGE ASKS ONLY PUBLIC DOORS (kanban #526): every path src/arena-ui/health/index.html asks a node is a GET the
 // nodes document as needing no authentication (src/website/docs/endpoints.json), the page's script parses, and it never asks more than
-// six requests at once with a time limit on each.
+// six requests at once with a time limit on each. The read is src/arena-ui/health/network.js since kanban #686 (the page and the explorer's
+// copy run it), and the page draws a kept copy first.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const PAGE = readFileSync(new URL('../../../src/arena-ui/health/index.html', import.meta.url), 'utf8');
 const ENDPOINTS = JSON.parse(readFileSync(new URL('../../../src/website/docs/endpoints.json', import.meta.url), 'utf8'));
-const script = PAGE.match(/<script>([\s\S]*?)<\/script>/)[1];
+const page = PAGE.match(/<script>([\s\S]*?)<\/script>/)[1];
+const NETWORK = new URL('../../../src/arena-ui/health/network.js', import.meta.url);
+const script = readFileSync(NETWORK, 'utf8');
 
 test('the health page asks the nodes only public GET doors the API reference lists', () => {
   const asked = new Set();
@@ -21,11 +24,13 @@ test('the health page asks the nodes only public GET doors the API reference lis
   assert.deepEqual(unknown, [], 'asked but not a public GET in endpoints.json');
 });
 
-test('the page script parses, and it limits itself: six at once, 10 s each, every 60 s', () => {
-  assert.doesNotThrow(() => new Function(script));
-  assert.match(script, /const ASK_MS = 10000, AT_ONCE = 6;/);
+test('the page script parses, and the read limits itself: six at once, 10 s each; the nodes asked when the copy is 5 min old, looked at every 60 s', () => {
+  assert.doesNotThrow(() => new Function(page));
+  assert.match(script, /export const ASK_MS = 10000, AT_ONCE = 6;/);
   assert.match(script, /signal: AbortSignal\.timeout\(ASK_MS\)/);
-  assert.match(script, /setInterval\(read, 60000\)/);
+  assert.match(page, /STALE_MS = 5 \* 60000, EVERY_MS = 60000/);
+  assert.match(page, /setInterval\(\(\) => run\(tick\), EVERY_MS\)/);
+  assert.match(page, /COPY_URL = 'https:\/\/explorer\.bitcoin-arena\.io\/api\/health'/);
 });
 
 test('each federation\'s gateway row is its own guardians\' answer, not the first seat\'s', async () => {
@@ -41,8 +46,9 @@ test('each federation\'s gateway row is its own guardians\' answer, not the firs
   const ask = async (s) => ({ ok: true, body: answers[s] });
   // the page's tables are data (kanban #564): drawTable is handed in and keeps what each table was given
   const tables = {};
-  const fn = new Function('ask', 'drawTable', 'fedCell', 'cut', 'sat', src + '\nreturn paintGateways;')(ask, (id, head, rows, empty, foot) => { tables[id] = { head, rows, empty, foot }; },
-    (f) => String(f).slice(0, 12), (x, n) => String(x).slice(0, n), (x) => Number(x).toLocaleString('en-US'));
+  const spare = new Set();
+  const fn = new Function('ask', 'drawTable', 'fedCell', 'cut', 'sat', 'spare', 'keyOf', src + '\nreturn paintGateways;')(ask, (id, head, rows, empty, foot) => { tables[id] = { head, rows, empty, foot }; },
+    (f) => String(f).slice(0, 12), (x, n) => String(x).slice(0, n), (x) => Number(x).toLocaleString('en-US'), spare, (b, p) => b + p);
   await fn([{ federation: A }, { federation: B }], ['a1', 'b1'], []);
   const fedRows = tables.gateways.rows.filter((r) => r.dot);
   assert.deepEqual(fedRows.map((r) => [r.dot, r.cells[0], r.cells[2], r.cells[4].t]), [['warn', 'aaaaaaaaaaaa', '1 of 2', 'A ranked'], ['bad', 'bbbbbbbbbbbb', '0 of 2', 'B ranked']], 'B is ranked by a seat of B');
