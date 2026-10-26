@@ -46,15 +46,15 @@ test('the bond: two transactions, the census reads the second as this node\'s te
   assert.ok(advert, 'the census finds the advertisement in the witness');
   assert.equal(toHex(advert.nodePubkey), toHex(schnorr.getPublicKey(nodeSecret)));
   assert.deepEqual([advert.bondMaturityHeight, advert.endpoint, advert.operatorId], [b.maturity, 'https://node.example.com', 'op-test']);
-  assert.deepEqual([...advert.roles].sort(), ['game', 'settlement', 'verify']);
+  assert.deepEqual([...advert.roles].sort(), ['game', 'relay', 'settlement', 'verify']);
   assert.equal(toHex(commitmentsOf(tx)[0]), toHex(advertId(advert)), 'the commitment is the advertisement\'s id');
   assert.equal(toHex(tx.outputs[0].script), '5120' + toHex(bondKeyAt(schnorr.getPublicKey(nodeSecret), b.maturity).outputKey), 'output 0 is the bond');
   assert.equal(tx.outputs[0].value, BOND_MIN_SATS);
   assert.equal(toHex(tx.outputs[3].script), toHex(w.spk), 'the change returns to the wallet');
   assert.throws(() => buildBond({ wallet: w, nodeSecret, coins: [{ txid: '22'.repeat(32), vout: 0, sats: 40000 }], tip: 1, operatorId: 'x', roles: ['verify'], endpoint: 'https://x', payoutPubkey: payoutKeyOf(seed) }),
     /a bond of 50000 sat needs at least/);
-  assert.deepEqual(advertRoles(['settlement']), ['settlement']);
-  assert.deepEqual(advertRoles(['verify', 'settlement', 'custody', 'liquidity']), ['game', 'verify', 'settlement'], 'custody and liquidity are no advertisement roles (macOS node A: "unknown role: liquidity")');
+  assert.deepEqual(advertRoles(['settlement']), ['settlement', 'relay']);   // relay always (2026-10-26)
+  assert.deepEqual(advertRoles(['verify', 'settlement', 'custody', 'liquidity']), ['game', 'verify', 'settlement', 'relay'], 'custody and liquidity are no advertisement roles (macOS node A: "unknown role: liquidity")');
   const lock = lockOf(156900, { nowMs: 0 });
   assert.deepEqual([lock.maturity, lock.blocks, lock.estimatedMs], [157189, 289, 289 * 600000]);
   // measured on testnet4 2026-10-19: built at 156976 with the old 6 blocks of slack (maturity 157121), confirmed at 157000 - never counted

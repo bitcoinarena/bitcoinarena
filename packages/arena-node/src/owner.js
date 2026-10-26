@@ -157,7 +157,8 @@ export function createOwner({ store, verify, node, nowMs = () => Date.now(), log
       log(`[owner] store settings: automatic updates ${owner.settings.autoUpdate ? 'on' : 'off'}, ${sources.length} source seat(s)`);
       return { ok: true, settings: owner.settings };
     },
-    storeSettings: () => (owner && owner.settings ? owner.settings : { autoUpdate: false, sources: [] }),
+    // apps update automatically, always (2026-10-26: "Should always be enabled"): the setting's sources stay, its switch is gone
+    storeSettings: () => ({ sources: [], ...((owner && owner.settings) || {}), autoUpdate: true }),
     /** Any owner action: the signature, the time, and that the key is the owner's. */
     authorize(req, action) {
       if (!owner) return { ok: false, status: 409, why: 'this node has no owner yet' };

@@ -24,8 +24,11 @@ export class ReleasePanel extends React.Component {
   latest(v) {
     const l = v.latest || {};
     if (l.newer && l.latest) return (
-      <p className="ok"><b>A new release is available: {l.latest.version}</b>{l.latest.release ? <> - <a href={l.latest.release} target="_blank" rel="noopener noreferrer">its release page</a> (invite only)</> : null}. Download the asset for this machine with SHA256SUMS and SHA256SUMS.sig beside it.</p>);
-    if (l.latest) return <div className="row"><span>Newest release</span><b>{l.latest.version} - this node is up to date</b></div>;
+      <div className="rel-state new" id="release-state"><b>Update available: {l.latest.version}</b>
+        <span>This node runs {v.version}. It updates by itself within 30 minutes{l.latest.release ? <>; <a href={l.latest.release} target="_blank" rel="noopener noreferrer">what is new</a></> : null}.</span></div>);
+    // UP TO DATE IN GREEN, AN UPDATE CLEARLY MARKED (kanban #714, 2026-10-26: "when it's up2date mark it in a more seeable color with green
+    // colors that no update is available. If there is an update it should also mark it clearly")
+    if (l.latest) return <div className="rel-state ok" id="release-state"><b>✓ Up to date</b><span>{l.latest.version} is the newest release.</span></div>;
     return l.why ? <p className="sub">Newest release: {l.why}.</p> : null;
   }
   render() {
@@ -38,7 +41,7 @@ export class ReleasePanel extends React.Component {
         {v.commit ? <div className="row"><span>Commit</span><b><code>{v.commit.slice(0, 12)}</code></b></div> : null}
         <div className="row"><span>Protocol versions it speaks</span><b>{protoRange(v.protocols || [])}</b></div>
         {this.latest(v)}
-        {v.update ? <p className="sub">To update: {v.update}.</p> : null}
+        {v.update && newRelease(v) ? <p className="sub">To update now by hand: {v.update}.</p> : null}
       </div>
     );
   }

@@ -256,8 +256,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !u.hasPrefix("Updated") && !u.hasPrefix("Up to date") { self.status(note: "Your node was not updated: " + (u.isEmpty ? "the update said nothing." : u)) } else { self.status() }
         // the owner page signed in once after the update (2026-10-26: "The updater MUST fix my credentials in the browser so it works")
         if u.hasPrefix("Updated") { Helper.run(["signin"]) { _, _ in } }
-        // then more nodes on this macOS (kanban #713: "When I update an existing node ... There, I can setup additional nodes")
-        if u.hasPrefix("Updated") { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.addNodes() } }
+        // more nodes: the Add nodes button on the status screen, never a dialog of its own (2026-10-26, the owner on 1.9.10: "It
+        // automatically opens the modal, don't do that")
       }
     }
   }

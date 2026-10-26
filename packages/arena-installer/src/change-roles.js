@@ -48,7 +48,8 @@ export async function changeRolesOnNode({ home, release, roles, custody, post = 
   const next = stateRolesFor(asked, had);
   const before = { roles: advertRoles(had).sort(), custody: custodyNow };
   const after = { roles: advertRoles(next).sort(), custody: custodyNow };
-  if (!after.roles.length && !custodyNow) return { ok: false, why: 'a node with no role at all serves nothing: keep at least one' };
+  // relay alone (always named, 2026-10-26) serves no round: a node needs another role or custody
+  if (!after.roles.filter((r) => r !== 'relay').length && !custodyNow) return { ok: false, why: 'a node with no role at all serves nothing: keep at least one' };
   if (JSON.stringify(before) === JSON.stringify(after)) return { ok: false, why: 'those are the roles this node already advertises' };
   const built = await advertUpdateOf({ st, s, release, roles: next, guardianOf, nowMs, chainKit });
   if (!built.ok) return built;
