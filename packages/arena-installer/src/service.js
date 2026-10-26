@@ -5,7 +5,7 @@
 // installer before the wizard goes on. The user needs no root: `loginctl enable-linger` keeps a user unit running with nobody logged
 // in, and the wizard says so when linger is off.
 import { named } from './instance.js';
-import { writeFileSync, mkdirSync, chmodSync } from 'node:fs';
+import { writeFileSync, mkdirSync, chmodSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
@@ -74,6 +74,8 @@ export async function installService({ node = process.execPath, release, home, p
   if (platform === 'darwin' || platform === 'win32') {
     // THE CHAIN BRIDGE FIRST (Electrum mode): its own service, so the node finds its chain when it starts - on Linux it is the
     // arena-chain-bridge unit below, which the node's unit starts after
+    // a node that reads its own Core needs no bridge: one left from the interim Electrum chain is taken away (removeProgram)
+    if (!bridgePort) await removeProgram({ id: 'chain-bridge', home, env, sh, platform });
     if (bridgePort) {
       const b = await installProgram({ id: 'chain-bridge', description: 'Bitcoin Arena: chain bridge (Electrum + Esplora, testnet4)',
         args: [node, join(release, 'packages', 'arena-installer', 'bin', 'chain-bridge.mjs'), String(bridgePort), home], home, boot, env, sh, platform });
@@ -87,6 +89,7 @@ export async function installService({ node = process.execPath, release, home, p
   const units = [UNIT];
   writeFileSync(join(dir, UNIT), seatUnit({ node, release, home, port }));
   if (bridgePort) { writeFileSync(join(dir, BRIDGE_UNIT), bridgeUnit({ node, release, home, bridgePort })); units.unshift(BRIDGE_UNIT); }
+  else await removeProgram({ id: 'chain-bridge', home, env, sh, platform });
   if (tunnel) { writeFileSync(join(dir, TUNNEL_UNIT), tunnel); units.push(TUNNEL_UNIT); }
   const t0 = Date.now();
   for (const args of [['--user', 'daemon-reload'], ['--user', boot ? 'enable' : 'disable', ...units], ['--user', 'restart', ...units]]) {
@@ -210,6 +213,39 @@ async function installWindows({ node, release, home, port, tunnelArgs, boot, sh,
   onStage('start');                                               // the services are in: the wizard's progress shows the wait
   const health = await waitHealthy({ port, fetcher, waitMs });
   return { ...health, ms: Date.now() - t0, boot, linger: true };
+}
+
+/**
+ * A PROGRAM'S SERVICE TAKEN AWAY (the owner's services card on 2026.1.9.9, 2026-10-26: "Do I need electrum when I have bitcoin core installed
+ * and running? That is confusing" - the chain bridge of the interim Electrum chain stayed after the switch to the node's own Core, its agent
+ * started again and again, "spawn scheduled, last exit 2"): stopped and its file removed - the launch agent, the unit, or the launcher with its
+ * logon task or Startup script. Nothing to do when it is not there. Answers { ok, removed }.
+ */
+export async function removeProgram({ id, home, env = process.env, sh = run, platform = process.platform }) {
+  if (platform === 'darwin') {
+    const label = `${LAUNCHD_LABEL}.${id}`;
+    const file = join(env.HOME || homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
+    if (!existsSync(file)) return { ok: true, removed: false };
+    const uid = typeof process.getuid === 'function' ? process.getuid() : 501;
+    await sh('launchctl', ['bootout', `gui/${uid}/${label}`]);
+    rmSync(file, { force: true });
+    return { ok: true, removed: true };
+  }
+  if (platform === 'win32') {
+    const file = join(home, `arena-${id}.cmd`), name = named(`Arena ${id}`, ' ');
+    const vbs = join(startupDir(env), `${name}.vbs`);
+    if (!existsSync(file) && !existsSync(vbs)) return { ok: true, removed: false };
+    await sh('schtasks', ['/end', '/tn', name]);
+    await sh('schtasks', ['/delete', '/f', '/tn', name]);
+    rmSync(vbs, { force: true }); rmSync(file, { force: true });
+    return { ok: true, removed: true };
+  }
+  const unit = unitName(id), file = join(unitDir(env), unit);
+  if (!existsSync(file)) return { ok: true, removed: false };
+  await sh('systemctl', ['--user', 'disable', '--now', unit]);
+  rmSync(file, { force: true });
+  await sh('systemctl', ['--user', 'daemon-reload']);
+  return { ok: true, removed: true };
 }
 
 /**

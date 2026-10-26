@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { SetupStatus, SetupCard, SetupBanner, SETUP_OPEN_SECTIONS } from '../dist/test/setup-status.mjs';
+import { SetupStatus, SetupCard, SetupBanner, SETUP_OPEN_SECTIONS, PegInCard, FoundingWait } from '../dist/test/setup-status.mjs';
 
 const card = (status) => renderToStaticMarkup(React.createElement(SetupStatus, { status: { ok: true, ...status } }));
 
@@ -32,6 +32,40 @@ test('all done: complete; nothing to show: nothing', () => {
   const html = card({ address: { ok: true, url: 'https://n.example' }, lnd: { ok: true, synced: true, height: 1, channels: 2, pending: 0 }, gateway: { ok: true, federations: 1 } });
   assert.match(html, /<h3>Setup<\/h3><span class="setup-pill ok">Complete<\/span>/);
   assert.equal(card({}), '');
+});
+
+// "DON'T SHOW AGAIN" ON A COMPLETE SETUP (2026-10-26: "Setup needs a Don't show again link if it's complete so it's hidden on the device
+// (stored in browser)"): per node in this browser; a setup not complete shows anyway
+test('a complete setup: a Don\'t show again link, hidden per node once clicked; one not complete shows anyway', () => {
+  const store = new Map();
+  globalThis.localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) };
+  try {
+    const done = { ok: true, node: 'ab'.repeat(32), address: { ok: true, url: 'https://n.example' }, lnd: { ok: true, synced: true, height: 1, channels: 2, pending: 0 }, gateway: { ok: true, federations: 1 } };
+    assert.match(renderToStaticMarkup(React.createElement(SetupStatus, { status: done })), /<button type="button" class="setup-hide">Don&#x27;t show again<\/button>/);
+    const c = new SetupStatus({ status: done }); c.setState = (u) => Object.assign(c.state, u);
+    c.hide();
+    assert.equal(store.get(`arena-setup-hidden:${'ab'.repeat(32)}`), '1');
+    assert.equal(renderToStaticMarkup(React.createElement(SetupStatus, { status: done })), '', 'hidden for that node');
+    assert.notEqual(renderToStaticMarkup(React.createElement(SetupStatus, { status: { ...done, node: 'cd'.repeat(32) } })), '', 'another node: shown');
+    const open = { ...done, address: { ok: false, url: 'https://n.example', why: 'ENOTFOUND' } };
+    assert.match(renderToStaticMarkup(React.createElement(SetupStatus, { status: open })), /1 problem/, 'not complete: shown though hidden');
+    assert.doesNotMatch(renderToStaticMarkup(React.createElement(SetupStatus, { status: open })), /Don&#x27;t show again/);
+  } finally { delete globalThis.localStorage; }
+});
+
+// THE PEG-IN, PROMINENT (2026-10-26: "It needs to show the status of the peg in prominently if we have a peg in") and HOW MANY NODES ARE
+// READY FOR THE FOUNDING ("display here how many other nodes are waiting in the format e.g 3/10 ... in big letters")
+test('the peg-in as N/100 confirmations, credited at the end; the founding as 3/10 ready nodes', () => {
+  const peg = (p) => renderToStaticMarkup(React.createElement(PegInCard, { status: { ok: true, blockMs: 600000, pegIn: p } }));
+  assert.equal(peg(null), '');
+  const going = peg({ txid: 'e6'.repeat(32), sats: 100000, height: 157600, confirmations: 37, seen: true, needed: 100, credited: false });
+  assert.match(going, /<span class="setup-pill wait">Confirming<\/span>[\s\S]*<span class="founding-n">37\/100<\/span><span class="founding-l">confirmations · 100,000 sat into the federation for your gateway<\/span>/);
+  assert.match(going, /About 11 h to go/);
+  assert.match(peg({ txid: 'e6'.repeat(32), confirmations: 0, seen: false, needed: 100 }), /Waiting to be mined/);
+  assert.match(peg({ txid: 'e6'.repeat(32), confirmations: 120, seen: true, needed: 100, credited: true }), /setup-pill ok">Credited[\s\S]*founding-n ok">100\/100/);
+  const wait = (f) => renderToStaticMarkup(React.createElement(FoundingWait, { status: { ok: true, founding: { waiting: true, sinceMs: Date.UTC(2026, 9, 25, 15, 31), ...f } } }));
+  assert.match(wait({ ready: 3, needed: 10 }), /<span class="founding-n">3\/10<\/span><span class="founding-l">nodes ready for the next federation<\/span>/);
+  assert.doesNotMatch(wait({}), /founding-n/, 'no count read: none shown');
 });
 
 test('LND: reached directly, over Tor, or not at all (a problem)', () => {

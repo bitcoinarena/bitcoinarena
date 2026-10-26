@@ -254,6 +254,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
       }) { out, _ in
         let u = out.split(separator: "\n").map(String.init).last(where: { !$0.hasPrefix("[") }) ?? ""
         if !u.hasPrefix("Updated") && !u.hasPrefix("Up to date") { self.status(note: "Your node was not updated: " + (u.isEmpty ? "the update said nothing." : u)) } else { self.status() }
+        // the owner page signed in once after the update (2026-10-26: "The updater MUST fix my credentials in the browser so it works")
+        if u.hasPrefix("Updated") { Helper.run(["signin"]) { _, _ in } }
       }
     }
   }

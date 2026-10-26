@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { DashboardPage, Players, Liquidity, sat, short, earningsOf, signedSat, score, keep } from '../dist/test/dashboard.mjs';
+import { DashboardPage, Players, Liquidity, sat, short, earningsOf, signedSat, score, keep, ownerHref } from '../dist/test/dashboard.mjs';
 
 const NOW = Date.UTC(2026, 9, 21, 11, 0);
 const zero = { gameVerifyMsat: '0', settlementMsat: '0', guardianMsat: '0', otherMsat: '0', lightningCostMsat: '0', gatewayCostMsat: '0', profitMsat: '0' };
@@ -127,4 +127,13 @@ test('the dev client card: its last recovery', () => {
   const dev = { ...D.devClient, lastRecovery: { at: '2026-10-21T09:00:00Z', ok: true, unclaimedMsat: '2000' } };
   const h = renderToStaticMarkup(React.createElement(DashboardPage, { data: { ...D, devClient: dev } }));
   assert.ok(h.includes('<span>Last recovery</span><b>21 Oct 09:00 · ok, +2 sat</b>'));
+});
+
+// THE OWNER AREA ON THE ARENA SITE (2026-10-26, the owner on 2026.1.9.9: "It works via owner page but not Open Dashboard"): the link went to
+// this node's own page on 127.0.0.1, which never holds the key the site's page keeps
+test('the Owner area link: the site\'s owner page for this node, with the local address when the dashboard is the node\'s own', () => {
+  const key = 'ab'.repeat(32);
+  assert.equal(ownerHref(key, { hostname: '127.0.0.1', origin: 'http://127.0.0.1:8770' }), `https://testnet.bitcoin-arena.io/owner/#node=${key}&local=http%3A%2F%2F127.0.0.1%3A8770`);
+  assert.equal(ownerHref(key, { hostname: 'x.trycloudflare.com', origin: 'https://x.trycloudflare.com' }), `https://testnet.bitcoin-arena.io/owner/#node=${key}`);
+  assert.equal(ownerHref('not a key', null), 'Dashboard/owner');
 });

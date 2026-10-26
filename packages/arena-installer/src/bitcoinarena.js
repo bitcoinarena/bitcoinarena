@@ -84,6 +84,34 @@ const startHandoff = ({ home, target }) => new Promise((ok) => {
 const openUrl = (url, platform = process.platform) => new Promise((ok) => execFile(platform === 'darwin' ? 'open' : platform === 'win32' ? 'rundll32' : 'xdg-open',
   platform === 'win32' ? ['url.dll,FileProtocolHandler', url] : [url], () => ok()));
 
+/** The site's owner page for the node at `home`: its key from state.json or the seat's /identity; the local page when neither answers. */
+async function ownerUrlOf(home, deps) {
+  const n = nodeOf(home);
+  const local = `http://127.0.0.1:${n.port}`;
+  let key = n.state && n.state.service && n.state.service.identity;
+  if (!/^[0-9a-f]{64}$/.test(String(key || ''))) {
+    try { const r = await (deps.fetch || fetch)(`${local}/identity`, { signal: AbortSignal.timeout(5000) }); const b = Buffer.from(await r.arrayBuffer()); key = r.status === 200 && b.length >= 32 ? b.subarray(0, 32).toString('hex') : null; }
+    catch { key = null; }
+  }
+  return /^[0-9a-f]{64}$/.test(String(key || '')) ? `${OWNER_SITE}#node=${key}&local=${encodeURIComponent(local)}` : `${local}/dashboard/owner`;
+}
+/**
+ * THE KEY HANDED TO THE SITE'S OWNER PAGE ONCE (the owner, 2026-10-26 on 2026.1.9.9: "The updater MUST fix my credentials in the browser so
+ * it works. This is very important"): until this node's key was handed over (or with `force`), the one-time page on 127.0.0.1 opens the
+ * site's owner page and posts it the key. Run after an update a person started and before the dashboard opens. The address it opened, or null.
+ */
+async function signInOnce(home, deps, io, { force = false } = {}) {
+  if (deps.noOpen) return null;
+  const url = await ownerUrlOf(home, deps);
+  const { handedAt, ownerKeyOf } = await import('./owner-handoff.js');
+  if (!url.startsWith(OWNER_SITE) || (handedAt(home) && !force) || !ownerKeyOf(home)) return null;
+  const h = await (deps.handoff || startHandoff)({ home, target: `${url}&owner-handoff` });
+  if (!h) return null;
+  io.out(`Signing you in on your owner page once: ${h}`);
+  await (deps.openUrl || openUrl)(h, deps.platform);
+  return h;
+}
+
 /**
  * Run one command. `io`: { out(line), err(line) }; `deps` injectable for the tests ({ sh, fetcher, platform, env, latest, quickUrl }).
  * Answers the exit code.
@@ -177,6 +205,8 @@ export async function main(args, { home, name = 'bitcoinarena', io = { out: (l) 
       const bar = progressBar({ tty: deps.tty ?? !!process.stdout.isTTY, line: (l) => io.out(l) });
       const r = await checkOnce({ home, latest: deps.latest, force: true, log: bar.line, progress: bar.report, trace: log, ...(deps.fetcher ? { fetcher: deps.fetcher } : {}) });
       io.out(r.upToDate ? `Up to date: ${r.version} is the newest release.` : r.ok ? `Updated ${r.from} -> ${r.to}. Backup: ${r.backup}` : `Not updated: ${r.why}`);
+      // the owner page signed in once after the update (2026-10-26: "The updater MUST fix my credentials in the browser so it works")
+      if (r.ok && !r.upToDate) await signInOnce(home, deps, io);
       return r.ok ? 0 : 1;
     }
     case 'auto-update': {
@@ -200,31 +230,29 @@ export async function main(args, { home, name = 'bitcoinarena', io = { out: (l) 
     case 'dashboard': {
       const n = nodeOf(home);
       const url = `http://127.0.0.1:${n.port}/dashboard`;
+      // its "Owner area" opens the site's owner page: signed in once first (2026-10-26: "It works via owner page but not Open Dashboard")
+      await signInOnce(home, deps, io);
       io.out(url);
-      if (!deps.noOpen) await openUrl(url, deps.platform);
+      if (!deps.noOpen) await (deps.openUrl || openUrl)(url, deps.platform);
       return 0;
     }
     // THE OWNER PAGE ON THE ARENA SITE (kanban #687, the owner's playtest 2026-10-26 on 1.9.7: "the owner page still points to
     // http://127.0.0.1:8770/dashboard/owner which doesn't have my secret"): the installer hands the owner key to the site's page, kept there
     // per node key; the local page keeps a login per address and had none. The site finds the node by its key, else at local=
     case 'open': {
-      const n = nodeOf(home);
-      const local = `http://127.0.0.1:${n.port}`;
-      let key = n.state && n.state.service && n.state.service.identity;
-      if (!/^[0-9a-f]{64}$/.test(String(key || ''))) {
-        try { const r = await (deps.fetch || fetch)(`${local}/identity`, { signal: AbortSignal.timeout(5000) }); const b = Buffer.from(await r.arrayBuffer()); key = r.status === 200 && b.length >= 32 ? b.subarray(0, 32).toString('hex') : null; }
-        catch { key = null; }
-      }
-      const url = /^[0-9a-f]{64}$/.test(String(key || '')) ? `${OWNER_SITE}#node=${key}&local=${encodeURIComponent(local)}` : `${local}/dashboard/owner`;
+      const url = await ownerUrlOf(home, deps);
       // THE KEY HANDED OVER ONCE (the owner's playtest 2026-10-26 on 2026.1.9.8, a node from 1.9.7: the site's page asked for the 24 words):
       // until this node's key was handed to the site's page (or with --sign-in), a one-time page on 127.0.0.1 opens it and posts it the key
-      const { handedAt, ownerKeyOf } = await import('./owner-handoff.js');
-      if (url.startsWith(OWNER_SITE) && !deps.noOpen && (!handedAt(home) || args.includes('--sign-in')) && ownerKeyOf(home)) {
-        const h = await (deps.handoff || startHandoff)({ home, target: `${url}&owner-handoff` });
-        if (h) { io.out(`${url}\nsigning you in once: ${h}`); await openUrl(h, deps.platform); return 0; }
-      }
+      if (await signInOnce(home, deps, io, { force: args.includes('--sign-in') })) { io.out(url); return 0; }
       io.out(url);
-      if (!deps.noOpen) await openUrl(url, deps.platform);
+      if (!deps.noOpen) await (deps.openUrl || openUrl)(url, deps.platform);
+      return 0;
+    }
+    // AFTER AN UPDATE THE DESKTOP APPS RAN (2026-10-26, "The updater MUST fix my credentials in the browser"): the key handed over once, if
+    // it never was; nothing opens when it was
+    case 'sign-in-once': {
+      const h = await signInOnce(home, deps, io);
+      if (!h) io.out('Your owner page has your key already, or this node has none to hand over.');
       return 0;
     }
     default:

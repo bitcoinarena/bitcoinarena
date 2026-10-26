@@ -141,6 +141,8 @@ if ((Test-Path $command) -and (Test-Path (Join-Path $nodeHome 'arena.conf'))) {
       $line = Get-Content $ulog -ErrorAction SilentlyContinue | Where-Object { $_ -match '^(Updated|Up to date|Rolled back|Not updated)' } | Select-Object -Last 1
       Show-Installed
       if ($line -and $line -notmatch '^Up to date') { $sub.Text = "$line`r`n" + $sub.Text }
+      # THE OWNER PAGE SIGNED IN ONCE AFTER THE UPDATE (2026-10-26: "The updater MUST fix my credentials in the browser so it works")
+      if ($line -match '^Updated') { & cmd /c "`"$command`" sign-in-once" | Out-Null }
     })
     $utimer.Start()
   } else { Show-Installed }

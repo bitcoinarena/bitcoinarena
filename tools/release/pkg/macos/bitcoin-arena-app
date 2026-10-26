@@ -100,11 +100,12 @@ case "${1:-}" in
   stop) stop_it ;;
   status) "$CMD" status 2>&1 | head -24 ;;
   owner) "$CMD" open >/dev/null 2>&1 ;;
+  signin) "$CMD" sign-in-once >/dev/null 2>&1 ;;
   restart) "$CMD" restart >/dev/null 2>&1 ;;
   node) "$CMD" state 2>&1 | head -1 ;;
   dashboard) "$CMD" dashboard >/dev/null 2>&1 ;;
   node-start) "$CMD" start 2>&1 | tail -3 ;;
   node-stop) "$CMD" stop 2>&1 | tail -3 ;;
   doctor) "$CMD" doctor 2>&1 | head -30 ;;
-  *) echo "usage: bitcoin-arena-app prepare|launch|wait-link|start|newer|update|state|link|stop|status|owner|restart|node|dashboard|node-start|node-stop|doctor" >&2; exit 2 ;;
+  *) echo "usage: bitcoin-arena-app prepare|launch|wait-link|start|newer|update|state|link|stop|status|owner|signin|restart|node|dashboard|node-start|node-stop|doctor" >&2; exit 2 ;;
 esac

@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { checkAsset } from './release-verify.js';
-import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHealthy, launchdPlist, LAUNCHD_LABEL, windowsLauncher } from './service.js';
+import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHealthy, launchdPlist, LAUNCHD_LABEL, windowsLauncher, removeProgram } from './service.js';
 import { adhocSign } from './tor.js';
 import { INSTANCE, PORT_OFFSET } from './instance.js';
 import { envToConfValues, formatConf, renameKeys, renameValues } from '../../arena-node/src/arena-conf.js';
@@ -443,7 +443,16 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
     const confNew = renameKeys(envForRelease(confText, newRelease));
     if (confNew !== confText) writeFileSync(confFile, confNew, { mode: 0o600 });
   }
+  // A CHAIN BRIDGE THE NODE NO LONGER READS (the owner's services card on 2026.1.9.9: "Do I need electrum when I have bitcoin core installed
+  // and running?"): a node on its own Core keeps no bridge of its interim Electrum chain - it is taken away, not moved (removeProgram)
+  const noBridge = !!(state.chain && state.chain.kind === 'core');
+  const isBridge = (f) => { const b = f.split(/[\\/]/).pop(); return b === BRIDGE_UNIT || b === `${LAUNCHD_LABEL}.chain-bridge.plist` || b === 'arena-chain-bridge.cmd'; };
+  if (noBridge && moving.some(isBridge)) {
+    await removeProgram({ id: 'chain-bridge', home, env, sh, platform });
+    step('the chain bridge of the interim Electrum chain was taken away: this node reads its own Bitcoin Core');
+  }
   for (const f of moving) {
+    if (noBridge && isBridge(f)) continue;
     const moved = f === svc.seatFile ? svc.seatFor(newRelease, oldTexts.get(f))
       : svc.bridgeFor && f.endsWith(BRIDGE_UNIT) ? svc.bridgeFor(newRelease, state)
         : oldersIn(oldTexts.get(f)).reduce((t, o) => t.split(o).join(newRelease), oldTexts.get(f).split(from).join(newRelease));
@@ -471,7 +480,7 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
       // and every service started after it that names the host - the gateway's --api-addr above all (measured in the Windows VM, 0.1.0 ->
       // 0.1.1: arena.conf took the new name, arena-gateway.cmd kept the old one, and the gateway announced a host that no longer answers)
       for (const f of moving) {
-        if (tunnels.includes(f)) continue;
+        if (tunnels.includes(f) || (noBridge && isBridge(f))) continue;
         const t = readFileSync(f, 'utf8');
         if (t.includes(oldHost)) writeFileSync(f, t.split(oldHost).join(newHost));
       }
@@ -479,7 +488,7 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
     }
   }
   say(42, 'Starting your node');
-  const rest = await svc.start(moving.filter((f) => !tunnels.includes(f)));
+  const rest = await svc.start(moving.filter((f) => !tunnels.includes(f) && !(noBridge && isBridge(f))));
   const started = !tunnelStarted.ok ? tunnelStarted : rest;
   step(`started: ${started.ok ? 'ok' : started.why}; waiting up to ${Math.round(waitMs / 1000)} s for the seat to answer on port ${port}`);
   // THE FIRST ANSWER: nobody knows how long a node takes to load its games; the bar moves with each ask, 45 % towards 85 %, closer
