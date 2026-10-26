@@ -138,6 +138,31 @@ only**. The guardians are a separate, longer-lived set.
 
 ---
 
+## Who posts the rounds (2026-10-26, kanban #702; spec §5A.5)
+
+The owner: "The round runners must be an integrated part of the node. Who decides what round is posted today? There is something in
+the spec." The spec decides, and every node now runs it itself - no runner process, no operator by hand.
+
+- **Who.** Each UTC day has a duty order: the nodes of the census at the day's anchor block, sorted by a hash of the network, the day
+  and each node's key. Every node computes the same list; GET /duty on any node shows the top 3.
+- **What.** The first node posts the next day's rounds of every app in every open federation, one transaction per app, from 00:00
+  UTC (the primary grid). The second node posts a second grid of the same day from 02:00 UTC (the backup grid), on its own coins,
+  with a different census block and a later committee time, so one reorg or one bad coin cannot take both.
+- **Which one is played.** One per window. The primary while its committee can be drawn; otherwise the backup. Seats mark each
+  paid round `played` and pages only offer the played one. Once a backup round holds a stake on a seat, that seat takes no
+  stake in the same window's primary.
+- **Missed.** If the first node has not posted by 01:00, the second posts it; by 02:00, the third. A missed backup moves to the third
+  node at 03:00, never to the node that posted the primary. A day whose postings die (a reorg, a fork the network left, a
+  conflicted coin) or that is not drawable 4 h before it starts gets an emergency grid for the rest of it.
+- **Paying.** The node pays from its own Bitcoin Core wallet, confirmed coins first, at 0.1 sat/vB (raised to at most 1 sat/vB
+  if still unconfirmed 3 h before the committee time). The fee comes back from the series' node fee to the node's key (it signs
+  every grid as its creator - which is also how anyone sees who posted it). A node without a wallet, without confirmed coins, or
+  reading the chain through Electrum says so on GET /duty and its owner page, and the day falls to the next node.
+- **Turning it off.** `duty_post=off` in arena.conf (default `auto`: on while the wallet holds confirmed coins; `on` always tries).
+  `duty_wallet` names the wallet, `duty_fee_rate` and `duty_max_fee_rate` the fees.
+
+---
+
 ## Built from
 
 - **Stock, unpatched, pinned:** fedimintd 0.12.0 (mint v2, lnv2, wallet).

@@ -2389,6 +2389,43 @@ committee time  each grid's first start less 6 h: its publication confirms long 
                 a grid whose committee came 45 min after its publication waited ~2 h for a 6-deep beacon)
 ```
 
+**One posting per app per day, a primary and a backup, posted by the nodes themselves (RULED 2026-10-14 ~11:22Z, 2026-10-26; kanban #689,
+#702).** "Each game may only have one round posting per day and the fees must be as low as possible" (10-14) made the slot a UTC day;
+"The round runners must be an integrated part of the node" (10-26) made every node run the duty itself; "Yes make it part of the design,
+in the spec" (10-26) added the backup grid. This is the rule every node follows today (arena-protocol `duty.js`, arena-node
+`duty-day.js` / `duty-poster.js`):
+
+```text
+day             day d (a UTC day) posts the rounds of day d + 1, every app in every OPEN federation: one transaction per app, one
+                table per federation (Rock Paper Scissors two), the whole day on the app's period
+on duty         the census at day d's anchor (the first block whose median time past is beyond d's start less 3 h) in duty order,
+                H(duty tag || network_id || d || node key) - the same list on every node; GET /duty on any node shows its top 3
+primary         rank 1 posts from 00:00 UTC of day d; rank 2 from 01:00 and rank 3 from 02:00 if the day's marker is still not seen
+                (no later rank: nodes that post nothing cannot push it towards the evening). Marker OP_RETURN "ARN" 'D' d item_tag.
+                Census 6 below the tip, committee time 12 h before day d + 1, the newest app version that census can draw
+backup          the node after rank 1 in the same order posts a second grid of the same day: rank 2 from 02:00 UTC, rank 3 from
+                03:00 if rank 2 has not, never the node that posted the primary. Its own coins and publication, a census 12 below
+                the tip (taken two hours later, so another block), committee time 9 h before day d + 1. Marker "ARN" 'B' d item_tag
+played          one grid per window: a round of a backup series (its publication carries the 'B' marker) is offered, and takes
+                entries, only while no round of the same app, federation and start from another series is drawn on that seat - the
+                primary while its committee is drawable, otherwise the backup. A seat that holds an entry in a window's backup round
+                takes none in its other rounds of that window. Seats say it per row (GET /rounds `backup`, `played`); pages offer
+                a row most seats play (lobbyRowOffered); a backup under a drawn primary is no live round (GET /games)
+posted by       every grid names the posting node's key as its creator and signs each series id with it: who posted a day is the
+                creator of the series its marked transaction publishes - checkable by anyone, shown on GET /duty and the Health page
+missed          a primary nobody posts falls to rank 2 and 3 as above; a backup nobody posts leaves the day to its primary
+dead            a posting whose census block the chain left, whose census the seats' chains (GET /headers) do not hold, whose
+                publication a reorg returned to the mempool and its beacon then passed, or whose coins a mined transaction spends
+                (conflicted) is dead at once. A day whose postings are all dead, or that is not drawable on the seats for the newest
+                version 4 h before it starts (or while it runs), gets an emergency grid of what is left of it ("ARN" 'D' with the
+                item "<app>-day-emergency"), at most 3, from the day's duty node first and the next ranks 20 min apart. An
+                unconfirmed posting has its fee raised once, 3 h before its committee time
+paying          the node pays from its own Bitcoin Core wallet, confirmed coins first, at 0.1 sat/vB (raised to at most 1). A node
+                that cannot pay - no wallet, no confirmed coins, a chain read through Electrum - says so on GET /duty and posts
+                nothing; its day falls to the next rank. arena.conf duty_post = auto (default: on while the wallet holds confirmed
+                coins) | on | off; duty_wallet, duty_fee_rate, duty_max_fee_rate
+```
+
 **Who pays the fee.** The publisher pays it from its own wallet and is
 reimbursed from the node fee (§22A, 5% in Bitcoin Arena) of the series' round 0 - or, if round
 0 has no entries, the first round of the series that settles with any. The
