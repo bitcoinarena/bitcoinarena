@@ -56,10 +56,10 @@ export function keepable(answers, spare = new Set()) {
 // THE ROUNDS POSTED FOR EACH APP (kanban #692, 2026-10-26, on the APPS table: "Should also show the round posting status for the today and
 // the next 24 hours. Status posted, delayed, failed with a tooltip why it's delayed or failed. After posted add confirmations in ()"). Only
 // the NEWEST version of each app counts (the owner's rule). For each period - the rest of today (UTC) and the next 24 h - every grid of that
-// version whose rounds fall in it, from the seats' GET /pending (a grid's publication and draw block, as each seat reads its chain; the
+// version whose rounds fall in it, from the seats' GET /pending (a grid's publication and committee block, as each seat reads its chain; the
 // furthest kept) with its version from GET /expected, and from one seat's GET /rounds whether its committee can be drawn:
-//   posted (N)   the draw block is 6 deep and the seats can draw the committee; N = the draw block's confirmations (the least of its grids)
-//   delayed      its round table not mined yet, or its draw block not there yet or not 6 deep - the tooltip says which and when
+//   posted (N)   the committee block is 6 deep and the seats can draw the committee; N = the committee block's confirmations (the least of its grids)
+//   delayed      its round table not mined yet, or its committee block not there yet or not 6 deep - the tooltip says which and when
 //   failed       part of the period no grid of the newest version covers, a publication on no chain, or a grid whose committee no seat
 //                draws - the tooltip names the seat's reason
 // roundPosting({ games, pending, expected, rounds, nowMs, fedNo }) -> Map(app name -> { today, next }), each a table cell { t, c, tip }
@@ -113,10 +113,10 @@ export function roundPosting({ games = [], pending = [], expected = [], rounds =
         const item = (st, live, say, detail) => { const f = Math.max(a, Number(g.firstWindowMs)), to = Math.min(b, Number(g.lastCloseMs)); items.push({ s: st, live, f, to, when: span(f, to), fed: n ? `Fed ${n}` : '', say, detail }); };
         if (!p.height && !p.inMempool) { states.push('failed'); lines.push(head + (p.unread ? 'announced, but no seat reads its round table on its chain' : `its round table ${String(p.txid).slice(0, 10)} is in no block and not in the mempool`)); item('bad', false, p.unread ? 'announced, but no node finds its transaction' : 'never mined: its transaction was replaced or dropped', `round table ${String(p.txid).slice(0, 10)}`); }
         else if (!p.height) { states.push('unconfirmed'); per.push([g, 1]); lines.push(head + `its round table ${String(p.txid).slice(0, 10)} waits in the mempool to be mined`); item('warn', true, 'waiting to be mined', `round table ${String(p.txid).slice(0, 10)}`); }
-        else if (bc.height == null) { states.push('delayed'); per.push([g, 2]); waits.push(Number(p.confirmations) || 0); lines.push(head + `published in block ${p.height}; its draw block is the first whose median time passes ${hm(g.committeeTimeMs)} UTC (the median time runs about an hour behind), then 6 confirmations`); item('warn', true, `mined; waiting for its draw block (after ${hm(g.committeeTimeMs)} UTC), then 6 confirmations`, `published in block ${p.height}`); }
-        else if ((bc.depth || 0) < (bc.needed || 6)) { states.push('delayed'); per.push([g, 2]); waits.push(Number(p.confirmations) || 0); lines.push(head + `its draw block ${bc.height} has ${bc.depth} of ${bc.needed || 6} confirmations: posted in about ${((bc.needed || 6) - bc.depth) * BLOCK_MS / 60000} min`); item('warn', true, `draw block ${bc.depth} of ${bc.needed || 6} confirmations, about ${((bc.needed || 6) - bc.depth) * BLOCK_MS / 60000} min to go`, `draw block ${bc.height}`); }
+        else if (bc.height == null) { states.push('delayed'); per.push([g, 2]); waits.push(Number(p.confirmations) || 0); lines.push(head + `published in block ${p.height}; its committee block is the first whose median time passes ${hm(g.committeeTimeMs)} UTC (the median time runs about an hour behind), then 6 confirmations`); item('warn', true, `mined; waiting for its committee block (after ${hm(g.committeeTimeMs)} UTC), then 6 confirmations`, `published in block ${p.height}`); }
+        else if ((bc.depth || 0) < (bc.needed || 6)) { states.push('delayed'); per.push([g, 2]); waits.push(Number(p.confirmations) || 0); lines.push(head + `its committee block ${bc.height} has ${bc.depth} of ${bc.needed || 6} confirmations: posted in about ${((bc.needed || 6) - bc.depth) * BLOCK_MS / 60000} min`); item('warn', true, `committee block ${bc.depth} of ${bc.needed || 6} confirmations, about ${((bc.needed || 6) - bc.depth) * BLOCK_MS / 60000} min to go`, `committee block ${bc.height}`); }
         else if (d && !d.yes && d.no) { states.push('failed'); lines.push(head + `posted, but no seat can draw its committee: ${d.why || 'no reason given'}`); item('bad', false, plainWhy(d.why), d.why || ''); }
-        else { states.push('posted'); per.push([g, 3]); depths.push(bc.depth); lines.push(head + `posted: its draw block ${bc.height} has ${bc.depth} confirmations (6 needed)`); item('ok', true, `playable · draw block ${bc.depth} confirmations`, `draw block ${bc.height}`); }
+        else { states.push('posted'); per.push([g, 3]); depths.push(bc.depth); lines.push(head + `posted: its committee block ${bc.height} has ${bc.depth} confirmations (6 needed)`); item('ok', true, `playable · committee block ${bc.depth} confirmations`, `committee block ${bc.height}`); }
       }
       if (!states.length) return { t: '-', c: 'muted', tip: 'nothing to post' };
       // UNCONFIRMED, IN YELLOW (2026-10-26, the owner: "If it's the rounds are in the mempool and unconfirmed it needs to show as unconfirmed
@@ -133,12 +133,12 @@ export function roundPosting({ games = [], pending = [], expected = [], rounds =
       // A DELAYED GRID SAYS HOW FAR IT IS MINED (2026-10-26, the owner: "if it is confirmed and says delayed it should say delayed(1) for example
       // for 1 confirmation"): the round table's confirmations in ()
       return { t: (st === 'posted' ? `posted (${Math.max(...depths)})` : st === 'delayed' && Math.max(...waits) > 0 ? `delayed (${Math.max(...waits)})` : st) + (gap && st !== 'failed' ? ' · gap' : ''), c: st === 'posted' && !gap ? 'ok' : st === 'failed' ? 'bad' : 'warn',
-        // one line per reading (several series share a round table and a draw block): the same words once, with how many
-        tip: (st === 'posted' ? `version ${app.version}; in () the confirmations of the draw block - the block whose hash draws each round's committee\n` : st === 'delayed' ? `version ${app.version}; in () the confirmations of the round table\n` : `version ${app.version}\n`)
+        // one line per reading (several series share a round table and a committee block): the same words once, with how many
+        tip: (st === 'posted' ? `version ${app.version}; in () the confirmations of the committee block - the block whose hash draws each round's committee\n` : st === 'delayed' ? `version ${app.version}; in () the confirmations of the round table\n` : `version ${app.version}\n`)
           + [...lines.reduce((m, l) => m.set(l, (m.get(l) || 0) + 1), new Map())].map(([l, k]) => (k > 1 ? `${l} (${k} grids)` : l)).join('\n'),
         // THE SAME, READABLE (2026-10-26 11:44, the owner on the panel: "Wall of text make it more readable and much easier to understand"):
         // one line on what it means, then one short row per grid - the live ones first, the ones that cannot be played folded below
-        summary: (st === 'posted' ? 'Rounds are playable.' : st === 'delayed' ? 'The next rounds are mined and wait for their draw block.' : st === 'unconfirmed' ? 'The next rounds wait to be mined.' : 'No rounds can be played.')
+        summary: (st === 'posted' ? 'Rounds are playable.' : st === 'delayed' ? 'The next rounds are mined and wait for their committee block.' : st === 'unconfirmed' ? 'The next rounds wait to be mined.' : 'No rounds can be played.')
           + (gap && st !== 'failed' ? ' Some hours have no rounds.' : ''),
         version: app.version,
         // WHAT WAS DONE ABOUT IT (2026-10-26, the owner: "Also post resolution what has been done to fix the problem"): each stretch that cannot

@@ -6609,7 +6609,7 @@
       // WHEN THE NEXT ROUND COMES (2026-10-20: "Add an estimated message to markets when it's currently no rounds but a new round is
       // expected at a specific time or blocks"): under the client's "No window is open on these nodes right now." the page says when the
       // next window opens - a listed one, else one its publisher put on chain (window.ARENA_EXPECTED) - and, while the grid waits for its
-      // draw block, which block: the first whose median time passes the committee time, then 6 deep. The client's bytes are unchanged.
+      // committee block, which block: the first whose median time passes the committee time, then 6 deep. The client's bytes are unchanged.
       function expectedLine(fr) {
         const hhmm = (ms) => new Date(Number(ms)).toISOString().slice(11, 16) + ' UTC';
         const inMin = (ms) => { const m = Math.round((Number(ms) - Date.now()) / 60000); return m >= 60 ? `in ${Math.floor(m / 60)} h ${m % 60} min` : m > 0 ? `in ${m} min` : 'soon'; };
@@ -6640,7 +6640,7 @@
             if (said) text = said.text;
             else if (e) {
               const opens = Number(e.firstWindowMs) > now ? `entry opens ${hhmm(e.firstWindowMs)} (${inMin(e.firstWindowMs)})` : 'entry opens with the next window';
-              text = `Next round expected: ${opens}. It starts once its draw block is in: a block after ${hhmm(e.committeeTimeMs)}, then 6 confirmations (~1 h).`
+              text = `Next round expected: ${opens}. It starts once its committee block is in: a block after ${hhmm(e.committeeTimeMs)}, then 6 confirmations (~1 h).`
                 + (e.publication && e.publication.height ? ` Published in block ${Number(e.publication.height).toLocaleString('en-US')}.` : '');
             } else text = 'No round is scheduled on these nodes yet.';
           }
@@ -7525,7 +7525,7 @@
               const r = await fetch(base + '/expected', { signal: AbortSignal.timeout(2500) }); if (!r.ok) continue;
               const v = await r.json();
               if (v && Array.isArray(v.expected) && v.expected.length) {
-                // AND WHERE EACH STANDS ON THAT SEAT'S CHAIN (kanban #690): its publication's confirmations, its draw block's depth
+                // AND WHERE EACH STANDS ON THAT SEAT'S CHAIN (kanban #690): its publication's confirmations, its committee block's depth
                 try { const p = await (await fetch(base + '/pending', { signal: AbortSignal.timeout(4000) })).json(); if (p && Array.isArray(p.grids)) v.grids = p.grids; } catch (e) { /* the times alone */ }
                 kept = { at: Date.now(), v }; return v;
               }
