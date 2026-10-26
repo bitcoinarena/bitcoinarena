@@ -164,6 +164,7 @@ select:focus{outline:2px solid var(--st);outline-offset:1px}
 // address stays the site's, the login is kept per node key, and the node is found where it is now: the seats' signed address announcements
 // (GET /address-announcements, #562) name its current address. The node that answers there must be that key (checked in start()).
 const ON_SITE = !/\/[Dd]ashboard\/owner\/?$/.test(location.pathname);
+const OWNER_SITE = 'https://testnet.bitcoin-arena.io/owner/';   // the Arena site's owner page (installer FinishSteps OWNER_SITE, arenanode open)
 const HASH = new URLSearchParams(location.hash.slice(1));
 const NODE_KEY = ON_SITE ? String(HASH.get('node') || '').trim().toLowerCase() : null;
 async function siteBase() {
@@ -177,7 +178,11 @@ async function siteBase() {
     if (!e) throw new Error('not named here');
     return e;
   })).catch(() => null);
-  return found ? found.endpoint.replace(/\/+$/, '') : null;
+  if (found) return found.endpoint.replace(/\/+$/, '');
+  // ON THIS MACHINE (kanban #687): a node no seat names - no tunnel, not announced yet - is asked at the loopback address the app or
+  // the node's own page named (local=); start() still checks that the node answering is this key
+  const local = String(HASH.get('local') || '').replace(/\/+$/, '');
+  return /^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(local) ? local : null;
 }
 const BASE = ON_SITE ? await siteBase() : location.pathname.replace(/\/[Dd]ashboard\/owner\/?$/, '');
 if (ON_SITE && !BASE) {
@@ -505,6 +510,14 @@ async function start() {
   try { state = await (await fetch(at('/owner'), { cache: 'no-store' })).json(); }
   catch (e) { $('who').textContent = 'This node did not answer: ' + e.message; return; }
   $('who').textContent = 'Node ' + state.node;
+  // THE OWNER'S LOGIN IS ON THE ARENA SITE (kanban #687, the owner's playtest 2026-10-26 on 1.9.7: "the owner page still points to
+  // http://127.0.0.1:8770/dashboard/owner which doesn't have my secret"): the installer hands the owner key to the site's owner page,
+  // kept per node key there; this page keeps a login per address. Opened here with no login of its own on a node that has an owner, it
+  // goes to the site's page for this node (?here stays)
+  if (!ON_SITE && state.claimed && !readSeed() && !readNostr() && !new URLSearchParams(location.search).has('here')) {
+    location.replace(OWNER_SITE + '#node=' + state.node + '&local=' + encodeURIComponent(location.origin));
+    return;
+  }
   if (ON_SITE && NODE_KEY && state.node !== NODE_KEY) { $('who').textContent = 'The address announced for ' + NODE_KEY.slice(0, 16) + '… answers as another node (' + String(state.node).slice(0, 16) + '…). Try again in a minute.'; return; }
   let id = null;
   try { id = await identity(); }

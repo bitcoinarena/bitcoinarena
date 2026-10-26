@@ -371,3 +371,27 @@ test('arenanode state: running, running with a service down, stopped; arenanode 
     assert.equal(c3, 0); assert.match(t3, /^http:\/\/127\.0\.0\.1:\d+\/dashboard$/, 'the local address: a quick tunnel\'s name changes at a restart, and the login is kept per address');
   } finally { rmSync(n.root, { recursive: true, force: true }); }
 });
+
+// THE OWNER PAGE BUTTON (kanban #687, 2026-10-26 on 1.9.7: "the owner page still points to http://127.0.0.1:8770/dashboard/owner which
+// doesn't have my secret"): the Arena site's owner page for this node's key, where the installer handed the key over; local= beside it
+test('arenanode open: the site\'s owner page for the node\'s key, from state.json or the node\'s /identity; the local page only with no key', async () => {
+  const n = linuxNode({ port: 8770 });
+  const key = 'ab'.repeat(32);
+  try {
+    const run = async (args, fetch) => {
+      const out = [];
+      const code = await main(args, { home: n.home, io: { out: (l) => out.push(l), err: (l) => out.push(`ERR ${l}`) }, deps: { platform: 'linux', env: n.env, sh: fakeSh({}).sh, noOpen: true, fetch } });
+      return [code, out.join('\n')];
+    };
+    const down = async () => { throw new Error('ECONNREFUSED'); };
+    assert.deepEqual(await run(['open'], down), [0, 'http://127.0.0.1:8770/dashboard/owner'], 'no key known: the local page');
+    const asked = [];
+    const ident = async (u) => { asked.push(String(u)); return new Response(Buffer.from(key, 'hex')); };
+    assert.deepEqual(await run(['open'], ident), [0, `https://testnet.bitcoin-arena.io/owner/#node=${key}&local=http%3A%2F%2F127.0.0.1%3A8770`]);
+    assert.deepEqual(asked, ['http://127.0.0.1:8770/identity']);
+    const st = join(n.home, 'state.json');
+    let j = {}; try { j = JSON.parse(readFileSync(st, 'utf8')); } catch { j = {}; }
+    writeFileSync(st, JSON.stringify({ ...j, service: { ...(j.service || {}), identity: 'cd'.repeat(32) } }));
+    assert.deepEqual(await run(['open'], down), [0, `https://testnet.bitcoin-arena.io/owner/#node=${'cd'.repeat(32)}&local=http%3A%2F%2F127.0.0.1%3A8770`], 'the key the installer kept');
+  } finally { rmSync(n.root, { recursive: true, force: true }); }
+});

@@ -335,7 +335,9 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.equal(realpathSync(join(home, '.local', 'bin', 'arenanode')), realpathSync(join(home, 'bin', 'arenanode')), 'linked into ~/.local/bin');
   assert.equal((await c.get('/api/state')).json.launchers.command.name, 'arenanode');
   const fin = (await c.post('/api/finish')).json;
-  assert.deepEqual([fin.ok, fin.mode, fin.owner], [true, 'direct', `http://127.0.0.1:${seatPort}/Dashboard/owner`], 'the user is told how to reach the node');
+  // the Arena site's owner page for this node's key, where the installer hands the key over (kanban #687), the local address beside it
+  assert.deepEqual([fin.ok, fin.mode], [true, 'direct'], 'the user is told how to reach the node');
+  assert.match(fin.owner, new RegExp(`^https://testnet\\.bitcoin-arena\\.io/owner/#node=[0-9a-f]{64}&local=${encodeURIComponent(`http://127.0.0.1:${seatPort}`)}$`));
   assert.equal((await c.get('/api/state')).status, 401, 'after finish the wizard answers nothing');
 });
 
