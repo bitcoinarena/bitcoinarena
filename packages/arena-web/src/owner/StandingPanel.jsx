@@ -2,8 +2,10 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE OWNER DASHBOARD'S STANDING, IN REACT (kanban #564): how this node is drawn - draws missed in a row, its bond, its share of all bonds,
 // the rounds it qualified for, its bond against the minimum most rounds ask and the network's minimum (a rise with its notice) - and every
-// warning in plain words (kanban #553), from GET /owner/seatings and GET /owner/standing. The page's badge is told of missed draws.
+// warning in plain words (kanban #553), from GET /owner/seatings and GET /owner/standing. The page's badge is told of missed draws. Below
+// them the node's round posting (kanban #702, RoundPosting.jsx).
 import React from 'react';
+import { RoundPosting } from './RoundPosting.jsx';
 
 /** Each warning kind in the owner's words. */
 export const KIND = Object.freeze({ 'missed seatings': 'Missed draws', 'losing brackets': 'Bond below the minimum', 'near the floor': 'Bond at the minimum',
@@ -44,6 +46,8 @@ export class StandingPanel extends React.Component {
             {w.update ? <p className="sub">Step out until it is fixed: <code>{w.update}</code></p> : null}
           </React.Fragment>))
           : <p className="sub ok">No warning: this node shows up when drawn, and its bond is above the safety margin.</p>}
+        {/* WHO POSTS THE DAY'S ROUNDS (kanban #702): this node when it is on duty, if its wallet can pay */}
+        <RoundPosting api={this.props.api} initial={this.props.initialDuty} />
       </div>
     );
   }

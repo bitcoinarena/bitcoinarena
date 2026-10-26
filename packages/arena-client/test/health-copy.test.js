@@ -6,7 +6,7 @@
 // asks every door the page asks, the oldest first within its budget, and serves the copy at /api/health for any page to read.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeHealth, recorder, replay, keepable, ageOf, keyOf, live, roundPosting } from '../../../src/arena-ui/health/network.js';
+import { makeHealth, recorder, replay, keepable, ageOf, keyOf, live, roundPosting, dutyNotes, withDuty, nodeLabel } from '../../../src/arena-ui/health/network.js';
 import { readHealth, HEALTH_DAILY, HEALTH_CRON } from '../../../src/website/explorer/health.js';
 import explorer from '../../../src/website/explorer/worker.js';
 
@@ -213,4 +213,78 @@ test('the copy keeps a seat\'s rounds small: each round\'s app, committee time, 
   assert.deepEqual(keepable({ [k]: big })[k].body, { rounds: [
     { game: { id: 'g' }, committeeTimeMs: '5', federation: 'f', committee: { drawn: true, why: null } },
     { game: { id: 'g' }, committeeTimeMs: '6', federation: 'f', committee: { drawn: false, why: 'that census carries 0 game nodes' } }] });
+});
+
+// WHO POSTS EACH DAY, AND WHO DID (kanban #702, 2026-10-26, the owner: "In health also say who posted that round" - "Since its pre
+// deterministic"): from a seat's GET /duty, the node on duty with its fallbacks, and the poster of each posting - a fallback said as one
+const A1 = '11'.repeat(32), A2 = '22'.repeat(32), A3 = '33'.repeat(32);
+const DUTY = { ok: true, node: A2, nowMs: '1', setting: 'auto', on: true, days: [
+  { slot: 20751, covers: '2026-10-26', period: 'today', anchor: 157600,
+    order: [{ rank: 1, key: A1, endpoint: 'https://tn4.example/node-1', dueFrom: '2026-10-25T00:00:00.000Z' }, { rank: 2, key: A2, endpoint: 'wss://test-host.example', dueFrom: '2026-10-25T01:00:00.000Z' },
+      { rank: 3, key: A3, endpoint: null, dueFrom: '2026-10-25T02:00:00.000Z' }],
+    apps: [{ app: 'rps', name: 'rock-paper-scissors', state: 'posted', postings: [{ txid: 'ab'.repeat(32), height: 157610, emergency: false, poster: A2, posterEndpoint: null, posterRank: 2, fallback: true }] },
+      { app: 'updown', name: 'btc-updown-15m', state: 'posted', postings: [{ txid: 'cd'.repeat(32), height: null, emergency: false, poster: null, posterEndpoint: null, posterRank: null, fallback: false }] }] },
+  { slot: 20752, covers: '2026-10-27', period: 'next', anchor: 157700,
+    order: [{ rank: 1, key: A3, endpoint: null, dueFrom: '2026-10-26T00:00:00.000Z' }],
+    apps: [{ app: 'rps', name: 'rock-paper-scissors', state: 'due', postings: [] }, { app: 'nextblock', name: 'nextblock', state: 'missed', postings: [] }] }] };
+
+test('the APPS table says who is on duty and who posted: a fallback said as one, a key outside the census said plainly', () => {
+  assert.deepEqual([nodeLabel(A1, 'https://tn4.example/node-1'), nodeLabel(A2, 'wss://test-host.example'), nodeLabel(A3, null)], ['node-1', 'test-host', '33333333']);
+  // a seat before the backup: one entry per app, no role - the primary
+  const n = dutyNotes(DUTY);
+  const rps = n.get('rock-paper-scissors');
+  assert.equal(rps.today.t, 'by test-host (fallback, rank 2)');
+  assert.match(rps.today.tip, /The rounds of 2026-10-26 are posted the day before by the nodes on duty, drawn from the census at block 157,600:/);
+  assert.match(rps.today.tip, /1\. tn4\.example\/node-1 \(key 11111111\): the primary grid from 00:00 UTC/);
+  assert.match(rps.today.tip, /2\. test-host\.example \(key 22222222\): the primary from 01:00 UTC if nobody before it has posted/);
+  assert.match(rps.today.tip, /Primary: posted by test-host\.example \(key 22222222, rank 2\) in ababababab, block 157,610, a fallback: rank 1 did not post in its hour/);
+  assert.equal(rps.next.t, 'on duty: 33333333');
+  assert.match(rps.next.tip, /Primary: due from 00:00 UTC from key 3333333333333333 \(rank 1\), not posted yet\./);
+  assert.equal(n.get('btc-updown-15m').today.t, 'by a key outside the census');
+  assert.match(n.get('btc-updown-15m').today.tip, /Primary: posted by a key outside the census in cdcdcdcdcd, the mempool/);
+  assert.deepEqual([n.get('nextblock').next.t, /did not post it in its hour: the next node on duty posts it/.test(n.get('nextblock').next.tip)], ['on duty: 33333333 (missed)', true]);
+  // beside the posting status, its tooltip carrying both
+  const c = withDuty({ t: 'posted (8)', c: 'ok', tip: 'version 2' }, rps.today);
+  assert.deepEqual([c[0].t, c[0].c, c[1].t, c[1].c], ['posted (8)', 'ok', 'by test-host (fallback, rank 2)', 'muted']);
+  assert.match(c[0].tip, /^version 2\n\nThe rounds of 2026-10-26/);
+  assert.equal(withDuty('-', null), '-');
+  // an old seat (404), or no answer: nothing said
+  assert.equal(dutyNotes(null).size, 0);
+});
+
+// TWO GRIDS A DAY (the owner's ruling, 2026-10-26 ~11:4xZ): the primary from rank 1, a backup from rank 2 from 02:00 UTC (rank 3 from 03:00)
+test('the APPS table names the primary and the backup: who owes each, who posted each, a backup by rank 3 said as a fallback', () => {
+  const order = [{ rank: 1, key: A1, endpoint: 'https://tn4.example/node-1', dueFrom: '2026-10-26T00:00:00.000Z' },
+    { rank: 2, key: A2, endpoint: 'https://tn4.example/node-2', dueFrom: '2026-10-26T01:00:00.000Z', backupDueFrom: '2026-10-26T02:00:00.000Z' },
+    { rank: 3, key: A3, endpoint: 'https://tn4.example/node-3', dueFrom: '2026-10-26T02:00:00.000Z', backupDueFrom: '2026-10-26T03:00:00.000Z' }];
+  const post = (txid, poster, posterRank, role) => ({ txid, height: 157700, emergency: false, poster, posterEndpoint: null, posterRank, fallback: posterRank > (role === 'backup' ? 2 : 1), role });
+  const duty = { ok: true, days: [{ slot: 20752, covers: '2026-10-27', period: 'next', anchor: 157700, order, apps: [
+    { app: 'rps', name: 'rock-paper-scissors', role: 'primary', state: 'posted', postings: [post('aa'.repeat(32), A1, 1, 'primary')] },
+    { app: 'rps', name: 'rock-paper-scissors', role: 'backup', state: 'posted', postings: [post('bb'.repeat(32), A3, 3, 'backup')] },
+    { app: 'updown', name: 'btc-updown-15m', role: 'primary', state: 'due', postings: [] },
+    { app: 'updown', name: 'btc-updown-15m', role: 'backup', state: 'not due yet', postings: [] }] }] };
+  const n = dutyNotes(duty);
+  const rps = n.get('rock-paper-scissors').next, up = n.get('btc-updown-15m').next;
+  assert.equal(rps.t, 'by node-1 · backup by node-3 (fallback, rank 3)');
+  assert.match(rps.tip, /2\. tn4\.example\/node-2 \(key 22222222\): the backup grid from 02:00 UTC; the primary from 01:00 UTC if nobody before it has posted/);
+  assert.match(rps.tip, /3\. tn4\.example\/node-3 \(key 33333333\): the backup grid from 03:00 UTC if rank 2 has not posted it;/);
+  assert.match(rps.tip, /Primary: posted by tn4\.example\/node-1 \(key 11111111, rank 1\) in aaaaaaaaaa, block 157,700\n/);
+  assert.match(rps.tip, /Backup: posted by tn4\.example\/node-3 \(key 33333333, rank 3\) in bbbbbbbbbb, block 157,700, a fallback: rank 2 did not post in its hour/);
+  assert.equal(up.t, 'on duty: node-1 · backup: node-2');
+  assert.match(up.tip, /Primary: due from 00:00 UTC from tn4\.example\/node-1 \(key 11111111, rank 1\), not posted yet\./);
+  assert.match(up.tip, /Backup: tn4\.example\/node-2 \(key 22222222, rank 2\), from 02:00 UTC: not due yet\./);
+});
+
+test('the read asks the seats\' GET /duty, keeps the best answer in the copy, and the replay asks nobody for it', async () => {
+  const seen = [];
+  const net = network(seen);
+  const withDutyDoor = async (url) => (/\/duty$/.test(String(url)) && /s2\.example/.test(String(url)) ? new Response(JSON.stringify(DUTY)) : net(url));
+  const rec = recorder((b, p) => live(b, p, withDutyDoor));
+  const a = cards();
+  assert.equal(await a.health.read({ transport: rec.transport, daily: async () => DAILY }), true);
+  const copy = { daily: DAILY, answers: keepable(rec.answers, a.health.spare()) };
+  assert.deepEqual(copy.answers['https://s2.example/b/duty'].body.days.map((d) => d.covers), ['2026-10-26', '2026-10-27']);
+  const b = cards();
+  assert.equal(await b.health.read({ transport: replay(copy), daily: async () => DAILY }), true);
+  assert.equal(b.last.apps, a.last.apps);
 });
