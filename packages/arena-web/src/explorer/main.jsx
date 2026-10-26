@@ -198,7 +198,9 @@ function Tx({ id }) {
   // "Negative timings": the page's steps come before the first node)
   const press = ev.find((x) => x.group === 'page');
   const t0 = press ? press.atMs : nodeEv.length ? nodeEv[0].atMs : ev.length ? ev[0].atMs : Date.now();
-  const rel = (ms) => { const d = (ms - t0) / 1000; return (d < 0 ? '−' : '+') + Math.abs(d).toFixed(2) + ' s'; };
+  // over 120 s as minutes and seconds (kanban #680: "display it as 3m 2s instead of 850s")
+  const rel = (ms) => { const d = (ms - t0) / 1000, a = Math.abs(d), s = Math.round(a);
+    return (d < 0 ? '−' : '+') + (a > 120 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's' : a.toFixed(2) + ' s'); };
   rel.ms = (ms) => ms - t0;
   // THE NODE SIDE, SUMMED UP: for each step the first node's, the half-way node's and the last node's time from the first node it reached
   const steps = [['door', 'Received'], ['stored', 'Stored'], ['stakelock', 'Stake lock verified'], ['feelock', 'Fee lock verified'], ['book', 'In order book'], ['settle', 'Settlement']]
