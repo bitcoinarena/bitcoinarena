@@ -11,25 +11,28 @@
      Scissors" on testnet4 seat 2 (its key below); a ?ref=<key> on this page's address shows the same page for another program.
      THE GAME AS THIS SITE'S OWN, NOT A FRAME (kanban #678, 2026-10-26: "It shouldn't be just an iframe that is basically stealing a game. The
      demo site should take rps and take it as its own, embedding the code. Not an iframe."): the embed kit (/arena-embed.js) brings the Arena's
-     engine and the game's client into the div below - the snippet the Referral Program page and the owner area's Referrer hand out. -->
+     engine and the game's client into the div below - the snippet the Referral Program page and the owner area's Referrer hand out.
+     THE WAY BACK TO THE GAMES (kanban #697, 2026-10-26: "referral pages is missing a option to return to the games"; #694, #699): the Arena's
+     header and footer (/site-chrome.js) above and below the demo site - it is a page of the Arena's site that only stands for another. -->
 <style>
   :root { --bg: #0b0d12; --panel: #131722; --line: #232a38; --text: #eef1f6; --dim: #95a0b2; --accent: #7c5cff; color-scheme: dark; }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 400 16px/1.55 Inter, system-ui, -apple-system, sans-serif; }
-  header { border-bottom: 1px solid var(--line); background: linear-gradient(180deg, rgba(124,92,255,.14), transparent); }
+  header.demo { border-bottom: 1px solid var(--line); background: linear-gradient(180deg, rgba(124,92,255,.14), transparent); }
   .wrap { max-width: 1100px; margin: 0 auto; padding: 0 16px; }
-  header .wrap { display: flex; align-items: center; gap: 12px; height: 60px; }
+  header.demo .wrap { display: flex; align-items: center; gap: 12px; height: 60px; }
   .logo { width: 30px; height: 30px; border-radius: 9px; background: conic-gradient(from 120deg, var(--accent), #2fd3c8, var(--accent)); }
-  header b { font: 700 18px system-ui; } header span { color: var(--dim); font-size: 14px; margin-left: auto; }
+  header.demo b { font: 700 18px system-ui; } header.demo span { color: var(--dim); font-size: 14px; margin-left: auto; }
   h1 { font: 700 clamp(24px, 4vw, 34px)/1.2 system-ui; margin: 26px 0 6px; }
   p { color: var(--dim); margin: 0 0 16px; max-width: 760px; }
-  .game { border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: #000; height: min(760px, calc(100vh - 120px)); min-height: 560px; }
+  .game { border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: #000; height: min(760px, calc(100vh - 191px)); min-height: 560px; }
   .note { margin: 14px 0 30px; font-size: 14px; } .note a { color: #b9a8ff; }
   code { font: 12px "JetBrains Mono", ui-monospace, monospace; overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
-<header><div class="wrap"><i class="logo"></i><b>Game Night</b><span>a demo site</span></div></header>
+<script src="/site-chrome.js"></script>
+<header class="demo"><div class="wrap"><i class="logo"></i><b>Game Night</b><span>a demo site</span></div></header>
 <main class="wrap">
   <h1>Rock Paper Scissors for bitcoin</h1>
   <p>This page stands for someone else's website. The game below runs on Bitcoin Arena. Every game played here pays this site's referral program 10% of the nodes' fee. Players pay the same as anywhere else.</p>

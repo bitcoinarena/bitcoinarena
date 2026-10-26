@@ -15,7 +15,9 @@
      read; this page reads everything itself and hands each section its data - no drawing of its own (2026-10-21: "no fall backs").
      KEPT, SO IT OPENS AT ONCE (kanban #686, 2026-10-26): the read is ./network.js, run by this page and every minute by the explorer
      (src/website/explorer/worker.js, /api/health); a kept copy of the nodes' answers is drawn first and the nodes are asked again only
-     when it is older than 5 minutes - the script below. -->
+     when it is older than 5 minutes - the script below.
+     THE ARENA'S HEADER AND FOOTER (kanban #698, 2026-10-26: "health is missing the header"; #694, #699): /site-chrome.js - the logo, "← Arena"
+     and the menu, the build line and Donate; the line's own "← Bitcoin Arena" is gone (the header's ← does it) -->
 <style>
   :root { --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --muted: #8b949e; --ok: #3fb950; --warn: #d29922; --bad: #f85149; --accent: #f7931a; color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -76,10 +78,11 @@
 </style>
 </head>
 <body>
+<script src="/site-chrome.js"></script>
 <main>
   <h1>Network health</h1>
   <p class="lead">Every node of the Bitcoin Arena network (testnet4), read from the nodes themselves - nothing here is trusted beyond what each node signs or answers. The answers are kept, so the page opens at once; it says how old they are.</p>
-  <div class="bar"><span id="read">reading …</span><button id="again" type="button">Read again</button><span>asked again when older than 5 min · <span class="dot ok"></span>fine <span class="dot warn"></span>look at it <span class="dot bad"></span>wrong or not answering</span><a href="../">← Bitcoin Arena</a></div>
+  <div class="bar"><span id="read">reading …</span><button id="again" type="button">Read again</button><span>asked again when older than 5 min · <span class="dot ok"></span>fine <span class="dot warn"></span>look at it <span class="dot bad"></span>wrong or not answering</span></div>
   <div class="card"><h2>Network</h2><div id="network"></div></div>
   <div class="card"><h2>Nodes</h2><div class="scroll" id="nodes"></div></div>
   <div class="card"><h2>Machines</h2><div class="scroll" id="machines"></div></div>

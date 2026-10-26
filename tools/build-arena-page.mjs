@@ -60,6 +60,13 @@ export function fill(html, { pin, ui, sizes }) {
   return s;
 }
 
+/** The menu pages' header and footer (src/arena-ui/site-chrome.js, kanban #694) with the page's own build line. */
+export function fillChrome(js, { pin, ui }) {
+  const s = js.replaceAll('{{{ PRODUCT_VERSION }}}', pin.productVersion).replaceAll('{{{ UI_VERSION }}}', String(ui));
+  if (s.includes('{{{')) throw new Error(`site-chrome.js: an unfilled template token is left: ${s.match(/\{\{\{[^}]*\}\}\}/)[0]}`);
+  return s;
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const out = args[0];
@@ -83,5 +90,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const from = sources();
   for (const [rel, src] of Object.entries(from)) { mkdirSync(dirname(join(out, rel)), { recursive: true }); copyFileSync(src, join(out, rel)); }
   writeFileSync(join(out, 'index.html'), fill(readFileSync(join(SOURCE, 'index.html'), 'utf8'), { pin, ui, sizes }));
+  writeFileSync(join(out, 'site-chrome.js'), fillChrome(readFileSync(join(SOURCE, 'site-chrome.js'), 'utf8'), { pin, ui }));
   console.log(`page ${out}: UI ${ui}, ${Object.keys(from).length} Arena files, Next Block's client ${pin.build} (${pin.productVersion}, ${pin.release}) - ${Object.keys(pin.files).length} pinned files`);
 }

@@ -1380,7 +1380,9 @@
     <!-- THE WALLET IN EVERY HEADER (2026-10-19: "the header is missing balance, deposit and withdrawls"):
          the same balance button, Deposit and Withdraw as the games screen's bar, the same handlers -->
     <!-- PROPOSALS, EXPLORER, HEALTH IN THE HEADER (kanban #673: "add a link to proposals and explorer to the Testnet site in the top header
-         bar. You may need to use a burger menu", "also include Health"): the links in the row on a wide screen, behind ☰ on a narrow one -->
+         bar. You may need to use a burger menu", "also include Health"): the links in the row on a wide screen, behind ☰ on a narrow one.
+         THE EXPLORER IN THE SAME TAB (kanban #696, 2026-10-26: "the explorer link opens in a new window. it should open in the same tab as it is
+         implemented on the referral program"); the menu's pages draw this header and its menu with /site-chrome.js (kanban #694) - the same links -->
     <button id="arena-hdr-bal" class="wb-bal" type="button" title="Your balance by federation"><b id="arena-hdr-sats">&ndash; sat</b></button>
     <button id="arena-hdr-deposit" type="button" title="Deposit" aria-label="Deposit"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v7.5M4.8 6.5 8 9.7l3.2-3.2M2.5 11.5v2h11v-2"/></svg><span class="word">Deposit</span></button>
     <button id="arena-hdr-withdraw" type="button" title="Withdraw" aria-label="Withdraw"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 10V2.5M4.8 5.7 8 2.5l3.2 3.2M2.5 11.5v2h11v-2"/></svg><span class="word">Withdraw</span></button>
@@ -1390,7 +1392,7 @@
     <button id="arena-shop-go" type="button" title="Shop: this game's items, bought once and kept" aria-label="Shop"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5.5h11l-1 8h-9z"/><path d="M5.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"/></svg><span class="word">Shop</span></button>
     <button id="arena-settings-go" type="button" title="Settings">&#9881;</button>
     <div id="arena-nav" class="arena-nav"><button id="arena-nav-go" class="arena-nav-go" type="button" aria-label="Menu" aria-expanded="false" aria-controls="arena-nav-menu">&#9776;</button>
-      <nav id="arena-nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoin-arena.io/" target="_blank" rel="noopener">Explorer</a><a href="/health/">Health</a><a href="/referral/">Referral Program</a></nav></div>
+      <nav id="arena-nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoin-arena.io/">Explorer</a><a href="/health/">Health</a><a href="/referral/">Referral Program</a></nav></div>
     <div id="arena-hdr-why" role="status"></div>
   </div>
   <!-- SETTINGS, ITS OWN SCREEN (2026-09-25 21:16: "The wallet page belongs in the settings screen. Deposit,
@@ -1406,7 +1408,7 @@
     <button id="arena-wb-season" type="button" title="Leaderboard" aria-label="Leaderboard"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg><span class="word">Leaderboard</span></button>
     <button id="arena-wb-gear" type="button" title="Settings">&#9881;</button>
     <div id="arena-wb-nav" class="arena-nav"><button id="arena-wb-nav-go" class="arena-nav-go" type="button" aria-label="Menu" aria-expanded="false" aria-controls="arena-wb-nav-menu">&#9776;</button>
-      <nav id="arena-wb-nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoin-arena.io/" target="_blank" rel="noopener">Explorer</a><a href="/health/">Health</a><a href="/referral/">Referral Program</a></nav></div>
+      <nav id="arena-wb-nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoin-arena.io/">Explorer</a><a href="/health/">Health</a><a href="/referral/">Referral Program</a></nav></div>
     <div id="arena-wb-why" role="status"></div>
   </div>
   <div id="arena-withdraw" role="dialog" aria-modal="true" aria-labelledby="arena-withdraw-title"><div class="wd-head"><h3 id="arena-withdraw-title">Withdraw</h3><button type="button" class="wd-close" aria-label="Close">&times;</button></div><div class="wd-body"></div></div>
@@ -8425,6 +8427,9 @@
         } });
       el.classList.add('show');
     };
+    // DONATE FROM THE MENU'S PAGES (kanban #699, 2026-10-26: "all pages are missing the footer"): their footer's Donate (/site-chrome.js) is a
+    // link to /#donate - the box needs this page's wallet, so it opens here, once
+    if (location.hash === '#donate') { try { history.replaceState(null, '', location.pathname + location.search); } catch { /* the box opens anyway */ } window.ARENA_DONATE_OPEN(); }
     // ---------------------------------------------------------------- the add-ons panel Unity draws (ARENA_ADDONS_*): Tick Tock's page part, packages/nextblock/page/unity-page.js (kanban #521)
     {
       const go = document.getElementById('arena-shop-go');
