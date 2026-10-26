@@ -26,8 +26,8 @@ import { blockRandom, blockRandomReady } from '../../arena-protocol/src/block-ra
 import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS } from '../../arena-protocol/src/served-nodes.js';
 import { decodePurchase } from '../../arena-protocol/src/purchase.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
-import { keepItemPurchase, itemsOwned } from './item-purchase-seat.js';
-import { keepDonationGift, giftsOf } from './donation-gift-seat.js';
+import { keepItemPurchase, itemsOwned, purchasesSince } from './item-purchase-seat.js';
+import { keepDonationGift, giftsOf, giftsSince } from './donation-gift-seat.js';
 import { decodeDonationGift, GIFT_TO_GAME, GIFT_TO_PLAYER, GIFT_TO_BOTH, playerGiftRecipients } from '../../arena-protocol/src/donation-gift.js';
 import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
 import { guardianThreshold } from '../../arena-protocol/src/threshold.js';
@@ -7525,6 +7525,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const id = Buffer.from(r.entry_id).toString('hex');
           return { id, round: Buffer.from(r.round_id).toString('hex'), storedMs: Number(r.joined_ms), app: o.app, federation: o.rc ? fedOf(o.rc, r.contract) : null,
             ...(full ? { detail: txView(id).body } : {}) }; }) }, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v)));
+      }
+      // THE GIFTS, ZAPS AND ITEMS BOUGHT HERE (kanban #683, 2026-10-26: "I don't see item purchases in the explorer"; #682: a gift "doesn't show
+      // in the explorer"): what explorer.bitcoin-arena.io polls beside /txs - each kept after `since` (ms), oldest first, at most `limit` of each
+      if (req.method === 'GET' && url.pathname === '/payments') {
+        const since = Math.max(0, Number(url.searchParams.get('since') || 0) || 0), limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit') || 200) || 200));
+        return sendJson(200, { seat: toHex(round.pubkey), gifts: giftsSince(round.db, { since, limit }), items: purchasesSince(round.db, { since, limit }) });
       }
       // THE PAGE'S OWN TIMING OF ITS ORDER (kanban #624): { timing, sig } - sig the order's session key's Ed25519 signature over
       // timingMessage(id, JSON of timing); kept for GET /tx. No one but the page that holds the order's session key writes it.

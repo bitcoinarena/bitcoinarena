@@ -5,7 +5,7 @@
 // output by output, as a round's donation outputs are (stake-lock-signer-node.js verifyDonationOutputs): at each outpoint the
 // federation holds the pre-expired payout contract to that payee for exactly that msat with the buyer's key as its image. A
 // transaction already kept for another purchase is refused: one payment is one purchase. Kept, it is the buyer's ownership.
-import { purchaseStands, purchaseId, encodePurchase } from '../../arena-protocol/src/purchase.js';
+import { purchaseStands, purchaseId, encodePurchase, decodePurchase } from '../../arena-protocol/src/purchase.js';
 import { donationContractFields } from './stake-lock-signer-node.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
@@ -95,5 +95,21 @@ export function itemPurchaseKept(db, id) {
   db.exec(ITEM_PURCHASES_SQL);
   const r = db.prepare('SELECT * FROM item_purchases WHERE id = ?').get(String(id).toLowerCase());
   return r ? { id: r.id, player: r.player, gameDev: r.game_dev, gameName: r.game_name, itemId: r.item_id, txid: r.txid } : null;
+}
+
+// EVERY ITEM BOUGHT, FOR THE EXPLORER (kanban #683, 2026-10-26: "I don't see item purchases in the explorer"): the purchases this seat kept
+// after `since` (ms), oldest first, at most `limit` - every seat keeps every purchase of its network (each is handed on to all). By kept_ms,
+// indexed: the explorer asks every minute.
+export const ITEM_PURCHASES_KEPT_SQL = 'CREATE INDEX IF NOT EXISTS item_purchases_kept ON item_purchases (kept_ms)';
+export function purchasesSince(db, { since = 0, limit = 200 } = {}) {
+  db.exec(ITEM_PURCHASES_SQL); db.exec(ITEM_PURCHASES_KEPT_SQL);
+  return db.prepare('SELECT id, bytes, kept_ms FROM item_purchases WHERE kept_ms > ? ORDER BY kept_ms, id LIMIT ?').all(Number(since), Number(limit)).map((r) => {
+    let p; try { p = decodePurchase(new Uint8Array(r.bytes)); } catch { return null; }
+    return { id: r.id, kind: 'item', item: itemLabel(p.gameName, p.itemId), player: toHex(p.playerPubkey), gameDev: toHex(p.gameDevPubkey), gameName: p.gameName,
+      itemId: p.itemId, gameId: p.gameId ? toHex(p.gameId) : null, priceSat: String(p.priceSat), federation: toHex(p.federationId), txid: toHex(p.txid),
+      totalMsat: String(p.outputs.reduce((t, o) => t + o.msat, 0n)), outputs: p.outputs.map((o) => ({ outIdx: o.outIdx, pk: toHex(o.pk), msat: String(o.msat),
+        ...(p.reserveKey && toHex(o.pk) === toHex(p.reserveKey) ? { reserve: true } : {}) })),
+      atMs: Number(p.boughtAtMs), keptMs: Number(r.kept_ms) };
+  }).filter(Boolean);
 }
 export { purchaseId };
