@@ -159,7 +159,11 @@ test('a running guardian whose federation config names peers is started again on
     0: { url: 'wss://gone.trycloudflare.com/guardian', name: 'aaaaaaaaaaaaaaaa' }, 1: { url: 'ws://198.51.100.7:6571/guardian', name: 'cccccccccccccccc' } } } }));
   const lines = [];
   const again = fakePids(5161);
-  await run(again, (l) => lines.push(l));                        // the DKG wrote its config: started again, with them
+  const g1 = await run(again, (l) => lines.push(l));             // the DKG wrote its config: started again, with them
+  // and the running guardian answers the COOKIE's fingerprint, the one node-start.js compares every 30 s (2026-10-26 07:4xZ: it answered
+  // the kept one, cookie and overrides, the two never matched, and the guardian was started again every 30 s)
+  const { cookieFingerprint } = await import('../src/guardian.js');
+  assert.equal(g1.cookieSha, cookieFingerprint(cookie));
   assert.equal(again.calls.stopped, 1); assert.equal(again.calls.started.length, 1);
   const ov = again.calls.started[0].env.FM_WS_API_CONNECT_OVERRIDES;
   assert.match(ov, /wss:\/\/gone\.trycloudflare\.com\/guardian=ws:\/\/127\.0\.0\.1:6551\/guardian-api\/aaaaaaaaaaaaaaaa/);

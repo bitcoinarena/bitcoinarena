@@ -281,7 +281,7 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
   };
   const ramFollow = (pidOf) => (ramOn && ramSupported()
     ? ramLoop({ dataDir, ram, pidOf, offsetMs: (Math.floor(nodePort / 10) % 12) * 5000 + (slot === 'next' ? 2500 : 0), log }) : null);
-  let cookieSha = cookieFingerprint(cookiePath);
+  const cookieSha = cookieFingerprint(cookiePath);
   // its federation's peers, once there is one: their API addresses as the config names them, carried through this seat
   let apiOverrides = '';
   try {
@@ -292,7 +292,9 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
   } catch { apiOverrides = ''; }
   // AND THE OVERRIDES IN THE FINGERPRINT (kanban #577): a running guardian is adopted, not restarted, so one started before its seat
   // carried its peers' API (or with other peers) is started again once - the same rule as a changed bitcoind cookie
-  if (cookieSha && apiOverrides) cookieSha = createHash('sha256').update(`${cookieSha}\n${apiOverrides}`).digest('hex');
+  // ONLY IN THE KEPT FILE: the running guardian's `cookieSha` stays the cookie's own, which node-start.js compares every 30 s with the cookie
+  // (2026-10-26 07:4xZ, after 2026.1.9.5: the two never matched, and every guardian of a federation was started again every 30 s)
+  const keptSha = cookieSha && apiOverrides ? createHash('sha256').update(`${cookieSha}\n${apiOverrides}`).digest('hex') : cookieSha;
   const fmEnv = guardianEnv({ nodePort, dataDir, network, chain, bitcoindUrl, endpoint, ports, p2pUrlPort: nodeKey ? p2pTunnelPort(nodeKey, slot) : null, apiOverrides,
     cookieSecret: readFileSync(cookiePath, 'utf8').trim().split(':').slice(1).join(':'),
     password: readFileSync(pwFile, 'utf8').trim() });
@@ -305,16 +307,16 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
     const unit = guardianUnit(nodePort, slot);
     if (await units.active(unit)) {
       const had = keptFingerprint(dataDir);
-      if (!had || !cookieSha || had === cookieSha) {
+      if (!had || !keptSha || had === keptSha) {
         log(`[guardian] ${unit} already runs: adopted, not restarted; endpoint ${endpoint}, api 127.0.0.1:${ports.api}`);
-        return { running: true, kept: true, adopted: true, unit, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot, cookieSha: had || cookieSha, stop: async () => {}, halt: () => units.stop(unit) };
+        return { running: true, kept: true, adopted: true, unit, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot, cookieSha, stop: async () => {}, halt: () => units.stop(unit) };
       }
       log(`[guardian] ${unit} runs with an old bitcoind cookie or old peer addresses: started again`);
       await units.stop(unit);
     }
     if (!ramReady()) return not('its database is neither in RAM nor in a snapshot');
     await units.start(unit, bin, { ...fmEnv, PATH: env.PATH || '' }, join(dataDir, 'fedimintd.log'));
-    keepFingerprint(dataDir, cookieSha);
+    keepFingerprint(dataDir, keptSha);
     log(`[guardian] fedimintd started as ${unit} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}; it outlives this node`);
     return { running: true, kept: true, adopted: false, unit, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot, cookieSha, stop: async () => {}, halt: () => units.stop(unit) };
   }
@@ -328,16 +330,16 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
     if (await pids.active(dataDir)) {
       const had = keptFingerprint(dataDir);
       // a guardian adopted only while it reads bitcoind with the cookie bitcoind has now (one started before the fingerprint was kept: as before)
-      if (!had || !cookieSha || had === cookieSha) {
+      if (!had || !keptSha || had === keptSha) {
         log(`[guardian] fedimintd ${pids.pid(dataDir)} already runs on ${dataDir}: adopted, not restarted; endpoint ${endpoint}, api 127.0.0.1:${ports.api}`);
-        return kept(true, pids.pid(dataDir), had || cookieSha);
+        return kept(true, pids.pid(dataDir), cookieSha);
       }
       log(`[guardian] fedimintd ${pids.pid(dataDir)} on ${dataDir} runs with an old bitcoind cookie or old peer addresses: started again`);
       await pids.stop(dataDir);
       if (!keep) {
         if (!ramReady()) return not('its database is neither in RAM nor in a snapshot');
         const pid = await pids.start(dataDir, bin, { ...env, ...fmEnv }, join(dataDir, 'fedimintd.log'));
-        keepFingerprint(dataDir, cookieSha);
+        keepFingerprint(dataDir, keptSha);
         log(`[guardian] fedimintd ${pid} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}; kept: it outlives this node`);
         return kept(false, pid, cookieSha);
       }
@@ -345,7 +347,7 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
     if (keep) {
       if (!ramReady()) return not('its database is neither in RAM nor in a snapshot');
       const pid = await pids.start(dataDir, bin, { ...env, ...fmEnv }, join(dataDir, 'fedimintd.log'));
-      keepFingerprint(dataDir, cookieSha);
+      keepFingerprint(dataDir, keptSha);
       log(`[guardian] fedimintd ${pid} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}; kept: it outlives this node`);
       return kept(false, pid, cookieSha);
     }
@@ -354,7 +356,7 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
   const out = openSync(join(dataDir, 'fedimintd.log'), 'a');
   const child = spawn(bin, [], { env: { ...env, ...fmEnv }, stdio: ['ignore', out, out] });
   const follow = ramFollow(() => (exited ? null : child.pid));
-  keepFingerprint(dataDir, cookieSha);
+  keepFingerprint(dataDir, keptSha);
   let exited = false;
   child.on('exit', (code, sig) => { exited = true; log(`[guardian] fedimintd exited (${sig || code})`); });
   log(`[guardian] fedimintd ${child.pid} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}`);
