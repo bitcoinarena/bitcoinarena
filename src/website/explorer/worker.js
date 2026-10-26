@@ -140,14 +140,20 @@ async function readPayments(env, since, limit) {
   return { seats: [...answered.values()].filter(Boolean).length, payments: ids.length, written: writes.length, next, ms: Date.now() - t0 };
 }
 
+// THE EXPLORER'S OWN STATE IN D1 (2026-10-26, Cloudflare blocked KV puts for the day: "exceeded the daily Workers KV free tier limit of
+// 1,000 put operations" - the walks' positions and the kept figures were written every minute): one row per key in the table state
+// (migrations/0003_state.sql); KV keeps only the Health copy
+const stateGet = async (env, k) => { const r = await env.DB.prepare('SELECT v FROM state WHERE k = ?').bind(k).first(); return r ? r.v : null; };
+const statePut = (env, k, v) => env.DB.prepare('INSERT INTO state (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').bind(k, String(v)).run();
+
 // THE OLDER ONES TOO: from the first a seat kept, a page each minute (KV 'payments-walk'), until a read leaves nothing over; the
 // minute's own read covers the newest READ_BACK_MS from then on
 async function paymentsWalk(env) {
-  const at = await env.EXPLORER.get('payments-walk');
+  const at = await stateGet(env, 'payments-walk');
   if (at === 'done') return;
   const n = await readPayments(env, Number(at) || 0, BACKFILL_ROWS);
   if (!n.seats) return;   // no seat lists payments yet (before their roll): asked again next minute
-  await env.EXPLORER.put('payments-walk', n.next === null ? 'done' : String(n.next));
+  await statePut(env, 'payments-walk', n.next === null ? 'done' : String(n.next));
   console.log(JSON.stringify({ paymentsWalk: { from: Number(at) || 0, ...n } }));
 }
 
@@ -156,11 +162,11 @@ async function paymentsWalk(env) {
 const BACKFILL_UNTIL_MS = 14 * 24 * 3600000, BACKFILL_ROWS = 200;
 async function backfill(env) {
   const t0 = Date.now();
-  let at = Number(await env.EXPLORER.get('backfill')) || t0 - READ_BACK_MS;
+  let at = Number(await stateGet(env, 'backfill')) || t0 - READ_BACK_MS;
   if (at <= t0 - BACKFILL_UNTIL_MS) return;
   const from = at - READ_BACK_MS;
   const n = await readWindow(env, from, BACKFILL_ROWS, at);
-  await env.EXPLORER.put('backfill', String(from));
+  await statePut(env, 'backfill', String(from));
   console.log(JSON.stringify({ backfill: { from: new Date(from).toISOString(), to: new Date(at).toISOString(), ...n } }));
 }
 
@@ -190,13 +196,13 @@ async function readMetrics(env) {
     reserve: { msat: String(sum(feds.values())), federations: [...feds].map(([federation, msat]) => ({ federation, msat: String(msat) })) },
     referral: { msat: String(sum([...sites.values()].map((x) => x.msat))), sites: [...sites].map(([site, x]) => ({ site, name: names.has(site) ? names.get(site).name : null, msat: String(x.msat), payouts: x.payouts }))
       .sort((a, b) => (BigInt(b.msat) > BigInt(a.msat) ? 1 : BigInt(b.msat) < BigInt(a.msat) ? -1 : 0)) } };
-  await env.EXPLORER.put('metrics', JSON.stringify(m));
+  await statePut(env, 'metrics', JSON.stringify(m));
   return m;
 }
 
 const DAY_MS = 86400000, VOLUME_DAYS = 30;
 async function metrics(env) {
-  const kept = JSON.parse((await env.EXPLORER.get('metrics')) || 'null');
+  const kept = JSON.parse((await stateGet(env, 'metrics')) || 'null');
   const since = Math.floor(Date.now() / DAY_MS) * DAY_MS - (VOLUME_DAYS - 1) * DAY_MS;
   // the stakes of the orders (kanban #683: the gifts and items bought are rows too, not stakes)
   const r = await env.DB.prepare(`SELECT (stored_ms / ${DAY_MS}) AS d, COUNT(*) AS n, SUM(CAST(json_extract(json, '$.entry.stakeMsat') AS INTEGER)) AS msat
@@ -211,10 +217,10 @@ async function poll(env) {
   console.log(JSON.stringify({ poll: n, payments: pay }));
   await paymentsWalk(env).catch((e) => console.log(JSON.stringify({ paymentsWalkError: String(e && e.message ? e.message : e) })));
   // every quarter hour: each app's, kind's and federation's count for the list's filters (a read of every row)
-  if (Math.floor(Date.now() / 60000) % 15 === 0 || !(await env.EXPLORER.get('facets')))
+  if (Math.floor(Date.now() / 60000) % 15 === 0 || !(await stateGet(env, 'facets')))
     await readFacets(env).catch((e) => console.log(JSON.stringify({ facetsError: String(e && e.message ? e.message : e) })));
   // every fifth minute: the figures change slowly, and each read asks every seat twice
-  if (Math.floor(Date.now() / 60000) % 5 === 0 || !(await env.EXPLORER.get('metrics')))
+  if (Math.floor(Date.now() / 60000) % 5 === 0 || !(await stateGet(env, 'metrics')))
     await readMetrics(env).catch((e) => console.log(JSON.stringify({ metricsError: String(e && e.message ? e.message : e) })));
   await backfill(env).catch((e) => console.log(JSON.stringify({ backfillError: String(e && e.message ? e.message : e) })));
 }
@@ -260,10 +266,10 @@ async function readFacets(env) {
   const sum = (key) => { const m = new Map(); for (const x of r.results || []) { const k = x[key] === null ? '-' : x[key]; m.set(k, (m.get(k) || 0) + Number(x.n)); }
     return [...m].map(([v, n]) => ({ [key]: v, n })).sort((a, b) => b.n - a.n); };
   const f = { apps: sum('app'), kinds: sum('kind'), feds: sum('federation').filter((x) => x.federation !== '-'), total: (r.results || []).reduce((t, x) => t + Number(x.n), 0), readAt: new Date().toISOString() };
-  await env.EXPLORER.put('facets', JSON.stringify(f));
+  await statePut(env, 'facets', JSON.stringify(f));
   return f;
 }
-async function facets(env) { return JSON.parse((await env.EXPLORER.get('facets')) || 'null') || readFacets(env); }
+async function facets(env) { return JSON.parse((await stateGet(env, 'facets')) || 'null') || readFacets(env); }
 
 // A ROW'S CURSOR: its time and id, "<ms>_<id>" - a page goes on before or after it (kanban #683: "Add paging to the explorer to display more
 // than a 1000")
