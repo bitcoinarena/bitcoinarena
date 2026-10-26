@@ -325,10 +325,26 @@ export async function seatLogTail({ home, platform = process.platform, sh = run,
   return text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(-n).map((l) => l.slice(0, 300));
 }
 
-export async function updateNode({ home, newRelease, port, node = process.execPath, asset = null, sums = null, sig = null, env = process.env, sh = run,
+/**
+ * THE MOVE REPORTED, 0 TO 100 % (kanban #706): `progress` takes { pct, step, detail } at each step (update-progress.js), then { done } -
+ * or { failed, step, why }: the step it failed at, and why.
+ */
+export async function updateNode({ progress = () => {}, ...o }) {
+  let at = { pct: 0, step: 'Checking the new release' };
+  const say = (pct, step, detail = '') => { at = { pct: pct ?? at.pct, step, detail }; try { progress(at); } catch { /* a reporter never stops the update */ } };
+  const end = (p) => { try { progress(p); } catch { /* the same */ } };
+  let r;
+  try { r = await moveNode({ ...o, say, failedAt: () => at.step }); } catch (e) { end({ failed: true, pct: at.pct, step: at.step, why: e.message }); throw e; }
+  if (r.ok) end({ done: true, pct: 100 });
+  else end({ failed: true, pct: at.pct, step: r.failedAt || at.step, why: r.rolledBack ? `${r.why}. ${r.restored ? 'The old release runs again.' : 'The old release was started again but does not answer.'}` : r.why });
+  return r;
+}
+
+async function moveNode({ home, newRelease, port, node = process.execPath, asset = null, sums = null, sig = null, env = process.env, sh = run,
   fetcher = fetch, nowMs = () => Date.now(), waitMs = null, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), platform = process.platform,
   quickUrl = quickTunnelUrl, restartService = (id, o) => control('restart', id, o), installUpdaterFn = null, fetchApps = ensureApps, arch = process.arch,
-  lndKit = { installLnd }, refreshGames = async (o) => (await import('./change-roles.js')).refreshHostedGames(o), trace: given = QUIET }) {
+  lndKit = { installLnd }, refreshGames = async (o) => (await import('./change-roles.js')).refreshHostedGames(o), trace: given = QUIET,
+  say = () => {}, failedAt = () => null }) {
   // EVERY STEP SAID AT --verbose, WITH ITS TIME; THE DECISIONS AT --debug (kanban #693, 2026-10-26: "shows more info on what its doing, what
   // is going wrong etc")
   const trace = given.tag('update');
@@ -339,6 +355,9 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   // 300 s everywhere (kanban #663, Linux 2026-10-25: "the node did not answer on port 8470 within 90 s" updating to 2026.1.8 and 1.9 - a
   // node that loads every version of its games, with their cores, can take longer than 90 s to answer on a small machine)
   waitMs = waitMs ?? 300000;
+  // the version said in the steps: the release's VERSION, else its folder
+  const label = releaseIdOf(newRelease).version || String(newRelease).split(/[\\/]/).filter(Boolean).pop();
+  say(0, 'Checking the new release', label);
   if (asset) {
     const c = checkAsset({ file: asset, sums, sig });
     if (!c.ok) return { ok: false, why: c.why };
@@ -352,6 +371,7 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   if (from === newRelease) return { ok: false, why: 'that release is the one running' };
   // THE NEW RELEASE'S APPS (kanban #575): downloaded and checked before anything is stopped - an app that cannot be fetched leaves the
   // node running as it is
+  say(2, `Getting the apps of ${label}`);
   const apps = await fetchApps({ release: newRelease, home, fetcher });
   step(`the new release's apps: ${apps.ok ? 'fetched and checked' : apps.why}`);
   if (!apps.ok) return { ok: false, why: `the new release's apps: ${apps.why}` };
@@ -361,10 +381,12 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   const lndFile = lnd ? svcFiles[lnd.index] : null;
   trace.debug(`LND: ${lnd ? `${lnd.from} runs, this release pins ${lnd.to} (${lndFile})` : 'the pinned one runs, or none'}`);
   if (lnd) {
+    say(12, `Getting Lightning (LND ${lnd.to})`);
     const got = await lndKit.installLnd({ home, platform, arch, fetcher });
     step(`the pinned LND ${lnd.to}: ${got.ok ? 'installed' : got.why}`);
     if (!got.ok) return { ok: false, why: `the pinned LND (${lnd.to}): ${got.why}` };
   }
+  say(20, 'Checking your node before it stops');
   const before = await waitHealthy({ port, fetcher, waitMs: 10000, everyMs: 500 });
   step(`before: the seat on port ${port} ${before.ok ? `answers as ${before.identity.slice(0, 16)}…` : `does not answer (${before.why}): any key will do after`}`);
   // the node's services that run from the old release: the seat, and every other one naming it - or naming an OLDER release beside it
@@ -379,8 +401,9 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   step(`${moving.length} of ${svcFiles.length} service file(s) move: ${moving.map((f) => f.split(/[\\/]/).pop()).join(', ')}`);
   trace.debug(`not moved (they name neither ${from} nor an older release): ${svcFiles.filter((f) => !moving.includes(f)).map((f) => f.split(/[\\/]/).pop()).join(', ') || 'none'}`);
 
-  if (inSeatingWindow(nowMs())) step('inside a market seating window (minutes 11-14 of a quarter hour): waiting it out before anything stops');
+  if (inSeatingWindow(nowMs())) { step('inside a market seating window (minutes 11-14 of a quarter hour): waiting it out before anything stops'); say(22, 'Waiting for the market to seat its players', 'up to 3 minutes'); }
   while (inSeatingWindow(nowMs())) await sleep(5000);
+  say(24, 'Stopping your node');
   await svc.prepare(newRelease);
   const stop = await svc.stop(moving, from);
   step(`stopped: ${stop.ok ? 'ok' : stop.why}`);
@@ -397,9 +420,11 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   const leftAfterStop = svc.leftovers ? await svc.leftovers(oldFolders) : [];
   if (leftAfterStop.length && svc.end) await svc.end(leftAfterStop.map((x) => x.pid));
   if (leftAfterStop.length) step(`still running from an older release after the stop, ended: ${leftAfterStop.map((x) => `${x.name} ${x.pid}`).join(', ')}`);
+  say(32, 'Backing up your node');
   const backup = backupNode(home);
   step(`backed up ${backup.files.length} file(s) into ${backup.dir}: ${backup.files.join(', ')}`);
   const state = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
+  say(36, `Writing the settings for ${label}`);
   // THE SETTINGS: arena.conf, its paths into an older release moved to the new one. A node from before it ran from
   // node.env: its settings are moved into arena.conf here, once (node.env stays until the new release answers, then is kept as
   // node.env.migrated; a rollback takes arena.conf away again and the old release reads node.env as before)
@@ -435,6 +460,7 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   const tunnels = state.reach && state.reach.mode === 'quick' && state.reach.url ? moving.filter(isTunnel) : [];
   let reachUrl = null, tunnelStarted = { ok: true };
   if (tunnels.length) {
+    say(40, 'Starting the tunnel');
     const startAt = Date.now();
     tunnelStarted = await svc.start(tunnels);
     const url = await quickUrl({ unit: TUNNEL_UNIT, home, platform, sh, sinceMs: startAt });
@@ -452,14 +478,21 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
       reachUrl = url;
     }
   }
+  say(42, 'Starting your node');
   const rest = await svc.start(moving.filter((f) => !tunnels.includes(f)));
   const started = !tunnelStarted.ok ? tunnelStarted : rest;
   step(`started: ${started.ok ? 'ok' : started.why}; waiting up to ${Math.round(waitMs / 1000)} s for the seat to answer on port ${port}`);
-  const after = await waitHealthy({ port, fetcher, waitMs });
+  // THE FIRST ANSWER: nobody knows how long a node takes to load its games; the bar moves with each ask, 45 % towards 85 %, closer
+  // the longer it takes (most answer within a minute), and the seconds are said
+  const waitFrom = Date.now();
+  say(45, "Waiting for your node's first answer");
+  const asking = (url, o) => { const s = (Date.now() - waitFrom) / 1000; if (s >= 1) say(45 + 40 * (1 - Math.exp(-s / 60)), "Waiting for your node's first answer", `${Math.round(s)} s`); return fetcher(url, o); };
+  const after = await waitHealthy({ port, fetcher: asking, waitMs });
   const sameKey = after.ok && (!before.ok || after.identity === before.identity);
   step(`after: ${after.ok ? `the seat answers as ${after.identity.slice(0, 16)}…, ${sameKey ? 'the same node' : 'ANOTHER node'}` : `the seat did not answer: ${after.why}`}`);
   // THE NEW RELEASE, NOT THE OLD PROCESS (kanban #546): a release that names its version must answer with it and its commit
   const want = releaseIdOf(newRelease);
+  if (sameKey && want.version) say(86, `Checking it runs ${label}`);
   const answered = sameKey && want.version ? await versionAnswers({ port, fetcher, want, waitMs: Math.min(waitMs, 120000) }) : { ok: sameKey };
   if (sameKey && want.version) step(`GET /owner/version: ${answered.ok ? `${answered.version} (${String(answered.commit).slice(0, 12)}), the new release` : answered.why}`);
   // and no process of an older release left after the start: ended and named, and if one will not end, no update
@@ -469,6 +502,7 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   const same = sameKey && answered.ok && !stillLeft.length;
   if (leftAfterStart.length) step(`still running from an older release after the start, ended: ${leftAfterStart.map((x) => `${x.name} ${x.pid}`).join(', ')}${stillLeft.length ? `; would not end: ${stillLeft.map((x) => `${x.name} ${x.pid}`).join(', ')}` : ''}`);
   if (same) {
+    say(92, 'Finishing up');
     writeFileSync(join(home, 'state.json'), JSON.stringify({ ...state, ...(reachUrl ? { reach: { ...state.reach, url: reachUrl } } : {}),
       release: { path: newRelease, from, atMs: nowMs() } }, null, 2) + '\n', { mode: 0o600 });
     if (migrating && existsSync(envFile)) renameSync(envFile, `${envFile}.migrated`);
@@ -516,6 +550,8 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   // lines - the journal of the seat's unit on Linux, node.log elsewhere - read before the old release starts again
   const seatLog = !after.ok ? await seatLogTail({ home, platform, sh, unit: svc.seatFile ? String(svc.seatFile).split(/[\\/]/).pop() : UNIT }).catch(() => []) : [];
   step('rolling back: the old service files, the backup and the old release');
+  const failedStep = failedAt();
+  say(null, `Going back to ${releaseIdOf(from).version || 'the release it ran'}`);
   if (seatLog.length) trace.debug(`the new release's last log lines:\n  ${seatLog.join('\n  ')}`);
   // ROLLED BACK: the old services, the backup, the old release started - started whatever the restore says (measured in the Windows
   // VM: copying the backup back threw while the stopped seat still held its database, and the node was left with nothing running)
@@ -527,7 +563,7 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   await svc.start(moving);
   const back = await waitHealthy({ port, fetcher, waitMs });
   step(`rolled back: the backup ${put.ok ? 'put back' : `not all put back (${put.failed.join(', ')})`}; the old release ${back.ok ? 'answers' : `does not answer (${back.why})`}`);
-  return { ok: false, rolledBack: true, from, to: newRelease, backup: backup.dir,
+  return { ok: false, rolledBack: true, from, to: newRelease, backup: backup.dir, failedAt: failedStep,
     why: !after.ok ? `the new release did not come up: ${after.why}${seatLog.length ? `. Its last log lines: ${seatLog.join(' | ')}` : ''}`
       : !sameKey ? `the new release answered as another node (${after.identity.slice(0, 16)}), not ${before.identity.slice(0, 16)}`
         : !answered.ok ? (answered.version && answered.version === releaseIdOf(from).version ? `the old release still answers (${answered.version}): ${answered.why}` : answered.why)
