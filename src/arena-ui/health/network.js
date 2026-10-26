@@ -194,7 +194,7 @@ export function dutyNotes(duty) {
     const apps = new Map();
     for (const a of d.apps || []) { const k = a.name || a.app; const m = apps.get(k) || {}; m[a.role === 'backup' ? 'backup' : 'primary'] = a; apps.set(k, m); }
     for (const [key, roles] of apps) {
-      const lines = [...head], short = [];
+      const lines = [...head], short = [], items = [];
       for (const role of ['primary', 'backup']) {
         const a = roles[role];
         if (!a) continue;
@@ -210,6 +210,21 @@ export function dutyNotes(duty) {
           const where = p.height != null ? `block ${Number(p.height).toLocaleString('en-US')}` : 'the mempool';
           lines.push(`${Role}: ${p.emergency ? 'emergency grid' : 'posted'} by ${who} in ${String(p.txid).slice(0, 10)}, ${where}${late(p) ? `, a fallback: rank ${own} did not post in its hour` : ''}`);
         }
+        // the same as rows for the panel: one per poster (its grids counted), or the one waiting
+        const rows = new Map();
+        for (const p of ps) {
+          const who = p.poster ? name(p.poster, endpointOf(p.poster, p.posterEndpoint)) : 'a key outside the census';
+          const k = `${who}|${p.emergency ? 1 : 0}|${p.height != null ? 1 : 0}`, w = rows.get(k);
+          if (w) { w.n++; w.detail += `, ${String(p.txid).slice(0, 10)}`; continue; }
+          rows.set(k, { s: p.height != null ? 'ok' : 'warn', live: true, when: Role,
+            say: `${p.emergency ? 'emergency grid' : 'posted'} by ${who}${p.height != null ? ` in block ${Number(p.height).toLocaleString('en-US')}` : ', waiting to be mined'}${late(p) ? ` (fallback: rank ${own} did not post)` : ''}`,
+            detail: String(p.txid).slice(0, 10), n: 1 });
+        }
+        items.push(...rows.values());
+        if (!ps.length) items.push(owner
+          ? { s: a.state === 'missed' ? 'bad' : 'warn', live: true, when: Role, say: a.state === 'missed' ? `${name(owner.key, owner.endpoint)} missed its hour; the next node on duty posts it`
+            : a.state === 'due' ? `due from ${hmUtc(due)} by ${name(owner.key, owner.endpoint)}, not posted yet` : `${name(owner.key, owner.endpoint)} posts it from ${hmUtc(due)}` }
+          : { s: 'bad', live: true, when: Role, say: `no node of this census holds rank ${own}` });
         if (main) {
           const who = main.poster ? name(main.poster, main.posterEndpoint) : 'a key outside the census';
           const fb = late(main) && main.posterRank ? ` (fallback, rank ${main.posterRank})` : '';
@@ -221,7 +236,14 @@ export function dutyNotes(duty) {
         } else { short.push(role === 'primary' ? 'no duty order yet' : 'backup: nobody yet'); lines.push(`${Role}: no node of this census holds rank ${own}.`); }
       }
       const was = out.get(key) || {};
-      out.set(key, { ...was, [period]: { t: short.join(' · '), tip: lines.join('\n') } });
+      // THE PANEL IN ROWS, AS THE ROUNDS' PANEL (2026-10-26 ~15:00Z, the owner: "tomorrow is still the old format"): one line on what it
+      // is, a row for the primary and the backup, the duty order folded below
+      out.set(key, { ...was, [period]: { t: short.join(' · '), tip: lines.join('\n'),
+        summary: `The rounds of ${d.covers} are posted the day before by the nodes on duty${d.anchor != null ? ` (census at block ${Number(d.anchor).toLocaleString('en-US')})` : ''}.`,
+        items: [...items, ...order.map((o) => ({ s: '', live: false, when: `${o.rank}. ${nodeLabel(o.key, o.endpoint)}`,
+          say: o.rank === 1 ? `primary from ${hmUtc(o.dueFrom)}` : `${o.backupDueFrom ? `backup from ${hmUtc(o.backupDueFrom)}, ` : ''}primary from ${hmUtc(o.dueFrom)} if nobody before it posted`,
+          detail: fullName(o.key, o.endpoint) }))],
+        fold: order.length ? 'Duty order' : null } });
     }
   }
   return out;
@@ -230,7 +252,8 @@ export function dutyNotes(duty) {
 export function withDuty(cell, note) {
   if (!note) return cell;
   const base = cell && typeof cell === 'object' ? cell : { t: cell == null ? '-' : String(cell) };
-  return [{ ...base, tip: base.tip ? `${base.tip}\n\n${note.tip}` : note.tip }, { t: note.t, c: 'muted', tip: note.tip }];
+  const rows = note.items ? { summary: note.summary, items: note.items, fold: note.fold } : {};
+  return [{ ...(base.items ? {} : rows), ...base, tip: base.tip ? `${base.tip}\n\n${note.tip}` : note.tip }, { t: note.t, c: 'muted', tip: note.tip, ...rows }];
 }
 
 /** How old a kept copy is: its oldest answer's time (a copy is as old as the oldest thing it shows). */

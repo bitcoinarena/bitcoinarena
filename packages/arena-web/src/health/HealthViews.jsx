@@ -139,20 +139,39 @@ function TipRows({ p }) {
   return (<>
     <p className="tip-sum">{p.summary}{p.version != null ? <span className="muted"> Version {p.version}.</span> : null}</p>
     {live.length ? <ul className="tip-rows">{live.map((x, i) => <TipRow key={i} x={x} />)}</ul> : null}
-    {dead.length ? <details className="tip-dead" onClick={(e) => e.stopPropagation()}><summary>{dead.length === 1 ? '1 stretch' : `${dead.length} stretches`} with no playable rounds</summary>
+    {dead.length ? <details className="tip-dead"><summary>{p.fold || `${dead.length === 1 ? '1 stretch' : `${dead.length} stretches`} with no playable rounds`}</summary>
       <ul className="tip-rows">{dead.map((x, i) => <TipRow key={i} x={x} />)}</ul></details> : null}
   </>);
 }
+// CLOSED BY THE X, A CLICK OUTSIDE OR ESC (2026-10-26 ~15:00Z, the owner: "Both modals need an X button at the right top and when I click
+// somewhere else it disappears"): a click inside the panel leaves it open, so its text can be selected and its folds opened
+// ONE PANEL AT A TIME (2026-10-26 ~15:10Z, the owner: "There may be only one modal be open and it re-takes it"): a click on another status
+// opens its panel in place of the open one, in one click
+let closeOpenTip = null;
 function Tip({ p }) {
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpenState] = React.useState(false);
+  const btn = React.useRef(null), pop = React.useRef(null);
+  const close = React.useCallback(() => { setOpenState(false); if (closeOpenTip === close) closeOpenTip = null; }, []);
+  const toggle = () => {
+    if (open) return close();
+    if (closeOpenTip) closeOpenTip();
+    closeOpenTip = close; setOpenState(true);
+  };
+  React.useEffect(() => () => { if (closeOpenTip === close) closeOpenTip = null; }, [close]);
+  React.useEffect(() => {
+    if (!open) return undefined;
+    const esc = (e) => { if (e.key === 'Escape') close(); };
+    const outside = (e) => { if (!(pop.current && pop.current.contains(e.target)) && !(btn.current && btn.current.contains(e.target))) close(); };
+    document.addEventListener('keydown', esc); document.addEventListener('pointerdown', outside);
+    return () => { document.removeEventListener('keydown', esc); document.removeEventListener('pointerdown', outside); };
+  }, [open, close]);
   return (<>
-    <button type="button" className={`tip ${p.c || ''}`} title={p.tip} aria-expanded={open} onClick={() => setOpen(!open)}>{p.t}</button>
-    {open ? <div className="tip-pop" role="dialog" onClick={() => setOpen(false)}>
+    <button ref={btn} type="button" className={`tip ${p.c || ''}`} title={p.tip} aria-expanded={open} onClick={toggle}>{p.t}</button>
+    {open ? <div ref={pop} className="tip-pop" role="dialog">
       {/* a close button top right (2026-10-26, the owner: "the modal should get a regular X button on the top right corner") */}
-      <button type="button" className="tip-x" aria-label="Close" onClick={(e) => { e.stopPropagation(); setOpen(false); }}>×</button>
+      <button type="button" className="tip-x" aria-label="Close" onClick={close}>×</button>
       <b className={p.c || undefined}>{p.t}</b>
-      {p.items ? <TipRows p={p} /> : <div className="tip-text">{p.tip}</div>}
-      <span className="muted">tap to close</span></div> : null}
+      {p.items ? <TipRows p={p} /> : <div className="tip-text">{p.tip}</div>}</div> : null}
   </>);
 }
 const Part = ({ p }) => (p && typeof p === 'object'
