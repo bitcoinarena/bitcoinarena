@@ -313,7 +313,7 @@ export class LockSettlement {
     for (const c of s.claims) {
       if (c.kind === 'fee') { claims.push(c); continue; }
       const entryId = got.lockEntry.get(toHex(c.pubkey));
-      const opened = await this.stakeSecrets.open({ roundId: roundIdBytes, entryId, needed: receiptsNeeded(got.contract.nodes.length) });
+      const opened = await this.stakeSecrets.open({ roundId: roundIdBytes, entryId, needed: receiptsNeeded(got.contract.settlementSlots) });
       if (!opened.ok) return refuse(`a loser's P could not be opened: ${opened.why}`);
       claims.push({ ...c, preimage: opened.preimage });
     }
@@ -321,7 +321,7 @@ export class LockSettlement {
     if (!port || typeof port.settle !== 'function') return refuse(`this signer node cannot reach federation ${String(fid).slice(0, 16)}, so it builds nothing there`);
     const tx = await port.settle({ claimPk: got.claimPk, claims, payouts: s.payouts, nonce: s.nonce });
     const built = { ok: true, message: fromHex(tx.message), txid: tx.txid, settlement: s, plan: got.plan, claims, claimPk: got.claimPk,
-      signerNode: got.held.signerNode, needed: receiptsNeeded(got.contract.nodes.length), federation: String(fid).toLowerCase() };
+      signerNode: got.held.signerNode, needed: receiptsNeeded(got.contract.settlementSlots), federation: String(fid).toLowerCase() };
     this.built.set(key, built);
     return built;
   }
@@ -413,7 +413,7 @@ export class LockSettlement {
     const claims = [];
     for (const c of plan.claims) {
       if (c.kind === 'fee') { claims.push(c); continue; }
-      const opened = await this.stakeSecrets.open({ roundId: roundIdBytes, entryId: entryIdBytes, needed: receiptsNeeded(contract.nodes.length) });
+      const opened = await this.stakeSecrets.open({ roundId: roundIdBytes, entryId: entryIdBytes, needed: receiptsNeeded(contract.settlementSlots) });
       if (!opened.ok) return refuse(`the late loser's P could not be opened: ${opened.why}`);
       if (fields.paymentImage.kind === 'point') {
         const point = this.curve.pointFromScalar(scalarFrom32(opened.preimage) % FIELD);
@@ -423,7 +423,7 @@ export class LockSettlement {
     }
     const tx = await (await this.portFor(roundIdBytes)).settle({ claimPk, claims, payouts: plan.payouts, nonce: plan.nonce });
     const built = { ok: true, message: fromHex(tx.message), txid: tx.txid, plan, claims, claimPk,
-      signerNode: held.signerNode, needed: receiptsNeeded(contract.nodes.length) };
+      signerNode: held.signerNode, needed: receiptsNeeded(contract.settlementSlots) };
     this.built.set(key, built);
     return built;
   }
@@ -854,7 +854,7 @@ export class LockSettlement {
     for (const c of plan.claims) {
       if (c.kind === 'fee') { claims.push(c); continue; }
       const entryId = lockEntry.get(toHex(c.pubkey));
-      const opened = await this.stakeSecrets.open({ roundId: roundIdBytes, entryId, needed: receiptsNeeded(contract.nodes.length) });
+      const opened = await this.stakeSecrets.open({ roundId: roundIdBytes, entryId, needed: receiptsNeeded(contract.settlementSlots) });
       if (!opened.ok) return refuse(`a loser's P could not be opened: ${opened.why}`);
       const lock = locks.get(toHex(c.pubkey));
       if (lock.fields.paymentImage.kind === 'point') {
@@ -866,7 +866,7 @@ export class LockSettlement {
     }
     const tx = await (await this.portFor(roundIdBytes)).settle({ claimPk, claims, payouts: plan.payouts, nonce: plan.nonce });
     const built = { ok: true, message: fromHex(tx.message), txid: tx.txid, plan, claims, claimPk,
-      signerNode: held.signerNode, needed: receiptsNeeded(contract.nodes.length) };
+      signerNode: held.signerNode, needed: receiptsNeeded(contract.settlementSlots) };
     this.built.set(key, built);
     this.byPlan.set(key, { fp, built });
     if (this.byPlan.size > 4096) this.byPlan.delete(this.byPlan.keys().next().value);

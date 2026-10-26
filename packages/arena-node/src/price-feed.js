@@ -190,7 +190,7 @@ export class PriceFeed {
     const contract = decodeRoundContract(new Uint8Array(row.contract));
     if (!this.priceRound(contract)) return refuse('that round does not play against the price feed');
     // a committee too small for the network's rule (a one-seat test round) needs every seat
-    let needed; try { needed = receiptsNeeded(contract.nodes.length); } catch { needed = contract.nodes.length; }
+    let needed; try { needed = receiptsNeeded(contract.gameVerifySlots); } catch { needed = contract.nodes.length; }
     return { ok: true, contract, needed, committee: contract.nodes, median: mediansPrices(contract) };
   }
   #sign(id) { return { key: toHex(this.round.identity.pubkey || this.round.pubkey), signature: toHex(schnorr.sign(id, this.round.identity.secret)) }; }
