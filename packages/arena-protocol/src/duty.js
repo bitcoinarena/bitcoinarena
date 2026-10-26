@@ -80,6 +80,15 @@ export function dutyMarkersOf(raw) {
     .map((p) => ({ slot: new DataView(p.buffer, p.byteOffset).getUint32(4, false), tag: toHex(p.subarray(8, 12)) }));
 }
 
+/**
+ * THE SERIES A POSTING PUBLISHES: the ids of its "ARN" SERIES outputs (36 bytes, kind 'S'), hex - so who posted a day can be read from
+ * the series' own signed lines, their creator key (kanban #702, 2026-10-26: "In health also say who posted that round")
+ */
+export function postedSeriesOf(raw) {
+  let tx; try { tx = typeof raw === 'object' && raw.outputs ? raw : parseTransaction(raw); } catch { return []; }
+  return commitmentsOf(tx).filter((p) => p.length === 36 && p[0] === 0x41 && p[1] === 0x52 && p[2] === 0x4e && p[3] === 0x53).map((p) => toHex(p.subarray(4, 36)));
+}
+
 /** A slot before the current one counts as missed only this long into the current slot: a last-minute post has time to be seen. */
 export const DUTY_MISS_GRACE_MS = 5 * 60000;
 
@@ -112,4 +121,55 @@ export const targetDay = (slot) => ({ startMs: (slot + 1) * DUTY_DAY_MS, endMs: 
 export function dayPostDue({ nowMs, slot, rank, posted }) {
   if (posted || !Number.isInteger(rank) || rank < 0) return false;
   return Number(nowMs) >= dayStartMs(slot) + rank * DUTY_FALLBACK_MS && Number(nowMs) < dayStartMs(slot + 1);
+}
+
+// THE BACKUP GRID (2026-10-26, the owner: "Yes make it part of the design, in the spec" - a second grid for every day from another node, so
+// a day is never without a round; kanban #702). Every day gets a PRIMARY grid from the day's duty node (rank 1, above) and a BACKUP grid from
+// the next node in the same order (rank 2; rank 3 an hour later if rank 2 has not posted it, up to DUTY_BACKUP_RANK_CAP), posted on its
+// own: its own coins and publication, a census DUTY_BACKUP_CENSUS_DEPTH below the tip (the primary's is 6) taken from DUTY_BACKUP_AFTER_MS
+// into the day, so at a later block, and a committee time DUTY_BACKUP_COMMITTEE_LEAD_MS before the day (the primary's 12 h) - one fork,
+// reorg or conflicted coin does not take both. It carries the backup marker OP_RETURN "ARN" 'B' day item_tag (12 bytes) in place of the
+// duty marker. The node that posted the primary never posts the backup.
+//   PLAYED     one grid per window: a round of a backup series is offered, and takes entries, only while no round of the same game,
+//              federation and start from a series that is not a backup is drawn on that seat - the primary is played while its committee
+//              is drawable, otherwise the backup. A seat that holds an entry in a window's backup round takes none in its other rounds.
+//   MISSED     a backup nobody posted leaves the day to its primary (and to the emergency grid when that dies) - nothing more.
+export const DUTY_BACKUP_AFTER_MS = 2 * 3600000;
+export const DUTY_BACKUP_COMMITTEE_LEAD_MS = 9 * 3600000;
+export const DUTY_BACKUP_CENSUS_DEPTH = 12;
+export const DUTY_BACKUP_RANK_CAP = 3;
+const BACKUP_MAGIC = [0x41, 0x52, 0x4e, 0x42];            // "ARN" 'B'
+/** The backup marker's output: "ARN" 'B' || day (u32) || item tag - zero value, OP_RETURN, one direct push. */
+export function backupMarkerOutput(slot, itemName) {
+  const payload = new Uint8Array(12); payload.set(BACKUP_MAGIC, 0); payload.set(u32(slot), 4); payload.set(itemTag(itemName), 8);
+  const script = new Uint8Array(14); script[0] = OP_RETURN; script[1] = 12; script.set(payload, 2);
+  return { value: 0n, script };
+}
+/** Every duty and backup marker a transaction carries: [{ slot, tag hex, kind: 'D' | 'B' }]. */
+export function dayMarkersOf(raw) {
+  let tx; try { tx = typeof raw === 'object' && raw.outputs ? raw : parseTransaction(raw); } catch { return []; }
+  return commitmentsOf(tx).filter((p) => p.length === 12 && p[0] === 0x41 && p[1] === 0x52 && p[2] === 0x4e && (p[3] === 0x44 || p[3] === 0x42))
+    .map((p) => ({ slot: new DataView(p.buffer, p.byteOffset).getUint32(4, false), tag: toHex(p.subarray(8, 12)), kind: p[3] === 0x42 ? 'B' : 'D' }));
+}
+/** Is a series publication a backup grid's: its transaction carries a backup marker. */
+export const isBackupPublication = (raw) => dayMarkersOf(raw).some((m) => m.kind === 'B');
+/**
+ * Is the day's backup due from the node at `rank` (0 = the day's duty node, which never posts it) now: rank 1 from DUTY_BACKUP_AFTER_MS into
+ * the day, each next rank an hour later, up to `cap` - not once the day's backup marker is seen, never from the node that posted the primary.
+ */
+export function backupPostDue({ nowMs, slot, rank, posted, postedPrimary = false, cap = DUTY_BACKUP_RANK_CAP }) {
+  if (posted || postedPrimary || !Number.isInteger(rank) || rank < 1) return false;
+  return Number(nowMs) >= dayStartMs(slot) + DUTY_BACKUP_AFTER_MS + (Math.min(rank, cap) - 1) * DUTY_FALLBACK_MS && Number(nowMs) < dayStartMs(slot + 1);
+}
+/**
+ * WHICH ROUNDS OF ONE WINDOW ARE PLAYED (the rule above), from what a seat sees of the rounds of one game, federation and start: `rows`
+ * [{ id, backup: bool|null, drawn: bool, entries: n }] -> the Set of ids offered. A row whose role is not known yet (its publication not
+ * read) counts as not a backup.
+ */
+export function playedOfWindow(rows) {
+  const primaryDrawn = rows.some((r) => !r.backup && r.drawn);
+  const backupTaken = rows.some((r) => r.backup && r.entries > 0);
+  const out = new Set();
+  for (const r of rows) if (r.backup ? !primaryDrawn || r.entries > 0 : !backupTaken || r.entries > 0) out.add(r.id);
+  return out;
 }
