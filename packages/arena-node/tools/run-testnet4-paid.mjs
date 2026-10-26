@@ -589,9 +589,14 @@ if (env.PAID_DUTY_DAILY === '1') {
   // THE SEATS' ROUNDS (GET /rounds?next=1&ahead=50h): this runner's seats and the census's others, 12 at most, read again every 10 min
   const seatRounds = keptFor(10 * 60000, async () => Promise.all(round.dutyChain.seatUrls().slice(0, Number(env.DUTY_DRAW_SEATS || 12))
     .map((u) => seatJson(`${u}/rounds?next=1&ahead=50h`, 60000).catch(() => null))));
-  // THE APP'S VERSIONS AS THE SEATS LIST THEM, and the best drawn of them in [fromMs, toMs) - any posting's, this machine's or not
-  const familyIds = async () => new Set([...((await seatCatalog().catch(() => null)) || new Map()).values()]
-    .filter((g) => g.name === guard.DUTY_APP_NAMES[game] && g.dev === DEV_OF[game]).map((g) => g.id));
+  // THE APP'S NEWEST VERSION AS THE SEATS LIST IT, and how much of [fromMs, toMs) the seats draw of it - any posting's, this machine's or not.
+  // ONLY THE NEWEST COUNTS (2026-10-26, the owner: "We should always play the newest version not v13"; the page shows the newest alone):
+  // a day an older version's grid covers is not covered, so the emergency grid on the newest one is posted
+  const familyIds = async () => {
+    const all = [...((await seatCatalog().catch(() => null)) || new Map()).values()].filter((g) => g.name === guard.DUTY_APP_NAMES[game] && g.dev === DEV_OF[game]);
+    const top = Math.max(0, ...all.map((g) => g.version || 0));
+    return new Set(all.filter((g) => (g.version || 0) === top).map((g) => g.id));
+  };
   const familyDraw = async (fromMs, toMs) => {
     let best = { drawn: 0, undrawn: 0, of: 0, why: '' };
     for (const id of await familyIds()) { const d = guard.drawCount(await seatRounds(), { gameId: id, fromMs, toMs }); if (d.drawn > best.drawn || (!best.of && d.of)) best = d; }
@@ -611,7 +616,10 @@ if (env.PAID_DUTY_DAILY === '1') {
     // A POSTING KEPT BEFORE #689 NAMES NO GAME: the best of the app's versions on the seats
     const draw = !deep ? null : k.gameId ? guard.drawCount(await seatRounds(), { gameId: k.gameId, fromMs: Number(k.firstStartMs ?? day.startMs), toMs: day.endMs })
       : await familyDraw(day.startMs, day.endMs);
-    const v = guard.postingVerdict({ censusOnChain, seatsAgree, pubHeight, beaconAt, tip: idx.tip, draw, postedAtMs: k.postedAtMs ?? null, nowMs });
+    // the wallet's word on a publication not in a block: conflicted (confirmations < 0) when a mined transaction spends its coins
+    let conflicted = false;
+    if (pubHeight === null) { try { conflicted = Number((await rpc('gettransaction', [k.txid])).confirmations) < 0; } catch { conflicted = false; } }
+    const v = guard.postingVerdict({ conflicted, censusOnChain, seatsAgree, pubHeight, beaconAt, tip: idx.tip, draw, postedAtMs: k.postedAtMs ?? null, nowMs });
     // STILL UNCONFIRMED DUTY_BUMP_WITHIN_MS (3 h) BEFORE ITS COMMITTEE TIME (10-25 #633: confirmed after its beacon): its fee raised to
     // DUTY_MAX_FEE_RATE, once - the publication is replaceable (fund-at-rate.js)
     let changed = !k.verdict || k.verdict.state !== v.state || k.verdict.stage !== v.stage;

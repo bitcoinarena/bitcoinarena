@@ -114,6 +114,9 @@ test('a posting confirmed after its beacon is dead (10-25 #633); one whose censu
   assert.match(postingVerdict({ ...at, censusOnChain: false, pubHeight: 900, beaconAt: 950 }).why, /left the branch/);
   assert.equal(postingVerdict({ ...at, seatsAgree: { ok: false, of: 5, agree: 1, why: 'branch' }, pubHeight: 900 }).state, 'dead');
   assert.deepEqual(postingVerdict({ ...at, pubHeight: null }).stage, 'unconfirmed');
+  // conflicted: a mined transaction spends its coins - dead at once, not waited for until the beacon (kanban #689, 2026-10-26)
+  assert.deepEqual([postingVerdict({ ...at, pubHeight: null, conflicted: true }).state, postingVerdict({ ...at, pubHeight: null, conflicted: true }).stage], ['dead', 'publication']);
+  assert.match(postingVerdict({ ...at, pubHeight: null, conflicted: true }).why, /never mined/);
   assert.deepEqual(postingVerdict({ ...at, pubHeight: 900 }).stage, 'published');
   assert.match(postingVerdict({ ...at, pubHeight: 900, beaconAt: 998 }).why, /3 of 6 deep/);
   assert.equal(postingVerdict({ ...at, pubHeight: 900, beaconAt: 990 }).stage, 'seats');
