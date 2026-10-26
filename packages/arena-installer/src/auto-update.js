@@ -10,7 +10,7 @@
 //   3. unpacked beside the running release and the node moved to it by update.js - outside a market seating window, backed up, the same
 //      node answering after, rolled back by itself if not.
 //
-// `bitcoinarena update` does it once, now; `bitcoinarena auto-update` is the service that checks every few hours. That service names the
+// `bitcoinarena update` does it once, now; `bitcoinarena auto-update` is the service that checks every 30 minutes. That service names the
 // node's own command (<home>/bin/bitcoinarena; <home>/bin/arenanode on a node installed before 2026.1.9.8, which runs it since), not a release, so an update never stops it mid-way; after an update it ends and its service starts it
 // again from the new release.
 import { createHash } from 'node:crypto';
@@ -118,9 +118,9 @@ export async function checkOnce({ home, latest, fetcher = fetch, platform = proc
  * The service: a check now (after `firstMs`) and every `everyMs`; after an update it ends with `exitAfterUpdate` (75) so its service
  * starts it again from the new release. `sleep` and `exit` injectable for the tests.
  */
-export async function runAutoUpdate({ home, latest, everyMs = 6 * 3600_000, firstMs = 10 * 60_000, log = (l) => console.log(`${new Date().toISOString()} ${l}`),
+export async function runAutoUpdate({ home, latest, everyMs = 30 * 60_000, firstMs = 10 * 60_000, log = (l) => console.log(`${new Date().toISOString()} ${l}`),
   sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), exit = (code) => process.exit(code), once = checkOnce, rounds = Infinity, trace = QUIET }) {
-  log(`auto update: on for ${home}; first check in ${Math.round(firstMs / 60000)} min, then every ${Math.round(everyMs / 3600000)} h`);
+  log(`auto update: on for ${home}; first check in ${Math.round(firstMs / 60000)} min, then every ${Math.round(everyMs / 60000)} min`);
   await sleep(firstMs);
   for (let i = 0; i < rounds; i++) {
     let r;
