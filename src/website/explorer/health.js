@@ -35,7 +35,7 @@ export async function readHealth(env, fetchImpl = fetch) {
     if (!due.length) break;
     // AT_ONCE at a time (the page's six; a Worker keeps six connections open)
     let i = 0;
-    await Promise.all(Array.from({ length: AT_ONCE }, async () => {
+    await Promise.all(Array.from({ length: Number(env.HEALTH_AT_ONCE) || AT_ONCE }, async () => {
       while (i < due.length && !limited) {
         const [k, [base, path]] = due[i++];
         asked++;

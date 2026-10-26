@@ -27,4 +27,4 @@ migrations_dir = "migrations"
 
 [triggers]
 #: the transactions every minute; the Network health page's copy (kanban #686, health.js readHealth) on its own trigger, so a run of its own
-crons = ["* * * * *", "*/2 * * * *"]   # the health copy on its own schedule: Cloudflare runs "*/1" as the same one (kanban #686, measured 2026-10-26)
+crons = ["* * * * *"]   # the health copy comes from a machine of ours every 3 min (health-push.mjs; kanban #686, 2026-10-26: the plan's ~50 requests a run left it 20 min old)
