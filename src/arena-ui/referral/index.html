@@ -67,9 +67,12 @@
     <li><b>Run a node.</b> Your program lives on your own node: it holds the program's key and collects what it earns. <a href="https://docs.bitcoin-arena.io/">How to install a node</a>.</li>
     <li><b>Open your node's owner area and go to Referrer.</b> Give your program a name, for example the name of your site. You can have as many programs as you like, one per site or campaign. Each earns on its own.</li>
     <li><b>Put your link on your site.</b> The Referrer section shows it: <code>https://testnet.bitcoin-arena.io/?ref=&lt;your program's key&gt;</code>. A visitor who comes through it plays under your program for 30 days.</li>
-    <li><b>Or host a game on your site.</b> Copy the embed from the same section. Players play right on your page:
-      <pre>&lt;iframe src="https://testnet.bitcoin-arena.io/?game=rock-paper-scissors&amp;ref=&lt;your key&gt;"
-        width="100%" height="720"&gt;&lt;/iframe&gt;</pre>
+    <!-- THE EMBED KIT, NOT A FRAME (kanban #678, 2026-10-26: "It shouldn't be just an iframe that is basically stealing a game"): /arena-embed.js -->
+    <li><b>Or host a game on your site.</b> Copy the embed from the same section. The game runs in your page itself, not in a frame: lobby, wallet, deposit, withdraw and play, sized to the box you give it.
+      <pre>&lt;div id="arena-game" style="height:720px"&gt;&lt;/div&gt;
+&lt;script src="https://testnet.bitcoin-arena.io/arena-embed.js" data-game="rock-paper-scissors"
+        data-ref="&lt;your key&gt;" data-target="#arena-game"&gt;&lt;/script&gt;</pre>
+      The player's wallet is kept in your site's browser storage, not on testnet.bitcoin-arena.io. A player who already has a wallet on Bitcoin Arena restores it on your page with the 24 words, and the other way round. Your page's styles do not reach the game, and the game's do not reach your page. A site that sends a Content Security Policy has to allow scripts from testnet.bitcoin-arena.io with 'unsafe-eval', and the game's connections to its nodes.
       See it working on the <a href="/referral-demo/">demo page</a>.</li>
     <li><b>Withdraw over Lightning.</b> What your program earns is paid to its key in the game's federation, after each round settles. Your node collects it. In Referrer, press Withdraw and paste a Lightning invoice or a Lightning address.</li>
   </ol>

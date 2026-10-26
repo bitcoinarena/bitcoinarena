@@ -8,7 +8,10 @@
 <link rel="icon" href="/favicon.ico">
 <!-- A SITE THAT HOSTS OUR GAME (kanban #675, 2026-10-25: "Build a demo page that hosts our rps game and refers new users"): what a third party
      puts on its own site - Rock Paper Scissors in a frame, its referral program's key in the frame's link. The program is "Demo Rock Paper
-     Scissors" on testnet4 seat 2 (its key below); a ?ref=<key> on this page's address shows the same page for another program. -->
+     Scissors" on testnet4 seat 2 (its key below); a ?ref=<key> on this page's address shows the same page for another program.
+     THE GAME AS THIS SITE'S OWN, NOT A FRAME (kanban #678, 2026-10-26: "It shouldn't be just an iframe that is basically stealing a game. The
+     demo site should take rps and take it as its own, embedding the code. Not an iframe."): the embed kit (/arena-embed.js) brings the Arena's
+     engine and the game's client into the div below - the snippet the Referral Program page and the owner area's Referrer hand out. -->
 <style>
   :root { --bg: #0b0d12; --panel: #131722; --line: #232a38; --text: #eef1f6; --dim: #95a0b2; --accent: #7c5cff; color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -21,7 +24,6 @@
   h1 { font: 700 clamp(24px, 4vw, 34px)/1.2 system-ui; margin: 26px 0 6px; }
   p { color: var(--dim); margin: 0 0 16px; max-width: 760px; }
   .game { border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: #000; height: min(760px, calc(100vh - 120px)); min-height: 560px; }
-  .game iframe { display: block; width: 100%; height: 100%; border: 0; }
   .note { margin: 14px 0 30px; font-size: 14px; } .note a { color: #b9a8ff; }
   code { font: 12px "JetBrains Mono", ui-monospace, monospace; overflow-wrap: anywhere; }
 </style>
@@ -31,7 +33,7 @@
 <main class="wrap">
   <h1>Rock Paper Scissors for bitcoin</h1>
   <p>This page stands for someone else's website. The game below runs on Bitcoin Arena. Every game played here pays this site's referral program 10% of the nodes' fee. Players pay the same as anywhere else.</p>
-  <div class="game"><iframe id="game" title="Rock Paper Scissors" allow="clipboard-write" loading="eager"></iframe></div>
+  <div class="game" id="arena-game"></div>
   <p class="note">Referral program: <b id="program">Demo Rock Paper Scissors</b> · key <code id="key"></code><br>
     Want this on your site? <a href="/referral/">Referral Program</a> shows how.</p>
 </main>
@@ -44,7 +46,13 @@
     var key = ref && /^0[23][0-9a-f]{64}$/i.test(ref) ? ref.toLowerCase() : DEMO;
     if (key !== DEMO) document.getElementById('program').textContent = 'yours';
     document.getElementById('key').textContent = key.slice(0, 16) + '…';
-    document.getElementById('game').src = '/?game=rock-paper-scissors&ref=' + key;
+    // the kit's snippet, with this page's program: <script src=".../arena-embed.js" data-game data-ref data-target>
+    var kit = document.createElement('script');
+    kit.src = '/arena-embed.js';
+    kit.setAttribute('data-game', 'rock-paper-scissors');
+    kit.setAttribute('data-ref', key);
+    kit.setAttribute('data-target', '#arena-game');
+    document.body.appendChild(kit);
   })();
 </script>
 </body>
