@@ -35,9 +35,7 @@ import { CORE_HASH } from './core-hash.mjs';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4 } from '../../arena-protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../arena-protocol/src/donation.js';
 import { execFileSync } from 'node:child_process';
-import { buildRules } from '../../arena-protocol/src/rules.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { seriesCreatorMessage } from '../../arena-protocol/src/creator.js';
 
 import { createServer } from 'node:http';
 import { existsSync, readFileSync, statSync, appendFileSync, writeFileSync as writeProof, mkdirSync as mkProofDir } from 'node:fs';
@@ -46,7 +44,7 @@ import { extname, join, normalize } from 'node:path';
 import { openStore, nodeIdentity } from '../src/store.js';
 import { chainBeacon } from '../src/beacon-source.js';
 import { awaitPublishedBeacon } from '../src/publication-wait.js';
-import { fundAtRate } from '../src/fund-at-rate.js';
+import { buildGrid, publishGridTx, announceGrid, postSeriesLine } from '../src/grid-build.js';
 import { beaconFromChain, medianTimePast } from '../../arena-protocol/src/beacon.js';
 import { regtest } from './regtest-bond.mjs';
 import { chainOf, publicationOf } from '../../arena-protocol/tools/chainview.js';
@@ -60,13 +58,12 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { configForNewRound } from '../../arena-protocol/src/ballot-chain.js';
 import { BITCOIN_MAINNET_GENESIS_HEADER, blockHashOf, blockTimeOf } from '../../arena-protocol/src/chain.js';
 import { publicationPayload } from '../../arena-protocol/src/publication.js';
-import { seriesId, seriesRound, seriesLeadIsValid, seriesPublicationOutput } from '../../arena-protocol/src/series.js';
-import { seriesLineOf, parseSeriesLine } from '../src/series-line.js';
+import { seriesId, seriesRound } from '../../arena-protocol/src/series.js';
 import { hash256, parseTransaction } from '../../arena-protocol/src/tx.js';
 import { advertId } from '../../arena-protocol/src/advert.js';
 import { bondTransaction, blockOf } from '../../arena-protocol/tools/bond.js';
 import { encodeRoundContract, decodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
-import { deriveCensus, meetsCensusMinimum } from '../../arena-protocol/src/census.js';
+import { deriveCensus } from '../../arena-protocol/src/census.js';
 import { bondSetFor, tweakPoint, combine } from '../src/curve.js';
 import { bondOutputKey, bondInternalKey } from '../../arena-protocol/src/bond-script.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
@@ -1257,83 +1254,28 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     committeeTimeMs, feeRate = 1, maxFeeRate = 4, onPublished = () => {}, onPosted = () => {}, extraOutputs = [], waitBeacon = true } = {}) {
     if (!onChain || onChain.minable) throw new Error('a grid is published on a chain nobody here mines (testnet4)');
     if (firstCloseMs === undefined || committeeTimeMs === undefined) throw new Error('a grid names its first close and its committee time');
-    if (Array.isArray(kind.tableFields) && kind.tableFields.length) tables = kind.tableFields.length;
-    const committee = BigInt(committeeTimeMs), first = BigInt(firstCloseMs);
-    if (first - BigInt(entryAfterStartMs) - committee < MIN_ENTRY_WINDOW_MS) throw new Error('the grid starts before its committee time plus the minimum entry window');
     // A GRID OF ITS OWN CENSUS HEIGHT (kanban #689: the duty names the census of the day it posts, not the one this tool stood up at its
     // start - 10-20 and 10-26 days named a census from before their version's adverts): the view's window moves with it
     if (kind.fields && kind.fields.censusHeight !== undefined) censusFloorTo(Number(kind.fields.censusHeight));
     censusView = await viewToTip();
-    const start = first - BigInt(entryAfterStartMs);
-    const templates = [];
-    for (let k = 0; k < tables; k++) {
-      const t = { ...contract,
-        ...(kind.stakeMsat !== undefined ? { stakeMsat: BigInt(kind.stakeMsat) } : {}),
-        ...(kind.custody ? { custody: kind.custody } : {}),
-        committeeTimeMs: committee - BigInt(k), startTimeMs: start, entryCloseMs: first, blockTicks: runTicksAt(start),
-        ...(kind.fields || {}),
-        // A TABLE'S OWN FIELDS (2026-10-14: "Each game may only have one round posting per day"): one transaction carries every
-        // federation's tables of a game, each table naming its federation here
-        ...((kind.tableFields || [])[k] || {}) };
-      // a lock span sized from the round's times is the LAST round's, so it holds for every round of the table
-      if (typeof kind.stakeExpiryFor === 'function') {
-        const lastStart = start + BigInt(slots - 1) * BigInt(windowMs);
-        t.stakeExpiryBlocks = kind.stakeExpiryFor({ ...t, startTimeMs: lastStart, entryCloseMs: lastStart + BigInt(entryAfterStartMs) });
-      }
-      Object.assign(t, { seriesGrid: true, seriesPeriodMs: BigInt(windowMs), seriesCount: slots });
-      const valid = seriesLeadIsValid(t);
-      if (!valid.ok) throw new Error(`the grid is no grid series: ${valid.why}`);
-      templates.push(t);
-    }
-    // ONE CENSUS FOR THE GRID: every round names the same census height, game and slots, so the root is derived once - and
-    // checked again on the last round, which must agree
-    const root = censusRootFor(templates[0]);
-    if (toHex(censusRootFor(seriesRound(templates[tables - 1], slots - 1))) !== toHex(root)) throw new Error('the grid first and last rounds derive different census roots');
-    for (const t of templates) t.censusRoot = root;
-    // A GRID NO COMMITTEE CAN SERVE IS NOT PUBLISHED (kanban #689, 2026-10-26: "Harden it" - the 10-26 Up/Down day named a census with 0
-    // game nodes hosting its version, and nobody saw it until the seats refused to draw): `kind.mustDraw` checks, before any coin is spent,
-    // that the census the root was derived from carries enough game nodes hosting each table's game, and enough settlement nodes (census.js)
-    if (kind.mustDraw) for (const t of templates) for (const role of ['game', 'settlement']) {
-      const m = meetsCensusMinimum(lastCensusEntries, decodeRoundContract(encodeRoundContract(t)), role);
-      if (!m.ok) throw new Error(`no committee can be drawn for this grid at census ${t.censusHeight}: ${m.why}`);
-    }
-    // THE RULES IT IS SETTLED UNDER (§6): a v3 grid names this build's four rule hashes, the last-mark disconnect rule, a
-    // claim window of 1 day and each role's floor at the round's bond_min - unless `kind.rules` is false
-    for (const t of templates) if (Number(t.protocolVersion) >= 3 && kind.rules !== false && !t.rules)
-      t.rules = buildRules({ claimWindowDays: 1, bondMinGameVerifySats: BigInt(t.bondMinSats), bondMinSettlementSats: BigInt(t.bondMinSats) });
-    // THE CREATOR: `kind.creatorSecret` names this publisher in every template (2026.0.3) and signs each series id
-    if (kind.creatorSecret) for (const t of templates) t.creatorPubkey = schnorr.getPublicKey(kind.creatorSecret);
-    // FRESH OBJECTS BEFORE THE IDS (measured 2026-10-20 ~14:00Z: Up/Down grids 7fd7df5c and 7d3f16e7 published series 5c639e9b /
-    // ... while every seat derives 0752f64f... from the same line - "that signature is not the named creator's over this series' id"):
-    // seriesId() keeps one id per template object (series.js, kanban #468), and censusRootFor(seriesRound(...)) above asked for one
-    // before the census root, the rules and the creator were set - so the ids, the publication and the creator's signature named the
-    // template as it was then. Copied here, each template's id is worked out from what it is now.
-    for (let k = 0; k < templates.length; k++) templates[k] = { ...templates[k] };
-    const ids = templates.map((t) => seriesId(t));
-    if (kind.creatorSecret) templates.forEach((t, k) => { t.creatorSignature = schnorr.sign(seriesCreatorMessage(ids[k]), kind.creatorSecret); });
+    // THE TABLES, THEIR IDS, LINES AND OUTPUTS (src/grid-build.js, kanban #702: the node's own duty poster builds a grid the same way)
+    const built = buildGrid({ contract, kind, slots, tables, windowMs, entryAfterStartMs, firstCloseMs, committeeTimeMs, censusRootFor,
+      censusEntries: () => lastCensusEntries, blockTicksAt: runTicksAt, extraOutputs });
+    const { templates, ids, lines, outs, start, first, committee } = built;
+    tables = built.tables;
     const grid = [];
     for (let s = 0; s < slots; s++) for (let k = 0; k < tables; k++) grid.push(seriesRound(templates[k], s));
-    // THE TRANSACTION BY HAND: createrawtransaction takes one `data` output only ("duplicate key: data"), and Bitcoin Core
-    // 30+ relays several. One zero-value OP_RETURN "ARN" SERIES series_id (36 bytes) per table.
-    const le = (n, bytes) => { const b = Buffer.alloc(bytes); if (bytes === 8) b.writeBigUInt64LE(BigInt(n)); else b.writeUIntLE(n, 0, bytes); return b; };
-    const outs = ids.map((id) => { const o = seriesPublicationOutput(id); return Buffer.concat([le(0, 8), Buffer.from([o.script.length]), Buffer.from(o.script)]); });
-    // AND ANY OTHER ZERO-VALUE OUTPUT THE CALLER NAMES - the duty marker of the slot this grid posts (duty.js)
-    for (const o of extraOutputs) outs.push(Buffer.concat([le(o.value || 0, 8), Buffer.from([o.script.length]), Buffer.from(o.script)]));
     // THE COINS CHOSEN HERE, AT feeRate - under the wallet's 1 sat/vB floor when asked (fund-at-rate.js; 2026-10-12
-    // "Mach das deutlich sparsamer"); the wallet signs
-    const { hex: signed, vsize, fee } = await fundAtRate(chainRpc, outs, feeRate);
-    const lines = templates.map((t) => seriesLineOf(t, encodeRoundContract));
-    // AND NOTHING IS PUBLISHED THAT A SEAT WOULD READ AS ANOTHER SERIES: each line, read back as a seat reads it, must name the id published
-    lines.forEach((line, k) => { const back = toHex(seriesId(parseSeriesLine(line))); if (back !== toHex(ids[k])) throw new Error(`series line ${k} reads back as ${back.slice(0, 16)}, not ${toHex(ids[k]).slice(0, 16)}: nothing published`); });
-    // ARENA_GRID_DRY=1: the transaction built, signed and asked of the node's mempool (testmempoolaccept) - not sent
-    if (process.env.ARENA_GRID_DRY === '1') {
-      const [acc] = await chainRpc('testmempoolaccept', [[signed]]);
-      return { ok: false, dry: true, accepted: acc.allowed, reject: acc['reject-reason'], bytes: vsize, feeSat: String(fee), outputs: outs.length,
+    // "Mach das deutlich sparsamer"); the wallet signs. ARENA_GRID_DRY=1: built, signed and asked of the node's mempool - not sent
+    const sent = await publishGridTx({ outs, rpc: chainRpc, feeRate, dry: process.env.ARENA_GRID_DRY === '1' });
+    const { hex: signed, vsize, fee } = sent;
+    if (sent.dry) {
+      return { ok: false, dry: true, accepted: sent.accepted, reject: sent.reject, bytes: vsize, feeSat: String(fee), outputs: outs.length,
         series: ids.map((id) => toHex(id)), lines, rounds: grid.length, firstStart: new Date(Number(start)).toISOString(),
         lastClose: new Date(Number(grid[grid.length - 1].entryCloseMs)).toISOString(), committeeTime: new Date(Number(committee)).toISOString(),
         leadMs: String(start - committee) };
     }
-    const txid = await chainRpc('sendrawtransaction', [signed]);
+    const txid = sent.txid;
     onPublished({ txid, rounds: grid.length, bytes: vsize, feeSat: String(fee), series: ids.map((id) => toHex(id)), lines,
       // the first 900 rounds' contracts for the tools that read them (a 24 h grid derives 21,600; every seat derives them itself)
       contracts: grid.slice(0, 900).map((c) => toHex(encodeRoundContract(c))), firstClose: new Date(Number(first)).toISOString(),
@@ -1341,13 +1283,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // AND ANNOUNCED AT ONCE (kanban #560, 2026-10-20: "it will work on future testnet and mainnet with nodes not operated by us"): every
     // seat this tool runs and every other node of the census gets the signed line and the publication (POST /expected), checks both and
     // says when the grid's first window comes - its rounds are posted only once its beacon block is 6 deep. Not waited for.
-    (async () => {
-      const targets = [...[a, b, ...rest].map((n) => `http://${host}:${n.port}`), ...[...otherCensusSeats()].map(([, url]) => url)];
-      const said = await Promise.all(lines.flatMap((line) => targets.map(async (u) => {
-        try { const r = await fetch(`${u}/expected`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ line, tx: signed }), signal: AbortSignal.timeout(20000) }); return r.ok; } catch { return false; }
-      })));
-      console.log(`[grid] ${txid.slice(0, 16)} announced at ${said.filter(Boolean).length} of ${said.length} seat(s)`);
-    })().catch(() => {});
+    announceGrid({ lines, tx: signed, targets: [...[a, b, ...rest].map((n) => `http://${host}:${n.port}`), ...[...otherCensusSeats()].map(([, url]) => url)] })
+      .then((said) => console.log(`[grid] ${txid.slice(0, 16)} announced at ${said.took} of ${said.of} seat(s)`)).catch(() => {});
     // THE DUTY KEEPER waits for nothing here: it posts the series to the seats itself once the publication confirms
     if (!waitBeacon) for (const sid of ids) if (funded.nameRound) funded.nameRound(sid);   // named funded before any seat is asked
     if (!waitBeacon) return { ok: true, published: true, txid, series: ids.map((id) => toHex(id)), lines, rounds: grid.length,
@@ -1511,20 +1448,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     id, url, lobbyUrl, contract, openNext, openGrid, keepOpen,
     // A SERIES LINE TO EVERY SEAT THIS TOOL RUNS AND EVERY OTHER NODE OF THE CENSUS (as openGrid posts a grid's): the
     // seats that took it, and why the others did not
-    postSeries: async (line) => {
-      const targets = [...[a, b, ...rest].map((n) => [String(n.port), `http://${host}:${n.port}`]), ...otherCensusSeats()];
-      const answers = await Promise.all(targets.map(async ([who, url]) => {
-        let ok = false, why = '';
-        for (let t = 0; t < 30 && !ok; t++) {
-          try { const r = await fetch(`${url}/series`, { method: 'POST', body: line, signal: AbortSignal.timeout(30000) }); ok = r.ok; if (!ok) why = await r.text(); }
-          catch (e) { why = e.message; }
-          if (!ok && !/no chain view|view .*pending|fetch failed|unreachable|not confirmed|no publication|nobody has funded/i.test(why)) break;
-          if (!ok) await new Promise((res) => setTimeout(res, 3000));
-        }
-        return { who: who.slice(0, 8), ok, why: ok ? '' : String(why).slice(0, 160) };
-      }));
-      return { took: answers.filter((x) => x.ok).length, of: answers.length, refused: answers.filter((x) => !x.ok) };
-    },
+    postSeries: async (line) => postSeriesLine(line, [...[a, b, ...rest].map((n) => [String(n.port), `http://${host}:${n.port}`]), ...otherCensusSeats()]),
     // THE CHAIN, FOR THE DUTY KEEPER: the view to the tip, and the census's node keys at a height - derived as the seats do
     dutyChain: {
       view: async () => (censusView = await viewToTip()),

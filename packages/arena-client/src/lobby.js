@@ -205,7 +205,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
         const parses = /^[0-9a-f]{64}$/.test(nodeKey) && Number.isFinite(at);
         const signedNow = () => (checked === null ? (checked = parses && lobbySigned(verify, { id, nodeKey, nowMs: at, x })) : checked);
         said.get(id).push({ node, key: nodeKey, joined: Number(x.joined) || 0, playing: Number(x.playing) || 0,
-          watching: Number(x.watching) || 0, free: !!x.free, phase: x.phase, assignedHere: !!x.assignedHere,
+          watching: Number(x.watching) || 0, free: !!x.free, phase: x.phase, assignedHere: !!x.assignedHere, ...(typeof x.played === 'boolean' ? { played: x.played } : {}),
           get signed() { return signedNow(); }, fresh: Number.isFinite(at) && Math.abs(at - nowMs) <= skewMs,
           // for verifyMany (below): what it is checked with, and its answer kept
           checkArgs: () => (parses ? lobbySignedArgs({ id, nodeKey, nowMs: at, x }) : null), setChecked: (ok) => { checked = !!ok; },
@@ -552,6 +552,11 @@ export function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null
 export function lobbyRowOffered(r) {
   if (!r) return false;
   if (r.free) return true;
+  // ONE GRID PLAYED PER WINDOW (§5A.5 the backup rule, kanban #702, 2026-10-26: "Yes make it part of the design, in the spec"): a seat names
+  // a round it does not play in its window - a backup under a drawn primary, a primary whose backup took entries there - played: false;
+  // a round most of the seats that say so do not play is not offered
+  const plays = (r.said || []).filter((c) => c && typeof c.played === 'boolean');
+  if (plays.length && plays.filter((c) => !c.played).length * 2 > plays.length) return false;
   const said = (r.said || []).map((c) => c && c.committee).filter(Boolean);
   // a seat names a drawn committee by its members ({ drawn: { game: [...], settlement: [...] } }), an undrawn one drawn: false and why
   return !said.length || said.some((c) => !!c.drawn);

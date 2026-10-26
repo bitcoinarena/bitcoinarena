@@ -555,6 +555,21 @@ if (url) {
       return got;
     },
   });
+  // THE NODE POSTS THE ROUNDS ITSELF (kanban #702, 2026-10-26: "The round runners must be an integrated part of the node. Who decides what
+  // round is posted today? There is something in the spec"): the spec's day duty (duty-poster.js) on this node's own chain, census and
+  // Bitcoin Core wallet - arena.conf duty_post (auto: while the wallet holds confirmed coins), duty_wallet, duty_fee_rate, duty_max_fee_rate
+  {
+    const { createDutyPoster } = await import('./duty-poster.js');
+    const { nodeIdentity } = await import('./store.js');
+    const { NETWORK_ID_TESTNET4, NETWORK_ID_REGTEST } = await import('../../arena-protocol/src/genesis-ids.js');
+    const net = process.env.ARENA_DONATION_NETWORK;
+    const nid = net === 'testnet4' ? NETWORK_ID_TESTNET4 : net === 'regtest' ? NETWORK_ID_REGTEST : null;
+    options.duty = createDutyPoster({ call, walletCall: (name) => bitcoindRpc({ url: `${url.replace(/\/+$/, '')}/wallet/${encodeURIComponent(name)}`, cookiePath }),
+      networkIdHex: () => (nid ? toHexMain(nid) : null), censusEntriesAt: options.ballot.censusEntriesAt,
+      // A ROUND'S CENSUS, AS THE SEATS DERIVE IT: kept per its depth, floor and protocol (each changes who is in it)
+      dutyCensus: (c) => chainCensusKept(`duty:${c.censusConfirmations}:${c.bondMinSats}:${c.protocolVersion}`, toHexMain(c.networkId), Number(c.censusHeight), c),
+      chainBlocks: (from, to) => blocksOver(call, from, to, { cache: blocksKept }), dir: `${path}.duty`, env: process.env, nodeSecret: nodeIdentity(db).secret });
+  }
   // A HELD SERIES' VIEWS ARE READ AT START (TWO-GAMES-1407, measured on testnet4 2026-09-30 12:37Z): the first paying
   // POST /round after a restart was refused by every node - "this node has no chain view for that round, so it cannot
   // say who is bonded" - because the old series' bonding is read at its own census height (OLD_TESTNET4_SERIES_BOND_HEIGHT),

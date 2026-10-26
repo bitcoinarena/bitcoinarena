@@ -39,6 +39,11 @@ export const CONF_KEYS = Object.freeze([
   ['latest_url', 'a test update channel: a signed latest.json on https://testnet.bitcoin-arena.io/ (empty: the production release)'],
   // kanban #693, 2026-10-26: "add a --debug and --verbose flag that shows more info on what its doing, what is going wrong etc"
   ['log_level', 'how much the node\'s services log: info (default), verbose (each step), debug (and the insides); from their next start'],
+  // kanban #702, 2026-10-26: "The round runners must be an integrated part of the node"
+  ['duty_post', 'posting the day\'s rounds when this node is on duty: auto (default: while its Bitcoin Core wallet holds confirmed coins), on, off'],
+  ['duty_wallet', 'the Bitcoin Core wallet the rounds are paid from (empty: the only wallet loaded)'],
+  ['duty_fee_rate', 'the fee rate a day\'s posting is sent at, sat/vB (default 0.1)'],
+  ['duty_max_fee_rate', 'the most a posting\'s fee is raised to when it is still unconfirmed near its committee time, sat/vB (default 1)'],
 ]);
 const KNOWN = new Set(CONF_KEYS.map(([k]) => k));
 const PORT_NAMED = Object.freeze({ public_url: 'ARENA_WSS_', guardian_endpoint: 'ARENA_GUARDIAN_ENDPOINT_', guardian_next_endpoint: 'ARENA_GUARDIAN_NEXT_ENDPOINT_' });
