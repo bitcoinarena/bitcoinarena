@@ -519,6 +519,9 @@ if (env.PAID_NB90_GRID === '1') {
 // first close 105 min from now - or 8 s after the last grid's, when that is later, so a table plays on without a hole.
 // RPS_GRID_NOW=1 publishes the first grid without waiting for a page's ask.
 if (env.PAID_RPS_GRID === '1') {
+  // THE CHOSEN VERSION, AS A DAY POSTS IT (kanban #689, 2026-10-26, the owner: "Always the newest app version"): the grid built every
+  // round from the built-in version's fields (RPS_ROUND_FIELDS) and ignored DUTY_RPS_PLUGIN
+  const RPS_GRID_FIELDS = RPS_CHOSEN_FIELDS || RPS_ROUND_FIELDS;
   const slots = Number(env.RPS_GRID_SLOTS || 225), tables = Number(env.RPS_GRID_TABLES || 2);
   const aheadMs = Number(env.RPS_GRID_AHEAD_MS || 100 * 60000), leadMs = Number(env.RPS_GRID_LEAD_MS || 120 * 60000);
   // RPS_GRID_FEE_RATE (sat/vB, 2026-10-12 "Mach das deutlich sparsamer"): under the wallet's 1 sat/vB down to the
@@ -527,7 +530,7 @@ if (env.PAID_RPS_GRID === '1') {
   // RPS_GRID_AFTER_MS: a grid already running when this keeper starts (its last close, ms) - the next one's first close comes
   // 8 s after it, so a restart does not lay a second grid over the running one
   let lastCloseMs = Number(env.RPS_GRID_AFTER_MS || 0), busy = false, now1 = env.RPS_GRID_NOW === '1';
-  const gid = toHex(ROCK_PAPER_SCISSORS.gameId);
+  const gid = toHex(RPS_GRID_FIELDS.gameId);
   const look = async () => {
     if (busy) return;
     let wantAt = 0;
@@ -581,7 +584,7 @@ if (env.PAID_RPS_GRID === '1') {
         fedPick = openingFederation({ listed: fl.federations || [], serves, own });
       } catch { /* its own, said above */ }
       say({ rpsGrid: 'federation', ...fedPick, serves: serves.map((f) => f.slice(0, 16)) });
-      const got = await round.openGrid({ ...CREATOR, fields: { ...RPS_ROUND_FIELDS, donationSetId, federationId: fromHex(fedPick.federationId) }, stakeMsat }, { slots, tables, feeRate, maxFeeRate, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee),
+      const got = await round.openGrid({ ...CREATOR, fields: { ...RPS_GRID_FIELDS, donationSetId, federationId: fromHex(fedPick.federationId) }, stakeMsat }, { slots, tables, feeRate, maxFeeRate, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee),
         onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `rps-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ rpsGrid: 'published', ...p }); }, onPosted: (p) => say({ rpsGrid: 'posted', ...p }) });
       if (got.dry) { say({ rpsGrid: 'dry', ...got }); return; }
       say({ rpsGrid: got.ok ? 'up' : 'not up', ok: got.ok, why: got.why, txid: got.txid, publishedAt: got.publishedAt, beacon: got.beacon,
