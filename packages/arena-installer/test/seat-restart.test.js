@@ -19,6 +19,6 @@ test('the wizard restarts the seat alone after the quick tunnel\'s name is writt
   const src = readFileSync(new URL('../src/wizard.js', import.meta.url), 'utf8');
   const at = src.indexOf("if (s.reach.mode === 'quick') {");
   const block = src.slice(at, src.indexOf('// workers.dev', at));
-  assert.match(block, /state\.writeSecret\('arena\.conf', after\);[\s\S]*if \(seatNeedsRestart\(before, after\)\) \{ const rs = await restartSeat\(state\.home\)/);
+  assert.match(block, /state\.writeSecret\('arena\.conf', after\);[\s\S]*if \(seatNeedsRestart\(before, after\)\) \{ (?:stage\('restart'\); )?const rs = await restartSeat\(state\.home\)/);
   assert.match(src, /restartSeat = \(home\) => control\('restart', 'node', \{ home \}\)/, 'the seat (node), not its tunnel');
 });

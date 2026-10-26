@@ -145,7 +145,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   coreKit = { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, freeCorePorts, installProgram },
   lndKit = { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, installProgram, lndFunds, lndOpenChannel, lndChannels },
   gwKit = { findGatewayd, configureGateway, testGateway, joinFederation, installProgram }, launch = writeLaunchers, nowMs = () => Date.now(), onDone = () => {}, log = () => {},
-  restartSeat = (home) => control('restart', 'node', { home }), fundFrom = null, trace: given = QUIET }) {
+  restartSeat = (home) => control('restart', 'node', { home }), restartTunnel = (home) => control('restart', 'tunnel', { home }), fundFrom = null, trace: given = QUIET }) {
   // EACH STEP AND STAGE SAID AT --verbose, WITH ITS TIME; WHAT EACH STEP WAS HANDED (its field names) AND FULL ERRORS AT --debug (kanban #693)
   const trace = given.tag('wizard');
   let token = b64u(32);
@@ -384,7 +384,13 @@ const serviceRun = async (b) => {
       if (!k.ok) return { ok: false, why: `the Worker forwards, but its keeper did not start: ${k.why}`, identity: r.identity };
     }
     if (s.reach.mode !== 'direct') stage('address');
-    if (s.reach.mode !== 'direct') reachTest = s.reach.url ? await reach.testPublicUrl({ url: s.reach.url, identity: r.identity, fetcher }) : { ok: false, why: 'the quick tunnel gave no name' };
+    // a quick tunnel that never answers is started again (kanban #704, reach.js testWithNewTunnels)
+    if (s.reach.mode === 'quick' && s.reach.url) {
+      const t = await (reach.testWithNewTunnels || reachKit.testWithNewTunnels)({ url: s.reach.url, identity: r.identity, fetcher, log, test: reach.testPublicUrl,
+        newTunnel: async () => { const rt = await restartTunnel(state.home); return rt && rt.tunnel ? rt.tunnel.url : null; } });
+      reachTest = t.reachTest;
+      if (t.url !== s.reach.url) s = state.save({ reach: { ...state.read().reach, url: t.url } });
+    } else if (s.reach.mode !== 'direct') reachTest = s.reach.url ? await reach.testPublicUrl({ url: s.reach.url, identity: r.identity, fetcher }) : { ok: false, why: 'the quick tunnel gave no name' };
     let login = null;
     if (s.owner.mode === 'seed') { stage('login'); login = await ownerLogin(signedBySeed(r.identity)); }
     else if (nostrKey) {

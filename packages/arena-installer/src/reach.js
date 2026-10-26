@@ -255,3 +255,20 @@ export async function testPublicUrl({ url, identity, fetcher = fetch, tries = 12
   }
   return { ok: false, why: `${url} does not answer as this node: ${why}` };
 }
+
+// A QUICK TUNNEL THAT NEVER ANSWERS IS STARTED AGAIN (kanban #704, the owner's 2026.1.9.8 install 2026-10-26: "Testing its public address"
+// past 322 s, through only after the install was started again - which starts a new tunnel): a new name answered after 4 min 45 s at worst
+// (2026-10-19), so 3 min on the first name, then a new tunnel (`newTunnel` restarts it, follows its name into the node's files and
+// restarts the node on it, answering the name) and 4 min on that, twice. Answers { reachTest, url } - url the name tested last.
+export async function testWithNewTunnels({ url, identity, fetcher = fetch, newTunnel, test = testPublicUrl, log = () => {}, firstTries = 45, laterTries = 60, tunnels = 3, waitMs = 4000 }) {
+  let reachTest = null;
+  for (let k = 0; k < tunnels; k++) {
+    reachTest = await test({ url, identity, fetcher, tries: k === 0 ? firstTries : laterTries, waitMs });
+    if (reachTest.ok || k === tunnels - 1) break;
+    log(`[service] ${reachTest.why}; starting a new quick tunnel`);
+    const next = await newTunnel();
+    if (next) url = next;
+    log(`[service] the new tunnel: ${url}`);
+  }
+  return { reachTest, url };
+}
