@@ -21,7 +21,7 @@ import {
 import {
   encodeSlashProof, decodeSlashProof, slashProofId, slashCommitment,
   slashHolds, OFFENCES, TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F,
-  SETTLED_WITHOUT_AUTHORITY, OPERATOR_PLAYED, FEE_WITHOUT_SERVICE,
+  SETTLED_WITHOUT_AUTHORITY, OPERATOR_PLAYED, FEE_WITHOUT_SERVICE, AUDIT_CONTRADICTED,
 } from '../src/slash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -64,11 +64,11 @@ const ask = (over = {}) => {
  * The names are not pretended: 5A.3 lists six offences and a name in this
  * array that answers nothing reads as coverage of one.
  */
-test('all six of 5A.3\'s rows are implemented, in the table\'s own order', () => {
+test('all six of 5A.3\'s rows are implemented, in the table\'s own order, and §13A.1\'s contradicted AUDIT after them (kanban #724, #725)', () => {
   assert.deepEqual(OFFENCES,
     [TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, SETTLED_WITHOUT_AUTHORITY,
-     OPERATOR_PLAYED, FEE_WITHOUT_SERVICE],
-    '5A.3 lists six offences and every one of them now has a predicate');
+     OPERATOR_PLAYED, FEE_WITHOUT_SERVICE, AUDIT_CONTRADICTED],
+    '5A.3 lists six offences and every one of them now has a predicate; §13A.1 adds the AUDIT');
 });
 
 /**

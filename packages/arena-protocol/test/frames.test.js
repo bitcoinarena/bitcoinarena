@@ -69,7 +69,9 @@ test('one type carries no authority, and it is the ghost', () => {
   // 52 since the fee proposals and approvals, the funding proposal, comment and signal, the player name and the
   // leaderboard payout were entered (2026-10-19): declared without an entry, bearsAuthority refused them as unknown
   // 53 since the owner's emergency leave request (protocol 17, §23A.5a): it takes a node out of the seating - an authority.
-  assert.equal(FRAMES.size, 53, 'a type was added without saying what it decides');
+  // 55 since the auditor's AUDIT (§13A.1, kanban #725: it names the auditor in the payout's lines) and the slash proof against a
+  // contradicted one (kanban #724, #725: a slashing transaction commits to its id) - both authorities.
+  assert.equal(FRAMES.size, 55, 'a type was added without saying what it decides');
 });
 
 /**

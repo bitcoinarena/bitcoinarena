@@ -2111,6 +2111,22 @@ export class Round {
         bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
   }
 
+  /** A slash proof against a contradicted AUDIT (§13A.1, kanban #724, #725); one per auditor and round, a second is ignored. */
+  putAuditSlashProof(roundIdBytes, entryIdBytes, nodePubkey, proofId, bytes) {
+    return this.db.prepare(
+      'INSERT OR IGNORE INTO audit_slash_proofs (round_id, node_pubkey, entry_id, proof_id, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(roundIdBytes, nodePubkey, entryIdBytes, proofId, bytes, this.now()).changes;
+  }
+
+  /** Every slash proof this node filed against a round's AUDITs, or all of them (newest first) for GET /slashes. */
+  auditSlashProofs(roundIdBytes = null, { limit = 500 } = {}) {
+    const rows = roundIdBytes
+      ? this.db.prepare('SELECT round_id, node_pubkey, entry_id, proof_id, bytes, seen_ms FROM audit_slash_proofs WHERE round_id = ? ORDER BY node_pubkey').all(roundIdBytes)
+      : this.db.prepare('SELECT round_id, node_pubkey, entry_id, proof_id, bytes, seen_ms FROM audit_slash_proofs ORDER BY seen_ms DESC LIMIT ?').all(limit);
+    return rows.map((r) => ({ roundId: new Uint8Array(r.round_id), nodePubkey: new Uint8Array(r.node_pubkey), entryId: new Uint8Array(r.entry_id),
+      proofId: new Uint8Array(r.proof_id), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
+  }
+
   /** Every handout this signer node accepted for one round: its id and bytes. */
   handoutsOf(roundIdBytes) {
     return this.db.prepare('SELECT handout_id, bytes FROM handouts WHERE round_id = ?').all(Buffer.from(roundIdBytes))

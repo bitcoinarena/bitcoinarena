@@ -22,7 +22,9 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { slashHolds, slashProofId, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS } from '../../arena-protocol/src/slash.js';
+import { slashHolds, slashProofId, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS,
+  splitAuditSlashEvidence, slashHoldsOnAudit, auditSlashProofId, AUDIT_CONTRADICTED } from '../../arena-protocol/src/slash.js';
+import { windowsOf } from '../../arena-protocol/src/window.js';
 import { splitSignedResult, decodePlayerResult, resultId } from '../../arena-protocol/src/result.js';
 import { arbitrationSpend, arbitrationSighash, arbitrationWitness, arbitrationTransaction, escrowOutput, escrowSpend } from '../../arena-protocol/src/arbitration-tx.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
@@ -96,6 +98,43 @@ export async function judgeProof({ evidence, bundle, entry, entryId, contract, c
     advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
   if (!held.slashed) return no(held.why);
   return { slashed: true, offence: held.offence, bond: held.bond, proof, proofId: slashProofId(proof), playerPubkey: proof.playerPubkey, why: held.why };
+}
+
+/**
+ * THE JUDGEMENT OF A PROOF AGAINST A CONTRADICTED AUDIT (§13A.1, kanban #724, #725), as `judgeProof` judges a signed result: the
+ * objection that held against the run the AUDIT vouched for is REPLAYED here under the round's core and beacon (checkObjectionBundle,
+ * the seat's door), and then slashHoldsOnAudit's comparisons - the AUDIT the proof names, signed by its node, its VRF proof good and
+ * the node drawn out of `eligible`/`total` (the round's census less its drawn nodes and its players, auditEligible), signed 30 s before
+ * the window's close; its rows the results it vouched for, the proof's entry among them at the objected run; the bond its own
+ * advertisement names. `vrf` is the secp256k1 ECVRF (vrf.js makeVrf). Answers what judgeProof answers, so buildSlash takes either.
+ */
+export async function judgeAuditProof({ evidence, bundle, entry, contract, committee, advert, bondOutpoint, core, roundRandomness, eligible, total, vrf, replayRun }) {
+  const no = (why) => ({ slashed: false, why });
+  let got;
+  try { got = splitAuditSlashEvidence(evidence); } catch (e) { return no(`not a slash proof record against an AUDIT: ${e.message}`); }
+  const { proof } = got;
+  if (!(bundle instanceof Uint8Array) || !bundle.length) return no('no objection bundle to replay');
+  let objected, canonical;
+  try {
+    const b = decodeObjectionBundle(bundle);
+    objected = b.objection.signedResultId;
+    canonical = transcriptHash(decodeTranscript(b.transcript));
+  } catch (e) { return no(`that is not an objection bundle: ${e.message}`); }
+  // THE REPLAY, AGAIN, HERE: the objection that held against exactly the run the AUDIT vouched for - of this round and this entry
+  if (toHex(objected) !== toHex(proof.contradictedRunId)) return no('the objection contradicts another run than the one the AUDIT vouched for');
+  const checked = await checkObjectionBundle({ bundle, roundId: proof.roundId, entryId: proof.entryId, entry, contract, committee,
+    signedResultId: objected, core, roundRandomness,
+    verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
+    ...(replayRun ? { replayRun } : {}) });
+  if (!checked.holds) return no(`the replay does not contradict that run: ${checked.why}`);
+  let closeMs;
+  try { closeMs = windowsOf(contract).closeMs; } catch (e) { return no(`the round names no window: ${e.message}`); }
+  const held = slashHoldsOnAudit({ proof, audit: got.audit, signature: got.signature, rows: got.rows, entry, eligible, total, vrf,
+    verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
+    windowCloseMs: closeMs, canonicalTranscriptHash: canonical, objectedRunId: objected, replayDiffers: true,
+    advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
+  if (!held.slashed) return no(held.why);
+  return { slashed: true, offence: held.offence, bond: held.bond, proof, proofId: auditSlashProofId(proof), playerPubkey: proof.playerPubkey, why: held.why };
 }
 
 /**
@@ -260,7 +299,7 @@ export function musigParty({ set, allow = () => ({ ok: false, why: 'no spend is 
   };
 }
 
-export { REPLAY_CONTRADICTS };
+export { REPLAY_CONTRADICTS, AUDIT_CONTRADICTED };
 
 /**
  * THE ARBITER'S DOORS: POST /musig/nonce { sessionId, nodeKey, tweak, msg, spend } -> the 7 members'
