@@ -13,7 +13,11 @@ import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { Roster } from '../src/roster.js';
 import { presenceBook } from '../src/presence-book.js';
-import { chainOf, FIRST_TIME, SPACING, publicationOf } from '../../arena-protocol/tools/chainview.js';
+import { chainOf, FIRST_TIME, publicationOf } from '../../arena-protocol/tools/chainview.js';
+// AN HOUR A BLOCK, so the fixture chain spans 30 h and its earlier rounds sit an hour apart inside the census's 24 h, each with a beacon
+// of its own (the 3 missed closes of a proof lie at least 1 h apart, presence.js ABSENCE_PROOF_SPACING_MS)
+const SPACING = 3600;
+const timeOf = (i) => FIRST_TIME + i * SPACING;
 import { bondTransaction } from '../../arena-protocol/tools/bond.js';
 import { encodeRoundContract, decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
@@ -66,7 +70,7 @@ const chainWith = (bonds, contracts = []) => {
   const blocks = [];
   for (let h = FROM; h <= TIP; h++) blocks.push({ transactions: h === FROM ? bonds : [] });
   if (contracts.length) blocks[1] = { transactions: contracts.map(publicationOf) };
-  return chainOf(blocks, FROM);
+  return chainOf(blocks, FROM, { timeOf });
 };
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const nOf = new Map([1, 2, 3, 4, 5, 6].map((n) => [toHex(keyFor(n)), n]));
@@ -99,12 +103,13 @@ function certOf(s, { present = s.seated, seated = s.seated, seenSigner = signBy 
  * THE WORLD: one chain holding every round's publication, a seat with its presence book, earlier rounds of the 24 h (their census
  * the chain's own), and the seatings among them that drew the stopped node at different closes - its proofs.
  */
-function world({ over = {}, absent = [STOPPED], rounds = 24 } = {}) {
+function world({ over = {}, absent = [STOPPED], rounds = 8 } = {}) {
   const bonds = bondsAt(over.protocolVersion ?? PRESENCE_VERSION);
   const full = rootFor(bonds, null, over), less = rootFor(bonds, absent, over);
   const current = contractFor({ ...over, censusRoot: less.root });
-  const earlier = Array.from({ length: rounds }, (_, j) => contractFor({ ...over, startTimeMs: COMMITTEE_TIME + 60500n + BigInt(j + 1) * 1000n,
-    entryCloseMs: COMMITTEE_TIME + 200000n + BigInt(j + 1) * 1000n, censusRoot: full.root }));
+  // an hour apart, so any 3 of their closes count (presence.js ABSENCE_PROOF_SPACING_MS)
+  const earlier = Array.from({ length: rounds }, (_, j) => contractFor({ ...over, startTimeMs: COMMITTEE_TIME + 60500n - BigInt(j + 1) * 3600000n,
+    entryCloseMs: COMMITTEE_TIME + 200000n - BigInt(j + 1) * 3600000n, committeeTimeMs: COMMITTEE_TIME - BigInt(j + 1) * 3600000n, censusRoot: full.root }));
   const view = chainWith(bonds, [current, ...earlier]);
   const round = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
   const roster = new Roster(round, { chainFor: () => view, randomnessFor: ({ contract: c }) => beaconOf(view, c) });
@@ -174,7 +179,7 @@ test('a claim naming an honest node is refused by the seat and by the client: li
     // 1. a seated node of a named seating listed it present: it was there
     ['present', claimOf(STOPPED, three, { ...claimOf(STOPPED, three).certs, [k0]: certOf(three[0], { present: [...three[0].seated, STOPPED] }) }), /lists it present/],
     // 2. proven at 2 seatings only (a node flooded at 2 of its seatings)
-    ['too-few', claimOf(STOPPED, three.slice(0, 2)), /on 2 missed seating close\(s\); it takes 3/],
+    ['too-few', claimOf(STOPPED, three.slice(0, 2)), /on 2 missed close\(s\) at least 1 h apart; it takes 3/],
     // 3. a forged certificate: who was present signed by a key that is not the seated
     ['certificate', claimOf(STOPPED, three, { ...claimOf(STOPPED, three).certs, [k0]: certOf(three[0], { seenSigner: () => signBy(LIVE_ONE === three[0].seated[0] ? three[0].seated[1] : LIVE_ONE) }) }), /does not stand/],
     // 4. under threshold: one seated of a 3-seat round needing 2
@@ -192,7 +197,7 @@ test('a claim naming an honest node is refused by the seat and by the client: li
   }
   // a live node named absent at seatings that never drew it
   const notDrawn = claimOf(LIVE_ONE, W.seatings.filter((s) => !s.drawn.includes(LIVE_ONE)).slice(0, 3));
-  if (notDrawn.claims[0].proofs.length === 3) assert.match(client(W, notDrawn).why, /neither drew it nor had it left out/);
+  if (notDrawn.claims[0].proofs.length === 3) assert.match(client(W, notDrawn).why, /neither drew it .*nor had it left out/);
   // a seat holding a window certificate that lists the stopped node present refuses whatever the claim names
   const fourth = W.seatings[3];
   assert.equal(W.book.takeCert(fromHex(certOf(fourth, { present: [...fourth.seated, STOPPED] }))).ok, true);

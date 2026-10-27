@@ -12,8 +12,8 @@
 //   present     listed by any seated node of the certificate, or seated in it
 //   missed      drawn for the seating by the round's own draw - or left out of the round's census as absent, as every seated node
 //               says - and not present
-//   absent      in the chain census, present at no window seating, and missed at ABSENCE_PROOF_SEATINGS (3) or more seatings with
-//               different seating closes
+//   absent      in the chain census, present at no window seating, and missed at ABSENCE_PROOF_SEATINGS (3) or more seatings or
+//               heartbeat slots whose closes lie at least ABSENCE_PROOF_SPACING_MS (1 h) apart
 //   census      from protocol 22 the census is the chain census less every output of an absent node; its root commits to that set
 //
 // ABSENCE ONLY WITH PROOF (the owner 2026-10-27, "can it be manipulated which nodes are offline so others are chosen?"). As first built the
@@ -24,13 +24,31 @@
 // To hide an honest node's PRESENT every seated node of a seating must lie, three times at three moments.
 //
 // AND NOT FOR A FEW MISSED SEATINGS (the owner 2026-10-27, an attacker flooding a node while it is drawn): fewer than 3 missed seatings,
-// or present once, and the node is kept. 3 different seating closes, so one blackout that falls on two games' grids counts once.
+// or present once, and the node is kept. 3 closes at least 1 h apart (ABSENCE_PROOF_SPACING_MS), so one blackout - on two games' grids,
+// or a 10-min restart across 3 heartbeat slots - counts once.
+//
+// AND THE HEARTBEAT, SO A DAY IS ENOUGH (kanban #727, the owner 2026-10-27): a seating proves only its 9 drawn missed, and only when 5 of
+// them are present, so on 10-27 the stopped nodes took three days to be proven out. A heartbeat certificate (heartbeat.js) proves EVERY
+// node of its round's census missed that it does not list, at a slot every 5 min. A proof names a seating (role game or settlement) or a
+// heartbeat slot (role heartbeat-0..2); both count towards the 3 closes an hour apart, and a listing in either keeps the node in.
 import { toHex } from './hash.js';
-import { PRESENCE_VERSION, ABSENCE_PROOF_SEATINGS } from './constants.js';
+import { PRESENCE_VERSION, ABSENCE_PROOF_SEATINGS, ABSENCE_PROOF_SPACING_MS } from './constants.js';
 import { medianTimePast } from './beacon.js';
 import { verifySeating } from './seating.js';
+import { provenHeartbeat, heartbeatSlotOf } from './heartbeat.js';
 
-export { ABSENCE_PROOF_SEATINGS };
+export { ABSENCE_PROOF_SEATINGS, ABSENCE_PROOF_SPACING_MS };
+/**
+ * HOW MANY OF THESE CLOSES COUNT: the most that lie pairwise at least ABSENCE_PROOF_SPACING_MS apart (newest first, each the next
+ * one at least 1 h older - the greedy pick is the largest such set on a line).
+ */
+export function spacedCloses(closes) {
+  let n = 0, last = null;
+  for (const c of [...new Set([...closes].map(BigInt))].sort((a, b) => (a > b ? -1 : a < b ? 1 : 0))) {
+    if (last === null || last - c >= ABSENCE_PROOF_SPACING_MS) { n++; last = c; }
+  }
+  return n;
+}
 /** The window's length: 24 h of median time past before the census block (the owner 2026-10-27). */
 export const PRESENCE_WINDOW_MS = 24n * 3600n * 1000n;
 /** What a census says of an output it leaves out as absent. */
@@ -67,8 +85,23 @@ export function provenSeating(bytes, { roundId, role, drawn, slots, closeMs, ver
 }
 /** Was `node` present at this seating (listed by a seated node, or seated)? */
 export const presentAt = (node, s) => s.present.includes(node) || s.seated.includes(node);
-/** Did `node` miss this seating: drawn for it, or left out of its census already - and not present? */
-export const missedAt = (node, s) => (s.drawn.includes(node) || s.leftOut.includes(node)) && !presentAt(node, s);
+/**
+ * Did `node` miss this seating: drawn for it, or left out of its census already - and not present? A heartbeat slot expects every node
+ * of its round's census (`expected`), not only its committee.
+ */
+export const missedAt = (node, s) => ((s.expected || s.drawn).includes(node) || s.leftOut.includes(node)) && !presentAt(node, s);
+
+/**
+ * ONE PROOF, CHECKED ON THE CHECKER'S OWN DRAW: a seating certificate (`d` { drawn, slots, closeMs }) or a heartbeat certificate (`d`
+ * { heartbeat: j, drawn: the slot's committee, census: the round's census keys, closeMs }). Answers { ok, seating } as provenSeating.
+ */
+export function provenProof(bytes, { roundId, role, d, verify }) {
+  if (heartbeatSlotOf(role) !== null) {
+    if (d.heartbeat !== heartbeatSlotOf(role) || !Array.isArray(d.census)) return { ok: false, why: `that draw is not of heartbeat slot ${role}` };
+    return provenHeartbeat(bytes, { roundId, slot: d.heartbeat, committee: d.drawn, census: d.census, closeMs: d.closeMs, verify });
+  }
+  return provenSeating(bytes, { roundId, role, drawn: d.drawn, slots: d.slots, closeMs: d.closeMs, verify });
+}
 
 /**
  * THE ABSENT, AS A POSTING NODE FINDS THEM. `seatings` the window's proven seatings it holds (provenSeating), `census` the chain census's
@@ -86,11 +119,12 @@ export function absentFrom({ seatings, census, window, seen = [] }) {
   const claims = [];
   for (const node of inCensus) {
     if (sawIt.has(node)) continue;
-    const proofs = [], closes = new Set();
+    const proofs = [];
+    let last = null;
     for (const s of proven) {
       if (proofs.length >= ABSENCE_PROOF_SEATINGS) break;
-      if (closes.has(s.closeMs) || !missedAt(node, s)) continue;
-      closes.add(s.closeMs);
+      if ((last !== null && last - s.closeMs < ABSENCE_PROOF_SPACING_MS) || !missedAt(node, s)) continue;
+      last = s.closeMs;
       proofs.push({ roundId: s.roundId, role: s.role });
     }
     if (proofs.length >= ABSENCE_PROOF_SEATINGS) claims.push({ node, proofs });
@@ -146,18 +180,19 @@ export function checkAbsenceProof(claims, { census = null, window, certOf, drawO
         if (!d) return { ok: false, notYet: true, node, why: `the seating ${rid.slice(0, 16)} ${p.role} that proves ${short} absent cannot be drawn here yet` };
         const bytes = certOf(rid, p.role);
         if (!bytes) return { ok: false, node, proof: 'certificate', why: `the proof that ${short} is absent names seating ${rid.slice(0, 16)} ${p.role} and carries no certificate of it` };
-        const got = provenSeating(bytes, { roundId: rid, role: p.role, drawn: d.drawn, slots: d.slots, closeMs: d.closeMs, verify });
+        const got = provenProof(bytes, { roundId: rid, role: p.role, d, verify });
         if (!got.ok) return { ok: false, node, proof: 'certificate', why: `the certificate that proves ${short} absent at ${rid.slice(0, 16)} ${p.role} does not stand: ${got.why}` };
         s = got.seating;
         proven.set(key, s);
       }
       if (!inWindow(window, s.closeMs)) return { ok: false, node, proof: 'outside', why: `the seating ${rid.slice(0, 16)} ${p.role} that proves ${short} absent closes outside the census's 24 h` };
       if (presentAt(node, s)) return { ok: false, node, proof: 'present', why: `that census leaves out ${short} as absent, and the certificate of ${rid.slice(0, 16)} ${p.role} lists it present` };
-      if (!missedAt(node, s)) return { ok: false, node, proof: 'not-missed', why: `that census leaves out ${short} as absent, and ${rid.slice(0, 16)} ${p.role} neither drew it nor had it left out` };
+      if (!missedAt(node, s)) return { ok: false, node, proof: 'not-missed', why: `that census leaves out ${short} as absent, and ${rid.slice(0, 16)} ${p.role} neither drew it (a heartbeat slot: held it in its census) nor had it left out` };
       closes.add(s.closeMs);
     }
-    if (closes.size < ABSENCE_PROOF_SEATINGS)
-      return { ok: false, node, proof: 'too-few', why: `that census leaves out ${short} as absent on ${closes.size} missed seating close(s); it takes ${ABSENCE_PROOF_SEATINGS}` };
+    const spaced = spacedCloses(closes);
+    if (spaced < ABSENCE_PROOF_SEATINGS)
+      return { ok: false, node, proof: 'too-few', why: `that census leaves out ${short} as absent on ${spaced} missed close(s) at least 1 h apart; it takes ${ABSENCE_PROOF_SEATINGS}` };
   }
   return { ok: true };
 }

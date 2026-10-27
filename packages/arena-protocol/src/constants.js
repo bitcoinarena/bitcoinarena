@@ -47,6 +47,27 @@ export const PRESENCE_VERSION = 22;
  */
 export const ABSENCE_PROOF_SEATINGS = 3;
 /**
+ * THE HEARTBEAT (§5A.3, protocol 22, kanban #727, the owner 2026-10-27). On 10-27 20 of 28 bonded nodes were stopped, almost no round
+ * reached 5 present, so almost no seating certificate existed and the stopped nodes took 3 days to be proven out. So from 22 every
+ * node also signs a HEARTBEAT for each heartbeat slot of a round and hands it to that slot's heartbeat committee; the committee's live
+ * members sign who they heard (HEARD), and a certificate of at least HEARTBEAT_THRESHOLD of them proves every census node it does not
+ * list missed at that slot - not only the drawn. A round that seats itself has HEARTBEAT_SLOTS_PER_ROUND slots, closing
+ * HEARTBEAT_SPACING_MS apart before its seating close (heartbeat.js), so a 15-min grid gives a slot every 5 min, 288 a day.
+ * HEARTBEAT_DRAWN members per slot, drawn on the round's own census and beacon (one key one seat, by bond, on their own seed).
+ * The threshold is 5 of 9, as a seating's: 2 x 5 > 9, so two certificates of one slot share a signer, and no group of fewer than 5
+ * nodes can make one at all.
+ */
+export const HEARTBEAT_SLOTS_PER_ROUND = 3;
+/**
+ * THE 3 MISSED CLOSES LIE AT LEAST 1 H APART (kanban #727, the owner 2026-10-27: not out for a short outage). With a heartbeat slot every
+ * 5 min, a 10-min restart misses three of them; so the closes a proof counts are each at least this far from the next, and one outage
+ * shorter than 2 h - a restart, an upgrade, a blackout - is never proof. Seatings and heartbeat slots alike.
+ */
+export const ABSENCE_PROOF_SPACING_MS = 3600000n;
+export const HEARTBEAT_SPACING_MS = 300000n;
+export const HEARTBEAT_DRAWN = 9;
+export const HEARTBEAT_THRESHOLD = 5;
+/**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
  * and the beacon ... Thresholds count the 7 seated nodes"). Measured 2026-10-13 00:28Z: with federation B's 7 bonds the
@@ -381,6 +402,10 @@ export const TYPE_AUDIT = 0x36;
 export const TYPE_AUDIT_SLASH_PROOF = 0x37;
 /** A seated node's word on who was present at a 22 seating (§5A.7, protocol 22, kanban #727): carried in the seating certificate. */
 export const TYPE_SEATING_SEEN = 0x38;
+/** A node's HEARTBEAT for one heartbeat slot of a 22 round (§5A.3, protocol 22, kanban #727): its word that it is up, to that slot's committee. */
+export const TYPE_HEARTBEAT = 0x39;
+/** A heartbeat committee member's HEARD: who it held a HEARTBEAT of at the slot's close; a heartbeat certificate carries them (kanban #727). */
+export const TYPE_HEARTBEAT_HEARD = 0x3a;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 export const TYPE_SPENT_SET = 0x26;
@@ -579,6 +604,10 @@ export const TAG = {
   seating: 'ARENA/v1/Seating',
   // §5A.3/§5A.7 protocol 22: who a seated node held a PRESENT of at the seating close, and who the round's census left out
   seatingSeen: 'ARENA/v1/SeatingSeen',
+  // §5A.3 protocol 22 the heartbeat (kanban #727): a node's HEARTBEAT, a member's HEARD, and the seed a slot's committee is drawn on
+  heartbeat: 'ARENA/v1/Heartbeat',
+  heartbeatHeard: 'ARENA/v1/HeartbeatHeard',
+  heartbeatDraw: 'ARENA/v1/HeartbeatDraw',
   // §23A.5 a guardian's signed copy of a halted federation's spent-note set
   spentSet: 'ARENA/v1/SpentSet',
   // §13 who won a price round: BULLS / BEARS / FLAT by its attested open and close
