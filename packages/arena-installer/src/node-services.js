@@ -572,7 +572,8 @@ export async function doctor({ home, platform = process.platform, env = process.
   if (free !== null) add('Disk', free >= 2e9, `${(free / 1e9).toFixed(1)} GB free at ${home}`, free >= 2e9 ? null : 'free disk space: the node needs about 2 GB');
   // the bond
   const bond = node.state.bond;
-  if (!bond || !bond.txid) add('Bond', null, 'no bond posted yet: the node is not seated until it has one', 'arena-install (the installer\'s bond step)');
+  // SET UP IN THE OWNER AREA (kanban #728, the 2026.1.9.11 install test: the hint named the installer's bond step, gone once the setup is done)
+  if (!bond || !bond.txid) add('Bond', null, 'no bond posted yet: the node is not seated until it has one', `the Bond section of the owner area (${name} open)`);
   else {
     try {
       log.verbose(`the bond: asking ${esplora}/tx/${bond.txid}/status`);

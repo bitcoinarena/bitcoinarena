@@ -23,6 +23,18 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { UNIT, BRIDGE_UNIT, TUNNEL_UNIT, LAUNCHD_LABEL, WINDOWS_TASK, startupDir, unitName } from './service.js';
 import { named, INSTANCE } from './instance.js';
+import { SERVICES } from './node-services.js';
+
+/**
+ * STOP STOPS EVERY SERVICE OF THE NODE (the 2026.1.9.11 install test, kanban #704: "Bitcoin Arena Stop.command" left the .updater agent running -
+ * the scripts named only the services the state lists, and the auto update, the liquidity provider or an agent added later are not among
+ * them): the auto update first, so it starts nothing again, then the node's services last first, then every other service the installer can
+ * write for this node (node-services.js SERVICES) - one that is not there is passed over quietly. `nameOf(id)` the service's name.
+ */
+export function stopOrder(svc, nameOf) {
+  const rest = SERVICES.filter((x) => !x.inside && x.id !== 'node').map((x) => nameOf(x.id)).reverse();
+  return [...new Set([nameOf('updater'), ...[...svc].reverse(), ...rest])];
+}
 
 /** The services of a node from its state: { linux: units, darwin: launchd labels, win32: task names }. */
 export function servicesOf(s) {
@@ -63,7 +75,7 @@ export function writeLaunchers({ home, s, ownerUrl, addCustody = null, platform 
   if (platform === 'linux') {
     for (const old of ['start', 'stop', 'status', 'open', 'add-custody']) rmSync(join(bin, `arena-node-${old}`), { force: true });
     const start = put(join(bin, 'bitcoin-arena-start'), sh([`# Start Bitcoin Arena's services: ${svc.join(', ')}`, `systemctl --user start ${svc.join(' ')}`, `echo "Started. Owner page: ${ownerUrl}"`]));
-    put(join(bin, 'bitcoin-arena-stop'), sh([`# Stop Bitcoin Arena's services`, `systemctl --user stop ${[...svc].reverse().join(' ')}`]));
+    put(join(bin, 'bitcoin-arena-stop'), sh([`# Stop Bitcoin Arena's services, every one of this node`, ...stopOrder(svc, (id) => (id === 'chain-bridge' ? BRIDGE_UNIT : unitName(id))).map((u) => `systemctl --user stop ${u} 2>/dev/null`), 'echo Stopped.']));
     put(join(bin, 'bitcoin-arena-status'), sh([`systemctl --user --no-pager status ${svc.join(' ')}`]));
     put(join(bin, 'bitcoin-arena-open'), sh([`xdg-open ${q(ownerUrl)}`]));
     if (addCustody) put(join(bin, 'bitcoin-arena-add-custody'), sh(['# Add custody to this node: the installer\'s custody screens open in the browser', addCustody.map(q).join(' ')]));
@@ -81,7 +93,8 @@ export function writeLaunchers({ home, s, ownerUrl, addCustody = null, platform 
       ...svc.map((l) => `launchctl print gui/$uid/${l} >/dev/null 2>&1 || launchctl bootstrap gui/$uid ${q(join(agents, `${l}.plist`))}; launchctl kickstart gui/$uid/${l}`)];
     for (const old of ['Start', 'Stop', 'Status', 'Open', 'Add Custody']) rmSync(join(bin, `Arena Node ${old}.command`), { force: true });
     const start = put(join(bin, 'Bitcoin Arena Start.command'), sh([...startLines, `echo "Started. Owner page: ${ownerUrl}"`]));
-    put(join(bin, 'Bitcoin Arena Stop.command'), sh([`# Stop Bitcoin Arena's services`, `uid=${uid}`, ...[...svc].reverse().map((l) => `launchctl bootout gui/$uid/${l} 2>/dev/null`), 'echo Stopped.']));
+    put(join(bin, 'Bitcoin Arena Stop.command'), sh([`# Stop Bitcoin Arena's services, every agent of this node`, `uid=${uid}`,
+      ...stopOrder(svc, (id) => `${LAUNCHD_LABEL}.${id}`).map((l) => `launchctl bootout gui/$uid/${l} 2>/dev/null`), 'echo Stopped.']));
     put(join(bin, 'Bitcoin Arena Status.command'), sh([`uid=${uid}`, ...svc.map((l) => `launchctl print gui/$uid/${l} 2>/dev/null | grep -E '^\\s*(state|pid) =' | sed "s/^/${l}: /" || echo "${l}: not loaded"`)]));
     put(join(bin, 'Bitcoin Arena Open.command'), sh([`open ${q(ownerUrl)}`]));
     if (addCustody) put(join(bin, 'Bitcoin Arena Add Custody.command'), sh(['# Add custody to this node: the installer\'s custody screens open in the browser', addCustody.map(q).join(' ')]));

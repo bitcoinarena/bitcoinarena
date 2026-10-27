@@ -105,7 +105,9 @@ export async function firstBond({ state, post = false, chainKit = { coinsOf, bro
   }
   const seed = fromHex(seedHex);
   const w = walletOf(seed);
-  const { tip, coins } = await chainKit.coinsOf(s.chain, w.spk);
+  // THE PLAN IS A LIGHT READ (the 2026.1.9.11 install test: the Bond panel asks it every 30 s and each answer took 14-18 s): the UTXO scan of
+  // this tip is used again (wallet.js coinsOf reuseScan), the mempool still read; the post reads the chain afresh
+  const { tip, coins } = await chainKit.coinsOf(s.chain, w.spk, ...(post ? [] : [{ reuseScan: true }]));
   const custody = (s.roles || []).includes('custody');
   const parts = depositParts(s, custody ? Math.max(0, Math.floor(Number((s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS))) : 0);
   const needSats = Object.values(parts).reduce((a, x) => a + Number(x), 0);
@@ -142,7 +144,18 @@ export async function firstBond({ state, post = false, chainKit = { coinsOf, bro
 }
 
 /** THE FIRST BOND ON AN INSTALLED NODE (kanban #728): POST /owner/first-bond - the release's software hash and guardian endpoint, as addBondOnNode. */
-export async function firstBondOnNode({ home, release, post = false, chainKit, state = null, askMinimum, startAgent }) {
+// ONE PLAN READ AT A TIME PER NODE (the 2026.1.9.11 install test, kanban #728): a second ask while one runs (two tabs, a reload) waits for that
+// one's answer instead of reading the chain again; the post is never shared
+const planReads = new Map();   // home -> Promise
+export async function firstBondOnNode(o) {
+  if (o.post) return firstBondOnNodeNow(o);
+  const key = String(o.home || (o.state && o.state.home) || '');
+  if (planReads.has(key)) return planReads.get(key);
+  const p = firstBondOnNodeNow(o).finally(() => planReads.delete(key));
+  planReads.set(key, p);
+  return p;
+}
+async function firstBondOnNodeNow({ home, release, post = false, chainKit, state = null, askMinimum, startAgent }) {
   const { readFileSync } = await import('node:fs');
   const { join } = await import('node:path');
   const { sha256 } = await import('../../arena-protocol/src/hash.js');

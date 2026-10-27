@@ -142,6 +142,8 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.equal(steps.status, 200, 'the React steps, with the session (kanban #564)'); assert.match(steps.headers['content-type'], /^text\/javascript/);
   assert.equal((await client(port).get('/wizard.js')).status, 401, 'not without it');
   assert.equal((await c.req('POST', '/api/roles', { roles: ['verify'] })).status, 403, 'a POST without x-arena-wizard is refused');
+  // the icon, to anyone (the 2026.1.9.11 install test: a missing favicon.ico at every load)
+  { const ico = await client(port).get('/favicon.ico'); assert.deepEqual([ico.status, ico.headers['content-type']], [200, 'image/x-icon']); }
 
   let s = (await c.get('/api/state')).json;
   assert.equal(s.step, 'start', 'New / Restore first (kanban #652)');
