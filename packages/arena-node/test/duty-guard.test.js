@@ -142,6 +142,16 @@ test('the seats\' rounds of one game in a day: drawn on a majority or not', () =
   assert.deepEqual(drawCount([...listings, reading], { gameId: id(24), ...day }).of, 2);
 });
 
+test('a round drawn short is not drawn: 3 nodes a role cannot seat 5 (measured 2026-10-27, Up/Down v24)', () => {
+  const day = { fromMs: Date.parse('2026-10-27T00:00:00Z'), toMs: Date.parse('2026-10-28T00:00:00Z') };
+  const row = (n) => ({ game: { id: id(24) }, startTime: '2026-10-27T10:00:00Z', committee: { drawn: { game: [], settlement: [] }, drawnCount: { game: n, settlement: n } } });
+  const short = drawCount([{ rounds: [row(3)] }, { rounds: [row(3)] }], { gameId: id(24), ...day });
+  assert.deepEqual([short.drawn, short.undrawn, short.of], [0, 2, 2]);
+  assert.match(short.why, /drawn short: 3 nodes a role, 5 needed to seat/);
+  assert.deepEqual(drawCount([{ rounds: [row(9)] }], { gameId: id(24), ...day }).drawn, 1, 'nine drawn: drawable');
+  assert.equal(postingVerdict({ tip: 1000, pubHeight: 900, beaconAt: 990, nowMs: 60 * 60000, postedAtMs: 0, draw: short }).state, 'dead', 'and the day gets its emergency grid');
+});
+
 test('the day: drawable when one posting is, dead when all are; an emergency grid when dead, or not drawable 4 h before it starts', () => {
   const day = { startMs: 100 * H, endMs: 124 * H };
   assert.equal(dayVerdict([{ state: 'dead' }, { state: 'drawable' }]).state, 'drawable');
