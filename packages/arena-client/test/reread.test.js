@@ -56,3 +56,13 @@ test('a write is never asked twice, a refused connection is not asked again, and
 
   assert.equal(connectionLost(new Error('no cause')), false);
 });
+
+test('a read with no signal of its own is given one: a seat that never answers ends the read', async () => {
+  let seen = null;
+  const fetcher = (url, opts) => { seen = opts; return Promise.resolve({ ok: true }); };
+  await readWithOneRetry(fetcher, 'http://x/census');
+  assert.ok(seen.signal instanceof AbortSignal);
+  const own = new AbortController();
+  await readWithOneRetry(fetcher, 'http://x/census', { signal: own.signal });
+  assert.equal(seen.signal, own.signal);
+});

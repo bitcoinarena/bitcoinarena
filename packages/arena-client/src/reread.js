@@ -21,8 +21,13 @@ const CONNECTION_LOST = new Set(['ECONNRESET', 'EPIPE', 'UND_ERR_SOCKET']);
 /** Did this fetch fail because the connection it rode was already gone? */
 export const connectionLost = (e) => !!(e && e.cause && CONNECTION_LOST.has(e.cause.code));
 
+// AND A READ THAT NEVER ENDS ENDS (measured 2026-10-27: two market bots stood still for 7 min, each on one census read of a
+// loaded seat that took the connection and never answered): a read with no signal of its own gives up after READ_MS
+export const READ_MS = 30000;
+
 /** `fetcher(url, opts)`, asked once more if a read lost its connection. */
 export async function readWithOneRetry(fetcher, url, opts) {
+  if (!(opts && opts.signal)) opts = { ...(opts || {}), signal: AbortSignal.timeout(READ_MS) };
   try {
     return await fetcher(url, opts);
   } catch (e) {
