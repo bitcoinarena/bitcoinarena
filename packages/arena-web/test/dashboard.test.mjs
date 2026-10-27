@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { DashboardPage, Players, Liquidity, sat, short, earningsOf, signedSat, score, keep, ownerHref } from '../dist/test/dashboard.mjs';
+import { DashboardPage, Players, Liquidity, sat, short, earningsOf, signedSat, score, keep, ownerHref, bondHref } from '../dist/test/dashboard.mjs';
 
 const NOW = Date.UTC(2026, 9, 21, 11, 0);
 const zero = { gameVerifyMsat: '0', settlementMsat: '0', guardianMsat: '0', otherMsat: '0', lightningCostMsat: '0', gatewayCostMsat: '0', profitMsat: '0' };
@@ -138,4 +138,19 @@ test('the Owner area link: the site\'s owner page for this node, with the local 
   assert.equal(ownerHref(key, { hostname: '127.0.0.1', origin: 'http://127.0.0.1:8770' }), `https://testnet.bitcoin-arena.io/owner/#node=${key}&local=http%3A%2F%2F127.0.0.1%3A8770`);
   assert.equal(ownerHref(key, { hostname: 'x.trycloudflare.com', origin: 'https://x.trycloudflare.com' }), `https://testnet.bitcoin-arena.io/owner/#node=${key}`);
   assert.equal(ownerHref('not a key', null), 'Dashboard/owner');
+});
+
+// NO BOND ON THE DASHBOARD (kanban #728, 2026-10-27: "Wenn kein Bond da ist, muss das deutlich sichtbar sein im Dashboard"): the red card at
+// the top with "Set up the bond" to the owner area's Bond section; no Federation card, no "3/10"
+test('no bond: the red card first, linking to the Bond section; no founding shown', () => {
+  const key = 'ab'.repeat(32);
+  assert.equal(bondHref(key, { hostname: '127.0.0.1', origin: 'http://127.0.0.1:8770' }), `https://testnet.bitcoin-arena.io/owner/#node=${key}&local=http%3A%2F%2F127.0.0.1%3A8770&section=bond`);
+  assert.equal(bondHref('not a key', null), 'Dashboard/owner#bond');
+  const setup = { ok: true, bond: null, gateway: { ok: true, federations: 0 }, founding: { waiting: true, ready: 3, needed: 10 } };
+  const html = renderToStaticMarkup(React.createElement(DashboardPage, { data: { ...D, setup } }));
+  assert.match(html, /<header class="dash-head">[\s\S]*?<\/header><section><div class="card no-bond" id="no-bond"[\s\S]*?<h3>No bond<\/h3>[\s\S]*?href="https:\/\/testnet\.bitcoin-arena\.io\/owner\/#node=4003758bc189[0-9a-f]*&amp;section=bond">Set up the bond<\/a>/);
+  assert.doesNotMatch(html, /founding-wait|nodes ready for the next federation|3\/10/);
+  const bonded = renderToStaticMarkup(React.createElement(DashboardPage, { data: { ...D, setup: { ...setup, bond: { txid: 'b0'.repeat(32), sats: '50000', seen: true, confirmations: 9, needed: 6 } } } }));
+  assert.doesNotMatch(bonded, /id="no-bond"/);
+  assert.match(bonded, /<span class="founding-n">3\/10<\/span>/, 'with a bond the founding shows as before');
 });

@@ -75,8 +75,10 @@ export function lndLine(l) {
   const reach = !v ? '' : v.how === 'direct' ? `; reached directly at ${v.at}` : v.how === 'tor' ? `; reached over Tor (no open port needed)` : `; other nodes cannot reach it${v.why ? ` (${v.why})` : ''}`;
   return { done: !l.pending && (!v || v.how !== 'none'), problem: !!v && v.how === 'none', text: `synced at block ${n(l.height)}${ch}${reach}` };
 }
-export function gatewayLine(g, founding = null) {
+export function gatewayLine(g, founding = null, bonded = true) {
   if (!g) return null;
+  // no bond, no federation (kanban #728): the gateway waits for the bond, which the Bond section sets up - nothing to do here
+  if (g.ok && !(g.federations > 0) && !bonded) return { done: true, text: 'running; it joins a federation once your node has a bond' };
   // waiting for a founding is not setup (2026-10-26): done here, the founding has its own panel (FoundingWait)
   if (g.ok && !(g.federations > 0) && founding && founding.waiting) return { done: true, text: 'running; it joins your federation once that is founded' };
   if (g.ok) return { done: g.federations > 0, text: g.federations > 0 ? `running, in ${n(g.federations)} federation${g.federations === 1 ? '' : 's'}` : 'running, joining its federation' };
@@ -110,7 +112,7 @@ export function setupRowsOf(s) {
   const e = s.etas || {};
   const at = (l, left) => (l ? { ...l, left: left === undefined ? null : left } : l);
   return [['setup-core', 'Bitcoin Core', at(coreLine(s.core), e.core)], ['setup-address', 'Public address', addressLine(s.address)], ['setup-faucet', 'Test coins', at(faucetLine(s.faucet, s.bond), e.faucet)],
-      ['setup-bond', 'Bond', at(bondLine(s.bond), e.bond)], ['setup-lnd', 'LND', at(lndLine(s.lnd), e.lnd)], ['setup-gateway', 'Gateway', at(gatewayLine(s.gateway, s.founding), e.gateway)], ['setup-pegin', 'Peg-in', at(pegInLine(s.pegIn), e.pegIn)],
+      ['setup-bond', 'Bond', at(bondLine(s.bond), e.bond)], ['setup-lnd', 'LND', at(lndLine(s.lnd), e.lnd)], ['setup-gateway', 'Gateway', at(gatewayLine(s.gateway, s.founding, !noBond(s)), e.gateway)], ['setup-pegin', 'Peg-in', at(pegInLine(s.pegIn), e.pegIn)],
       ...(s.updates || []).map((u, i) => [`setup-update-${i}`, 'Update', at(updateLine(u), (e.updates || [])[i])]),
       ...(s.oldBonds || []).map((o, i) => [`setup-old-${i}`, 'Old bond', oldBondLine(o)])].filter(([, , l]) => l);
 }
@@ -122,10 +124,24 @@ export function readyIn(s) {
   return { text: dur(e.ready), atLeast: !!e.partial };
 }
 
+/** NO BOND (kanban #728, 2026-10-27, the owner: "Wenn kein Bond da ist, muss das deutlich sichtbar sein im Dashboard und Owner-Dashboard,
+ *  und auch keine Federation-Info"): an installed node whose setup names no bond posted - the installer's "I'll post it later". */
+export const noBond = (s) => !!(s && s.ok && !s.bond);
+/** The red card on both dashboards: no bond, so no rounds - and the one thing to do, set it up in the owner area's Bond section (`href`). */
+export function NoBondCard({ status: s, href }) {
+  if (!noBond(s)) return null;
+  return (
+    <div className="card no-bond" id="no-bond" style={{ borderColor: '#f85149' }}>
+      <div className="setup-head"><h3>No bond</h3><span className="setup-pill bad">Not drawn for rounds</span></div>
+      <p>Your node needs a bond before it is drawn for rounds and earns.</p>
+      <a className="btn primary" id="no-bond-go" href={href}>Set up the bond</a>
+    </div>);
+}
+
 /** THE FOUNDING THE NODE WAITS FOR, apart from the setup (2026-10-26, the owner: "setup is complete but a separate header that it's waiting for
  *  the foundation"): no time is promised - a founding needs ten ready nodes drawn together. */
 export function FoundingWait({ status: s }) {
-  if (!s || !s.founding || !s.founding.waiting) return null;
+  if (!s || !s.founding || !s.founding.waiting || noBond(s)) return null;
   return (
     <div className="card founding-wait" id="founding-wait">
       <div className="setup-head"><h3>Federation</h3><span className="setup-pill wait">Waiting for a founding</span></div>
@@ -199,7 +215,7 @@ export class SetupCard extends React.Component {
     this.setState({ status: s });
     clearTimeout(this.timer); this.timer = setTimeout(this.load, this.props.everyMs || 30000);
   }
-  render() { return this.props.banner ? <SetupBanner status={this.state.status} /> : <><PegInCard status={this.state.status} /><SetupStatus status={this.state.status} /><FoundingWait status={this.state.status} /></>; }
+  render() { return this.props.banner ? <SetupBanner status={this.state.status} /> : <><NoBondCard status={this.state.status} href="#bond" /><PegInCard status={this.state.status} /><SetupStatus status={this.state.status} /><FoundingWait status={this.state.status} /></>; }
 }
 
 /** The owner sections that help while the setup runs (a problem to fix, an update, the emergency code, the login); the rest waits for it. */

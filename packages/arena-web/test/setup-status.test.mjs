@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { SetupStatus, SetupCard, SetupBanner, SETUP_OPEN_SECTIONS, PegInCard, FoundingWait } from '../dist/test/setup-status.mjs';
+import { SetupStatus, SetupCard, SetupBanner, SETUP_OPEN_SECTIONS, PegInCard, FoundingWait, NoBondCard, noBond } from '../dist/test/setup-status.mjs';
 
 const card = (status) => renderToStaticMarkup(React.createElement(SetupStatus, { status: { ok: true, ...status } }));
 
@@ -55,6 +55,26 @@ test('a complete setup: a Don\'t show again link, hidden per node once clicked; 
 
 // THE PEG-IN, PROMINENT (2026-10-26: "It needs to show the status of the peg in prominently if we have a peg in") and HOW MANY NODES ARE
 // READY FOR THE FOUNDING ("display here how many other nodes are waiting in the format e.g 3/10 ... in big letters")
+// NO BOND (kanban #728, 2026-10-27: "Wenn kein Bond da ist, muss das deutlich sichtbar sein im Dashboard und Owner-Dashboard, und auch keine
+// Federation-Info"): the installer's "I'll post it later" - a red card with the way to set it up, and no founding anywhere
+test('no bond: a red card with "Set up the bond", no founding count, the gateway not waiting on a federation', () => {
+  const none = { ok: true, bond: null, gateway: { ok: true, federations: 0 }, founding: { waiting: true, ready: 3, needed: 10 } };
+  assert.deepEqual([noBond(none), noBond({ ok: true, bond: { txid: 'b0'.repeat(32) } }), noBond({ ok: false }), noBond(null)], [true, false, false, false]);
+  const red = renderToStaticMarkup(React.createElement(NoBondCard, { status: none, href: '#bond' }));
+  assert.match(red, /<h3>No bond<\/h3><span class="setup-pill bad">Not drawn for rounds<\/span>/);
+  assert.match(red, /<a class="btn primary" id="no-bond-go" href="#bond">Set up the bond<\/a>/);
+  assert.equal(renderToStaticMarkup(React.createElement(NoBondCard, { status: { ...none, bond: { txid: 'b0'.repeat(32), sats: '50000' } }, href: '#bond' })), '', 'a bond: no card');
+  assert.equal(renderToStaticMarkup(React.createElement(FoundingWait, { status: none })), '', 'no bond: no founding, no 3/10');
+  const html = card(none);
+  assert.doesNotMatch(html, /federation is founded|3\/10|founding/i);
+  assert.match(html, /id="setup-gateway"[\s\S]*?joins a federation once your node has a bond/);
+  assert.match(html, /setup-pill ok">Complete/, 'a missing bond does not hold the setup screen');
+  // the owner's Overview: the card first, linking to the Bond section; no Federation card
+  const ov = renderToStaticMarkup(new SetupCard({ initial: none }).render());
+  assert.match(ov, /^<div class="card no-bond" id="no-bond"[\s\S]*href="#bond">Set up the bond/);
+  assert.doesNotMatch(ov, /founding-wait|nodes ready for the next federation/);
+});
+
 test('the peg-in as N/100 confirmations, credited at the end; the founding as 3/10 ready nodes', () => {
   const peg = (p) => renderToStaticMarkup(React.createElement(PegInCard, { status: { ok: true, blockMs: 600000, pegIn: p } }));
   assert.equal(peg(null), '');
@@ -63,7 +83,7 @@ test('the peg-in as N/100 confirmations, credited at the end; the founding as 3/
   assert.match(going, /About 11 h to go/);
   assert.match(peg({ txid: 'e6'.repeat(32), confirmations: 0, seen: false, needed: 100 }), /Waiting to be mined/);
   assert.match(peg({ txid: 'e6'.repeat(32), confirmations: 120, seen: true, needed: 100, credited: true }), /setup-pill ok">Credited[\s\S]*founding-n ok">100\/100/);
-  const wait = (f) => renderToStaticMarkup(React.createElement(FoundingWait, { status: { ok: true, founding: { waiting: true, sinceMs: Date.UTC(2026, 9, 25, 15, 31), ...f } } }));
+  const wait = (f) => renderToStaticMarkup(React.createElement(FoundingWait, { status: { ok: true, bond: { txid: 'b0'.repeat(32), sats: 50000 }, founding: { waiting: true, sinceMs: Date.UTC(2026, 9, 25, 15, 31), ...f } } }));
   assert.match(wait({ ready: 3, needed: 10 }), /<span class="founding-n">3\/10<\/span><span class="founding-l">nodes ready for the next federation<\/span>/);
   assert.doesNotMatch(wait({}), /founding-n/, 'no count read: none shown');
 });

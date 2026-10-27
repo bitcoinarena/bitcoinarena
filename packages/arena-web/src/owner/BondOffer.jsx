@@ -61,6 +61,8 @@ export class BondAnswer extends React.Component {
   }
   copy() { navigator.clipboard.writeText(this.state.address).then(() => this.setState({ copied: true }), () => {}); }
   render() {
+    // NO BOND, NO OFFER (kanban #728: "Wenn kein Bond da ist ... auch keine Federation-Info"): the Bond panel below says it and sets it up
+    if (this.props.bond && !this.props.bond.bond) return null;
     const a = bondAnswerOf(this.props), s = this.state, o = a.offer;
     const drawn = <p className={a.drawn.tone}>{a.drawn.text}</p>;
     if (!o) return <><h3>Your bond</h3>{drawn}<p className="sub">No federation you guard pays extra for a bigger bond right now. It shows up here when one does.</p></>;
