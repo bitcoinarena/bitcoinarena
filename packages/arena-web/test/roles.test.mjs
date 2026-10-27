@@ -18,11 +18,11 @@ function driven(api) {
   return c;
 }
 
-test('what it shows: six tiles, a switch for each advertised role and custody, the gateway on, no save bar while nothing changed', () => {
+test('what it shows: seven tiles, a switch for each advertised role, audit and custody, the gateway on, no save bar while nothing changed', () => {
   const was = switchesOf(mine);
   const html = renderToStaticMarkup(React.createElement(RolesPanel, { node: 'me', initial: { loaded: true, mine, gateway: answers['/gateway-claim'], was, now: { ...was } } }));
-  assert.equal((html.match(/class="tile[ "]/g) || []).length, 6);
-  for (const k of ['play', 'settlement', 'custody']) assert.match(html, new RegExp(`id="rl-${k}"`));
+  assert.equal((html.match(/class="tile[ "]/g) || []).length, 7);
+  for (const k of ['play', 'audit', 'settlement', 'custody']) assert.match(html, new RegExp(`id="rl-${k}"`));
   assert.match(html, /class="tile on" id="tile-play"/);
   // relay: always on, no switch (2026-10-26: "Clarify why relay is not default on. It should always be on")
   assert.doesNotMatch(html, /id="rl-relay"/);
@@ -37,7 +37,7 @@ test('what it does: read from the seat, a switch flipped and counted, Review ask
     post: async (path, body) => { posts.push(body.args); return body.args.post ? { ok: true, update: { txid: 'ab'.repeat(32) } } : { ok: true, plan: { feeSats: 612 } }; } };
   const c = driven(api);
   await c.componentDidMount();
-  assert.deepEqual([c.state.loaded, c.state.was], [true, { play: true, settlement: true, relay: true, custody: true }]);
+  assert.deepEqual([c.state.loaded, c.state.was], [true, { play: true, audit: false, settlement: true, relay: true, custody: true }]);
   c.toggle('settlement', false);
   assert.deepEqual(changedOf(c.state.was, c.state.now), ['settlement']);
   assert.match(renderToStaticMarkup(c.render()), /1 change not saved/);
@@ -71,7 +71,7 @@ test('an unanswered /roles is not "not in the census": asked three times, then s
   assert.doesNotMatch(html, /not in the census/); assert.doesNotMatch(html, /class="tile/); assert.match(html, /Couldn.{1,6}t load the roles/); assert.match(html, />Try again</);
   down = false;
   await c.retry();
-  assert.deepEqual([c.state.unread, c.state.was], [false, { play: true, settlement: true, relay: true, custody: true }]);
+  assert.deepEqual([c.state.unread, c.state.was], [false, { play: true, audit: false, settlement: true, relay: true, custody: true }]);
   assert.match(renderToStaticMarkup(c.render()), /class="tile on" id="tile-play"/);
 });
 
