@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A 22 CENSUS LESS ITS ABSENT, AT A SEAT AND AT THE CLIENT (§5A.3, kanban #727). On the seat's own fixture chain: a round of protocol 22
-// whose root leaves out two absent nodes is served by a seat that holds the posting node's claim and finds nothing against it - and the
-// client, from headers and the seat's census evidence alone, draws exactly the seat's committee, with neither absent node in it. A seat
-// with no claim for the root, a seat holding an absent node's signature of the 24 h, and a round below 22 refuse the root by name.
-// The presence book: proofs taken and served, claims kept, and the posting node asking before it leaves anyone out.
+// A 22 CENSUS LESS ITS ABSENT, ONLY WITH PROOF, AT A SEAT AND AT THE CLIENT (§5A.3, kanban #727, the owner 2026-10-27). On the seat's own
+// fixture chain: six bonded nodes, rounds of 3 seats drawing 3; node 5 is stopped. Its absence is proven by three seating certificates
+// of other rounds of the 24 h, signed for real by their seated: drawn there, present at none. The seat serves a round whose root leaves
+// node 5 out, and the client - from headers, the rounds' contracts and their census evidence alone - checks the same proofs and draws
+// the seat's committee. A claim naming an honest node, a claim of 2 seatings, a forged or an under-threshold certificate: refused by
+// the seat and by the client, by name. The presence book: the posting node's claim with its certificates, from what it holds and asks.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -22,9 +23,9 @@ import { keyFor, bondFor } from './curve.js';
 import { deriveCensus } from '../../arena-protocol/src/census.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { bondSetFor } from '../src/curve.js';
-import { committeeFromChain } from '../../arena-protocol/src/client-committee.js';
-import { checkAbsent, presenceWindow } from '../../arena-protocol/src/presence.js';
-import { signPresent } from '../../arena-protocol/src/seating.js';
+import { committeeFromChain, absenceFromChain } from '../../arena-protocol/src/client-committee.js';
+import { presenceWindow, censusTimeMs } from '../../arena-protocol/src/presence.js';
+import { signSeating, signSeen, seatingId, encodeSeatingCertificate, signPresent } from '../../arena-protocol/src/seating.js';
 import { PRESENCE_VERSION } from '../../arena-protocol/src/constants.js';
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH, NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
@@ -61,144 +62,221 @@ const advertFor = (n, version) => ({
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3), guardianOf: [], timestamp: 1788700000000n,
 });
 const bondsAt = (version) => [1, 2, 3, 4, 5, 6].map((n) => bondTransaction(advertFor(n, version), { previousTxid: b32(0xa0 + n), previousVout: 0, outputKey: bondFor(keyFor(n)) }));
-const chainWith = (bonds, contract) => {
+const chainWith = (bonds, contracts = []) => {
   const blocks = [];
   for (let h = FROM; h <= TIP; h++) blocks.push({ transactions: h === FROM ? bonds : [] });
-  if (contract) blocks[1] = { transactions: [publicationOf(contract)] };
+  if (contracts.length) blocks[1] = { transactions: contracts.map(publicationOf) };
   return chainOf(blocks, FROM);
 };
-const ABSENT = [2, 5].map((n) => toHex(keyFor(n))).sort();
-const CLAIMS = ABSENT.map((node) => ({ node, drawnIn: [{ roundId: 'aa'.repeat(32), role: 'settlement' }] }));
-const DRAWN_YESTERDAY = { drawn: [1, 2, 3, 4, 5, 6].map((n) => toHex(keyFor(n))) };
+const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
+const nOf = new Map([1, 2, 3, 4, 5, 6].map((n) => [toHex(keyFor(n)), n]));
+const signBy = (h) => (m) => schnorr.sign(m, b32(nOf.get(h)));
+const STOPPED = toHex(keyFor(5));
+const LIVE_ONE = toHex(keyFor(1));
 
-/** The root of the chain census at the contract's height, less `absent` - what the posting node writes. */
-function rootFor(bonds, over, absent) {
+/** The root of the chain census at HEIGHT less `absent` - what the posting node writes. */
+function rootFor(bonds, absent, over = {}) {
   const contract = decodeRoundContract(encodeRoundContract(contractFor(over)));
   const view = chainWith(bonds);
   const byTxid = new Map();
   for (const block of view.blocks) for (const raw of block.transactions) byTxid.set(toHex(parseTransaction(raw).txid), raw);
-  const census = deriveCensus(view, { contract, bond: bondSetFor('regtest'), absent,
+  const census = deriveCensus(view, { contract, bond: bondSetFor('regtest'), absent: absent ? absent.map((node) => ({ node })) : null,
     resolve: (e) => { const raw = byTxid.get(toHex(e.txid)); return raw ? { transaction: raw } : null; } });
   assert.equal(census.ok, true, census.why);
   return census;
 }
 
-/** A seat whose presence book is `absence`; the round's root leaves out `absent` (or not). */
-function seat({ over = {}, absent = CLAIMS, absence }) {
-  const version = over.protocolVersion ?? PRESENCE_VERSION;
-  const bonds = bondsAt(version);
-  const round = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
-  const census = rootFor(bonds, over, absent);
-  const contract = contractFor({ ...over, censusRoot: census.root });
-  const rid = round.open(contract);
-  const roster = new Roster(round, { chainFor: ({ contract: c } = {}) => chainWith(bonds, c),
-    randomnessFor: ({ contract: c }) => beaconOf(chainWith(bonds, c), c), absence });
-  return { round, rid, roster, bonds, census, contract: decodeRoundContract(new Uint8Array(round.get(rid).contract)) };
+/** A 22 certificate of a seating, signed for real by its seated: `present` what each lists, `seenSigner` who signs the SEEN. */
+function certOf(s, { present = s.seated, seated = s.seated, seenSigner = signBy } = {}) {
+  const rid = fromHex(s.roundId), keys = seated.map(fromHex);
+  const id = seatingId({ roundId: rid, role: s.role, seated: keys });
+  return toHex(encodeSeatingCertificate({ roundId: rid, role: s.role, seated: keys,
+    signatures: seated.map((h) => ({ nodePubkey: fromHex(h), signature: signSeating({ roundId: rid, role: s.role, seated: keys }, signBy(h)) })),
+    seen: [{ present, leftOut: [], signatures: seated.map((h) => ({ nodePubkey: fromHex(h), signature: signSeen({ roundId: rid, role: s.role, seating: id, present, leftOut: [] }, seenSigner(h)) })) }] }));
 }
-const book = ({ claims = CLAIMS, seen = [], drawOf = () => ({ ...DRAWN_YESTERDAY, closeMs: 0n }) } = {}) => ({
-  claimFor: () => claims,
-  // the window is the fixture chain's; the named seating closes inside it
-  check: (c, { census, w }) => checkAbsent(c, { census, seen, drawOf: (r, role) => { const d = drawOf(r, role); return d ? { ...d, closeMs: w.toMs - 1n } : null; }, window: w }),
-});
-const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
+
+/**
+ * THE WORLD: one chain holding every round's publication, a seat with its presence book, earlier rounds of the 24 h (their census
+ * the chain's own), and the seatings among them that drew the stopped node at different closes - its proofs.
+ */
+function world({ over = {}, absent = [STOPPED], rounds = 24 } = {}) {
+  const bonds = bondsAt(over.protocolVersion ?? PRESENCE_VERSION);
+  const full = rootFor(bonds, null, over), less = rootFor(bonds, absent, over);
+  const current = contractFor({ ...over, censusRoot: less.root });
+  const earlier = Array.from({ length: rounds }, (_, j) => contractFor({ ...over, startTimeMs: COMMITTEE_TIME + 60500n + BigInt(j + 1) * 1000n,
+    entryCloseMs: COMMITTEE_TIME + 200000n + BigInt(j + 1) * 1000n, censusRoot: full.root }));
+  const view = chainWith(bonds, [current, ...earlier]);
+  const round = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
+  const roster = new Roster(round, { chainFor: () => view, randomnessFor: ({ contract: c }) => beaconOf(view, c) });
+  const book = presenceBook({ round, roster, verify });
+  roster.absence = { claimFor: book.claimFor, check: book.check };
+  const seatings = [];
+  for (const c of earlier) {
+    const rid = round.open(c);
+    for (const role of ['settlement', 'game']) {
+      const d = roster.committeeFor(rid, role);
+      assert.equal(d.ok, true, d.why);
+      const drawn = d.drawn.map((e) => toHex(e.pubkey));
+      if (drawn.includes(STOPPED)) { seatings.push({ roundId: toHex(rid), role, drawn, seated: drawn.filter((h) => h !== STOPPED) }); break; }
+    }
+  }
+  if (rounds) assert.ok(seatings.length >= 4, 'the earlier rounds drew the stopped node at 4 or more closes');
+  const rid = round.open(current);
+  const contract = decodeRoundContract(new Uint8Array(round.get(rid).contract));
+  const w = presenceWindow(censusTimeMs(view, HEIGHT));
+  const contracts = Object.fromEntries(seatings.map((s) => [s.roundId, toHex(new Uint8Array(round.get(fromHex(s.roundId)).contract))]));
+  return { round, roster, book, rid, contract, view, seatings, w, contracts, bonds, less };
+}
+const proofsOf = (list) => list.map((s) => ({ roundId: s.roundId, role: s.role }));
+/** A claim of `node` at `list` seatings, with `certs` (default: each signed honestly). */
+const claimOf = (node, list, certs = Object.fromEntries(list.map((s) => [`${s.roundId}:${s.role}`, certOf(s)]))) => ({ claims: [{ node, proofs: proofsOf(list) }], certs });
+/** The client's check: the claim, the rounds' contracts and census evidence a seat hands over, the headers. */
+const client = (W, claim) => {
+  // the round's own census as the client checked it (none where the seat serves it no census: nothing to hold the claim against)
+  const ev = W.roster.censusEvidenceFor(W.rid);
+  const own = ev.ok ? committeeFromChain({ contract: W.contract, roundId: W.rid, headers: W.view.blocks.map((b) => b.header), firstHeight: W.view.firstHeight,
+    evidence: ev.entries, bond: bondSetFor('regtest'), verify }) : null;
+  return absenceFromChain({ contract: W.contract, claim: { ...claim, contracts: W.contracts }, headers: W.view.blocks.map((b) => b.header), firstHeight: W.view.firstHeight,
+    evidenceOf: (r) => W.roster.censusEvidenceFor(fromHex(r)).entries, bond: bondSetFor('regtest'), verify, entries: own && own.ok ? own.checkedCensus.entries : [] });
+};
 const keys = (list) => list.map((k) => toHex(k)).sort();
 
-test('a 22 round less its two absent: the seat serves it, and the client draws the seat\'s committee from the evidence alone', () => {
-  const s = seat({ absence: book() });
-  assert.equal(s.census.entries.length, 4, 'the posting node\'s census: six bonds less two absent');
-  assert.deepEqual(s.census.excluded.filter((x) => x.step === 'absent').map((x) => toHex(x.pubkey)).sort(), ABSENT);
-  const c = s.roster.censusFor(s.rid);
+test('a 22 round less a node proven absent at 3 seatings: the seat serves it, and the client checks the same proofs and draws the seat\'s committee', () => {
+  const W = world();
+  assert.equal(W.less.entries.length, 5, 'six bonds less the stopped one');
+  const claim = claimOf(STOPPED, W.seatings.slice(0, 3));
+  assert.equal(W.book.keepClaim(toHex(W.contract.censusRoot), claim).ok, true);
+  const c = W.roster.censusFor(W.rid);
   assert.equal(c.ok, true, c.why);
-  assert.deepEqual(c.absent.map((x) => x.node), ABSENT);
-  const ev = s.roster.censusEvidenceFor(s.rid);
+  assert.deepEqual(c.absent.map((x) => x.node), [STOPPED]);
+  const ev = W.roster.censusEvidenceFor(W.rid);
   assert.equal(ev.ok, true, ev.why);
-  assert.equal(ev.entries.length, 4, 'the evidence a client gets is the census less the absent');
-  const view = chainWith(s.bonds, s.contract);
-  const mine = committeeFromChain({ contract: s.contract, roundId: s.rid, headers: view.blocks.map((b) => b.header), firstHeight: view.firstHeight,
+  assert.equal(ev.entries.length, 5, 'the evidence a client gets is the census less the absent');
+  const got = client(W, claim);
+  assert.equal(got.ok, true, got.why);
+  assert.deepEqual(got.absent, [STOPPED]);
+  const mine = committeeFromChain({ contract: W.contract, roundId: W.rid, headers: W.view.blocks.map((b) => b.header), firstHeight: W.view.firstHeight,
     evidence: ev.entries, bond: bondSetFor('regtest'), verify });
   assert.equal(mine.ok, true, mine.why);
   for (const role of ['game', 'settlement']) {
-    const at = s.roster.committeeFor(s.rid, role);
+    const at = W.roster.committeeFor(W.rid, role);
     assert.equal(at.ok, true, at.why);
     assert.deepEqual(keys(mine.drawn[role]), keys(at.drawn.map((e) => e.pubkey)), `${role}: the client and the seat draw one set`);
-    for (const k of mine.drawn[role]) assert.ok(!ABSENT.includes(toHex(k)), 'an absent node is drawn by neither');
+    assert.ok(!mine.drawn[role].some((k) => toHex(k) === STOPPED), 'the absent node is drawn by neither');
   }
 });
 
-test('no claim held for the root, a seat holding an absent node\'s window signature, a claim naming a seating that did not draw it: refused by name', () => {
-  const none = seat({ absence: book({ claims: null }) });
-  assert.match(none.roster.censusFor(none.rid).why, /no absent claim is held here for that root/);
-  const seen = seat({ absence: book({ seen: [ABSENT[0]] }) });
-  const r = seen.roster.censusFor(seen.rid);
+test('a claim naming an honest node is refused by the seat and by the client: listed present, 2 seatings only, a forged certificate, one under threshold', () => {
+  const W = world();
+  const three = W.seatings.slice(0, 3);
+  const k0 = `${three[0].roundId}:${three[0].role}`;
+  const cases = [
+    // 1. a seated node of a named seating listed it present: it was there
+    ['present', claimOf(STOPPED, three, { ...claimOf(STOPPED, three).certs, [k0]: certOf(three[0], { present: [...three[0].seated, STOPPED] }) }), /lists it present/],
+    // 2. proven at 2 seatings only (a node flooded at 2 of its seatings)
+    ['too-few', claimOf(STOPPED, three.slice(0, 2)), /on 2 missed seating close\(s\); it takes 3/],
+    // 3. a forged certificate: who was present signed by a key that is not the seated
+    ['certificate', claimOf(STOPPED, three, { ...claimOf(STOPPED, three).certs, [k0]: certOf(three[0], { seenSigner: () => signBy(LIVE_ONE === three[0].seated[0] ? three[0].seated[1] : LIVE_ONE) }) }), /does not stand/],
+    // 4. under threshold: one seated of a 3-seat round needing 2
+    ['certificate', claimOf(STOPPED, three, { ...claimOf(STOPPED, three).certs, [k0]: certOf(three[0], { seated: three[0].seated.slice(0, 1), present: three[0].seated.slice(0, 1) }) }), /fewer than the 2/],
+  ];
+  const census = W.roster.censusFor(W.rid, null, { asRoundsOwn: false });
+  for (const [proof, claim, why] of cases) {
+    const atSeat = W.book.check(claim, { census: census.entries.map((e) => toHex(e.pubkey)), w: W.w });
+    assert.equal(atSeat.ok, false, `${proof}: the seat refuses`);
+    assert.equal(atSeat.proof, proof);
+    assert.match(atSeat.why, why);
+    const atClient = client(W, claim);
+    assert.equal(atClient.ok, false, `${proof}: the client refuses`);
+    assert.match(atClient.why, why);
+  }
+  // a live node named absent at seatings that never drew it
+  const notDrawn = claimOf(LIVE_ONE, W.seatings.filter((s) => !s.drawn.includes(LIVE_ONE)).slice(0, 3));
+  if (notDrawn.claims[0].proofs.length === 3) assert.match(client(W, notDrawn).why, /neither drew it nor had it left out/);
+  // a seat holding a window certificate that lists the stopped node present refuses whatever the claim names
+  const fourth = W.seatings[3];
+  assert.equal(W.book.takeCert(fromHex(certOf(fourth, { present: [...fourth.seated, STOPPED] }))).ok, true);
+  const held = W.book.check(claimOf(STOPPED, three), { census: census.entries.map((e) => toHex(e.pubkey)), w: W.w });
+  assert.equal(held.proof, 'seen');
+  // and wired through the roster: the round's census is refused by name, and not served
+  W.book.keepClaim(toHex(W.contract.censusRoot), claimOf(STOPPED, three.slice(0, 2)));
+  const r = W.roster.censusFor(W.rid);
   assert.equal(r.ok, false);
-  assert.match(r.why, /this seat holds its signature of a seating in the 24 h/);
-  assert.deepEqual(r.refuted, { node: ABSENT[0], proof: 'seen' });
-  const notDrawn = seat({ absence: book({ drawOf: () => ({ drawn: [toHex(keyFor(1))] }) }) });
-  assert.match(notDrawn.roster.censusFor(notDrawn.rid).why, /none of the seatings it names drew it/);
-  // a fresh seat: it cannot draw the named seating, so it serves the round
-  const fresh = seat({ absence: book({ drawOf: () => null }) });
-  const f = fresh.roster.censusFor(fresh.rid);
-  assert.equal(f.ok, true, f.why);
-  assert.deepEqual(f.uncheckedAbsent, ABSENT);
-  // no presence book at all: the root is any other root the chain does not give
-  const bare = seat({ absence: null });
-  assert.match(bare.roster.censusFor(bare.rid).why, /that round names census root .* and the chain gives/);
+  assert.ok(r.refuted && r.refuted.node === STOPPED, r.why);
 });
 
-test('below protocol 22 nothing is left out: the posting node\'s census is the chain\'s, whatever it is handed', () => {
-  const s = seat({ over: { protocolVersion: 20 }, absence: book() });
-  assert.equal(s.census.entries.length, 6, 'a 20 census keeps every bond');
-  const c = s.roster.censusFor(s.rid);
+test('no claim held, a proof seating not drawable yet: not yet, not refused for good; below protocol 22 nothing is left out', () => {
+  const W = world();
+  assert.match(W.roster.censusFor(W.rid).why, /no absent claim is held here for that root/);
+  // a seating this seat does not hold: it cannot draw it yet
+  const claim = claimOf(STOPPED, W.seatings.slice(0, 3));
+  claim.claims[0].proofs[0] = { roundId: 'ab'.repeat(32), role: 'game' };
+  const census = W.roster.censusFor(W.rid, null, { asRoundsOwn: false });
+  const r = W.book.check(claim, { census: census.entries.map((e) => toHex(e.pubkey)), w: W.w });
+  assert.equal(r.notYet, true, r.why);
+  const old = world({ over: { protocolVersion: 20 }, absent: null, rounds: 0 });
+  const c = old.roster.censusFor(old.rid);
   assert.equal(c.ok, true, c.why);
-  assert.equal(c.entries.length, 6);
+  assert.equal(c.entries.length, 6, 'a 20 census keeps every bond');
 });
 
-test('the presence book: a peer\'s PRESENT taken as a proof clears a node the posting node would have left out; claims kept by root', async () => {
-  const round = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
-  const T = 1793145600000n, w = presenceWindow(T);
-  const nodes = [1, 2, 3, 4].map((n) => ({ n, secret: new Uint8Array(32).fill(n), get pubkey() { return schnorr.getPublicKey(this.secret); } }));
-  const rids = [b32(0x51), b32(0x52), b32(0x53)];
-  for (const rid of rids) round.db.prepare('INSERT INTO rounds (round_id, contract, state, opened_ms) VALUES (?, ?, 0, ?)').run(rid, new Uint8Array(1), Number(T) - 3600000);
-  const closeOfRound = (rid) => { const i = rids.findIndex((r) => toHex(r) === toHex(rid)); return i < 0 ? null : (i === 2 ? T + 1n : T - BigInt(i + 1) * 60000n); };
-  const roster = { committeeFor: () => ({ ok: true, drawn: nodes.map((x) => ({ pubkey: x.pubkey })) }) };
-  const ROOT0 = 'c0'.repeat(32);
-  const pb = presenceBook({ round, roster, verify, closeOfRound, rootOfRound: () => ROOT0 });
-  // this seat holds node 1's PRESENT of round 0 (it was drawn there too)
-  round.db.prepare('INSERT INTO seat_presents (round_id, role, node, bytes) VALUES (?, ?, ?, ?)').run(rids[0], 'settlement', toHex(nodes[0].pubkey),
-    signPresent({ roundId: rids[0], role: 'settlement', nodePubkey: nodes[0].pubkey }, (m) => schnorr.sign(m, nodes[0].secret)));
-  assert.equal(pb.seatingsIn(w).length, 4, 'two rounds in the window, two roles each; the third closes after the census');
-  const census = nodes.map((x) => toHex(x.pubkey));
-  // node 2's PRESENT is held only by a peer: asked for, taken, and node 2 is kept
-  const peerHeld = signPresent({ roundId: rids[1], role: 'game', nodePubkey: nodes[1].pubkey }, (m) => schnorr.sign(m, nodes[1].secret));
+test('the presence book: the posting node leaves out the node its certificates prove absent, with them attached - and keeps one a peer\'s certificate lists present', async () => {
+  const W = world();
+  // this seat holds the certificates of three of the seatings (it was drawn there)
+  for (const s of W.seatings.slice(0, 3)) W.round.db.prepare('INSERT INTO seat_certs (round_id, role, cert) VALUES (?, ?, ?)').run(fromHex(s.roundId), s.role, fromHex(certOf(s)));
+  const chain = [1, 2, 3, 4, 5, 6].map((n) => toHex(keyFor(n)));
+  assert.equal(W.book.seatingsIn(W.w).length, 3);
   const asked = [];
-  const claims = await pb.absentForPosting({ census, w, ask: async (list) => { asked.push(...list); return [toHex(peerHeld)]; } });
-  assert.deepEqual(asked.sort(), census.slice(1).sort(), 'the three not seen here are asked for');
-  assert.deepEqual(claims.map((c) => c.node).sort(), [toHex(nodes[2].pubkey), toHex(nodes[3].pubkey)].sort());
-  assert.deepEqual(pb.proofsOf([toHex(nodes[1].pubkey)], w), [toHex(peerHeld)], 'the proof taken is served on to the next asker');
-  // a PRESENT outside the window, or forged, is not a proof
-  assert.match(pb.takeProof(signPresent({ roundId: rids[2], role: 'game', nodePubkey: nodes[2].pubkey }, (m) => schnorr.sign(m, nodes[2].secret)), w).why, /outside the 24 h/);
-  assert.match(pb.takeProof(signPresent({ roundId: rids[0], role: 'game', nodePubkey: nodes[2].pubkey }, (m) => schnorr.sign(m, nodes[3].secret)), w).why, /not signed by the node it names/);
-  // claims by root
+  const claim = await W.book.absentForPosting({ census: chain, w: W.w, ask: async (nodes) => { asked.push(...nodes); return { presents: [], certs: [] }; } });
+  assert.deepEqual(claim.claims.map((c) => c.node), [STOPPED], 'the node the certificates show drawn and absent at 3 closes');
+  assert.ok(asked.includes(STOPPED), 'the nodes this seat saw nowhere are asked for first');
+  assert.equal(Object.keys(claim.certs).length, 3, 'the three certificates attached');
+  assert.equal(client(W, claim).ok, true, 'and the client takes the claim as posted');
+  // a peer holds a fourth seating whose certificate lists it present: handed over, the node is kept
+  const fourth = W.seatings[3];
+  const kept = await W.book.absentForPosting({ census: chain, w: W.w, ask: async () => ({ presents: [], certs: [certOf(fourth, { present: [...fourth.seated, STOPPED] })] }) });
+  assert.deepEqual(kept.claims, [], 'present once in the 24 h: kept');
+  assert.equal(W.book.certsOf([STOPPED], W.w).length, 4, 'and the certificates are served on to the next asker');
+  // a PRESENT a peer holds, forged or outside the window, is no proof
+  const [rid] = [fromHex(W.seatings[0].roundId)];
+  assert.match(W.book.takeProof(signPresent({ roundId: rid, role: 'game', nodePubkey: keyFor(5) }, (m) => schnorr.sign(m, b32(4))), W.w).why, /not signed by the node it names/);
+  // claims by root, with their certificates
   const root = 'cd'.repeat(32);
-  assert.equal(pb.keepClaim(root, claims).ok, true);
-  assert.deepEqual(pb.claimFor(root).map((c) => c.node), claims.map((c) => c.node));
-  assert.equal(pb.claimFor('ef'.repeat(32)), null);
-  assert.match(pb.keepClaim(root, [{ node: 'zz' }]).why, /32 bytes hex/);
-  // and the seat's check of its own claim stands
-  assert.equal(pb.check(claims, { census, w }).ok, true);
-  assert.equal(pb.check([{ node: toHex(nodes[1].pubkey), drawnIn: [{ roundId: toHex(rids[1]), role: 'game' }] }], { census, w }).proof, 'seen');
-  // ABSENT STAYS ABSENT UNTIL SEEN: the census the window's rounds were drawn from left node 4 out; it stays out, naming that root
-  pb.keepClaim(ROOT0, [{ node: toHex(nodes[3].pubkey), drawnIn: [] }]);
-  assert.deepEqual(pb.carriedIn(w), [{ node: toHex(nodes[3].pubkey), root: ROOT0 }]);
-  const again = await pb.absentForPosting({ census, w });
-  assert.equal(again.find((c) => c.node === toHex(nodes[3].pubkey)).from, ROOT0);
-  assert.equal(pb.check(again, { census, w }).ok, true, 'a seat holding the claim of that root agrees');
-  // and node 4 comes back by being seen: the rounds whose census names it absent, as their seatings come
-  assert.deepEqual(pb.roundsToReturn(toHex(nodes[3].pubkey), Number(T - 3n * 60000n)).map(toHex), [toHex(rids[1])], 'the round whose seating closes in the next minute');
-  assert.deepEqual(pb.roundsToReturn(toHex(nodes[3].pubkey), Number(T - 2n * 60000n)).map(toHex), [toHex(rids[0])], 'and then the next');
-  assert.deepEqual(pb.roundsToReturn(toHex(nodes[0].pubkey), Number(T - 3n * 60000n)), [], 'a node no census left out signs nothing extra');
-  assert.equal(pb.takeProof(signPresent({ roundId: rids[0], role: 'game', nodePubkey: nodes[3].pubkey }, (m) => schnorr.sign(m, nodes[3].secret)), null).ok, true);
-  const cleared = await pb.absentForPosting({ census, w });
-  assert.ok(!cleared.some((c) => c.node === toHex(nodes[3].pubkey)), 'seen once in the 24 h, it is in the next census');
-  void fromHex;
+  assert.equal(W.book.keepClaim(root, claim).ok, true);
+  assert.deepEqual(W.book.claimFor(root).claims.map((c) => c.node), [STOPPED]);
+  assert.equal(Object.keys(W.book.claimFor(root).certs).length, 3);
+  assert.equal(W.book.claimFor('ef'.repeat(32)), null);
+  assert.match(W.book.keepClaim(root, { claims: [{ node: 'zz' }] }).why, /32 bytes hex/);
+  // a node left out comes back by being seen: the rounds whose census names it absent, as their seatings come
+  W.book.keepClaim(toHex(W.contract.censusRoot), claim);
+  const close = BigInt(W.contract.startTimeMs) - 120000n;
+  assert.deepEqual(W.book.roundsToReturn(STOPPED, Number(close - 30000n)).map(toHex), [toHex(W.rid)]);
+  assert.deepEqual(W.book.roundsToReturn(LIVE_ONE, Number(close - 30000n)), [], 'a node no census left out signs nothing extra');
+});
+
+// ---- the page's own function, over what the seats serve (GET /headers, /census, /absent) ----
+import { clientCommittee } from '../../arena-client/src/committee.js';
+import { pageCurve } from '../../arena-client/src/page-curve.js';
+import { blockHashOf } from '../../arena-protocol/src/chain.js';
+
+test('the page joins a 22 round only after it checked the absent claim the seats hand over: a proven claim joins, a claim of 2 seatings is refused', async () => {
+  // the refusal first: a claim that stood is kept per root, a refused one never is
+  for (const [list, ok] of [[2, false], [3, true]]) {
+    const W = world();
+    const claim = claimOf(STOPPED, W.seatings.slice(0, list));
+    // the seat serves the round with the proven claim; the page is handed `claim` by GET /absent
+    W.book.keepClaim(toHex(W.contract.censusRoot), claimOf(STOPPED, W.seatings.slice(0, 3)));
+    const headers = Buffer.concat(W.view.blocks.map((b) => Buffer.from(b.header)));
+    const fetcher = async (url) => {
+      const u = new URL(url);
+      if (u.pathname === '/headers') return new Response(headers, { status: 200 });
+      if (u.pathname === '/census') return new Response(JSON.stringify(W.roster.censusEvidenceFor(fromHex(u.searchParams.get('round')))), { status: 200 });
+      if (u.pathname === '/absent') return new Response(JSON.stringify({ root: u.searchParams.get('root'), ...claim, contracts: W.contracts }), { status: 200 });
+      return new Response('no', { status: 404 });
+    };
+    const got = await clientCommittee(toHex(W.rid), W.contract, ['https://seat-a.example', 'https://seat-b.example'], { curve: pageCurve, fetcher, compare: false,
+      anchorAt: { hash: blockHashOf(W.view.blocks[0].header), height: W.view.firstHeight } });
+    if (ok) { assert.equal(got.ok, true, got.why); assert.deepEqual(got.absent, [STOPPED]); }
+    else { assert.equal(got.ok, false); assert.match(got.why, /leaves out a node without proof: .*it takes 3/); }
+  }
 });
