@@ -55,9 +55,12 @@ export function buildGrid({ contract, kind = {}, slots = 225, tables = 2, window
   }
   // ONE CENSUS FOR THE GRID: every round names the same census height, game and slots, so the root is derived once - and checked again on
   // the last round, which must agree
+  // THE ROOT ON EVERY TEMPLATE BEFORE THE LAST ROUND IS DERIVED (kanban #702, measured 2026-10-27 08:33Z, the seats posting for the first time:
+  // seriesRound encodes the template for its series id, and a template the node built itself names no root yet - "expected 32 bytes, got
+  // nothing" for every grid; the runners' templates carried their held round's root, so they never met it)
   const root = censusRootFor(templates[0]);
-  if (toHex(censusRootFor(seriesRound(templates[tables - 1], slots - 1))) !== toHex(root)) throw new Error('the grid first and last rounds derive different census roots');
   for (const t of templates) t.censusRoot = root;
+  if (toHex(censusRootFor(seriesRound(templates[tables - 1], slots - 1))) !== toHex(root)) throw new Error('the grid first and last rounds derive different census roots');
   // A GRID NO COMMITTEE CAN SERVE IS NOT PUBLISHED (kanban #689): enough game nodes hosting each table's game, and enough settlement nodes
   if (kind.mustDraw) for (const t of templates) for (const role of ['game', 'settlement']) {
     const m = meetsCensusMinimum(censusEntries(), decodeRoundContract(encodeRoundContract(t)), role);
