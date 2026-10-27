@@ -25,6 +25,7 @@ import { WaitingDonations, DevClients } from './DonationsPanels.jsx';
 import { BallotsPanel } from './BallotsPanel.jsx';
 import { GameDevsPanel } from './GameDevsPanel.jsx';
 import { ReferrerPanel } from './ReferrerPanel.jsx';
+import { RoundsPanel } from './RoundsPanel.jsx';
 import { flushSync } from 'react-dom';
 
 export function mountRoles(element, { api, node, initial } = {}) {
@@ -33,6 +34,7 @@ export function mountRoles(element, { api, node, initial } = {}) {
   return root;
 }
 // THE NODE KEY FROM THE 24 WORDS (kanban #650): optional, asked only on the owner's Check
+export function mountRounds(element, { api, initial } = {}) { const root = createRoot(element); root.render(<RoundsPanel api={api} initial={initial} />); return root; }
 export function mountKeySwitch(element, { api, initial } = {}) { const root = createRoot(element); root.render(<KeySwitchPanel api={api} initial={initial} />); return root; }
 export function mountServices(element, { api, initial, onAttention } = {}) {
   const root = createRoot(element);

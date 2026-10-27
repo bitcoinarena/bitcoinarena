@@ -11,7 +11,7 @@ import React from 'react';
 import { NeedsPanel, ordered } from './NeedsPanel.jsx';
 import { CopyButton } from '../design/components.jsx';
 
-export const SECTIONS = [['overview', 'Overview'], ['roles', 'Roles'], ['bond', 'Bond'], ['services', 'Services'], ['apps', 'Apps'], ['release', 'Updates'],
+export const SECTIONS = [['overview', 'Overview'], ['roles', 'Roles'], ['rounds', 'Rounds'], ['bond', 'Bond'], ['services', 'Services'], ['apps', 'Apps'], ['release', 'Updates'],
   ['money', 'Donations'], ['referrer', 'Referrer'], ['emergency', 'Emergency code'], ['leave', 'Leave'], ['developer', 'Developer'], ['login', 'Your login']];
 const HOW = { words: 'your 24 words', nsec: 'Nostr (nsec)', extension: 'Nostr (extension)', bunker: 'Nostr (remote signer)' };
 /** a place a panel is drawn into: React draws it empty and never touches what the page puts in it */
@@ -59,6 +59,10 @@ export class OwnerArea extends React.Component {
             <Place id="roles" />
             <h3 className="sh">Custody (guardian)</h3><Place id="custody" />
             <h3 className="sh">Liquidity provider</h3><Place id="liquidity" /></>)}
+          {/* THE ROUNDS THIS NODE IS DRAWN FOR (kanban #715): drawn by RoundsPanel from GET /owner/rounds */}
+          {sec('rounds', <><h2>Rounds</h2>
+            <p className="lead">The rounds your node is drawn for: in "Play and check" it replays the games and signs who won, in "Pay out winners" it co-signs the payout.</p>
+            <Place id="rounds" /></>)}
           {sec('bond', <><h2>Bond</h2>
             <Place id="bond-answer" /><Place id="capacity-plea" className={null} /><Place id="bond" /><Place id="keyswitch-place" className={null} />
             <details className="more"><summary>How this node is drawn (details)</summary><Place id="standing" /></details></>)}
