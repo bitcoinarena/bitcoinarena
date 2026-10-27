@@ -40,6 +40,7 @@ import { decodeAdvert, splitSignedAdvert, advertId, hostsGame } from './advert.j
 import { maturityStands } from './bond-script.js';
 import { poolOfRole, GAME_VERIFY } from './fee.js';
 import { genesisFor } from './genesis.js';
+import { dropsAbsent, withoutAbsent } from './presence.js';
 
 /**
  * One census entry, encoded.
@@ -1341,7 +1342,7 @@ export function newestPerNode(eligible, updates) {
  * spent, and the advertisement signature needs a curve this package does not
  * carry. Neither is skipped quietly.
  */
-export function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond, verifyUpdate }) {
+export function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond, verifyUpdate, absent = null }) {
   // MOST WORK WINS, HERE, before anything is read. Two chains that disagree
   // about Bitcoin are not two censuses: one of them is the chain.
   const chain = bestChainView(views);
@@ -1489,6 +1490,17 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
     sumOut.push(...f.out);
   }
 
+  // AND THE ABSENT NODES (§5A.3, protocol 22, kanban #727): a node drawn in the 24 h before the census and seen at none of those
+  // seatings leaves it, every output of it. The list is the posting node's claim (presence.js absentFrom), checked by the seats one
+  // way (checkAbsent) - this only applies it, so the root commits to the set the claim names. Below 22, or with no claim, nothing.
+  const absentOut = [];
+  if (Array.isArray(absent) && absent.length && dropsAbsent(contract)) {
+    const kept = withoutAbsent(eligible, absent);
+    const keptSet = new Set(kept);
+    for (const e of eligible) if (!keptSet.has(e)) absentOut.push({ ...e, absent: true, why: 'drawn in the 24 h before the census and seen at none of those seatings: left out of the census, its bond untouched' });
+    eligible = kept;
+  }
+
   let census;
   try {
     census = commitCensus(eligible, { contract, view: chain });
@@ -1510,6 +1522,7 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
       ...reaffirmOut.map((e) => ({ ...e, step: 'reaffirm' })),
       ...updatedOut.map((e) => ({ ...e, step: 'update' })),
       ...sumOut.map((e) => ({ ...e, step: 'sum' })),
+      ...absentOut.map((e) => ({ ...e, step: 'absent' })),
     ],
     unchecked: resolved.unchecked,
     chainChecked: resolved.chainChecked,

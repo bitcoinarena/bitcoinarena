@@ -35,6 +35,11 @@ export const PRESSURE_WEIGHT_VERSION = 20;
 /** About three auditors, drawn in secret by a VRF, replay every paid round and object to a false result (§13A.1, kanban #725). */
 export const AUDITOR_VERSION = 22;
 /**
+ * A node drawn in the 24 h before the census and seen at none of those seatings leaves the census (§5A.3, presence.js, kanban #727).
+ * Folded into 22 with the auditors: 2.0 is unreleased and no series of 22 is posted on any network, so one number keeps 2.0's rules one set.
+ */
+export const PRESENCE_VERSION = 22;
+/**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
  * and the beacon ... Thresholds count the 7 seated nodes"). Measured 2026-10-13 00:28Z: with federation B's 7 bonds the
