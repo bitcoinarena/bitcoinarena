@@ -40,7 +40,7 @@ import { decodeAdvert, splitSignedAdvert, advertId, hostsGame } from './advert.j
 import { maturityStands } from './bond-script.js';
 import { poolOfRole, GAME_VERIFY } from './fee.js';
 import { genesisFor } from './genesis.js';
-import { dropsAbsent, withoutAbsent } from './presence.js';
+import { dropsAbsent, withoutAbsent, ABSENT_WHY } from './presence.js';
 
 /**
  * One census entry, encoded.
@@ -1490,14 +1490,15 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
     sumOut.push(...f.out);
   }
 
-  // AND THE ABSENT NODES (§5A.3, protocol 22, kanban #727): a node drawn in the 24 h before the census and seen at none of those
-  // seatings leaves it, every output of it. The list is the posting node's claim (presence.js absentFrom), checked by the seats one
-  // way (checkAbsent) - this only applies it, so the root commits to the set the claim names. Below 22, or with no claim, nothing.
+  // AND THE ABSENT NODES (§5A.3, protocol 22, kanban #727): a node that seating certificates prove drawn and not present at 3 or more
+  // seatings of the 24 h before the census, and present at none, leaves it, every output of it. The list is the posting node's claim
+  // (presence.js absentFrom), whose proofs every seat and the client check (checkAbsenceProof) - this only applies it, so the root
+  // commits to the set the claim names. Below 22, or with no claim, nothing.
   const absentOut = [];
   if (Array.isArray(absent) && absent.length && dropsAbsent(contract)) {
     const kept = withoutAbsent(eligible, absent);
     const keptSet = new Set(kept);
-    for (const e of eligible) if (!keptSet.has(e)) absentOut.push({ ...e, absent: true, why: 'drawn in the 24 h before the census and seen at none of those seatings: left out of the census, its bond untouched' });
+    for (const e of eligible) if (!keptSet.has(e)) absentOut.push({ ...e, absent: true, why: ABSENT_WHY });
     eligible = kept;
   }
 

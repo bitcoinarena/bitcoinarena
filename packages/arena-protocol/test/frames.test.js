@@ -71,7 +71,8 @@ test('one type carries no authority, and it is the ghost', () => {
   // 53 since the owner's emergency leave request (protocol 17, §23A.5a): it takes a node out of the seating - an authority.
   // 55 since the auditor's AUDIT (§13A.1, kanban #725: it names the auditor in the payout's lines) and the slash proof against a
   // contradicted one (kanban #724, #725: a slashing transaction commits to its id) - both authorities.
-  assert.equal(FRAMES.size, 55, 'a type was added without saying what it decides');
+  // 56 since a seated node's SEEN (§5A.3, kanban #727: it proves a node absent, and so leaves it out of a census) - an authority.
+  assert.equal(FRAMES.size, 56, 'a type was added without saying what it decides');
 });
 
 /**
