@@ -109,7 +109,8 @@ test('starting the node starts its guardian with nothing configured for it, and 
   try {
     assert.equal(g.running, true);
     assert.equal(g.endpoint, 'wss://seat.example.com/guardian-1/guardian', "the node's own public address");
-    for (let i = 0; i < 50 && !existsSync(seen); i++) await new Promise((r) => setTimeout(r, 100));
+    // the shell creates `seen` before grep has written to it: waited for until it holds what grep writes
+    for (let i = 0; i < 100 && !(existsSync(seen) && /FM_DATA_DIR=/.test(readFileSync(seen, 'utf8'))); i++) await new Promise((r) => setTimeout(r, 100));
     const env = Object.fromEntries(readFileSync(seen, 'utf8').trim().split('\n').map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
     assert.equal(env.FM_API_URL, 'wss://seat.example.com/guardian-1/guardian');
     assert.equal(env.FM_BITCOIN_NETWORK, 'testnet4', "read off the node's own bitcoind");
@@ -168,7 +169,8 @@ test('the guardian-next: ports +5000..+8000 that meet no guardian of the row, it
   try {
     assert.deepEqual([g.running, g.slot, g.apiPort, g.dataDir], [true, 'next', 11221, join(dir, 'a.db.guardian-next')]);
     assert.equal(g.endpoint, 'wss://seat.example.com/fed2-1/guardian-next');
-    for (let i = 0; i < 50 && !existsSync(seen); i++) await new Promise((r) => setTimeout(r, 100));
+    // the shell creates `seen` before grep has written to it: waited for until it holds the data dir (the last FM_ line a loaded machine writes)
+    for (let i = 0; i < 100 && !(existsSync(seen) && /FM_DATA_DIR=/.test(readFileSync(seen, 'utf8'))); i++) await new Promise((r) => setTimeout(r, 100));
     const env = Object.fromEntries(readFileSync(seen, 'utf8').trim().split('\n').map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
     assert.deepEqual([env.FM_BIND_API, env.FM_BIND_P2P, env.FM_BIND_UI, env.FM_BIND_METRICS, env.FM_P2P_URL, env.FM_DATA_DIR],
       ['127.0.0.1:11221', '127.0.0.1:12221', '127.0.0.1:13221', '127.0.0.1:14221', 'fedimint://127.0.0.1:12221', join(dir, 'a.db.guardian-next')]);
