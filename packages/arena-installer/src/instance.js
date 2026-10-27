@@ -34,6 +34,18 @@ export function confAt(home) {
  * refused, "that key is not this node's owner"): a name not this node's own is taken only when none of its ports is in use.
  */
 export const BASE_PORTS = [7800, 8470, 8471, 8476, 8477, 9735, 10009, 10080, 19050, 19051];
+/**
+ * EVERY PORT A NODE AT `offset` WILL USE (the 2026.1.9.11 install test: the new node's fedimintd could not bind its API port 12770 -
+ * "Address already in use" - since another node's guardian held it; the free-port check knew only the ports above): the fixed ones, the
+ * gateway's metrics port (gateway.js: its port + 2), and the guardian's and the guardian-next's, which follow the seat's port
+ * (arena-node guardian.js guardianPorts: + 1000 .. + 4000, guardianNextPorts: + 5000 .. + 8000). Tor and Bitcoin Core find free ports of
+ * their own (tor.js freeTorPorts, bitcoind.js freeCorePorts).
+ */
+export const SEAT_PORT = 8470, GATEWAY_PORT = 8476;
+export function nodePorts(offset = 0) {
+  const o = Number(offset) || 0, seat = SEAT_PORT + o;
+  return [...BASE_PORTS.map((p) => p + o), GATEWAY_PORT + 2 + o, ...[1, 2, 3, 4, 5, 6, 7, 8].map((k) => seat + k * 1000)];
+}
 /** The ports among `ports` that are in use on this machine: something answers on 127.0.0.1, or a listener cannot bind it. */
 export function portsInUse(ports) {
   const probe = `const net=require('net');const one=(p)=>new Promise((ok)=>{const c=net.connect({port:p,host:'127.0.0.1'});c.setTimeout(700);
@@ -54,7 +66,7 @@ export function freeInstance(home, { platform = process.platform, env: e = proce
     if (!file) return { instance: '', offset: 0 };
     const text = read(file);
     if (text !== null && text.includes(resolve(home))) return { instance: inst, offset };
-    if (text === null && !busy(BASE_PORTS.map((p) => p + offset)).length) return { instance: inst, offset };
+    if (text === null && !busy(nodePorts(offset)).length) return { instance: inst, offset };
   }
   throw new Error(`every Bitcoin Arena service name up to --${tries} belongs to another node on this machine, or its ports are in use`);
 }
