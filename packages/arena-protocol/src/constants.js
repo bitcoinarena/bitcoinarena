@@ -586,6 +586,8 @@ export const TAG = {
   auditor: 'ARENA/v1/Auditor',
   audit: 'ARENA/v1/Audit',
   auditResults: 'ARENA/v1/AuditResults',
+  // a seat handing an AUDIT on to the round's other seats signs this over its id: the forwarded copy counts until the close (§13A.1)
+  auditForward: 'ARENA/v1/AuditForward',
   abandonmentProof: 'ARENA/v1/AbandonmentProof',
 };
 
