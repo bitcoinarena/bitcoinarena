@@ -76,8 +76,10 @@ export function checkPlanTaken(bytes, { seats, planId }) {
  * round's seats - 2 of 2, 5 of 7. `answers` are { base, bytes } or { base, why }. Returns the count, the need, the
  * certificate (the signed acceptances that counted) and every answer that did not count, named.
  */
-export function countPlanTaken({ own, answers, seats, planId }) {
-  const needed = receiptsNeeded(seats.length);
+export function countPlanTaken({ own, answers, seats, planId, slots = seats.length }) {
+  // THE CONTRACT'S SETTLEMENT SLOTS, NOT THE SEATS NAMED (2026.1.9.11 release check: a round drawn 9 for 7 slots and seated
+  // with 6 settled nothing - "no committee threshold for 6 slots" - and its losers' locks went back at expiry)
+  const needed = receiptsNeeded(slots);
   const seen = new Set();
   const certificate = [];
   const refused = [];
