@@ -14,10 +14,12 @@ const utc = (ms) => new Date(ms).toISOString().replace('T', ' ').slice(0, 23);
 const ago = (ms) => { const s = Math.round((Date.now() - ms) / 1000); return s < 90 ? s + ' s ago' : s < 5400 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago'; };
 export const appName = (a) => ({ 'btc-updown-15m': 'Bitcoin Up or Down', nextblock: 'Tick Tock, Next Block', 'rock-paper-scissors': 'Rock Paper Scissors', '-': 'unknown' })[a] || a || 'unknown';
 // EVERY KIND OF PAYMENT (kanban #683, 2026-10-26: "I don't see item purchases in the explorer"; #682: a gift "doesn't show in the explorer")
-export const KINDS = { order: 'Order', item: 'Item bought', donation: 'Donation', zap: 'Zap' };
+// AND THE ARBITRATION SET'S OWN (kanban #723, the owner 2026-10-27: liquidations and slashes as their own events, with every payout and its transaction)
+export const KINDS = { order: 'Order', item: 'Item bought', donation: 'Donation', zap: 'Zap', liquidation: 'Liquidation', slash: 'Slash' };
+const EVENT_KINDS = ['liquidation', 'slash'];
 const kindOf = (t) => t.kind || 'order';
-/** A row's app as said: an order's or item's game; a donation to the protocol developers alone has none. */
-export const rowApp = (t) => (t.app ? appName(t.app) : kindOf(t) === 'donation' ? 'Protocol' : kindOf(t) === 'zap' ? '–' : appName('-'));
+/** A row's app as said: an order's or item's game; a donation to the protocol developers alone has none, nor a liquidation or a slash. */
+export const rowApp = (t) => (t.app ? appName(t.app) : kindOf(t) === 'donation' || EVENT_KINDS.includes(kindOf(t)) ? 'Protocol' : kindOf(t) === 'zap' ? '–' : appName('-'));
 const given = typeof window !== 'undefined' ? window.EXPLORER_DATA || {} : {};
 
 // THE RESULT (2026-10-24: "Also show the result of the transaction, if won or lost and how much it has won")
@@ -95,7 +97,7 @@ export function List({ data = null }) {
     <button type="button" disabled={!page.newer || busy} onClick={() => load({ ...p, before: '', after: page.newer }, 'push')}>Newer</button>
     <button type="button" disabled={!page.older || busy} onClick={() => load({ ...p, before: page.older, after: '' }, 'push')}>Older</button></div>);
   return (<>
-    <h1>Latest transactions</h1><p className="dim">Orders, items bought, donations and zaps stored by the nodes. Updated every minute.</p>
+    <h1>Latest transactions</h1><p className="dim">Orders, items bought, donations and zaps stored by the nodes, and the arbitration set's liquidations and slashes. Updated every minute.</p>
     <div className="filters">
       <select value={p.app} onChange={(e) => set('app', e.target.value)}><option value="">All apps</option>
         {apps.map(([a, c]) => <option key={a} value={a}>{a === '-' ? 'No app' : appName(a)}{n(c)}</option>)}</select>
@@ -111,7 +113,7 @@ export function List({ data = null }) {
       {txs.map((t) => (<tr key={t.id}><td className="mono"><a href={'/tx/' + t.id}>{t.id.slice(0, 16)}…</a></td><td>{rowApp(t)}</td>
         <td className="nw">{KINDS[kindOf(t)] || kindOf(t)}{kindOf(t) === 'item' && t.item ? <span className="dim"> · {t.item.slice(t.item.lastIndexOf(' · ') + 3)}</span> : null}</td>
         <td className="n nw">{t.stakeMsat !== null && t.stakeMsat !== undefined ? (Number(t.stakeMsat) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 }) + ' sat' : '–'}</td>
-        <td className={'nw ' + resultCls(t.result)}>{t.result ? (t.result.state === 'won' || t.result.state === 'lost' ? signed(t.result.netMsat) : resultText(t.result)) : kindOf(t) === 'order' ? '–' : 'Paid'}</td>
+        <td className={'nw ' + resultCls(t.result)}>{t.result ? (t.result.state === 'won' || t.result.state === 'lost' ? signed(t.result.netMsat) : resultText(t.result)) : kindOf(t) === 'order' ? '–' : EVENT_KINDS.includes(kindOf(t)) ? statusText(t.status) : 'Paid'}</td>
         <td className="mono">{t.federation ? t.federation.slice(0, 8) : '–'}</td><td className="mono">{String(t.round || '').slice(0, 12)}</td>
         <td>{utc(t.storedMs).slice(0, 19)} UTC <span className="dim">{ago(t.storedMs)}</span></td></tr>))}
       {!txs.length ? <tr><td colSpan={8} className="dim">No matches.</td></tr> : null}</tbody></table></div>
@@ -146,6 +148,76 @@ export function Payment({ tx }) {
     <details className="grp"><summary><b>Nodes</b> <span className="dim">{known} of {(tx.seats || []).length}</span></summary>
       <table className="rows"><thead><tr><th>Node</th><th>Has it</th><th>Stored</th></tr></thead><tbody>{(tx.seats || []).map((s) => (<tr key={s.seat}><td>{s.seat}</td>
         <td className={s.known ? 'ok' : 'dim'}>{s.known ? 'yes' : s.status ? 'no' : 'offline'}</td><td>{s.storedAt ? utc(Date.parse(s.storedAt)).slice(0, 19) + ' UTC' : '–'}</td></tr>))}</tbody></table></details>
+  </>);
+}
+
+// ---- a liquidation, a slash ------------------------------------------------------------------------------------------------------------
+// (kanban #723, the owner 2026-10-27: "Sind die Transaktionen alle im Explorer zu sehen als liquidation event?" - "Ja soll es"): the event as the
+// arbitration set signed it - each step with its amount and its transaction, every payout with its key, msat and output, the remainder per payee
+const STATUS = { 'paid out': 'Paid out', 'claims paid, remainder waits': 'Claims paid · remainder waits', 'escrow claimed in the safe federation': 'Escrow claimed',
+  'escrow sent to the safe federation': 'Escrow sent', 'claims open': 'Claims open', posted: 'Posted', 'escrow sent to the federation': 'Escrow sent',
+  'escrow claimed in the federation': 'Escrow claimed' };
+export const statusText = (s) => (s ? STATUS[s] || s : '–');
+const when = (ms) => (ms !== null && ms !== undefined && Number.isFinite(Number(ms)) ? utc(Number(ms)).slice(0, 19) + ' UTC' : null);
+const At = ({ ms }) => (when(ms) ? <span className="dim"> · {when(ms)}</span> : null);
+const Tx64 = ({ id, chain }) => (id ? <span className="mono">{id}{chain ? <span className="dim"> ({chain})</span> : null}</span> : <span className="dim">–</span>);
+const PARTS = { node: 'Node', donation: 'Donation set' };
+
+export function Liquidation({ tx }) {
+  const e = tx.event || {}, h = e.halt || null, x = e.escrow || {}, c = e.claims || { accepted: [], refused: [] }, r = e.remainder || null;
+  const paid = (e.payouts || []).reduce((t, p) => t + BigInt(p.msat), 0n);
+  const keys = new Set((c.accepted || []).map((a) => a.payoutPk)).size;
+  const parts = r ? Object.entries((r.payouts || []).reduce((m, p) => { const k = p.part || '-'; m[k] = m[k] || { n: 0, msat: 0n }; m[k].n++; m[k].msat += BigInt(p.msat); return m; }, {})) : [];
+  return (<>
+    <h1>Liquidation</h1><p className="mono">{e.federation}</p>
+    <div className="card"><dl>
+      <dt>Status</dt><dd><b>{statusText(e.status)}</b></dd>
+      <dt>Federation</dt><dd className="mono">{e.federation}</dd>
+      <dt>Halt</dt><dd>{h ? <>at height {count(h.height)}{h.proof ? <span className="dim"> · proven by {h.proof.observers} seats, session {h.proof.session}, {(h.proof.abandoned || []).length} guardians abandoned</span> : null}</> : <span className="dim">–</span>}</dd>
+      {h && h.proof ? <><dt>Halt proof</dt><dd className="mono">{h.proof.id}</dd></> : null}
+      <dt>Escrow</dt><dd>{x.sats ? count(x.sats) + ' sat' : '–'}{x.outpoint ? <span className="mono dim"> · {x.outpoint}</span> : null}</dd>
+      <dt>Into the safe federation</dt><dd><Tx64 id={x.txid} chain="bitcoin" /><At ms={x.atMs} /></dd>
+      <dt>Safe federation</dt><dd className="mono">{x.into || '–'}</dd>
+      <dt>Claimed there</dt><dd>{sat(x.claimedMsat)}<At ms={x.claimedAtMs} /></dd>
+      <dt>Claims</dt><dd>{count((c.accepted || []).length)} notes accepted ({sat(c.msat)}, {keys} {keys === 1 ? 'key' : 'keys'}) · {count((c.refused || []).length)} refused</dd>
+      <dt>Paid to claims</dt><dd>{sat(String(paid))} <span className="dim">in {(e.payouts || []).length} {(e.payouts || []).length === 1 ? 'payout' : 'payouts'}</span></dd>
+      <dt>Remainder</dt><dd>{r ? <>{sat(r.msat)} to {r.payees} payees{parts.length ? <span className="dim"> · {parts.map(([k, v]) => `${v.n} ${k === 'donation' ? 'donation set' : k === 'node' ? 'node' : k}${v.n === 1 ? '' : 's'} ${sats(String(v.msat))} sat`).join(', ')}</span> : null}<At ms={r.atMs} /></> : <span className="dim">not yet</span>}</dd>
+      {r ? <><dt>Remainder transaction</dt><dd><Tx64 id={r.txid} chain="federation" /></dd></> : null}
+      <dt>First recorded</dt><dd>{when(e.firstMs) || '–'}</dd><dt>Last changed</dt><dd>{when(e.atMs) || '–'}</dd></dl></div>
+    <h2>Payouts to claims</h2>
+    <div className="card"><table className="rows"><thead><tr><th>Paid to</th><th className="n">Amount</th><th>Federation transaction</th><th>Output</th></tr></thead><tbody>
+      {(e.payouts || []).map((p, i) => <tr key={i}><td className="mono">{p.payoutPk}</td><td className="n nw">{sat(p.msat)}</td><td className="mono">{p.txid}</td><td>{p.outIdx ?? '–'}</td></tr>)}
+      {!(e.payouts || []).length ? <tr><td colSpan={4} className="dim">None yet.</td></tr> : null}</tbody></table></div>
+    <h2>Remainder <span className="dim">{r ? r.payees + ' payees' : ''}</span></h2>
+    <div className="card">{r ? (<>{r.payouts && r.payouts.length ? <table className="rows"><thead><tr><th>Output</th><th>Part</th><th>Paid to</th><th className="n">Amount</th></tr></thead><tbody>
+      {r.payouts.map((p, i) => <tr key={i}><td>{p.outIdx ?? '–'}</td><td>{PARTS[p.part] || p.part || '–'}</td><td className="mono">{p.payoutPk}</td><td className="n nw">{sat(p.msat)}</td></tr>)}</tbody></table>
+      : <p className="dim">The arbitration set names {r.payees} payees and did not list them.</p>}<p className="dim">All in federation transaction <span className="mono">{r.txid}</span>.</p></>)
+      : <p className="dim">Paid after the late-claim window closes.</p>}</div>
+    <details className="grp"><summary><b>Claims</b> <span className="dim">{(c.accepted || []).length} accepted · {(c.refused || []).length} refused</span></summary>
+      <table className="rows"><thead><tr><th>Note</th><th className="n">Amount</th><th>Height</th><th>Paid to</th></tr></thead><tbody>
+        {(c.accepted || []).map((a) => <tr key={a.nonce}><td className="mono">{a.nonce}</td><td className="n nw">{sat(a.amountMsat)}</td><td>{a.height ?? '–'}</td><td className="mono">{a.payoutPk}</td></tr>)}
+        {(c.refused || []).map((a, i) => <tr key={'r' + i} className="away"><td className="mono">{a.nonce || '–'}</td><td className="bad" colSpan={3}>refused: {a.why}</td></tr>)}</tbody></table></details>
+  </>);
+}
+
+export function Slash({ tx }) {
+  const e = tx.event || {}, x = e.escrow || {}, s = e.sats || {};
+  const part = (k, l) => (s[k] ? <span className="dim">{' · '}{l} {count(s[k])} sat</span> : null);
+  return (<>
+    <h1>Slash</h1><p className="mono">{e.proof}</p>
+    <div className="card"><dl>
+      <dt>Status</dt><dd><b>{statusText(e.status)}</b></dd>
+      <dt>Node slashed</dt><dd className="mono">{e.node || '–'}</dd>
+      <dt>Round</dt><dd className="mono">{e.round || '–'}</dd><dt>Entry</dt><dd className="mono">{e.entry || '–'}</dd>
+      <dt>Slash transaction</dt><dd><Tx64 id={e.txid} chain="bitcoin" />{e.slashHeight ? <span className="dim"> · height {count(e.slashHeight)}, {e.signers} signers</span> : null}</dd>
+      <dt>Bond</dt><dd>{s.bond ? count(s.bond) + ' sat' : '–'}{part('players', 'players')}{part('nodes', 'nodes')}{part('developers', 'developers')}</dd>
+      <dt>Players' escrow into the federation</dt><dd><Tx64 id={x.txid} chain="bitcoin" />{x.sats ? <span className="dim"> · {count(x.sats)} sat</span> : null}</dd>
+      <dt>Claimed there</dt><dd>{sat(x.claimedMsat)}{x.into ? <span className="mono dim"> · {x.into}</span> : null}</dd>
+      <dt>First recorded</dt><dd>{when(e.firstMs) || '–'}</dd><dt>Last changed</dt><dd>{when(e.atMs) || '–'}</dd></dl></div>
+    <h2>Payouts to players</h2>
+    <div className="card"><table className="rows"><thead><tr><th>Paid to</th><th className="n">Amount</th><th>Federation transaction</th><th>Output</th></tr></thead><tbody>
+      {(e.payouts || []).map((p, i) => <tr key={i}><td className="mono">{p.refundPk}</td><td className="n nw">{sat(p.msat)}</td><td className="mono">{p.txid}</td><td>{p.outIdx ?? '–'}</td></tr>)}
+      {!(e.payouts || []).length ? <tr><td colSpan={4} className="dim">None yet.</td></tr> : null}</tbody></table></div>
   </>);
 }
 
@@ -258,6 +330,8 @@ function Tx({ id }) {
   // #settlement, #lock, ... (a link from the UI's history): that group opened and in view
   useEffect(() => { const h = location.hash.slice(1); const el = h && document.getElementById(h); if (el) { el.open = true; el.scrollIntoView(); } }, [tx && tx.id]);
   if (!tx) return missing ? <><h1>Not found</h1><p className="dim">Transaction {id} is unknown.</p></> : err ? <p className="bad">Could not load: {err}</p> : <p className="dim">Loading…</p>;
+  if (tx.kind === 'liquidation') return <Liquidation tx={tx} />;
+  if (tx.kind === 'slash') return <Slash tx={tx} />;
   if (tx.kind && tx.kind !== 'order') return <Payment tx={tx} />;
   const e = tx.entry || {};
   const ev = timelineOf(tx);
