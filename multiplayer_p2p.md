@@ -3555,9 +3555,13 @@ wait for them; paid from the nodes' fee, 10 % of it.
 **A role of its own, in the owner dashboard** *(RULED 2026-10-27: "Die Rolle
 muss im owner Dashboard stehen")*. Auditing is a node role like the others
 (§5A.9): the advertisement names it in its roles (`audit`), the owner area's
-Roles lists it as **"Audit rounds"** - on by default for every bonded node,
-the owner may turn it off - and the Rounds section (kanban #715) shows the
-rounds this node audited, the objections it filed and what it earned. Only
+Roles lists it as **"Audit rounds"** with on and off, and the Rounds section
+(kanban #715) shows the rounds this node audited, the objections it filed and
+what it earned. The installer offers it with "Play and check rounds" (on
+together). **A node that had the verify role before the update gets the audit
+role automatically** (RULED 2026-10-27): the updater, or the node at its first
+start on protocol 21, adds `audit` to its roles and posts the advertisement
+update, with no step by the owner; a node without verify gets nothing added. Only
 nodes advertising the role are eligible, so `W` counts no node that would
 never replay and the expected number stays three.
 
