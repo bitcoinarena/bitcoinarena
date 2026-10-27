@@ -7371,6 +7371,160 @@
  },
  {
   "method": "GET",
+  "path": "/presence",
+  "params": "query nodes (1-256 node keys, comma list), to (ms)",
+  "auth": "none",
+  "returns": "200 JSON {node, presents:[hex]}; 400",
+  "purpose": "The PRESENTs this seat holds of those nodes for seatings in the 24 h before a census (§5A.3, protocol 22, kanban #727): a posting node asks before it leaves a node out of the census as absent.",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "Presence proofs of nodes",
+  "query": [
+   {
+    "name": "nodes",
+    "required": true,
+    "type": "string",
+    "description": "1 to 256 node keys (64 hex), comma-separated."
+   },
+   {
+    "name": "to",
+    "required": true,
+    "type": "string",
+    "description": "The census time in ms (the census block's median time past); the 24 h ending there is the window."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{node, presents:[PRESENT hex, at most 3 per node]}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Malformed nodes or to."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/presence",
+  "params": "query to (ms); body PRESENTs in hex, one per line",
+  "auth": "none",
+  "returns": "201 JSON {took, of}; 400",
+  "purpose": "PRESENTs handed over as presence proofs: each kept when signed by the node it names for a round this seat holds whose seating closes in the 24 h (§5A.3, kanban #727).",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "Hand over presence proofs",
+  "query": [
+   {
+    "name": "to",
+    "required": true,
+    "type": "string",
+    "description": "The census time in ms (the census block's median time past); the 24 h ending there is the window."
+   }
+  ],
+  "body": {
+   "contentType": "text/plain",
+   "description": "PRESENTs in hex, one per line (at most 4096)."
+  },
+  "responses": [
+   {
+    "status": "201",
+    "contentType": "application/json",
+    "description": "{took, of}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "No to."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/absent",
+  "params": "query root (64 hex)",
+  "auth": "none",
+  "returns": "200 JSON {root, claims:[{node, drawnIn}]}; 400; 404",
+  "purpose": "The absent claim of a protocol-22 census root: the nodes its posting node left out as drawn in the 24 h and seen at none of those seatings, each with up to 3 seatings it was drawn for (§5A.3, kanban #727). A seat checks it before it serves the census.",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "Absent claim of a census",
+  "query": [
+   {
+    "name": "root",
+    "required": true,
+    "type": "string",
+    "description": "The census root, 64 hex."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{root, claims}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Malformed root."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "No claim held for that root."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/absent",
+  "params": "body JSON {root, claims}",
+  "auth": "none",
+  "returns": "201 JSON {ok, root, nodes}; 400",
+  "purpose": "Keep the absent claim of a census root, as the posting node sends it before its grid (§5A.3, kanban #727). Kept as given; the root decides whether it is the census's, and the seat checks it against what it holds before it serves.",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "Hand over an absent claim",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "description": "{root: 64 hex, claims: [{node: 64 hex, drawnIn: [{roundId, role}]}]}"
+  },
+  "responses": [
+   {
+    "status": "201",
+    "contentType": "application/json",
+    "description": "{ok, root, nodes}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Malformed root or claims."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
   "path": "/present",
   "params": "query round (hex 32)",
   "auth": "none; only when seating is on (ARENA_SEATING=1)",

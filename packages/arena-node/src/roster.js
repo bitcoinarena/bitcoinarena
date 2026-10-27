@@ -17,7 +17,8 @@
 // exists to prevent, and the guard test in `round.test.js` counts the files
 // that reach the census the same way it counts the files that reach the core.
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
-import { deriveCensus } from '../../arena-protocol/src/census.js';
+import { deriveCensus, censusRootOf } from '../../arena-protocol/src/census.js';
+import { dropsAbsent, withoutAbsent, presenceWindow, censusTimeMs } from '../../arena-protocol/src/presence.js';
 import { selectCommittee, drawCommittee, slotsForRole, drawAttestors } from '../../arena-protocol/src/sortition.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -188,8 +189,11 @@ export function censusOfView(view, contract, { network = networkOf(contract.netw
 }
 
 export class Roster {
-  constructor(round, { chainFor = NO_CHAIN_VIEW, randomnessFor = NO_BEACON, seatedFor = null } = {}) {
+  constructor(round, { chainFor = NO_CHAIN_VIEW, randomnessFor = NO_BEACON, seatedFor = null, absence = null } = {}) {
     this.round = round;
+    // THE ABSENT OF A 22 CENSUS (§5A.3, kanban #727): `{ claimFor(rootHex), check(claims, { census, w }) }` - the seat's presence book
+    // (presence-book.js). With none, a 22 round whose root leaves nodes out is refused as any other root the chain does not give.
+    this.absence = absence;
     // RESERVE SEATS (§5A.7): who a seating certificate seats for a round and role - node keys (hex), or null
     // while none stands. Set by the seating agent (seating-agent.js); with none, the committee is the draw's first slots.
     this.seatedFor = seatedFor;
@@ -388,6 +392,28 @@ export class Roster {
    * returned here is therefore a statement about the chain at a height, not about the round, and the
    * height it was read at travels with it so no caller can mistake it for the round's own.
    */
+  /**
+   * A 22 CENSUS LESS ITS ABSENT (§5A.3, kanban #727): the chain census `census` less every node the claim kept for the round's root
+   * names, if that set hashes to the root and the claim stands against this seat's presence book. Answers the census, or why not - a
+   * claim this seat holds a node's window signature against (`refuted`) is a refusal; no claim held yet is only "not yet".
+   */
+  absentCensus(contract, census, view) {
+    if (!dropsAbsent(contract) || !this.absence) return null;
+    const claims = this.absence.claimFor(toHex(contract.censusRoot));
+    if (!claims) return { ok: false, notYet: true, why: 'no absent claim is held here for that root' };
+    const kept = censusRootOf(withoutAbsent(census.entries, claims), { censusHeight: contract.censusHeight, censusConfirmations: contract.censusConfirmations });
+    if (!kept.root.every((b, i) => b === contract.censusRoot[i]))
+      return { ok: false, why: `less the ${claims.length} absent node(s) of its claim the chain gives ${toHex(kept.root).slice(0, 16)}` };
+    const t = censusTimeMs(view, contract.censusHeight);
+    if (t === null) return { ok: false, why: 'this seat\'s view does not reach the census block\'s median time, so its 24 h cannot be read' };
+    const checked = this.absence.check(claims, { census: census.entries.map((e) => toHex(e.pubkey)), w: presenceWindow(t) });
+    if (!checked.ok) return { ok: false, why: checked.why, refuted: { node: checked.node, proof: checked.proof || null } };
+    const out = new Set(claims.map((c) => c.node));
+    return { ...census, entries: kept.entries, leaves: kept.leaves, root: kept.root, absent: claims, uncheckedAbsent: checked.unchecked,
+      excluded: [...(census.excluded || []), ...census.entries.filter((e) => out.has(toHex(e.pubkey))).map((e) => ({ ...e, absent: true, step: 'absent',
+        why: 'drawn in the 24 h before the census and seen at none of those seatings: left out of the census, its bond untouched' }))] };
+  }
+
   censusAtHeight(roundIdBytes, height) {
     if (!Number.isInteger(height)) return { ok: false, why: 'a census is read at a block height' };
     const derived = this.censusFor(roundIdBytes, height, { asRoundsOwn: false });
@@ -461,7 +487,7 @@ export class Roster {
     const readFrom = isOldTestnet4Id(contract.networkId) && contract.seriesId instanceof Uint8Array && isOldTestnet4Series(contract.seriesId)
       && view.firstHeight < OLD_TESTNET4_SERIES_CENSUS_FROM
       ? { firstHeight: OLD_TESTNET4_SERIES_CENSUS_FROM, blocks: view.blocks.slice(OLD_TESTNET4_SERIES_CENSUS_FROM - view.firstHeight) } : view;
-    const census = censusOfView(view, contract, { network, readFrom });
+    let census = censusOfView(view, contract, { network, readFrom });
     if (!census.ok) return census;
 
     // AND IT HAS TO BE THIS ROUND'S CENSUS - when it is being asked for as this round's.
@@ -480,15 +506,22 @@ export class Roster {
     if (!asRoundsOwn) return census;
     if (!(contract.censusRoot instanceof Uint8Array) || contract.censusRoot.length !== 32)
       return { ok: false, why: 'that round names no census root to check against the chain' };
+    // FROM PROTOCOL 22 A ROOT MAY LEAVE OUT THE ABSENT (§5A.3, kanban #727): the chain census less the nodes its posting node's claim
+    // names, when the claim is held here and stands against what this seat holds
+    const lessAbsent = census.root.every((b, i) => b === contract.censusRoot[i]) ? null : this.absentCensus(contract, census, view);
+    if (lessAbsent && lessAbsent.ok) census = lessAbsent;
     if (!census.root.every((b, i) => b === contract.censusRoot[i])) {
       const answer = {
         ok: false,
         why: `that round names census root ${toHex(contract.censusRoot).slice(0, 16)} and the `
-          + `chain gives ${toHex(census.root).slice(0, 16)} at height ${contract.censusHeight}`,
+          + `chain gives ${toHex(census.root).slice(0, 16)} at height ${contract.censusHeight}${lessAbsent ? `; ${lessAbsent.why}` : ''}`,
         root: census.root,
+        ...(lessAbsent && lessAbsent.refuted ? { refuted: lessAbsent.refuted } : {}),
       };
       // kept per series (or census key), so a series' other rounds naming the same root are answered from it
-      if (atBlock) {
+      // NOT KEPT WHILE ITS ABSENT CLAIM IS ONLY NOT HERE YET (kanban #727): the claim arrives by POST /absent or is fetched, and the
+      // next ask must see it
+      if (atBlock && !(lessAbsent && lessAbsent.notYet)) {
         if (!REFUSED_AT_BLOCK.has(atBlock)) REFUSED_AT_BLOCK.set(atBlock, new Map());
         REFUSED_AT_BLOCK.get(atBlock).set(`${kept}:${toHex(contract.censusRoot)}`, answer);
       }
