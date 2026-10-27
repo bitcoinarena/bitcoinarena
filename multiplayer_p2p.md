@@ -3594,21 +3594,29 @@ auditor       iff  v < AUDITORS x weight(node) / W  // AUDITORS = 3
 
 **What an auditor does.** As soon as the round's transcripts are on its
 `publication_relays[]` (§13A, "where the run is posted"), it replays every run
-of the round in the replay worker (§10) and, **before `window_close`**:
+of the round in the replay worker (§10) and, **at least 30 s before
+`window_close`**:
 
 - if every result it replays equals the signed one: it publishes
 
   ```text
   AUDIT {
     round_id
-    results_hash        // H over (entry_id, signed result) of every entry, in entry_id order
+    results_hash        // H over (entry_id, run id the committee signed) of every entry, in entry_id order
     node_pubkey
+    at_ms               // when it was signed: at most window_close - 30 s
     vrf_proof           // pi, and beta
     signature           // node key, over all of the above
   }
   ```
 
-  to the round's seats (`POST /audit`) and its `publication_relays[]`;
+  to the round's seats (`POST /audit`) and its `publication_relays[]`. A seat
+  takes it only if `at_ms` is within the tolerance of its own clock (§13A
+  rule 3) and at most `window_close - 30 s`, and hands every new one to the
+  round's other seats, which take a forwarded one until `window_close`: the
+  30 s are for every seat to hold the same set, because the auditors' lines
+  are part of the payout all seats sign byte for byte (a seat that still
+  differs signs other bytes and the 5 of 7 that agree carry the payout);
 - if one differs: it files the objection of §13A for that entry, exactly as
   any objector does. The objection is what stops `FINAL`, and it is a fraud
   proof against every node that signed the false result (§5A.3, §5A.3B): the
@@ -3636,8 +3644,8 @@ k = 0          -> the whole share stays in the pools
 ```
 
 A settlement seat counts an `AUDIT` only if its proof verifies, its node was
-eligible, its `results_hash` matches the results being settled, and it
-reached the seat before `window_close` (signed times, §13A rule 3). The
+eligible, its `results_hash` matches the results being settled, and it was
+taken by the rule above. The
 player pays nothing more: the stake, the fee and the donation are what they
 were. Example, a round of 10,000 sat stakes and a website line: nodes' fee
 400 sat, website 40, auditors 36 (three auditors: 12 each), pools 324 (one

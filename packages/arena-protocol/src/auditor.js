@@ -22,6 +22,14 @@ export const AUDITORS = 3n;
 /** The auditors' share of the nodes' part of the fee, after the website's line (§13A.1, RULED 2026-10-27: 10 %). */
 export const AUDIT_SHARE_BPS = 1000n;
 export const AUDIT_PROOF_BYTES = 81;
+/**
+ * WHEN AN AUDIT COUNTS (§13A.1): signed at most AUDIT_LEAD_MS before window_close, and taken by a seat only if its signed time is within
+ * AUDIT_TOLERANCE_MS of the seat's clock (§13A rule 3) - or, forwarded by another seat, by window_close. Every seat that takes one hands it
+ * to the round's other seats, so the 30 s between the last AUDIT and the window's close are for every seat to hold the same set: the
+ * auditors' lines are part of the payout every seat signs byte for byte.
+ */
+export const AUDIT_LEAD_MS = 30000;
+export const AUDIT_TOLERANCE_MS = 5000;
 
 const is32 = (b) => b instanceof Uint8Array && b.length === 32;
 const beInt = (b) => b.reduce((n, x) => (n << 8n) | BigInt(x), 0n);
@@ -76,8 +84,8 @@ export function isAuditor({ beta, weight, total }) {
 }
 
 /**
- * THE RESULTS AN AUDIT VOUCHES FOR: H_tag(ARENA/v1/AuditResults, n || (entry_id 32, result digest 32)*), in entry id order - the
- * provisional results of every entry of the round, each as the 32-byte digest of its signed result.
+ * THE RESULTS AN AUDIT VOUCHES FOR: H_tag(ARENA/v1/AuditResults, n || (entry_id 32, run id 32)*), in entry id order - for every entry
+ * of the round the run id its committee signed (verdict.js runId; the run FINAL is about, §13C), as `resultDigest`.
  */
 export function auditResultsHash(results) {
   const rows = (results || []).map((r) => {
@@ -95,7 +103,8 @@ export function encodeAudit(a) {
   if (!(a.vrfProof instanceof Uint8Array) || a.vrfProof.length !== AUDIT_PROOF_BYTES) throw new Error(`an AUDIT carries its ${AUDIT_PROOF_BYTES}-byte VRF proof`);
   const w = new Writer();
   w.u8(TYPE_AUDIT); w.u16(PROTOCOL_VERSION);
-  w.bytes32(a.roundId); w.bytes32(a.resultsHash); w.bytes32(a.nodePubkey); w.bytes(a.vrfProof, AUDIT_PROOF_BYTES);
+  if (typeof a.atMs !== 'bigint' || a.atMs < 0n) throw new Error('an AUDIT carries the time it was signed (BigInt ms)');
+  w.bytes32(a.roundId); w.bytes32(a.resultsHash); w.bytes32(a.nodePubkey); w.u64(a.atMs); w.bytes(a.vrfProof, AUDIT_PROOF_BYTES);
   return w.finish();
 }
 
@@ -103,7 +112,7 @@ export function decodeAudit(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_AUDIT) throw new Error('not an AUDIT');
   r.u16();
-  const a = { roundId: r.bytes32(), resultsHash: r.bytes32(), nodePubkey: r.bytes32(), vrfProof: r.bytes(AUDIT_PROOF_BYTES) };
+  const a = { roundId: r.bytes32(), resultsHash: r.bytes32(), nodePubkey: r.bytes32(), atMs: r.u64(), vrfProof: r.bytes(AUDIT_PROOF_BYTES) };
   r.end();
   return a;
 }
@@ -116,7 +125,8 @@ export const auditId = (a) => taggedHash(TAG.audit, encodeAudit(a));
  * round under that node's key, the node eligible and drawn, and its results hash the one being settled. The arrival time is the
  * seat's to check (signed times, §13A rule 3). Answers { ok, beta } or { ok: false, why }.
  */
-export function auditStands(a, { signature, vrf, verify, eligible, total, resultsHash }) {
+export function auditStands(a, { signature, vrf, verify, eligible, total, resultsHash, windowCloseMs = null }) {
+  if (windowCloseMs !== null && a.atMs > BigInt(windowCloseMs) - BigInt(AUDIT_LEAD_MS)) return { ok: false, why: `an AUDIT is signed at least ${AUDIT_LEAD_MS / 1000} s before the window closes` };
   if (!(signature instanceof Uint8Array) || signature.length !== 64) return { ok: false, why: 'an AUDIT is signed (64 bytes)' };
   if (!verify(signature, auditId(a), a.nodePubkey)) return { ok: false, why: 'the AUDIT is not signed by the node it names' };
   const key = toHex(a.nodePubkey);
