@@ -2,7 +2,7 @@
  "openapi": "3.0.3",
  "info": {
   "title": "Bitcoin Arena node API",
-  "version": "2026-10-26",
+  "version": "2026-10-28",
   "description": "Every request a Bitcoin Arena node (`arena-node`) answers, generated from `packages/arena-node/src/server.js` by `src/website/docs/gen-docs.py`. Concepts and guides: https://docs.bitcoin-arena.io/"
  },
  "servers": [
@@ -164,6 +164,79 @@
       }
      }
     }
+   }
+  },
+  "/absent": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Absent claim of a census",
+    "description": "The absent claim of a protocol-22 census root: the nodes its posting node left out as drawn in the 24 h and seen at none of those seatings, each with up to 3 seatings it was drawn for (\u00a75A.3, kanban #727). A seat checks it before it serves the census.\n\nAccess: none\n\nReturns: 200 JSON {root, claims:[{node, drawnIn}]}; 400; 404\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_absent",
+    "parameters": [
+     {
+      "name": "root",
+      "in": "query",
+      "required": true,
+      "description": "The census root, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{root, claims}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Malformed root.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "404": {
+      "description": "No claim held for that root.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Hand over an absent claim",
+    "description": "Keep the absent claim of a census root, as the posting node sends it before its grid (\u00a75A.3, kanban #727). Kept as given; the root decides whether it is the census's, and the seat checks it against what it holds before it serves.\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none\n\nReturns: 201 JSON {ok, root, nodes}; 400\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "post_absent",
+    "requestBody": {
+     "required": true,
+     "description": "{root: 64 hex, claims: [{node: 64 hex, drawnIn: [{roundId, role}]}]}",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "{ok, root, nodes}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Malformed root or claims.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
    }
   },
   "/address-announcement": {
@@ -7558,6 +7631,478 @@
     }
    }
   },
+  "/polymarket/book": {
+   "get": {
+    "tags": [
+     "Builders"
+    ],
+    "summary": "Polymarket-compatible: the order book of a token",
+    "description": "Polymarket's GET /book: bids and asks of one token from the seat's cleared ledger (the other side's buys as asks at 1 - price), sizes in shares.\n\nAccess: none\n\nReturns: 200 JSON {market, asset_id, timestamp, hash, bids[], asks[], min_order_size, tick_size, neg_risk, last_trade_price}; 404\n\nSource: `packages/arena-node/src/server.js` line 8440.",
+    "operationId": "get_polymarket_book",
+    "parameters": [
+     {
+      "name": "token_id",
+      "in": "query",
+      "required": true,
+      "description": "A token id: the round id as a uint256 with its lowest bit the outcome (0 Up, 1 Down), decimal. GET /polymarket/markets lists them.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "200 JSON {market, asset_id, timestamp, hash, bids[], asks[], min_order_size, tick_size, neg_risk, last_trade_price}; 404",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/polymarket/data/order/{id}": {
+   "get": {
+    "tags": [
+     "Builders"
+    ],
+    "summary": "Polymarket-compatible: one order",
+    "description": "Polymarket's GET /data/order/{id}: id is 0x + the entry id.\n\nAccess: none\n\nReturns: 200 JSON the order; 404\n\nSource: `packages/arena-node/src/server.js` line 8440.",
+    "operationId": "get_polymarket_data_order_id",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "description": "0x + the entry id (64 hex).",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "200 JSON the order; 404",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/polymarket/data/orders": {
+   "get": {
+    "tags": [
+     "Builders"
+    ],
+    "summary": "Polymarket-compatible: open orders",
+    "description": "Polymarket's GET /data/orders without a key: the open orders of a market (all=1 for every order), by asset or maker (0x + player key).\n\nAccess: none\n\nReturns: 200 JSON {data: [order], next_cursor, limit, count}\n\nSource: `packages/arena-node/src/server.js` line 8440.",
+    "operationId": "get_polymarket_data_orders",
+    "parameters": [
+     {
+      "name": "market",
+      "in": "query",
+      "required": false,
+      "description": "condition_id",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "asset_id",
+      "in": "query",
+      "required": false,
+      "description": "token id",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "maker_address",
+      "in": "query",
+      "required": false,
+      "description": "0x + the player key",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "all",
+      "in": "query",
+      "required": false,
+      "description": "1: closed orders too",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "200 JSON {data: [order], next_cursor, limit, count}",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/polymarket/events": {
+   "get": {
+    "tags": [
+     "Builders"
+    ],
+    "summary": "Polymarket-compatible: Gamma events",
+    "description": "Gamma's GET /events: one event per market, its market with clobTokenIds, outcomes and outcomePrices as JSON strings.\n\nAccess: none\n\nReturns: 200 JSON [event]\n\nSource: `packages/arena-node/src/server.js` line 8440.",
+    "operationId": "get_polymarket_events",
+    "parameters": [
+     {
+      "name": "active",
+      "in": "query",
+      "required": false,
+      "description": "true/false",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "closed",
+      "in": "query",
+      "required": false,
+      "description": "true/false",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "description": "at most, default 100",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "200 JSON [event]",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/polymarket/markets": {
+   "get": {
+    "tags": [
+     "Builders"
+    ],
+    "summary": "Polymarket-compatible: the markets",
+    "description": "Polymarket's GET /markets: every two-outcome market this seat holds (an Up/Down window round is one), in Polymarket's market shape (kanban #736).\n\nAccess: none\n\nReturns: 200 JSON {data: [market], next_cursor: 'LTE=', limit, count}\n\nSource: `packages/arena-node/src/server.js` line 8440.",
+    "operationId": "get_polymarket_markets",
+    "parameters": [
+     {
+      "name": "next_cursor",
+      "in": "query",
+      "required": false,
+      "description": "Polymarket's cursor; one page here.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "200 JSON {data: [market], next_cursor: 'LTE=', limit, count}",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/polymarket/markets/{condition_id}": {
+   "get": {
+    "tags": [
+     "Builders"
+    ],
+    "summary": "Polymarket-compatible: one market",
+    "description": "Polymarket's GET /markets/{condition_id}: condition_id is 0x + the round id.\n\nAccess: none\n\nReturns: 200 JSON the market; 404\n\nSource: `packages/arena-node/src/server.js` line 8440.",
+    "operationId": "get_polymarket_markets_condition_id",
+    "parameters": [
+     {
+      "name": "condition_id",
+      "in": "path",
+      "required": true,
+      "description": "0x + the round id (64 hex).",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "200 JSON the market; 404",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/polymarket/midpoint": {
+   "get": {
+    "tags": [
+     "Builders"
+    ],
+    "summary": "Polymarket-compatible: the midpoint",
+    "description": "Polymarket's GET /midpoint; /spread, /last-trade-price, /tick-size, /neg-risk and /fee-rate answer beside it with the same parameter.\n\nAccess: none\n\nReturns: 200 JSON {mid}\n\nSource: `packages/arena-node/src/server.js` line 8440.",
+    "operationId": "get_polymarket_midpoint",
+    "parameters": [
+     {
+      "name": "token_id",
+      "in": "query",
+      "required": true,
+      "description": "A token id: the round id as a uint256 with its lowest bit the outcome (0 Up, 1 Down), decimal. GET /polymarket/markets lists them.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "200 JSON {mid}",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/polymarket/order": {
+   "post": {
+    "tags": [
+     "Builders"
+    ],
+    "summary": "Polymarket-compatible: an order (answered by the adapter)",
+    "description": "Polymarket's POST /order. A seat holds no player's keys or e-cash, so it answers 501 by name: orders are placed by the Arena CLOB adapter beside the bot (tools/polymarket-adapter.mjs), which serves this path on localhost.\n\nAccess: none\n\nReturns: 501 JSON {success: false, errorMsg}\n\nSource: `packages/arena-node/src/server.js` line 8440.",
+    "operationId": "post_polymarket_order",
+    "requestBody": {
+     "required": true,
+     "description": "Polymarket's {order, owner, orderType}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "501": {
+      "description": "501 JSON {success: false, errorMsg}",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/polymarket/positions": {
+   "get": {
+    "tags": [
+     "Builders"
+    ],
+    "summary": "Polymarket-compatible: positions",
+    "description": "The Data API's GET /positions: the filled shares of a player key's orders, valued at the mid.\n\nAccess: none\n\nReturns: 200 JSON [position]\n\nSource: `packages/arena-node/src/server.js` line 8440.",
+    "operationId": "get_polymarket_positions",
+    "parameters": [
+     {
+      "name": "user",
+      "in": "query",
+      "required": true,
+      "description": "0x + the player key, or an entry id",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "market",
+      "in": "query",
+      "required": false,
+      "description": "condition_id",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "200 JSON [position]",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/polymarket/price": {
+   "get": {
+    "tags": [
+     "Builders"
+    ],
+    "summary": "Polymarket-compatible: the price of a token",
+    "description": "Polymarket's GET /price: side=BUY the best ask, side=SELL the best bid.\n\nAccess: none\n\nReturns: 200 JSON {price}\n\nSource: `packages/arena-node/src/server.js` line 8440.",
+    "operationId": "get_polymarket_price",
+    "parameters": [
+     {
+      "name": "token_id",
+      "in": "query",
+      "required": true,
+      "description": "A token id: the round id as a uint256 with its lowest bit the outcome (0 Up, 1 Down), decimal. GET /polymarket/markets lists them.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "side",
+      "in": "query",
+      "required": false,
+      "description": "BUY (default) or SELL",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "200 JSON {price}",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/polymarket/prices-history": {
+   "get": {
+    "tags": [
+     "Builders"
+    ],
+    "summary": "Polymarket-compatible: price history",
+    "description": "Polymarket's GET /prices-history: the clearing price of every certified batch for a token, within interval or startTs..endTs, one point per fidelity minutes.\n\nAccess: none\n\nReturns: 200 JSON {history: [{t, p}]}\n\nSource: `packages/arena-node/src/server.js` line 8440.",
+    "operationId": "get_polymarket_prices_history",
+    "parameters": [
+     {
+      "name": "market",
+      "in": "query",
+      "required": true,
+      "description": "A token id.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "interval",
+      "in": "query",
+      "required": false,
+      "description": "1m, 1h, 6h, 1d, 1w, max",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "fidelity",
+      "in": "query",
+      "required": false,
+      "description": "minutes per point",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "startTs",
+      "in": "query",
+      "required": false,
+      "description": "unix seconds",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "endTs",
+      "in": "query",
+      "required": false,
+      "description": "unix seconds",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "200 JSON {history: [{t, p}]}",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/polymarket/trades": {
+   "get": {
+    "tags": [
+     "Builders"
+    ],
+    "summary": "Polymarket-compatible: trades",
+    "description": "The Data API's GET /trades: every fill of a certified batch, newest first; GET /polymarket/data/trades answers the CLOB's page shape.\n\nAccess: none\n\nReturns: 200 JSON [trade]\n\nSource: `packages/arena-node/src/server.js` line 8440.",
+    "operationId": "get_polymarket_trades",
+    "parameters": [
+     {
+      "name": "market",
+      "in": "query",
+      "required": false,
+      "description": "condition_id",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "asset_id",
+      "in": "query",
+      "required": false,
+      "description": "token id",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "description": "at most, default 100",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "offset",
+      "in": "query",
+      "required": false,
+      "description": "skip",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "200 JSON [trade]",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
   "/postings": {
    "get": {
     "tags": [
@@ -7599,6 +8144,93 @@
       }
      }
     }
+   }
+  },
+  "/presence": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Presence proofs of nodes",
+    "description": "The PRESENTs this seat holds of those nodes for seatings in the 24 h before a census (\u00a75A.3, protocol 22, kanban #727): a posting node asks before it leaves a node out of the census as absent.\n\nAccess: none\n\nReturns: 200 JSON {node, presents:[hex]}; 400\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_presence",
+    "parameters": [
+     {
+      "name": "nodes",
+      "in": "query",
+      "required": true,
+      "description": "1 to 256 node keys (64 hex), comma-separated.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "to",
+      "in": "query",
+      "required": true,
+      "description": "The census time in ms (the census block's median time past); the 24 h ending there is the window.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{node, presents:[PRESENT hex, at most 3 per node]}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Malformed nodes or to.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Hand over presence proofs",
+    "description": "PRESENTs handed over as presence proofs: each kept when signed by the node it names for a round this seat holds whose seating closes in the 24 h (\u00a75A.3, kanban #727).\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none\n\nReturns: 201 JSON {took, of}; 400\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "post_presence",
+    "parameters": [
+     {
+      "name": "to",
+      "in": "query",
+      "required": true,
+      "description": "The census time in ms (the census block's median time past); the 24 h ending there is the window.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "description": "PRESENTs in hex, one per line (at most 4096).",
+     "content": {
+      "text/plain": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "{took, of}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "No to.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
    }
   },
   "/present": {
