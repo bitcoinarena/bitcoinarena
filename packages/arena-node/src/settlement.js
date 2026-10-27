@@ -1299,7 +1299,15 @@ export class LockSettlement {
       ? `claimed ${stakeClaims} loser lock(s), ${m.plan.poolMsat} msat; paid ${qualifiers} qualifier(s) ${m.plan.paidMsat} msat${remainder}${feePart}`
       : `the guardians refused it: ${sent.error}`;
     this.round.putLockSettlement({ roundId: roundIdBytes, txid: m.txid, message: m.message, signature, state, why });
-    if (sent.accepted) this.indexDonationKeys(roundIdBytes, m.txid, m.plan);
+    // SAID, AND NEVER LOST IN A THROW (2026.1.9.11 release check: no seat held a settlement row since 10-25 - the website share of
+    // settlement ed86a2fa (800 msat) was listed under its key nowhere, so a referrer's wallet could never collect it)
+    if (sent.accepted) {
+      try {
+        const n = this.indexDonationKeys(roundIdBytes, m.txid, m.plan);
+        const kinds = (m.plan.payouts || []).filter((p) => SETTLEMENT_ROW_KINDS.has(p.kind)).map((p) => p.kind);
+        console.log(`[settle] ${toHex(roundIdBytes).slice(0, 16)} donation keys of the settlement: ${n} row(s) kept${kinds.length ? ` (${kinds.join(', ')})` : ''}`);
+      } catch (e) { console.error(`[settle] ${toHex(roundIdBytes).slice(0, 16)} donation keys not indexed: ${e.message}`); }
+    }
     const winnings = sent.accepted ? await this.sendWinnings(roundIdBytes) : null;
     return { ok: sent.accepted, state, why, txid: m.txid, signature, plan: m.plan, answer: sent, winnings };
   }
