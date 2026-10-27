@@ -221,7 +221,7 @@ async function installWindows({ node, release, home, port, tunnelArgs, boot, sh,
  * started again and again, "spawn scheduled, last exit 2"): stopped and its file removed - the launch agent, the unit, or the launcher with its
  * logon task or Startup script. Nothing to do when it is not there. Answers { ok, removed }.
  */
-export async function removeProgram({ id, home, env = process.env, sh = run, platform = process.platform }) {
+export async function removeProgram({ id, home, env = process.env, sh = run, platform = process.platform, unit: unitGiven = null }) {
   if (platform === 'darwin') {
     const label = `${LAUNCHD_LABEL}.${id}`;
     const file = join(env.HOME || homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
@@ -240,7 +240,8 @@ export async function removeProgram({ id, home, env = process.env, sh = run, pla
     rmSync(vbs, { force: true }); rmSync(file, { force: true });
     return { ok: true, removed: true };
   }
-  const unit = unitName(id), file = join(unitDir(env), unit);
+  // `unit` names the file outright: another node of this machine updated from this process has its own (instance) name (kanban #719)
+  const unit = unitGiven || unitName(id), file = join(unitDir(env), unit);
   if (!existsSync(file)) return { ok: true, removed: false };
   await sh('systemctl', ['--user', 'disable', '--now', unit]);
   rmSync(file, { force: true });

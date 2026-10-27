@@ -446,9 +446,12 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
   // A CHAIN BRIDGE THE NODE NO LONGER READS (the owner's services card on 2026.1.9.9: "Do I need electrum when I have bitcoin core installed
   // and running?"): a node on its own Core keeps no bridge of its interim Electrum chain - it is taken away, not moved (removeProgram)
   const noBridge = !!(state.chain && state.chain.kind === 'core');
-  const isBridge = (f) => { const b = f.split(/[\\/]/).pop(); return b === BRIDGE_UNIT || b === `${LAUNCHD_LABEL}.chain-bridge.plist` || b === 'arena-chain-bridge.cmd'; };
+  // ANY NODE'S BRIDGE OF THIS MACHINE, by its own name (kanban #719: the update of the owner's second node looked for arena-chain-bridge.service,
+  // the name of the process's own node, and left arena-chain-bridge--2.service restarting 840 times) - `moving` holds this node's files only
+  const isBridge = (f) => { const b = f.split(/[\\/]/).pop(); return b === BRIDGE_UNIT || /^arena-chain-bridge(--[a-z0-9]+)?\.service$/.test(b) || b === `${LAUNCHD_LABEL}.chain-bridge.plist` || /^arena-chain-bridge(--[a-z0-9]+)?\.cmd$/.test(b); };
   if (noBridge && moving.some(isBridge)) {
-    await removeProgram({ id: 'chain-bridge', home, env, sh, platform });
+    const bridgeUnit = moving.map((f) => f.split(/[\\/]/).pop()).find((b) => /\.service$/.test(b) && isBridge(b)) || null;
+    await removeProgram({ id: 'chain-bridge', home, env, sh, platform, unit: bridgeUnit });
     step('the chain bridge of the interim Electrum chain was taken away: this node reads its own Bitcoin Core');
   }
   for (const f of moving) {
