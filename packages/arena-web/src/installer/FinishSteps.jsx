@@ -316,6 +316,8 @@ export class BondStep extends React.Component {
         {found && found.lock ? <p className="sub">{lockText(found.lock)}</p> : null}
         <button type="button" id="b-post" disabled={busy || !(found && found.enough)} onClick={this.postBond}>{later ? 'Update my bond for custody' : 'Post the bond'}</button>
         <button type="button" className="ghost" onClick={this.later}>{later ? 'Later' : 'I\'ll post it later'}</button>
+        {/* POSTED LATER FROM THE OWNER AREA (kanban #728): the same wallet, the same bond */}
+        {later ? null : <p className="sub">Later works too: post it from your owner area, under Bond.</p>}
         <p className="sub">You do not wait for confirmations here. Your dashboard shows how many the bond and the peg-in have, and when they count.</p>
       </div>
     );

@@ -9,7 +9,7 @@
 // the page's own script drew is here too - a round opened to its players with their replays (readResult), the notes, every host row,
 // the capacity plea and the liquidity card (the page hands in liquidity-claim and capacity?node=me), and the words for an unreadable node.
 import React from 'react';
-import { SetupStatus, FoundingWait, PegInCard } from './SetupStatus.jsx';
+import { SetupStatus, FoundingWait, PegInCard, NoBondCard, noBond } from './SetupStatus.jsx';
 import { CopyButton } from '../design/components.jsx';
 
 /** msat to the page's sat: three decimals under 10, one under 1,000, none above. */
@@ -145,6 +145,8 @@ export function ownerHref(node, loc) {
   const local = loc && /^(127\.0\.0\.1|localhost)$/.test(loc.hostname) ? `&local=${encodeURIComponent(loc.origin)}` : '';
   return `${OWNER_SITE}#node=${node}${local}`;
 }
+/** The owner area's Bond section (kanban #728): the site's page names it beside the node, the node's own page by its #. */
+export function bondHref(node, loc) { const h = ownerHref(node, loc); return h.includes('#') ? `${h}&section=bond` : `${h}#bond`; }
 export const keep = (t) => String(t).replace(/-/g, '‑');
 const tone = (m) => (m === null || m === undefined || m === '' ? '' : Number(m) > 0 ? 'ok' : Number(m) < 0 ? 'bad' : '');
 
@@ -214,9 +216,11 @@ export class DashboardPage extends React.Component {
             </div></div>
           <a className="btn" href={ownerHref(D.node, typeof location === 'undefined' ? null : location)}>Owner area →</a>
         </header>
+        {/* NO BOND, AT THE TOP (kanban #728): red, with the way to set it up; no founding then (FoundingWait says nothing) */}
+        {noBond(D.setup) ? <section><NoBondCard status={D.setup} href={bondHref(D.node, typeof location === 'undefined' ? null : location)} /></section> : null}
         {D.setup && D.setup.ok && D.setup.pegIn && D.setup.pegIn.txid ? <section><PegInCard status={D.setup} /></section> : null}
         {D.setup && D.setup.ok ? <section><SetupStatus status={D.setup} node={D.node} /></section> : null}
-        {D.setup && D.setup.ok && D.setup.founding && D.setup.founding.waiting ? <section><FoundingWait status={D.setup} /></section> : null}
+        {D.setup && D.setup.ok && D.setup.founding && D.setup.founding.waiting && !noBond(D.setup) ? <section><FoundingWait status={D.setup} /></section> : null}
         {D.capacity ? <section><h2>Capacity</h2><div className="card"><p className={D.capacity.level === 'bad' ? 'bad' : 'warn'}>{String(D.capacity.says)}</p></div></section> : null}
         <section><h2>Earnings</h2><Earnings totals={D.totals} period={period} onPeriod={(p) => this.setState({ period: p })} /></section>
         <section><div className="card"><Chart days={D.days || []} /></div></section>
