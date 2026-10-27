@@ -2,10 +2,10 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE HEARTBEAT AT A SEAT AND AT THE CLIENT (§5A.3, protocol 22, kanban #727, the owner 2026-10-27). On the seat's own fixture chain (an hour
 // a block): six bonded nodes, node 5 stopped, earlier rounds of the 24 h an hour apart. The five live nodes run the heartbeat agent on
-// a round - each beats to the slot's committee, each member signs who it heard, and the certificate stands with 5. Three such slots an
-// hour apart prove node 5 out: the seat serves the round whose root leaves it out, and the client - from headers, the rounds'
-// contracts and their census evidence alone - checks the same proofs and agrees. Four signers, a listing, one round's three slots
-// (10 min): refused at both, by name.
+// a round - each beats to the slot's committee (one slot per round, the owner 2026-10-27), each member signs who it heard, and the
+// certificate stands with 5. Three rounds' slots an hour apart prove node 5 out: the seat serves the round whose root leaves it out,
+// and the client - from headers, the rounds' contracts and their census evidence alone - checks the same proofs and agrees. Four
+// signers, a listing, two slots only: refused at both, by name.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
@@ -147,7 +147,7 @@ test('five live nodes beat, sign who they heard and certify each slot with 5; th
   const contract = decodeRoundContract(new Uint8Array(W.round.get(rid).contract));
   const clock = { now: 0 };
   const A = agents(W, rid, clock);
-  for (const slot of [2, 1, 0]) {
+  for (const slot of [0]) {
     const close = heartbeatCloseMs(contract, slot);
     clock.now = Number(close) - 30000;
     for (const a of A.values()) await a.tick();
@@ -170,9 +170,9 @@ test('five live nodes beat, sign who they heard and certify each slot with 5; th
   assert.match(any.takeHeartbeat(signHeartbeat({ roundId: rid, slot: 0, nodePubkey: keyFor(5) }, signBy(STOPPED))).why, /has closed/);
 });
 
-test('three heartbeat slots an hour apart prove the stopped node out: the seat serves the round less it, and the client agrees and draws the seat\'s committee', () => {
+test('three rounds\' heartbeat slots an hour apart prove the stopped node out: the seat serves the round less it, and the client agrees and draws the seat\'s committee', () => {
   const W = world();
-  const claim = claimOf(STOPPED, W.rids.slice(0, 3).map((rid, i) => ({ rid, slot: i })));
+  const claim = claimOf(STOPPED, W.rids.slice(0, 3).map((rid) => ({ rid, slot: 0 })));
   assert.equal(W.book.keepClaim(toHex(W.contract.censusRoot), claim).ok, true);
   const c = W.roster.censusFor(W.rid);
   assert.equal(c.ok, true, c.why);
@@ -187,7 +187,7 @@ test('three heartbeat slots an hour apart prove the stopped node out: the seat s
   const at = W.roster.committeeFor(W.rid, 'settlement');
   assert.deepEqual(mine.drawn.settlement.map(toHex).sort(), at.drawn.map((e) => toHex(e.pubkey)).sort(), 'one draw at the client and the seat');
   // the presence book, posting: holding those three certificates it finds the same claim
-  for (const [i, r] of W.rids.slice(0, 3).entries()) assert.equal(W.book.takeCert(fromHex(certOf(r, i))).ok, true);
+  for (const r of W.rids.slice(0, 3)) assert.equal(W.book.takeCert(fromHex(certOf(r, 0))).ok, true);
   return W.book.absentForPosting({ census: NODES.map((n) => toHex(keyFor(n))), w: W.w }).then((posted) => {
     assert.deepEqual(posted.claims.map((x) => x.node), [STOPPED]);
     assert.ok(posted.claims[0].proofs.every((p) => p.role.startsWith('heartbeat-')));
@@ -195,9 +195,9 @@ test('three heartbeat slots an hour apart prove the stopped node out: the seat s
   });
 });
 
-test('a heartbeat claim against an honest node is refused by the seat and by the client: 4 signers, a listing, one round\'s three slots', () => {
+test('a heartbeat claim against an honest node is refused by the seat and by the client: 4 signers, a listing, two slots only', () => {
   const W = world();
-  const three = W.rids.slice(0, 3).map((rid, i) => ({ rid, slot: i }));
+  const three = W.rids.slice(0, 3).map((rid) => ({ rid, slot: 0 }));
   const census = W.roster.censusFor(W.rid, null, { asRoundsOwn: false }).entries.map((e) => toHex(e.pubkey));
   const cases = [
     // 1. four members only: no certificate - a group of 4 makes none
@@ -206,8 +206,8 @@ test('a heartbeat claim against an honest node is refused by the seat and by the
     ['present', claimOf(STOPPED, [{ ...three[0], cert: toHex(encodeHeartbeatCertificate({ roundId: three[0].rid, slot: 0, groups: [
       { heard: LIVE, leftOut: [], signatures: LIVE.slice(1).map((h) => ({ nodePubkey: fromHex(h), signature: signHeard({ roundId: three[0].rid, slot: 0, heard: LIVE, leftOut: [] }, signBy(h)) })) },
       { heard: [...LIVE, STOPPED], leftOut: [], signatures: [{ nodePubkey: fromHex(LIVE[0]), signature: signHeard({ roundId: three[0].rid, slot: 0, heard: [...LIVE, STOPPED], leftOut: [] }, signBy(LIVE[0])) }] }] })) }, ...three.slice(1)]), /lists it present/],
-    // 3. one round's three slots: 10 min, one outage - not 3 misses an hour apart
-    ['too-few', claimOf(STOPPED, [0, 1, 2].map((slot) => ({ rid: W.rids[0], slot }))), /on 1 missed close\(s\) at least 1 h apart/],
+    // 3. two slots only: a node flooded at 2 moments stays in
+    ['too-few', claimOf(STOPPED, three.slice(0, 2)), /on 2 missed close\(s\) at least 1 h apart; it takes 3/],
   ];
   for (const [proof, claim, why] of cases) {
     const atSeat = W.book.check(claim, { census, w: W.w });

@@ -52,12 +52,17 @@ export const ABSENCE_PROOF_SEATINGS = 3;
  * node also signs a HEARTBEAT for each heartbeat slot of a round and hands it to that slot's heartbeat committee; the committee's live
  * members sign who they heard (HEARD), and a certificate of at least HEARTBEAT_THRESHOLD of them proves every census node it does not
  * list missed at that slot - not only the drawn. A round that seats itself has HEARTBEAT_SLOTS_PER_ROUND slots, closing
- * HEARTBEAT_SPACING_MS apart before its seating close (heartbeat.js), so a 15-min grid gives a slot every 5 min, 288 a day.
+ * HEARTBEAT_SPACING_MS apart up to its seating close (heartbeat.js).
+ *
+ * ONE SLOT PER ROUND (the owner 2026-10-27, ruling the trade-off): any rule that lets a few live nodes prove many stopped ones out in a
+ * day lets as many colluding nodes make the same proofs against honest ones. On 28 nodes over 100 simulated days: with 1 slot per
+ * round a stopped node is out within a day on 83 % of days (3 slots: 100 %), and a colluding group of 7 has the proofs on 36 % of days
+ * (3 slots: 90 %), 6 on 2 %, 5 never. A 15-min grid gives a slot every 15 min, 96 a day, closing with the round's seating.
  * HEARTBEAT_DRAWN members per slot, drawn on the round's own census and beacon (one key one seat, by bond, on their own seed).
  * The threshold is 5 of 9, as a seating's: 2 x 5 > 9, so two certificates of one slot share a signer, and no group of fewer than 5
  * nodes can make one at all.
  */
-export const HEARTBEAT_SLOTS_PER_ROUND = 3;
+export const HEARTBEAT_SLOTS_PER_ROUND = 1;
 /**
  * THE 3 MISSED CLOSES LIE AT LEAST 1 H APART (kanban #727, the owner 2026-10-27: not out for a short outage). With a heartbeat slot every
  * 5 min, a 10-min restart misses three of them; so the closes a proof counts are each at least this far from the next, and one outage

@@ -7407,7 +7407,7 @@
  {
   "method": "GET",
   "path": "/heartbeat-cert",
-  "params": "query: round=<64 hex>, slot=0..2",
+  "params": "query: round=<64 hex>, slot=0",
   "auth": "none; only when seating is on (ARENA_SEATING=1)",
   "returns": "200 JSON {cert}; 400; 404",
   "purpose": "The heartbeat certificate of one slot of a 22 round held here (§5A.3, kanban #727): who 5 or more of its committee heard; every census node it does not list missed that slot.",
@@ -7423,7 +7423,7 @@
    {
     "name": "slot",
     "required": true,
-    "description": "The heartbeat slot, 0 to 2."
+    "description": "The heartbeat slot: 0 (one per round, the owner 2026-10-27)."
    }
   ],
   "body": null,

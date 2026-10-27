@@ -25,12 +25,12 @@
 //
 // AND NOT FOR A FEW MISSED SEATINGS (the owner 2026-10-27, an attacker flooding a node while it is drawn): fewer than 3 missed seatings,
 // or present once, and the node is kept. 3 closes at least 1 h apart (ABSENCE_PROOF_SPACING_MS), so one blackout - on two games' grids,
-// or a 10-min restart across 3 heartbeat slots - counts once.
+// or a restart across several heartbeat slots - counts once.
 //
 // AND THE HEARTBEAT, SO A DAY IS ENOUGH (kanban #727, the owner 2026-10-27): a seating proves only its 9 drawn missed, and only when 5 of
 // them are present, so on 10-27 the stopped nodes took three days to be proven out. A heartbeat certificate (heartbeat.js) proves EVERY
-// node of its round's census missed that it does not list, at a slot every 5 min. A proof names a seating (role game or settlement) or a
-// heartbeat slot (role heartbeat-0..2); both count towards the 3 closes an hour apart, and a listing in either keeps the node in.
+// node of its round's census missed that it does not list, one slot per round (the owner 2026-10-27). A proof names a seating (role game or
+// settlement) or a heartbeat slot (role heartbeat-0); both count towards the 3 closes an hour apart, and a listing in either keeps the node in.
 import { toHex } from './hash.js';
 import { PRESENCE_VERSION, ABSENCE_PROOF_SEATINGS, ABSENCE_PROOF_SPACING_MS } from './constants.js';
 import { medianTimePast } from './beacon.js';
