@@ -62,10 +62,16 @@ async function mempoolOutputs(rpc, key, spkHex, { batch = 16 } = {}) {
  * The coins at the wallet's address: [{ txid, vout, sats, height (0 = unconfirmed) }] and the tip, from the chain the node uses
  * (state.chain: { kind: 'core', ... } or { kind: 'electrum', ... }).
  */
-export async function coinsOf(chain, spk, { session = electrumSession, fetcher = fetch, scanPauseMs = 2000, scanTries = 30 } = {}) {
+// THE UTXO SET CHANGES ONLY WITH A BLOCK (the 2026.1.9.11 install test, kanban #728: the owner area's Bond panel asked its plan every 30 s and
+// each answer took 14-18 s, a scantxoutset of the whole UTXO set each time): with `reuseScan` a scan made at this same tip is used again -
+// the mempool and gettxout are still read, so a deposit arriving or a coin spent shows at once. Kept per bitcoind and script.
+const scanKept = new Map();   // `${url} ${spkHex}` -> { tip, found }
+export async function coinsOf(chain, spk, { session = electrumSession, fetcher = fetch, scanPauseMs = 2000, scanTries = 30, reuseScan = false } = {}) {
   if (chain.kind === 'core') {
     const rpc = coreRpc({ ...chain, fetcher, timeoutMs: 120000 });
     const tip = await rpc('getblockcount');
+    const key = `${chain.url} ${toHex(spk)}`, kept = scanKept.get(key);
+    if (reuseScan && kept && kept.tip === tip) return { tip, coins: await liveCoins(rpc, chain, spk, kept.found.map((c) => ({ ...c }))), reused: true };
     // ONE SCAN AT A TIME PER BITCOIN CORE (kanban #577, measured 2026-10-22 on the second machine: nodes sharing one Bitcoin Core - an
     // install's bond check and the custody agents' coin reads - met "Scan already in progress" at every check for 25 minutes, each
     // scan taking 5-10 s): a busy scan is waited for, every scanPauseMs, up to scanTries times, before it counts as a failure
@@ -75,14 +81,8 @@ export async function coinsOf(chain, spk, { session = electrumSession, fetcher =
       catch (e) { if (!/scan already in progress/i.test(String(e && e.message)) || i + 1 >= scanTries) throw e; await new Promise((ok) => setTimeout(ok, scanPauseMs)); }
     }
     const found = (r.unspents || []).map((u) => ({ txid: u.txid, vout: u.vout, sats: Math.round(u.amount * 1e8), height: u.height }));
-    // scantxoutset reads the UTXO set only: a deposit still in the mempool is found by reading the mempool (kanban #635)
-    for (const c of await mempoolOutputs(rpc, chain.url, toHex(spk))) if (!found.some((f) => f.txid === c.txid && f.vout === c.vout)) found.push(c);
-    // A COIN THE MEMPOOL ALREADY SPENDS IS NO COIN (kanban #577, measured 2026-10-22 on the three installers after founding
-    // a997abf1: the custody agent's peg-in picked the coins its own unconfirmed guardian_of update had just spent, and bitcoind
-    // refused it every minute - "insufficient fee, rejecting replacement"): gettxout with the mempool says null for it
-    const coins = [];
-    for (const c of found) { let out = null; try { out = await rpc('gettxout', [c.txid, c.vout, true]); } catch { out = {}; } if (out) coins.push(c); }
-    return { tip, coins };
+    if (Number(r.height) === tip || r.height === undefined) scanKept.set(key, { tip, found: found.map((c) => ({ ...c })) });
+    return { tip, coins: await liveCoins(rpc, chain, spk, found) };
   }
   const s = await session({ ...chain, timeoutMs: 20000 });
   try {
@@ -90,6 +90,17 @@ export async function coinsOf(chain, spk, { session = electrumSession, fetcher =
     const list = await s.call('blockchain.scripthash.listunspent', [scriptHash(spk)]);
     return { tip, coins: list.map((u) => ({ txid: u.tx_hash, vout: u.tx_pos, sats: u.value, height: u.height > 0 ? u.height : 0 })) };
   } finally { s.close(); }
+}
+/** The scan's coins with the mempool's outputs to `spk` added and the ones the mempool spends taken out. */
+async function liveCoins(rpc, chain, spk, found) {
+  // scantxoutset reads the UTXO set only: a deposit still in the mempool is found by reading the mempool (kanban #635)
+  for (const c of await mempoolOutputs(rpc, chain.url, toHex(spk))) if (!found.some((f) => f.txid === c.txid && f.vout === c.vout)) found.push(c);
+  // A COIN THE MEMPOOL ALREADY SPENDS IS NO COIN (kanban #577, measured 2026-10-22 on the three installers after founding
+  // a997abf1: the custody agent's peg-in picked the coins its own unconfirmed guardian_of update had just spent, and bitcoind
+  // refused it every minute - "insufficient fee, rejecting replacement"): gettxout with the mempool says null for it
+  const coins = [];
+  for (const c of found) { let out = null; try { out = await rpc('gettxout', [c.txid, c.vout, true]); } catch { out = {}; } if (out) coins.push(c); }
+  return coins;
 }
 
 /** Broadcast a raw transaction through the node's chain: its txid. */

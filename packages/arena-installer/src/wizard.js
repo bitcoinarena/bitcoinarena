@@ -971,7 +971,7 @@ const serviceRun = async (b) => {
       // the owner page where the installer hands the key over (kanban #687): the Arena site's, by this node's key
       const idNow = (state.read().service || {}).identity;
       return { ok: true, owner: /^[0-9a-f]{64}$/.test(String(idNow || '')) ? `https://testnet.bitcoin-arena.io/owner/#node=${idNow}&local=${encodeURIComponent(`http://127.0.0.1:${portOf()}`)}`
-        : `http://127.0.0.1:${portOf()}/Dashboard/owner`, url: reachNow.url || null, mode: reachNow.mode || null };
+        : `http://127.0.0.1:${portOf()}/dashboard/owner`, url: reachNow.url || null, mode: reachNow.mode || null };
     },
   };
 
@@ -1044,6 +1044,12 @@ const serviceRun = async (b) => {
   async function handle(req, res) {
     const url = new URL(req.url, 'http://x');
     if (!hostOk(req)) return json(res, 421, { ok: false, why: 'this host is not the installer' });
+    // THE ICON, TO ANYONE (the 2026.1.9.11 install test, kanban #704: every page load logged a missing favicon.ico): the node's own, beside its pages
+    if (req.method === 'GET' && url.pathname === '/favicon.ico') {
+      let body; try { body = readFileSync(new URL('../../arena-node/pages/favicon.ico', import.meta.url)); } catch { res.writeHead(204); return res.end(); }
+      res.writeHead(200, { 'content-type': 'image/x-icon', 'cache-control': 'max-age=86400' });
+      return res.end(body);
+    }
     // THE TOKEN, ONCE: traded for a session and gone
     if (req.method === 'GET' && url.pathname === '/' && url.searchParams.has('t')) {
       // THE LINK OPENED AGAIN IN A BROWSER THAT HOLDS ITS SESSION (kanban #635, the owner's playtest 2026-10-25: the test host app's "Open in
