@@ -26,11 +26,11 @@ test('the offer: "Earn up to 6.5× more", the sat to send, its address and QR, o
   const o = answer({ standing: enough, capacity: { ok: true, plea: null, mine: [m] }, bond });
   o.a.componentDidMount(); await tick(); await tick();
   const h = o.html();
-  assert.match(h, /<h3 class="offer">💰 Earn up to 6\.5× more<\/h3><p>Federation 337ae01a is 433 % full and pays guardians with bigger bonds more\. Optional\.<\/p>/);
+  assert.match(h, /^<div class="card"><h3 class="offer">💰 Earn up to 6\.5× more<\/h3><p>Federation 337ae01a is 433 % full and pays guardians with bigger bonds more\. Optional\.<\/p>/);
   assert.match(h, /<li><b>Send 372,160 sat<\/b> to your bond wallet/, '383,334 + 4,830 - 16,004');
   assert.match(h, /<code>tb1ptopup<\/code>.*<svg data-qr=""\/>.*Your bond wallet has 16,004 sat\. This adds the rest and about 4,830 sat for fees\./);
   assert.match(h, /<button type="button" class="primary" id="ab-go" disabled="">Add 383,334 sat to my bond<\/button><span class="sub"> - once the coins have arrived<\/span>/);
-  assert.match(h, /<p class="ok">✓ Your bond is enough: this node is drawn for rounds\.<\/p>$/);
+  assert.match(h, /<p class="ok">✓ Your bond is enough: this node is drawn for rounds\.<\/p><\/div>$/);
   assert.deepEqual(o.calls.needs, [['earn', 'warn', 'Earn up to 6.5× more from Federation 337ae01a: add 383,334 sat to your bond.']]);
 });
 
@@ -48,7 +48,7 @@ test('a wallet with enough: no send step, the button on, the plan shown, then po
 
 test('nothing to earn: no offer; a bond below what rounds ask: red with the amount and on the Overview', () => {
   const calm = answer({ standing: enough, capacity: { mine: [{ ...m, band: 'CALM', load: 0.4 }] }, bond });
-  assert.match(calm.html(), /^<h3>Your bond<\/h3><p class="ok">✓ Your bond is enough.*No federation you guard pays extra/);
+  assert.match(calm.html(), /^<div class="card"><h3>Your bond<\/h3><p class="ok">✓ Your bond is enough.*No federation you guard pays extra/);
   const low = answer({ standing: { ownBondSats: '20000', commonBondMinSats: '50000', warnings: [{ kind: 'losing brackets' }] }, capacity: null, bond: null });
   low.a.componentDidMount();
   assert.match(low.html(), /<p class="err">⚠ Your bond is below what most rounds ask \(50,000 sat\): add 30,000 sat to be drawn again\.<\/p>/);
@@ -64,4 +64,11 @@ test('the capacity plea: the seat\'s words when a federation fills; nothing when
   assert.match(h, /^<div class="card"><h3>A federation you guard is filling up<\/h3><p class="warnline">Federation aaaaaaaa holds 87 %.*Increase your bond by 36,667 sat \(Add to bond\)/);
   assert.match(h, /take more deposits/);
   for (const capacity of [null, { ok: true }, { ok: true, plea: null }, { plea: { says: 'x' }, mine: [m] }]) assert.equal(renderToStaticMarkup(React.createElement(CapacityPlea, { capacity })), '');
+});
+
+// NOTHING TO SAY, NO BOX (kanban #728, the 2026.1.9.11 install test: an empty box above the Bond panel on a node with no bond): the answer is
+// its own card, and a node with no bond gets none at all
+test('no bond: the answer draws nothing, not even an empty card', () => {
+  const o = answer({ standing: null, capacity: { ok: true }, bond: { bond: null, oldBonds: [] } });
+  assert.equal(o.html(), '');
 });

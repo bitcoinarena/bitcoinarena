@@ -23,6 +23,13 @@ test('on a running seat: /gateway-claim, /liquidity-claim, /liquidity-seating, /
     assert.deepEqual(await get('/liquidity-claim'), [200, 'application/json', liq], 'the provider\'s claim, as written');
     const [gs, , gb] = await get('/gateway-claim');
     assert.deepEqual([gs, gb.why], [404, 'this node stands for no gateway seat']);
+    // its own owner page asks quietly (the 2026.1.9.11 install test: a 404 in the console at every load): none is a 200 null; a claim as before
+    assert.deepEqual(await get('/gateway-claim?quiet=1'), [200, 'application/json', null]);
+    assert.deepEqual(await get('/liquidity-claim?quiet=1'), [200, 'application/json', liq]);
+    // the pages' icon (the 2026.1.9.11 install test: a missing favicon.ico at every load)
+    const ico = await fetch(base + '/favicon.ico');
+    assert.deepEqual([ico.status, ico.headers.get('content-type')], [200, 'image/x-icon']);
+    assert.deepEqual([...new Uint8Array(await ico.arrayBuffer()).slice(0, 4)], [0, 0, 1, 0], 'an icon file');
     const [ls, , lb] = await get(`/liquidity-seating?federation=${'f0'.repeat(32)}&epoch=1090`);
     assert.deepEqual([ls, lb.ok], [404, false]); assert.match(lb.why, /signed no liquidity seating/);
     const [ss, , sb] = await get(`/gateway-seating?federation=${'f0'.repeat(32)}&epoch=1090`);
