@@ -93,7 +93,7 @@ export function walletOf(cli) {
 export const walletAddress = (cli) => cli('getnewaddress', 'add-bond', 'bech32m');
 
 /** WHAT AN ADVERTISEMENT CAN SAY THE NODE DOES (constants.js ROLES), and custody: its guardian_capable flag. */
-export const ADVERT_ROLES = Object.freeze(['game', 'verify', 'settlement', 'relay']);
+export const ADVERT_ROLES = Object.freeze(['game', 'verify', 'settlement', 'relay', 'audit']);
 const UPDATE_CARRIER_SATS = 3000n;
 /**
  * THE NODE'S ROLES CHANGED FROM THE OWNER PAGE (kanban #553, 2026-10-20: "It also offers no options to setup the role of the node";

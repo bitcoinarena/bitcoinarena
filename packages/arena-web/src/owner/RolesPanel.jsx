@@ -8,14 +8,14 @@ import React from 'react';
 import { Tile, Switch, Button, SaveBar } from '../design/components.jsx';
 
 /** The roles the node's advertisement names, a switch each; custody is its guardian_capable flag. */
-export const ROLE_SWITCHES = Object.freeze([['play', ['game', 'verify']], ['settlement', ['settlement']], ['relay', ['relay']]]);
+export const ROLE_SWITCHES = Object.freeze([['play', ['game', 'verify']], ['audit', ['audit']], ['settlement', ['settlement']], ['relay', ['relay']]]);
 // relay is no switch: every node serves round data, always on (2026-10-26: "It should always be on")
-export const SWITCHABLE = Object.freeze(['play', 'settlement', 'custody']);
+export const SWITCHABLE = Object.freeze(['play', 'audit', 'settlement', 'custody']);
 
 /** What is on now, from the node's census row. */
 export function switchesOf(mine) {
   const has = (r) => !!(mine && (mine.roles || []).includes(r));
-  return { play: has('verify') || has('game'), settlement: has('settlement'), relay: true, custody: !!(mine && mine.guardianCapable) };
+  return { play: has('verify') || has('game'), audit: has('audit'), settlement: has('settlement'), relay: true, custody: !!(mine && mine.guardianCapable) };
 }
 /** The switches the owner changed. */
 export const changedOf = (was, now) => SWITCHABLE.filter((k) => !!was[k] !== !!now[k]);
@@ -100,6 +100,8 @@ export class RolesPanel extends React.Component {
     const gatewayWaits = !(gateway && gateway.gatewayUrl) && !!gatewayRuns;
     return [
       ['play', '🎮', 'Play and check rounds', 'A share of every round\'s node fee', 'Replays the rounds it is drawn for and signs who won.'],
+      // THE AUDIT ROLE (spec §13A.1, kanban #725): drawn in secret, outside the round's seats
+      ['audit', '🔎', 'Audit rounds', '10 % of the node fee of the rounds it checks', 'Drawn in secret for rounds it is not seated in: replays them and objects if a result was signed wrong.'],
       ['settlement', '💸', 'Pay out winners', 'A share of every round\'s node fee', 'Co-signs the payout once a result is signed.'],
       ['relay', '📡', 'Relay for other nodes', 'Keeps rounds reachable', 'Every node does this: it serves round data to players and other nodes. Always on.', 'On', true],
       ['custody', '🛡️', 'Guardian (custody)', 'The guardians\' share of every round', guarding ? 'Guards players\' bitcoin in a federation with other guardians.' : 'Ready to be drawn as a guardian when a federation is founded.', guarding ? 'Guarding' : null],

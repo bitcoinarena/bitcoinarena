@@ -8,10 +8,11 @@ import React from 'react';
 import { Tile, Switch, Pill } from '../design/components.jsx';
 
 // the roles' icons and their share of the 4 % (fee.js, 2026.0.16: four pools of 1 %; custody's third to 2 random gateways per day)
-export const ROLE_IC = Object.freeze({ verify: '🎮', settlement: '✍️', custody: '🏦', liquidity: '💧' });
+export const ROLE_IC = Object.freeze({ verify: '🎮', audit: '🔎', settlement: '✍️', custody: '🏦', liquidity: '💧' });
 export const ROLE_EARN = Object.freeze({
   verify: '1 % of each round, shared by its 7 seated nodes',
   settlement: '1 % of each round, shared by its 7 seated nodes',
+  audit: '10 % of the node fee of each round it checks, shared by that round\'s auditors (about 3)',
   custody: '1 % of each round of your federation: guardians ⅔, gateways ⅓ (2 per federation, randomly chosen each day)',
   liquidity: '1 % of each round, shared by the liquidity providers: the more coins you hold for new nodes, the bigger your share',
 });

@@ -20,7 +20,7 @@ import { nodeState, guardianSetupOf } from './state.js';
 import { fromHex, toHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.js';
 
-export const ADVERT_ROLES = Object.freeze(['game', 'verify', 'settlement', 'relay']);
+export const ADVERT_ROLES = Object.freeze(['game', 'verify', 'settlement', 'relay', 'audit']);
 
 /** The installer's roles for the advertisement roles asked: game or verify is its one 'verify'; custody and liquidity as they were. */
 export function stateRolesFor(asked, had) {
@@ -29,6 +29,7 @@ export function stateRolesFor(asked, had) {
   if (want.has('game') || want.has('verify')) out.push('verify');
   if (want.has('settlement')) out.push('settlement');
   if (want.has('relay')) out.push('relay');
+  if (want.has('audit')) out.push('audit');
   for (const keep of ['custody', 'liquidity']) if ((had || []).includes(keep)) out.push(keep);
   return out;
 }
@@ -58,7 +59,8 @@ export async function changeRolesOnNode({ home, release, roles, custody, post = 
   if (!post) return { ok: true, plan };
   await chainKit.broadcast(s.chain, u.funding.hex);
   const txid = await chainKit.broadcast(s.chain, u.update.hex);
-  st.save({ roles: next, rolesUpdate: { txid, advertId: u.advertId, before, after, atMs: nowMs } });
+  // the owner's own choice of the audit role stands from now on: no later update adds it again (auditGrantDue)
+  st.save({ roles: next, auditGranted: true, rolesUpdate: { txid, advertId: u.advertId, before, after, atMs: nowMs } });
   return { ok: true, plan, update: { txid } };
 }
 
@@ -102,6 +104,9 @@ async function advertUpdateOf({ st, s, release, roles, hostedGames = s.hostedGam
  * Next Block's first version, as every installer node named before): the same - nothing to do; else an advertisement update naming
  * them, from the node's wallet. Answers { ok, unchanged } / { ok, plan } / { ok, plan, update } or { ok: false, why }.
  */
+/** Whether an update adds the audit role: the node plays and checks rounds, does not audit, and was never given it (auditGranted). */
+export const auditGrantDue = (s) => !!s && (s.roles || []).includes('verify') && !(s.roles || []).includes('audit') && !s.auditGranted;
+
 export async function refreshHostedGames({ home, release, post = false, chainKit = { coinsOf, broadcast }, state = null, nowMs = Date.now() }) {
   const st = state || nodeState(home);
   const s = st.read();
@@ -116,15 +121,21 @@ export async function refreshHostedGames({ home, release, post = false, chainKit
   const protocols = [...SUPPORTED_PROTOCOL_VERSIONS];
   const protocolsHad = Array.isArray(s.advertProtocols) ? s.advertProtocols : null;
   const sameProtocols = !!protocolsHad && JSON.stringify(protocolsHad) === JSON.stringify(protocols);
-  if (JSON.stringify(had) === JSON.stringify(now) && sameProtocols) return { ok: true, unchanged: true };
-  const built = await advertUpdateOf({ st, s, release, roles: s.roles || [], hostedGames: now, nowMs, chainKit });
+  // THE AUDIT ROLE AT UPDATE (spec §13A.1, RULED 2026-10-27: "wer verify hatte vor einem Update bekommt automatisch die neue Rolle"): a node
+  // that plays and checks rounds and does not audit yet gets `audit` with this update - once (auditGranted), so an owner who turns it off
+  // later keeps it off; a node without verify gets nothing added
+  const roles = s.roles || [];
+  const grantAudit = auditGrantDue(s);
+  const rolesNow = grantAudit ? [...roles, 'audit'] : roles;
+  if (JSON.stringify(had) === JSON.stringify(now) && sameProtocols && !grantAudit) return { ok: true, unchanged: true };
+  const built = await advertUpdateOf({ st, s, release, roles: rolesNow, hostedGames: now, nowMs, chainKit });
   if (!built.ok) return built;
   const u = built.update;
   const plan = { before: had.length, after: now.length, added: now.filter((g) => !had.includes(g)).length, protocols: Math.max(...protocols), protocolsBefore: protocolsHad ? Math.max(...protocolsHad) : null,
-    feeSats: String(u.fees.funding + u.fees.update), countsAfter: 6 };
+    ...(grantAudit ? { auditAdded: true } : {}), feeSats: String(u.fees.funding + u.fees.update), countsAfter: 6 };
   if (!post) return { ok: true, plan };
   await chainKit.broadcast(s.chain, u.funding.hex);
   const txid = await chainKit.broadcast(s.chain, u.update.hex);
-  st.save({ hostedGames: now, advertProtocols: protocols, gamesUpdate: { txid, advertId: u.advertId, before: had.length, after: now.length, protocols: Math.max(...protocols), atMs: nowMs } });
+  st.save({ hostedGames: now, advertProtocols: protocols, ...(grantAudit ? { roles: rolesNow, auditGranted: true } : {}), gamesUpdate: { txid, advertId: u.advertId, before: had.length, after: now.length, protocols: Math.max(...protocols), atMs: nowMs } });
   return { ok: true, plan, update: { txid } };
 }
