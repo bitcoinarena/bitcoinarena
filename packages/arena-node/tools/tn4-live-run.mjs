@@ -56,7 +56,10 @@ import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { drivenTape, say as sayTo, bedFrom, GENESIS_HASH } from '../test/window-fixture.js';
-import { NEXTBLOCK_CORES_V3 as NEXTBLOCK_CORES } from '../../nextblock/plugin/truck-cores.js';
+import { NEXTBLOCK_CORES_V3, NEXTBLOCK_CORES_V5 } from '../../nextblock/plugin/truck-cores.js';
+// EVERY CORE A ROUND MAY NAME: v3's and v5's (v6 plays v5's 0847, measured 2026-10-27 10:18Z - the run stopped after the locks with
+// "the round names core 0847c99f60e694e1, which nextblock does not hold")
+const NEXTBLOCK_CORES = new Map([...NEXTBLOCK_CORES_V3, ...NEXTBLOCK_CORES_V5]);
 import { MANIFEST_V3, GAME_ID_V3 } from '../../nextblock/plugin/nextblock-v3.js';
 import { itemsKeyFor, ownedItems, entryItemsFor, entryUnlocks } from '../../arena-client/src/item-buy.js';
 const env = process.env;

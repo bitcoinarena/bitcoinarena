@@ -15,7 +15,10 @@ const [port, home] = [Number(process.argv[2]), process.argv[3]];
 const { serviceLog } = await import('../../arena-node/src/log-level.js');
 serviceLog({ home });
 const state = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
-if (!state.chain || state.chain.kind !== 'electrum') { console.error('this node is not in Electrum mode (state.json chain.kind)'); process.exit(2); }
+// NOTHING TO BRIDGE IS NO FAILURE (kanban #719, the owner's node after an update 2026-10-26: "arena-chain-bridge--2.service: Scheduled restart
+// job, restart counter is at 840" - a node on its own Bitcoin Core whose bridge unit the update had not removed, exiting 2 under
+// Restart=on-failure every 10 s): said once, exit 0, and the unit stays down
+if (!state.chain || state.chain.kind !== 'electrum') { console.log('this node reads its own Bitcoin Core (state.json chain.kind): nothing to bridge, the chain bridge stays off'); process.exit(0); }
 const bridge = createBridge({ electrum: state.chain, fallbacks: TESTNET4_ELECTRUM, home, log: (l) => console.log(l) });   // the others when it fails (kanban #639)
 const at = await bridge.listen(port);
 console.log(`[bridge] testnet4 through ${state.chain.host}:${state.chain.port} and Esplora, on 127.0.0.1:${at}; cookie ${bridge.cookiePath}`);

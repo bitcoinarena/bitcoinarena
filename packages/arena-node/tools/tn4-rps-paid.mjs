@@ -72,10 +72,13 @@ const evenPlayer = () => { let k; do { k = secp256k1.utils.randomSecretKey(); } 
 import { hiddenMove, moveCommitment, revealMove } from '../../arena-client/src/head-to-head.js';
 import { RPS_GAME_ID } from '../../rock-paper-scissors/plugin/rock-paper-scissors.js';
 import { GAME_ID_V2 as RPS_GAME_ID_V2 } from '../../rock-paper-scissors/plugin/rock-paper-scissors-v2.js';
+import { GAME_ID_V5 as RPS_GAME_ID_V5 } from '../../rock-paper-scissors/plugin/rock-paper-scissors-v5.js';
 // NODES: the seats by URL - a v2 round draws its signer nodes from all 14, seven of them on the test host
 const nodes = env.NODES ? env.NODES.split(',').map((u) => u.trim().replace(/\/+$/, '')) : env.PORTS.split(',').map((p) => `http://127.0.0.1:${p.trim()}`);
 const invite = readFileSync(env.INVITE_FILE, 'utf8').replace(/["\s]/g, '');
-const GAME = toHex(env.RPS_V2 ? RPS_GAME_ID_V2 : RPS_GAME_ID);   // RPS_V2=1: the v2 tables a v2 grid seats from 14
+// THE NEWEST VERSION'S TABLES by default (2026-10-27: the day grids post v5 62a940ae; v5 decides with v4's core, which decides as v1's -
+// the moves, the hidden entry and the reveal are the same); RPS_V1=1 / RPS_V2=1 for the older tables
+const GAME = toHex(env.RPS_V1 ? RPS_GAME_ID : env.RPS_V2 ? RPS_GAME_ID_V2 : RPS_GAME_ID_V5);
 
 async function paidEntry(c, rid, roundHex, move, who) {
   const STAKE = BigInt(c.stakeMsat);
