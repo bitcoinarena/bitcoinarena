@@ -32,7 +32,7 @@ import { SIGNED_RERUN_BYTES, splitSignedRerun, decodeRerunResult, rerunResultId,
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import {
-  PROTOCOL_VERSION, speaksVersion, TYPE_SLASH_PROOF, TYPE_PAYOUT_TABLE, TYPE_SETTLEMENT_RECORD,
+  PROTOCOL_VERSION, speaksVersion, TYPE_SLASH_PROOF, TYPE_AUDIT_SLASH_PROOF, TYPE_PAYOUT_TABLE, TYPE_SETTLEMENT_RECORD,
   TYPE_RESULT, TYPE_FEE_CLAIM, TYPE_SERVICE_RECORD, ROLES, roleByte,
   SLASH_REMAINDERS, SLASH_TO_PLAYERS_BPS, TAG, splitNodesDevelopers,
 } from './constants.js';
@@ -43,6 +43,7 @@ import { computePayoutTable, payoutTableId, decodePayoutTable } from './payout.j
 import { payoutRuleForRound } from './manifest.js';
 import { lockAction, lockActionByte, lockActionOf, EXPIRE } from './lock-action.js';
 import { outcomeByte, outcomeOf } from './result.js';
+import { decodeAudit, auditId, auditStands, auditResultsHash } from './auditor.js';
 
 const hex = (b) => toHex(b);
 
@@ -103,10 +104,17 @@ export const OPERATOR_PLAYED = 'OPERATOR_PLAYED';
  */
 export const FEE_WITHOUT_SERVICE = 'FEE_WITHOUT_SERVICE';
 
-// In 5A.3's own document order, which is the order they are being written in.
+/**
+ * §13A.1 (kanban #724, #725): "an AUDIT over a result that a valid objection later contradicts is a fraud proof against its signer,
+ * as for a committee signature ("a result contradicted by replay", §5A.3), and slashes its bond", proof "the AUDIT + the objection
+ * that held". Not a row of 5A.3's table but its second row's twin: the auditor signed that a run replays, and the replay says no.
+ */
+export const AUDIT_CONTRADICTED = 'AUDIT_CONTRADICTED';
+
+// In 5A.3's own document order, which is the order they are being written in; §13A.1's AUDIT after them.
 export const OFFENCES = [
   TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, SETTLED_WITHOUT_AUTHORITY,
-  OPERATOR_PLAYED, FEE_WITHOUT_SERVICE,
+  OPERATOR_PLAYED, FEE_WITHOUT_SERVICE, AUDIT_CONTRADICTED,
 ];
 
 /**
@@ -120,9 +128,11 @@ export const OFFENCES = [
  * supplies them because only a node holding the round knows which entries paid; this decides nothing
  * about them, it only selects.
  */
-export const NAMES_ONE_ENTRY = [TWO_RESULTS, REPLAY_CONTRADICTS];
+// A CONTRADICTED AUDIT NAMES ONE ENTRY TOO (kanban #724, #725): the one whose contradicted run its proof names - the auditor
+// vouched for every entry, but only that one's player was harmed by the run it said replays.
+export const NAMES_ONE_ENTRY = [TWO_RESULTS, REPLAY_CONTRADICTS, AUDIT_CONTRADICTED];
 export function affectedEntries({ offence, playerPubkey, entries = [] } = {}) {
-  if (!OFFENCES.includes(offence)) return { ok: false, why: `${offence} is not one of the six offences` };
+  if (!OFFENCES.includes(offence)) return { ok: false, why: `${offence} is not one of the offences` };
   if (NAMES_ONE_ENTRY.includes(offence)) {
     const one = entries.find((e) => e && hex(e.playerPubkey) === hex(playerPubkey));
     if (!one) return { ok: false, why: 'that proof names a player the round has no entry for' };
@@ -436,6 +446,178 @@ export function slashHoldsOnRerun({
     bond: { txid: proof.bondTxid, vout: proof.bondVout },
     commitment: slashCommitment(proof),
     why: 'the node signed a re-run the canonical transcript does not replay to, and a second valid objection proved it',
+  };
+}
+
+/**
+ * A CONTRADICTED AUDIT, AS A SLASH PROOF (§13A.1, kanban #724, #725). Until this an auditor whose AUDIT a valid objection
+ * contradicted was only unpaid: the seat kept its bytes as "the fraud proof against its signer" and nothing could carry them to the
+ * bond, because every proof above is about a signed player result. The proof body names the AUDIT, the entry whose run it vouched
+ * for, that run, the canonical transcript the objection replayed and the bond the auditor's own advertisement names:
+ *
+ *   type 0x37 | version | round_id | entry_id | player_pubkey | node_pubkey | audit_id | contradicted_run_id | transcript_hash
+ *   | bond_txid | bond_vout                                                                             (263 bytes)
+ *
+ * and beside it, as a player-result proof carries the signed result, the evidence: the AUDIT's bytes, its signature and the rows
+ * (entry id, run id) its results_hash is over - so a stranger sees that the AUDIT vouched for exactly that run of that entry:
+ *
+ *   AUDIT (188) | signature (64) | n (u16) | n x (entry_id 32, run_id 32)
+ *
+ * The objection that held (the transcript, its receipts, the replay) travels as it does for the player-result kind: the seat's
+ * GET /objection-bundle for (round, entry), REPLAYED by whoever judges the proof. Its own type byte, under the same slash-proof tag:
+ * the proof's id is what a slashing transaction commits to (5A.3B step 4), and no proof of one kind reads as the other.
+ */
+export const AUDIT_SLASH_PROOF_BYTES = 263;
+/** An AUDIT's own bytes: type, version, three 32-byte fields, its time (u64) and its 81-byte VRF proof. */
+export const AUDIT_BYTES = 188;
+
+export function encodeAuditSlashProof(p) {
+  const w = new Writer();
+  w.u8(TYPE_AUDIT_SLASH_PROOF);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(p.roundId);
+  w.bytes32(p.entryId);
+  w.bytes32(p.playerPubkey);
+  w.bytes32(p.nodePubkey);
+  w.bytes32(p.auditId);
+  w.bytes32(p.contradictedRunId);
+  w.bytes32(p.transcriptHash);
+  w.bytes32(p.bondTxid);
+  w.u32(p.bondVout);
+  return w.finish();
+}
+
+export function decodeAuditSlashProof(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_AUDIT_SLASH_PROOF) throw new Error('not a slash proof against an AUDIT');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
+  const p = {
+    roundId: r.bytes32(), entryId: r.bytes32(), playerPubkey: r.bytes32(), nodePubkey: r.bytes32(), auditId: r.bytes32(),
+    contradictedRunId: r.bytes32(), transcriptHash: r.bytes32(), bondTxid: r.bytes32(), bondVout: r.u32(),
+  };
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the slash proof');
+  return p;
+}
+
+/** Its id, under the slash-proof tag: the 32 bytes a slashing transaction's OP_RETURN commits to. */
+export const auditSlashProofId = (p) => taggedHash(TAG.slashProof, encodeAuditSlashProof(p));
+
+/** The published size of the proof starting at `at`: its body, the AUDIT, the signature and its rows. */
+export function auditSlashEvidenceBytesOf(bytes, at = 0) {
+  const head = at + AUDIT_SLASH_PROOF_BYTES + AUDIT_BYTES + 64;
+  if (!(bytes instanceof Uint8Array) || bytes.length < head + 2 || bytes[at] !== TYPE_AUDIT_SLASH_PROOF)
+    throw new Error('not a published slash proof against an AUDIT');
+  return head + 2 + ((bytes[head] << 8) | bytes[head + 1]) * 64 - at;
+}
+
+/** A PROOF AGAINST AN AUDIT, AS IT IS PUBLISHED: the body, the AUDIT and its signature, its rows. */
+export function joinAuditSlashEvidence(proofBytes, auditBytes, signature, rows) {
+  if (proofBytes.length !== AUDIT_SLASH_PROOF_BYTES) throw new Error(`a slash proof against an AUDIT is ${AUDIT_SLASH_PROOF_BYTES} bytes, got ${proofBytes.length}`);
+  if (auditBytes.length !== AUDIT_BYTES) throw new Error(`an AUDIT is ${AUDIT_BYTES} bytes, got ${auditBytes.length}`);
+  if (!(signature instanceof Uint8Array) || signature.length !== 64) throw new Error('an AUDIT\'s signature is 64 bytes');
+  if (!Array.isArray(rows) || rows.length > 0xffff) throw new Error('the rows an AUDIT is over are a list');
+  const w = new Writer();
+  w.bytes(proofBytes, AUDIT_SLASH_PROOF_BYTES); w.bytes(auditBytes, AUDIT_BYTES); w.bytes(signature, 64); w.u16(rows.length);
+  for (const x of rows) { w.bytes32(x.entryId); w.bytes32(x.runId); }
+  return w.finish();
+}
+
+export function splitAuditSlashEvidence(bytes) {
+  let n = -1; try { n = auditSlashEvidenceBytesOf(bytes); } catch { n = -1; }
+  if (n < 0 || bytes.length !== n) throw new Error('that is not a published slash proof against an AUDIT');
+  const proofBytes = bytes.subarray(0, AUDIT_SLASH_PROOF_BYTES);
+  let at = AUDIT_SLASH_PROOF_BYTES;
+  const audit = bytes.subarray(at, at + AUDIT_BYTES); at += AUDIT_BYTES;
+  const signature = bytes.subarray(at, at + 64); at += 64 + 2;
+  const rows = [];
+  for (; at < bytes.length; at += 64) rows.push({ entryId: bytes.slice(at, at + 32), runId: bytes.slice(at + 32, at + 64) });
+  return { proof: decodeAuditSlashProof(proofBytes), proofBytes, audit, signature, rows };
+}
+
+/** Cut a stream of published proofs against AUDITs; a record that does not fit ends the stream. */
+export function cutAuditSlashEvidence(body) {
+  const out = [];
+  for (let at = 0; at < body.length;) {
+    let n; try { n = auditSlashEvidenceBytesOf(body, at); } catch { break; }
+    if (at + n > body.length) break;
+    out.push(body.subarray(at, at + n)); at += n;
+  }
+  return out;
+}
+
+/**
+ * DOES THIS PROOF SLASH AN AUDITOR'S BOND? (§13A.1, kanban #724, #725.) Mechanical, as `slashHolds` is: every check a comparison or a
+ * signature, and the one judgement - did the replay contradict the run - handed in as `replayDiffers`, never made here.
+ *
+ *   the AUDIT      is the one the proof names, by the node it names, for the round it names; and it STOOD: signed by that node,
+ *                  its VRF proof good for the round, the node in the round's eligible set (`eligible`, `total`, as a seat's
+ *                  auditStands reads them) and drawn, signed at least 30 s before `windowCloseMs`. An AUDIT no seat could have
+ *                  taken vouched for nothing, as a stranger's result signature owes nothing.
+ *   the rows       are the results it vouched for: auditResultsHash(rows) is its results_hash, and the row of the proof's entry
+ *                  is the run the proof says was contradicted.
+ *   the entry      is the proof's (entryId of `entry`), of the proof's round, and its player is the proof's - the one paid.
+ *   the objection  held against that run (`objectedRunId`, the run the held objection names), on the canonical transcript.
+ *   the bond       is the one the auditor's own advertisement names.
+ *
+ * `vrf` and `verify` are injected (no curve lives in this package). Returns `{ slashed: false, why }` or `{ slashed: true, offence,
+ * bond, commitment, why }`.
+ */
+export function slashHoldsOnAudit({
+  proof, audit, signature, rows, entry, advert, eligible, total, vrf, verify, windowCloseMs,
+  canonicalTranscriptHash, objectedRunId, replayDiffers,
+}) {
+  const no = (why) => ({ slashed: false, why });
+  if (!proof) return no('no proof');
+  if (typeof verify !== 'function' || !vrf || typeof vrf.verify !== 'function') return no('checking an AUDIT needs a verifier and a VRF, and none was injected');
+  if (!(eligible instanceof Map) || typeof total !== 'bigint') return no('no eligible set to say who could audit this round');
+  let a;
+  try { a = decodeAudit(audit); } catch (e) { return no(`the evidence is not an AUDIT: ${e.message}`); }
+  if (hex(auditId(a)) !== hex(proof.auditId)) return no('the AUDIT attached is not the one this proof names');
+  if (hex(a.nodePubkey) !== hex(proof.nodePubkey)) return no('the AUDIT attached was signed by a different node');
+  if (hex(a.roundId) !== hex(proof.roundId)) return no('the AUDIT attached is for a different round');
+  if (windowCloseMs === undefined || windowCloseMs === null) return no('no window close to say whether the AUDIT counted');
+  let stood;
+  try { stood = auditStands(a, { signature, vrf, verify, eligible, total, resultsHash: null, windowCloseMs }); }
+  catch (e) { stood = { ok: false, why: e.message }; }
+  if (!stood.ok) return no(`the AUDIT attached does not stand: ${stood.why}`);
+
+  // WHAT IT VOUCHED FOR, ROW BY ROW: without the rows the AUDIT names only a hash, and no stranger can say which run of which entry it is
+  let vouched;
+  try { vouched = auditResultsHash((rows || []).map((x) => ({ entryId: x.entryId, resultDigest: x.runId }))); }
+  catch (e) { return no(`the rows attached do not read: ${e.message}`); }
+  if (hex(vouched) !== hex(a.resultsHash)) return no('the rows attached are not the results the AUDIT vouched for');
+  const row = rows.find((x) => hex(x.entryId) === hex(proof.entryId));
+  if (!row) return no('the AUDIT vouched for no run of the entry this proof names');
+  if (hex(row.runId) !== hex(proof.contradictedRunId))
+    return no('the AUDIT vouched for another run of that entry than the one this proof says was contradicted');
+
+  // THE ENTRY, FOR WHO WAS HARMED: its id is the proof's, its round the AUDIT's
+  if (!entry) return no('no entry to name the player harmed');
+  let eid;
+  try { eid = entryId(entry); } catch (e) { return no(`the entry does not encode: ${e.message}`); }
+  if (hex(eid) !== hex(proof.entryId)) return no('the entry attached is not the one this proof names');
+  if (hex(entry.roundId) !== hex(proof.roundId)) return no('the entry attached is for a different round');
+  if (hex(entry.playerPubkey) !== hex(proof.playerPubkey)) return no('the proof names another player than the entry\'s');
+
+  // THE OBJECTION THAT HELD WAS AGAINST THAT RUN, ON THE CANONICAL TRANSCRIPT. An objection against another run of the entry (the
+  // re-run's, a second objection) contradicts something this AUDIT never vouched for.
+  if (!(objectedRunId instanceof Uint8Array) || hex(objectedRunId) !== hex(proof.contradictedRunId))
+    return no('no objection held against the run this AUDIT vouched for, so nothing contradicts it');
+  if (!(canonicalTranscriptHash instanceof Uint8Array)) return no('no canonical transcript to have replayed');
+  if (hex(proof.transcriptHash) !== hex(canonicalTranscriptHash)) return no('the proof names a transcript that is not the canonical one');
+
+  if (!advert || hex(advert.nodePubkey) !== hex(proof.nodePubkey)) return no('no advertisement from the accused node to name its bond');
+  if (hex(advert.bondTxid) !== hex(proof.bondTxid) || advert.bondVout !== proof.bondVout)
+    return no(`the proof names bond ${hex(proof.bondTxid)}:${proof.bondVout} and the node advertised ${hex(advert.bondTxid)}:${advert.bondVout}`);
+
+  // AND THE ONE JUDGEMENT, NOT MADE HERE: anything but an explicit yes leaves the bond alone (5A.3B's residual)
+  if (replayDiffers !== true) return no('no replay has contradicted the run the AUDIT vouched for');
+  return {
+    slashed: true,
+    offence: AUDIT_CONTRADICTED,
+    bond: { txid: proof.bondTxid, vout: proof.bondVout },
+    commitment: auditSlashProofId(proof),
+    why: 'the auditor signed that a run replays, and a valid objection replayed the canonical transcript to another result',
   };
 }
 

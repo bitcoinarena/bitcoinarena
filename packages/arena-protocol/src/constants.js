@@ -362,6 +362,11 @@ export const TYPE_DEPARTURE_NOTICE = 0x25;
 export const TYPE_EMERGENCY_DEPARTURE = 0x35;
 /** An auditor's AUDIT of a round (§13A.1, protocol 22, kanban #725). */
 export const TYPE_AUDIT = 0x36;
+/**
+ * A slash proof against a contradicted AUDIT (§13A.1, kanban #724, #725): its own type byte, so neither the proof nor its id can be
+ * read as the player-result kind's (TYPE_SLASH_PROOF) - the two share the slash-proof tag and differ from their first byte on.
+ */
+export const TYPE_AUDIT_SLASH_PROOF = 0x37;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 export const TYPE_SPENT_SET = 0x26;

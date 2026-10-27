@@ -1775,6 +1775,7 @@ a transaction is §5A.3B.
 | Settlement action without the required 5-of-7 result and payout signatures | The settlement record |
 | Claiming a fee share without meeting the availability rule (§22A) | Receipt record |
 | Withholding a settlement signature: a seat that acknowledged the round's settlement transaction and did not sign it before the locks expired | The signed acknowledgement + the transaction + the expiry — a stall refunds losers and unpays winners, so it is an offence and not only a delay |
+| Signing an `AUDIT` (§13A.1) over a result a valid objection contradicts (kanban #724, #725) | The `AUDIT` + its signature + the rows it vouched for + transcript + receipts + replay of the objection that held |
 
 Slashed bonds are distributed: half to the affected players of that round;
 the other half 75% evenly to the active census nodes at the slashing height
@@ -1809,6 +1810,7 @@ minus the round's own seats (the witnesses) and 25% to the donation set of
   | Settlement action without the required signatures | every financially activated entry |
   | A fee share claimed without the availability rule | every financially activated entry - they paid the fee |
   | A withheld settlement signature | every financially activated entry - a stall refunds losers and unpays winners alike |
+  | A contradicted `AUDIT` (§13A.1) | the `playerPubkey` of the entry whose contradicted run the proof names |
 
   §13A's "the affected player, another player in the round" is the same
   word: the one the offence names first, and the others after. The
@@ -3668,9 +3670,48 @@ verify seat of seven: 11.6 sat, against 12.9 without auditors).
 - *Contradicted*: where the first result's signers are filed against (an agreed re-run of another run, VOID or FORFEIT after an
   objection, a late objection), every `AUDIT` the seat holds for that round is marked. Its bytes and signature are kept as the evidence
   (`GET /audits`), and it is paid nothing.
+- *Slashed* (kanban #724, #725): at the same place the seat files one `AUDIT_CONTRADICTED` proof per contradicted `AUDIT`
+  (`verify.js fileAuditSlashProofs`, `slash.js`), with the same standing and the same verdict as the first result's signers: the
+  contradicted run is the one they are filed for, and the replay is the seat's own signed result differing from it (for an agreed
+  re-run, also being the re-run's run). The proof and what travels beside it:
 
-Not built: the slash proof that carries a contradicted `AUDIT` to its bond (slash.js knows only signed player results); the `AUDIT` to
-the round's `publication_relays[]`; the operator exclusion (no player declares an operator since §5A.13's ruling). Two choices the
+  ```text
+  AUDIT_SLASH_PROOF {                       // type 0x37, 263 bytes; its id H_tag(ARENA/v1/SlashProof, bytes) is what path B commits to
+    round_id, entry_id, player_pubkey       // the entry whose run the AUDIT vouched for, and its player
+    node_pubkey, audit_id                   // the auditor and the AUDIT it signed
+    contradicted_run_id                     // the run the objection held against
+    transcript_hash                         // the canonical transcript the objection replayed
+    bond_txid, bond_vout                    // the bond the auditor's own advertisement names
+  }
+  || AUDIT (188) || its signature (64) || n (u16) || n x (entry_id, run_id)   // the rows its results_hash is over
+  ```
+
+  The objection that held travels as for a result contradicted by replay: the seat's `GET /objection-bundle` for (round, entry). The
+  check (`slashHoldsOnAudit`), every step a comparison or a signature, the replay verdict handed in: the `AUDIT` is the one named, by
+  the node and for the round named, and it **stood** (`auditStands`: its signature, its VRF proof for the round, the node eligible and
+  drawn, signed at least 30 s before `window_close`); its rows hash to its `results_hash`, and the proof's entry is among them at
+  `contradicted_run_id`; the entry is of the round and names the player; the held objection is against that run, on the canonical
+  transcript; the bond is the advertised one; the replay differs. Stored once per (round, auditor) (`audit_slash_proofs`), listed for
+  the arbitration set at `GET /slashes` under `auditSlashes` (the player-result list is unchanged), served at `GET /audit-slash-proofs`,
+  and put to the round's relays (`PUT /slash/<id>`, kept only with the `AUDIT` it names and the rows it vouched for). The arbiter
+  (`arbiter.js judgeAuditProof`, `tools/arbiter.mjs`) judges it as it judges the player-result kind: the objection replayed again under
+  the round's core and beacon, then the same check, the eligible set from its own census (less the round's drawn nodes, and the
+  players off `GET /audit-run` out of the set and still in `W`). Path B and its split are §5A.3's for every slash: half to the affected
+  players, here the one entry the proof names; the rest 75 % to the active census nodes at `slash_height` less the round's seats, and
+  25 % to the developers.
+
+  Decided here, where the text above is silent: (1) **one proof per `AUDIT`**, naming the first entry whose contradiction this seat
+  files: one `AUDIT` is one signature and pays from one bond, so a second contradicted entry of the same round files nothing more
+  (as a second proof against a spent bond would slash nothing); (2) **the harmed player is that entry's**, as for a result
+  contradicted by replay (§5A.3's `affected[]`), not every entry the `AUDIT` covered; (3) **an `AUDIT` that could not have stood is
+  not slashable**: one by a node not drawn, or signed inside the last 30 s, vouched for nothing a seat could take, as a stranger's
+  result signature owes nothing; (4) **the evidence carries the rows**, not only the `AUDIT`: its `results_hash` alone names no run,
+  and the rows are what show a stranger which run of which entry it vouched for; (5) **its own type byte under the slash-proof tag**:
+  a proof of one kind never reads as the other, and the commitment stays `H_tag(ARENA/v1/SlashProof, proof)`.
+
+Not built: the `AUDIT` to the round's `publication_relays[]`; a contradicted `AUDIT` filed when the seat reads no census for the
+round yet (it is marked and logged, and not filed later); the offence in the arbitration set's published slash event (kanban #723
+names the proof, not its kind); `GET /slash-owing` for the `AUDIT` kind; the operator exclusion (no player declares an operator since §5A.13's ruling). Two choices the
 text above does not make: the players are refused at the seat's door and are not taken out of `W`, so an auditor holding no entry
 draws on the same `W` as the seats. An entry void at the door (§15) is left out of `results_hash`.
 

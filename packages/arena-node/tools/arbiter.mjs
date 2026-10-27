@@ -12,6 +12,9 @@
 //     census at the slash height (the tip), and the accused's bond output itself;
 //   - judges the proof (arbiter.js judgeProof: the objection REPLAYED here under the round's core), builds path B at
 //     slash_height = the tip, has 5 of its 7 members sign on their own, and posts it only after testmempoolaccept.
+// A proof against a contradicted AUDIT (kanban #724, #725; GET /slashes `auditSlashes`, its record at GET /audit-slash-proofs) is judged
+// the same way by arbiter.js judgeAuditProof - the objection replayed here, the AUDIT's signature and VRF draw checked against the round's
+// census less its drawn nodes and its players (GET /audit-run) - and paid as every slash.
 // The members' keys are the test network's derivable ones (genesis-ids.js); mainnet has no set and this refuses it.
 // Its doors (POST /musig/nonce, /musig/partial, GET /status) serve the cooperative key path: it agrees to a release
 // only for a node no handled or open proof accuses.
@@ -21,10 +24,10 @@
 //   ARENA_ARBITER_NETWORK=testnet4 ARENA_ARBITER_SEATS=https://seat-a,... ARENA_BITCOIND_URL=... ARENA_BITCOIND_COOKIE=...
 //   ARENA_ARBITER_PORT=31290 ARENA_ARBITER_STATE=<file> node tools/arbiter.mjs [--once]
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { schnorr } from '@noble/curves/secp256k1.js';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
-import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin } from '../src/arbiter.js';
+import { arbitrationMembers, judgeProof, judgeAuditProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin } from '../src/arbiter.js';
 import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
 import { liquidationEvent, slashEvent, stampEvent, signEvent, eventKey } from '../src/arbitration-events.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
@@ -38,7 +41,10 @@ import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-do
 import { bondSetFor } from '../src/curve.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
-import { splitSlashEvidence, cutSlashEvidence } from '../../arena-protocol/src/slash.js';
+import { splitSlashEvidence, cutSlashEvidence, splitAuditSlashEvidence, cutAuditSlashEvidence, auditSlashProofId } from '../../arena-protocol/src/slash.js';
+import { auditEligible } from '../../arena-protocol/src/auditor.js';
+import { makeVrf, SUITE_SECP256K1_TAI } from '../../arena-protocol/src/vrf.js';
+import { entryId as entryIdOf } from '../../arena-protocol/src/contracts.js';
 import { deriveCensus } from '../../arena-protocol/src/census.js';
 import { beaconFromChain, committeeSeedFromBeacon } from '../../arena-protocol/src/beacon.js';
 import { selectCommittee } from '../../arena-protocol/src/sortition.js';
@@ -54,6 +60,8 @@ const state = statePath && existsSync(statePath) ? JSON.parse(readFileSync(state
 const keep = () => { if (statePath) writeFileSync(statePath, JSON.stringify(state, null, 1)); };
 const say = (o) => console.log(`[arbiter] ${JSON.stringify(o)}`);
 const cache = blockCache();
+// THE AUDITORS' VRF (§13A.1): a proof against a contradicted AUDIT is judged on the AUDIT's own VRF proof (kanban #724, #725)
+const auditVrf = makeVrf({ Point: secp256k1.Point, suite: SUITE_SECP256K1_TAI });
 const LOOKBACK = Number(env.ARENA_ARBITER_LOOKBACK || 2100);
 
 const get = async (url, as = 'json') => { const r = await fetch(url, { signal: AbortSignal.timeout(20000) }); if (!r.ok) throw new Error(`${url} answered ${r.status}`); return as === 'json' ? r.json() : new Uint8Array(await r.arrayBuffer()); };
@@ -72,9 +80,15 @@ async function censusAt(contract, height) {
 
 async function handle(seat, s) {
   const rid = fromHex(s.round), eid = fromHex(s.entry);
-  const recs = await get(`${seat}/slash-proofs?round=${s.round}&entry=${s.entry}`, 'bytes');
+  // A PROOF AGAINST A CONTRADICTED AUDIT (kanban #724, #725): its own record (GET /audit-slash-proofs), judged by judgeAuditProof
+  const audit = s.kind === 'audit';
+  const recs = await get(audit ? `${seat}/audit-slash-proofs?round=${s.round}` : `${seat}/slash-proofs?round=${s.round}&entry=${s.entry}`, 'bytes');
   let evidence = null;
-  for (const r of cutSlashEvidence(recs)) { let sp; try { sp = splitSlashEvidence(r); } catch { continue; } if (toHex(sp.proof.nodePubkey) === s.node) evidence = r; }
+  if (audit) {
+    for (const r of cutAuditSlashEvidence(recs)) { let sp; try { sp = splitAuditSlashEvidence(r); } catch { continue; } if (toHex(sp.proof.nodePubkey) === s.node && toHex(auditSlashProofId(sp.proof)) === s.proof) evidence = r; }
+  } else {
+    for (const r of cutSlashEvidence(recs)) { let sp; try { sp = splitSlashEvidence(r); } catch { continue; } if (toHex(sp.proof.nodePubkey) === s.node) evidence = r; }
+  }
   if (!evidence) return { done: false, why: 'the seat lists that proof and does not hand it over' };
   const bundle = await get(`${seat}/objection-bundle?round=${s.round}&entry=${s.entry}`, 'bytes');
   const contract = decodeRoundContract(await get(`${seat}/round?id=${s.round}`, 'bytes'));
@@ -93,9 +107,25 @@ async function handle(seat, s) {
     ...selectCommittee({ entries: census.entries, contract, role: 'settlement', committeeSeed: seeded.seed })].map((e) => [toHex(e.pubkey), e.pubkey])).values()];
   const accused = census.entries.find((e) => toHex(e.pubkey) === s.node);
   if (!accused) return { done: true, why: 'the accused is not in the round\'s census' };
-  const verdict = await judgeProof({ evidence, bundle, entry, entryId: eid, contract, committee, advert: accused.advert,
-    bondOutpoint: { txid: accused.txid, vout: accused.vout }, core: coreForRound(contract, rid, (await import('../src/plugins.js')).hostedPlugins((await loadApps()))),
-    roundRandomness: beacon.hash });
+  const core = coreForRound(contract, rid, (await import('../src/plugins.js')).hostedPlugins((await loadApps())));
+  let verdict;
+  if (audit) {
+    // WHO COULD AUDIT THE ROUND, FROM THIS ARBITER'S OWN CENSUS (§13A.1): its census less every node drawn for its roles; its players'
+    // keys out of the eligible set and still in W, as a seat's door takes them (the players off the seat's GET /audit-run, checked
+    // against their own entry ids)
+    const run = await get(`${seat}/audit-run?round=${s.round}`);
+    const players = new Set();
+    for (const e of run.entries || []) {
+      try { const x = decodeEntryContract(fromHex(e.entry)); if (toHex(entryIdOf(x)) === e.id) players.add(toHex(x.playerPubkey)); } catch { /* not an entry */ }
+    }
+    const set = auditEligible({ entries: census.entries, bondMinSats: BigInt(contract.bondMinSats || 50000n), drawn: committee.map(toHex) });
+    const eligible = new Map([...set.eligible].filter(([key]) => !players.has(key)));
+    verdict = await judgeAuditProof({ evidence, bundle, entry, contract, committee, advert: accused.advert,
+      bondOutpoint: { txid: accused.txid, vout: accused.vout }, core, roundRandomness: beacon.hash, eligible, total: set.total, vrf: auditVrf });
+  } else {
+    verdict = await judgeProof({ evidence, bundle, entry, entryId: eid, contract, committee, advert: accused.advert,
+      bondOutpoint: { txid: accused.txid, vout: accused.vout }, core, roundRandomness: beacon.hash });
+  }
   if (!verdict.slashed) return { done: true, why: `not slashed: ${verdict.why}` };
   // THE BOND AS THE CHAIN HOLDS IT NOW, AND THE CENSUS AT THE SLASH HEIGHT (the tip)
   const out = await rpc('gettxout', [toHex([...accused.txid].reverse()), accused.vout, false]);
@@ -241,7 +271,7 @@ async function pass() {
   await payLiquidations().catch((e) => say({ liquidationsError: e.message }));
   for (const seat of seats) {
     let list; try { list = await get(`${seat}/slashes`); } catch (e) { say({ seat, refused: e.message }); continue; }
-    for (const s of list.slashes || []) {
+    for (const s of [...(list.slashes || []), ...(list.auditSlashes || []).map((x) => ({ ...x, kind: 'audit' }))]) {
       if (state.handled[s.proof]) continue;
       let r; try { r = await handle(seat, s); } catch (e) { r = { done: false, why: e.message }; }
       say({ seat, proof: s.proof.slice(0, 16), node: s.node.slice(0, 16), ...r });

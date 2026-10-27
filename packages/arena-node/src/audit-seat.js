@@ -9,7 +9,8 @@
 // AN AUDIT A VALID OBJECTION CONTRADICTS (§13A.1: "an AUDIT over a result that a valid objection later contradicts is a fraud proof
 // against its signer"): `contradict` marks every AUDIT the seat holds for the round - each vouched for the very results the objection
 // now contradicts, since a seat takes one only over the results it holds - and keeps its bytes and signature as the evidence. A
-// contradicted AUDIT is paid nothing: `held` leaves it out of the auditors' lines.
+// contradicted AUDIT is paid nothing: `held` leaves it out of the auditors' lines. And it is filed for slashing (kanban #724, #725):
+// `contradicted` hands its bytes and signature to verify.js fileAuditSlashProofs, which files the AUDIT_CONTRADICTED proof.
 import { decodeAudit, auditStands, auditId, auditResultsHash, AUDIT_TOLERANCE_MS } from '../../arena-protocol/src/auditor.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { TAG } from '../../arena-protocol/src/constants.js';
@@ -76,5 +77,8 @@ export function createAuditDesk({ db, now = () => Date.now(), contextFor, vrf, v
     if (open.length) mark.run(String(why || 'a valid objection contradicts the results it vouched for'), roundId);
     return open;
   };
-  return { take, held, list, contradict };
+  /** The contradicted AUDITs of a round, their bytes and signatures: what the slash proofs against them carry (kanban #724, #725). */
+  const contradicted = (roundId) => rows.all(roundId).filter((r) => r.contradicted !== null)
+    .map((r) => ({ node: toHex(new Uint8Array(r.node)), bytes: new Uint8Array(r.bytes), signature: new Uint8Array(r.signature) }));
+  return { take, held, list, contradict, contradicted };
 }

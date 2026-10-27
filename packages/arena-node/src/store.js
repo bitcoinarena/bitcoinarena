@@ -677,6 +677,19 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, node_pubkey)
     );
 
+    -- SLASH PROOFS AGAINST CONTRADICTED AUDITS (§13A.1, kanban #724, #725): one per (round, auditor), since one AUDIT vouched for
+    -- every entry of the round and one bond pays for it; entry_id is the entry whose contradicted run the proof names. The bytes are
+    -- the proof, the AUDIT and its signature, and the rows its results_hash is over.
+    CREATE TABLE IF NOT EXISTS audit_slash_proofs (
+      round_id    BLOB NOT NULL,
+      node_pubkey BLOB NOT NULL,
+      entry_id    BLOB NOT NULL,
+      proof_id    BLOB NOT NULL,
+      bytes       BLOB NOT NULL,
+      seen_ms     INTEGER NOT NULL,
+      PRIMARY KEY (round_id, node_pubkey)
+    );
+
     -- A CENSUS THIS NODE DERIVED AND CHECKED AGAINST ITS ROUND'S OWN ROOT (OPEN-LIST-2140 item 4): a pure function of the
     -- chain below its height, so it is kept across a restart - a cold derivation held a starting seat's loop 2.7 s each.
     CREATE TABLE IF NOT EXISTS census_kept (

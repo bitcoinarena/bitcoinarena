@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import {
   slashHeightIsValid, affectedEntries, playersShares, NAMES_ONE_ENTRY, OFFENCES,
   TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, SETTLED_WITHOUT_AUTHORITY,
-  OPERATOR_PLAYED, FEE_WITHOUT_SERVICE,
+  OPERATOR_PLAYED, FEE_WITHOUT_SERVICE, AUDIT_CONTRADICTED,
 } from '../src/slash.js';
 import { toHex } from '../src/hash.js';
 
@@ -39,8 +39,8 @@ test('the slashing height is one the arbitration set names, between census heigh
   assert.match(at(900101).why, /above the tip/);
 });
 
-test('two offences name one entry and the other four name the paying field', () => {
-  assert.deepEqual(NAMES_ONE_ENTRY, [TWO_RESULTS, REPLAY_CONTRADICTS]);
+test('two offences name one entry and the other four name the paying field; a contradicted AUDIT names one entry (kanban #724, #725)', () => {
+  assert.deepEqual(NAMES_ONE_ENTRY, [TWO_RESULTS, REPLAY_CONTRADICTS, AUDIT_CONTRADICTED]);
   const named = (offence) => affectedEntries({ offence, playerPubkey: ALICE, entries })
     .affected.map((e) => toHex(e.playerPubkey).slice(0, 2));
   const facts = Object.fromEntries(OFFENCES.map((o) => [o, named(o)]));
@@ -49,6 +49,7 @@ test('two offences name one entry and the other four name the paying field', () 
     // the one the proof is about
     [TWO_RESULTS]: ['a1'],
     [REPLAY_CONTRADICTS]: ['a1'],
+    [AUDIT_CONTRADICTED]: ['a1'],
     // every financially activated entry - Cara never paid, so she is not harmed by a money offence
     [TABLE_IS_NOT_F]: ['a1', 'a2', 'a4'],
     [SETTLED_WITHOUT_AUTHORITY]: ['a1', 'a2', 'a4'],

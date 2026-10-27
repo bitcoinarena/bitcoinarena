@@ -45,7 +45,10 @@ import {
   encodeRerunResult, rerunResultId, joinSignedRerun, splitSignedRerun, decodeRerunResult, rerunIsAgreed,
   SIGNED_RERUN_BYTES, runOf, cutSignedReruns,
 } from '../../arena-protocol/src/rerun.js';
-import { encodeSlashProof, slashProofId, slashHolds, joinSlashEvidence, slashHoldsOnRerun, joinRerunSlashEvidence } from '../../arena-protocol/src/slash.js';
+import { encodeSlashProof, slashProofId, slashHolds, joinSlashEvidence, slashHoldsOnRerun, joinRerunSlashEvidence,
+  encodeAuditSlashProof, auditSlashProofId, joinAuditSlashEvidence, slashHoldsOnAudit } from '../../arena-protocol/src/slash.js';
+import { decodeAudit, auditId } from '../../arena-protocol/src/auditor.js';
+import { agreedRunsOf } from './audit-seat.js';
 import {
   joinSignedResult, splitSignedResult, decodePlayerResult, resultId, SIGNED_RESULT_BYTES, cutSignedResults,
   encodePlayerResult,
@@ -1606,6 +1609,95 @@ export class Verifier {
       if (named.has(who) || signedFirst.has(who)) continue;
       named.add(who);
       report.refused.push(`${who.slice(0, 16)}: signed the re-run, not the contradicted result`);
+    }
+    return report;
+  }
+
+  /**
+   * SLASH PROOFS AGAINST THE ROUND'S CONTRADICTED AUDITS (§13A.1, kanban #724, #725): "an AUDIT over a result that a valid objection
+   * later contradicts is a fraud proof against its signer ... and slashes its bond". Until this a contradicted AUDIT was only unpaid.
+   * Filed where the first result's signers are - an agreed re-run of another run, VOID or FORFEIT after an objection, a late
+   * objection - with the same standing and the same verdict: the contradicted run is the one those filings name, and the replay is
+   * this node's own signed result differing from it (and, for an agreed re-run, being the authoritative run). One proof per AUDIT
+   * held (`audits`: [{ bytes, signature }] from the seat's desk), checked by `slashHoldsOnAudit` against the round's eligible set
+   * (`eligible`, `total`) with `vrf`, stored once per auditor and round, and published to the round's relays. Money is not touched.
+   */
+  async fileAuditSlashProofs(roundIdBytes, entryIdBytes, { audits = [], eligible, total, vrf } = {}) {
+    const report = { filed: [], refused: [], published: 0 };
+    if (!audits.length) return report;
+    const row = this.round.get(roundIdBytes);
+    if (!row) { report.refused.push('no such round'); return report; }
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const standing = finalityOf(this.round, roundIdBytes, entryIdBytes);
+    // THE CONTRADICTED RUN, AS THE FIRST-RESULT FILINGS READ IT
+    let contradicted = null, differs = null;
+    if (standing.state === 'FINAL' && standing.contradictedRunId && standing.runId) {
+      contradicted = standing.contradictedRunId;
+      differs = (myRun) => myRun !== contradicted && myRun === standing.runId;
+    } else {
+      const late = standing.state === 'FINAL' && standing.lateObjection && !standing.contradictedRunId;
+      const ended = (standing.state === 'VOID' && (standing.secondObjection || standing.noQuorum))
+        || (standing.state === 'FORFEIT' && standing.noQuorum) || late;
+      if (ended && standing.runId) {
+        contradicted = standing.secondObjection ? standing.contradictedRunId : standing.runId;
+        differs = (myRun) => myRun !== contradicted;
+      }
+    }
+    if (!contradicted) {
+      report.refused.push(`no valid objection has contradicted that entry's run (it is ${standing.state || 'without a result'}), so no AUDIT of it is contradicted`);
+      return report;
+    }
+    let canonical;
+    try { canonical = this.round.canonicalTranscript(roundIdBytes, entryIdBytes); }
+    catch (e) { report.refused.push(e.message); return report; }
+    const signerNodes = this.round.signerNodes(roundIdBytes);
+    const mine = this.round.results(roundIdBytes, entryIdBytes).find((r) => hex(r.nodePubkey) === hex(this.round.pubkey));
+    if (!mine) { report.refused.push('this node signed no result for that run, so it has no replay to accuse with'); return report; }
+    const replayDiffers = differs(hex(runId(decodePlayerResult(splitSignedResult(mine.bytes).body))));
+    // THE RUN THE HELD OBJECTION NAMES: off its bundle as it was checked at this door; a row from before the bundle was kept is
+    // against the committee's run, which is the contradicted one
+    let objectedRunId = null;
+    const bundle = this.round.objectionBundle(roundIdBytes, entryIdBytes);
+    if (bundle) { try { objectedRunId = decodeObjectionBundle(bundle).objection.signedResultId; } catch { objectedRunId = null; } }
+    else if (this.round.objected(roundIdBytes, entryIdBytes)) objectedRunId = Buffer.from(contradicted, 'hex');
+    // THE ROWS EVERY AUDIT OF THE ROUND WAS OVER: the agreed run of every entry but one void at the door, as the desk took it
+    const entries = this.round.entriesOf(roundIdBytes).filter((e) => !this.round.entryVoid(e.entryId));
+    const runs = agreedRunsOf({ contract, committee: signerNodes,
+      entries: entries.map((e) => ({ entryId: e.entryId, results: this.round.results(roundIdBytes, e.entryId).map((r) => r.bytes) })) });
+    if (!runs.ok) { report.refused.push(runs.why); return report; }
+    const rows = runs.runs.map((r) => ({ entryId: new Uint8Array(r.entryId), runId: new Uint8Array(r.runId) }));
+    const entry = (entries.find((e) => hex(e.entryId) === hex(entryIdBytes)) || {}).entry;
+    if (!entry) { report.refused.push('this node holds no such entry of that round'); return report; }
+    let adverts = null;
+    try { adverts = this.advertsFor ? this.advertsFor(roundIdBytes) : null; } catch { adverts = null; }
+    const filed = new Set(this.round.auditSlashProofs(roundIdBytes).map((p) => hex(p.nodePubkey)));
+    const verify = (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } };
+    const closeMs = windowsOf(contract).closeMs;
+    for (const held of audits) {
+      let a;
+      try { a = decodeAudit(held.bytes); } catch { continue; }
+      const who = hex(a.nodePubkey);
+      if (filed.has(who)) continue;
+      const advert = adverts instanceof Map ? adverts.get(who) : null;
+      const proof = {
+        roundId: new Uint8Array(roundIdBytes), entryId: new Uint8Array(entryIdBytes), playerPubkey: entry.playerPubkey, nodePubkey: a.nodePubkey,
+        auditId: auditId(a), contradictedRunId: Buffer.from(contradicted, 'hex'), transcriptHash: canonical.hash,
+        bondTxid: advert ? advert.bondTxid : new Uint8Array(32), bondVout: advert ? advert.bondVout : 0,
+      };
+      const check = slashHoldsOnAudit({ proof, audit: held.bytes, signature: held.signature, rows, entry, advert, eligible, total, vrf, verify,
+        windowCloseMs: closeMs, canonicalTranscriptHash: canonical.hash, objectedRunId, replayDiffers });
+      if (!check.slashed) { report.refused.push(`${who.slice(0, 16)}: ${check.why}`); continue; }
+      const id = auditSlashProofId(proof);
+      const record = joinAuditSlashEvidence(encodeAuditSlashProof(proof), held.bytes, held.signature, rows);
+      if (!this.round.putAuditSlashProof(roundIdBytes, entryIdBytes, a.nodePubkey, id, record)) continue;
+      report.filed.push(who);
+      for (const relay of contract.publicationRelays || []) {
+        try {
+          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: record });
+          if (put.ok) report.published += 1;
+          else report.refused.push(`${relay}: kept no proof (${put.status})`);
+        } catch (e) { report.refused.push(`${relay}: ${e.message}`); }
+      }
     }
     return report;
   }

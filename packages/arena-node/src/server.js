@@ -150,14 +150,14 @@ import { createAuditDesk, agreedRunsOf, forwardDigest } from './audit-seat.js';
 import { RoundAuditor, auditorNet } from './round-auditor.js';
 import { buildObjectionBundle } from './objection-bundle.js';
 import { runId as runIdOf } from './verdict.js';
-import { auditEligible, vrfSecretFor, decodeAudit } from '../../arena-protocol/src/auditor.js';
+import { auditEligible, vrfSecretFor, decodeAudit, auditId, auditResultsHash } from '../../arena-protocol/src/auditor.js';
 import { makeVrf, SUITE_SECP256K1_TAI } from '../../arena-protocol/src/vrf.js';
 import { entryId as entryIdOfContract } from '../../arena-protocol/src/contracts.js';
 import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
-import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION } from '../../arena-protocol/src/constants.js';
+import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, TYPE_AUDIT_SLASH_PROOF, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
@@ -239,7 +239,7 @@ import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { createDonationBallots } from './donation-ballots.js';
 import { decodeDonationProposal, donationProposalId, donationApprovalDigest, encodeDonationProposal, encodeDonationApproval } from '../../arena-protocol/src/donation-vote.js';
 
-import { SLASH_PROOF_BYTES, splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES } from '../../arena-protocol/src/slash.js';
+import { SLASH_PROOF_BYTES, splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES, splitAuditSlashEvidence, auditSlashProofId } from '../../arena-protocol/src/slash.js';
 import { slashOwing, entriesForSlash } from './slash-owing.js';
 import { StakeSecrets, encodeShareAnswer, SEALED_ANSWER_BYTES } from './stake-secret.js';
 import { Dkg } from './dkg.js';
@@ -2572,9 +2572,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   // A RESULT A VALID OBJECTION CONTRADICTED (§13A.1): every AUDIT this seat holds for its round vouched for it - a fraud proof against its
   // signer, kept with its bytes and signature (GET /audits) and paid nothing. Called where the first result's signers are filed against.
-  function contradictAudits(rid, eid, why) {
+  // AND FILED FOR SLASHING (kanban #724, #725): before this the AUDIT was only unpaid. One proof per contradicted AUDIT, with the same
+  // standing and verdict as the first result's signers (verify.js fileAuditSlashProofs), against the round's eligible set as the desk
+  // took it (its players out); stored, listed at GET /slashes for the arbitration set, and published to the round's relays.
+  async function contradictAudits(rid, eid, why) {
     for (const who of auditDesk.contradict(new Uint8Array(rid), `entry ${toHex(eid)}: ${why}`))
       console.log(`[audit] ${toHex(rid).slice(0, 16)}: the AUDIT of ${who.slice(0, 16)} vouched for the result of ${toHex(eid).slice(0, 16)} a valid objection contradicts - held as the fraud proof against it, paid nothing`);
+    const audits = auditDesk.contradicted(new Uint8Array(rid));
+    if (!audits.length) return;
+    const set = auditSetFor(new Uint8Array(rid));
+    if (!set) { console.log(`[slash] ${toHex(rid).slice(0, 16)}: no census read for the round, so its contradicted AUDITs are not filed yet`); return; }
+    const players = new Set(round.entriesOf(new Uint8Array(rid)).map((e) => toHex(e.entry.playerPubkey)));
+    const eligible = new Map([...set.eligible].filter(([key]) => !players.has(key)));
+    try {
+      const f = await verifier.fileAuditSlashProofs(new Uint8Array(rid), new Uint8Array(eid), { audits, eligible, total: set.total, vrf: auditVrf });
+      for (const who of f.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} filed AUDIT_CONTRADICTED against auditor ${who.slice(0, 16)}`);
+      for (const w of f.refused) console.log(`[slash] ${toHex(eid).slice(0, 16)} audit: ${w}`);
+    } catch (e) { console.log(`[slash] ${toHex(eid).slice(0, 16)} audit: ${e.message}`); }
   }
   // THIS NODE AS AN AUDITOR: every 10 s, the rounds it holds that have auditors, whose window is open and that it is not seated in
   const auditContracts = new Map();   // round hex -> contract | null
@@ -2764,13 +2778,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if ((now.state === 'VOID' || now.state === 'FORFEIT') && (now.noQuorum || now.secondObjection)) {
       const f = await verifier.fileFirstResultSlashProofs(rid, eid);
       for (const who of f.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} filed REPLAY_CONTRADICTS against first-result signer ${who.slice(0, 16)} (${now.state})`);
-      contradictAudits(rid, eid, `${now.state} after a valid objection`);
+      await contradictAudits(rid, eid, `${now.state} after a valid objection`);
       return true;
     }
     if (now.state !== FINAL || !now.contradictedRunId) return false;
     const f = await verifier.fileSlashProofs(rid, eid, Buffer.from(now.contradictedRunId, 'hex'), Buffer.from(now.runId, 'hex'));
     for (const who of f.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} filed REPLAY_CONTRADICTS against ${who.slice(0, 16)}`);
-    contradictAudits(rid, eid, `the agreed re-run ${String(now.runId).slice(0, 16)} contradicts run ${String(now.contradictedRunId).slice(0, 16)}`);
+    await contradictAudits(rid, eid, `the agreed re-run ${String(now.runId).slice(0, 16)} contradicts run ${String(now.contradictedRunId).slice(0, 16)}`);
     for (const why of f.refused) console.log(`[slash] ${toHex(eid).slice(0, 16)} ${why}`);
     return true;
   }
@@ -3079,7 +3093,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (f.state !== FINAL || !f.lateObjection || round.slashProofs(rid, eid).length) return;
     const g = await verifier.fileFirstResultSlashProofs(rid, eid);
     for (const who of g.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} late objection: filed REPLAY_CONTRADICTS against ${who.slice(0, 16)}`);
-    contradictAudits(rid, eid, 'a valid late objection');
+    await contradictAudits(rid, eid, 'a valid late objection');
   }
   function watchRerun(rid, eid) {
     const row = round.get(rid);
@@ -9342,8 +9356,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/slashes') {
         const rows = round.allSlashProofs().map((r) => ({ round: toHex(r.roundId), entry: toHex(r.entryId), node: toHex(r.nodePubkey),
           proof: toHex(r.proofId), seenMs: r.seenMs, objection: !!round.objectionBundle(r.roundId, r.entryId) }));
+        // AND THE PROOFS AGAINST CONTRADICTED AUDITS (kanban #724, #725), under their own key: an arbiter that knows only the
+        // player-result kind reads `slashes` as before and is never handed a proof it would look for in the wrong table
+        const auditRows = round.auditSlashProofs().map((r) => ({ round: toHex(r.roundId), entry: toHex(r.entryId), node: toHex(r.nodePubkey),
+          proof: toHex(r.proofId), seenMs: r.seenMs, objection: !!round.objectionBundle(r.roundId, r.entryId) }));
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), slashes: rows }));
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), slashes: rows, auditSlashes: auditRows }));
+      }
+      // A ROUND'S PROOFS AGAINST CONTRADICTED AUDITS, as published (proof, AUDIT, signature, rows), one after another (kanban #724, #725)
+      if (req.method === 'GET' && url.pathname === '/audit-slash-proofs') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'a round id is 32 bytes');
+        const held = round.auditSlashProofs(rid);
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-slash-proofs': String(held.length), ...CORS });
+        return res.end(Buffer.concat(held.map((p) => Buffer.from(p.bytes))));
       }
       // AND THE OBJECTION THAT HELD AGAINST A RUN, as it was checked at this door (§13A): what the arbiter replays again
       if (req.method === 'GET' && url.pathname === '/objection-bundle') {
@@ -9569,6 +9595,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const slashed = /^\/slash\/([0-9a-f]{64})$/.exec(url.pathname);
       if (slashed && req.method === 'PUT') {
         const bytes = await read(req);
+        // A PROOF AGAINST A CONTRADICTED AUDIT (kanban #724, #725) travels with the AUDIT it names, its signature and its rows: kept
+        // only when the AUDIT is the one the proof names, by the node it names, and its rows are the results the AUDIT vouched for
+        if (bytes.length && bytes[0] === TYPE_AUDIT_SLASH_PROOF) {
+          let got;
+          try { got = splitAuditSlashEvidence(new Uint8Array(bytes)); } catch (e) { return text(res, 400, e.message); }
+          if (toHex(auditSlashProofId(got.proof)) !== slashed[1]) return text(res, 409, 'that is not the proof that id names');
+          let a;
+          try { a = decodeAudit(got.audit); } catch (e) { return text(res, 409, `the evidence is not an AUDIT: ${e.message}`); }
+          if (toHex(auditId(a)) !== toHex(got.proof.auditId) || toHex(a.nodePubkey) !== toHex(got.proof.nodePubkey))
+            return text(res, 409, 'the evidence is not the AUDIT the proof names');
+          if (toHex(auditResultsHash(got.rows.map((x) => ({ entryId: x.entryId, resultDigest: x.runId })))) !== toHex(a.resultsHash))
+            return text(res, 409, 'the rows are not the results the AUDIT vouched for');
+          round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
+          return text(res, 201, 'kept');
+        }
         // A PROOF AGAINST A RE-RUN SIGNER (slice C2c) travels with the signed re-run it names, at its own size.
         if (bytes.length > SLASH_PROOF_BYTES && bytes[SLASH_PROOF_BYTES] === TYPE_RERUN_RESULT) {
           let rr;
@@ -9742,7 +9783,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (after && after.state === FINAL && after.lateObjection) {
           const g = await verifier.fileFirstResultSlashProofs(new Uint8Array(rid), new Uint8Array(eid));
           for (const who of g.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} late objection: filed REPLAY_CONTRADICTS against ${who.slice(0, 16)}`);
-          contradictAudits(rid, eid, 'a valid late objection');
+          await contradictAudits(rid, eid, 'a valid late objection');
         }
         // AND A SECOND ONE THAT VOIDS THE ENTRY SLASHES THE RE-RUN'S SIGNERS AS WELL (13A, slice C2c): this node files
         // its proofs before it answers, so what it took and what it filed are one step.
@@ -9753,7 +9794,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // AND THE FIRST RESULT'S SIGNERS, AS WELL (ruling C step 2): the objection that proved them wrong already exists.
           const g = await verifier.fileFirstResultSlashProofs(new Uint8Array(rid), new Uint8Array(eid));
           for (const who of g.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} filed REPLAY_CONTRADICTS against first-result signer ${who.slice(0, 16)}`);
-          contradictAudits(rid, eid, 'VOID by a second valid objection');
+          await contradictAudits(rid, eid, 'VOID by a second valid objection');
         }
         return text(res, taken.status, taken.text);
       }
