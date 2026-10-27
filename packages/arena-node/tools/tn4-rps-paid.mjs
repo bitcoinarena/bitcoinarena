@@ -137,7 +137,9 @@ async function paidEntry(c, rid, roundHex, move, who) {
     log({ step: 'locked', outpoint: `${toHex(lk.outpoint.txid)}:${lk.outpoint.outIdx}`, msat: net, ms: Date.now() - t2, ...(locks.txid ? { tx: locks.txid.slice(0, 16), donationOutputs: (locks.entryFields.donationOutpoints || []).length, reserveOutput: !!locks.entryFields.reserveOutpoint } : {}) });
     const fee = locks.fee, hand = fee ? fee.fields : null;
     if (fee) log({ step: 'fee locked', outpoint: `${toHex(fee.outpoint.txid)}:${fee.outpoint.outIdx}` });
-    const needed = receiptsNeeded(c.nodes.length);
+    // THE CONTRACT'S SLOTS NAME THE THRESHOLD, as join.js reads it: 9 drawn for 7 slots, so a round with 6 seated plays at 5
+    // (2026.1.9.11 release check: "no committee threshold for 6 slots" after the deposit)
+    const needed = receiptsNeeded(c.settlementSlots ?? c.gameVerifySlots);
     const e = rand(32);
     const dealt = await dealHandout({ preimage: s.p, signerNodes: c.nodes, roundId: rid, playerPubkey: s.player,
       ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
@@ -158,8 +160,17 @@ async function paidEntry(c, rid, roundHex, move, who) {
       const h = await fetch(`${n}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
       const en = await fetch(`${n}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
       const enWhy = (await en.text()).trim().slice(0, 140);
-      if (hand) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(hand)) });
-      const l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(lk.fields)) });
+      // ASKED AGAIN UNTIL THE SEAT SEES THE LOCK, as the page's market.js asks (2026.1.9.11 release check: the RPS run handed
+      // its lock 2 s after the lock tx and all 7 signer nodes said "the federation holds no lock"; Next Block's 7 s later passed)
+      let l;
+      for (const until = Date.now() + 45000; ;) {
+        if (hand) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(hand)) });
+        l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(lk.fields)) });
+        if (l.status !== 409 || Date.now() >= until) break;
+        const why = await l.clone().text();
+        if (!/holds no lock/.test(why)) break;
+        await new Promise((ok) => setTimeout(ok, 3000));
+      }
       signerNodes.push({ node: n, handout: h.status, entry: en.status, ...(en.status >= 300 ? { entryWhy: enWhy } : {}),
         lock: l.status, lockSaid: (await l.text()).trim().slice(0, 160) });
     }
@@ -213,6 +224,8 @@ try {
     catch (e) { if (!/no certificate/.test(e.message) || Date.now() > Number(c.entryCloseMs) - 150000) throw e; log({ step: 'certificate not yet', why: e.message.slice(0, 120) }); await new Promise((r) => setTimeout(r, 5000)); }
   }
   log({ step: 'seated', signerNodes: seated.signerNodes.length, agreed: seated.agreed });
+  // NOTHING PAID FOR A ROUND TOO FEW SEATS TOOK
+  if (seated.signerNodes.length < receiptsNeeded(c.settlementSlots ?? c.gameVerifySlots)) throw new Error(`seated ${seated.signerNodes.length}, fewer than the round needs: nothing paid`);
   if (env.DRY) { log({ step: 'dry run: nothing paid' }); process.exit(0); }
   const moves = [Number(env.MOVE_1 ?? 0), Number(env.MOVE_2 ?? 2)];   // 0 rock, 1 paper, 2 scissors (the game's own numbering)
   const p1 = await paidEntry(c, rid, roundHex, moves[0], 'P1');
