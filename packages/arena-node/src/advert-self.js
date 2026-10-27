@@ -6,13 +6,13 @@
 // accept queue filled (Recv-Q 512) and a CPU profile of it was 94.9 % spawn from this check. Here the whole check runs in a worker,
 // one per check; the seat's thread only waits for its answer.
 import { isMainThread, parentPort, workerData, Worker } from 'node:worker_threads';
-import { toHex } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 /**
  * One check: `mine` = [{ federationId, guardianKey }] (bytes) of the guardians this seat runs. Answers null when there is nothing
  * to do (no wallet, no bond, an update still in the mempool), else guardianOfFromWallet's answer.
  */
-export async function advertSelfOnce({ mine, secret, last, network = 'testnet4', dry = false }) {
+export async function advertSelfOnce({ mine, secret, last, hostedGames = [], network = 'testnet4', dry = false }) {
   const { bondCliFrom, guardianOfFromWallet } = await import('./add-bond-wallet.js');
   const b = bondCliFrom(); if (!b) return null;
   if (last && last.txid) { try { b.cli('getmempoolentry', last.txid); return null; } catch { /* confirmed or gone: look again */ } }
@@ -24,7 +24,7 @@ export async function advertSelfOnce({ mine, secret, last, network = 'testnet4',
   const now = (rt.newestUpdateOf(bonds[0]) || {}).advert || bonds[0].advert;
   const want = new Map(((now && now.guardianOf) || []).map((g) => [toHex(g.federationId), g]));
   for (const e of mine) want.set(toHex(e.federationId), e);
-  return guardianOfFromWallet({ cli: b.cli, wallet: b.wallet, network, secret, guardianOf: [...want.values()], post: !dry });
+  return guardianOfFromWallet({ cli: b.cli, wallet: b.wallet, network, secret, guardianOf: [...want.values()], hostedGames: hostedGames.map((h) => (typeof h === 'string' ? fromHex(h) : h)), post: !dry });
 }
 
 /** advertSelfOnce in a worker thread: the seat's loop stays free while bitcoin-cli runs. */

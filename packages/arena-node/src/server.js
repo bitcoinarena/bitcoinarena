@@ -4748,7 +4748,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // (ARENA_BOND_CLI) and has no installer home, where the custody agent does it - reads the federation and guardian key of each guardian it
   // runs (its invite-code, local.json, consensus.json) and, when its advertisement lacks one, posts an update from that wallet. Entries the
   // advertisement has are kept: nothing is removed. One update at a time (`.advert-self.json`); ARENA_ADVERT_SELF=dry builds and checks only.
-  if (process.env.ARENA_BOND_CLI && !process.env.ARENA_HOME && process.env.ARENA_ADVERT_SELF !== '0' && (guardian || guardianNext)) {
+  // AND THE GAMES IT LOADED (kanban #685): every such seat, guardian or not - a version it loads is announced in the next check
+  if (process.env.ARENA_BOND_CLI && !process.env.ARENA_HOME && process.env.ARENA_ADVERT_SELF !== '0') {
     const selfFile = db && db.arenaPath ? `${db.arenaPath}.advert-self.json` : null;
     const entryOf = (dir) => {
       try {
@@ -4762,16 +4763,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     };
     const advertSelf = async () => {
       const mine = [guardian, guardianNext].filter((g) => g && g.dataDir).map((g) => entryOf(g.dataDir)).filter(Boolean);
-      if (!mine.length) return;
+      const hostedGames = [...new Set([...hosted.values()].filter((h) => h && h.gameId).map((h) => toHex(h.gameId)))];
+      if (!mine.length && !hostedGames.length) return;
       let last = null; try { last = selfFile ? JSON.parse(readFileSync(selfFile, 'utf8')) : null; } catch { last = null; }
       const dry = process.env.ARENA_ADVERT_SELF === 'dry';
       // bitcoin-cli runs synchronously: in a worker, never on the seat's thread (#705)
       const { advertSelfInWorker } = await import('./advert-self.js');
-      const r = await advertSelfInWorker({ mine, secret: round.identity.secret, last, network: process.env.ARENA_DONATION_NETWORK || 'testnet4', dry });
+      const r = await advertSelfInWorker({ mine, hostedGames, secret: round.identity.secret, last, network: process.env.ARENA_DONATION_NETWORK || 'testnet4', dry });
       if (!r) return;
       if (r.same) return;
-      if (!r.ok) { console.log(`[advert] guardian_of not posted: ${r.why}`); return; }
-      console.log(`[advert] guardian_of ${dry ? 'would be' : 'posted'}: ${r.plan.after.split(',').map((x) => x.slice(0, 8)).join(' ')} (was ${r.plan.before.split(',').map((x) => x.slice(0, 8)).join(' ') || 'none'})${r.update ? `, ${r.update.txid}` : ''}`);
+      if (!r.ok) { console.log(`[advert] own advertisement not posted: ${r.why}`); return; }
+      console.log(`[advert] own advertisement ${dry ? 'would be' : 'posted'}: guardian_of ${r.plan.after.split(',').map((x) => x.slice(0, 8)).join(' ') || 'none'} (was ${r.plan.before.split(',').map((x) => x.slice(0, 8)).join(' ') || 'none'})${(r.plan.addedGames || []).length ? `, ${r.plan.addedGames.length} game(s) added: ${r.plan.addedGames.map((g) => g.slice(0, 8)).join(' ')}` : ''}${r.update ? `, ${r.update.txid}` : ''}`);
       if (r.update && selfFile) { try { writeFileSync(selfFile, JSON.stringify({ txid: r.update.txid, after: r.plan.after, atMs: Date.now() })); } catch { /* checked on chain next time */ } }
     };
     let selfBusy = false;          // one check at a time: a slow wallet never stacks them
