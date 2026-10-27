@@ -89,7 +89,9 @@ try {
   if (!env.ROUND) {
     // THE FIRST SEAT THAT ANSWERS (2026-10-26: a seat held for minutes stopped every try at "fetch failed" before any step)
     let list = null;
-    for (const n of nodes) { try { const r = await fetch(`${n}/rounds`, { signal: AbortSignal.timeout(30000) }); if (r.ok) { list = (await r.json()).rounds; break; } } catch { /* the next seat */ } }
+    // ONLY THE NEXT ROUNDS OF EACH SERIES, as the lobby asks (measured 2026-10-27 09:27Z: the whole list was 19 MB and took 31.5 s, past the
+    // 30 s this waited, so every seat counted as not answering)
+    for (const n of nodes) { try { const r = await fetch(`${n}/rounds?next=2`, { signal: AbortSignal.timeout(30000) }); if (r.ok) { list = (await r.json()).rounds; break; } } catch { /* the next seat */ } }
     if (!list) throw new Error('no seat answered GET /rounds');
     const now = Date.now();
     const next = list.filter((x) => x.entryOpen && x.game && x.game.name === 'nextblock' && Number(x.startTimeMs) - now > 75000

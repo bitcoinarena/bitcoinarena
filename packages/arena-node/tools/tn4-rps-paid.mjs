@@ -172,7 +172,8 @@ try {
   // THE ROUND: the one named, else the soonest seated RPS round whose entry closes more than 150 s ahead (time for two deposits)
   let roundHex = env.ROUND;
   if (!roundHex) {
-    const list = (await (await fetch(`${nodes[0]}/rounds?ahead=7200000`)).json()).rounds || [];
+    // the next 60 rounds of each series (measured 2026-10-27: ?ahead=7200000 took over 20 s, the whole list 19 MB in 31 s; next=60, 1.5 MB in 12 s)
+    const list = (await (await fetch(`${nodes[0]}/rounds?next=60`)).json()).rounds || [];
     const now = Date.now();
     // AHEAD_S (default 270): a round whose seating is still to come (seating close = entry close - 200 s on an RPS grid), so its
     // certificate forms while this waits - measured 20:38Z and 20:53Z: a round taken 150 s ahead had missed its seating under load
