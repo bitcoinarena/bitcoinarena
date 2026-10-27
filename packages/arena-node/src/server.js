@@ -5953,7 +5953,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
               const gap = gatewayGap(nodeState(home).read());
               const p = custodyProgress(home);
               const busy = p && p.gatewayOnly && !['done', 'failed'].includes(p.state) ? p : null;
-              if (gap) extra = extra.map((x) => (x.id !== 'gateway' ? x : { ...x, running: false, detail: gap.why,
+              // LEFT FOR LATER IS NO FAULT (the owner 2026-10-27: "1 service not running" for a gateway set up later on purpose): the row says so
+              if (gap) extra = extra.map((x) => (x.id !== 'gateway' ? x : { ...x, running: false, later: true, detail: gap.why,
                 probe: { ok: false, says: busy ? `Setting up: ${busy.step || busy.state}` : p && p.gatewayOnly && p.state === 'failed' ? `${gap.why} The last try stopped at ${p.step}: ${p.why || 'no reason given'}` : gap.why },
                 fix: gap.fix ? { action: 'gateway/setup', label: busy ? 'Setting up…' : 'Set up the gateway', busy: !!busy } : null }));
             }

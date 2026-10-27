@@ -68,3 +68,16 @@ test('a gateway left for later in setup: the reason on the card and a button tha
   const busy = renderToStaticMarkup(React.createElement(ServicesPanel, { initial: { loaded: true, answer: c.state.answer } }));
   assert.match(busy, /<button type="button" class="mini" disabled="">Setting up…<\/button>/);
 });
+
+// LEFT FOR LATER IS NO FAULT (the owner 2026-10-27: "1 service not running" for a gateway set up later on purpose)
+test('a gateway left for later reads "Left for later", grey, with its set-up button, and needs no attention', () => {
+  const later = { id: 'gateway', title: 'Lightning gateway', running: false, later: true, detail: 'Not set up: Lightning was left for later in setup, so the gateway was never started.',
+    probe: { ok: false, says: 'Not set up: Lightning was left for later in setup, so the gateway was never started.' }, fix: { action: 'gateway/setup', label: 'Set up the gateway', busy: false }, controls: [] };
+  assert.equal(lightOf(later), '⚪');
+  assert.equal(needsAttention([later]), 0);
+  assert.equal(needsAttention([later, { ...later, later: false }]), 1, 'a gateway that stopped still counts');
+  const html = renderToStaticMarkup(React.createElement(ServicesPanel, { initial: { loaded: true, answer: { ok: true, services: [later] } } }));
+  assert.match(html, /Left for later/);
+  assert.doesNotMatch(html, /Needs attention/);
+  assert.match(html, /Set up the gateway/);
+});
