@@ -64,6 +64,11 @@ for (const k of [env.NODES ? 'NODES' : 'PORTS', 'INVITE_FILE', 'WASM_PKG', 'LNCL
   if (!env[k]) { console.error(`${k} is needed`); process.exit(2); }
 const log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
 const rand = (n) => new Uint8Array(randomBytes(n));
+// A SEAT THAT DROPS ONE CONNECTION IS ASKED AGAIN (2026.1.9.11 release check: a Next Block player's first handout POST got
+// "fetch failed" under load, and the run stopped with its stake locked; the other player's, 5 s later, went through at every seat)
+{ const once = globalThis.fetch;
+  globalThis.fetch = async (u, o) => { for (let i = 0; ; i++) { try { return await once(u, o); }
+    catch (e) { if (i >= 2 || !/fetch failed/.test(String(e && e.message))) throw e; await new Promise((ok) => setTimeout(ok, 1000)); } } }; }
 const run = (bin, args) => new Promise((done) => execFile(bin, args, { timeout: 240000 },
   (err, out, errOut) => done({ ok: !err, out: String(out), err: String(errOut || (err && err.message) || '') })));
 const payer = (...a) => run(env.LNCLI, [`--lnddir=${env.PAYER_DIR}`, `--rpcserver=${env.PAYER_RPC}`, `--network=${env.ARENA_TN4_NETWORK || 'testnet4'}`, ...a]);
