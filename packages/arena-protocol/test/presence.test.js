@@ -3,7 +3,7 @@
 // ONLY NODES SEEN IN THE LAST 24 H ARE DRAWN, AND ABSENT ONLY WITH PROOF (§5A.3, protocol 22, kanban #727, the owner 2026-10-27). The
 // testnet4 day of 2026-10-27 on the protocol's own draw: 28 bonded nodes, 20 of them stopped with their bonds still locked; a round
 // draws 9 and needs 5 present. A node leaves the census only on threshold-signed seating certificates of 3 seatings of the 24 h (3
-// different closes) that show it drawn - or left out already - and present at none of them. Every certificate here is signed for real.
+// closes at least 1 h apart) that show it drawn - or left out already - and present at none of them. Every certificate here is signed for real.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -201,7 +201,7 @@ test('a claim naming an honest node does not stand: present in a certificate, pr
   assert.equal(run([victim], { seen: [victim.node] }).proof, 'seen');
   // 2. proven at 2 seatings only
   r = run([{ node: victim.node, proofs: victim.proofs.slice(0, 2) }]);
-  assert.equal(r.proof, 'too-few'); assert.match(r.why, /2 missed seating close\(s\); it takes 3/);
+  assert.equal(r.proof, 'too-few'); assert.match(r.why, /2 missed close\(s\) at least 1 h apart; it takes 3/);
   // the same seating twice is not two
   assert.equal(run([{ node: victim.node, proofs: [victim.proofs[0], victim.proofs[0], victim.proofs[1]] }]).proof, 'too-few');
   // 3. a forged certificate: signed by keys that are not the seated

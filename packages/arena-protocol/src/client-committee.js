@@ -33,6 +33,7 @@ import { medianTimePast } from './beacon.js';
 import { decodeRoundContract, roundId } from './contracts.js';
 import { seatingCloseMs } from './seating.js';
 import { checkAbsenceProof, presenceWindow, dropsAbsent } from './presence.js';
+import { drawHeartbeat, heartbeatSlotOf, heartbeatCloseMs, hasHeartbeats } from './heartbeat.js';
 
 const sameCC = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
 const bytesOfCC = (v) => (v instanceof Uint8Array ? v : typeof v === 'string' ? fromHex(v) : null);
@@ -206,7 +207,7 @@ export function committeeFromChain({ contract, roundId, headers, firstHeight, ev
   let attestors = null;
   try { attestors = drawAttestors({ entries: census.entries, contract, committeeSeed: seeded.seed }).map((e) => e.pubkey); } catch { attestors = null; }
   return { ok: true, committees, drawn, attestors, beacon: { height: beacon.height, hash: beacon.hash }, census: { root: census.root, entries: census.entries.length },
-    checkedCensus: { root: census.root, entries: census.entries } };
+    checkedCensus: { root: census.root, entries: census.entries }, seed: seeded.seed };
 }
 
 /**
@@ -241,13 +242,24 @@ export function absenceFromChain({ contract, claim, evidenceOf, headers, firstHe
         if (c && toHex(roundId(c)) === ridHex) {
           const kept = checkedCensus.get(toHex(c.censusRoot)) || null;
           const r = committeeFromChain({ contract: c, roundId: fromHex(ridHex), headers, firstHeight, evidence: kept ? null : evidenceOf(ridHex), bond, verify, census: kept });
-          if (r.ok) { checkedCensus.set(toHex(c.censusRoot), r.checkedCensus); got = { contract: c, drawn: r.drawn }; }
+          if (r.ok) { checkedCensus.set(toHex(c.censusRoot), r.checkedCensus); got = { contract: c, drawn: r.drawn, entries: r.checkedCensus.entries, seed: r.seed }; }
         }
       } catch { got = null; }
       drawn.set(ridHex, got);
     }
     const d = drawn.get(ridHex);
-    return d ? { drawn: d.drawn[role].map(toHex), slots: slotsForRole(d.contract, role), closeMs: seatingCloseMs(d.contract) } : null;
+    if (!d) return null;
+    // A HEARTBEAT SLOT (kanban #727): its committee drawn here on the round's census and seed, the census every node of which it expects
+    const j = heartbeatSlotOf(role);
+    if (j !== null) {
+      // a round with no heartbeat slots (below 22, a table's later round) is a wrong proof, not one to ask again
+      if (!hasHeartbeats(d.contract)) return { heartbeat: null, drawn: [], census: null, closeMs: 0n };
+      try {
+        return { heartbeat: j, drawn: drawHeartbeat({ entries: d.entries, contract: d.contract, committeeSeed: d.seed, slot: j }).map((e) => toHex(e.pubkey)),
+          census: d.entries.map((e) => toHex(e.pubkey)), closeMs: heartbeatCloseMs(d.contract, j) };
+      } catch { return null; }
+    }
+    return { drawn: d.drawn[role].map(toHex), slots: slotsForRole(d.contract, role), closeMs: seatingCloseMs(d.contract) };
   };
   const r = checkAbsenceProof(claim.claims, { window, verify, drawOf,
     certOf: (ridHex, role) => { const h = claim.certs && claim.certs[`${ridHex}:${role}`]; return h ? fromHex(h) : null; } });
