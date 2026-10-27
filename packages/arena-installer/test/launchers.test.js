@@ -24,7 +24,9 @@ test('Linux: start, stop, status and open scripts, and the desktop menu entry', 
   const home = mkdtempSync(join(tmpdir(), 'l-')), data = mkdtempSync(join(tmpdir(), 'd-'));
   const l = writeLaunchers({ home, s, ownerUrl: owner, platform: 'linux', env: { XDG_DATA_HOME: data } });
   assert.match(readFileSync(l.start, 'utf8'), /systemctl --user start arena-bitcoind-testnet4.service .* arena-node.service arena-tunnel.service/);
-  assert.match(readFileSync(join(home, 'bin', 'bitcoin-arena-stop'), 'utf8'), /systemctl --user stop arena-tunnel.service arena-node.service/);
+  const stop = readFileSync(join(home, 'bin', 'bitcoin-arena-stop'), 'utf8');
+  assert.match(stop, /systemctl --user stop arena-updater\.service 2>\/dev\/null\nsystemctl --user stop arena-tunnel\.service 2>\/dev\/null\nsystemctl --user stop arena-node\.service/, 'the auto update first, then last first');
+  assert.match(stop, /stop arena-liquidity\.service/, 'every service of the node, also one its state does not list (the 2026.1.9.11 install test)');
   assert.equal(statSync(l.start).mode & 0o111, 0o111, 'executable');
   assert.match(readFileSync(join(data, 'applications', 'bitcoin-arena.desktop'), 'utf8'), /Name=Bitcoin Arena[\s\S]*Exec=.*bitcoin-arena-start.*xdg-open https:\/\/x\.trycloudflare\.com\/Dashboard\/owner/);
   assert.equal(existsSync(join(home, 'bin', 'bitcoin-arena-add-custody')), false, 'no "add custody" unless asked for');
@@ -41,7 +43,11 @@ test('macOS: the .command scripts and Bitcoin Arena.app - it starts the node\'s 
   assert.match(exe, /launchctl kickstart gui\/\$uid\/io\.bitcoin-arena\.node\n/);
   assert.match(exe, /launchctl bootstrap gui\/\$uid '.*LaunchAgents\/io\.bitcoin-arena\.node\.tunnel\.plist'/);
   assert.match(exe, /open 'https:\/\/x\.trycloudflare\.com\/Dashboard\/owner'/);
-  assert.ok(existsSync(join(home, 'bin', 'Bitcoin Arena Stop.command')));
+  // EVERY AGENT OF THE NODE STOPPED (the 2026.1.9.11 install test, kanban #704: the .updater agent kept running)
+  const stop = readFileSync(join(home, 'bin', 'Bitcoin Arena Stop.command'), 'utf8').split('\n').map((x) => /^launchctl bootout gui\/\$uid\/(\S+) 2>\/dev\/null$/.exec(x)).filter(Boolean).map((m) => m[1]);
+  assert.deepEqual(stop.slice(0, 3), ['io.bitcoin-arena.node.updater', 'io.bitcoin-arena.node.tunnel', 'io.bitcoin-arena.node']);
+  for (const id of ['custody', 'gateway', 'lnd', 'tor', 'liquidity', 'workers', 'chain-bridge', 'bitcoind-testnet4']) assert.ok(stop.includes(`io.bitcoin-arena.node.${id}`), id);
+  assert.equal(new Set(stop).size, stop.length, 'each once');
 });
 
 test('Windows: start, stop and owner-page scripts, and three Start menu shortcuts made by PowerShell', () => {

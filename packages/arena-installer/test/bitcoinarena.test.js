@@ -252,7 +252,7 @@ test('the doctor: a stopped service, a stale announced address and a missing bon
     assert.equal(by['Quick tunnel name'].ok, false, 'the tunnel logs another name than the node names');
     assert.match(by['Lightning gateway address'].says, new RegExp(`announces ${OLD.replace(/\./g, '\\.')}`));
     assert.equal(by['Lightning gateway address'].fix.startsWith('bitcoinarena restart tunnel'), true);
-    assert.deepEqual([by.Bond.ok, by.Bond.fix], [null, 'arena-install (the installer\'s bond step)']);
+    assert.deepEqual([by.Bond.ok, by.Bond.fix], [null, 'the Bond section of the owner area (bitcoinarena open)'], 'set up in the owner area (kanban #728)');
     assert.equal(by.Release.ok, null);
     // the command prints them and says how many
     const out = [];

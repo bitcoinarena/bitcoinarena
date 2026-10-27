@@ -142,3 +142,14 @@ test('a launch agent bootstrapped while its bootout still unloads is tried again
   assert.equal(never.ok, false, 'five refusals stay a refusal, with its words');
   assert.match(never.err, /Bootstrap failed/);
 });
+
+// THE INSTALLER'S LAST WORDS NAME THIS NODE'S OWN SERVICE (the 2026.1.9.11 install test, kanban #704: "the user service arena-node" on a macOS
+// whose agent is io.bitcoin-arena.node--mt19911): the name with the instance, in each system's word
+test('the node\'s service as the owner finds it: the launch agent, the user unit or the task, with this node\'s instance', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const words = (env) => JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e',
+    `const m = await import(${JSON.stringify(new URL('../src/service.js', import.meta.url).href)}); console.log(JSON.stringify(['darwin', 'linux', 'win32'].map((p) => m.nodeServiceWords(p))));`],
+  { env: { PATH: process.env.PATH, ARENA_HOME: '/nonexistent-arena-home', ...env }, encoding: 'utf8' }));
+  assert.deepEqual(words({ ARENA_INSTANCE: 'mt19911' }), ['the launch agent io.bitcoin-arena.node--mt19911', 'the user service arena-node--mt19911.service', 'the scheduled task "Arena node mt19911"']);
+  assert.deepEqual(words({}), ['the launch agent io.bitcoin-arena.node', 'the user service arena-node.service', 'the scheduled task "Arena node"']);
+});

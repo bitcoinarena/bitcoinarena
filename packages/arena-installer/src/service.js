@@ -137,6 +137,12 @@ export function launchdPlist({ node, release, home, port, boot = true, env = {} 
 // WINDOWS: A SCHEDULED TASK (ruling 2: no custody on Windows - fedimint does not build there) - "Arena node",
 // at logon (or at start-up with the user's password), restarted on failure, running a .cmd that starts the seat from arena.conf.
 export const WINDOWS_TASK = named('Arena node', ' ');
+/**
+ * THE NODE'S SERVICE, AS THE OWNER FINDS IT ON THIS SYSTEM (the 2026.1.9.11 install test, kanban #704: the installer's last words said "the user
+ * service arena-node" on a macOS whose agent is io.bitcoin-arena.node--mt19911): its name with this node's instance, in that system's word.
+ */
+export const nodeServiceWords = (platform = process.platform) => (platform === 'darwin' ? `the launch agent ${LAUNCHD_LABEL}`
+  : platform === 'win32' ? `the scheduled task "${WINDOWS_TASK}"` : `the user service ${UNIT}`);
 export function windowsLauncher({ node, release, home, port }) {
   return ['@echo off', 'rem The Arena node, written by the installer: the seat started from its settings, arena.conf (bitcoinarena config).',
     `cd /d "${release}\\packages\\arena-node"`,

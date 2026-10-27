@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { addBond, firstBond } from '../src/add-bond.js';
+import { addBond, firstBond, firstBondOnNode } from '../src/add-bond.js';
 import { nodeState, bondsOf } from '../src/state.js';
 import { bondKeyAt } from '../src/bond.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -153,4 +153,28 @@ test('the first bond on a custody node starts its agent, as the wizard does; a p
   const p = await firstBond({ state: plain, chainKit: kit([], [{ txid: '5a'.repeat(32), vout: 1, sats: 60000, height: 157000 }]), startAgent, post: true });
   assert.equal(p.ok, true, p.why);
   assert.deepEqual([started.length, p.agent], [1, null]);
+});
+
+// THE PLAN IS A LIGHT READ (the 2026.1.9.11 install test, kanban #728: the Bond panel asks every 30 s and each answer took 14-18 s): the plan
+// asks the chain to reuse its UTXO scan of this tip, the post reads afresh; two plan asks at once share one read
+test('the first bond\'s plan reuses the scan of this tip, the post does not; plan asks at once share one read', async () => {
+  const { state } = node({ bond: null });
+  state.save({ done: { service: 1 }, bond: null });
+  const opts = [];
+  let release = null;
+  const slow = { coinsOf: async (chain, spk, o) => { opts.push(o || null); await new Promise((r) => { release = r; }); return { tip: 157070, coins: [{ txid: '5a'.repeat(32), vout: 1, sats: 70000, height: 157060 }] }; },
+    broadcast: async () => 'ab'.repeat(32) };
+  const ask = () => firstBondOnNode({ home: state.home, state, release: '/nowhere', chainKit: slow, askMinimum: null, startAgent: null });
+  const a = ask(), b = ask();
+  await new Promise((r) => setTimeout(r, 20));
+  release();
+  const [ra, rb] = await Promise.all([a, b]);
+  assert.equal(ra.ok, true, ra.why);
+  assert.strictEqual(ra, rb, 'the second ask had the first one\'s answer');
+  assert.deepEqual(opts, [{ reuseScan: true }], 'one read, reusing the scan');
+  const p = firstBondOnNode({ home: state.home, state, release: '/nowhere', chainKit: slow, askMinimum: null, startAgent: null, post: true });
+  await new Promise((r) => setTimeout(r, 20));
+  release();
+  await p;
+  assert.deepEqual(opts, [{ reuseScan: true }, null], 'the post reads the chain afresh');
 });
