@@ -55,7 +55,8 @@ export function pruneTranscripts({ db, nowMs = Date.now(), keptUntil = (row) => 
 // order, outcome, objection, forfeit, equivocation - whatever table a seat keeps per round, found from the schema, so a table added
 // later counts by itself. An unused round goes, with every committee and seating row, once its end + W + its claim window has
 // passed (a day where it names none). A used round is never touched here.
-export const COMMITTEE_TABLES = Object.freeze(['rounds', 'signer_nodes', 'round_beacons', 'seat_presents', 'seat_sigs', 'seat_certs', 'seat_signed']);
+// `round_peers`: the seated nodes' addresses kept with the round (kanban #735) - a seating record, gone with the round
+export const COMMITTEE_TABLES = Object.freeze(['rounds', 'signer_nodes', 'round_beacons', 'seat_presents', 'seat_sigs', 'seat_certs', 'seat_signed', 'round_peers']);
 const TRANSCRIPT_TABLES = ['ticks', 'batches', 'checkpoints'];
 /** At most this many rounds looked at in one pass: the backlog goes in steps, never one long stall of the seat. */
 export const UNUSED_BATCH = 5000;

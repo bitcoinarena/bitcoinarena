@@ -1152,6 +1152,18 @@ export function openStore(path = ':memory:') {
       seen_ms       INTEGER NOT NULL,
       PRIMARY KEY (round_id, entry_id, run_id, signer_pubkey)
     );
+    -- THE ROUND'S SEATED SIGNER NODES' ADDRESSES, KEPT AT SEATING TIME (kanban #735, measured 2026-10-27: seat 1 was restarted
+    -- inside round 2927d830's objection window and for ~15 min read no chain view for the round - its roster could not say who was
+    -- bonded - so it gathered no FINAL signature from its peers). The certificate names the seated set; each seated node's
+    -- endpoint, off the census advert the seat held then, is written here per role, so the round's peers are found without a
+    -- chain view. A seating record (transcript-prune.js COMMITTEE_TABLES): it marks no round used.
+    CREATE TABLE IF NOT EXISTS round_peers (
+      round_id BLOB NOT NULL,
+      role     TEXT NOT NULL,
+      node     TEXT NOT NULL,
+      endpoint TEXT NOT NULL,
+      PRIMARY KEY (round_id, role, node)
+    );
     -- AND THE ONES THAT DID NOT COUNT BECAUSE OF THEIR TIME (§13A rule 3): "A back-dated or forward-dated signature does
     -- not count and is itself evidence against its signer." Kept as they came, with why.
     CREATE TABLE IF NOT EXISTS final_sig_evidence (
