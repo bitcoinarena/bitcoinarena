@@ -37,6 +37,11 @@ test('no bond: red on top, the address and the amount, what arrived, Post the bo
   assert.match(waiting, /<b>Send 52,000 sat<\/b> to your node wallet \(bond 50,000 sat, the rest for fees\)/);
   assert.match(waiting, /<code id="first-bond-address">tb1pfirstbond<\/code>/);
   assert.match(waiting, /id="first-bond-arrived">20,000 of 52,000 sat arrived \(20,000 sat not confirmed yet\)/);
+  // THE ADDRESS AS A QR TOO (kanban #728): a bitcoin: link with the amount, drawn by the page's QR helper
+  const asked = [];
+  const qrd = renderToStaticMarkup(React.createElement(BondPanel, { nowMs: () => T, qr: (t) => { asked.push(t); return '<svg data-qr="1"></svg>'; }, initial: { loaded: true, bond: none, first: plan } }));
+  assert.deepEqual(asked, ['bitcoin:tb1pfirstbond?amount=0.00052000']);
+  assert.match(qrd, /<div class="qr"><svg data-qr="1"><\/svg><\/div><div class="bar" role="progressbar"/);
   assert.match(waiting, /<button type="button" class="primary" disabled="">Post the bond<\/button>/, 'off until the coins are there');
   assert.doesNotMatch(waiting, /[Ff]ederation|founding/, 'no federation info without a bond');
   assert.match(draw({ first: { ...plan, walletSats: 52000, confirmingSats: 0, shortSats: 0, enough: true } }), /<button type="button" class="primary">Post the bond<\/button>/);

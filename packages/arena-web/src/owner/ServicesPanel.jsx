@@ -33,6 +33,9 @@ export class ServicesPanel extends React.Component {
     if (r && r.ok && r.services.some((x) => x.fix && x.fix.busy)) this.fixTimer = setTimeout(this.reload, 10000);
     // the page's own badge for the section (its sidebar dot), told how many need attention
     if (this.props.onAttention && r && r.ok) this.props.onAttention(needsAttention(r.services));
+    // and the rows themselves, so the Overview's Custody says what this card says (the 2026.1.9.11 install test: "Custody: Guardian" in
+    // green while the guardian had not started)
+    if (this.props.onServices && r && r.ok) this.props.onServices(r.services);
   }
   async act(id, action) {
     this.setState({ busy: `${id}:${action}`, message: null });

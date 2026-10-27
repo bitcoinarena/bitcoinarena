@@ -60,7 +60,10 @@ export class BondAnswer extends React.Component {
     try { const d = await this.props.add(add); this.setState({ step: 'done', done: d }); } catch (e) { this.setState({ step: null, why: e.message }); }
   }
   copy() { navigator.clipboard.writeText(this.state.address).then(() => this.setState({ copied: true }), () => {}); }
-  render() {
+  // ITS OWN CARD, NONE WHEN IT HAS NOTHING TO SAY (kanban #728, the 2026.1.9.11 install test: an empty box above the Bond panel on a node
+  // with no bond): the page's place is a bare div, so a null answer draws nothing at all
+  render() { const body = this.body(); return body ? <div className="card">{body}</div> : null; }
+  body() {
     // NO BOND, NO OFFER (kanban #728: "Wenn kein Bond da ist ... auch keine Federation-Info"): the Bond panel below says it and sets it up
     if (this.props.bond && !this.props.bond.bond) return null;
     const a = bondAnswerOf(this.props), s = this.state, o = a.offer;

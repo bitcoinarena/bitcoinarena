@@ -5322,6 +5322,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           .map((f) => { try { return JSON.parse(readFileSync(f, 'utf8')); } catch { return null; } }).filter(Boolean);
         const want = String(url.searchParams.get('federation') || '').toLowerCase();
         const c = want ? claims.find((x) => String(x.federationId || '').toLowerCase() === want) : claims[0];
+        // NONE, SAID QUIETLY TO ITS OWN PAGE (the 2026.1.9.11 install test: the owner page logged a 404 at every load on a node without a
+        // gateway): with ?quiet=1 no claim is a 200 null; other seats ask without it and read the 404 as before
+        if (!c && url.searchParams.get('quiet') === '1') return claimJson(200, null);
         return c ? claimJson(200, c) : claimJson(404, { ok: false, why: want ? 'this node stands for no gateway seat of that federation' : 'this node stands for no gateway seat' });
       }
       // A LIQUIDITY CLAIM (§23A.10): this node is a liquidity provider - the claim its provider service signed (file)
@@ -5367,6 +5370,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // an installed node that became a provider from its owner page (kanban #567) serves its home's claim before its next restart
         const f = process.env.ARENA_LIQUIDITY_CLAIM_FILE || (process.env.ARENA_HOME ? joinPath(process.env.ARENA_HOME, 'liquidity-claim.json') : null);
         let c = null; try { c = f ? JSON.parse(readFileSync(f, 'utf8')) : null; } catch { c = null; }
+        if (!c && url.searchParams.get('quiet') === '1') return claimJson(200, null);   // the owner page's ask (the 2026.1.9.11 install test)
         return c ? claimJson(200, c) : claimJson(404, { ok: false, why: 'this node is no liquidity provider' });
       }
       if (req.method === 'GET' && url.pathname === '/liquidity-seating') {
@@ -5387,6 +5391,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return bytes(res, 200, round.pubkey);
       }
 
+      // THE ICON OF ITS PAGES (the 2026.1.9.11 install test: the dashboard and the owner page logged a missing favicon.ico at every load)
+      if (req.method === 'GET' && url.pathname === '/favicon.ico') {
+        let body; try { body = readFileSync(new URL('../pages/favicon.ico', import.meta.url)); } catch { res.writeHead(204); return res.end(); }
+        res.writeHead(200, { 'content-type': 'image/x-icon', 'cache-control': 'max-age=86400' });
+        return res.end(body);
+      }
       // /Dashboard (2026-10-01 15:44): what this node earned, spent and did, from its own store - the page, and
       // the figures it draws (kept 30 s: one reading walks every round with entries)
       if (req.method === 'GET' && (url.pathname === '/Dashboard' || url.pathname === '/dashboard')) {

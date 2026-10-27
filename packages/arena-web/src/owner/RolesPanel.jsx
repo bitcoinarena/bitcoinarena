@@ -62,7 +62,8 @@ export class RolesPanel extends React.Component {
     let pub = null;
     for (let i = 0; i < 3 && !pub; i++) { if (i) await pause(2000); pub = await get('/roles'); }
     if (!pub) { this.setState({ loaded: true, unread: true }); return; }
-    const [guardian, gateway, liquidity] = await Promise.all([get('/guardian'), get('/gateway-claim'), get('/liquidity-claim')]);
+    // ?quiet=1: none is a 200 null, not a 404 in the browser's console at every load (the 2026.1.9.11 install test)
+    const [guardian, gateway, liquidity] = await Promise.all([get('/guardian'), get('/gateway-claim?quiet=1'), get('/liquidity-claim?quiet=1')]);
     const mine = pub && (pub.nodes || []).find((x) => x.node === this.props.node) || null;
     const was = switchesOf(mine);
     // A GATEWAY THAT RUNS BUT HOLDS NO SEAT YET (kanban #563, measured on installer C 2026-10-21: its tile said "Off" and "Set up" while its

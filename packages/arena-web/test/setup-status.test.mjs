@@ -164,3 +164,19 @@ test('one big number until the node is ready, and each part\'s own time', async 
   assert.match(gate, /Your node is still being set up<span class="ver" id="setup-gate-ver">2026\.1\.9\.3<\/span><\/h2>/);
   assert.deepEqual([dur(20000), dur(12 * min), dur(200 * min), dur(812 * min), dur(4 * 1440 * min)], ['under a minute', '12 min', '3 h 20 min', '14 h', '4 days']);
 });
+
+// LIGHTNING LEFT FOR LATER (kanban #711, the 2026.1.9.11 install test: "Complete" on a custody node with no LND and no gateway): each a tile
+// "left for later" with the way to set it up, the heading says so, and the owner area is not closed for it
+test('Lightning left for later: not complete, its tiles say how to set it up, and the owner area stays open', () => {
+  const later = { lnd: true, gateway: true, fix: true, why: 'Not set up: Lightning was left for later in setup, so the gateway was never started.' };
+  const html = card({ address: { ok: true, url: 'https://n.example' }, later });
+  assert.match(html, /<span class="setup-pill wait">Lightning left for later<\/span>/);
+  assert.doesNotMatch(html, /Complete/);
+  assert.match(html, /class="setup-step s-later" id="setup-lnd"><span class="setup-ic" aria-hidden="true">–<\/span><div class="setup-body"><b>LND<\/b><span class="setup-text">Left for later\. Set it up in the owner area: Services, Lightning gateway, Set up the gateway\./);
+  assert.match(html, /id="setup-gateway"[\s\S]*Left for later: custody needs it to serve deposits\./);
+  assert.equal(renderToStaticMarkup(React.createElement(SetupBanner, { status: { ok: true, address: { ok: true, url: 'https://n.example' }, later } })), '', 'no setup screen over the owner area for it');
+  const electrum = card({ address: { ok: true, url: 'https://n.example' }, later: { lnd: true, gateway: true, fix: false, why: 'Not set up: the gateway needs Lightning, and Lightning needs your own Bitcoin Core (this node reads an Electrum server).' } });
+  assert.match(electrum, /Left for later\. Not set up: the gateway needs Lightning, and Lightning needs your own Bitcoin Core/);
+  assert.match(card({ address: { ok: true, url: 'https://n.example' }, lnd: { ok: true, synced: true, height: 1, channels: 1, pending: 0 }, later: { lnd: false, gateway: true, fix: true, why: 'x' } }),
+    /id="setup-lnd"[\s\S]*synced at block 1[\s\S]*id="setup-gateway"[\s\S]*Left for later/);
+});
