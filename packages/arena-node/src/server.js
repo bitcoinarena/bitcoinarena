@@ -5500,6 +5500,38 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const missed = missedInARow(rows);
           return answer(200, { missedInARow: missed, warning: seatingWarning(missed), rounds: rows.slice(0, 20) });
         }
+        // THE ROUNDS THIS NODE IS DRAWN FOR (kanban #715): each round of the last day and the coming ones, what the node does in it (Play and
+        // check / Pay out winners / reserve), and when there is none the first reason that holds, in plain words (owner-rounds.js)
+        if (req.method === 'GET' && url.pathname === '/owner/rounds') {
+          const me = toHex(round.pubkey), now = Date.now();
+          const rows = [];
+          let own = null, share = null;
+          for (const r of round.db.prepare('SELECT round_id, contract FROM rounds WHERE opened_ms > ? ORDER BY opened_ms DESC LIMIT 400').all(now - 36 * 3600000)) {
+            let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
+            const rid = new Uint8Array(r.round_id);
+            let g = null, st = null;
+            try { g = roster.committeeFor(rid, 'game'); st = roster.committeeFor(rid, 'settlement'); } catch { continue; }
+            const has = (pick, list) => !!(pick && pick.ok && (pick[list] || []).some((e) => toHex(e.pubkey) === me));
+            let endMs = Number(c.startTimeMs); try { endMs = Number(windowsOf(c).openMs); } catch { /* the start, then */ }
+            // the node's own census row, from the newest round it can be read for: its roles and whether its announcement names this game
+            let hostedHere = false;
+            try {
+              const census = roster.censusFor(rid);
+              const mine = census && census.ok ? census.entries.find((e) => toHex(e.pubkey) === me) : null;
+              hostedHere = !!(mine && (mine.hostedGames || []).some((x) => toHex(x) === toHex(c.gameId)));
+              if (!own && census && census.ok) {
+                own = mine ? { roles: mine.roles || [], serving: mine.advert ? mine.advert.serving !== false : true, bondSats: String(mine.bondSats ?? '') } : null;
+                const total = census.entries.reduce((t, e) => t + Number(e.bondSats || 0), 0);
+                share = mine && total > 0 ? census.entries.filter((e) => toHex(e.pubkey) === me).reduce((t, e) => t + Number(e.bondSats || 0), 0) / total : null;
+              }
+            } catch { /* no census read for that round here */ }
+            const startMs = Number(c.startTimeMs);
+            rows.push({ round: toHex(rid), game: (() => { const x = gameOfContract(c); const h = hosted.get(toHex(c.gameId)); return x ? { ...x, version: h && h.manifest ? h.manifest.version : null } : null; })(), startMs, endMs, phase: now < startMs ? 'upcoming' : now < endMs ? 'running' : 'done',
+              gameSeated: has(g, 'committee'), settleSeated: has(st, 'committee'), drawn: has(g, 'drawn') || has(st, 'drawn'), hostedHere, paid: c.stakeMsat > 0n });
+          }
+          const { roundsForOwner } = await import('./owner-rounds.js');
+          return answer(200, roundsForOwner({ rows, own, share, nowMs: now }));
+        }
         // THIS NODE'S STANDING (§5A.10B): own weight, brackets served, headroom - from the censuses of the newest rounds
         // held, and the warnings an operator needs before the floor passes the bond
         // THE NODE'S BOND AND ITS LOCK (2026-10-18: "withdrawing the bond after the lock (communicating the

@@ -71,6 +71,10 @@ nav.side a{font-size:14.5px}nav.side a.on{border-color:transparent;box-shadow:in
 .summary{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 18px;border-radius:14px;border:1px solid var(--line);background:var(--card);margin:6px 0 4px}
 .summary.good{border-color:color-mix(in srgb,var(--ok) 45%,var(--line))}.summary.bad{border-color:var(--bad)}.summary b{display:block;font-size:17px}.summary .sub{margin:0;display:block}
 .pill.bad{background:color-mix(in srgb,var(--bad) 18%,transparent);color:var(--bad)}
+/* the Rounds section (kanban #715) */
+#rounds-why{background:color-mix(in srgb,var(--gv) 12%,transparent);border-radius:10px;padding:10px 12px;margin:0 0 10px}
+table.rounds{width:100%;border-collapse:collapse;font-size:14px}table.rounds th{text-align:left;color:var(--dim);font-weight:600;padding:4px 6px}table.rounds td{padding:6px;border-top:1px solid var(--line,#8883)}table.rounds tr.done td{color:var(--dim)}
+@media (max-width:640px){table.rounds th:nth-child(1),table.rounds td:nth-child(1){white-space:nowrap;font-size:12px}}
 .svc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
 .svc-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px}.svc-card.down{border-color:var(--bad)}
 .svc-head{display:flex;align-items:center;gap:10px}.svc-name{flex:1;min-width:0;font-size:15px}
@@ -347,6 +351,7 @@ async function area() {
   ballotsPanel();
   gameDevs();
   standingPanel();
+  roundsPanel();
   capacityPlea();
   bondAnswer();
   servicesPanel();
@@ -391,6 +396,9 @@ function bondPanel() { mount('bond', 'mountBond', { api: { get: getOk, post, sig
 let pleaRead = null;   // the capacity plea, read once: the Bond answer and the Capacity card use it
 const readPlea = () => (pleaRead = pleaRead || fetch(at('/capacity?node=me'), { cache: 'no-store' }).then((r) => r.json()).catch(() => null));
 async function capacityPlea() { mount('capacity-plea', 'mountPlea', { capacity: await readPlea() }); }
+
+// THE ROUNDS THIS NODE IS DRAWN FOR (kanban #715), and why there are none
+function roundsPanel() { mount('rounds', 'mountRounds', { api: { get: getJson } }); }
 
 // THIS NODE'S STANDING (§5A.3, §5A.10B): the draws it missed and its bond against the bracket now common; missed draws on the Overview
 function standingPanel() {
