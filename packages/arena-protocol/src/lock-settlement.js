@@ -36,11 +36,12 @@
 // never to the donation recipients, and no split invented here. A VOID or
 // ENTRY_VOID entry's fee lock is not claimed: §22A's fee base leaves it out.
 import { paysReserves, RESERVES_NODE_FEE_BPS } from './reserves.js';
+import { auditorShares } from './auditor.js';
 import { netStakeMsat, isRefund, FAILED, FORFEIT, VOID, DELIVERED } from './payout.js';
 import { lockActions, CLAIM, RETURN } from './lock-action.js';
 import { winnings } from './payout-spend.js';
 import { nodeFeeTable, entryFeeMsat, frontendShares, frontendBookShares, GAME_VERIFY, SETTLEMENT, GUARDIAN, GATEWAY, LIQUIDITY } from './fee.js';
-import { MIN_PLAYERS_PER_ROUND } from './constants.js';
+import { MIN_PLAYERS_PER_ROUND, AUDITOR_VERSION } from './constants.js';
 import { refundKeyOf } from './stake-lock.js';
 import { splitDonation } from './donation.js';
 import { roundId } from './contracts.js';
@@ -636,13 +637,30 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
     frontendGross += got + lnv2FeeMsat(fees, got);
     payouts.push({ pubkey: payoutPk.subarray(1), payoutPk, owedMsat: siteMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'frontend' });
   }
-  const nodesSpendable = nodePartMsat - publisherGross - frontendGross;
+  // THE ROUND'S AUDITORS (§13A.1, protocol 22): 10 % of the nodes' part after the website's line, equally to the auditors whose AUDIT
+  // the seats hold (`signerNodes.auditors`, node keys hex, the same set on every seat by §13A.1's rule) - one line each, before the seats'.
+  // None held: nothing taken, the seats share all of it as before.
+  let auditorGross = 0n, auditorBps = 0n;
+  const auditors = Number(contract.protocolVersion) >= AUDITOR_VERSION && Array.isArray(signerNodes.auditors) ? signerNodes.auditors : [];
+  if (auditors.length) {
+    const shares = auditorShares({ nodesMsat: nodePartMsat - publisherGross - frontendGross, auditors });
+    for (const { key, msat } of shares.each) {
+      const pubkey = fromHex(key);
+      const got = largestPayoutMsat(fees, msat);
+      if (got === 0n) { unpaid.push({ pubkey, owedMsat: msat, why: 'the auditor\'s share does not pay its own output fee' }); continue; }
+      auditorGross += got + lnv2FeeMsat(fees, got);
+      payouts.push({ pubkey, payoutPk: refundKeyOf(pubkey), owedMsat: msat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'auditor' });
+    }
+    auditorBps = 1000n;
+  }
+  const nodesSpendable = nodePartMsat - publisherGross - frontendGross - auditorGross;
   for (const [key, msat] of owed) {
     const guardianPk = key.startsWith('payout:') ? fromHex(key.slice(7)) : null;
     const pubkey = guardianPk ? guardianPk.subarray(1) : fromHex(key);
     // what this node is owed once the websites' 20% is taken from the nodes' fee (its table share, scaled down by their total)
-    const owedMsat = sites.totalMsat ? (msat * (table.fee - sites.totalMsat)) / table.fee : msat;
-    const got = largestPayoutMsat(fees, publisherGross || frontendGross ? (msat * nodesSpendable) / table.fee : (msat * spendable) / poolMsat);
+    const afterSites = sites.totalMsat ? (msat * (table.fee - sites.totalMsat)) / table.fee : msat;
+    const owedMsat = auditorBps ? (afterSites * (10000n - auditorBps)) / 10000n : afterSites;
+    const got = largestPayoutMsat(fees, publisherGross || frontendGross || auditorGross ? (msat * nodesSpendable) / table.fee : (msat * spendable) / poolMsat);
     if (got === 0n) { unpaid.push({ pubkey, owedMsat, why: 'its fee share does not pay its own output fee' }); continue; }
     payouts.push({ pubkey, payoutPk: guardianPk || refundKeyOf(pubkey), owedMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: guardianPk ? 'guardian payout key' : 'signer node' });
   }
