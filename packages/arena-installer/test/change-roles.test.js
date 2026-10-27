@@ -84,7 +84,8 @@ test('an update names every game of the node\'s apps when its advertisement does
   assert.equal(r.ok, true, r.why);
   const read = readAdvertUpdate(fromHex(n.sent[1]), { network: 'testnet4' });
   assert.deepEqual(read.advert.hostedGames.map((g) => toHex(g)), want, 'the advertisement names them, sorted');
-  assert.deepEqual([...read.advert.roles].sort(), ['game', 'relay', 'settlement', 'verify'], 'the roles kept');
+  assert.deepEqual([...read.advert.roles].sort(), ['audit', 'game', 'relay', 'settlement', 'verify'], 'the roles kept, and audit added: it had verify (§13A.1)');
+  assert.deepEqual([n.state.read().roles, n.state.read().auditGranted, r.plan.auditAdded], [['verify', 'settlement', 'audit'], true, true]);
   assert.deepEqual(n.state.read().hostedGames, want);
   const { SUPPORTED_PROTOCOL_VERSIONS } = await import('../../arena-protocol/src/constants.js');
   assert.deepEqual([...read.advert.protocolVersions], [...SUPPORTED_PROTOCOL_VERSIONS], 'and the newest protocols');
@@ -103,4 +104,36 @@ test('a node that names its games but declares older protocols is updated to the
   const r = await refreshHostedGames({ home: n.home, release: repo, state: n.state, chainKit: n.chainKit, post: true });
   assert.deepEqual([r.ok, r.plan.added, r.plan.protocolsBefore], [true, 0, 3], r.why);
   assert.equal(n.sent.length, 2);
+});
+
+test('the audit role at update (§13A.1, RULED 2026-10-27): added once to a node with verify, never to one without, never again once given', async () => {
+  const { refreshHostedGames, auditGrantDue } = await import('../src/change-roles.js');
+  const { hostedGameIdsOf } = await import('../src/apps.js');
+  const repo = join(import.meta.dirname, '..', '..', '..');
+  const want = await hostedGameIdsOf(repo, ['nextblock']);
+  const { SUPPORTED_PROTOCOL_VERSIONS } = await import('../../arena-protocol/src/constants.js');
+  const current = { apps: ['nextblock'], hostedGames: want, advertProtocols: [...SUPPORTED_PROTOCOL_VERSIONS] };
+  // games and protocols as they are: only the role is due, and it alone makes the update
+  const a = node(['verify']); a.state.save(current);
+  const r = await refreshHostedGames({ home: a.home, release: repo, state: a.state, chainKit: a.chainKit, post: true });
+  assert.deepEqual([r.ok, r.plan.auditAdded, a.sent.length], [true, true, 2], r.why);
+  assert.ok(readAdvertUpdate(fromHex(a.sent[1]), { network: 'testnet4' }).advert.roles.includes('audit'));
+  assert.deepEqual(await refreshHostedGames({ home: a.home, release: repo, state: a.state, chainKit: a.chainKit, post: true }), { ok: true, unchanged: true }, 'once');
+  // without verify: nothing added, nothing sent
+  const b = node(['settlement']); b.state.save(current);
+  assert.deepEqual(await refreshHostedGames({ home: b.home, release: repo, state: b.state, chainKit: b.chainKit, post: true }), { ok: true, unchanged: true });
+  assert.equal(b.sent.length, 0);
+  // turned off by the owner after it was given: an update does not add it back
+  const c = node(['verify']); c.state.save({ ...current, auditGranted: true });
+  assert.equal(auditGrantDue(c.state.read()), false);
+  assert.deepEqual(await refreshHostedGames({ home: c.home, release: repo, state: c.state, chainKit: c.chainKit, post: true }), { ok: true, unchanged: true });
+});
+
+test('the owner switches the audit role on and off from the owner page; the choice then stands', async () => {
+  const n = node(['verify', 'settlement']);
+  const on = await changeRolesOnNode({ home: n.home, release: n.home, state: n.state, roles: ['game', 'verify', 'audit', 'settlement', 'relay'], post: true, chainKit: n.chainKit });
+  assert.equal(on.ok, true, on.why);
+  assert.deepEqual([on.plan.after.roles, n.state.read().auditGranted], [['audit', 'game', 'relay', 'settlement', 'verify'], true]);
+  const off = await changeRolesOnNode({ home: n.home, release: n.home, state: n.state, roles: ['game', 'verify', 'settlement', 'relay'], post: true, chainKit: n.chainKit });
+  assert.deepEqual([off.ok, off.plan.after.roles.includes('audit')], [true, false], off.why);
 });
