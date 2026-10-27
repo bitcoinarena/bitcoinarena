@@ -99,9 +99,35 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     }
     db.prepare('INSERT OR IGNORE INTO seat_certs (round_id, role, cert) VALUES (?, ?, ?)').run(rid, role, bytes);
     if (!certs.has(key) || certs.get(key) !== null) certs.set(key, v.seating.seated.map(toHex));
+    keepPeers(rid, role, v.seating.seated);
     // the seats a v2 round counts are these (2026.0.2): the server writes them into the stored contract
     try { onSeated(rid, role, v.seating.seated); } catch (e) { log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: ${e.message}`); }
     return { ok: true, kept: true };
+  };
+
+  // THE SEATED NODES' ADDRESSES, KEPT WITH THE ROUND (kanban #735, measured 2026-10-27: seat 1, restarted inside round 2927d830's
+  // objection window, read no chain view for the round for ~15 min and so gathered no FINAL from its peers - it held the certificate
+  // naming them, but a key is not an address). The certificate stood against this node's draw, so the census it was drawn from is
+  // readable now: each seated node's endpoint off its advert there is written to the store (round.keepRoundPeers), and every
+  // "where are the round's signer nodes" lookup reads it when the roster cannot answer. A node advertising no endpoint is not written.
+  const keepPeers = (rid, role, seated) => {
+    try {
+      const row = round.get(rid);
+      const posted = row ? null : contractOf(rid);
+      const c = roster.committeeFor(rid, role, posted ? { posted } : {});
+      if (!c.ok) return;
+      const entries = new Map();
+      for (const e of [...(c.drawn || []), ...(c.committee || [])]) if (e && e.pubkey) entries.set(toHex(e.pubkey), e);
+      // a node the census left out as absent and seated by being present (kanban #727) is in the census's entries, not the draw
+      if (row) { try { const census = roster.censusFor(rid); if (census.ok) for (const e of census.entries || []) if (e && e.pubkey && !entries.has(toHex(e.pubkey))) entries.set(toHex(e.pubkey), e); } catch { /* the draw's entries */ } }
+      const peers = [];
+      for (const k of seated) {
+        const e = entries.get(toHex(k));
+        if (e && e.advert && e.advert.endpoint) peers.push({ node: toHex(k), endpoint: String(e.advert.endpoint) });
+      }
+      const n = round.keepRoundPeers(rid, role, peers);
+      if (n < seated.length) log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: ${n} of ${seated.length} seated nodes' addresses kept with the round (the rest advertise none)`);
+    } catch (e) { log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: the seated nodes' addresses were not kept: ${e.message}`); }
   };
 
   // ROUNDS BY START TIME, read once each (the seats hold thousands)

@@ -14,6 +14,7 @@ import {
   encodeRoundContract, roundId, encodeEntryContract, entryId, decodeEntryContract,
   decodeRoundContract, roundWindowsAreValid, lastTickOfRun, sittingSeatsFitTheSlots } from '../../arena-protocol/src/contracts.js';
 import { decodeInputBatch, batchTicks, batchId } from '../../arena-protocol/src/batch.js';
+import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { checkBatchPrices } from '../../arena-protocol/src/price-sample.js';
 import { LATE_JOIN_LAST_ENTRY_MS, entryItemDigest } from '../../arena-protocol/src/contracts.js';
 import { LATE_JOIN_MS } from '../../arena-protocol/src/series.js';
@@ -2591,6 +2592,39 @@ export class Round {
   lobbyNames(roundIdBytes) {
     return this.db.prepare('SELECT record, signature FROM lobby_names WHERE round_id = ? ORDER BY player_pubkey')
       .all(roundIdBytes).map((r) => ({ record: new Uint8Array(r.record), signature: new Uint8Array(r.signature) }));
+  }
+
+  /**
+   * THE ROUND'S SEATED SIGNER NODES' ADDRESSES, KEPT AT SEATING TIME (kanban #735, measured 2026-10-27: seat 1, restarted inside
+   * round 2927d830's objection window, read no chain view for the round for ~15 min - "reads no signer node addresses: this node has
+   * no chain view for that round" - so it gathered no FINAL signature from its peers while the other five held FINAL 6 of 6). When
+   * the seating certificate stands here, each seated node's endpoint off the census advert held then is written per role; the
+   * roster's answer stays first, and these are read when it has none. `peers`: [{ node (hex), endpoint (ws:// or http://) }].
+   * A node with no endpoint is not written (an address is not guessed at). Written again, the row is replaced.
+   */
+  keepRoundPeers(roundIdBytes, role, peers) {
+    const put = this.db.prepare('INSERT OR REPLACE INTO round_peers (round_id, role, node, endpoint) VALUES (?, ?, ?, ?)');
+    let n = 0;
+    for (const p of peers || []) {
+      if (!p || !p.node || !p.endpoint) continue;
+      put.run(Buffer.from(roundIdBytes), String(role), String(p.node).toLowerCase(), String(p.endpoint));
+      n++;
+    }
+    return n;
+  }
+
+  /**
+   * The seated signer nodes kept for a round and role: [{ node, endpoint }], [] where none were kept. A table's later round is
+   * seated by its first round's certificate (known-game.js tableAnchorOf), so it reads what was kept for that round.
+   */
+  roundPeers(roundIdBytes, role) {
+    const read = (rid) => this.db.prepare('SELECT node, endpoint FROM round_peers WHERE round_id = ? AND role = ? ORDER BY node')
+      .all(Buffer.from(rid), String(role)).map((r) => ({ node: r.node, endpoint: r.endpoint }));
+    const own = read(roundIdBytes);
+    if (own.length) return own;
+    let anchor = null;
+    try { const row = this.get(roundIdBytes); const a = row ? tableAnchorOf(decodeRoundContract(new Uint8Array(row.contract))) : null; if (a && !a.first) anchor = a.anchorId; } catch { anchor = null; }
+    return anchor ? read(anchor) : [];
   }
 
   /** The entry's first mark as this signer node stores it (the chain's first link), or null. */

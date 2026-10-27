@@ -2053,10 +2053,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
     // §23.2 REFUSED: asked at the forfeit - does this node still refuse that round? (null: it offers it)
     refusedNow: (rid) => unenteredReturnOfRound(rid),
-    peersFor: (rid) => {
-      const picked = roster.committeeFor(rid, 'settlement');
-      return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
-    },
+    // the census's addresses, else the ones kept at seating (kanban #735), else the DKG's
+    peersFor: (rid) => committeePeers(rid, 'settlement', { orElse: dkg.peers || [] }).peers,
     onVoid: (rid, eid) => pushVoid(rid, eid),
     // Before a Void lock is refunded: the other signer nodes' proof of two first marks.
     pullProof: (rid, eid) => verifier.pullFirstMarkProofReach(rid, eid),
@@ -2066,10 +2064,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // 2026-09-14): the same signer nodes, the same claim key, each loser's P opened by the
   // share conversation, one txid rebuilt by every signer node and signed once.
   // WINNINGS ALWAYS SENT on a FEDERATION round (winnings-send.js): the same settlement committee, the same peers.
-  const winningsPeers = (rid) => {
-    const picked = roster.committeeFor(rid, 'settlement');
-    return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
-  };
+  const winningsPeers = (rid) => committeePeers(rid, 'settlement', { orElse: dkg.peers || [] }).peers;
   const winnings = stakeLocks ? new WinningsSend({ round, port: stakeLocks, curve: poolCurve,
     random: (n) => new Uint8Array(randomBytes(n)), peersFor: winningsPeers, fetcher: (u, o) => fetch(u, o),
     lnurlFetch, network: winningsNetwork }) : null;
@@ -2077,7 +2072,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const txRecord = createTxRecord({ db: round.db });
   // THE MARKET ORDER BOOK: orders taken here, each batch's set agreed with the round's other seats
   const orderBook = new OrderBook(round, { plugins: hosted, intervalMs: orderBatchMs, now: () => round.now(), feesFor,
-    peersFor: (rid) => { const picked = roster.committeeFor(rid, 'settlement'); return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []); } });
+    peersFor: (rid) => committeePeers(rid, 'settlement', { orElse: dkg.peers || [] }).peers });
   // AN ORDER A CERTIFIED BATCH NAMES THAT NEVER REACHED THIS SEAT (kanban #620, measured 2026-10-24: round 42835aaa never settled - fed2-3
   // and fed2-7 held no entry 008e278a of batch 3585700432, refused its certificate - "this seat holds no entry 008e278ac2bfff47" - and
   // rebuilt settlement 8f0144a1 where the others built ffabdc94): the entry from the seat that handed the batch, kept when its bytes hash
@@ -2161,7 +2156,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const priceRound = (c) => { const f = pluginForRound(c, hosted); return f.ok && !f.attested && f.plugin && (f.plugin.name === 'nextblock' || (f.plugin.manifest && f.plugin.manifest.gameName === 'nextblock')); };
   const prices = new PriceFeed(round, { priceRound, now: () => round.now(),
     ...(priceFeed && typeof priceFeed === 'object' && priceFeed.readPrice ? { readPrice: priceFeed.readPrice } : {}),
-    peersFor: (rid) => { const picked = roster.committeeFor(rid, 'settlement'); return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []); } });
+    peersFor: (rid) => committeePeers(rid, 'settlement', { orElse: dkg.peers || [] }).peers });
   let priceTimeout = null;
   // ENFORCED (§11): where this seat runs the feed, a price round's batches carry only attested prices
   const feedFor = (contractBytes) => { if (!priceFeed) return false; try { return priceRound(decodeRoundContract(new Uint8Array(contractBytes))); } catch { return false; } };
@@ -2200,10 +2195,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const settlements = new LockSettlement(round, {
     conflictsFor,
     dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf, donationSetFor, donationTargetFor, orderBook, reserveKeyFor, feesFor,
-    peersFor: (rid) => {
-      const picked = roster.committeeFor(rid, 'settlement');
-      return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
-    },
+    // the census's addresses, else the ones kept at seating (kanban #735), else the DKG's
+    peersFor: (rid) => committeePeers(rid, 'settlement', { orElse: dkg.peers || [] }).peers,
     // WHOSE TURN IT IS TO COMBINE (M3.3-19): the round's beacon height and this node's chain tip, as the payout reads them.
     turnClock: {
       beaconHeight: async (rid, contract) => {
@@ -2307,6 +2300,29 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // one committee and sign results against another.
     ...(randomnessFor ? { randomnessFor } : {}),
   });
+  // THE ROUND'S SIGNER NODES' ADDRESSES WHEN THE ROSTER CANNOT SAY (kanban #735, measured 2026-10-27: seat 1 was restarted inside round
+  // 2927d830's objection window and for ~15 min read no chain view for the round - bitcoind re-read seven seats' views under load - so
+  // every peersFor answered [] ("reads no signer node addresses: this node has no chain view for that round"), it gathered no FINAL
+  // from its peers and held its own signature alone while the other five held FINAL 6 of 6). At seating time the agent kept the seated
+  // nodes' endpoints with the round (seating-agent.js keepPeers, round.roundPeers); the roster's answer stays first where it has one,
+  // and these are read where it has none - the other role's where that role kept none (the two seatings mostly overlap). A round this
+  // seat never saw seated (a 2-of-2 test round, a round before the table) keeps nothing, and the caller's last fallback stands.
+  function keptPeersFor(rid, role) {
+    const me = toHex(round.pubkey);
+    const read = (r) => { try { return round.roundPeers(rid, r); } catch { return []; } };
+    let kept = read(role);
+    if (!kept.length) kept = read(role === 'game' ? 'settlement' : 'game');
+    return [...new Set(kept.filter((p) => p.node !== me).map((p) => String(p.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')))];
+  }
+  // One rule for every lookup: the committee's census endpoints, else the kept ones, else `orElse` (the DKG peers where a caller had
+  // them). `picked`: a committeeFor answer the caller already holds. Answers { peers, kept, why } - `kept` says the roster did not answer.
+  function committeePeers(rid, role, { orElse = [], picked = null } = {}) {
+    const got = picked || roster.committeeFor(rid, role);
+    if (got.ok) return { peers: endpointsOf(got.committee, round.pubkey), kept: false, why: null };
+    const kept = keptPeersFor(rid, role);
+    if (kept.length) return { peers: kept, kept: true, why: got.why };
+    return { peers: orElse, kept: false, why: got.why };
+  }
   // THE PRESENCE BOOK (§5A.3, protocol 22, kanban #727): the seating certificates and PRESENTs of a census's 24 h, and the absent claims
   // of the censuses this seat holds. The roster checks every proof of a 22 root that leaves nodes out against it (the owner 2026-10-27:
   // absence only with proof); a claim not held yet is asked of the seats once a minute per root, so a seat that missed the posting
@@ -2417,8 +2433,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     hold: async (bytes, rid) => {
       const got = holdOutcome(rid, bytes, decodeAttestation(bytes), false);
       if (!got.held) { console.log(`[attest] ${toHex(rid).slice(0, 16)}: the combined attestation was not held here: ${got.why}`); return false; }
-      const picked = roster.committeeFor(rid, 'settlement');
-      const to = new Set([...(picked.ok ? endpointsOf(picked.committee, round.pubkey) : []), ...drawnAttestor.peersFor(rid)]);
+      const to = new Set([...committeePeers(rid, 'settlement').peers, ...drawnAttestor.peersFor(rid)]);
       await Promise.all([...to].map((base) => fetch(`${base}/outcome?round=${toHex(rid)}`, { method: 'POST', body: bytes, signal: AbortSignal.timeout(8000) }).catch(() => null)));
       return true;
     },
@@ -2533,13 +2548,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE ROUND'S SETTLEMENT SIGNER NODES, OFF THE CENSUS: who holds a stake's shares
   // and who signs its payout table. The same rule the receipt pull uses, for
   // the other committee. Called at a close, when `roster` exists.
+  // A ROSTER THAT CANNOT ANSWER reads the addresses kept at seating (kanban #735); none kept, [] as before.
   function settlementPeers(roundIdBytes) {
-    const picked = roster.committeeFor(roundIdBytes, 'settlement');
-    if (!picked.ok) {
-      console.error(`[custody] ${toHex(roundIdBytes).slice(0, 16)} reads no settlement signer node addresses: ${picked.why}`);
-      return [];
-    }
-    return endpointsOf(picked.committee, round.pubkey);
+    const got = committeePeers(roundIdBytes, 'settlement');
+    if (got.kept) console.log(`[custody] ${toHex(roundIdBytes).slice(0, 16)} settlement signer node addresses read from the seating kept here (${got.peers.length}): ${got.why}`);
+    else if (got.why) console.error(`[custody] ${toHex(roundIdBytes).slice(0, 16)} reads no settlement signer node addresses: ${got.why}`);
+    return got.peers;
   }
 
   const verifier = new Verifier(round, {
@@ -2564,13 +2578,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // - the same record joining reads, and the rule the payout path uses below.
     // Measured before this: both daemons of the regtest rehearsal closed with
     // peers [], so no receipt and no result could ever be fetched.
+    // AND WHEN THE CENSUS CANNOT BE READ EITHER - a seat restarted while bitcoind re-reads its views (kanban #735) - the addresses
+    // kept at seating; none kept, [] with the refusal logged, as before.
     peersFor: (roundIdBytes) => {
-      const picked = roster.committeeFor(roundIdBytes, 'game');
-      if (!picked.ok) {
-        console.error(`[verify] ${toHex(roundIdBytes).slice(0, 16)} reads no signer node addresses: ${picked.why}`);
-        return [];
-      }
-      return endpointsOf(picked.committee, round.pubkey);
+      const got = committeePeers(roundIdBytes, 'game');
+      if (got.kept) console.log(`[verify] ${toHex(roundIdBytes).slice(0, 16)} signer node addresses read from the seating kept here (${got.peers.length}): ${got.why}`);
+      else if (got.why) console.error(`[verify] ${toHex(roundIdBytes).slice(0, 16)} reads no signer node addresses: ${got.why}`);
+      return got.peers;
     },
   });
 
@@ -2628,10 +2642,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (typeof auditOpts.seatsFor === 'function') return auditOpts.seatsFor(rid);
     if (verifier.peers && verifier.peers.length) return verifier.peers;
     const out = new Set();
-    for (const role of ['game', 'settlement']) {
-      const picked = roster.committeeFor(rid, role);
-      if (picked.ok) for (const u of endpointsOf(picked.committee, round.pubkey)) out.add(u);
-    }
+    for (const role of ['game', 'settlement']) for (const u of committeePeers(rid, role).peers) out.add(u);   // kept at seating when the roster cannot say (kanban #735)
     return [...out];
   }
   // THE ENTRIES AN AUDIT IS OVER: every entry of the round but one void at the door (§15), which has no run to agree on
@@ -3067,10 +3078,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (dkg.signerNodeFor(signerNodes).ok) return;
     const peersOf = () => {
       const found = new Set();
-      for (const role of ['settlement', 'game']) {
-        const picked = roster.committeeFor(rid, role);
-        if (picked.ok) for (const u of endpointsOf(picked.committee, round.pubkey)) found.add(u);
-      }
+      for (const role of ['settlement', 'game']) for (const u of committeePeers(rid, role).peers) found.add(u);   // kept at seating when the roster cannot say (kanban #735)
       return [...found];
     };
     claimKeyRuns.add(key);
@@ -3148,6 +3156,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let picked = roster.committeeFor(rid, 'game');
         if (picked.ok) peersHere = endpointsOf(picked.committee, round.pubkey);
         if (!peersHere.length) { picked = roster.committeeFor(rid, 'settlement'); if (picked.ok) peersHere = endpointsOf(picked.committee, round.pubkey); }
+        // NEITHER CENSUS READABLE - a seat restarted inside the window while bitcoind re-read its views (kanban #735, round 2927d830:
+        // ~15 min of "no chain view", its own FINAL held alone) - the seated nodes' addresses kept at seating time; fixed as the
+        // census's are, so kept here the same way
+        if (!peersHere.length) {
+          peersHere = keptPeersFor(rid, 'game');
+          if (peersHere.length) console.log(`[final] ${toHex(rid).slice(0, 16)} the peers asked for FINAL are the ${peersHere.length} kept at seating: ${picked.why}`);
+        }
         drawnPeers.set(toHex(rid), { at: Date.now(), peers: peersHere });
         if (drawnPeers.size > 4096) drawnPeers.delete(drawnPeers.keys().next().value);
       }
@@ -9694,6 +9709,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (seating && req.method === 'POST' && url.pathname === '/presents') {
         const r = seating.takePresents(new Uint8Array(await read(req)));
         return r.ok ? json(res, 201, r) : text(res, 400, r.why);
+      }
+      // THE ROUND'S SEATED SIGNER NODES' ADDRESSES, AS KEPT AT SEATING (kanban #735): per role, each seated node's key and the endpoint
+      // off its census advert then - what this seat reads when its roster has no chain view for the round, and what a peer that lost
+      // its own (a store made before the table) may ask for. `kept` says the roster answered none of it right now.
+      if (req.method === 'GET' && url.pathname === '/round-peers') {
+        let rid; try { rid = fromHex(url.searchParams.get('round') || ''); } catch { rid = null; }
+        if (!rid || rid.length !== 32) return text(res, 400, 'name a round: ?round=<64 hex>');
+        const peers = Object.fromEntries(SEATING_ROLES.map((role) => [role, round.roundPeers(rid, role)]));
+        return json(res, 200, { round: toHex(rid), peers, fromRoster: Object.fromEntries(SEATING_ROLES.map((role) => { let c; try { c = roster.committeeFor(rid, role); } catch (e) { c = { ok: false, why: e.message }; } return [role, c.ok]; })) });
       }
       if (seating && req.method === 'GET' && url.pathname === '/seating-batch') {
         const ids = String(url.searchParams.get('rounds') || '').toLowerCase().split(',').filter(Boolean);

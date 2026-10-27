@@ -157,9 +157,12 @@ test('a 22 round: the seated sign who was present, and the certificate names the
   for (const n of nodes.slice(0, 8)) {
     const db = db0();
     db.prepare('INSERT INTO rounds (round_id, contract) VALUES (?, ?)').run(rid, bytes);
-    const round = { db, pubkey: n.pubkey, get: (id) => (toHex(id) === toHex(rid) ? { contract: bytes } : null) };
-    agents.set(n.endpoint, seatingAgent({ round, roster: { committeeFor: () => ({ ok: true, drawn }) }, sign: signer(n), fetcher, nowMs: () => now,
-      verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, leftOutOf: () => [toHex(back.pubkey)] }));
+    // the seated nodes' addresses the agent keeps with the round when the certificate stands (kanban #735)
+    const kept = new Map();
+    const round = { db, pubkey: n.pubkey, get: (id) => (toHex(id) === toHex(rid) ? { contract: bytes } : null),
+      keepRoundPeers: (id, role, peers) => { assert.equal(toHex(id), toHex(rid)); kept.set(role, peers); return peers.length; } };
+    agents.set(n.endpoint, { ...seatingAgent({ round, roster: { committeeFor: () => ({ ok: true, drawn }) }, sign: signer(n), fetcher, nowMs: () => now,
+      verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, leftOutOf: () => [toHex(back.pubkey)] }), kept });
   }
   const all = [...agents.values()];
   // the returning node hands its PRESENT to the drawn before the close; a node neither drawn nor left out is refused
@@ -180,5 +183,8 @@ test('a 22 round: the seated sign who was present, and the certificate names the
     assert.ok(v.present.includes(toHex(back.pubkey)), 'the node coming back');
     assert.ok(!v.present.includes(toHex(nodes[8].pubkey)), 'not the stopped node');
     assert.deepEqual(v.leftOut, [toHex(back.pubkey)]);
+    // AND EVERY NODE THAT HOLDS THE CERTIFICATE KEPT THE SEATED NODES' ADDRESSES WITH THE ROUND (kanban #735): the 7 seated, each with
+    // the endpoint its census advert names - what the node reads for the round's peers when its roster has no chain view
+    for (const a of all) assert.deepEqual(a.kept.get(role), nodes.slice(0, 7).map((n) => ({ node: toHex(n.pubkey), endpoint: n.endpoint })), `${role}: the seated nodes' addresses kept`);
   }
 });
