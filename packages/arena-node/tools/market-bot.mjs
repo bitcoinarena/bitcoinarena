@@ -359,7 +359,9 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
   const lockMs = Date.now() - tLock;
   steps.lockPuts = io.puts - io0.puts; steps.lockWrites = io.writes - io0.writes; steps.lockWriteMs = io.writeMs - io0.writeMs;
   if (env.DEBUG) say({ step: 'locks', gate: gate.pays, gateWhy: gate.why, fee: !!locks.fee, feeLock: locks.entryFields.feeLockOutpoint && toHex(locks.entryFields.feeLockOutpoint.txid).slice(0, 12), feeMsat: split.feeMsat, netMsat: split.netMsat });
-  const needed = receiptsNeeded(signers.length), e = rand(32);
+  // THE CONTRACT'S SLOTS, NOT THE SEATED COUNT (as the page deals, join.js sharesNeededFor; measured 2026-10-27 23:02Z: the 23:00
+  // window's round seated 6 of its 7 slots and every order failed "no committee threshold for 6 slots")
+  const needed = receiptsNeeded(Number(c.settlementSlots)), e = rand(32);
   const dealt = await dealHandout({ preimage: p, signerNodes: signers, roundId: rid, playerPubkey: player, ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
     coefficients: Array.from({ length: needed - 1 }, () => scalarFrom32(rand(32)) % FIELD), needed, curve: feldmanGroup });
   // THE PAGE'S OWN LOCK RECORD for this order (saveLock): what a refund of a lock no seat took reads, and lookOwed's last resort
