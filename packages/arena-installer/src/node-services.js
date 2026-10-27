@@ -536,7 +536,7 @@ export async function doctor({ home, platform = process.platform, env = process.
       const other = unknownKeys(node.conf.values);
       add('arena.conf', true, `${Object.keys(node.conf.values).length} settings${other.length ? `; not known to this release: ${other.join(', ')}` : ''}`);
     }
-  } else if (node.legacyEnv) add('arena.conf', false, 'this node still runs from node.env (an older release)', 'update the node (arena-install --update): it moves the settings into arena.conf');
+  } else if (node.legacyEnv) add('arena.conf', false, 'this node still runs from node.env (an older release)', 'update the node (bitcoinarena-install --update): it moves the settings into arena.conf');
   else add('arena.conf', false, `${node.conf.file} is missing`, 'arena-install (the installer writes it)');
   const view = await overview({ home, platform, env, sh, fetcher, log: lg });
   for (const s of view.services) {
@@ -583,7 +583,7 @@ export async function doctor({ home, platform = process.platform, env = process.
       const l = await latest(node.version);
       const lv = l.latest && l.latest.version;
       if (!lv) add('Release', null, `${node.version}; ${l.why || 'the newest could not be read'}`);
-      else add('Release', l.newer ? null : true, l.newer ? `${node.version} runs; ${lv} is out` : `${node.version} (the newest)`, l.newer ? `update the node: arena-install --update <the ${lv} asset>` : null);
+      else add('Release', l.newer ? null : true, l.newer ? `${node.version} runs; ${lv} is out` : `${node.version} (the newest)`, l.newer ? `update the node: bitcoinarena-install --update <the ${lv} asset>` : null);
     } catch (e) { log.fail('the newest release', e); add('Release', null, `${node.version}; the newest could not be read (${e.message})`); }
   } else add('Release', null, node.version || 'unknown');
   return out;
