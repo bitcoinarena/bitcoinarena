@@ -235,13 +235,14 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     const protocolVersion = Math.max(Number(t.contract.protocolVersion || 3), Number(base.requiredProtocol || 0));
     const contract = { ...t.contract, protocolVersion, censusHeight: kind.fields.censusHeight };
     let census = await censusFor({ ...contract, ...kind.fields });
-    // FROM PROTOCOL 22 LESS THE ABSENT (§5A.3, kanban #727): nodes drawn in the census's 24 h and seen at none of those seatings leave it;
-    // the claim is the seat's (server.js postingLessAbsent) and goes to every seat before the grid does, so each can check the root
+    // FROM PROTOCOL 22 LESS THE ABSENT (§5A.3, kanban #727): nodes that seating certificates prove drawn and not present at 3 seatings of
+    // the census's 24 h, and present at none, leave it; the claim is the seat's (server.js postingLessAbsent), carries those certificates
+    // (the owner 2026-10-27: absence only with proof) and goes to every seat before the grid does, so each checks the root and the proofs
     let absent = null;
     if (dropsAbsent(contract) && seat && typeof seat.lessAbsent === 'function') {
       try {
         const less = await seat.lessAbsent({ ...contract, ...kind.fields }, census, await chainView());
-        if (less) { census = less; absent = { root: toHex(less.root), claims: less.claims }; say({ dutyDay: 'absent', game, nodes: less.claims.length, root: absent.root.slice(0, 16) }); }
+        if (less) { census = less; absent = { root: toHex(less.root), claims: less.claims, certs: less.certs || {} }; say({ dutyDay: 'absent', game, nodes: less.claims.length, root: absent.root.slice(0, 16) }); }
       } catch (e) { say({ dutyDay: 'absent not read', game, why: e.message }); }
     }
     const built = buildGrid({ contract, kind, ...opts, censusRootFor: () => census.root, censusEntries: () => census.entries,

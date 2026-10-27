@@ -29,6 +29,10 @@ import { beaconFromChain, committeeSeedFromBeacon } from './beacon.js';
 import { selectCommittee, drawCommittee, slotsForRole, drawAttestors } from './sortition.js';
 import { networkOf } from './constants.js';
 import { toHex, fromHex } from './hash.js';
+import { medianTimePast } from './beacon.js';
+import { decodeRoundContract, roundId } from './contracts.js';
+import { seatingCloseMs } from './seating.js';
+import { checkAbsenceProof, presenceWindow, dropsAbsent } from './presence.js';
 
 const sameCC = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
 const bytesOfCC = (v) => (v instanceof Uint8Array ? v : typeof v === 'string' ? fromHex(v) : null);
@@ -203,4 +207,50 @@ export function committeeFromChain({ contract, roundId, headers, firstHeight, ev
   try { attestors = drawAttestors({ entries: census.entries, contract, committeeSeed: seeded.seed }).map((e) => e.pubkey); } catch { attestors = null; }
   return { ok: true, committees, drawn, attestors, beacon: { height: beacon.height, hash: beacon.hash }, census: { root: census.root, entries: census.entries.length },
     checkedCensus: { root: census.root, entries: census.entries } };
+}
+
+/**
+ * THE CLIENT CHECKS A 22 ROUND'S ABSENT CLAIM ITSELF (§5A.3, kanban #727, the owner 2026-10-27: "absence only with proof" - every seat AND
+ * the client). `claim` is what GET /absent answers for the round's census root: { claims, certs, contracts } - each absent node with the
+ * seatings that prove it, the certificates of those seatings and the contracts of their rounds (hex). `evidenceOf(ridHex)` the census
+ * evidence of a named round (GET /census?round=, as for the round itself). Each named round is drawn here as committeeFromChain draws
+ * the client's own round - its contract by its id, its census from evidence hashing to its root, its beacon off the same headers - and
+ * every proof is checked on that draw (presence.js checkAbsenceProof): the certificate signed by that draw's seated, the node drawn
+ * there or left out already, listed present by none, at 3 different seating closes in the census's 24 h. A claimed node that is in the
+ * round's own census is refused too. What the client cannot see is a node a census left out that the claim does not name: that root is
+ * the seats' check against their chains, as every omission always was (§5A.6).
+ * `entries`: the round's own census as this client checked it (committeeFromChain's checkedCensus.entries).
+ * Answers { ok: true, absent: [node hex] } or { ok: false, why, node? }.
+ */
+export function absenceFromChain({ contract, claim, evidenceOf, headers, firstHeight, bond, verify, entries = null }) {
+  if (!dropsAbsent(contract)) return { ok: true, absent: [] };
+  if (!claim || !Array.isArray(claim.claims)) return { ok: false, why: 'no absent claim for that census root' };
+  const t = medianTimePast(headers, firstHeight, Number(contract.censusHeight));
+  if (t === null) return { ok: false, why: 'the agreed headers do not reach the census block\'s median time, so its 24 h cannot be read' };
+  const window = presenceWindow(BigInt(t) * 1000n);
+  const inRound = new Set((entries || []).map((e) => toHex(e.pubkey)));
+  for (const c of claim.claims) if (inRound.has(String(c.node).toLowerCase())) return { ok: false, node: c.node, why: `the claim names ${String(c.node).slice(0, 16)} absent, and the round's own census holds it` };
+  const drawn = new Map();
+  const checkedCensus = new Map();
+  const drawOf = (ridHex, role) => {
+    if (!drawn.has(ridHex)) {
+      let got = null;
+      try {
+        const hex = claim.contracts && claim.contracts[ridHex];
+        const c = hex ? decodeRoundContract(fromHex(hex)) : null;
+        if (c && toHex(roundId(c)) === ridHex) {
+          const kept = checkedCensus.get(toHex(c.censusRoot)) || null;
+          const r = committeeFromChain({ contract: c, roundId: fromHex(ridHex), headers, firstHeight, evidence: kept ? null : evidenceOf(ridHex), bond, verify, census: kept });
+          if (r.ok) { checkedCensus.set(toHex(c.censusRoot), r.checkedCensus); got = { contract: c, drawn: r.drawn }; }
+        }
+      } catch { got = null; }
+      drawn.set(ridHex, got);
+    }
+    const d = drawn.get(ridHex);
+    return d ? { drawn: d.drawn[role].map(toHex), slots: slotsForRole(d.contract, role), closeMs: seatingCloseMs(d.contract) } : null;
+  };
+  const r = checkAbsenceProof(claim.claims, { window, verify, drawOf,
+    certOf: (ridHex, role) => { const h = claim.certs && claim.certs[`${ridHex}:${role}`]; return h ? fromHex(h) : null; } });
+  if (!r.ok) return { ok: false, node: r.node, why: r.notYet ? `${r.why}: its contract or census was not handed over` : r.why };
+  return { ok: true, absent: claim.claims.map((c) => String(c.node).toLowerCase()) };
 }

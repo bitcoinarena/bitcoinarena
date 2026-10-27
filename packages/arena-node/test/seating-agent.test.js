@@ -132,3 +132,53 @@ test('a started round\'s PRESENTs are neither taken nor checked: only its certif
   assert.equal(w.verifies(), 14, 'the second tick asks nothing and checks nothing');
   assert.equal(w.agent.presentsOf(w.rid).length, 0, 'no PRESENT of a started round is kept');
 });
+
+// FROM PROTOCOL 22 THE CERTIFICATE SAYS WHO WAS PRESENT (§5A.3, kanban #727, the owner 2026-10-27): eight live seats of nine drawn, one
+// stopped, and a node the round's census left out as absent coming back. Every seated node signs a SEEN with its seating; the
+// certificate is made only with all seven, and names the present reserve and the returning node - not the stopped one.
+test('a 22 round: the seated sign who was present, and the certificate names the seated, the present reserve and a node coming back - never the stopped one', async () => {
+  const back = (() => { const secret = new Uint8Array(32).fill(40); return { secret, pubkey: schnorr.getPublicKey(secret) }; })();
+  const db0 = () => { const db = new DatabaseSync(':memory:'); db.exec('CREATE TABLE rounds (round_id BLOB, contract BLOB)'); return db; };
+  const c = { ...contractFor(nodes.slice(0, 7).map((n) => n.pubkey)), startTimeMs: START, protocolVersion: 22 };
+  const bytes = encodeRoundContract(c);
+  const rid = roundIdOf(c);
+  const drawn = nodes.map((n) => ({ pubkey: n.pubkey, advert: { endpoint: n.endpoint } }));
+  let now = NOW;
+  const agents = new Map();
+  const fetcher = async (url, init = {}) => {
+    const u = new URL(url);
+    const a = agents.get(`${u.protocol}//${u.host}`);
+    if (!a) return new Response('down', { status: 503 });            // node 8: stopped
+    if (u.pathname === '/presents') { const r = a.takePresents(new Uint8Array(await new Response(init.body).arrayBuffer())); return new Response(JSON.stringify(r), { status: r.ok ? 201 : 400 }); }
+    if (u.pathname === '/seating-batch') return new Response(JSON.stringify(a.batchOf(u.searchParams.get('rounds').split(','))), { status: 200 });
+    if (u.pathname === '/seating') { const b = new Uint8Array(await new Response(init.body).arrayBuffer()); const r = a.keepCert(rid, (await import('../../arena-protocol/src/seating.js')).decodeSeatingCertificate(b).role, b); return new Response(JSON.stringify(r), { status: r.ok ? 201 : 409 }); }
+    return new Response('no', { status: 404 });
+  };
+  for (const n of nodes.slice(0, 8)) {
+    const db = db0();
+    db.prepare('INSERT INTO rounds (round_id, contract) VALUES (?, ?)').run(rid, bytes);
+    const round = { db, pubkey: n.pubkey, get: (id) => (toHex(id) === toHex(rid) ? { contract: bytes } : null) };
+    agents.set(n.endpoint, seatingAgent({ round, roster: { committeeFor: () => ({ ok: true, drawn }) }, sign: signer(n), fetcher, nowMs: () => now,
+      verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, leftOutOf: () => [toHex(back.pubkey)] }));
+  }
+  const all = [...agents.values()];
+  // the returning node hands its PRESENT to the drawn before the close; a node neither drawn nor left out is refused
+  for (const a of all) for (const role of ['game', 'settlement']) assert.equal(a.takePresent(signPresent({ roundId: rid, role, nodePubkey: back.pubkey }, signer(back))).ok, true);
+  const stranger = { secret: new Uint8Array(32).fill(41) }; stranger.pubkey = schnorr.getPublicKey(stranger.secret);
+  assert.match(all[0].takePresent(signPresent({ roundId: rid, role: 'game', nodePubkey: stranger.pubkey }, signer(stranger))).why, /not drawn/);
+  for (const a of all) await a.tick();
+  now = Number(START - 120000n) + 1000;                               // past the close: sign, gather, certify
+  for (let i = 0; i < 3; i++) for (const a of all) await a.tick();
+  const { verifySeating } = await import('../../arena-protocol/src/seating.js');
+  for (const role of ['game', 'settlement']) {
+    const cert = all[0].certOf(rid, role);
+    assert.ok(cert, `${role}: certified`);
+    const v = verifySeating(Buffer.from(cert, 'hex'), { roundId: rid, role, drawn: drawn.map((e) => e.pubkey), slots: 7, verify: (s, m, k) => schnorr.verify(s, m, k), listsPresent: true });
+    assert.equal(v.ok, true, v.why);
+    assert.deepEqual(v.seating.seated.map(toHex), nodes.slice(0, 7).map((n) => toHex(n.pubkey)));
+    assert.ok(v.present.includes(toHex(nodes[7].pubkey)), 'the present reserve');
+    assert.ok(v.present.includes(toHex(back.pubkey)), 'the node coming back');
+    assert.ok(!v.present.includes(toHex(nodes[8].pubkey)), 'not the stopped node');
+    assert.deepEqual(v.leftOut, [toHex(back.pubkey)]);
+  }
+});

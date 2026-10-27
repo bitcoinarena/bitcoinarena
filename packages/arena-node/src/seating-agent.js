@@ -11,12 +11,17 @@
 //   any time                              a second valid certificate for one round and role is equivocation: both are
 //                                         kept as the proof (GET /seating-equivocation), and the round takes no entries
 //
+// FROM PROTOCOL 22 THE SEATED ALSO SIGN WHO WAS PRESENT (§5A.3, kanban #727, the owner 2026-10-27): with its SEATING signature a seated
+// node signs a SEEN - every node it held a PRESENT of at the close, and the nodes the round's census left out as absent - and the
+// certificate is made only with every seated node's SEEN in it. Those certificates are the only proof that leaves a node out of a
+// census. A node the round's census left out may hand in a PRESENT though it is not drawn: that is how it comes back.
+//
 // The roster asks `seatedFor` and seats the certificate's nodes; before one stands, the draw's first slots (Roster).
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { slotsForRole } from '../../arena-protocol/src/sortition.js';
 import { signPresent, verifyPresent, decodePresent, seatedFrom, signSeating, seatingId, encodeSeatingCertificate, verifySeating,
-  seatingEquivocation, seatingCloseMs, decodeSeatingCertificate, SEATING_ROLES } from '../../arena-protocol/src/seating.js';
+  seatingEquivocation, seatingCloseMs, decodeSeatingCertificate, SEATING_ROLES, signSeen, seenId, seatingListsPresent } from '../../arena-protocol/src/seating.js';
 import { endpointsOf } from './roster.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 
@@ -29,7 +34,9 @@ export const BATCH_ROUNDS = 64;
 const joinBytes = (list) => { const out = new Uint8Array(list.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of list) { out.set(x, at); at += x.length; } return out; };
 
 export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, nowMs = () => Date.now(), log = () => {}, windowOf = () => null,
-  onSeated = () => {}, leftNode = () => false, contractOf = () => null }) {
+  onSeated = () => {}, leftNode = () => false, contractOf = () => null, leftOutOf = () => [] }) {
+  // `leftOutOf(rid)`: the node keys (hex) the round's census left out as absent (protocol 22, kanban #727) - they may say PRESENT
+  // undrawn, and every seated node names them in its SEEN
   // `leftNode(nodeHex)`: the node's owner took it out of every seating with the emergency key (§23A.5a, protocol 17) - its PRESENT is
   // not counted, and this node signs none once it holds its own request
   const db = round.db;
@@ -43,6 +50,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     CREATE TABLE IF NOT EXISTS seat_certs (round_id BLOB NOT NULL, role TEXT NOT NULL, cert BLOB NOT NULL, PRIMARY KEY (round_id, role));
     CREATE TABLE IF NOT EXISTS seat_equivocations (round_id BLOB NOT NULL, role TEXT NOT NULL, a BLOB NOT NULL, b BLOB NOT NULL,
       PRIMARY KEY (round_id, role));
+    CREATE TABLE IF NOT EXISTS seat_seen (round_id BLOB NOT NULL, role TEXT NOT NULL, seating TEXT NOT NULL, node TEXT NOT NULL, present TEXT NOT NULL,
+      left_out TEXT NOT NULL, signature BLOB NOT NULL, PRIMARY KEY (round_id, role, seating, node));
   `);
   const me = toHex(round.pubkey);
   const certs = new Map();       // `${rid}:${role}` -> seated hex list (null: equivocated)
@@ -64,7 +73,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const c = roster.committeeFor(rid, role, posted ? { posted } : {});
     if (!c.ok) return { refused: c.why };
     const contract = row ? decodeRoundContract(new Uint8Array(row.contract)) : posted;
-    return { roundId: rid, role, drawn: c.drawn.map((e) => e.pubkey), slots: slotsForRole(contract, role), verify };
+    return { roundId: rid, role, drawn: c.drawn.map((e) => e.pubkey), slots: slotsForRole(contract, role), verify, listsPresent: seatingListsPresent(contract) };
   };
   const keepCert = (rid, role, bytes) => {
     // ONE HELD ALREADY, byte for byte, is not checked again (2026-10-12 "figure out why CPU usage so high and
@@ -147,7 +156,9 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (leftNode(toHex(nodePubkey))) return { ok: false, why: 'that node\'s owner took it out of the seating (emergency departure, §23A.5a)' };
     const c = roster.committeeFor(roundId, role);
     if (!c.ok) return { ok: false, why: c.why };
-    if (!c.drawn.some((e) => toHex(e.pubkey) === toHex(nodePubkey))) return { ok: false, why: 'that node is not drawn for that round and role' };
+    // A NODE THE ROUND'S CENSUS LEFT OUT AS ABSENT may say PRESENT undrawn (kanban #727): listed in the SEEN, it is back next census
+    if (!c.drawn.some((e) => toHex(e.pubkey) === toHex(nodePubkey)) && !leftOutHex(roundId).includes(toHex(nodePubkey)))
+      return { ok: false, why: 'that node is not drawn for that round and role' };
     const t = starts.get(toHex(roundId));
     if (t && BigInt(nowMs()) >= t.close) return { ok: false, why: 'that round\'s seating has closed' };
     db.prepare('INSERT OR IGNORE INTO seat_presents (round_id, role, node, bytes) VALUES (?, ?, ?, ?)').run(roundId, role, toHex(nodePubkey), bytes);
@@ -155,9 +166,16 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   }
   const presentsOf = (rid) => db.prepare('SELECT role, node, bytes FROM seat_presents WHERE round_id = ?').all(rid)
     .map((r) => ({ role: r.role, node: r.node, present: toHex(new Uint8Array(r.bytes)) }));
+  const leftOutHex = (rid) => { try { return (leftOutOf(rid) || []).map((k) => String(k).toLowerCase()); } catch { return []; } };
   const mySignature = (rid, role) => {
     const r = db.prepare('SELECT seated, signature FROM seat_signed WHERE round_id = ? AND role = ?').get(rid, role);
-    return r ? { node: me, seated: JSON.parse(r.seated), signature: toHex(new Uint8Array(r.signature)) } : null;
+    if (!r) return null;
+    const seated = JSON.parse(r.seated);
+    // AND, FOR A 22 ROUND, WHO IT HELD A PRESENT OF (kanban #727)
+    const id = toHex(seatingId({ roundId: rid, role, seated: seated.map(fromHex) }));
+    const seen = db.prepare('SELECT present, left_out, signature FROM seat_seen WHERE round_id = ? AND role = ? AND seating = ? AND node = ?').get(rid, role, id, me);
+    return { node: me, seated, signature: toHex(new Uint8Array(r.signature)),
+      ...(seen ? { seen: { present: JSON.parse(seen.present), leftOut: JSON.parse(seen.left_out), signature: toHex(new Uint8Array(seen.signature)) } } : {}) };
   };
   const certOf = (rid, role) => {
     const r = db.prepare('SELECT cert FROM seat_certs WHERE round_id = ? AND role = ?').get(rid, role);
@@ -310,6 +328,14 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const list = seated.map(toHex);
     const id = toHex(seatingId({ roundId: w.t.rid, role: w.role, seated }));
     db.prepare('INSERT OR IGNORE INTO seat_sigs (round_id, role, seating, node, signature) VALUES (?, ?, ?, ?, ?)').run(w.t.rid, w.role, id, me, sig);
+    // A 22 ROUND: WHO WAS PRESENT, signed with it (kanban #727) - every PRESENT held at the close (the table takes none after it), and
+    // the round's census's absent
+    if (seatingListsPresent(w.t.contract)) {
+      const present = [...new Set(held)].sort(), leftOut = [...new Set(leftOutHex(w.t.rid))].sort();
+      const seenSig = signSeen({ roundId: w.t.rid, role: w.role, seating: fromHex(id), present, leftOut }, sign);
+      db.prepare('INSERT OR IGNORE INTO seat_seen (round_id, role, seating, node, present, left_out, signature) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(w.t.rid, w.role, id, me, JSON.stringify(present), JSON.stringify(leftOut), seenSig);
+    }
     log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: signed the seating of ${list.length} (${held.length} present of ${w.drawnKeys.length} drawn)`);
   }
 
@@ -319,9 +345,22 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (!signed || !got.signature || !Array.isArray(got.seated) || !got.node) return;
     if (got.seated.join(',') !== signed.seated.join(',')) return;    // another seating: no signature of this one
     const id = toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: signed.seated.map(fromHex) }));
+    keepSeen(w, id, got);
     if (db.prepare('SELECT 1 FROM seat_sigs WHERE round_id = ? AND role = ? AND seating = ? AND node = ?').get(w.t.rid, w.role, id, got.node)) return;   // held already
     let good = false; try { good = verify(fromHex(got.signature), fromHex(id), fromHex(got.node)); } catch { good = false; }
     if (good) db.prepare('INSERT OR IGNORE INTO seat_sigs (round_id, role, seating, node, signature) VALUES (?, ?, ?, ?, ?)').run(w.t.rid, w.role, id, got.node, fromHex(got.signature));
+  }
+  /** A seated node's SEEN over the seating this node signed (a 22 round), kept when it verifies. */
+  function keepSeen(w, id, got) {
+    if (!seatingListsPresent(w.t.contract) || !got.seen || !Array.isArray(got.seen.present) || !Array.isArray(got.seen.leftOut) || !got.seen.signature) return;
+    if (db.prepare('SELECT 1 FROM seat_seen WHERE round_id = ? AND role = ? AND seating = ? AND node = ?').get(w.t.rid, w.role, id, got.node)) return;
+    let present, leftOut;
+    try { present = [...new Set(got.seen.present.map((k) => String(k).toLowerCase()))].sort(); leftOut = [...new Set(got.seen.leftOut.map((k) => String(k).toLowerCase()))].sort(); } catch { return; }
+    if (present.length > 4096 || leftOut.length > 4096 || ![...present, ...leftOut].every((k) => /^[0-9a-f]{64}$/.test(k))) return;
+    let good = false;
+    try { good = verify(fromHex(got.seen.signature), seenId({ roundId: w.t.rid, role: w.role, seating: fromHex(id), present, leftOut }), fromHex(got.node)); } catch { good = false; }
+    if (good) db.prepare('INSERT OR IGNORE INTO seat_seen (round_id, role, seating, node, present, left_out, signature) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(w.t.rid, w.role, id, got.node, JSON.stringify(present), JSON.stringify(leftOut), fromHex(got.seen.signature));
   }
 
   /** With every seated node's signature: the certificate, kept and handed to every other drawn node. */
@@ -333,7 +372,21 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const id = toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: list }));
     const sigs = db.prepare('SELECT node, signature FROM seat_sigs WHERE round_id = ? AND role = ? AND seating = ?').all(w.t.rid, w.role, id);
     if (!signed.seated.every((k) => sigs.some((x) => x.node === k))) return;
-    const cert = encodeSeatingCertificate({ roundId: w.t.rid, role: w.role, seated: list,
+    // A 22 ROUND'S CERTIFICATE CARRIES EVERY SEATED NODE'S SEEN (kanban #727): not made before each is held
+    let seen = null;
+    if (seatingListsPresent(w.t.contract)) {
+      const rows = db.prepare('SELECT node, present, left_out, signature FROM seat_seen WHERE round_id = ? AND role = ? AND seating = ?').all(w.t.rid, w.role, id)
+        .filter((x) => signed.seated.includes(x.node));
+      if (!signed.seated.every((k) => rows.some((x) => x.node === k))) return;
+      const groups = new Map();
+      for (const x of rows) {
+        const key = `${x.present}|${x.left_out}`;
+        if (!groups.has(key)) groups.set(key, { present: JSON.parse(x.present).map(fromHex), leftOut: JSON.parse(x.left_out).map(fromHex), signatures: [] });
+        groups.get(key).signatures.push({ nodePubkey: fromHex(x.node), signature: new Uint8Array(x.signature) });
+      }
+      seen = [...groups.values()];
+    }
+    const cert = encodeSeatingCertificate({ roundId: w.t.rid, role: w.role, seated: list, seen,
       signatures: sigs.filter((x) => signed.seated.includes(x.node)).map((x) => ({ nodePubkey: fromHex(x.node), signature: new Uint8Array(x.signature) })) });
     const k = keepCert(w.t.rid, w.role, cert);
     if (k.ok && k.kept) {
