@@ -262,7 +262,22 @@ export function dayTimeline(slot, { committeeLeadMs = DUTY_DAY_COMMITTEE_LEAD_MS
 }
 
 /** The seats' GET /rounds rows of one game inside [fromMs, toMs): how many seats list one drawn, how many list them all undrawn. */
-export function drawCount(listings, { gameId, fromMs, toMs }) {
+/** The seats a round needs drawn per role before it can be seated (§5A.7: 5 of 7). */
+export const DUTY_SEAT_THRESHOLD = 5;
+
+// A ROUND DRAWN SHORT IS NOT DRAWN (measured 2026-10-27: the 10-27 Up/Down v24 grid drew 3 nodes per role - the only ones whose
+// advertisement named v24 - so no round could ever be seated, and the duty called the day "drawable" and posted no emergency grid): a round
+// counts as drawn only when each role drew at least `need` nodes (the seating threshold, 5 of 7), read from its drawnCount; a seat that does
+// not say drawnCount is taken at its word as before
+const drawnEnough = (r, need) => {
+  const c = r && r.committee;
+  if (!c || !c.drawn) return false;
+  const n = c.drawnCount;
+  if (!n || typeof n !== 'object') return true;
+  return Math.min(Number(n.game ?? 0), Number(n.settlement ?? 0)) >= need;
+};
+
+export function drawCount(listings, { gameId, fromMs, toMs, need = DUTY_SEAT_THRESHOLD }) {
   let drawn = 0, undrawn = 0, of = 0, why = '';
   const g = String(gameId).toLowerCase();
   for (const l of listings || []) {
@@ -272,8 +287,13 @@ export function drawCount(listings, { gameId, fromMs, toMs }) {
     // A SEAT STILL READING ITS VIEW (after a reorg, a restart) says nothing either way: "no chain view", "view ... pending"
     if (!rows.some((r) => r.committee && r.committee.drawn) && rows.every((r) => /no chain view|view .*pending/i.test(String((r.committee || {}).why || '')))) continue;
     of++;
-    if (rows.some((r) => r.committee && r.committee.drawn)) drawn++;
-    else { undrawn++; why = why || String((rows[0].committee || {}).why || '').slice(0, 160); }
+    if (rows.some((r) => drawnEnough(r, need))) drawn++;
+    else {
+      undrawn++;
+      const short = rows.find((r) => r.committee && r.committee.drawn && r.committee.drawnCount);
+      why = why || (short ? `drawn short: ${Math.min(Number(short.committee.drawnCount.game ?? 0), Number(short.committee.drawnCount.settlement ?? 0))} nodes a role, ${need} needed to seat`
+        : String((rows[0].committee || {}).why || '').slice(0, 160));
+    }
   }
   return { drawn, undrawn, of, why };
 }
