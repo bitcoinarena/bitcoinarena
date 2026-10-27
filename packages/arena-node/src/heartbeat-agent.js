@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE HEARTBEAT AT A SEAT (multiplayer_p2p.md §5A.3 "The heartbeat", protocol 22, kanban #727, the owner 2026-10-27). For every 22 round
-// this seat holds that seats itself, and each of its 3 heartbeat slots (heartbeat.js: closing 0, 5 and 10 min before its seating close):
+// this seat holds that seats itself, and its heartbeat slot (heartbeat.js: one per round, the owner 2026-10-27, closing with its seating):
 //
 //   in the minute before the slot closes   if this node is in the round's census (or left out by it, coming back), it signs its HEARTBEAT
 //                                          and hands it to the slot's 9 committee members (POST /heartbeats, one body per member)
@@ -11,7 +11,7 @@
 //                                          certificate, and a bigger one as more arrive
 //
 // Why: on 10-27 almost no round reached 5 present, so almost no seating certificate existed and the stopped nodes took 3 days to be
-// proven out. A heartbeat certificate proves every census node it does not list missed at its slot, one every 5 min, so a day of them
+// proven out. A heartbeat certificate proves every census node it does not list missed at its slot, one every 15 min on a 15-min grid, so a day of them
 // proves a stopped node out. The presence book reads the certificates (hb_certs) and the HEARTBEATs held (hb_beats): a seat holding one
 // of a node in the 24 h refuses a census that leaves it out.
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';

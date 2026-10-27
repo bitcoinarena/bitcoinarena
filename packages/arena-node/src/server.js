@@ -203,6 +203,7 @@ import { thresholdOf as thresholdOfFederation } from '../../arena-protocol/src/f
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY } from './roster.js';
 import { seatingAgent } from './seating-agent.js';
 import { heartbeatAgent } from './heartbeat-agent.js';
+import { HEARTBEAT_SLOTS_PER_ROUND } from '../../arena-protocol/src/heartbeat.js';
 import { presenceBook } from './presence-book.js';
 import { presenceWindow, censusTimeMs, withoutAbsent } from '../../arena-protocol/src/presence.js';
 import { censusRootOf } from '../../arena-protocol/src/census.js';
@@ -2511,7 +2512,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   if (seating) roster.seatedFor = seating.seatedFor;
   const seatingTimer = seating ? setInterval(() => { seating.tick(); }, Number(process.env.ARENA_SEATING_TICK_MS || 2000)) : null;
   if (seatingTimer) seatingTimer.unref();
-  // THE HEARTBEAT (§5A.3, protocol 22, kanban #727, the owner 2026-10-27): with seating on, this node beats for every 22 round's 3 heartbeat
+  // THE HEARTBEAT (§5A.3, protocol 22, kanban #727, the owner 2026-10-27): with seating on, this node beats for every 22 round's heartbeat
   // slots to each slot's committee, and as a member signs who it heard - the certificates prove a stopped node out within a day
   const heartbeat = seating ? heartbeatAgent({ round, roster, sign: (digest) => schnorr.sign(digest, round.identity.secret), verify: verifySchnorrKept,
     leftNode: (hex) => !!absences.emergencyFor(hex), log: (m) => console.log(m) }) : null;
@@ -9686,7 +9687,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (heartbeat && req.method === 'GET' && url.pathname === '/heartbeat-cert') {
         let rid; try { rid = fromHex(url.searchParams.get('round') || ''); } catch { rid = null; }
         const slot = Number(url.searchParams.get('slot'));
-        if (!rid || rid.length !== 32 || !Number.isInteger(slot) || slot < 0 || slot > 2) return text(res, 400, 'name a round and a slot: ?round=<64 hex>&slot=0..2');
+        if (!rid || rid.length !== 32 || !Number.isInteger(slot) || slot < 0 || slot >= HEARTBEAT_SLOTS_PER_ROUND) return text(res, 400, 'name a round and a slot: ?round=<64 hex>&slot=0');
         const cert = heartbeat.certOf(rid, slot);
         return cert ? json(res, 200, { cert }) : text(res, 404, 'no heartbeat certificate for that slot here');
       }

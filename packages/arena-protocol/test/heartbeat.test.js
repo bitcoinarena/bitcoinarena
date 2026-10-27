@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE HEARTBEAT (§5A.3, protocol 22, kanban #727, the owner 2026-10-27). The testnet4 day of 2026-10-27 again - 28 bonded nodes, 20 of them
-// stopped with their bonds still locked - now with a heartbeat: every round of a 15-min grid has 3 heartbeat slots 5 min apart, each
+// stopped with their bonds still locked - now with a heartbeat: every round of a 15-min grid has one heartbeat slot (the owner 2026-10-27),
 // with a committee of 9 drawn on the round's census and beacon, and a certificate of 5 of them proves every node they did not hear
 // missed at that slot. A node is out on 3 missed closes at least 1 h apart, present at none. Every certificate a check reads is signed
 // for real.
@@ -112,52 +112,51 @@ function checker(slots) {
 
 test('a HEARTBEAT is signed by its node; a certificate stands with 5 members of the slot\'s committee, and never with 4, a stranger or a member twice', () => {
   const rid = seed(1, 0), committee = LIVE.map(hex).concat([hex(1)]);
-  const hb = signHeartbeat({ roundId: rid, slot: 2, nodePubkey: key(21) }, signBy(hex(21)));
+  const hb = signHeartbeat({ roundId: rid, slot: 0, nodePubkey: key(21) }, signBy(hex(21)));
   assert.equal(hb.length, HEARTBEAT_BYTES);
   assert.equal(verifyHeartbeat(hb, { roundId: rid, verify }).ok, true);
-  assert.equal(decodeHeartbeat(hb).slot, 2);
+  assert.equal(decodeHeartbeat(hb).slot, 0);
   assert.match(verifyHeartbeat(signHeartbeat({ roundId: rid, slot: 0, nodePubkey: key(21) }, signBy(hex(22))), { verify }).why, /not signed by the node it names/);
   assert.match(verifyHeartbeat(hb, { roundId: seed(2, 0), verify }).why, /another round/);
-  assert.throws(() => signHeartbeat({ roundId: rid, slot: 3, nodePubkey: key(21) }, signBy(hex(21))), /slot/);
+  assert.throws(() => signHeartbeat({ roundId: rid, slot: 1, nodePubkey: key(21) }, signBy(hex(21))), /slot/, 'one slot per round: slot 1 is none');
   const heard = LIVE.map(hex);
-  const check = { roundId: rid, slot: 1, committee, census: chainKeys, verify };
-  const five = certify({ roundId: toHex(rid), slot: 1, signers: heard.slice(0, 5), heard });
+  const check = { roundId: rid, slot: 0, committee, census: chainKeys, verify };
+  const five = certify({ roundId: toHex(rid), slot: 0, signers: heard.slice(0, 5), heard });
   const v = verifyHeartbeatCertificate(five, check);
   assert.equal(v.ok, true, v.why);
   assert.deepEqual(v.heard, [...heard].sort());
-  assert.equal(decodeHeartbeatCertificate(five).slot, 1);
+  assert.equal(decodeHeartbeatCertificate(five).slot, 0);
   // a member that heard one more: present if ANY signer lists it
-  const more = certify({ roundId: toHex(rid), slot: 1, signers: heard.slice(0, 5), heard, lists: { [heard[2]]: [...heard, hex(3)] } });
+  const more = certify({ roundId: toHex(rid), slot: 0, signers: heard.slice(0, 5), heard, lists: { [heard[2]]: [...heard, hex(3)] } });
   assert.ok(verifyHeartbeatCertificate(more, check).heard.includes(hex(3)));
-  assert.match(verifyHeartbeatCertificate(certify({ roundId: toHex(rid), slot: 1, signers: heard.slice(0, 4), heard }), check).why, /signed by 4 of the slot's committee, fewer than the 5/);
-  assert.match(verifyHeartbeatCertificate(certify({ roundId: toHex(rid), slot: 1, signers: [...heard.slice(0, 4), hex(2)], heard }), check).why, /not drawn for its committee/);
-  assert.match(verifyHeartbeatCertificate(certify({ roundId: toHex(rid), slot: 1, signers: heard.slice(0, 5), heard, signAs: (h) => (h === heard[0] ? signBy(heard[1]) : signBy(h)) }), check).why, /does not verify/);
-  assert.match(verifyHeartbeatCertificate(certify({ roundId: toHex(rid), slot: 1, signers: heard.slice(0, 5), heard, leftOut: [hex(1)] }), check).why, /left out a node the census holds/);
-  assert.match(verifyHeartbeatCertificate(five, { ...check, slot: 0 }).why, /for slot 1, not 0/);
+  assert.match(verifyHeartbeatCertificate(certify({ roundId: toHex(rid), slot: 0, signers: heard.slice(0, 4), heard }), check).why, /signed by 4 of the slot's committee, fewer than the 5/);
+  assert.match(verifyHeartbeatCertificate(certify({ roundId: toHex(rid), slot: 0, signers: [...heard.slice(0, 4), hex(2)], heard }), check).why, /not drawn for its committee/);
+  assert.match(verifyHeartbeatCertificate(certify({ roundId: toHex(rid), slot: 0, signers: heard.slice(0, 5), heard, signAs: (h) => (h === heard[0] ? signBy(heard[1]) : signBy(h)) }), check).why, /does not verify/);
+  assert.match(verifyHeartbeatCertificate(certify({ roundId: toHex(rid), slot: 0, signers: heard.slice(0, 5), heard, leftOut: [hex(1)] }), check).why, /left out a node the census holds/);
+  assert.match(verifyHeartbeatCertificate(five, { ...check, slot: 1 }).why, /for slot 0, not 1/);
   // one member's two lists in one certificate
   const rid1 = toHex(rid);
-  const twice = encodeHeartbeatCertificate({ roundId: rid, slot: 1, groups: [
-    { heard, leftOut: [], signatures: heard.slice(0, 5).map((h) => ({ nodePubkey: fromHex(h), signature: signHeard({ roundId: rid, slot: 1, heard, leftOut: [] }, signBy(h)) })) },
-    { heard: heard.slice(1), leftOut: [], signatures: [{ nodePubkey: fromHex(heard[0]), signature: signHeard({ roundId: rid, slot: 1, heard: heard.slice(1), leftOut: [] }, signBy(heard[0])) }] }] });
+  const twice = encodeHeartbeatCertificate({ roundId: rid, slot: 0, groups: [
+    { heard, leftOut: [], signatures: heard.slice(0, 5).map((h) => ({ nodePubkey: fromHex(h), signature: signHeard({ roundId: rid, slot: 0, heard, leftOut: [] }, signBy(h)) })) },
+    { heard: heard.slice(1), leftOut: [], signatures: [{ nodePubkey: fromHex(heard[0]), signature: signHeard({ roundId: rid, slot: 0, heard: heard.slice(1), leftOut: [] }, signBy(heard[0])) }] }] });
   assert.match(verifyHeartbeatCertificate(twice, check).why, /signed two heard lists/);
   assert.ok(rid1);
   // slots and roles
-  assert.deepEqual(HEARTBEAT_ROLES, ['heartbeat-0', 'heartbeat-1', 'heartbeat-2']);
-  assert.equal(heartbeatSlotOf('heartbeat-2'), 2); assert.equal(heartbeatSlotOf('heartbeat-3'), null); assert.equal(heartbeatSlotOf('game'), null);
+  assert.deepEqual(HEARTBEAT_ROLES, ['heartbeat-0'], 'one slot per round (the owner 2026-10-27)');
+  assert.equal(heartbeatSlotOf('heartbeat-0'), 0); assert.equal(heartbeatSlotOf('heartbeat-1'), null); assert.equal(heartbeatSlotOf('game'), null);
   const c = { ...contract, startTimeMs: T0 };
   assert.equal(hasHeartbeats(c), true);
   assert.equal(hasHeartbeats({ ...c, protocolVersion: 21 }), false, 'below 22: no heartbeat slots');
-  assert.equal(heartbeatCloseMs(c, 2), seatingCloseMs(c) - 600000n, 'slot 2 closes 10 min before the seating');
-  // a slot's committee: 9, one key one seat, its own draw per slot
+  assert.equal(heartbeatCloseMs(c, 0), seatingCloseMs(c), 'the slot closes with the seating');
+  // a slot's committee: 9, one key one seat, on its own seed
   const a = drawHeartbeat({ entries: census, contract, committeeSeed: seed(5, 0), slot: 0 }).map((e) => toHex(e.pubkey));
-  const b = drawHeartbeat({ entries: census, contract, committeeSeed: seed(5, 0), slot: 1 }).map((e) => toHex(e.pubkey));
   assert.equal(a.length, HEARTBEAT_DRAWN); assert.equal(new Set(a).size, HEARTBEAT_DRAWN);
-  assert.notDeepEqual(a, b, 'each slot draws its own committee');
   assert.notDeepEqual(a, drawCommittee({ entries: census, contract, role: 'settlement', committeeSeed: seed(5, 0) }).map((e) => toHex(e.pubkey)), 'and not the round\'s seats');
 });
 
 // THE 10-27 SHAPE, WITH THE HEARTBEAT: day 0's certificates prove every stopped node out, so the first census already holds only the 8
-// live nodes; no live node is ever proven absent; every round of every later day is seated.
+// live nodes; no live node is ever proven absent; every round of every later day is seated. With one slot per round (the owner 2026-10-27)
+// that holds on this day's draws; over 100 simulated days of the shape a stopped node is out within one day on 83 % of them.
 test('the 10-27 shape with the heartbeat: all 20 stopped nodes are proven out by the first census, no live node ever is', () => {
   let entries = census;
   const facts = [];
@@ -172,7 +171,7 @@ test('the 10-27 shape with the heartbeat: all 20 stopped nodes are proven out by
     assert.ok(claims.every((c) => c.proofs.length === ABSENCE_PROOF_SEATINGS), 'each absence names 3 slots');
     const ch = checker(slots);
     assert.deepEqual(checkAbsenceProof(claims, { census: chainKeys, window: w, verify, ...ch }), { ok: true }, `day ${d}: the claim stands at a checker`);
-    facts.push(`day ${d}: census ${entries.length}, seated ${seatedRounds}/96, heartbeat certificates ${beats}/288, proven absent ${claims.length}`);
+    facts.push(`day ${d}: census ${entries.length}, seated ${seatedRounds}/96, heartbeat certificates ${beats}/${96 * HEARTBEAT_SLOTS_PER_ROUND}, proven absent ${claims.length}`);
     if (allOutAt === null && claims.length === DEAD.length) allOutAt = d;
     entries = withoutAbsent(census, claims);
     T += PRESENCE_WINDOW_MS;
@@ -238,7 +237,7 @@ test('a colluding minority cannot exclude an honest node: 4 members make no cert
     const stranger = COLL.find((h) => !s.drawn.includes(h));
     if (stranger) assert.equal(run(certify({ roundId: s.roundId, slot: s.slot, signers: [...in4, stranger, ...honestMembers].slice(0, 5), heard: in4 }), s).proof, 'certificate');
   }
-  // HOW OFTEN A GROUP HOLDS 5 OF A SLOT'S 9 SEATS, over 20 days of 288 slots on the 28-node census - the only way a group makes a certificate
+  // HOW OFTEN A GROUP HOLDS 5 OF A SLOT'S 9 SEATS, over 20 days of 96 slots on the 28-node census - the only way a group makes a certificate
   // without an honest member. Fewer than 5 never; the bar per day is 3 such slots an hour apart.
   const rates = {};
   for (const c of [4, 5, 6, 7]) {
@@ -246,7 +245,7 @@ test('a colluding minority cannot exclude an honest node: 4 members make no cert
     let days3 = 0, total = 0;
     for (let d = 0; d < 20; d++) {
       const closes = [];
-      for (let i = 0; i < 96; i++) for (let j = 0; j < 3; j++) {
+      for (let i = 0; i < 96; i++) for (let j = 0; j < HEARTBEAT_SLOTS_PER_ROUND; j++) {
         const m = drawHeartbeat({ entries: census, contract, committeeSeed: seed(i, 100 + d), slot: j }).filter((e) => group.has(toHex(e.pubkey))).length;
         if (m >= HEARTBEAT_THRESHOLD) closes.push(BigInt(i * 900000 - j * 300000));
       }
@@ -255,7 +254,7 @@ test('a colluding minority cannot exclude an honest node: 4 members make no cert
     }
     rates[c] = { perDay: total / 20, days: days3 };
   }
-  console.log(`  FACTS: slots a colluding group fills 5 of 9 seats of, per day (20 days of 288 on 28 nodes): ${Object.entries(rates).map(([c, r]) => `${c} nodes ${r.perDay.toFixed(2)}/day, ${r.days}/20 days with 3 an hour apart`).join('; ')}`);
+  console.log(`  FACTS: slots a colluding group fills 5 of 9 seats of, per day (20 days of ${96 * HEARTBEAT_SLOTS_PER_ROUND} on 28 nodes): ${Object.entries(rates).map(([c, r]) => `${c} nodes ${r.perDay.toFixed(2)}/day, ${r.days}/20 days with 3 an hour apart`).join('; ')}`);
   assert.equal(rates[4].perDay, 0, 'a group of 4 never makes a certificate');
 });
 

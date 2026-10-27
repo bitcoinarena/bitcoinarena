@@ -8,8 +8,9 @@
 // rounds, and the stopped nodes were out only by the third census. the owner chose a heartbeat, so a stopped node is proven out within a day.
 //
 // WHAT.
-//   slot        a 22 round that seats itself (not a table's later round) has HEARTBEAT_SLOTS_PER_ROUND heartbeat slots j = 0, 1, 2,
-//               closing at seating_close - j x HEARTBEAT_SPACING_MS: a 15-min grid gives a slot every 5 min, 288 a day
+//   slot        a 22 round that seats itself (not a table's later round) has HEARTBEAT_SLOTS_PER_ROUND heartbeat slots j = 0 ..,
+//               closing at seating_close - j x HEARTBEAT_SPACING_MS. the owner 2026-10-27 ruled 1 slot per round: it closes with
+//               the round's seating, and a 15-min grid gives one every 15 min, 96 a day (constants.js has the trade-off)
 //   committee   HEARTBEAT_DRAWN node keys of the round's census, drawn as its committees are (one key one seat, weighed by bond) on
 //               their own seed H("ARENA/v1/HeartbeatDraw" || committee seed || j) - every seat and the client draw the same 9 from the
 //               round's census and beacon, which they already check for the round's seating
@@ -25,9 +26,9 @@
 // different moments of one day - the draw is the round's beacon's, after the round was posted. With 5 of 9, two certificates of one
 // slot share a signer, so a member that signed two different HEARDs for one slot has equivocated. On top, every seat that holds a
 // node's HEARTBEAT of the 24 h refuses a census that leaves it out (presence-book.js), and a live node hands its heartbeats to 9
-// members every 5 min, so nearly every seat holds one.
+// members every 15 min, so nearly every seat holds one.
 //
-// WHAT IT COSTS. Per node per day: 288 x 9 HEARTBEATs out (132 bytes each, ~342 KB), as many in as a member on average, and one HEARD
+// WHAT IT COSTS. Per node per day: 96 x 9 HEARTBEATs out (132 bytes each, ~114 KB), as many in as a member on average, and one HEARD
 // per membership to 8 others; a seat keeps its memberships' certificates. See §5A.3 for the numbers.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
@@ -74,7 +75,7 @@ export const heartbeatCloseMs = (contract, j) => seatingCloseMs(contract) - BigI
 /** THE SLOT'S COMMITTEE: HEARTBEAT_DRAWN entries of the round's census, on the round's committee seed and the slot. */
 export function drawHeartbeat({ entries, contract, committeeSeed, slot }) {
   if (!is32(committeeSeed)) throw new Error('a heartbeat committee is drawn on the seed the round\'s beacon produced');
-  if (!slotOk(slot)) throw new Error('a round has heartbeat slots 0 to 2');
+  if (!slotOk(slot)) throw new Error(`a round has heartbeat slots 0 to ${HEARTBEAT_SLOTS_PER_ROUND - 1}`);
   const w = new Writer(); w.bytes32(committeeSeed); w.u8(slot);
   return selectCommittee({ entries, contract, role: 'settlement', committeeSeed: taggedHash(TAG.heartbeatDraw, w.finish()), count: HEARTBEAT_DRAWN });
 }

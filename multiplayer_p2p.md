@@ -1740,9 +1740,9 @@ window      (T - 24 h, T], T = the median time past of the census_height block
 seating     one (round, role) whose seating_close falls in the window and whose
             protocol-22 seating certificate stands: every seated node signed
             the SEATING and a SEEN naming who was present (§5A.7)
-slot        one heartbeat slot (round, j) of a 22 round that seats itself,
-            closing at seating_close - j x 5 min, j = 0, 1, 2, whose heartbeat
-            certificate stands: 5 or more of the slot's 9 committee members
+slot        the heartbeat slot (round, 0) of a 22 round that seats itself
+            (one per round, the owner 2026-10-27), closing with its seating,
+            whose heartbeat certificate stands: 5 or more of the slot's 9 committee members
             signed a HEARD naming who they heard (below)
 present     named in the SEEN of any seated node of the certificate, or seated;
             for a slot, named in any signer's HEARD, or a signer
@@ -1795,13 +1795,14 @@ untouched, nothing is slashed, and the node comes back by itself.
   count once, so one blackout is one miss. The 3 is
   `ABSENCE_PROOF_SEATINGS`, a protocol constant.
 - **Three misses an hour apart** *(kanban #727, the owner 2026-10-27: not out
-  for a short outage)*. With a heartbeat slot every 5 minutes, a 10-minute
-  restart misses three slots in a row. So the closes a proof counts must
-  lie at least 1 h apart (`ABSENCE_PROOF_SPACING_MS`), seatings and slots
-  alike: one outage shorter than 2 h - a restart, an upgrade, a blackout -
-  is never proof, and an attacker who floods a node must do it at three
-  moments an hour apart, each time while the honest posting node would
-  still find the node present at the rest of the day (below).
+  for a short outage)*. With a heartbeat slot every 15 minutes (and more
+  than one grid's rounds), a 30-minute restart misses three slots in a row.
+  So the closes a proof counts must lie at least 1 h apart
+  (`ABSENCE_PROOF_SPACING_MS`), seatings and slots alike: one outage shorter
+  than 2 h - a restart, an upgrade, a blackout - is never proof, and an
+  attacker who floods a node must do it at three moments an hour apart,
+  each time while the honest posting node would still find the node
+  present at the rest of the day (below).
 - **Seatings alone were too slow.** A round with fewer than 5 present has
   no seating certificate, so it proves no one absent, and a seating proves
   only its 9 drawn missed. On the 10-27 shape (28 bonded, 20 stopped;
@@ -1810,41 +1811,43 @@ untouched, nothing is slashed, and the node comes back by itself.
   first day and prove 1 node absent; the next day 7 and 12; the day after
   47 and all 20. Three days of rounds drawn mostly from stopped nodes.
 - **The heartbeat** *(RULED 2026-10-27, kanban #727; the owner chose a
-  heartbeat so a stopped node is proven out within a day)*. Every 22 round
-  that seats itself (not a table's later rounds, which share its first
-  round's draw) has `HEARTBEAT_SLOTS_PER_ROUND` = 3 heartbeat slots, closing
-  0, 5 and 10 min before its seating close: a 15-min grid gives a slot
-  every 5 min, 288 a day. Each slot has a **committee** of
+  heartbeat so a stopped node is proven out within a day, and one slot per
+  round)*. Every 22 round that seats itself (not a table's later rounds,
+  which share its first round's draw) has `HEARTBEAT_SLOTS_PER_ROUND` = 1
+  heartbeat slot, closing with its seating: a 15-min grid gives a slot
+  every 15 min, 96 a day. The slot has a **committee** of
   `HEARTBEAT_DRAWN` = 9 node keys of the round's census, drawn as its
   committees are (one key one seat, weighed by bond, §5A.6) on its own
-  seed `H("ARENA/v1/HeartbeatDraw" || committee_seed || j)` - so every seat
-  and the client draw the same 9 from the census and beacon they already
-  check for the round. Every node of the round's census, and every node
-  its census left out (that is how it comes back), signs
-  `HEARTBEAT(round_id, j, node_pubkey)` in the minute before the slot
-  closes and hands it to the 9 (`POST /heartbeats`). A member keeps the
-  HEARTBEATs of census nodes until the close and none after; then each
-  live member signs `HEARD(round_id, j, heard, left_out)` - every node it
-  held a HEARTBEAT of, and the nodes the round's census left out - and
-  hands it to the other 8 (`POST /heard`). The **heartbeat certificate**
-  is the HEARDs of at least `HEARTBEAT_THRESHOLD` = 5 distinct members,
-  grouped by identical lists. Every node a signer lists, and every signer,
-  was present at the slot; every other node of the round's census, or left
-  out by it, missed it - not only the drawn. A proof names a slot as role
-  `heartbeat-0` .. `heartbeat-2`; it counts with seatings toward the 3
-  misses an hour apart, and a listing in either keeps the node in. A seat
-  that held a node's HEARTBEAT in the window refuses a census that leaves
-  it out, as it does with a PRESENT.
-- **Why the heartbeat proves a day enough.** A certificate needs 5 live
-  members of one random 9, as a seating needs 5 live of its drawn 9; but a
-  day has 288 slots instead of 96 rounds, and each certificate proves every
-  stopped node missed at once. On the 10-27 shape with the heartbeat
-  (arena-protocol `heartbeat.test.js`, every certificate signed for real)
-  the first day has 4 seated rounds and 17 heartbeat certificates, and its
-  census leaves out all 20 stopped nodes; from the next day every round is
-  seated (96 of 96) and every slot certified (288 of 288), and no live node
-  is ever proven absent. Over 100 simulated days of that shape a stopped
-  node is proven out within one day on 100 % of them (seatings alone: 1 %).
+  seed `H("ARENA/v1/HeartbeatDraw" || committee_seed || j)`, j = 0 - not
+  the round's seats, and the same 9 at every seat and at the client, from
+  the census and beacon they already check for the round. Every node of
+  the round's census, and every node its census left out (that is how it
+  comes back), signs `HEARTBEAT(round_id, j, node_pubkey)` in the minute
+  before the slot closes and hands it to the 9 (`POST /heartbeats`). A
+  member keeps the HEARTBEATs of census nodes until the close and none
+  after; then each live member signs `HEARD(round_id, j, heard, left_out)` -
+  every node it held a HEARTBEAT of, and the nodes the round's census left
+  out - and hands it to the other 8 (`POST /heard`). The **heartbeat
+  certificate** is the HEARDs of at least `HEARTBEAT_THRESHOLD` = 5
+  distinct members, grouped by identical lists. Every node a signer lists,
+  and every signer, was present at the slot; every other node of the
+  round's census, or left out by it, missed it - not only the drawn. A
+  proof names a slot as role `heartbeat-0`; it counts with seatings toward
+  the 3 misses an hour apart, and a listing in either keeps the node in. A
+  seat that held a node's HEARTBEAT in the window refuses a census that
+  leaves it out, as it does with a PRESENT.
+- **Why the heartbeat is faster.** A certificate needs 5 live members of
+  one random 9, as a seating needs 5 live of its drawn 9; but each
+  certificate proves every stopped node missed at once, where a seating
+  proves only the stopped nodes it drew, and the slot's 9 are a second,
+  independent draw beside the round's seats. On the 10-27 shape with the
+  heartbeat (arena-protocol `heartbeat.test.js`, one slot per round, every
+  certificate signed for real) the first day has 4 seated rounds and 10
+  heartbeat certificates of 96, and its census leaves out all 20 stopped
+  nodes; from the next day every round is seated (96 of 96) and every slot
+  certified (96 of 96), and no live node is ever proven absent. Over 100
+  simulated days of that shape a stopped node is proven out within one day
+  on 83 % of them (seatings alone: 1 %).
 - **Why it is safe.** The certificate threshold stays 5 of 9 even when most
   nodes are down: a slot with fewer than 5 live members simply has no
   certificate, and proves nothing. So **no group of fewer than 5 nodes can
@@ -1855,36 +1858,34 @@ untouched, nothing is slashed, and the node comes back by itself.
   of the 9 seats of the beacon's random draw at three slots an hour apart in
   one day, **and** post the census (the day's duty node), **and** the
   honest seats - which hold the honest node's HEARTBEATs, handed to 9
-  members every 5 min - refuse that census. How often a group holds 5 of a
-  slot's 9 seats on a 28-node census (`heartbeat.test.js`, 20 days of 288
-  slots): 4 nodes never; 5 nodes 0.3 slots a day, never 3 an hour apart; 6
-  nodes 1.4 a day; 7 nodes 4.8 a day.
-- **The trade-off this rests on** *(OPEN - needs the owner's ruling, see
-  the table)*. Any rule that lets a few live nodes prove many stopped ones
-  out in a day lets as many colluding nodes produce the same proofs against
-  honest ones: from the certificates alone, "8 nodes are up and 20 are
-  stopped" and "8 nodes pretend the other 20 are stopped" look the same.
-  What decides is how many proof chances a day holds. Share of 100
-  simulated days on 28 nodes (8 live for the stopped case; a colluding
-  group of c for the honest victim) on which 3 misses an hour apart can be
-  proven:
+  members every 15 min - refuse that census. How often a group holds 5 of a
+  slot's 9 seats on a 28-node census (`heartbeat.test.js`, 20 days of 96
+  slots): 4 and 5 nodes never; 6 nodes 0.35 slots a day, never 3 an hour
+  apart; 7 nodes 1.5 a day, 3 an hour apart on 2 of the 20 days.
+- **The trade-off, as ruled** *(the owner 2026-10-27: one slot per round)*.
+  Any rule that lets a few live nodes prove many stopped ones out in a day
+  lets as many colluding nodes produce the same proofs against honest
+  ones: from the certificates alone, "8 nodes are up and 20 are stopped"
+  and "8 nodes pretend the other 20 are stopped" look the same. What
+  decides is how many proof chances a day holds. Share of 100 simulated
+  days on 28 nodes (8 live for the stopped case; a colluding group of c for
+  the honest victim) on which 3 misses an hour apart can be proven:
 
   | slots per round | a stopped node out in 1 day (8 of 28 live) | c = 5 | c = 6 | c = 7 | c = 8 |
   |---|---|---|---|---|---|
   | seatings only (before) | 1 % | 0 % | 0 % | 0 % | 1 % |
-  | 1 (a slot per 15-min round) | 83 % | 0 % | 2 % | 36 % | 86 % |
-  | **3 (a slot every 5 min, built)** | **100 %** | 0 % | 23 % | 90 % | 100 % |
+  | **1 (a slot per 15-min round, ruled)** | **83 %** | **0 %** | **2 %** | **36 %** | 86 % |
+  | 3 (a slot every 5 min) | 100 % | 0 % | 23 % | 90 % | 100 % |
 
-  Built with 3, as the owner asked for a day. With 1 the stopped nodes of a
-  10-27 day are out after the first day on 5 of 6 days and after the
-  second on the rest; a 25 % group (7 of 28) has the proofs on about a
-  third of days instead of nine in ten. The number is one constant,
-  `HEARTBEAT_SLOTS_PER_ROUND`.
-- **What it costs.** Per node per day (`heartbeat.test.js`): out 288 x 9
+  the owner chose 1 slot per round: on a 10-27 day a stopped node is out
+  within one day on 83 % of days; a colluding group of 7 of 28 has the
+  proofs on 36 % of days, of 6 on 2 %, of 5 never. The number is one
+  constant, `HEARTBEAT_SLOTS_PER_ROUND`.
+- **What it costs.** Per node per day (`heartbeat.test.js`): out 96 x 9
   HEARTBEATs of 132 bytes and a HEARD to 8 members per membership - about
-  1.0 MB at 28 nodes and 0.7 MB at 500 (a node is a member of 288 x 9 / n
-  slots: 93 at 28, 5 at 500); as much in; about 160 KB of certificates kept
-  at 28 nodes and 50 KB at 500. A HEARD lists keys of 32 bytes; at
+  350 KB at 28 nodes and 220 KB at 500 (a node is a member of 96 x 9 / n
+  slots: 31 at 28, 2 at 500); as much in; about 55 KB of certificates kept
+  at 28 nodes and 15 KB at 500. A HEARD lists keys of 32 bytes; at
   hundreds of nodes a bitmap over the census would cut it to n/8 bytes.
 - **Absent stays absent until seen.** An absent node is drawn for nothing
   in the next census, so by "not drawn is not absent" alone it would be back
@@ -1960,7 +1961,7 @@ untouched, nothing is slashed, and the node comes back by itself.
   an honest node's word; it takes three such certificates an hour apart,
   each a different random draw. The draws are random, but the claim
   chooses which certificates of the day it names - three of 96 rounds and
-  288 slots - so the bar is "a group holds 5 of 9 seats three times in a
+  96 slots - so the bar is "a group holds 5 of 9 seats three times in a
   day", not "a majority of the drawn" (the table above). (2) Miners
   grinding the beacon, unchanged (§5A.5): a miner can withhold blocks to
   move which nodes are drawn, here as for every draw. (3) An attacker who
@@ -2943,9 +2944,10 @@ unchanged, and a certificate below 22 carries no SEEN, byte for byte as
 before (a below-22 certificate that carries one is refused).
 
 **Heartbeat committees** *(protocol 22, kanban #727, RULED 2026-10-27)*.
-Besides its seats, every 22 round that seats itself draws 3 heartbeat
-committees of 9, one per heartbeat slot (§5A.3, "The heartbeat"), on the
-round's census and committee seed with their own tag. They serve nothing
+Besides its seats, every 22 round that seats itself draws one heartbeat
+committee of 9 for its heartbeat slot (§5A.3, "The heartbeat"; one slot per
+round, the owner 2026-10-27), on the round's census and committee seed with its
+own tag. They serve nothing
 and sign no result: they only sign who they heard. The threshold is the
 seating's, 5 of 9, and the same `2 x threshold > drawn` holds, so two
 certificates of one slot share a signer.

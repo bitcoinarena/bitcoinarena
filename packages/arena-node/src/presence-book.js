@@ -15,10 +15,10 @@
 // ABSENCE ONLY WITH PROOF (the owner 2026-10-27): a node is left out only on threshold-signed certificates (seating.js SEEN), never on
 // what the posting node says it collected.
 //
-// AND THE HEARTBEAT (kanban #727, the owner 2026-10-27): besides seatings, a round's 3 heartbeat slots are proofs too (heartbeat.js) - a
+// AND THE HEARTBEAT (kanban #727, the owner 2026-10-27): besides seatings, a round's heartbeat slot is a proof too (heartbeat.js) - a
 // slot's certificate (hb_certs, made by heartbeat-agent.js or gathered) names every census node it did not hear missed, and a HEARTBEAT
 // this seat held as a member (hb_beats) is evidence it refuses a census with, as a PRESENT is. A proof's role is a seating's (game,
-// settlement) or a slot's (heartbeat-0..2).
+// settlement) or a slot's (heartbeat-0).
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { seatingCloseMs, verifyPresent, decodeSeatingCertificate, SEATING_ROLES } from '../../arena-protocol/src/seating.js';
