@@ -31,6 +31,7 @@ import { seriesId, isGridSeries } from '../../arena-protocol/src/series.js';
 import { createGridBase, createDayDuty, DUTY_APPS } from './duty-day.js';
 import { buildGrid, publishGridTx, announceGrid, postSeriesLine } from './grid-build.js';
 import * as guard from './duty-guard.js';
+import { dropsAbsent } from '../../arena-protocol/src/presence.js';
 
 export const DUTY_EVERY_MS = 60000;
 export const DUTY_VIEW_BLOCKS = 400;
@@ -145,7 +146,7 @@ export function posterOf({ series, templateOf, order }) {
  *   env                       ARENA_DUTY_POST, ARENA_DUTY_WALLET, ARENA_DUTY_FEE_RATE, ARENA_DUTY_MAX_FEE_RATE, ARENA_DUTY_APPS,
  *                             ARENA_DUTY_ITEM_<APP>, ARENA_FUNDED_ROUNDS_FILE, ARENA_DUTY_EMERGENCY
  *   nodeSecret                this node's identity secret: it signs the series it creates
- * and, once its seat listens, attach({ port, host, endpoint, heldTemplates, nameFunded, donationSetAt, nodeKey }) from server.js.
+ * and, once its seat listens, attach({ port, host, endpoint, heldTemplates, nameFunded, donationSetAt, nodeKey, lessAbsent }) from server.js.
  */
 export function createDutyPoster({ call, walletCall, networkIdHex, censusEntriesAt, dutyCensus, chainBlocks, dir, env = {}, nodeSecret,
   fetchFn = fetch, log = (l) => console.log(l), now = Date.now, everyMs = DUTY_EVERY_MS }) {
@@ -233,7 +234,16 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     // THE PROTOCOL A GRID IS WRITTEN IN: the day's shape's, or the newest version's requirement when that is higher
     const protocolVersion = Math.max(Number(t.contract.protocolVersion || 3), Number(base.requiredProtocol || 0));
     const contract = { ...t.contract, protocolVersion, censusHeight: kind.fields.censusHeight };
-    const census = await censusFor({ ...contract, ...kind.fields });
+    let census = await censusFor({ ...contract, ...kind.fields });
+    // FROM PROTOCOL 22 LESS THE ABSENT (§5A.3, kanban #727): nodes drawn in the census's 24 h and seen at none of those seatings leave it;
+    // the claim is the seat's (server.js postingLessAbsent) and goes to every seat before the grid does, so each can check the root
+    let absent = null;
+    if (dropsAbsent(contract) && seat && typeof seat.lessAbsent === 'function') {
+      try {
+        const less = await seat.lessAbsent({ ...contract, ...kind.fields }, census, await chainView());
+        if (less) { census = less; absent = { root: toHex(less.root), claims: less.claims }; say({ dutyDay: 'absent', game, nodes: less.claims.length, root: absent.root.slice(0, 16) }); }
+      } catch (e) { say({ dutyDay: 'absent not read', game, why: e.message }); }
+    }
     const built = buildGrid({ contract, kind, ...opts, censusRootFor: () => census.root, censusEntries: () => census.entries,
       blockTicksAt: null });
     const sent = await publishGridTx({ outs: built.outs, rpc: walletCall(wallet.wallet), feeRate: opts.feeRate, dry: env.ARENA_GRID_DRY === '1' });
@@ -243,7 +253,9 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
       try { seat.nameFunded(toHex(id)); } catch { /* none */ }
       if (env.ARENA_FUNDED_ROUNDS_FILE) { try { appendFileSync(env.ARENA_FUNDED_ROUNDS_FILE, `${toHex(id)}\n`); } catch (e) { say({ dutyDay: 'funded file not written', why: e.message }); } }
     }
-    announceGrid({ lines: built.lines, tx: sent.hex, targets: await seatUrls(), fetchFn })
+    const targets = await seatUrls();
+    if (absent) await Promise.all(targets.map((u) => fetchFn(`${u}/absent`, { method: 'POST', body: JSON.stringify(absent), signal: AbortSignal.timeout(8000) }).catch(() => null)));
+    announceGrid({ lines: built.lines, tx: sent.hex, targets, fetchFn })
       .then((s) => say({ dutyDay: 'announced', txid: sent.txid.slice(0, 16), seats: `${s.took}/${s.of}` })).catch(() => {});
     return { ok: true, published: true, txid: sent.txid, series: built.ids.map(toHex), lines: built.lines, rounds: built.rounds, lastCloseMs: built.lastCloseMs, firstStartMs: built.start };
   };

@@ -202,7 +202,10 @@ import { readReserve } from './federation-reserve.js';
 import { thresholdOf as thresholdOfFederation } from '../../arena-protocol/src/federation-record.js';
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY } from './roster.js';
 import { seatingAgent } from './seating-agent.js';
-import { decodeSeatingCertificate, encodeSeatingCertificate } from '../../arena-protocol/src/seating.js';
+import { presenceBook } from './presence-book.js';
+import { presenceWindow, censusTimeMs, withoutAbsent } from '../../arena-protocol/src/presence.js';
+import { censusRootOf } from '../../arena-protocol/src/census.js';
+import { decodeSeatingCertificate, encodeSeatingCertificate, signPresent, SEATING_ROLES } from '../../arena-protocol/src/seating.js';
 import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../../arena-protocol/src/genesis.js';
 import { authorityAt, donationSetSignedBy, donationSetInForce, encodeDonationSetBody, encodeAuthorityRotation, donationSetBodyId, authorityRotationId } from '../../arena-protocol/src/authority.js';
 import { donationSetId, donationOutputsExpected, encodeDonationSet, vestedShares } from '../../arena-protocol/src/donation.js';
@@ -2302,6 +2305,71 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // one committee and sign results against another.
     ...(randomnessFor ? { randomnessFor } : {}),
   });
+  // THE PRESENCE BOOK (§5A.3, protocol 22, kanban #727): who was seen at the seatings of a census's 24 h, and the absent claims of the
+  // censuses this seat holds. The roster checks a 22 root that leaves nodes out against it; a claim not held yet is asked of the seats
+  // once a minute per root, so a seat that missed the posting node's POST /absent learns it
+  const presence = presenceBook({ round, roster, verify: verifySchnorrKept, log: (m) => console.log(m) });
+  const claimAsked = new Map();
+  const fetchClaim = async (rootHex) => {
+    for (const u of networkSeats()) {
+      let got; try { const r = await fetch(`${u}/absent?root=${rootHex}`, { signal: AbortSignal.timeout(8000) }); got = r.ok ? await r.json() : null; } catch { got = null; }
+      if (got && Array.isArray(got.claims) && presence.keepClaim(rootHex, got.claims).ok) { console.log(`[presence] absent claim of census ${rootHex.slice(0, 16)} taken from ${u}: ${got.claims.length} node(s)`); return; }
+    }
+  };
+  roster.absence = {
+    claimFor: (rootHex) => {
+      const c = presence.claimFor(rootHex);
+      if (!c && !(Date.now() - (claimAsked.get(rootHex) || 0) < 60000)) { claimAsked.set(rootHex, Date.now()); fetchClaim(rootHex).catch(() => {}); }
+      return c;
+    },
+    check: presence.check,
+  };
+  // LEFT OUT AS ABSENT, THIS NODE COMES BACK BY BEING SEEN (§5A.3, kanban #727): while a census of rounds it holds names it absent, it
+  // signs a PRESENT for each of those rounds as its seating comes (drawn or not), keeps it, and hands it to every seat - so the next
+  // census's 24 h hold its signature and it is drawn again. Nothing to do for the operator.
+  const returned = new Set();
+  const returnTick = setInterval(() => {
+    let rids = [];
+    try { rids = presence.roundsToReturn(toHex(round.pubkey), round.now()); } catch { rids = []; }
+    const fresh = rids.filter((rid) => !returned.has(toHex(rid)));
+    if (!fresh.length) return;
+    const lines = [];
+    for (const rid of fresh) {
+      returned.add(toHex(rid));
+      for (const role of SEATING_ROLES) {
+        const p = signPresent({ roundId: rid, role, nodePubkey: round.pubkey }, (d) => schnorr.sign(d, round.identity.secret));
+        if (presence.takeProof(p, null).ok) lines.push(toHex(p));
+      }
+    }
+    if (returned.size > 20000) returned.clear();
+    console.log(`[presence] this node is left out of a census as absent: ${fresh.length} PRESENT(s) signed and handed to the seats`);
+    for (const u of networkSeats()) fetch(`${u}/presence`, { method: 'POST', body: lines.join('\n'), signal: AbortSignal.timeout(8000) }).catch(() => {});
+  }, 30000);
+  if (returnTick.unref) returnTick.unref();
+  /**
+   * A CENSUS THIS NODE POSTS, LESS ITS ABSENT (§5A.3, kanban #727): the window off `view` (the census block's median time), the claim
+   * from the presence book after asking every seat and every candidate's own door for proofs, the root over the rest, the claim kept
+   * here under that root. Null when nobody is absent or the window cannot be read - the chain census is posted, as below 22.
+   */
+  const postingLessAbsent = async (contract, census, view) => {
+    const t = censusTimeMs(view, Number(contract.censusHeight));
+    if (t === null) return null;
+    const w = presenceWindow(t);
+    const ends = new Map((census.entries || []).filter((e) => e.advert && e.advert.endpoint).map((e) => [toHex(e.pubkey), baseOf(e.advert.endpoint)]));
+    const ask = async (nodes) => {
+      const urls = [...new Set([...networkSeats(), ...nodes.map((n) => ends.get(n)).filter(Boolean)])];
+      const all = await Promise.all(urls.map(async (u) => {
+        try { const r = await fetch(`${u}/presence?nodes=${nodes.join(',')}&to=${w.toMs}`, { signal: AbortSignal.timeout(10000) }); const j = r.ok ? await r.json() : null; return j && Array.isArray(j.presents) ? j.presents : []; }
+        catch { return []; }
+      }));
+      return all.flat().slice(0, 4096);
+    };
+    const claims = await presence.absentForPosting({ census: census.entries.map((e) => toHex(e.pubkey)), w, ask });
+    if (!claims.length) return null;
+    const kept = censusRootOf(withoutAbsent(census.entries, claims), { censusHeight: Number(contract.censusHeight), censusConfirmations: contract.censusConfirmations });
+    presence.keepClaim(toHex(kept.root), claims);
+    return { ...census, root: kept.root, entries: kept.entries, claims };
+  };
   // THIS SEAT AS A DRAWN ATTESTOR (kanban #630, protocol 21): only where it hosts a game whose attestors are drawn. Every 10 s it reads
   // its price; a round of such a game whose window ended in the last 30 min and that this seat is drawn for gets its word, the other
   // drawn seats' words, and - once 5 signed one body - the attestation held here and handed to the round's settlement committee
@@ -9485,6 +9553,33 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       // THE BATCH DOORS: many PRESENTs in one body, and one read of many rounds' seating state - the same
       // signed messages the per-round doors carry, one exchange per node per tick at grid density
+      // THE PRESENCE DOORS (§5A.3, protocol 22, kanban #727). GET /presence?nodes=<hex,...>&to=<ms>: the PRESENTs this seat holds of
+      // those nodes for seatings in the 24 h ending at `to`; POST /presence?to=<ms>: PRESENTs (hex, one a line) taken as proofs.
+      // GET /absent?root=<hex>: the absent claim of a census root; POST /absent { root, claims }: kept (the root decides its use).
+      if (req.method === 'GET' && url.pathname === '/presence') {
+        const nodes = String(url.searchParams.get('nodes') || '').toLowerCase().split(',').filter(Boolean);
+        let to; try { to = BigInt(url.searchParams.get('to') || ''); } catch { to = null; }
+        if (!nodes.length || nodes.length > 256 || !nodes.every((h) => /^[0-9a-f]{64}$/.test(h)) || to === null) return text(res, 400, 'nodes: 1 to 256 node keys, hex, comma-separated; to: the census time in ms');
+        return json(res, 200, { node: toHex(round.pubkey), presents: presence.proofsOf(nodes, presenceWindow(to)) });
+      }
+      if (req.method === 'POST' && url.pathname === '/presence') {
+        // `to`, when given, takes only proofs of the 24 h ending there
+        let to = null; if (url.searchParams.get('to')) { try { to = BigInt(url.searchParams.get('to')); } catch { return text(res, 400, 'to: the census time in ms'); } }
+        const lines = Buffer.from(await read(req)).toString('utf8').split(/\s+/).filter(Boolean).slice(0, 4096);
+        let took = 0; for (const h of lines) { try { if (presence.takeProof(fromHex(h), to === null ? null : presenceWindow(to)).ok) took++; } catch { /* not one */ } }
+        return json(res, 201, { took, of: lines.length });
+      }
+      if (req.method === 'GET' && url.pathname === '/absent') {
+        const root = String(url.searchParams.get('root') || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(root)) return text(res, 400, 'root: a census root, 32 bytes hex');
+        const claims = presence.claimFor(root);
+        return claims ? json(res, 200, { root, claims }) : text(res, 404, 'no absent claim is held here for that root');
+      }
+      if (req.method === 'POST' && url.pathname === '/absent') {
+        let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a JSON body { root, claims }'); }
+        const k = presence.keepClaim(body && body.root, body && body.claims);
+        return k.ok ? json(res, 201, k) : text(res, 400, k.why);
+      }
       if (seating && req.method === 'POST' && url.pathname === '/presents') {
         const r = seating.takePresents(new Uint8Array(await read(req)));
         return r.ok ? json(res, 201, r) : text(res, 400, r.why);
@@ -10396,7 +10491,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return donationSetId(forced.recipients);
     };
     duty.attach({ port: http.address().port, host, endpoint: publicEndpoint, heldTemplates: () => series.slice(),
-      nameFunded: (idHex) => { if (typeof funded.nameRound === 'function') funded.nameRound(idHex); }, donationSetAt: inForce, nodeKey: round.pubkey });
+      nameFunded: (idHex) => { if (typeof funded.nameRound === 'function') funded.nameRound(idHex); }, donationSetAt: inForce, nodeKey: round.pubkey,
+      // a 22 census less its absent (kanban #727)
+      lessAbsent: postingLessAbsent });
   };
   return new Promise((resolve) => {
     http.listen(port, host, () => { dutyAttach(); resolve({
