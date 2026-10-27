@@ -157,6 +157,10 @@ async function openWindows() {
         // NOT A ROUND DRAWN TOO SHORT TO BE SEATED (2026-10-27: today's v24 rounds drew 3 nodes - their census predates the seats'
         // adverts naming v24 - and every pass stopped at "that round has no signer nodes yet", so no order reached the v23 round)
         .filter((r) => !(r.committee && r.committee.drawnCount && Number(r.committee.drawnCount.game) < 5));
+      // A SEATED ROUND OVER ONE THAT NEVER WILL BE (2026-10-27 22:04Z: the bots quoted the day's v23 rounds - drawn 9, onto stopped nodes,
+      // never seated - and never reached the seated v24 emergency round of the same window): once any round of a window is seated, only those
+      const seated = rows.filter((r) => r.committee && r.committee.seated && r.committee.seated.game);
+      if (seated.length) return seated.sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs));
       if (rows.length) return rows.sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs));
     } catch (e) { say({ step: 'rounds', seat: n, why: e.message }); }
   }
