@@ -7329,6 +7329,127 @@
   "pathParams": []
  },
  {
+  "method": "POST",
+  "path": "/heartbeats",
+  "params": "body: many 132-byte HEARTBEAT messages back to back",
+  "auth": "each signed by the node it names; kept only by a member of that slot's heartbeat committee, before the slot closes; only when seating is on (ARENA_SEATING=1)",
+  "returns": "201 JSON {ok, taken, refused[]}; 400",
+  "purpose": "A node's HEARTBEATs for 22 rounds' heartbeat slots (§5A.3, kanban #727): the committee member keeps each until the slot closes and lists it in its HEARD.",
+  "audience": "node-to-node",
+  "line": 6063,
+  "summary": "Hand HEARTBEATs to a heartbeat committee member",
+  "query": [],
+  "body": {
+   "contentType": "application/octet-stream",
+   "required": true,
+   "description": "HEARTBEAT messages back to back."
+  },
+  "responses": [
+   {
+    "status": "201",
+    "contentType": "application/json",
+    "description": "{ok, taken, refused[]}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a whole number of HEARTBEATs."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "No such door: seating is off (ARENA_SEATING unset)."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signature",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/heard",
+  "params": "body: JSON [{ round, slot, node, heard[], leftOut[], signature }]",
+  "auth": "each signed by a member of that slot's heartbeat committee; only when seating is on (ARENA_SEATING=1)",
+  "returns": "201 JSON {ok, taken, refused[]}; 400",
+  "purpose": "Other members' HEARDs of a heartbeat slot (§5A.3, kanban #727): with 5 of the committee's, the slot's certificate is kept.",
+  "audience": "node-to-node",
+  "line": 6063,
+  "summary": "Hand HEARDs to the other members of a heartbeat committee",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "A list of HEARDs, keys and signature hex."
+  },
+  "responses": [
+   {
+    "status": "201",
+    "contentType": "application/json",
+    "description": "{ok, taken, refused[]}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a JSON list of HEARDs."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "No such door: seating is off (ARENA_SEATING unset)."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signature",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/heartbeat-cert",
+  "params": "query: round=<64 hex>, slot=0..2",
+  "auth": "none; only when seating is on (ARENA_SEATING=1)",
+  "returns": "200 JSON {cert}; 400; 404",
+  "purpose": "The heartbeat certificate of one slot of a 22 round held here (§5A.3, kanban #727): who 5 or more of its committee heard; every census node it does not list missed that slot.",
+  "audience": "node-to-node",
+  "line": 6063,
+  "summary": "A heartbeat slot's certificate",
+  "query": [
+   {
+    "name": "round",
+    "required": true,
+    "description": "The round id, 32 bytes hex."
+   },
+   {
+    "name": "slot",
+    "required": true,
+    "description": "The heartbeat slot, 0 to 2."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{cert}, hex."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "No round or slot named."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "No certificate for that slot here, or seating is off."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
   "method": "GET",
   "path": "/seating-batch",
   "params": "query rounds (1-64 round ids, comma list)",

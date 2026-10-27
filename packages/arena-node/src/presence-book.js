@@ -14,12 +14,24 @@
 //
 // ABSENCE ONLY WITH PROOF (the owner 2026-10-27): a node is left out only on threshold-signed certificates (seating.js SEEN), never on
 // what the posting node says it collected.
+//
+// AND THE HEARTBEAT (kanban #727, the owner 2026-10-27): besides seatings, a round's 3 heartbeat slots are proofs too (heartbeat.js) - a
+// slot's certificate (hb_certs, made by heartbeat-agent.js or gathered) names every census node it did not hear missed, and a HEARTBEAT
+// this seat held as a member (hb_beats) is evidence it refuses a census with, as a PRESENT is. A proof's role is a seating's (game,
+// settlement) or a slot's (heartbeat-0..2).
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { seatingCloseMs, verifyPresent, decodeSeatingCertificate, SEATING_ROLES } from '../../arena-protocol/src/seating.js';
 import { slotsForRole } from '../../arena-protocol/src/sortition.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
-import { absentFrom, checkAbsenceProof, provenSeating, presentAt, missedAt, inWindow, ABSENCE_PROOF_SEATINGS } from '../../arena-protocol/src/presence.js';
+import { absentFrom, checkAbsenceProof, provenProof, presentAt, missedAt, inWindow, ABSENCE_PROOF_SEATINGS } from '../../arena-protocol/src/presence.js';
+import { heartbeatSlotOf, decodeHeartbeatCertificate, HEARTBEAT_ROLES, HEARTBEAT_SLOTS_PER_ROUND, HEARTBEAT_SPACING_MS } from '../../arena-protocol/src/heartbeat.js';
+import { TYPE_HEARTBEAT_HEARD } from '../../arena-protocol/src/constants.js';
+
+/** What a proof names: a seating's role, or a heartbeat slot's. */
+export const PROOF_ROLES = Object.freeze([...SEATING_ROLES, ...HEARTBEAT_ROLES]);
+/** A round's earliest heartbeat slot closes this long before its seating does. */
+const SLOTS_LEAD_MS = BigInt(HEARTBEAT_SLOTS_PER_ROUND - 1) * HEARTBEAT_SPACING_MS;
 
 /** At most this many proofs one GET /presence answers per node (one stands; three survive a round this seat does not hold). */
 export const PROOFS_PER_NODE = 3;
@@ -44,6 +56,10 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
   db.exec(`
     CREATE TABLE IF NOT EXISTS seat_presents (round_id BLOB NOT NULL, role TEXT NOT NULL, node TEXT NOT NULL, bytes BLOB NOT NULL, PRIMARY KEY (round_id, role, node));
     CREATE TABLE IF NOT EXISTS seat_certs (round_id BLOB NOT NULL, role TEXT NOT NULL, cert BLOB NOT NULL, PRIMARY KEY (round_id, role));
+    CREATE TABLE IF NOT EXISTS hb_beats (round_id BLOB NOT NULL, slot INTEGER NOT NULL, node TEXT NOT NULL, close_ms INTEGER NOT NULL, bytes BLOB NOT NULL,
+      PRIMARY KEY (round_id, slot, node));
+    CREATE TABLE IF NOT EXISTS hb_certs (round_id BLOB NOT NULL, slot INTEGER NOT NULL, close_ms INTEGER NOT NULL, cert BLOB NOT NULL,
+      PRIMARY KEY (round_id, slot));
   `);
 
   // EACH STORED ROUND'S SEATING CLOSE, read once: null for a round that seats nothing of its own (a table's later rounds)
@@ -75,8 +91,9 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
     const c = contracts.get(toHex(rid));
     return c ? slotsForRole(c, role) : null;
   };
+  // a round whose seating closes in the window - or up to 10 min after it, for its heartbeat slots that close inside
   const roundsIn = (w) => db.prepare('SELECT round_id FROM rounds WHERE opened_ms > ?').all(Number(w.fromMs) - STORED_LEAD_MS)
-    .map((r) => new Uint8Array(r.round_id)).filter((rid) => { const c = closeOf(rid); return c !== null && inWindow(w, c); });
+    .map((r) => new Uint8Array(r.round_id)).filter((rid) => { const c = closeOf(rid); return c !== null && c > w.fromMs && c <= w.toMs + SLOTS_LEAD_MS; });
 
   /**
    * THIS SEAT'S OWN DRAW OF A SEATING, with its seats and its close - or null (no such round here, or no draw yet). Drawn on the
@@ -85,6 +102,14 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
    */
   const drawOf = (ridHex, role) => {
     let rid; try { rid = fromHex(ridHex); } catch { return null; }
+    // A HEARTBEAT SLOT: its committee and the census it expects to beat, on the round's census as its root commits
+    const j = heartbeatSlotOf(role);
+    if (j !== null) {
+      const c = roster.heartbeatCommitteeFor ? roster.heartbeatCommitteeFor(rid, j, { asCommitted: true }) : null;
+      if (c && c.none) return { heartbeat: null, drawn: [], census: null, closeMs: 0n };     // no slots there: a wrong proof, for good
+      if (!c || !c.ok) return null;
+      return { heartbeat: j, drawn: c.committee.map((e) => toHex(e.pubkey)), census: c.census, closeMs: c.closeMs };
+    }
     const closeMs = closeOf(rid);
     if (closeMs === null) return null;
     const slots = slotsOf(rid, role);
@@ -96,6 +121,8 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
 
   /** A certificate this seat holds for a seating: its own (seat_certs) or one gathered (presence_certs). */
   const heldCert = (rid, role) => {
+    const j = heartbeatSlotOf(role);
+    if (j !== null) { const h = db.prepare('SELECT cert FROM hb_certs WHERE round_id = ? AND slot = ?').get(rid, j); return h ? new Uint8Array(h.cert) : null; }
     const r = db.prepare('SELECT cert FROM seat_certs WHERE round_id = ? AND role = ?').get(rid, role)
       || db.prepare('SELECT cert FROM presence_certs WHERE round_id = ? AND role = ?').get(rid, role);
     return r ? new Uint8Array(r.cert) : null;
@@ -109,7 +136,7 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
     if (proven.has(key)) return proven.get(key);
     const d = drawOf(toHex(rid), role);
     if (!d) return null;          // not drawable yet: asked again next time
-    const got = provenSeating(bytes, { roundId: rid, role, drawn: d.drawn, slots: d.slots, closeMs: d.closeMs, verify });
+    const got = provenProof(bytes, { roundId: rid, role, d, verify });
     const s = got.ok ? got.seating : null;
     proven.set(key, s);
     if (proven.size > 20000) proven.delete(proven.keys().next().value);
@@ -119,7 +146,7 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
   /** THE WINDOW'S PROVEN SEATINGS THIS SEAT HOLDS: [{ roundId, role, closeMs, drawn, seated, present, leftOut }] (presence.js). */
   function seatingsIn(w) {
     const out = [];
-    for (const rid of roundsIn(w)) for (const role of SEATING_ROLES) { const s = provenOf(rid, role); if (s) out.push(s); }
+    for (const rid of roundsIn(w)) for (const role of PROOF_ROLES) { const s = provenOf(rid, role); if (s && inWindow(w, s.closeMs)) out.push(s); }
     return out;
   }
 
@@ -128,6 +155,8 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
     const seen = new Set();
     for (const rid of roundsIn(w)) for (const r of db.prepare('SELECT node FROM seat_presents WHERE round_id = ?').all(rid)) seen.add(r.node);
     for (const r of db.prepare('SELECT node FROM presence_proofs WHERE close_ms > ? AND close_ms <= ?').all(Number(w.fromMs), Number(w.toMs))) seen.add(r.node);
+    // a HEARTBEAT this seat held as a member, in time for its slot (heartbeat-agent.js takes none after the close)
+    for (const r of db.prepare('SELECT node FROM hb_beats WHERE close_ms > ? AND close_ms <= ?').all(Number(w.fromMs), Number(w.toMs))) seen.add(r.node);
     return seen;
   }
   /** THE NODES SEEN IN THE WINDOW BY WHAT THIS SEAT HOLDS: a PRESENT, or present in a window certificate. */
@@ -150,6 +179,7 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
       if (want.has(r.node)) add(r.node, r.bytes);
     for (const rid of roundsIn(w))
       for (const r of db.prepare('SELECT node, bytes FROM seat_presents WHERE round_id = ?').all(rid)) if (want.has(r.node)) add(r.node, r.bytes);
+    for (const r of db.prepare('SELECT node, bytes FROM hb_beats WHERE close_ms > ? AND close_ms <= ?').all(Number(w.fromMs), Number(w.toMs))) if (want.has(r.node)) add(r.node, r.bytes);
     return out;
   }
   function certsOf(nodes, w) {
@@ -176,13 +206,33 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
   }
   /** A 22 SEATING CERTIFICATE handed over (GET /presence answers, an absent claim): kept when it stands against this seat's own draw. */
   function takeCert(bytes) {
+    if (bytes[0] === TYPE_HEARTBEAT_HEARD) return takeHeartbeatCert(bytes);
     let c; try { c = decodeSeatingCertificate(bytes); } catch (e) { return { ok: false, why: e.message }; }
     if (heldCert(c.roundId, c.role)) return { ok: true, held: true };
     const d = drawOf(toHex(c.roundId), c.role);
     if (!d) return { ok: false, why: 'this seat cannot draw that seating' };
-    const got = provenSeating(bytes, { roundId: c.roundId, role: c.role, drawn: d.drawn, slots: d.slots, closeMs: d.closeMs, verify });
+    const got = provenProof(bytes, { roundId: c.roundId, role: c.role, d, verify });
     if (!got.ok) return got;
     db.prepare('INSERT OR IGNORE INTO presence_certs (round_id, role, close_ms, cert) VALUES (?, ?, ?, ?)').run(c.roundId, c.role, Number(d.closeMs), bytes);
+    return { ok: true };
+  }
+  /** A HEARTBEAT CERTIFICATE handed over: kept when it stands against this seat's own draw of the slot, and lists more than the one held. */
+  function takeHeartbeatCert(bytes) {
+    let c; try { c = decodeHeartbeatCertificate(bytes); } catch (e) { return { ok: false, why: e.message }; }
+    const role = HEARTBEAT_ROLES[c.slot];
+    const held = heldCert(c.roundId, role);
+    if (held && toHex(held) === toHex(bytes)) return { ok: true, held: true };
+    const d = drawOf(toHex(c.roundId), role);
+    if (!d) return { ok: false, why: 'this seat cannot draw that heartbeat slot' };
+    const got = provenProof(bytes, { roundId: c.roundId, role, d, verify });
+    if (!got.ok) return got;
+    // TWO CERTIFICATES OF ONE SLOT: the one more members signed is kept - both stand, and presence is any listing, so the bigger one is
+    // the one that lists more (a node a smaller one missed is in no danger from it: the checker of a claim reads the claim's own)
+    if (held) {
+      const was = provenProof(held, { roundId: c.roundId, role, d, verify });
+      if (was.ok && was.seating.seated.length >= got.seating.seated.length) return { ok: true, held: true };
+    }
+    db.prepare('INSERT OR REPLACE INTO hb_certs (round_id, slot, close_ms, cert) VALUES (?, ?, ?, ?)').run(c.roundId, c.slot, Number(d.closeMs), bytes);
     return { ok: true };
   }
 
@@ -229,13 +279,13 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
       const node = String((c && c.node) || '').toLowerCase();
       if (!HEX64.test(node)) return { ok: false, why: 'an absent node is its key, 32 bytes hex' };
       const proofs = (Array.isArray(c.proofs) ? c.proofs : []).slice(0, 16).map((s) => ({ roundId: String(s.roundId || '').toLowerCase(), role: String(s.role || '') }));
-      if (!proofs.every((s) => HEX64.test(s.roundId) && SEATING_ROLES.includes(s.role))) return { ok: false, why: 'a proof names a seating: a round id, 32 bytes hex, and a role' };
+      if (!proofs.every((s) => HEX64.test(s.roundId) && PROOF_ROLES.includes(s.role))) return { ok: false, why: 'a proof names a seating or a heartbeat slot: a round id, 32 bytes hex, and a role' };
       clean.push({ node, proofs });
     }
     const certs = {};
     for (const [k, v] of Object.entries((claim && claim.certs) || {}).slice(0, 4096)) {
       const [rid, role] = String(k).toLowerCase().split(':');
-      if (!HEX64.test(rid || '') || !SEATING_ROLES.includes(role) || !/^([0-9a-f]{2})+$/.test(String(v)) || String(v).length > 200000) return { ok: false, why: 'certificates are by round id and role, hex' };
+      if (!HEX64.test(rid || '') || !PROOF_ROLES.includes(role) || !/^([0-9a-f]{2})+$/.test(String(v)) || String(v).length > 200000) return { ok: false, why: 'certificates are by round id and role, hex' };
       certs[`${rid}:${role}`] = String(v).toLowerCase();
     }
     db.prepare('INSERT OR REPLACE INTO absent_claims (root, claim, kept_ms) VALUES (?, ?, ?)').run(root, JSON.stringify({ claims: clean, certs }), Date.now());

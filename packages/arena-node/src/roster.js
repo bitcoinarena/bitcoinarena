@@ -20,6 +20,7 @@ import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { deriveCensus, censusRootOf } from '../../arena-protocol/src/census.js';
 import { dropsAbsent, withoutAbsent, presenceWindow, censusTimeMs, ABSENT_WHY } from '../../arena-protocol/src/presence.js';
 import { selectCommittee, drawCommittee, slotsForRole, drawAttestors } from '../../arena-protocol/src/sortition.js';
+import { drawHeartbeat, hasHeartbeats, heartbeatCloseMs } from '../../arena-protocol/src/heartbeat.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { merkleBranchOf } from '../../arena-protocol/src/chain.js';
@@ -786,6 +787,31 @@ export class Roster {
    * A ROUND'S DRAWN ATTESTORS (kanban #630, protocol 21): the 7 node keys of its census drawn on the attestor seed - the same census and
    * beacon its committees are drawn on, so every seat names the same 7. { ok, attestors: [entry], root } or why it cannot say.
    */
+  heartbeatCommitteeFor(roundIdBytes, slot, { asCommitted = false } = {}) {
+    // A ROUND'S HEARTBEAT COMMITTEE (§5A.3, protocol 22, kanban #727, the owner 2026-10-27): the 9 node keys of its census drawn for heartbeat
+    // slot `slot` on its own seed off the round's committee seed (heartbeat.js drawHeartbeat) - the census and beacon its seats are drawn
+    // on, so every seat and the client name the same 9. Also the census's node keys (every one of them is expected to beat) and the
+    // nodes the census left out as absent (they beat to come back). `asCommitted`: as for committeeFor, a slot named as proof.
+    // { ok, committee: [entry], census: [hex], leftOut: [hex], closeMs, root } or why not.
+    const row = this.round.get(roundIdBytes);
+    if (!row) return { ok: false, why: 'this node holds no such round' };
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    if (!hasHeartbeats(contract)) return { ok: false, none: true, why: 'that round has no heartbeat slots (below 22, or a table\'s later round)' };
+    const census = this.censusFor(roundIdBytes, null, { asCommitted });
+    if (!census.ok) return census;
+    const seeded = this.seedFor(roundIdBytes, contract);
+    if (!seeded.ok) return { ok: false, why: seeded.why, root: census.root };
+    const kept = `${toHex(roundIdBytes)}:heartbeat-${slot}:${toHex(census.root)}:${toHex(seeded.seed)}`;
+    if (this.committees.has(kept)) return this.committees.get(kept);
+    let committee;
+    try { committee = drawHeartbeat({ entries: census.entries, contract, committeeSeed: seeded.seed, slot }); } catch (e) { return { ok: false, why: e.message, root: census.root }; }
+    const answer = { ok: true, committee, census: [...new Set(census.entries.map((e) => toHex(e.pubkey)))], leftOut: (census.absent || []).map((a) => a.node),
+      closeMs: heartbeatCloseMs(contract, slot), root: census.root };
+    this.committees.set(kept, answer);
+    if (this.committees.size > Roster.PER_ROUND_KEPT) this.committees.delete(this.committees.keys().next().value);
+    return answer;
+  }
+
   attestorsFor(roundIdBytes) {
     const row = this.round.get(roundIdBytes);
     if (!row) return { ok: false, why: 'this node holds no such round' };
