@@ -2918,13 +2918,37 @@ round opens for entries iff |seated| >= 5
 **The seating certificate.** The seated nodes sign
 `SEATING(round_id, role, seated list)`; a round's seating is valid only with
 the signature of **every** node it seats. Each node signs at most one seating
-per round and role, and seats itself only in score order among the PRESENT
-messages it holds: it seats a node ranked below one it knows to be present
-only if that one is also seated. Two valid seatings for the same round and
-role always share a signer - each has at least 5 of the same 9, and
+per round and role that can still stand, and seats itself only in score order
+among the PRESENT messages it holds: it seats a node ranked below one it knows
+to be present only if that one is also seated. Two valid seatings for the same
+round and role always share a signer - each has at least 5 of the same 9, and
 5 + 5 > 9 - so two certificates are proof of **equivocation** by that signer
 and slash its bond (§5A.3B). The general constraint, for any parameters:
 `2 x threshold > drawn`.
+
+**A second signature only after a member of the first signed another**
+*(kanban #738)*. Measured 2026-10-27 23:30Z (Up/Down round d77b3d03): one
+overloaded seat signed the seating of the 5 PRESENTs it held at the close, six
+signed the seating of 7, and no certificate formed. Seatings are ordered: S
+comes before T when T seats at least as many and its i-th seated ranks no
+lower in the draw than S's i-th, for every i of S (the seating of more
+PRESENTs comes after the seating of fewer). A node that signed S and holds no
+certificate for the round and role signs a second seating S' only when
+
+```text
+1. a member of S other than itself signed a seating that does not come before S
+2. S' is the seating of the PRESENTs it holds now, and S' comes after S
+3. it is in S'
+4. another node's signature over S' is in hand
+```
+
+and only before the round starts. A seat in that state takes the PRESENTs the
+others held at the close from them, late. An honest node's signatures then
+come one after another in that order: the first node to leave S saw a member
+that never signed S and, from a seating not before S, can only go on to
+seatings after it - never to S. So S never completes, at most one certificate
+stands, and two certificates still prove equivocation only against a node that
+broke the rule.
 
 **Who was present** *(protocol 22, kanban #727, RULED 2026-10-27)*. From
 22 the certificate also says who was present, because it is the only proof
@@ -2938,7 +2962,9 @@ after its signatures, grouped by identical lists, and stands for a 22 round
 only with one SEEN from **every** seated node and from no one else. A node
 is present at the seating if any seated node names it, so hiding an honest
 node's PRESENT needs every seated node to lie. A PRESENT is taken only until
-the close; one that arrives later is in no SEEN, and for the proof that
+the close (but at a seat whose seating can never stand, above, which lists
+those it took late in the SEEN of its second seating); one that arrives later
+is in no SEEN, and for the proof that
 seating is missed. The SEATING body, its id and the equivocation rule are
 unchanged, and a certificate below 22 carries no SEEN, byte for byte as
 before (a below-22 certificate that carries one is refused).
