@@ -153,7 +153,10 @@ async function openWindows() {
         // its entry close still ahead, refused every order two minutes past 07:45 - "the round is closed")
         .filter((r) => r.game && r.game.name === GAME && r.entryOpen && r.windowStartMs
           && Math.min(Number(r.entryCloseMs), Number(r.windowStartMs) + WINDOW_MS) - now > OPEN_AHEAD_MS)
-        .filter((r) => !walletFed || !r.federation || String(r.federation.id || r.federation).toLowerCase().startsWith(walletFed.slice(0, 16)));
+        .filter((r) => !walletFed || !r.federation || String(r.federation.id || r.federation).toLowerCase().startsWith(walletFed.slice(0, 16)))
+        // NOT A ROUND DRAWN TOO SHORT TO BE SEATED (2026-10-27: today's v24 rounds drew 3 nodes - their census predates the seats'
+        // adverts naming v24 - and every pass stopped at "that round has no signer nodes yet", so no order reached the v23 round)
+        .filter((r) => !(r.committee && r.committee.drawnCount && Number(r.committee.drawnCount.game) < 5));
       if (rows.length) return rows.sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs));
     } catch (e) { say({ step: 'rounds', seat: n, why: e.message }); }
   }

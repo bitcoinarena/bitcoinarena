@@ -69,6 +69,15 @@ test('a seat\'s yes is its signature over this plan: unsigned, strangers, other 
   const five = countPlanTaken({ own: sign(seven[0]), answers: seven.slice(1, 5).map((s, i) => ({ base: `p${i}`, bytes: sign(s) })), seats: seats7, planId });
   assert.deepEqual([five.agreed, five.needed, five.final], [5, 5, true]);
   assert.equal(five.certificate.length, 5);
+
+  // A ROUND DRAWN 9 FOR 7 SLOTS AND SEATED WITH 6 (2026.1.9.11 release check: "no committee threshold for 6 slots", nothing
+  // settled): the contract's slots name the threshold, 5 of 7, whatever number of seats it names
+  const six = seats7.slice(0, 6);
+  assert.throws(() => countPlanTaken({ own: sign(seven[0]), answers: [], seats: six, planId }), /no committee threshold for 6 slots/);
+  const sixFive = countPlanTaken({ own: sign(seven[0]), answers: seven.slice(1, 5).map((s, i) => ({ base: `p${i}`, bytes: sign(s) })), seats: six, planId, slots: 7 });
+  assert.deepEqual([sixFive.agreed, sixFive.needed, sixFive.final], [5, 5, true]);
+  const sixFour = countPlanTaken({ own: sign(seven[0]), answers: seven.slice(1, 4).map((s, i) => ({ base: `p${i}`, bytes: sign(s) })), seats: six, planId, slots: 7 });
+  assert.deepEqual([sixFour.agreed, sixFour.final], [4, false]);
 });
 
 test('the plan id is the plan: row order and key order do not move it, any field does, and the late entry and the round do', () => {

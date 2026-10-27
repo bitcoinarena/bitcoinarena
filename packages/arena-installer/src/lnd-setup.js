@@ -69,7 +69,9 @@ export async function setUpOwnLnd({ state, release, fetcher = fetch, reach = rea
     // (its cookie file), and when it does not come Tor's own line says why on the Lightning step
     if (torKit.freeTorPorts) torPorts = await torKit.freeTorPorts({ home: state.home }).catch(() => TOR_PORTS);
     const cmd = torKit.torCommand ? torKit.torCommand({ home: state.home, tor }) : [tor];
-    const t = await lndKit.installProgram({ id: 'tor', description: 'Bitcoin Arena: Tor for Lightning', args: [...cmd, '-f', torKit.writeTorrc({ home: state.home, ports: torPorts })], home: state.home, boot });
+    const t = await lndKit.installProgram({ id: 'tor', description: 'Bitcoin Arena: Tor for Lightning', args: [...cmd, '-f', torKit.writeTorrc({ home: state.home, ports: torPorts })], home: state.home, boot,
+      // A TOR THAT ENDS IS STARTED AGAIN, however it ended (kanban #720): LND dials every peer through it
+      restart: 'always' });
     // TOR ANSWERING, NOT ONLY STARTED (2026-10-25): LND told to use a Tor that is not there shuts down - so LND gets Tor only once its
     // control port answers; else LND runs without it (clearnet only) and the node's state says why
     const up = !t.ok ? false : torKit.torUp ? await torKit.torUp({ port: torPorts.control, home: state.home }) : true;
@@ -79,7 +81,9 @@ export async function setUpOwnLnd({ state, release, fetcher = fetch, reach = rea
   }
   onStage('start');
   const cfg = lndKit.configureLnd({ home: state.home, chain, tor: torOn ? torPorts : null, externalIp: lnReach.reached ? lnReach.address : null });
-  const r = await lndKit.installProgram({ id: 'lnd', description: 'LND for Bitcoin Arena (custody)', args: lndKit.lndArgs({ lnd: got.lnd, lnddir: cfg.lnddir }), home: state.home, boot, partOf: torOn ? 'tor' : null });
+  const r = await lndKit.installProgram({ id: 'lnd', description: 'LND for Bitcoin Arena (custody)', args: lndKit.lndArgs({ lnd: got.lnd, lnddir: cfg.lnddir }), home: state.home, boot, partOf: torOn ? 'tor' : null,
+    // LND STARTS ONCE ITS TOR'S SOCKS PORT ANSWERS (kanban #720)
+    waitPort: torOn ? torPorts.socks : null });
   if (!r.ok) return { ok: false, why: r.why };
   state.save({ tor: torOn ? { bin: tor, ports: torPorts } : { why: torWhy ? torWhy : lnReach.reached ? `not needed: others reach LND at ${lnReach.address}:${LND_PORTS.p2p}` : tor ? 'Tor did not start' : 'no Tor: the release has none for this system (linux-arm64: apt install tor)' },
     lightning: { mode: 'own', restUrl: cfg.restUrl, tlsCert: cfg.tlsCert, macaroon: cfg.macaroon, passwordFile: cfg.passwordFile, lnddir: cfg.lnddir, startedMs: Date.now() } });

@@ -33,7 +33,7 @@ test('what it shows: six tiles, a switch for each advertised role and custody, t
 
 test('what it does: read from the seat, a switch flipped and counted, Review asks for the fee, Confirm sends, Undo puts it back', async () => {
   const posts = [];
-  const api = { get: async (p) => answers[p], signed: async (action, args) => ({ action, args }),
+  const api = { get: async (p) => answers[p.replace('?quiet=1', '')], signed: async (action, args) => ({ action, args }),
     post: async (path, body) => { posts.push(body.args); return body.args.post ? { ok: true, update: { txid: 'ab'.repeat(32) } } : { ok: true, plan: { feeSats: 612 } }; } };
   const c = driven(api);
   await c.componentDidMount();
@@ -54,7 +54,7 @@ test('what it does: read from the seat, a switch flipped and counted, Review ask
 test('a node not in the census yet: no switches, the reason said; the seat refusing the change is shown', async () => {
   const html = renderToStaticMarkup(React.createElement(RolesPanel, { node: 'me', initial: { loaded: true, mine: null, was: {}, now: {} } }));
   assert.doesNotMatch(html, /id="rl-/); assert.match(html, /isn.{1,6}t in the census yet/);
-  const c = driven({ get: async (p) => answers[p], signed: async () => ({}), post: async () => ({ ok: false, why: 'the bond wallet holds 200 sat' }) });
+  const c = driven({ get: async (p) => answers[p.replace('?quiet=1', '')], signed: async () => ({}), post: async () => ({ ok: false, why: 'the bond wallet holds 200 sat' }) });
   await c.componentDidMount(); c.toggle('settlement', false); await c.review();
   assert.deepEqual([c.state.step, c.state.message], ['idle', 'the bond wallet holds 200 sat']);
   assert.deepEqual(askOf({ play: false, settlement: true, relay: false, custody: false }), { roles: ['settlement'], custody: false });
@@ -62,7 +62,7 @@ test('a node not in the census yet: no switches, the reason said; the seat refus
 
 test('an unanswered /roles is not "not in the census": asked three times, then said, and Try again reads it (2026-10-22, guardian-6)', async () => {
   let calls = 0, down = true;
-  const api = { get: async (p) => { if (p === '/roles') { calls++; if (down) throw new Error('502'); } return answers[p]; } };
+  const api = { get: async (p) => { if (p === '/roles') { calls++; if (down) throw new Error('502'); } return answers[p.replace('?quiet=1', '')]; } };
   const c = new RolesPanel({ api, node: 'me', pause: async () => {} });
   c.setState = (u) => { Object.assign(c.state, typeof u === 'function' ? u(c.state) : u); };
   await c.componentDidMount();
@@ -76,7 +76,7 @@ test('an unanswered /roles is not "not in the census": asked three times, then s
 });
 
 test('a gateway that runs but holds no seat yet says Waiting, not Off (kanban #563, installer C 2026-10-21)', async () => {
-  const api = { get: async (p) => ({ ...answers, '/gateway-claim': null })[p], signed: async (action) => ({ action }),
+  const api = { get: async (p) => ({ ...answers, '/gateway-claim': null })[p.replace('?quiet=1', '')], signed: async (action) => ({ action }),
     post: async (path) => (path === '/owner/services' ? { ok: true, services: [{ id: 'gateway', running: true }] } : { ok: true }) };
   const c = driven(api);
   await c.componentDidMount();
@@ -93,9 +93,17 @@ test('a waiting gateway names what it waits for: the founding with its count, th
   assert.equal(gatewayWaitsFor({ founding: { waiting: true, ready: 3, needed: 10 } }), 'Waiting for its federation to be founded: 3 of 10 nodes ready. Then it pegs in and takes the gateway seat.');
   assert.equal(gatewayWaitsFor({ pegIn: { txid: 'e6'.repeat(32), confirmations: 37, needed: 100 } }), 'Waiting for its peg-in: 37 of 100 confirmations. Then it takes the gateway seat.');
   assert.match(gatewayWaitsFor({ pegIn: { txid: 'e6'.repeat(32), credited: true } }), /peg-in is credited/);
-  const api = { get: async (p) => ({ ...answers, '/gateway-claim': null, '/setup-status': { ok: true, founding: { waiting: true, ready: 3, needed: 10 } } })[p], signed: async (action) => ({ action }),
+  const api = { get: async (p) => ({ ...answers, '/gateway-claim': null, '/setup-status': { ok: true, founding: { waiting: true, ready: 3, needed: 10 } } })[p.replace('?quiet=1', '')], signed: async (action) => ({ action }),
     post: async (path) => (path === '/owner/services' ? { ok: true, services: [{ id: 'gateway', running: true }] } : { ok: true }) };
   const c = driven(api);
   await c.componentDidMount();
   assert.match(renderToStaticMarkup(c.render()), /id="tile-gateway"[\s\S]*?Waiting for its federation to be founded: 3 of 10 nodes ready/);
+});
+
+// QUIETLY, NO 404 IN THE CONSOLE (the 2026.1.9.11 install test): the claims asked with ?quiet=1, which the node answers 200 null when there is none
+test('the claims are asked quietly', async () => {
+  const asked = [];
+  const c = driven({ get: async (p) => { asked.push(p); return answers[p.replace('?quiet=1', '')]; } });
+  await c.componentDidMount();
+  assert.deepEqual(asked.filter((p) => /claim/.test(p)), ['/gateway-claim?quiet=1', '/liquidity-claim?quiet=1']);
 });

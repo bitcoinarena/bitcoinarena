@@ -22,7 +22,7 @@
  * THROUGH A REFERRAL PROGRAM (kanban #675): FRONTEND_PK=<33-byte website key hex> - the entry names it as a page that came by a ?ref= link
  * does; at settlement the key is paid 10% of the nodes' fee on this stake (GET /referral-fees on the seats then counts it).
  */
-import { readFileSync, copyFileSync } from 'node:fs';
+import { readFileSync, copyFileSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -42,6 +42,8 @@ import { clientSettlementSignerNodes } from '../../arena-client/src/committee.js
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
+import { settlementOf, forfeitOf } from '../../arena-client/src/page-lock.js';
+import { GATE_X } from '../../nextblock/src/rules/gate.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { entrySplit, lockEntry } from './entry-locks.mjs';
@@ -56,7 +58,10 @@ import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { drivenTape, say as sayTo, bedFrom, GENESIS_HASH } from '../test/window-fixture.js';
-import { NEXTBLOCK_CORES_V3 as NEXTBLOCK_CORES } from '../../nextblock/plugin/truck-cores.js';
+import { NEXTBLOCK_CORES_V3, NEXTBLOCK_CORES_V5 } from '../../nextblock/plugin/truck-cores.js';
+// EVERY CORE A ROUND MAY NAME: v3's and v5's (v6 plays v5's 0847, measured 2026-10-27 10:18Z - the run stopped after the locks with
+// "the round names core 0847c99f60e694e1, which nextblock does not hold")
+const NEXTBLOCK_CORES = new Map([...NEXTBLOCK_CORES_V3, ...NEXTBLOCK_CORES_V5]);
 import { MANIFEST_V3, GAME_ID_V3 } from '../../nextblock/plugin/nextblock-v3.js';
 import { itemsKeyFor, ownedItems, entryItemsFor, entryUnlocks } from '../../arena-client/src/item-buy.js';
 const env = process.env;
@@ -64,6 +69,11 @@ for (const k of [env.NODES ? 'NODES' : 'PORTS', 'INVITE_FILE', 'WASM_PKG', 'LNCL
   if (!env[k]) { console.error(`${k} is needed`); process.exit(2); }
 const log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
 const rand = (n) => new Uint8Array(randomBytes(n));
+// A SEAT THAT DROPS ONE CONNECTION IS ASKED AGAIN (2026.1.9.11 release check: a Next Block player's first handout POST got
+// "fetch failed" under load, and the run stopped with its stake locked; the other player's, 5 s later, went through at every seat)
+{ const once = globalThis.fetch;
+  globalThis.fetch = async (u, o) => { for (let i = 0; ; i++) { try { return await once(u, o); }
+    catch (e) { if (i >= 2 || !/fetch failed/.test(String(e && e.message))) throw e; await new Promise((ok) => setTimeout(ok, 1000)); } } }; }
 // A SEAT'S /play AT ITS OWN ADDRESS (the fixture's say() opens ws://127.0.0.1:<port>/play, so with NODES naming the
 // test host's seats every batch and mark went to a local port nothing listens on, and those signers never held the run)
 const sayAt = (node, message) => new Promise((resolve, reject) => {
@@ -78,18 +88,53 @@ const run = (bin, args) => new Promise((done) => execFile(bin, args, { timeout: 
   (err, out, errOut) => done({ ok: !err, out: String(out), err: String(errOut || (err && err.message) || '') })));
 const payer = (...a) => run(env.LNCLI, [`--lnddir=${env.PAYER_DIR}`, `--rpcserver=${env.PAYER_RPC}`, `--network=${env.ARENA_TN4_NETWORK || 'testnet4'}`, ...a]);
 const scalar = () => { for (;;) { const s = rand(32); const v = scalarFrom32(s); if (v > 0n && v < FIELD) return s; } };
-const evenPlayer = () => { let k; do { k = secp256k1.utils.randomSecretKey(); } while (secp256k1.getPublicKey(k, true)[0] !== 0x02); return schnorr.getPublicKey(k); };
+// the player's key with its secret: a winner collects its payout and its stake under it (redeemPayout / redeemStake)
+const evenPlayer = () => { let k; do { k = secp256k1.utils.randomSecretKey(); } while (secp256k1.getPublicKey(k, true)[0] !== 0x02); return { secret: k, pubkey: schnorr.getPublicKey(k) }; };
+
+// SEARCH=1: A RUN THAT DELIVERS, FOUND ON THE ROUND'S OWN CORE (2026.1.9.11 release check: drivenTape steers the source tree's
+// truck, and on the round's core 0847c99f it wrecked by tick 220 - FAILED, nothing to pay). The world is known before anything is
+// sent, so drives are tried on it until one delivers: full or part throttle, steered at a point past the gate, at most SEARCH_MS.
+// Measured offline on 0847c99f: 8 of 10 worlds give one, most in 1-17 s.
+function searchedTape(A, config, seedWord, N, startOpts, { ms = 60000 } = {}) {
+  const until = Date.now() + ms;
+  let tried = 0;
+  for (const thr of [0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 1]) for (const gain of [6, 3, 10]) for (const lead of [20, 0, 40]) for (const aimZ of [0, 10, -10, 20, -20]) {
+    if (Date.now() > until) return { tape: null, outcome: null, tried };
+    tried++;
+    const st = A.start(seedWord, config, { runTicks: N, ...startOpts });
+    const ev = A.eventsOf({ loads: bedFrom(0) });
+    const tape = [];
+    for (let t = 0; t < N; t++) {
+      if (A.result(st).outcome) { tape.push([0, 0, 0, 0, 0]); continue; }
+      const p = A.picture(st);
+      let off = Math.atan2(GATE_X / 65536 + lead - p.x / 65536, aimZ - p.z / 65536) / (2 * Math.PI) - p.heading / 65536;
+      off -= Math.round(off);
+      const w = [Math.round(thr * 65536), Math.max(-65536, Math.min(65536, Math.round(off * gain * 65536))), 0, 0, 0];
+      tape.push(w); ev.before(st, t); A.step(st, w);
+    }
+    const r = A.result(st);
+    if (r.outcome === 'DELIVERED') return { tape, outcome: r.outcome, score: r.score, tried, drive: { thr, gain, lead, aimZ } };
+  }
+  return { tape: null, outcome: null, tried };
+}
 
 // NODES: the seats by URL - a v2 round draws its signer nodes from all 14, seven of them on the test host
 const nodes = env.NODES ? env.NODES.split(',').map((u) => u.trim().replace(/\/+$/, '')) : env.PORTS.split(',').map((p) => `http://127.0.0.1:${p.trim()}`);
 const invite = readFileSync(env.INVITE_FILE, 'utf8').replace(/["\s]/g, '');
+// A PLAYER'S OWN REFERRAL LINK (kanban #681): REFERRER_SECRET_FILE=<64 hex identity secret> - the entry names that player's program
+// key, 02 and the identity key's x (identity.js referralOf), as a page opened by their ?ref= link does; with REFERRER_COLLECT=1 the run
+// then collects the share the seats paid to it, by refund under that secret, as the referrer's own wallet does (collectZaps)
+const REFERRER_SECRET = env.REFERRER_SECRET_FILE ? fromHex(readFileSync(env.REFERRER_SECRET_FILE, 'utf8').trim()) : null;
+const REFERRAL_PK = REFERRER_SECRET ? toHex(refundKeyOf(schnorr.getPublicKey(REFERRER_SECRET))) : env.FRONTEND_PK;
 let code = 0;
 try {
   // WHICH ROUND: the one named, else the next nextblock round of the series that is open for entries and starts 75 s ahead
   if (!env.ROUND) {
     // THE FIRST SEAT THAT ANSWERS (2026-10-26: a seat held for minutes stopped every try at "fetch failed" before any step)
     let list = null;
-    for (const n of nodes) { try { const r = await fetch(`${n}/rounds`, { signal: AbortSignal.timeout(30000) }); if (r.ok) { list = (await r.json()).rounds; break; } } catch { /* the next seat */ } }
+    // ONLY THE NEXT ROUNDS OF EACH SERIES, as the lobby asks (measured 2026-10-27 09:27Z: the whole list was 19 MB and took 31.5 s, past the
+    // 30 s this waited, so every seat counted as not answering)
+    for (const n of nodes) { try { const r = await fetch(`${n}/rounds?next=2`, { signal: AbortSignal.timeout(30000) }); if (r.ok) { list = (await r.json()).rounds; break; } } catch { /* the next seat */ } }
     if (!list) throw new Error('no seat answered GET /rounds');
     const now = Date.now();
     const next = list.filter((x) => x.entryOpen && x.game && x.game.name === 'nextblock' && Number(x.startTimeMs) - now > 75000
@@ -144,7 +189,10 @@ try {
   let att;
   for (const until = Date.now() + 100000; ;) {
     att = await attestedClaimKey({ round: { ...c, id: rid }, signerNodes: c.nodes, nodes, curve: pageCurve });
-    if (att.ok || !/making it now/.test(String(att.why)) || Date.now() >= until) break;
+    // AND WHILE TOO FEW OF THEM ATTEST IT YET (2026.1.9.11 check, 2026-10-27 09:31Z: "3 of 7 signer nodes attest this claim key, and this
+    // round needs 5" 2 s after the seating - the rest still dealing): asked again, each count said
+    if (att.ok || !/making it now|signer nodes attest this claim key/.test(String(att.why)) || Date.now() >= until) break;
+    log({ step: 'claim key forming', why: String(att.why).slice(0, 160) });
     await new Promise((r) => setTimeout(r, 5000));
   }
   if (!att.ok) throw new Error(`claim key: ${att.why}`);
@@ -159,6 +207,9 @@ try {
   const { LockClient } = wasmMod;
   const held = new Map();
   const memStore = { entries: () => JSON.stringify([...held]), put: (k, v) => { held.set(k, v); }, remove: (k) => { held.delete(k); } };
+  // NOTHING PAID INTO A FEDERATION THE ROUND DOES NOT NAME (two RPS runs took a federation-B table with the federation-A wallet)
+  if (String(LockClient.federationIdOf(invite)).toLowerCase() !== toHex(c.federationId))
+    throw new Error(`the round names federation ${toHex(c.federationId).slice(0, 8)}, this wallet pays into ${String(LockClient.federationIdOf(invite)).slice(0, 8)}: nothing paid`);
   const lc = await LockClient.join(invite, LockClient.federationIdOf(invite), toHex(rand(32)), memStore);
   const rule = JSON.parse(await lc.feeRule());
   const gate = feeLockPays({ contract: c, fees: { ppm: BigInt(rule.fee_ppm), baseMsat: BigInt(rule.fee_base_msat) } });
@@ -185,7 +236,8 @@ try {
     balanceMsat: await lc.balanceMsat() });
 
   // LOCKED TO THE ATTESTED CLAIM KEY, AND HANDED TO EVERY SIGNER NODE
-  const s = { p: scalar(), player: evenPlayer() };
+  const me = evenPlayer();
+  const s = { p: scalar(), player: me.pubkey };
   s.point = feldmanGroup.pointFromScalar(scalarFrom32(s.p) % FIELD);
   const t2 = Date.now();
   const locks = await lockEntry({ lc, c, split, stakePoint: s.point, player: s.player, claimPk: att.claimPk, gate, rand });
@@ -208,7 +260,7 @@ try {
     // THE OPERATOR THIS PLAYER DECLARES (§5A.13): OPERATOR_ID=<64 hex> - a committee node advertising the same operator
     // is conflicted in this round: it neither signs nor earns
     ...(/^[0-9a-f]{64}$/.test(env.OPERATOR_ID || '') ? { operatorId: fromHex(env.OPERATOR_ID) } : {}),
-    ...(/^0[23][0-9a-f]{64}$/.test(env.FRONTEND_PK || '') ? { frontendPk: fromHex(env.FRONTEND_PK) } : {}) };
+    ...(/^0[23][0-9a-f]{64}$/.test(REFERRAL_PK || '') ? { frontendPk: fromHex(REFERRAL_PK) } : {}) };
   // THE PLAYER'S ITEMS, as the page's join names them (ARENA_ITEMS_FOR_ENTRY): owned by the seed's items key, in a round of version 10+
   let unlocks = [];
   if (env.ITEMS_SEED_FILE) {
@@ -220,15 +272,27 @@ try {
     log({ step: 'items', itemsKey: toHex(key.pubkey).slice(0, 16), owned: owned.map((o) => `${o.itemId} ${o.id.slice(0, 8)}`), entry: entry.items.map((i) => `${i.itemId} ${toHex(i.purchaseId).slice(0, 8)}`), unlocks: unlocks.map((u) => u.slice(0, 16)) });
     if (!entry.items.length) throw new Error('the seed owns no item this round\'s game sells');
   }
-  const eid = entryId(entry);
   // THE RUN: the world the round's randomness seeds, driven to the gate, under the round's core and run length
-  const seed = await worldSeedFor({ entry, round: env.ROUND, nodes, contract: c });
   const core = NEXTBLOCK_CORES.get(toHex(c.simCoreHash));
   if (!core) throw new Error(`the round names core ${toHex(c.simCoreHash).slice(0, 16)}, which nextblock does not hold`);
   const config = core.configs.get(toHex(c.configHash)) || {};
   const N = c.blockTicks;
-  const drive = drivenTape(seed.seedWord, N);
   const A = core.adapter;
+  // A WORLD WITH NO DELIVERING DRIVE IS DRAWN AGAIN (its own world secret) while the round's world is the player's own
+  let seed, drive;
+  for (let tries = 1; ; tries++) {
+    seed = await worldSeedFor({ entry, round: env.ROUND, nodes, contract: c });
+    if (!env.SEARCH) { drive = drivenTape(seed.seedWord, N); break; }
+    drive = searchedTape(A, config, seed.seedWord, N, unlocks.length ? { items: unlocks } : {}, { ms: Number(env.SEARCH_MS || 60000) });
+    log({ step: 'searched', tries, drivesTried: drive.tried, outcome: drive.outcome, score: drive.score, drive: drive.drive });
+    if (drive.tape) break;
+    if (worldIsShared(c, sharedWorldOf(c.gameId)) || tries >= 3) throw new Error('no delivering drive found for this world');
+    entry.worldSecret = rand(32);
+  }
+  const eid = entryId(entry);
+  if (env.KEYS_FILE) appendFileSync(env.KEYS_FILE, `${JSON.stringify({ at: new Date().toISOString(), round: toHex(rid), entry: toHex(eid),
+    secret: toHex(me.secret), stake: `${toHex(locks.stake.outpoint.txid)}:${locks.stake.outpoint.outIdx}`,
+    fee: locks.fee ? `${toHex(locks.fee.outpoint.txid)}:${locks.fee.outpoint.outIdx}` : null })}\n`);
   const st = A.start(seed.seedWord, config, { runTicks: N, ...(unlocks.length ? { items: unlocks } : {}) });
   const ev = A.eventsOf({ loads: bedFrom(0) });
   const stateAt = [];
@@ -259,8 +323,17 @@ try {
     const h = await fetch(`${n}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
     const en = await fetch(`${n}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
     const enWhy = (await en.text()).trim().slice(0, 140);
-    if (hand) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(hand)) });
-    const l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(lk.fields)) });
+    // ASKED AGAIN UNTIL THE SEAT SEES THE LOCK, as the page's market.js asks (2026.1.9.11 release check: the RPS run handed
+    // its lock 2 s after the lock tx and all 7 signer nodes said "the federation holds no lock"; Next Block's 7 s later passed)
+    let l;
+    for (const until = Date.now() + 45000; ;) {
+      if (hand) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(hand)) });
+      l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(lk.fields)) });
+      if (l.status !== 409 || Date.now() >= until) break;
+      const why = await l.clone().text();
+      if (!/holds no lock/.test(why)) break;
+      await new Promise((ok) => setTimeout(ok, 3000));
+    }
     // ITS FIRST MARK AT ONCE (measured 2026-10-14: published 30 s after the seats stored the entry, past their start
     // deadline - 900 ticks + 5 s from the stake seen - two seats signed FORFEIT at the door and the entry went VOID), as the page
     // sends it a second into the run; the rest after every seat holds the entry
@@ -296,7 +369,7 @@ try {
     await new Promise((ok) => setTimeout(ok, 15000));
     try { settled = await settlementBy({ entryId: eid, signerNodes: c.nodes, nodes }); } catch (e) { settled = { error: e.message }; }
     log({ step: 'settlement', at: Math.round((Date.now() - endMs) / 1000), said: settled });
-    if ((settled && (settled.decided || settled.state === 'ACCEPTED' || settled.settled)) || Date.now() > until) break;
+    if ((settled && (settled.decided || settled.state === 'ACCEPTED' || settled.settled || settled.finality === 'FINAL')) || Date.now() > until) break;
   }
   const results = [];
   for (const n of nodes) {
@@ -304,6 +377,56 @@ try {
     catch (e) { results.push({ node: n, error: e.message }); }
   }
   log({ step: 'results', entry: toHex(eid), results });
+
+  // THE PLAYER COLLECTS, as the page's redeemPayout and redeemStake do (the owner HARD for 2026.1.9.11: "Auszahlung muss
+  // funktionieren"): a payout contract to this player's refund key, by refund under that key, then its stake and fee lock by
+  // the seats' forfeit. Asked until a seat holds the accepted settlement, at most COLLECT_MS (15 min).
+  let stl = null;
+  for (const stop = Date.now() + Number(env.COLLECT_MS || 15 * 60000); ;) {
+    stl = await settlementOf({ roundId: rid, nodes });
+    if (stl.ok || Date.now() > stop) break;
+    log({ step: 'settlement not accepted yet', why: stl.why.slice(0, 200) });
+    await new Promise((ok) => setTimeout(ok, 30000));
+  }
+  if (!stl.ok) throw new Error(`no accepted settlement to collect from: ${stl.why}`);
+  log({ step: 'settled', txid: stl.txid.slice(0, 16), from: stl.from, payouts: stl.moved.payouts.length });
+  const before = await lc.balanceMsat();
+  const mine = toHex(refundKeyOf(s.player));
+  const at = stl.moved.payouts.findIndex((x) => x.kind === 'qualifier' && String(x.pk).toLowerCase() === mine);
+  let payout = null;
+  if (at >= 0) {
+    const x = stl.moved.payouts[at];
+    const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(x.msat), claimPk: mine, refundPk: mine, expiration: 0 };
+    const said = JSON.parse(await lc.refund(stl.txid, at, JSON.stringify(fields), toHex(me.secret)));
+    payout = { msat: String(x.msat), outIdx: at, accepted: said.accepted === true, ...(said.accepted === true ? {} : { said: JSON.stringify(said).slice(0, 200) }) };
+  }
+  const stakes = [];
+  for (const [l, kind] of [[locks.stake, 'stake'], [locks.fee, 'fee']]) {
+    if (!l) continue;
+    const f = await forfeitOf({ roundId: rid, entryId: toHex(eid), nodes, lock: kind });
+    if (!f.ok) { stakes.push({ kind, forfeit: f.why.slice(0, 160) }); continue; }
+    const said = JSON.parse(await lc.redeem(toHex(l.outpoint.txid), Number(l.outpoint.outIdx), JSON.stringify(lockFieldsToJson(l.fields)), f.signature, toHex(me.secret)));
+    stakes.push({ kind, accepted: said.accepted === true, ...(said.accepted === true ? {} : { said: JSON.stringify(said).slice(0, 200) }) });
+  }
+  log({ step: 'collected', payout, stakes, balanceBeforeMsat: before, balanceAfterMsat: await lc.balanceMsat() });
+
+  // THE REFERRER COLLECTS ITS SHARE (#681): every payout the seats list under its key (GET /donations?key=), spent by refund
+  if (REFERRER_SECRET && env.REFERRER_COLLECT) {
+    const found = new Map();
+    for (const n of nodes) {
+      try { const r = await fetch(`${n}/donations?key=${REFERRAL_PK}&since=0`); if (r.ok) for (const d of ((await r.json()).donations || [])) if (d && d.outpoint) found.set(d.outpoint, d); } catch { /* another seat */ }
+    }
+    const mine = [...found.values()].filter((d) => d.roundId === toHex(rid) || String(d.roundId || '').startsWith(toHex(rid).slice(0, 16)));
+    const refBefore = await lc.balanceMsat();
+    const got = [];
+    for (const d of mine) {
+      const [txid, vout] = String(d.outpoint).split(':');
+      const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(d.amountMsat), claimPk: REFERRAL_PK, refundPk: REFERRAL_PK, expiration: 0 };
+      const said = JSON.parse(await lc.refund(txid, Number(vout), JSON.stringify(fields), toHex(REFERRER_SECRET)));
+      got.push({ outpoint: d.outpoint, item: d.item, msat: String(d.amountMsat), accepted: said.accepted === true, ...(said.accepted === true ? {} : { said: JSON.stringify(said).slice(0, 160) }) });
+    }
+    log({ step: 'referral collected', key: REFERRAL_PK.slice(0, 16), listed: found.size, thisRound: mine.length, got, balanceBeforeMsat: refBefore, balanceAfterMsat: await lc.balanceMsat() });
+  }
 } catch (e) {
   code = 1;
   log({ step: 'stopped', why: String(e.stack || e.message).slice(0, 600) });

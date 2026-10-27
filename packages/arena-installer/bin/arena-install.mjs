@@ -40,6 +40,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { createWizard } from '../src/wizard.js';
+import { nodeServiceWords } from '../src/service.js';
 import { nodeState, defaultHome } from '../src/state.js';
 import { openQuickTunnel } from '../src/tunnel.js';
 import { setupLinkMode } from '../src/session.js';
@@ -302,7 +303,9 @@ const wizard = createWizard({ state, release, seatPort, bridgePort, cloudflared,
   onDone: () => {
   // the public address when the node has one (2026-10-18: "Always show the public address and not 127.0.0.1 when it's not localhost only")
   const pub = (state.read().reach || {}).url;
-  console.log(`\nDone. Your node runs as the user service arena-node.\nIts owner page: ${pub || `http://127.0.0.1:${seatPort}`}/Dashboard/owner${pub ? '' : ' (this machine only)'}`);
+  // its own service's name and the owner page's own spelling (the 2026.1.9.11 install test, kanban #704: "user service arena-node" on a macOS, and
+  // /Dashboard/owner with a capital D)
+  console.log(`\nDone. Your node runs as ${nodeServiceWords()}.\nIts owner page: ${pub || `http://127.0.0.1:${seatPort}`}/dashboard/owner${pub ? '' : ' (this machine only)'}`);
   const l = state.read().launchers;
   if (l && l.command && l.command.name) console.log(`On the command line: ${l.command.name} status | doctor | restart <service> | logs | config${l.command.note ? ` (${l.command.note})` : ''}`);
   if (l) console.log(`To start it again: ${l.app ? `open "Bitcoin Arena" in Applications (${l.app})` : l.menu && /Start Menu/.test(l.menu) ? 'Start menu > Bitcoin Arena' : 'Bitcoin Arena in your desktop menu'}, or run ${l.start}`);

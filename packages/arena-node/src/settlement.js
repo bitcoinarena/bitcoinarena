@@ -1299,7 +1299,15 @@ export class LockSettlement {
       ? `claimed ${stakeClaims} loser lock(s), ${m.plan.poolMsat} msat; paid ${qualifiers} qualifier(s) ${m.plan.paidMsat} msat${remainder}${feePart}`
       : `the guardians refused it: ${sent.error}`;
     this.round.putLockSettlement({ roundId: roundIdBytes, txid: m.txid, message: m.message, signature, state, why });
-    if (sent.accepted) this.indexDonationKeys(roundIdBytes, m.txid, m.plan);
+    // SAID, AND NEVER LOST IN A THROW (2026.1.9.11 release check: no seat held a settlement row since 10-25 - the website share of
+    // settlement ed86a2fa (800 msat) was listed under its key nowhere, so a referrer's wallet could never collect it)
+    if (sent.accepted) {
+      try {
+        const n = this.indexDonationKeys(roundIdBytes, m.txid, m.plan);
+        const kinds = (m.plan.payouts || []).filter((p) => SETTLEMENT_ROW_KINDS.has(p.kind)).map((p) => p.kind);
+        console.log(`[settle] ${toHex(roundIdBytes).slice(0, 16)} donation keys of the settlement: ${n} row(s) kept${kinds.length ? ` (${kinds.join(', ')})` : ''}`);
+      } catch (e) { console.error(`[settle] ${toHex(roundIdBytes).slice(0, 16)} donation keys not indexed: ${e.message}`); }
+    }
     const winnings = sent.accepted ? await this.sendWinnings(roundIdBytes) : null;
     return { ok: sent.accepted, state, why, txid: m.txid, signature, plan: m.plan, answer: sent, winnings };
   }
@@ -1580,7 +1588,7 @@ export class LockSettlement {
         answers.push({ base, bytes: new Uint8Array(await r.arrayBuffer()) });
       } catch (e) { answers.push({ base, why: e.message }); }
     }
-    const counted = countPlanTaken({ own, answers, seats: contract.nodes, planId });
+    const counted = countPlanTaken({ own, answers, seats: contract.nodes, planId, slots: contract.settlementSlots });
     if (counted.final) {
       const certificate = joinCertificate(counted.certificate);
       this.planCertificates.set(lateEntryId ? `${toHex(roundIdBytes)}:${toHex(lateEntryId)}` : toHex(roundIdBytes), { planId, certificate });
@@ -1612,7 +1620,7 @@ export class LockSettlement {
     if (toHex(planId) !== toHex(bytes.subarray(0, 32))) return refuse('that certificate is for another plan than the one this seat kept');
     const records = splitCertificate(bytes.subarray(32));
     const counted = countPlanTaken({ own: records[0], answers: records.slice(1).map((b, i) => ({ base: `record ${i + 1}`, bytes: b })),
-      seats: contract.nodes, planId });
+      seats: contract.nodes, planId, slots: contract.settlementSlots });
     if (!counted.final) return refuse(`${counted.agreed} of the ${counted.needed} seats in that certificate stand here: ${counted.refused.join('; ')}`);
     this.planCertificates.set(lateEntryId ? `${toHex(roundIdBytes)}:${toHex(lateEntryId)}` : toHex(roundIdBytes),
       { planId, certificate: joinCertificate(counted.certificate) });

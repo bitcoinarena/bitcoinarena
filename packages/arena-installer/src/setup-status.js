@@ -87,8 +87,21 @@ export async function setupStatus({ home, reader = chainReader, nowMs = Date.now
   // founding): a node drawn into a founding whose gateway runs in no federation yet, with no peg-in, waits for that founding - not for 100 blocks
   const founding = (s.federation || {}).mode === 'drawn' && more.gateway && more.gateway.ok && !(more.gateway.federations > 0) && !base.pegIn
     ? { waiting: true, sinceMs: Number((s.federation || {}).atMs) || null } : null;
-  const all = { ...base, ...more, founding };
+  const all = { ...base, ...more, founding, later: await leftForLater(s) };
   return { ...all, blockMs, blockMsMeasured: !!base.blockMs, etas: setupEtas(all, { blockMs, lndPerMs }) };
+}
+
+/**
+ * LIGHTNING LEFT FOR LATER (kanban #711, the 2026.1.9.11 install test: the Setup card said "Complete" on a custody node with no LND and no
+ * gateway - nothing was set up, so there was no row to say so): { lnd, gateway, why, fix } for a custody node whose gateway was never set
+ * up (add-custody.js gatewayGap: `fix` when the owner area's Services card can set it up), else null.
+ */
+export async function leftForLater(s) {
+  try {
+    const { gatewayGap } = await import('./add-custody.js');
+    const gap = gatewayGap(s || {});
+    return gap ? { lnd: !(s.lightning && (s.lightning.restUrl || s.lightning.pubkey)), gateway: true, why: gap.why, fix: !!gap.fix } : null;
+  } catch { return null; }
 }
 
 // LND's last heights read (per node home), to tell how fast it catches up: blocks per ms between two reads at least a minute apart

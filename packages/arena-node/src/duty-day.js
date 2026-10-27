@@ -261,7 +261,7 @@ export function createDayDuty(o) {
   };
   const familyDraw = async (fromMs, toMs) => {
     let best = { drawn: 0, undrawn: 0, of: 0, why: '' };
-    for (const id of await familyIds()) { const d = guard.drawCount(await seatRounds(), { gameId: id, fromMs, toMs }); if (d.drawn > best.drawn || (!best.of && d.of)) best = d; }
+    for (const id of await familyIds()) { const d = guard.drawCount(await seatRounds(), { gameId: id, fromMs, toMs, nowMs: now() }); if (d.drawn > best.drawn || (!best.of && d.of)) best = d; }
     return best;
   };
   /** One kept posting judged (postingVerdict), its fee raised once if it is still unconfirmed close to its committee time. */
@@ -278,7 +278,7 @@ export function createDayDuty(o) {
     const cut = { firstHeight: Math.max(view.firstHeight, idx.tip - 299), blocks: view.blocks.slice(-300) };
     const beaconAt = beaconBlockIn({ committeeTimeMs: BigInt(committeeMs) }, cut);
     const deep = beaconAt !== null && pubHeight !== null && pubHeight < beaconAt && idx.tip - beaconAt + 1 >= guard.DUTY_BEACON_DEPTH;
-    const draw = !deep ? null : k.gameId ? guard.drawCount(await seatRounds(), { gameId: k.gameId, fromMs: Number(k.firstStartMs ?? day.startMs), toMs: day.endMs })
+    const draw = !deep ? null : k.gameId ? guard.drawCount(await seatRounds(), { gameId: k.gameId, fromMs: Number(k.firstStartMs ?? day.startMs), toMs: day.endMs, nowMs: now() })
       : await familyDraw(day.startMs, day.endMs);
     // CONFLICTED (a fee raise elsewhere replaced the coin under it, 10-26 d2a9c0c7 / 094e6875): the wallet's confirmations < 0
     let conflicted = false;
@@ -316,7 +316,10 @@ export function createDayDuty(o) {
       const foreign = [...idx.markers, ...mempool].filter((m) => m.slot === slot && (m.tag === tag || m.tag === emergencyTag) && !ks.some((k) => k.txid === m.txid));
       if (foreign.some((m) => m.tag === tag)) verdicts.push({ state: 'pending', stage: 'foreign', why: `posted by another node; drawn on ${drawnNow.drawn} of ${drawnNow.of} seats` });
       const verdict = guard.dayVerdict(verdicts);
-      const emergencies = ks.filter((k) => k.emergency).length + foreign.filter((m) => m.tag === emergencyTag).length;
+      // A DEAD EMERGENCY GRID IS NOT ONE OF THE DAY'S (2026.1.9.11 release check, Up/Down 2026-10-27: two emergency grids died - one
+      // published past its beacon, one whose census block the chain left - and with a third node's marker the day reached the cap,
+      // so no grid that could be drawn was ever posted): only this node's postings that are not dead count against the cap
+      const emergencies = ks.filter((k) => k.emergency && !(k.verdict && k.verdict.state === 'dead')).length + foreign.filter((m) => m.tag === emergencyTag).length;
       const inFlight = ks.some((k) => k.emergency && k.verdict && k.verdict.state === 'pending')
         || foreign.some((m) => m.tag === emergencyTag && (m.height === null || idx.tip - m.height < 15));
       const postedAny = ks.length > 0 || foreign.length > 0;
@@ -425,7 +428,7 @@ export function createDayDuty(o) {
           const pay = await canPay();
           // A NODE THAT CANNOT PAY SAYS SO AND SKIPS: the day falls to the next node in order an hour later (duty.js dayPostDue)
           if (!pay.ok) { seen.wouldPost.push({ app: game, slot, why: pay.why }); if (lastSaid !== `${said} nopay`) say({ dutyDay: 'DUE, CANNOT PAY', item, slot, why: pay.why }); lastSaid = `${said} nopay`; }
-          else { try { await publish(slot); } catch (e) { fail(`${game} ${new Date(targetDay(slot).startMs).toISOString().slice(0, 10)}: ${e.message}`); say({ dutyDay: 'NOT PUBLISHED', item, slot, why: e.message }); } }
+          else { try { await publish(slot); } catch (e) { fail(`${game} ${new Date(targetDay(slot).startMs).toISOString().slice(0, 10)}: ${e.message}`); say({ dutyDay: 'NOT PUBLISHED', item, slot, why: e.message, at: String(e.stack || '').split('\n').slice(1, 4).map((l) => l.trim()).join(' < ') }); } }
         }
       }
       await watch(view, idx, await mempoolMarkers(), rank, ready);

@@ -16,6 +16,11 @@ export const UNIT = unitName('node');
 export const BRIDGE_UNIT = unitName('chain-bridge');
 export const TUNNEL_UNIT = unitName('tunnel');
 
+// STARTED ONCE THE PORT IT DIALS ANSWERS (kanban #720, the owner's LND log 2026-10-27: "dial proxy failed (connection refused)"): After=
+// orders the start only - LND came up before Tor's SOCKS port listened and dialled into nothing. The unit waits up to 90 s for the port,
+// else fails and is started again 30 s later (Restart). `$$` is a `$` to the shell: systemd expands a single one itself.
+export const waitPortLine = (port) => `ExecStartPre=/bin/bash -c 'for i in $$(seq 1 90); do (echo > /dev/tcp/127.0.0.1/${Number(port)}) 2>/dev/null && exit 0; sleep 1; done; echo "nothing listens on 127.0.0.1:${Number(port)}"; exit 1'`;
+
 /** The unit's directory: $XDG_CONFIG_HOME/systemd/user. */
 export const unitDir = (env = process.env) => join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'systemd', 'user');
 
@@ -132,6 +137,12 @@ export function launchdPlist({ node, release, home, port, boot = true, env = {} 
 // WINDOWS: A SCHEDULED TASK (ruling 2: no custody on Windows - fedimint does not build there) - "Arena node",
 // at logon (or at start-up with the user's password), restarted on failure, running a .cmd that starts the seat from arena.conf.
 export const WINDOWS_TASK = named('Arena node', ' ');
+/**
+ * THE NODE'S SERVICE, AS THE OWNER FINDS IT ON THIS SYSTEM (the 2026.1.9.11 install test, kanban #704: the installer's last words said "the user
+ * service arena-node" on a macOS whose agent is io.bitcoin-arena.node--mt19911): its name with this node's instance, in that system's word.
+ */
+export const nodeServiceWords = (platform = process.platform) => (platform === 'darwin' ? `the launch agent ${LAUNCHD_LABEL}`
+  : platform === 'win32' ? `the scheduled task "${WINDOWS_TASK}"` : `the user service ${UNIT}`);
 export function windowsLauncher({ node, release, home, port }) {
   return ['@echo off', 'rem The Arena node, written by the installer: the seat started from its settings, arena.conf (bitcoinarena config).',
     `cd /d "${release}\\packages\\arena-node"`,
@@ -221,7 +232,7 @@ async function installWindows({ node, release, home, port, tunnelArgs, boot, sh,
  * started again and again, "spawn scheduled, last exit 2"): stopped and its file removed - the launch agent, the unit, or the launcher with its
  * logon task or Startup script. Nothing to do when it is not there. Answers { ok, removed }.
  */
-export async function removeProgram({ id, home, env = process.env, sh = run, platform = process.platform }) {
+export async function removeProgram({ id, home, env = process.env, sh = run, platform = process.platform, unit: unitGiven = null }) {
   if (platform === 'darwin') {
     const label = `${LAUNCHD_LABEL}.${id}`;
     const file = join(env.HOME || homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
@@ -240,7 +251,8 @@ export async function removeProgram({ id, home, env = process.env, sh = run, pla
     rmSync(vbs, { force: true }); rmSync(file, { force: true });
     return { ok: true, removed: true };
   }
-  const unit = unitName(id), file = join(unitDir(env), unit);
+  // `unit` names the file outright: another node of this machine updated from this process has its own (instance) name (kanban #719)
+  const unit = unitGiven || unitName(id), file = join(unitDir(env), unit);
   if (!existsSync(file)) return { ok: true, removed: false };
   await sh('systemctl', ['--user', 'disable', '--now', unit]);
   rmSync(file, { force: true });
@@ -253,7 +265,8 @@ export async function removeProgram({ id, home, env = process.env, sh = run, pla
  * io.bitcoin-arena.<id>, the task "Arena <id>"), `args` is its command line, `log` where its output goes. Started now; at boot too
  * when `boot`. `vars`: environment the program needs (secrets too - kept only in files of this user, 0600). Answers { ok, why }.
  */
-export async function installProgram({ id, description, args, home, boot = true, vars = null, partOf = null, env = process.env, sh = run, platform = process.platform, againOn = null }) {
+export async function installProgram({ id, description, args, home, boot = true, vars = null, partOf = null, env = process.env, sh = run, platform = process.platform, againOn = null,
+  waitPort = null, restart = 'on-failure' }) {
   const varLines = Object.entries(vars || {}).map(([k, v]) => { if (!/^[A-Z_][A-Z0-9_]*$/.test(k) || /[\r\n]/.test(String(v))) throw new Error(`bad variable ${k}`); return [k, String(v)]; });
   if (platform === 'darwin') {
     const dir = join(env.HOME || homedir(), 'Library', 'LaunchAgents');
@@ -311,8 +324,8 @@ After=network-online.target${partOf ? ` ${unitName(partOf)}` : ''}
 Wants=network-online.target
 ${partOf ? `# restarted with arena-${partOf}: LND's onion service lives in that Tor and is gone when it restarts (measured 2026-10-18 on the test host)\nPartOf=${unitName(partOf)}\n` : ''}
 [Service]
-${varLines.length ? `EnvironmentFile=${envFile}\n` : ''}ExecStart=${args.join(' ')}
-Restart=on-failure
+${varLines.length ? `EnvironmentFile=${envFile}\n` : ''}${waitPort ? `${waitPortLine(waitPort)}\n` : ''}ExecStart=${args.join(' ')}
+Restart=${restart}
 RestartSec=30
 TimeoutStopSec=600
 Nice=10

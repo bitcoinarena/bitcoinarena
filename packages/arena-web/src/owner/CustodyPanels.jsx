@@ -160,7 +160,8 @@ export class LiquidityPanel extends React.Component {
   }
   componentDidMount() { if (!this.state.loaded && this.props.api) this.read(); }
   async read() {
-    let c = null; try { c = await this.props.api.get('/liquidity-claim'); } catch { c = null; }
+    // ?quiet=1: none is a 200 null, not a 404 in the browser's console (the 2026.1.9.11 install test)
+    let c = null; try { c = await this.props.api.get('/liquidity-claim?quiet=1'); } catch { c = null; }
     this.setState({ loaded: true, claim: c });
   }
   async newAddress() {

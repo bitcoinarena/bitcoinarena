@@ -11,7 +11,7 @@ import React from 'react';
 import { NeedsPanel, ordered } from './NeedsPanel.jsx';
 import { CopyButton } from '../design/components.jsx';
 
-export const SECTIONS = [['overview', 'Overview'], ['roles', 'Roles'], ['bond', 'Bond'], ['services', 'Services'], ['apps', 'Apps'], ['release', 'Updates'],
+export const SECTIONS = [['overview', 'Overview'], ['roles', 'Roles'], ['rounds', 'Rounds'], ['bond', 'Bond'], ['services', 'Services'], ['apps', 'Apps'], ['release', 'Updates'],
   ['money', 'Donations'], ['referrer', 'Referrer'], ['emergency', 'Emergency code'], ['leave', 'Leave'], ['developer', 'Developer'], ['login', 'Your login']];
 const HOW = { words: 'your 24 words', nsec: 'Nostr (nsec)', extension: 'Nostr (extension)', bunker: 'Nostr (remote signer)' };
 /** a place a panel is drawn into: React draws it empty and never touches what the page puts in it */
@@ -24,7 +24,12 @@ export class OwnerArea extends React.Component {
     this.state = { section: this.fromHash(), words: null, emShown: false, manifest: '', signed: null, signErr: '', copied: false };
     this.onHash = () => { this.setState({ section: this.fromHash() }); window.scrollTo(0, 0); };
   }
-  fromHash() { const want = (typeof location !== 'undefined' ? location.hash : '').slice(1) || 'overview'; return SECTIONS.some(([x]) => x === want) ? want : 'overview'; }
+  // A SECTION NAMED BESIDE THE NODE (kanban #728: the dashboard's "Set up the bond" opens the site's page at #node=...&section=bond)
+  fromHash() {
+    const raw = (typeof location !== 'undefined' ? location.hash : '').slice(1);
+    const want = (raw.includes('=') ? new URLSearchParams(raw).get('section') : raw) || 'overview';
+    return SECTIONS.some(([x]) => x === want) ? want : 'overview';
+  }
   componentDidMount() { window.addEventListener('hashchange', this.onHash); }
   componentWillUnmount() { window.removeEventListener('hashchange', this.onHash); }
   sign() {
@@ -50,7 +55,11 @@ export class OwnerArea extends React.Component {
             {/* THE NODE AT A GLANCE (kanban #565): one card per fact, the label small, the value large */}
             <div className="stats">
               <div className="stat"><span>Node</span><b className="mono">{p.node.slice(0, 12)}… <CopyButton text={p.node} label="Copy the node key" /></b></div>
-              <div className="stat"><span>Custody</span><b className={p.guardian ? 'ok' : undefined}>{p.guardian ? 'Guardian' : 'No custody'}</b></div>
+              {/* GREEN ONLY WHILE ITS GUARDIAN RUNS (the 2026.1.9.11 install test: "Custody: Guardian" in green while this node's fedimintd had
+                ended at its start): `guardianUp` is the Services card's guardian row - true, false, or null while it has not answered */}
+              <div className="stat"><span>Custody</span>{!p.guardian ? <b>No custody</b> : p.guardianUp === false
+                ? <><b className="bad">Guardian, not running</b><small><a href="#services">See Services</a></small></>
+                : <b className={p.guardianUp ? 'ok' : undefined}>Guardian</b>}</div>
               <div className="stat"><span>Apps</span><b>{games.length}</b><small>{games.length ? games.map((g) => `${g.name} v${g.version ?? '?'}`).join(', ') : 'none installed'}</small></div>
               <div className="stat"><span>Owner since</span><b>{new Date(p.claimedAtMs).toISOString().slice(0, 10)}</b><small>signed in with {HOW[p.how] || p.how}</small></div>
               <div className="stat"><span>Owner key</span><b className="mono">{p.owner.slice(0, 12)}… <CopyButton text={p.owner} label="Copy the owner key" /></b></div>
@@ -59,8 +68,12 @@ export class OwnerArea extends React.Component {
             <Place id="roles" />
             <h3 className="sh">Custody (guardian)</h3><Place id="custody" />
             <h3 className="sh">Liquidity provider</h3><Place id="liquidity" /></>)}
+          {/* THE ROUNDS THIS NODE IS DRAWN FOR (kanban #715): drawn by RoundsPanel from GET /owner/rounds */}
+          {sec('rounds', <><h2>Rounds</h2>
+            <p className="lead">The rounds your node is drawn for: in "Play and check" it replays the games and signs who won, in "Pay out winners" it co-signs the payout.</p>
+            <Place id="rounds" /></>)}
           {sec('bond', <><h2>Bond</h2>
-            <Place id="bond-answer" /><Place id="capacity-plea" className={null} /><Place id="bond" /><Place id="keyswitch-place" className={null} />
+            <Place id="bond-answer" className={null} /><Place id="capacity-plea" className={null} /><Place id="bond" /><Place id="keyswitch-place" className={null} />
             <details className="more"><summary>How this node is drawn (details)</summary><Place id="standing" /></details></>)}
           {sec('services', <><h2>Services</h2>
             <h3 className="sh">Address</h3><Place id="address" /><Place id="services" /></>)}

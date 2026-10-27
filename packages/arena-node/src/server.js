@@ -4992,7 +4992,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // (ARENA_BOND_CLI) and has no installer home, where the custody agent does it - reads the federation and guardian key of each guardian it
   // runs (its invite-code, local.json, consensus.json) and, when its advertisement lacks one, posts an update from that wallet. Entries the
   // advertisement has are kept: nothing is removed. One update at a time (`.advert-self.json`); ARENA_ADVERT_SELF=dry builds and checks only.
-  if (process.env.ARENA_BOND_CLI && !process.env.ARENA_HOME && process.env.ARENA_ADVERT_SELF !== '0' && (guardian || guardianNext)) {
+  // AND THE GAMES IT LOADED (kanban #685): every such seat, guardian or not - a version it loads is announced in the next check
+  if (process.env.ARENA_BOND_CLI && !process.env.ARENA_HOME && process.env.ARENA_ADVERT_SELF !== '0') {
     const selfFile = db && db.arenaPath ? `${db.arenaPath}.advert-self.json` : null;
     const entryOf = (dir) => {
       try {
@@ -5006,16 +5007,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     };
     const advertSelf = async () => {
       const mine = [guardian, guardianNext].filter((g) => g && g.dataDir).map((g) => entryOf(g.dataDir)).filter(Boolean);
-      if (!mine.length) return;
+      const hostedGames = [...new Set([...hosted.values()].filter((h) => h && h.gameId).map((h) => toHex(h.gameId)))];
+      if (!mine.length && !hostedGames.length) return;
       let last = null; try { last = selfFile ? JSON.parse(readFileSync(selfFile, 'utf8')) : null; } catch { last = null; }
       const dry = process.env.ARENA_ADVERT_SELF === 'dry';
       // bitcoin-cli runs synchronously: in a worker, never on the seat's thread (#705)
       const { advertSelfInWorker } = await import('./advert-self.js');
-      const r = await advertSelfInWorker({ mine, secret: round.identity.secret, last, network: process.env.ARENA_DONATION_NETWORK || 'testnet4', dry });
+      const r = await advertSelfInWorker({ mine, hostedGames, secret: round.identity.secret, last, network: process.env.ARENA_DONATION_NETWORK || 'testnet4', dry });
       if (!r) return;
       if (r.same) return;
-      if (!r.ok) { console.log(`[advert] guardian_of not posted: ${r.why}`); return; }
-      console.log(`[advert] guardian_of ${dry ? 'would be' : 'posted'}: ${r.plan.after.split(',').map((x) => x.slice(0, 8)).join(' ')} (was ${r.plan.before.split(',').map((x) => x.slice(0, 8)).join(' ') || 'none'})${r.update ? `, ${r.update.txid}` : ''}`);
+      if (!r.ok) { console.log(`[advert] own advertisement not posted: ${r.why}`); return; }
+      console.log(`[advert] own advertisement ${dry ? 'would be' : 'posted'}: guardian_of ${r.plan.after.split(',').map((x) => x.slice(0, 8)).join(' ') || 'none'} (was ${r.plan.before.split(',').map((x) => x.slice(0, 8)).join(' ') || 'none'})${(r.plan.addedGames || []).length ? `, ${r.plan.addedGames.length} game(s) added: ${r.plan.addedGames.map((g) => g.slice(0, 8)).join(' ')}` : ''}${r.update ? `, ${r.update.txid}` : ''}`);
       if (r.update && selfFile) { try { writeFileSync(selfFile, JSON.stringify({ txid: r.update.txid, after: r.plan.after, atMs: Date.now() })); } catch { /* checked on chain next time */ } }
     };
     let selfBusy = false;          // one check at a time: a slow wallet never stacks them
@@ -5564,6 +5566,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           .map((f) => { try { return JSON.parse(readFileSync(f, 'utf8')); } catch { return null; } }).filter(Boolean);
         const want = String(url.searchParams.get('federation') || '').toLowerCase();
         const c = want ? claims.find((x) => String(x.federationId || '').toLowerCase() === want) : claims[0];
+        // NONE, SAID QUIETLY TO ITS OWN PAGE (the 2026.1.9.11 install test: the owner page logged a 404 at every load on a node without a
+        // gateway): with ?quiet=1 no claim is a 200 null; other seats ask without it and read the 404 as before
+        if (!c && url.searchParams.get('quiet') === '1') return claimJson(200, null);
         return c ? claimJson(200, c) : claimJson(404, { ok: false, why: want ? 'this node stands for no gateway seat of that federation' : 'this node stands for no gateway seat' });
       }
       // A LIQUIDITY CLAIM (§23A.10): this node is a liquidity provider - the claim its provider service signed (file)
@@ -5609,6 +5614,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // an installed node that became a provider from its owner page (kanban #567) serves its home's claim before its next restart
         const f = process.env.ARENA_LIQUIDITY_CLAIM_FILE || (process.env.ARENA_HOME ? joinPath(process.env.ARENA_HOME, 'liquidity-claim.json') : null);
         let c = null; try { c = f ? JSON.parse(readFileSync(f, 'utf8')) : null; } catch { c = null; }
+        if (!c && url.searchParams.get('quiet') === '1') return claimJson(200, null);   // the owner page's ask (the 2026.1.9.11 install test)
         return c ? claimJson(200, c) : claimJson(404, { ok: false, why: 'this node is no liquidity provider' });
       }
       if (req.method === 'GET' && url.pathname === '/liquidity-seating') {
@@ -5629,6 +5635,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return bytes(res, 200, round.pubkey);
       }
 
+      // THE ICON OF ITS PAGES (the 2026.1.9.11 install test: the dashboard and the owner page logged a missing favicon.ico at every load)
+      if (req.method === 'GET' && url.pathname === '/favicon.ico') {
+        let body; try { body = readFileSync(new URL('../pages/favicon.ico', import.meta.url)); } catch { res.writeHead(204); return res.end(); }
+        res.writeHead(200, { 'content-type': 'image/x-icon', 'cache-control': 'max-age=86400' });
+        return res.end(body);
+      }
       // /Dashboard (2026-10-01 15:44): what this node earned, spent and did, from its own store - the page, and
       // the figures it draws (kept 30 s: one reading walks every round with entries)
       if (req.method === 'GET' && (url.pathname === '/Dashboard' || url.pathname === '/dashboard')) {
@@ -5744,6 +5756,38 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const missed = missedInARow(rows);
           return answer(200, { missedInARow: missed, warning: seatingWarning(missed), rounds: rows.slice(0, 20) });
         }
+        // THE ROUNDS THIS NODE IS DRAWN FOR (kanban #715): each round of the last day and the coming ones, what the node does in it (Play and
+        // check / Pay out winners / reserve), and when there is none the first reason that holds, in plain words (owner-rounds.js)
+        if (req.method === 'GET' && url.pathname === '/owner/rounds') {
+          const me = toHex(round.pubkey), now = Date.now();
+          const rows = [];
+          let own = null, share = null;
+          for (const r of round.db.prepare('SELECT round_id, contract FROM rounds WHERE opened_ms > ? ORDER BY opened_ms DESC LIMIT 400').all(now - 36 * 3600000)) {
+            let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
+            const rid = new Uint8Array(r.round_id);
+            let g = null, st = null;
+            try { g = roster.committeeFor(rid, 'game'); st = roster.committeeFor(rid, 'settlement'); } catch { continue; }
+            const has = (pick, list) => !!(pick && pick.ok && (pick[list] || []).some((e) => toHex(e.pubkey) === me));
+            let endMs = Number(c.startTimeMs); try { endMs = Number(windowsOf(c).openMs); } catch { /* the start, then */ }
+            // the node's own census row, from the newest round it can be read for: its roles and whether its announcement names this game
+            let hostedHere = false;
+            try {
+              const census = roster.censusFor(rid);
+              const mine = census && census.ok ? census.entries.find((e) => toHex(e.pubkey) === me) : null;
+              hostedHere = !!(mine && (mine.hostedGames || []).some((x) => toHex(x) === toHex(c.gameId)));
+              if (!own && census && census.ok) {
+                own = mine ? { roles: mine.roles || [], serving: mine.advert ? mine.advert.serving !== false : true, bondSats: String(mine.bondSats ?? '') } : null;
+                const total = census.entries.reduce((t, e) => t + Number(e.bondSats || 0), 0);
+                share = mine && total > 0 ? census.entries.filter((e) => toHex(e.pubkey) === me).reduce((t, e) => t + Number(e.bondSats || 0), 0) / total : null;
+              }
+            } catch { /* no census read for that round here */ }
+            const startMs = Number(c.startTimeMs);
+            rows.push({ round: toHex(rid), game: (() => { const x = gameOfContract(c); const h = hosted.get(toHex(c.gameId)); return x ? { ...x, version: h && h.manifest ? h.manifest.version : null } : null; })(), startMs, endMs, phase: now < startMs ? 'upcoming' : now < endMs ? 'running' : 'done',
+              gameSeated: has(g, 'committee'), settleSeated: has(st, 'committee'), drawn: has(g, 'drawn') || has(st, 'drawn'), hostedHere, paid: c.stakeMsat > 0n });
+          }
+          const { roundsForOwner } = await import('./owner-rounds.js');
+          return answer(200, roundsForOwner({ rows, own, share, nowMs: now }));
+        }
         // THIS NODE'S STANDING (§5A.10B): own weight, brackets served, headroom - from the censuses of the newest rounds
         // held, and the warnings an operator needs before the floor passes the bond
         // THE NODE'S BOND AND ITS LOCK (2026-10-18: "withdrawing the bond after the lock (communicating the
@@ -5755,7 +5799,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const { version, commit } = releaseHere();
           let latest; try { latest = await latestReleaseFor(version); } catch (e) { latest = { latest: null, newer: false, why: e.message }; }
           return answer(200, { node: toHex(round.pubkey), version, commit, latest,
-            protocols: SUPPORTED_PROTOCOL_VERSIONS, machine: machineOf({ chain }), update: 'arena-install --update <new release> on this machine (checked, backed up, rolled back if it fails)' });
+            protocols: SUPPORTED_PROTOCOL_VERSIONS, machine: machineOf({ chain }), update: 'bitcoinarena-install --update <new release> on this machine (checked, backed up, rolled back if it fails)' });
         }
         // OLD BONDS AFTER A KEY SWITCH (kanban #650: "b but optional"): a node that moved to the key its 24 words give left its bonds under
         // the old key, kept in the store's identity_old and named in the installer's state (oldBonds). Each with its lock, and whether this
@@ -6153,7 +6197,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
               const gap = gatewayGap(nodeState(home).read());
               const p = custodyProgress(home);
               const busy = p && p.gatewayOnly && !['done', 'failed'].includes(p.state) ? p : null;
-              if (gap) extra = extra.map((x) => (x.id !== 'gateway' ? x : { ...x, running: false, detail: gap.why,
+              // LEFT FOR LATER IS NO FAULT (the owner 2026-10-27: "1 service not running" for a gateway set up later on purpose): the row says so
+              if (gap) extra = extra.map((x) => (x.id !== 'gateway' ? x : { ...x, running: false, later: true, detail: gap.why,
                 probe: { ok: false, says: busy ? `Setting up: ${busy.step || busy.state}` : p && p.gatewayOnly && p.state === 'failed' ? `${gap.why} The last try stopped at ${p.step}: ${p.why || 'no reason given'}` : gap.why },
                 fix: gap.fix ? { action: 'gateway/setup', label: busy ? 'Setting up…' : 'Set up the gateway', busy: !!busy } : null }));
             }
@@ -6243,6 +6288,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (r.bond) console.log(`[bond] added ${plan.addSats} sat beside the bond: ${r.bond.txid}:0 (total ${plan.totalSats} sat)`);
             return answer(200, { ok: true, plan, bond: r.bond || null });
           } catch (e) { return answer(500, { ok: false, why: `the bond could not be added: ${e.message}` }); }
+        }
+        // THE FIRST BOND FROM THE OWNER AREA (kanban #728: the installer's "I'll post it later" left no way to post it): signed by the
+        // owner, { post } - the plan (the node wallet's address, what to send, what arrived), and with post: true the bond the wizard
+        // would have posted (arena-installer add-bond.js firstBondOnNode); the setup card then counts its confirmations
+        if (url.pathname === '/owner/first-bond') {
+          const a = owner.authorize(body, 'first-bond');
+          if (!a.ok) return answer(a.status || 401, a);
+          const home = process.env.ARENA_HOME;
+          if (!home) return answer(501, { ok: false, why: 'this node was not set up by the installer: its bond is posted where it runs' });
+          try {
+            const { firstBondOnNode } = await import('../../arena-installer/src/add-bond.js');
+            const r = await firstBondOnNode({ home, release: fileURLToPath(new URL('../../../', import.meta.url)), post: (body.args || {}).post === true });
+            if (!r.ok) return answer(400, r);
+            if (r.bond && !r.done) { console.log(`[bond] the owner posted this node's first bond: ${r.bond.txid}:0 (${r.bond.sats} sat)`); setupStatusKept = null; dashboardKept = null; }
+            return answer(200, r);
+          } catch (e) { return answer(500, { ok: false, why: `the bond could not be posted: ${e.message}` }); }
         }
         // THE NODE'S ROLES (kanban #553, 2026-10-20: "It also offers no options to setup the role of the node"): signed by the owner,
         // { roles: [game, verify, settlement, relay], custody, post } - an advertisement update of its bond from the bond wallet
