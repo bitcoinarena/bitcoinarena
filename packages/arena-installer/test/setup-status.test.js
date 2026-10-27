@@ -113,3 +113,21 @@ test('the block speed from the chain and LND\'s speed between two reads reach th
     assert.deepEqual([unmeasured.blockMs, unmeasured.blockMsMeasured], [600000, false]);
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
+
+// LIGHTNING LEFT FOR LATER (kanban #711, the 2026.1.9.11 install test: "Complete" on a custody node with no LND and no gateway): said, with
+// whether the owner area can set it up; a node without custody, or with its gateway, has nothing left for later
+test('a custody node whose Lightning was left for later says so; others say nothing', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'arena-setup-status-'));
+  try {
+    writeFileSync(join(home, 'seed.hex'), 'cc'.repeat(32));
+    const reader = async () => ({ tip: 157559, heightOf: async () => null, close: () => {} });
+    const services = async () => ({ lnd: null, gateway: null, address: null });
+    const at = async (st) => { writeFileSync(join(home, 'state.json'), JSON.stringify(st)); return (await setupStatus({ home, reader, services })).later; };
+    const core = { kind: 'core', url: 'http://127.0.0.1:1', cookiePath: '/c' };
+    assert.deepEqual(await at({ chain: core, roles: ['verify', 'custody'] }), { lnd: true, gateway: true, fix: true, why: 'Not set up: Lightning was left for later in setup, so the gateway was never started.' });
+    assert.equal(await at({ chain: core, roles: ['verify'] }), null, 'no custody: nothing left for later');
+    assert.equal(await at({ chain: core, roles: ['custody'], gateway: { apiUrl: 'http://127.0.0.1:2' } }), null, 'its gateway is set up');
+    const lndOnly = await at({ chain: core, roles: ['custody'], lightning: { pubkey: '02'.repeat(33), restUrl: 'https://127.0.0.1:3' } });
+    assert.deepEqual([lndOnly.lnd, lndOnly.gateway], [false, true], 'LND there, the gateway left for later');
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});

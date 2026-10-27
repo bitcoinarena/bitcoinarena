@@ -55,7 +55,11 @@ export class OwnerArea extends React.Component {
             {/* THE NODE AT A GLANCE (kanban #565): one card per fact, the label small, the value large */}
             <div className="stats">
               <div className="stat"><span>Node</span><b className="mono">{p.node.slice(0, 12)}… <CopyButton text={p.node} label="Copy the node key" /></b></div>
-              <div className="stat"><span>Custody</span><b className={p.guardian ? 'ok' : undefined}>{p.guardian ? 'Guardian' : 'No custody'}</b></div>
+              {/* GREEN ONLY WHILE ITS GUARDIAN RUNS (the 2026.1.9.11 install test: "Custody: Guardian" in green while this node's fedimintd had
+                ended at its start): `guardianUp` is the Services card's guardian row - true, false, or null while it has not answered */}
+              <div className="stat"><span>Custody</span>{!p.guardian ? <b>No custody</b> : p.guardianUp === false
+                ? <><b className="bad">Guardian, not running</b><small><a href="#services">See Services</a></small></>
+                : <b className={p.guardianUp ? 'ok' : undefined}>Guardian</b>}</div>
               <div className="stat"><span>Apps</span><b>{games.length}</b><small>{games.length ? games.map((g) => `${g.name} v${g.version ?? '?'}`).join(', ') : 'none installed'}</small></div>
               <div className="stat"><span>Owner since</span><b>{new Date(p.claimedAtMs).toISOString().slice(0, 10)}</b><small>signed in with {HOW[p.how] || p.how}</small></div>
               <div className="stat"><span>Owner key</span><b className="mono">{p.owner.slice(0, 12)}… <CopyButton text={p.owner} label="Copy the owner key" /></b></div>
@@ -69,7 +73,7 @@ export class OwnerArea extends React.Component {
             <p className="lead">The rounds your node is drawn for: in "Play and check" it replays the games and signs who won, in "Pay out winners" it co-signs the payout.</p>
             <Place id="rounds" /></>)}
           {sec('bond', <><h2>Bond</h2>
-            <Place id="bond-answer" /><Place id="capacity-plea" className={null} /><Place id="bond" /><Place id="keyswitch-place" className={null} />
+            <Place id="bond-answer" className={null} /><Place id="capacity-plea" className={null} /><Place id="bond" /><Place id="keyswitch-place" className={null} />
             <details className="more"><summary>How this node is drawn (details)</summary><Place id="standing" /></details></>)}
           {sec('services', <><h2>Services</h2>
             <h3 className="sh">Address</h3><Place id="address" /><Place id="services" /></>)}

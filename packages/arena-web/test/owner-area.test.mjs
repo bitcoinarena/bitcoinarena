@@ -9,7 +9,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { OwnerArea, SECTIONS } from '../dist/test/owner-area.mjs';
 
-const base = { node: 'ab'.repeat(32), owner: 'cd'.repeat(32), claimedAtMs: Date.UTC(2026, 9, 21), guardian: true, how: 'words',
+const base = { node: 'ab'.repeat(32), owner: 'cd'.repeat(32), claimedAtMs: Date.UTC(2026, 9, 21), guardian: true, guardianUp: true, how: 'words',
   games: [{ name: 'nextblock', version: 5 }, { name: 'rock-paper-scissors', version: 4 }], emergencyCode: 'EMER-GENC-YCOD', emergencyLink: '/Dashboard/emergency',
   devKey: 'ef'.repeat(32), hasDevs: true, onShowWords: () => ['w1', 'w2'], onForget() {}, signManifest: () => ({ gameId: '12'.repeat(32), hex: 'beef' }) };
 function area(props = {}) {
@@ -45,11 +45,19 @@ test('the sidebar marks the sections that need the owner; one section shown; the
   assert.match(area({ needs: [] }).html(), /All good ✓/);
 });
 
+// GREEN ONLY WHILE ITS GUARDIAN RUNS (the 2026.1.9.11 install test: "Custody: Guardian" in green while this node's fedimintd had ended at its start)
+test('the Overview\'s Custody follows the Services card\'s guardian row: green while it runs, red when it does not, plain until it answered', () => {
+  assert.match(area({ guardianUp: false }).html(), /<span>Custody<\/span><b class="bad">Guardian, not running<\/b><small><a href="#services">See Services<\/a><\/small>/);
+  assert.match(area({ guardianUp: null }).html(), /<span>Custody<\/span><b>Guardian<\/b>/);
+  assert.match(area({ guardian: false, guardianUp: false }).html(), /<span>Custody<\/span><b>No custody<\/b>/);
+});
+
 test('every panel\'s place is there and empty, for the page to draw into', () => {
   const h = area({ needs: null }).html();
-  for (const id of ['roles', 'custody', 'liquidity', 'bond-answer', 'bond', 'standing', 'address', 'services', 'release', 'leave'])
+  for (const id of ['roles', 'custody', 'liquidity', 'bond', 'standing', 'address', 'services', 'release', 'leave'])
     assert.match(h, new RegExp(`<div class="card" id="${id}"></div>`), id);
-  for (const id of ['capacity-plea', 'installed', 'netfound', 'netmine', 'dons', 'devs', 'ballots']) assert.match(h, new RegExp(`<div id="${id}"></div>`), id);
+  // the Bond answer draws its own card, none when it has nothing to say (kanban #728, the 2026.1.9.11 install test: an empty box)
+  for (const id of ['bond-answer', 'capacity-plea', 'installed', 'netfound', 'netmine', 'dons', 'devs', 'ballots']) assert.match(h, new RegExp(`<div id="${id}"></div>`), id);
 });
 
 test('the emergency code only on a press; none without the words', () => {
