@@ -53,3 +53,48 @@ test('forwarded by another seat: counts until the close, its time no longer near
   at(CLOSE + 5);
   assert.match((await desk.take(auditAt(CLOSE - AUDIT_LEAD_MS - 1000), { forwarded: true })).why, /window has closed/);
 });
+
+test('a valid objection contradicts the round\'s AUDITs: kept as evidence with their bytes, paid nothing, marked once', async () => {
+  const { desk } = deskAt(1_900_000);
+  const body = auditAt(1_900_000);
+  assert.equal((await desk.take(body)).kept, true);
+  assert.deepEqual(desk.contradict(roundId, 'entry 01..: VOID after a valid objection'), [toHex(node)]);
+  assert.deepEqual(desk.held(roundId), [], 'a contradicted AUDIT is no auditor\'s line');
+  const [row] = desk.list(roundId);
+  assert.match(row.contradicted, /VOID after a valid objection/);
+  assert.equal(row.audit, toHex(body), 'its bytes and signature: the fraud proof\'s evidence');
+  assert.deepEqual(desk.contradict(roundId, 'again'), [], 'once');
+  assert.equal((await desk.take(body)).kept, false, 'and not taken again');
+});
+
+test('the forward digest is the AUDIT\'s own, under its own tag: no other object signs it', async () => {
+  const { forwardDigest } = await import('../src/audit-seat.js');
+  const { decodeAudit } = await import('../../arena-protocol/src/auditor.js');
+  const { TAG } = await import('../../arena-protocol/src/constants.js');
+  const body = auditAt(1_900_000);
+  const id = auditId(decodeAudit(body.subarray(0, body.length - 64)));
+  assert.equal(toHex(forwardDigest(body)), toHex(taggedHash(TAG.auditForward, id)));
+  assert.notEqual(toHex(forwardDigest(body)), toHex(id));
+  assert.equal(Object.values(TAG).filter((t) => t === TAG.auditForward).length, 1);
+});
+
+test('the agreed runs an AUDIT is over: every entry\'s 5 of 7, in entry order - none while one entry has no agreed run', async () => {
+  const { agreedRunsOf } = await import('../src/audit-seat.js');
+  const { encodePlayerResult, joinSignedResult, resultId } = await import('../../arena-protocol/src/result.js');
+  const { runId } = await import('../src/verdict.js');
+  const keys = Array.from({ length: 7 }, (_, i) => taggedHash('test/audit-seat/seat', Uint8Array.of(i)));
+  const committee = keys.map((k) => schnorr.getPublicKey(k));
+  const contract = { gameVerifySlots: 7 };
+  const signed = (entry, score, k) => {
+    const r = { roundId, playerPubkey: new Uint8Array(32).fill(entry), outcome: 'DELIVERED', score, transcriptHash: new Uint8Array(32).fill(entry),
+      simCoreHash: new Uint8Array(32).fill(3), nodePubkey: schnorr.getPublicKey(k) };
+    return { r, bytes: joinSignedResult(encodePlayerResult(r), schnorr.sign(resultId(r), k)) };
+  };
+  const entries = [2, 1].map((n) => ({ entryId: new Uint8Array(32).fill(n), results: keys.map((k, i) => signed(n, i < 5 ? 10 : 11, k).bytes) }));
+  const got = agreedRunsOf({ contract, committee, entries });
+  assert.equal(got.ok, true, got.why);
+  assert.deepEqual(got.runs.map((r) => toHex(r.runId)), [2, 1].map((n) => toHex(runId(signed(n, 10, keys[0]).r))), 'the five, not the two');
+  assert.equal(toHex(got.resultsHash), toHex(auditResultsHash(got.runs.map((r) => ({ entryId: r.entryId, resultDigest: r.runId })))));
+  const short = [{ entryId: entries[0].entryId, results: entries[0].results.slice(0, 4) }, entries[1]];
+  assert.match(agreedRunsOf({ contract, committee, entries: short }).why, /has no agreed run yet/);
+});
