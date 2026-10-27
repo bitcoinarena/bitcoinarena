@@ -157,19 +157,36 @@ function sendUpdateFromWallet({ cli, rt, secret, bond, advert, post }) {
  * ([{ federationId, guardianKey }] as bytes - every federation one of its guardians runs), funded from the bond wallet as the roles are.
  * Answers { ok: false, same: true } when the advertisement says that already.
  */
-export async function guardianOfFromWallet({ cli, wallet, network = 'testnet4', secret, guardianOf, post = false }) {
+/**
+ * THE SEAT'S ADVERTISEMENT AFTER ITS OWN CHECK: `now` the advertisement in force; guardian_of as asked; the games hosted = those it names
+ * and `hostedGames` (32-byte ids), sorted, none removed. Answers { same } when nothing would change, else { advert, before, after, addedGames }.
+ */
+export function ownAdvertAfter(now, { guardianOf, hostedGames = null, nowMs = Date.now() }) {
+  const key = (gs) => (gs || []).map((g) => `${toHex(g.federationId)}:${toHex(g.guardianKey)}`).sort().join(',');
+  const before = key(now.guardianOf), after = key(guardianOf);
+  const had = (now.hostedGames || []).map(toHex);
+  const games = [...new Set([...had, ...(hostedGames || []).map(toHex)])].sort();
+  const addedGames = games.filter((g) => !had.includes(g));
+  if (before === after && !addedGames.length) return { same: true };
+  return { advert: { ...now, guardianOf: (guardianOf || []).map((g) => ({ federationId: g.federationId, guardianKey: g.guardianKey })),
+    hostedGames: games.map((g) => fromHex(g)), timestamp: BigInt(nowMs) }, before, after, addedGames };
+}
+
+// AND THE GAMES IT HOSTS (kanban #685, measured 2026-10-27: the seats loaded Up/Down v24 and never announced it, so every v24 round drew only
+// the 3 outside nodes that did and none could be seated): `hostedGames` (32-byte ids) are added to what the advertisement names - nothing is
+// removed - in the same update as the guardians, so a new game version counts once that update does
+export async function guardianOfFromWallet({ cli, wallet, network = 'testnet4', secret, guardianOf, hostedGames = null, post = false }) {
   const { regtest } = await import('../tools/regtest-bond.mjs');
   const rt = regtest(cli, { network, wallet: wallet || 'arena' });
   const bonds = rt.bondsOf(secret);
   if (!bonds.length) return { ok: false, why: 'this node has no confirmed bond whose advertisement could be updated' };
   const bond = bonds[0];
   const now = (rt.newestUpdateOf(bond) || {}).advert || bond.advert;
-  const key = (gs) => (gs || []).map((g) => `${toHex(g.federationId)}:${toHex(g.guardianKey)}`).sort().join(',');
-  const before = key(now.guardianOf), after = key(guardianOf);
-  if (before === after) return { ok: false, same: true, why: 'the advertisement names these guardians already' };
-  const advert = { ...now, guardianOf: guardianOf.map((g) => ({ federationId: g.federationId, guardianKey: g.guardianKey })), timestamp: BigInt(Date.now()) };
+  const next = ownAdvertAfter(now, { guardianOf, hostedGames });
+  if (next.same) return { ok: false, same: true, why: 'the advertisement names these guardians and games already' };
+  const { advert, before, after, addedGames } = next;
   const sent = sendUpdateFromWallet({ cli, rt, secret, bond, advert, post });
   if (!sent.ok) return sent;
-  const plan = { before, after, bond: `${bond.txid}:${bond.vout}`, feeSats: sent.feeSats, countsAfter: 6 };
+  const plan = { before, after, addedGames, bond: `${bond.txid}:${bond.vout}`, feeSats: sent.feeSats, countsAfter: 6 };
   return post ? { ok: true, plan, update: { txid: sent.txid } } : { ok: true, plan };
 }
