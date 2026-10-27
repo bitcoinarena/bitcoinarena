@@ -48,9 +48,9 @@ export function mountAddress(element, { api, initial } = {}) {
 }
 // THE SETUP CARD ON THE OVERVIEW (playtest 2026-10-25: the dashboard's card "auch in der owners area")
 export function mountSetup(element, { api, initial, banner } = {}) { const root = createRoot(element); root.render(<SetupCard api={api} initial={initial} banner={banner} everyMs={banner ? 15000 : 30000} />); return root; }
-export function mountBond(element, { api, initial } = {}) {
+export function mountBond(element, { api, initial, qr } = {}) {
   const root = createRoot(element);
-  root.render(<BondPanel api={api} initial={initial} />);
+  root.render(<BondPanel api={api} initial={initial} qr={qr} />);
   return root;
 }
 export function mountCustody(element, { api, initial } = {}) { const root = createRoot(element); root.render(<CustodyPanel api={api} initial={initial} />); return root; }
@@ -93,4 +93,6 @@ export function drawInto(element, kind, props) {
   element._react.render(<C {...props} />);
   return element._react;
 }
-if (typeof window !== 'undefined') window.ArenaOwner = { areaInto, drawInto, mountKeySwitch, mountBondAnswer, mountPlea, mountLeave, mountStart, mountMessage, mountRoles, mountServices, mountAddress, mountSetup, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };
+// mountRounds too (kanban #728, found by owner-react-door.test: #715 left it out, so owner.html's roundsPanel() threw and every panel
+// mounted after it - the Bond section among them - stayed empty)
+if (typeof window !== 'undefined') window.ArenaOwner = { areaInto, drawInto, mountKeySwitch, mountRounds, mountBondAnswer, mountPlea, mountLeave, mountStart, mountMessage, mountRoles, mountServices, mountAddress, mountSetup, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };

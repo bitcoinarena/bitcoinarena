@@ -18,6 +18,16 @@ function area(props = {}) {
   return { m, html: () => renderToStaticMarkup(m.render()) };
 }
 
+// THE DASHBOARD'S "SET UP THE BOND" (kanban #728): the site's page at #node=...&section=bond opens the Bond section; #bond as before
+test('a section named beside the node in the # opens it; a plain #section as before; anything else the Overview', () => {
+  const was = globalThis.location;
+  try {
+    const at = (hash) => { globalThis.location = { hash }; return area().m.fromHash(); };
+    assert.deepEqual([at(`#node=${'ab'.repeat(32)}&local=http%3A%2F%2F127.0.0.1%3A8770&section=bond`), at('#bond'), at(`#node=${'ab'.repeat(32)}`), at('#nope'), at('')],
+      ['bond', 'bond', 'overview', 'overview', 'overview']);
+  } finally { globalThis.location = was; }
+});
+
 test('the sidebar marks the sections that need the owner; one section shown; the Overview says "checking" until something said', () => {
   const a = area({ needs: null });
   const h = a.html();

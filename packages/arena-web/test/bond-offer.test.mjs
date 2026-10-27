@@ -55,6 +55,8 @@ test('nothing to earn: no offer; a bond below what rounds ask: red with the amou
   assert.deepEqual(low.calls.needs, [['bond', 'bad', 'Your bond is too small to be drawn for rounds. Add 30,000 sat.']]);
   assert.equal(bondAnswerOf({ standing: { ownBondSats: null }, capacity: null, bond: null }).drawn.text, 'Your bond is not counted yet: this node is not drawn for rounds until it is.');
   assert.deepEqual([daysHours(26 * 3600000), daysHours(5 * 3600000)], ['1 day 2 h', '5 h']);
+  // no bond (kanban #728): nothing here - the Bond panel says it and sets it up; no federation offer
+  assert.equal(answer({ standing: { ownBondSats: null }, capacity: { mine: [m] }, bond: { bond: null } }).html(), '');
 });
 
 test('the capacity plea: the seat\'s words when a federation fills; nothing when calm or carried by the offer', () => {

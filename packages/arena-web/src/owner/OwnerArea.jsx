@@ -24,7 +24,12 @@ export class OwnerArea extends React.Component {
     this.state = { section: this.fromHash(), words: null, emShown: false, manifest: '', signed: null, signErr: '', copied: false };
     this.onHash = () => { this.setState({ section: this.fromHash() }); window.scrollTo(0, 0); };
   }
-  fromHash() { const want = (typeof location !== 'undefined' ? location.hash : '').slice(1) || 'overview'; return SECTIONS.some(([x]) => x === want) ? want : 'overview'; }
+  // A SECTION NAMED BESIDE THE NODE (kanban #728: the dashboard's "Set up the bond" opens the site's page at #node=...&section=bond)
+  fromHash() {
+    const raw = (typeof location !== 'undefined' ? location.hash : '').slice(1);
+    const want = (raw.includes('=') ? new URLSearchParams(raw).get('section') : raw) || 'overview';
+    return SECTIONS.some(([x]) => x === want) ? want : 'overview';
+  }
   componentDidMount() { window.addEventListener('hashchange', this.onHash); }
   componentWillUnmount() { window.removeEventListener('hashchange', this.onHash); }
   sign() {

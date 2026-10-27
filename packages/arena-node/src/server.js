@@ -6034,6 +6034,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             return answer(200, { ok: true, plan, bond: r.bond || null });
           } catch (e) { return answer(500, { ok: false, why: `the bond could not be added: ${e.message}` }); }
         }
+        // THE FIRST BOND FROM THE OWNER AREA (kanban #728: the installer's "I'll post it later" left no way to post it): signed by the
+        // owner, { post } - the plan (the node wallet's address, what to send, what arrived), and with post: true the bond the wizard
+        // would have posted (arena-installer add-bond.js firstBondOnNode); the setup card then counts its confirmations
+        if (url.pathname === '/owner/first-bond') {
+          const a = owner.authorize(body, 'first-bond');
+          if (!a.ok) return answer(a.status || 401, a);
+          const home = process.env.ARENA_HOME;
+          if (!home) return answer(501, { ok: false, why: 'this node was not set up by the installer: its bond is posted where it runs' });
+          try {
+            const { firstBondOnNode } = await import('../../arena-installer/src/add-bond.js');
+            const r = await firstBondOnNode({ home, release: fileURLToPath(new URL('../../../', import.meta.url)), post: (body.args || {}).post === true });
+            if (!r.ok) return answer(400, r);
+            if (r.bond && !r.done) { console.log(`[bond] the owner posted this node's first bond: ${r.bond.txid}:0 (${r.bond.sats} sat)`); setupStatusKept = null; dashboardKept = null; }
+            return answer(200, r);
+          } catch (e) { return answer(500, { ok: false, why: `the bond could not be posted: ${e.message}` }); }
+        }
         // THE NODE'S ROLES (kanban #553, 2026-10-20: "It also offers no options to setup the role of the node"): signed by the owner,
         // { roles: [game, verify, settlement, relay], custody, post } - an advertisement update of its bond from the bond wallet
         // (add-bond-wallet.js changeRolesFromWallet): the plan, and with post: true the two transactions sent; the census reads it 6 deep
