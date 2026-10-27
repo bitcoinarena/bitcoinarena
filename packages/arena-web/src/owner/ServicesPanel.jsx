@@ -9,13 +9,15 @@ import { Switch } from '../design/components.jsx';
 const LABEL = Object.freeze({ start: 'Start', stop: 'Stop', restart: 'Restart' });
 /** A row's light: green it answers, red it does not, grey unknown. */
 export const lightOf = (s) => {
+  if (s.later) return '⚪';
   const ok = s.running === null || s.running === undefined ? null : !s.running ? false : s.probe ? s.probe.ok : true;
   return ok === null ? '⚪' : ok ? '🟢' : '🔴';
 };
 /** A service's state: up (answers), down (stopped or not answering), unknown. */
-export const stateOf = (s) => (s.running === null || s.running === undefined ? 'unknown' : !s.running ? 'down' : s.probe && !s.probe.ok ? 'down' : 'up');
-export const STATE_WORD = Object.freeze({ up: 'Running', down: 'Needs attention', unknown: 'Unknown' });
-export const needsAttention = (rows) => rows.filter((s) => s.running === false || (s.running && s.probe && !s.probe.ok)).length;
+// LEFT FOR LATER (the owner 2026-10-27: "1 service not running" for a gateway set up later on purpose): its own word, and no attention
+export const stateOf = (s) => (s.later ? 'later' : s.running === null || s.running === undefined ? 'unknown' : !s.running ? 'down' : s.probe && !s.probe.ok ? 'down' : 'up');
+export const STATE_WORD = Object.freeze({ up: 'Running', down: 'Needs attention', unknown: 'Unknown', later: 'Left for later' });
+export const needsAttention = (rows) => rows.filter((s) => !s.later && (s.running === false || (s.running && s.probe && !s.probe.ok))).length;
 
 export class ServicesPanel extends React.Component {
   constructor(props) {
@@ -33,6 +35,9 @@ export class ServicesPanel extends React.Component {
     if (r && r.ok && r.services.some((x) => x.fix && x.fix.busy)) this.fixTimer = setTimeout(this.reload, 10000);
     // the page's own badge for the section (its sidebar dot), told how many need attention
     if (this.props.onAttention && r && r.ok) this.props.onAttention(needsAttention(r.services));
+    // and the rows themselves, so the Overview's Custody says what this card says (the 2026.1.9.11 install test: "Custody: Guardian" in
+    // green while the guardian had not started)
+    if (this.props.onServices && r && r.ok) this.props.onServices(r.services);
   }
   async act(id, action) {
     this.setState({ busy: `${id}:${action}`, message: null });

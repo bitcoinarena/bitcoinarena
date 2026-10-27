@@ -275,3 +275,25 @@ test('2b. short of five FINAL signatures at end + 1205 s, a seat that held no ob
     assert.equal(after.state, 'VOID', 'a FINAL signature arriving later turned the decision back');
   } finally { await w.close(); }
 });
+
+// AND ONLY ONE THAT HEARD FROM ANOTHER SEAT (the 2026.1.9.11 release check, round 2927d830: a seat restarted inside the window read no
+// peer addresses, held its own FINAL signature alone and signed VOID while the other five held FINAL 6 of 6)
+test('2c. a seat holding no other seat\'s FINAL signature decides nothing at the re-run window\'s end; once one reaches it, it decides', async () => {
+  const w = await roundAhead();
+  try {
+    w.sign('agrees', () => ({}));
+    const eid = w.runs.agrees.eid;
+    const E = roundEndMs(w.contract);
+    skipTo(Number(E + 605000n) + 50);
+    await holderSigns(w, eid);
+    skipTo(Number(E + 1205000n) + 50);
+    const alone = stateOf(w, eid);
+    const kept = w.holder.round.noQuorum(eid);
+    await w.finalBy('agrees', 1);
+    const heard = stateOf(w, eid);
+    console.log('  FACTS (2c):', big({ alone: [alone.state, alone.finalSigs], kept: kept && kept.outcome, heard: [heard.state, heard.finalSigs] }));
+    assert.equal(alone.state, 'PROVISIONALLY_FINAL', alone.why);
+    assert.equal(kept, null, 'a decision was written by a seat that heard from nobody');
+    assert.equal(heard.state, 'VOID', heard.why);
+  } finally { await w.close(); }
+});

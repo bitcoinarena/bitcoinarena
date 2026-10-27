@@ -28,12 +28,12 @@ export const eta = (ms) => (ms === null || ms === undefined ? '' : ms < 3600000 
 // the state under it, a bar where there is one to fill
 class Step extends React.Component {
   render() {
-    const { id, label, done, problem, text, meter, left } = this.props;
-    const st = done ? 'ok' : problem ? 'bad' : 'wait';
+    const { id, label, done, problem, later, text, meter, left } = this.props;
+    const st = done ? 'ok' : problem ? 'bad' : later ? 'later' : 'wait';
     const t = !done && left ? dur(left) : '';
     return (
       <div className={`setup-step s-${st}`} id={id}>
-        <span className="setup-ic" aria-hidden="true">{done ? '✓' : problem ? '!' : '…'}</span>
+        <span className="setup-ic" aria-hidden="true">{done ? '✓' : problem ? '!' : later ? '–' : '…'}</span>
         <div className="setup-body"><b>{label}</b><span className="setup-text">{text}</span>
           {meter !== undefined ? <div className="bar"><i style={{ width: `${meter}%` }} /></div> : null}</div>
         {t ? <span className="setup-eta">{t}</span> : null}
@@ -75,12 +75,23 @@ export function lndLine(l) {
   const reach = !v ? '' : v.how === 'direct' ? `; reached directly at ${v.at}` : v.how === 'tor' ? `; reached over Tor (no open port needed)` : `; other nodes cannot reach it${v.why ? ` (${v.why})` : ''}`;
   return { done: !l.pending && (!v || v.how !== 'none'), problem: !!v && v.how === 'none', text: `synced at block ${n(l.height)}${ch}${reach}` };
 }
-export function gatewayLine(g, founding = null) {
+export function gatewayLine(g, founding = null, bonded = true) {
   if (!g) return null;
+  // no bond, no federation (kanban #728): the gateway waits for the bond, which the Bond section sets up - nothing to do here
+  if (g.ok && !(g.federations > 0) && !bonded) return { done: true, text: 'running; it joins a federation once your node has a bond' };
   // waiting for a founding is not setup (2026-10-26): done here, the founding has its own panel (FoundingWait)
   if (g.ok && !(g.federations > 0) && founding && founding.waiting) return { done: true, text: 'running; it joins your federation once that is founded' };
   if (g.ok) return { done: g.federations > 0, text: g.federations > 0 ? `running, in ${n(g.federations)} federation${g.federations === 1 ? '' : 's'}` : 'running, joining its federation' };
   return { done: false, problem: !g.syncing, text: g.syncing ? 'waiting for LND to sync. Then its peg-in needs 100 confirmations.' : `not answering: ${g.why}` };
+}
+/**
+ * LEFT FOR LATER (kanban #711, the 2026.1.9.11 install test: "Complete" on a custody node with no LND and no gateway): not done, no problem,
+ * and the way to set it up - the owner area's Services card sets the gateway up, Lightning with it. `l` the setup's `later`.
+ */
+export function laterLine(l, what) {
+  if (!l || !l[what]) return null;
+  const how = l.fix ? 'Set it up in the owner area: Services, Lightning gateway, Set up the gateway.' : l.why;
+  return { done: false, later: true, text: what === 'lnd' ? `Left for later. ${how}` : `Left for later: custody needs it to serve deposits. ${how}` };
 }
 export function addressLine(a) {
   if (!a) return null;
@@ -110,7 +121,7 @@ export function setupRowsOf(s) {
   const e = s.etas || {};
   const at = (l, left) => (l ? { ...l, left: left === undefined ? null : left } : l);
   return [['setup-core', 'Bitcoin Core', at(coreLine(s.core), e.core)], ['setup-address', 'Public address', addressLine(s.address)], ['setup-faucet', 'Test coins', at(faucetLine(s.faucet, s.bond), e.faucet)],
-      ['setup-bond', 'Bond', at(bondLine(s.bond), e.bond)], ['setup-lnd', 'LND', at(lndLine(s.lnd), e.lnd)], ['setup-gateway', 'Gateway', at(gatewayLine(s.gateway, s.founding), e.gateway)], ['setup-pegin', 'Peg-in', at(pegInLine(s.pegIn), e.pegIn)],
+      ['setup-bond', 'Bond', at(bondLine(s.bond), e.bond)], ['setup-lnd', 'LND', s.lnd ? at(lndLine(s.lnd), e.lnd) : laterLine(s.later, 'lnd')], ['setup-gateway', 'Gateway', s.gateway ? at(gatewayLine(s.gateway, s.founding, !noBond(s)), e.gateway) : laterLine(s.later, 'gateway')], ['setup-pegin', 'Peg-in', at(pegInLine(s.pegIn), e.pegIn)],
       ...(s.updates || []).map((u, i) => [`setup-update-${i}`, 'Update', at(updateLine(u), (e.updates || [])[i])]),
       ...(s.oldBonds || []).map((o, i) => [`setup-old-${i}`, 'Old bond', oldBondLine(o)])].filter(([, , l]) => l);
 }
@@ -122,10 +133,24 @@ export function readyIn(s) {
   return { text: dur(e.ready), atLeast: !!e.partial };
 }
 
+/** NO BOND (kanban #728, 2026-10-27, the owner: "Wenn kein Bond da ist, muss das deutlich sichtbar sein im Dashboard und Owner-Dashboard,
+ *  und auch keine Federation-Info"): an installed node whose setup names no bond posted - the installer's "I'll post it later". */
+export const noBond = (s) => !!(s && s.ok && !s.bond);
+/** The red card on both dashboards: no bond, so no rounds - and the one thing to do, set it up in the owner area's Bond section (`href`). */
+export function NoBondCard({ status: s, href }) {
+  if (!noBond(s)) return null;
+  return (
+    <div className="card no-bond" id="no-bond" style={{ borderColor: '#f85149' }}>
+      <div className="setup-head"><h3>No bond</h3><span className="setup-pill bad">Not drawn for rounds</span></div>
+      <p>Your node needs a bond before it is drawn for rounds and earns.</p>
+      <a className="btn primary" id="no-bond-go" href={href}>Set up the bond</a>
+    </div>);
+}
+
 /** THE FOUNDING THE NODE WAITS FOR, apart from the setup (2026-10-26, the owner: "setup is complete but a separate header that it's waiting for
  *  the foundation"): no time is promised - a founding needs ten ready nodes drawn together. */
 export function FoundingWait({ status: s }) {
-  if (!s || !s.founding || !s.founding.waiting) return null;
+  if (!s || !s.founding || !s.founding.waiting || noBond(s)) return null;
   return (
     <div className="card founding-wait" id="founding-wait">
       <div className="setup-head"><h3>Federation</h3><span className="setup-pill wait">Waiting for a founding</span></div>
@@ -154,15 +179,17 @@ export class SetupStatus extends React.Component {
     if (all && (this.state.hidden || hiddenFor(this.nodeOf()))) return null;
     const problems = rows.filter(([, , l]) => l.problem).length;
     const done = rows.filter(([, , l]) => l.done).length;
+    // ONLY WHAT WAS LEFT FOR LATER IS OPEN (kanban #711): said so, not "Complete" and not "n of m done"
+    const onlyLater = !all && rows.every(([, , l]) => l.done || l.later);
     const ready = readyIn(s);
     return (
       <div className="card setup-status" id="setup-status">
         <div className="setup-head"><h3>Setup</h3>
-          <span className={`setup-pill ${all ? 'ok' : problems ? 'bad' : 'wait'}`}>{all ? 'Complete' : problems ? `${problems} problem${problems === 1 ? '' : 's'}` : `${done} of ${rows.length} done`}</span></div>
+          <span className={`setup-pill ${all ? 'ok' : problems ? 'bad' : 'wait'}`}>{all ? 'Complete' : problems ? `${problems} problem${problems === 1 ? '' : 's'}` : onlyLater ? 'Lightning left for later' : `${done} of ${rows.length} done`}</span></div>
         {!all && ready ? <div className="setup-ready" id="setup-ready"><span className="setup-ready-n">{ready.atLeast ? 'at least ' : ''}{ready.text}</span>
           <span className="setup-ready-l">until your node is ready</span></div> : null}
         <div className="setup-total" role="progressbar" aria-valuemin="0" aria-valuemax={rows.length} aria-valuenow={done}><i style={{ width: `${Math.round((100 * done) / rows.length)}%` }} /></div>
-        <div className="setup-grid">{rows.map(([id, label, l]) => <Step key={id} id={id} label={label} done={l.done} problem={l.problem} text={l.text} meter={l.meter} left={l.left} />)}</div>
+        <div className="setup-grid">{rows.map(([id, label, l]) => <Step key={id} id={id} label={label} done={l.done} problem={l.problem} later={l.later} text={l.text} meter={l.meter} left={l.left} />)}</div>
         {s.tip || (all && this.nodeOf()) ? <p className="setup-tip">{s.tip ? <>Chain tip · block {n(s.tip)}{s.blockMs && s.blockMsMeasured ? ` · lately a block every ${dur(s.blockMs)}` : ''}</> : null}
           {all && this.nodeOf() ? <button type="button" className="setup-hide" onClick={() => this.hide()}>Don't show again</button> : null}</p> : null}
       </div>);
@@ -199,7 +226,7 @@ export class SetupCard extends React.Component {
     this.setState({ status: s });
     clearTimeout(this.timer); this.timer = setTimeout(this.load, this.props.everyMs || 30000);
   }
-  render() { return this.props.banner ? <SetupBanner status={this.state.status} /> : <><PegInCard status={this.state.status} /><SetupStatus status={this.state.status} /><FoundingWait status={this.state.status} /></>; }
+  render() { return this.props.banner ? <SetupBanner status={this.state.status} /> : <><NoBondCard status={this.state.status} href="#bond" /><PegInCard status={this.state.status} /><SetupStatus status={this.state.status} /><FoundingWait status={this.state.status} /></>; }
 }
 
 /** The owner sections that help while the setup runs (a problem to fix, an update, the emergency code, the login); the rest waits for it. */
@@ -228,7 +255,11 @@ export class SetupBanner extends React.Component {
     // AN UPDATE IS NO SETUP (2026-10-26, the owner on "Your node is still being set up - Update: the roles change: 0 of 6 confirmations":
     // "When it is just doing an update because a transaction was sent, no need to lock the entire screen. The full owner dashboard remains
     // available"): an advertisement update on its way never closes the owner area; the Overview's Setup card shows it
-    const setup = rows.filter(([id]) => !String(id).startsWith('setup-update-'));
+    // NOR WHAT WAS LEFT FOR LATER (kanban #711): Lightning the owner chose to set up later never closes the owner area - it is set up there
+    // NOR THE BOND (kanban #728, the 2026.1.9.11 install test: a bond posted from the Bond section closed the whole owner area behind
+    // "still being set up" until it had 6 confirmations - the Bond section itself among the sections it shut): the bond is made and
+    // watched in the owner area, never a reason to close it
+    const setup = rows.filter(([id, , l]) => !String(id).startsWith('setup-update-') && id !== 'setup-bond' && !l.later);
     if (!setup.length || setup.every(([, , l]) => l.done)) return { phase: 'done', rows };
     return { phase: this.state.entered ? 'open' : 'gate', rows };
   }

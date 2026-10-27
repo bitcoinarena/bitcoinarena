@@ -6,6 +6,7 @@
 // these; an installed node shows them beside the installer's services (node-services.js overview). Rows as the installer's:
 // { id, title, running, pid, detail, inside, probe: { ok, says } }.
 import { connect } from 'node:net';
+import { guardianAnswers } from './guardian-probe.js';
 
 const tcpAnswers = (port, host = '127.0.0.1', ms = 1500) => new Promise((resolve) => {
   const s = connect({ host, port });
@@ -15,7 +16,7 @@ const tcpAnswers = (port, host = '127.0.0.1', ms = 1500) => new Promise((resolve
 const httpOf = (u) => String(u || '').replace(/^ws(s?):/i, 'http$1:').replace(/\/+$/, '');
 
 export async function ownServices({ port, chainTip = null, guardian = null, guardianNext = null, gatewayPort = null, publicEndpoint = null,
-  p2pTunnels = null, addressBook = null, ownKey = null, fetcher = fetch, tcp = tcpAnswers, nowMs = () => Date.now() }) {
+  p2pTunnels = null, addressBook = null, ownKey = null, fetcher = fetch, tcp = tcpAnswers, nowMs = () => Date.now(), guardianCheck = guardianAnswers, storePath = null }) {
   const rows = [{ id: 'node', title: 'The node (seat)', running: true, pid: process.pid, detail: `port ${port}`, inside: false, probe: { ok: true, says: 'answers (this page comes from it)' } }];
   // THE CHAIN it reads its census, bonds and rounds from
   let tip = null, why = null;
@@ -24,9 +25,12 @@ export async function ownServices({ port, chainTip = null, guardian = null, guar
     inside: false, probe: Number.isInteger(tip) ? { ok: true, says: `at block ${tip.toLocaleString('en-US')}` } : chainTip ? { ok: false, says: `does not answer${why ? `: ${why}` : ''}` } : null });
   for (const [id, title, g] of [['guardian', 'Guardian (custody)', guardian], ['guardian-next', 'Guardian (next federation)', guardianNext]]) {
     if (!g) { if (id === 'guardian') rows.push({ id, title, running: null, pid: null, detail: 'this node runs no guardian', inside: true, probe: null }); continue; }
-    const up = g.apiPort ? await tcp(g.apiPort) : false;
-    rows.push({ id, title, running: up, pid: g.pid || null, detail: g.setup ? 'in setup: waits to be drawn for a founding' : `API on 127.0.0.1:${g.apiPort}`, inside: true,
-      probe: { ok: up, says: up ? `its API answers${g.endpoint ? ` (public ${g.endpoint})` : ''}` : `its API on 127.0.0.1:${g.apiPort} does not answer` } });
+    // THIS NODE'S GUARDIAN, NOT WHATEVER HOLDS ITS PORT (the 2026.1.9.11 install test: another node's guardian answered on the port this
+    // node's fedimintd could not bind, and the card said "Running - its API answers"): asked with this node's admin password (guardian-probe.js)
+    const dataDir = g.dataDir || (storePath ? `${storePath}${id === 'guardian' ? '.guardian' : '.guardian-next'}` : null);
+    const a = await guardianCheck({ apiPort: g.apiPort, dataDir });
+    rows.push({ id, title, running: a.ok, pid: g.pid || null, detail: a.ok ? (g.setup ? 'in setup: waits to be drawn for a founding' : `API on 127.0.0.1:${g.apiPort}`) : 'Not running', inside: true,
+      probe: { ok: a.ok, says: a.ok ? `${a.says}${g.endpoint ? ` (public ${g.endpoint})` : ''}` : a.says } });
   }
   if (gatewayPort) {
     const up = await tcp(Number(gatewayPort));

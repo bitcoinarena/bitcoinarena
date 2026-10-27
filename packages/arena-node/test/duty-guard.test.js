@@ -142,6 +142,33 @@ test('the seats\' rounds of one game in a day: drawn on a majority or not', () =
   assert.deepEqual(drawCount([...listings, reading], { gameId: id(24), ...day }).of, 2);
 });
 
+test('a round drawn short is not drawn: 3 nodes a role cannot seat 5 (measured 2026-10-27, Up/Down v24)', () => {
+  const day = { fromMs: Date.parse('2026-10-27T00:00:00Z'), toMs: Date.parse('2026-10-28T00:00:00Z') };
+  const row = (n) => ({ game: { id: id(24) }, startTime: '2026-10-27T10:00:00Z', committee: { drawn: { game: [], settlement: [] }, drawnCount: { game: n, settlement: n } } });
+  const short = drawCount([{ rounds: [row(3)] }, { rounds: [row(3)] }], { gameId: id(24), ...day });
+  assert.deepEqual([short.drawn, short.undrawn, short.of], [0, 2, 2]);
+  assert.match(short.why, /drawn short: 3 nodes a role, 5 needed to seat/);
+  assert.deepEqual(drawCount([{ rounds: [row(9)] }], { gameId: id(24), ...day }).drawn, 1, 'nine drawn: drawable');
+  assert.equal(postingVerdict({ tip: 1000, pubHeight: 900, beaconAt: 990, nowMs: 60 * 60000, postedAtMs: 0, draw: short }).state, 'dead', 'and the day gets its emergency grid');
+});
+
+test('a round drawn in full but never seated is not drawn: its drawn nodes are stopped (kanban #727, Up/Down v23 2026-10-27)', () => {
+  const day = { fromMs: Date.parse('2026-10-27T00:00:00Z'), toMs: Date.parse('2026-10-28T00:00:00Z') };
+  const row = (seated) => ({ id: '399ac2293d991c68', game: { id: id(24) }, startTime: '2026-10-27T12:45:00Z',
+    committee: { drawn: { game: [], settlement: [] }, drawnCount: { game: 9, settlement: 9 }, seated: { game: seated, settlement: seated } } });
+  const at = (iso) => Date.parse(iso);
+  // listed 30 s before its start, nothing seated: its seating has closed - not drawable on that seat
+  const dead = drawCount([{ nowMs: at('2026-10-27T12:44:30Z'), rounds: [row(false)] }, { nowMs: at('2026-10-27T12:44:40Z'), rounds: [row(false)] }], { gameId: id(24), ...day });
+  assert.deepEqual([dead.drawn, dead.undrawn, dead.of], [0, 2, 2]);
+  assert.match(dead.why, /drawn but not seated: round 399ac229/);
+  // listed 8 min before its start, its seating still to come: drawable as before
+  assert.equal(drawCount([{ nowMs: at('2026-10-27T12:37:00Z'), rounds: [row(false)] }], { gameId: id(24), ...day }).drawn, 1);
+  // seated: drawable
+  assert.equal(drawCount([{ nowMs: at('2026-10-27T12:44:30Z'), rounds: [row(true)] }], { gameId: id(24), ...day }).drawn, 1);
+  // and with no time at all the listing says nothing about it
+  assert.equal(drawCount([{ rounds: [row(false)] }], { gameId: id(24), ...day }).drawn, 1);
+});
+
 test('the day: drawable when one posting is, dead when all are; an emergency grid when dead, or not drawable 4 h before it starts', () => {
   const day = { startMs: 100 * H, endMs: 124 * H };
   assert.equal(dayVerdict([{ state: 'dead' }, { state: 'drawable' }]).state, 'drawable');

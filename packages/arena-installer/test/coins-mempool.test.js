@@ -63,3 +63,34 @@ test('coinsOf on bitcoind finds a deposit still in the mempool, at height 0, and
   await coinsOf(chain, spk, { fetcher });
   assert.deepEqual(fetched, [next], 'a second read asks only for the new transaction');
 });
+
+// THE UTXO SET CHANGES ONLY WITH A BLOCK (the 2026.1.9.11 install test, kanban #728: each Bond plan took 14-18 s, a full scantxoutset every
+// 30 s): with reuseScan a scan at the same tip is used again - the mempool and gettxout still read - and a new block scans again
+test('reuseScan: one scan per tip, the mempool\'s deposit and a spent coin still seen; without it every read scans', async () => {
+  let tip = 157300, scans = 0, mempool = [], spent = new Set();
+  const conf = 'dd'.repeat(32), dep = 'ee'.repeat(32), spk = new Uint8Array([0x51, 0x20, 7]);
+  const spkHex = Buffer.from(spk).toString('hex');
+  const fetcher = async (url, { body }) => {
+    const { method, params } = JSON.parse(body);
+    if (method === 'scantxoutset') scans++;
+    const result = method === 'getblockcount' ? tip
+      : method === 'scantxoutset' ? { height: tip, unspents: [{ txid: conf, vout: 0, amount: 0.0005, height: tip - 1 }] }
+        : method === 'getrawmempool' ? mempool
+          : method === 'getrawtransaction' ? { vout: [{ n: 0, value: 0.0001, scriptPubKey: { hex: spkHex } }] }
+            : method === 'gettxout' ? (spent.has(params[0]) ? null : { value: 1 }) : null;
+    return { status: 200, json: async () => ({ result, error: null }) };
+  };
+  const chain = { kind: 'core', url: 'http://127.0.0.1:2', user: 'u', password: 'p' };
+  const a = await coinsOf(chain, spk, { fetcher, reuseScan: true });
+  assert.deepEqual([scans, a.coins.map((c) => c.txid)], [1, [conf]]);
+  mempool = [dep];
+  const b = await coinsOf(chain, spk, { fetcher, reuseScan: true });
+  assert.deepEqual([scans, b.coins.map((c) => [c.txid, c.height])], [1, [[conf, tip - 1], [dep, 0]]], 'the same tip: no scan, the deposit from the mempool');
+  spent.add(conf);
+  assert.deepEqual((await coinsOf(chain, spk, { fetcher, reuseScan: true })).coins.map((c) => c.txid), [dep], 'a coin the mempool spends: gone without a scan');
+  tip += 1;
+  await coinsOf(chain, spk, { fetcher, reuseScan: true });
+  assert.equal(scans, 2, 'a new block: scanned again');
+  await coinsOf(chain, spk, { fetcher });
+  assert.equal(scans, 3, 'without reuseScan (the post): always scanned');
+});

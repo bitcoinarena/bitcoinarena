@@ -25,6 +25,7 @@ import { WaitingDonations, DevClients } from './DonationsPanels.jsx';
 import { BallotsPanel } from './BallotsPanel.jsx';
 import { GameDevsPanel } from './GameDevsPanel.jsx';
 import { ReferrerPanel } from './ReferrerPanel.jsx';
+import { RoundsPanel } from './RoundsPanel.jsx';
 import { flushSync } from 'react-dom';
 
 export function mountRoles(element, { api, node, initial } = {}) {
@@ -33,10 +34,13 @@ export function mountRoles(element, { api, node, initial } = {}) {
   return root;
 }
 // THE NODE KEY FROM THE 24 WORDS (kanban #650): optional, asked only on the owner's Check
+export function mountRounds(element, { api, initial } = {}) { const root = createRoot(element); root.render(<RoundsPanel api={api} initial={initial} />); return root; }
 export function mountKeySwitch(element, { api, initial } = {}) { const root = createRoot(element); root.render(<KeySwitchPanel api={api} initial={initial} />); return root; }
-export function mountServices(element, { api, initial, onAttention } = {}) {
+// AND ITS ROWS HANDED ON (the 2026.1.9.11 install test: the Overview's Custody chip never turned green - onServices, which owner.html
+// passes, was dropped here, so ServicesPanel never called it)
+export function mountServices(element, { api, initial, onAttention, onServices } = {}) {
   const root = createRoot(element);
-  root.render(<ServicesPanel api={api} initial={initial} onAttention={onAttention} />);
+  root.render(<ServicesPanel api={api} initial={initial} onAttention={onAttention} onServices={onServices} />);
   return root;
 }
 export function mountAddress(element, { api, initial } = {}) {
@@ -46,9 +50,9 @@ export function mountAddress(element, { api, initial } = {}) {
 }
 // THE SETUP CARD ON THE OVERVIEW (playtest 2026-10-25: the dashboard's card "auch in der owners area")
 export function mountSetup(element, { api, initial, banner } = {}) { const root = createRoot(element); root.render(<SetupCard api={api} initial={initial} banner={banner} everyMs={banner ? 15000 : 30000} />); return root; }
-export function mountBond(element, { api, initial } = {}) {
+export function mountBond(element, { api, initial, qr } = {}) {
   const root = createRoot(element);
-  root.render(<BondPanel api={api} initial={initial} />);
+  root.render(<BondPanel api={api} initial={initial} qr={qr} />);
   return root;
 }
 export function mountCustody(element, { api, initial } = {}) { const root = createRoot(element); root.render(<CustodyPanel api={api} initial={initial} />); return root; }
@@ -91,4 +95,6 @@ export function drawInto(element, kind, props) {
   element._react.render(<C {...props} />);
   return element._react;
 }
-if (typeof window !== 'undefined') window.ArenaOwner = { areaInto, drawInto, mountKeySwitch, mountBondAnswer, mountPlea, mountLeave, mountStart, mountMessage, mountRoles, mountServices, mountAddress, mountSetup, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };
+// mountRounds too (kanban #728, found by owner-react-door.test: #715 left it out, so owner.html's roundsPanel() threw and every panel
+// mounted after it - the Bond section among them - stayed empty)
+if (typeof window !== 'undefined') window.ArenaOwner = { areaInto, drawInto, mountKeySwitch, mountRounds, mountBondAnswer, mountPlea, mountLeave, mountStart, mountMessage, mountRoles, mountServices, mountAddress, mountSetup, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };

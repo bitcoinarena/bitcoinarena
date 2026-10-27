@@ -191,9 +191,14 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
     // or reached it late (caught up after a restart, a test round dated 1970), would void a run the others are still
     // signing, so it decides nothing here
     const ownHex = round.pubkey ? toHex(round.pubkey) : null;
-    const signedOwn = ownHex !== null && round.finalSigs(roundIdBytes, entryIdBytes, signedResultId)
-      .some((r) => toHex(r.signerPubkey) === ownHex && BigInt(r.seenMs) < win.rerunDeadlineMs);
-    if (nowMs >= win.rerunDeadlineMs && signedOwn) {
+    const held = round.finalSigs(roundIdBytes, entryIdBytes, signedResultId);
+    const signedOwn = ownHex !== null && held.some((r) => toHex(r.signerPubkey) === ownHex && BigInt(r.seenMs) < win.rerunDeadlineMs);
+    // AND ONLY A SEAT THAT HEARD FROM ANOTHER (the 2026.1.9.11 release check, round 2927d830: seat 1, restarted inside the window, read no
+    // peer addresses - "no chain view for that round" - so it held its own FINAL signature alone and signed VOID, while the other five
+    // held FINAL 6 of 6): with no other seat's FINAL signature it cannot tell a run nobody finalised from one whose signatures never
+    // reached it, and it decides nothing. A run nobody signs goes back to its player at the lock's expiry, as before this rule.
+    const heardOthers = held.some((r) => toHex(r.signerPubkey) !== ownHex);
+    if (nowMs >= win.rerunDeadlineMs && signedOwn && heardOthers) {
       const proven = typeof round.provenTwoFirstMarks === 'function'
         && (typeof round.provenEquivocation === 'function' ? round.provenEquivocation : round.provenTwoFirstMarks).call(round, roundIdBytes, entryIdBytes, evidenceWindow(round, roundIdBytes, contract, win.rerunDeadlineMs)) === true;
       const d = noQuorumOutcome({ signatures: fin.signed || 0, needed: fin.needed || 1, equivocationProven: proven, state: PROVISIONALLY_FINAL });

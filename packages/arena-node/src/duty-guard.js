@@ -262,7 +262,27 @@ export function dayTimeline(slot, { committeeLeadMs = DUTY_DAY_COMMITTEE_LEAD_MS
 }
 
 /** The seats' GET /rounds rows of one game inside [fromMs, toMs): how many seats list one drawn, how many list them all undrawn. */
-export function drawCount(listings, { gameId, fromMs, toMs }) {
+/** The seats a round needs drawn per role before it can be seated (§5A.7: 5 of 7). */
+export const DUTY_SEAT_THRESHOLD = 5;
+
+// A ROUND DRAWN SHORT IS NOT DRAWN (measured 2026-10-27: the 10-27 Up/Down v24 grid drew 3 nodes per role - the only ones whose
+// advertisement named v24 - so no round could ever be seated, and the duty called the day "drawable" and posted no emergency grid): a round
+// counts as drawn only when each role drew at least `need` nodes (the seating threshold, 5 of 7), read from its drawnCount; a seat that does
+// not say drawnCount is taken at its word as before
+const drawnEnough = (r, need) => {
+  const c = r && r.committee;
+  if (!c || !c.drawn) return false;
+  const n = c.drawnCount;
+  if (!n || typeof n !== 'object') return true;
+  return Math.min(Number(n.game ?? 0), Number(n.settlement ?? 0)) >= need;
+};
+
+// DRAWN IS NOT SEATED (kanban #727, 2026-10-27: every Up/Down v23 round of the day drew 9 nodes, 7-9 of them stopped test nodes still
+// bonded - no round was ever seated, and the day counted as drawable, so no emergency grid came): a round whose seating has closed
+// (within UNSEATED_AT_MS of its start, or past it, at the time the seat listed it: GET /rounds nowMs) and that no role seated is a round of a day that is not drawable on this seat
+export const UNSEATED_AT_MS = 60000;
+const seatedNone = (r) => r && r.committee && r.committee.seated && r.committee.seated.game === false && r.committee.seated.settlement === false;
+export function drawCount(listings, { gameId, fromMs, toMs, need = DUTY_SEAT_THRESHOLD, nowMs = null }) {
   let drawn = 0, undrawn = 0, of = 0, why = '';
   const g = String(gameId).toLowerCase();
   for (const l of listings || []) {
@@ -272,8 +292,18 @@ export function drawCount(listings, { gameId, fromMs, toMs }) {
     // A SEAT STILL READING ITS VIEW (after a reorg, a restart) says nothing either way: "no chain view", "view ... pending"
     if (!rows.some((r) => r.committee && r.committee.drawn) && rows.every((r) => /no chain view|view .*pending/i.test(String((r.committee || {}).why || '')))) continue;
     of++;
-    if (rows.some((r) => r.committee && r.committee.drawn)) drawn++;
-    else { undrawn++; why = why || String((rows[0].committee || {}).why || '').slice(0, 160); }
+    const at = Number(l.nowMs) || nowMs;
+    const closedUnseated = !at ? [] : rows.filter((r) => Date.parse(r.startTime) - at <= UNSEATED_AT_MS && drawnEnough(r, need) && seatedNone(r));
+    if (closedUnseated.length && !rows.some((r) => r.committee && r.committee.seated && (r.committee.seated.game || r.committee.seated.settlement))) {
+      undrawn++;
+      why = why || `drawn but not seated: round ${String(closedUnseated[0].id || '').slice(0, 8)} drew ${need}+ nodes and none of its roles was seated by its start`;
+    } else if (rows.some((r) => drawnEnough(r, need))) drawn++;
+    else {
+      undrawn++;
+      const short = rows.find((r) => r.committee && r.committee.drawn && r.committee.drawnCount);
+      why = why || (short ? `drawn short: ${Math.min(Number(short.committee.drawnCount.game ?? 0), Number(short.committee.drawnCount.settlement ?? 0))} nodes a role, ${need} needed to seat`
+        : String((rows[0].committee || {}).why || '').slice(0, 160));
+    }
   }
   return { drawn, undrawn, of, why };
 }

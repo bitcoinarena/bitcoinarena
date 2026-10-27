@@ -3,7 +3,7 @@
 # Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 # ONE RELEASE ASSET OF THE ARENA NODE: the seat, its protocol and the installer from a commit (the apps only as pins), their
 # npm dependencies at pinned versions, a pinned Node runtime and cloudflared for the OS - each download checked against its published
-# SHA-256 - and the launcher (`arena-install`, `arena-install.cmd` on Windows). Run by CI for every tag (release.yml), the same way
+# SHA-256 - and the launcher (`bitcoinarena-install`, `bitcoinarena-install.cmd` on Windows; `arena-install` beside it). Run by CI for every tag (release.yml), the same way
 # each time.
 #
 #     tools/release/build-release.sh <version> <linux|darwin|windows> <x64|arm64> <out dir> [commit]
@@ -147,20 +147,24 @@ if [ "$OS" = windows ]; then rm "$STAGE/packages/arena-installer/node_modules"; 
 # (and the apps' arena-sdk, a link the .zip would lose too: a copy of the folder - kanban #569)
 if [ "$OS" = windows ]; then rm "$STAGE/packages/node_modules/arena-sdk"; cp -R "$STAGE/packages/arena-sdk" "$STAGE/packages/node_modules/arena-sdk"; fi
 
-# 4. the launcher: the installer on the release's own runtime, cloudflared beside it
+# 4. the launcher: the installer on the release's own runtime, cloudflared beside it - named bitcoinarena-install (kanban #721, 2026-10-27:
+# "the install script is still named arena-install, should be bitcoinarena-install"); arena-install stays beside it, the same launcher under
+# the name the docs and scripts of earlier releases give
 if [ "$OS" = windows ]; then
-  printf '%s\r\n' '@echo off' 'rem The Arena node installer: double-click, then open the link it prints. --tunnel on a remote machine.' \
-    'set "ARENA_CLOUDFLARED=%~dp0runtime\cloudflared.exe"' '"%~dp0runtime\node.exe" "%~dp0packages\arena-installer\bin\arena-install.mjs" %*' 'pause' > "$STAGE/arena-install.cmd"
+  printf '%s\r\n' '@echo off' 'rem The Bitcoin Arena node installer: double-click, then open the link it prints. --tunnel on a remote machine.' \
+    'set "ARENA_CLOUDFLARED=%~dp0runtime\cloudflared.exe"' '"%~dp0runtime\node.exe" "%~dp0packages\arena-installer\bin\arena-install.mjs" %*' 'pause' > "$STAGE/bitcoinarena-install.cmd"
+  cp "$STAGE/bitcoinarena-install.cmd" "$STAGE/arena-install.cmd"
 else
-  cat > "$STAGE/arena-install" <<'SH'
+  cat > "$STAGE/bitcoinarena-install" <<'SH'
 #!/bin/sh
-# The Arena node installer: ./arena-install, then open the link it prints. --tunnel on a remote machine.
+# The Bitcoin Arena node installer: ./bitcoinarena-install, then open the link it prints. --tunnel on a remote machine.
 here="$(cd "$(dirname "$0")" && pwd)"
 ARENA_CLOUDFLARED="$here/runtime/cloudflared" exec "$here/runtime/node" "$here/packages/arena-installer/bin/arena-install.mjs" "$@"
 SH
-  chmod 0755 "$STAGE/arena-install"
+  chmod 0755 "$STAGE/bitcoinarena-install"
+  cp "$STAGE/bitcoinarena-install" "$STAGE/arena-install"
   # macOS: a double-clickable copy (Terminal opens it)
-  [ "$OS" = darwin ] && cp "$STAGE/arena-install" "$STAGE/arena-install.command"
+  [ "$OS" = darwin ] && cp "$STAGE/bitcoinarena-install" "$STAGE/bitcoinarena-install.command" && cp "$STAGE/bitcoinarena-install" "$STAGE/arena-install.command"
 fi
 
 # 5. the asset and its checksum (tar with fixed owner and order, so the same commit gives the same bytes)

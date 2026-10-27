@@ -27,6 +27,7 @@ import { quickTunnelUrl } from './reach.js';
 import { parseConf, unknownKeys } from '../../arena-node/src/arena-conf.js';
 import { bondCounts } from './bond.js';
 import { QUIET } from '../../arena-node/src/log-level.js';
+import { guardianAnswers, lastErrorLine } from '../../arena-node/src/guardian-probe.js';
 
 /** Every service an installed node can have, in start order. */
 export const SERVICES = Object.freeze([
@@ -128,7 +129,9 @@ async function stateOf(svc, { platform, sh, procs, nodePid, nodeRunning, home = 
     if (k) return { running: true, pid: k.pid, detail: 'runs beside the node, kept through its restarts' };
     // the node's own process not visible to this user (the Windows window, v0.1.1 in the VM): neither is its guardian - its API decides
     if (nodeRunning === null) return { running: null, pid: null, detail: 'its process is not visible to this user' };
-    return { running: false, pid: null, detail: nodePid ? 'the node runs without it' : 'the node is not running' };
+    // WHY IT IS NOT RUNNING (the 2026.1.9.11 install test: its fedimintd ended at start, "Address already in use", and only its log said so)
+    const last = nodePid ? lastErrorLine(join(home, 'node.db.guardian', 'fedimintd.log')) : null;
+    return { running: false, pid: null, detail: nodePid ? `the node runs without it${last ? `; its log: ${last}` : ''}` : 'the node is not running' };
   }
   if (platform === 'linux') {
     const r = await sh('systemctl', ['--user', 'show', svc.name, '-p', 'ActiveState', '-p', 'SubState', '-p', 'MainPID', '-p', 'NRestarts']);
@@ -182,16 +185,16 @@ export async function chainCall({ url, cookie, method, params = [], fetcher = fe
  * What each service serves, asked: { ok, says }, or null when there is nothing to ask beyond its process. `node` from nodeOf.
  * `local` the seat's identity when it answered (the tunnel's must be the same).
  */
-export async function probeOf(svc, { node, fetcher, local, dnsRetries = 2, dnsPauseMs = 5000, log = QUIET }) {
+export async function probeOf(svc, { node, fetcher, local, dnsRetries = 2, dnsPauseMs = 5000, log = QUIET, guardianCheck = guardianAnswers }) {
   // WHAT IS ASKED AND WHAT ANSWERED, WITH ITS TIME (kanban #693, 2026-10-26: "shows more info on what its doing, what is going wrong etc"):
   // at --verbose, each probe's target before it is asked and its answer after
   const t0 = performance.now();
-  const said = await probeAsk(svc, { node, fetcher, local, dnsRetries, dnsPauseMs, log });
+  const said = await probeAsk(svc, { node, fetcher, local, dnsRetries, dnsPauseMs, log, guardianCheck });
   if (said) log.verbose(`${svc.id}: ${said.ok ? 'ok' : 'NOT ok'} - ${said.says} (${log.since(t0)})`);
   else log.debug(`${svc.id}: nothing to ask beyond its process`);
   return said;
 }
-async function probeAsk(svc, { node, fetcher, local, dnsRetries, dnsPauseMs, log }) {
+async function probeAsk(svc, { node, fetcher, local, dnsRetries, dnsPauseMs, log, guardianCheck }) {
   const v = node.conf.values, s = node.state;
   try {
     if (svc.id === 'node') {
@@ -219,8 +222,11 @@ async function probeAsk(svc, { node, fetcher, local, dnsRetries, dnsPauseMs, log
     }
     if (svc.id === 'guardian') {
       const api = node.port + 1000;   // guardian.js guardianPorts: api = node port + 1000
-      log.verbose(`guardian: is anything listening on 127.0.0.1:${api} (the seat's port ${node.port} + 1000)?`);
-      return (await portOpen(api)) ? { ok: true, says: `API on port ${api}` } : { ok: false, says: `nothing listens on its API port ${api}` };
+      // THIS NODE'S GUARDIAN, NOT WHATEVER HOLDS ITS PORT (the 2026.1.9.11 install test: another node's guardian answered on the port this
+      // node's fedimintd could not bind): asked with the node's own admin password, as the seat's services card asks (guardian-probe.js)
+      log.verbose(`guardian: asking 127.0.0.1:${api} (the seat's port ${node.port} + 1000) with this node's admin password`);
+      const a = await guardianCheck({ apiPort: api, dataDir: join(node.home, 'node.db.guardian') });
+      return { ok: a.ok, says: a.says, ours: a.ours };
     }
     if (svc.id === 'lnd') {
       const l = s.lightning || {};
@@ -273,7 +279,7 @@ async function probeAsk(svc, { node, fetcher, local, dnsRetries, dnsPauseMs, log
  * THE OVERVIEW: { home, conf, version, instance, port, publicUrl, services: [{ id, title, name, running, pid, detail, probe }] }.
  * `probes` false: the states only (fast).
  */
-export async function overview({ home, platform = process.platform, env = process.env, sh = run, fetcher = fetch, probes = true, dnsPauseMs = 5000, log: given = QUIET }) {
+export async function overview({ home, platform = process.platform, env = process.env, sh = run, fetcher = fetch, probes = true, dnsPauseMs = 5000, log: given = QUIET, guardianCheck = guardianAnswers }) {
   // EACH STEP SAID AT --verbose, THE DECISIONS AT --debug (kanban #693): which files were read, which services found where, each state and probe
   const log = given.tag('status');
   const node = nodeOf(home);
@@ -299,16 +305,18 @@ export async function overview({ home, platform = process.platform, env = proces
     for (const r of rows) {
       if (r.running === null) {
         // not visible: running when it answers (a service with nothing to ask stays unknown)
-        r.probe = await probeOf(r, { node, fetcher, local: local.identity, dnsPauseMs, log });
-        if (r.probe) r.running = r.probe.ok ? true : null;
+        r.probe = await probeOf(r, { node, fetcher, local: local.identity, dnsPauseMs, log, guardianCheck });
+        if (r.probe) r.running = r.probe.ok ? true : r.probe.ours === false ? false : null;
         if (r.probe && r.probe.ok) r.detail = 'answers (its process is not visible to this user)';
         else if (r.probe) r.detail = `its process is not visible to this user, and ${r.probe.says}`;
         if (r.id === 'node' && r.probe && r.probe.identity) local.identity = r.probe.identity;
         continue;
       }
       if (!r.running) { r.probe = null; log.verbose(`${r.id}: not asked (not running)`); continue; }
-      r.probe = await probeOf(r, { node, fetcher, local: local.identity, dnsPauseMs, log });
+      r.probe = await probeOf(r, { node, fetcher, local: local.identity, dnsPauseMs, log, guardianCheck });
       if (r.id === 'node' && r.probe && r.probe.identity) local.identity = r.probe.identity;
+      // a fedimintd process that is not the guardian answering on its port: not running, as the seat's card says
+      if (r.id === 'guardian' && r.probe && !r.probe.ok) { r.running = false; r.detail = `not running: ${r.probe.says}`; }
     }
   }
   return { home, conf: node.conf.present ? node.conf.file : null, legacyEnv: node.legacyEnv, version: node.version, release: node.release,
@@ -523,7 +531,7 @@ const freeBytes = (dir) => { try { const s = statfsSync(dir); return Number(s.ba
  * release ({ latest, newer }) or throws; `esplora` the chain explorer for the bond.
  */
 export async function doctor({ home, platform = process.platform, env = process.env, sh = run, fetcher = fetch, latest = null,
-  esplora = 'https://mempool.space/testnet4/api', name = 'bitcoinarena', log: lg = QUIET } = {}) {
+  esplora = 'https://mempool.space/testnet4/api', name = 'bitcoinarena', log: lg = QUIET, guardianCheck = guardianAnswers } = {}) {
   const log = lg.tag('doctor');
   const out = [];
   const add = (check, ok, says, fix = null) => { out.push({ check, ok, says, fix }); log.verbose(`${check}: ${ok === true ? 'ok' : ok === false ? 'PROBLEM' : 'note'} - ${says}`); };
@@ -536,9 +544,9 @@ export async function doctor({ home, platform = process.platform, env = process.
       const other = unknownKeys(node.conf.values);
       add('arena.conf', true, `${Object.keys(node.conf.values).length} settings${other.length ? `; not known to this release: ${other.join(', ')}` : ''}`);
     }
-  } else if (node.legacyEnv) add('arena.conf', false, 'this node still runs from node.env (an older release)', 'update the node (arena-install --update): it moves the settings into arena.conf');
+  } else if (node.legacyEnv) add('arena.conf', false, 'this node still runs from node.env (an older release)', 'update the node (bitcoinarena-install --update): it moves the settings into arena.conf');
   else add('arena.conf', false, `${node.conf.file} is missing`, 'arena-install (the installer writes it)');
-  const view = await overview({ home, platform, env, sh, fetcher, log: lg });
+  const view = await overview({ home, platform, env, sh, fetcher, log: lg, guardianCheck });
   for (const s of view.services) {
     const fix = s.inside ? `${name} restart node` : `${name} restart ${s.id}`;
     if (s.running === null) { add(s.title, null, `${s.detail}${s.probe ? `; ${s.probe.says}` : ''}`); continue; }
@@ -564,7 +572,8 @@ export async function doctor({ home, platform = process.platform, env = process.
   if (free !== null) add('Disk', free >= 2e9, `${(free / 1e9).toFixed(1)} GB free at ${home}`, free >= 2e9 ? null : 'free disk space: the node needs about 2 GB');
   // the bond
   const bond = node.state.bond;
-  if (!bond || !bond.txid) add('Bond', null, 'no bond posted yet: the node is not seated until it has one', 'arena-install (the installer\'s bond step)');
+  // SET UP IN THE OWNER AREA (kanban #728, the 2026.1.9.11 install test: the hint named the installer's bond step, gone once the setup is done)
+  if (!bond || !bond.txid) add('Bond', null, 'no bond posted yet: the node is not seated until it has one', `the Bond section of the owner area (${name} open)`);
   else {
     try {
       log.verbose(`the bond: asking ${esplora}/tx/${bond.txid}/status`);
@@ -583,7 +592,7 @@ export async function doctor({ home, platform = process.platform, env = process.
       const l = await latest(node.version);
       const lv = l.latest && l.latest.version;
       if (!lv) add('Release', null, `${node.version}; ${l.why || 'the newest could not be read'}`);
-      else add('Release', l.newer ? null : true, l.newer ? `${node.version} runs; ${lv} is out` : `${node.version} (the newest)`, l.newer ? `update the node: arena-install --update <the ${lv} asset>` : null);
+      else add('Release', l.newer ? null : true, l.newer ? `${node.version} runs; ${lv} is out` : `${node.version} (the newest)`, l.newer ? `update the node: bitcoinarena-install --update <the ${lv} asset>` : null);
     } catch (e) { log.fail('the newest release', e); add('Release', null, `${node.version}; the newest could not be read (${e.message})`); }
   } else add('Release', null, node.version || 'unknown');
   return out;

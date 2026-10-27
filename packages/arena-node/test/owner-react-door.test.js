@@ -35,7 +35,7 @@ test('owner.html: the React bundle loaded once and unconditionally; every screen
   const used = [...script.matchAll(/mount\('[\w-]+', '(\w+)'/g)].map((m) => m[1]);
   // the way in and its one-card messages too (kanban #564: OwnerStart, OwnerMessage)
   assert.deepEqual(new Set(used), new Set(['mountStart', 'mountMessage', 'mountBondAnswer', 'mountPlea', 'mountLeave', 'mountRoles', 'mountKeySwitch', 'mountSetup', 'mountCustody', 'mountLiquidity', 'mountServices', 'mountAddress', 'mountRelease', 'mountBond',
-    'mountStanding', 'mountApps', 'mountNetworkApps', 'mountNetwork']));
+    'mountStanding', 'mountApps', 'mountNetworkApps', 'mountNetwork', 'mountRounds']));
   for (const u of [...used, 'areaInto']) assert.ok(offered.has(u), `${u} is offered by the bundle`);
   // the area itself is React's (kanban #564, OwnerArea): drawn with the need() list, again on each change
   assert.match(script, /O\.areaInto\(\$\('view'\), \{ \.\.\.areaProps, needs:/);

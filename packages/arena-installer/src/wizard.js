@@ -971,7 +971,7 @@ const serviceRun = async (b) => {
       // the owner page where the installer hands the key over (kanban #687): the Arena site's, by this node's key
       const idNow = (state.read().service || {}).identity;
       return { ok: true, owner: /^[0-9a-f]{64}$/.test(String(idNow || '')) ? `https://testnet.bitcoin-arena.io/owner/#node=${idNow}&local=${encodeURIComponent(`http://127.0.0.1:${portOf()}`)}`
-        : `http://127.0.0.1:${portOf()}/Dashboard/owner`, url: reachNow.url || null, mode: reachNow.mode || null };
+        : `http://127.0.0.1:${portOf()}/dashboard/owner`, url: reachNow.url || null, mode: reachNow.mode || null };
     },
   };
 
@@ -988,7 +988,7 @@ const serviceRun = async (b) => {
     if (!s.service) return null;
     // the local owner page, which goes on to the Arena site's page for this node where the owner key is kept (kanban #687): a quick
     // tunnel's address changes at every restart, and a .desktop Exec line or cmd would cut the site page's #node=...&local=...
-    const ownerUrl = `http://127.0.0.1:${portOf()}/Dashboard/owner`;
+    const ownerUrl = `http://127.0.0.1:${portOf()}/dashboard/owner`;
     try {
       const addCustody = (s.roles || []).includes('custody') ? null
         : [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'arena-install.mjs'), '--add-custody', '--home', state.home];
@@ -1044,12 +1044,18 @@ const serviceRun = async (b) => {
   async function handle(req, res) {
     const url = new URL(req.url, 'http://x');
     if (!hostOk(req)) return json(res, 421, { ok: false, why: 'this host is not the installer' });
+    // THE ICON, TO ANYONE (the 2026.1.9.11 install test, kanban #704: every page load logged a missing favicon.ico): the node's own, beside its pages
+    if (req.method === 'GET' && url.pathname === '/favicon.ico') {
+      let body; try { body = readFileSync(new URL('../../arena-node/pages/favicon.ico', import.meta.url)); } catch { res.writeHead(204); return res.end(); }
+      res.writeHead(200, { 'content-type': 'image/x-icon', 'cache-control': 'max-age=86400' });
+      return res.end(body);
+    }
     // THE TOKEN, ONCE: traded for a session and gone
     if (req.method === 'GET' && url.pathname === '/' && url.searchParams.has('t')) {
       // THE LINK OPENED AGAIN IN A BROWSER THAT HOLDS ITS SESSION (kanban #635, the owner's playtest 2026-10-25: the test host app's "Open in
       // browser" opened the used link, and the page said "that setup link is used or expired" in a browser already logged in)
       if (sessionOk(req)) { res.writeHead(303, { location: '/', 'cache-control': 'no-store' }); return res.end(); }
-      if (!token || nowMs() > tokenUntil || !same(url.searchParams.get('t'), token)) return json(res, 403, { ok: false, why: 'This setup link was used already or is older than 30 minutes. Open the Bitcoin Arena app again (or run arena-install again) to get a new one' });
+      if (!token || nowMs() > tokenUntil || !same(url.searchParams.get('t'), token)) return json(res, 403, { ok: false, why: 'This setup link was used already or is older than 30 minutes. Open the Bitcoin Arena app again (or run bitcoinarena-install again) to get a new one' });
       token = null;
       const sid = b64u(32);
       sessions.set(hashOf(sid), nowMs()); saveSessions(true);
@@ -1057,7 +1063,7 @@ const serviceRun = async (b) => {
       res.writeHead(303, { location: '/', 'set-cookie': `arena_wizard=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_IDLE_MS / 1000}${secure}`, 'cache-control': 'no-store' });
       return res.end();
     }
-    if (!sessionOk(req)) return json(res, 401, { ok: false, why: finished ? 'Setup is finished. Your node runs: open the Bitcoin Arena app to see it' : 'This page opens from the setup link. Open the Bitcoin Arena app again (or run arena-install again) and it opens the page for you' });
+    if (!sessionOk(req)) return json(res, 401, { ok: false, why: finished ? 'Setup is finished. Your node runs: open the Bitcoin Arena app to see it' : 'This page opens from the setup link. Open the Bitcoin Arena app again (or run bitcoinarena-install again) and it opens the page for you' });
     if (req.method === 'GET' && url.pathname === '/') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY',
         'content-security-policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'" });

@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { addBond } from '../src/add-bond.js';
+import { addBond, firstBond, firstBondOnNode } from '../src/add-bond.js';
 import { nodeState, bondsOf } from '../src/state.js';
 import { bondKeyAt } from '../src/bond.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -58,7 +58,7 @@ test('+32,000 sat: the plan names the amount, the fees, the new total and the ma
   assert.match((await addBond({ state, addSats: 'lots', chainKit: kit(sent) })).why, /not an amount of sat/);
   assert.match((await addBond({ state, addSats: 100, chainKit: kit(sent) })).why, /at least 330 sat/);
   assert.match((await addBond({ state, addSats: 32000, chainKit: kit(sent, [{ txid: '5a'.repeat(32), vout: 1, sats: 20000 }]) })).why, /the wallet holds 20000 sat: a bond of 32000 sat needs/);
-  assert.match((await addBond({ state: node({ bond: null }).state, addSats: 32000, chainKit: kit(sent) })).why, /no posted bond to add to/);
+  assert.match((await addBond({ state: node({ bond: null }).state, addSats: 32000, chainKit: kit(sent) })).why, /no bond yet: set up its first bond in the owner area/);
 });
 
 test('posted: the second output carries its own advertisement - same node key and operator - the first bond untouched, bonds[] recorded', async () => {
@@ -99,4 +99,82 @@ test('a custody node\'s guardian seat goes into the added output\'s advertisemen
   assert.equal(advert.guardianOf.length, 1);
   assert.equal(toHex(advert.guardianOf[0].federationId), '33'.repeat(32));
   assert.equal(advert.guardianEndpoint, 'wss://node.example.com/guardian');
+});
+
+// THE FIRST BOND FROM THE OWNER AREA (kanban #728, 2026-10-27: "Du hast die Option es zu skippen und dann später einzurichten, was aber nicht
+// geht - Bug"): a node whose owner chose "I'll post it later" posts the wizard's bond from the owner page - the plan first, then posted
+test('the first bond after "I\'ll post it later": the address and what to send, nothing sent; then posted as the state\'s bond, counted by the setup', async () => {
+  const { state, nodeSecret } = node({ bond: null });
+  state.save({ done: { service: 1, bond: 1 }, bond: null });   // the wizard's "later": the step done, no bond
+  const sent = [];
+  const asked = [];
+  const askMinimum = async () => { asked.push(1); return { sats: 60000, from: ['seat'], why: 'the network\'s bond target' }; };
+  const few = kit(sent, [{ txid: '5a'.repeat(32), vout: 1, sats: 20000, height: 0 }]);
+  const p = await firstBond({ state, chainKit: few, askMinimum, nowMs: 1000 });
+  assert.equal(p.ok, true, p.why);
+  assert.equal(sent.length, 0, 'the plan sends nothing');
+  assert.match(p.plan.address, /^tb1p/);
+  assert.deepEqual([p.plan.bondSats, p.plan.needSats, p.plan.walletSats, p.plan.confirmingSats, p.plan.shortSats, p.plan.enough], ['60000', 62000, 20000, 20000, 42000, false]);
+  assert.equal(p.plan.minimumWhy, 'the network\'s bond target', 'the seats\' minimum, kept');
+  await firstBond({ state, chainKit: few, askMinimum, nowMs: 2000 });
+  assert.equal(asked.length, 1, 'the minimum asked again only after 10 minutes');
+  const short = await firstBond({ state, chainKit: few, askMinimum, post: true, nowMs: 3000 });
+  assert.equal(short.ok, false);
+  assert.match(short.why, /the wallet holds 20000 sat: send 42000 sat more to tb1p/);
+  assert.equal(sent.length, 0);
+  const r = await firstBond({ state, chainKit: kit(sent, [{ txid: '5a'.repeat(32), vout: 1, sats: 70000, height: 157060 }]), askMinimum, post: true, nowMs: 4000 });
+  assert.equal(r.ok, true, r.why);
+  assert.equal(sent.length, 2, 'the funding, then the bond');
+  const bondTx = parseTransaction(fromHex(sent[1]));
+  assert.equal(bondTx.outputs[0].value, 60000n);
+  assert.equal(toHex(bondTx.outputs[0].script), '5120' + toHex(bondKeyAt(schnorr.getPublicKey(nodeSecret), r.bond.maturity).outputKey), 'locked under the node key');
+  const s = state.read();
+  assert.deepEqual([s.bond.txid, s.bond.sats, s.bond.fromOwnerArea], [r.bond.txid, '60000', true], 'the state\'s bond: setup-status counts its confirmations');
+  assert.deepEqual(bondsOf(s).map((b) => b.txid), [r.bond.txid]);
+  assert.ok(Array.isArray(s.advertProtocols) && s.advertProtocols.length);
+  // posted already: nothing sent again
+  const again = await firstBond({ state, chainKit: kit(sent), post: true });
+  assert.deepEqual([again.ok, again.done, again.bond.txid, sent.length], [true, true, r.bond.txid, 2]);
+  // not installed: refused
+  const fresh = node({ bond: null }).state;
+  assert.match((await firstBond({ state: fresh, chainKit: kit([]) })).why, /not installed yet/);
+});
+
+test('the first bond on a custody node starts its agent, as the wizard does; a plain node starts none', async () => {
+  const started = [];
+  const startAgent = async () => { started.push(1); return { ok: true }; };
+  const custody = node({ bond: null }).state;
+  custody.save({ done: { service: 1 }, roles: ['verify', 'settlement', 'custody'], custody: { pegInSats: 0 } });
+  const r = await firstBond({ state: custody, chainKit: kit([], [{ txid: '5a'.repeat(32), vout: 1, sats: 400000, height: 157000 }]), startAgent, post: true });
+  assert.equal(r.ok, true, r.why);
+  assert.deepEqual([started.length, r.agent.ok, !!custody.read().custodyAgent.installedMs], [1, true, true]);
+  const plain = node({ bond: null }).state;
+  plain.save({ done: { service: 1 } });
+  const p = await firstBond({ state: plain, chainKit: kit([], [{ txid: '5a'.repeat(32), vout: 1, sats: 60000, height: 157000 }]), startAgent, post: true });
+  assert.equal(p.ok, true, p.why);
+  assert.deepEqual([started.length, p.agent], [1, null]);
+});
+
+// THE PLAN IS A LIGHT READ (the 2026.1.9.11 install test, kanban #728: the Bond panel asks every 30 s and each answer took 14-18 s): the plan
+// asks the chain to reuse its UTXO scan of this tip, the post reads afresh; two plan asks at once share one read
+test('the first bond\'s plan reuses the scan of this tip, the post does not; plan asks at once share one read', async () => {
+  const { state } = node({ bond: null });
+  state.save({ done: { service: 1 }, bond: null });
+  const opts = [];
+  let release = null;
+  const slow = { coinsOf: async (chain, spk, o) => { opts.push(o || null); await new Promise((r) => { release = r; }); return { tip: 157070, coins: [{ txid: '5a'.repeat(32), vout: 1, sats: 70000, height: 157060 }] }; },
+    broadcast: async () => 'ab'.repeat(32) };
+  const ask = () => firstBondOnNode({ home: state.home, state, release: '/nowhere', chainKit: slow, askMinimum: null, startAgent: null });
+  const a = ask(), b = ask();
+  await new Promise((r) => setTimeout(r, 20));
+  release();
+  const [ra, rb] = await Promise.all([a, b]);
+  assert.equal(ra.ok, true, ra.why);
+  assert.strictEqual(ra, rb, 'the second ask had the first one\'s answer');
+  assert.deepEqual(opts, [{ reuseScan: true }], 'one read, reusing the scan');
+  const p = firstBondOnNode({ home: state.home, state, release: '/nowhere', chainKit: slow, askMinimum: null, startAgent: null, post: true });
+  await new Promise((r) => setTimeout(r, 20));
+  release();
+  await p;
+  assert.deepEqual(opts, [{ reuseScan: true }, null], 'the post reads the chain afresh');
 });
