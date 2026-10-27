@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { checkAsset } from './release-verify.js';
-import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHealthy, launchdPlist, LAUNCHD_LABEL, windowsLauncher, removeProgram } from './service.js';
+import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHealthy, launchdPlist, LAUNCHD_LABEL, windowsLauncher, removeProgram, unitName, waitPortLine } from './service.js';
 import { adhocSign } from './tor.js';
 import { INSTANCE, PORT_OFFSET } from './instance.js';
 import { envToConfValues, formatConf, renameKeys, renameValues } from '../../arena-node/src/arena-conf.js';
@@ -114,6 +114,32 @@ export function peerPortsLocal(home) {
       writeFileSync(l, t.replace(/^listen=0\.0\.0\.0:/m, 'listen=127.0.0.1:'), { mode: 0o600 });
       changed.push('lnd');
     }
+  }
+  return changed;
+}
+
+/**
+ * LND WAITS FOR ITS TOR, AND TOR COMES BACK (kanban #720, the owner's LND log 2026-10-27: "dial proxy failed (connection refused)",
+ * "host unreachable"): on Linux a node installed before 2026.1.9.11 has an LND unit that only starts after the Tor unit - not once Tor's
+ * SOCKS port answers - and a Tor unit that is not started again after a clean exit. The two units are given the lines a new install
+ * writes (service.js waitPortLine, Restart=always). Answers the units changed (a daemon-reload takes them; nothing is restarted).
+ */
+export function lndWaitsForTor(home, { env = process.env } = {}) {
+  let socks = null;
+  try { socks = Number(JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).tor.ports.socks) || null; } catch { socks = null; }
+  if (!socks) return [];
+  const dir = unitDir(env), changed = [];
+  const lnd = join(dir, unitName('lnd')), tor = join(dir, unitName('tor'));
+  if (existsSync(lnd)) {
+    const t = readFileSync(lnd, 'utf8');
+    if (/^PartOf=.*tor/m.test(t) && !/^ExecStartPre=/m.test(t) && /^ExecStart=/m.test(t)) {
+      writeFileSync(lnd, t.replace(/^ExecStart=/m, () => `${waitPortLine(socks)}\nExecStart=`));
+      changed.push(unitName('lnd'));
+    }
+  }
+  if (existsSync(tor)) {
+    const t = readFileSync(tor, 'utf8');
+    if (/^Restart=on-failure$/m.test(t)) { writeFileSync(tor, t.replace(/^Restart=on-failure$/m, 'Restart=always')); changed.push(unitName('tor')); }
   }
   return changed;
 }
@@ -524,6 +550,13 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
       local = peerPortsLocal(home);
       for (const id of local) await restartService(id, { home, platform, env, sh });
     } catch (e) { local = [`not changed: ${e.message}`]; }
+    // AND ON LINUX, LND STARTED ONCE ITS TOR ANSWERS (kanban #720): the two units' lines, then a daemon-reload
+    if (platform === 'linux') {
+      try {
+        const units = lndWaitsForTor(home, { env });
+        if (units.length) { await sh('systemctl', ['--user', 'daemon-reload']); local.push(...units); }
+      } catch (e) { local.push(`LND/Tor units not changed: ${e.message}`); }
+    }
     // THE AUTO UPDATE SERVICE for a node installed before it, once
     let updater = null;
     if (installUpdaterFn) {
