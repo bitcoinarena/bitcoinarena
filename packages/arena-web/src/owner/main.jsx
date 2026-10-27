@@ -36,9 +36,11 @@ export function mountRoles(element, { api, node, initial } = {}) {
 // THE NODE KEY FROM THE 24 WORDS (kanban #650): optional, asked only on the owner's Check
 export function mountRounds(element, { api, initial } = {}) { const root = createRoot(element); root.render(<RoundsPanel api={api} initial={initial} />); return root; }
 export function mountKeySwitch(element, { api, initial } = {}) { const root = createRoot(element); root.render(<KeySwitchPanel api={api} initial={initial} />); return root; }
-export function mountServices(element, { api, initial, onAttention } = {}) {
+// AND ITS ROWS HANDED ON (the 2026.1.9.11 install test: the Overview's Custody chip never turned green - onServices, which owner.html
+// passes, was dropped here, so ServicesPanel never called it)
+export function mountServices(element, { api, initial, onAttention, onServices } = {}) {
   const root = createRoot(element);
-  root.render(<ServicesPanel api={api} initial={initial} onAttention={onAttention} />);
+  root.render(<ServicesPanel api={api} initial={initial} onAttention={onAttention} onServices={onServices} />);
   return root;
 }
 export function mountAddress(element, { api, initial } = {}) {
