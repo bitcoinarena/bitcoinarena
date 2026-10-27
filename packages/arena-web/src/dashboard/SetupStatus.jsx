@@ -256,7 +256,10 @@ export class SetupBanner extends React.Component {
     // "When it is just doing an update because a transaction was sent, no need to lock the entire screen. The full owner dashboard remains
     // available"): an advertisement update on its way never closes the owner area; the Overview's Setup card shows it
     // NOR WHAT WAS LEFT FOR LATER (kanban #711): Lightning the owner chose to set up later never closes the owner area - it is set up there
-    const setup = rows.filter(([id, , l]) => !String(id).startsWith('setup-update-') && !l.later);
+    // NOR THE BOND (kanban #728, the 2026.1.9.11 install test: a bond posted from the Bond section closed the whole owner area behind
+    // "still being set up" until it had 6 confirmations - the Bond section itself among the sections it shut): the bond is made and
+    // watched in the owner area, never a reason to close it
+    const setup = rows.filter(([id, , l]) => !String(id).startsWith('setup-update-') && id !== 'setup-bond' && !l.later);
     if (!setup.length || setup.every(([, , l]) => l.done)) return { phase: 'done', rows };
     return { phase: this.state.entered ? 'open' : 'gate', rows };
   }

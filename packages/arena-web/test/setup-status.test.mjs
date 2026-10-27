@@ -180,3 +180,10 @@ test('Lightning left for later: not complete, its tiles say how to set it up, an
   assert.match(card({ address: { ok: true, url: 'https://n.example' }, lnd: { ok: true, synced: true, height: 1, channels: 1, pending: 0 }, later: { lnd: false, gateway: true, fix: true, why: 'x' } }),
     /id="setup-lnd"[\s\S]*synced at block 1[\s\S]*id="setup-gateway"[\s\S]*Left for later/);
 });
+
+// A BOND ON ITS WAY NEVER CLOSES THE OWNER AREA (kanban #728, the 2026.1.9.11 install test: posted from the Bond section, it shut the
+// whole area - the Bond section among it - behind "still being set up" until its 6 confirmations)
+test('a bond posted and confirming does not put the setup screen over the owner area', () => {
+  const bond = { txid: 'b0'.repeat(32), sats: '50000', seen: true, confirmations: 1, confirmBy: 157790 };
+  assert.equal(renderToStaticMarkup(React.createElement(SetupBanner, { status: { ok: true, address: { ok: true, url: 'https://n.example' }, bond } })), '');
+});
