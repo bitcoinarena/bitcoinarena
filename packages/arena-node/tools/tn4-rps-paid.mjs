@@ -43,6 +43,7 @@ import { clientSettlementSignerNodes } from '../../arena-client/src/committee.js
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
+import { settlementOf, forfeitOf } from '../../arena-client/src/page-lock.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { entrySplit, lockEntry } from './entry-locks.mjs';
@@ -67,7 +68,8 @@ const run = (bin, args) => new Promise((done) => execFile(bin, args, { timeout: 
   (err, out, errOut) => done({ ok: !err, out: String(out), err: String(errOut || (err && err.message) || '') })));
 const payer = (...a) => run(env.LNCLI, [`--lnddir=${env.PAYER_DIR}`, `--rpcserver=${env.PAYER_RPC}`, `--network=${env.ARENA_TN4_NETWORK || 'testnet4'}`, ...a]);
 const scalar = () => { for (;;) { const s = rand(32); const v = scalarFrom32(s); if (v > 0n && v < FIELD) return s; } };
-const evenPlayer = () => { let k; do { k = secp256k1.utils.randomSecretKey(); } while (secp256k1.getPublicKey(k, true)[0] !== 0x02); return schnorr.getPublicKey(k); };
+// the player's key with its secret: the winner collects its payout and its stake under it (redeemPayout / redeemStake)
+const evenPlayer = () => { let k; do { k = secp256k1.utils.randomSecretKey(); } while (secp256k1.getPublicKey(k, true)[0] !== 0x02); return { secret: k, pubkey: schnorr.getPublicKey(k) }; };
 
 import { hiddenMove, moveCommitment, revealMove } from '../../arena-client/src/head-to-head.js';
 import { RPS_GAME_ID } from '../../rock-paper-scissors/plugin/rock-paper-scissors.js';
@@ -103,6 +105,10 @@ async function paidEntry(c, rid, roundHex, move, who) {
     const { LockClient } = wasmMod;
     const held = new Map();
     const memStore = { entries: () => JSON.stringify([...held]), put: (k, v) => { held.set(k, v); }, remove: (k) => { held.delete(k); } };
+    // NOTHING PAID INTO A FEDERATION THE ROUND DOES NOT NAME (2026.1.9.11 release check: two runs took a federation-B table with
+    // this federation-A wallet - every seat then said "the federation holds no lock" and the stake waits for its expiry)
+    if (String(LockClient.federationIdOf(invite)).toLowerCase() !== toHex(c.federationId))
+      throw new Error(`the round names federation ${toHex(c.federationId).slice(0, 8)}, this wallet pays into ${String(LockClient.federationIdOf(invite)).slice(0, 8)}: nothing paid`);
     const lc = await LockClient.join(invite, LockClient.federationIdOf(invite), toHex(rand(32)), memStore);
     const rule = JSON.parse(await lc.feeRule());
     const gate = feeLockPays({ contract: c, fees: { ppm: BigInt(rule.fee_ppm), baseMsat: BigInt(rule.fee_base_msat) } });
@@ -129,7 +135,8 @@ async function paidEntry(c, rid, roundHex, move, who) {
       balanceMsat: await lc.balanceMsat() });
 
     // LOCKED TO THE ATTESTED CLAIM KEY, AND HANDED TO EVERY SIGNER NODE
-    const s = { p: scalar(), player: evenPlayer() };
+    const me = evenPlayer();
+    const s = { p: scalar(), player: me.pubkey };
     s.point = feldmanGroup.pointFromScalar(scalarFrom32(s.p) % FIELD);
     const t2 = Date.now();
     const locks = await lockEntry({ lc, c, split, stakePoint: s.point, player: s.player, claimPk: att.claimPk, gate, rand });
@@ -177,7 +184,7 @@ async function paidEntry(c, rid, roundHex, move, who) {
     log({ step: 'handed over', entry: toHex(eid).slice(0, 16), signerNodes });
     if (signerNodes.filter((x) => x.lock >= 200 && x.lock < 300).length < needed) throw new Error('fewer seats than needed took the lock');
 
-  return { eid, hidden, signerNodes };
+  return { eid, hidden, signerNodes, lc, playerSecret: me.secret, playerPubkey: s.player, stake: locks.stake, fee: locks.fee };
   }
 }
 
@@ -192,7 +199,8 @@ try {
     // AHEAD_S (default 270): a round whose seating is still to come (seating close = entry close - 200 s on an RPS grid), so its
     // certificate forms while this waits - measured 20:38Z and 20:53Z: a round taken 150 s ahead had missed its seating under load
     const ahead = Number(env.AHEAD_S || 270) * 1000;
-    const rows = list.filter((r) => r.game && r.game.id === GAME && Number(r.entryCloseMs) - now > ahead).sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs) || (a.id < b.id ? -1 : 1));
+    const rows = list.filter((r) => r.game && r.game.id === GAME && Number(r.entryCloseMs) - now > ahead
+      && (!env.FEDERATION || String(r.federation || '').toLowerCase().startsWith(String(env.FEDERATION).toLowerCase()))).sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs) || (a.id < b.id ? -1 : 1));
     if (!rows.length) throw new Error(`no RPS round held whose entry closes more than ${ahead / 1000} s ahead`);
     roundHex = rows[0].id;
     // FEDERATION=<hex prefix>: only a table of the federation this payer's wallet pays into - both grids list together
@@ -257,5 +265,39 @@ try {
   }
   const rr = await (await fetch(`${nodes[0]}/api/round-result?round=${roundHex}`)).json().catch((e) => ({ error: e.message }));
   log({ step: 'result', result: JSON.stringify(rr).slice(0, 600) });
+
+  // THE WINNER COLLECTS, as the page's redeemPayout and redeemStake do (2026.1.9.11 release check, the owner HARD: "Auszahlung muss
+  // funktionieren"): the settlement's payout contract to this player's refund key, spent by refund under that key, then its own
+  // stake (and fee lock) by the seats' forfeit. Asked until a seat holds the accepted settlement, at most 15 min.
+  let st = null;
+  for (const stop = Date.now() + 15 * 60000; ;) {
+    st = await settlementOf({ roundId: rid, nodes });
+    if (st.ok || Date.now() > stop) break;
+    log({ step: 'settlement not accepted yet', why: st.why.slice(0, 200) });
+    await new Promise((r) => setTimeout(r, 30000));
+  }
+  if (!st.ok) throw new Error(`no accepted settlement to collect from: ${st.why}`);
+  log({ step: 'settled', txid: st.txid.slice(0, 16), from: st.from, payouts: st.moved.payouts.length });
+  for (const [p, who] of [[p1, 'P1'], [p2, 'P2']]) {
+    const before = await p.lc.balanceMsat();
+    const mine = toHex(refundKeyOf(p.playerPubkey));
+    const at = st.moved.payouts.findIndex((x) => x.kind === 'qualifier' && String(x.pk).toLowerCase() === mine);
+    let payout = null;
+    if (at >= 0) {
+      const x = st.moved.payouts[at];
+      const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(x.msat), claimPk: mine, refundPk: mine, expiration: 0 };
+      const said = JSON.parse(await p.lc.refund(st.txid, at, JSON.stringify(fields), toHex(p.playerSecret)));
+      payout = { msat: String(x.msat), outIdx: at, accepted: said.accepted === true, ...(said.accepted === true ? {} : { said: JSON.stringify(said).slice(0, 200) }) };
+    }
+    const stakes = [];
+    for (const [l, kind] of [[p.stake, 'stake'], [p.fee, 'fee']]) {
+      if (!l) continue;
+      const f = await forfeitOf({ roundId: rid, entryId: p.eid, nodes, lock: kind });
+      if (!f.ok) { stakes.push({ kind, forfeit: f.why.slice(0, 160) }); continue; }
+      const said = JSON.parse(await p.lc.redeem(toHex(l.outpoint.txid), Number(l.outpoint.outIdx), JSON.stringify(lockFieldsToJson(l.fields)), f.signature, toHex(p.playerSecret)));
+      stakes.push({ kind, accepted: said.accepted === true, ...(said.accepted === true ? {} : { said: JSON.stringify(said).slice(0, 200) }) });
+    }
+    log({ step: 'collected', player: who, payout, stakes, balanceBeforeMsat: before, balanceAfterMsat: await p.lc.balanceMsat() });
+  }
 } catch (e) { code = 1; log({ step: 'stopped', why: String(e.stack || e.message).slice(0, 600) }); }
 process.exit(code);
