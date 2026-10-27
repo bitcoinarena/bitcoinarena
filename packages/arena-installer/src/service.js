@@ -16,6 +16,11 @@ export const UNIT = unitName('node');
 export const BRIDGE_UNIT = unitName('chain-bridge');
 export const TUNNEL_UNIT = unitName('tunnel');
 
+// STARTED ONCE THE PORT IT DIALS ANSWERS (kanban #720, the owner's LND log 2026-10-27: "dial proxy failed (connection refused)"): After=
+// orders the start only - LND came up before Tor's SOCKS port listened and dialled into nothing. The unit waits up to 90 s for the port,
+// else fails and is started again 30 s later (Restart). `$$` is a `$` to the shell: systemd expands a single one itself.
+export const waitPortLine = (port) => `ExecStartPre=/bin/bash -c 'for i in $$(seq 1 90); do (echo > /dev/tcp/127.0.0.1/${Number(port)}) 2>/dev/null && exit 0; sleep 1; done; echo "nothing listens on 127.0.0.1:${Number(port)}"; exit 1'`;
+
 /** The unit's directory: $XDG_CONFIG_HOME/systemd/user. */
 export const unitDir = (env = process.env) => join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'systemd', 'user');
 
@@ -254,7 +259,8 @@ export async function removeProgram({ id, home, env = process.env, sh = run, pla
  * io.bitcoin-arena.<id>, the task "Arena <id>"), `args` is its command line, `log` where its output goes. Started now; at boot too
  * when `boot`. `vars`: environment the program needs (secrets too - kept only in files of this user, 0600). Answers { ok, why }.
  */
-export async function installProgram({ id, description, args, home, boot = true, vars = null, partOf = null, env = process.env, sh = run, platform = process.platform, againOn = null }) {
+export async function installProgram({ id, description, args, home, boot = true, vars = null, partOf = null, env = process.env, sh = run, platform = process.platform, againOn = null,
+  waitPort = null, restart = 'on-failure' }) {
   const varLines = Object.entries(vars || {}).map(([k, v]) => { if (!/^[A-Z_][A-Z0-9_]*$/.test(k) || /[\r\n]/.test(String(v))) throw new Error(`bad variable ${k}`); return [k, String(v)]; });
   if (platform === 'darwin') {
     const dir = join(env.HOME || homedir(), 'Library', 'LaunchAgents');
@@ -312,8 +318,8 @@ After=network-online.target${partOf ? ` ${unitName(partOf)}` : ''}
 Wants=network-online.target
 ${partOf ? `# restarted with arena-${partOf}: LND's onion service lives in that Tor and is gone when it restarts (measured 2026-10-18 on the test host)\nPartOf=${unitName(partOf)}\n` : ''}
 [Service]
-${varLines.length ? `EnvironmentFile=${envFile}\n` : ''}ExecStart=${args.join(' ')}
-Restart=on-failure
+${varLines.length ? `EnvironmentFile=${envFile}\n` : ''}${waitPort ? `${waitPortLine(waitPort)}\n` : ''}ExecStart=${args.join(' ')}
+Restart=${restart}
 RestartSec=30
 TimeoutStopSec=600
 Nice=10
