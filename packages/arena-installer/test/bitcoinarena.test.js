@@ -94,6 +94,30 @@ test('a guardian waiting in setup runs beside the seat: found by its pid file, a
   } finally { rmSync(n.root, { recursive: true, force: true }); }
 });
 
+// ANOTHER NODE'S GUARDIAN ON THIS NODE'S PORT (the 2026.1.9.11 install test: the owner's card said "Running - its API answers" while this node's
+// fedimintd had ended at its start, "Address already in use"): the status and the doctor ask with the node's own password, and say the log's reason
+test('the guardian is this node\'s only when it takes this node\'s password; not running says its log\'s last error, in status and doctor alike', async () => {
+  const n = linuxNode({ port: 8472 });
+  try {
+    mkdirSync(join(n.home, 'node.db.guardian'), { recursive: true });
+    writeFileSync(join(n.home, 'node.db.guardian', 'fedimintd.log'), 'INFO starting\nERROR fedimintd: Bind address: 127.0.0.1:9472 ... Address already in use\n');
+    const asked = [];
+    const other = async (a) => { asked.push(a); return { ok: false, ours: false, says: `another guardian answers on its API port ${a.apiPort} and refuses this node's password` }; };
+    const { sh } = fakeSh({});
+    const by = Object.fromEntries((await overview({ home: n.home, platform: 'linux', env: n.env, sh, fetcher: async () => { throw new Error('ECONNREFUSED'); }, dnsPauseMs: 1, guardianCheck: other })).services.map((s) => [s.id, s]));
+    assert.deepEqual(asked, [{ apiPort: 9472, dataDir: join(n.home, 'node.db.guardian') }], 'the seat\'s port + 1000, its own data dir');
+    assert.equal(by.guardian.running, false, 'a fedimintd under the seat, but not the guardian on its port: not running');
+    assert.match(by.guardian.detail, /another guardian answers on its API port 9472/);
+    const checks = await doctor({ home: n.home, platform: 'linux', env: n.env, sh, fetcher: async () => { throw new Error('ECONNREFUSED'); }, guardianCheck: other });
+    const g = checks.find((c) => c.check === 'Guardian (fedimintd)');
+    assert.equal(g.ok, false); assert.match(g.says, /another guardian answers/);
+    // no fedimintd at all: the log's last error is the reason
+    const ps = async (cmd, args) => (cmd === 'ps' ? { ok: true, out: '  104     1 node\n', err: '' } : sh(cmd, args));
+    const none = Object.fromEntries((await overview({ home: n.home, platform: 'linux', env: n.env, sh: ps, probes: false })).services.map((s) => [s.id, s]));
+    assert.equal(none.guardian.detail, 'the node runs without it; its log: ERROR fedimintd: Bind address: 127.0.0.1:9472 ... Address already in use');
+  } finally { rmSync(n.root, { recursive: true, force: true }); }
+});
+
 // THE CHAIN BRIDGE TAKEN AWAY (the owner on 2026.1.9.9: "Do I need electrum when I have bitcoin core installed and running?")
 test('removeProgram: the bridge\'s unit stopped and removed; nothing to do when there is none', async () => {
   const { removeProgram, unitName } = await import('../src/service.js');

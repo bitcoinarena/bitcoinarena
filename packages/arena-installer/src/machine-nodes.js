@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { parseConf } from '../../arena-node/src/arena-conf.js';
 import { instancesOf, INSTANCES_MAX } from './instances.js';
-import { BASE_PORTS, portsInUse } from './instance.js';
+import { nodePorts, portsInUse } from './instance.js';
 
 const holds = (d) => existsSync(join(d, 'state.json')) || existsSync(join(d, 'arena.conf'));
 const readJson = (f) => { try { return JSON.parse(readFileSync(f, 'utf8')); } catch { return null; } };
@@ -91,7 +91,9 @@ export function addNodesPlan(nodes, count, { busy = portsInUse } = {}) {
   for (const c of instancesOf(26, base.home, { instance: base.instance, portOffset: base.portOffset }).slice(1)) {
     if (out.length === n) break;
     if (names.has(c.instance) || homes.has(c.home) || offsets.has(c.portOffset) || holds(c.home)) continue;
-    if (busy(BASE_PORTS.map((p) => p + c.portOffset)).length) continue;
+    // EVERY PORT IT WILL USE, its guardian's among them (the 2026.1.9.11 install test: another node's guardian held the new node's guardian
+    // API port, and its fedimintd ended at start with "Address already in use"): none of them in use
+    if (busy(nodePorts(c.portOffset)).length) continue;
     out.push(c);
   }
   if (out.length < n) return { ok: false, why: `only ${out.length} free name(s) and port range(s) were found for ${n} more node(s)` };
