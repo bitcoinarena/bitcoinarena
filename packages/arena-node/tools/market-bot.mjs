@@ -552,8 +552,15 @@ async function pass() {
     const rid = roundId(c);
     if (toHex(rid) !== row.id) throw new Error('the seat answered another round');
     // seated before anything is paid (§5A.7) - read once per round: a round's seated signers do not change
-    const seated = seatedOf.get(row.id) || await clientSettlementSignerNodes(row.id, c, nodes, { curve: pageCurve });
-    seatedOf.set(row.id, seated);
+    // A ROUND NOT SEATED IS SKIPPED, NOT THE PASS (measured 2026-10-27 23:15-23:45Z: the test host seats listed the window's fed-A round
+    // 3e8f9277 as unseated - their certificate never written in, the test host seats held it - so an unseated round of the window came
+    // first, threw "that round has no signer nodes yet" and ended the pass before the seated one was asked)
+    let seated = seatedOf.get(row.id);
+    if (!seated) {
+      try { seated = await clientSettlementSignerNodes(row.id, c, nodes, { curve: pageCurve }); }
+      catch (e) { say({ step: 'not seated', round: row.id.slice(0, 16), why: String(e.message).slice(0, 160) }); continue; }
+      seatedOf.set(row.id, seated);
+    }
     let placedThisPass = 0;
     for (const q of todo) {
       if (placedThisPass >= PER_PASS) break;
