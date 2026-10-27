@@ -3651,7 +3651,28 @@ were. Example, a round of 10,000 sat stakes and a website line: nodes' fee
 400 sat, website 40, auditors 36 (three auditors: 12 each), pools 324 (one
 verify seat of seven: 11.6 sat, against 12.9 without auditors).
 
-**AS BUILT:** not yet (kanban #725).
+**AS BUILT (2026-10-27, kanban #725):** protocol (`auditor.js`, `vrf.js`), the role, the payout line (`lock-settlement.js`) and the node:
+
+- *The auditor* (`round-auditor.js`, run by `server.js` every 10 s on every node): every paid round of protocol 22 of a replayed game
+  (not an attested market, not a head-to-head round) that it holds, is not seated in, and whose window is open. Drawn by its own VRF, it
+  reads the round from a seat (`GET /audit-run`: every entry and every signed result), counts the agreed run itself against the
+  committee, and replays each entry from what the seats hand out (canonical transcript, receipts, inputs) through the seat's own objection
+  check (`checkObjection`, the round's core and beacon). All agree: the `AUDIT` to every seat. One differs: the objection of §13A
+  claiming the replayed run, to every seat, and no `AUDIT`.
+- *The seat's door* (`POST /audit`, `audit-seat.js`): signed by its node, VRF proof good, the node eligible and drawn, not a player of
+  the round, its `results_hash` the seat's own agreed runs, within 5 s of the seat's clock and at least 30 s before `window_close`. Kept
+  once per node and round. A new one goes to the round's other seats with the forwarding seat's key (`x-audit-seat`) and its signature
+  under `ARENA/v1/AuditForward` over the `AUDIT`'s id (`x-audit-forward`). A forwarded one counts until `window_close`, and only from a
+  seat of the round. `GET /audits` lists them.
+- *Pay*: the settlement reads the `AUDIT`s held and not contradicted (`signerNodes.auditors`).
+- *Contradicted*: where the first result's signers are filed against (an agreed re-run of another run, VOID or FORFEIT after an
+  objection, a late objection), every `AUDIT` the seat holds for that round is marked. Its bytes and signature are kept as the evidence
+  (`GET /audits`), and it is paid nothing.
+
+Not built: the slash proof that carries a contradicted `AUDIT` to its bond (slash.js knows only signed player results); the `AUDIT` to
+the round's `publication_relays[]`; the operator exclusion (no player declares an operator since §5A.13's ruling). Two choices the
+text above does not make: the players are refused at the seat's door and are not taken out of `W`, so an auditor holding no entry
+draws on the same `W` as the seats. An entry void at the door (§15) is left out of `results_hash`.
 
 ---
 
