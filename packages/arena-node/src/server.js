@@ -5545,7 +5545,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const { version, commit } = releaseHere();
           let latest; try { latest = await latestReleaseFor(version); } catch (e) { latest = { latest: null, newer: false, why: e.message }; }
           return answer(200, { node: toHex(round.pubkey), version, commit, latest,
-            protocols: SUPPORTED_PROTOCOL_VERSIONS, machine: machineOf({ chain }), update: 'arena-install --update <new release> on this machine (checked, backed up, rolled back if it fails)' });
+            protocols: SUPPORTED_PROTOCOL_VERSIONS, machine: machineOf({ chain }), update: 'bitcoinarena-install --update <new release> on this machine (checked, backed up, rolled back if it fails)' });
         }
         // OLD BONDS AFTER A KEY SWITCH (kanban #650: "b but optional"): a node that moved to the key its 24 words give left its bonds under
         // the old key, kept in the store's identity_old and named in the installer's state (oldBonds). Each with its lock, and whether this
