@@ -121,6 +121,11 @@ function searchedTape(A, config, seedWord, N, startOpts, { ms = 60000 } = {}) {
 // NODES: the seats by URL - a v2 round draws its signer nodes from all 14, seven of them on the test host
 const nodes = env.NODES ? env.NODES.split(',').map((u) => u.trim().replace(/\/+$/, '')) : env.PORTS.split(',').map((p) => `http://127.0.0.1:${p.trim()}`);
 const invite = readFileSync(env.INVITE_FILE, 'utf8').replace(/["\s]/g, '');
+// A PLAYER'S OWN REFERRAL LINK (kanban #681): REFERRER_SECRET_FILE=<64 hex identity secret> - the entry names that player's program
+// key, 02 and the identity key's x (identity.js referralOf), as a page opened by their ?ref= link does; with REFERRER_COLLECT=1 the run
+// then collects the share the seats paid to it, by refund under that secret, as the referrer's own wallet does (collectZaps)
+const REFERRER_SECRET = env.REFERRER_SECRET_FILE ? fromHex(readFileSync(env.REFERRER_SECRET_FILE, 'utf8').trim()) : null;
+const REFERRAL_PK = REFERRER_SECRET ? toHex(refundKeyOf(schnorr.getPublicKey(REFERRER_SECRET))) : env.FRONTEND_PK;
 let code = 0;
 try {
   // WHICH ROUND: the one named, else the next nextblock round of the series that is open for entries and starts 75 s ahead
@@ -255,7 +260,7 @@ try {
     // THE OPERATOR THIS PLAYER DECLARES (§5A.13): OPERATOR_ID=<64 hex> - a committee node advertising the same operator
     // is conflicted in this round: it neither signs nor earns
     ...(/^[0-9a-f]{64}$/.test(env.OPERATOR_ID || '') ? { operatorId: fromHex(env.OPERATOR_ID) } : {}),
-    ...(/^0[23][0-9a-f]{64}$/.test(env.FRONTEND_PK || '') ? { frontendPk: fromHex(env.FRONTEND_PK) } : {}) };
+    ...(/^0[23][0-9a-f]{64}$/.test(REFERRAL_PK || '') ? { frontendPk: fromHex(REFERRAL_PK) } : {}) };
   // THE PLAYER'S ITEMS, as the page's join names them (ARENA_ITEMS_FOR_ENTRY): owned by the seed's items key, in a round of version 10+
   let unlocks = [];
   if (env.ITEMS_SEED_FILE) {
@@ -404,6 +409,24 @@ try {
     stakes.push({ kind, accepted: said.accepted === true, ...(said.accepted === true ? {} : { said: JSON.stringify(said).slice(0, 200) }) });
   }
   log({ step: 'collected', payout, stakes, balanceBeforeMsat: before, balanceAfterMsat: await lc.balanceMsat() });
+
+  // THE REFERRER COLLECTS ITS SHARE (#681): every payout the seats list under its key (GET /donations?key=), spent by refund
+  if (REFERRER_SECRET && env.REFERRER_COLLECT) {
+    const found = new Map();
+    for (const n of nodes) {
+      try { const r = await fetch(`${n}/donations?key=${REFERRAL_PK}&since=0`); if (r.ok) for (const d of ((await r.json()).donations || [])) if (d && d.outpoint) found.set(d.outpoint, d); } catch { /* another seat */ }
+    }
+    const mine = [...found.values()].filter((d) => d.roundId === toHex(rid) || String(d.roundId || '').startsWith(toHex(rid).slice(0, 16)));
+    const refBefore = await lc.balanceMsat();
+    const got = [];
+    for (const d of mine) {
+      const [txid, vout] = String(d.outpoint).split(':');
+      const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(d.amountMsat), claimPk: REFERRAL_PK, refundPk: REFERRAL_PK, expiration: 0 };
+      const said = JSON.parse(await lc.refund(txid, Number(vout), JSON.stringify(fields), toHex(REFERRER_SECRET)));
+      got.push({ outpoint: d.outpoint, item: d.item, msat: String(d.amountMsat), accepted: said.accepted === true, ...(said.accepted === true ? {} : { said: JSON.stringify(said).slice(0, 160) }) });
+    }
+    log({ step: 'referral collected', key: REFERRAL_PK.slice(0, 16), listed: found.size, thisRound: mine.length, got, balanceBeforeMsat: refBefore, balanceAfterMsat: await lc.balanceMsat() });
+  }
 } catch (e) {
   code = 1;
   log({ step: 'stopped', why: String(e.stack || e.message).slice(0, 600) });
