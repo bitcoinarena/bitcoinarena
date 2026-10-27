@@ -1402,12 +1402,15 @@ export class Verifier {
    * evidence, before anything is stored - the objector's signature, what it names, the transcript's hash and chain, that
    * it is this entry's, a committee member's receipt on every checkpoint, and a replay under the round's own core through
    * the same pool as a close (first in its queue: it is objected). `signedResultId` is the run it is filed against.
+   * AN AUDITOR'S REPLAY (§13A.1, kanban #725) runs the very same check: it holds the round but neither its entries nor a seat in it, so
+   * it hands the entry contract (`given.entry`, checked against the entry id) and the committee it drew (`given.committee`).
    */
-  async checkObjection(roundIdBytes, entryIdBytes, bundle, signedResultId) {
+  async checkObjection(roundIdBytes, entryIdBytes, bundle, signedResultId, given = {}) {
     const row = this.round.get(roundIdBytes);
     if (!row) return { holds: false, step: 'names', why: 'no such round' };
     const contract = decodeRoundContract(new Uint8Array(row.contract));
-    const found = this.round.entriesOf(roundIdBytes).find((e) => hex(e.entryId) === hex(entryIdBytes));
+    const found = given.entry ? { entryId: entryIdBytes, entry: given.entry }
+      : this.round.entriesOf(roundIdBytes).find((e) => hex(e.entryId) === hex(entryIdBytes));
     if (!found) return { holds: false, step: 'names', why: 'no such entry in that round' };
     const beacon = beaconFor(this.randomnessFor, contract, roundIdBytes, found.entry, entryIdBytes, this.chainFor);
     if (!beacon.ok) return { holds: false, step: 'replay', why: `no beacon to replay under: ${beacon.why}` };
@@ -1432,7 +1435,7 @@ export class Verifier {
       try { const p = decodeObjectionBundle(bundle); content = hex(sha256(new Uint8Array([...p.transcript, ...(p.inputs || [])]))); } catch { content = ''; }
       return await checkObjectionBundle({
         bundle, roundId: roundIdBytes, entryId: entryIdBytes, entry: found.entry, contract,
-        committee: this.round.signerNodes(roundIdBytes), signedResultId, core, roundRandomness: beacon.hash,
+        committee: given.committee || this.round.signerNodes(roundIdBytes), signedResultId, core, roundRandomness: beacon.hash,
         verify: (sig, msg, key) => verifyKept(sig, msg, key),
         replayRun: (form, entry, options) => {
           const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}:${content}:${form.ticks.length}`;

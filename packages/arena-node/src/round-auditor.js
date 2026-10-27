@@ -87,3 +87,102 @@ export class RoundAuditor {
   }
 }
 
+/**
+ * WHAT A DRAWN AUDITOR READS AND SENDS, OVER THE ROUND'S SEATS (§13A.1, kanban #725): the network half of RoundAuditor, kept apart so the
+ * draw and the rule stay testable with no daemon. The auditor is no seat of the round and holds none of its entries: it asks a seat
+ * (GET /audit-run) for every entry and every signed result, counts the agreed run itself against the committee it drew (agreedRunsOf,
+ * the same count a seat makes), and replays each entry from what any seat hands out - the canonical transcript, the receipts and the
+ * inputs (tools/objection-bundle.mjs, as any objector builds them) - through the very check a seat runs on an objection at its door
+ * (`check`, verify.js checkObjection): the replay under the round's own core and beacon, every receipt a committee member's. Agreeing,
+ * that check refuses a bundle claiming the signed run ("the replay agrees"); differing, it names the run the replay gives, and the
+ * objection then claims that run - the bundle every seat checks again on its own.
+ *
+ * `seatsFor(rid)` the round's seats (base URLs), `committeeFor(rid)` its signer node keys, `contractOf(rid)` its contract, `check(rid, eid,
+ * bundle, signedRunId, { entry, committee })` the seat's objection check, `secret` this node's key (it signs the bundle as the objector),
+ * `decodeResult(bytes)` { result, runId } of one signed result.
+ */
+export function auditorNet({ seatsFor, committeeFor, contractOf, check, secret, buildBundle, decodeEntry, entryIdOf, agreedRunsOf, decodeResult,
+  fetcher = fetch, now = () => Date.now(), log = () => {} }) {
+  const kept = new Map();   // round hex -> { seat, entries: Map(entry hex -> { entry, runId, signed, replayed }) }
+  const fromHexStr = (s) => Uint8Array.from(Buffer.from(String(s), 'hex'));
+  const seatList = (rid) => { try { return [...new Set(seatsFor(rid) || [])].map((u) => String(u).replace(/\/+$/, '')); } catch { return []; } };
+
+  async function entriesFor(roundId) {
+    const contract = contractOf(roundId), committee = committeeFor(roundId);
+    if (!contract || !committee || !committee.length) return null;
+    for (const seat of seatList(roundId)) {
+      let j;
+      try {
+        const r = await fetcher(`${seat}/audit-run?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(8000) });
+        if (r.status !== 200) continue;
+        j = await r.json();
+      } catch { continue; }
+      const rows = [];
+      try {
+        for (const x of j.entries || []) {
+          const entry = decodeEntry(fromHexStr(x.entry));
+          if (toHex(entry.roundId) !== toHex(roundId)) throw new Error('an entry of another round');
+          rows.push({ entryId: entryIdOf(entry), entry, results: (x.results || []).map(fromHexStr) });
+        }
+      } catch (e) { log(`[audit] ${toHex(roundId).slice(0, 16)}: ${seat} hands an entry that does not read: ${e.message}`); continue; }
+      const agreed = agreedRunsOf({ contract, committee, entries: rows });
+      if (!agreed.ok) return null;          // not all agreed yet at this seat: the next pass asks again
+      const entries = new Map();
+      for (const [i, run] of agreed.runs.entries()) {
+        const signed = rows[i].results.map((b) => { try { return decodeResult(b); } catch { return null; } })
+          .find((res) => res && toHex(res.runId) === toHex(run.runId));
+        entries.set(toHex(run.entryId), { entry: rows[i].entry, runId: run.runId, signed: signed ? signed.result : null, replayed: null });
+      }
+      kept.set(toHex(roundId), { seat, entries });
+      if (kept.size > 256) kept.delete(kept.keys().next().value);
+      return agreed.runs;
+    }
+    return null;
+  }
+
+  const bundleOf = (roundId, entryId, k, claimed) => buildBundle({ base: kept.get(toHex(roundId)).seat, roundId, entryId, signedRunId: k.runId,
+    playerPubkey: k.entry.playerPubkey, claimed, objectorSecret: secret, atMs: BigInt(now()), fetcher });
+
+  /** The run this node's replay gives for one entry (bytes), or null when it could not replay it. */
+  async function replay(roundId, entryId) {
+    const at = kept.get(toHex(roundId)), k = at && at.entries.get(toHex(entryId));
+    if (!k || !k.signed) return null;
+    const b = await bundleOf(roundId, entryId, k, { outcome: k.signed.outcome, score: k.signed.score });
+    const r = await check(roundId, entryId, b.bundle, k.runId, { entry: k.entry, committee: committeeFor(roundId) });
+    if (!r || !r.replayedRunId) { log(`[audit] ${toHex(entryId).slice(0, 16)}: not replayed - ${r ? `${r.step}: ${r.why}` : 'no answer'}`); return null; }
+    k.replayed = r.replayed;
+    return fromHexStr(r.replayedRunId);
+  }
+
+  /** The §13A objection for an entry whose replay gave another run: the bundle claiming that run, to every seat. True once one took it. */
+  async function object(roundId, entryId) {
+    const at = kept.get(toHex(roundId)), k = at && at.entries.get(toHex(entryId));
+    if (!k || !k.replayed) return false;
+    const b = await bundleOf(roundId, entryId, k, k.replayed);
+    let took = false;
+    for (const seat of seatList(roundId)) {
+      try {
+        const r = await fetcher(`${seat}/objection?round=${toHex(roundId)}&entry=${toHex(entryId)}`, { method: 'POST', body: b.bundle, signal: AbortSignal.timeout(60000) });
+        if (r.status === 201 || r.status === 200) took = true;
+        log(`[audit] ${toHex(entryId).slice(0, 16)}: objection at ${seat}: ${r.status} ${(await r.text()).slice(0, 120)}`);
+      } catch (e) { log(`[audit] ${toHex(entryId).slice(0, 16)}: objection at ${seat}: ${e.message}`); }
+    }
+    return took;
+  }
+
+  /** The AUDIT (its bytes and signature) to every seat of the round: the number that took it. */
+  async function post(bytes, signature, roundId) {
+    const body = new Uint8Array(bytes.length + 64); body.set(bytes); body.set(signature, bytes.length);
+    let n = 0;
+    for (const seat of seatList(roundId)) {
+      try {
+        const r = await fetcher(`${seat}/audit`, { method: 'POST', body, signal: AbortSignal.timeout(8000) });
+        if (r.status === 201 || r.status === 200) n++;
+        else log(`[audit] ${toHex(roundId).slice(0, 16)}: ${seat} refused the AUDIT: ${r.status} ${(await r.text()).slice(0, 160)}`);
+      } catch (e) { log(`[audit] ${toHex(roundId).slice(0, 16)}: ${seat}: ${e.message}`); }
+    }
+    return n;
+  }
+  return { entriesFor, replay, object, post };
+}
+
