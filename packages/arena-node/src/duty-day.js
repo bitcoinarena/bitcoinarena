@@ -425,7 +425,7 @@ export function createDayDuty(o) {
           const pay = await canPay();
           // A NODE THAT CANNOT PAY SAYS SO AND SKIPS: the day falls to the next node in order an hour later (duty.js dayPostDue)
           if (!pay.ok) { seen.wouldPost.push({ app: game, slot, why: pay.why }); if (lastSaid !== `${said} nopay`) say({ dutyDay: 'DUE, CANNOT PAY', item, slot, why: pay.why }); lastSaid = `${said} nopay`; }
-          else { try { await publish(slot); } catch (e) { fail(`${game} ${new Date(targetDay(slot).startMs).toISOString().slice(0, 10)}: ${e.message}`); say({ dutyDay: 'NOT PUBLISHED', item, slot, why: e.message }); } }
+          else { try { await publish(slot); } catch (e) { fail(`${game} ${new Date(targetDay(slot).startMs).toISOString().slice(0, 10)}: ${e.message}`); say({ dutyDay: 'NOT PUBLISHED', item, slot, why: e.message, at: String(e.stack || '').split('\n').slice(1, 4).map((l) => l.trim()).join(' < ') }); } }
         }
       }
       await watch(view, idx, await mempoolMarkers(), rank, ready);
