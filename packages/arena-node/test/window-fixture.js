@@ -65,6 +65,8 @@ import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { HOSTED } from './plugins/hosted.js';
+import { roundSplit } from '../../arena-protocol/src/reserves.js';
+import { RESERVES_VERSION } from '../../arena-protocol/src/constants.js';
 
 export const b32 = (n) => new Uint8Array(32).fill(n);
 
@@ -270,6 +272,13 @@ export function presentDay(contract, endMs) {
 // THE OBJECTION WINDOW IS EXACTLY 600 000 ms (§13A, WINDOW-10-SPEC, RULED 2026-10-01): whatever a caller still
 // passes as its second argument, the contract says 600000 - any other number is an invalid contract the node refuses. A
 // test about that refusal sets the field itself.
+// A PROTOCOL-11 ROUND'S ENTRY (§27A.9): the nodes' 4 %, the developers' 4 % and the reserves' 2 % in its donation, its reserve lock named -
+// for an entry stored directly (`direct`), whose locks no federation checks; null for an older round
+export const reservesEntry = (c) => {
+  if (!(Number(c.protocolVersion) >= RESERVES_VERSION) || !(c.stakeMsat > 0n)) return null;
+  const s = roundSplit(c.stakeMsat);
+  return { feeMsat: s.nodesMsat, donationMsat: s.protocolDevsMsat + s.gameDevsMsat + s.reservesMsat, reserveOutpoint: { txid: rand(32), outIdx: 2n } };
+};
 export const contractFor = (nodes, _windowNoLongerChosen, publicationRelays = []) => ({
   startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE,
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 1,
@@ -294,7 +303,8 @@ export const say = (port, message) => new Promise((resolve, reject) => {
 export const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) p = rand(32); return p; };
 
 /** One player's stake dealt at `needed` to every signer node, joined, paid and played on `daemons`. */
-export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false, donationMsat = 0n, port = null, randomness = RANDOMNESS } = {}) {
+// `entryOver`: entry fields over the fixture's - a protocol-11 round's fee split and reserve lock, for an entry stored directly
+export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false, donationMsat = 0n, port = null, randomness = RANDOMNESS, entryOver = null } = {}) {
   await warmPlay(who, randomness);
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
@@ -323,6 +333,7 @@ export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false
     await port.put(entry.feeLockOutpoint, { paymentImage: { kind: 'hash', bytes: sha256(feeSecret) }, amountMsat: entry.feeMsat,
       claimPk, refundPk: refundKeyOf(who.key), expiration: port.height + 200 });
   }
+  if (entryOver) Object.assign(entry, entryOver);
   const eid = entryId(entry);
   const input = { roundId: rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
     ticks: Array.from({ length: who.ticks }, (_, t) => playFor(who, randomness).words(t)), liquidations: [], loads: bedFrom(0) };
@@ -378,7 +389,8 @@ export const opts = { funded: () => true, randomnessFor: beaconFor, windowChain:
 // `endMs`: put the round's end (protocol roundEndMs) at that instant (presentDay) - a window test's round, whose 600 s
 // window is read on the wall clock; left out, the round sits in 1970 as it always did, its windows long closed.
 // `peers` (test-only): where the holder asks its peers, as serve's `peers` - a counting fake in that test.
-export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule = false, finality = null, play = {}, endMs = null, peers = null } = {}) {
+// `round`: contract fields over the fixture's (a protocol version); `serveOpts`: more of the holder's serve options (kanban #725's `audit`).
+export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule = false, finality = null, play = {}, endMs = null, peers = null, round = {}, serveOpts = {} } = {}) {
   // EVERY SIGNER NODE'S ADVERTISEMENT, as a census would give it: each names its own
   // bond outpoint, which a slash proof must name (5A.3B). Filled once the keys exist.
   const adverts = new Map();
@@ -393,18 +405,19 @@ export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule =
   const port = slot.port;
   const holder = await serve(openStore(':memory:'), { plugins: HOSTED, 
     port: 0, ...opts, stakeLocks: port, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor,
-    claimKeyFor: () => new Uint8Array(33).fill(2), advertsFor: () => adverts, ...(finality ? { finality } : {}), ...(peers ? { peers } : {}) });
+    claimKeyFor: () => new Uint8Array(33).fill(2), advertsFor: () => adverts, ...(finality ? { finality } : {}), ...(peers ? { peers } : {}), ...serveOpts });
   // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED 2026-09-24): the block clock every fixture daemon reads.
   holder.round.chainView = CLOCK.chainView();
   try {
     const others = Array.from({ length: 6 }, () => rand(32));
     [holder.round.pubkey, ...others.map((s) => schnorr.getPublicKey(s))].forEach((k, i) =>
       adverts.set(toHex(k), { nodePubkey: k, bondTxid: b32(0xb0 + i), bondVout: i }));
-    const first = contractFor([holder.round.pubkey, ...others.map((s) => schnorr.getPublicKey(s))], BigInt(windowMs),
-      relays === undefined ? [`http://127.0.0.1:${holder.port}`] : relays);
+    const first = { ...contractFor([holder.round.pubkey, ...others.map((s) => schnorr.getPublicKey(s))], BigInt(windowMs),
+      relays === undefined ? [`http://127.0.0.1:${holder.port}`] : relays), ...round };
     const drafted = endMs === null ? first : presentDay(first, endMs);
     // ONLY THE FIELD THE CHAIN DICTATES (RULED 2026-09-25): the census root its bonds derive to; the committee time stands.
-    const c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot, { endpoints: [`ws://127.0.0.1:${holder.port}`] }).censusRoot };
+    const c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot, { endpoints: [`ws://127.0.0.1:${holder.port}`],
+      ...(drafted.protocolVersion > 1 ? { protocolVersions: Array.from({ length: drafted.protocolVersion }, (_, i) => i + 1) } : {}) }).censusRoot };
     const rid = roundId(c);
     // THE ROUND'S OWN BEACON: the players seed their marks from it, as the node replays them.
     const beacon = slot.randomnessFor({ contract: c });
@@ -418,7 +431,7 @@ export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule =
       // `play` names who plays a run instead of the loser - a run that stops while
       // still LIVE, for one (M3.3-34 walk-away step 7).
       runs[name] = await joinAndPlay([holder], c, rid, { ...(play[name] || LOSER), name, key: b32(key) }, 5,
-        { direct: storedBeforeTheRule, port, randomness: beacon && beacon.hash });
+        { direct: storedBeforeTheRule, port, randomness: beacon && beacon.hash, entryOver: reservesEntry(c) });
       // FIVE OF SEVEN RECEIPTS MAKE THE TRANSCRIPT CANONICAL: its own and four signer nodes'.
       for (const secret of others.slice(0, 4)) {
         const receipt = { checkpointId: runs[name].mid, receivedAtMs: 1234n, nodePubkey: schnorr.getPublicKey(secret) };
@@ -503,7 +516,7 @@ export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule =
       await finalBy(name, 4);
       return resultFinality(holder.round, rid, eid);
     };
-    return { holder, rid, runs, sign, post, rerunBy, finalBy, finalNow, others, adverts, contract: c, close: () => holder.close() };
+    return { holder, rid, runs, sign, post, rerunBy, finalBy, finalNow, others, adverts, contract: c, slot, close: () => holder.close() };
   } catch (err) { await holder.close(); throw err; }
 }
 
