@@ -10945,5 +10945,454 @@
   ],
   "changesState": false,
   "needsAuth": "none"
+ },
+ {
+  "method": "GET",
+  "path": "/polymarket/markets",
+  "params": "query next_cursor",
+  "auth": "none",
+  "returns": "200 JSON {data: [market], next_cursor: 'LTE=', limit, count}",
+  "purpose": "Polymarket's GET /markets: every two-outcome market this seat holds (an Up/Down window round is one), in Polymarket's market shape (kanban #736).",
+  "audience": "game/market developer",
+  "line": 8440,
+  "summary": "Polymarket-compatible: the markets",
+  "query": [
+   {
+    "name": "next_cursor",
+    "required": false,
+    "type": "string",
+    "description": "Polymarket's cursor; one page here."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 JSON {data: [market], next_cursor: 'LTE=', limit, count}"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/polymarket/markets/{condition_id}",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON the market; 404",
+  "purpose": "Polymarket's GET /markets/{condition_id}: condition_id is 0x + the round id.",
+  "audience": "game/market developer",
+  "line": 8440,
+  "summary": "Polymarket-compatible: one market",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 JSON the market; 404"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": [
+   {
+    "name": "condition_id",
+    "description": "0x + the round id (64 hex)."
+   }
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/polymarket/events",
+  "params": "query active, query closed, query limit",
+  "auth": "none",
+  "returns": "200 JSON [event]",
+  "purpose": "Gamma's GET /events: one event per market, its market with clobTokenIds, outcomes and outcomePrices as JSON strings.",
+  "audience": "game/market developer",
+  "line": 8440,
+  "summary": "Polymarket-compatible: Gamma events",
+  "query": [
+   {
+    "name": "active",
+    "required": false,
+    "type": "string",
+    "description": "true/false"
+   },
+   {
+    "name": "closed",
+    "required": false,
+    "type": "string",
+    "description": "true/false"
+   },
+   {
+    "name": "limit",
+    "required": false,
+    "type": "string",
+    "description": "at most, default 100"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 JSON [event]"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/polymarket/book",
+  "params": "query token_id",
+  "auth": "none",
+  "returns": "200 JSON {market, asset_id, timestamp, hash, bids[], asks[], min_order_size, tick_size, neg_risk, last_trade_price}; 404",
+  "purpose": "Polymarket's GET /book: bids and asks of one token from the seat's cleared ledger (the other side's buys as asks at 1 - price), sizes in shares.",
+  "audience": "game/market developer",
+  "line": 8440,
+  "summary": "Polymarket-compatible: the order book of a token",
+  "query": [
+   {
+    "name": "token_id",
+    "required": true,
+    "type": "string",
+    "description": "A token id: the round id as a uint256 with its lowest bit the outcome (0 Up, 1 Down), decimal. GET /polymarket/markets lists them."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 JSON {market, asset_id, timestamp, hash, bids[], asks[], min_order_size, tick_size, neg_risk, last_trade_price}; 404"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/polymarket/price",
+  "params": "query token_id, query side",
+  "auth": "none",
+  "returns": "200 JSON {price}",
+  "purpose": "Polymarket's GET /price: side=BUY the best ask, side=SELL the best bid.",
+  "audience": "game/market developer",
+  "line": 8440,
+  "summary": "Polymarket-compatible: the price of a token",
+  "query": [
+   {
+    "name": "token_id",
+    "required": true,
+    "type": "string",
+    "description": "A token id: the round id as a uint256 with its lowest bit the outcome (0 Up, 1 Down), decimal. GET /polymarket/markets lists them."
+   },
+   {
+    "name": "side",
+    "required": false,
+    "type": "string",
+    "description": "BUY (default) or SELL"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 JSON {price}"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/polymarket/midpoint",
+  "params": "query token_id",
+  "auth": "none",
+  "returns": "200 JSON {mid}",
+  "purpose": "Polymarket's GET /midpoint; /spread, /last-trade-price, /tick-size, /neg-risk and /fee-rate answer beside it with the same parameter.",
+  "audience": "game/market developer",
+  "line": 8440,
+  "summary": "Polymarket-compatible: the midpoint",
+  "query": [
+   {
+    "name": "token_id",
+    "required": true,
+    "type": "string",
+    "description": "A token id: the round id as a uint256 with its lowest bit the outcome (0 Up, 1 Down), decimal. GET /polymarket/markets lists them."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 JSON {mid}"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/polymarket/prices-history",
+  "params": "query market, query interval, query fidelity, query startTs, query endTs",
+  "auth": "none",
+  "returns": "200 JSON {history: [{t, p}]}",
+  "purpose": "Polymarket's GET /prices-history: the clearing price of every certified batch for a token, within interval or startTs..endTs, one point per fidelity minutes.",
+  "audience": "game/market developer",
+  "line": 8440,
+  "summary": "Polymarket-compatible: price history",
+  "query": [
+   {
+    "name": "market",
+    "required": true,
+    "type": "string",
+    "description": "A token id."
+   },
+   {
+    "name": "interval",
+    "required": false,
+    "type": "string",
+    "description": "1m, 1h, 6h, 1d, 1w, max"
+   },
+   {
+    "name": "fidelity",
+    "required": false,
+    "type": "string",
+    "description": "minutes per point"
+   },
+   {
+    "name": "startTs",
+    "required": false,
+    "type": "string",
+    "description": "unix seconds"
+   },
+   {
+    "name": "endTs",
+    "required": false,
+    "type": "string",
+    "description": "unix seconds"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 JSON {history: [{t, p}]}"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/polymarket/trades",
+  "params": "query market, query asset_id, query limit, query offset",
+  "auth": "none",
+  "returns": "200 JSON [trade]",
+  "purpose": "The Data API's GET /trades: every fill of a certified batch, newest first; GET /polymarket/data/trades answers the CLOB's page shape.",
+  "audience": "game/market developer",
+  "line": 8440,
+  "summary": "Polymarket-compatible: trades",
+  "query": [
+   {
+    "name": "market",
+    "required": false,
+    "type": "string",
+    "description": "condition_id"
+   },
+   {
+    "name": "asset_id",
+    "required": false,
+    "type": "string",
+    "description": "token id"
+   },
+   {
+    "name": "limit",
+    "required": false,
+    "type": "string",
+    "description": "at most, default 100"
+   },
+   {
+    "name": "offset",
+    "required": false,
+    "type": "string",
+    "description": "skip"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 JSON [trade]"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/polymarket/data/orders",
+  "params": "query market, query asset_id, query maker_address, query all",
+  "auth": "none",
+  "returns": "200 JSON {data: [order], next_cursor, limit, count}",
+  "purpose": "Polymarket's GET /data/orders without a key: the open orders of a market (all=1 for every order), by asset or maker (0x + player key).",
+  "audience": "game/market developer",
+  "line": 8440,
+  "summary": "Polymarket-compatible: open orders",
+  "query": [
+   {
+    "name": "market",
+    "required": false,
+    "type": "string",
+    "description": "condition_id"
+   },
+   {
+    "name": "asset_id",
+    "required": false,
+    "type": "string",
+    "description": "token id"
+   },
+   {
+    "name": "maker_address",
+    "required": false,
+    "type": "string",
+    "description": "0x + the player key"
+   },
+   {
+    "name": "all",
+    "required": false,
+    "type": "string",
+    "description": "1: closed orders too"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 JSON {data: [order], next_cursor, limit, count}"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/polymarket/data/order/{id}",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON the order; 404",
+  "purpose": "Polymarket's GET /data/order/{id}: id is 0x + the entry id.",
+  "audience": "game/market developer",
+  "line": 8440,
+  "summary": "Polymarket-compatible: one order",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 JSON the order; 404"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": [
+   {
+    "name": "id",
+    "description": "0x + the entry id (64 hex)."
+   }
+  ]
+ },
+ {
+  "method": "GET",
+  "path": "/polymarket/positions",
+  "params": "query user, query market",
+  "auth": "none",
+  "returns": "200 JSON [position]",
+  "purpose": "The Data API's GET /positions: the filled shares of a player key's orders, valued at the mid.",
+  "audience": "game/market developer",
+  "line": 8440,
+  "summary": "Polymarket-compatible: positions",
+  "query": [
+   {
+    "name": "user",
+    "required": true,
+    "type": "string",
+    "description": "0x + the player key, or an entry id"
+   },
+   {
+    "name": "market",
+    "required": false,
+    "type": "string",
+    "description": "condition_id"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 JSON [position]"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/polymarket/order",
+  "params": "none",
+  "auth": "none",
+  "returns": "501 JSON {success: false, errorMsg}",
+  "purpose": "Polymarket's POST /order. A seat holds no player's keys or e-cash, so it answers 501 by name: orders are placed by the Arena CLOB adapter beside the bot (tools/polymarket-adapter.mjs), which serves this path on localhost.",
+  "audience": "game/market developer",
+  "line": 8440,
+  "summary": "Polymarket-compatible: an order (answered by the adapter)",
+  "query": [],
+  "body": {
+   "required": true,
+   "contentType": "application/json",
+   "description": "Polymarket's {order, owner, orderType}."
+  },
+  "responses": [
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "501 JSON {success: false, errorMsg}"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
  }
 ]

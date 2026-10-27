@@ -150,6 +150,7 @@
   <a href="#templates">Event-market templates</a>
   <a href="#game-markets">Markets on games</a>
   <a href="#scalar-markets">Scalar markets</a>
+  <a href="#polymarket">Polymarket-compatible API</a>
   <a href="#money">Where the money goes</a>
   <a href="#reserves">Protocol reserves</a>
   <a href="#referral">The referral program</a>
@@ -877,6 +878,99 @@ for (const node of committeeNodes)
     <li>The value is clamped to the bounds. LONG's share of the whole pool (the net stakes of both sides) is <code>(value - low) ÷ (high - low)</code>, SHORT's the rest; each side's share is split over its own players by their net stakes. Every amount is whole millisats, rounded down, the leftovers to named places; nothing is kept back.</li>
     <li>If only one side has players there is no counterparty, and every stake goes back, its fee too. No value by the deadline, or two different values signed, makes the market void: every stake back.</li>
   </ul>
+
+  </div></details>
+  <details class="sec" open><summary><h2 id="polymarket">Polymarket-compatible API</h2></summary><div class="sec-body">
+  <p>Every node answers Polymarket's CLOB API under <code>/polymarket/</code>, with Polymarket's paths, parameters and JSON shapes. A trading bot written for Polymarket reads Bitcoin Arena's markets, books, prices and trades by changing only its base URL: <code>https://clob.polymarket.com</code> becomes <code>https://tn4.bitcoin-arena.io/guardian-1/polymarket</code> (any node, any seat). Placing an order needs one more piece, the <b>Arena CLOB adapter</b> beside the bot, because the money is yours and no node holds it; see below.</p>
+  <h3 id="polymarket-mapping">How Arena's terms map onto Polymarket's</h3>
+  <table>
+    <tr><th>Polymarket</th><th>Bitcoin Arena</th></tr>
+    <tr><td><code>condition_id</code> (0x + 32 bytes)</td><td><code>0x</code> + the round id. One <i>Bitcoin Up or Down</i> window round is one market.</td></tr>
+    <tr><td><code>token_id</code> (uint256, decimal)</td><td>The round id as a 256-bit number with its lowest bit set to the outcome: 0 = Up (YES), 1 = Down (NO). A node reads the round back from the token, so there is no token it does not know.</td></tr>
+    <tr><td><code>question</code>, <code>end_date_iso</code>, <code>game_start_time</code></td><td><code>BTC up at &lt;window end&gt;?</code>, the window's end and start. A template's round asks its own question.</td></tr>
+    <tr><td>price (a decimal in [0, 1], tick 0.01)</td><td>The same; inside the node it is an integer on a scale of 100,000 (<code>0.55</code> = 55000).</td></tr>
+    <tr><td>size (shares, 1 $ each)</td><td>Shares; one share pays 1 sat if its side wins. <code>minimum_order_size</code> 5, as on Polymarket.</td></tr>
+    <tr><td>order id (0x + 32 bytes), <code>side</code></td><td><code>0x</code> + the entry id. Every Arena order buys one side; a resting sell of held shares is a SELL.</td></tr>
+    <tr><td>a trade, <code>transactionHash</code></td><td>A fill of a certified batch at the batch's clearing price; the batch id.</td></tr>
+    <tr><td><code>maker_address</code>, <code>user</code></td><td><code>0x</code> + the order's player key (32 bytes). No Ethereum address exists here.</td></tr>
+    <tr><td><code>neg_risk</code>, <code>rewards</code>, <code>fpmm</code>, <code>icon</code></td><td>No counterpart: <code>false</code>, empty, empty. Fields a stock client expects are always present.</td></tr>
+    <tr><td><code>maker_base_fee</code> / <code>taker_base_fee</code></td><td>The market's fee in basis points (Up/Down: 100 = 1 %), charged on the part of an order that fills, out of the order's fee lock.</td></tr>
+  </table>
+  <p>Every answer also carries an <code>arena</code> object (the round, its game, the number of seats, the federation, the fee) beside Polymarket's fields; a stock client ignores it.</p>
+  <h3 id="polymarket-endpoints">The endpoints</h3>
+  <p>Read-only, no key, CORS open. <code>BASE</code> is a node plus <code>/polymarket</code>.</p>
+  <table>
+    <tr><th>Request</th><th>Answer</th></tr>
+    <tr><td><code>GET BASE/</code>, <code>GET BASE/ok</code></td><td><code>"OK"</code></td></tr>
+    <tr><td><code>GET BASE/time</code></td><td>The node's clock, unix seconds.</td></tr>
+    <tr><td><code>GET BASE/markets?next_cursor=MA==</code></td><td><code>{ data: [market…], next_cursor: "LTE=", limit, count }</code>. All markets in one page (a node holds a few hundred at most). <code>/simplified-markets</code> and <code>/sampling-markets</code> answer the same set.</td></tr>
+    <tr><td><code>GET BASE/markets/{condition_id}</code></td><td>One market: <code>condition_id, question, tokens: [{ token_id, outcome, price, winner }], end_date_iso, game_start_time, active, closed, accepting_orders, minimum_order_size, minimum_tick_size, maker_base_fee, …</code></td></tr>
+    <tr><td><code>GET BASE/events?active=true</code>, <code>GET BASE/gamma/markets</code></td><td>Gamma's shapes: an event per market, its market with <code>clobTokenIds</code>, <code>outcomes</code> and <code>outcomePrices</code> as JSON strings.</td></tr>
+    <tr><td><code>GET BASE/book?token_id=</code>; <code>POST BASE/books</code> <code>[{ token_id }]</code></td><td><code>{ market, asset_id, timestamp, hash, bids: [{ price, size }], asks, min_order_size, tick_size, neg_risk, last_trade_price }</code>. Bids ascending, asks descending (best last, as on Polymarket). A buy of the other side at <i>q</i> is an ask at 1 − <i>q</i>.</td></tr>
+    <tr><td><code>GET BASE/price?token_id=&amp;side=BUY|SELL</code></td><td><code>{ price }</code>: the best ask for BUY, the best bid for SELL.</td></tr>
+    <tr><td><code>GET BASE/midpoint</code>, <code>/spread</code>, <code>/last-trade-price</code>, <code>/tick-size</code>, <code>/neg-risk</code>, <code>/fee-rate</code> <code>?token_id=</code></td><td><code>{ mid }</code>, <code>{ spread }</code>, <code>{ price, side }</code>, <code>{ minimum_tick_size: "0.01" }</code>, <code>{ neg_risk: false }</code>, <code>{ fee_rate_bps }</code>.</td></tr>
+    <tr><td><code>GET BASE/prices-history?market=&lt;token_id&gt;&amp;interval=1h&amp;fidelity=1</code> (or <code>startTs</code>, <code>endTs</code>)</td><td><code>{ history: [{ t, p }] }</code>: the clearing price of every certified batch for that token.</td></tr>
+    <tr><td><code>GET BASE/trades?market=</code> (or <code>asset_id=</code>)</td><td>The Data API's list: <code>[{ side, asset, conditionId, size, price, timestamp, outcome, outcomeIndex, transactionHash, … }]</code>, newest first. <code>GET BASE/data/trades</code> answers the CLOB's page shape.</td></tr>
+    <tr><td><code>GET BASE/data/orders?market=</code> (<code>asset_id=</code>, <code>maker_address=</code>, <code>all=1</code>)</td><td><code>{ data: [{ id, status, maker_address, market, asset_id, side, original_size, size_matched, price, outcome, created_at, expiration, order_type }] }</code>. Open orders (LIVE, DELAYED) unless <code>all=1</code>. No key is needed: the book is public on every node.</td></tr>
+    <tr><td><code>GET BASE/data/order/{id}</code></td><td>One order by its id (<code>0x</code> + entry id).</td></tr>
+    <tr><td><code>GET BASE/positions?user=&lt;0x player key&gt;&amp;market=</code></td><td>The Data API's positions: <code>[{ asset, conditionId, size, avgPrice, curPrice, currentValue, cashPnl, outcome, redeemable, … }]</code>.</td></tr>
+    <tr><td><code>POST BASE/order</code>, <code>DELETE BASE/order</code>, <code>POST BASE/auth/…</code></td><td><code>501 { success: false, errorMsg }</code> naming the adapter. A node holds nobody's keys or e-cash.</td></tr>
+  </table>
+<pre>$ curl -s https://tn4.bitcoin-arena.io/guardian-1/polymarket/markets | jq '.data[0] | {condition_id, question, end_date_iso, tokens}'
+{
+  "condition_id": "0xe2bb42c977075db7ec375220eda9b8336af21eb74da68c8b1b0d59789b22f80a",
+  "question": "BTC up at 2026-10-28T08:00:00.000Z?",
+  "end_date_iso": "2026-10-28T08:00:00.000Z",
+  "tokens": [
+    { "token_id": "102582…6730", "outcome": "Up",   "price": 0.55, "winner": false },
+    { "token_id": "102582…6731", "outcome": "Down", "price": 0.45, "winner": false }
+  ]
+}
+$ curl -s "https://tn4.bitcoin-arena.io/guardian-1/polymarket/book?token_id=102582…6730"
+{"market":"0xe2bb…f80a","asset_id":"102582…6730","timestamp":"1793145300123","hash":"…","bids":[{"price":"0.52","size":"400"}],"asks":[{"price":"0.55","size":"4"}],"min_order_size":"5","tick_size":"0.01","neg_risk":false,"last_trade_price":"0.55"}</pre>
+  <h3 id="polymarket-orders">Placing orders: the Arena CLOB adapter</h3>
+  <p>On Polymarket a bot signs an EIP-712 order and the exchange contract moves USDC it has approved. On Bitcoin Arena there is no exchange and no approval: an order is a <b>stake lock and a fee lock in the federation</b>, paid from the player's own e-cash, plus a share handout to the round's seated signer nodes and the signed entry handed to those nodes. The keys and the notes live with the player - in the game page, or in a script - never on a node. So a node cannot accept <code>POST /order</code> in anyone's name, and we do not pretend it can.</p>
+  <p>The adapter is a small process you run next to your bot, <code>packages/arena-node/tools/polymarket-adapter.mjs</code>. It serves the same paths on <code>http://127.0.0.1:8787</code>: every read is passed to the nodes you name, and the writes are done with the adapter's own wallet, exactly as the market-maker bot (<code>tools/market-bot.mjs</code>) does them:</p>
+  <ul>
+    <li><code>POST /auth/api-key</code>, <code>GET /auth/derive-api-key</code>: the adapter mints the L2 credentials a stock client asks for (<code>apiKey, secret, passphrase</code>) and checks the client's HMAC headers on every write. The L1 EIP-712 signature is taken as the client's identity, not verified against a chain - there is none.</li>
+    <li><code>POST /order</code>: Polymarket's body (<code>{ order: { tokenId, makerAmount, takerAmount, side, expiration, … }, owner, orderType }</code>) is read as an Arena order: the token names the round and the side, <code>makerAmount / takerAmount</code> the price to the cent, the size the shares. The adapter locks the stake and the fee in the federation, deals the handout to the seated signer nodes and hands the entry to the round's nodes. Answer: <code>{ success: true, orderID: "0x&lt;entry id&gt;", status: "live" }</code>, or <code>{ success: false, errorMsg }</code> with the node's reason. GTC and GTD orders are kept as such; FOK and FAK are placed as GTD orders that expire at the next batch.</li>
+    <li><code>DELETE /order</code> <code>{ orderID }</code>: the entry's session key signs the cancel and the adapter posts it to the nodes; it takes effect in the next batch (<code>{ canceled: [orderID], not_canceled: {} }</code>). <code>DELETE /orders</code>, <code>/cancel-all</code> and <code>/cancel-market-orders</code> cancel the adapter's own orders.</li>
+    <li><code>GET /data/orders</code>, <code>/data/trades</code>, <code>/positions</code>: the node's answer, filtered to the adapter's own orders. Winnings are collected into the adapter's wallet after each window, as the bot collects them.</li>
+    <li>What differs for a bot: a batch auction clears every 0.5 s at one price, so there is no instant fill and no partial fill inside a batch; a market is open only during its 15-minute window; there is a 1 % fee on filled volume and none for cancelling; <code>maker_address</code> is a 32-byte key; settlement pays sats to the wallet, not USDC to an address.</li>
+  </ul>
+<pre># the adapter, next to your bot (testnet4)
+NODES=https://tn4.bitcoin-arena.io/guardian-1,https://tn4.bitcoin-arena.io/guardian-2,… \
+INVITE_FILE=./federation-a.invite WASM_PKG=./blwp-lock-client ADAPTER_DIR=./adapter PORT=8787 \
+node packages/arena-node/tools/polymarket-adapter.mjs</pre>
+  <h3 id="polymarket-bot">A sample bot: py-clob-client, only the host changed</h3>
+<pre>from py_clob_client.client import ClobClient
+from py_clob_client.clob_types import OrderArgs
+from py_clob_client.order_builder.constants import BUY
+
+# reads: straight from a node
+ro = ClobClient("https://tn4.bitcoin-arena.io/guardian-1/polymarket")
+markets = ro.get_markets()["data"]
+m = next(x for x in markets if x["accepting_orders"])
+up = next(t for t in m["tokens"] if t["outcome"] == "Up")["token_id"]
+print(m["question"], ro.get_order_book(up).bids, ro.get_midpoint(up))
+
+# writes: through the adapter beside the bot (it holds the wallet)
+client = ClobClient("http://127.0.0.1:8787", key=PRIVATE_KEY, chain_id=137)
+client.set_api_creds(client.create_or_derive_api_creds())
+resp = client.create_and_post_order(OrderArgs(token_id=up, price=0.55, size=20, side=BUY))
+print(resp)            # {'success': True, 'orderID': '0x…', 'status': 'live'}
+print(client.get_orders())
+client.cancel(resp["orderID"])</pre>
+<pre>// the JS client (@polymarket/clob-client), the same way
+import { ClobClient, Side } from "@polymarket/clob-client";
+const ro = new ClobClient("https://tn4.bitcoin-arena.io/guardian-1/polymarket", 137);
+const { data } = await ro.getMarkets();
+const book = await ro.getOrderBook(data[0].tokens[0].token_id);
+const rw = new ClobClient("http://127.0.0.1:8787", 137, wallet);
+const creds = await rw.createOrDeriveApiKey();
+const client = new ClobClient("http://127.0.0.1:8787", 137, wallet, creds);
+await client.createAndPostOrder({ tokenID: data[0].tokens[0].token_id, price: 0.55, size: 20, side: Side.BUY });</pre>
+  <p>The node side is <code>packages/arena-node/src/polymarket.js</code>; its tests (<code>test/polymarket-shapes.test.js</code>, <code>test/polymarket-seat.test.js</code>) check every shape against the requests py-clob-client 0.34.6 makes.</p>
 
   </div></details>
   <details class="sec" open><summary><h2 id="money">Where the money goes</h2></summary><div class="sec-body">
