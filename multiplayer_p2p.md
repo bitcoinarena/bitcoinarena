@@ -1732,18 +1732,20 @@ because a node stepped out by its own update costs no reserve at all.
 nodes whose bonds were still locked, so no round was seated all day. the owner:
 "Können die adverts nur gezogen werden von nodes die in den letzten 24h auch
 online waren?" - yes, from 2.0. "Online" from pings is not a fact two seats
-share, so the rule reads only signed seat messages (§5A.7):
+share, so the rule reads only threshold-signed seating certificates (§5A.7):
 
 ```text
 window      (T - 24 h, T], T = the median time past of the census_height block
-seating     one (round, role) whose seating_close falls in the window
-drawn       the 9 drawn for that seating (§5A.6-5A.7)
-seen        the node signed a PRESENT for a seating in the window - drawn for it
-            or not - or is seated by a standing seating certificate of one
-            (every seated node signs it)
-absent      in the census by every other criterion, seen at no seating of the
-            window, and either drawn for at least one of them, or left out as
-            absent by the census a window seating was drawn from (carried)
+seating     one (round, role) whose seating_close falls in the window and whose
+            protocol-22 seating certificate stands: every seated node signed
+            the SEATING and a SEEN naming who was present (§5A.7)
+present     named in the SEEN of any seated node of the certificate, or seated
+missed      drawn for the seating by the round's own draw - or left out of the
+            round's census as absent, as every seated node's SEEN says - and
+            not present
+absent      in the census by every other criterion, present at no seating of
+            the window, and missed at ABSENCE_PROOF_SEATINGS = 3 or more
+            seatings with three different seating_close times
 census      from protocol 22: every output of an absent node is left out (a node is
             its key); census_root (§5A.4) is taken over what is left
 ```
@@ -1754,85 +1756,143 @@ missing seatings (the three-in-a-row warning); now a day of nothing but
 misses also leaves the census. It is still no punishment - the bond is
 untouched, nothing is slashed, and the node comes back by itself.
 
-- **Not drawn is not absent.** A node no seating of the window drew - a new
-  bond, a small weight, a quiet day - had nothing to be seen at, and is
-  kept. A reserve that signed PRESENT and was not seated (7 seats were
-  filled above it) was seen, and is kept.
+- **Absence only with proof** *(RULED 2026-10-27; the owner: "can it be
+  manipulated which nodes are offline so others are chosen?")*. As first
+  built, the posting node chose the absent from the PRESENTs it had
+  collected, and a seat could refuse that only with a signature it happened
+  to hold. A posting node could ignore PRESENTs and declare honest nodes
+  absent - "drawn in the window" limited nothing, since nearly every node is
+  drawn every day - and shrink the census to raise its own and its
+  colluders' share of every draw. So now a node may be left out only on
+  threshold-signed seating certificates that show it missed: the claim
+  names, for each absent node, 3 seatings, and attaches their certificates.
+  Every seat **and the client** checks each one deterministically, on its
+  own draw of that seating: the certificate stands against the round's own
+  draw (every seated node signed it, at least the threshold, in score
+  order), the node was drawn there (or the round's census had left it out
+  already), no seated node named it present, and the closes are three
+  different times in the window. An absence without valid proof makes the
+  census invalid at every seat and at the client. That is a plain validity
+  check of what the census root committed, like any other census check -
+  not the "a refutation spreads from seat to seat" path the owner rejected.
+  To hide an honest node's PRESENT, every seated node of a seating must
+  lie, at three seatings, each of a different random draw.
+- **Not for a few missed seatings** *(RULED 2026-10-27, against an attacker
+  flooding a node while it is drawn)*. One or two missed seatings - a
+  restart, a network blip, a denial of service timed to its seatings - keep
+  a node in. So does one listed presence anywhere in the 24 h. A node drawn
+  for fewer than 3 seatings, or for none - a new bond, a small weight, a
+  quiet day - had too little to be seen at, and is kept. The two roles of
+  one round, or two grids' rounds at one moment, share a seating_close and
+  count once, so one blackout is one miss. The 3 is
+  `ABSENCE_PROOF_SEATINGS`, a protocol constant.
+- **Only a seated round proves anything.** A round with fewer than 5
+  present has no certificate, so it proves no one absent. On the 10-27
+  shape (28 bonded, 20 stopped; arena-protocol `presence.test.js`, both
+  roles of a 15-min grid, every certificate signed for real) the first day
+  seats 1 round of 96 and its certificates prove 1 node absent; the next
+  day seats 7 and proves 13; the day after seats 56 and proves all 20; from
+  then every round is seated, 96 of 96, and no live node is ever proven
+  absent. The cascade is the point: every node proven out raises the next
+  day's live share. It is slower than the first build (all out the next
+  day) - the price of not taking anyone's word for it.
 - **Absent stays absent until seen.** An absent node is drawn for nothing
   in the next census, so by "not drawn is not absent" alone it would be back
-  in the census after that, drawn again, missed again - every second day's
-  census would hold the dead nodes of 10-27 again. So the census a window
-  seating was drawn from passes its absent on: a node it left out stays out
-  (its claim names that census's root, `from`) until it is seen.
+  in the census after that, drawn again, missed again. So each seated
+  node's SEEN names the nodes the round's census left out (`left_out`), and
+  a seating that left a node out and did not see it is a missed seating
+  too: the next claim proves it absent again with that day's certificates,
+  and no earlier census has to be checked again.
 - **Coming back.** A node left out signs, as the seatings of the rounds whose
   census names it absent come, a PRESENT for each - it is drawn for none of
-  them, and that is allowed for this purpose - and hands them to every seat
-  (`POST /presence`). The reference node does this by itself (it reads the
-  absent claims it holds); the operator does nothing. The next census whose
-  window holds one such PRESENT draws it again.
-- **Why the posting node decides and the seats check.** No two seats hold
-  the same PRESENTs: they are exchanged only among the 9 drawn of each
-  seating (§5A.7), and a seat that was down holds none of its day. A rule
-  every seat recomputed from its own store would give each seat its own
-  census. So the absent set is **chosen once, by the node that posts the
-  census** (the day's duty node, §5A.5), and **committed in the census root
-  it writes into the series** - fixed on chain by the publication, before
-  the beacon, so it cannot be aimed at a committee (§5A.5). Every other seat
-  and every client then reads one census.
-- **What the posting node does.** Before it writes the root it lists the
-  window's seatings it can draw and the nodes it holds a window signature
-  of; for every node that looks absent it asks every seat of the census and
-  the node's own address for that node's PRESENTs (`GET /presence`) and
-  takes each that verifies. Only a node still unseen after that is left
-  out. It sends its **absent claim** - for each absent node its key, up to
-  three seatings it was drawn for and, when carried, the root of the census
-  that left it out - to every seat (`POST /absent`)
-  before the grid, and every seat serves it again (`GET /absent?root=`).
-- **What every seat checks, one way only.** A seat whose chain census does
-  not hash to a 22 round's `census_root` takes the claim held for that
-  root, checks that the chain census less the claimed nodes hashes to it,
-  and checks each claimed node: it must be in the chain census; the seat
-  must hold **no** window signature of it (a PRESENT, or a certificate
-  seating it); and among the seatings the claim names, at least one the seat
-  can draw must have drawn it in the window - or, for a carried node, the
-  claim of the census it names (`from`) must leave it out, where the seat
-  holds that claim and a window seating drawn from that census. A claim that fails any of
-  these makes the census invalid at that seat, exactly as a wrong root is
-  today - the seat serves none of its rounds and names the node and the
-  proof. Leaving out **fewer** than the whole absent set is never refused:
-  keeping a node in is the rule below 22, and no seat can know the whole
-  set. Every refutation is a message any seat can check, and the node
-  itself holds its own PRESENTs, so a live node can always clear itself.
-- **A fresh seat** - restarted without its store, or new - holds no
-  seatings of the window. As a checker it cannot draw the seatings a claim
-  names, so it does not refuse the claim (it cannot prove it wrong; refusing
-  would stop a new seat serving for a day for nothing); it still checks the
-  root and its own signatures. As a posting node it leaves out only nodes it
-  can show drawn from series it holds - with no history it leaves out
-  nobody, and its census is the chain census, as below 22. A node whose own
-  store was lost is cleared by its drawn peers, who hold its PRESENTs.
-- **The client** checks the census as before (§5A.6): every entry proven,
-  the set hashing to the round's `census_root`. It cannot see an absent
-  node, as it never could see a bond a census omitted - completeness was
-  always the seats' check, against their full chains, and the absent claim
-  is part of that check. The client and the seats draw the same committee
-  because they draw over the same committed set; sortition itself is
-  unchanged.
-- **Residual.** A PRESENT carries no time, and a series is known a day or
-  more ahead, so a node could sign PRESENTs in advance to keep itself in the
-  census while away. It gains only today's rule (it stays in and misses its
-  seats); a stopped node signs nothing. A posting node that leaves out a
-  live node whose PRESENTs no seat holds and the node does not answer for
-  is not caught by any seat; the node signs its return PRESENTs as soon as it
-  sees the claim and is back from the census after.
+  them, and the seats take it for this purpose (only from a node the round's
+  census left out) - and hands it **before the seating close** to the
+  round's drawn (`POST /presents`) and to every seat (`POST /presence`). A
+  seated node names it in its SEEN, so it is present at that seating and the
+  next census keeps it. The reference node does this by itself; the
+  operator does nothing.
+- **Present but late.** PRESENTs go into a certificate only up to the
+  seating close: a seat takes none after it, and signs its SEEN over what it
+  held then. A node whose PRESENT arrived late is not present at that
+  seating - for the proof that seating is missed, as it was for the seating
+  itself (it was not seated). One PRESENT in time in 24 h keeps it in. A
+  seat that still holds a late PRESENT of it refuses a census that leaves it
+  out (below), and the posting node asks the seats for such PRESENTs before
+  it claims anyone, so it leaves out no node a seat would refuse it for.
+- **What the posting node does.** The absent set is chosen once, by the
+  node that posts the census (the day's duty node, §5A.5), and committed in
+  the census root it writes into the series - fixed on chain before the
+  beacon, so it cannot be aimed at a committee. Before it writes the root it
+  reads the window's certificates it holds; for every node of the census it
+  saw nowhere it asks every seat and the node's own address
+  (`GET /presence`) for that node's PRESENTs and for the certificates that
+  name it, and takes each that stands against its own draw. A node is left
+  out only if the certificates prove it absent. It sends the **absent
+  claim** - each absent node with its 3 seatings, and their certificates -
+  to every seat (`POST /absent`) before the grid; every seat serves it again
+  (`GET /absent?root=`, with the contracts of the named rounds, so a client
+  can draw each).
+- **What every seat checks.** A seat whose chain census does not hash to a
+  22 round's `census_root` takes the claim held for that root, checks that
+  the chain census less the claimed nodes hashes to it (so the claim names
+  exactly the nodes left out), and checks every proof as above, drawing each
+  named seating itself. The named round's census is read as its own root
+  commits - its absent claim is not checked again here, its seated checked
+  it before they signed - so a proof never sends a seat back through every
+  earlier day. A wrong proof makes the census invalid, exactly as a wrong
+  root is today: the seat serves none of its rounds and names the node and
+  the proof. A named seating the seat cannot draw yet (it does not hold that
+  round's contract) is "not yet", like a claim not yet received: asked
+  again, never kept as a refusal. On top, as the owner ruled, a seat that holds
+  a window PRESENT or a window certificate naming a left-out node present
+  refuses that census itself; that refusal stays the seat's own.
+- **The client** checks the census as before (§5A.6) and, for a 22 round
+  whose seats hold a claim, every proof of it the same way: each named
+  round's contract by its id, its census from evidence hashing to its root,
+  its beacon off the same headers, its draw, its certificate. A wrong proof
+  refuses the round. What the client cannot see is a node a census left out
+  that the claim does not name - completeness was always the seats' check,
+  against their full chains, and such a root hashes to nothing an honest
+  seat serves.
+- **A fresh seat** - restarted without its store, or new - draws a named
+  seating from the round's contract once it holds the series (they are
+  announced to every seat), so it checks the proofs as any seat does; until
+  then the census is "not yet". As a posting node it leaves out only nodes
+  that the certificates it holds or is handed prove absent.
+- **What this closes.** A posting node can no longer leave out an honest
+  node: every absence is a proof everyone checks, and the census root
+  commits to the set. Nobody can keep an honest node out for a day by
+  flooding it at one or two of its seatings. A colluding posting node and a
+  few seats gain nothing either: one seated node's honest SEEN keeps a node
+  in.
+- **What remains.** (1) All seated nodes of a seating (5 to 7 of its 9
+  drawn) colluding can sign SEENs without an honest node's PRESENT; it takes
+  three such seatings at three closes, each a different random draw - the
+  same honest-majority-of-the-drawn assumption every seating and every
+  result already rests on (§5A.7, `2 x threshold > drawn`). (2) Miners
+  grinding the beacon, unchanged (§5A.5): a miner can withhold blocks to
+  move which nodes are drawn, here as for every draw. (3) An attacker who
+  floods a node at **every** seating of a whole day (3 or more, and at every
+  presence) keeps it out the next day; it signs one PRESENT in time and is
+  back the census after. (4) A PRESENT carries no time and a series is known
+  ahead, so a node could pre-sign PRESENTs to stay in while away; it gains
+  only the rule before 22 (it stays in and misses its seats). (5) A client
+  checks a named round's contract by its id; for a series round that id
+  binds the series and index, not every field, so the client trusts the
+  seat for the rest of that contract as it already does for its own round;
+  the seats check it from the series they hold.
 
 **Version.** Folded into protocol 22 with the auditors (§13A.1), not a
 number of its own: 2.0 is unreleased and no series of 22 is posted on any
-network, so a 22 census has only ever been this one. A census below 22 is
-the chain census, whatever claim a seat holds. Had a 22 series been posted
-before this rule, it would have needed 23. (arena-protocol `presence.js`,
-`PRESENCE_VERSION`; `census.js` deriveCensus `absent`; arena-node
-`presence-book.js`, `roster.js` absentCensus, `duty-poster.js`.)
+network, so a 22 census and a 22 certificate have only ever been these. A
+census below 22 is the chain census, whatever claim a seat holds, and a
+certificate below 22 carries no SEEN - byte for byte as before. Had a 22
+series been posted before this rule, it would have needed 23.
+(arena-protocol `presence.js` absentFrom, checkAbsenceProof,
+`ABSENCE_PROOF_SEATINGS`, `PRESENCE_VERSION`; `seating.js` SEEN;
+`census.js` deriveCensus `absent`; `client-committee.js` absenceFromChain;
+arena-node `presence-book.js`, `roster.js` absentCensus, `seating-agent.js`,
+`duty-poster.js`; arena-client `committee.js`.)
 
 `bond_min(role)` is **named in the Round Contract**, not global. A round
 declares the bracket it plays at and the floor that goes with it, and a
@@ -1852,10 +1912,10 @@ misbehaviour" as a live judgement. None of these is objectively observable
 by every participant at a common instant; each would hand different
 observers a different census. An earlier draft listed uptime and heartbeats here, which
 alone would have broken canonicalization. The absent rule above (protocol 22) is
-not uptime: it reads signed seat messages, not pings, and is decided once by
-the posting node and committed in the census root, so every observer still
-reads one census; what the seats check is only that no exclusion is
-contradicted by a signature they hold.
+not uptime: it reads threshold-signed seating certificates, not pings, is
+chosen once by the posting node and committed in the census root, and every
+exclusion carries its own proof that every seat and every client checks the
+same way - so every observer still reads one census.
 
 Liveness is handled *after* selection instead, where it costs nothing to
 disagree about: an absent node earns no fee share (§22A), and a committee
@@ -2109,8 +2169,9 @@ Given `census_height`, every participant runs the same five steps:
             hash is public, the content is missing for all).
 
 3. FILTER   apply 5A.3. Objective criteria only. From protocol 22 also
-            the absent nodes of the posting node's claim (5A.3), checked
-            by every seat against the signatures it holds.
+            the absent nodes of the posting node's claim (5A.3), each with
+            3 seating certificates proving it absent, checked by every
+            seat and by the client.
 
 4. SORT     ascending by (funding_txid, vout) as raw bytes.
             Outpoints are unique, so the order is total and tie-free.
@@ -2760,6 +2821,23 @@ role always share a signer - each has at least 5 of the same 9, and
 5 + 5 > 9 - so two certificates are proof of **equivocation** by that signer
 and slash its bond (§5A.3B). The general constraint, for any parameters:
 `2 x threshold > drawn`.
+
+**Who was present** *(protocol 22, kanban #727, RULED 2026-10-27)*. From
+22 the certificate also says who was present, because it is the only proof
+that leaves a node out of a census (§5A.3, "Absent from its seatings"). With
+its SEATING signature each seated node signs
+`SEEN(round_id, role, seating_id, present, left_out)`: `present` every node
+it held a valid PRESENT of at the seating close - seated, a present reserve,
+and a node the round's census left out coming back - and `left_out` the
+nodes the round's census left out as absent. The certificate carries these
+after its signatures, grouped by identical lists, and stands for a 22 round
+only with one SEEN from **every** seated node and from no one else. A node
+is present at the seating if any seated node names it, so hiding an honest
+node's PRESENT needs every seated node to lie. A PRESENT is taken only until
+the close; one that arrives later is in no SEEN, and for the proof that
+seating is missed. The SEATING body, its id and the equivocation rule are
+unchanged, and a certificate below 22 carries no SEEN, byte for byte as
+before (a below-22 certificate that carries one is refused).
 
 A client takes an entry only for a round whose seating certificate it holds
 and has checked against the draw it computes itself (§5A.6); the lobby lists

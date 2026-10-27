@@ -7374,8 +7374,8 @@
   "path": "/presence",
   "params": "query nodes (1-256 node keys, comma list), to (ms)",
   "auth": "none",
-  "returns": "200 JSON {node, presents:[hex]}; 400",
-  "purpose": "The PRESENTs this seat holds of those nodes for seatings in the 24 h before a census (§5A.3, protocol 22, kanban #727): a posting node asks before it leaves a node out of the census as absent.",
+  "returns": "200 JSON {node, presents:[hex], certs:[hex]}; 400",
+  "purpose": "The PRESENTs this seat holds of those nodes for seatings in the 24 h before a census, and the protocol-22 seating certificates it holds that name them present or missed (§5A.3, kanban #727): a posting node asks before it leaves a node out of the census as absent, and leaves out only a node the certificates prove absent.",
   "audience": "node-to-node",
   "line": 0,
   "summary": "Presence proofs of nodes",
@@ -7398,7 +7398,7 @@
    {
     "status": "200",
     "contentType": "application/json",
-    "description": "{node, presents:[PRESENT hex, at most 3 per node]}."
+    "description": "{node, presents:[PRESENT hex, at most 3 per node], certs:[seating certificate hex, at most 256]}."
    },
    {
     "status": "400",
@@ -7455,8 +7455,8 @@
   "path": "/absent",
   "params": "query root (64 hex)",
   "auth": "none",
-  "returns": "200 JSON {root, claims:[{node, drawnIn}]}; 400; 404",
-  "purpose": "The absent claim of a protocol-22 census root: the nodes its posting node left out as drawn in the 24 h and seen at none of those seatings, each with up to 3 seatings it was drawn for (§5A.3, kanban #727). A seat checks it before it serves the census.",
+  "returns": "200 JSON {root, claims:[{node, proofs}], certs, contracts}; 400; 404",
+  "purpose": "The absent claim of a protocol-22 census root: each node its posting node left out, with the 3 seatings (3 different closes in the 24 h) whose threshold-signed certificates show it drawn, or left out already, and present at none; the certificates; and the contracts of those rounds, so a client draws each itself (§5A.3, kanban #727). Every seat and the client check the proofs; a wrong one makes the census invalid.",
   "audience": "node-to-node",
   "line": 0,
   "summary": "Absent claim of a census",
@@ -7473,7 +7473,7 @@
    {
     "status": "200",
     "contentType": "application/json",
-    "description": "{root, claims}."
+    "description": "{root, claims:[{node, proofs:[{roundId, role}]}], certs:{'roundId:role': certificate hex}, contracts:{roundId: contract hex}}."
    },
    {
     "status": "400",
@@ -7494,17 +7494,17 @@
  {
   "method": "POST",
   "path": "/absent",
-  "params": "body JSON {root, claims}",
+  "params": "body JSON {root, claims, certs}",
   "auth": "none",
-  "returns": "201 JSON {ok, root, nodes}; 400",
-  "purpose": "Keep the absent claim of a census root, as the posting node sends it before its grid (§5A.3, kanban #727). Kept as given; the root decides whether it is the census's, and the seat checks it against what it holds before it serves.",
+  "returns": "201 JSON {ok, root, nodes, certs}; 400",
+  "purpose": "Keep the absent claim of a census root, as the posting node sends it before its grid (§5A.3, kanban #727). Kept as given; the root decides whether it is the census's, and the seat checks every proof - the certificates against its own draw of each seating - before it serves.",
   "audience": "node-to-node",
   "line": 0,
   "summary": "Hand over an absent claim",
   "query": [],
   "body": {
    "contentType": "application/json",
-   "description": "{root: 64 hex, claims: [{node: 64 hex, drawnIn: [{roundId, role}]}]}"
+   "description": "{root: 64 hex, claims: [{node: 64 hex, proofs: [{roundId, role}]}], certs: {'roundId:role': seating certificate hex}}"
   },
   "responses": [
    {

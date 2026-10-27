@@ -4,33 +4,37 @@
 //
 // Measured on testnet4 2026-10-27: every Up/Down v23 round drew 9 nodes, 7-9 of them stopped test nodes whose bonds were still locked,
 // so no round was seated all day. the owner 14:00Z: "Können die adverts nur gezogen werden von nodes die in den letzten 24h auch online
-// waren?" - yes, from 2.0. "Online" from pings is no shared fact, so the rule reads only signed seat messages:
+// waren?" - yes, from 2.0. "Online" from pings is no shared fact, so the rule reads only threshold-signed seating certificates:
 //
 //   window      (T - 24 h, T], T the median time past of the census block
-//   a seating   one (round, role) whose seating_close (seating.js) falls in the window
-//   seen        the node signed a PRESENT (drawn for it or not) or a SEATING of a seating in the window
-//   absent      in the chain census, seen at no seating of the window, and drawn for one of them - or left out as absent by the
-//               census a window seating was drawn from (absent stays absent until seen)
+//   a seating   one (round, role) whose seating_close (seating.js) falls in the window and whose 22 certificate stands - every seated
+//               node signed it and signed who it held a PRESENT of at the close (seating.js SEEN)
+//   present     listed by any seated node of the certificate, or seated in it
+//   missed      drawn for the seating by the round's own draw - or left out of the round's census as absent, as every seated node
+//               says - and not present
+//   absent      in the chain census, present at no window seating, and missed at ABSENCE_PROOF_SEATINGS (3) or more seatings with
+//               different seating closes
 //   census      from protocol 22 the census is the chain census less every output of an absent node; its root commits to that set
 //
-// A node drawn for no seating in the window, and left out by no census of one, is not absent: it had nothing to be seen at (a new bond,
-// a small stake, a quiet day).
+// ABSENCE ONLY WITH PROOF (the owner 2026-10-27, "can it be manipulated which nodes are offline so others are chosen?"). As first built the
+// posting node chose the absent from the PRESENTs it collected, and a seat could refuse it only with a signature it happened to hold: a
+// posting node could leave out honest nodes to raise its own share of the draw. Now every absent node in a claim comes with three
+// certificates the round's seated signed, and any seat and the client check them alone: the signers are the seated of the round's own
+// draw, the node was drawn there (or left out already) and no seated node listed it. A claim without that is not a census at all.
+// To hide an honest node's PRESENT every seated node of a seating must lie, three times at three moments.
 //
-// HOW EVERY SEAT AGREES WITHOUT HOLDING THE SAME HISTORY. No two seats hold the same PRESENTs: they are exchanged only among the 9
-// drawn nodes of each seating. So the absent set is not recomputed by every seat - it is CHOSEN by the posting node, committed in the
-// census root it writes into the series (fixed on chain before the beacon, so it cannot aim at a committee), and CHECKED by every
-// other seat one way only: a seat refuses a census that leaves out a node it holds a window signature of, or a node it can show was
-// drawn for none of the seatings the claim names. Leaving out fewer than the whole absent set is never refused - keeping a node in is
-// the rule before 22. Every refutation is a signed message any seat can check, and the node itself holds its own PRESENTs, so a live
-// node can always clear itself.
+// AND NOT FOR A FEW MISSED SEATINGS (the owner 2026-10-27, an attacker flooding a node while it is drawn): fewer than 3 missed seatings,
+// or present once, and the node is kept. 3 different seating closes, so one blackout that falls on two games' grids counts once.
 import { toHex } from './hash.js';
-import { PRESENCE_VERSION } from './constants.js';
+import { PRESENCE_VERSION, ABSENCE_PROOF_SEATINGS } from './constants.js';
 import { medianTimePast } from './beacon.js';
+import { verifySeating } from './seating.js';
 
+export { ABSENCE_PROOF_SEATINGS };
 /** The window's length: 24 h of median time past before the census block (the owner 2026-10-27). */
 export const PRESENCE_WINDOW_MS = 24n * 3600n * 1000n;
-/** At most this many drawn seatings a claim names per absent node: one checkable is enough, three survive a seat missing a series. */
-export const CLAIM_SEATINGS = 3;
+/** What a census says of an output it leaves out as absent. */
+export const ABSENT_WHY = `proven drawn and not present at ${ABSENCE_PROOF_SEATINGS} or more seatings of the 24 h before the census, and present at none: left out of the census, its bond untouched`;
 
 /** Does this round's census leave out its absent nodes (protocol 22 on)? */
 export const dropsAbsent = (contract) => !!contract && Number(contract.protocolVersion) >= PRESENCE_VERSION;
@@ -51,35 +55,47 @@ export function censusTimeMs(view, censusHeight) {
 export const inWindow = (w, ms) => BigInt(ms) > w.fromMs && BigInt(ms) <= w.toMs;
 
 /**
- * THE ABSENT, AS A POSTING NODE FINDS THEM. `seatings` [{ roundId, role, closeMs, drawn: [key], seated: [key] | null }] the window's
- * seatings it can draw; `seen` the node keys it holds a window PRESENT or SEATING signature of (its own store and what it gathered);
- * `census` the chain census's node keys. A node seated by a standing certificate signed it, so it is seen. Answers the claims, by
- * node key: [{ node, drawnIn: [{ roundId, role }], from? }] sorted by key, each naming up to CLAIM_SEATINGS seatings it was drawn for.
- *
- * ABSENT STAYS ABSENT UNTIL SEEN. `carried` [{ node, root }]: the nodes the census of a window seating left out as absent, by that
- * census's root. Without it a stopped node would come back every other day: left out of one census, drawn for nothing in the next
- * census's window, so "not drawn, not punished" put it back - and on 10-27's census every second day would again draw dead nodes. Such
- * a node stays out (its claim names `from`, the root that left it out) until it is seen: a returning node signs a PRESENT for a
- * seating of the window, drawn or not, and is back from the next census.
+ * A SEATING AS PROOF: a 22 certificate checked against the draw the checker computed itself (`drawn`, `slots`) and the seating's close.
+ * Answers { ok, seating: { roundId, role, closeMs, drawn, seated, present, leftOut } } (keys hex) or { ok: false, why }.
  */
-export function absentFrom({ seatings, seen, census, window, carried = [] }) {
-  const inCensus = new Set([...census].map(hexOf));
+export function provenSeating(bytes, { roundId, role, drawn, slots, closeMs, verify }) {
+  const v = verifySeating(bytes, { roundId: typeof roundId === 'string' ? Uint8Array.from(roundId.match(/../g).map((h) => parseInt(h, 16))) : roundId,
+    role, drawn: drawn.map((k) => (typeof k === 'string' ? Uint8Array.from(k.match(/../g).map((h) => parseInt(h, 16))) : k)), slots, verify, listsPresent: true });
+  if (!v.ok) return v;
+  return { ok: true, seating: { roundId: toHex(v.seating.roundId), role: v.seating.role, closeMs: BigInt(closeMs), drawn: drawn.map(hexOf),
+    seated: v.seating.seated.map(toHex), present: v.present, leftOut: v.leftOut } };
+}
+/** Was `node` present at this seating (listed by a seated node, or seated)? */
+export const presentAt = (node, s) => s.present.includes(node) || s.seated.includes(node);
+/** Did `node` miss this seating: drawn for it, or left out of its census already - and not present? */
+export const missedAt = (node, s) => (s.drawn.includes(node) || s.leftOut.includes(node)) && !presentAt(node, s);
+
+/**
+ * THE ABSENT, AS A POSTING NODE FINDS THEM. `seatings` the window's proven seatings it holds (provenSeating), `census` the chain census's
+ * node keys, `seen` node keys it holds any other window evidence of (a PRESENT a seat would refuse the claim with). Answers the claims
+ * sorted by node: [{ node, proofs: [{ roundId, role }] }], each naming the ABSENCE_PROOF_SEATINGS newest seatings it missed, at different
+ * closes. ABSENT STAYS ABSENT UNTIL SEEN: a node the census of a window seating left out is missed there too, so it is not back the day
+ * after for having been drawn for nothing; it comes back by signing a PRESENT that a seated node lists.
+ */
+export function absentFrom({ seatings, census, window, seen = [] }) {
+  const inCensus = [...new Set([...census].map(hexOf))].sort();
   const sawIt = new Set([...seen].map(hexOf));
-  const drawnIn = new Map();
-  for (const s of seatings || []) {
-    if (!inWindow(window, s.closeMs)) continue;
-    for (const k of s.seated || []) sawIt.add(hexOf(k));
-    for (const k of s.drawn || []) {
-      const h = hexOf(k);
-      if (!drawnIn.has(h)) drawnIn.set(h, []);
-      const list = drawnIn.get(h);
-      if (list.length < CLAIM_SEATINGS) list.push({ roundId: hexOf(s.roundId), role: s.role });
+  const proven = (seatings || []).filter((s) => inWindow(window, s.closeMs))
+    .sort((a, b) => (a.closeMs === b.closeMs ? (a.roundId + a.role < b.roundId + b.role ? -1 : 1) : (a.closeMs > b.closeMs ? -1 : 1)));
+  for (const s of proven) { for (const k of s.present) sawIt.add(k); for (const k of s.seated) sawIt.add(k); }
+  const claims = [];
+  for (const node of inCensus) {
+    if (sawIt.has(node)) continue;
+    const proofs = [], closes = new Set();
+    for (const s of proven) {
+      if (proofs.length >= ABSENCE_PROOF_SEATINGS) break;
+      if (closes.has(s.closeMs) || !missedAt(node, s)) continue;
+      closes.add(s.closeMs);
+      proofs.push({ roundId: s.roundId, role: s.role });
     }
+    if (proofs.length >= ABSENCE_PROOF_SEATINGS) claims.push({ node, proofs });
   }
-  const from = new Map();
-  for (const c of carried || []) if (!from.has(hexOf(c.node))) from.set(hexOf(c.node), hexOf(c.root));
-  return [...new Set([...drawnIn.keys(), ...from.keys()])].filter((h) => inCensus.has(h) && !sawIt.has(h)).sort()
-    .map((node) => ({ node, drawnIn: drawnIn.get(node) || [], ...(from.has(node) ? { from: from.get(node) } : {}) }));
+  return claims;
 }
 
 /** The census less every output of an absent node (a node is its key: all its bonds go with it). */
@@ -98,40 +114,50 @@ export function absentImplied(chainEntries, committedEntries) {
 }
 
 /**
- * A SEAT'S CHECK OF A POSTED ABSENT CLAIM - one way only. `claims` as absentFrom answers; `census` the chain census's node keys;
- * `seen` the keys this seat holds a window signature of; `drawOf(roundIdHex, role)` the drawn keys of a seating this seat can draw,
- * with its close (`{ drawn, closeMs }`), or null when it cannot (it lacks the series: a fresh seat); `carriedOf(rootHex)` the node keys
- * the claim of that census root left out, when this seat holds that claim and a window seating drawn from that census - else null.
- * Answers { ok, unchecked } or { ok: false, why, node, proof } naming the first wrong exclusion. A claim this seat cannot check is not
- * refused: it cannot prove it wrong, and a fresh seat refusing every census for a day would stop serving for nothing.
+ * THE CHECK OF AN ABSENT CLAIM'S PROOFS - the same at every seat and at the client. `claims` as absentFrom answers; `census` the node
+ * keys the claimed nodes must be in (a seat: its chain census; the client: none, it cannot see a node a census left out); `certOf(ridHex,
+ * role)` the certificate bytes the claim attached (or the checker holds); `drawOf(ridHex, role)` the checker's own draw of that seating
+ * - { drawn, slots, closeMs } - or null when it cannot draw it yet; `seen` node keys the checker holds other window evidence of (a seat's
+ * own PRESENTs and certificates; the owner ruled that refusal stays the seat's own). Answers { ok: true } or { ok: false, node, why, proof }
+ * - proof 'seen', 'present', 'not-missed', 'certificate', 'too-few', 'outside' - or { ok: false, notYet: true, node, why } when a
+ * named seating cannot be drawn here yet. Any wrong proof makes the census invalid: it is a plain check of what was committed.
  */
-export function checkAbsent(claims, { census, seen, drawOf, window, carriedOf = () => null }) {
-  const inCensus = new Set([...census].map(hexOf));
+export function checkAbsenceProof(claims, { census = null, window, certOf, drawOf, verify, seen = [] }) {
+  const inCensus = census ? new Set([...census].map(hexOf)) : null;
   const sawIt = new Set([...seen].map(hexOf));
-  const unchecked = [];
+  const proven = new Map();      // `${rid}:${role}` -> the seating, checked once per claim
   let last = '';
   for (const c of claims || []) {
     const node = hexOf(c.node);
     if (node <= last) return { ok: false, node, why: 'that absent list is not sorted by node key, or names a node twice' };
     last = node;
-    if (!inCensus.has(node)) return { ok: false, node, why: `that census leaves out ${node.slice(0, 16)} as absent, and it is not in the chain census` };
-    if (sawIt.has(node)) return { ok: false, node, proof: 'seen', why: `that census leaves out ${node.slice(0, 16)} as absent, and this seat holds its signature of a seating in the 24 h` };
-    const named = (c.drawnIn || []).slice(0, CLAIM_SEATINGS);
-    if (!named.length && !c.from) return { ok: false, node, why: `that census leaves out ${node.slice(0, 16)} as absent and names no seating it was drawn for` };
-    let checked = 0, drawn = false;
-    for (const s of named) {
-      const d = drawOf(hexOf(s.roundId), s.role);
-      if (!d) continue;
-      checked++;
-      if (inWindow(window, d.closeMs) && d.drawn.some((k) => hexOf(k) === node)) { drawn = true; break; }
+    const short = node.slice(0, 16);
+    if (inCensus && !inCensus.has(node)) return { ok: false, node, why: `that census leaves out ${short} as absent, and it is not in the chain census` };
+    if (sawIt.has(node)) return { ok: false, node, proof: 'seen', why: `that census leaves out ${short} as absent, and this seat holds its signature of a seating in the 24 h` };
+    const proofs = Array.isArray(c.proofs) ? c.proofs : [];
+    const closes = new Set(), named = new Set();
+    for (const p of proofs) {
+      const rid = hexOf(String(p.roundId || '')), key = `${rid}:${p.role}`;
+      if (named.has(key)) return { ok: false, node, proof: 'too-few', why: `the proof that ${short} is absent names one seating twice` };
+      named.add(key);
+      let s = proven.get(key);
+      if (!s) {
+        const d = drawOf(rid, p.role);
+        if (!d) return { ok: false, notYet: true, node, why: `the seating ${rid.slice(0, 16)} ${p.role} that proves ${short} absent cannot be drawn here yet` };
+        const bytes = certOf(rid, p.role);
+        if (!bytes) return { ok: false, node, proof: 'certificate', why: `the proof that ${short} is absent names seating ${rid.slice(0, 16)} ${p.role} and carries no certificate of it` };
+        const got = provenSeating(bytes, { roundId: rid, role: p.role, drawn: d.drawn, slots: d.slots, closeMs: d.closeMs, verify });
+        if (!got.ok) return { ok: false, node, proof: 'certificate', why: `the certificate that proves ${short} absent at ${rid.slice(0, 16)} ${p.role} does not stand: ${got.why}` };
+        s = got.seating;
+        proven.set(key, s);
+      }
+      if (!inWindow(window, s.closeMs)) return { ok: false, node, proof: 'outside', why: `the seating ${rid.slice(0, 16)} ${p.role} that proves ${short} absent closes outside the census's 24 h` };
+      if (presentAt(node, s)) return { ok: false, node, proof: 'present', why: `that census leaves out ${short} as absent, and the certificate of ${rid.slice(0, 16)} ${p.role} lists it present` };
+      if (!missedAt(node, s)) return { ok: false, node, proof: 'not-missed', why: `that census leaves out ${short} as absent, and ${rid.slice(0, 16)} ${p.role} neither drew it nor had it left out` };
+      closes.add(s.closeMs);
     }
-    // carried from the census of a window seating that left it out already
-    if (!drawn && c.from) {
-      const was = carriedOf(hexOf(c.from));
-      if (was) { checked++; if (was.some((k) => hexOf(k) === node)) drawn = true; }
-    }
-    if (checked && !drawn) return { ok: false, node, proof: 'not-drawn', why: `that census leaves out ${node.slice(0, 16)} as absent, and none of the seatings it names drew it in the 24 h, nor did the census it names leave it out` };
-    if (!checked) unchecked.push(node);
+    if (closes.size < ABSENCE_PROOF_SEATINGS)
+      return { ok: false, node, proof: 'too-few', why: `that census leaves out ${short} as absent on ${closes.size} missed seating close(s); it takes ${ABSENCE_PROOF_SEATINGS}` };
   }
-  return { ok: true, unchecked };
+  return { ok: true };
 }
