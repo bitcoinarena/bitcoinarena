@@ -75,7 +75,7 @@ test('an AUDIT: bytes round trip, and a seat counts it only signed, drawn, eligi
   assert.ok(drawn, 'some round in 50 draws an auditor');
   const resultsHash = auditResultsHash([{ entryId: new Uint8Array(32).fill(2), resultDigest: new Uint8Array(32).fill(9) },
     { entryId: new Uint8Array(32).fill(1), resultDigest: new Uint8Array(32).fill(8) }]);
-  const a = { roundId, resultsHash, nodePubkey: drawn.pubkey, vrfProof: vrf.prove(vrfSecretFor(drawn.secret, secp256k1.Point), auditAlpha(roundId)) };
+  const a = { roundId, resultsHash, nodePubkey: drawn.pubkey, atMs: 1_000_000n, vrfProof: vrf.prove(vrfSecretFor(drawn.secret, secp256k1.Point), auditAlpha(roundId)) };
   assert.deepEqual(decodeAudit(encodeAudit(a)), a);
   const signature = schnorr.sign(auditId(a), drawn.secret);
   const { eligible, total } = auditEligible({ entries, bondMinSats: BOND_MIN });
@@ -83,6 +83,8 @@ test('an AUDIT: bytes round trip, and a seat counts it only signed, drawn, eligi
   assert.equal(auditStands(a, ctx).ok, true);
   assert.match(auditStands(a, { ...ctx, signature: schnorr.sign(auditId(a), nodes.find((x) => x !== drawn).secret) }).why, /not signed/);
   assert.match(auditStands(a, { ...ctx, resultsHash: new Uint8Array(32) }).why, /other results/);
+  assert.equal(auditStands(a, { ...ctx, windowCloseMs: 1_030_000 }).ok, true, '30 s before the close');
+  assert.match(auditStands(a, { ...ctx, windowCloseMs: 1_029_999 }).why, /30 s before the window closes/);
   assert.match(auditStands(a, { ...ctx, ...auditEligible({ entries, bondMinSats: BOND_MIN, drawn: [toHex(drawn.pubkey)] }) }).why, /may not audit/);
   const undrawn = nodes.find((nd) => !drawsOf(roundId, entries, [nd]).length);
   const b = { ...a, nodePubkey: undrawn.pubkey, vrfProof: vrf.prove(vrfSecretFor(undrawn.secret, secp256k1.Point), auditAlpha(roundId)) };
