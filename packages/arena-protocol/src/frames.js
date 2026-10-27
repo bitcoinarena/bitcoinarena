@@ -28,7 +28,7 @@ import {
   TYPE_GAME_MANIFEST, TYPE_OUTCOME_ATTESTATION, TYPE_PRICE_SAMPLE, TYPE_PRICE_TAPE, TYPE_FEDERATION_RECORD, TYPE_PRESENT, TYPE_SEATING,
   TYPE_CONFIG_PROPOSAL, TYPE_ABSENCE_ATTESTATION, TYPE_DEPARTURE_NOTICE, TYPE_EMERGENCY_DEPARTURE, TYPE_SPENT_SET, TYPE_ROUND_RESULT, TYPE_RESULT_FRONT, TYPE_HALT_OBSERVATION,
   TYPE_VALUE_ATTESTATION, TYPE_DONATION_PROPOSAL, TYPE_DONATION_APPROVAL, TYPE_DONATION_SET_KEYS_VESTING,
-  TYPE_AUDIT, TYPE_AUDIT_SLASH_PROOF,
+  TYPE_AUDIT, TYPE_AUDIT_SLASH_PROOF, TYPE_SEATING_SEEN,
 } from './constants.js';
 
 /**
@@ -83,6 +83,8 @@ export const FRAMES = new Map([
   [TYPE_FEDERATION_RECORD, { name: 'FederationRecord', authority: true }],
   [TYPE_PRESENT, { name: 'Present', authority: true }],
   [TYPE_SEATING, { name: 'Seating', authority: true }],
+  // A seated node's word on who was present at a 22 seating (§5A.7, kanban #727): it proves a node absent, and so leaves it out of a census
+  [TYPE_SEATING_SEEN, { name: 'SeatingSeen', authority: true }],
   // A config proposal (§27A.7.2): tallied, it decides the configuration rounds run under.
   [TYPE_CONFIG_PROPOSAL, { name: 'ConfigProposal', authority: true }],
   // A guardian's absence attestation and a departure notice (§23A.4-5): they make a guardian ABANDONED or DEPARTED.

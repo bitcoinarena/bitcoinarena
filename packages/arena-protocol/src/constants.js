@@ -35,10 +35,17 @@ export const PRESSURE_WEIGHT_VERSION = 20;
 /** About three auditors, drawn in secret by a VRF, replay every paid round and object to a false result (§13A.1, kanban #725). */
 export const AUDITOR_VERSION = 22;
 /**
- * A node drawn in the 24 h before the census and seen at none of those seatings leaves the census (§5A.3, presence.js, kanban #727).
+ * A node that seating certificates prove drawn and not present at 3 seatings of the 24 h before the census, and present at none,
+ * leaves the census (§5A.3, presence.js, kanban #727); from the same version the certificate names who was present (seating.js SEEN).
  * Folded into 22 with the auditors: 2.0 is unreleased and no series of 22 is posted on any network, so one number keeps 2.0's rules one set.
  */
 export const PRESENCE_VERSION = 22;
+/**
+ * ABSENCE ONLY WITH PROOF, AND NOT FOR A FEW MISSED SEATINGS (§5A.3, kanban #727, the owner 2026-10-27): a node leaves a 22 census only
+ * when threshold-signed seating certificates of at least this many window seatings show it drawn (or left out already) and not present,
+ * and it is present at none. One or two missed seatings - a restart, a network blip, an attacker flooding it while it is drawn - keep it in.
+ */
+export const ABSENCE_PROOF_SEATINGS = 3;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -372,6 +379,8 @@ export const TYPE_AUDIT = 0x36;
  * read as the player-result kind's (TYPE_SLASH_PROOF) - the two share the slash-proof tag and differ from their first byte on.
  */
 export const TYPE_AUDIT_SLASH_PROOF = 0x37;
+/** A seated node's word on who was present at a 22 seating (§5A.7, protocol 22, kanban #727): carried in the seating certificate. */
+export const TYPE_SEATING_SEEN = 0x38;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 export const TYPE_SPENT_SET = 0x26;
@@ -568,6 +577,8 @@ export const TAG = {
   // §5A.7 reserve seats
   seatPresent: 'ARENA/v1/SeatPresent',
   seating: 'ARENA/v1/Seating',
+  // §5A.3/§5A.7 protocol 22: who a seated node held a PRESENT of at the seating close, and who the round's census left out
+  seatingSeen: 'ARENA/v1/SeatingSeen',
   // §23A.5 a guardian's signed copy of a halted federation's spent-note set
   spentSet: 'ARENA/v1/SpentSet',
   // §13 who won a price round: BULLS / BEARS / FLAT by its attested open and close
