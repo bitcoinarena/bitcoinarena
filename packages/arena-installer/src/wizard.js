@@ -988,7 +988,7 @@ const serviceRun = async (b) => {
     if (!s.service) return null;
     // the local owner page, which goes on to the Arena site's page for this node where the owner key is kept (kanban #687): a quick
     // tunnel's address changes at every restart, and a .desktop Exec line or cmd would cut the site page's #node=...&local=...
-    const ownerUrl = `http://127.0.0.1:${portOf()}/Dashboard/owner`;
+    const ownerUrl = `http://127.0.0.1:${portOf()}/dashboard/owner`;
     try {
       const addCustody = (s.roles || []).includes('custody') ? null
         : [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'arena-install.mjs'), '--add-custody', '--home', state.home];

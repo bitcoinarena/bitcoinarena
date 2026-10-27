@@ -254,7 +254,7 @@ const opt=(u)=>json(u).catch(()=>null);
 const readResult=(id)=>json('api/round-result?round='+encodeURIComponent(id));
 let shown=false;
 // the setup's progress (kanban #635): Bitcoin Core's background sync, the bond's and the peg-in's confirmations
-async function load(){let D;try{const [d,liq,cap,setup]=await Promise.all([json('dashboard.json'),opt('liquidity-claim'),opt('capacity?node=me'),opt('setup-status')]);D={...d,liquidity:liq,capacity:(cap&&cap.plea)||null,setup}}
+async function load(){let D;try{const [d,liq,cap,setup]=await Promise.all([json('dashboard.json'),opt('liquidity-claim?quiet=1'),opt('capacity?node=me'),opt('setup-status')]);D={...d,liquidity:liq,capacity:(cap&&cap.plea)||null,setup}}
 catch(e){if(shown)return;D={error:e.message}}
 shown=shown||!D.error;window.ArenaDashboard.draw(document.getElementById('app'),D,readResult)}
 load();setInterval(()=>{if(!document.hidden)load()},60000);
