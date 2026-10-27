@@ -1049,7 +1049,7 @@ const serviceRun = async (b) => {
       // THE LINK OPENED AGAIN IN A BROWSER THAT HOLDS ITS SESSION (kanban #635, the owner's playtest 2026-10-25: the test host app's "Open in
       // browser" opened the used link, and the page said "that setup link is used or expired" in a browser already logged in)
       if (sessionOk(req)) { res.writeHead(303, { location: '/', 'cache-control': 'no-store' }); return res.end(); }
-      if (!token || nowMs() > tokenUntil || !same(url.searchParams.get('t'), token)) return json(res, 403, { ok: false, why: 'This setup link was used already or is older than 30 minutes. Open the Bitcoin Arena app again (or run arena-install again) to get a new one' });
+      if (!token || nowMs() > tokenUntil || !same(url.searchParams.get('t'), token)) return json(res, 403, { ok: false, why: 'This setup link was used already or is older than 30 minutes. Open the Bitcoin Arena app again (or run bitcoinarena-install again) to get a new one' });
       token = null;
       const sid = b64u(32);
       sessions.set(hashOf(sid), nowMs()); saveSessions(true);
@@ -1057,7 +1057,7 @@ const serviceRun = async (b) => {
       res.writeHead(303, { location: '/', 'set-cookie': `arena_wizard=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_IDLE_MS / 1000}${secure}`, 'cache-control': 'no-store' });
       return res.end();
     }
-    if (!sessionOk(req)) return json(res, 401, { ok: false, why: finished ? 'Setup is finished. Your node runs: open the Bitcoin Arena app to see it' : 'This page opens from the setup link. Open the Bitcoin Arena app again (or run arena-install again) and it opens the page for you' });
+    if (!sessionOk(req)) return json(res, 401, { ok: false, why: finished ? 'Setup is finished. Your node runs: open the Bitcoin Arena app to see it' : 'This page opens from the setup link. Open the Bitcoin Arena app again (or run bitcoinarena-install again) and it opens the page for you' });
     if (req.method === 'GET' && url.pathname === '/') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY',
         'content-security-policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'" });
