@@ -146,7 +146,10 @@ try {
   let att;
   for (const until = Date.now() + 100000; ;) {
     att = await attestedClaimKey({ round: { ...c, id: rid }, signerNodes: c.nodes, nodes, curve: pageCurve });
-    if (att.ok || !/making it now/.test(String(att.why)) || Date.now() >= until) break;
+    // AND WHILE TOO FEW OF THEM ATTEST IT YET (2026.1.9.11 check, 2026-10-27 09:31Z: "3 of 7 signer nodes attest this claim key, and this
+    // round needs 5" 2 s after the seating - the rest still dealing): asked again, each count said
+    if (att.ok || !/making it now|signer nodes attest this claim key/.test(String(att.why)) || Date.now() >= until) break;
+    log({ step: 'claim key forming', why: String(att.why).slice(0, 160) });
     await new Promise((r) => setTimeout(r, 5000));
   }
   if (!att.ok) throw new Error(`claim key: ${att.why}`);
