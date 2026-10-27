@@ -316,7 +316,10 @@ export function createDayDuty(o) {
       const foreign = [...idx.markers, ...mempool].filter((m) => m.slot === slot && (m.tag === tag || m.tag === emergencyTag) && !ks.some((k) => k.txid === m.txid));
       if (foreign.some((m) => m.tag === tag)) verdicts.push({ state: 'pending', stage: 'foreign', why: `posted by another node; drawn on ${drawnNow.drawn} of ${drawnNow.of} seats` });
       const verdict = guard.dayVerdict(verdicts);
-      const emergencies = ks.filter((k) => k.emergency).length + foreign.filter((m) => m.tag === emergencyTag).length;
+      // A DEAD EMERGENCY GRID IS NOT ONE OF THE DAY'S (2026.1.9.11 release check, Up/Down 2026-10-27: two emergency grids died - one
+      // published past its beacon, one whose census block the chain left - and with a third node's marker the day reached the cap,
+      // so no grid that could be drawn was ever posted): only this node's postings that are not dead count against the cap
+      const emergencies = ks.filter((k) => k.emergency && !(k.verdict && k.verdict.state === 'dead')).length + foreign.filter((m) => m.tag === emergencyTag).length;
       const inFlight = ks.some((k) => k.emergency && k.verdict && k.verdict.state === 'pending')
         || foreign.some((m) => m.tag === emergencyTag && (m.height === null || idx.tip - m.height < 15));
       const postedAny = ks.length > 0 || foreign.length > 0;
