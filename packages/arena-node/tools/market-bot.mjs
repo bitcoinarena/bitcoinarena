@@ -50,6 +50,7 @@ const MAX_ORDERS = Number(env.MAX_ORDERS || 4), LOOP_MS = Number(env.LOOP_S || 1
 // side's fair value - past the makers' bids, which rest EDGE_CENTS inside it, so it crosses the other side's resting bids and
 // the batch trades. A bot takes in a pass with chance TAKE_BASE + (1 - TAKE_BASE) x |2 fair - 1|: some action always, nearly
 // every bot when the window is decided. Unset or 0, the bot only quotes, as before.
+const ONLY_SIDE = String(env.ONLY_SIDE || '').toLowerCase();
 const TAKES = Number(env.TAKES || 0), TAKE_CENTS = Number(env.TAKE_CENTS || 2), TAKE_SHARES = Number(env.TAKE_SHARES || SHARES);
 const TAKE_BASE = Number(env.TAKE_BASE || 0.3);
 // THE SELLER (kanban #588, 2026-10-23: "wir brauchen bid und asks"): a bot sells shares it holds when the window has moved
@@ -533,7 +534,10 @@ async function pass() {
     const makerTurn = Date.now() >= start + offsetIn(start) && closeAt - Date.now() > AHEAD_MS;
     let beat; try { beat = await beatOf(start); } catch (e) { say({ step: 'beat', round: row.id.slice(0, 16), why: e.message }); continue; }
     const fair = fairUp({ beat, last, msLeft: end - Date.now() });
-    const ladder = quoteLadder({ fair, levels: LEVELS, stepCents: STEP, edgeCents: EDGE, shares: SHARES });
+    // ONLY ONE SIDE (ONLY_SIDE=up|down, a measuring knob): one bot quoting only Down above its fair value crosses another's Up -
+    // measured 2026-10-27: two bots on the same price both bought the favourite every window and no order ever filled
+    const ladder = quoteLadder({ fair, levels: LEVELS, stepCents: STEP, edgeCents: EDGE, shares: SHARES })
+      .filter((q) => !ONLY_SIDE || Number(q.outcome) === (ONLY_SIDE === 'down' ? 1 : 0));
     const done = new Set(placed[row.id] || []);
     const made = [...done].filter((k) => !k.startsWith('take:')).length, taken = done.size - made;
     const todo = makerTurn ? ladder.filter((q) => !done.has(`${q.outcome}:${q.priceCents}`)).slice(0, Math.max(0, MAX_ORDERS - made)) : [];
