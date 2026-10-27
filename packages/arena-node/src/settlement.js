@@ -1580,7 +1580,7 @@ export class LockSettlement {
         answers.push({ base, bytes: new Uint8Array(await r.arrayBuffer()) });
       } catch (e) { answers.push({ base, why: e.message }); }
     }
-    const counted = countPlanTaken({ own, answers, seats: contract.nodes, planId });
+    const counted = countPlanTaken({ own, answers, seats: contract.nodes, planId, slots: contract.settlementSlots });
     if (counted.final) {
       const certificate = joinCertificate(counted.certificate);
       this.planCertificates.set(lateEntryId ? `${toHex(roundIdBytes)}:${toHex(lateEntryId)}` : toHex(roundIdBytes), { planId, certificate });
@@ -1612,7 +1612,7 @@ export class LockSettlement {
     if (toHex(planId) !== toHex(bytes.subarray(0, 32))) return refuse('that certificate is for another plan than the one this seat kept');
     const records = splitCertificate(bytes.subarray(32));
     const counted = countPlanTaken({ own: records[0], answers: records.slice(1).map((b, i) => ({ base: `record ${i + 1}`, bytes: b })),
-      seats: contract.nodes, planId });
+      seats: contract.nodes, planId, slots: contract.settlementSlots });
     if (!counted.final) return refuse(`${counted.agreed} of the ${counted.needed} seats in that certificate stand here: ${counted.refused.join('; ')}`);
     this.planCertificates.set(lateEntryId ? `${toHex(roundIdBytes)}:${toHex(lateEntryId)}` : toHex(roundIdBytes),
       { planId, certificate: joinCertificate(counted.certificate) });

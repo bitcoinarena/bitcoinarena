@@ -267,8 +267,17 @@ try {
     const h = await fetch(`${n}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
     const en = await fetch(`${n}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
     const enWhy = (await en.text()).trim().slice(0, 140);
-    if (hand) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(hand)) });
-    const l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(lk.fields)) });
+    // ASKED AGAIN UNTIL THE SEAT SEES THE LOCK, as the page's market.js asks (2026.1.9.11 release check: the RPS run handed
+    // its lock 2 s after the lock tx and all 7 signer nodes said "the federation holds no lock"; Next Block's 7 s later passed)
+    let l;
+    for (const until = Date.now() + 45000; ;) {
+      if (hand) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(hand)) });
+      l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(lk.fields)) });
+      if (l.status !== 409 || Date.now() >= until) break;
+      const why = await l.clone().text();
+      if (!/holds no lock/.test(why)) break;
+      await new Promise((ok) => setTimeout(ok, 3000));
+    }
     // ITS FIRST MARK AT ONCE (measured 2026-10-14: published 30 s after the seats stored the entry, past their start
     // deadline - 900 ticks + 5 s from the stake seen - two seats signed FORFEIT at the door and the entry went VOID), as the page
     // sends it a second into the run; the rest after every seat holds the entry
