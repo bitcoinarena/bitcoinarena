@@ -184,11 +184,9 @@ export function decodeAdvert(bytes) {
     nodePubkey: r.bytes32(),
     operatorId: r.str(),
     protocolVersions: r.vec((rr) => rr.u16()),
-    roles: r.vec((rr) => {
-      const i = rr.u8();
-      if (i < 0 || i >= ROLES.length) throw new Error('unknown role index ' + i);
-      return ROLES[i];
-    }),
+    // A ROLE THIS BUILD DOES NOT KNOW IS SKIPPED, not refused (kanban #725, protocol 22): refusing it dropped the whole node from the
+    // census of every older seat the day a newer one named a new role, so the census differed seat by seat
+    roles: r.vec((rr) => { const i = rr.u8(); return i < ROLES.length ? ROLES[i] : null; }).filter((x) => x !== null),
     endpoint: r.str(),
     region: r.str(),
     capacityClass: r.u8(),

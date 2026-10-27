@@ -1026,7 +1026,7 @@ stake (gross, what leaves the wallet)              100%
   same whoever the recipients are.
 - Free rounds carry no fee and no donation.
 
-**The round's auditors** *(protocol 21, §13A.1)*: after the website's line, **10% of the nodes' part** goes to the
+**The round's auditors** *(protocol 22, §13A.1)*: after the website's line, **10% of the nodes' part** goes to the
 auditors whose `AUDIT` arrived in time, equally; none, and it stays with the pools. The player pays nothing more.
 
 **The website that brought the entry** *(RULED 2026-10-15, 
@@ -3531,12 +3531,12 @@ the attacker at no cost. Therefore:
 several — never infrastructure of this protocol: anyone may mirror, and the
 objects carry their own verification.
 
-## 13A.1 Three auditors replay every round *(RULED 2026-10-27, kanban #725; protocol 21)*
+## 13A.1 Three auditors replay every round *(RULED 2026-10-27, kanban #725; protocol 22)*
 
 Every seat of a round's committees replays its runs (§34), and anyone may
 object (above). But nobody outside the committee is obliged to look, so five
 colluding seats are caught only if somebody happens to replay. From protocol
-21 every paid round also has **auditors**: about three census nodes outside
+22 every paid round also has **auditors**: about three census nodes outside
 its committees, drawn in secret, who replay every run of the round and
 object to a false result.
 
@@ -3560,7 +3560,7 @@ Roles lists it as **"Audit rounds"** with on and off, and the Rounds section
 what it earned. The installer offers it with "Play and check rounds" (on
 together). **A node that had the verify role before the update gets the audit
 role automatically** (RULED 2026-10-27): the updater, or the node at its first
-start on protocol 21, adds `audit` to its roles and posts the advertisement
+start on protocol 22, adds `audit` to its roles and posts the advertisement
 update, with no step by the owner; a node without verify gets nothing added. Only
 nodes advertising the role are eligible, so `W` counts no node that would
 never replay and the expected number stays three.

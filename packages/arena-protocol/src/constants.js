@@ -32,6 +32,8 @@ export const TAG_SWITCH_VERSION = 18;
 export const BOND_SUM_VERSION = 19;
 /** Under capacity pressure the guardians' custody share is weighted by bond up to B*, squared (§23A.3a part 1, kanban #559/#543). */
 export const PRESSURE_WEIGHT_VERSION = 20;
+/** About three auditors, drawn in secret by a VRF, replay every paid round and object to a false result (§13A.1, kanban #725). */
+export const AUDITOR_VERSION = 22;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -358,6 +360,8 @@ export const TYPE_ABSENCE_ATTESTATION = 0x24;
 export const TYPE_DEPARTURE_NOTICE = 0x25;
 /** A leave request signed by a node's emergency key, for a node that is offline (§23A.5a). */
 export const TYPE_EMERGENCY_DEPARTURE = 0x35;
+/** An auditor's AUDIT of a round (§13A.1, protocol 22, kanban #725). */
+export const TYPE_AUDIT = 0x36;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 export const TYPE_SPENT_SET = 0x26;
@@ -579,6 +583,9 @@ export const TAG = {
   emergencyKey: 'ARENA/v1/EmergencyKey',
   emergencySecret: 'ARENA/v1/EmergencySecret',
   emergencyDeparture: 'ARENA/v1/EmergencyDeparture',
+  auditor: 'ARENA/v1/Auditor',
+  audit: 'ARENA/v1/Audit',
+  auditResults: 'ARENA/v1/AuditResults',
   abandonmentProof: 'ARENA/v1/AbandonmentProof',
 };
 
@@ -629,8 +636,9 @@ export const slashRemainderOf = (byte) => {
  */
 export const SLASH_TO_PLAYERS_BPS = 5000;
 
-/** Roles a bonded node can stand for. Order is protocol: it indexes roleByte. */
-export const ROLES = ['game', 'verify', 'settlement', 'relay'];
+/** Roles a bonded node can stand for. Order is protocol: it indexes roleByte. `audit` (§13A.1, protocol 22): replays rounds it is
+ * drawn to audit; a decoder from protocol 22 on skips a role index it does not know instead of refusing the advertisement. */
+export const ROLES = ['game', 'verify', 'settlement', 'relay', 'audit'];
 export const roleByte = (role) => {
   const i = ROLES.indexOf(role);
   if (i < 0) throw new Error('unknown role: ' + role);
