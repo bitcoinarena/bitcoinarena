@@ -7,6 +7,7 @@
 //   every minute (cron)   each seat's GET /txs?full=1 over the last READ_BACK_MS: every transaction it holds with its whole record;
 //                         merged across the seats and written to D1 (txs) for EVERY transaction, only where it changed
 //   every minute (cron)   each seat's GET /payments: the gifts, zaps and items bought (kanban #683), each a row of its own kind
+//   every minute (cron)   EVENT_SEATS seats' GET /liquidations, in turn: the arbitration set's liquidations and slashes (kanban #723), each a row
 //   GET /api/recent       a page of them, newest first, from D1: ?app= &kind= &fed= &since= &q=, &before= / &after= a row's cursor (kanban #683)
 //   GET /api/tx/<id>      from D1; one the minute has not read yet is read from the seats once and kept
 //   /, /tx/<id>           the pages (www/), with what D1 holds built into the page, so they draw at once
@@ -78,11 +79,13 @@ async function keep(env, tx, had) {
   const h = await sha(JSON.stringify(stable));
   if (had === h) return null;
   const e = tx.entry || {};
-  return env.DB.prepare(`INSERT INTO txs (id, round, app, federation, stored_ms, settled, hash, json, updated_ms, kind, fed_txid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  return env.DB.prepare(`INSERT INTO txs (id, round, app, federation, stored_ms, settled, hash, json, updated_ms, kind, fed_txid, txids) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET round = excluded.round, app = excluded.app, federation = excluded.federation, stored_ms = excluded.stored_ms,
-    settled = excluded.settled, hash = excluded.hash, json = excluded.json, updated_ms = excluded.updated_ms, kind = excluded.kind, fed_txid = excluded.fed_txid`)
+    settled = excluded.settled, hash = excluded.hash, json = excluded.json, updated_ms = excluded.updated_ms, kind = excluded.kind, fed_txid = excluded.fed_txid,
+    txids = excluded.txids`)
     .bind(tx.id, e.round || null, e.app || null, e.federation || null, tx.storedFirst ? Date.parse(tx.storedFirst) : Date.now(),
-      tx.settlement ? tx.settlement.state : null, h, JSON.stringify(tx), Date.now(), tx.kind || 'order', tx.payment ? tx.payment.txid : null);
+      tx.settlement ? tx.settlement.state : null, h, JSON.stringify(tx), Date.now(), tx.kind || 'order', tx.payment ? tx.payment.txid : null,
+      Array.isArray(tx.txids) && tx.txids.length ? tx.txids.join(' ') : null);
 }
 
 // THE GIFTS, ZAPS AND ITEMS BOUGHT (kanban #683, 2026-10-26: "I don't see item purchases in the explorer"; #682: a gift "doesn't show in
@@ -138,6 +141,57 @@ async function readPayments(env, since, limit) {
   }
   for (let i = 0; i < writes.length; i += 50) await env.DB.batch(writes.slice(i, i + 50));
   return { seats: [...answered.values()].filter(Boolean).length, payments: ids.length, written: writes.length, next, ms: Date.now() - t0 };
+}
+
+// THE ARBITRATION SET'S LIQUIDATIONS AND SLASHES (kanban #723, the owner 2026-10-27: "Sind die Transaktionen alle im Explorer zu sehen als
+// liquidation event?" - "Ja soll es"): the set signs each one as an event with every payout and its transaction and posts it to the seats,
+// which hand it on to each other (packages/arena-node/src/arbitration-events.js), so any seat lists them all at GET /liquidations (`events`).
+// Each minute EVENT_SEATS seats are asked, in turn; the newest version of each event any of them holds is a row of its kind
+// (`liquidation`, `slash`) named by its subject - the federation liquidated, the slash proof - with every transaction it names for the search.
+const EVENT_KINDS = ['liquidation', 'slash'];
+const EVENT_SEATS = 3;
+const eventSubject = (e) => (e.kind === 'slash' ? e.proof : e.federation);
+/** Every transaction an event names, bitcoin and federation (as arbitration-events.js eventTxids). */
+export function eventTxids(e) {
+  const out = new Set(); const add = (x) => { if (hex64.test(String(x || ''))) out.add(String(x)); };
+  add(e.txid); add(e.escrow && e.escrow.txid); add(e.escrow && e.escrow.outpoint && String(e.escrow.outpoint).split(':')[0]);
+  for (const p of e.payouts || []) add(p.txid);
+  add(e.remainder && e.remainder.txid);
+  return [...out];
+}
+const msatOf = (sats) => (sats === null || sats === undefined ? null : String(BigInt(sats) * 1000n));
+/** One event as the row the list and its page read: what it moved (a liquidation's escrow, a slash's bond), its status, its transactions. */
+export function eventTx(e, seats) {
+  const amountMsat = e.kind === 'slash' ? msatOf((e.sats && (e.sats.bond || e.sats.players)) || null)
+    : (e.escrow && (e.escrow.claimedMsat || msatOf(e.escrow.sats))) || null;
+  return { id: eventSubject(e), kind: e.kind, found: true, readAt: new Date().toISOString(), readMs: null, event: e, status: e.status || null, amountMsat,
+    entry: { app: null, federation: e.kind === 'liquidation' ? e.federation : null, round: e.kind === 'slash' ? e.round : null },
+    txids: eventTxids(e), settlement: null, client: null, processed: null, result: null, storedFirst: new Date(Number(e.firstMs)).toISOString(), seats };
+}
+async function readEvents(env, now = Date.now()) {
+  const t0 = Date.now();
+  const from = Math.floor(now / 60000) % SEATS.length;
+  const asked = Array.from({ length: Math.min(EVENT_SEATS, SEATS.length) }, (_, i) => SEATS[(from + i) % SEATS.length]);
+  const got = await Promise.all(asked.map(async (seat) => ({ seat, ...(await ask(`${seat}/liquidations`, READ_MS)) })));
+  const newest = new Map(), heldBy = new Map();
+  for (const g of got) for (const r of (g.body && Array.isArray(g.body.events) ? g.body.events : [])) {
+    const e = r && r.event;
+    if (!e || !EVENT_KINDS.includes(e.kind) || !hex64.test(String(eventSubject(e) || '')) || !Number.isFinite(Number(e.atMs)) || !Number.isFinite(Number(e.firstMs))) continue;
+    const k = `${e.kind}:${eventSubject(e)}`;
+    if (!newest.has(k) || Number(newest.get(k).atMs) < Number(e.atMs)) newest.set(k, e);
+    heldBy.set(k, (heldBy.get(k) || 0) + 1);
+  }
+  const writes = [];
+  for (const e of newest.values()) {
+    const id = eventSubject(e);
+    const had = await env.DB.prepare('SELECT hash FROM txs WHERE id = ?').bind(id).first();
+    // which seats were asked is left out of the row: the read goes round the seats, and the row would change every minute
+    const w = await keep(env, eventTx(e, []), had ? had.hash : undefined);
+    if (w) writes.push(w);
+  }
+  for (let i = 0; i < writes.length; i += 50) await env.DB.batch(writes.slice(i, i + 50));
+  if (writes.length) await readFacets(env).catch(() => null);
+  return { seats: got.filter((g) => g.body && Array.isArray(g.body.events)).length, of: asked.length, events: newest.size, written: writes.length, ms: Date.now() - t0 };
 }
 
 // THE EXPLORER'S OWN STATE IN D1 (2026-10-26, Cloudflare blocked KV puts for the day: "exceeded the daily Workers KV free tier limit of
@@ -214,7 +268,8 @@ async function metrics(env) {
 async function poll(env) {
   const n = await readWindow(env, Date.now() - READ_BACK_MS, 500, null);
   const pay = await readPayments(env, Date.now() - READ_BACK_MS, 500).catch((e) => ({ error: String(e && e.message ? e.message : e) }));
-  console.log(JSON.stringify({ poll: n, payments: pay }));
+  const events = await readEvents(env).catch((e) => ({ error: String(e && e.message ? e.message : e) }));
+  console.log(JSON.stringify({ poll: n, payments: pay, events }));
   await paymentsWalk(env).catch((e) => console.log(JSON.stringify({ paymentsWalkError: String(e && e.message ? e.message : e) })));
   // every quarter hour: each app's, kind's and federation's count for the list's filters (a read of every row)
   if (Math.floor(Date.now() / 60000) % 15 === 0 || !(await stateGet(env, 'facets')))
@@ -287,15 +342,18 @@ function filterSql(q, now = Date.now()) {
   const since = Number(q.get('since'));
   if (Number.isFinite(since) && since > 0) { where.push('stored_ms >= ?'); binds.push(now - since * 1000); }
   const part = String(q.get('q') || '').toLowerCase();
-  if (/^[0-9a-f]{1,64}$/.test(part)) { where.push('(id LIKE ? OR round LIKE ? OR fed_txid LIKE ?)'); binds.push(`%${part}%`, `%${part}%`, `%${part}%`); }
+  // and every transaction a liquidation or a slash names (kanban #723)
+  if (/^[0-9a-f]{1,64}$/.test(part)) { where.push('(id LIKE ? OR round LIKE ? OR fed_txid LIKE ? OR txids LIKE ?)'); binds.push(`%${part}%`, `%${part}%`, `%${part}%`, `%${part}%`); }
   return { where, binds };
 }
 const ROW_SQL = `SELECT id, round, app, federation, stored_ms, kind, json_extract(json, '$.entry.stakeMsat') AS stake, json_extract(json, '$.amountMsat') AS amount,
   json_extract(json, '$.payment.item') AS item, json_extract(json, '$.result.state') AS rstate, json_extract(json, '$.result.netMsat') AS rnet,
-  json_extract(json, '$.result.payoutMsat') AS rpaid FROM txs`;
+  json_extract(json, '$.result.payoutMsat') AS rpaid, json_extract(json, '$.status') AS status FROM txs`;
 const rowOut = (x) => ({ id: x.id, kind: x.kind || 'order', round: x.round, app: x.app, federation: x.federation, storedMs: Number(x.stored_ms),
   // with its amount (2026-10-24: "Also add the amount to the list page in sats"): an order's stake, msat; a gift's or purchase's total
   stakeMsat: x.stake !== null && x.stake !== undefined ? String(x.stake) : x.amount !== null && x.amount !== undefined ? String(x.amount) : null, item: x.item || null,
+  // a liquidation's or a slash's step reached (kanban #723)
+  ...(x.status ? { status: x.status } : {}),
   result: x.rstate ? { state: x.rstate, netMsat: x.rnet === null ? null : String(x.rnet), payoutMsat: x.rpaid === null ? null : String(x.rpaid) } : null });
 
 /** One page of the list, newest first: { txs, older, newer, total, facets } - older/newer the cursors of the pages beside it, or null. */
@@ -321,6 +379,9 @@ async function txOf(env, ctx, id) {
   // by its id, or a gift's or purchase's by its federation transaction - what the wallet history names (kanban #682)
   const row = await env.DB.prepare('SELECT json FROM txs WHERE id = ? OR fed_txid = ? LIMIT 1').bind(id, id).first();
   if (row) return { ...JSON.parse(row.json), cached: true };
+  // or a liquidation's or a slash's by any transaction it names (kanban #723): the escrow, a payout, the remainder, path B
+  const ev = await env.DB.prepare(`SELECT json FROM txs WHERE kind IN ('liquidation', 'slash') AND txids LIKE ? LIMIT 1`).bind(`%${id}%`).first();
+  if (ev) return { ...JSON.parse(ev.json), cached: true };
   const tx = await readTx(id);
   if (tx.found) { const w = await keep(env, tx, null); if (w) ctx.waitUntil(w.run()); }
   return tx;
