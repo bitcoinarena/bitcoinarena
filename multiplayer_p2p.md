@@ -1026,6 +1026,9 @@ stake (gross, what leaves the wallet)              100%
   same whoever the recipients are.
 - Free rounds carry no fee and no donation.
 
+**The round's auditors** *(protocol 21, §13A.1)*: after the website's line, **10% of the nodes' part** goes to the
+auditors whose `AUDIT` arrived in time, equally; none, and it stays with the pools. The player pays nothing more.
+
 **The website that brought the entry** *(RULED 2026-10-15, 
 roadmap item 7, path (a); AS BUILT, protocol 2026.0.9)*: an entry may name the
 33-byte payout key of the page that brought it (`frontend_pk`, marker `0xac`,
@@ -3527,6 +3530,116 @@ the attacker at no cost. Therefore:
 `publication_relays[]` are data in the contract — any URL, any relay,
 several — never infrastructure of this protocol: anyone may mirror, and the
 objects carry their own verification.
+
+## 13A.1 Three auditors replay every round *(RULED 2026-10-27, kanban #725; protocol 21)*
+
+Every seat of a round's committees replays its runs (§34), and anyone may
+object (above). But nobody outside the committee is obliged to look, so five
+colluding seats are caught only if somebody happens to replay. From protocol
+21 every paid round also has **auditors**: about three census nodes outside
+its committees, drawn in secret, who replay every run of the round and
+object to a false result.
+
+**Rulings (2026-10-27):** drawn in secret until they publish; `FINAL` does not
+wait for them; paid from the nodes' fee, 10 % of it.
+
+**Who may audit a round.** The census at the round's `census_height`
+(§5A.2), less:
+
+- every node **drawn** for any of the round's roles (all 9 per role of
+  §5A.7, seated or not);
+- the nodes of the round's players and every node of their operators
+  (§5A.13), so nobody audits a round he plays or profits from;
+- every node that does not advertise the **audit role** (below).
+
+**A role of its own, in the owner dashboard** *(RULED 2026-10-27: "Die Rolle
+muss im owner Dashboard stehen")*. Auditing is a node role like the others
+(§5A.9): the advertisement names it in its roles (`audit`), the owner area's
+Roles lists it as **"Audit rounds"** - on by default for every bonded node,
+the owner may turn it off - and the Rounds section (kanban #715) shows the
+rounds this node audited, the objections it filed and what it earned. Only
+nodes advertising the role are eligible, so `W` counts no node that would
+never replay and the expected number stays three.
+
+Call what is left the round's eligible set `E`, with total weight
+`W = sum of weight(node)` over `E` (`weight` as in §5A.6: `floor(bond / bond_min)`).
+
+**The lottery: secret, unique, checkable by anyone.** Each eligible node
+evaluates a verifiable random function over the round id with its node key:
+
+```text
+alpha          = tagged_hash("ARENA/v1/Auditor", round_id)
+(beta, pi)     = ECVRF_prove(node_secret, alpha)    // RFC 9381, ECVRF-SECP256K1-SHA256-TAI
+v              = int(beta[0..8]) / 2^64              // in [0, 1)
+auditor       iff  v < AUDITORS x weight(node) / W  // AUDITORS = 3
+```
+
+- **Secret.** `beta` needs the node's secret key: nobody else, the committee
+  included, can tell who audits a round before the auditor shows its proof.
+  A committee that means to cheat does not know whom to bribe or avoid.
+- **Unique.** A VRF has one output per key and input, so a node cannot try
+  again for a better draw (a Schnorr signature would let it: its nonce is its
+  own choice). `alpha` is fixed by the round id, before any result exists, so
+  the committee cannot steer it either.
+- **Checkable.** Anyone verifies `pi` against the node's census key, `alpha`
+  and the census, and recomputes `v`, `weight` and `W`.
+- **About three, not exactly three.** The expected number is 3; a round can
+  have none (about 5 % of rounds, `e^-3`) or more. That is the price of the
+  secret draw, accepted 2026-10-27; the committee's own replay and every other
+  objector still stand behind it.
+
+**What an auditor does.** As soon as the round's transcripts are on its
+`publication_relays[]` (§13A, "where the run is posted"), it replays every run
+of the round in the replay worker (§10) and, **before `window_close`**:
+
+- if every result it replays equals the signed one: it publishes
+
+  ```text
+  AUDIT {
+    round_id
+    results_hash        // H over (entry_id, signed result) of every entry, in entry_id order
+    node_pubkey
+    vrf_proof           // pi, and beta
+    signature           // node key, over all of the above
+  }
+  ```
+
+  to the round's seats (`POST /audit`) and its `publication_relays[]`;
+- if one differs: it files the objection of §13A for that entry, exactly as
+  any objector does. The objection is what stops `FINAL`, and it is a fraud
+  proof against every node that signed the false result (§5A.3, §5A.3B): the
+  slash follows. An auditor that objects publishes no `AUDIT` for the round.
+
+A drawn node that cannot replay in time publishes nothing. **It never signs
+an `AUDIT` it has not replayed**: an `AUDIT` over a result that a valid
+objection later contradicts is a fraud proof against its signer, as for a
+committee signature ("a result contradicted by replay", §5A.3), and slashes
+its bond.
+
+**`FINAL` does not wait for the auditors.** The window, the 5 of 7 and
+`final_after` of §13A are unchanged. An auditor that never shows holds up
+nothing; it only earns nothing.
+
+**Pay: 10 % of the nodes' fee, to the auditors who published.** At
+settlement, after the website's line (§0A.8, `frontend_pk`) and before the
+pools (§23A.10 "Pay"), one line off the top of the nodes' part:
+
+```text
+auditors_share = floor(nodes_fee_after_website x 10 %)
+each           = floor(auditors_share / k)     k = the valid AUDITs the settlement seats hold at final_after
+remainder      -> back into the nodes' pools, as if there were no auditors
+k = 0          -> the whole share stays in the pools
+```
+
+A settlement seat counts an `AUDIT` only if its proof verifies, its node was
+eligible, its `results_hash` matches the results being settled, and it
+reached the seat before `window_close` (signed times, §13A rule 3). The
+player pays nothing more: the stake, the fee and the donation are what they
+were. Example, a round of 10,000 sat stakes and a website line: nodes' fee
+400 sat, website 40, auditors 36 (three auditors: 12 each), pools 324 (one
+verify seat of seven: 11.6 sat, against 12.9 without auditors).
+
+**AS BUILT:** not yet (kanban #725).
 
 ---
 
