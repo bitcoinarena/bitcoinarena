@@ -65,6 +65,18 @@ test('a new node whose default service name belongs to another node folder takes
   assert.deepEqual(freeInstance(mine, { platform: 'win32', read: () => 'x' }), { instance: '', offset: 0 }, 'Windows keeps the default');
 });
 
+// EVERY PORT THE NODE WILL USE (the 2026.1.9.11 install test: the new node's fedimintd could not bind its API port - "Address already in use" -
+// since another node's guardian held it): the guardian's and the guardian-next's ports, which follow the seat's, are checked too
+test('a name is taken only when none of the node\'s ports is in use, its guardian\'s and the gateway\'s metrics port among them', async () => {
+  const { freeInstance, nodePorts } = await import('../src/instance.js');
+  const ports = nodePorts(100);
+  for (const p of [8570, 8576, 8578, 9570, 10570, 11570, 12570, 13570, 14570, 15570, 16570]) assert.ok(ports.includes(p), `offset 100 uses ${p}`);
+  const opts = (inUse) => ({ platform: 'darwin', env: { HOME: '/Users/d' }, read: () => null, busy: (x) => x.filter((p) => inUse.includes(p)) });
+  assert.deepEqual(freeInstance('/Users/d/.bitcoinarena', opts([9470])), { instance: '2', offset: 100 }, 'the default\'s guardian API port held by another node: --2');
+  assert.deepEqual(freeInstance('/Users/d/.bitcoinarena', opts([12470, 9570])), { instance: '3', offset: 200 }, 'the guardian\'s UI port, then --2\'s API port: --3');
+  assert.deepEqual(freeInstance('/Users/d/.bitcoinarena', opts([8478])), { instance: '2', offset: 100 }, 'the gateway\'s metrics port');
+});
+
 test('portsInUse finds a listener on this machine, and only it', async () => {
   const { portsInUse } = await import('../src/instance.js');
   const { createServer } = await import('node:net');

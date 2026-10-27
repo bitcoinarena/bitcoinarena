@@ -55,6 +55,9 @@ test('the further nodes: b, c ... from the first, past every name, home and port
     // a port range in use is passed over
     const busyD = (ports) => (ports.includes(8770) ? [8770] : []);
     assert.deepEqual(addNodesPlan(here, 2, { busy: busyD }).nodes.map((x) => x.instance), ['c', 'e']);
+    // the guardian's ports too (the 2026.1.9.11 install test): one in use passes that range over
+    const busyG = (ports) => (ports.includes(10670) ? [10670] : []);
+    assert.deepEqual(addNodesPlan(here, 2, { busy: busyG }).nodes.map((x) => x.instance), ['d', 'e'], 'c at +200 has its guardian P2P port on 10670 (8670 + 2000)');
     assert.match(addNodesPlan(here, 19, { busy: free }).why, /at most 20 nodes on one machine: 2 are here, so at most 18 more/);
     assert.match(addNodesPlan([], 1).why, /install one first/);
     assert.match(addNodesPlan([{ ...here[0], network: 'mainnet' }], 1, { busy: free }).why, /testnet4 only/);
