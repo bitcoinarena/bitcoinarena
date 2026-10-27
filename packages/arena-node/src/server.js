@@ -139,6 +139,7 @@ import { FOUNDING_WINDOW } from '../../arena-protocol/src/guardian-founding.js';
 import { createEndpointsOf, federationOfDir, configInvite } from './federation-endpoints.js';
 import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
+import { createArbitrationEvents } from './arbitration-events.js';
 import { createHalts, wsSessionCount } from './halts.js';
 import { reserveMembersOf } from './reserve-members.js';
 import { createSettleBackoff } from './settle-backoff.js';
@@ -584,6 +585,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const absences = createAbsences({ verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } },
     store: absencesFile ? { read: () => JSON.parse(readFileSync(absencesFile, 'utf8')), write: (v) => writeFileSync(absencesFile, JSON.stringify(v)) } : null });
   let liquidations = null;                     // liquidations.js, over fedRecords
+  let arbitrationEvents = null;                // arbitration-events.js: the set's liquidations and slashes (kanban #723)
   let halts = null;                            // halts.js: the seats' halt observations and proof
   // THIS SEAT'S NETWORK'S GENESIS, read once: null where this build names none
   let seatGenesisKept;
@@ -4423,6 +4425,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (ht.unref) ht.unref();
   }
   liquidations = createLiquidations({ records: fedRecords, clocks: fedClocks, verify: schnorrVerify, claimsUrl: process.env.ARENA_LIQUIDATION_CLAIMS || null, halts });
+  // THE ARBITRATION SET'S EVENTS (kanban #723): its liquidations and slashes with every payout and transaction, signed by k of its members -
+  // checked against this chain's genesis, kept beside the database across restarts, listed at GET /liquidations (`events`)
+  const eventsFile = db && db.arenaPath ? `${db.arenaPath}.arbitration-events.json` : null;
+  arbitrationEvents = createArbitrationEvents({ keys: (seatGenesis() || {}).arbitrationKeys || [], k: (seatGenesis() || {}).arbitrationK || Infinity, verify: schnorrVerify,
+    load: () => (eventsFile && existsSync(eventsFile) ? JSON.parse(readFileSync(eventsFile, 'utf8')) : []),
+    save: (rows) => { if (eventsFile) { try { writeFileSync(eventsFile, JSON.stringify(rows)); } catch { /* kept in memory */ } } } });
   // THE FEDERATION THIS NODE IS A GUARDIAN OF: the held record (not CLOSED) that names its node key, and its peer key there
   ownGuardianSeat = () => {
     for (const f of (fedRecords.list() || []).map((x) => x.federation)) {
@@ -9524,9 +9532,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           proof: p ? { session: p.session, haltHeight: p.haltHeight, observers: p.observers, abandoned: p.abandoned.map(toHex), answered: p.answered.map(toHex) } : null });
       }
       if (req.method === 'GET' && url.pathname === '/liquidations') {
-        if (!liquidations) return json(res, 200, { node: toHex(round.pubkey), liquidations: [] });
+        // with the arbitration set's events (kanban #723): every liquidation and slash it published, each with its signatures; ?events=0 leaves them out
+        const events = arbitrationEvents && url.searchParams.get('events') !== '0' ? arbitrationEvents.list({ kind: url.searchParams.get('kind') || null }) : [];
+        if (!liquidations) return json(res, 200, { node: toHex(round.pubkey), liquidations: [], events });
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), liquidations: liquidations.list() }));
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), liquidations: liquidations.list(), events }));
+      }
+      // AN EVENT OF THE ARBITRATION SET (kanban #723): { event, signatures } - taken when k members signed it and it is newer than the one
+      // held, then handed on to every seat this one can name, so the explorer finds it at any seat
+      if (req.method === 'POST' && url.pathname === '/liquidations/events') {
+        if (!arbitrationEvents) return text(res, 503, 'this seat keeps no arbitration events yet');
+        let said; try { said = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'an event is JSON: { event, signatures: [{ key, sig }] }'); }
+        const r = arbitrationEvents.offer(said || {});
+        if (r.ok && r.kept) for (const u of everySeat()) fetch(`${u}/liquidations/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(said),
+          signal: AbortSignal.timeout(15000) }).catch(() => null);
+        return r.ok ? json(res, r.status, r) : text(res, r.status, r.why);
       }
       if (req.method === 'POST' && url.pathname === '/liquidations/spent-set') {
         if (!liquidations) return text(res, 503, 'this seat holds no federation records yet');

@@ -15,6 +15,8 @@
 // The members' keys are the test network's derivable ones (genesis-ids.js); mainnet has no set and this refuses it.
 // Its doors (POST /musig/nonce, /musig/partial, GET /status) serve the cooperative key path: it agrees to a release
 // only for a node no handled or open proof accuses.
+// After each pass it publishes every liquidation and posted slash it keeps as a signed event (kanban #723, arbitration-events.js) to
+// every seat of ARENA_ARBITER_SEATS and ARENA_ARBITER_PUBLISH (POST /liquidations/events), for the explorer to read from any seat.
 //
 //   ARENA_ARBITER_NETWORK=testnet4 ARENA_ARBITER_SEATS=https://seat-a,... ARENA_BITCOIND_URL=... ARENA_BITCOIND_COOKIE=...
 //   ARENA_ARBITER_PORT=31290 ARENA_ARBITER_STATE=<file> node tools/arbiter.mjs [--once]
@@ -24,6 +26,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
 import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin } from '../src/arbiter.js';
 import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
+import { liquidationEvent, slashEvent, stampEvent, signEvent, eventKey } from '../src/arbitration-events.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
 import { decodeSpentSet, spentNonceSet } from '../../arena-protocol/src/spent-set.js';
 import { clocksFor, liquidationRemainderPayees } from '../../arena-protocol/src/federation-slash.js';
@@ -111,7 +114,9 @@ async function handle(seat, s) {
   // WHO THE PLAYERS' ESCROW IS FOR, kept with the slash: the step after (payOut) pays each from the federation
   const players = [...slash.distribution.playerShares].map(([key, sats]) => ({ key, sats: String(sats) }));
   return sent.ok ? { done: true, posted: sent.txid, slashHeight: census.tip, signers: tx.signers, node: s.node, round: s.round, entry: s.entry,
-    playersSats: String(slash.built.amounts.players), players } : { done: false, why: sent.why };
+    playersSats: String(slash.built.amounts.players), players,
+    // THE WHOLE SPLIT KEPT (kanban #723): the slash's event says the bond and every part of it, not only the players'
+    bondSats: String(bond.value), nodesSats: String(slash.built.amounts.nodes), developersSats: String(slash.built.amounts.developers) } : { done: false, why: sent.why };
 }
 
 // AFTER PATH B (spec §5A.3B): the players' escrow into the round's federation, claimed, each share paid
@@ -149,7 +154,8 @@ async function payLiquidations() {
       if (!spend.ok) return { why: spend.why };
       const signed = assemble({ slash: spend, signatures: set.members.slice(0, set.k).map((m) => ({ key: m.key, sig: memberSign(m, spend.sighash) })), set });
       if (!signed.ok) return { why: signed.why };
-      return post(rpc, signed.hex);
+      // with the escrow's amount (kanban #723: the liquidation's event names it), read before it is spent
+      return { ...(await post(rpc, signed.hex)), sats: String(BigInt(Math.round(Number(o.value) * 1e8))) };
     };
     // THE REMAINDER'S PAYEES at the tip: the census this set derives from its own chain (a seat's newest round as the template),
     // less the slashed and the federation's guardians (its halt record), and the donation set in force (its keys)
@@ -175,9 +181,60 @@ async function payLiquidations() {
       // them made 34 and the tool refused the whole remainder, "malformed public key")
       return got.payees.map((x) => ({ ...x, key: x.key.length === 64 ? `02${x.key}` : x.key }));
     };
+    // THE HALT AS THE SEATS LISTED IT, kept once (kanban #723): the liquidation's event says it after the seats forget the federation
+    if (!v.halt) { try { const l = await claims.liquidation(fid); if (l) { v.halt = haltOfListing(l); keep(); } } catch { /* next pass */ } }
     let r; try { r = await payOutLiquidation({ fid, v, claims, height: async () => Number(await rpc('getblockcount')), run, spendEscrow, remainderPayees, keep, say }); } catch (e) { r = { why: e.message }; }
     if (r.why) say({ liquidation: fid.slice(0, 16), waits: r.why });
   }
+}
+
+const haltOfListing = (l) => ({ height: Number(l.haltHeight), proof: l.haltProof ? { session: l.haltProof.session, observers: l.haltProof.observers,
+  abandoned: l.haltProof.abandoned || [], id: l.haltProof.id } : null });
+
+// THE SET'S EVENTS, PUBLISHED (kanban #723, the owner 2026-10-27: liquidations and slashes in the explorer as their own events, with every payout and
+// its transaction): after each pass every liquidation and every posted slash this set keeps is said as an event (arbitration-events.js), signed
+// by k members, and posted to every seat (POST /liquidations/events) - ARENA_ARBITER_SEATS and ARENA_ARBITER_PUBLISH - when it changed or
+// a seat has not taken it within PUBLISH_AGAIN_MS; the seats hand it on to each other and list it at GET /liquidations
+const PUBLISH_AGAIN_MS = Number(env.ARENA_ARBITER_PUBLISH_AGAIN_MS || 1800000);
+const publishTo = [...new Set([...seats, ...String(env.ARENA_ARBITER_PUBLISH || '').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean)])];
+const postedTo = new Map();            // seat -> Map(event key -> { hash, at })
+function arbiterEvents() {
+  const out = [];
+  const into = String(env.ARENA_LIQ_PAY_FEDERATION || '').toLowerCase() || null;
+  state.events = state.events || {};
+  let changed = false;
+  for (const [fid, v] of Object.entries(state.liquidations || {})) {
+    const body = liquidationEvent({ network, fid, v, claims: claims ? claims.claimed(fid) : [], escrowAt: liqEscrows.get(fid) || null, into });
+    const kept = state.events[`liquidation:${fid}`] = state.events[`liquidation:${fid}`] || {};
+    const s1 = stampEvent(body, kept); changed = changed || s1.changed; out.push(s1.event);
+  }
+  for (const [proof, v] of Object.entries(state.handled || {})) {
+    if (!v.posted) continue;
+    const body = slashEvent({ network, proof, v, into: String(env.ARENA_ARBITER_FEDERATION || '').toLowerCase() || null });
+    const kept = state.events[`slash:${proof}`] = state.events[`slash:${proof}`] || {};
+    if (!Number.isFinite(kept.firstMs) && Number.isFinite(v.at)) kept.firstMs = v.at;
+    const s1 = stampEvent(body, kept); changed = changed || s1.changed; out.push(s1.event);
+  }
+  if (changed) keep();
+  return out;
+}
+async function publishEvents() {
+  const events = arbiterEvents();
+  if (!events.length || !publishTo.length) return;
+  const signed = events.map((e) => ({ key: eventKey(e), hash: String(e.atMs), said: signEvent(e, set, memberSign) }));
+  let sent = 0;
+  await Promise.all(publishTo.map(async (seat) => {
+    const mine = postedTo.get(seat) || new Map(); postedTo.set(seat, mine);
+    for (const x of signed) {
+      const had = mine.get(x.key);
+      if (had && had.hash === x.hash && Date.now() - had.at < PUBLISH_AGAIN_MS) continue;
+      try {
+        const r = await fetch(`${seat}/liquidations/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(x.said), signal: AbortSignal.timeout(15000) });
+        if (r.ok) { mine.set(x.key, { hash: x.hash, at: Date.now() }); sent++; }
+      } catch { /* that seat next pass */ }
+    }
+  }));
+  if (sent) say({ eventsPublished: sent, events: signed.length, seats: publishTo.length });
 }
 
 async function pass() {
@@ -196,6 +253,7 @@ async function pass() {
     let r; try { r = await payOut(proof, v); } catch (e) { r = { why: e.message }; }
     if (r.why) say({ proof: proof.slice(0, 16), payouts: r.why });
   }
+  await publishEvents().catch((e) => say({ eventsError: e.message }));
 }
 // THE SLASH'S PAYOUTS (GET /slash-payouts?round=), for a page to collect its player's: each a pre-expired lock at txid:outIdx
 const payouts = () => Object.values(state.handled).flatMap((v) => v.payouts || []);
@@ -249,7 +307,17 @@ if (liqClients.size) {
 // the paid claims' locks, from the state each pass keeps (ARENA_LIQ_PAY_FEDERATION: the safe federation ARENA_LIQ_PAY_DIR is a client of)
 const liquidationPayouts = () => Object.entries(state.liquidations || {}).flatMap(([fid, v]) => (v.payouts || []).concat(v.remainderPayouts || [])
   .map((p) => ({ federation: fid, into: String(env.ARENA_LIQ_PAY_FEDERATION || '').toLowerCase(), ...p })));
-const doors = await serveArbiter({ set, allow, port: Number(env.ARENA_ARBITER_PORT || 31290), posted: posted(), payouts, claims, liquidationPayouts });
+// EVERY REFUSED NOTE KEPT with its reason (kanban #723: the liquidation's event says the claims accepted and refused), at most 500 a federation
+const keepRefused = (body, got) => {
+  const fid = String(body && body.federation || '').toLowerCase();
+  if (!got || !Array.isArray(got.refused) || !got.refused.length || !/^[0-9a-f]{64}$/.test(fid)) return got;
+  state.liquidations = state.liquidations || {};
+  const v = state.liquidations[fid] = state.liquidations[fid] || {};
+  v.refused = [...(v.refused || []), ...got.refused.map((r) => ({ nonce: r.nonce || r.request || null, why: r.why, height: got.height ?? null }))].slice(-500); keep();
+  return got;
+};
+const claimsDoor = claims ? { ...claims, offer: async (b) => keepRefused(b, await claims.offer(b)), offerPending: async (b) => keepRefused(b, await claims.offerPending(b)) } : null;
+const doors = await serveArbiter({ set, allow, port: Number(env.ARENA_ARBITER_PORT || 31290), posted: posted(), payouts, claims: claimsDoor, liquidationPayouts });
 say({ up: doors.port, network, seats: seats.length, members: set.members.length, k: set.k });
 await pass();
 if (process.argv.includes('--once')) { await doors.close(); process.exit(0); }

@@ -119,7 +119,10 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
       refused: got.refused, remainderMsat: String(got.remainderMsat), split: got.split ? { nodes: String(got.split.nodes), developers: String(got.split.developers) } : null,
       remainderSplitsAt: got.remainderSplitsAt };
   }
-  return { offer, offerPending, plan, liquidation: liquidationOf };
+  // THE CLAIMS TAKEN for one federation, as kept (kanban #723: the liquidation's event names every note accepted)
+  const claimed = (fidHex) => [...(claims.get(String(fidHex || '').toLowerCase()) || new Map()).values()]
+    .map((c) => ({ nonce: c.nonce, amountMsat: String(c.amountMsat), height: c.height, payoutPk: c.payoutPk }));
+  return { offer, offerPending, plan, claimed, liquidation: liquidationOf };
 }
 
 /**
@@ -143,13 +146,14 @@ export async function payOutLiquidation({ fid, v, claims, height, run, spendEscr
     if (!addr.address) return { why: `no peg-in address: ${addr.error || JSON.stringify(addr)}` };
     const sent = await spendEscrow(addr.address);
     if (!sent || !sent.txid) return { why: sent && sent.why ? sent.why : 'the escrow was not spent' };
-    Object.assign(v, { escrowTxid: sent.txid, pegInAddress: addr.address }); keep();
+    // with when and how much (kanban #723: the explorer names every step of a liquidation with its amount and its transaction)
+    Object.assign(v, { escrowTxid: sent.txid, pegInAddress: addr.address, escrowAtMs: Date.now(), ...(sent.sats !== undefined ? { escrowSats: String(sent.sats) } : {}) }); keep();
     say({ federation: fid.slice(0, 16), escrowIntoSafeFederation: sent.txid });
   }
   if (!v.claimedMsat) {
     const c = await run(['--mode', 'pegin-claim', '--address', v.pegInAddress, '--timeout-s', '840']);
     if (!(c.balance_after_msat > c.balance_before_msat)) return { why: `the peg-in is not claimed yet: ${c.error || JSON.stringify(c)}` };
-    v.claimedMsat = String(BigInt(c.balance_after_msat) - BigInt(c.balance_before_msat)); keep();
+    v.claimedMsat = String(BigInt(c.balance_after_msat) - BigInt(c.balance_before_msat)); v.claimedAtMs = Date.now(); keep();
   }
   const p = await claims.plan(fid, { escrowMsat: BigInt(v.claimedMsat) });
   if (!p.ok) return { why: p.why };
@@ -172,7 +176,13 @@ export async function payOutLiquidation({ fid, v, claims, height, run, spendEscr
     if (to.reduce((a, x) => a + BigInt(x.msat), 0n) > rest) return { why: 'the remainder\'s payees come to more than the remainder' };
     const r = await run(['--mode', 'pay', '--payouts', to.map((x) => `${x.key}:${x.msat}`).join(',')]);
     if (!r.txid) return { why: `no remainder transaction: ${r.error || JSON.stringify(r)}` };
-    Object.assign(v, { remainderTxid: r.txid, remainderMsat: String(rest), remainderPayees: to.length }); keep();
+    // EVERY PAYEE OF THE REMAINDER KEPT, not only their count (kanban #723, 2026-10-27: T2's remainder 1f107491 went to 44 payees and the
+    // state said "44" - who got what had to be rebuilt from the census by hand): its key, its part (node or donation), msat and out_idx
+    const partOf = new Map(to.map((x) => [String(x.key).toLowerCase(), x.part || null]));
+    const outs = Array.isArray(r.payouts) && r.payouts.length ? r.payouts.map((x) => ({ payoutPk: String(x.refund_pk).toLowerCase(), msat: String(x.amount_msat), outIdx: x.out_idx }))
+      : to.map((x) => ({ payoutPk: String(x.key).toLowerCase(), msat: String(x.msat), outIdx: null }));
+    const remainderPayouts = outs.map((x) => ({ part: partOf.get(x.payoutPk) || null, ...x, txid: r.txid }));
+    Object.assign(v, { remainderTxid: r.txid, remainderMsat: String(rest), remainderPayees: to.length, remainderPayouts, remainderAtMs: Date.now() }); keep();
     say({ federation: fid.slice(0, 16), remainder: String(rest), payees: to.length, txid: r.txid });
     return { paid: 0, notes: done.size, remainder: String(rest) };
   }
@@ -181,7 +191,8 @@ export async function payOutLiquidation({ fid, v, claims, height, run, spendEscr
   const paid = await run(['--mode', 'pay', '--payouts', [...byKey.entries()].map(([k, m]) => `${k}:${m}`).join(',')]);
   if (!paid.txid) return { why: `no payout transaction: ${paid.error || JSON.stringify(paid)}` };
   v.paidNonces = [...done, ...due.map((n) => n.nonce)];
-  v.payouts = [...(v.payouts || []), ...(paid.payouts || []).map((x) => ({ payoutPk: x.refund_pk, msat: String(x.amount_msat), txid: paid.txid, outIdx: x.out_idx }))];
+  const atMs = Date.now();
+  v.payouts = [...(v.payouts || []), ...(paid.payouts || []).map((x) => ({ payoutPk: x.refund_pk, msat: String(x.amount_msat), txid: paid.txid, outIdx: x.out_idx, atMs }))];
   keep();
   say({ federation: fid.slice(0, 16), paidNotes: due.length, keys: byKey.size, txid: paid.txid });
   return { paid: due.length, notes: v.paidNonces.length, txid: paid.txid };
