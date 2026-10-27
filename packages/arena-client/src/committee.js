@@ -11,7 +11,8 @@
 // Kept per census and committee time: every round of a series shares them, so a series' second join asks nothing new.
 import { verifySeating } from '../../arena-protocol/src/seating.js';
 import { slotsForRole } from '../../arena-protocol/src/sortition.js';
-import { committeeFromChain } from '../../arena-protocol/src/client-committee.js';
+import { committeeFromChain, absenceFromChain } from '../../arena-protocol/src/client-committee.js';
+import { dropsAbsent } from '../../arena-protocol/src/presence.js';
 import { blockHashOf, TESTNET4_ANCHOR_HEIGHT } from '../../arena-protocol/src/chain.js';
 import { networkOf } from '../../arena-protocol/src/constants.js';
 import { NETWORK_ID_TESTNET4, ARBITRATION_KEYS_TESTNET4, ARBITRATION_KEYS_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
@@ -54,6 +55,7 @@ const keptChains = new Map();     // network:explorer -> [{ at, chain, firstHeig
 const keptCensus = new Map();     // round's census root -> evidence
 const keptTooOld = new Map();     // round's census root -> the nodes a seat left out for their protocol version
 const keptChecked = new Map();    // round's census root -> the census this client checked (entries), for the series' other rounds
+const keptAbsence = new Map();    // a 22 round's census root -> the absent claim this client checked against it (kanban #727)
 
 const baseOf = (u) => String(u).replace(/\/+$/, '');
 // ONE SOURCE PER SEAT, as join.js counts its chain sources (sourceKey): the origin and the first path segment - testnet4's
@@ -134,6 +136,24 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
   return { ok: false, why: `no node handed over the census: ${refused.join('; ')}` };
 }
 
+/** The absent claim of a 22 round's census root, checked here (client-committee.js absenceFromChain); no claim held anywhere: none. */
+async function absenceFor(contract, nodes, { fetcher, headers, firstHeight, entries, bond, verify }) {
+  const rootHex = toHex(contract.censusRoot);
+  let claim = null, from = null;
+  for (const u of nodes) {
+    try { const r = await fetcher(`${baseOf(u)}/absent?root=${rootHex}`); if (r.ok) { const j = await r.json(); if (j && Array.isArray(j.claims)) { claim = j; from = u; break; } } } catch { /* the next */ }
+  }
+  if (!claim) return { ok: true, absent: [] };
+  const evidence = new Map();
+  for (const rid of Object.keys(claim.contracts || {}).slice(0, 64)) {
+    for (const u of [from, ...nodes.filter((x) => x !== from)]) {
+      try { const r = await readWithOneRetry(fetcher, `${baseOf(u)}/census?round=${rid}`); if (r.ok) { const j = await r.json(); if (j && Array.isArray(j.entries)) { evidence.set(rid, j.entries); break; } } } catch { /* the next */ }
+    }
+  }
+  const r = absenceFromChain({ contract, claim, evidenceOf: (rid) => evidence.get(rid) || [], headers, firstHeight, bond, verify, entries });
+  return r.ok ? r : { ...r, from };
+}
+
 /**
  * THIS ROUND'S COMMITTEES, AS THIS CLIENT DERIVES THEM. `curve`: the page's (ARENA_CURVE: bondTweakPoint, bondCombine, verify).
  * Answers { ok, committees: { game, settlement }, beacon, census, headers: { from, agreed, firstHeight, count }, seats: [{ node,
@@ -189,6 +209,21 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   if (!got.ok) return { ...got, censusRefused };
   keptCensus.set(toHex(contract.censusRoot), evidence.entries);
   keptChecked.set(toHex(contract.censusRoot), got.checkedCensus ? { ...got.checkedCensus, height: Number(contract.censusHeight) } : got.checkedCensus);
+  // A 22 CENSUS LEAVES OUT A NODE ONLY WITH PROOF, AND THE CLIENT CHECKS IT TOO (§5A.3, kanban #727, the owner 2026-10-27): the claim held
+  // for the root (GET /absent), each named seating drawn here from its round's contract and census evidence, every certificate checked
+  // on that draw. A wrong proof refuses the round. No claim at any node: nothing named, nothing to check - an omission without a claim
+  // is a root no honest seat serves.
+  if (dropsAbsent(contract)) {
+    const rootHex = toHex(contract.censusRoot);
+    let absence = keptAbsence.get(rootHex);
+    if (!absence) {
+      absence = await absenceFor(contract, nodes, { fetcher, headers: chain.chain.headers, firstHeight: chain.firstHeight, entries: got.checkedCensus ? got.checkedCensus.entries : [],
+        bond: { arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity, tweakPoint: curve.bondTweakPoint, combine: curve.bondCombine }, verify: curve.verify });
+      if (absence.ok) keptAbsence.set(rootHex, absence);
+    }
+    if (!absence.ok) return { ok: false, why: `the round's census leaves out a node without proof: ${absence.why}`, absentRefused: absence };
+    got.absent = absence.absent;
+  }
   // THE SEATING (§5A.7 reserve seats): each role's certificate, asked of the seats and checked against the draw
   // this client made itself - every seated node signed it, in score order, within the seats and at least the threshold. A
   // checked certificate's seated are the committee. `seating[role]`: { seated, from } checked; { missing } when a seat
