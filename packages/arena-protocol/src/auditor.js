@@ -67,7 +67,8 @@ export function auditEligible({ entries, bondMinSats, drawn = [], players = [], 
   for (const e of entries || []) {
     if (!(e.roles || []).includes('audit')) continue;
     const key = toHex(e.pubkey);
-    if (out.has(key) || (e.operatorId !== undefined && ops.has(String(e.operatorId)))) continue;
+    const op = e.operatorId !== undefined ? e.operatorId : e.advert && e.advert.operatorId;   // a census entry names it in its advert
+    if (out.has(key) || (op !== undefined && op !== null && ops.has(String(op)))) continue;
     sats.set(key, (sats.get(key) || 0n) + BigInt(e.bondSats));
   }
   const eligible = new Map();
