@@ -108,6 +108,7 @@ import { msForTicks } from '../../arena-protocol/src/tick.js';
 import { entryFeeMsat, feeBpsOf, entryFeeBpsOf } from '../../arena-protocol/src/fee.js';
 import { cancelId, BATCH_MS } from '../../arena-protocol/src/order-book.js';
 import { OrderBook } from './order-batch.js';
+import { createPolymarketRouter } from './polymarket.js';
 import { PriceFeed } from './price-feed.js';
 import { matchOf } from './match.js';
 import { matchProofId, presenceId, PRESENCE_MS } from '../../arena-protocol/src/match.js';
@@ -2071,6 +2072,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // EVERY ORDER'S TRANSACTION, KEPT HERE (kanban #624, tx-record.js): each door's steps per transaction id, and the page's signed timing
   const txRecord = createTxRecord({ db: round.db });
   // THE MARKET ORDER BOOK: orders taken here, each batch's set agreed with the round's other seats
+  let polymarket = null;   // the Polymarket-compatible router (kanban #736), made on its first request
   const orderBook = new OrderBook(round, { plugins: hosted, intervalMs: orderBatchMs, now: () => round.now(), feesFor,
     peersFor: (rid) => committeePeers(rid, 'settlement', { orElse: dkg.peers || [] }).peers });
   // AN ORDER A CERTIFIED BATCH NAMES THAT NEVER REACHED THIS SEAT (kanban #620, measured 2026-10-24: round 42835aaa never settled - fed2-3
@@ -8480,6 +8482,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // void of a batch that can no longer be certified (POST /batch-void-ask, POST /batch-void), and every certified batch
       // for a seat that missed one (GET /book-certificates). For anyone: the book as this seat clears it (GET /book), and a
       // player's sell of shares its entry holds (POST /sell, its session key; matched in a batch, paid at settlement).
+      // THE POLYMARKET-COMPATIBLE READ OF THE MARKETS (kanban #736, polymarket.js): every path under /polymarket/ in Polymarket's
+      // shapes - markets, books, prices, trades, history, orders and positions as this seat holds them; built on the first call, once
+      // the listing and the outcome helpers above stand
+      if (url.pathname === '/polymarket' || url.pathname.startsWith('/polymarket/')) {
+        if (!polymarket) polymarket = createPolymarketRouter({ round, orderBook, hosted, read, marketWindowFor, outcomeOf,
+          listRounds: async () => (await announcedRounds(new URL('/rounds?next=4', 'http://seat'))).listed.map((r) => r.id) });
+        if (await polymarket.handle(req, res, url)) return;
+      }
       // THE COMMITTEE'S PRICE SAMPLES (§11): sign one this seat read too, keep one that stands, list what it holds
       if (req.method === 'GET' && url.pathname === '/price-samples') {
         const rh = String(url.searchParams.get('round') || '').toLowerCase();
