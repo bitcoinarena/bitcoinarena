@@ -277,7 +277,12 @@ const drawnEnough = (r, need) => {
   return Math.min(Number(n.game ?? 0), Number(n.settlement ?? 0)) >= need;
 };
 
-export function drawCount(listings, { gameId, fromMs, toMs, need = DUTY_SEAT_THRESHOLD }) {
+// DRAWN IS NOT SEATED (kanban #727, 2026-10-27: every Up/Down v23 round of the day drew 9 nodes, 7-9 of them stopped test nodes still
+// bonded - no round was ever seated, and the day counted as drawable, so no emergency grid came): a round whose seating has closed
+// (within UNSEATED_AT_MS of its start, or past it, at the time the seat listed it: GET /rounds nowMs) and that no role seated is a round of a day that is not drawable on this seat
+export const UNSEATED_AT_MS = 60000;
+const seatedNone = (r) => r && r.committee && r.committee.seated && r.committee.seated.game === false && r.committee.seated.settlement === false;
+export function drawCount(listings, { gameId, fromMs, toMs, need = DUTY_SEAT_THRESHOLD, nowMs = null }) {
   let drawn = 0, undrawn = 0, of = 0, why = '';
   const g = String(gameId).toLowerCase();
   for (const l of listings || []) {
@@ -287,7 +292,12 @@ export function drawCount(listings, { gameId, fromMs, toMs, need = DUTY_SEAT_THR
     // A SEAT STILL READING ITS VIEW (after a reorg, a restart) says nothing either way: "no chain view", "view ... pending"
     if (!rows.some((r) => r.committee && r.committee.drawn) && rows.every((r) => /no chain view|view .*pending/i.test(String((r.committee || {}).why || '')))) continue;
     of++;
-    if (rows.some((r) => drawnEnough(r, need))) drawn++;
+    const at = Number(l.nowMs) || nowMs;
+    const closedUnseated = !at ? [] : rows.filter((r) => Date.parse(r.startTime) - at <= UNSEATED_AT_MS && drawnEnough(r, need) && seatedNone(r));
+    if (closedUnseated.length && !rows.some((r) => r.committee && r.committee.seated && (r.committee.seated.game || r.committee.seated.settlement))) {
+      undrawn++;
+      why = why || `drawn but not seated: round ${String(closedUnseated[0].id || '').slice(0, 8)} drew ${need}+ nodes and none of its roles was seated by its start`;
+    } else if (rows.some((r) => drawnEnough(r, need))) drawn++;
     else {
       undrawn++;
       const short = rows.find((r) => r.committee && r.committee.drawn && r.committee.drawnCount);

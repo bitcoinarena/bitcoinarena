@@ -261,7 +261,7 @@ export function createDayDuty(o) {
   };
   const familyDraw = async (fromMs, toMs) => {
     let best = { drawn: 0, undrawn: 0, of: 0, why: '' };
-    for (const id of await familyIds()) { const d = guard.drawCount(await seatRounds(), { gameId: id, fromMs, toMs }); if (d.drawn > best.drawn || (!best.of && d.of)) best = d; }
+    for (const id of await familyIds()) { const d = guard.drawCount(await seatRounds(), { gameId: id, fromMs, toMs, nowMs: now() }); if (d.drawn > best.drawn || (!best.of && d.of)) best = d; }
     return best;
   };
   /** One kept posting judged (postingVerdict), its fee raised once if it is still unconfirmed close to its committee time. */
@@ -278,7 +278,7 @@ export function createDayDuty(o) {
     const cut = { firstHeight: Math.max(view.firstHeight, idx.tip - 299), blocks: view.blocks.slice(-300) };
     const beaconAt = beaconBlockIn({ committeeTimeMs: BigInt(committeeMs) }, cut);
     const deep = beaconAt !== null && pubHeight !== null && pubHeight < beaconAt && idx.tip - beaconAt + 1 >= guard.DUTY_BEACON_DEPTH;
-    const draw = !deep ? null : k.gameId ? guard.drawCount(await seatRounds(), { gameId: k.gameId, fromMs: Number(k.firstStartMs ?? day.startMs), toMs: day.endMs })
+    const draw = !deep ? null : k.gameId ? guard.drawCount(await seatRounds(), { gameId: k.gameId, fromMs: Number(k.firstStartMs ?? day.startMs), toMs: day.endMs, nowMs: now() })
       : await familyDraw(day.startMs, day.endMs);
     // CONFLICTED (a fee raise elsewhere replaced the coin under it, 10-26 d2a9c0c7 / 094e6875): the wallet's confirmations < 0
     let conflicted = false;
