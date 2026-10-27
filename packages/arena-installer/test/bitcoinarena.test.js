@@ -109,6 +109,20 @@ test('removeProgram: the bridge\'s unit stopped and removed; nothing to do when 
   } finally { rmSync(n.root, { recursive: true, force: true }); }
 });
 
+// ANOTHER NODE'S BRIDGE OF THE SAME MACHINE (kanban #719: arena-chain-bridge--2.service restarted 840 times after the update): removed by its own name
+test('removeProgram: a second node\'s bridge unit, named outright, is the one removed', async () => {
+  const { removeProgram, unitName } = await import('../src/service.js');
+  const n = linuxNode({ port: 8472 });
+  try {
+    const mine = join(n.units, unitName('chain-bridge')), second = join(n.units, 'arena-chain-bridge--2.service');
+    writeFileSync(mine, '[Service]\nExecStart=/r/bridge\n'); writeFileSync(second, '[Service]\nExecStart=/r/bridge 2\n');
+    const calls = []; const sh = async (cmd, args) => { calls.push([cmd, ...args].join(' ')); return { ok: true, out: '', err: '' }; };
+    assert.deepEqual(await removeProgram({ id: 'chain-bridge', home: n.home, env: n.env, sh, platform: 'linux', unit: 'arena-chain-bridge--2.service' }), { ok: true, removed: true });
+    assert.deepEqual([existsSync(second), existsSync(mine)], [false, true], 'the second node\'s, not this one\'s');
+    assert.equal(calls[0], 'systemctl --user disable --now arena-chain-bridge--2.service');
+  } finally { rmSync(n.root, { recursive: true, force: true }); }
+});
+
 // THE UPDATE SIGNS THE OWNER PAGE IN (2026-10-26, the owner on 2026.1.9.9: "The updater MUST fix my credentials in the browser so it works.
 // This is very important" - "It works via owner page but not Open Dashboard"): once, until the key was handed over
 test('sign-in-once and the dashboard: the one-time sign-in page opened while the key was never handed over, never after', async () => {
