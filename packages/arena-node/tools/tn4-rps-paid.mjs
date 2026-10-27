@@ -24,7 +24,7 @@
  *   PORTS=<seven seat ports> INVITE_FILE=<federation invite> WASM_PKG=<dir with blwp_lock_client.js> LNCLI=<lncli>
  *   PAYER_DIR=<payer lnd dir> PAYER_RPC=<host:port> [ROUND=<id hex>] node tools/tn4-live-run.mjs
  */
-import { readFileSync, copyFileSync } from 'node:fs';
+import { readFileSync, copyFileSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -184,6 +184,10 @@ async function paidEntry(c, rid, roundHex, move, who) {
     log({ step: 'handed over', entry: toHex(eid).slice(0, 16), signerNodes });
     if (signerNodes.filter((x) => x.lock >= 200 && x.lock < 300).length < needed) throw new Error('fewer seats than needed took the lock');
 
+  // KEYS_FILE: the player's key and locks, one line each, so a collect that failed can be done again by hand (testnet only)
+  if (env.KEYS_FILE) appendFileSync(env.KEYS_FILE, `${JSON.stringify({ at: new Date().toISOString(), round: toHex(rid), entry: toHex(eid), player: who,
+    secret: toHex(me.secret), stake: `${toHex(locks.stake.outpoint.txid)}:${locks.stake.outpoint.outIdx}`,
+    fee: locks.fee ? `${toHex(locks.fee.outpoint.txid)}:${locks.fee.outpoint.outIdx}` : null })}\n`);
   return { eid, hidden, signerNodes, lc, playerSecret: me.secret, playerPubkey: s.player, stake: locks.stake, fee: locks.fee };
   }
 }
@@ -292,7 +296,7 @@ try {
     const stakes = [];
     for (const [l, kind] of [[p.stake, 'stake'], [p.fee, 'fee']]) {
       if (!l) continue;
-      const f = await forfeitOf({ roundId: rid, entryId: p.eid, nodes, lock: kind });
+      const f = await forfeitOf({ roundId: rid, entryId: toHex(p.eid), nodes, lock: kind });
       if (!f.ok) { stakes.push({ kind, forfeit: f.why.slice(0, 160) }); continue; }
       const said = JSON.parse(await p.lc.redeem(toHex(l.outpoint.txid), Number(l.outpoint.outIdx), JSON.stringify(lockFieldsToJson(l.fields)), f.signature, toHex(p.playerSecret)));
       stakes.push({ kind, accepted: said.accepted === true, ...(said.accepted === true ? {} : { said: JSON.stringify(said).slice(0, 200) }) });
