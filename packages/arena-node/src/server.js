@@ -145,11 +145,18 @@ import { createSettleBackoff } from './settle-backoff.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
 import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
 import { DrawnAttestor } from './drawn-attestor.js';
+import { createAuditDesk, agreedRunsOf, forwardDigest } from './audit-seat.js';
+import { RoundAuditor, auditorNet } from './round-auditor.js';
+import { buildObjectionBundle } from './objection-bundle.js';
+import { runId as runIdOf } from './verdict.js';
+import { auditEligible, vrfSecretFor, decodeAudit } from '../../arena-protocol/src/auditor.js';
+import { makeVrf, SUITE_SECP256K1_TAI } from '../../arena-protocol/src/vrf.js';
+import { entryId as entryIdOfContract } from '../../arena-protocol/src/contracts.js';
 import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
-import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION } from '../../arena-protocol/src/constants.js';
+import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
@@ -440,6 +447,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // from the close and, while a run waits on its window, from that window's
   // end (M3.3-32).
   finality = {},
+  // THE ROUND'S AUDITORS (§13A.1, kanban #725): `everyMs` how often this node looks for rounds it is drawn to audit (10 s; 0 - never by
+  // itself, a test calls `auditor.pass()`). A TEST AID, as `finality` is: `setFor(rid)` who may audit a round ({ eligible, total }) in
+  // place of the census's, `seatsFor(rid)` where its seats answer.
+  audit: auditOpts = {},
   // THE DAILY'S CLOSE (M3.3-34), OPT-IN: close each round this signer node holds by
   // its own clock once it is over (protocol roundEndMs). `true`, or
   // `{ everyMs }`. Off by default: a harness closes its rounds when it says so.
@@ -2244,7 +2255,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       return { gameVerify: game.ok ? game.committee.map((e) => e.pubkey) : contract.nodes,
         settlement: settle.ok ? settle.committee.map((e) => e.pubkey) : contract.nodes, guardian, gateway, liquidity, ...(liquidityWeights ? { liquidityWeights } : {}), ...(guardianWeights ? { guardianWeights } : {}), ...(gatewayWeights ? { gatewayWeights } : {}),
-        conflicted: [...conflictsFor(rid).conflicted.keys()], ...(publisher ? { publisher } : {}), ...(guardianPayout ? { guardianPayout } : {}) };
+        conflicted: [...conflictsFor(rid).conflicted.keys()], ...(publisher ? { publisher } : {}), ...(guardianPayout ? { guardianPayout } : {}),
+        // AND THE ROUND'S AUDITORS (§13A.1, kanban #725, protocol 22): every auditor whose AUDIT this seat took in time and no valid objection
+        // contradicted - the same set on every seat by the forwarding rule, read at settlement, after final_after, when no more is taken
+        ...(Number(contract.protocolVersion) >= AUDITOR_VERSION ? { auditors: auditDesk.held(rid) } : {}) };
     },
   });
   // WHO PROCESSED THE ROUND, KEPT (kanban #624, 2026-10-24: "Also show who processed the round, e.g for settlement and verify"): each
@@ -2463,6 +2477,143 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return endpointsOf(picked.committee, round.pubkey);
     },
   });
+
+  // THE ROUND'S AUDITORS (spec §13A.1, kanban #725, protocol 22): about three census nodes outside a paid round's committees, drawn in
+  // secret by a VRF over its round id, replay every entry and post an AUDIT to its seats, or object. Both halves run on every node: as a
+  // SEAT, the desk takes AUDITs at POST /audit, hands each new one to the round's other seats, pays the ones it holds a line of the
+  // settlement, and marks them contradicted when the result they vouched for is; as an AUDITOR, a node advertising `audit` draws itself
+  // for every such round it knows and is not seated in. FINAL never waits for either.
+  const auditVrf = makeVrf({ Point: secp256k1.Point, suite: SUITE_SECP256K1_TAI });
+  const verifyAudit = (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } };
+  const contractOfRound = (rid) => { const row = round.get(rid); if (!row) return null; try { return decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; } };
+  // A ROUND THAT HAS AUDITORS: paid, from protocol 22, of a game whose runs are replayed - an attested market has its attestors' outcome
+  // and a head-to-head round its reveals, and neither a run to replay
+  const auditedRound = (c) => {
+    if (!c || Number(c.protocolVersion) < AUDITOR_VERSION || !(c.stakeMsat > 0n)) return false;
+    const f = pluginForRound(c, hosted);
+    return f.ok && !f.attested && f.headToHead !== true;
+  };
+  const seatOf = (rid) => round.signerNodes(rid).some((k) => toHex(k) === toHex(round.pubkey));
+  // THE ROUND'S COMMITTEE as this node counts its signed results: the keys assigned here, or - an auditor holds the round but was assigned
+  // nothing - the census's draw for it
+  const committeeOfRound = (rid) => {
+    const held = round.signerNodes(rid);
+    if (held.length) return held;
+    const s = roster.signerNodesFor(rid);
+    return s.ok ? s.signerNodes : null;
+  };
+  // WHO MAY AUDIT A ROUND (§13A.1), the same set on every seat and every auditor: the census at its census_height advertising `audit`, less
+  // every node drawn for its game and settlement roles (all 9 of each, seated or not). Kept per round: the census and the draw do not change.
+  // The players are left out at the seat's door instead (contextFor below): the auditor holds no entry when it draws, and W must be
+  // the same number for both.
+  const auditSets = new Map();
+  function auditSetFor(rid) {
+    if (typeof auditOpts.setFor === 'function') return auditOpts.setFor(rid);
+    const k = toHex(rid);
+    if (auditSets.has(k)) return auditSets.get(k);
+    const c = contractOfRound(rid);
+    if (!c) return null;
+    const census = roster.censusFor(rid);
+    if (!census.ok) return null;
+    const drawn = [];
+    for (const role of ['game', 'settlement']) {
+      const picked = roster.committeeFor(rid, role);
+      if (!picked.ok) return null;
+      for (const e of picked.drawn || picked.committee) drawn.push(toHex(e.pubkey));
+    }
+    let set;
+    try { set = auditEligible({ entries: census.entries, bondMinSats: BigInt(c.bondMinSats || 50000n), drawn }); } catch { return null; }
+    auditSets.set(k, set);
+    if (auditSets.size > 1024) auditSets.delete(auditSets.keys().next().value);
+    return set;
+  }
+  // WHERE THE ROUND'S SEATS ANSWER: the operator's peers where it named them (as a close asks), else its committees' census endpoints
+  function auditSeats(rid) {
+    if (typeof auditOpts.seatsFor === 'function') return auditOpts.seatsFor(rid);
+    if (verifier.peers && verifier.peers.length) return verifier.peers;
+    const out = new Set();
+    for (const role of ['game', 'settlement']) {
+      const picked = roster.committeeFor(rid, role);
+      if (picked.ok) for (const u of endpointsOf(picked.committee, round.pubkey)) out.add(u);
+    }
+    return [...out];
+  }
+  // THE ENTRIES AN AUDIT IS OVER: every entry of the round but one void at the door (§15), which has no run to agree on
+  const auditEntries = (rid) => round.entriesOf(rid).filter((e) => !round.entryVoid(e.entryId));
+  const auditDesk = createAuditDesk({ db: round.db, now: () => round.now(), vrf: auditVrf, verify: verifyAudit,
+    contextFor: async (rid) => {
+      const c = contractOfRound(rid);
+      if (!c) return { ok: false, why: 'this seat holds no such round' };
+      if (!auditedRound(c)) return { ok: false, why: 'that round has no auditors: they audit paid rounds of a replayed game from protocol 22' };
+      if (!seatOf(rid)) return { ok: false, why: 'this node is no seat of that round' };
+      const set = auditSetFor(rid);
+      if (!set) return { ok: false, why: 'this seat reads no census for that round, so it cannot say who may audit it' };
+      const entries = auditEntries(rid);
+      const runs = agreedRunsOf({ contract: c, committee: round.signerNodes(rid), entries: entries.map((e) => ({ entryId: e.entryId, results: round.results(rid, e.entryId).map((r) => r.bytes) })) });
+      if (!runs.ok) return { ok: false, why: runs.why };
+      // A PLAYER'S OWN NODE AUDITS NOTHING OF ITS ROUND (§13A.1): a key that plays in it is not taken here, though it counts in W
+      const players = new Set(entries.map((e) => toHex(e.entry.playerPubkey)));
+      const eligible = new Map([...set.eligible].filter(([key]) => !players.has(key)));
+      return { ok: true, eligible, total: set.total, closeMs: Number(windowsOf(c).closeMs), resultsHash: runs.resultsHash };
+    } });
+  // A NEW AUDIT GOES ON TO THE ROUND'S OTHER SEATS (§13A.1: "hands every new one to the round's other seats"), signed by this seat, so each
+  // takes it until window_close whatever its signed time - and every seat holds the same set for the payout all of them sign
+  function forwardAudit(body, rid) {
+    let sig;
+    try { sig = schnorr.sign(forwardDigest(body), round.identity.secret); } catch { return; }
+    const headers = { 'x-audit-seat': toHex(round.pubkey), 'x-audit-forward': toHex(sig) };
+    for (const seat of auditSeats(rid)) {
+      fetch(`${String(seat).replace(/\/+$/, '')}/audit`, { method: 'POST', body, headers, signal: AbortSignal.timeout(8000) })
+        .then(async (r) => { if (r.status !== 201 && r.status !== 200) console.log(`[audit] ${toHex(rid).slice(0, 16)}: ${seat} refused the forwarded AUDIT: ${r.status} ${(await r.text()).slice(0, 120)}`); },
+          (e) => console.log(`[audit] ${toHex(rid).slice(0, 16)}: forwarding to ${seat}: ${e.message}`));
+    }
+  }
+  // A RESULT A VALID OBJECTION CONTRADICTED (§13A.1): every AUDIT this seat holds for its round vouched for it - a fraud proof against its
+  // signer, kept with its bytes and signature (GET /audits) and paid nothing. Called where the first result's signers are filed against.
+  function contradictAudits(rid, eid, why) {
+    for (const who of auditDesk.contradict(new Uint8Array(rid), `entry ${toHex(eid)}: ${why}`))
+      console.log(`[audit] ${toHex(rid).slice(0, 16)}: the AUDIT of ${who.slice(0, 16)} vouched for the result of ${toHex(eid).slice(0, 16)} a valid objection contradicts - held as the fraud proof against it, paid nothing`);
+  }
+  // THIS NODE AS AN AUDITOR: every 10 s, the rounds it holds that have auditors, whose window is open and that it is not seated in
+  const auditContracts = new Map();   // round hex -> contract | null
+  const auditDue = () => {
+    const now = round.now(), out = [];
+    for (const r of round.db.prepare('SELECT round_id, contract FROM rounds WHERE opened_ms > ?').all(now - 4 * 3600000)) {
+      const k = toHex(r.round_id);
+      if (!auditContracts.has(k)) {
+        let c = null;
+        try { c = decodeRoundContract(new Uint8Array(r.contract)); if (!auditedRound(c)) c = null; } catch { c = null; }
+        auditContracts.set(k, c);
+        if (auditContracts.size > 4096) auditContracts.delete(auditContracts.keys().next().value);
+      }
+      const c = auditContracts.get(k);
+      if (!c) continue;
+      const rid = new Uint8Array(r.round_id);
+      let w; try { w = windowsOf(c); } catch { continue; }
+      if (now < Number(w.openMs) || now > Number(w.closeMs) || seatOf(rid)) continue;
+      if (!auditSetFor(rid)) continue;   // no census read yet: drawn on a later pass, not taken as "not drawn"
+      out.push({ roundId: rid, closeMs: Number(w.closeMs) });
+    }
+    return out;
+  };
+  const roundAuditor = new RoundAuditor({
+    selfKey: round.pubkey, prove: (alpha) => auditVrf.prove(vrfSecretFor(round.identity.secret, secp256k1.Point), alpha),
+    outputOf: (pi) => auditVrf.proofToHash(pi), sign: (d) => schnorr.sign(d, round.identity.secret), due: auditDue, eligibleFor: auditSetFor,
+    ...auditorNet({ seatsFor: auditSeats, committeeFor: committeeOfRound, contractOf: contractOfRound, secret: round.identity.secret,
+      check: (rid, eid, bundle, signed, given) => verifier.checkObjection(rid, eid, bundle, signed, given),
+      buildBundle: buildObjectionBundle, decodeEntry: decodeEntryContract, entryIdOf: entryIdOfContract, agreedRunsOf,
+      decodeResult: (b) => { const r = decodePlayerResult(splitSignedResult(b).body); return { result: r, runId: runIdOf(r) }; },
+      now: () => round.now(), log: (m) => console.log(m) }),
+    now: () => round.now(), log: (m) => console.log(m),
+  });
+  let auditPassing = false;
+  const auditTimer = Number(auditOpts.everyMs ?? 10000) > 0 ? setInterval(() => {
+    if (auditPassing || shuttingDown) return;
+    auditPassing = true;
+    roundAuditor.pass().catch((e) => console.log(`[audit] pass: ${e.message}`)).finally(() => { auditPassing = false; });
+  }, Number(auditOpts.everyMs ?? 10000)) : null;
+  if (auditTimer && auditTimer.unref) auditTimer.unref();
+
   // MARKETS ON GAMES (feature 6, §0A.7d): a market round's outcome is its source round's signed RoundResult, checked
   // against the settlement committee THIS seat's roster draws for the source, held where an attestation is held (game_outcomes),
   // and settled by the attested sweep below as any market. A source round this seat does not hold is fetched from the market
@@ -2611,11 +2762,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if ((now.state === 'VOID' || now.state === 'FORFEIT') && (now.noQuorum || now.secondObjection)) {
       const f = await verifier.fileFirstResultSlashProofs(rid, eid);
       for (const who of f.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} filed REPLAY_CONTRADICTS against first-result signer ${who.slice(0, 16)} (${now.state})`);
+      contradictAudits(rid, eid, `${now.state} after a valid objection`);
       return true;
     }
     if (now.state !== FINAL || !now.contradictedRunId) return false;
     const f = await verifier.fileSlashProofs(rid, eid, Buffer.from(now.contradictedRunId, 'hex'), Buffer.from(now.runId, 'hex'));
     for (const who of f.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} filed REPLAY_CONTRADICTS against ${who.slice(0, 16)}`);
+    contradictAudits(rid, eid, `the agreed re-run ${String(now.runId).slice(0, 16)} contradicts run ${String(now.contradictedRunId).slice(0, 16)}`);
     for (const why of f.refused) console.log(`[slash] ${toHex(eid).slice(0, 16)} ${why}`);
     return true;
   }
@@ -2924,6 +3077,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (f.state !== FINAL || !f.lateObjection || round.slashProofs(rid, eid).length) return;
     const g = await verifier.fileFirstResultSlashProofs(rid, eid);
     for (const who of g.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} late objection: filed REPLAY_CONTRADICTS against ${who.slice(0, 16)}`);
+    contradictAudits(rid, eid, 'a valid late objection');
   }
   function watchRerun(rid, eid) {
     const row = round.get(rid);
@@ -9469,6 +9623,49 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(t.kept === 'kept' ? 'kept' : String(t.why));
       }
 
+      // AN AUDITOR'S AUDIT OF A ROUND (§13A.1, kanban #725): its bytes and the auditor's signature. Taken once when it stands - signed by
+      // the node it names, its VRF proof good for this round under that key, the node eligible and drawn, its results the ones this seat
+      // holds - and in time: signed within 5 s of this seat's clock and 30 s before window_close, or forwarded by another seat of the
+      // round (x-audit-seat, and its signature over the AUDIT's id in x-audit-forward) by the close. A new one goes on to the other seats.
+      if (req.method === 'POST' && url.pathname === '/audit') {
+        const body = new Uint8Array(await read(req));
+        const seatHex = String(req.headers['x-audit-seat'] || '').toLowerCase(), forwardSig = String(req.headers['x-audit-forward'] || '').toLowerCase();
+        let forwarded = false;
+        if (seatHex || forwardSig) {
+          if (!/^[0-9a-f]{64}$/.test(seatHex) || !/^[0-9a-f]{128}$/.test(forwardSig)) return text(res, 400, 'a forwarded AUDIT names its seat (x-audit-seat, 64 hex) and that seat\'s signature (x-audit-forward, 128 hex)');
+          let a;
+          try { a = decodeAudit(body.subarray(0, body.length - 64)); } catch (e) { return text(res, 400, `that is not an AUDIT: ${e.message}`); }
+          if (!round.signerNodes(a.roundId).some((k) => toHex(k) === seatHex)) return text(res, 403, 'a forwarded AUDIT counts only from a seat of its round');
+          if (!verifyAudit(fromHex(forwardSig), forwardDigest(body), fromHex(seatHex))) return text(res, 403, 'the forwarding seat\'s signature does not verify');
+          forwarded = true;
+        }
+        const got = await auditDesk.take(body, { forwarded });
+        if (!got.ok) return text(res, got.status || 409, got.why);
+        if (got.kept) {
+          console.log(`[audit] ${got.round.slice(0, 16)}: AUDIT of ${got.node.slice(0, 16)} kept${forwarded ? ` (forwarded by ${seatHex.slice(0, 16)})` : ''}, handed on`);
+          forwardAudit(body, fromHex(got.round));
+        }
+        return text(res, got.kept ? 201 : 200, got.kept ? 'AUDIT kept' : 'already held');
+      }
+      // THE AUDITS THIS SEAT HOLDS FOR A ROUND, a contradicted one with its bytes and signature (the fraud proof's evidence)
+      if (req.method === 'GET' && url.pathname === '/audits') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'the audits are asked for by round id');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ round: toHex(rid), audits: auditDesk.list(new Uint8Array(rid)) }) + '\n');
+      }
+      // WHAT AN AUDITOR READS OF A ROUND IT IS NOT SEATED IN (§13A.1): every entry an AUDIT is over, with every signed result this seat
+      // holds for it - the auditor counts the agreed run itself, against the committee it draws; nothing here is taken on trust
+      if (req.method === 'GET' && url.pathname === '/audit-run') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'a round is asked for by its id');
+        if (!round.get(rid)) return text(res, 404, 'no such round');
+        const entries = auditEntries(new Uint8Array(rid)).map((e) => ({ id: toHex(e.entryId), entry: toHex(new Uint8Array(round.entry(e.entryId))),
+          results: round.results(rid, e.entryId).map((r) => toHex(new Uint8Array(r.bytes))) }));
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ round: toHex(rid), entries }) + '\n');
+      }
+
       // AN OBJECTION AGAINST A RUN (13A intake). What an objection costs and
       // who may file one is the objection protocol and is not decided here;
       // that the node KNOWS of one is what lets the replay queue put it first.
@@ -9525,6 +9722,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (after && after.state === FINAL && after.lateObjection) {
           const g = await verifier.fileFirstResultSlashProofs(new Uint8Array(rid), new Uint8Array(eid));
           for (const who of g.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} late objection: filed REPLAY_CONTRADICTS against ${who.slice(0, 16)}`);
+          contradictAudits(rid, eid, 'a valid late objection');
         }
         // AND A SECOND ONE THAT VOIDS THE ENTRY SLASHES THE RE-RUN'S SIGNERS AS WELL (13A, slice C2c): this node files
         // its proofs before it answers, so what it took and what it filed are one step.
@@ -9535,6 +9733,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // AND THE FIRST RESULT'S SIGNERS, AS WELL (ruling C step 2): the objection that proved them wrong already exists.
           const g = await verifier.fileFirstResultSlashProofs(new Uint8Array(rid), new Uint8Array(eid));
           for (const who of g.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} filed REPLAY_CONTRADICTS against first-result signer ${who.slice(0, 16)}`);
+          contradictAudits(rid, eid, 'VOID by a second valid objection');
         }
         return text(res, taken.status, taken.text);
       }
@@ -10142,6 +10341,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     http.listen(port, host, () => { dutyAttach(); resolve({
       http, wss, round, host, verifier, ghosts, roster, stakeSecrets,
       dkg, settlements, winnings, orderBook,
+      // the round's auditors (§13A.1): this node as one, and its desk as a seat
+      auditor: roundAuditor, auditDesk,
       // the protocol reserves' keys: make one with given members and peers, and the DKG of a federation
       reserves: { make: makeReserveKey, dkgOf: reserveDkgOf, round: reserveRound, peerRound: reservePeerRound },
       funding: fundingBook,
@@ -10177,6 +10378,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         clearInterval(emergencyPull); clearTimeout(emergencyFirstPull);
         clearInterval(networkAppsTimer);
         clearInterval(winningsTimer);
+        if (auditTimer) clearInterval(auditTimer);
         clearInterval(lateTimer);
         nostr.stop();
         badges.stop();
