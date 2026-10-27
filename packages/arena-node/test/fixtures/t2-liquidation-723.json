@@ -1,0 +1,685 @@
+{
+ "_": "kanban #723: T2's liquidation (9919a571, rehearsal 17) as the arbiter on the test host keeps it (arb307 state.json and liq-claims.json, read 2026-10-27), completed by tools/liquidation-record.mjs with the remainder's 44 payees rebuilt at height 157,699 (all 44 contract ids matched those the guardians hold), the escrow's 47,000 sat and the times of the arbiter's log; the halt as the seats list it",
+ "network": "testnet4",
+ "federation": "9919a5719f43f0478227b49b9d0ad673e80bd2ee4e27b90c7d7576a6495d6c28",
+ "escrowAt": "b6464f0e5a967292c140fe343829ab24041ec17093bf3c49299e27d2de32c045:1",
+ "into": "337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e",
+ "firstMs": 1792870644000,
+ "state": {
+  "escrowTxid": "d96364ecc7f8f75f8fb60e64c9b61e3dfee36fae8390cc30a2c995c0690da72a",
+  "pegInAddress": "tb1q3ml3gh5xvgz3sk633fsztu377vmdv2pnyz5lae0msuxc38vllemsv47nh2",
+  "claimedMsat": "44999680",
+  "paidNonces": [
+   "02069c5e1203edac52a3b91250210b053d6009217697b56c1a43d26c7859bc58d6",
+   "02103ea513d71ee86eb6d710a2c398e1a55c3743e450aa39615bd27e40241d8e28",
+   "02178808a99d2e1e4cfd5fe6f157cec4fb8aa3165d91a154f64f16ee2891fb7756",
+   "021d4cf08bf61c311c76a2b4e4a2eb35e2b30864bdedb38fe88ba7419f15edf36d",
+   "0233c3db6316703e2f6602409fc66d7d34d35778590c6feac644bfb8f6f7565280",
+   "024067944e0afc51111441accdb60d245cb693147797ed3e7d0b87f24cfd4b88c7",
+   "02646db675e0abd0995f94323711abb4f5b8f9093b026ef281329fd1bee49327ab",
+   "0270fd6db57c1e1d9e05aabf38b97fc5cf359c415ee589276fff626c3b366b0ead",
+   "027601e3e11bb79317977c0cea26bee1679ff79290cfef50cc8f27986bd2ebfb8e",
+   "027f04e6397bed2e5bd00a8a015452a07bab2ecad18487e557d27282a54cfa0c8b",
+   "027fb358bdd64d842c0937edd8389cec50508bdbc2d9a1084e075ffd653a95a0d0",
+   "0280be35d3eaef5debf029aaa1f003cf6c154330a92311eef84d1144bf09880cf8",
+   "02972888fd854af40b00a46c3ca0192c02ce6aad0e9c46a4c95898a03e78e6551b",
+   "02a8dcfe0124da3d663356df94969d1b19f890ae0c1ee521ccb2346e4b53241894",
+   "02b3e43cc85b0fdac2cb8ff349d25d04499139dbac30d8f114245fa68d73f7152b",
+   "02b5f6802a827aacdd81d7465cb4ae2ec74bc614d959ce4ef9043e3b1ebd77c2cb",
+   "02ce8187359d78ec6d71f8ca81df9421677455c27a60fc907c662629c05b3591be",
+   "02d241eacd45c01b5a98cfe993eb2970cedd63628b3f09abfe91444785a212bdf4",
+   "02da03027e7ea950eb615335ec3294a791bb33aad3418d9c22352eb860b05ee127",
+   "02da73e90d4debcd37b21cd2aa28e0087539cf0fe2e005aa21a9f0d84cf877797b",
+   "02dfa84545cc2f31b6a169e417faae3b54407c3b7567c6071f786473c45dc25c38",
+   "02eafcd6146eee9ae6678ea113ce2ece889d291af8eed6a1300a88236bd056d874",
+   "02f86a5d0074695cfed73c87b9b366652b9a8a6fd906714b1ee7ab68f198d900bf",
+   "02f99eaebbdc596b7862b288d18990a27d464c327f4230c2c277fc0d55fa75d8b5",
+   "030a5d902a5ecbdd6702288e71d544508554cec826c0c6168f5d1e14a45abd8270",
+   "030f381a17b910b162bbf97f4433d8b93461e063e735c4bda4872fe8c1f6ee0c6b",
+   "0318046301dabf51147cc0191c0b3235c4007d3b0842fcf14d1ac54f576c3a44d7",
+   "0333b12fa013b7bfe2fd0962c450bd04e7c59b970aecb10660047fb795401a7133",
+   "0347da2c68f533908c8c6467a7fdc20864bbc744b44d61fbc7950b0e44f1359868",
+   "034e1d8e45db8b9ef03973845606266990983fa1bf326f8a94db05e89cfd0f0a9b",
+   "0361aae66b0932db048b9b15aa0d863b7b8eedbaff72211b0cb07d1998b3a1db48",
+   "0364d804faf2ad56ec22fdd4c6b9df1ce004c560a84df85acb1f232961999ff2b1",
+   "03928e8f5b2e45d73f8878706d1f8494c099addf35bd943906f61e31644428bfc3",
+   "0399d6c85a66518550ece1cb64d7b635c4c56516ed6fb5e4bc8bdcf25ecd391cc6",
+   "039cd4c7eae4ede5c4dea3f011d577350d9c2ef8f6299264e15030053f20ecd24c",
+   "03a1cf0312650e052c77fb798842e51d1543ec5282e4f17b4712d69f0547a78674",
+   "03a30f4509d680116f84d17a62f4387a854eb33b7f23cf82b7d9e618ecd0163b4d",
+   "03a79c1bae80a0301b316d28a8e62337f55cebc3146fdebc5014abb768a3fc9893",
+   "03aa92033f25901e3b0e36ad59d8a0075c450ca144c5829c4a530358152751ad82",
+   "03b4eaa93d39456a00947fde83de2ad4f16bdcbc03512c4933c821dd1da0fb66cc",
+   "03bdf105f1a59852b40563e259a70037f5f9804c41969792c5c7abae389afc4efb",
+   "03c3680849a23135ef0726cd86ebd3d2055a63ad298660e6a9a5c117e59fff1bd0",
+   "03c827c96858e2f1be2c9854a67be2dff7cf6e5c14c8b1bcf2b13d8ecac4b4856c",
+   "03cba653fcecb12319840ffc06f088627d972a77d2ac31f3bc9424fe3c28d86528",
+   "03da1dfbc2b7964097844533aad7465aaa06a080986e77b70af3695989303c16ac",
+   "03de717f990228df4d0960a23372cdeaaa14b5f9e538bcad1b3fd10a13359c35b9",
+   "03f9b9bc48db046734a90668409a6e6f428932c4493d051fd6d6b4578fb6d5dcbe"
+  ],
+  "payouts": [
+   {
+    "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60",
+    "msat": "28994560",
+    "txid": "a6c8636f34b02a12a583599f3c649a211fe9857c28df435c094f239921710f91",
+    "outIdx": 0,
+    "atMs": 1793051338000
+   }
+  ],
+  "remainderTxid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62",
+  "remainderMsat": "15994608",
+  "remainderPayees": 44,
+  "remainderPayouts": [
+   {
+    "part": "node",
+    "payoutPk": "020656b934176f0920e057bfe68ba04feb0522990acc4c3f5d121d2b326492a0c6",
+    "msat": "285618",
+    "outIdx": 0,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "0207e5c9f621a0f08f45f0c2acea16e8f5d3e7d500264146ba27452809936bacf2",
+    "msat": "285618",
+    "outIdx": 1,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "020a1234256d28a5917127c955c869ab60f4c20cc0efc952cda481ab387e9078b9",
+    "msat": "285618",
+    "outIdx": 2,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "020b6e9b0bcb5b5194619b8357ac7052fbb21c26b00a66802d3739215f1ec261b0",
+    "msat": "285618",
+    "outIdx": 3,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "021e8f434182520f42b92d88551d026087a7fd3b2d937bcb290a6834260aa7c9d3",
+    "msat": "285618",
+    "outIdx": 4,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "0226e2b3d04f35129ad07a7198c64da0801f4a19079d62539d61a0b5df84b46de2",
+    "msat": "285618",
+    "outIdx": 5,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "02299bf8638a3cc9851473df879ee2bf7abe6e54bea5b74ad16327784985078c4e",
+    "msat": "285618",
+    "outIdx": 6,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "022d6d61f5ac33a4dfee6d475ea0c0a50218860a2c9ba0625b6c37c2c245c1e012",
+    "msat": "285618",
+    "outIdx": 7,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "022fca10904ca38498e45f073f7d7d8bbcfe8d75ba797fdf381cd6ca9b49e0c528",
+    "msat": "285618",
+    "outIdx": 8,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "0232efc70da2f6a77aa50cfcd6d0572132675405b08d6767e6ff8f56665544e410",
+    "msat": "285618",
+    "outIdx": 9,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "023bfe28f72b91671eaffffaca41369725abe5375a200453eff593b15417dc357e",
+    "msat": "285618",
+    "outIdx": 10,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "023d896ca59901245c9904a2a3bebc5961fe58ba1a6d758923e7c9d83cde44cb10",
+    "msat": "285618",
+    "outIdx": 11,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "023e67f72ab0d43fa20822a8a0b92a6ea7091bf6f659ccb49902c7f67261182257",
+    "msat": "285618",
+    "outIdx": 12,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "024003758bc18980b590c9390ff33441ca145e36a4bdb4a4932b4a52ecc1ff6300",
+    "msat": "285618",
+    "outIdx": 13,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "024157a73141e180f3770ea2753f03e65c8b641c53802cdcf3f0035f62d02c9e29",
+    "msat": "285618",
+    "outIdx": 14,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "02438af56fb35ea4b0509ebd24359c647762cb263f2e99adf6afd3b65e1a1eb0fa",
+    "msat": "285618",
+    "outIdx": 15,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "025549ca259d4cc2cfa758d37ac422195b722b99d6e18f038274c2b0824e410618",
+    "msat": "285618",
+    "outIdx": 16,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "0258bc28e89cce04178f7147bf502ea61d06b07b702935150dd6a8616009893518",
+    "msat": "285618",
+    "outIdx": 17,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "0258bf864901391d8383e9fd3d2bb3f9b641d280845632bb87a3c4445709b5ad6c",
+    "msat": "285618",
+    "outIdx": 18,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "02656827ef96998220155bbb41ee1f04f06088dd47b492b34a0153e1213f22f4d7",
+    "msat": "285618",
+    "outIdx": 19,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "026819b8e1ff7d472785570a98bd64f5ec2dfa179735e8ee925f93a9e681f92b85",
+    "msat": "285618",
+    "outIdx": 20,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "026f1c0ca4632f20a0589a1b8cc68d3990e91f5745710163e83c8fcb6366528f2a",
+    "msat": "285618",
+    "outIdx": 21,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "027fcba34ffaf658edc99cb15c32e43a415650b9cbb7a56429cdb801b8751f1131",
+    "msat": "285618",
+    "outIdx": 22,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "0286fbdd57206625911e9a262cf72eda4643308476a2b9db39b4d212228c556f7d",
+    "msat": "285618",
+    "outIdx": 23,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "0293b5ece41f3f7da23c2cc7344f66690c793eefd45a126da4116a56e06f23b87a",
+    "msat": "285618",
+    "outIdx": 24,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "0294e649ddb39a5ecef14b2e2e05e23d437ef72b17b99d8692b74347b3dd98ff14",
+    "msat": "285618",
+    "outIdx": 25,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "02965da6c8b0b86dc2594e5ca76dd7f92329a53cafd4b43167b31f6f13394004ff",
+    "msat": "285618",
+    "outIdx": 26,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "02a63a3cd4fdfcd4766aafac59051c789081735f6dfc93e9dca7b0a46fb751a510",
+    "msat": "285618",
+    "outIdx": 27,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "02b36828faa157020245eaa6ebcb4a02abd11f6805821765af72a70f797730261e",
+    "msat": "285618",
+    "outIdx": 28,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "02b7c76691fb2170c7aaf9c4903e38f35ac8bcaa228bc6e0fabf898620beb425a5",
+    "msat": "285618",
+    "outIdx": 29,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "02ba8f85d114b78e907e72f9379b49af8b841771723d849eccc33b7a0f40cf3827",
+    "msat": "285618",
+    "outIdx": 30,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "02bee5c4d07642b41ac82ff9b38f953502cae05bc22bed386f64735272d771ad29",
+    "msat": "285618",
+    "outIdx": 31,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "02c3af8e493a3bac1031d0bdda4ba5071de521470d5fa11adb50568650d59b01cb",
+    "msat": "285618",
+    "outIdx": 32,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "02c6d5d34b071f72323dc6dd7df5aee33833602a17f8dbd41e3920b14e37817bfa",
+    "msat": "285618",
+    "outIdx": 33,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "02c6df650affaf806a5aaffa5e03ef064344846ff6bf94114a7ffd84e232e31112",
+    "msat": "285618",
+    "outIdx": 34,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "02d5faf2946cc032c329438131c3266e9c5fe6c2ecee5df853c3a854265ad7022a",
+    "msat": "285618",
+    "outIdx": 35,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "02dc5194be7f23613c391e6572e84d4688d11dbe3320c9f602e91fa762e4ae4c5c",
+    "msat": "285618",
+    "outIdx": 36,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "02ed5cbd1d3ec4e003da650f2136b56260697b0dda281f839b34ad9adbb6950b12",
+    "msat": "285618",
+    "outIdx": 37,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "02ef11d0993785740958c540fcd946a12af3e330432348e6bf8d63c74e8e001986",
+    "msat": "285618",
+    "outIdx": 38,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "02f4bfe620527f1b8da832e9ec2ef8cafa2bee6742a6e1189559c7f8db0bcbe17c",
+    "msat": "285618",
+    "outIdx": 39,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "02f5a0ca3fe526a6dedf131952ec0e649d9abc95eb66c2a1bd215e2415f4019105",
+    "msat": "285618",
+    "outIdx": 40,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "node",
+    "payoutPk": "02fefa194553c5ccbd851be273a407bfd2d9d11655539f1c2c6d10c88e960be391",
+    "msat": "285618",
+    "outIdx": 41,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "donation",
+    "payoutPk": "02baf4f243bce44aaab1a7ce12be3166b7e1587915e5cb9c102aa95c4f9f5ad0e4",
+    "msat": "2665902",
+    "outIdx": 42,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   },
+   {
+    "part": "donation",
+    "payoutPk": "02ed57f5412a004bfc98b406ee6067efc2569eacfd6e6562ecd18a095f57b84c9d",
+    "msat": "1332750",
+    "outIdx": 43,
+    "txid": "1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62"
+   }
+  ],
+  "escrowSats": "47000",
+  "escrowAtMs": 1792870644000,
+  "claimedAtMs": 1793051338000,
+  "remainderAtMs": 1793054760000,
+  "halt": {
+   "height": 157476,
+   "proof": {
+    "session": 783,
+    "observers": 27,
+    "abandoned": [
+     "0321b1c7b34394c4847c694d46a56477f207b8393ed118250cce5940ffde5181c1",
+     "0205bfd5b3a9dc2b66f3fd9a953958654be84e2875fbeb6560012c97cabfd3ac26",
+     "03f8e46925d23c8a99f3b9a7d5613fc224840a622efccaf1759a84aba26382ba45"
+    ],
+    "id": "7529faa9e47de8e20cdff227325c05f938ba8737bce23f48d4f32d497ebd4873"
+   }
+  }
+ },
+ "claims": [
+  {
+   "nonce": "03de717f990228df4d0960a23372cdeaaa14b5f9e538bcad1b3fd10a13359c35b9",
+   "amountMsat": "4194304",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "03a79c1bae80a0301b316d28a8e62337f55cebc3146fdebc5014abb768a3fc9893",
+   "amountMsat": "4194304",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "0364d804faf2ad56ec22fdd4c6b9df1ce004c560a84df85acb1f232961999ff2b1",
+   "amountMsat": "4194304",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "039cd4c7eae4ede5c4dea3f011d577350d9c2ef8f6299264e15030053f20ecd24c",
+   "amountMsat": "2097152",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "030a5d902a5ecbdd6702288e71d544508554cec826c0c6168f5d1e14a45abd8270",
+   "amountMsat": "2097152",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "02f86a5d0074695cfed73c87b9b366652b9a8a6fd906714b1ee7ab68f198d900bf",
+   "amountMsat": "2097152",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "02f99eaebbdc596b7862b288d18990a27d464c327f4230c2c277fc0d55fa75d8b5",
+   "amountMsat": "2097152",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "03f9b9bc48db046734a90668409a6e6f428932c4493d051fd6d6b4578fb6d5dcbe",
+   "amountMsat": "1048576",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "02ce8187359d78ec6d71f8ca81df9421677455c27a60fc907c662629c05b3591be",
+   "amountMsat": "1048576",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "02da73e90d4debcd37b21cd2aa28e0087539cf0fe2e005aa21a9f0d84cf877797b",
+   "amountMsat": "1048576",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "03a30f4509d680116f84d17a62f4387a854eb33b7f23cf82b7d9e618ecd0163b4d",
+   "amountMsat": "1048576",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "0333b12fa013b7bfe2fd0962c450bd04e7c59b970aecb10660047fb795401a7133",
+   "amountMsat": "524288",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "03cba653fcecb12319840ffc06f088627d972a77d2ac31f3bc9424fe3c28d86528",
+   "amountMsat": "524288",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "0361aae66b0932db048b9b15aa0d863b7b8eedbaff72211b0cb07d1998b3a1db48",
+   "amountMsat": "524288",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "0318046301dabf51147cc0191c0b3235c4007d3b0842fcf14d1ac54f576c3a44d7",
+   "amountMsat": "524288",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "02a8dcfe0124da3d663356df94969d1b19f890ae0c1ee521ccb2346e4b53241894",
+   "amountMsat": "262144",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "0399d6c85a66518550ece1cb64d7b635c4c56516ed6fb5e4bc8bdcf25ecd391cc6",
+   "amountMsat": "262144",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "034e1d8e45db8b9ef03973845606266990983fa1bf326f8a94db05e89cfd0f0a9b",
+   "amountMsat": "262144",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "03a1cf0312650e052c77fb798842e51d1543ec5282e4f17b4712d69f0547a78674",
+   "amountMsat": "131072",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "03b4eaa93d39456a00947fde83de2ad4f16bdcbc03512c4933c821dd1da0fb66cc",
+   "amountMsat": "131072",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "02b3e43cc85b0fdac2cb8ff349d25d04499139dbac30d8f114245fa68d73f7152b",
+   "amountMsat": "131072",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "027f04e6397bed2e5bd00a8a015452a07bab2ecad18487e557d27282a54cfa0c8b",
+   "amountMsat": "131072",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "02dfa84545cc2f31b6a169e417faae3b54407c3b7567c6071f786473c45dc25c38",
+   "amountMsat": "65536",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "0280be35d3eaef5debf029aaa1f003cf6c154330a92311eef84d1144bf09880cf8",
+   "amountMsat": "65536",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "02646db675e0abd0995f94323711abb4f5b8f9093b026ef281329fd1bee49327ab",
+   "amountMsat": "65536",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "03c3680849a23135ef0726cd86ebd3d2055a63ad298660e6a9a5c117e59fff1bd0",
+   "amountMsat": "32768",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "02d241eacd45c01b5a98cfe993eb2970cedd63628b3f09abfe91444785a212bdf4",
+   "amountMsat": "32768",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "02972888fd854af40b00a46c3ca0192c02ce6aad0e9c46a4c95898a03e78e6551b",
+   "amountMsat": "32768",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "02da03027e7ea950eb615335ec3294a791bb33aad3418d9c22352eb860b05ee127",
+   "amountMsat": "32768",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "03aa92033f25901e3b0e36ad59d8a0075c450ca144c5829c4a530358152751ad82",
+   "amountMsat": "16384",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "03928e8f5b2e45d73f8878706d1f8494c099addf35bd943906f61e31644428bfc3",
+   "amountMsat": "16384",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "02178808a99d2e1e4cfd5fe6f157cec4fb8aa3165d91a154f64f16ee2891fb7756",
+   "amountMsat": "16384",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "03da1dfbc2b7964097844533aad7465aaa06a080986e77b70af3695989303c16ac",
+   "amountMsat": "8192",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "02b5f6802a827aacdd81d7465cb4ae2ec74bc614d959ce4ef9043e3b1ebd77c2cb",
+   "amountMsat": "8192",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "03c827c96858e2f1be2c9854a67be2dff7cf6e5c14c8b1bcf2b13d8ecac4b4856c",
+   "amountMsat": "8192",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "02eafcd6146eee9ae6678ea113ce2ece889d291af8eed6a1300a88236bd056d874",
+   "amountMsat": "4096",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "02069c5e1203edac52a3b91250210b053d6009217697b56c1a43d26c7859bc58d6",
+   "amountMsat": "4096",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "0270fd6db57c1e1d9e05aabf38b97fc5cf359c415ee589276fff626c3b366b0ead",
+   "amountMsat": "2048",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "024067944e0afc51111441accdb60d245cb693147797ed3e7d0b87f24cfd4b88c7",
+   "amountMsat": "2048",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "027601e3e11bb79317977c0cea26bee1679ff79290cfef50cc8f27986bd2ebfb8e",
+   "amountMsat": "2048",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "02103ea513d71ee86eb6d710a2c398e1a55c3743e450aa39615bd27e40241d8e28",
+   "amountMsat": "1024",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "030f381a17b910b162bbf97f4433d8b93461e063e735c4bda4872fe8c1f6ee0c6b",
+   "amountMsat": "1024",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "027fb358bdd64d842c0937edd8389cec50508bdbc2d9a1084e075ffd653a95a0d0",
+   "amountMsat": "1024",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "0347da2c68f533908c8c6467a7fdc20864bbc744b44d61fbc7950b0e44f1359868",
+   "amountMsat": "512",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "021d4cf08bf61c311c76a2b4e4a2eb35e2b30864bdedb38fe88ba7419f15edf36d",
+   "amountMsat": "512",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "0233c3db6316703e2f6602409fc66d7d34d35778590c6feac644bfb8f6f7565280",
+   "amountMsat": "512",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  },
+  {
+   "nonce": "03bdf105f1a59852b40563e259a70037f5f9804c41969792c5c7abae389afc4efb",
+   "amountMsat": "512",
+   "height": 157503,
+   "payoutPk": "029b9fb97fa5eec099d821c8f012b7d4ab323da69343bb15713ec46f3ab4139f60"
+  }
+ ]
+}
