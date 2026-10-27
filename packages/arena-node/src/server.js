@@ -202,6 +202,7 @@ import { readReserve } from './federation-reserve.js';
 import { thresholdOf as thresholdOfFederation } from '../../arena-protocol/src/federation-record.js';
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY } from './roster.js';
 import { seatingAgent } from './seating-agent.js';
+import { heartbeatAgent } from './heartbeat-agent.js';
 import { presenceBook } from './presence-book.js';
 import { presenceWindow, censusTimeMs, withoutAbsent } from '../../arena-protocol/src/presence.js';
 import { censusRootOf } from '../../arena-protocol/src/census.js';
@@ -2510,6 +2511,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   if (seating) roster.seatedFor = seating.seatedFor;
   const seatingTimer = seating ? setInterval(() => { seating.tick(); }, Number(process.env.ARENA_SEATING_TICK_MS || 2000)) : null;
   if (seatingTimer) seatingTimer.unref();
+  // THE HEARTBEAT (§5A.3, protocol 22, kanban #727, the owner 2026-10-27): with seating on, this node beats for every 22 round's 3 heartbeat
+  // slots to each slot's committee, and as a member signs who it heard - the certificates prove a stopped node out within a day
+  const heartbeat = seating ? heartbeatAgent({ round, roster, sign: (digest) => schnorr.sign(digest, round.identity.secret), verify: verifySchnorrKept,
+    leftNode: (hex) => !!absences.emergencyFor(hex), log: (m) => console.log(m) }) : null;
+  const heartbeatTimer = heartbeat ? setInterval(() => { heartbeat.tick(); }, Number(process.env.ARENA_HEARTBEAT_TICK_MS || 5000)) : null;
+  if (heartbeatTimer) heartbeatTimer.unref();
 
   // WHAT HEARS A ROUND CLOSING. Section 13 replays once the run is over, so
   // the close is the event and this is what listens for it. The world secret
@@ -9663,6 +9670,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a JSON body { root, claims }'); }
         const k = presence.keepClaim(body && body.root, body);
         return k.ok ? json(res, 201, k) : text(res, 400, k.why);
+      }
+      // THE HEARTBEAT DOORS (§5A.3, kanban #727). POST /heartbeats: whole 132-byte HEARTBEATs, kept by a member until the slot closes.
+      // POST /heard: other members' HEARDs, JSON [{ round, slot, node, heard, leftOut, signature }]. GET /heartbeat-cert?round=&slot=: the
+      // slot's certificate held here, hex.
+      if (heartbeat && req.method === 'POST' && url.pathname === '/heartbeats') {
+        const r = heartbeat.takeHeartbeats(new Uint8Array(await read(req)));
+        return r.ok ? json(res, 201, r) : text(res, 400, r.why);
+      }
+      if (heartbeat && req.method === 'POST' && url.pathname === '/heard') {
+        let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a JSON list of HEARDs'); }
+        const r = heartbeat.takeHeard(body);
+        return r.ok ? json(res, 201, r) : text(res, 400, r.why);
+      }
+      if (heartbeat && req.method === 'GET' && url.pathname === '/heartbeat-cert') {
+        let rid; try { rid = fromHex(url.searchParams.get('round') || ''); } catch { rid = null; }
+        const slot = Number(url.searchParams.get('slot'));
+        if (!rid || rid.length !== 32 || !Number.isInteger(slot) || slot < 0 || slot > 2) return text(res, 400, 'name a round and a slot: ?round=<64 hex>&slot=0..2');
+        const cert = heartbeat.certOf(rid, slot);
+        return cert ? json(res, 200, { cert }) : text(res, 404, 'no heartbeat certificate for that slot here');
       }
       if (seating && req.method === 'POST' && url.pathname === '/presents') {
         const r = seating.takePresents(new Uint8Array(await read(req)));
