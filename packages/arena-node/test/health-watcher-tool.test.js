@@ -41,7 +41,8 @@ function world({ rounds = OUTAGE, load = [3, 3, 3], down = [], at = NOW, duty = 
     identity: async (base) => (w.down.has(base) ? { ok: false, why: 'ECONNREFUSED' } : { ok: true, key: SEATKEY.get(base) }),
     get: async (base, path) => {
       if (w.down.has(base)) return { ok: false, why: 'ECONNREFUSED' };
-      if (path === '/rounds?next=8') return { ok: true, body: w.rounds };
+      // the same listing as time goes on: every round moved by the time passed since NOW
+      if (path === '/rounds?next=8') { const d = w.now - NOW; return { ok: true, body: { ...w.rounds, rounds: w.rounds.rounds.map((r) => ({ ...r, startTimeMs: String(Number(r.startTimeMs) + d), entryCloseMs: String(Number(r.entryCloseMs) + d) })) } }; }
       if (path === '/duty') return { ok: true, body: w.duty };
       if (path === '/pending') return { ok: true, body: w.pending };
       if (path === '/roles') return { ok: true, body: { nodes: [] } };
@@ -170,7 +171,7 @@ test('a post that fails is tried again on the next pass; --dry posts and fixes n
 test('pending txs: old and unlisted - appended to miner C\'s list once, rechecked; listed and stuck two hours - alerted; tip stalled', async () => {
   const T1 = '11'.repeat(32), T2 = '22'.repeat(32);
   const w = world({ rounds: HEALTHY, pending: { tip: 157830, txs: [{ txid: T1, kind: 'grid publication', game: 'nextblock', inMempool: true }, { txid: T2, kind: 'bond', confirmations: 3 }] } });
-  let { r, st } = await passes(w, 10);   // 30 min
+  let { r, st } = await passes(w, 12);   // 33 min: seen 30 min on the 11th pass
   assert.deepEqual(w.adds, [[T1]], 'only the unconfirmed one, once');
   ({ r, st } = await passes(w, 5, st));
   assert.equal(w.adds.length, 1);
@@ -184,14 +185,18 @@ test('posting: tomorrow unposted after 18:00Z and today unposted are problems; l
   const duty = structuredClone(DUTY);
   duty.days[1].apps[2].state = 'due'; duty.days[1].apps[2].postings = [];
   const w = world({ rounds: HEALTHY, duty, at: Date.UTC(2026, 9, 28, 19, 4, 0), load: [13.1, 14.2, 15.7] });
+  w.nRestarts['blwp-tn4-node@1.service'] = 12;
   const { st } = await passes(w, 2);
   assert.ok(w.posts.some((t) => /PROBLEM: tomorrow \(2026-10-29\) has no posting for nextblock/.test(t) && /primary: due \(0 posting\(s\)\)/.test(t)));
   assert.ok(w.posts.some((t) => /PROBLEM: test host 15-min load 15\.7 > 12/.test(t) && /top: node 90%/.test(t)));
   // before 18:00Z tomorrow's posting is not late yet
   const early = assess({ nowMs: Date.UTC(2026, 9, 28, 12, 4, 0), load: [1, 1, 1], seats: [], units: {}, lists: [HEALTHY], games: GAMES, duty: [duty], pending: [], answering: [], minerc: null }, {}, CFG);
   assert.ok(!early.problems.some((p) => p.key.startsWith('posting:')));
+  // today with no posting for an app is a problem at any hour
+  const today = structuredClone(DUTY); today.days[0].apps[1].state = 'missed'; today.days[0].apps[1].postings = [];
+  const t = assess({ nowMs: Date.UTC(2026, 9, 28, 1, 4, 0), load: [1, 1, 1], seats: [], units: {}, lists: [HEALTHY], games: GAMES, duty: [today], pending: [], answering: [], minerc: null }, {}, CFG);
+  assert.deepEqual(t.problems.filter((p) => p.key.startsWith('posting:')).map((p) => p.title), ['today (2026-10-28) has no posting for rock-paper-scissors']);
   // NRestarts 12 -> 16 in the hour
-  w.nRestarts['blwp-tn4-node@1.service'] = 12;
   let s = st; ({ st: s } = await passes(w, 1, s));
   w.nRestarts['blwp-tn4-node@1.service'] = 16;
   await passes(w, 1, s);
