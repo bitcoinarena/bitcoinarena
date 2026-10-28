@@ -2573,7 +2573,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   function settlementPeers(roundIdBytes) {
     const got = committeePeers(roundIdBytes, 'settlement');
     if (got.kept) console.log(`[custody] ${toHex(roundIdBytes).slice(0, 16)} settlement signer node addresses read from the seating kept here (${got.peers.length}): ${got.why}`);
-    else if (got.why) console.error(`[custody] ${toHex(roundIdBytes).slice(0, 16)} reads no settlement signer node addresses: ${got.why}`);
+    // NOT READ YET IS NOT A FAULT (kanban #745): asked again at the next pass; a failed read is said once a minute by main.js
+    else if (got.why && !VIEW_NOT_YET.test(got.why)) console.error(`[custody] ${toHex(roundIdBytes).slice(0, 16)} reads no settlement signer node addresses: ${got.why}`);
     return got.peers;
   }
 
@@ -2604,7 +2605,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     peersFor: (roundIdBytes) => {
       const got = committeePeers(roundIdBytes, 'game');
       if (got.kept) console.log(`[verify] ${toHex(roundIdBytes).slice(0, 16)} signer node addresses read from the seating kept here (${got.peers.length}): ${got.why}`);
-      else if (got.why) console.error(`[verify] ${toHex(roundIdBytes).slice(0, 16)} reads no signer node addresses: ${got.why}`);
+      // NOT READ YET IS NOT A FAULT (kanban #745): a view still being read - or one whose read failed, which main.js says
+      // once a minute as "[chain] view ... did not read" - is asked again at the next pass. Logged here it was one line per
+      // round: 408 on seat 7 in the minutes after its 07:02Z restart, all of them rounds whose view arrived seconds later.
+      else if (got.why && !VIEW_NOT_YET.test(got.why)) console.error(`[verify] ${toHex(roundIdBytes).slice(0, 16)} reads no signer node addresses: ${got.why}`);
       return got.peers;
     },
   });
