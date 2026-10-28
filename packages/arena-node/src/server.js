@@ -1645,7 +1645,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const [fromMs, toMs] = await Promise.all([blockTimeAt(from), blockTimeAt(to)]);
         const times = new Map([[from, fromMs], [to, toMs]]);
         const a = activeNodesBefore({ rounds: await servedRoundsBetween(fromMs, toMs), endHeight: to, timeOf: (h) => times.get(h), verify: (sg, m, k2) => schnorr.verify(sg, m, k2), windowBlocks: w });
-        weeks.push(new Set(a.nodes.map((n) => toHex(n.key).toLowerCase())));
+        // servedNodes names each node by its key's hex already (kanban #397, measured on a regtest: toHex of that string gave 07000706..
+        // for 7ed07e6b.., the seasoned filter matched no node and every signal failed at 0 of 0 active)
+        weeks.push(new Set(a.nodes.map((n) => (typeof n.key === 'string' ? n.key : toHex(n.key)).toLowerCase())));
       }
       return { ok: true, nodes: activeInWeeks(weeks), fromHeight: end - 4 * w };
     },
