@@ -10,7 +10,7 @@ import { lockSettlement, lnv2FeeMsat, largestPayoutMsat, settlementNonce, feeLoc
 import { DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
 import { refundKeyOf } from '../src/stake-lock.js';
 import { toHex } from '../src/hash.js';
-import { entryFeeMsat } from '../src/fee.js';
+import { entryFeeMsat, NODE_FEE_BPS } from '../src/fee.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -480,4 +480,57 @@ test('a 2026.0.13 guardian share goes to the guardian\'s payout key, its own out
   assert.equal(byKey.has(toHex(refundKeyOf(g1))), false, 'nothing of g1\'s guardian share at its node key');
   const total = s.signerNodePayouts.reduce((a, p) => a + p.owedMsat, 0n);
   assert.equal(total, 2n * FEE, 'the whole fee, as before');
+});
+
+// kanban #559 P4 (spec §23A.9): a gateway seat is "paid like every share: one payout contract per seat in the round's settlement
+// transaction, to the advertisement's payout_pubkey". A seat holder is a guardian too, and both its shares go to the one payout
+// key: one output for the seat, never a second one. A seat left out of the signed seating (held below the minimums) is no gateway
+// output at all; a guardian that holds no seat is paid only its guardian share. Every paid seat once, nobody else.
+test('§23A.9 P4: a 2026.0.15 settlement pays each seat once, to its advert\'s payout key; an unpaid seat gets no gateway output', async () => {
+  const { guardianPayoutKeyOf, onCurveX } = await import('../src/guardian-payout.js');
+  const { splitByFederation } = await import('../src/federation-settlement.js');
+  const xs = ['79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798',    // G, 2G, 3G: x coordinates on the curve
+    'c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5',
+    'f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9'].map((h) => Uint8Array.from(Buffer.from(h, 'hex')));
+  for (const x of xs) assert.equal(onCurveX(x), true);
+  const W = entry(1, DELIVERED, 3);
+  const L = entry(2, FAILED, 0);
+  const committee = [SIGNER_NODE(1), SIGNER_NODE(2)];
+  const g = [SIGNER_NODE(7), SIGNER_NODE(8), SIGNER_NODE(9)];
+  const payoutOf = new Map(g.map((k, i) => [toHex(k), guardianPayoutKeyOf(xs[i])]));
+  const contract = { ...contractOf(committee), protocolVersion: 15 };
+  // the rate the fixture's fee locks were made at (5 %), named: a 2026.0.15 round would otherwise be read at the reserves rate
+  const settle = (gateway) => lockSettlement({ roundId: RID, entries: [W, L], minScore: 1, fees: NO_FEES, contract, feeBps: NODE_FEE_BPS,
+    signerNodes: { gameVerify: committee, settlement: committee, guardian: g, gateway, guardianPayout: payoutOf },
+    addressed: named(W), locks: new Map([lockFor(W, 1), lockFor(L, 2)]), feeLocks: new Map([feeLockFor(W, 1), feeLockFor(L, 2)]) });
+  const fee = 2n * FEE, third = fee / 3n, custody = fee - 2n * third, gwPool = custody / 3n, guardians = custody - gwPool;
+  const keyOf = (i) => '02' + toHex(xs[i]);
+
+  for (const [name, gateway, gwOwed] of [
+    ['two seats', [g[0], g[1]], [gwPool / 2n, gwPool - gwPool / 2n]],
+    ['one seat below the minimums, so not in the seating', [g[0]], [gwPool, 0n]],
+  ]) {
+    const s = settle(gateway);
+    assert.equal(s.ok, true, `${name}: ${s.why}`);
+    const out = s.signerNodePayouts;
+    const keys = out.map((p) => toHex(p.payoutPk));
+    // ONE OUTPUT PER PAID KEY: the two committee nodes at their node keys, each guardian (seat or not) at its advert's key
+    assert.equal(new Set(keys).size, keys.length, `${name}: no key paid twice`);
+    assert.deepEqual([...keys].sort(), [...committee.map((k) => toHex(refundKeyOf(k))), keyOf(0), keyOf(1), keyOf(2)].sort(), `${name}: five outputs, each paid seat once`);
+    for (const k of g) assert.equal(keys.includes(toHex(refundKeyOf(k))), false, `${name}: no guardian or gateway share at a node key`);
+    const at = (i) => out.find((p) => toHex(p.payoutPk) === keyOf(i));
+    // what each guardian's one output holds: its guardian share plus, for a paid seat, its gateway share (remainders within a msat)
+    for (let i = 0; i < 3; i++) {
+      const want = guardians / 3n + (gwOwed[i] || 0n);
+      assert.ok(at(i).owedMsat >= want - 1n && at(i).owedMsat <= want + 2n, `${name}: guardian ${i} owed ${at(i).owedMsat}, about ${want}`);
+      assert.equal(at(i).kind, 'guardian payout key');
+    }
+    assert.equal(out.reduce((a, p) => a + p.owedMsat, 0n), fee, `${name}: the whole fee, nothing lost`);
+    // AND IN THE TRANSACTION: the federation's settlement lists exactly these outputs, once each
+    const tx = splitByFederation(s, { roundId: RID, federationOf: () => toHex(TEST_FEDERATION_ID), feesOf: () => NO_FEES });
+    assert.equal(tx.ok, true, tx.why);
+    assert.equal(tx.settlements.length, 1);
+    const txKeys = tx.settlements[0].payouts.filter((p) => p.kind !== 'qualifier').map((p) => toHex(p.payoutPk));
+    assert.deepEqual(txKeys.sort(), [...keys].sort(), `${name}: one output per paid seat in the settlement transaction`);
+  }
 });

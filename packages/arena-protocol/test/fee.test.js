@@ -439,3 +439,53 @@ test('2026.0.20: under peg-in pressure the gateways\' part follows weights.gatew
   const plain = at(20, null);
   assert.ok(owed(plain, gw[0]) - owed(plain, gw[1]) <= 1n && owed(plain, gw[1]) - owed(plain, gw[0]) <= 1n, 'no weights (CALM): evenly');
 });
+
+// kanban #559 P3 (spec §23A.9): "An empty or unearned gateway share goes to the other gateway seat. With no gateway seated, it goes
+// to the guardians." The signed seating names only the paid seats (server.js: a seat held below the minimums is left out), so an
+// empty seat is a missing key, and an unearned one a key the round does not count eligible. Pinned on ragged volumes, where every
+// floor leaves a remainder: the pools always sum to the fee, nothing unallocated.
+test('§23A.9 P3: one gateway seat takes the whole gateway third; an unearned seat\'s goes to the other; none seated - the guardians\'', () => {
+  const g = [b32(0x51), b32(0x52), b32(0x53)], a = b32(0x51), b = b32(0x52);   // both seats guardians, as every seat is
+  // three stakes that leave a remainder at every floor: the fee, its thirds, the gateway third, the gateway seats' halves
+  const ragged = [player(0xa1, 'DELIVERED', 100003n), player(0xa2, 'FAILED', 123457n), player(0xa3, 'FAILED', 98761n)];
+  const sum = (t, pool) => [...t.signerNodes].filter(([k]) => k.startsWith(`${pool}:`)).reduce((s, [, v]) => s + v, 0n);
+  const owed = (t, pool, k) => t.signerNodes.get(`${pool}:${toHex(k)}`) || 0n;
+  for (const v of [15, 16, 20]) {
+    const at = (gateway, elig = [...game, ...settle, ...g]) => nodeFeeTable({ contract: { ...contract, protocolVersion: v }, entries: ragged,
+      pools: { ...pools, guardian: g, gateway }, eligible: new Set(elig.map(toHex)) });
+    const both = at([a, b]);
+    const custody = both.pools.guardian + both.pools.gateway, gwPool = custody / 3n;
+    assert.ok(custody % 3n !== 0n || gwPool % 2n !== 0n || both.fee % 3n !== 0n, 'the volumes leave a remainder somewhere');
+    assert.equal(both.pools.gateway, gwPool, `v${v}: a third of the custody pool, floored`);
+    assert.ok(owed(both, GUARDIAN, a) > 0n && owed(both, 'gateway', a) > 0n && owed(both, 'gateway', b) > 0n);
+    const d = owed(both, 'gateway', a) - owed(both, 'gateway', b);
+    assert.ok(d >= -1n && d <= 1n, `v${v}: two seats share it evenly, the odd msat to one`);
+
+    // ONE SEAT EMPTY: the seating names a only
+    const one = at([a]);
+    assert.equal(owed(one, 'gateway', a), gwPool, `v${v}: the one seated gateway takes the whole gateway third`);
+    assert.equal(one.signerNodes.has(`gateway:${toHex(b)}`), false);
+    assert.equal(one.pools.guardian, custody - gwPool, `v${v}: the guardians keep only their two thirds`);
+
+    // ONE SEAT UNEARNED: seated, but not counted eligible in the round (a conflicted or dropped seat) - its share is the other's
+    const unearned = at([a, b], [...game, ...settle, g[0], g[2]]);
+    assert.equal(owed(unearned, 'gateway', a), gwPool, `v${v}: an unearned seat's share goes to the other seat`);
+    assert.equal(owed(unearned, 'gateway', b), 0n);
+    assert.equal(unearned.pools.gateway, gwPool);
+
+    // NO GATEWAY SEATED, or both unearned: the whole custody pool is the guardians'
+    for (const [why, t] of [['no seating', at([])], ['both seats unearned', at([b32(0x61), b32(0x62)])]]) {
+      assert.equal(t.pools.gateway, undefined, `v${v} ${why}: no gateway pool`);
+      assert.equal(t.pools.guardian, custody, `v${v} ${why}: the guardians keep the whole custody pool`);
+      assert.equal(sum(t, GUARDIAN), custody);
+      assert.equal(t.unallocated, 0n, `v${v} ${why}: nothing unallocated`);
+    }
+
+    // NO MSAT LOST: every table's shares are the fee, each pool's shares are its pool
+    for (const t of [both, one, unearned]) {
+      assert.equal(t.unallocated, 0n);
+      assert.equal(paid(t), t.fee, `v${v}: the shares are the whole fee`);
+      for (const pool of [GAME_VERIFY, SETTLEMENT, GUARDIAN, 'gateway']) assert.equal(sum(t, pool), t.pools[pool], `v${v}: ${pool} paid exactly`);
+    }
+  }
+});
