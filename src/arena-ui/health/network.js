@@ -44,12 +44,87 @@ export function keepable(answers, spare = new Set()) {
     if (a.ok && a.body && /\/dashboard\.json$/.test(k)) {
       const d = a.body, last = Math.max(0, ...(d.settlements || []).map((x) => Number(x.madeMs) || 0));
       out[k] = { ...a, body: { node: d.node, totals: d.totals, byGame: d.byGame, hosts: d.hosts, settlements: last ? [{ madeMs: last }] : [] } };
+    } else if (a.ok && a.body && k.endsWith(NOW_ROUNDS)) {
+      // a seat's rounds for the lobby's window (kanban #758): only the rounds that are open or start within the hour, each with whether it is
+      // seated and its drawn game committee by the keys' first 16 characters (what roundSeating compares the answering nodes with)
+      // (the keys once, in `keys`, each round naming them by place: 100 kB a seat measured with every key in every round, 10:59Z)
+      const at = Number(a.atMs) || Number(a.body.nowMs) || Date.now(), keys = [], place = new Map();
+      const ix = (x) => { const h = String(x).toLowerCase().slice(0, 16); if (!place.has(h)) { place.set(h, keys.length); keys.push(h); } return place.get(h); };
+      out[k] = { ...a, body: { nowMs: a.body.nowMs, keys, rounds: (a.body.rounds || []).filter((r) => inNow(r, at)).map((r) => ({ id: String(r.id).slice(0, 16), game: { id: String(r.game && r.game.id).slice(0, 16), name: r.game && r.game.name },
+        entryOpen: !!r.entryOpen, played: r.played, startTimeMs: r.startTimeMs, entryCloseMs: r.entryCloseMs,
+        committee: r.committee ? { seated: r.committee.seated || null, drawnCount: r.committee.drawnCount || null,
+          ...(isSeated(r.committee) ? {} : { drawnAt: drawnGame(r).map(ix) }) } : null })) } };
     } else if (a.ok && a.body && /\/rounds\?/.test(k)) {
       // a seat's rounds (kanban #692, 346 kB at ?next=1): each round's app, committee time, federation and whether its committee is drawn
       out[k] = { ...a, body: { rounds: (a.body.rounds || []).map((r) => ({ game: { id: r.game && r.game.id }, committeeTimeMs: r.committeeTimeMs, federation: r.federation,
         committee: { drawn: !!(r.committee && r.committee.drawn), why: r.committee && !r.committee.drawn ? r.committee.why || null : null } })) } };
     } else out[k] = a;
   }
+  return out;
+}
+
+// THE ROUNDS THAT MATTER NOW, SEATED OR NOT (kanban #758, 2026-10-28, a tester: "The health page must be able to understand these kind of
+// outages and show it in the 'App' section"). The outage (#757, measured 10:05Z): every seat listed the day's rounds, entry open on 120 Rock
+// Paper Scissors, 36 Next Block and 4 Up/Down rounds, and NONE was seated - committee.seated false for both roles, only 0-4 of the 9 drawn
+// answering - so the Arena page offered no round to join while this table said "posted" in green. Read from every seat's GET /rounds?next=8
+// (the lobby's own ask, so a seat serves it from the listing it keeps), for the rounds whose entry is still open and that start within the
+// hour (NOW_WINDOW_MS); a round counts once, by id:
+//   seated     some seat says both roles are seated (committee.seated.game and .settlement) - what the lobby needs before a join
+//   joinable   seated and its entry open
+//   not seated listed, no seat says it is seated; with how many of its drawn game committee answer this page
+// A round a seat does not play in its window (played: false, the backup rule) does not count. The cell: red "no joinable rounds" when rounds
+// are listed and none can be joined (or the day's rounds are posted and no seat lists one in the hour), amber when some are not seated, green
+// when the next rounds are seated.
+// roundSeating({ games, lists, nowMs, answering, posted }) -> Map(app name -> cell { t, c, tip })
+export const NOW_ROUNDS = '/rounds?next=8', NOW_WINDOW_MS = 3600000;
+const drawnGame = (r, keys = null) => { const c = r && r.committee; if (!c) return [];
+  if (keys && Array.isArray(c.drawnAt)) return c.drawnAt.map((i) => keys[i]).filter(Boolean);
+  return c.drawn && Array.isArray(c.drawn.game) ? c.drawn.game : Array.isArray(c.game) ? c.game : []; };
+const inNow = (r, nowMs, windowMs = NOW_WINDOW_MS) => Number(r.entryCloseMs) > nowMs && Number(r.startTimeMs) <= nowMs + windowMs;
+const isSeated = (c) => !!(c && c.seated && c.seated.game && c.seated.settlement);
+export function roundSeating({ games = [], lists = [], nowMs = Date.now(), answering = null, posted = () => false, windowMs = NOW_WINDOW_MS }) {
+  nowMs = Number(nowMs); windowMs = Number(windowMs);
+  const nameOfId = new Map((games || []).map((g) => [String(g.id).toLowerCase().slice(0, 16), g.name || g.title]));
+  const live = answering ? new Set([...answering].map((k) => String(k).toLowerCase().slice(0, 16))) : null;
+  const byId = new Map();
+  for (const body of lists) for (const r of (body && body.rounds) || []) {
+    if (!r || !r.id || r.played === false || !inNow(r, nowMs, windowMs)) continue;
+    const k = String(r.id).toLowerCase().slice(0, 16), w = byId.get(k);
+    const name = nameOfId.get(String(r.game && r.game.id).toLowerCase().slice(0, 16)) || (r.game && (r.game.name || r.game.title)) || '?';
+    const drawn = drawnGame(r, body.keys);
+    if (!w) byId.set(k, { name, startTimeMs: Number(r.startTimeMs), seated: isSeated(r.committee), open: !!r.entryOpen, drawn, drawnCount: drawn.length || Number(r.committee && r.committee.drawnCount && r.committee.drawnCount.game) || 0 });
+    else { w.seated = w.seated || isSeated(r.committee); w.open = w.open || !!r.entryOpen; if (!w.drawn.length && drawn.length) { w.drawn = drawn; w.drawnCount = drawn.length; } }
+  }
+  const apps = new Map();
+  for (const r of byId.values()) { if (!apps.has(r.name)) apps.set(r.name, []); apps.get(r.name).push(r); }
+  const until = hm(nowMs + windowMs), seats = lists.filter(Boolean).length;
+  const out = new Map();
+  const cellOf = (name, rs) => {
+    if (!rs.length) {
+      // no seat's listing read (a kept copy made before kanban #758 has none): nothing known, said so - not red
+      if (!seats) return { t: 'no seat answered', c: 'warn', tip: `no seat answered GET ${NOW_ROUNDS}: whether the next rounds are seated is not known` };
+      if (!posted(name)) return { t: '-', c: 'muted', tip: `no round of this app is open or starts by ${until} UTC on any of the ${seats} seats that answered` };
+      return { t: 'no joinable rounds - posted but none listed', c: 'bad', summary: 'No round can be joined: the day\'s rounds are posted, and no seat lists one for the next hour.',
+        tip: `the day's rounds are posted, but none of the ${seats} seats that answered lists a round of this app open or starting by ${until} UTC` };
+    }
+    const seated = rs.filter((r) => r.seated), joinable = seated.filter((r) => r.open), unseated = rs.filter((r) => !r.seated);
+    const here = (r) => (live && r.drawn.length ? r.drawn.filter((k) => live.has(String(k).toLowerCase().slice(0, 16))).length : null);
+    const ups = unseated.map(here).filter((x) => x != null), of = Math.max(0, ...unseated.map((r) => r.drawnCount));
+    const answer = ups.length ? `${Math.min(...ups) === Math.max(...ups) ? Math.min(...ups) : `${Math.min(...ups)}-${Math.max(...ups)}`} of ${of} drawn answer` : of ? `${of} drawn` : '';
+    const soon = (xs) => xs.length ? hm(Math.min(...xs.map((r) => r.startTimeMs))) : '-';
+    const lines = [`${rs.length} round(s) open or starting by ${until} UTC, from ${seats} seat(s) that answered`, `seated: ${seated.length} (both roles' committees seated)`,
+      `listed but not seated: ${unseated.length}${answer ? ` (${answer})` : ''}`, `joinable now (seated, entry open): ${joinable.length}${joinable.length ? `, the soonest at ${soon(joinable)} UTC` : ''}`];
+    if (!joinable.length && unseated.length) return { t: `no joinable rounds - posted but not seated${answer ? ` (${answer})` : ''}`, c: 'bad', tip: lines.join('\n'),
+      summary: 'No round can be joined: the rounds are listed, but their committees are not seated - too few of the drawn nodes answer.' };
+    if (!joinable.length) return { t: `${seated.length} seated · none open yet`, c: 'warn', tip: lines.join('\n'), summary: 'The next rounds are seated; none takes entries yet.' };
+    if (unseated.length) return { t: `${joinable.length} joinable · ${unseated.length} of ${rs.length} not seated${answer ? ` (${answer})` : ''}`, c: 'warn', tip: lines.join('\n'),
+      summary: 'Some rounds can be joined; others are listed but their committees are not seated.' };
+    return { t: `${joinable.length} joinable · ${seated.length} of ${rs.length} seated`, c: 'ok', tip: lines.join('\n'), summary: 'The next rounds are seated and can be joined.' };
+  };
+  // the one line on what it means first in the tooltip, then the counts
+  const fin = ({ summary, ...c }) => (summary ? { ...c, tip: `${summary}\n${c.tip}` } : c);
+  for (const [name, rs] of apps) out.set(name, fin(cellOf(name, rs)));
+  for (const g of games || []) { const name = g.name || g.title; if (!out.has(name)) out.set(name, fin(cellOf(name, []))); }
   return out;
 }
 
@@ -383,6 +458,9 @@ export function makeHealth({ H, $, window = {} }) {
       const pendingP = paintPending(seats);
       // the rounds posted for each app (kanban #692): the grids' versions from the seat that expects the most, the committees from one seat's rounds
       const expectedP = best(seats, '/expected', (b) => [(b.expected || []).length]), roundsP = first(seats, '/rounds?next=1');
+      // and whether the rounds of the next hour are seated (kanban #758): every seat's listing, the lobby's own ask
+      nowRounds = null;
+      const nowP = Promise.all(seats.map((s) => ask(s, NOW_ROUNDS)));
       // and who is on duty for each day, who posted it (kanban #702): the seat that has seen the most postings
       const dutyP = best(seats, '/duty', (b) => [(b.days || []).reduce((s, d) => s + (d.apps || []).reduce((x, y) => x + (y.postings || []).length, 0), 0), (b.days || []).length]);
       await paintLiquidity(fedList, nodes, tip);
@@ -398,6 +476,11 @@ export function makeHealth({ H, $, window = {} }) {
       duties = dutyNotes(dt ? dt.body : null);
       postings = roundPosting({ games: games ? games.body.games : [], pending: pendingRead || [], expected: ex ? ex.body.expected || [] : [],
         rounds: rd ? rd.body.rounds || [] : [], nowMs: Date.now(), fedNo: fedNoOf });
+      paintApps(games, nodes);
+      const lists = (await nowP).map((a) => (a.ok && a.body ? a.body : null));
+      nowRounds = roundSeating({ games: games ? games.body.games : [], lists, nowMs: how.atMs || Date.now(),
+        answering: nodes.filter((n) => n.node && n.version && n.version.ok).map((n) => n.node),
+        posted: (name) => { const p = postings && postings.get(name); return !!(p && p.today && /^(posted|scheduled)/.test(String(p.today.t))); } });
       paintApps(games, nodes);
       window.ARENA_HEALTH = { atMs: how.atMs || Date.now(), tip, nodes: nodes.length, answered: nodes.filter((n) => n.version && n.version.ok).length };
       return true;
@@ -666,17 +749,19 @@ export function makeHealth({ H, $, window = {} }) {
   function paintMachines(nodes) { H.draw($('machines'), 'machines', { view: H.machinesView(nodes) }); }
   // ROUNDS POSTED (kanban #692): the newest version's, today and the next 24 h (roundPosting above), once the seats' grids are read
   // AND WHO IS ON DUTY FOR THEM, WHO POSTED THEM (kanban #702): beside each cell, the whole story in its tooltip
-  let pendingRead = null, postings = null, duties = null;
+  let pendingRead = null, postings = null, duties = null, nowRounds = null;
   function paintApps(g, nodes) {
     // GAMES AND MARKETS FOLDED IN HERE (2026-10-26 ~15:25Z, the owner: "Games and Markets is also deprecated if we have apps"): the one
     // number it had that Apps did not, the seats hosting the newest version
-    const AH = ['App', 'Type', 'Newest version', 'Seats hosting', 'Rounds today', 'Tomorrow', 'Earned by nodes (sat)', 'This month (sat)'];
+    const AH = ['App', 'Type', 'Newest version', 'Seats hosting', 'Next hour: seated / joinable', 'Rounds today', 'Tomorrow', 'Earned by nodes (sat)', 'This month (sat)'];
     const hosting = (name, v) => Math.max(0, ...(g ? g.body.games : []).filter((x) => (x.name || x.title) === name && String(x.version) === String(v)).map((x) => (x.seats || []).length || 0));
     const wait = { t: 'reading …', c: 'muted' };
     const rows = H.appsView(g ? g.body.games : [], nodes).map((a) => { const p = postings && postings.get(a.name), d = duties && duties.get(a.name);
       const at = (k) => (p ? withDuty(p[k], d && d[k]) : postings ? withDuty('-', d && d[k]) : wait);
-      return { key: a.name, dot: a.newest != null ? 'ok' : 'warn',
-        cells: [a.title, a.type, a.newest == null ? '-' : String(a.newest), a.newest == null ? '-' : hosting(a.name, a.newest), at('today'), at('next'), sat(a.total), sat(a.month)] }; });
+      // THE NEXT HOUR (kanban #758): seated and joinable rounds, red when none can be joined - the row's dot with it
+      const now = nowRounds ? nowRounds.get(a.name) || { t: '-', c: 'muted' } : wait;
+      return { key: a.name, dot: now.c === 'bad' ? 'bad' : now.c === 'warn' ? 'warn' : a.newest != null ? 'ok' : 'warn',
+        cells: [a.title, a.type, a.newest == null ? '-' : String(a.newest), a.newest == null ? '-' : hosting(a.name, a.newest), now, at('today'), at('next'), sat(a.total), sat(a.month)] }; });
     drawTable('apps', AH, rows, 'no app read', 'summed from every answering node\'s dashboard - each node counts only its own share');
   }
 
