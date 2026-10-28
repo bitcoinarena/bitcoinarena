@@ -147,3 +147,15 @@ test('§23A.9 P2: a seat is paid in a round only if the standing seating of the 
     assert.ok(gw(a) > 0n && gw(b) > 0n);
     assert.equal((s22.signerNodes.get(`guardian:${a}`) || 0n) + (s22.signerNodes.get(`guardian:${b}`) || 0n), s22.pools.guardian); }
 });
+
+// kanban #559/#543 (§23A.3a part 2): the peg-ins a guardian signs are those it proved - a paid seat it could not check is left out
+test('the proved peg-ins a guardian signs: each checked paid seat as a decimal string; unchecked or unknown seats left out', async () => {
+  const { provedPegInsOf } = await import('../src/gateway-seating.js');
+  const D = 'dd'.repeat(32), E = 'ee'.repeat(32);
+  const gateways = { [A]: { provedPegInSats: 60000n }, [B]: { provedPegInSats: null }, [C]: {}, [D]: { provedPegInSats: '0' } };
+  assert.deepEqual(provedPegInsOf([A, B, C, D, E], gateways), { [A]: '60000', [D]: '0' },
+    'A proved, B null, C no amount, E no entry at all; a proved 0 is a check, kept');
+  assert.deepEqual(provedPegInsOf([B], { [A]: { provedPegInSats: 1n } }), {}, 'only paid seats are named');
+  assert.deepEqual(provedPegInsOf([A], undefined), {}, 'no view: nothing proved');
+  assert.deepEqual(provedPegInsOf([], gateways), {});
+});
