@@ -172,6 +172,36 @@ select:focus{outline:2px solid var(--st);outline-offset:1px}
 // (GET /address-announcements, #562) name its current address. The node that answers there must be that key (checked in start()).
 const ON_SITE = !/\/[Dd]ashboard\/owner\/?$/.test(location.pathname);
 const OWNER_SITE = 'https://testnet.bitcoin-arena.io/owner/';   // the Arena site's owner page (installer FinishSteps OWNER_SITE, bitcoinarena open)
+// A RELOAD KEEPS THE NODE (kanban #764, the owner: "Refresh on the logged-in owner page loses the login"): the area's menu and its links
+// are plain #section anchors (OwnerArea, RolesPanel goTo), and each one replaced the whole # - node=, local=, url= went with it, and a
+// reload found no node key. Every # the page moves to keeps the node's own part beside the section (section=, which OwnerArea reads), and
+// this tab remembers it too (sessionStorage), for a # typed by hand. Only the node's public key and its address: no secret, and a # is
+// never sent to a server
+const NODE_PARTS = ['node', 'local', 'url'], NODE_TAB = 'arena-owner-node';
+function withNode(raw, kept) {
+  raw = String(raw || '').replace(/^#/, '');
+  const h = new URLSearchParams(raw.includes('=') ? raw : '');
+  if (raw && !raw.includes('=')) h.set('section', decodeURIComponent(raw));
+  if (/^[0-9a-f]{64}$/i.test(h.get('node') || '')) return { hash: raw, kept: Object.fromEntries(NODE_PARTS.filter((k) => h.has(k)).map((k) => [k, h.get(k)])) };
+  if (!kept || !/^[0-9a-f]{64}$/i.test(String(kept.node || ''))) return { hash: raw, kept: null };
+  const out = new URLSearchParams();
+  for (const k of NODE_PARTS) if (kept[k]) out.set(k, kept[k]);
+  for (const [k, v] of h) if (!out.has(k)) out.set(k, v);
+  return { hash: out.toString(), kept };
+}
+if (ON_SITE) {
+  let kept = null;
+  try { kept = JSON.parse(sessionStorage.getItem(NODE_TAB) || 'null'); } catch {}
+  const keepNode = () => {
+    const r = withNode(location.hash, kept);
+    if (!r.kept) return;
+    kept = r.kept;
+    try { sessionStorage.setItem(NODE_TAB, JSON.stringify(kept)); } catch {}
+    if (r.hash !== location.hash.slice(1)) history.replaceState(history.state, '', location.pathname + location.search + '#' + r.hash);
+  };
+  keepNode();
+  addEventListener('hashchange', keepNode);   // before the area's own listener: it reads the section from the # kept here
+}
 const HASH = new URLSearchParams(location.hash.slice(1));
 const NODE_KEY = ON_SITE ? String(HASH.get('node') || '').trim().toLowerCase() : null;
 async function siteBase() {
