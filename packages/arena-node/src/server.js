@@ -612,9 +612,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (refusedGameOf.size > REFUSED_GAME_ROUNDS) refusedGameOf.delete(refusedGameOf.keys().next().value);
   };
   // A ROUND'S GAME AS THIS NODE HOSTS IT - { id, name } - or null for a game it does not host
+  // (kanban #742: asked for every open round on every scan, it hexed the game id twice and built the answer each time - the game id's
+  // hex is kept per contract, the answer per hosted game)
+  const gameHexOf = new WeakMap();                // a contract's gameId bytes -> their hex
+  const gameAnswerOf = new WeakMap();             // a hosted game -> its { id, name, title, icon }
   const gameOfContract = (c) => {
-    const p = c && c.gameId instanceof Uint8Array ? hosted.get(toHex(c.gameId)) : null;
-    return p ? { id: toHex(p.gameId), name: p.name, title: p.title || p.name, icon: p.icon ? `game-icon?game=${toHex(p.gameId)}` : null } : null;
+    if (!c || !(c.gameId instanceof Uint8Array)) return null;
+    let gh = gameHexOf.get(c.gameId); if (gh === undefined) { gh = toHex(c.gameId); gameHexOf.set(c.gameId, gh); }
+    const p = hosted.get(gh);
+    if (!p) return null;
+    let a = gameAnswerOf.get(p);
+    if (!a) { a = { id: toHex(p.gameId), name: p.name, title: p.title || p.name, icon: p.icon ? `game-icon?game=${toHex(p.gameId)}` : null }; gameAnswerOf.set(p, a); }
+    return { ...a };
   };
   // AN ATTESTED ROUND'S OUTCOME (§0A.7a): what this seat holds for it - OPEN (no attestation yet), ATTESTED (one
   // outcome), DISPUTED (two standing attestations of different outcomes: the proof, and the round settles on neither) -
@@ -1547,8 +1556,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   if (process.env.ARENA_RESERVE_DKG !== '0') { const t = setInterval(() => { reserveRound().catch(() => {}); }, RESERVE_DKG_MS); if (t.unref) t.unref(); setTimeout(() => reserveRound().catch(() => {}), 20000).unref?.(); }
   // THE RESERVES' FIGURES OF ONE FEDERATION: its reserve rows in this seat's store, under its reserve key
   const gameOfRound = (roundHex) => {
-    try { const row = round.get(fromHex(roundHex)); if (!row) return null;
-      const c = decodeRoundContract(new Uint8Array(row.contract)); const id = c.gameId instanceof Uint8Array ? toHex(c.gameId) : null;
+    try { const c = round.contractOf(fromHex(roundHex)); if (!c) return null;
+      const id = c.gameId instanceof Uint8Array ? toHex(c.gameId) : null;
       const h = id && hosted instanceof Map ? hosted.get(id) : null; return h ? h.name : id ? id.slice(0, 8) : null; } catch { return null; }
   };
   // (a reserve output a payout spent is no longer held:)
@@ -2309,13 +2318,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // only rounds whose committee is drawn count as live (kanban #685); committeeOf is the listing's own draw, set up before any request
   const liveNow = gameLive(round, { windowOf: marketWindowFor, drawable: (rid) => {
-    const k = committeeOf(fromHex(rid));
-    if (k.drawn !== true) return false;
-    // AND SEATED (kanban #761): where the seats seat (§5A.7), a round whose roles are not both seated takes no entry - no live round either
-    if (k.seated && !(k.seated.game && k.seated.settlement)) return false;
+    if (committeeOf(fromHex(rid)).drawn !== true) return false;
     // AND PLAYED IN ITS WINDOW (the backup rule, §5A.5): a backup round under a drawn primary is no live round
-    const row = round.get(fromHex(rid)); if (!row) return true;
-    try { return playedHere(fromHex(rid), decodeRoundContract(new Uint8Array(row.contract))).played; } catch { return true; }
+    const c = round.contractOf(fromHex(rid)); if (!c) return true;
+    try { return playedHere(fromHex(rid), c).played; } catch { return true; }
   } });
   const roster = new Roster(round, {
     ...(chainFor ? { chainFor } : {}),
@@ -2444,20 +2450,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     attestorsFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? got.attestors.map((e) => toHex(e.pubkey)) : null; },
     peersFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? endpointsOf(got.attestors, round.pubkey) : []; },
     due: () => {
-      const now = round.now(), out = [];
-      for (const r of round.db.prepare('SELECT round_id, contract FROM rounds WHERE opened_ms > ?').all(now - 4 * 3600000)) {
-        const k = toHex(r.round_id);
+      // THE IDS ONLY, EVERY 10 S (kanban #742: every contract of the last 4 h was read out of the store and its id hexed on each
+      // pass): a round seen for the first time has its contract read once (the store's decoded copy while it is open), and what is
+      // kept of rounds that left the 4 h goes
+      const now = round.now(), out = [], seen = new Set();
+      for (const r of round.db.prepare('SELECT lower(hex(round_id)) AS h FROM rounds WHERE opened_ms > ?').all(now - 4 * 3600000)) {
+        const k = r.h;
+        seen.add(k);
         if (!drawnContracts.has(k)) {
           let got = null;
           try {
-            const c = decodeRoundContract(new Uint8Array(r.contract)), plugin = attestedOf(c);
+            const c = round.contractOf(fromHex(k)), plugin = c ? attestedOf(c) : null;
             if (plugin && isDrawnAttest(plugin.manifest)) { const w = marketWindowOf(c, plugin.manifest); if (w.ok && w.window) got = { c, window: w.window }; }
           } catch { got = null; }
           drawnContracts.set(k, got);
         }
         const d = drawnContracts.get(k);
-        if (d && Number(d.window.endMs) <= now && Number(d.window.endMs) > now - 1800000) out.push({ roundId: new Uint8Array(r.round_id), window: d.window });
+        if (d && Number(d.window.endMs) <= now && Number(d.window.endMs) > now - 1800000) out.push({ roundId: fromHex(k), window: d.window });
       }
+      for (const k of drawnContracts.keys()) if (!seen.has(k)) drawnContracts.delete(k);
       return out;
     },
     hold: async (bytes, rid) => {
@@ -3724,7 +3735,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (shuttingDown || process.env.ARENA_LEAN_PRUNE === '0' || Date.now() < unusedIdleUntil) return;
     try {
       const r = pruneUnusedRounds({ db, nowMs: Number(round.now()), afterRowid: unusedAfter, batch: UNUSED_PASS,
-        onDeleted: (rid) => { if (seating && seating.forget) seating.forget(toHex(new Uint8Array(rid))); } });
+        contractOf: (rid) => round.contractOf(new Uint8Array(rid)),
+        onDeleted: (rid) => { round.forget(new Uint8Array(rid)); if (seating && seating.forget) seating.forget(toHex(new Uint8Array(rid))); } });
       unusedTally.deleted += r.deleted; unusedTally.rows += r.rows; unusedTally.passes += 1; unusedTally.lastAtMs = Date.now();
       unusedAfter = r.done ? 0 : r.lastRowid;
       if (r.done) { unusedIdleUntil = Date.now() + PRUNE_EVERY_MS; unusedTally.caughtUpAtMs = Date.now();
@@ -3934,19 +3946,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // loop) - ~2,950 rounds held on testnet4, a series 72 h ahead. A contract never changes: ids are read, a contract only
   // the first time, and what is kept of rounds no longer open goes once it outgrows them by 500.
   const heldKept = new Map();                   // round id hex -> { c, endMs } or { bad: true }
-  // an id's hex, kept for the id objects the open list below hands out again and again
-  const hexOfId = new WeakMap();
-  const hexId = (rid) => { let h = hexOfId.get(rid); if (h === undefined) { h = toHex(rid); hexOfId.set(rid, h); } return h; };
+  // an id's hex, kept by the store for the id objects its open list hands out again and again (kanban #742)
+  const hexId = (rid) => round.hexOf(rid);
+  // THE CONTRACT IS THE STORE'S (Round.contractOf, kanban #742): decoded once there, shared here; what this keeps is only what is
+  // derived from it, read again if the store's contract was rewritten (a v2 round's seats written in)
   const heldOf = (rid) => {
     const k = hexId(rid);
     let v = heldKept.get(k);
-    if (!v) {
-      const row = round.db.prepare('SELECT contract FROM rounds WHERE round_id = ?').get(rid);
-      try {
-        const c = decodeRoundContract(new Uint8Array(row.contract));
-        let endMs = null; try { endMs = roundEndMs(c); } catch { endMs = null; }
-        v = { c, endMs };
-      } catch { v = { bad: true }; }
+    const c = v && v.bad ? null : round.contractOf(rid);
+    if (!v || (!v.bad && v.c !== c)) {
+      if (c) { let endMs = null; try { endMs = roundEndMs(c); } catch { endMs = null; } v = { c, endMs }; } else v = { bad: true };
       heldKept.set(k, v);
     }
     return v;
@@ -3954,7 +3963,6 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE OPEN LIST READ AGAIN ONLY WHEN IT CHANGED (NODE-OPT-1648): the close sweep (2 s), the door sweep (5 s) and the
   // listing each read ~2,950 ids from the store and turned each into hex; a round opening or closing changes the open
   // rounds' count or their newest row, which one covering-index read tells.
-  let openList = { key: null, ids: [] };
   let dashboardKept = null;   // /dashboard.json, kept 30 s
   // HOW LONG THIS NODE WAS UP (kanban #756, uptime.js): its own record of every stretch it ran, kept in its store from this release on -
   // GET /uptime serves the four figures (24 h, 7 days, 30 days, all time) and the 24 h test the draw reads from protocol 22; the owner page,
@@ -3991,12 +3999,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return { gameVerify: game.ok ? game.committee.map((e) => e.pubkey) : contract.nodes,
       settlement: settle.ok ? settle.committee.map((e) => e.pubkey) : contract.nodes, guardian };
   };
-  const openKeyQuery = () => round.db.prepare('SELECT count(*) AS n, max(rowid) AS m FROM rounds WHERE state = 0').get();
+  // THE STORE'S KEPT OPEN LIST (Round.openHeld, kanban #742): one list, the same id objects while their rounds stay open
   const openHeld = () => {
-    const q = openKeyQuery();
-    const key = `${q.n}:${q.m}`;
-    if (openList.key !== key) openList = { key, ids: round.openRoundIds() };
-    const ids = openList.ids;
+    const ids = round.openHeld();
     if (heldKept.size > ids.length + 500) {
       const open = new Set(ids.map((r) => hexId(r)));
       for (const k of heldKept.keys()) if (!open.has(k)) heldKept.delete(k);
@@ -5367,10 +5372,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (windowRounds.get(windowKeyOf(c)).size < 2) return { played: true, backup: isBackupRound(rid, c) };
     const rows = [];
     for (const id of windowRounds.get(windowKeyOf(c))) {
-      const row = id === toHex(rid) ? { contract: null } : round.get(fromHex(id));
-      if (!row) continue;
-      let cc = c; if (row.contract) { try { cc = decodeRoundContract(new Uint8Array(row.contract)); } catch { continue; } }
       const r = fromHex(id);
+      const cc = id === toHex(rid) ? c : round.contractOf(r);
+      if (!cc) continue;
       rows.push({ id, backup: isBackupRound(r, cc), drawn: committeeOf(r).drawn === true, entries: round.entriesOf(r).length });
     }
     const me = rows.find((x) => x.id === toHex(rid));
@@ -5379,10 +5383,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       why: played ? null : me && me.backup ? 'this window is played on its primary grid, whose committee is drawn (the backup rule, §5A.5)'
         : 'this window\'s backup round already holds entries on this seat (the backup rule, §5A.5)' };
   };
+  // A DRAW NOT YET SEATED, KEPT WHILE WHAT IT IS MADE OF STANDS (kanban #742: with reserve seats a round 3 h ahead is drawn but not seated,
+  // so committeeOf below drew it again on every listing, every lobby row's backup check and every live check - the keys hexed, the
+  // overlap counted, the census's keys gathered each time): the roster keeps each role's answer by census root, seed and seating, so the
+  // same two answer objects and the same equivocation are the same draw
+  const drawnFrom = new WeakMap();                // the game role's roster answer -> { settlement, equivocated, out }
   const committeeDraw = (rid) => {
     const game = roster.committeeFor(rid, 'game');
     const settlement = roster.committeeFor(rid, 'settlement');
     if (!game.ok || !settlement.ok) return { drawn: false, why: (!game.ok ? game : settlement).why };
+    const equivocated = seating ? Object.values(seating.stateOf(rid)).some((x) => x && x.equivocated) : null;
+    const was = drawnFrom.get(game);
+    if (was && was.settlement === settlement && was.equivocated === equivocated) return was.out;
+    const out = drawOf(rid, game, settlement, equivocated);
+    drawnFrom.set(game, { settlement, equivocated, out });
+    return out;
+  };
+  const drawOf = (rid, game, settlement, equivocated) => {
     const keys = (x) => x.committee.map((e) => toHex(e.pubkey));
     // WHAT IT WAS DRAWN FROM: the census's bond entries and its distinct node keys - a key sits once (sortition.js).
     // THE OVERLAP, PUBLISHED (§5A.9 overlap_countRULED 2026-10-14 ~13:20Z: one set of nodes, the overlap
@@ -5392,7 +5409,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // RESERVE SEATS (§5A.7): whether each role's committee is a seating certificate's, and the drawn beyond the seats
       ...(seating ? { seated: { game: game.seated, settlement: settlement.seated }, drawnCount: { game: game.drawn.length, settlement: settlement.drawn.length },
         drawn: { game: game.drawn.map((e) => toHex(e.pubkey)), settlement: settlement.drawn.map((e) => toHex(e.pubkey)) },
-        equivocated: Object.values(seating.stateOf(rid)).some((x) => x && x.equivocated) } : {}),
+        equivocated } : {}),
       eligibleKeys: new Set((roster.censusFor(rid).entries || []).map((e) => toHex(e.pubkey))).size };
   };
   const listingKept = new Map();                  // GET /rounds query -> { at, json }, a large one kept 30 s

@@ -81,12 +81,15 @@ export function usedMarkerTables(db) {
  * and seating rows. `goesAt(row)` answers a rounds row's time (default: its contract's). Answers { deleted, rows, looked, lastRowid,
  * done } - done when the pass reached the table's end; the next pass starts from 0 again.
  */
-export function pruneUnusedRounds({ db, nowMs = Date.now(), afterRowid = 0, batch = UNUSED_BATCH, goesAt = null, onDeleted = () => {} }) {
+// `contractOf(round_id)`: the seat's decoded contract (Round.contractOf, kept while the round is open - kanban #742), or null where it
+// does not parse; unnamed, each row's contract is decoded here.
+export function pruneUnusedRounds({ db, nowMs = Date.now(), afterRowid = 0, batch = UNUSED_BATCH, goesAt = null, contractOf = null, onDeleted = () => {} }) {
   // A CONTRACT THIS SEAT CANNOT READ (measured on test host seat 1: its oldest 3,000 rounds, stored 2026-09-28, all fail with "custody
   // byte 94 is not a custody of this network" - an older format) can be neither served nor settled by it: it goes UNREADABLE_KEEP_MS
   // after it was stored, still only when nothing marks it used
   const at = goesAt || ((row) => {
-    let c; try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return Number(row.opened_ms) + UNREADABLE_KEEP_MS; }
+    let c; try { c = contractOf ? contractOf(row.round_id) : decodeRoundContract(new Uint8Array(row.contract)); } catch { c = null; }
+    if (!c) return Number(row.opened_ms) + UNREADABLE_KEEP_MS;
     let end; try { end = Number(roundEndMs(c)); } catch { end = Number(c.entryCloseMs); } return unusedRoundGoesAt(c, end); });
   // THE USED IDS READ ONCE PER PASS (kanban #705, profiled on test host seat 4 2026-10-26 12:55Z: 90 % of its loop, the seat silent for
   // minutes): a lookup per round and marker table was a full scan of each of the 17 tables without a round_id index - 17,000 scans a
@@ -103,9 +106,10 @@ export function pruneUnusedRounds({ db, nowMs = Date.now(), afterRowid = 0, batc
   try {
     for (const r of rowsOf) {
       lastRowid = r.rowid;
+      // a used round is kept whatever its time: asked first, so its contract is not decoded for nothing (kanban #742)
+      if (used.has(idKey(r.round_id))) continue;
       let when; try { when = at(r); } catch { continue; }
       if (!(nowMs >= when)) continue;
-      if (used.has(idKey(r.round_id))) continue;
       for (const d of dels) rows += Number(d.run(r.round_id).changes);
       deleted += 1; onDeleted(r.round_id);
     }
