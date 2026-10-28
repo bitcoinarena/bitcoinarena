@@ -129,7 +129,8 @@ declare -A CUSTODY_SHA=(
   [fedimint-cli:linux-x64]=1eb63589f6753fc2da3c1e2c6c5ead2b6aeb88b5b319784ad81a0a80e1bf8a75
 )
 EXE=""; if [ "$OS" = windows ]; then EXE=.exe; fi   # (an assignment from a failing $(...) ends a set -e script: CI run 39128370301)
-for BIN in gatewayd fedimintd fedimint-cli; do
+# fedimint-dbtool (kanban #718): taken once pinned here (custody-build.sh builds it); a release without it starts a restored RAM guardian unchecked
+for BIN in gatewayd fedimintd fedimint-cli fedimint-dbtool; do
   PIN="${CUSTODY_SHA[$BIN:$KEY]:-}"
   [ -n "$PIN" ] || continue
   F="$BIN-$KEY$EXE"
