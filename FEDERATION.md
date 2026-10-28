@@ -240,6 +240,10 @@ two. Every deposit and withdrawal above goes "through any of several gateways", 
   routing fees.
   - Unearned shares go to the other seat, then to the guardians.
   - With no seating standing, the guardians keep the pool.
+  - The mirror, from protocol 22: with no eligible guardian in a round, the custody pool's guardian part goes to the eligible gateway
+    seats, evenly; only the custody pool moves, and the gateway seats' own share and the liquidity providers' shares are paid as with
+    guardians. Only with no eligible gateway seat either does the custody pool go to the two committees (game/verify and settlement),
+    half each, the odd millisatoshi to settlement.
 - **The installer** says all of this in its custody step:
   - it sets up LND, its channels, the gateway on it, and the peg-in from the node's wallet;
   - the node's custody agent announces the gateway (a claim signed by the node key) once its federation is founded.

@@ -490,11 +490,10 @@ test('§23A.9 P3: one gateway seat takes the whole gateway third; an unearned se
   }
 });
 
-// kanban #559: P3 WITH NO ELIGIBLE GUARDIAN. fee.js splits the gateway third off the guardian pool, and with no guardian named or
-// eligible there is no guardian pool: the round keeps the two-pool table (two halves of the fee, the odd msat to settlement), and a
-// seated gateway is paid nothing from the fee - on every version that has gateway seats. §23A.9 does not name this case (every seat
-// is a guardian, so it arises only when the round's guardian list misses the seat holders); this pins what the code does.
-test('§23A.9 P3: with no eligible guardian the round keeps the two-pool table and the gateway seats get nothing', () => {
+// kanban #559: P3 WITH NO ELIGIBLE GUARDIAN, BELOW PROTOCOL 22. fee.js splits the gateway third off the guardian pool, and with no
+// guardian named or eligible such a round has no guardian pool: it keeps the two-pool table (two halves of the fee, the odd msat to
+// settlement), and a seated gateway and a liquidity provider are paid nothing. Kept byte for byte for those versions; 22 below.
+test('§23A.9 P3 below protocol 22: with no eligible guardian the round keeps the two-pool table and the gateway seats get nothing', () => {
   const a = b32(0x51), b = b32(0x52);
   const ragged = [player(0xa1, 'DELIVERED', 100003n), player(0xa2, 'FAILED', 123457n), player(0xa3, 'FAILED', 98761n)];
   for (const v of [15, 16, 20]) {
@@ -510,4 +509,71 @@ test('§23A.9 P3: with no eligible guardian the round keeps the two-pool table a
       assert.equal(paid(t), t.fee, `v${v} ${why}: the committees take the whole fee`);
     }
   }
+});
+
+// kanban #559, the owner's rule (§23A.9, from protocol 22): with no eligible guardian the custody pool's guardian part goes to the
+// eligible gateway seats, evenly; the gateway third and the liquidity quarter are exactly what they are with guardians; only with no
+// eligible gateway either does the custody pool go to the two committees, half each, the odd msat to settlement.
+test('§23A.9 P3 from protocol 22: no eligible guardian - the guardian part to the gateway seats; no gateway either - to the committees', () => {
+  const a = b32(0x51), b = b32(0x52), g = [b32(0x53), b32(0x54), b32(0x55)], lp = [b32(0x71), b32(0x72)];
+  const ragged = [player(0xa1, 'DELIVERED', 100003n), player(0xa2, 'FAILED', 123457n), player(0xa3, 'FAILED', 98761n)];
+  const sum = (t, pool) => [...t.signerNodes].filter(([k]) => k.startsWith(`${pool}:`)).reduce((s, [, v]) => s + v, 0n);
+  const owed = (t, pool, k) => t.signerNodes.get(`${pool}:${toHex(k)}`) || 0n;
+  const at = ({ guardian = [], gateway = [], liquidity = [], elig, weights = null }) => nodeFeeTable({ contract: { ...contract, protocolVersion: 22 },
+    entries: ragged, pools: { ...pools, guardian, gateway, liquidity }, eligible: new Set(elig.map(toHex)), weights });
+  for (const providers of [lp, []]) {
+    const base = [...game, ...settle, ...providers];
+    // WITH GUARDIANS: the reference schedule
+    const ref = at({ guardian: g, gateway: [a, b], liquidity: providers, elig: [...base, ...g, a, b] });
+    const custody = ref.pools.guardian + ref.pools.gateway;
+    for (const [why, guardian, elig] of [['no guardian named', [], [...base, a, b]], ['guardians named, none eligible', g, [...base, a, b]]]) {
+      const t = at({ guardian, gateway: [a, b], liquidity: providers, elig });
+      const tag = `${why}, ${providers.length} providers`;
+      // ONLY THE CUSTODY POOL MOVES: every pool's amount is the reference's
+      assert.deepEqual(t.pools, ref.pools, `${tag}: the same schedule as with guardians`);
+      assert.equal(sum(t, 'gateway'), ref.pools.gateway, `${tag}: the gateway third as with guardians`);
+      assert.equal(owed(t, 'gateway', a) + owed(t, 'gateway', b), owed(ref, 'gateway', a) + owed(ref, 'gateway', b));
+      // each provider's share as with guardians, up to the remainder msat: the leftover order runs on across the pools, and the
+      // guardian pool before it has other members here, so the odd msat can land on the other provider
+      assert.equal(sum(t, 'liquidity'), ref.pools.liquidity || 0n, `${tag}: the liquidity quarter as with guardians`);
+      for (const k of providers) { const x = owed(t, 'liquidity', k) - owed(ref, 'liquidity', k); assert.ok(x >= -1n && x <= 1n, `${tag}: a provider's share as with guardians`); }
+      if (providers.length) assert.ok(sum(t, 'liquidity') > 0n);
+      // THE GUARDIAN PART TO THE TWO SEATS, evenly (within a msat), as `guardian:` rows of theirs
+      assert.equal(sum(t, GUARDIAN), ref.pools.guardian, `${tag}: the whole guardian part`);
+      const d = owed(t, GUARDIAN, a) - owed(t, GUARDIAN, b);
+      assert.ok(owed(t, GUARDIAN, a) > 0n && d >= -1n && d <= 1n, `${tag}: evenly, ${owed(t, GUARDIAN, a)} and ${owed(t, GUARDIAN, b)}`);
+      for (const k of g) assert.equal(owed(t, GUARDIAN, k), 0n);
+      assert.equal(sum(t, GUARDIAN) + sum(t, 'gateway'), custody, `${tag}: the custody pool, all of it to the seats`);
+      assert.equal(t.unallocated, 0n);
+      assert.equal(paid(t), t.fee, `${tag}: nothing lost`);
+    }
+    // ONE SEAT ELIGIBLE: the whole guardian part and the whole gateway third to it
+    const one = at({ gateway: [a, b], liquidity: providers, elig: [...base, a] });
+    assert.equal(owed(one, GUARDIAN, a), ref.pools.guardian);
+    assert.equal(owed(one, 'gateway', a), ref.pools.gateway);
+    // EVENLY EVEN UNDER PRESSURE: the guardians' bond weights do not split the gateways' guardian part; their own third follows its weights
+    const w = { guardian: new Map([[toHex(a), 9n], [toHex(b), 1n]]), gateway: new Map([[toHex(a), 3n], [toHex(b), 1n]]) };
+    const weighted = at({ gateway: [a, b], liquidity: providers, elig: [...base, a, b], weights: w });
+    const dw = owed(weighted, GUARDIAN, a) - owed(weighted, GUARDIAN, b);
+    assert.ok(dw >= -1n && dw <= 1n, 'the guardian part evenly');
+    assert.ok(owed(weighted, 'gateway', a) > 2n * owed(weighted, 'gateway', b), 'the gateway third by its own weights');
+    // NO ELIGIBLE GATEWAY EITHER: the custody pool to the two committees, half each, the odd msat to settlement
+    for (const [why, gateway] of [['no seating', []], ['seats, none eligible', [a, b]]]) {
+      const t = at({ guardian: g, gateway, liquidity: providers, elig: base });
+      const tag = `no guardian, ${why}, ${providers.length} providers`;
+      const q = t.fee / 4n, cust = providers.length ? t.fee - 3n * q : t.fee - 2n * q;
+      assert.equal(t.pools[GAME_VERIFY], q + cust / 2n, `${tag}: game/verify takes half the custody pool`);
+      assert.equal(t.pools[SETTLEMENT], q + cust - cust / 2n, `${tag}: settlement the rest`);
+      assert.equal(t.pools[GUARDIAN], 0n);
+      assert.equal(t.pools.gateway, undefined);
+      if (providers.length) assert.equal(t.pools.liquidity, ref.pools.liquidity, `${tag}: the providers' quarter as with guardians`);
+      assert.equal(t.unallocated, 0n);
+      assert.equal(paid(t), t.fee, `${tag}: nothing lost`);
+    }
+  }
+  // AND A ROUND WITH ONLY THE COMMITTEES PAYS THE TWO-POOL TABLE'S AMOUNTS, as below 22
+  const t22 = at({ elig: [...game, ...settle] });
+  const t20 = nodeFeeTable({ contract: { ...contract, protocolVersion: 20 }, entries: ragged, pools, eligible: all });
+  assert.deepEqual(t22.pools, t20.pools);
+  assert.equal(paid(t22), t22.fee);
 });
