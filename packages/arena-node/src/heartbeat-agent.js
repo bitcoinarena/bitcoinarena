@@ -29,7 +29,7 @@ const HEARD_AGAIN_MS = 60000n;
 const HEX64 = /^[0-9a-f]{64}$/;
 const joinBytes = (list) => { const out = new Uint8Array(list.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of list) { out.set(x, at); at += x.length; } return out; };
 
-export function heartbeatAgent({ round, roster, sign, verify, fetcher = fetch, nowMs = () => Date.now(), log = () => {}, leftNode = () => false }) {
+export function heartbeatAgent({ round, roster, sign, verify, fetcher = fetch, nowMs = () => Date.now(), log = () => {}, leftNode = () => false, endpointOf = null }) {
   const db = round.db;
   db.exec(`
     CREATE TABLE IF NOT EXISTS hb_beats (round_id BLOB NOT NULL, slot INTEGER NOT NULL, node TEXT NOT NULL, close_ms INTEGER NOT NULL, bytes BLOB NOT NULL,
@@ -164,7 +164,7 @@ export function heartbeatAgent({ round, roster, sign, verify, fetcher = fetch, n
           const c = roster.heartbeatCommitteeFor(s.rid, j);
           if (!c.ok) continue;
           const member = c.committee.some((e) => toHex(e.pubkey) === me);
-          const others = endpointsOf(c.committee, round.pubkey);
+          const others = endpointsOf(c.committee, round.pubkey, endpointOf);
           // 1. BEFORE THE CLOSE: this node's HEARTBEAT, once, to every member (itself kept when it is one)
           if (now < close && !sent.has(key) && !leftNode(me) && (c.census.includes(me) || c.leftOut.includes(me))) {
             sent.add(key);
