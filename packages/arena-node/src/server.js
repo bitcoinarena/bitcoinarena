@@ -4142,7 +4142,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // others what they hold and takes each paying series whose publication its own chain confirms. ARENA_SERIES_PULL=0 turns it off.
   const seriesPull = chainFor && process.env.ARENA_SERIES_PULL !== '0' ? createSeriesPull({
     peers: () => everySeat(),
-    held: () => writers.map((w) => toHex(w.id)),
+    // and the ones taken out here on purpose (droppedSeries): not pulled back in
+    held: () => [...writers.map((w) => toHex(w.id)), ...droppedSeries],
     take: async (t) => { const p = await publishedHere(t); if (!p.ok) return p; const got = takeGridSeries(t, { published: true }); return got.ok ? got : { ok: false, why: got.why }; },
     parse: parseSeriesLine, idOf: (t) => toHex(seriesId(t)), fetchFn: (u, o) => seasonFetch(u, o), say: (l) => console.log(l),
   }) : null;
