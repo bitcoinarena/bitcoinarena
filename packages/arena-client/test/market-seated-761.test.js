@@ -76,3 +76,9 @@ test('#761: the page holds unseated rounds back, says why in the market, and a j
   assert.match(bundle, /unplayableWindowLine: unplayableWindowLine/);
   assert.match(bundle, /lobbyRowNotOffered: lobbyRowNotOffered/);
 });
+
+test('#761: while no window is playable the market\'s sides and order sheet are dimmed and not pressable', () => {
+  const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  assert.match(page, /body\[data-arena-unplayable\] \.sides,body\[data-arena-unplayable\] \.sheet\{opacity:\.45;pointer-events:none\}/);
+  assert.match(page, /d\.body\.toggleAttribute\('data-arena-unplayable', !!\(empty && unplayable\)\)/);
+});
