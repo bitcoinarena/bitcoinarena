@@ -159,3 +159,32 @@ test('the proved peg-ins a guardian signs: each checked paid seat as a decimal s
   assert.deepEqual(provedPegInsOf([A], undefined), {}, 'no view: nothing proved');
   assert.deepEqual(provedPegInsOf([], gateways), {});
 });
+
+// kanban #559, the owner's ruling 1 (§23A.9, from protocol 22): each guardian floors a seat's proved peg-in to whole 100,000 sat before it
+// signs, so guardians reading the federation's coins minutes apart sign one body; a real disagreement (one sees the coin, one does not)
+// still splits them; below 22 the amounts stay exact, as before
+test('from protocol 22 a proved peg-in is signed floored to 100,000 sat: near amounts make one body that stands; a seat seen by some only does not', async () => {
+  const { provedPegInsOf, PEG_IN_FLOOR_SATS } = await import('../src/gateway-seating.js');
+  assert.equal(PEG_IN_FLOOR_SATS, 100_000n);
+  const signWith = (i, gateways, version) => signGatewaySeating({ federationId: fid, epoch: 7, seats: [A, B], ...((p) => (Object.keys(p).length ? { pegIns: p } : {}))(provedPegInsOf([A, B], gateways, { version })) },
+    g[i].hex, (h) => schnorr.sign(h, g[i].secret));
+  const seen = [{ [A]: { provedPegInSats: 1_234_567n }, [B]: { provedPegInSats: 99_999n } },
+    { [A]: { provedPegInSats: 1_201_000n }, [B]: { provedPegInSats: 0n } },
+    { [A]: { provedPegInSats: 1_299_999n }, [B]: { provedPegInSats: 50_000n } }];
+  // 22: three guardians, three readings, one body - it stands at threshold 3, naming 1,200,000 and 0
+  assert.deepEqual(provedPegInsOf([A], seen[0], { version: 22 }), { [A]: '1200000' });
+  const at22 = standingSeating({ signed: seen.map((s, i) => signWith(i, s, 22)), federationId: fid, epoch: 7, seated, threshold: 3, verify });
+  assert.equal(at22.ok, true, at22.why);
+  assert.deepEqual([at22.signers, at22.seating.pegIns], [3, { [A]: '1200000', [B]: '0' }]);
+  // a real disagreement: the third guardian could not check A (its coin not seen) - A is left out of its body, and nothing stands
+  const blind = { [A]: { provedPegInSats: null }, [B]: { provedPegInSats: 50_000n } };
+  const split = standingSeating({ signed: [signWith(0, seen[0], 22), signWith(1, seen[1], 22), signWith(2, blind, 22)], federationId: fid, epoch: 7, seated, threshold: 3, verify });
+  assert.equal(split.ok, false);
+  assert.match(split.why, /at most 2/);
+  // below 22: exact amounts, three bodies, as before
+  assert.deepEqual(provedPegInsOf([A], seen[0], { version: 20 }), { [A]: '1234567' });
+  assert.deepEqual(provedPegInsOf([A], seen[0]), { [A]: '1234567' }, 'no version named: exact');
+  const at20 = standingSeating({ signed: seen.map((s, i) => signWith(i, s, 20)), federationId: fid, epoch: 7, seated, threshold: 3, verify });
+  assert.equal(at20.ok, false);
+  assert.match(at20.why, /at most 1/);
+});

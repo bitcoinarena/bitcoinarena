@@ -9,6 +9,10 @@ import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
 import { tagAt, tagsAccepted, TAG_PAIRS } from './tag-switch.js';
 import { GATEWAY_EPOCH_BLOCKS } from './gateway-seats.js';
+import { SEATING_RULES_VERSION } from './constants.js';
+
+/** The step a guardian floors a proved peg-in to before signing it, from SEATING_RULES_VERSION (§23A.9 ruling 1). */
+export const PEG_IN_FLOOR_SATS = 100_000n;
 
 export const GATEWAY_SEATING_TAG = TAG_PAIRS.gatewaySeating[0];   // the tag before the switch (tag-switch.js, kanban #525)
 
@@ -29,10 +33,14 @@ export const paidSeatsOf = (ranking) => ((ranking && ranking.seated) || []).filt
 /**
  * THE PROVED PEG-INS A GUARDIAN SIGNS (§23A.3a part 2, kanban #559/#543): { node hex: sat string } for each paid seat whose peg-in this
  * guardian proved from the federation's coins (`gateways`: its watch's view, node hex -> { provedPegInSats }); a seat it could not check
- * (no entry, or null) is left out.
+ * (no entry, or null) is left out. From SEATING_RULES_VERSION (`version`: the version the guardian signs by) each amount is floored to
+ * whole PEG_IN_FLOOR_SATS (ruling 1: guardians reading the coins minutes apart, a few sat moved, still sign one body); below it, exact.
+ * Never the lowest of the signers' amounts: each seat gathers another subset of signatures, and would settle on another body.
  */
-export function provedPegInsOf(paid, gateways) {
-  return Object.fromEntries((paid || []).filter((n) => gateways && gateways[n] && gateways[n].provedPegInSats != null).map((n) => [n, String(gateways[n].provedPegInSats)]));
+export function provedPegInsOf(paid, gateways, { version = 0 } = {}) {
+  const floor = Number(version) >= SEATING_RULES_VERSION;
+  return Object.fromEntries((paid || []).filter((n) => gateways && gateways[n] && gateways[n].provedPegInSats != null)
+    .map((n) => [n, floor ? String((BigInt(gateways[n].provedPegInSats) / PEG_IN_FLOOR_SATS) * PEG_IN_FLOOR_SATS) : String(gateways[n].provedPegInSats)]));
 }
 
 /**
