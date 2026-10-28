@@ -71,3 +71,47 @@ test('one posting per game per day: the day posts the next day; the first in dut
   const a = await anchorHeight(d, { mtpAt: async (h) => mtp(h), tip: 100, slotMs: DUTY_DAY_MS });
   assert.equal(a, 4);                                                       // 3 h before = 1 h after the first block: 3 blocks, the first past it is 4
 });
+
+// ONLY THE DUTY POSTINGS' ROUNDS ARE ABSENCE PROOFS (§5A.3, kanban #727): a round counts only when its publication carries the day marker of
+// a duty item for the day it starts in, and its creator is within the first DUTY_PROOF_RANKS of that day's duty order over the round's
+// census; per day, item and kind the first confirmed publication (emergency: the first 3).
+test('a duty round: the marker of a duty item for its day, its creator within the first 3 of the day\'s order; the first confirmed posting per day, item and kind', async () => {
+  const { dutyMarkerOf, dutyRoundStands, dutyPostingsOf, backupMarkerOutput, daySlotOf, dayStartMs, DUTY_PROOF_RANKS, DUTY_PROOF_ITEMS, DUTY_EMERGENCY_CAP } = await import('../src/duty.js');
+  const { serializeSpend } = await import('../src/bond-spend.js');
+  const { seriesPublicationOutput } = await import('../src/series.js');
+  const { schnorr } = await import('@noble/curves/secp256k1.js');
+  const keys = Array.from({ length: 10 }, (_, i) => schnorr.getPublicKey(b32(i + 1)));
+  const start = BigInt(Date.UTC(2026, 10, 3, 9, 15));                  // the round starts 2026-11-03 09:15Z
+  const d = daySlotOf(Number(start)) - 1;                               // posted by day d, the day before
+  const order = dutyOrder({ networkId: NET, slot: d, nodeKeys: keys, sw: null });
+  const tx = (outs) => serializeSpend({ inputs: [{ txid: b32(7), vout: 0, sequence: 0xffffffff }], outputs: outs, witnesses: [[new Uint8Array(64)]] });
+  const sid = b32(0x5e);
+  const primary = tx([seriesPublicationOutput(sid), dutyMarkerOutput(d, 'updown-day')]);
+  const m = dutyMarkerOf(primary);
+  assert.deepEqual({ slot: m.slot, kind: m.kind, app: m.app, item: m.item, emergency: m.emergency }, { slot: d, kind: 'D', app: 'updown', item: 'updown-day', emergency: false });
+  assert.equal(dutyMarkerOf(tx([seriesPublicationOutput(sid), dutyMarkerOutput(d, 'rps-fed-337ae01a')])), null, 'an item that is no duty item: no marker');
+  assert.equal(dutyMarkerOf(tx([seriesPublicationOutput(sid), backupMarkerOutput(d, 'nextblock-day-emergency')])), null, 'a backup of an emergency item: none');
+  assert.equal(dutyMarkerOf(tx([seriesPublicationOutput(sid)])), null);
+  assert.equal(dutyMarkerOf(tx([seriesPublicationOutput(sid), backupMarkerOutput(d, 'nextblock-day')])).kind, 'B');
+  assert.equal(dutyMarkerOf(tx([seriesPublicationOutput(sid), dutyMarkerOutput(d, 'rps-day-emergency')])).emergency, true);
+  assert.equal(Object.keys(DUTY_PROOF_ITEMS).length, 6, 'three apps, a day item and an emergency item each');
+  // the round: its creator's rank in the day's order over the census keys
+  const round = (rank, over = {}) => ({ networkId: NET, startTimeMs: start, creatorPubkey: order[rank - 1], ...over });
+  for (const rank of [1, 2, 3]) { const r = dutyRoundStands({ contract: round(rank), marker: m, orderKeys: keys, sw: null }); assert.equal(r.ok, true, r.why); assert.equal(r.rank, rank); }
+  assert.equal(DUTY_PROOF_RANKS, 3);
+  assert.match(dutyRoundStands({ contract: round(4), marker: m, orderKeys: keys, sw: null }).why, /rank 4 of its day's duty order; a duty posting is by one of the first 3/);
+  assert.match(dutyRoundStands({ contract: round(1), marker: m, orderKeys: keys.filter((k) => k !== order[0]), sw: null }).why, /not in the round's census/);
+  assert.match(dutyRoundStands({ contract: round(1), marker: null, orderKeys: keys, sw: null }).why, /no duty marker/);
+  assert.match(dutyRoundStands({ contract: { networkId: NET, startTimeMs: start }, marker: m, orderKeys: keys, sw: null }).why, /names no creator/);
+  // the day: the marker's slot posts the next day; a round of another day under that marker is none of its posting
+  assert.match(dutyRoundStands({ contract: round(1, { startTimeMs: BigInt(dayStartMs(d + 2)) }), marker: m, orderKeys: keys, sw: null }).why, /the round starts on 2026-11-04/);
+  assert.equal(dutyRoundStands({ contract: round(1, { startTimeMs: BigInt(dayStartMs(d + 1)) }), marker: m, orderKeys: keys, sw: null }).ok, true, 'the day\'s first moment is in');
+  // the first confirmed per day, item and kind; emergency grids up to DUTY_EMERGENCY_CAP; a transaction without a duty marker never
+  const mk = (txid, outs) => ({ txid, marker: dutyMarkerOf(tx(outs)) });
+  const marked = [mk('a1', [dutyMarkerOutput(d, 'updown-day')]), mk('a2', [dutyMarkerOutput(d, 'updown-day')]), mk('b1', [backupMarkerOutput(d, 'updown-day')]),
+    mk('b2', [backupMarkerOutput(d, 'updown-day')]), mk('e1', [dutyMarkerOutput(d, 'updown-day-emergency')]), mk('e2', [dutyMarkerOutput(d, 'updown-day-emergency')]),
+    mk('e3', [dutyMarkerOutput(d, 'updown-day-emergency')]), mk('e4', [dutyMarkerOutput(d, 'updown-day-emergency')]), mk('n1', [dutyMarkerOutput(d + 1, 'updown-day')]),
+    mk('r1', [dutyMarkerOutput(d, 'rps-day')]), mk('x1', [seriesPublicationOutput(sid)])];
+  assert.deepEqual([...dutyPostingsOf(marked)].sort(), ['a1', 'b1', 'e1', 'e2', 'e3', 'n1', 'r1']);
+  assert.equal(DUTY_EMERGENCY_CAP, 3);
+});

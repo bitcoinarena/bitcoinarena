@@ -35,8 +35,31 @@ import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../arena-protocol/src/donation.js';
 import { HOSTED } from './plugins/hosted.js';
+import { serializeSpend } from '../../arena-protocol/src/bond-spend.js';
+import { publicationOutput } from '../../arena-protocol/src/publication.js';
+import { roundId } from '../../arena-protocol/src/contracts.js';
+import { dutyMarkerOutput, dutyOrder, daySlotOf } from '../../arena-protocol/src/duty.js';
+import { creatorMessage } from '../../arena-protocol/src/creator.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
+// THE DUTY POSTING A ROUND BELONGS TO (kanban #727, only the duty postings' rounds prove): the day before its start posts it, by the
+// first of that day's duty order over the six bonds; its publication carries the day marker, its contract names that creator
+const DUTY_ITEM = 'nextblock-day';
+const dutySlotOf = (c) => daySlotOf(Number(c.startTimeMs)) - 1;
+const asDuty = (c) => ({ ...c, creatorPubkey: dutyOrder({ networkId: NETWORK_ID_REGTEST, slot: dutySlotOf(c), nodeKeys: [1, 2, 3, 4, 5, 6].map(keyFor), sw: null })[0] });
+/** The publications as the duty posts them: one marked transaction per day carrying every duty round of it; a plain one per other round. */
+function publicationsOf(contracts) {
+  const byDay = new Map();
+  const out = [];
+  for (const c of contracts) {
+    if (!c.creatorPubkey) { out.push(publicationOf(c)); continue; }
+    if (!byDay.has(dutySlotOf(c))) byDay.set(dutySlotOf(c), []);
+    byDay.get(dutySlotOf(c)).push(c);
+  }
+  for (const [slot, list] of byDay) out.push(serializeSpend({ inputs: [{ txid: roundId(list[0]), vout: 0, sequence: 0xffffffff }],
+    outputs: [...list.map((c) => publicationOutput(roundId(c))), dutyMarkerOutput(slot, DUTY_ITEM)], witnesses: [[new Uint8Array(64)]] }));
+  return out;
+}
 const SPACING = 3600;
 const timeOf = (i) => FIRST_TIME + i * SPACING;
 const AFTER_COMMITTEE = Number(BigInt(FIRST_TIME + 20 * SPACING) * 1000n);
@@ -70,7 +93,8 @@ const bonds = NODES.map((n) => bondTransaction(advertFor(n), { previousTxid: b32
 const chainWith = (contracts = []) => {
   const blocks = [];
   for (let h = FROM; h <= TIP; h++) blocks.push({ transactions: h === FROM ? bonds : [] });
-  if (contracts.length) blocks[1] = { transactions: contracts.map(publicationOf) };
+  // a round naming a creator is a duty posting's: its publication carries the day marker (a self-posted round's carries none)
+  if (contracts.length) blocks[1] = { transactions: publicationsOf(contracts) };
   return chainOf(blocks, FROM, { timeOf });
 };
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
@@ -91,22 +115,29 @@ function rootFor(absent) {
 }
 
 /** THE WORLD: the chain, a seat with its presence book, 6 earlier rounds an hour apart (census: the chain's own), the round less node 5. */
-function world() {
+function world({ selfPosted = 0 } = {}) {
   const full = rootFor(null), less = rootFor([STOPPED]);
   const current = contractFor({ censusRoot: less.root });
-  const earlier = Array.from({ length: 6 }, (_, j) => contractFor({ startTimeMs: COMMITTEE_TIME + 60500n - BigInt(j + 1) * 3600000n,
-    entryCloseMs: COMMITTEE_TIME + 200000n - BigInt(j + 1) * 3600000n, committeeTimeMs: COMMITTEE_TIME - BigInt(j + 1) * 3600000n, censusRoot: full.root }));
-  const view = chainWith([current, ...earlier]);
+  const earlierAt = (j, nodes) => contractFor({ startTimeMs: COMMITTEE_TIME + 60500n - BigInt(j + 1) * 3600000n,
+    entryCloseMs: COMMITTEE_TIME + 200000n - BigInt(j + 1) * 3600000n, committeeTimeMs: COMMITTEE_TIME - BigInt(j + 1) * 3600000n, censusRoot: full.root, ...(nodes ? { nodes } : {}) });
+  // every earlier round a duty posting's (kanban #727); `selfPosted` more that are nobody's duty - no marker, no creator
+  const earlier = Array.from({ length: 6 }, (_, j) => asDuty(earlierAt(j)));
+  const others = Array.from({ length: selfPosted }, (_, j) => earlierAt(j, [b32(0x50 + j)]));
+  const view = chainWith([current, ...earlier, ...others]);
   const round = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
   const roster = new Roster(round, { chainFor: () => view, randomnessFor: ({ contract: c }) => beaconOf(view, c) });
-  const book = presenceBook({ round, roster, verify });
+  const creators = {};
+  const book = presenceBook({ round, roster, verify, creatorOf: (r) => { const s = creators[toHex(r)]; return s ? fromHex(s) : null; } });
   roster.absence = { claimFor: book.claimFor, check: book.check };
   const rids = earlier.map((c) => round.open(c));
+  earlier.forEach((c, i) => { creators[toHex(rids[i])] = toHex(signBy(toHex(c.creatorPubkey))(creatorMessage(roundId(c)))); });
+  const selfRids = others.map((c) => round.open(c));
   const rid = round.open(current);
   const contract = decodeRoundContract(new Uint8Array(round.get(rid).contract));
   const w = presenceWindow(censusTimeMs(view, HEIGHT));
-  const contracts = Object.fromEntries(rids.map((r) => [toHex(r), toHex(new Uint8Array(round.get(r).contract))]));
-  return { round, roster, book, rid, rids, contract, view, w, contracts };
+  const contracts = Object.fromEntries([...rids, ...selfRids].map((r) => [toHex(r), toHex(new Uint8Array(round.get(r).contract))]));
+  const publications = Object.fromEntries([...rids, ...selfRids].map((r) => [toHex(r), book.publicationProofOf(toHex(r))]));
+  return { round, roster, book, rid, rids, selfRids, contract, view, w, contracts, publications, creators };
 }
 /** A heartbeat certificate of slot `slot` of round `rid`, signed for real by `signers`, each listing `heard`. */
 const certOf = (rid, slot, signers = LIVE, heard = LIVE) => toHex(encodeHeartbeatCertificate({ roundId: rid, slot,
@@ -117,8 +148,8 @@ const client = (W, claim) => {
   const ev = W.roster.censusEvidenceFor(W.rid);
   const own = ev.ok ? committeeFromChain({ contract: W.contract, roundId: W.rid, headers: W.view.blocks.map((b) => b.header), firstHeight: W.view.firstHeight,
     evidence: ev.entries, bond: bondSetFor('regtest'), verify }) : null;
-  return absenceFromChain({ contract: W.contract, claim: { ...claim, contracts: W.contracts }, headers: W.view.blocks.map((b) => b.header), firstHeight: W.view.firstHeight,
-    evidenceOf: (r) => W.roster.censusEvidenceFor(fromHex(r)).entries, bond: bondSetFor('regtest'), verify, entries: own && own.ok ? own.checkedCensus.entries : [] });
+  return absenceFromChain({ contract: W.contract, claim: { ...claim, contracts: W.contracts, publications: W.publications, creators: W.creators }, headers: W.view.blocks.map((b) => b.header),
+    firstHeight: W.view.firstHeight, evidenceOf: (r) => W.roster.censusEvidenceFor(fromHex(r)).entries, bond: bondSetFor('regtest'), verify, entries: own && own.ok ? own.checkedCensus.entries : [] });
 };
 
 /** THE FIVE LIVE NODES RUN THE AGENT on one round: each its own store holding the round, the seat's roster for the draw. */
@@ -221,4 +252,21 @@ test('a heartbeat claim against an honest node is refused by the seat and by the
   // a seat that held the node's HEARTBEAT in the 24 h refuses whatever the claim names
   W.round.db.prepare('INSERT INTO hb_beats (round_id, slot, node, close_ms, bytes) VALUES (?, ?, ?, ?, ?)').run(W.rids[4], 0, STOPPED, Number(W.w.toMs) - 1000, new Uint8Array(132));
   assert.equal(W.book.check(claimOf(STOPPED, three), { census, w: W.w }).proof, 'seen');
+});
+
+// ONLY THE DUTY POSTINGS' ROUNDS PROVE (kanban #727): a heartbeat certificate of a self-posted round - its publication carries no duty
+// marker - is refused as proof by the seat and by the client, by name, beside two duty slots; the duty rounds' slots stand as before
+test('a heartbeat certificate of a self-posted round proves nothing: refused at the seat and at the client; the duty rounds\' slots stand', () => {
+  const W = world({ selfPosted: 2 });
+  const census = W.roster.censusFor(W.rid, null, { asRoundsOwn: false }).entries.map((e) => toHex(e.pubkey));
+  for (const r of W.rids) { const d = W.book.dutyOf(toHex(r)); assert.equal(d.ok, true, d.why); }
+  assert.match(W.book.dutyOf(toHex(W.selfRids[0])).why, /no duty marker/);
+  const mixed = claimOf(STOPPED, [{ rid: W.selfRids[0], slot: 0 }, ...W.rids.slice(0, 2).map((rid) => ({ rid, slot: 0 }))]);
+  const atSeat = W.book.check(mixed, { census, w: W.w });
+  assert.equal(atSeat.ok, false); assert.equal(atSeat.proof, 'not-duty'); assert.match(atSeat.why, /no duty marker/);
+  const atClient = client(W, mixed);
+  assert.equal(atClient.ok, false); assert.match(atClient.why, /no duty marker/);
+  const duty = claimOf(STOPPED, W.rids.slice(0, 3).map((rid) => ({ rid, slot: 0 })));
+  assert.equal(W.book.check(duty, { census, w: W.w }).ok, true);
+  assert.equal(client(W, duty).ok, true);
 });

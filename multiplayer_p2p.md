@@ -1910,6 +1910,60 @@ untouched, nothing is slashed, and the node comes back by itself.
   seat that still holds a late PRESENT of it refuses a census that leaves it
   out (below), and the posting node asks the seats for such PRESENTs before
   it claims anyone, so it leaves out no node a seat would refuse it for.
+- **Only the duty postings' rounds prove an absence** *(kanban #727,
+  2026-10-28; the hole the heartbeat left open: "rounds anyone posts add
+  extra draws")*. Anyone may post a series, and a seat and the client draw
+  any round whose contract they can check - so a group that posted many
+  rounds of its own would get many more random draws to find three with 5
+  of its nodes in, at one publication fee per 96 rounds. So a seating or
+  heartbeat certificate is a proof only for a round of a **duty posting of
+  its day** (§5A.5 "One posting per app per day"): the day's primary grid,
+  its backup grid, or an emergency grid - a round of any other series (a
+  table someone posted themselves, a test grid) proves nothing, though its
+  certificate still keeps every node it lists in. Which postings count,
+  decided the same way at every seat and at the client from the chain and
+  the publication:
+
+  ```text
+  marker      the round's publication (its series' publication for a series
+              round) carries a day marker "ARN" 'D' or 'B' || day d || tag
+              whose tag is a duty item's: <app>-day or <app>-day-emergency
+              for the apps the duty posts (DUTY_PROOF_ITEMS: updown, rps,
+              nextblock; a 'B' on an emergency item is no marker)
+  day         the round starts in the day that d posts (d + 1, targetDay)
+  creator     the round names its creator, the creator signed the series id
+              (a plain round: the round id), and the creator is within the
+              first DUTY_PROOF_RANKS = 3 of day d's duty order - ranks 1-3
+              post the primary, 2-3 the backup, the emergency from rank 1 on
+              - taken over the node keys of the round's own census as its
+              root commits it (every seat checks that root against its
+              chain, the client against the root: one list everywhere)
+  first       per day, item and kind the first confirmed publication is the
+              posting (as the duty rule reads "posted"); an emergency item
+              the first DUTY_EMERGENCY_CAP = 3. A later duplicate of the
+              same day and item adds no proof round
+  ```
+
+  Why this holds: an attacker can post a series and can write any marker
+  into an OP_RETURN, but it cannot stand in the day's duty order on demand -
+  that order is the chain census's rank, `H(duty tag || network_id || d ||
+  node key)` over the census, the same list on every node. A group of 7 of
+  28 has a member in a day's first 3 on about 59 % of days; the cap on
+  postings is what keeps that member from multiplying the day's rounds - at
+  most one primary, one backup and three emergency grids per app, each what
+  the duty would have posted anyway. The rank is read over the round's
+  committed census, not the census at the day's anchor the duty node reads
+  its own rank from (`duty-day.js` orderOf): the two differ by at most the
+  bonds confirmed between the anchor and the series' census block, and a
+  posting at a rank the proof rule does not take is played as before - its
+  rounds prove nothing, which is all. An item named otherwise (arena.conf
+  `ARENA_DUTY_ITEM_<APP>`) posts rounds that are played but prove nothing.
+  Measured (`heartbeat.test.js`, 20 days of 96 slots on 28 nodes): a group
+  of 7 has 3 slots an hour apart on 2 of 20 days from the duty grid, and on
+  13 of 20 with one self-posted grid of its own beside it - which the rule
+  takes away; a self-posted grid of 96 beside the duty grid would have had
+  20 of its slots (11 of its seatings, `presence.test.js`) named as proofs
+  without the rule, 0 with it, and the claim is the same either way.
 - **What the posting node does.** The absent set is chosen once, by the
   node that posts the census (the day's duty node, §5A.5), and committed in
   the census root it writes into the series - fixed on chain before the
@@ -1918,16 +1972,20 @@ untouched, nothing is slashed, and the node comes back by itself.
   saw nowhere it asks every seat and the node's own address
   (`GET /presence`) for that node's PRESENTs and for the certificates that
   name it, and takes each that stands against its own draw. A node is left
-  out only if the certificates prove it absent. It sends the **absent
-  claim** - each absent node with its 3 seatings, and their certificates -
-  to every seat (`POST /absent`) before the grid; every seat serves it again
-  (`GET /absent?root=`, with the contracts of the named rounds, so a client
-  can draw each).
+  out only if the certificates of duty rounds prove it absent. It sends the
+  **absent claim** - each absent node with its 3 seatings, and their
+  certificates - to every seat (`POST /absent`) before the grid; every seat
+  serves it again (`GET /absent?root=`, with the contracts of the named
+  rounds, each round's publication with its merkle branch and its creator's
+  signature, so a client can draw each and read whose duty posting it is).
 - **What every seat checks.** A seat whose chain census does not hash to a
   22 round's `census_root` takes the claim held for that root, checks that
   the chain census less the claimed nodes hashes to it (so the claim names
   exactly the nodes left out), and checks every proof as above, drawing each
-  named seating itself. The named round's census is read as its own root
+  named seating itself and reading, from its own chain view, whether the
+  named round is a duty posting's (the marker on its publication, the day's
+  first confirmed posting of that item and kind, the creator's rank over
+  the round's committed census). The named round's census is read as its own root
   commits - its absent claim is not checked again here, its seated checked
   it before they signed - so a proof never sends a seat back through every
   earlier day. A wrong proof makes the census invalid, exactly as a wrong
@@ -1940,11 +1998,17 @@ untouched, nothing is slashed, and the node comes back by itself.
 - **The client** checks the census as before (§5A.6) and, for a 22 round
   whose seats hold a claim, every proof of it the same way: each named
   round's contract by its id, its census from evidence hashing to its root,
-  its beacon off the same headers, its draw, its certificate. A wrong proof
+  its beacon off the same headers, its draw, its certificate - and that the
+  round is a duty posting's: its publication proven into the client's
+  agreed headers and publishing it, the duty marker and its day read off
+  it, the creator's signature over the series id (a plain round: the round
+  id) under the key the contract names, and the creator's rank in that
+  day's duty order over the census the client just checked. A wrong proof
   refuses the round. What the client cannot see is a node a census left out
-  that the claim does not name - completeness was always the seats' check,
-  against their full chains, and such a root hashes to nothing an honest
-  seat serves.
+  that the claim does not name, and whether an earlier posting of the same
+  day and item exists (the first confirmed one counts) - completeness was
+  always the seats' check, against their full chains, and such a root
+  hashes to nothing an honest seat serves.
 - **A fresh seat** - restarted without its store, or new - draws a named
   seating from the round's contract once it holds the series (they are
   announced to every seat), so it checks the proofs as any seat does; until
@@ -1955,14 +2019,21 @@ untouched, nothing is slashed, and the node comes back by itself.
   commits to the set. Nobody can keep an honest node out for a day by
   flooding it at one or two of its seatings. A colluding posting node and a
   few seats gain nothing either: one seated node's honest SEEN keeps a node
-  in.
+  in. And nobody buys draws (2026-10-28): a round of a series anyone posted
+  themselves proves nothing, so the day's proof chances are the duty
+  postings' rounds and no more - a group's chances are the table above, on
+  the duty grid, whatever it posts beside it.
 - **What remains.** (1) All seated nodes of a seating (5 to 7 of its 9
   drawn), or 5 members of a heartbeat slot's 9, colluding can sign without
   an honest node's word; it takes three such certificates an hour apart,
   each a different random draw. The draws are random, but the claim
-  chooses which certificates of the day it names - three of 96 rounds and
-  96 slots - so the bar is "a group holds 5 of 9 seats three times in a
-  day", not "a majority of the drawn" (the table above). (2) Miners
+  chooses which certificates of the day it names - three of the duty
+  postings' rounds and slots - so the bar is "a group holds 5 of 9 seats
+  three times in a day", not "a majority of the drawn" (the table above,
+  per grid of 96). The duty itself posts more than one grid a day - one
+  table per app per federation, a primary and a backup - and each is its
+  own 96 draws; the table's numbers are per grid, and a network's chances
+  per day scale with how many duty grids it plays. (2) Miners
   grinding the beacon, unchanged (§5A.5): a miner can withhold blocks to
   move which nodes are drawn, here as for every draw. (3) An attacker who
   floods a node at **every** seating and slot of a whole day (3 or more an
@@ -1973,13 +2044,14 @@ untouched, nothing is slashed, and the node comes back by itself.
   checks a named round's contract by its id; for a series round that id
   binds the series and index, not every field, so the client trusts the
   seat for the rest of that contract as it already does for its own round;
-  the seats check it from the series they hold. (6) Rounds anyone can post
-  multiply the draws: a seat and the client draw any round whose contract
-  they can check, so a group that posts many rounds of its own gets many
-  more draws to find three with 5 of its nodes in. Proofs should name only
-  the network's duty grids' rounds (one series per game per day, posted by
-  the day's duty node); not built yet, and it holds for seatings and slots
-  alike.
+  the seats check it from the series they hold. (6) The "first confirmed
+  posting" of a day and item is the seats' reading of their chains; the
+  client, holding headers, takes a duplicate posting by a first-3 node for
+  the day's (it still needs the marker, the day, the creator's signature
+  and rank). (7) A marker is an OP_RETURN anyone can write: a bogus 'D'
+  marker for a day makes the duty nodes see the day as posted (§5A.5
+  "posted") - the Health page names who posted; for proofs it counts for
+  nothing (its series' creator is not in the first 3, or signs nothing).
 
 **Version.** Folded into protocol 22 with the auditors (§13A.1), not a
 number of its own: 2.0 is unreleased and no series of 22 is posted on any
@@ -1989,12 +2061,16 @@ certificate below 22 carries no SEEN - byte for byte as before. Had a 22
 series been posted before this rule, it would have needed 23.
 The heartbeat is part of the same 22: its HEARTBEAT (0x39) and HEARD (0x3a)
 are new types, and a seat below 22 has no slots to draw.
+The duty-only rule is in the same 22 too: no claim of 22 was ever posted,
+so no claim ever named a round that is not a duty posting's.
 (arena-protocol `presence.js` absentFrom, checkAbsenceProof, provenProof,
 `ABSENCE_PROOF_SEATINGS`, `ABSENCE_PROOF_SPACING_MS`, `PRESENCE_VERSION`;
 `heartbeat.js`, `HEARTBEAT_SLOTS_PER_ROUND`, `HEARTBEAT_DRAWN`,
-`HEARTBEAT_THRESHOLD`; `seating.js` SEEN;
+`HEARTBEAT_THRESHOLD`; `seating.js` SEEN; `duty.js` dutyMarkerOf,
+dutyRoundStands, dutyPostingsOf, `DUTY_PROOF_RANKS`, `DUTY_PROOF_ITEMS`,
+`DUTY_EMERGENCY_CAP`;
 `census.js` deriveCensus `absent`; `client-committee.js` absenceFromChain;
-arena-node `presence-book.js`, `roster.js` absentCensus and
+arena-node `presence-book.js` dutyOf, `roster.js` absentCensus and
 heartbeatCommitteeFor, `seating-agent.js`, `heartbeat-agent.js`,
 `duty-poster.js`; arena-client `committee.js`.)
 
@@ -2701,6 +2777,8 @@ played          one grid per window: a round of a backup series (its publication
                 a row most seats play (lobbyRowOffered); a backup under a drawn primary is no live round (GET /games)
 posted by       every grid names the posting node's key as its creator and signs each series id with it: who posted a day is the
                 creator of the series its marked transaction publishes - checkable by anyone, shown on GET /duty and the Health page
+proofs          only these postings' rounds - the primary, the backup, the emergency grids, by a creator within the day's first 3 -
+                are absence proofs (§5A.3 "Only the duty postings' rounds prove an absence"); a table anyone posted proves nothing
 missed          a primary nobody posts falls to rank 2 and 3 as above; a backup nobody posts leaves the day to its primary
 dead            a posting whose census block the chain left, whose census the seats' chains (GET /headers) do not hold, whose
                 publication a reorg returned to the mempool and its beacon then passed, or whose coins a mined transaction spends

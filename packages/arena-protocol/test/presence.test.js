@@ -58,25 +58,27 @@ function certify({ roundId, role, seated, present, leftOut = [], lists = {}, sig
  * returning node the census left out, when `back` names it), seated = the first 7 present if 5 or more. Answers the seatings with
  * their records; a certificate is signed only when a proof needs it (`certOf`).
  */
-function day(entries, d, w, { back = [] } = {}) {
+function day(entries, d, w, { back = [], rounds = 96, self = () => false } = {}) {
   const leftOut = absentImplied(census, entries);
   const out = [];
-  for (let i = 0; i < 96; i++) {
+  for (let i = 0; i < rounds; i++) {
     for (const role of ['game', 'settlement']) {
       const roundId = toHex(seed(1000 + i, d));
       const drawn = drawCommittee({ entries, contract, role, committeeSeed: seed(i * 2 + (role === 'game' ? 1 : 0), d) }).map((e) => toHex(e.pubkey));
       const present = [...drawn.filter(isLive), ...back.filter((h) => leftOut.includes(h))];
       const seated = drawn.filter((h) => present.includes(h)).slice(0, 7);
-      out.push({ roundId, role, closeMs: w.fromMs + BigInt(i + 1) * 900000n, drawn, present, leftOut, seated: seated.length >= 5 ? seated : null });
+      // `self`: a round of a series someone posted themselves, not the day's duty grid (kanban #727: it proves nothing)
+      out.push({ roundId, role, closeMs: w.fromMs + BigInt((i % 96) + 1) * 900000n, drawn, present, leftOut, seated: seated.length >= 5 ? seated : null, self: !!self(i) });
     }
   }
   return out;
 }
 /** The seatings a seat or a client can hold proofs of: the certified ones. */
 const proven = (seatings) => seatings.filter((s) => s.seated).map((s) => ({ ...s, present: [...new Set([...s.present, ...s.seated])] }));
-/** What a checker has: its own draw of each seating, and the certificates (signed when first asked). */
+/** What a checker has: its own draw of each seating, the certificates (signed when first asked), and whether a round is a duty posting's. */
 function checker(seatings) {
   const by = new Map(seatings.map((s) => [`${s.roundId}:${s.role}`, s]));
+  const byRound = new Map(seatings.map((s) => [s.roundId, s]));
   const certs = new Map();
   return {
     drawOf: (rid, role) => { const s = by.get(`${rid}:${role}`); return s ? { drawn: s.drawn, slots: 7, closeMs: s.closeMs } : null; },
@@ -85,6 +87,7 @@ function checker(seatings) {
       if (!certs.has(k)) { const s = by.get(k); certs.set(k, s && s.seated ? certify(s) : null); }
       return certs.get(k);
     },
+    dutyOf: (rid) => { const s = byRound.get(rid); return !s ? null : s.self ? { ok: false, why: 'its publication carries no duty marker: not a duty posting, so no proof' } : { ok: true, rank: 1 }; },
   };
 }
 
@@ -136,11 +139,11 @@ test('the 10-27 shape: the stopped nodes are proven absent by certificates withi
     const w = presenceWindow(T);
     const seatings = day(entries, d, w);
     const seatedRounds = seatings.filter((s) => s.role === 'settlement' && s.seated).length;
-    const claims = absentFrom({ seatings: proven(seatings), census: chainKeys, window: w });
+    // the proofs stand at every checker that draws the day itself - a seat, a client; every round here is the day's duty grid's
+    const ch = checker(seatings);
+    const claims = absentFrom({ seatings: proven(seatings), census: chainKeys, window: w, dutyOf: ch.dutyOf });
     assert.ok(claims.every((c) => !isLive(c.node)), `day ${d}: no live node is proven absent`);
     assert.ok(claims.every((c) => c.proofs.length === ABSENCE_PROOF_SEATINGS), 'each absence names 3 seatings');
-    // the proofs stand at every checker that draws the day itself - a seat, a client
-    const ch = checker(seatings);
     assert.deepEqual(checkAbsenceProof(claims, { census: chainKeys, window: w, verify, ...ch }), { ok: true }, `day ${d}: the claim stands`);
     facts.push(`day ${d}: census ${entries.length}, seated ${seatedRounds}/96, proven absent ${claims.length}`);
     if (d === 0) assert.ok(seatedRounds < 48, 'the day before the rule seats fewer than half its rounds');
@@ -152,8 +155,39 @@ test('the 10-27 shape: the stopped nodes are proven absent by certificates withi
     entries = withoutAbsent(census, claims);
     T += PRESENCE_WINDOW_MS;
   }
-  console.log(`  FACTS: 28 bonded, 20 stopped; ${facts.join('; ')}`);
+  console.log(`  FACTS: 28 bonded, 20 stopped, duty-only rounds; ${facts.join('; ')}`);
   assert.ok(allOutFrom !== null && allOutFrom <= 3, `every stopped node is out of the census by day 3 (from day ${allOutFrom})`);
+});
+
+// ONLY THE DUTY GRID'S ROUNDS PROVE (kanban #727; the heartbeat helper's open hole: rounds anyone posts add draws). Beside the day's duty
+// grid, a series someone posted themselves - 96 more rounds, on the same census and the same 24 h - adds no proof: the posting node names
+// none of its seatings, a claim that names one is refused by every checker as 'not-duty', and still its certificates keep the nodes
+// they list in.
+test('a self-posted series adds no draws: its seatings are never named, a claim naming one is refused (not-duty), its certificates still keep nodes in', () => {
+  const w = presenceWindow(T0);
+  const seatings = day(census, 0, w, { rounds: 192, self: (i) => i >= 96 });
+  const ch = checker(seatings);
+  const dutyOnly = absentFrom({ seatings: proven(seatings), census: chainKeys, window: w, dutyOf: ch.dutyOf });
+  const anyRound = absentFrom({ seatings: proven(seatings), census: chainKeys, window: w });
+  const selfNamed = anyRound.flatMap((c) => c.proofs).filter((p) => seatings.find((s) => s.roundId === p.roundId).self).length;
+  assert.ok(selfNamed > 0, 'without the rule the self-posted series\' seatings would be named as proofs');
+  assert.ok(dutyOnly.every((c) => c.proofs.every((p) => !seatings.find((s) => s.roundId === p.roundId).self)), 'with it, every proof names a duty round');
+  assert.deepEqual(dutyOnly, absentFrom({ seatings: proven(seatings.filter((s) => !s.self)), census: chainKeys, window: w, dutyOf: ch.dutyOf }), 'the same claim as from the duty grid alone');
+  assert.deepEqual(checkAbsenceProof(dutyOnly, { census: chainKeys, window: w, verify, ...ch }), { ok: true });
+  // a claim naming a self-posted seating: refused, by name, before its certificate is even read
+  const victim = dutyOnly[0];
+  const selfSeating = proven(seatings).find((s) => s.self && s.drawn.includes(victim.node) && !s.present.includes(victim.node));
+  assert.ok(selfSeating, 'the self-posted series drew the stopped node too');
+  const r = checkAbsenceProof([{ node: victim.node, proofs: [{ roundId: selfSeating.roundId, role: selfSeating.role }, ...victim.proofs.slice(1)] }],
+    { census: chainKeys, window: w, verify, ...ch });
+  assert.equal(r.ok, false); assert.equal(r.proof, 'not-duty'); assert.match(r.why, /is no duty posting's: its publication carries no duty marker/);
+  // whether a round is a duty posting's is not known here yet: not yet, not refused for good
+  assert.equal(checkAbsenceProof(dutyOnly, { census: chainKeys, window: w, verify, ...ch, dutyOf: () => null }).notYet, true);
+  // a self-posted seating's certificate lists the stopped node present: it keeps the node in, as any certificate does
+  const listed = { ...selfSeating, present: [...selfSeating.present, victim.node] };
+  const kept = absentFrom({ seatings: [...proven(seatings).filter((s) => s !== selfSeating), listed], census: chainKeys, window: w, dutyOf: ch.dutyOf });
+  assert.ok(!kept.some((c) => c.node === victim.node), 'listed present at a self-posted round: kept');
+  console.log(`  FACTS: a self-posted grid of 96 beside the duty grid: ${selfNamed} of its seatings would have been named as proofs without the rule, 0 with it; claims ${dutyOnly.length} nodes either way`);
 });
 
 test('DoS: a live node flooded at 2 of its seatings stays in; at 3 different closes it is out; never drawn, or present once, stays in', () => {

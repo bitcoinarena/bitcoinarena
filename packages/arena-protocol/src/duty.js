@@ -45,18 +45,23 @@ export async function anchorHeight(slot, { mtpAt, tip, low = 0, slotMs = DUTY_SL
   return lo;
 }
 
-const u32 = (n) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n >>> 0, false); return b; };
+// (dutyU32, not u32: this module joins the client bundle, where another u32 already lives)
+const dutyU32 = (n) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n >>> 0, false); return b; };
 
-/** A node's rank for a slot: H_duty(network_id || slot || node key) - the tag by the slot's hour (tag-switch.js, kanban #525). */
-export function dutyTicket(networkId, slot, nodeKey) {
+/**
+ * A node's rank for a slot: H_duty(network_id || slot || node key) - the tag by the slot's hour (tag-switch.js, kanban #525). `sw`: the
+ * tag switch to read it with - this process's network's unless given (a client names the contract's network's: dutyRoundStands below).
+ */
+export function dutyTicket(networkId, slot, nodeKey, sw = undefined) {
   const w = new Writer(); w.bytes32(networkId); w.u32(slot); w.bytes32(nodeKey);
-  return bytesToBigInt(taggedHash(tagAt('duty', { ms: slot * 3_600_000 }), w.finish()));
+  const tag = sw === undefined ? tagAt('duty', { ms: slot * 3_600_000 }) : tagAt('duty', { ms: slot * 3_600_000 }, sw);
+  return bytesToBigInt(taggedHash(tag, w.finish()));
 }
 
 /** The slot's nodes in duty order (node keys, 32 bytes each; one per key): the first is on duty. */
-export function dutyOrder({ networkId, slot, nodeKeys }) {
+export function dutyOrder({ networkId, slot, nodeKeys, sw = undefined }) {
   const keys = [...new Map((nodeKeys || []).map((k) => [toHex(k), k])).values()];
-  return keys.map((k) => ({ k, t: dutyTicket(networkId, slot, k) })).sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0)).map((x) => x.k);
+  return keys.map((k) => ({ k, t: dutyTicket(networkId, slot, k, sw) })).sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0)).map((x) => x.k);
 }
 
 /** A plan item's 4-byte tag: the first 4 bytes of sha256 of its name ("rps-fed-337ae01a", "updown-fed-...") - fixed by the name. */
@@ -65,7 +70,7 @@ export const itemTag = (name) => sha256(new TextEncoder().encode(String(name))).
 const MAGIC = [0x41, 0x52, 0x4e, 0x44];                   // "ARN" 'D'
 /** The duty marker's payload: "ARN" 'D' || slot (u32) || item tag (4 bytes) - 12 bytes. */
 export function dutyMarkerPayload(slot, itemName) {
-  const p = new Uint8Array(12); p.set(MAGIC, 0); p.set(u32(slot), 4); p.set(itemTag(itemName), 8); return p;
+  const p = new Uint8Array(12); p.set(MAGIC, 0); p.set(dutyU32(slot), 4); p.set(itemTag(itemName), 8); return p;
 }
 /** The output that carries it: zero value, OP_RETURN, one direct push. */
 export function dutyMarkerOutput(slot, itemName) {
@@ -141,7 +146,7 @@ export const DUTY_BACKUP_RANK_CAP = 3;
 const BACKUP_MAGIC = [0x41, 0x52, 0x4e, 0x42];            // "ARN" 'B'
 /** The backup marker's output: "ARN" 'B' || day (u32) || item tag - zero value, OP_RETURN, one direct push. */
 export function backupMarkerOutput(slot, itemName) {
-  const payload = new Uint8Array(12); payload.set(BACKUP_MAGIC, 0); payload.set(u32(slot), 4); payload.set(itemTag(itemName), 8);
+  const payload = new Uint8Array(12); payload.set(BACKUP_MAGIC, 0); payload.set(dutyU32(slot), 4); payload.set(itemTag(itemName), 8);
   const script = new Uint8Array(14); script[0] = OP_RETURN; script[1] = 12; script.set(payload, 2);
   return { value: 0n, script };
 }
@@ -172,4 +177,77 @@ export function playedOfWindow(rows) {
   const out = new Set();
   for (const r of rows) if (r.backup ? !primaryDrawn || r.entries > 0 : !backupTaken || r.entries > 0) out.add(r.id);
   return out;
+}
+
+// ONLY THE DUTY GRIDS' ROUNDS ARE ABSENCE PROOFS (multiplayer_p2p.md §5A.3 "Only the duty postings' rounds prove an absence", protocol
+// 22, kanban #727). A seating or heartbeat certificate proves a node absent only for a round of a DUTY posting of its day: the day's
+// primary grid, its backup grid or an emergency grid - a publication carrying the day marker ("ARN" 'D' or 'B', day, item tag) of one of
+// the protocol's duty items, posted by a node within the first DUTY_PROOF_RANKS of that day's duty order. Anyone can post a series, and
+// anyone can write a marker into an OP_RETURN; what nobody can do on demand is stand in the day's duty order - that is the chain
+// census's rank. A round of any other series (a table someone posted themselves, a test grid) proves nothing. The checker reads the
+// rank over the round's own census as its root commits it: every seat checks that root against its chain, the client against the root,
+// so every checker reads one list. (The duty node reads its own rank over the census at the day's anchor, duty-day.js orderOf; the two
+// differ by at most the bonds confirmed between the anchor and the series' census block. A posting at a rank the proof rule does not
+// take is played as before; its rounds prove nothing, which is all.)
+/** A proof round's creator is within the first 3 of its day's duty order: ranks 1-3 post the primary, 2-3 the backup, 1.. the emergency. */
+export const DUTY_PROOF_RANKS = 3;
+/** The apps a day duty posts (duty-day.js DUTY_APPS): their items are `<app>-day`, their emergency grids' `<app>-day-emergency`. */
+export const DUTY_PROOF_APPS = Object.freeze(['updown', 'rps', 'nextblock']);
+/** At most this many emergency grids of one day and app count (duty-guard.js DUTY_EMERGENCY_MAX posts at most 3). */
+export const DUTY_EMERGENCY_CAP = 3;
+/** The duty items by their marker tag (hex): { app, item, emergency }. */
+export const DUTY_PROOF_ITEMS = Object.freeze(Object.fromEntries(DUTY_PROOF_APPS.flatMap((app) => [
+  [toHex(itemTag(`${app}-day`)), Object.freeze({ app, item: `${app}-day`, emergency: false })],
+  [toHex(itemTag(`${app}-day-emergency`)), Object.freeze({ app, item: `${app}-day-emergency`, emergency: true })]])));
+/**
+ * THE DUTY MARKER A PUBLICATION CARRIES: the first "ARN" 'D' / 'B' marker of a duty item - { slot, tag, kind, app, item, emergency } -
+ * or null (no marker, or none of a duty item; a 'B' marker on an emergency item is none: a backup posts no emergency grid).
+ */
+export function dutyMarkerOf(raw) {
+  for (const m of dayMarkersOf(raw)) {
+    const it = DUTY_PROOF_ITEMS[m.tag];
+    if (!it || (m.kind === 'B' && it.emergency)) continue;
+    return { ...m, app: it.app, item: it.item, emergency: it.emergency };
+  }
+  return null;
+}
+/** One day's postings are keyed by day, item and kind: one primary, one backup, DUTY_EMERGENCY_CAP emergency grids. */
+export const dutyPostingKey = (m) => `${m.slot}:${m.tag}:${m.kind}`;
+/**
+ * THE DAY'S POSTINGS AMONG MARKED TRANSACTIONS IN CHAIN ORDER (`marked`: [{ txid, marker }] by height, then by position in the block -
+ * confirmed only): per day, item and kind the first confirmed transaction, and for an emergency item the first DUTY_EMERGENCY_CAP. The
+ * duty rule reads "posted" the same way (the first confirmed publication is the one reimbursed; a duplicate is the duplicating node's
+ * loss), so a node that posts a second primary of a day adds no proof round. Answers the Set of txids (hex) that count.
+ */
+export function dutyPostingsOf(marked) {
+  const taken = new Map();
+  const out = new Set();
+  for (const { txid, marker } of marked || []) {
+    if (!marker) continue;
+    const k = dutyPostingKey(marker), n = taken.get(k) || 0;
+    if (n >= (marker.emergency ? DUTY_EMERGENCY_CAP : 1)) continue;
+    taken.set(k, n + 1);
+    out.add(String(txid).toLowerCase());
+  }
+  return out;
+}
+/**
+ * DOES THIS ROUND STAND AS A DUTY ROUND: `contract` names its creator and starts in the day the marker's slot posts (targetDay), and
+ * the creator is within the first DUTY_PROOF_RANKS of the day's duty order over `orderKeys` (the node keys of the round's census as its
+ * root commits it), `sw` the network's tag switch. { ok, rank, marker } or { ok: false, why }.
+ */
+export function dutyRoundStands({ contract, marker, orderKeys, sw = undefined }) {
+  if (!marker) return { ok: false, why: 'its publication carries no duty marker: not a duty posting, so no proof' };
+  if (!contract || !(contract.creatorPubkey instanceof Uint8Array)) return { ok: false, why: 'it names no creator, so it is nobody\'s duty posting' };
+  if (!(contract.networkId instanceof Uint8Array) || typeof contract.startTimeMs !== 'bigint') return { ok: false, why: 'it names no network or no start' };
+  const day = targetDay(marker.slot);
+  const start = Number(contract.startTimeMs);
+  if (!(start >= day.startMs && start < day.endMs))
+    return { ok: false, why: `its publication is marked as day ${new Date(day.startMs).toISOString().slice(0, 10)}'s ${marker.item}, and the round starts on ${new Date(start).toISOString().slice(0, 10)}` };
+  const order = dutyOrder({ networkId: contract.networkId, slot: marker.slot, nodeKeys: orderKeys, sw });
+  const creator = toHex(contract.creatorPubkey);
+  const rank = order.findIndex((k) => toHex(k) === creator);
+  if (rank < 0) return { ok: false, why: `its creator ${creator.slice(0, 16)} is not in the round's census, so not in its day's duty order` };
+  if (rank >= DUTY_PROOF_RANKS) return { ok: false, why: `its creator ${creator.slice(0, 16)} is rank ${rank + 1} of its day's duty order; a duty posting is by one of the first ${DUTY_PROOF_RANKS}` };
+  return { ok: true, rank: rank + 1, marker };
 }

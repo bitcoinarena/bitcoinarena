@@ -277,6 +277,9 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     const key = role === 'backup' ? `${game}:backup` : game;
     if (engines.has(key)) return engines.get(key);
     const nid = networkIdHex();
+    // THE ITEM'S NAME IS THE PROTOCOL'S (`<app>-day`, duty.js DUTY_PROOF_ITEMS, kanban #727): only a posting marked with a duty item is an
+    // absence proof's round at the seats and the client. An item named otherwise (ARENA_DUTY_ITEM_<APP>) posts rounds that are played but
+    // prove nothing.
     const e = createDayDuty({ game, role, item: String(env[`ARENA_DUTY_ITEM_${game.toUpperCase()}`] || `${game}-day`), networkId: fromHex(nid),
       postedPrimary: async (slot) => { const p = engines.get(game); return !!p && (p.state().mine || []).some((x) => x.slot === slot && !x.emergency); },
       local: new Set([toHex(seat.nodeKey)]), dir: join(dir, role === 'backup' ? `${game}-backup` : game),
