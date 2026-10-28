@@ -21,7 +21,7 @@ import { deriveCensus } from '../../arena-protocol/src/census.js';
 import { selectCommittee, drawCommittee, slotsForRole, drawAttestors } from '../../arena-protocol/src/sortition.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
-import { merkleBranchOf } from '../../arena-protocol/src/chain.js';
+import { merkleBranchOf, blockHashOf } from '../../arena-protocol/src/chain.js';
 import { networkOf, namesNoDraw, SEATED_GUARDIAN_VERSION } from '../../arena-protocol/src/constants.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { guardianPayoutKeyOf } from '../../arena-protocol/src/guardian-payout.js';
@@ -470,7 +470,11 @@ export class Roster {
     const refusedHere = atBlock && REFUSED_AT_BLOCK.get(atBlock);
     const refused = refusedHere && asRoundsOwn && contract.censusRoot instanceof Uint8Array && refusedHere.get(`${kept}:${toHex(contract.censusRoot)}`);
     if (refused) return refused;
-    const stored = asRoundsOwn ? readKeptCensus(this.round, kept) : null;
+    // KEPT UNDER THE BLOCK AT THE CENSUS HEIGHT (kanban #786, measured 10-28: the test host seats kept the census of the 10-29 postings
+    // derived on the private branch of 10-22; read back after the chain left that branch, it stood for a root the chain no longer gives,
+    // and the series stayed held, written and listed): a census kept before another block took that height is not read back
+    const storeKey = atBlock && atBlock.header instanceof Uint8Array ? `${kept}:${toHex(blockHashOf(atBlock.header))}` : null;
+    const stored = asRoundsOwn && storeKey ? readKeptCensus(this.round, storeKey) : null;
     if (stored && stored.root instanceof Uint8Array && contract.censusRoot instanceof Uint8Array
         && stored.root.length === 32 && stored.root.every((b, i) => b === contract.censusRoot[i])) {
       this.censuses.set(kept, stored);
@@ -519,7 +523,7 @@ export class Roster {
     // still derived when it can be.
     this.censuses.set(kept, census);
     if (this.censuses.size > Roster.CENSUS_KEPT) this.censuses.delete(this.censuses.keys().next().value);
-    keepCensus(this.round, kept, census);
+    if (storeKey) keepCensus(this.round, storeKey, census);
     return census;
   }
 
