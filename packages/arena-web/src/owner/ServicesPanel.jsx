@@ -19,6 +19,9 @@ export const stateOf = (s) => (s.later ? 'later' : s.running === null || s.runni
 export const STATE_WORD = Object.freeze({ up: 'Running', down: 'Needs attention', unknown: 'Unknown', later: 'Left for later' });
 export const needsAttention = (rows) => rows.filter((s) => !s.later && (s.running === false || (s.running && s.probe && !s.probe.ok))).length;
 
+// how often the open card asks the node again (kanban #765)
+export const SERVICES_EVERY_MS = 30000;
+
 export class ServicesPanel extends React.Component {
   constructor(props) {
     super(props);
@@ -26,13 +29,15 @@ export class ServicesPanel extends React.Component {
     this.reload = this.reload.bind(this);
   }
   componentDidMount() { if (!this.state.loaded && this.props.api) this.reload(); }
-  componentWillUnmount() { clearTimeout(this.timer); clearTimeout(this.fixTimer); }
+  componentWillUnmount() { this.gone = true; clearTimeout(this.timer); clearTimeout(this.fixTimer); }
   async reload() {
     let r; try { r = await this.props.api.post('/owner/services', await this.props.api.signed('services')); } catch (e) { r = { ok: false, why: e.message }; }
     this.setState({ loaded: true, answer: r, busy: null });
-    // a fix running (kanban #711: the gateway being set up): asked again every 10 s until it is done
+    // a fix running (kanban #711: the gateway being set up): asked again every 10 s until it is done; otherwise every 30 s, so a
+    // service repaired or restarted outside the page shows here once it is back (kanban #765: LND and the gateway stayed red)
     clearTimeout(this.fixTimer);
-    if (r && r.ok && r.services.some((x) => x.fix && x.fix.busy)) this.fixTimer = setTimeout(this.reload, 10000);
+    if (this.gone) return;
+    this.fixTimer = setTimeout(this.reload, r && r.ok && r.services.some((x) => x.fix && x.fix.busy) ? 10000 : SERVICES_EVERY_MS);
     // the page's own badge for the section (its sidebar dot), told how many need attention
     if (this.props.onAttention && r && r.ok) this.props.onAttention(needsAttention(r.services));
     // and the rows themselves, so the Overview's Custody says what this card says (the 2026.1.9.11 install test: "Custody: Guardian" in
