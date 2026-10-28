@@ -11992,8 +11992,13 @@ const CONNECTION_LOST = new Set(['ECONNRESET', 'EPIPE', 'UND_ERR_SOCKET']);
 /** Did this fetch fail because the connection it rode was already gone? */
 const connectionLost = (e) => !!(e && e.cause && CONNECTION_LOST.has(e.cause.code));
 
+// AND A READ THAT NEVER ENDS ENDS (measured 2026-10-27: two market bots stood still for 7 min, each on one census read of a
+// loaded seat that took the connection and never answered): a read with no signal of its own gives up after READ_MS
+const READ_MS = 30000;
+
 /** `fetcher(url, opts)`, asked once more if a read lost its connection. */
 async function readWithOneRetry(fetcher, url, opts) {
+  if (!(opts && opts.signal)) opts = { ...(opts || {}), signal: AbortSignal.timeout(READ_MS) };
   try {
     return await fetcher(url, opts);
   } catch (e) {
@@ -18628,6 +18633,9 @@ function savedLockExpiration(storage, roundIdHex) {
  * the window's close its time; for 10 min after it "paying out"; from then "not paid yet", and when the lock comes back.
  */
 const PAYOUT_GRACE_MS = 600000;
+// A SEAT THAT NEVER ANSWERS IS A SEAT THAT SAID NOTHING (measured 2026-10-27: a market bot's collect waited 13 min on one
+// seat that took the connection and never answered): the reads collect makes of every seat give up after 15 s
+const SEAT_READ_MS = 15000;
 function pendingWindowLine({ closeMs, provisional = false, nowMs = Date.now(), expiration = null }) {
   if (!closeMs) return '';
   const t = new Date(Number(closeMs)).toISOString().slice(11, 19);
@@ -19968,7 +19976,7 @@ async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch } = {}) 
   const answers = await Promise.all(asked.map(async (node) => {
     const name = String(node).replace(/^https?:\/\//, '').slice(0, 40);
     try {
-      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/stake-lock?round=${toHex(roundId)}&refund=${refund}`);
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/stake-lock?round=${toHex(roundId)}&refund=${refund}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${name} ${r.status}`, got: [] };
       const got = await r.json();
       return { said: `${name} ${got.length}`, got };
@@ -20031,7 +20039,7 @@ async function forfeitOf({ roundId, entryId, nodes, fetcher = fetch, lock = 'sta
   const refused = [];
   for (const node of [...new Set(nodes || [])]) {
     try {
-      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/forfeit?round=${toHex(roundId)}&entry=${entryId}${lock === 'fee' ? '&lock=fee' : ''}`);
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/forfeit?round=${toHex(roundId)}&entry=${entryId}${lock === 'fee' ? '&lock=fee' : ''}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) { refused.push(`${node}: ${r.status} ${(await r.text()).trim()}`); continue; }
       const j = await r.json();
       if (/^[0-9a-f]{128}$/.test(String(j.signature))) return { ok: true, signature: j.signature, contractId: j.contractId, claimPk: j.claimPk, from: node };
@@ -20101,7 +20109,7 @@ async function settlementOf({ roundId, nodes, fetcher = fetch } = {}) {
   // EVERY SIGNER NODE AT ONCE (kanban #593), the first ACCEPTED in the nodes' order
   const answers = await Promise.all([...new Set(nodes || [])].map(async (node) => {
     try {
-      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`);
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${node}: ${r.status}` };
       const j = await r.json();
       if (j.state === 'ACCEPTED' && j.moved && Array.isArray(j.moved.payouts)) return { ok: true, txid: j.txid, moved: j.moved, from: node };
@@ -20171,7 +20179,7 @@ async function federationSettlementsOf({ roundId, nodes, fetcher = fetch } = {})
   const said = [];
   for (const node of [...new Set(nodes || [])]) {
     try {
-      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`);
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) { said.push(`${node}: ${r.status}`); continue; }
       const j = await r.json();
       if (j.state === 'ACCEPTED' && Array.isArray(j.federations) && j.federations.length
