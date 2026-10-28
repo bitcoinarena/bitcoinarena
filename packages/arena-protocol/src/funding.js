@@ -18,7 +18,6 @@
 // its bond; the proposal passes when those nodes are at least 15 % of the active ones. Nothing is paid on a signal.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { NETWORK_ID_TESTNET4 } from './genesis-ids.js';
 import { PROTOCOL_VERSION, speaksVersion, TYPE_FUNDING_PROPOSAL, TYPE_FUNDING_COMMENT, TYPE_FUNDING_SIGNAL, TAG } from './constants.js';
 import { servedNodes } from './served-nodes.js';
 import { decodeVote, voteMessage, CHOICE } from './ballot.js';
@@ -41,13 +40,7 @@ export const FUNDING_SCHEDULES = Object.freeze({
     season: 12960, lockAfterVote: 12960, year: 52560, delay: 2016, trancheEvery: 4320, capWindow: 12960, week: 1008 }),
   short: Object.freeze({ signal: 1, activeWindow: 432, vote: 6, decideDepth: 6,
     season: 24, lockAfterVote: 48, year: 72, delay: 6, trancheEvery: 6, capWindow: 144, week: 108 }),
-  // TESTNET4: A DAY TO SIGNAL AND A DAY TO VOTE (kanban #785, a tester 2026-10-28: "for Testnet you can set the signal and voting
-  // periods to 1 day for all types of proposals"): 144 blocks each; everything else as the spec
-  testnet4: Object.freeze({ signal: 144, activeWindow: 432, vote: 144, decideDepth: 6,
-    season: 12960, lockAfterVote: 12960, year: 52560, delay: 2016, trancheEvery: 4320, capWindow: 12960, week: 1008 }),
 });
-/** The funding schedule a network runs (kanban #785): testnet4's day-long signal and vote, the spec's everywhere else. */
-export const fundingScheduleFor = (networkId) => (networkId && toHex(networkId) === toHex(NETWORK_ID_TESTNET4) ? FUNDING_SCHEDULES.testnet4 : FUNDING_SCHEDULES.spec);
 export const FUNDING_ABSOLUTE_PCT = 20n;        // rule 3: YES of everyone who could vote
 export const FUNDING_CAP_PCT = 10n;             // rule 4: one proposal of the paying federation's reserves
 export const FUNDING_CAP_WINDOW_PCT = 25n;      // rule 4: all payments of a window of the reserves at its start
