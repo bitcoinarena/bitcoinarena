@@ -50,6 +50,9 @@ import { roundResultFrom, roundResultFromReadings, roundResultId, frontName } fr
 import { mediansPrices } from '../../arena-protocol/src/constants.js';
 import { msForTicks } from '../../arena-protocol/src/tick.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { roundEndMs } from '../../arena-protocol/src/first-mark.js';
+import { OBJECTION_WINDOW_MS } from '../../arena-protocol/src/window.js';
+import { CLOSED } from './store.js';
 
 const EVERY = PRICE_SAMPLE_EVERY_MS;
 export const SIGN_SLACK_MS = 15000;
@@ -57,6 +60,8 @@ export const SIGN_SLACK_MS = 15000;
 export const SERVE_AFTER_MS = 2500;
 /** Protocol 5: a seat short of an end's readings asks the committee again at most this often. */
 export const ASK_ENDS_EVERY_MS = 30000;
+/** The held maps' sizes are logged at most this often (kanban #742: the before/after on the live seats). */
+export const HELD_LOG_EVERY_MS = 600000;
 // THE TOLERANCE, 0.05 % (RULED 2026-10-14 ~21:50Z, interim D): at 0.5 % a seat signed any proposed price
 // within about +-$408 of its own reading - more than BTC moves in a run - so the seat that proposed a sample chose BULLS, BEARS
 // or FLAT (measured on rounds 6b51be20 / a45f2ae5: both ends the 15:36 close, $81,766.45, while the run traded $81,713-81,838).
@@ -115,8 +120,8 @@ export class PriceFeed {
    * the feed. `readPrice()`: cents, the seat's own read. `peersFor(roundIdBytes)`: the other seats' base URLs.
    */
   constructor(round, { priceRound = () => false, readPrice = () => coinbaseReading(), peersFor = () => [], fetcher = (u, o) => fetch(u, o),
-    now = () => Date.now(), tolerance = DEFAULT_TOLERANCE } = {}) {
-    Object.assign(this, { round, priceRound, readPrice, peersFor, fetcher, now, tolerance });
+    now = () => Date.now(), tolerance = DEFAULT_TOLERANCE, log = (line) => console.log(line) } = {}) {
+    Object.assign(this, { round, priceRound, readPrice, peersFor, fetcher, now, tolerance, log });
     this.readings = new Map();   // grid ms -> cents, this seat's own
     this.samples = new Map();    // round hex -> Map(k -> { tick, priceCents, sigs })
     this.tapes = new Map();      // round hex -> { tick, prices, sigs }
@@ -127,6 +132,9 @@ export class PriceFeed {
     this.mine = new Map();       // `${round}:${k}` / `${round}:tape` -> the reading this seat signed (one each)
     this.built = new Map();      // `${round}:${k}` -> the sample made of the readings held (dropped when one more comes)
     this.endsAsked = new Map();  // round hex -> when this seat last asked the committee for the ends' readings
+    // every map above but `readings` is let go of a round once it is finished (tidy, kanban #742)
+    this.evicted = 0;            // rounds let go of since the last held line
+    this.heldLoggedAt = null;
     // the rounds' ENDS (sample 0 and the closing sample), kept across restarts in the seat's database
     this.ends = null;
     try {
@@ -407,6 +415,62 @@ export class PriceFeed {
       if (!(m && m.has(k)) && toHex(contract.nodes[k % n]) === me) out.push([k, await this.leadSample(r.roundId, k).catch((e) => refuse(e.message))]);
     }
     return out;
+  }
+
+  /**
+   * WHEN A ROUND IS FINISHED FOR THE FEED (kanban #742: every seat's heap reached 1,024 MB about hourly - the per-round maps
+   * here kept every price round's samples, readings and signatures forever). Closed on this seat, past its end, and past its
+   * objection window after both: max(closed, end) + W, as transcript-prune.js counts a round's close and its window
+   * (end: first-mark.js roundEndMs, the end the close sweep closes it at; W: the contract's objectionWindowMs). By then no run
+   * plays (a closed round takes no entry and beat leads nothing in it), no sample or reading can be signed (each only within
+   * SIGN_SLACK_MS of a moment before the end), and what is still read of it - GET /round-result and GET /price-samples?ks= of
+   * its two ends, asked by clients, markets and seats short of an end - comes from the database (price_ends), which #held and
+   * #heardAt read back. A round no longer held at all is finished too: every read of it refuses.
+   */
+  #finished(rh, now) {
+    let row;
+    try { row = this.round.get(fromHex(rh)); } catch { return false; }
+    if (!row) return true;
+    if (row.state !== CLOSED || row.closed_ms === null || row.closed_ms === undefined) return false;
+    let contract; try { contract = decodeRoundContract(new Uint8Array(row.contract)); } catch { return false; }
+    let end = 0; try { end = Number(roundEndMs(contract)); } catch { end = 0; }
+    const w = contract.objectionWindowMs !== undefined ? Number(contract.objectionWindowMs) : OBJECTION_WINDOW_MS;
+    return now >= Math.max(Number(row.closed_ms), end) + w;
+  }
+
+  /** The sizes held now: per map, the rounds in it (and the entries inside, for the maps of maps). */
+  heldSizes() {
+    const inner = (m) => { let n = 0; for (const x of m.values()) n += x.size; return n; };
+    return { samples: this.samples.size, sampleEntries: inner(this.samples), tapes: this.tapes.size, signed: this.signed.size,
+      heard: this.heard.size, heardSamples: inner(this.heard), heardTapes: this.heardTapes.size, mine: this.mine.size,
+      built: this.built.size, endsAsked: this.endsAsked.size };
+  }
+
+  /**
+   * LET GO OF THE FINISHED ROUNDS (kanban #742): every entry of a round past #finished leaves every per-round map - samples,
+   * tapes, signed, heard, heardTapes, mine, built, endsAsked. Without a database the ends live in memory only, so nothing is let
+   * go of. A read after that (an end asked again) is answered from the database and held again until the next tidy. Logs the
+   * sizes at most every HELD_LOG_EVERY_MS. Answers the rounds let go of.
+   */
+  tidy() {
+    const now = this.now();
+    const gone = new Set();
+    if (this.ends) {
+      const rounds = new Set();
+      for (const m of [this.samples, this.tapes, this.heard, this.heardTapes, this.endsAsked]) for (const rh of m.keys()) rounds.add(rh);
+      for (const m of [this.signed, this.mine, this.built]) for (const key of m.keys()) rounds.add(key.slice(0, 64));
+      for (const rh of rounds) if (this.#finished(rh, now)) gone.add(rh);
+      for (const m of [this.samples, this.tapes, this.heard, this.heardTapes, this.endsAsked]) for (const rh of gone) m.delete(rh);
+      if (gone.size) for (const m of [this.signed, this.mine, this.built]) for (const key of m.keys()) if (gone.has(key.slice(0, 64))) m.delete(key);
+      this.evicted += gone.size;
+    }
+    if (this.heldLoggedAt === null || now - this.heldLoggedAt >= HELD_LOG_EVERY_MS) {
+      const s = this.heldSizes();
+      this.log(`[prices] held: samples ${s.samples} (${s.sampleEntries}), tapes ${s.tapes}, signed ${s.signed}, heard ${s.heard} (${s.heardSamples}), `
+        + `heardTapes ${s.heardTapes}, mine ${s.mine}, built ${s.built}, endsAsked ${s.endsAsked}; ${this.evicted} finished round(s) let go of since the last line`);
+      this.heldLoggedAt = now; this.evicted = 0;
+    }
+    return [...gone];
   }
 
   // ------------------------------------------------------------------------------------------------------------------------

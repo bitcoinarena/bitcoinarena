@@ -2171,6 +2171,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     };
     schedulePrices();
   }
+  // THE FEED LETS GO OF ITS FINISHED ROUNDS (kanban #742): looked at once a minute, on every seat - a seat without the feed
+  // still holds what the committee posts to it - and the sizes held logged at most every 10 minutes (price-feed.js tidy)
+  const priceTidy = setInterval(() => { try { prices.tidy(); } catch (e) { console.error(`[prices] tidy: ${e.message}`); } }, 60000);
+  if (priceTidy.unref) priceTidy.unref();
   // NOBODY IS CONFLICTED IN A ROUND (§5A.13, RULED 2026-10-14 ~20:01Z): a player declares no operator, so no
   // committee node is left out of signing, settling or the fee share by one, and no round is voided for it. An entry an older page
   // made may still carry an operator; it decodes and is ignored.
@@ -10261,6 +10265,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (marketsTimer) clearInterval(marketsTimer);
         if (orderBatchTimeout) { clearTimeout(orderBatchTimeout); orderBatchTimeout = null; }
         if (priceTimeout) { clearTimeout(priceTimeout); priceTimeout = null; }
+        clearInterval(priceTidy);
         clearTimeout(attestedBoot);
         signer.close().catch(() => {});
         clearInterval(autoUpdateTimer);
