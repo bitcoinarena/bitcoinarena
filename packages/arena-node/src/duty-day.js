@@ -323,8 +323,10 @@ export function createDayDuty(o) {
       const inFlight = ks.some((k) => k.emergency && k.verdict && k.verdict.state === 'pending')
         || foreign.some((m) => m.tag === emergencyTag && (m.height === null || idx.tip - m.height < 15));
       const postedAny = ks.length > 0 || foreign.length > 0;
+      // CONFIRMED ROUNDS OF THE DAY (kanban #775): one of this node's postings in a block and not dead, or rounds of it the seats list
+      const confirmedAny = verdict.state === 'drawable' || ks.some((k) => guard.confirmedPosting(k.verdict)) || drawnNow.of > 0;
       const pending = ks.filter((k) => k.verdict && k.verdict.state === 'pending').map((k) => Number(k.committeeMs ?? (day.startMs - DUTY_COMMITTEE_LEAD_MS)));
-      const due = backup ? { due: false } : guard.emergencyDue({ nowMs, day, verdict, emergencies, inFlight, postedAny, dutyOverMs: guard.dayTimeline(slot, { committeeLeadMs, cap: rankCap }).postByMs + 3600000, drawableByMs,
+      const due = backup ? { due: false } : guard.emergencyDue({ nowMs, day, verdict, emergencies, inFlight, postedAny, dutyOverMs: guard.dayTimeline(slot, { committeeLeadMs, cap: rankCap }).postByMs + 3600000, drawableByMs, confirmedAny,
         pendingCommitteeMs: pending.length ? Math.max(...pending) : foreign.some((m) => m.tag === tag) ? day.startMs - DUTY_COMMITTEE_LEAD_MS : null });
       let emergency = null;
       if (due.due) {
