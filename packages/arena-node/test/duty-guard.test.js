@@ -9,7 +9,7 @@ import { NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import {
   catalogOf, hostsOf, pickNewestVersion, pinVerdict, pickCore, dutyFieldsOf, headerHashes, chainAgreement, postingVerdict, dayVerdict,
-  emergencyDue, emergencyPlan, dayDueCapped, dayTimeline, drawCount, statusLine, dayShape, DUTY_DAY_COMMITTEE_LEAD_MS, DUTY_DRAWABLE_BY_MS,
+  emergencyDue, emergencyPlan, confirmedPosting, DUTY_CONFIRMED_BY_MS, dayDueCapped, dayTimeline, drawCount, statusLine, dayShape, DUTY_DAY_COMMITTEE_LEAD_MS, DUTY_DRAWABLE_BY_MS,
 } from '../src/duty-guard.js';
 
 const H = 3600000;
@@ -187,6 +187,18 @@ test('the day: drawable when one posting is, dead when all are; an emergency gri
   assert.equal(emergencyDue({ nowMs: 97 * H, day, verdict: { state: 'pending' }, pendingCommitteeMs: 94 * H }).due, false);
   assert.equal(emergencyDue({ nowMs: 98 * H, day, verdict: { state: 'pending' }, pendingCommitteeMs: 94 * H }).due, true);
   assert.equal(emergencyDue({ nowMs: 96 * H, day, verdict: { state: 'pending' }, pendingCommitteeMs: 88 * H }).due, true);
+  // NO CONFIRMED ROUNDS BY 16:00 UTC THE DAY BEFORE (kanban #775): due at 8 h before the day, even with another node's marker pending to 22:00Z
+  assert.equal(emergencyDue({ nowMs: 92 * H - 1, day, verdict: { state: 'pending' }, pendingCommitteeMs: 94 * H, confirmedAny: false }).due, false);
+  const c = emergencyDue({ nowMs: 92 * H, day, verdict: { state: 'pending' }, pendingCommitteeMs: 94 * H, confirmedAny: false });
+  assert.equal(c.due, true);
+  assert.match(c.why, /no confirmed rounds of it by/);
+  assert.equal(emergencyDue({ nowMs: 92 * H, day, verdict: { state: 'pending' }, pendingCommitteeMs: 94 * H, confirmedAny: true }).due, false);
+  assert.equal(emergencyDue({ nowMs: 92 * H, day, verdict: { state: 'drawable' }, confirmedAny: false }).due, false);
+  assert.equal(DUTY_CONFIRMED_BY_MS, 8 * H);
+  assert.equal(confirmedPosting({ state: 'pending', stage: 'beacon' }), true);
+  assert.equal(confirmedPosting({ state: 'pending', stage: 'unconfirmed' }), false);
+  assert.equal(confirmedPosting({ state: 'dead', stage: 'census' }), false);
+  assert.equal(confirmedPosting({ state: 'pending', stage: 'foreign' }), false);
 });
 
 test('an emergency grid: committee 2 h past the median, first start 140 min after it, on the period grid, to the day\'s end', () => {

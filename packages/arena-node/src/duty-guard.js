@@ -33,6 +33,12 @@ export const DUTY_APP_NAMES = Object.freeze({ updown: 'btc-updown-15m', rps: 'ro
 export const DUTY_DAY_COMMITTEE_LEAD_MS = 12 * HOUR;
 export const DUTY_DAY_RANK_CAP = 2;
 export const DUTY_DRAWABLE_BY_MS = 4 * HOUR;
+// NO CONFIRMED ROUNDS OF A DAY 8 H BEFORE IT STARTS (16:00 UTC the day before) AND ITS EMERGENCY GRID IS POSTED (kanban #775, a tester
+// 2026-10-28 ~14:55Z: "By 12:00 of the previous day the rounds must be posted. If there are no confirmed rounds by 16:00 the emergency round
+// post takes place"; the 10-29 Up/Down and RPS days were posted on a branch the chain left, and the seats waited for them until 22:00Z)
+export const DUTY_CONFIRMED_BY_MS = 8 * HOUR;
+/** A posting whose publication is in a block and that is not dead: the day has confirmed rounds (kanban #775). */
+export const confirmedPosting = (v) => !!v && v.state !== 'dead' && ['published', 'beacon', 'seats', 'drawn'].includes(v.stage);
 export const DUTY_EMERGENCY_COMMITTEE_LEAD_MS = 2 * HOUR;
 export const DUTY_SEED_WAIT_MS = 140 * 60000;
 export const DUTY_BEACON_DEPTH = 6;
@@ -220,7 +226,7 @@ export function dayVerdict(verdicts) {
  * that committee time, if that is later.
  */
 export function emergencyDue({ nowMs, day, verdict, emergencies = 0, inFlight = false, postedAny = true, dutyOverMs = null,
-  drawableByMs = DUTY_DRAWABLE_BY_MS, pendingCommitteeMs = null, max = DUTY_EMERGENCY_MAX }) {
+  drawableByMs = DUTY_DRAWABLE_BY_MS, pendingCommitteeMs = null, max = DUTY_EMERGENCY_MAX, confirmedAny = true, confirmedByMs = DUTY_CONFIRMED_BY_MS }) {
   // A POSTING STILL ON ITS WAY GETS ITS BEACON 6 DEEP AND ITS DRAW FIRST (DUTY_DRAW_ALLOW_MS after its committee time): a day posted at the
   // old 6 h lead is drawn ~21:00Z, after the 20:00Z mark - an emergency grid then would run beside it, not instead of it
   const byMs = Math.max(day.startMs - drawableByMs, pendingCommitteeMs === null ? -Infinity : pendingCommitteeMs + DUTY_DRAW_ALLOW_MS);
@@ -230,6 +236,9 @@ export function emergencyDue({ nowMs, day, verdict, emergencies = 0, inFlight = 
   if (verdict.state === 'drawable') return { due: false };
   if (verdict.state === 'dead') return { due: true, why: `every posting is dead: ${verdict.why}` };
   if (!postedAny && dutyOverMs !== null && nowMs >= dutyOverMs) return { due: true, why: 'nothing was posted for it in the duty\'s hours' };
+  // AND NO CONFIRMED ROUNDS 8 H BEFORE IT (16:00 UTC the day before, kanban #775): a posting still unconfirmed, or another node's marker whose
+  // rounds no seat lists, does not hold the emergency grid back any longer
+  if (!confirmedAny && nowMs >= day.startMs - confirmedByMs) return { due: true, why: `no confirmed rounds of it by ${new Date(day.startMs - confirmedByMs).toISOString()}` };
   if (nowMs >= byMs) return { due: true, why: `not drawable by ${new Date(byMs).toISOString()}: ${verdict.why || verdict.state}` };
   return { due: false };
 }

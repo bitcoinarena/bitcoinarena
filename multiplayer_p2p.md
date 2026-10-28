@@ -2766,7 +2766,8 @@ on duty         the census at day d's anchor (the first block whose median time 
                 H(duty tag || network_id || d || node key) - the same list on every node; GET /duty on any node shows its top 3
 primary         rank 1 posts from 00:00 UTC of day d; rank 2 from 01:00 and rank 3 from 02:00 if the day's marker is still not seen
                 (no later rank: nodes that post nothing cannot push it towards the evening). Marker OP_RETURN "ARN" 'D' d item_tag.
-                Census 6 below the tip, committee time 12 h before day d + 1, the newest app version that census can draw
+                Census 6 below the tip, committee time 12 h before day d + 1, the newest app version that census can draw. A
+                day's rounds are posted by 12:00 UTC of day d, its committee time (kanban #775)
 backup          the node after rank 1 in the same order posts a second grid of the same day: rank 2 from 02:00 UTC, rank 3 from
                 03:00 if rank 2 has not, never the node that posted the primary. Its own coins and publication, a census 12 below
                 the tip (taken two hours later, so another block), committee time 9 h before day d + 1. Marker "ARN" 'B' d item_tag
@@ -2782,8 +2783,10 @@ proofs          only these postings' rounds - the primary, the backup, the emerg
 missed          a primary nobody posts falls to rank 2 and 3 as above; a backup nobody posts leaves the day to its primary
 dead            a posting whose census block the chain left, whose census the seats' chains (GET /headers) do not hold, whose
                 publication a reorg returned to the mempool and its beacon then passed, or whose coins a mined transaction spends
-                (conflicted) is dead at once. A day whose postings are all dead, or that is not drawable on the seats for the newest
-                version 4 h before it starts (or while it runs), gets an emergency grid of what is left of it ("ARN" 'D' with the
+                (conflicted) is dead at once. A day whose postings are all dead, that has no confirmed rounds by 16:00 UTC of day d
+                (no posting of its own in a block and not dead, and no rounds of it listed by the seats; kanban #775), or that is not
+                drawable on the seats for the newest version 4 h before it starts (or while it runs), gets an emergency grid of what is
+                left of it ("ARN" 'D' with the
                 item "<app>-day-emergency"), at most 3, from the day's duty node first and the next ranks 20 min apart. An
                 unconfirmed posting has its fee raised once, 3 h before its committee time
 paying          the node pays from its own Bitcoin Core wallet, confirmed coins first, at 0.1 sat/vB (raised to at most 1). A node
