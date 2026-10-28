@@ -38,11 +38,16 @@
 //                         machine alone makes them one; the log says to stop all n and repair them together
 // The nodes of one machine are separate processes: each restored guardian registers in <RAM base>/recover/<federation>/, waits up to
 // `gatherMs` for the others, and the first to take the decide lock decides for all registered and writes the verdict; each reads its own.
+// A VERDICT BELONGS TO ONE CRASH (rehearsal 2026-10-28, phase C): a guardian restored again minutes after its group's verdict, while that
+// group runs, is not part of that group. Only the guardians that are down and restoring NOW form a group. A late guardian joins the old
+// verdict only when its database is the group's moment (the same set, or the repaired group's session and items). Otherwise, when its
+// peers run (one announced on this machine since the verdict with a live fedimintd, or answering its API), it is decided afresh among
+// the guardians restoring now; alone, that is the lone path. When the whole old group restores again (a second crash), it is decided afresh.
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync, renameSync, realpathSync, accessSync, constants } from 'node:fs';
 import { join, dirname, delimiter } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { stageCopy } from './guardian-ram.js';
+import { stageCopy, ramMembers } from './guardian-ram.js';
 
 /** The forkers a federation of `n` tolerates: f = floor((n-1)/3). */
 export const faultsTolerated = (n) => Math.floor((Number(n) - 1) / 3);
@@ -192,7 +197,8 @@ const writeJson = (f, v) => { const t = `${f}.${process.pid}.tmp`; writeFileSync
  * its federation to pass its session. `now`/`sleep` are the tests' clock.
  */
 export async function ramRecover({ base, dataDir, ram, restored, db = null, sessionCountOf = async () => { throw new Error('no peer asked'); },
-  gatherMs = 120000, verdictWaitMs = 900000, loneWaitMs = 1200000, pollMs = 1000, now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), log = () => {} }) {
+  gatherMs = 120000, verdictWaitMs = 900000, loneWaitMs = 1200000, pollMs = 1000, now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), log = () => {},
+  alive = pidAlive }) {
   if (!restored || !restored.restored) return { start: true, action: 'none', why: 'not restored from a snapshot' };
   if (restored.clean) return { start: true, action: 'clean', why: `restored from its clean stop (${restored.snap})` };
   const fed = federationOf(dataDir);
@@ -218,7 +224,9 @@ export async function ramRecover({ base, dataDir, ram, restored, db = null, sess
     }
     if (decider) {
       writeJson(join(lock, 'owner'), { pid: process.pid, at: now() });
-      try { verdict = await decide({ dir, fed, me, pending: pending(), verdictFile, verdict, fresh, db, now, log }); } finally { rmSync(lock, { recursive: true, force: true }); }
+      const old = verdict;
+      const peersRunning = (downIds) => peersUp({ base, fed, downIds, since: old && old.at, sessionCountOf, alive, now });
+      try { verdict = await decide({ dir, fed, me, pending: pending(), verdictFile, verdict, fresh, db, now, log, peersRunning }); } finally { rmSync(lock, { recursive: true, force: true }); }
     } else {
       while (!mine(verdict) && now() - me.at < gatherMs + verdictWaitMs) { await sleep(pollMs); verdict = readJson(verdictFile); }
       if (!mine(verdict)) return { start: false, action: 'refuse', why: `REFUSED: no verdict for guardian ${fed.id} in ${Math.round((gatherMs + verdictWaitMs) / 1000)} s (the deciding node stopped?) - start the node again` };
@@ -234,25 +242,64 @@ export async function ramRecover({ base, dataDir, ram, restored, db = null, sess
   return { start: true, action: 'lone-timeout', why: `no peer past session ${my.finished} in ${Math.round(loneWaitMs / 60000)} min (peers at ${w.seen ?? 'no answer'}): started anyway, as before - it may fork in that session, which the federation tolerates for up to ${faultsTolerated(fed.n)} guardians` };
 }
 
+const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+
+/**
+ * WHETHER A GUARDIAN'S PEERS RUN NOW, from facts only (no timer): a guardian of the same federation on this machine announced since
+ * `since` with a live fedimintd (guardian-ram.js ramAnnounce, every minute while it runs), or any peer not in `downIds` answering its
+ * session count over its API.
+ */
+async function peersUp({ base, fed, downIds, since, sessionCountOf, alive, now }) {
+  const down = new Set(downIds);
+  for (const m of ramMembers(base, { nowMs: now() })) {
+    if (!m.pid || !(m.at >= (since || 0)) || !alive(m.pid)) continue;
+    const f = federationOf(m.dataDir);
+    if (f && f.fed === fed.fed && !down.has(f.id)) return true;
+  }
+  const asked = await Promise.allSettled(fed.peers.filter((p) => !down.has(p.id)).map((p) => sessionCountOf(p)));
+  return asked.some((a) => a.status === 'fulfilled' && Number.isInteger(a.value));
+}
+
+/** A group decided afresh, repaired when that is the verdict. Answers { d, entries } (the verdict's member entries). */
+async function decideNow(fed, members, db, now, log) {
+  const needFacts = !(members.length >= fed.n && members.every((m) => m.snap && m.snap === members[0].snap));
+  const facts = [];
+  for (const m of members) facts.push(needFacts && m.finished === undefined ? await factsOf(db, m) : m);
+  for (const f of facts) if (f.readError) log(`[guardian-recover] guardian ${f.id}: database not read: ${f.readError}`);
+  let d = decideGroup({ n: fed.n, members: facts });
+  if (d.action === 'repair') {
+    try { await repairAll(db, facts, { nowMs: now(), log }); } catch (e) { d = { action: 'refuse', why: `REFUSED: the repair failed (${e.message}) - none started; each database before it is in ram-snaps/pre-repair-*` }; }
+  }
+  return { d, entries: facts.map((f) => ({ id: f.id, at: f.at, action: d.action, why: d.why, finished: Number.isInteger(f.finished) ? f.finished : null })) };
+}
+
 /** The decider: the registered members' facts read, the group decided (and repaired), the verdict written for every member. */
-async function decide({ dir, fed, me, pending, verdictFile, verdict: old, fresh, db, now, log }) {
+async function decide({ dir, fed, pending, verdictFile, verdict: old, fresh, db, now, log, peersRunning = async () => false }) {
   const members = pending.filter((m) => now() - m.at < 2 * 3600000).sort((a, b) => a.id - b.id);
+  const ids = members.map((m) => m.id);
   let out;
-  // LATECOMERS to a verdict already given in this boot (their nodes started after the others had been decided): each judged against it
-  if (fresh(old) && old.fed === fed.fed) {
+  // THE WHOLE OLD GROUP RESTORING AGAIN (a second crash of all of it): that verdict is over, they are one group of now
+  const again = fresh(old) && old.fed === fed.fed && old.members.every((x) => members.some((m) => m.id === x.id && m.at !== x.at));
+  // LATECOMERS to a verdict already given (their nodes started after the others had been decided): each judged against it - and one whose
+  // database is not that group's moment while its peers run is not of that group: decided afresh with the guardians restoring now
+  if (fresh(old) && old.fed === fed.fed && !again) {
     out = old;
-    for (const m of members) if (!out.members.some((x) => x.id === m.id && x.at === m.at)) out = await latecomer({ old: out, me: m, db, now, log });
-  } else {
-    const needFacts = !(members.length >= fed.n && members.every((m) => m.snap && m.snap === members[0].snap));
-    const facts = [];
-    for (const m of members) facts.push(needFacts ? await factsOf(db, m) : m);
-    for (const f of facts) if (f.readError) log(`[guardian-recover] guardian ${f.id}: database not read: ${f.readError}`);
-    let d = decideGroup({ n: fed.n, members: facts });
-    if (d.action === 'repair') {
-      try { await repairAll(db, facts, { nowMs: now(), log }); } catch (e) { d = { action: 'refuse', why: `REFUSED: the repair failed (${e.message}) - none started; each database before it is in ram-snaps/pre-repair-*` }; }
+    const later = [];
+    let running = null;
+    for (const m of members) {
+      if (out.members.some((x) => x.id === m.id && x.at === m.at)) continue;
+      const r = await latecomer({ old: out, me: m, db, now, log });
+      if (!r.ofGroup && (running ??= await peersRunning(ids))) later.push(r.facts);
+      else out = r.out;
     }
-    out = { at: now(), fed: fed.fed, n: fed.n, action: d.action, why: d.why, set: d.set || null, finished: d.finished ?? null, digest: d.digest || null,
-      members: facts.map((f) => ({ id: f.id, at: f.at, action: d.action, why: d.why, finished: Number.isInteger(f.finished) ? f.finished : null })) };
+    if (later.length) {
+      const { d, entries } = await decideNow(fed, later, db, now, log);
+      log(`[guardian-recover] guardian${later.length > 1 ? 's' : ''} ${later.map((m) => m.id).join(', ')} restored while ${later.length > 1 ? 'their' : 'its'} peers run: not of the group decided at ${new Date(old.at).toISOString()} (${old.action}) - decided afresh: ${d.action}`);
+      out = { ...out, members: [...out.members.filter((x) => !later.some((m) => m.id === x.id)), ...entries] };
+    }
+  } else {
+    const { d, entries } = await decideNow(fed, members, db, now, log);
+    out = { at: now(), fed: fed.fed, n: fed.n, action: d.action, why: d.why, set: d.set || null, finished: d.finished ?? null, digest: d.digest || null, members: entries };
   }
   writeJson(verdictFile, out);
   for (const m of members) rmSync(join(dir, `peer-${m.id}.json`), { force: true });
@@ -260,19 +307,24 @@ async function decide({ dir, fed, me, pending, verdictFile, verdict: old, fresh,
   return out;
 }
 
-/** A guardian decided after its group: the same repair when its state is the group's, the same start when it is of the same set, else lone. */
+/**
+ * A guardian decided after its group: the same repair when its state is the group's, the same start when it is of the same set, refused
+ * with a refused group, lone after a lone one - all `ofGroup` (the group's verdict holds for it). Its database at another moment than a
+ * consistent or repaired group's: not `ofGroup`, refused or lone only while its peers do not run. Answers { out, ofGroup, facts }.
+ */
 async function latecomer({ old, me, db, now, log }) {
   const add = (action, why, finished = null) => ({ ...old, members: [...old.members.filter((x) => x.id !== me.id), { id: me.id, at: me.at, action, why, finished }] });
-  if (old.action === 'consistent' && me.snap === old.set) return add('consistent', `restored from the same snapshot set as its group (${old.set})`);
+  if (old.action === 'consistent' && me.snap === old.set) return { ofGroup: true, facts: me, out: add('consistent', `restored from the same snapshot set as its group (${old.set})`) };
   const f = await factsOf(db, me);
   if (old.action === 'repair') {
     if (Number.isInteger(f.finished) && f.finished === old.finished && digestOf(f.accepted) === old.digest) {
-      try { await repairAll(db, [f], { nowMs: now(), log }); return add('repair', `its group was repaired; its session ${f.finished} and accepted items are the group's (${old.digest}): repaired the same way`); } catch (e) { return add('refuse', `REFUSED: the repair failed (${e.message})`); }
+      try { await repairAll(db, [f], { nowMs: now(), log }); return { ofGroup: true, facts: f, out: add('repair', `its group was repaired; its session ${f.finished} and accepted items are the group's (${old.digest}): repaired the same way`) }; } catch (e) { return { ofGroup: true, facts: f, out: add('refuse', `REFUSED: the repair failed (${e.message})`) }; }
     }
-    return add('refuse', `REFUSED: its group was repaired (session ${old.finished}, items ${old.digest}), but this guardian is at ${f.finished ?? '?'} with items ${Array.isArray(f.accepted) ? digestOf(f.accepted) : '?'} - repair it by hand`);
+    return { ofGroup: false, facts: f, out: add('refuse', `REFUSED: its group was repaired (session ${old.finished}, items ${old.digest}), but this guardian is at ${f.finished ?? '?'} with items ${Array.isArray(f.accepted) ? digestOf(f.accepted) : '?'} - repair it by hand`) };
   }
-  if (old.action === 'refuse') return add('refuse', `REFUSED: its group was refused (${old.why})`);
-  return add('lone', `restored after its group was decided: waits until its peers have closed the session it was in`, Number.isInteger(f.finished) ? f.finished : null);
+  if (old.action === 'refuse') return { ofGroup: true, facts: f, out: add('refuse', `REFUSED: its group was refused (${old.why})`) };
+  const out = add('lone', `restored after its group was decided: waits until its peers have closed the session it was in`, Number.isInteger(f.finished) ? f.finished : null);
+  return { ofGroup: old.action !== 'consistent', facts: f, out };
 }
 
 export { digestOf };

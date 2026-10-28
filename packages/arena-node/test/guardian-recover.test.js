@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { decideGroup, faultsTolerated, bigSize, fedimintDb, ramRecover, federationOf, loneWait, digestOf } from '../src/guardian-recover.js';
+import { ramAnnounce } from '../src/guardian-ram.js';
 
 const ITEMS = Array.from({ length: 28 }, (_, i) => `01${i.toString(16).padStart(2, '0')} 00aa${i}`);
 
@@ -180,4 +181,55 @@ test('a latecomer to a repaired group: repaired alike when its state is the grou
     const off = await ramRecover({ base: fx2.base, dataDir: g.dataDir, ram: g.ram, restored: { ...g.restored, snap: 'snap-later2' }, db: fx2.db, ...fast, gatherMs: 50 });
     assert.equal(off.start, false); assert.match(off.why, /repair it by hand/);
   } finally { fx2.done(); }
+});
+
+// THE REHEARSAL OF 2026-10-28 (phase B then C): all 7 restored from different moments and repaired; minutes later only guardian 2 is
+// killed and restored, its RAM wiped, the other 6 running on. It is not part of B's group: it takes the lone path, nothing deleted.
+test('B then C: a guardian restored alone minutes after its group\'s repair, its peers running, takes the lone path', async () => {
+  const fx = fixture(7, [0, 1, 2, 3, 4, 5, 6], { finished: () => 7, accepted: () => [] });
+  try {
+    const b = await all(fx);
+    assert.ok(b.every((o) => o.start && o.action === 'repair'), 'B: all 7 repaired');
+    // the six run on: each node announces its live fedimintd every minute (guardian-ram.js ramTick)
+    for (const g of fx.guardians) if (g.id !== 2) ramAnnounce(fx.base, `${g.id}-guardian`, { dataDir: g.dataDir, ram: g.ram, pid: process.pid });
+    const g = fx.guardians[2];
+    fx.state[join(g.ram, 'database')] = { finished: 10, accepted: ITEMS.slice(0, 3), units: 77, dropped: [] };
+    let asked = 0;
+    const sessionCountOf = async () => (++asked > 2 ? 11 : 10);
+    const lines = [];
+    const c = await ramRecover({ base: fx.base, dataDir: g.dataDir, ram: g.ram, restored: { ...g.restored, snap: 'snap-20261028T081930' }, db: fx.db, sessionCountOf,
+      ...fast, gatherMs: 50, loneWaitMs: 5000, log: (l) => lines.push(l) });
+    assert.deepEqual([c.start, c.action], [true, 'lone'], c.why);
+    assert.match(c.why, /session 11, past session 10/);
+    assert.deepEqual(fx.state[join(g.ram, 'database')].dropped, [], 'nothing deleted: not repaired with B\'s group');
+    assert.ok(lines.some((l) => /guardian 2 restored while its peers run: not of the group decided .* \(repair\) - decided afresh: lone/.test(l)), lines.join('\n'));
+    assert.ok(!lines.some((l) => /REFUSED/.test(l)));
+  } finally { fx.done(); }
+});
+
+test('B then C with no announcement on this machine: peers answering their API run too; none running and the old verdict holds', async () => {
+  const fx = fixture(7, [0, 1, 2, 3, 4, 5, 6], { finished: () => 7, accepted: () => [] });
+  try {
+    await all(fx);
+    const g = fx.guardians[2];
+    fx.state[join(g.ram, 'database')] = { finished: 10, accepted: ITEMS.slice(0, 3), units: 77, dropped: [] };
+    const c = await ramRecover({ base: fx.base, dataDir: g.dataDir, ram: g.ram, restored: { ...g.restored, snap: 'snap-c' }, db: fx.db, sessionCountOf: async () => 11, ...fast, gatherMs: 50 });
+    assert.deepEqual([c.start, c.action], [true, 'lone']);
+    fx.state[join(g.ram, 'database')] = { finished: 10, accepted: ITEMS.slice(0, 3), units: 77, dropped: [] };
+    // an announcement of a dead fedimintd is not a running peer, and no API answers: B's verdict still holds - refused as before
+    ramAnnounce(fx.base, '0-guardian', { dataDir: fx.guardians[0].dataDir, ram: fx.guardians[0].ram, pid: 4190000 });
+    const d = await ramRecover({ base: fx.base, dataDir: g.dataDir, ram: g.ram, restored: { ...g.restored, snap: 'snap-d' }, db: fx.db, ...fast, gatherMs: 50, alive: () => false });
+    assert.equal(d.start, false); assert.match(d.why, /repair it by hand/);
+  } finally { fx.done(); }
+});
+
+test('a second crash of the whole group minutes after its repair: decided afresh, not judged against the old verdict', async () => {
+  const fx = fixture(4, [0, 1, 2, 3], { finished: () => 7, accepted: () => [] });
+  try {
+    await all(fx);
+    for (const g of fx.guardians) { fx.state[join(g.ram, 'database')] = { finished: 12, accepted: ITEMS.slice(0, 2), units: 5, dropped: [] }; g.restored = { ...g.restored, snap: `snap-again-${g.id}` }; }
+    const out = await all(fx);
+    assert.deepEqual(out.map((o) => [o.start, o.action]), Array(4).fill([true, 'repair']));
+    assert.match(out[0].why, /session 12 with the same 2 accepted items/);
+  } finally { fx.done(); }
 });
