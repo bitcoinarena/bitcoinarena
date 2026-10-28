@@ -37,7 +37,8 @@
 import { port as offsetPort, INSTANCE, PORT_OFFSET } from '../src/instance.js';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, join } from 'node:path';
+import { existsSync as fileExists } from 'node:fs';
 import { execFile, spawn } from 'node:child_process';
 import { createWizard } from '../src/wizard.js';
 import { nodeServiceWords } from '../src/service.js';
@@ -65,7 +66,11 @@ const bridgePort = Number(opt('--bridge-port', offsetPort(8471)));
 const home = resolve(opt('--home', defaultHome()));
 const release = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const state = nodeState(home);
-const cloudflared = process.env.ARENA_CLOUDFLARED || 'cloudflared';   // the release's own (arena-install sets it), else PATH
+// the release's own (the launcher sets ARENA_CLOUDFLARED), else the one beside this release, else PATH (kanban #765, measured in the Linux
+// VM 2026-10-28: an installer started without the launcher wrote a second node's tunnel unit as a bare `cloudflared` - 203/EXEC on every
+// start, "the quick tunnel gave no name")
+const cloudflared = process.env.ARENA_CLOUDFLARED
+  || [join(release, 'runtime', process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared')].find((f) => fileExists(f)) || 'cloudflared';
 
 // THE END OF A COMMAND THAT TALKED TO THE NETWORK OR RAN PROGRAMS: process.exit after 1.5 s, so the handles still closing close first
 // (measured in the Windows VM, rc.21 --update: after "Updated: ... the same node answers", an immediate process.exit aborted on
