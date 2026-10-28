@@ -174,9 +174,17 @@ export const CUSTODY_GATEWAY_VERSION = 22;
  * E is judged against the federation record in force at E's last block. A seating belongs to an epoch, not a round, so both apply by the
  * SEATING'S epoch - from this gateway epoch (144 blocks) on - never by a build's version or the clock: 1.9.x and 2.0 guardians signing
  * the same epoch apply the same rules. null: never - every guardian signs and judges as 1.9.x (exact peg-ins, the record held now).
- * SET TO A CONCRETE EPOCH AT THE 2.0 TAG.
+ * ONE CONSTANT PER NETWORK (the owner's ruling, 2026-10-28), keyed by the network's name as networkOf() answers it; nobody switches it by
+ * hand. regtest/devnet 0: the rules on from the first epoch, so tests run with them. A network not named here: null.
+ * testnet4/mainnet: set at the 2.0 tag to floor(tag height / 144) + 14; deploy gate: every guardian of every live federation on 2.0 by
+ * epoch N-2.
  */
-export const SEATING_RULES_EPOCH = null;
+export const SEATING_RULES_EPOCH = Object.freeze({ regtest: 0, devnet: 0, testnet4: null, mainnet: null });
+/** The activation epoch of the 2.0 seating rules on `network` (SEATING_RULES_EPOCH; 'testnet' is testnet4, as networkAnchor reads it). */
+export const seatingRulesEpochOf = (network) => {
+  const n = network === 'testnet' ? 'testnet4' : String(network || '');
+  return Object.prototype.hasOwnProperty.call(SEATING_RULES_EPOCH, n) ? SEATING_RULES_EPOCH[n] : null;
+};
 /** The owner's emergency key (§23A.5a): the advert names it, a request it signs takes an offline node out without losing its bond. */
 export const EMERGENCY_VERSION = 17;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);

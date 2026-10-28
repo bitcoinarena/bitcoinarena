@@ -9,16 +9,17 @@ import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
 import { tagAt, tagsAccepted, TAG_PAIRS } from './tag-switch.js';
 import { GATEWAY_EPOCH_BLOCKS } from './gateway-seats.js';
-import { SEATING_RULES_EPOCH } from './constants.js';
+import { seatingRulesEpochOf } from './constants.js';
 
 /** The step a guardian floors a proved peg-in to before signing it, from SEATING_RULES_EPOCH (§23A.9 ruling 1). */
 export const PEG_IN_FLOOR_SATS = 100_000n;
 
 /**
- * WHETHER THE 2.0 SEATING RULES APPLY TO A SEATING OF `epoch` (§23A.9 rulings 1 and 2): from the activation epoch `from` (SEATING_RULES_EPOCH;
- * a test names its own) on, by the seating's own epoch - the epoch signed, or the epoch judged. `from` null: never.
+ * WHETHER THE 2.0 SEATING RULES APPLY TO A SEATING OF `epoch` (§23A.9 rulings 1 and 2): from the activation epoch `from` (the seat's
+ * network's entry of SEATING_RULES_EPOCH, seatingRulesEpochOf; a test names its own) on, by the seating's own epoch - the epoch signed,
+ * or the epoch judged. `from` null or not given: never.
  */
-export const seatingRulesActive = (epoch, from = SEATING_RULES_EPOCH) =>
+export const seatingRulesActive = (epoch, from = null) =>
   from !== null && from !== undefined && epoch !== null && epoch !== undefined && Number(epoch) >= Number(from);
 
 export const GATEWAY_SEATING_TAG = TAG_PAIRS.gatewaySeating[0];   // the tag before the switch (tag-switch.js, kanban #525)
@@ -42,12 +43,12 @@ export const seatingJudgeHeight = (epoch) => (Number(epoch) + 1) * GATEWAY_EPOCH
 
 /**
  * THE FEDERATION RECORD A SEATING OF `epoch` IS JUDGED AGAINST - its seated guardians who may sign, its threshold (§23A.9 ruling 2): for a
- * seating of the activation epoch (`rulesEpoch`, SEATING_RULES_EPOCH) or later, the record in force at the epoch's last block
- * (`recordAt(height)`, federation-records.js), so a guardian set that changed after the epoch neither adds signers to it nor takes them
- * away; before it, or where this seat holds no record that old, the record it holds now (`current`), as before. Answers
+ * seating of the activation epoch (`rulesEpoch`, the `network`'s entry of SEATING_RULES_EPOCH) or later, the record in force at the
+ * epoch's last block (`recordAt(height)`, federation-records.js), so a guardian set that changed after the epoch neither adds signers to
+ * it nor takes them away; before it, or where this seat holds no record that old, the record it holds now (`current`), as before. Answers
  * { record, at: 'epoch' | 'now' }.
  */
-export function seatingRecordFor({ epoch, recordAt = null, current = null, rulesEpoch = SEATING_RULES_EPOCH }) {
+export function seatingRecordFor({ epoch, recordAt = null, current = null, network = null, rulesEpoch = seatingRulesEpochOf(network) }) {
   if (seatingRulesActive(epoch, rulesEpoch) && typeof recordAt === 'function') {
     let r = null; try { r = recordAt(seatingJudgeHeight(epoch)); } catch { r = null; }
     if (r) return { record: r, at: 'epoch' };
@@ -58,12 +59,12 @@ export function seatingRecordFor({ epoch, recordAt = null, current = null, rules
 /**
  * THE PROVED PEG-INS A GUARDIAN SIGNS (§23A.3a part 2, kanban #559/#543): { node hex: sat string } for each paid seat whose peg-in this
  * guardian proved from the federation's coins (`gateways`: its watch's view, node hex -> { provedPegInSats }); a seat it could not check
- * (no entry, or null) is left out. In a seating of the activation epoch (`rulesEpoch`, SEATING_RULES_EPOCH) or later (`epoch`: the epoch
- * signed) each amount is floored to whole PEG_IN_FLOOR_SATS (ruling 1: guardians reading the coins minutes apart, a few sat moved, still
+ * (no entry, or null) is left out. In a seating of the activation epoch (`rulesEpoch`, the `network`'s SEATING_RULES_EPOCH) or later
+ * (`epoch`: the epoch signed) each amount is floored to whole PEG_IN_FLOOR_SATS (ruling 1: guardians reading the coins minutes apart, a few sat moved, still
  * sign one body); before it, exact. Never the lowest of the signers' amounts: each seat gathers another subset of signatures, and would
  * settle on another body.
  */
-export function provedPegInsOf(paid, gateways, { epoch = null, rulesEpoch = SEATING_RULES_EPOCH } = {}) {
+export function provedPegInsOf(paid, gateways, { epoch = null, network = null, rulesEpoch = seatingRulesEpochOf(network) } = {}) {
   const floor = seatingRulesActive(epoch, rulesEpoch);
   return Object.fromEntries((paid || []).filter((n) => gateways && gateways[n] && gateways[n].provedPegInSats != null)
     .map((n) => [n, floor ? String((BigInt(gateways[n].provedPegInSats) / PEG_IN_FLOOR_SATS) * PEG_IN_FLOOR_SATS) : String(gateways[n].provedPegInSats)]));

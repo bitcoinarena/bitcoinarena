@@ -6186,13 +6186,16 @@ The flooring makes honest guardians measure the same values.
   the minimums) and each paid seat's peg-in as that guardian proved it. The seating **stands only when at least the threshold of
   the seated guardians signed the same body**; a guardian that ranks differently is outvoted by the threshold, and a seating
   without enough signatures does not stand.
-  - From the activation epoch named at the 2.0 release (`SEATING_RULES_EPOCH`), decided by the seating's own epoch, each guardian
+  - The activation epoch N is a constant per network (`SEATING_RULES_EPOCH`), never switched by hand: regtest/devnet 0 (the rules on
+    from the first epoch); testnet4 and mainnet fixed at the 2.0 tag to `N = floor(tag height / 144) + 14`, with the deploy gate that
+    every guardian of every live federation runs 2.0 by epoch N − 2. Until it is fixed for a network, the rules are off there.
+  - From the activation epoch of the seat's network (`SEATING_RULES_EPOCH`), decided by the seating's own epoch, each guardian
     floors a paid seat's proved peg-in to whole 100,000 sat before it signs, so guardians reading the federation's coins minutes apart
     sign the same body; a seat one guardian proved and another could not check still splits them.
-  - From the activation epoch named at the 2.0 release (`SEATING_RULES_EPOCH`), decided by the seating's own epoch, a seating of
+  - From the activation epoch of the seat's network (`SEATING_RULES_EPOCH`), decided by the seating's own epoch, a seating of
     epoch E is judged against the federation record in force at E's last block, height `(E + 1) × 144 − 1`: its seated guardians
     and threshold, not those of the record a seat holds when it gathers.
-  - Never by a build's version or the clock: until the activation epoch is named, every guardian signs and judges as 1.9.x does
+  - Never by a build's version or the clock: until the network's activation epoch is fixed, every guardian signs and judges as 1.9.x does
     (exact peg-ins, the record held now), so a mixed 1.9.x / 2.0 rollout signs the same bodies.
 - **The seats rotate every epoch** *(2026-10-20: "rotate the guardians daily every 144 blocks among those that want to be
   gateways in the federation")*: the holders of the epoch before step back, with all of their operator's nodes. The eligible
