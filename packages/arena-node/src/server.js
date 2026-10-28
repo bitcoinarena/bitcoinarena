@@ -5413,6 +5413,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       eligibleKeys: new Set((roster.censusFor(rid).entries || []).map((e) => toHex(e.pubkey))).size };
   };
   const listingKept = new Map();                  // GET /rounds query -> { at, json }, a large one kept 30 s
+  // how old a kept listing may be and still be answered at once while the next is built (kanban #782; LOBBY_SKEW_MS is 60 s)
+  const LISTING_STALE_MS = 50000;
+  const LISTING_WAIT_MS = 800;
   const listingBuilding = new Map();              // GET /rounds query -> the listing being built (one at a time)
   // THE DOORS' FEDERATION FACTS, KEPT A MINUTE (ORDER-2116, measured on testnet4 2026-10-02 03:5xZ): POST /round asked the
   // lock port for the federation's gateways and fee rule on every call - a client process each, pinging the gateways - and
@@ -7295,7 +7298,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // `?next=8` was made afresh on every ask from every open lobby every few seconds - 1038 of them over 200 ms in seat 1's
         // recent log, up to 14.8 s held - and its joined/playing counts may lag 5 s where a page takes 60.
         // AND NONE KEPT PAST A CHANGE OF THE SERIES HELD: a dropped series' rounds left the listing only 30 s later
-        if (!body || nowReal - body.at > (body.large ? 30000 : 5000) || body.version !== seriesVersion) {
+        // SERVED AT ONCE, BUILT BEHIND (kanban #782, a tester 2026-10-28: "/rounds may never take longer than 1s cached"; the owner's
+        // installer node took 44 s, the page gave up and showed no round): a kept listing past its age but younger than
+        // LISTING_STALE_MS (a page takes one up to 60 s old) and of the same series is answered as it is when the next build takes
+        // longer than LISTING_WAIT_MS, and that build goes on behind it - only an asker with no listing, or one too old, waits for it
+        const stale = body && nowReal - body.at > (body.large ? 30000 : 5000);
+        const servable = body && body.version === seriesVersion && nowReal - body.at <= LISTING_STALE_MS;
+        if (!body || stale || body.version !== seriesVersion) {
           // ONE BUILD PER QUERY AT A TIME: every asker that comes while it yields waits for the same listing
           let building = listingBuilding.get(q);
           if (!building) {
@@ -7309,8 +7318,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
               return made;
             })().finally(() => listingBuilding.delete(q));
             listingBuilding.set(q, building);
+            building.catch(() => {});
           }
-          body = await building;
+          // a build that is done within LISTING_WAIT_MS is answered fresh; a longer one is answered with the kept listing
+          if (!servable) body = await building;
+          else { const fresh = await Promise.race([building, new Promise((ok) => setTimeout(() => ok(null), LISTING_WAIT_MS))]); if (fresh) body = fresh; }
         }
         // GZIPPED TO A PAGE THAT TAKES IT (2026-10-17: the lobby said "Signer nodes tn4.bitcoin-arena.io/fed2-1 ...
         // fed2-7 did not answer in 10 s"): a listing is ~360 KB of JSON and federation B's seats answer through the tunnel to the
