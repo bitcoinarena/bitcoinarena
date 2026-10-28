@@ -6,7 +6,9 @@
 // (GET /owner/dev); the page hands over `programs`, `site` (the Arena site's address), `create(name)`, `withdraw(args)`, `follow`, `reread`.
 import React from 'react';
 
-const sat = (msat) => `${(Number(BigInt(msat || 0) / 1000n)).toLocaleString('en-US')} sat`;
+// TO THE MSAT (kanban #675, measured 10-29 on the demo program: three website payouts of 400-800 msat, 1,600 msat in all, read "1 sat"; one
+// 800 msat payout read "0 sat"): a part of a sat is shown, up to three places
+const sat = (msat) => `${(Number(BigInt(msat || 0)) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 })} sat`;
 const field = { autoComplete: 'off', autoCapitalize: 'none', spellCheck: false };
 
 export class ReferrerPanel extends React.Component {
