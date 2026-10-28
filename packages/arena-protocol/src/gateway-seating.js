@@ -27,6 +27,15 @@ export const seatingEpochAt = (height) => Math.floor(Number(height) / GATEWAY_EP
 export const paidSeatsOf = (ranking) => ((ranking && ranking.seated) || []).filter((n) => !((ranking && ranking.belowMinimums) || []).includes(n));
 
 /**
+ * THE PROVED PEG-INS A GUARDIAN SIGNS (§23A.3a part 2, kanban #559/#543): { node hex: sat string } for each paid seat whose peg-in this
+ * guardian proved from the federation's coins (`gateways`: its watch's view, node hex -> { provedPegInSats }); a seat it could not check
+ * (no entry, or null) is left out.
+ */
+export function provedPegInsOf(paid, gateways) {
+  return Object.fromEntries((paid || []).filter((n) => gateways && gateways[n] && gateways[n].provedPegInSats != null).map((n) => [n, String(gateways[n].provedPegInSats)]));
+}
+
+/**
  * THE PROVED PEG-INS A SEATING NAMES (kanban #559/#543, §23A.3a part 2): { node hex: sat string } for its seats whose peg-in the
  * guardian proved from the federation's own coins, sorted by node; [] when it names none.
  */

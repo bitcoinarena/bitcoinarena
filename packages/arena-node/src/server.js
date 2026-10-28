@@ -39,7 +39,7 @@ import { BOND_TEMPLATE_V2 } from '../../arena-protocol/src/bond-script.js';
 import { latestReleaseReader } from './release-latest.js';
 import { createGatewayWatch } from './gateway-watch.js';
 import { lnv2ModuleId, federationCoins, incomingSince } from './gateway-volume.js';
-import { signGatewaySeating, standingSeating, seatingEpochAt, paidSeatsOf } from '../../arena-protocol/src/gateway-seating.js';
+import { signGatewaySeating, standingSeating, seatingEpochAt, paidSeatsOf, provedPegInsOf } from '../../arena-protocol/src/gateway-seating.js';
 import { signLiquiditySeating, standingLiquiditySeating, liquiditySeatingFrom } from '../../arena-protocol/src/liquidity-seating.js';
 import { checkLiquidityClaim, provenFreeSats } from '../../arena-protocol/src/liquidity.js';
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
@@ -4918,7 +4918,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // and each paid seat's peg-in as this guardian proved it from the federation's coins (kanban #559/#543): signed with the seats,
           // the weights of the gateways' part under peg-in pressure (§23A.3a part 2); a seat it could not check is left out
           { const paid = paidSeatsOf(v);
-            const pegIns = Object.fromEntries(paid.filter((n) => v.gateways && v.gateways[n] && v.gateways[n].provedPegInSats != null).map((n) => [n, String(v.gateways[n].provedPegInSats)]));
+            const pegIns = provedPegInsOf(paid, v.gateways);
             const own = signGatewaySeating({ federationId: v.federationId, epoch, seats: paid, ...(Object.keys(pegIns).length ? { pegIns } : {}) }, toHex(round.pubkey), (h) => schnorr.sign(h, round.identity.secret));
             ownSeatings.set(`${v.federationId}:${epoch}`, own); keepSeating('own', v.federationId, epoch, own); }
       }
