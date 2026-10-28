@@ -63,7 +63,9 @@ export class OwnerArea extends React.Component {
               <div className="stat"><span>Apps</span><b>{games.length}</b><small>{games.length ? games.map((g) => `${g.name} v${g.version ?? '?'}`).join(', ') : 'none installed'}</small></div>
               <div className="stat"><span>Owner since</span><b>{new Date(p.claimedAtMs).toISOString().slice(0, 10)}</b><small>signed in with {HOW[p.how] || p.how}</small></div>
               <div className="stat"><span>Owner key</span><b className="mono">{p.owner.slice(0, 12)}… <CopyButton text={p.owner} label="Copy the owner key" /></b></div>
-            </div></>)}
+            </div>
+            {/* ITS UPTIME (kanban #756): drawn by UptimePanel from GET /uptime */}
+            <h3 className="sh">Uptime</h3><Place id="uptime" /></>)}
           {sec('roles', <><h2>Roles</h2>
             <Place id="roles" />
             <h3 className="sh">Custody (guardian)</h3><Place id="custody" />

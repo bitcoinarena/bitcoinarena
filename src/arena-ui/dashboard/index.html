@@ -27,7 +27,10 @@ const FUNNEL = 'seat.example.com';
   const draw = () => window.ArenaSite.nodes(list, { rows: rows.map((r) => ({ n: r.n, href: `${r.base}/dashboard`, read: r.read })) });
   draw();
   for (const r of rows) fetch(`${r.base}/dashboard.json`, { cache: 'no-store' }).then((x) => x.json())
-    .then((d) => { r.read = { node: d.node, dayMsat: d.totals.day.profitMsat, rounds: d.roundsChecked }; draw(); }, () => { r.read = false; draw(); });
+    .then((d) => { r.read = { node: d.node, dayMsat: d.totals.day.profitMsat, rounds: d.roundsChecked, uptime: r.uptime || null }; draw(); }, () => { r.read = false; draw(); });
+  // and each node's uptime (kanban #756, GET /uptime): 24 h, 7 days, 30 days, all time
+  for (const r of rows) fetch(`${r.base}/uptime`, { cache: 'no-store' }).then((x) => x.json())
+    .then((u) => { r.uptime = u; if (r.read) { r.read = { ...r.read, uptime: u }; draw(); } }, () => {});
 })();
 </script>
 </body></html>
