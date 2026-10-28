@@ -3,7 +3,7 @@
 // AN ITEM, BOUGHT: the buyer's signed record, its outputs rebuilt from the split, refused by name when anything differs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { encodePurchase, decodePurchase, purchaseId, purchaseOutputs, purchaseStands, PURCHASE_SHARE_VERSION } from '../src/purchase.js';
 import { itemPriceFor, ITEM_DEV_SHARES } from '../src/items.js';
 import { ITEMS_VERSION } from '../src/constants.js';

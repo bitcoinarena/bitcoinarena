@@ -4,7 +4,7 @@
 // request, and the two cases - a node with no guardian role leaves at once, a guardian in time departs, a late guardian is slashed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { emergencyCodeBytes, emergencyCodeText, parseEmergencyCode, emergencySecret, encodeEmergencyDeparture, decodeEmergencyDeparture,
   signEmergencyDeparture, emergencyDepartureStands, emergencyDepartureEffect, EMERGENCY_FRESH_BLOCKS } from '../src/emergency.js';
 import { encodeAdvert, decodeAdvert, advertId, EMERGENCY_MARKER } from '../src/advert.js';

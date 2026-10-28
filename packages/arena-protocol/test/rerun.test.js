@@ -10,7 +10,7 @@
 // gave another answer - two seats holding one set could decide two ways, one paying the re-run, the other refunding.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import {
   encodeRerunResult, decodeRerunResult, rerunResultId, joinSignedRerun, splitSignedRerun, rerunIsAgreed, runOf,
   RERUN_BYTES, RERUN_SIGNATURE_BYTES, SIGNED_RERUN_BYTES,

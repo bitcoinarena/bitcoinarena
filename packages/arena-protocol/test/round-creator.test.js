@@ -5,7 +5,7 @@
 // rides beside it (creator.js), and stands only by that key.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { encodeRoundContract, decodeRoundContract, roundId, CREATOR_MARKER } from '../src/contracts.js';
 import { creatorMessage, creatorSignatureStands } from '../src/creator.js';
 import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';

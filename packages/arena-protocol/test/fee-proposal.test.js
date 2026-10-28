@@ -7,7 +7,7 @@
 // donation of 0 or a round total above 10 % is refused at submission.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { FEES, FEES_TODAY, feeProposalId, encodeFeeProposal, decodeFeeProposal, feeProposalStands, feeProposalOutcome, feeApprovalId, feesAt,
   roundSplitBps, marketBps, devMajority } from '../src/fee-proposal.js';
 import { signalOutcome, votePeriodOf, fundingTally, FUNDING_SCHEDULES } from '../src/funding.js';

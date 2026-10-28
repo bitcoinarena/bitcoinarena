@@ -3,7 +3,7 @@
 // THE CONFIG BALLOT'S FIRST SLICE (spec §27A.7.2-4): the proposal on its face, the 77-byte vote, the tally.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { encodeConfigProposalBody, decodeConfigProposalBody, proposalBodyId, proposalId, proposalStands, encodeVote, decodeVote,
   voteMessage, tally, CLASS, CHOICE, SCHEDULES, VOTE_BYTES, configHashOf, TAG_GAME_CONFIG } from '../src/ballot.js';
 import { taggedHash, toHex } from '../src/hash.js';
