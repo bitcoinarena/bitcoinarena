@@ -183,3 +183,30 @@ test('Move: all of federation X by default, or an amount; never more than X can 
   const same = await movePlayerWallet({ ...ask, to: ask.from, storage: ledger() });
   assert.deepEqual([same.ok, same.why], [false, 'choose two different federations']);
 });
+
+// kanban #559 (spec §23A.9: "a deposit into F, and each leg of a swap, tries F's seated gateways before any other gateway F lists"): the
+// receiving leg asks the receiving federation's seated gateways first, the paying leg the paying federation's - each its own
+// federation's, not the other's - and only then the lists
+test('a swap\'s two legs try each one\'s own federation\'s seated gateways before its list', async () => {
+  const { useSeatedGateways, noteClientFederation } = await import('../src/page-lock.js');
+  const FROM = 'a1'.repeat(32), TO = 'b2'.repeat(32);
+  useSeatedGateways(async (fid) => (fid === TO ? ['https://seat-to'] : fid === FROM ? ['https://seat-from'] : []));
+  try {
+    const listed = JSON.stringify(['https://gw-c', 'https://gw-b']);
+    const to = wallet(0n, { base: 0, ppm: 0 }), from = wallet(500000n, { base: 0, ppm: 0 });
+    to.gateways = async () => listed; from.gateways = async () => listed;
+    noteClientFederation(to, TO); noteClientFederation(from, FROM);
+    const recvOf = new Map(); let n = 0;
+    to.receive = async (msat, gw) => { to.pending = BigInt(msat); const inv = `lnbcrt-${++n}-${msat}`; recvOf.set(inv, gw); return JSON.stringify({ invoice: inv, operation: 'op' + n }); };
+    const legs = [];
+    from.withdraw = async (invoice, pay) => {
+      legs.push([recvOf.get(invoice), pay]);
+      if (legs.length === 1) return JSON.stringify({ state: 'Refunded' });   // the first pair refunds: the next keeps the seated receive
+      const msat = BigInt(invoice.split('-').pop()); from.balance -= msat; return JSON.stringify({ state: 'Success', invoice_msat: String(msat) });
+    };
+    const done = await swapForRound({ from, to, amountMsat: 52000n });
+    assert.equal(done.ok, true, done.why);
+    assert.deepEqual(legs[0], ['https://seat-to', 'https://seat-from'], 'the first pair: the receiving federation\'s seat, the paying federation\'s seat');
+    assert.deepEqual(legs[1], ['https://seat-to', 'https://gw-c'], 'then the paying leg goes on to its federation\'s list');
+  } finally { useSeatedGateways(null); }
+});
