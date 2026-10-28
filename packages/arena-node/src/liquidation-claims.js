@@ -141,7 +141,16 @@ export async function payOutLiquidation({ fid, v, claims, height, run, spendEscr
   const p0 = await claims.plan(fid);
   if (!p0.ok) return { why: p0.why };
   if ((await height()) <= p0.claimWindowCloses) return { why: `the claim window closes at ${p0.claimWindowCloses}` };
+  // WHAT THE PAYING CLIENT HELD BEFORE THE ESCROW CAME (kanban #326, rehearsal 17 live 10-26): a claim that went through outside a recorded
+  // pass - by hand, or one ending right at the tool's timeout - left the balance risen before the next pass's pegin-claim began, which then
+  // saw no rise and the service waited for good. The rise over this mark stands for the claim, never more than the escrow carried.
+  const markBalance = async () => {
+    if (v.balanceBeforeClaimMsat !== undefined) return;
+    const b = await run(['--mode', 'balance']);
+    if (b && b.msat !== undefined) { v.balanceBeforeClaimMsat = String(b.msat); keep(); }
+  };
   if (!v.escrowTxid) {
+    await markBalance();
     const addr = await run(['--mode', 'pegin-address']);
     if (!addr.address) return { why: `no peg-in address: ${addr.error || JSON.stringify(addr)}` };
     const sent = await spendEscrow(addr.address);
@@ -151,9 +160,17 @@ export async function payOutLiquidation({ fid, v, claims, height, run, spendEscr
     say({ federation: fid.slice(0, 16), escrowIntoSafeFederation: sent.txid });
   }
   if (!v.claimedMsat) {
+    await markBalance();
     const c = await run(['--mode', 'pegin-claim', '--address', v.pegInAddress, '--timeout-s', '840']);
-    if (!(c.balance_after_msat > c.balance_before_msat)) return { why: `the peg-in is not claimed yet: ${c.error || JSON.stringify(c)}` };
-    v.claimedMsat = String(BigInt(c.balance_after_msat) - BigInt(c.balance_before_msat)); v.claimedAtMs = Date.now(); keep();
+    let got = c.balance_after_msat > c.balance_before_msat ? BigInt(c.balance_after_msat) - BigInt(c.balance_before_msat) : 0n;
+    if (got <= 0n && v.balanceBeforeClaimMsat !== undefined) {
+      const b = await run(['--mode', 'balance']);
+      const rose = b && b.msat !== undefined ? BigInt(b.msat) - BigInt(v.balanceBeforeClaimMsat) : 0n;
+      const cap = v.escrowSats !== undefined ? BigInt(v.escrowSats) * 1000n : null;
+      if (rose > 0n && (cap === null || rose <= cap)) { got = rose; say({ federation: fid.slice(0, 16), claimedOutsideAPass: String(rose) }); }
+    }
+    if (got <= 0n) return { why: `the peg-in is not claimed yet: ${c.error || JSON.stringify(c)}` };
+    v.claimedMsat = String(got); v.claimedAtMs = Date.now(); keep();
   }
   const p = await claims.plan(fid, { escrowMsat: BigInt(v.claimedMsat) });
   if (!p.ok) return { why: p.why };

@@ -222,3 +222,26 @@ test('the client presents its outputs still in issuance too: once, kept until ta
   const third = (await run()).find((x) => x.pending);
   assert.equal(third.kept, false, 'claimed before: nothing left to keep');
 });
+
+test('a peg-in claimed outside a pass is read from the balance the client held before the escrow came (kanban #326)', async () => {
+  const b = book(); b.at(1012);
+  await b.claims.offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+  let balance = 500_000; const v = {};
+  const run = async (args) => {
+    if (args[1] === 'balance') return { msat: balance };
+    if (args[1] === 'pegin-address') return { address: 'tb1qsafe' };
+    // the claim went through by hand before this pass: the tool waits for a rise it never sees
+    if (args[1] === 'pegin-claim') return { error: 'no claim within 840s' };
+    if (args[1] === 'pay') return { txid: 'p', payouts: [] };
+    return {}; };
+  const pass = () => payOutLiquidation({ fid: FED, v, claims: b.claims, height: async () => 1021, run, spendEscrow: async () => ({ txid: 'x', sats: 9000 }) });
+  assert.match((await pass()).why, /not claimed yet/, 'nothing yet');
+  assert.equal(v.balanceBeforeClaimMsat, '500000', 'marked before the escrow was spent');
+  balance = 500_000 + 8_990_000;
+  await pass();
+  assert.equal(v.claimedMsat, '8990000', 'the rise over the mark');
+  const w = { escrowTxid: 'x', pegInAddress: 'a', escrowSats: '9000', balanceBeforeClaimMsat: '0' };
+  balance = 50_000_000;
+  const r = await payOutLiquidation({ fid: FED, v: w, claims: b.claims, height: async () => 1021, run, spendEscrow: async () => ({ txid: 'x' }) });
+  assert.match(r.why, /not claimed yet/, 'never more than the escrow carried');
+});
