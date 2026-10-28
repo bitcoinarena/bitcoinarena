@@ -44,7 +44,9 @@ const n = Number(opt('--n')) || members[0].n;
 let d = decideGroup({ n, members: unclean });
 if (d.action === 'repair') {
   if (!repair) { say({ ...d, action: 'repair-needed', why: `${d.why} - run again with --repair (all ${n} stopped)` }); process.exit(0); }
-  try { await repairAll(db, unclean, { log: (l) => console.error(l) }); } catch (e) { d = { action: 'refuse', why: `REFUSED: the repair failed (${e.message})` }; }
+  // only the guardians at the top count: the ones behind stay untouched and catch up from them (start the top first)
+  const behind = new Set((d.behind || []).map((b) => b.id));
+  try { await repairAll(db, unclean.filter((m) => !behind.has(m.id)), { log: (l) => console.error(l) }); } catch (e) { d = { action: 'refuse', why: `REFUSED: the repair failed (${e.message})` }; }
 }
 say({ action: d.action, why: d.why });
 process.exit(d.action === 'refuse' ? 3 : d.action === 'unchecked' ? 4 : 0);
