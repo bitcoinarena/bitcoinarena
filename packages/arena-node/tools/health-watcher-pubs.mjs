@@ -35,7 +35,7 @@ export function pubsConfig(env = process.env, H = process.env.HOME || '/home/are
     publicCli: env.HW_PUBLIC_CLI || '$HOME/.arena-node/bitcoin-core/bitcoin-31.1/bin/bitcoin-cli -testnet4 -datadir=$HOME/.arena-node/bitcoin-testnet4',
     wallet: env.HW_POSTING_WALLET || 'blwp-tn4-bonds',
     opsDir: env.HW_OPS_LOG_DIR || `${H}/blwp-testnet4`,
-    scanBack: n('HW_SCAN_BACK', 150), scanMax: n('HW_SCAN_MAX', 200),
+    scanBack: n('HW_SCAN_BACK', 300), scanMax: n('HW_SCAN_MAX', 320),
     sourceMs: n('HW_PUB_SOURCE_H', 36) * 3600000, keepMs: n('HW_PUB_KEEP_H', 48) * 3600000,
     publicBlocks: n('HW_PUBLIC_BLOCKS', 2), publicMs: n('HW_PUBLIC_MIN', 30) * 60000, oursBlocks: n('HW_OURS_BLOCKS', 2),
     resendMs: n('HW_RESEND_MIN', 30) * 60000,
