@@ -377,15 +377,18 @@ export class PriceFeed {
     if (!this.kept) this.kept = new Map();       // round hex -> its contract when a price round, else null
     const seq = this.round.openSeq;
     if (seq !== undefined && this.keptSeq === seq && this.keptOut) return this.keptOut;
-    const ids = typeof this.round.openRoundIds === 'function' ? this.round.openRoundIds() : this.round.openRounds().map((r) => r.roundId);
+    // THE STORE'S OWN KEPT OPEN LIST AND DECODED CONTRACTS where it has them (kanban #742): the same id objects and their hex, and no
+    // contract decoded a second time beside the one the store keeps
+    const shared = typeof this.round.openHeld === 'function' && typeof this.round.contractOf === 'function';
+    const ids = shared ? this.round.openHeld() : typeof this.round.openRoundIds === 'function' ? this.round.openRoundIds() : this.round.openRounds().map((r) => r.roundId);
     const open = new Set();
     const out = [];
     for (const id of ids) {
-      const rh = toHex(id);
+      const rh = shared ? this.round.hexOf(id) : toHex(id);
       open.add(rh);
       if (!this.kept.has(rh)) {
         let contract = null;
-        try { const row = this.round.get(id); if (row) contract = decodeRoundContract(new Uint8Array(row.contract)); } catch { contract = null; }
+        try { if (shared) contract = this.round.contractOf(id); else { const row = this.round.get(id); if (row) contract = decodeRoundContract(new Uint8Array(row.contract)); } } catch { contract = null; }
         this.kept.set(rh, contract && this.priceRound(contract) ? contract : null);
       }
       const c = this.kept.get(rh);
