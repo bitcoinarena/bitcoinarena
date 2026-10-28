@@ -4468,12 +4468,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   // THE CHECK, one series at a time (a census on a branch the chain left takes ~3.5 s to derive and refuse): a series' first round is
   // asked for its census as the round's own; a root the chain does not give at that height means the chain left its census block
+  // A SERIES WHOSE VIEW IS STILL BEING READ WAITS A MINUTE AND THE PASS GOES ON (measured 10-28 on the test host seats: retried at once, the
+  // first pending series held the pass on every tick and no other series was ever asked)
   const offChainChecked = new Set();
+  const offChainLater = new Map();             // series id hex -> not asked again before (ms)
   const offChainPass = () => {
     if (shuttingDown) return;
-    const t = series.find((x) => !offChainChecked.has(toHex(seriesId(x))));
+    const now = Date.now();
+    const t = series.find((x) => { const k = toHex(seriesId(x)); return !offChainChecked.has(k) && !((offChainLater.get(k) || 0) > now); });
     if (!t) return;
-    const id = toHex(seriesId(t)); offChainChecked.add(id);
+    const id = toHex(seriesId(t)); offChainChecked.add(id); offChainLater.delete(id);
     const first = seriesRound(t, 0);
     let c; try { c = roster.censusFor(roundIdOf(first), null, { posted: first }); } catch { c = null; }
     if (c && c.ok) return;
@@ -4481,7 +4485,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try { dropOffChain(id, Number(first.censusHeight)); } catch (e) { console.error(`[series] #786 ${id.slice(0, 16)} not dropped: ${e.message}`); }
       return;
     }
-    offChainChecked.delete(id);              // not read yet (no view, a census height above the tip): asked again later
+    offChainChecked.delete(id); offChainLater.set(id, now + 60000);   // not read yet (no view, a census height above the tip): asked again later
   };
   const offChainTimer = setInterval(offChainPass, Number(process.env.ARENA_OFF_CHAIN_EVERY_MS || 2000));
   if (offChainTimer.unref) offChainTimer.unref();
