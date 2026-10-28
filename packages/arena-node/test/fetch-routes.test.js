@@ -52,3 +52,30 @@ test('seats behind one host have a lane each; a queued call is aborted by its ow
   await new Promise((r) => setTimeout(r, 10));
   assert.equal(pending.length, 2, 'nothing waited behind it any more');
 });
+
+// kanban #742 (measured on test host seat 3, 2026-10-28): every seat fetch to a stopped test node's quick tunnel failed at DNS and left a
+// TLSSocket behind, ~3.6 a second per host - 112,473 alive after an hour. A host that answered ENOTFOUND is not dialed again until the
+// request timeout has passed; another host, and the same host after the timeout, are dialed as before.
+test('a host that does not resolve is not dialed again until the timeout has passed', async () => {
+  const dialed = [];
+  const notFound = () => Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('getaddrinfo ENOTFOUND gone.example'), { code: 'ENOTFOUND' }) });
+  const inner = async (u) => { dialed.push(String(u)); if (String(u).includes('gone.example')) throw notFound(); return new Response('ok'); };
+  const f = cappedFetch(inner, { timeoutMs: 200 });
+  await assert.rejects(f('https://gone.example/presence'), (e) => e.cause && e.cause.code === 'ENOTFOUND');
+  for (let i = 0; i < 50; i++) await assert.rejects(f('https://gone.example/identity'), (e) => e.message === 'fetch failed' && e.cause.code === 'ENOTFOUND');
+  assert.equal(dialed.filter((u) => u.includes('gone.example')).length, 1, 'dialed once, then answered without a socket');
+  assert.deepEqual(Object.keys(f.unresolved()), ['gone.example']);
+  assert.equal(await (await f('https://other.example/x')).text(), 'ok');
+  await new Promise((r) => setTimeout(r, 250));
+  await assert.rejects(f('https://gone.example/identity'));
+  assert.equal(dialed.filter((u) => u.includes('gone.example')).length, 2, 'dialed again once the timeout has passed');
+});
+
+test('a failure other than ENOTFOUND does not hold the host back', async () => {
+  let n = 0;
+  const inner = async () => { n++; throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) }); };
+  const f = cappedFetch(inner, { timeoutMs: 10000 });
+  for (let i = 0; i < 3; i++) await assert.rejects(f('http://127.0.0.1:9/x'));
+  assert.equal(n, 3);
+  assert.deepEqual(f.unresolved(), {});
+});
