@@ -2111,6 +2111,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const lastOrderQ = round.db.prepare('SELECT (SELECT max(rowid) FROM market_orders) AS o, (SELECT max(rowid) FROM market_book_events) AS e');
   const openBatchesQ = round.db.prepare('SELECT DISTINCT round_id FROM market_batches WHERE certificate IS NULL');
   let orderRounds = [], orderRoundsAt = null;
+  const bookSyncedAtClose = new Set();     // round id hex: its closed book read from the other seats once (kanban #740)
   const orderBatchTick = async () => {
     const at = round.now();
     const k = Math.floor((at - orderBatchGraceMs) / orderBatchMs) - 1;
@@ -2126,7 +2127,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { const row = round.get(rid); close = row ? Number(decodeRoundContract(new Uint8Array(row.contract)).entryCloseMs) : 0; } catch { close = 0; }
         entryCloseOf.set(hex, close);
       }
-      if (close && Number(at) > close + 2 * orderBatchMs + orderBatchGraceMs && !waiting.has(hex)) continue;
+      if (close && Number(at) > close + 2 * orderBatchMs + orderBatchGraceMs && !waiting.has(hex)) {
+        // THE CLOSED BOOK AS THE OTHER SEATS HOLD IT (kanban #740): once, in the background, every certified batch this seat missed
+        // is read from the round's other seats (order-batch.js sync) - the settlement then finds the read kept. Only a book closed
+        // within the hour: a restart does not read every closed round this seat ever held
+        if (!bookSyncedAtClose.has(hex) && Number(at) < close + 3600000) {
+          bookSyncedAtClose.add(hex);
+          if (bookSyncedAtClose.size > 4096) bookSyncedAtClose.delete(bookSyncedAtClose.values().next().value);
+          orderBook.sync(rid).catch(() => {});
+        }
+        continue;
+      }
       if (!orderBook.leads(rid, k)) continue;
       const got = await orderBook.lead(rid, k).catch((e) => ({ ok: false, why: e.message }));
       if (got.ok && !got.empty) console.log(`[orders] ${toHex(rid).slice(0, 16)} batch ${k}: ${got.orderIds.length} order(s), ${got.cancels} cancel(s), ${got.sells} sell(s), signed by ${got.heldBy} of ${got.of}, certified ${got.certified} in ${got.timings.certifiedMs} ms`);
@@ -8245,7 +8256,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const k = url.searchParams.get('k') || '';
           if (!/^[0-9]{1,15}$/.test(k)) return text(res, 400, 'GET /batch-proposal?round=<id>&k=<batch>');
           got = orderBook.proposal(rid, Number(k));
-        } else if (url.pathname === '/book-certificates') got = { certificates: orderBook.certificates(rid) };
+        // AND THE BATCHES STILL PENDING HERE (kanban #740): a seat reading this list before it settles reads it again while one is
+        // undecided (an older seat ignores the field)
+        } else if (url.pathname === '/book-certificates') got = { certificates: orderBook.certificates(rid), pending: orderBook.pending(rid).map(String) };
         else { got = orderBook.cleared(rid); if (!got.ok) return text(res, got.status || 409, got.why); }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(got, (key, v) => (typeof v === 'bigint' ? String(v) : v)));
