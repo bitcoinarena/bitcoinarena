@@ -5,7 +5,7 @@
 // and held at load >= 12 or in the seating minutes; an alert is said again at most once an hour, and "resolved" once the problem is gone.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { config, pass, assess, alertsDue, inRestartMinutes, emergencyGrid } from '../tools/health-watcher.mjs';
+import { config, pass, assess, alertsDue, inRestartMinutes, emergencyGrid, topLine, seatName } from '../tools/health-watcher.mjs';
 
 // 2026-10-28 10:05:50Z: :05 of a quarter - a restart minute
 const NOW = Date.UTC(2026, 9, 28, 10, 5, 50);
@@ -69,15 +69,14 @@ test('#757: rounds listed, none seated, 2 of 9 drawn live - a seating alert on t
   w.now += 180000;
   const second = await pass(w.io, CFG, first.state);
   assert.equal(w.posts.length, 1);
-  const msg = w.posts[0];
-  assert.match(msg, /^\[health-watcher\] #757 @owner @a tester PROBLEM: no joinable rounds in the next hour: rock-paper-scissors, nextblock, btc-updown-15m/);
-  assert.match(msg, /rock-paper-scissors: no joinable rounds - posted but not seated \(2 of 9 drawn answer\)/);
-  assert.match(msg, /listed but not seated: 120 \(2 of 9 drawn answer\)/);
-  assert.match(msg, /listed but not seated: 36 /);
-  assert.match(msg, /listed but not seated: 16 /);
-  assert.match(msg, /live seats among the drawn game committee of the unseated rounds: 2 of 9 \(172 rounds\) \(our 14 answering seats\)/);
-  assert.match(msg, /Tried: nothing: an emergency grid is not posted automatically/);
-  assert.match(msg, /Needs: an emergency grid .*systemd-run --user --unit=emergency1028-dry-<game> --collect -E DRY=1/s);
+  // short and scannable (the owner 2026-10-28: "weniger wall of text"): six lines, one per app, no runbook prose, no commands, no paths
+  assert.equal(w.posts[0], [
+    '[health-watcher] #757 @owner @a tester PROBLEM: no joinable rounds (next hour)',
+    '• RPS: 120 listed, 0 seated (2/9 drawn live)',
+    '• Next Block: 36 listed, 0 seated (2/9 drawn live)',
+    '• Up/Down: 16 listed, 0 seated (2/9 drawn live)',
+    'Tried: nothing (no automatic emergency grid)',
+    'Needs: emergency grid on a clean census, see #757'].join('\n'));
   assert.equal(w.restarts.length + w.adds.length, 0, 'nothing "fixed"');
   assert.deepEqual(second.fixes, []);
   await assert.rejects(emergencyGrid(), /not posted automatically/);
@@ -95,12 +94,12 @@ test('a test host seat down: restarted after two passes, one seat at a time; hel
   assert.deepEqual([d.unit, d.allowed], ['blwp-tn4-node@3.service', true]);
   assert.ok(!r.problems.find((p) => p.key === `seat-down:${down}`).alert, 'the restart is the answer: no alert yet');
   // the test host seat is not ours to restart: alerted
-  assert.ok(w.posts.some((t) => /seat 192\.168\.1\.226:6231 not answering/.test(t) && /restarted on the test host/.test(t)));
+  assert.ok(w.posts.some((t) => /PROBLEM: second-host seat 2 not answering\n• down \d+ min \(ECONNREFUSED\)\nTried: nothing \(second-host seat\)\nNeeds: restart on the test host, see #759$/.test(t)), w.posts.join('\n---\n'));
   // the recheck: still down -> "restart did not help", alerted, not restarted again within the hour
   w.now += 120000;
   r = await pass(w.io, CFG, r.state);
   assert.equal(w.restarts.length, 1);
-  assert.ok(w.posts.some((t) => /#759 .*seat 127\.0\.0\.1:31241 not answering/.test(t) && /the recheck found it still down/.test(t) && /once per 60 min/.test(t)));
+  assert.ok(w.posts.some((t) => /#759 .*PROBLEM: seat 3 not answering/.test(t) && /Tried: restarted 10:06 UTC, still down; restart held \(another seat just restarted, once per hour\)/.test(t)), w.posts.join('\n---\n'));
 
   // load 12.0 (1-min): held and alerted, with the load
   w = world({ rounds: HEALTHY, down: [down], load: [12, 11, 10] });
@@ -110,8 +109,8 @@ test('a test host seat down: restarted after two passes, one seat at a time; hel
   assert.equal(held.allowed, false);
   assert.match(held.blocked.join(), /1-min load 12 >= 12/);
   assert.equal(w.posts.length, 1);
-  assert.match(w.posts[0], /restart of blwp-tn4-node@3\.service held: 1-min load 12 >= 12/);
-  assert.match(w.posts[0], /Needs: the seat restarted by hand when safe: systemctl --user restart blwp-tn4-node@3\.service/);
+  assert.equal(w.posts[0], ['[health-watcher] #759 @owner @a tester PROBLEM: seat 3 not answering', '• down 1 min (ECONNREFUSED), unit active, 0 restarts',
+    'Tried: restart held (load 12 >= 12)', 'Needs: manual restart when safe, see #759'].join('\n'));
 
   // in the seating minutes (:13): held, no alert before 20 min
   w = world({ rounds: HEALTHY, down: [down], at: Date.UTC(2026, 9, 28, 10, 12, 0) });
@@ -139,7 +138,7 @@ test('dedupe: the same problem again only after an hour; resolved once it is gon
   ({ st } = await passes(w, 2, st));    // past the hour
   const again = w.posts.filter((t) => /no joinable rounds/.test(t));
   assert.equal(again.length, 2);
-  assert.match(again[1], /STILL \(since 10:0\d UTC\)/);
+  assert.match(again[1], /^\[health-watcher\] #757 @owner @a tester STILL \(since 10:0\d UTC\): no joinable rounds \(next hour\)$/, 'one line');
   // the seats seat the rounds: one pass gone - not resolved yet; the second - resolved, once
   w.rounds = HEALTHY;
   ({ st } = await passes(w, 1, st));
@@ -147,7 +146,7 @@ test('dedupe: the same problem again only after an hour; resolved once it is gon
   ({ st } = await passes(w, 3, st));
   const res = w.posts.filter((t) => /RESOLVED/.test(t));
   assert.equal(res.length, 1);
-  assert.match(res[0], /^\[health-watcher\] #757 @owner @a tester RESOLVED: no joinable rounds in the next hour: .* \(since 10:0\d UTC, \d+ min\)$/);
+  assert.match(res[0], /^\[health-watcher\] #757 @owner @a tester RESOLVED: no joinable rounds \(next hour\) \(since 10:0\d UTC, \d+ min\)$/);
   assert.deepEqual(st.alerts, {});
 });
 
@@ -177,7 +176,7 @@ test('pending txs: old and unlisted - appended to miner C\'s list once, rechecke
   assert.equal(w.adds.length, 1);
   assert.equal(st.fixes['minerc-add'].recheck, 'helped');
   ({ r, st } = await passes(w, 26, st)); // past two hours: listed and still unconfirmed, and no block for 90 min
-  assert.ok(w.posts.some((t) => /^\[health-watcher\] #759 .*PROBLEM: 1 listed tx\(s\) unconfirmed for \d+ min/.test(t) && /1111111111 grid publication nextblock/.test(t)));
+  assert.ok(w.posts.some((t) => /^\[health-watcher\] #759 .*PROBLEM: 1 listed tx\(s\) unconfirmed for \d+ min/.test(t) && /• 11111111 grid publication Next Block, \d+ min/.test(t)));
   assert.ok(w.posts.some((t) => /PROBLEM: no new block for \d+ min \(tip 157830\)/.test(t)));
 });
 
@@ -187,20 +186,20 @@ test('posting: tomorrow unposted after 18:00Z and today unposted are problems; l
   const w = world({ rounds: HEALTHY, duty, at: Date.UTC(2026, 9, 28, 19, 4, 0), load: [13.1, 14.2, 15.7] });
   w.nRestarts['blwp-tn4-node@1.service'] = 12;
   const { st } = await passes(w, 2);
-  assert.ok(w.posts.some((t) => /PROBLEM: tomorrow \(2026-10-29\) has no posting for nextblock/.test(t) && /primary: due \(0 posting\(s\)\)/.test(t)));
-  assert.ok(w.posts.some((t) => /PROBLEM: test host 15-min load 15\.7 > 12/.test(t) && /top: node 90%/.test(t)));
+  assert.ok(w.posts.some((t) => /PROBLEM: no posting tomorrow \(10-29\): Next Block\n• primary due\nTried: nothing \(no automatic emergency grid\)\nNeeds: emergency grid for 10-29, see #757$/.test(t)));
+  assert.ok(w.posts.some((t) => /PROBLEM: test host load 15\.7 \(15 min\) > 12\ntop: node 90%\nTried: nothing \(no safe automatic cut\)\nNeeds: heavy jobs stopped or moved, see #759$/.test(t)));
   // before 18:00Z tomorrow's posting is not late yet
   const early = assess({ nowMs: Date.UTC(2026, 9, 28, 12, 4, 0), load: [1, 1, 1], seats: [], units: {}, lists: [HEALTHY], games: GAMES, duty: [duty], pending: [], answering: [], minerc: null }, {}, CFG);
   assert.ok(!early.problems.some((p) => p.key.startsWith('posting:')));
   // today with no posting for an app is a problem at any hour
   const today = structuredClone(DUTY); today.days[0].apps[1].state = 'missed'; today.days[0].apps[1].postings = [];
   const t = assess({ nowMs: Date.UTC(2026, 9, 28, 1, 4, 0), load: [1, 1, 1], seats: [], units: {}, lists: [HEALTHY], games: GAMES, duty: [today], pending: [], answering: [], minerc: null }, {}, CFG);
-  assert.deepEqual(t.problems.filter((p) => p.key.startsWith('posting:')).map((p) => p.title), ['today (2026-10-28) has no posting for rock-paper-scissors']);
+  assert.deepEqual(t.problems.filter((p) => p.key.startsWith('posting:')).map((p) => p.title), ['no posting today (10-28): RPS']);
   // NRestarts 12 -> 16 in the hour
   let s = st; ({ st: s } = await passes(w, 1, s));
   w.nRestarts['blwp-tn4-node@1.service'] = 16;
   await passes(w, 1, s);
-  assert.ok(w.posts.some((t) => /PROBLEM: blwp-tn4-node@1\.service restarting over and over/.test(t) && /NRestarts 12 -> 16/.test(t)));
+  assert.ok(w.posts.some((t) => /PROBLEM: seat 1 crash-looping\n• 4 restarts in \d+ min \(NRestarts 12 -> 16\)/.test(t)), w.posts.join("\n---\n"));
   assert.equal(alertsDue([], { alerts: {} }, CFG, NOW).length, 0);
 });
 
@@ -208,4 +207,14 @@ test('importing the tool does nothing: no read, no timer', async () => {
   const before = process.getActiveResourcesInfo().filter((x) => x === 'Timeout').length;
   await import('../tools/health-watcher.mjs?again');
   assert.equal(process.getActiveResourcesInfo().filter((x) => x === 'Timeout').length, before);
+});
+
+test('names for the chat: seats by number, the top processes as "seat 6 70%"', () => {
+  assert.deepEqual([seatName('http://127.0.0.1:31221'), seatName('http://127.0.0.1:31281'), seatName('http://192.0.2.226:6241'), seatName('http://x.example:9000')],
+    ['seat 1', 'seat 7', 'second-host seat 3', 'x.example:9000']);
+  const ps = ['69.2 /home/arena/.nvm/versions/node/v24.15.0/bin/node src/main.js 31271 /home/arena/blwp-testnet4/node-6.db',
+    '68.4 /home/arena/.nvm/versions/node/v24.15.0/bin/node src/main.js 31221 /home/arena/blwp-testnet4/node-1.db',
+    '51.1 /mnt/bitcoin/bitcoin-31.1/bin/bitcoind -datadir=/mnt/bitcoin/tn4 -printtoconsole',
+    '50.8 /home/arena/.nvm/versions/node/v24.15.0/bin/node tools/market-bot.mjs --x', '3.0 [chrome] <defunct>'].join('\n');
+  assert.equal(topLine(ps), 'seat 6 69%, seat 1 68%, bitcoind 51%, node market-bot.mjs 51%');
 });
