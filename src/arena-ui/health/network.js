@@ -244,6 +244,91 @@ export function roundPosting({ games = [], pending = [], expected = [], rounds =
   return out;
 }
 
+// EVERY POSTING OF THE DAY, NOT ONLY THE DUTY'S (kanban #758, 2026-10-28, the owner: "Is health showing the newly posted rounds? It needs to
+// support that as well."). On 10-28 (#757) emergency grids were published for the rest of the day by an ops tool, not by the daily duty:
+// "Rounds today" read the duty's grids and the seating column sees a grid's rounds only once its committee block is 6 deep (~2.5 h after
+// publishing). Here every publication of the day, one row each, from what the seats already answer:
+//   GET /duty      the duty's postings, primary and backup, and every grid carrying the duty's emergency marker, with the key that signed it
+//                  (height null: seen in the mempool)
+//   GET /pending   every grid a seat reads on its chain: its publication's block or mempool, its committee block and how deep
+//   GET /expected  every grid announced to a seat, read or not
+// A grid that is in /pending or /expected and that no /duty posting names is an EXTRA POSTING (another creator key, e.g. an ops tool's
+// emergency grid); the seats do not say its creator (GET /expected drops the signed series line's key). Each posting's state:
+//   on the seats          committee block 6 deep: its rounds are listed and can be drawn
+//   reaches the seats ~HH:MM  mined; waiting for its committee block (the first whose median time passes the committee time, the median
+//                         running about an hour behind) and its 6 confirmations
+//   waiting to be mined   in the mempool
+//   not on chain          neither mined nor in any seat's mempool
+// allPostings({ games, pending, expected, duty, nowMs }) -> Map(app name -> { today, next }), each a cell { t, c, tip, summary, items }
+const MTP_LAG_MS = 3600000;
+export function allPostings({ games = [], pending = [], expected = [], duty = null, nowMs = Date.now() }) {
+  nowMs = Number(nowMs);
+  const k16 = (t) => String(t || '').toLowerCase().slice(0, 16);
+  const nameOfId = new Map((games || []).map((g) => [String(g.id).toLowerCase(), g.name || g.title]));
+  // every grid read or announced, by publication; the furthest reading kept
+  const grids = new Map();
+  const deeper = (g, w) => !w || (Number(g.beacon && g.beacon.depth) || 0) > (Number(w.beacon && w.beacon.depth) || 0) || (Number(g.publication && g.publication.confirmations) || 0) > (Number(w.publication && w.publication.confirmations) || 0)
+    || (!!(g.publication && g.publication.inMempool) && !(w.publication && w.publication.inMempool) && !(w.publication && w.publication.height));
+  for (const a of pending || []) for (const g of (a && a.grids) || []) { const k = k16(g.publication && g.publication.txid); if (k && deeper(g, grids.get(k))) grids.set(k, { ...g, read: true }); }
+  for (const e of expected || []) { const k = k16(e.publication && e.publication.txid); if (k && !grids.has(k)) grids.set(k, { ...e, game: e.game || nameOfId.get(String(e.gameId).toLowerCase()), read: false, beacon: { height: null, depth: 0, needed: 6 } }); }
+  // the duty's postings, by publication: which day, which role, emergency or not, who signed it
+  const byDuty = new Map(), order = new Map();
+  for (const d of (duty && duty.days) || []) {
+    for (const o of d.order || []) order.set(String(o.key).toLowerCase(), o);
+    for (const a of d.apps || []) for (const x of a.postings || []) {
+      const k = k16(x.txid); if (!k || byDuty.has(k)) continue;
+      byDuty.set(k, { app: a.name || a.app, period: d.period, role: x.role || a.role || 'primary', emergency: !!x.emergency, poster: x.poster || null, posterEndpoint: x.posterEndpoint || null, height: x.height ?? null, txid: x.txid });
+    }
+  }
+  const endOfDay = Math.floor(nowMs / 86400000) * 86400000 + 86400000;
+  // a grid's day: the one its duty posting names, else the day its middle falls on (a day grid starts minutes before its day: 23:45, 23:59)
+  const periodOf = (g) => { if (Number(g.lastCloseMs) <= nowMs) return null; const mid = (Number(g.firstWindowMs) + Number(g.lastCloseMs)) / 2;
+    return mid < endOfDay ? 'today' : mid < endOfDay + 86400000 ? 'next' : null; };
+  const who = (key, endpoint) => (key ? nodeLabel(key, endpoint || (order.get(String(key).toLowerCase()) || {}).endpoint) : null);
+  const rows = [];
+  for (const k of new Set([...grids.keys(), ...byDuty.keys()])) {
+    const g = grids.get(k) || null, d = byDuty.get(k) || null;
+    const app = (g && g.game) || (d && d.app);
+    const period = d && (d.period === 'today' || d.period === 'next') ? d.period : g ? periodOf(g) : null;
+    if (!app || !period) continue;
+    const p = g ? g.publication || {} : {}, bc = g ? g.beacon || {} : {}, need = Number(bc.needed) || 6;
+    let st, s, eta = null;
+    if (g && bc.height != null && (Number(bc.depth) || 0) >= need) { st = 'on the seats'; s = 'ok'; }
+    else if (g && p.height) {
+      eta = bc.height != null ? nowMs + (need - (Number(bc.depth) || 0)) * BLOCK_MS : Math.max(nowMs, Number(g.committeeTimeMs) + MTP_LAG_MS) + need * BLOCK_MS;
+      st = `posted, reaches the seats at ~${hm(eta)} UTC`; s = 'warn';
+    } else if (g && !g.read) { st = 'announced to the seats, not read on their chain yet'; s = 'warn'; }
+    else if ((g && p.inMempool) || (d && d.height == null && !(g && g.read))) { st = 'waiting to be mined'; s = 'warn'; }
+    else if (d && d.height != null) { eta = null; st = `mined in block ${Number(d.height).toLocaleString('en-US')}, not read by the seats yet`; s = 'warn'; }
+    else { st = 'not on chain: neither mined nor in any seat\'s mempool'; s = 'bad'; }
+    const kind = d ? (d.emergency ? 'emergency grid (duty marker)' : `duty ${d.role}`) : 'extra posting';
+    const by = d ? (d.poster ? who(d.poster, d.posterEndpoint) : 'a key outside the census') : 'creator not named by the seats';
+    const rounds = g && Number(g.slots) ? `${Number(g.slots).toLocaleString('en-US')} rounds from ${dhm(g.firstWindowMs)} UTC` : 'its rounds not read yet';
+    rows.push({ app, period, s, st, eta, extra: !d || d.emergency, live: s !== 'bad', item: { s, live: s !== 'bad', when: kind[0].toUpperCase() + kind.slice(1), say: `${rounds} · ${st}`,
+      detail: `publication ${String(d ? d.txid : p.txid).slice(0, 16)} · by ${by}${g && g.federation ? ` · federation ${String(g.federation).slice(0, 8)}` : ''}` },
+      line: `${kind} ${String(d ? d.txid : p.txid).slice(0, 10)} by ${by}: ${rounds}; ${st}` });
+  }
+  const out = new Map();
+  const names = new Set([...(games || []).map((g) => g.name || g.title), ...rows.map((r) => r.app)]);
+  for (const name of names) {
+    const cell = (period) => {
+      const rs = rows.filter((r) => r.app === name && r.period === period);
+      if (!rs.length) return { t: '-', c: 'muted', tip: `no posting of this app read for ${period === 'today' ? 'the rest of today' : 'tomorrow'}` };
+      const on = rs.filter((r) => r.s === 'ok').length, coming = rs.filter((r) => r.s === 'warn'), extra = rs.filter((r) => r.extra && r.live);
+      // the extra postings each by its state; of the duty's still coming, the soonest to reach the seats
+      const extraSays = extra.map((r) => (r.s === 'ok' ? 'extra posting on the seats' : r.eta ? `extra posting reaches the seats ~${hm(r.eta)}` : `extra posting ${r.st}`));
+      const duty = coming.filter((r) => !r.extra), soon = duty.filter((r) => r.eta).sort((x, y) => x.eta - y.eta)[0];
+      const t = [`${rs.length} posting${rs.length === 1 ? '' : 's'} · ${on} on the seats`, ...[...new Set(extraSays)].map((x) => (extraSays.filter((y) => y === x).length > 1 ? `${x} (${extraSays.filter((y) => y === x).length})` : x)),
+        ...(soon ? [`next reaches the seats ~${hm(soon.eta)}`] : duty.length ? [`${duty.length} waiting`] : [])].join(' · ');
+      const c = on && !coming.length ? 'ok' : on || coming.length ? 'warn' : 'bad';
+      return { t, c, tip: rs.map((r) => r.line).join('\n'), summary: `Every grid of ${period === 'today' ? 'today' : 'tomorrow'} the seats know of - the duty's, its emergency grids and any other creator's.`,
+        items: rs.sort((x, y) => Number(y.live) - Number(x.live)).map((r) => r.item), fold: 'Not on chain' };
+    };
+    out.set(name, { today: cell('today'), next: cell('next') });
+  }
+  return out;
+}
+
 // WHO POSTS EACH DAY'S ROUNDS, AND WHO DID (kanban #702, 2026-10-26, the owner: "In health also say who posted that round" - "Since its pre
 // deterministic"). A seat's GET /duty names, for the day whose posting covers today and the one covering the next 24 h, the duty order the
 // census at that day's anchor gives and, per app, every posting seen with the node whose key signed it (the series' creator). TWO GRIDS A
@@ -462,7 +547,7 @@ export function makeHealth({ H, $, window = {} }) {
       await paintGateways(fedList, seats, nodes);
       // THE SEATS' GET /pending beside the rest (kanban #686, 2026-10-26 measurement: a node that reads its chain through a bridge takes
       // 7 s warm and past 20 s cold): its two tables come when it does, the cards below are not held for it
-      pendingRead = null; postings = null; duties = null;
+      pendingRead = null; postings = null; duties = null; every = null;
       const pendingP = paintPending(seats);
       // the rounds posted for each app (kanban #692): the grids' versions from the seat that expects the most, the committees from one seat's rounds
       const expectedP = best(seats, '/expected', (b) => [(b.expected || []).length]), roundsP = first(seats, '/rounds?next=1');
@@ -484,6 +569,7 @@ export function makeHealth({ H, $, window = {} }) {
       duties = dutyNotes(dt ? dt.body : null);
       postings = roundPosting({ games: games ? games.body.games : [], pending: pendingRead || [], expected: ex ? ex.body.expected || [] : [],
         rounds: rd ? rd.body.rounds || [] : [], nowMs: Date.now(), fedNo: fedNoOf });
+      every = allPostings({ games: games ? games.body.games : [], pending: pendingRead || [], expected: ex ? ex.body.expected || [] : [], duty: dt ? dt.body : null, nowMs: how.atMs || Date.now() });
       paintApps(games, nodes);
       const lists = (await nowP).map((a) => (a.ok && a.body ? a.body : null));
       nowRounds = roundSeating({ games: games ? games.body.games : [], lists, nowMs: how.atMs || Date.now(),
@@ -757,11 +843,11 @@ export function makeHealth({ H, $, window = {} }) {
   function paintMachines(nodes) { H.draw($('machines'), 'machines', { view: H.machinesView(nodes) }); }
   // ROUNDS POSTED (kanban #692): the newest version's, today and the next 24 h (roundPosting above), once the seats' grids are read
   // AND WHO IS ON DUTY FOR THEM, WHO POSTED THEM (kanban #702): beside each cell, the whole story in its tooltip
-  let pendingRead = null, postings = null, duties = null, nowRounds = null;
+  let pendingRead = null, postings = null, duties = null, nowRounds = null, every = null;
   function paintApps(g, nodes) {
     // GAMES AND MARKETS FOLDED IN HERE (2026-10-26 ~15:25Z, the owner: "Games and Markets is also deprecated if we have apps"): the one
     // number it had that Apps did not, the seats hosting the newest version
-    const AH = ['App', 'Type', 'Newest version', 'Seats hosting', 'Next hour: seated / joinable', 'Rounds today', 'Tomorrow', 'Earned by nodes (sat)', 'This month (sat)'];
+    const AH = ['App', 'Type', 'Newest version', 'Seats hosting', 'Next hour: seated / joinable', 'Postings today', 'Rounds today', 'Tomorrow', 'Earned by nodes (sat)', 'This month (sat)'];
     const hosting = (name, v) => Math.max(0, ...(g ? g.body.games : []).filter((x) => (x.name || x.title) === name && String(x.version) === String(v)).map((x) => (x.seats || []).length || 0));
     const wait = { t: 'reading …', c: 'muted' };
     const rows = H.appsView(g ? g.body.games : [], nodes).map((a) => { const p = postings && postings.get(a.name), d = duties && duties.get(a.name);
@@ -769,7 +855,7 @@ export function makeHealth({ H, $, window = {} }) {
       // THE NEXT HOUR (kanban #758): seated and joinable rounds, red when none can be joined - the row's dot with it
       const now = nowRounds ? nowRounds.get(a.name) || { t: '-', c: 'muted' } : wait;
       return { key: a.name, dot: now.c === 'bad' ? 'bad' : now.c === 'warn' ? 'warn' : a.newest != null ? 'ok' : 'warn',
-        cells: [a.title, a.type, a.newest == null ? '-' : String(a.newest), a.newest == null ? '-' : hosting(a.name, a.newest), now, at('today'), at('next'), sat(a.total), sat(a.month)] }; });
+        cells: [a.title, a.type, a.newest == null ? '-' : String(a.newest), a.newest == null ? '-' : hosting(a.name, a.newest), now, every ? (every.get(a.name) || {}).today || { t: '-', c: 'muted' } : wait, at('today'), at('next'), sat(a.total), sat(a.month)] }; });
     drawTable('apps', AH, rows, 'no app read', 'summed from every answering node\'s dashboard - each node counts only its own share');
   }
 
