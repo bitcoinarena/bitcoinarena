@@ -12,6 +12,7 @@ import { BondPanel } from './BondPanel.jsx';
 import { SetupCard } from '../dashboard/SetupStatus.jsx';
 import { CustodyPanel, LiquidityPanel } from './CustodyPanels.jsx';
 import { StandingPanel } from './StandingPanel.jsx';
+import { UptimePanel } from '../dashboard/Uptime.jsx';
 import { ReleasePanel } from './ReleasePanel.jsx';
 import { AppsPanel } from './AppsPanel.jsx';
 import { NetworkAppsPanel } from './NetworkAppsPanel.jsx';
@@ -57,6 +58,8 @@ export function mountBond(element, { api, initial, qr } = {}) {
 }
 export function mountCustody(element, { api, initial } = {}) { const root = createRoot(element); root.render(<CustodyPanel api={api} initial={initial} />); return root; }
 export function mountLiquidity(element, { api, initial } = {}) { const root = createRoot(element); root.render(<LiquidityPanel api={api} initial={initial} />); return root; }
+// THE NODE'S UPTIME (kanban #756): the four figures, where the 24 h matters, the warning below the line - GET /uptime
+export function mountUptime(element, { api, initial, onBelow } = {}) { const root = createRoot(element); root.render(<UptimePanel api={api} initial={initial} onBelow={onBelow} />); return root; }
 export function mountStanding(element, { api, initial, onMissed } = {}) { const root = createRoot(element); root.render(<StandingPanel api={api} initial={initial} onMissed={onMissed} />); return root; }
 export function mountRelease(element, { api, initial, onNewer } = {}) { const root = createRoot(element); root.render(<ReleasePanel api={api} initial={initial} onNewer={onNewer} />); return root; }
 export function mountApps(element, { api, initial } = {}) { const root = createRoot(element); root.render(<AppsPanel api={api} initial={initial} />); return root; }
@@ -97,4 +100,4 @@ export function drawInto(element, kind, props) {
 }
 // mountRounds too (kanban #728, found by owner-react-door.test: #715 left it out, so owner.html's roundsPanel() threw and every panel
 // mounted after it - the Bond section among them - stayed empty)
-if (typeof window !== 'undefined') window.ArenaOwner = { areaInto, drawInto, mountKeySwitch, mountRounds, mountBondAnswer, mountPlea, mountLeave, mountStart, mountMessage, mountRoles, mountServices, mountAddress, mountSetup, mountBond, mountCustody, mountLiquidity, mountStanding, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };
+if (typeof window !== 'undefined') window.ArenaOwner = { areaInto, drawInto, mountKeySwitch, mountRounds, mountBondAnswer, mountPlea, mountLeave, mountStart, mountMessage, mountRoles, mountServices, mountAddress, mountSetup, mountBond, mountCustody, mountLiquidity, mountStanding, mountUptime, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };

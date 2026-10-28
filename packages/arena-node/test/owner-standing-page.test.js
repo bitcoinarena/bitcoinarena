@@ -31,6 +31,24 @@ test('the standing: the React screen alone, reading the doors as they answer; mi
   assert.doesNotMatch(HTML, /Draws missed in a row|Recent rounds your bond qualified for/, 'no old panel left in the page');
 });
 
+// THE UPTIME (kanban #756): React's UptimePanel (arena-web test/uptime.test.mjs) on the Overview, reading GET /uptime; below the line said
+// on the Overview - red where the draw reads it (2.0, protocol 22), yellow before
+test('the uptime: the React screen on the Overview, reading GET /uptime; below the inclusion line said on the Overview', async () => {
+  assert.ok(AREA.includes('<Place id="uptime" />') && /\n {2}uptimePanel\(\);\n/.test(HTML));
+  assert.ok(AREA.indexOf('<Place id="uptime" />') < AREA.indexOf("sec('roles'"), 'in the Overview section');
+  const mounted = [], needs = [];
+  const fetch = async (u) => ({ json: async () => ({ asked: u }) });
+  new Function('at', 'fetch', 'mount', 'need', `${line('const getJson')}; ${block('function uptimePanel()')}; return uptimePanel;`)(
+    (p) => `https://seat${p}`, fetch, (id, how, props) => mounted.push({ id, how, props }), (...a) => needs.push(a))();
+  const [m] = mounted;
+  assert.deepEqual([m.id, m.how], ['uptime', 'mountUptime']);
+  assert.deepEqual(await m.props.api.get('/uptime'), { asked: 'https://seat/uptime' });
+  m.props.onBelow({ inclusion: { met: false, inForce: false } });
+  m.props.onBelow({ inclusion: { met: false, inForce: true } });
+  assert.deepEqual(needs, [['uptime', 'warn', 'Your node was not up 15 minutes without a break in the last 24 hours: from 2.0 that leaves it out of the draw.', 'overview'],
+    ['uptime', 'bad', 'Your node was not up 15 minutes without a break in the last 24 hours: it is left out of the next draw.', 'overview']]);
+});
+
 // THE CAPACITY PLEA AND THE BOND OFFER are React's too (kanban #564: CapacityPlea, BondAnswer - their words and figures are arena-web's,
 // test/bond-offer.test.mjs): the page reads the doors once and hands the answers over with the signed requests and need()
 const fnOf = (start, name) => { const c = HTML.indexOf(start); return HTML.slice(c, HTML.indexOf('\n}\n', HTML.indexOf(`async function ${name}() {`)) + 2); };
