@@ -32,11 +32,13 @@ const fromHex = (h) => Uint8Array.from(Buffer.from(h, 'hex'));
 
 /** Headers read per refresh. A view is a window; the rule judges what is in it. */
 export const BEACON_WINDOW = 64;
+/** How often a held beacon is checked against the chain as it stands now (kanban #727): the window read again, past its tip. */
+export const BEACON_RECHECK_MS = 30000;
 
 /** Two rounds share an answer only if they ask the same question of the chain. */
 const keyOf = (contract) => `${contract.committeeTimeMs}:${contract.censusConfirmations}`;
 
-export function chainBeacon({ call, window = BEACON_WINDOW } = {}) {
+export function chainBeacon({ call, window = BEACON_WINDOW, recheckMs = BEACON_RECHECK_MS } = {}) {
   if (typeof call !== 'function') throw new Error('a chain beacon needs a way to ask a node');
   const held = new Map();
   // ONE READ IN FLIGHT PER QUESTION (2026-09-30, the testnet4 bitcoind flood): rounds that share a committee_time
@@ -48,6 +50,7 @@ export function chainBeacon({ call, window = BEACON_WINDOW } = {}) {
   // blocks past its tip; a first new header that does not link to the held tip (a reorganised chain) reads it whole.
   let win = null;
   let winRead = null;
+  let lastCheck = 0;
   const extend = () => {
     if (winRead) return winRead;
     winRead = (async () => {
@@ -71,7 +74,7 @@ export function chainBeacon({ call, window = BEACON_WINDOW } = {}) {
     return winRead;
   };
 
-  return {
+  const api = {
     /**
      * Read the chain and keep what the rule names, or keep nothing.
      *
@@ -107,11 +110,27 @@ export function chainBeacon({ call, window = BEACON_WINDOW } = {}) {
     /** What this node holds for that round, or nothing at all. */
     for({ contract } = {}) {
       if (!contract) return undefined;
-      const seen = held.get(keyOf(contract));
-      return seen && { hash: seen.hash, height: seen.height, timeMs: seen.timeMs };
+      const key = keyOf(contract);
+      const seen = held.get(key);
+      if (!seen) return undefined;
+      // A HELD BEACON THE CHAIN LEFT (kanban #727, measured 2026-10-28 on public testnet4: an 11-block side branch 157901-157911 held
+      // the seats' beacon 157904 eight deep, then lost; every seat kept drawing the afternoon grids' committees on the branch's block
+      // while a page drew on the chain's, and refused every seating "which the draw did not draw"): the window, read again at most
+      // every BEACON_RECHECK_MS, still holds the beacon's height - and a different block there drops the answer and reads it again
+      if (Date.now() - lastCheck > recheckMs) { lastCheck = Date.now(); extend().catch(() => {}); }
+      if (win && seen.height >= win.firstHeight && seen.height <= win.tipHeight) {
+        const at = win.headers[seen.height - win.firstHeight];
+        if (at && hex(blockHashOf(at)) !== hex(seen.hash)) {
+          held.delete(key);
+          api.refresh(contract).catch(() => {});
+          return undefined;
+        }
+      }
+      return { hash: seen.hash, height: seen.height, timeMs: seen.timeMs };
     },
 
     /** What is being held, for an operator who wants to see it. */
     get size() { return held.size; },
   };
+  return api;
 }
