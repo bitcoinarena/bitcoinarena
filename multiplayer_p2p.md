@@ -6181,9 +6181,11 @@ by, in order:
 The flooring makes honest guardians measure the same values.
 
 **Seating:**
-- The top two operators are seated in the next federation record, signed
-  at threshold like every record. A guardian that ranks differently is
-  outvoted by the threshold.
+- The top two operators are signed as a separate **gateway seating** for the epoch, not written into the federation record.
+  Once the epoch is over, each seated guardian signs its seating of it: the paid seats (the seated ones less a seat held below
+  the minimums) and each paid seat's peg-in as that guardian proved it. The seating **stands only when at least the threshold of
+  the seated guardians signed the same body**; a guardian that ranks differently is outvoted by the threshold, and a seating
+  without enough signatures does not stand.
 - **The seats rotate every epoch** *(2026-10-20: "rotate the guardians daily every 144 blocks among those that want to be
   gateways in the federation")*: the holders of the epoch before step back, with all of their operator's nodes. The eligible
   operators that did not hold a seat take the seats first, in rank order. The holders fill what is left, in rank order, so with
@@ -6217,8 +6219,10 @@ GUARDIAN pool (4/3 %)
 - A gateway seat therefore earns **2.5×** what a guardian earns, plus its
   own Lightning routing fees. A gateway that is also a guardian, which every
   gateway seat is, earns both shares.
-- A seat earns its share for a round only if it was eligible in that
-  round's epoch: the seating the guardians sign names only eligible seats. A gateway that holds its seat below the minimums
+- **Which epoch pays a round:** the signed seating of the **last whole epoch before the round's census height**
+  (`floor(census_height / 144) - 1`), since an epoch can be measured and signed only once it is over. That seating names only the
+  eligible seats, so a seat earns its share for a round only if it was eligible in that epoch. With no standing seating for that
+  epoch the round pays no gateway; it does not fall back to an older epoch's seating. A gateway that holds its seat below the minimums
   (never without a gateway, above) serves but is not paid; its share goes to the other seat, or to the guardians.
 - An empty or unearned gateway share goes to the other gateway seat. With no
   gateway seated, it goes to the guardians. The mirror, from protocol 22: with
