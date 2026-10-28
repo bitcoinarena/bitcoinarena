@@ -9915,6 +9915,13 @@ function provenHeartbeat(bytes, { roundId, slot, committee, census, closeMs, ver
 // them are present, so on 10-27 the stopped nodes took three days to be proven out. A heartbeat certificate (heartbeat.js) proves EVERY
 // node of its round's census missed that it does not list, one slot per round (the owner 2026-10-27). A proof names a seating (role game or
 // settlement) or a heartbeat slot (role heartbeat-0); both count towards the 3 closes an hour apart, and a listing in either keeps the node in.
+//
+// AND ONLY THE DUTY POSTINGS' ROUNDS PROVE (kanban #727, the heartbeat helper's open hole: rounds anyone posts add draws, so a group that
+// posts many rounds of its own gets more chances to land 5 of its nodes in one). A proof's round must be of a duty posting of its day -
+// the primary, the backup or an emergency grid: its publication marked for that day and item, its creator within the first 3 of the
+// day's duty order (duty.js dutyRoundStands) - which an attacker cannot be on demand: that order is the chain census's rank. A round of
+// any other series proves nothing; its certificate still keeps the nodes it lists in. Every seat and the client decide it the same way
+// (`dutyOf` below: presence-book.js at a seat, client-committee.js at the client).
 
 
 
@@ -9992,13 +9999,19 @@ function provenProof(bytes, { roundId, role, d, verify }) {
  * sorted by node: [{ node, proofs: [{ roundId, role }] }], each naming the ABSENCE_PROOF_SEATINGS newest seatings it missed, at different
  * closes. ABSENT STAYS ABSENT UNTIL SEEN: a node the census of a window seating left out is missed there too, so it is not back the day
  * after for having been drawn for nothing; it comes back by signing a PRESENT that a seated node lists.
+ * ONLY THE DUTY POSTINGS' ROUNDS PROVE (kanban #727, duty.js): `dutyOf(ridHex)` answers { ok } for a round of a duty posting of its
+ * day, { ok: false } for any other (or null: not known yet - treated as no proof). A certificate of any round keeps the nodes it lists
+ * in (it is evidence of presence); only a duty round's certificate is named as proof of a miss.
  */
-function absentFrom({ seatings, census, window, seen = [] }) {
+function absentFrom({ seatings, census, window, seen = [], dutyOf = null }) {
   const inCensus = [...new Set([...census].map(hexOfPresence))].sort();
   const sawIt = new Set([...seen].map(hexOfPresence));
-  const proven = (seatings || []).filter((s) => inWindow(window, s.closeMs))
+  const evidence = (seatings || []).filter((s) => inWindow(window, s.closeMs))
     .sort((a, b) => (a.closeMs === b.closeMs ? (a.roundId + a.role < b.roundId + b.role ? -1 : 1) : (a.closeMs > b.closeMs ? -1 : 1)));
-  for (const s of proven) { for (const k of s.present) sawIt.add(k); for (const k of s.seated) sawIt.add(k); }
+  for (const s of evidence) { for (const k of s.present) sawIt.add(k); for (const k of s.seated) sawIt.add(k); }
+  const dutyKept = new Map();
+  const isDuty = (s) => { if (!dutyOf) return true; if (!dutyKept.has(s.roundId)) { const d = dutyOf(s.roundId); dutyKept.set(s.roundId, !!(d && d.ok)); } return dutyKept.get(s.roundId); };
+  const proven = evidence.filter(isDuty);
   const claims = [];
   for (const node of inCensus) {
     if (sawIt.has(node)) continue;
@@ -10035,14 +10048,17 @@ function absentImplied(chainEntries, committedEntries) {
  * keys the claimed nodes must be in (a seat: its chain census; the client: none, it cannot see a node a census left out); `certOf(ridHex,
  * role)` the certificate bytes the claim attached (or the checker holds); `drawOf(ridHex, role)` the checker's own draw of that seating
  * - { drawn, slots, closeMs } - or null when it cannot draw it yet; `seen` node keys the checker holds other window evidence of (a seat's
- * own PRESENTs and certificates; the owner ruled that refusal stays the seat's own). Answers { ok: true } or { ok: false, node, why, proof }
- * - proof 'seen', 'present', 'not-missed', 'certificate', 'too-few', 'outside' - or { ok: false, notYet: true, node, why } when a
- * named seating cannot be drawn here yet. Any wrong proof makes the census invalid: it is a plain check of what was committed.
+ * own PRESENTs and certificates; the owner ruled that refusal stays the seat's own). `dutyOf(ridHex)`: is the named round a duty posting's
+ * (duty.js dutyRoundStands) - { ok } / { ok: false, why } / null (not known here yet); a round of any other series proves nothing
+ * (kanban #727: rounds anyone posts would add draws). Answers { ok: true } or { ok: false, node, why, proof } - proof 'seen', 'present',
+ * 'not-missed', 'certificate', 'too-few', 'outside', 'not-duty' - or { ok: false, notYet: true, node, why } when a named seating cannot
+ * be drawn here yet. Any wrong proof makes the census invalid: it is a plain check of what was committed.
  */
-function checkAbsenceProof(claims, { census = null, window, certOf, drawOf, verify, seen = [] }) {
+function checkAbsenceProof(claims, { census = null, window, certOf, drawOf, verify, seen = [], dutyOf = null }) {
   const inCensus = census ? new Set([...census].map(hexOfPresence)) : null;
   const sawIt = new Set([...seen].map(hexOfPresence));
   const proven = new Map();      // `${rid}:${role}` -> the seating, checked once per claim
+  const duty = new Map();        // rid -> dutyOf's answer, once per round
   let last = '';
   for (const c of claims || []) {
     const node = hexOfPresence(c.node);
@@ -10061,6 +10077,12 @@ function checkAbsenceProof(claims, { census = null, window, certOf, drawOf, veri
       if (!s) {
         const d = drawOf(rid, p.role);
         if (!d) return { ok: false, notYet: true, node, why: `the seating ${rid.slice(0, 16)} ${p.role} that proves ${short} absent cannot be drawn here yet` };
+        if (dutyOf) {
+          if (!duty.has(rid)) duty.set(rid, dutyOf(rid));
+          const du = duty.get(rid);
+          if (!du) return { ok: false, notYet: true, node, why: `whether round ${rid.slice(0, 16)} that proves ${short} absent is a duty posting's cannot be read here yet` };
+          if (!du.ok) return { ok: false, node, proof: 'not-duty', why: `the round ${rid.slice(0, 16)} that proves ${short} absent is no duty posting's: ${du.why}` };
+        }
         const bytes = certOf(rid, p.role);
         if (!bytes) return { ok: false, node, proof: 'certificate', why: `the proof that ${short} is absent names seating ${rid.slice(0, 16)} ${p.role} and carries no certificate of it` };
         const got = provenProof(bytes, { roundId: rid, role: p.role, d, verify });
@@ -28062,6 +28084,820 @@ function nextRoundLine({ grids, game, nowMs = Date.now(), blockMs = 600000 }) {
   return { text: `${when} · ${draw}.`, grid: g, opensMs };
 }
 
+// ---- arena-protocol/src/tag-switch.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE LAST BLWP/v1 TAGS BECOME ARENA/v1 AT ONE POINT (kanban #525, protocol 18; 2026-10-19 ~14:00Z: "both domains accepted
+// during the switch, the new one required from the upgrade height"). Eleven tags the 10-08 rename left behind - the duty, guardian,
+// gateway and liquidity tickets, the founding's id and setup code, the gateway and liquidity claims, the coin proofs and the two
+// seatings - move together. The point is one block height H per network and that block's time T (ms): a tag computed at a height
+// compares it with H, one computed at a time (an hour slot, a claim's atMs) with T, a seating's epoch by its first height (epoch x 144).
+//   - before the point (or with no point named), every tag is the old one, and a signature is accepted only under it;
+//   - from the point, every tag is the new one, and only it is accepted.
+// Tickets and ids are computed the same on every node, so nobody may switch alone: H is named here by the release that sets it,
+// after every seat of the network runs protocol 18. Kept as they are (ancestor.js, genesis-ids.js): Advert, BOND_MARKER,
+// PlayerWalletSecret, TestArbitration and the donors' wallet tag - they are on Bitcoin already or derive keys.
+
+const TAG_PAIRS = Object.freeze({
+  duty: Object.freeze(['BLWP/v1/DUTY', 'ARENA/v1/DUTY']),
+  guardianTicket: Object.freeze(['BLWP/v1/GUARDIAN', 'ARENA/v1/GUARDIAN']),
+  gatewayTicket: Object.freeze(['BLWP/v1/GATEWAY', 'ARENA/v1/GATEWAY']),
+  gatewayClaim: Object.freeze(['BLWP/v1/GATEWAY_CLAIM', 'ARENA/v1/GATEWAY_CLAIM']),
+  gatewaySeating: Object.freeze(['BLWP/v1/GATEWAY_SEATING', 'ARENA/v1/GATEWAY_SEATING']),
+  liquidityTicket: Object.freeze(['BLWP/v1/LIQUIDITY', 'ARENA/v1/LIQUIDITY']),
+  liquidityClaim: Object.freeze(['BLWP/v1/LIQUIDITY_CLAIM', 'ARENA/v1/LIQUIDITY_CLAIM']),
+  liquidityFunds: Object.freeze(['BLWP/v1/LIQUIDITY_FUNDS', 'ARENA/v1/LIQUIDITY_FUNDS']),
+  liquiditySeating: Object.freeze(['BLWP/v1/LIQUIDITY_SEATING', 'ARENA/v1/LIQUIDITY_SEATING']),
+  founding: Object.freeze(['BLWP/v1/FOUNDING', 'ARENA/v1/FOUNDING']),
+  foundingSetup: Object.freeze(['BLWP/v1/FOUNDING_SETUP', 'ARENA/v1/FOUNDING_SETUP']),
+});
+
+/** The point per network: { height, timeMs } or null (not named yet: the old tags everywhere). testnet4: 2026-10-19 ~20:45Z,
+ *  "Launch it as soon as possible" - H 157,064 (~00:50Z at one block per 20 min, after every seat, provider and installer node runs it),
+ *  T 2026-10-20 01:00:00Z. */
+const TAG_SWITCH = Object.freeze({
+  mainnet: null,
+  testnet4: Object.freeze({ height: 157064, timeMs: Date.parse('2026-10-20T01:00:00Z') }),
+  regtest: null,
+});
+
+const EPOCH_BLOCKS = 144;
+
+let network = 'testnet4';
+let given;   // a test's own point; undefined: the network's
+/** Which network's point this process uses (a node, a provider and a custody agent name theirs at start). */
+function setTagNetwork(name) {
+  if (!Object.prototype.hasOwnProperty.call(TAG_SWITCH, name)) throw new Error(`no tag switch for network ${name}`);
+  network = name;
+}
+/** A test's own point ({ height, timeMs } or null); undefined goes back to the network's. Answers the one it replaced. */
+function setTagSwitchForTests(sw) { const was = given; given = sw; return was; }
+const tagSwitch = () => (given !== undefined ? given : TAG_SWITCH[network]);
+
+const reached = (at, sw) => {
+  if (!sw || !at) return false;
+  if (at.height != null) return Number(at.height) >= sw.height;
+  if (at.epoch != null) return Number(at.epoch) * EPOCH_BLOCKS >= sw.height;
+  if (at.ms != null) return Number(at.ms) >= sw.timeMs;
+  return false;
+};
+
+/** The tag `name` is computed and signed under at `at` ({ height } | { epoch } | { ms }). */
+function tagAt(name, at, sw = tagSwitch()) {
+  const pair = TAG_PAIRS[name];
+  if (!pair) throw new Error(`no tag named ${name}`);
+  return reached(at, sw) ? pair[1] : pair[0];
+}
+
+/**
+ * The tags a signature made at `at` is accepted under. With no point named, the old one only (nothing changes). Once a point is
+ * named, before it both - the switch, while every seat moves to protocol 18 and still signs the old one - and from it the new one only.
+ */
+function tagsAccepted(name, at, sw = tagSwitch()) {
+  const pair = TAG_PAIRS[name];
+  if (!pair) throw new Error(`no tag named ${name}`);
+  if (!sw) return [pair[0]];
+  return reached(at, sw) ? [pair[1]] : [pair[0], pair[1]];
+}
+
+// ---- arena-protocol/src/duty.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE DUTY TO POST THE ROUNDS 24 H AHEAD (2026-10-13 ~18:35Z): "Wir müssen jeden Tag verlässlich follow up rounds
+// für alle Spiele und Networks posten, jeden Tag für die nächsten 24h. Das macht immer eine bestimmte deterministische node die gerade
+// Dienst hat ... diese node postet die Runden die in 24h starten. Wichtig ist dass keine gap entsteht. Wenn die Node ihren Slot verpasst,
+// macht die nächste Node, verantwortlich für die nächste Runde das ... Bis es gepostet ist. Nur eine node postet die runde."
+//
+//   SLOT          one UTC hour. Slot i's duty is the rounds of hour i + 24: [(i + 24) h, (i + 25) h), for every plan item (a game in a
+//                 network/federation) - one grid each.
+//   WHO           the census at the slot's anchor - the first block whose median time past is beyond the slot's start less 3 h, fixed for
+//                 everybody once it exists - ranked by H(duty tag || network_id || slot || node key) (BLWP/v1/DUTY, ARENA/v1/DUTY from the switch: tag-switch.js); the first is on duty.
+//   POSTED        a slot of an item is posted when a transaction carries its marker, OP_RETURN "ARN" 'D' slot item (duty marker), in the
+//                 chain or the mempool, beside the grid's series publications.
+//   MISSED        the duty node of the CURRENT slot posts every slot of the last DUTY_LOOKBACK_SLOTS not posted yet, oldest first, before
+//                 its own - so a missed slot falls to the next slot's node, and the next after that, until it is posted; at any moment
+//                 only the current slot's node posts, and a missed slot keeps more than 4 h of lead.
+
+
+
+
+
+const DUTY_SLOT_MS = 3600000;
+const DUTY_AHEAD_SLOTS = 24;
+const DUTY_LOOKBACK_SLOTS = 20;
+const DUTY_ANCHOR_BACK_MS = 3 * 3600000;
+/** A grid's committee time is its first start less this: long enough for the publication to confirm and its beacon to be 6 deep. */
+const DUTY_COMMITTEE_LEAD_MS = 6 * 3600000;
+
+const slotOf = (ms) => Math.floor(Number(ms) / DUTY_SLOT_MS);
+const slotStartMs = (slot) => slot * DUTY_SLOT_MS;
+/** The hour whose rounds slot `slot` posts: [start, end) ms. */
+const targetWindow = (slot) => ({ startMs: (slot + DUTY_AHEAD_SLOTS) * DUTY_SLOT_MS, endMs: (slot + DUTY_AHEAD_SLOTS + 1) * DUTY_SLOT_MS });
+
+/**
+ * THE SLOT'S ANCHOR HEIGHT: the first block whose median time past is beyond the slot's start less 3 h. `mtpAt(height)` the chain's
+ * median time past (s) at a height; `tip`. Median time never falls, so the answer is the same for everybody once the block exists;
+ * null while it does not.
+ */
+async function anchorHeight(slot, { mtpAt, tip, low = 0, slotMs = DUTY_SLOT_MS }) {
+  const want = (slot * slotMs - DUTY_ANCHOR_BACK_MS) / 1000;
+  if ((await mtpAt(tip)) <= want) return null;
+  let lo = low, hi = tip;                              // the first h with mtp > want, by bisection (mtp is non-decreasing)
+  while (lo < hi) { const mid = Math.floor((lo + hi) / 2); if ((await mtpAt(mid)) > want) hi = mid; else lo = mid + 1; }
+  return lo;
+}
+
+// (dutyU32, not u32: this module joins the client bundle, where another u32 already lives)
+const dutyU32 = (n) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n >>> 0, false); return b; };
+
+/**
+ * A node's rank for a slot: H_duty(network_id || slot || node key) - the tag by the slot's hour (tag-switch.js, kanban #525). `sw`: the
+ * tag switch to read it with - this process's network's unless given (a client names the contract's network's: dutyRoundStands below).
+ */
+function dutyTicket(networkId, slot, nodeKey, sw = undefined) {
+  const w = new Writer(); w.bytes32(networkId); w.u32(slot); w.bytes32(nodeKey);
+  const tag = sw === undefined ? tagAt('duty', { ms: slot * 3_600_000 }) : tagAt('duty', { ms: slot * 3_600_000 }, sw);
+  return bytesToBigInt(taggedHash(tag, w.finish()));
+}
+
+/** The slot's nodes in duty order (node keys, 32 bytes each; one per key): the first is on duty. */
+function dutyOrder({ networkId, slot, nodeKeys, sw = undefined }) {
+  const keys = [...new Map((nodeKeys || []).map((k) => [toHex(k), k])).values()];
+  return keys.map((k) => ({ k, t: dutyTicket(networkId, slot, k, sw) })).sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0)).map((x) => x.k);
+}
+
+/** A plan item's 4-byte tag: the first 4 bytes of sha256 of its name ("rps-fed-337ae01a", "updown-fed-...") - fixed by the name. */
+const itemTag = (name) => sha256(new TextEncoder().encode(String(name))).subarray(0, 4);
+
+const MAGIC = [0x41, 0x52, 0x4e, 0x44];                   // "ARN" 'D'
+/** The duty marker's payload: "ARN" 'D' || slot (u32) || item tag (4 bytes) - 12 bytes. */
+function dutyMarkerPayload(slot, itemName) {
+  const p = new Uint8Array(12); p.set(MAGIC, 0); p.set(dutyU32(slot), 4); p.set(itemTag(itemName), 8); return p;
+}
+/** The output that carries it: zero value, OP_RETURN, one direct push. */
+function dutyMarkerOutput(slot, itemName) {
+  const payload = dutyMarkerPayload(slot, itemName);
+  const script = new Uint8Array(2 + payload.length); script[0] = OP_RETURN; script[1] = payload.length; script.set(payload, 2);
+  return { value: 0n, script };
+}
+/** The duty markers a transaction carries: [{ slot, tag hex }]. */
+function dutyMarkersOf(raw) {
+  let tx; try { tx = typeof raw === 'object' && raw.outputs ? raw : parseTransaction(raw); } catch { return []; }
+  return commitmentsOf(tx).filter((p) => p.length === 12 && MAGIC.every((b, i) => p[i] === b))
+    .map((p) => ({ slot: new DataView(p.buffer, p.byteOffset).getUint32(4, false), tag: toHex(p.subarray(8, 12)) }));
+}
+
+/**
+ * THE SERIES A POSTING PUBLISHES: the ids of its "ARN" SERIES outputs (36 bytes, kind 'S'), hex - so who posted a day can be read from
+ * the series' own signed lines, their creator key (kanban #702, 2026-10-26: "In health also say who posted that round")
+ */
+function postedSeriesOf(raw) {
+  let tx; try { tx = typeof raw === 'object' && raw.outputs ? raw : parseTransaction(raw); } catch { return []; }
+  return commitmentsOf(tx).filter((p) => p.length === 36 && p[0] === 0x41 && p[1] === 0x52 && p[2] === 0x4e && p[3] === 0x53).map((p) => toHex(p.subarray(4, 36)));
+}
+
+/** A slot before the current one counts as missed only this long into the current slot: a last-minute post has time to be seen. */
+const DUTY_MISS_GRACE_MS = 5 * 60000;
+
+/**
+ * WHAT THE CURRENT SLOT'S DUTY NODE POSTS NOW for one item: its own slot, and - from DUTY_MISS_GRACE_MS into its slot - every earlier
+ * slot of the last DUTY_LOOKBACK_SLOTS whose marker is not seen (`posted` a Set of slots), oldest first. [] for a node not on duty.
+ */
+function slotsToPost({ nowMs, onDuty, posted, lookback = DUTY_LOOKBACK_SLOTS }) {
+  if (!onDuty) return [];
+  const nowSlot = slotOf(nowMs);
+  const out = [];
+  const missedToo = Number(nowMs) - slotStartMs(nowSlot) >= DUTY_MISS_GRACE_MS;
+  if (missedToo) for (let i = nowSlot - lookback; i < nowSlot; i++) if (!posted.has(i)) out.push(i);
+  if (!posted.has(nowSlot)) out.push(nowSlot);
+  return out;
+}
+
+// ONE POSTING PER GAME PER DAY (2026-10-14 ~11:22Z: "Each game may only have one round posting per day and the fees must be as low
+// as possible"). The slot is a UTC day: day d's duty is the rounds of day d + 1 - one transaction per game carrying every federation's
+// series of it, at the lowest fee the network relays. Who posts: the census at the day's anchor in duty order, as above; the first is due
+// from the day's start, and each next one an hour after the one before it while the day's marker is not seen - so a missed post falls
+// to the next node within the same day, long before the grid's committee time (the next day's start less DUTY_COMMITTEE_LEAD_MS).
+const DUTY_DAY_MS = 86400000;
+const DUTY_FALLBACK_MS = 3600000;
+const daySlotOf = (ms) => Math.floor(Number(ms) / DUTY_DAY_MS);
+const dayStartMs = (slot) => slot * DUTY_DAY_MS;
+/** The day whose rounds day `slot` posts: [start, end) ms - the next day. */
+const targetDay = (slot) => ({ startMs: (slot + 1) * DUTY_DAY_MS, endMs: (slot + 2) * DUTY_DAY_MS });
+/** Is the day's post due from the node at `rank` (0 = first in duty order) now? Not once the day's marker is seen (`posted`). */
+function dayPostDue({ nowMs, slot, rank, posted }) {
+  if (posted || !Number.isInteger(rank) || rank < 0) return false;
+  return Number(nowMs) >= dayStartMs(slot) + rank * DUTY_FALLBACK_MS && Number(nowMs) < dayStartMs(slot + 1);
+}
+
+// THE BACKUP GRID (2026-10-26, the owner: "Yes make it part of the design, in the spec" - a second grid for every day from another node, so
+// a day is never without a round; kanban #702). Every day gets a PRIMARY grid from the day's duty node (rank 1, above) and a BACKUP grid from
+// the next node in the same order (rank 2; rank 3 an hour later if rank 2 has not posted it, up to DUTY_BACKUP_RANK_CAP), posted on its
+// own: its own coins and publication, a census DUTY_BACKUP_CENSUS_DEPTH below the tip (the primary's is 6) taken from DUTY_BACKUP_AFTER_MS
+// into the day, so at a later block, and a committee time DUTY_BACKUP_COMMITTEE_LEAD_MS before the day (the primary's 12 h) - one fork,
+// reorg or conflicted coin does not take both. It carries the backup marker OP_RETURN "ARN" 'B' day item_tag (12 bytes) in place of the
+// duty marker. The node that posted the primary never posts the backup.
+//   PLAYED     one grid per window: a round of a backup series is offered, and takes entries, only while no round of the same game,
+//              federation and start from a series that is not a backup is drawn on that seat - the primary is played while its committee
+//              is drawable, otherwise the backup. A seat that holds an entry in a window's backup round takes none in its other rounds.
+//   MISSED     a backup nobody posted leaves the day to its primary (and to the emergency grid when that dies) - nothing more.
+const DUTY_BACKUP_AFTER_MS = 2 * 3600000;
+const DUTY_BACKUP_COMMITTEE_LEAD_MS = 9 * 3600000;
+const DUTY_BACKUP_CENSUS_DEPTH = 12;
+const DUTY_BACKUP_RANK_CAP = 3;
+const BACKUP_MAGIC = [0x41, 0x52, 0x4e, 0x42];            // "ARN" 'B'
+/** The backup marker's output: "ARN" 'B' || day (u32) || item tag - zero value, OP_RETURN, one direct push. */
+function backupMarkerOutput(slot, itemName) {
+  const payload = new Uint8Array(12); payload.set(BACKUP_MAGIC, 0); payload.set(dutyU32(slot), 4); payload.set(itemTag(itemName), 8);
+  const script = new Uint8Array(14); script[0] = OP_RETURN; script[1] = 12; script.set(payload, 2);
+  return { value: 0n, script };
+}
+/** Every duty and backup marker a transaction carries: [{ slot, tag hex, kind: 'D' | 'B' }]. */
+function dayMarkersOf(raw) {
+  let tx; try { tx = typeof raw === 'object' && raw.outputs ? raw : parseTransaction(raw); } catch { return []; }
+  return commitmentsOf(tx).filter((p) => p.length === 12 && p[0] === 0x41 && p[1] === 0x52 && p[2] === 0x4e && (p[3] === 0x44 || p[3] === 0x42))
+    .map((p) => ({ slot: new DataView(p.buffer, p.byteOffset).getUint32(4, false), tag: toHex(p.subarray(8, 12)), kind: p[3] === 0x42 ? 'B' : 'D' }));
+}
+/** Is a series publication a backup grid's: its transaction carries a backup marker. */
+const isBackupPublication = (raw) => dayMarkersOf(raw).some((m) => m.kind === 'B');
+/**
+ * Is the day's backup due from the node at `rank` (0 = the day's duty node, which never posts it) now: rank 1 from DUTY_BACKUP_AFTER_MS into
+ * the day, each next rank an hour later, up to `cap` - not once the day's backup marker is seen, never from the node that posted the primary.
+ */
+function backupPostDue({ nowMs, slot, rank, posted, postedPrimary = false, cap = DUTY_BACKUP_RANK_CAP }) {
+  if (posted || postedPrimary || !Number.isInteger(rank) || rank < 1) return false;
+  return Number(nowMs) >= dayStartMs(slot) + DUTY_BACKUP_AFTER_MS + (Math.min(rank, cap) - 1) * DUTY_FALLBACK_MS && Number(nowMs) < dayStartMs(slot + 1);
+}
+/**
+ * WHICH ROUNDS OF ONE WINDOW ARE PLAYED (the rule above), from what a seat sees of the rounds of one game, federation and start: `rows`
+ * [{ id, backup: bool|null, drawn: bool, entries: n }] -> the Set of ids offered. A row whose role is not known yet (its publication not
+ * read) counts as not a backup.
+ */
+function playedOfWindow(rows) {
+  const primaryDrawn = rows.some((r) => !r.backup && r.drawn);
+  const backupTaken = rows.some((r) => r.backup && r.entries > 0);
+  const out = new Set();
+  for (const r of rows) if (r.backup ? !primaryDrawn || r.entries > 0 : !backupTaken || r.entries > 0) out.add(r.id);
+  return out;
+}
+
+// ONLY THE DUTY GRIDS' ROUNDS ARE ABSENCE PROOFS (multiplayer_p2p.md §5A.3 "Only the duty postings' rounds prove an absence", protocol
+// 22, kanban #727). A seating or heartbeat certificate proves a node absent only for a round of a DUTY posting of its day: the day's
+// primary grid, its backup grid or an emergency grid - a publication carrying the day marker ("ARN" 'D' or 'B', day, item tag) of one of
+// the protocol's duty items, posted by a node within the first DUTY_PROOF_RANKS of that day's duty order. Anyone can post a series, and
+// anyone can write a marker into an OP_RETURN; what nobody can do on demand is stand in the day's duty order - that is the chain
+// census's rank. A round of any other series (a table someone posted themselves, a test grid) proves nothing. The checker reads the
+// rank over the round's own census as its root commits it: every seat checks that root against its chain, the client against the root,
+// so every checker reads one list. (The duty node reads its own rank over the census at the day's anchor, duty-day.js orderOf; the two
+// differ by at most the bonds confirmed between the anchor and the series' census block. A posting at a rank the proof rule does not
+// take is played as before; its rounds prove nothing, which is all.)
+/** A proof round's creator is within the first 3 of its day's duty order: ranks 1-3 post the primary, 2-3 the backup, 1.. the emergency. */
+const DUTY_PROOF_RANKS = 3;
+/** The apps a day duty posts (duty-day.js DUTY_APPS): their items are `<app>-day`, their emergency grids' `<app>-day-emergency`. */
+const DUTY_PROOF_APPS = Object.freeze(['updown', 'rps', 'nextblock']);
+/** At most this many emergency grids of one day and app count (duty-guard.js DUTY_EMERGENCY_MAX posts at most 3). */
+const DUTY_EMERGENCY_CAP = 3;
+/** The duty items by their marker tag (hex): { app, item, emergency }. */
+const DUTY_PROOF_ITEMS = Object.freeze(Object.fromEntries(DUTY_PROOF_APPS.flatMap((app) => [
+  [toHex(itemTag(`${app}-day`)), Object.freeze({ app, item: `${app}-day`, emergency: false })],
+  [toHex(itemTag(`${app}-day-emergency`)), Object.freeze({ app, item: `${app}-day-emergency`, emergency: true })]])));
+/**
+ * THE DUTY MARKER A PUBLICATION CARRIES: the first "ARN" 'D' / 'B' marker of a duty item - { slot, tag, kind, app, item, emergency } -
+ * or null (no marker, or none of a duty item; a 'B' marker on an emergency item is none: a backup posts no emergency grid).
+ */
+function dutyMarkerOf(raw) {
+  for (const m of dayMarkersOf(raw)) {
+    const it = DUTY_PROOF_ITEMS[m.tag];
+    if (!it || (m.kind === 'B' && it.emergency)) continue;
+    return { ...m, app: it.app, item: it.item, emergency: it.emergency };
+  }
+  return null;
+}
+/** One day's postings are keyed by day, item and kind: one primary, one backup, DUTY_EMERGENCY_CAP emergency grids. */
+const dutyPostingKey = (m) => `${m.slot}:${m.tag}:${m.kind}`;
+/**
+ * THE DAY'S POSTINGS AMONG MARKED TRANSACTIONS IN CHAIN ORDER (`marked`: [{ txid, marker }] by height, then by position in the block -
+ * confirmed only): per day, item and kind the first confirmed transaction, and for an emergency item the first DUTY_EMERGENCY_CAP. The
+ * duty rule reads "posted" the same way (the first confirmed publication is the one reimbursed; a duplicate is the duplicating node's
+ * loss), so a node that posts a second primary of a day adds no proof round. Answers the Set of txids (hex) that count.
+ */
+function dutyPostingsOf(marked) {
+  const taken = new Map();
+  const out = new Set();
+  for (const { txid, marker } of marked || []) {
+    if (!marker) continue;
+    const k = dutyPostingKey(marker), n = taken.get(k) || 0;
+    if (n >= (marker.emergency ? DUTY_EMERGENCY_CAP : 1)) continue;
+    taken.set(k, n + 1);
+    out.add(String(txid).toLowerCase());
+  }
+  return out;
+}
+/**
+ * DOES THIS ROUND STAND AS A DUTY ROUND: `contract` names its creator and starts in the day the marker's slot posts (targetDay), and
+ * the creator is within the first DUTY_PROOF_RANKS of the day's duty order over `orderKeys` (the node keys of the round's census as its
+ * root commits it), `sw` the network's tag switch. { ok, rank, marker } or { ok: false, why }.
+ */
+function dutyRoundStands({ contract, marker, orderKeys, sw = undefined }) {
+  if (!marker) return { ok: false, why: 'its publication carries no duty marker: not a duty posting, so no proof' };
+  if (!contract || !(contract.creatorPubkey instanceof Uint8Array)) return { ok: false, why: 'it names no creator, so it is nobody\'s duty posting' };
+  if (!(contract.networkId instanceof Uint8Array) || typeof contract.startTimeMs !== 'bigint') return { ok: false, why: 'it names no network or no start' };
+  const day = targetDay(marker.slot);
+  const start = Number(contract.startTimeMs);
+  if (!(start >= day.startMs && start < day.endMs))
+    return { ok: false, why: `its publication is marked as day ${new Date(day.startMs).toISOString().slice(0, 10)}'s ${marker.item}, and the round starts on ${new Date(start).toISOString().slice(0, 10)}` };
+  const order = dutyOrder({ networkId: contract.networkId, slot: marker.slot, nodeKeys: orderKeys, sw });
+  const creator = toHex(contract.creatorPubkey);
+  const rank = order.findIndex((k) => toHex(k) === creator);
+  if (rank < 0) return { ok: false, why: `its creator ${creator.slice(0, 16)} is not in the round's census, so not in its day's duty order` };
+  if (rank >= DUTY_PROOF_RANKS) return { ok: false, why: `its creator ${creator.slice(0, 16)} is rank ${rank + 1} of its day's duty order; a duty posting is by one of the first ${DUTY_PROOF_RANKS}` };
+  return { ok: true, rank: rank + 1, marker };
+}
+
+// ---- arena-protocol/src/creator.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// A ROUND'S CREATOR (§6 `creator_pubkey` / `creator_signature`2026.0.3). A contract may name the x-only key of whoever
+// created it (contracts.js CREATOR_MARKER); the creator's BIP-340 signature over the round's id rides beside the contract, as the id
+// itself does - a signature cannot be inside the bytes it signs. "The creator gains no administrative power after publication - and
+// no influence over the committee either": the key says WHO published the round (whom a publication fee is paid back to),
+// and nothing else. A contract that names no creator needs no signature, and none is asked of it.
+//
+// No curve here: the verifier is the caller's (the seat's noble schnorr, the page's ARENA_CURVE), as for every signed record.
+
+
+
+/** What the creator signs: the round's id under its own tag. */
+const creatorMessage = (roundIdBytes) => taggedHash(TAG.roundCreator, roundIdBytes);
+
+/**
+ * DOES THIS SIGNATURE STAND FOR THIS CONTRACT? `verify(sig, msg, xOnlyKey)` BIP-340. { ok, why }: a contract naming no creator
+ * stands with none (and refuses one handed anyway - there is nobody it could be from); one naming a creator stands only with a
+ * 64-byte signature by that key over its id.
+ */
+function creatorSignatureStands(contract, signature, { verify }) {
+  const named = contract && contract.creatorPubkey instanceof Uint8Array;
+  if (!named) return signature ? { ok: false, why: 'that round names no creator, so no creator signature belongs to it' } : { ok: true, why: 'that round names no creator' };
+  if (!(signature instanceof Uint8Array) || signature.length !== 64) return { ok: false, why: 'that round names its creator, and comes without the creator\'s 64-byte signature over its id' };
+  let good = false;
+  try { good = !!verify(signature, creatorMessage(roundId(contract)), contract.creatorPubkey); } catch { good = false; }
+  return good ? { ok: true, why: 'signed by the creator the round names' } : { ok: false, why: 'that signature is not the named creator\'s over this round\'s id' };
+}
+
+/**
+ * A SERIES THAT NAMES ITS CREATOR: one signature over the SERIES id stands for every round of it - a grid of
+ * 10,800 rounds is published by one transaction and posted as one line, so it is signed once. The template's creator key is in
+ * the series id (it is in the template's bytes), so the signature binds the creator to every round the series makes. `seriesIdOf`
+ * is series.js seriesId (injected: series.js imports this package's contracts, as this file does). { ok, why } as above.
+ */
+const seriesCreatorMessage = (seriesIdBytes) => taggedHash(TAG.seriesCreator, seriesIdBytes);
+function seriesCreatorStands(template, signature, { verify, seriesIdOf }) {
+  const named = template && template.creatorPubkey instanceof Uint8Array;
+  if (!named) return signature ? { ok: false, why: 'that series names no creator, so no creator signature belongs to it' } : { ok: true, why: 'that series names no creator' };
+  if (!(signature instanceof Uint8Array) || signature.length !== 64) return { ok: false, why: 'that series names its creator, and comes without the creator\'s 64-byte signature over its id' };
+  let good = false;
+  try { good = !!verify(signature, seriesCreatorMessage(seriesIdOf(template)), template.creatorPubkey); } catch { good = false; }
+  return good ? { ok: true, why: 'signed by the creator the series names' } : { ok: false, why: 'that signature is not the named creator\'s over this series\' id' };
+}
+
+// ---- arena-protocol/src/publication.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// A ROUND EXISTS ONLY ONCE ITS HASH IS ON BITCOIN, BELOW ITS BEACON BLOCK.
+//
+// Section 5A.5 (v4.6.2, P1): "a Round Contract exists only once its hash is in
+// a Bitcoin block before the beacon block."
+//
+//     publication_txid   a transaction carrying
+//                        OP_RETURN "ARN" ROUND H(RoundContract)   (36 bytes)
+//                        confirmed at a height strictly below the beacon block
+//
+// THE HOLE IT CLOSES. 4.6.1 ordered a contract against its beacon by timestamp
+// receipts, which were free: a creator published a thousand candidate rounds,
+// waited for the beacon, and promoted the one whose committee was his. On chain
+// every candidate costs a transaction, and the ordering is objective - the
+// beacon block's hash did not exist when the publication confirmed.
+//
+// WHY THE TXID IS NOT IN THE CONTRACT although section 6 lists it: the
+// transaction carries H(RoundContract), which is the round id, so a contract
+// holding that transaction's id has no fixed point. It rides beside the
+// contract, as `round_id` and `creator_signature` do.
+//
+// THE KIND BYTE IS OURS. The spec writes `ROUND` and fixes no value for it; it
+// is 0x52, 'R', in keeping with the ASCII "ARN". A vote (27A.7.3) is "ARN" 'V'
+// (ballot.js, 2026-10-13), 77 bytes: the kind byte keeps them apart.
+
+const PUBLICATION_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e]);   // "ARN"
+const PUBLICATION_KIND_ROUND = 0x52;                             // 'R'
+const PUBLICATION_BYTES = 36;
+
+const pubIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+/** The 36 bytes a round's publication carries: "ARN", ROUND, round id. */
+function publicationPayload(roundIdBytes) {
+  if (!pubIs32(roundIdBytes)) throw new TypeError('a publication commits to a 32-byte round id');
+  const out = new Uint8Array(PUBLICATION_BYTES);
+  out.set(PUBLICATION_MAGIC, 0);
+  out[3] = PUBLICATION_KIND_ROUND;
+  out.set(roundIdBytes, 4);
+  return out;
+}
+
+/** The output a creator adds to publish a round: zero value, one direct push. */
+function publicationOutput(roundIdBytes) {
+  const payload = publicationPayload(roundIdBytes);
+  const script = new Uint8Array(2 + PUBLICATION_BYTES);
+  script[0] = OP_RETURN;
+  script[1] = PUBLICATION_BYTES;
+  script.set(payload, 2);
+  return { value: 0n, script };
+}
+
+/** Does this parsed transaction publish that round? */
+function publishesRound(tx, roundIdBytes) {
+  const want = publicationPayload(roundIdBytes);
+  return commitmentsOf(tx).some((p) => p.length === PUBLICATION_BYTES
+    && p.every((b, i) => b === want[i]));
+}
+
+/**
+ * WHERE A ROUND WAS PUBLISHED, IN A CHAIN VIEW THIS NODE READ ITSELF.
+ *
+ * The same view the census is derived from - `{ firstHeight, blocks: [{
+ * header, transactions }] }` - so the height is the chain's, and nobody has to
+ * be believed about a txid. The LOWEST publication counts: a creator who
+ * publishes the same round twice gained nothing by the second.
+ */
+function findPublication(view, roundIdBytes) {
+  if (!view || !Array.isArray(view.blocks) || !Number.isInteger(view.firstHeight)) return null;
+  for (let i = 0; i < view.blocks.length; i++) {
+    for (const raw of view.blocks[i].transactions || []) {
+      let tx;
+      try { tx = parseTransaction(raw); } catch { continue; }
+      if (publishesRound(tx, roundIdBytes)) return { tx, height: view.firstHeight + i };
+    }
+  }
+  return null;
+}
+
+/**
+ * IS THIS ROUND PUBLISHED, AND BEFORE ITS BEACON?
+ *
+ * The heights are the caller's own chain's - where the transaction confirmed
+ * and which block the beacon rule named - never a number the creator wrote.
+ * Missing either is a refusal: "I do not know when it confirmed" and "it
+ * confirmed in time" must never be the same answer. So is an equal height,
+ * because a publication in the beacon block itself was made knowing nothing of
+ * that block's hash only if the miner says so.
+ */
+function publicationIsBeforeBeacon({ roundId, tx, txHeight, beaconHeight } = {}) {
+  if (!pubIs32(roundId)) return { ok: false, why: 'that publication names no 32-byte round id' };
+  if (!tx || !Array.isArray(tx.outputs)) return { ok: false, why: 'there is no publication transaction to read' };
+  if (!publishesRound(tx, roundId))
+    return { ok: false, why: 'that transaction does not carry OP_RETURN "ARN" ROUND and this round\'s id' };
+  if (!Number.isInteger(txHeight) || txHeight < 0)
+    return { ok: false, why: 'that publication names no height, so nothing says it came before the beacon' };
+  if (!Number.isInteger(beaconHeight) || beaconHeight < 0)
+    return { ok: false, why: 'there is no beacon height to measure the publication against' };
+  if (txHeight >= beaconHeight)
+    return {
+      ok: false,
+      why: `that round was published at height ${txHeight}, at or after its beacon block `
+        + `${beaconHeight} - its creator could have seen the beacon first`,
+    };
+  return { ok: true, txHeight, beaconHeight };
+}
+
+// ---- arena-protocol/src/series.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// A ROUND SERIES: ONE PUBLICATION, A NEW ROUND EVERY 90 s, WRITTEN 72 h AHEAD (multiplayer_p2p.md §5A.5 "Round series";
+// 2026-09-28, 18738972 and HORIZON72-1131 / NODE72-1131).
+//
+// The unit anchored on chain is a SERIES: its template - every field of a Round Contract, its committee_time and its
+// start - is hashed once, and `OP_RETURN "ARN" SERIES series_id` publishes it. Round `i` of it is derived, never
+// authored: the template with start_time = series_start + i * 90 s and its entry closing at that start (every run of a
+// round starts together). Nothing per round is chosen after the beacon, so a series grinds no better than one round.
+//
+// THE TIMES ARE THE SPEC'S, counted back from the series' start:
+//
+//     committee_time(k)  = series_start(k) - committee lead   (mainnet 72 h, testnet4 24 h)
+//     census_height(k)   = the highest block whose MTP <= series_start(k) - census lead   (mainnet 72 h, testnet4 36 h)
+//     series_lead_min    = mainnet 72 h, testnet4 24 h: a node refuses a series whose start is less than that after
+//                          its committee_time; the writer still lays 72 h of rounds ahead on every network
+//
+// A ROUND OF A SERIES CARRIES ITS SERIES ID AND ITS INDEX, and its id is round_id(i) = H(series_id || i)
+// (ALL-BUT-MIN-1727, 2026-09-29 17:27; contracts.js). A node holds such a round only when its contract is
+// exactly the one the series derives - index inside 0 .. round_count - 1, entry window the derived one
+// (seriesRoundCheck) - and refuses entries, locks and settlements for any other.
+
+
+
+
+
+
+
+
+
+// THE GRID ITSELF LIVES IN constants.js (the manifest reads it there, so a client bundle carrying manifests
+// does not carry the series code); every series reader takes it from here as before.
+
+// LATE JOIN (2026-10-03: "Joining an existing round is possible with 45 seconds in"): a series may close each round's
+// entry LATE_JOIN_MS after its start instead of at it. The template's own entry_close - start is the series' late join
+// (0 or LATE_JOIN_MS), and every round derives the same: it is in the template's bytes, so in the series id.
+const LATE_JOIN_MS = 45000n;
+// The last entry of a late-join round is contracts.js LATE_JOIN_LAST_ENTRY_MS.
+
+const lateJoinOf = (template) => {
+  const late = template.entryCloseMs - template.startTimeMs;
+  return late === 0n || late === LATE_JOIN_MS ? late : null;
+};
+const SERIES_MAX_MS = 86400000n;                     // a series lasts at most 24 h
+
+// A GRID SERIES (2026-10-12: "Pick S ... Publish the grid as a short series, the format the spec
+// already has: one ARN S series_id output per table, two per grid"): an on-demand head-to-head grid - Rock Paper Scissors'
+// 2 tables of 8 s rounds - published as one series per table instead of one OP_RETURN per round (450 outputs, ~21,000 sat
+// at 1 sat/vB). Its own rule, in the owner's words: "lead of at least 45 minutes, as path B already uses; any start time; at
+// most 30 minutes of rounds; its own entry window". Still published on demand, about 1 h ahead: a series only in how it
+// is written on chain. Nothing per round is chosen after the beacon - every round is derived from the template.
+// 24 HOURS OF ROUNDS (2026-10-12 ~09:55Z: "Make sure each grid has 24 hours of gameplay, and cost as less as possible
+// on chain"): a grid runs at most a day - 10,800 slots of 8 s per table - published once a day for ~20 sat at 0.1 sat/vB;
+// the 30 minutes ruled at ~06:20Z gave way to it.
+// A template is one by `seriesGrid: true`, its period (`seriesPeriodMs`) and count (`seriesCount`) named; all three are
+// in its series id (H(template || period || count || 'G')), so a grid's id is never a day series' or a tail's.
+const GRID_SERIES_MAX_MS = SERIES_MAX_MS;            // 24 h
+const GRID_SERIES_LEAD_MIN_MS = 45n * 60000n;
+const GRID_ID_MARK = 0x47;                                  // 'G'
+const isGridSeries = (template) => !!template && template.seriesGrid === true;
+// A GRID'S ENTRY WINDOW IS ITS OWN: entry_close - start, as the template names it, for every round of it
+const gridLateOf = (template) => template.entryCloseMs - template.startTimeMs;
+const ROUNDS_PER_SERIES = Number(SERIES_MAX_MS / ROUND_PERIOD_MS);   // 960
+
+// A SERIES RUNS ON ITS GAME'S OWN round_period (§0A.7b.4 "Market rounds on their own 15 min period
+// instead of the 90 s grid"): a template may carry `seriesPeriodMs` - the node sets it from the game's manifest
+// (series-writer.js) - and every function here reads the period, and the day's round count, off the template. A template
+// without one is on the 90 s grid, as every series before this: its id, rounds and count are unchanged.
+const periodOf = (template, periodMs) => (periodMs !== undefined && periodMs !== null ? BigInt(periodMs)
+  : (template && template.seriesPeriodMs !== undefined && template.seriesPeriodMs !== null ? BigInt(template.seriesPeriodMs) : ROUND_PERIOD_MS));
+/** A day's rounds on a period: 960 on 90 s, 96 on 15 min. */
+const roundsPerSeries = (periodMs = ROUND_PERIOD_MS) => Number(SERIES_MAX_MS / BigInt(periodMs));
+const HOUR = 3600000n;
+// THE WRITER'S HORIZON IS 72 h ON EVERY NETWORK (TN24-1405): the schedule is laid 72 h ahead whatever the clock below.
+const SERIES_WRITE_AHEAD_MS = 72n * HOUR;
+
+/**
+ * THE SERIES CLOCK, PER NETWORK. Mainnet (CENSUS3D-1401): census cut, committee_time and lead are one 72 h.
+ * Testnet4 (TN24-1405, and the owner 14:1x: "Take the 36 h census lead"): committee_time 24 h before the start and a
+ * 24 h lead, so a round can be tested the next day - and the census 36 h before the start, because a census cut at the
+ * committee_time puts the beacon (the first block past committee_time) one block after the census block, below any
+ * publication that names that census: measured on census 154206, committee_time 1 s after its median and block 154207
+ * already past it. The 12 h between census and committee_time is the publication window.
+ */
+const SERIES_CLOCKS = Object.freeze({
+  mainnet: Object.freeze({ censusLeadMs: 72n * HOUR, committeeLeadMs: 72n * HOUR, leadMinMs: 72n * HOUR }),
+  testnet4: Object.freeze({ censusLeadMs: 36n * HOUR, committeeLeadMs: 24n * HOUR, leadMinMs: 24n * HOUR }),
+});
+const seriesSameBytes = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
+/** The clock a contract's network runs: testnet4's for its network id, mainnet's for every other. */
+const seriesClockFor = (networkId) => (seriesSameBytes(networkId, NETWORK_ID_TESTNET4) || isOldTestnet4Id(networkId)
+  ? SERIES_CLOCKS.testnet4 : SERIES_CLOCKS.mainnet);
+// the mainnet figures under their old names, for callers that name no network
+const SERIES_LEAD_MIN_MS = SERIES_CLOCKS.mainnet.leadMinMs;
+const SERIES_COMMITTEE_LEAD_MS = SERIES_CLOCKS.mainnet.committeeLeadMs;
+const SERIES_CENSUS_LEAD_MS = SERIES_CLOCKS.mainnet.censusLeadMs;
+const PUBLICATION_KIND_SERIES = 0x53;                // 'S', beside ROUND's 'R'
+
+const u64 = (v) => { const b = new Uint8Array(8); new DataView(b.buffer).setBigUint64(0, BigInt(v)); return b; };
+const u32 = (v) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v); return b; };
+
+/** When series 0 starts on the network a contract names: its genesis parameter (ALL-BUT-MIN-1727). */
+function genesisSeriesStart(networkId) {
+  const network = networkOf(networkId);
+  if (!network) throw new Error('that contract names a network this build has no genesis for, so no series start');
+  return genesisFor(network).genesisSeriesStartMs;
+}
+
+/** series_start(k) = genesis_series_start + k * series_max. */
+function seriesStartOf(networkId, k) {
+  if (!Number.isInteger(k) || k < 0) throw new Error('a series is numbered 0, 1, 2 ...');
+  return genesisSeriesStart(networkId) + BigInt(k) * SERIES_MAX_MS;
+}
+
+/** The first series whose start is at or after `ms` on that network. */
+function seriesIndexAt(networkId, ms) {
+  const g = genesisSeriesStart(networkId);
+  const at = BigInt(ms);
+  return at <= g ? 0 : Number((at - g + SERIES_MAX_MS - 1n) / SERIES_MAX_MS);
+}
+
+/**
+ * SERIES k's TEMPLATE from any Round Contract of its committee: its start the network's genesis_series_start + k * 24 h
+ * (a series does not name its own start), committee_time its network's lead before it, entry closing at it.
+ */
+function seriesTemplate(contract, k) {
+  const start = seriesStartOf(contract.networkId, k);
+  const clock = seriesClockFor(contract.networkId);
+  return { ...contract, committeeTimeMs: start - clock.committeeLeadMs, startTimeMs: start, entryCloseMs: start };
+}
+
+/** HORIZON72-1131: a series whose start is less than 72 h after its committee_time is refused - listed, opened, entered never. */
+function seriesLeadIsValid(template) {
+  if (!template || typeof template.startTimeMs !== 'bigint' || typeof template.committeeTimeMs !== 'bigint')
+    return { ok: false, why: 'a series names its committee time and its start' };
+  const lead = template.startTimeMs - template.committeeTimeMs;
+  if (isGridSeries(template)) return gridIsValid(template, lead);
+  // A TAIL (the 82/90 fork, 2026-10-01: "the partial-day tail"): fewer rounds than a day's, starting on the 90 s grid
+  // inside its day and running to that day's end, on testnet4 only, with a committee lead of at least 12 h.
+  if (Number.isInteger(template.seriesCount) && template.seriesCount !== roundsPerSeries(periodOf(template))) return tailIsValid(template, lead);
+  const min = seriesClockFor(template.networkId).leadMinMs;
+  if (lead < min)
+    return { ok: false, why: `that series starts ${lead} ms after its committee time, and a round must exist ${min} ms (${min / HOUR} h) before its first entry` };
+  if (lateJoinOf(template) === null)
+    return { ok: false, why: `a series round's entry closes at its start or ${LATE_JOIN_MS} ms after it (late join)` };
+  // PICK B (old-series.js): series 3cfbe516 of testnet4's old id predates genesis_series_start - no grid to be on
+  if (isOldTestnet4Id(template.networkId) && isOldTestnet4Series(seriesId(template))) return { ok: true, leadMs: lead, oldSeries: true };
+  // ON THE GENESIS GRID (ALL-BUT-MIN-1727): a series starts at genesis_series_start + k * 24 h, never where it names
+  let g;
+  try { g = genesisSeriesStart(template.networkId); } catch (e) { return { ok: false, why: e.message }; }
+  if (template.startTimeMs < g || (template.startTimeMs - g) % SERIES_MAX_MS !== 0n)
+    return { ok: false, why: `that series starts at ${template.startTimeMs}, and a series starts at genesis_series_start ${g} + k * ${SERIES_MAX_MS} ms` };
+  return { ok: true, leadMs: lead };
+}
+
+function gridIsValid(template, lead) {
+  const period = template.seriesPeriodMs, count = template.seriesCount;
+  if (typeof period !== 'bigint' || period <= 0n) return { ok: false, why: 'a grid series names its period' };
+  if (!Number.isInteger(count) || count < 1) return { ok: false, why: 'a grid series names its round count' };
+  if (BigInt(count) * period > GRID_SERIES_MAX_MS)
+    return { ok: false, why: `a grid series of ${count} rounds every ${period} ms runs ${BigInt(count) * period} ms, and a grid runs at most ${GRID_SERIES_MAX_MS} ms (24 h)` };
+  if (lead < GRID_SERIES_LEAD_MIN_MS)
+    return { ok: false, why: `that grid starts ${lead} ms after its committee time, and a grid needs ${GRID_SERIES_LEAD_MIN_MS} ms (45 min)` };
+  if (typeof template.entryCloseMs !== 'bigint' || gridLateOf(template) < 0n)
+    return { ok: false, why: 'a grid round\'s entry closes at or after its start' };
+  return { ok: true, leadMs: lead, grid: true };
+}
+
+function tailIsValid(template, lead) {
+  if (seriesClockFor(template.networkId) !== SERIES_CLOCKS.testnet4) return { ok: false, why: 'a tail series is testnet4\'s only: the mainnet clock is one 72 h' };
+  if (lateJoinOf(template) === null) return { ok: false, why: `a series round's entry closes at its start or ${LATE_JOIN_MS} ms after it (late join)` };
+  let g;
+  try { g = genesisSeriesStart(template.networkId); } catch (e) { return { ok: false, why: e.message }; }
+  const into = template.startTimeMs - g;
+  if (template.startTimeMs < g || into % ROUND_PERIOD_MS !== 0n) return { ok: false, why: `a tail starts on the 90 s grid from genesis_series_start ${g}` };
+  const index = Number((into % SERIES_MAX_MS) / ROUND_PERIOD_MS);
+  if (index === 0 || template.seriesCount !== ROUNDS_PER_SERIES - index)
+    return { ok: false, why: `a tail from round ${index} of its day runs ${ROUNDS_PER_SERIES - index} rounds, to the day's end - not ${template.seriesCount}` };
+  if (lead < TAIL_COMMITTEE_LEAD_MIN_MS)
+    return { ok: false, why: `that tail starts ${lead} ms after its committee time, and a tail needs ${TAIL_COMMITTEE_LEAD_MIN_MS} ms (12 h)` };
+  return { ok: true, leadMs: lead, tail: true, fromIndex: index };
+}
+
+/** A contract without its series fields: what a series' template is. */
+const withoutSeries = (c) => { const { seriesId: _s, roundIndex: _i, seriesCount: _n, seriesCutFrom: _c, seriesPeriodMs: _p, seriesGrid: _g, ...rest } = c; void _s; void _i; void _n; void _c; void _p; void _g; return rest; };
+
+/**
+ * A HELD SERIES' ROUND COUNT AND CUT (the 82/90 tail, 2026-10-01): a template may carry `seriesCount` - a tail's
+ * rounds, fewer than a day's 960 - and `seriesCutFrom` - the index from which a held series is replaced by a tail. Neither
+ * is in the template's bytes; the count is in its series id (H(template || period || count)), the cut is the node's.
+ */
+const countOf = (template, count) => (count !== undefined ? count
+  : (template && Number.isInteger(template.seriesCount) ? template.seriesCount : roundsPerSeries(periodOf(template))));
+const TAIL_COMMITTEE_LEAD_MIN_MS = 12n * HOUR;
+
+// ONE TEMPLATE'S ID IS WORKED OUT ONCE PER PERIOD AND COUNT (measured on seat 3's start 2026-10-18:
+// seriesRoundCheck - every door that touches a round asks it - encoded and hashed every held template again on every ask,
+// 4.5 % of the main thread's first minute). Kept per template object: a series file read again makes new objects; nothing
+// changes a template after it is read.
+const idsOf = new WeakMap();   // template -> Map(`${periodMs}|${count}` -> id)
+
+/** series_id = H(template || round_period || round_count), tagged; a grid's with 'G' after its count. */
+function seriesId(template, { periodMs, count } = {}) {
+  periodMs = periodOf(template, periodMs);
+  count = countOf(template, count);
+  const memo = template && typeof template === 'object' ? (idsOf.get(template) || (idsOf.set(template, new Map()), idsOf.get(template))) : null;
+  const key = `${periodMs}|${count}`;
+  if (memo && memo.has(key)) return memo.get(key);
+  const id = seriesIdOf(template, periodMs, count);
+  if (memo) memo.set(key, id);
+  return id;
+}
+function seriesIdOf(template, periodMs, count) {
+  // a v2 template's `nodes` is no part of its id (2026.0.2): its rounds' seats are drawn after it
+  const body = encodeRoundContract(idBodyOf(withoutSeries(template)));
+  const bytes = new Uint8Array(body.length + 12 + (isGridSeries(template) ? 1 : 0));
+  bytes.set(body, 0);
+  bytes.set(u64(periodMs), body.length);
+  bytes.set(u32(count), body.length + 8);
+  if (isGridSeries(template)) bytes[body.length + 12] = GRID_ID_MARK;
+  return taggedHash('ARENA/v1/Series', bytes);
+}
+
+/** Round `i` of the series, derived: start = series_start + i * 90 s, entry closing at that start. */
+function seriesRound(template, i, { periodMs, count } = {}) {
+  periodMs = periodOf(template, periodMs);
+  count = countOf(template, count);
+  if (!Number.isInteger(i) || i < 0 || i >= count) throw new Error(`round ${i} is outside the series' 0 .. ${count - 1}`);
+  const start = template.startTimeMs + BigInt(i) * BigInt(periodMs);
+  const late = isGridSeries(template) ? gridLateOf(template)
+    : template.entryCloseMs !== undefined && lateJoinOf(template) !== null ? lateJoinOf(template) : 0n;
+  return { ...withoutSeries(template), startTimeMs: start, entryCloseMs: start + late,
+    seriesId: seriesId(template, { periodMs, count }), roundIndex: i };
+}
+
+/**
+ * IS THIS THE ROUND A SERIES THIS NODE HOLDS DERIVES? A contract naming no series is not a series round ({ ok, series:
+ * false }). One naming a series must name one of `templates` (the series this node holds), an index inside
+ * 0 .. round_count - 1, and be byte for byte `seriesRound(template, i)` - its entry window the derived one.
+ */
+/**
+ * A SERIES' RUN FITS ITS 90 s SLOT (the 82/90 hard fork, 2026-10-01; multiplayer_p2p.md "Timing": "a run lasts at
+ * most 82 seconds ... run ends <= start_time(i+1) - 8 s"): the run its rounds name (blockTicks, at the core's tick rate)
+ * ends at least 8 s before the next round starts. Asked of a series on a core that takes its rounds' run length; a core
+ * held to one length (the truck before the fork, 180 s) is that core's own and was posted before the rule.
+ */
+const SERIES_RESULT_CARD_MS = 8000n;
+function seriesRunFits(template, { periodMs } = {}) {
+  periodMs = periodOf(template, periodMs);
+  let runMs;
+  try { runMs = msForTicks(template.blockTicks).ms; } catch (e) { return { ok: false, why: `the series names no run length: ${e.message}` }; }
+  const most = BigInt(periodMs) - SERIES_RESULT_CARD_MS;
+  if (BigInt(runMs) > most)
+    return { ok: false, why: `a run of ${template.blockTicks} ticks is ${runMs} ms, and a round of a ${periodMs} ms series runs at most ${most} ms (its next start less ${SERIES_RESULT_CARD_MS} ms)` };
+  return { ok: true, runMs: BigInt(runMs) };
+}
+
+function seriesRoundCheck(contract, templates, { periodMs, count: given } = {}) {
+  if (!contract || contract.seriesId === undefined || contract.seriesId === null) return { ok: true, series: false };
+  const t = (templates || []).find((x) => seriesSameBytes(seriesId(x, { periodMs, count: given }), contract.seriesId));
+  const count = t ? countOf(t, given) : ROUNDS_PER_SERIES;
+  const hex = Array.from(contract.seriesId.subarray(0, 8), (b) => b.toString(16).padStart(2, '0')).join('');
+  if (!t) return { ok: false, series: true, why: `that round names series ${hex}, and this node holds no such series` };
+  if (!Number.isInteger(contract.roundIndex) || contract.roundIndex < 0 || contract.roundIndex >= count)
+    return { ok: false, series: true, why: `round ${contract.roundIndex} is outside series ${hex}'s 0 .. ${count - 1}` };
+  // REPLACED FROM ITS CUT (the 82/90 tail): a held series cut at index C takes no round from C on - a tail carries them.
+  if (Number.isInteger(t.seriesCutFrom) && contract.roundIndex >= t.seriesCutFrom)
+    return { ok: false, series: true, why: `round ${contract.roundIndex} of series ${hex} is replaced from index ${t.seriesCutFrom} by its 82 s tail: not announced, entered, locked or settled` };
+  const derived = seriesRound(t, contract.roundIndex, { periodMs: periodOf(t, periodMs), count });
+  if (contract.startTimeMs !== derived.startTimeMs || contract.entryCloseMs !== derived.entryCloseMs
+    || contract.committeeTimeMs !== derived.committeeTimeMs)
+    return { ok: false, series: true, why: `round ${contract.roundIndex} of series ${hex} opens and closes its entry at `
+      + `${derived.committeeTimeMs}..${derived.entryCloseMs}, and that contract names ${contract.committeeTimeMs}..${contract.entryCloseMs}` };
+  // A v2 ROUND'S `nodes` IS ITS SEATS' OWN ANSWER (2026.0.2): compared without it
+  if (!seriesSameBytes(encodeRoundContract(idBodyOf(contract)), encodeRoundContract(idBodyOf(derived))))
+    return { ok: false, series: true, why: `that contract is not round ${contract.roundIndex} of series ${hex} as the series derives it` };
+  return { ok: true, series: true, index: contract.roundIndex, template: t };
+}
+
+/** The indices of the series' rounds whose start lies in [fromMs, toMs]. */
+function seriesRoundsWithin(template, fromMs, toMs, { periodMs, count } = {}) {
+  periodMs = periodOf(template, periodMs);
+  count = countOf(template, count);
+  const p = BigInt(periodMs), s = template.startTimeMs, from = BigInt(fromMs), to = BigInt(toMs);
+  if (to < s) return [];
+  const first = from <= s ? 0n : (from - s + p - 1n) / p;
+  const last = (to - s) / p;
+  const out = [];
+  for (let i = first; i <= last && i < BigInt(count); i++) out.push(Number(i));
+  return out;
+}
+
+/** The 36 bytes a series' publication carries: "ARN", SERIES, series id. */
+function seriesPublicationPayload(seriesIdBytes) {
+  if (!(seriesIdBytes instanceof Uint8Array) || seriesIdBytes.length !== 32) throw new TypeError('a series publication commits to a 32-byte series id');
+  const out = new Uint8Array(PUBLICATION_BYTES);
+  out.set(PUBLICATION_MAGIC, 0);
+  out[3] = PUBLICATION_KIND_SERIES;
+  out.set(seriesIdBytes, 4);
+  return out;
+}
+
+/**
+ * WHERE A SERIES WAS PUBLISHED, IN A CHAIN VIEW THIS NODE READ ITSELF: the lowest block carrying its series payload - a
+ * series round has no publication of its own, the series' is its (§5A.5 for a series). Null when the view holds none.
+ */
+function findSeriesPublication(view, seriesIdBytes) {
+  if (!view || !Array.isArray(view.blocks) || !Number.isInteger(view.firstHeight)) return null;
+  const want = seriesPublicationPayload(seriesIdBytes);
+  for (let i = 0; i < view.blocks.length; i++) {
+    for (const raw of view.blocks[i].transactions || []) {
+      let tx;
+      try { tx = parseTransaction(raw); } catch { continue; }
+      if (commitmentsOf(tx).some((p) => p.length === want.length && p.every((b, j) => b === want[j]))) return { tx, height: view.firstHeight + i };
+    }
+  }
+  return null;
+}
+
+/** The output that publishes a series: zero value, one direct push. */
+function seriesPublicationOutput(seriesIdBytes) {
+  const payload = seriesPublicationPayload(seriesIdBytes);
+  const script = new Uint8Array(2 + PUBLICATION_BYTES);
+  script[0] = OP_RETURN;
+  script[1] = PUBLICATION_BYTES;
+  script.set(payload, 2);
+  return { value: 0n, script };
+}
+
 // ---- arena-protocol/src/client-committee.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -28081,6 +28917,11 @@ function nextRoundLine({ grids, game, nowMs = Date.now(), blockMs = 600000 }) {
 //             (beaconFromChain), its hash the randomness (committeeSeedFromBeacon);
 //   SORTITION selectCommittee over the verified entries, the function a seat's Roster.committeeFor runs.
 // This package carries no curve and no signature scheme: `bond` brings the curve operations, `verify` BIP-340.
+
+
+
+
+
 
 
 
@@ -28284,6 +29125,12 @@ function committeeFromChain({ contract, roundId, headers, firstHeight, evidence,
  * there or left out already, listed present by none, at 3 different seating closes in the census's 24 h. A claimed node that is in the
  * round's own census is refused too. What the client cannot see is a node a census left out that the claim does not name: that root is
  * the seats' check against their chains, as every omission always was (§5A.6).
+ * AND ONLY A DUTY POSTING'S ROUND PROVES (kanban #727, duty.js dutyRoundStands): the claim hands over each named round's publication
+ * with its merkle branch (`publications[ridHex]` { transaction, branch, position }) and the creator's signature (`creators[ridHex]`,
+ * over the series id for a series round, the round id otherwise). The client proves the publication into its agreed headers, reads the
+ * duty marker off it (the day, the item), checks the creator signed, and reads the creator's rank in that day's duty order over the
+ * round's census it just checked. What it cannot see is whether an earlier posting of the same day and item exists (the first confirmed
+ * one counts): that is the seats' check against their chains, as completeness is.
  * `entries`: the round's own census as this client checked it (committeeFromChain's checkedCensus.entries).
  * Answers { ok: true, absent: [node hex] } or { ok: false, why, node? }.
  */
@@ -28325,7 +29172,29 @@ function absenceFromChain({ contract, claim, evidenceOf, headers, firstHeight, b
     }
     return { drawn: d.drawn[role].map(toHex), slots: slotsForRole(d.contract, role), closeMs: seatingCloseMs(d.contract) };
   };
-  const r = checkAbsenceProof(claim.claims, { window, verify, drawOf,
+  // IS THE NAMED ROUND A DUTY POSTING'S (above): its publication proven into the headers and publishing it, its creator's signature,
+  // the marker's day and item, the creator's rank over the round's checked census - the tag by the contract's network's switch
+  const dutyOf = (ridHex) => {
+    const d = drawn.get(ridHex);
+    if (!d) return null;
+    const c = d.contract;
+    const p = claim.publications && claim.publications[ridHex];
+    if (!p || !p.transaction) return { ok: false, why: 'its publication was not handed over with the claim' };
+    let tx; try { tx = parseTransaction(bytesOfCC(p.transaction)); } catch (e) { return { ok: false, why: `its publication is not a transaction: ${e.message}` }; }
+    if (provenAt(headers, firstHeight, tx.txid, proofOf(p)) === null) return { ok: false, why: 'its publication is not in any block of the agreed headers' };
+    const series = c.seriesId instanceof Uint8Array;
+    const publishes = series ? commitmentsOf(tx).some((x) => sameCC(x, seriesPublicationPayload(c.seriesId))) : publishesRound(tx, fromHex(ridHex));
+    if (!publishes) return { ok: false, why: 'the transaction handed over as its publication does not publish it' };
+    const marker = dutyMarkerOf(tx);
+    if (!marker || !(c.creatorPubkey instanceof Uint8Array)) return dutyRoundStands({ contract: c, marker, orderKeys: [] });   // no marker, no creator: why
+    const sigHex = claim.creators && claim.creators[ridHex];
+    const sig = sigHex ? bytesOfCC(sigHex) : null;
+    let signed = false;
+    try { signed = !!sig && sig.length === 64 && verify(sig, series ? seriesCreatorMessage(c.seriesId) : creatorMessage(fromHex(ridHex)), c.creatorPubkey) === true; } catch { signed = false; }
+    if (!signed) return { ok: false, why: 'its creator\'s signature was not handed over, or is not the named creator\'s' };
+    return dutyRoundStands({ contract: c, marker, orderKeys: d.entries.map((e) => e.pubkey), sw: TAG_SWITCH[networkOf(c.networkId)] || null });
+  };
+  const r = checkAbsenceProof(claim.claims, { window, verify, drawOf, dutyOf,
     certOf: (ridHex, role) => { const h = claim.certs && claim.certs[`${ridHex}:${role}`]; return h ? fromHex(h) : null; } });
   if (!r.ok) return { ok: false, node: r.node, why: r.notYet ? `${r.why}: its contract or census was not handed over` : r.why };
   return { ok: true, absent: claim.claims.map((c) => String(c.node).toLowerCase()) };
@@ -33338,444 +34207,6 @@ function marketWindowOf(contract, manifest) {
   if (contract.entryCloseMs % period !== 0n)
     return { ok: false, why: `game "${manifest.gameName}" runs one round per ${period} ms on the UTC grid, and that round's entries close at ${contract.entryCloseMs}, off it` };
   return { ok: true, window: { startMs: contract.entryCloseMs - period, endMs: contract.entryCloseMs, periodMs: period } };
-}
-
-// ---- arena-protocol/src/publication.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A ROUND EXISTS ONLY ONCE ITS HASH IS ON BITCOIN, BELOW ITS BEACON BLOCK.
-//
-// Section 5A.5 (v4.6.2, P1): "a Round Contract exists only once its hash is in
-// a Bitcoin block before the beacon block."
-//
-//     publication_txid   a transaction carrying
-//                        OP_RETURN "ARN" ROUND H(RoundContract)   (36 bytes)
-//                        confirmed at a height strictly below the beacon block
-//
-// THE HOLE IT CLOSES. 4.6.1 ordered a contract against its beacon by timestamp
-// receipts, which were free: a creator published a thousand candidate rounds,
-// waited for the beacon, and promoted the one whose committee was his. On chain
-// every candidate costs a transaction, and the ordering is objective - the
-// beacon block's hash did not exist when the publication confirmed.
-//
-// WHY THE TXID IS NOT IN THE CONTRACT although section 6 lists it: the
-// transaction carries H(RoundContract), which is the round id, so a contract
-// holding that transaction's id has no fixed point. It rides beside the
-// contract, as `round_id` and `creator_signature` do.
-//
-// THE KIND BYTE IS OURS. The spec writes `ROUND` and fixes no value for it; it
-// is 0x52, 'R', in keeping with the ASCII "ARN". A vote (27A.7.3) is "ARN" 'V'
-// (ballot.js, 2026-10-13), 77 bytes: the kind byte keeps them apart.
-
-const PUBLICATION_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e]);   // "ARN"
-const PUBLICATION_KIND_ROUND = 0x52;                             // 'R'
-const PUBLICATION_BYTES = 36;
-
-const pubIs32 = (b) => b instanceof Uint8Array && b.length === 32;
-
-/** The 36 bytes a round's publication carries: "ARN", ROUND, round id. */
-function publicationPayload(roundIdBytes) {
-  if (!pubIs32(roundIdBytes)) throw new TypeError('a publication commits to a 32-byte round id');
-  const out = new Uint8Array(PUBLICATION_BYTES);
-  out.set(PUBLICATION_MAGIC, 0);
-  out[3] = PUBLICATION_KIND_ROUND;
-  out.set(roundIdBytes, 4);
-  return out;
-}
-
-/** The output a creator adds to publish a round: zero value, one direct push. */
-function publicationOutput(roundIdBytes) {
-  const payload = publicationPayload(roundIdBytes);
-  const script = new Uint8Array(2 + PUBLICATION_BYTES);
-  script[0] = OP_RETURN;
-  script[1] = PUBLICATION_BYTES;
-  script.set(payload, 2);
-  return { value: 0n, script };
-}
-
-/** Does this parsed transaction publish that round? */
-function publishesRound(tx, roundIdBytes) {
-  const want = publicationPayload(roundIdBytes);
-  return commitmentsOf(tx).some((p) => p.length === PUBLICATION_BYTES
-    && p.every((b, i) => b === want[i]));
-}
-
-/**
- * WHERE A ROUND WAS PUBLISHED, IN A CHAIN VIEW THIS NODE READ ITSELF.
- *
- * The same view the census is derived from - `{ firstHeight, blocks: [{
- * header, transactions }] }` - so the height is the chain's, and nobody has to
- * be believed about a txid. The LOWEST publication counts: a creator who
- * publishes the same round twice gained nothing by the second.
- */
-function findPublication(view, roundIdBytes) {
-  if (!view || !Array.isArray(view.blocks) || !Number.isInteger(view.firstHeight)) return null;
-  for (let i = 0; i < view.blocks.length; i++) {
-    for (const raw of view.blocks[i].transactions || []) {
-      let tx;
-      try { tx = parseTransaction(raw); } catch { continue; }
-      if (publishesRound(tx, roundIdBytes)) return { tx, height: view.firstHeight + i };
-    }
-  }
-  return null;
-}
-
-/**
- * IS THIS ROUND PUBLISHED, AND BEFORE ITS BEACON?
- *
- * The heights are the caller's own chain's - where the transaction confirmed
- * and which block the beacon rule named - never a number the creator wrote.
- * Missing either is a refusal: "I do not know when it confirmed" and "it
- * confirmed in time" must never be the same answer. So is an equal height,
- * because a publication in the beacon block itself was made knowing nothing of
- * that block's hash only if the miner says so.
- */
-function publicationIsBeforeBeacon({ roundId, tx, txHeight, beaconHeight } = {}) {
-  if (!pubIs32(roundId)) return { ok: false, why: 'that publication names no 32-byte round id' };
-  if (!tx || !Array.isArray(tx.outputs)) return { ok: false, why: 'there is no publication transaction to read' };
-  if (!publishesRound(tx, roundId))
-    return { ok: false, why: 'that transaction does not carry OP_RETURN "ARN" ROUND and this round\'s id' };
-  if (!Number.isInteger(txHeight) || txHeight < 0)
-    return { ok: false, why: 'that publication names no height, so nothing says it came before the beacon' };
-  if (!Number.isInteger(beaconHeight) || beaconHeight < 0)
-    return { ok: false, why: 'there is no beacon height to measure the publication against' };
-  if (txHeight >= beaconHeight)
-    return {
-      ok: false,
-      why: `that round was published at height ${txHeight}, at or after its beacon block `
-        + `${beaconHeight} - its creator could have seen the beacon first`,
-    };
-  return { ok: true, txHeight, beaconHeight };
-}
-
-// ---- arena-protocol/src/series.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A ROUND SERIES: ONE PUBLICATION, A NEW ROUND EVERY 90 s, WRITTEN 72 h AHEAD (multiplayer_p2p.md §5A.5 "Round series";
-// 2026-09-28, 18738972 and HORIZON72-1131 / NODE72-1131).
-//
-// The unit anchored on chain is a SERIES: its template - every field of a Round Contract, its committee_time and its
-// start - is hashed once, and `OP_RETURN "ARN" SERIES series_id` publishes it. Round `i` of it is derived, never
-// authored: the template with start_time = series_start + i * 90 s and its entry closing at that start (every run of a
-// round starts together). Nothing per round is chosen after the beacon, so a series grinds no better than one round.
-//
-// THE TIMES ARE THE SPEC'S, counted back from the series' start:
-//
-//     committee_time(k)  = series_start(k) - committee lead   (mainnet 72 h, testnet4 24 h)
-//     census_height(k)   = the highest block whose MTP <= series_start(k) - census lead   (mainnet 72 h, testnet4 36 h)
-//     series_lead_min    = mainnet 72 h, testnet4 24 h: a node refuses a series whose start is less than that after
-//                          its committee_time; the writer still lays 72 h of rounds ahead on every network
-//
-// A ROUND OF A SERIES CARRIES ITS SERIES ID AND ITS INDEX, and its id is round_id(i) = H(series_id || i)
-// (ALL-BUT-MIN-1727, 2026-09-29 17:27; contracts.js). A node holds such a round only when its contract is
-// exactly the one the series derives - index inside 0 .. round_count - 1, entry window the derived one
-// (seriesRoundCheck) - and refuses entries, locks and settlements for any other.
-
-
-
-
-
-
-
-
-
-// THE GRID ITSELF LIVES IN constants.js (the manifest reads it there, so a client bundle carrying manifests
-// does not carry the series code); every series reader takes it from here as before.
-
-// LATE JOIN (2026-10-03: "Joining an existing round is possible with 45 seconds in"): a series may close each round's
-// entry LATE_JOIN_MS after its start instead of at it. The template's own entry_close - start is the series' late join
-// (0 or LATE_JOIN_MS), and every round derives the same: it is in the template's bytes, so in the series id.
-const LATE_JOIN_MS = 45000n;
-// The last entry of a late-join round is contracts.js LATE_JOIN_LAST_ENTRY_MS.
-
-const lateJoinOf = (template) => {
-  const late = template.entryCloseMs - template.startTimeMs;
-  return late === 0n || late === LATE_JOIN_MS ? late : null;
-};
-const SERIES_MAX_MS = 86400000n;                     // a series lasts at most 24 h
-
-// A GRID SERIES (2026-10-12: "Pick S ... Publish the grid as a short series, the format the spec
-// already has: one ARN S series_id output per table, two per grid"): an on-demand head-to-head grid - Rock Paper Scissors'
-// 2 tables of 8 s rounds - published as one series per table instead of one OP_RETURN per round (450 outputs, ~21,000 sat
-// at 1 sat/vB). Its own rule, in the owner's words: "lead of at least 45 minutes, as path B already uses; any start time; at
-// most 30 minutes of rounds; its own entry window". Still published on demand, about 1 h ahead: a series only in how it
-// is written on chain. Nothing per round is chosen after the beacon - every round is derived from the template.
-// 24 HOURS OF ROUNDS (2026-10-12 ~09:55Z: "Make sure each grid has 24 hours of gameplay, and cost as less as possible
-// on chain"): a grid runs at most a day - 10,800 slots of 8 s per table - published once a day for ~20 sat at 0.1 sat/vB;
-// the 30 minutes ruled at ~06:20Z gave way to it.
-// A template is one by `seriesGrid: true`, its period (`seriesPeriodMs`) and count (`seriesCount`) named; all three are
-// in its series id (H(template || period || count || 'G')), so a grid's id is never a day series' or a tail's.
-const GRID_SERIES_MAX_MS = SERIES_MAX_MS;            // 24 h
-const GRID_SERIES_LEAD_MIN_MS = 45n * 60000n;
-const GRID_ID_MARK = 0x47;                                  // 'G'
-const isGridSeries = (template) => !!template && template.seriesGrid === true;
-// A GRID'S ENTRY WINDOW IS ITS OWN: entry_close - start, as the template names it, for every round of it
-const gridLateOf = (template) => template.entryCloseMs - template.startTimeMs;
-const ROUNDS_PER_SERIES = Number(SERIES_MAX_MS / ROUND_PERIOD_MS);   // 960
-
-// A SERIES RUNS ON ITS GAME'S OWN round_period (§0A.7b.4 "Market rounds on their own 15 min period
-// instead of the 90 s grid"): a template may carry `seriesPeriodMs` - the node sets it from the game's manifest
-// (series-writer.js) - and every function here reads the period, and the day's round count, off the template. A template
-// without one is on the 90 s grid, as every series before this: its id, rounds and count are unchanged.
-const periodOf = (template, periodMs) => (periodMs !== undefined && periodMs !== null ? BigInt(periodMs)
-  : (template && template.seriesPeriodMs !== undefined && template.seriesPeriodMs !== null ? BigInt(template.seriesPeriodMs) : ROUND_PERIOD_MS));
-/** A day's rounds on a period: 960 on 90 s, 96 on 15 min. */
-const roundsPerSeries = (periodMs = ROUND_PERIOD_MS) => Number(SERIES_MAX_MS / BigInt(periodMs));
-const HOUR = 3600000n;
-// THE WRITER'S HORIZON IS 72 h ON EVERY NETWORK (TN24-1405): the schedule is laid 72 h ahead whatever the clock below.
-const SERIES_WRITE_AHEAD_MS = 72n * HOUR;
-
-/**
- * THE SERIES CLOCK, PER NETWORK. Mainnet (CENSUS3D-1401): census cut, committee_time and lead are one 72 h.
- * Testnet4 (TN24-1405, and the owner 14:1x: "Take the 36 h census lead"): committee_time 24 h before the start and a
- * 24 h lead, so a round can be tested the next day - and the census 36 h before the start, because a census cut at the
- * committee_time puts the beacon (the first block past committee_time) one block after the census block, below any
- * publication that names that census: measured on census 154206, committee_time 1 s after its median and block 154207
- * already past it. The 12 h between census and committee_time is the publication window.
- */
-const SERIES_CLOCKS = Object.freeze({
-  mainnet: Object.freeze({ censusLeadMs: 72n * HOUR, committeeLeadMs: 72n * HOUR, leadMinMs: 72n * HOUR }),
-  testnet4: Object.freeze({ censusLeadMs: 36n * HOUR, committeeLeadMs: 24n * HOUR, leadMinMs: 24n * HOUR }),
-});
-const seriesSameBytes = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
-/** The clock a contract's network runs: testnet4's for its network id, mainnet's for every other. */
-const seriesClockFor = (networkId) => (seriesSameBytes(networkId, NETWORK_ID_TESTNET4) || isOldTestnet4Id(networkId)
-  ? SERIES_CLOCKS.testnet4 : SERIES_CLOCKS.mainnet);
-// the mainnet figures under their old names, for callers that name no network
-const SERIES_LEAD_MIN_MS = SERIES_CLOCKS.mainnet.leadMinMs;
-const SERIES_COMMITTEE_LEAD_MS = SERIES_CLOCKS.mainnet.committeeLeadMs;
-const SERIES_CENSUS_LEAD_MS = SERIES_CLOCKS.mainnet.censusLeadMs;
-const PUBLICATION_KIND_SERIES = 0x53;                // 'S', beside ROUND's 'R'
-
-const u64 = (v) => { const b = new Uint8Array(8); new DataView(b.buffer).setBigUint64(0, BigInt(v)); return b; };
-const u32 = (v) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v); return b; };
-
-/** When series 0 starts on the network a contract names: its genesis parameter (ALL-BUT-MIN-1727). */
-function genesisSeriesStart(networkId) {
-  const network = networkOf(networkId);
-  if (!network) throw new Error('that contract names a network this build has no genesis for, so no series start');
-  return genesisFor(network).genesisSeriesStartMs;
-}
-
-/** series_start(k) = genesis_series_start + k * series_max. */
-function seriesStartOf(networkId, k) {
-  if (!Number.isInteger(k) || k < 0) throw new Error('a series is numbered 0, 1, 2 ...');
-  return genesisSeriesStart(networkId) + BigInt(k) * SERIES_MAX_MS;
-}
-
-/** The first series whose start is at or after `ms` on that network. */
-function seriesIndexAt(networkId, ms) {
-  const g = genesisSeriesStart(networkId);
-  const at = BigInt(ms);
-  return at <= g ? 0 : Number((at - g + SERIES_MAX_MS - 1n) / SERIES_MAX_MS);
-}
-
-/**
- * SERIES k's TEMPLATE from any Round Contract of its committee: its start the network's genesis_series_start + k * 24 h
- * (a series does not name its own start), committee_time its network's lead before it, entry closing at it.
- */
-function seriesTemplate(contract, k) {
-  const start = seriesStartOf(contract.networkId, k);
-  const clock = seriesClockFor(contract.networkId);
-  return { ...contract, committeeTimeMs: start - clock.committeeLeadMs, startTimeMs: start, entryCloseMs: start };
-}
-
-/** HORIZON72-1131: a series whose start is less than 72 h after its committee_time is refused - listed, opened, entered never. */
-function seriesLeadIsValid(template) {
-  if (!template || typeof template.startTimeMs !== 'bigint' || typeof template.committeeTimeMs !== 'bigint')
-    return { ok: false, why: 'a series names its committee time and its start' };
-  const lead = template.startTimeMs - template.committeeTimeMs;
-  if (isGridSeries(template)) return gridIsValid(template, lead);
-  // A TAIL (the 82/90 fork, 2026-10-01: "the partial-day tail"): fewer rounds than a day's, starting on the 90 s grid
-  // inside its day and running to that day's end, on testnet4 only, with a committee lead of at least 12 h.
-  if (Number.isInteger(template.seriesCount) && template.seriesCount !== roundsPerSeries(periodOf(template))) return tailIsValid(template, lead);
-  const min = seriesClockFor(template.networkId).leadMinMs;
-  if (lead < min)
-    return { ok: false, why: `that series starts ${lead} ms after its committee time, and a round must exist ${min} ms (${min / HOUR} h) before its first entry` };
-  if (lateJoinOf(template) === null)
-    return { ok: false, why: `a series round's entry closes at its start or ${LATE_JOIN_MS} ms after it (late join)` };
-  // PICK B (old-series.js): series 3cfbe516 of testnet4's old id predates genesis_series_start - no grid to be on
-  if (isOldTestnet4Id(template.networkId) && isOldTestnet4Series(seriesId(template))) return { ok: true, leadMs: lead, oldSeries: true };
-  // ON THE GENESIS GRID (ALL-BUT-MIN-1727): a series starts at genesis_series_start + k * 24 h, never where it names
-  let g;
-  try { g = genesisSeriesStart(template.networkId); } catch (e) { return { ok: false, why: e.message }; }
-  if (template.startTimeMs < g || (template.startTimeMs - g) % SERIES_MAX_MS !== 0n)
-    return { ok: false, why: `that series starts at ${template.startTimeMs}, and a series starts at genesis_series_start ${g} + k * ${SERIES_MAX_MS} ms` };
-  return { ok: true, leadMs: lead };
-}
-
-function gridIsValid(template, lead) {
-  const period = template.seriesPeriodMs, count = template.seriesCount;
-  if (typeof period !== 'bigint' || period <= 0n) return { ok: false, why: 'a grid series names its period' };
-  if (!Number.isInteger(count) || count < 1) return { ok: false, why: 'a grid series names its round count' };
-  if (BigInt(count) * period > GRID_SERIES_MAX_MS)
-    return { ok: false, why: `a grid series of ${count} rounds every ${period} ms runs ${BigInt(count) * period} ms, and a grid runs at most ${GRID_SERIES_MAX_MS} ms (24 h)` };
-  if (lead < GRID_SERIES_LEAD_MIN_MS)
-    return { ok: false, why: `that grid starts ${lead} ms after its committee time, and a grid needs ${GRID_SERIES_LEAD_MIN_MS} ms (45 min)` };
-  if (typeof template.entryCloseMs !== 'bigint' || gridLateOf(template) < 0n)
-    return { ok: false, why: 'a grid round\'s entry closes at or after its start' };
-  return { ok: true, leadMs: lead, grid: true };
-}
-
-function tailIsValid(template, lead) {
-  if (seriesClockFor(template.networkId) !== SERIES_CLOCKS.testnet4) return { ok: false, why: 'a tail series is testnet4\'s only: the mainnet clock is one 72 h' };
-  if (lateJoinOf(template) === null) return { ok: false, why: `a series round's entry closes at its start or ${LATE_JOIN_MS} ms after it (late join)` };
-  let g;
-  try { g = genesisSeriesStart(template.networkId); } catch (e) { return { ok: false, why: e.message }; }
-  const into = template.startTimeMs - g;
-  if (template.startTimeMs < g || into % ROUND_PERIOD_MS !== 0n) return { ok: false, why: `a tail starts on the 90 s grid from genesis_series_start ${g}` };
-  const index = Number((into % SERIES_MAX_MS) / ROUND_PERIOD_MS);
-  if (index === 0 || template.seriesCount !== ROUNDS_PER_SERIES - index)
-    return { ok: false, why: `a tail from round ${index} of its day runs ${ROUNDS_PER_SERIES - index} rounds, to the day's end - not ${template.seriesCount}` };
-  if (lead < TAIL_COMMITTEE_LEAD_MIN_MS)
-    return { ok: false, why: `that tail starts ${lead} ms after its committee time, and a tail needs ${TAIL_COMMITTEE_LEAD_MIN_MS} ms (12 h)` };
-  return { ok: true, leadMs: lead, tail: true, fromIndex: index };
-}
-
-/** A contract without its series fields: what a series' template is. */
-const withoutSeries = (c) => { const { seriesId: _s, roundIndex: _i, seriesCount: _n, seriesCutFrom: _c, seriesPeriodMs: _p, seriesGrid: _g, ...rest } = c; void _s; void _i; void _n; void _c; void _p; void _g; return rest; };
-
-/**
- * A HELD SERIES' ROUND COUNT AND CUT (the 82/90 tail, 2026-10-01): a template may carry `seriesCount` - a tail's
- * rounds, fewer than a day's 960 - and `seriesCutFrom` - the index from which a held series is replaced by a tail. Neither
- * is in the template's bytes; the count is in its series id (H(template || period || count)), the cut is the node's.
- */
-const countOf = (template, count) => (count !== undefined ? count
-  : (template && Number.isInteger(template.seriesCount) ? template.seriesCount : roundsPerSeries(periodOf(template))));
-const TAIL_COMMITTEE_LEAD_MIN_MS = 12n * HOUR;
-
-// ONE TEMPLATE'S ID IS WORKED OUT ONCE PER PERIOD AND COUNT (measured on seat 3's start 2026-10-18:
-// seriesRoundCheck - every door that touches a round asks it - encoded and hashed every held template again on every ask,
-// 4.5 % of the main thread's first minute). Kept per template object: a series file read again makes new objects; nothing
-// changes a template after it is read.
-const idsOf = new WeakMap();   // template -> Map(`${periodMs}|${count}` -> id)
-
-/** series_id = H(template || round_period || round_count), tagged; a grid's with 'G' after its count. */
-function seriesId(template, { periodMs, count } = {}) {
-  periodMs = periodOf(template, periodMs);
-  count = countOf(template, count);
-  const memo = template && typeof template === 'object' ? (idsOf.get(template) || (idsOf.set(template, new Map()), idsOf.get(template))) : null;
-  const key = `${periodMs}|${count}`;
-  if (memo && memo.has(key)) return memo.get(key);
-  const id = seriesIdOf(template, periodMs, count);
-  if (memo) memo.set(key, id);
-  return id;
-}
-function seriesIdOf(template, periodMs, count) {
-  // a v2 template's `nodes` is no part of its id (2026.0.2): its rounds' seats are drawn after it
-  const body = encodeRoundContract(idBodyOf(withoutSeries(template)));
-  const bytes = new Uint8Array(body.length + 12 + (isGridSeries(template) ? 1 : 0));
-  bytes.set(body, 0);
-  bytes.set(u64(periodMs), body.length);
-  bytes.set(u32(count), body.length + 8);
-  if (isGridSeries(template)) bytes[body.length + 12] = GRID_ID_MARK;
-  return taggedHash('ARENA/v1/Series', bytes);
-}
-
-/** Round `i` of the series, derived: start = series_start + i * 90 s, entry closing at that start. */
-function seriesRound(template, i, { periodMs, count } = {}) {
-  periodMs = periodOf(template, periodMs);
-  count = countOf(template, count);
-  if (!Number.isInteger(i) || i < 0 || i >= count) throw new Error(`round ${i} is outside the series' 0 .. ${count - 1}`);
-  const start = template.startTimeMs + BigInt(i) * BigInt(periodMs);
-  const late = isGridSeries(template) ? gridLateOf(template)
-    : template.entryCloseMs !== undefined && lateJoinOf(template) !== null ? lateJoinOf(template) : 0n;
-  return { ...withoutSeries(template), startTimeMs: start, entryCloseMs: start + late,
-    seriesId: seriesId(template, { periodMs, count }), roundIndex: i };
-}
-
-/**
- * IS THIS THE ROUND A SERIES THIS NODE HOLDS DERIVES? A contract naming no series is not a series round ({ ok, series:
- * false }). One naming a series must name one of `templates` (the series this node holds), an index inside
- * 0 .. round_count - 1, and be byte for byte `seriesRound(template, i)` - its entry window the derived one.
- */
-/**
- * A SERIES' RUN FITS ITS 90 s SLOT (the 82/90 hard fork, 2026-10-01; multiplayer_p2p.md "Timing": "a run lasts at
- * most 82 seconds ... run ends <= start_time(i+1) - 8 s"): the run its rounds name (blockTicks, at the core's tick rate)
- * ends at least 8 s before the next round starts. Asked of a series on a core that takes its rounds' run length; a core
- * held to one length (the truck before the fork, 180 s) is that core's own and was posted before the rule.
- */
-const SERIES_RESULT_CARD_MS = 8000n;
-function seriesRunFits(template, { periodMs } = {}) {
-  periodMs = periodOf(template, periodMs);
-  let runMs;
-  try { runMs = msForTicks(template.blockTicks).ms; } catch (e) { return { ok: false, why: `the series names no run length: ${e.message}` }; }
-  const most = BigInt(periodMs) - SERIES_RESULT_CARD_MS;
-  if (BigInt(runMs) > most)
-    return { ok: false, why: `a run of ${template.blockTicks} ticks is ${runMs} ms, and a round of a ${periodMs} ms series runs at most ${most} ms (its next start less ${SERIES_RESULT_CARD_MS} ms)` };
-  return { ok: true, runMs: BigInt(runMs) };
-}
-
-function seriesRoundCheck(contract, templates, { periodMs, count: given } = {}) {
-  if (!contract || contract.seriesId === undefined || contract.seriesId === null) return { ok: true, series: false };
-  const t = (templates || []).find((x) => seriesSameBytes(seriesId(x, { periodMs, count: given }), contract.seriesId));
-  const count = t ? countOf(t, given) : ROUNDS_PER_SERIES;
-  const hex = Array.from(contract.seriesId.subarray(0, 8), (b) => b.toString(16).padStart(2, '0')).join('');
-  if (!t) return { ok: false, series: true, why: `that round names series ${hex}, and this node holds no such series` };
-  if (!Number.isInteger(contract.roundIndex) || contract.roundIndex < 0 || contract.roundIndex >= count)
-    return { ok: false, series: true, why: `round ${contract.roundIndex} is outside series ${hex}'s 0 .. ${count - 1}` };
-  // REPLACED FROM ITS CUT (the 82/90 tail): a held series cut at index C takes no round from C on - a tail carries them.
-  if (Number.isInteger(t.seriesCutFrom) && contract.roundIndex >= t.seriesCutFrom)
-    return { ok: false, series: true, why: `round ${contract.roundIndex} of series ${hex} is replaced from index ${t.seriesCutFrom} by its 82 s tail: not announced, entered, locked or settled` };
-  const derived = seriesRound(t, contract.roundIndex, { periodMs: periodOf(t, periodMs), count });
-  if (contract.startTimeMs !== derived.startTimeMs || contract.entryCloseMs !== derived.entryCloseMs
-    || contract.committeeTimeMs !== derived.committeeTimeMs)
-    return { ok: false, series: true, why: `round ${contract.roundIndex} of series ${hex} opens and closes its entry at `
-      + `${derived.committeeTimeMs}..${derived.entryCloseMs}, and that contract names ${contract.committeeTimeMs}..${contract.entryCloseMs}` };
-  // A v2 ROUND'S `nodes` IS ITS SEATS' OWN ANSWER (2026.0.2): compared without it
-  if (!seriesSameBytes(encodeRoundContract(idBodyOf(contract)), encodeRoundContract(idBodyOf(derived))))
-    return { ok: false, series: true, why: `that contract is not round ${contract.roundIndex} of series ${hex} as the series derives it` };
-  return { ok: true, series: true, index: contract.roundIndex, template: t };
-}
-
-/** The indices of the series' rounds whose start lies in [fromMs, toMs]. */
-function seriesRoundsWithin(template, fromMs, toMs, { periodMs, count } = {}) {
-  periodMs = periodOf(template, periodMs);
-  count = countOf(template, count);
-  const p = BigInt(periodMs), s = template.startTimeMs, from = BigInt(fromMs), to = BigInt(toMs);
-  if (to < s) return [];
-  const first = from <= s ? 0n : (from - s + p - 1n) / p;
-  const last = (to - s) / p;
-  const out = [];
-  for (let i = first; i <= last && i < BigInt(count); i++) out.push(Number(i));
-  return out;
-}
-
-/** The 36 bytes a series' publication carries: "ARN", SERIES, series id. */
-function seriesPublicationPayload(seriesIdBytes) {
-  if (!(seriesIdBytes instanceof Uint8Array) || seriesIdBytes.length !== 32) throw new TypeError('a series publication commits to a 32-byte series id');
-  const out = new Uint8Array(PUBLICATION_BYTES);
-  out.set(PUBLICATION_MAGIC, 0);
-  out[3] = PUBLICATION_KIND_SERIES;
-  out.set(seriesIdBytes, 4);
-  return out;
-}
-
-/**
- * WHERE A SERIES WAS PUBLISHED, IN A CHAIN VIEW THIS NODE READ ITSELF: the lowest block carrying its series payload - a
- * series round has no publication of its own, the series' is its (§5A.5 for a series). Null when the view holds none.
- */
-function findSeriesPublication(view, seriesIdBytes) {
-  if (!view || !Array.isArray(view.blocks) || !Number.isInteger(view.firstHeight)) return null;
-  const want = seriesPublicationPayload(seriesIdBytes);
-  for (let i = 0; i < view.blocks.length; i++) {
-    for (const raw of view.blocks[i].transactions || []) {
-      let tx;
-      try { tx = parseTransaction(raw); } catch { continue; }
-      if (commitmentsOf(tx).some((p) => p.length === want.length && p.every((b, j) => b === want[j]))) return { tx, height: view.firstHeight + i };
-    }
-  }
-  return null;
-}
-
-/** The output that publishes a series: zero value, one direct push. */
-function seriesPublicationOutput(seriesIdBytes) {
-  const payload = seriesPublicationPayload(seriesIdBytes);
-  const script = new Uint8Array(2 + PUBLICATION_BYTES);
-  script[0] = OP_RETURN;
-  script[1] = PUBLICATION_BYTES;
-  script.set(payload, 2);
-  return { value: 0n, script };
 }
 
 // ---- arena-protocol/src/game-market.js
