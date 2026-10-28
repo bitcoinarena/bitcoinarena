@@ -33,7 +33,8 @@ test('the header: the logo to bitcoin-arena.io, "‚Üê Arena" back to the games, ‚
   assert.match(CHROME, /<a class="asc-home" href="https:\/\/bitcoin-arena\.io\/"/);
   assert.match(CHROME, /<a class="asc-back" href="' \+ esc\(site\) \+ '"[^>]*><span aria-hidden="true">&larr;<\/span><span class="word">Arena<\/span><\/a>/);
   assert.match(CHROME, /var LINKS = \[\['Proposals', site \+ 'proposals\/'\], \['Explorer', 'https:\/\/explorer\.bitcoin-arena\.io\/'\], \['Health', site \+ 'health\/'\], \['Referral Program', site \+ 'referral\/'\]\];/);
-  assert.ok(!/target=/.test(CHROME), 'no link opens a new tab');
+  // no link of the bar or the menu opens a new tab; only the footer's X, Discord and Telegram do (kanban #749, footer-social.test.js)
+  assert.ok(!/target=/.test(CHROME.replace(/<span class="asc-social">.*?<\/span>/, '')), 'no other link opens a new tab');
   // the Arena page's two menus: the same links, the explorer in the same tab (#696)
   const page = read('src/arena-ui/index.html');
   const menus = [...page.matchAll(/<nav id="arena-(?:wb-)?nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena">(.*?)<\/nav>/g)].map((m) => m[1]);
