@@ -806,6 +806,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   const round = new Round(db, undefined, { plugins: hosted });
   const addressBook = createAddressBook({ db, verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } } });
+  // EVERY COMMITTEE PEER AT ITS ANNOUNCED ADDRESS FIRST (kanban #757): roster.js endpointsOf with the address book's resolver -
+  // a node whose quick tunnel restarted is dialed where its signed announcement says, not at its bond's dead endpoint
+  const peerEndpointsOf = (committee, selfPubkey) => endpointsOf(committee, selfPubkey, addressBook.endpointOf);
   // A CHECKPOINT EQUIVOCATION THIS SEAT HOLDS FOR THE FIRST TIME GOES TO THE ROUND'S PUBLICATION RELAYS (§25.2): both
   // signed marks over each relay's /play, where the relay records the pair itself; unawaited, best effort
   round.onEquivocation = ({ roundId, entryId, tick, stored, offered }) => {
@@ -1092,14 +1095,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     try { rows = round.db.prepare('SELECT round_id FROM rounds ORDER BY rowid DESC LIMIT 40').all(); } catch { rows = []; }
     for (const r of rows) {
       let c; try { c = roster.censusFor(new Uint8Array(r.round_id)); } catch { c = null; }
-      if (c && c.ok && Array.isArray(c.entries) && c.entries.length) { for (const e of endpointsOf(c.entries, round.pubkey)) found.add(baseOf(e)); break; }
+      if (c && c.ok && Array.isArray(c.entries) && c.entries.length) { for (const e of peerEndpointsOf(c.entries, round.pubkey)) found.add(baseOf(e)); break; }
     }
     if (owner) for (const s of owner.storeSettings().sources || []) found.add(baseOf(s));
     // A NODE WITH NO PEERS AND NO ROUND OF ITS OWN (2026-10-26, the owner's installed node: "Found on the network - No other node answered:
     // 0 of 0 nodes answered", and Search again did nothing): an installed node names no peers and had checked no round yet, so it knew no
     // seat at all - the chain's newest census and the address announcements it holds name them
     if (!found.size) {
-      try { for (const e of endpointsOf(fedRecords && fedRecords.censusNewest ? fedRecords.censusNewest() : [], round.pubkey)) found.add(baseOf(e)); } catch { /* none read yet */ }
+      try { for (const e of peerEndpointsOf(fedRecords && fedRecords.censusNewest ? fedRecords.censusNewest() : [], round.pubkey)) found.add(baseOf(e)); } catch { /* none read yet */ }
       try { const me = toHex(round.pubkey); for (const a of (addressBook && addressBook.list ? addressBook.list() : [])) if (a && a.endpoint && a.node !== me) found.add(baseOf(a.endpoint)); } catch { /* none held */ }
     }
     return [...found].filter((u) => /^https?:\/\//.test(u));
@@ -1109,7 +1112,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // its peers alone, and the T seats and the test host/n495 seats each held only their own group's halt observations)
   const everySeat = () => {
     const to = new Set(networkSeats());
-    try { for (const e of endpointsOf(fedRecords && fedRecords.censusNewest ? fedRecords.censusNewest() : [], round.pubkey)) to.add(baseOf(e)); } catch { /* the seats known */ }
+    try { for (const e of peerEndpointsOf(fedRecords && fedRecords.censusNewest ? fedRecords.censusNewest() : [], round.pubkey)) to.add(baseOf(e)); } catch { /* the seats known */ }
     return [...to].filter((u) => /^https?:\/\//.test(u));
   };
   const readNetworkApps = async () => {
@@ -1485,7 +1488,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (fedRecords && fedRecords.censusNewest) {
       try { for (const [f, es] of Object.entries(reserveMembersOf(fedRecords.censusNewest() || []))) if (!out[f]) out[f] = es; } catch { /* the basis alone */ }
     }
-    return Object.fromEntries(Object.entries(out).map(([f, es]) => [f, { members: es.map((e) => e.pubkey), peers: endpointsOf(es, round.pubkey) }]));
+    return Object.fromEntries(Object.entries(out).map(([f, es]) => [f, { members: es.map((e) => e.pubkey), peers: peerEndpointsOf(es, round.pubkey) }]));
   };
   // A threshold for this many guardian seats, or null; /reserves says why.
   // THE RESERVE KEY'S THRESHOLD IS THE FEDERATION'S OWN (§23A 2f + 1: 7 of 10, 5 of 7; kanban #397, 2026-10-23: e2f42eea's ten guardian
@@ -2038,7 +2041,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     refusedNow: (rid) => unenteredReturnOfRound(rid),
     peersFor: (rid) => {
       const picked = roster.committeeFor(rid, 'settlement');
-      return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
+      return picked.ok ? peerEndpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
     },
     onVoid: (rid, eid) => pushVoid(rid, eid),
     // Before a Void lock is refunded: the other signer nodes' proof of two first marks.
@@ -2051,7 +2054,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WINNINGS ALWAYS SENT on a FEDERATION round (winnings-send.js): the same settlement committee, the same peers.
   const winningsPeers = (rid) => {
     const picked = roster.committeeFor(rid, 'settlement');
-    return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
+    return picked.ok ? peerEndpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
   };
   const winnings = stakeLocks ? new WinningsSend({ round, port: stakeLocks, curve: poolCurve,
     random: (n) => new Uint8Array(randomBytes(n)), peersFor: winningsPeers, fetcher: (u, o) => fetch(u, o),
@@ -2060,7 +2063,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const txRecord = createTxRecord({ db: round.db });
   // THE MARKET ORDER BOOK: orders taken here, each batch's set agreed with the round's other seats
   const orderBook = new OrderBook(round, { plugins: hosted, intervalMs: orderBatchMs, now: () => round.now(), feesFor,
-    peersFor: (rid) => { const picked = roster.committeeFor(rid, 'settlement'); return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []); } });
+    peersFor: (rid) => { const picked = roster.committeeFor(rid, 'settlement'); return picked.ok ? peerEndpointsOf(picked.committee, round.pubkey) : (dkg.peers || []); } });
   // AN ORDER A CERTIFIED BATCH NAMES THAT NEVER REACHED THIS SEAT (kanban #620, measured 2026-10-24: round 42835aaa never settled - fed2-3
   // and fed2-7 held no entry 008e278a of batch 3585700432, refused its certificate - "this seat holds no entry 008e278ac2bfff47" - and
   // rebuilt settlement 8f0144a1 where the others built ffabdc94): the entry from the seat that handed the batch, kept when its bytes hash
@@ -2155,7 +2158,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const priceRound = (c) => { const f = pluginForRound(c, hosted); return f.ok && !f.attested && f.plugin && (f.plugin.name === 'nextblock' || (f.plugin.manifest && f.plugin.manifest.gameName === 'nextblock')); };
   const prices = new PriceFeed(round, { priceRound, now: () => round.now(),
     ...(priceFeed && typeof priceFeed === 'object' && priceFeed.readPrice ? { readPrice: priceFeed.readPrice } : {}),
-    peersFor: (rid) => { const picked = roster.committeeFor(rid, 'settlement'); return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []); } });
+    peersFor: (rid) => { const picked = roster.committeeFor(rid, 'settlement'); return picked.ok ? peerEndpointsOf(picked.committee, round.pubkey) : (dkg.peers || []); } });
   let priceTimeout = null;
   // ENFORCED (§11): where this seat runs the feed, a price round's batches carry only attested prices
   const feedFor = (contractBytes) => { if (!priceFeed) return false; try { return priceRound(decodeRoundContract(new Uint8Array(contractBytes))); } catch { return false; } };
@@ -2200,7 +2203,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf, donationSetFor, donationTargetFor, orderBook, reserveKeyFor, feesFor,
     peersFor: (rid) => {
       const picked = roster.committeeFor(rid, 'settlement');
-      return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
+      return picked.ok ? peerEndpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
     },
     // WHOSE TURN IT IS TO COMBINE (M3.3-19): the round's beacon height and this node's chain tip, as the payout reads them.
     turnClock: {
@@ -2310,7 +2313,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const drawnAttestor = drawnHosted ? new DrawnAttestor({
     readPrice: () => prices.readPrice(), selfKey: toHex(round.pubkey), sign: (d) => schnorr.sign(d, round.identity.secret),
     attestorsFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? got.attestors.map((e) => toHex(e.pubkey)) : null; },
-    peersFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? endpointsOf(got.attestors, round.pubkey) : []; },
+    peersFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? peerEndpointsOf(got.attestors, round.pubkey) : []; },
     due: () => {
       const now = round.now(), out = [];
       for (const r of round.db.prepare('SELECT round_id, contract FROM rounds WHERE opened_ms > ?').all(now - 4 * 3600000)) {
@@ -2332,7 +2335,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const got = holdOutcome(rid, bytes, decodeAttestation(bytes), false);
       if (!got.held) { console.log(`[attest] ${toHex(rid).slice(0, 16)}: the combined attestation was not held here: ${got.why}`); return false; }
       const picked = roster.committeeFor(rid, 'settlement');
-      const to = new Set([...(picked.ok ? endpointsOf(picked.committee, round.pubkey) : []), ...drawnAttestor.peersFor(rid)]);
+      const to = new Set([...(picked.ok ? peerEndpointsOf(picked.committee, round.pubkey) : []), ...drawnAttestor.peersFor(rid)]);
       await Promise.all([...to].map((base) => fetch(`${base}/outcome?round=${toHex(rid)}`, { method: 'POST', body: bytes, signal: AbortSignal.timeout(8000) }).catch(() => null)));
       return true;
     },
@@ -2378,7 +2381,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   if (emergencyPull.unref) emergencyPull.unref();
   const emergencyFirstPull = setTimeout(() => { pullEmergencies().catch(() => {}); }, 30000);
   if (emergencyFirstPull.unref) emergencyFirstPull.unref();
-  const seating = (seatingOn ?? process.env.ARENA_SEATING === '1') ? seatingAgent({ round, roster,
+  const seating = (seatingOn ?? process.env.ARENA_SEATING === '1') ? seatingAgent({ round, roster, endpointOf: addressBook.endpointOf,
     // a table's round 0 this seat never wrote, built from the series it holds (kanban #604); `writers` is set further down
     contractOf: (rid) => {
       try {
@@ -2446,7 +2449,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         console.error(`[custody] ${toHex(roundIdBytes).slice(0, 16)} reads no settlement signer node addresses: ${picked.why}`);
       return [];
     }
-    return endpointsOf(picked.committee, round.pubkey);
+    return peerEndpointsOf(picked.committee, round.pubkey);
   }
 
   const verifier = new Verifier(round, {
@@ -2480,7 +2483,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!VIEW_NOT_YET.test(picked.why || '')) console.error(`[verify] ${toHex(roundIdBytes).slice(0, 16)} reads no signer node addresses: ${picked.why}`);
         return [];
       }
-      return endpointsOf(picked.committee, round.pubkey);
+      return peerEndpointsOf(picked.committee, round.pubkey);
     },
   });
   // MARKETS ON GAMES (feature 6, §0A.7d): a market round's outcome is its source round's signed RoundResult, checked
@@ -2488,10 +2491,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // and settled by the attested sweep below as any market. A source round this seat does not hold is fetched from the market
   // round's census seats (GET /round, through the routed fetch) and taken only if it hashes to the id the market names - a
   // series round only as a series this seat holds derives it; its committee is then drawn on that contract here.
-  const markets = gameMarkets({ round, plugins: hosted, now: () => round.now(), self: round.pubkey, seriesHeld: () => series,
+  const markets = gameMarkets({ round, plugins: hosted, now: () => round.now(), self: round.pubkey, endpointOf: addressBook.endpointOf, seriesHeld: () => series,
     committeeFor: (id, role, o) => roster.committeeFor(id, role, o),
     verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
-    sourcePeers: (marketRid) => { const c = roster.censusFor(marketRid); return c.ok ? endpointsOf(c.entries, round.pubkey) : []; },
+    sourcePeers: (marketRid) => { const c = roster.censusFor(marketRid); return c.ok ? peerEndpointsOf(c.entries, round.pubkey) : []; },
     // THIS SEAT'S OWN SIGNED RESULT where it sits on the source's committee (GET /round-result's answer, asked in-process)
     ownResult: (hex) => prices.result(hex) });
   // AND WITHOUT BEING ASKED: every 10 s a pass over the market rounds on games this seat holds - each round of the store looked at
@@ -2826,7 +2829,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const found = new Set();
       for (const role of ['settlement', 'game']) {
         const picked = roster.committeeFor(rid, role);
-        if (picked.ok) for (const u of endpointsOf(picked.committee, round.pubkey)) found.add(u);
+        if (picked.ok) for (const u of peerEndpointsOf(picked.committee, round.pubkey)) found.add(u);
       }
       return [...found];
     };
@@ -2903,8 +2906,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (had && (had.peers.length || Date.now() - had.at < 600000)) peersHere = had.peers;
       else {
         let picked = roster.committeeFor(rid, 'game');
-        if (picked.ok) peersHere = endpointsOf(picked.committee, round.pubkey);
-        if (!peersHere.length) { picked = roster.committeeFor(rid, 'settlement'); if (picked.ok) peersHere = endpointsOf(picked.committee, round.pubkey); }
+        if (picked.ok) peersHere = peerEndpointsOf(picked.committee, round.pubkey);
+        if (!peersHere.length) { picked = roster.committeeFor(rid, 'settlement'); if (picked.ok) peersHere = peerEndpointsOf(picked.committee, round.pubkey); }
         drawnPeers.set(toHex(rid), { at: Date.now(), peers: peersHere });
         if (drawnPeers.size > 4096) drawnPeers.delete(drawnPeers.keys().next().value);
       }
@@ -4661,7 +4664,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const e = entries.find((x) => toHex(x.pubkey) === node);
           if (!e || !e.advert || !e.advert.endpoint) continue;
           try {
-            const r = await fetch(`${String(e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')}/gateway-seating?federation=${fid}&epoch=${ep}`, { signal: AbortSignal.timeout(10000) });
+            const r = await fetch(`${String(addressBook.endpointOf(e) || e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')}/gateway-seating?federation=${fid}&epoch=${ep}`, { signal: AbortSignal.timeout(10000) });
             if (r.status === 200) signed.push(await r.json());
           } catch { /* that guardian's signature is missing this time */ }
         }
@@ -4680,7 +4683,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const epoch = Math.floor(Number(await chainTip()) / GATEWAY_EPOCH_BLOCKS) - 1;
       const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
       const entries = now.ok ? now.entries : [];
-      const endpointOf = (node) => { const e = entries.find((x) => toHex(x.pubkey) === node); return e && e.advert && e.advert.endpoint ? String(e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '') : null; };
+      const endpointOf = (node) => { const e = entries.find((x) => toHex(x.pubkey) === node); return e && e.advert && e.advert.endpoint ? String(addressBook.endpointOf(e) || e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '') : null; };
       const me = toHex(round.pubkey);
       for (const { federation: fid } of fedRecords.list()) {
         const rec = fedRecords.recordOf(fid);
@@ -7937,7 +7940,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const c = roster.committeeFor(id, role);
           if (!c.ok) continue;
           for (const e of c.committee) if (e && e.advert && e.advert.endpoint)
-            found.add(String(e.advert.endpoint).replace(/^wss?:/, 'https:').replace(/\/+$/, ''));
+            found.add(String(addressBook.endpointOf(e) || e.advert.endpoint).replace(/^wss?:/, 'https:').replace(/\/+$/, ''));
         }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ stable: replayPublic, endpoints: [...found] }));
