@@ -517,7 +517,12 @@ export class LockSettlement {
 
   async #bookPlan(roundIdBytes, a, claimPk, held) {
     const { contract } = a;
-    await this.orderBook.carry(roundIdBytes);
+    // THE BOOK AS A THRESHOLD OF THE ROUND'S SEATS HOLD IT FIRST (kanban #740, round 5d4cbd41: two seats that never received batch
+    // 3586289144 cleared batch 3586289193 alone and answered "no order filled" while the five others filled it at 40c): every certified
+    // batch the other seats list is taken here, once per round (order-batch.js sync). Until a threshold of seats answered, this seat
+    // says "not yet" - the combiner asks again - and never plans a book it may hold short, least of all one that claims nothing.
+    const synced = await this.orderBook.sync(roundIdBytes);
+    if (!synced.ok) return refuse(`not yet: reading the other seats' batches - ${synced.why}`, 409);
     const pending = this.orderBook.pending(roundIdBytes);
     if (pending.length) return refuse(`no lock is claimed: batch ${pending[0]} of the book is not decided at this seat`);
     const L = this.orderBook.ledger(roundIdBytes);
@@ -1020,9 +1025,34 @@ export class LockSettlement {
     return s;
   }
 
+  /**
+   * AN ORDER BOOK'S BATCHES READ AGAIN FROM THE OTHER SEATS (kanban #740), for a settlement whose fills or plan another seat rebuilt
+   * otherwise: answers whether a certified batch this seat lacked was taken - and then every settlement built here for the round is
+   * dropped, to be built again from the store. Not a book round, or nothing new: false, nothing dropped.
+   */
+  async bookResync(roundIdBytes) {
+    const key = toHex(roundIdBytes);
+    // AT MOST ONE READ A ROUND EVERY 30 S: an asker that keeps naming other bytes does not make an overloaded seat read every peer each time
+    const last = this.#resyncedAt.get(key) || 0;
+    if (Date.now() - last < 30000) return false;
+    if (!this.orderBook || !this.orderBook.isBook(roundIdBytes)) return false;
+    this.#resyncedAt.set(key, Date.now());
+    if (this.#resyncedAt.size > 4096) this.#resyncedAt.delete(this.#resyncedAt.keys().next().value);
+    const got = await this.orderBook.sync(roundIdBytes, { force: true });
+    if (!got.ok || !got.fresh) return false;
+    for (const k of [...this.built.keys()]) if (k === key || k.startsWith(`${key}:fed:`)) this.built.delete(k);
+    return true;
+  }
+  #resyncedAt = new Map();   // round id hex -> when its book was last read again on a mismatch (bookResync)
+
   /** ROUND ONE: this signer node's nonce commitment for the settlement it would sign. */
   async commit(roundIdBytes, { txid = null, entry = null, federation = null } = {}) {
-    const m = federation ? await this.fedMessage(roundIdBytes, federation) : entry ? await this.lateMessage(roundIdBytes, entry) : await this.message(roundIdBytes);
+    const build = () => (federation ? this.fedMessage(roundIdBytes, federation) : entry ? this.lateMessage(roundIdBytes, entry) : this.message(roundIdBytes));
+    let m = await build();
+    // AN ORDER BOOK REBUILT OTHERWISE THAN THE ASKER'S, OR NOT AT ALL (kanban #740): the asker built bytes this seat did not - the other
+    // seats' certified batches are read again (the read kept for the round may be older than a batch this seat missed), and with one
+    // taken, the settlement is built again from the store
+    if (txid && !entry && (!m.ok || String(txid).toLowerCase() !== String(m.txid).toLowerCase()) && (await this.bookResync(roundIdBytes))) m = await build();
     if (!m.ok) return m;
     // A COMMITMENT ONLY TO THE BYTES THE ASKER BUILT (measured on a 5-of-7): a signer node that rebuilt another
     // settlement - it saw a run end differently - would otherwise commit, and its share over its own bytes spoils the
@@ -1257,8 +1287,12 @@ export class LockSettlement {
           signers.push({ base, commitment: decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0] });
         } catch (e) { refused.push(`${base}: ${e.message}`); }
       }
-      if (signers.length < m.needed)
+      if (signers.length < m.needed) {
+        // THE ASKER ITSELF HELD THE BOOK SHORT (kanban #740): peers that rebuilt another settlement have it read the batches again,
+        // and the next pass builds anew
+        if (refused.some((x) => /rebuilt settlement/.test(x))) await this.bookResync(roundIdBytes);
         return refuse(`${signers.length} of the ${m.needed} signer nodes the settlement needs committed to it: ${refused.join('; ')}`);
+      }
       const commitments = signers.map((s) => s.commitment).sort((a, b) => a.id - b.id);
       const shares = [];
       for (const s of signers) {
