@@ -26,7 +26,7 @@
   pre { background: #140d12; border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; overflow-x: auto; line-height: 1.55; color: #eadbd0; }
   /* THE ARENA'S HEADER AND FOOTER (kanban #700, 2026-10-26: "docs missing footer"; #694 "the header of those pages does not match the style of
      the arena and games pages"; #701): https://testnet.bitcoin-arena.io/site-chrome.js draws them - the logo, "← Arena" (it was "Play on
-     testnet") and the menu, the build line and Donate; the Contents button sits at the bar's left end, a panel icon (three bars are the menu at the right end). The bar is 41 px high, the foot
+     testnet") and the menu, Donate and the links beside it (no build line since kanban #753); the Contents button sits at the bar's left end, a panel icon (three bars are the menu at the right end). The bar is 41 px high, the foot
      30 px. */
   .layout { width: min(1280px, calc(100% - 32px)); margin: 0 auto; display: grid; grid-template-columns: 240px 1fr; gap: 48px; }
   aside { position: sticky; top: 57px; align-self: start; max-height: calc(100vh - 41px - 30px - 16px); overflow: auto; padding: 24px 8px 24px 0; font-size: 14.5px; }
@@ -102,6 +102,9 @@
     .tbl.api tr { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin: 0 0 10px; padding: 4px 0; }
     .tbl.api td { border: 0; padding: 6px 14px; overflow-wrap: anywhere; } .tbl.api td.ep code { overflow-wrap: anywhere; }
     .tbl.api td[data-l]::before { content: attr(data-l); display: block; color: var(--dim); font: 600 11px Inter; letter-spacing: .08em; text-transform: uppercase; } }
+  /* THE LATEST RELEASE'S NUMBER (kanban #753): not in this file; https://bitcoin-arena.io/js/release-latest.js writes it from the update
+     channel every release publishes (testnet.bitcoin-arena.io/release/latest.json) */
+  .relv:not(:empty)::before { content: " "; }
 </style>
 </head>
 <body>
@@ -157,6 +160,9 @@
   <a href="#proposals">Funding proposals</a>
   <b>Technology</b>
   <a href="#tech">Technologies used</a>
+  <b>Source</b>
+  <a href="https://docs.bitcoin-arena.io/repos/">Repositories ↗</a>
+  <a href="https://github.com/a tester/bitcoin-arena/releases/latest">Latest release ↗</a>
 </aside>
 
 <main id="top">
@@ -172,6 +178,7 @@
     <a class="box link" href="#node"><h4>Run a node</h4><p>Seats, bonds, the census, the dashboard and the owner area.</p></a>
     <a class="box link" href="https://docs.bitcoin-arena.io/api/"><h4>Node API reference</h4><p>Every request a node answers, generated from its source. Try it live.</p></a>
     <a class="box link" href="#game"><h4>Build</h4><p>Write your own game or prediction market.</p></a>
+    <a class="box link" href="https://docs.bitcoin-arena.io/repos/"><h4>Repositories</h4><p>The platform, the apps and the SDK on GitHub, all on one page.</p></a>
   </div>
 
   <div class="folds"><button type="button" id="fold-open">Open all</button><button type="button" id="fold-close">Close all</button></div>
@@ -452,7 +459,7 @@
   </ul>
   <h3 id="run">Run a node</h3>
   <h4 id="installer">With the installer (Linux, macOS, Windows)</h4>
-  <p>The releases are on GitHub in the <b>invite-only</b> repository <code>a tester/bitcoin-arena</code> (Releases; ask for an invite). The simplest way is the package for your system. Each package contains Node.js, the node, the installer, <code>cloudflared</code> and Tor. Each opens a small Bitcoin Arena window that starts the installer and opens its setup page in your browser.</p>
+  <p>The releases are on GitHub in the repository <a href="https://github.com/a tester/bitcoin-arena">a tester/bitcoin-arena</a>: <b><a href="https://github.com/a tester/bitcoin-arena/releases/latest">download the latest release<span class="relv" data-arena-release-version></span></a></b>, or pick your system's file on <a href="https://bitcoin-arena.io/#download">bitcoin-arena.io</a>. Every repository: <a href="https://docs.bitcoin-arena.io/repos/">Repositories</a>. The simplest way is the package for your system. Each package contains Node.js, the node, the installer, <code>cloudflared</code> and Tor. Each opens a small Bitcoin Arena window that starts the installer and opens its setup page in your browser.</p>
   <ul>
     <li><b>Windows</b>: <code>bitcoin-arena-node-setup-&lt;version&gt;-windows-x64.exe</code>. It installs into your user folder (no administrator) and adds <b>Bitcoin Arena</b> to the Start menu and the desktop. Windows SmartScreen warns about an unsigned program: choose “More info”, then “Run anyway”. If Windows Firewall asks whether <code>cloudflared</code> may use public and private networks, choose <b>Cancel</b>: your node's tunnel only connects out and works either way.</li>
     <li><b>macOS</b>: <code>bitcoin-arena-node-&lt;version&gt;-darwin-arm64.dmg</code> (Apple silicon) or <code>-darwin-x64.dmg</code> (Intel). Drag <b>Bitcoin Arena</b> to Applications. The first time, right-click it and choose Open: the app is not signed with an Apple Developer ID yet.</li>
@@ -475,7 +482,7 @@
   <p><b>Auto update</b> (on by default): your node updates itself. A few hours after a newer release is published, the node's <i>Auto update</i> service fetches its own package. It checks the package against the Arena release key and updates in place the same way as by hand: it waits out a market's seating window, backs the node up, and rolls back by itself if the new release does not come up. <code>auto_update=0</code> in <code>arena.conf</code> turns it off; <code>bitcoinarena update</code> updates now. Releases are numbered <b>2026.xx.yy</b>, a fix <b>2026.xx.yy.zz</b>; the protocol a round runs on is a separate number (protocol 1, 2, … 16).</p>
   <p><b>Updates:</b> the owner page's Release card says when a newer release is out (it reads <code>testnet.bitcoin-arena.io/release/latest.json</code> every six hours and believes it only when the release key signed it). <code>./bitcoinarena-install --update &lt;new release&gt;</code> checks the release's signature, backs your node up, moves it to the new release with the same settings, and goes back to the old one by itself if the new one does not come up. It works on Linux (systemd), macOS (launchd; the bundled Tor is signed for the new release) and Windows (logon tasks, or the Startup folder without administrator rights), moves every service of the node, and the settings' paths into older releases with them. A node on a temporary quick tunnel gets a new tunnel name at every restart: the update starts the tunnel first and writes its new name into the node's settings before the node starts, so its public address and guardian endpoint stay right. On Windows it waits up to five minutes for the node to answer (a Windows node starts slower), starts the services so they keep running after the window that ran the update is closed, and if it has to roll back it always starts the old release again, even when a file the node held cannot be restored at once. <b>Several nodes on one machine:</b> start the installer for the second node once with <code>--home &lt;folder&gt; --instance &lt;name&gt; --port-offset &lt;n&gt;</code> (name a-z, 0-9, up to 12; n 0-20000). Its services get their own names (<code>arena-node--&lt;name&gt;</code>), every fixed port (seat, LND, gateway, Tor, liquidity provider, wizard) moves by n, and its command is <code>bitcoinarena-&lt;name&gt;</code>. Both values are written into its <code>arena.conf</code>, so nothing has to be given again. Each node needs its own LND, because a gateway cannot share one. <b>Checking a release yourself:</b> <code>SHA256SUMS.sig</code> is an Ed25519 signature by the key published at <a href="https://testnet.bitcoin-arena.io/release-key.txt">testnet.bitcoin-arena.io/release-key.txt</a> (<code>ce8d1ee7…c892</code>). With access to the source, the same release is built with <code>tools/release/build-release.sh &lt;version&gt; &lt;linux|darwin|windows&gt; &lt;x64|arm64&gt; out</code> (the same commit gives the same bytes).</p>
   <h4 id="manual">By hand</h4>
-  <p>You need a computer that is always on with a public HTTPS address (a tunnel works), Node.js 24, the Bitcoin Arena source, and a Bitcoin node (<code>bitcoind</code>) on the same network, testnet4 today, so your node reads the chain itself. For the guardian role you also need <code>fedimintd</code> and a seat in a federation. On testnet4, about 50,000 test sats is the practical floor for a bond.</p>
+  <p>You need a computer that is always on with a public HTTPS address (a tunnel works), Node.js 24, the Bitcoin Arena source (<a href="https://github.com/a tester/bitcoin-arena">a tester/bitcoin-arena</a>; every repository on <a href="https://docs.bitcoin-arena.io/repos/">Repositories</a>), and a Bitcoin node (<code>bitcoind</code>) on the same network, testnet4 today, so your node reads the chain itself. For the guardian role you also need <code>fedimintd</code> and a seat in a federation. On testnet4, about 50,000 test sats is the practical floor for a bond.</p>
 <pre># start a node on port 31221 with its database in node.db
 node packages/arena-node/src/main.js 31221 node.db
 
@@ -1102,5 +1109,6 @@ await client.createAndPostOrder({ tokenID: data[0].tokens[0].token_id, price: 0.
   document.querySelectorAll('main h2[id], main h3[id]').forEach((h) => io.observe(h));
 })();
 </script>
+<script src="https://bitcoin-arena.io/js/release-latest.js" defer></script>
 </body>
 </html>

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bitcoin Arena Repositories</title>
+<meta name="description" content="The source of Bitcoin Arena on GitHub: the platform (node, protocol, client, installer and the releases), the apps Tick Tock, Bitcoin Up or Down and Rock Paper Scissors, and the SDK an app builds on.">
+<meta name="theme-color" content="#0f0a10">
+<link rel="icon" href="/favicon.ico">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<!-- EVERY REPOSITORY ON ONE PAGE (kanban #753, a tester 2026-10-28: "All repositories are live now. Since there are many, create a page on
+     docs to link them all and add a GitHub icon"): written to www/repos/index.html by gen-docs.py, as the API reference is to www/api/. The
+     GitHub icon in every footer leads here. The release number is not in this file: js/release-latest.js on bitcoin-arena.io reads it from
+     the update channel (testnet.bitcoin-arena.io/release/latest.json) that every release publishes. -->
+<style>
+  :root { --bg:#0f0a10; --panel:#1a1218; --line:#33232c; --text:#f6ece4; --dim:#a8968c; --btc:#f7931a; --gold:#ffd166; --cyan:#4fd1ff; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: radial-gradient(120% 50% at 50% 0%, rgba(226,103,42,.10), transparent 60%), var(--bg); color: var(--text); font: 400 16px/1.6 Inter, system-ui, sans-serif; }
+  a { color: var(--cyan); text-decoration: none; } a:hover { text-decoration: underline; }
+  code { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13px; background: #22171e; border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; color: #ffe0b3; overflow-wrap: anywhere; }
+  .crumb { margin: 0 0 6px; font-size: 14px; } .crumb a { color: var(--dim); }
+  .wrap { width: min(980px, calc(100% - 32px)); margin: 0 auto; }
+  header.intro { padding: 34px 0 6px; }
+  h1 { font: 700 clamp(30px, 4.6vw, 48px)/1.1 "Space Grotesk", Inter, sans-serif; letter-spacing: -0.015em; margin: 0 0 10px; }
+  h2 { font: 700 13px/1 Inter, sans-serif; letter-spacing: .14em; text-transform: uppercase; color: var(--btc); margin: 34px 0 12px; }
+  .lead { color: #e3d5cb; max-width: 72ch; margin: 0 0 8px; font-size: 17px; }
+  .repos { display: grid; gap: 14px; }
+  .repo { display: grid; grid-template-columns: 44px 1fr; gap: 6px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; }
+  .repo .gh { grid-row: span 3; width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: #22171e; border: 1px solid var(--line); color: var(--text); }
+  .repo .gh svg { width: 24px; height: 24px; fill: currentColor; }
+  .repo h3 { margin: 0; font: 700 19px/1.3 "Space Grotesk", Inter, sans-serif; overflow-wrap: anywhere; }
+  .repo h3 a { color: var(--text); } .repo h3 a:hover { color: var(--btc); text-decoration: none; }
+  .repo p { margin: 0; color: #e0d2c8; font-size: 15px; }
+  .repo .meta { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 14px; color: var(--dim); }
+  .rel { color: var(--btc); font-weight: 600; } .rel .v:not(:empty)::before { content: " "; }
+  .note { margin: 28px 0 70px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; color: var(--dim); font-size: 14.5px; }
+  @media (max-width: 560px) { .repo { grid-template-columns: 1fr; padding: 16px; } .repo .gh { grid-row: auto; } }
+</style>
+</head>
+<body>
+<script src="https://testnet.bitcoin-arena.io/site-chrome.js"></script>
+
+<header class="intro wrap">
+  <p class="crumb"><a href="/">← Bitcoin Arena docs</a></p>
+  <h1>Repositories</h1>
+  <p class="lead">Bitcoin Arena is open on GitHub under <a href="https://github.com/a tester">a tester</a>: the platform, each app in a repository of its own, and the SDK the apps build on.</p>
+</header>
+
+<main class="wrap">
+  <h2 id="platform">Platform</h2>
+  <div class="repos">
+    <div class="repo" id="bitcoin-arena"><a class="gh" href="https://github.com/a tester/bitcoin-arena" aria-label="bitcoin-arena on GitHub">{{GH}}</a>
+      <h3><a href="https://github.com/a tester/bitcoin-arena">a tester/bitcoin-arena</a></h3>
+      <p>The platform: the node, the protocol, the game page's client and the installer. Every release is published here, with the packages for Windows, macOS and Linux.</p>
+      <div class="meta"><a class="rel" href="https://github.com/a tester/bitcoin-arena/releases/latest">Latest release<span class="v" data-arena-release-version></span></a><a href="https://github.com/a tester/bitcoin-arena/releases">All releases</a><a href="/#run">Run a node</a></div></div>
+  </div>
+
+  <h2 id="apps">Apps: games and markets</h2>
+  <div class="repos">
+    <div class="repo" id="arena-app-next-block"><a class="gh" href="https://github.com/a tester/arena-app-next-block" aria-label="arena-app-next-block on GitHub">{{GH}}</a>
+      <h3><a href="https://github.com/a tester/arena-app-next-block">a tester/arena-app-next-block</a></h3>
+      <p>Tick Tock, Next Block: the deterministic simulation core every node replays (integer arithmetic only), its plugin, its page and its Unity client.</p>
+      <div class="meta"><a href="/#nextblock">The game</a><a href="/#game">Implement a game</a></div></div>
+    <div class="repo" id="arena-app-up-or-down"><a class="gh" href="https://github.com/a tester/arena-app-up-or-down" aria-label="arena-app-up-or-down on GitHub">{{GH}}</a>
+      <h3><a href="https://github.com/a tester/arena-app-up-or-down">a tester/arena-app-up-or-down</a></h3>
+      <p>Bitcoin Up or Down, every 15 minutes: the prediction market's signed manifest with its developer and attestor keys, its registration and its page.</p>
+      <div class="meta"><a href="/#updown">The market</a><a href="/#market">Implement a prediction market</a></div></div>
+    <div class="repo" id="arena-app-rock-paper-scissors"><a class="gh" href="https://github.com/a tester/arena-app-rock-paper-scissors" aria-label="arena-app-rock-paper-scissors on GitHub">{{GH}}</a>
+      <h3><a href="https://github.com/a tester/arena-app-rock-paper-scissors">a tester/arena-app-rock-paper-scissors</a></h3>
+      <p>Rock Paper Scissors, a head-to-head game: its decide adapter, its plugin registration and its web client.</p>
+      <div class="meta"><a href="/#rps">The game</a><a href="/#h2h">Implement a head-to-head game</a></div></div>
+  </div>
+
+  <h2 id="sdk">SDK</h2>
+  <div class="repos">
+    <div class="repo" id="arena-sdk"><a class="gh" href="https://github.com/a tester/arena-sdk" aria-label="arena-sdk on GitHub">{{GH}}</a>
+      <h3><a href="https://github.com/a tester/arena-sdk">a tester/arena-sdk</a></h3>
+      <p>What an app imports from Bitcoin Arena: manifests and their signing, hashing, donations, series, the order book, contracts and the host. An app names it in its <code>package.json</code> as <code>github:a tester/arena-sdk#&lt;tag&gt;</code>. It is packed from <code>packages/arena-sdk</code> in bitcoin-arena; changes go there.</p>
+      <div class="meta"><a href="https://github.com/a tester/arena-sdk/tags">Tags</a><a href="/#devnet">Run a devnet</a></div></div>
+  </div>
+
+  <p class="note">Bitcoin Arena runs on Bitcoin <b>testnet4</b> today; mainnet is not live. Questions and ideas: Bitcoin Arena on <a href="https://discord.gg/tH8SPzyKq">Discord</a> and <a href="https://t.me/+KihHE8JhcVM3NDVi">Telegram</a>.</p>
+</main>
+
+<script src="https://bitcoin-arena.io/js/release-latest.js" defer></script>
+</body>
+</html>
