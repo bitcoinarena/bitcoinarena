@@ -141,26 +141,24 @@ export function assess(f, prev, cfg) {
   const postedToday = postedApps(f.duty, 'today');
   const cells = roundSeating({ games: dedupeGames(f.games), lists: f.lists, nowMs, answering: f.answering, posted: (name) => postedToday.has(name) });
   const bad = [...cells].filter(([, c]) => c.c === 'bad'), notOpen = [...cells].filter(([, c]) => c.c === 'warn' && /none open yet/.test(c.t)), unknown = [...cells].filter(([, c]) => c.t === 'no seat answered');
-  const ourKeys = new Set(f.seats.map((s) => s.key).filter(Boolean).map((k) => k.slice(0, 16)));
   if (bad.length) {
     const n = streak('seating', true);
-    const live = liveDrawn(f.lists, ourKeys, nowMs);
-    problems.push({ key: 'seating', ticket: '757', title: `no joinable rounds in the next hour: ${bad.map(([k]) => k).join(', ')}`,
-      lines: [...bad.map(([name, c]) => `${name}: ${c.t}\n  ${c.tip.split('\n').slice(1).join('\n  ')}`),
-        live ? `live seats among the drawn game committee of the unseated rounds: ${live} (our ${ourKeys.size} answering seats)` : null,
-        f.censusProbe ? `census nodes outside our seats answering /owner/version: ${f.censusProbe.answering.length} of ${f.censusProbe.asked}` : null].filter(Boolean),
-      tried: ['nothing: an emergency grid is not posted automatically (10-25: one crashed every seat)'],
-      needs: `an emergency grid for the rest of the day on a census without the dead nodes (memory emergency-day-post). ${emergencyRunbook(nowMs)}`,
+    const counts = appCounts(f.lists, nowMs, f.answering);
+    problems.push({ key: 'seating', ticket: '757', title: 'no joinable rounds (next hour)',
+      lines: bad.map(([name]) => { const x = counts.get(name);
+        return x ? `${appName(name)}: ${x.listed} listed, ${x.seated} seated${x.live ? ` (${x.live} drawn live)` : ''}` : `${appName(name)}: posted, none listed`; }),
+      tried: ['nothing (no automatic emergency grid)'], needs: 'emergency grid on a clean census, see #757',
       alert: n >= cfg.confirm });
   } else streak('seating', false);
   if (notOpen.length) {
     const n = streak('not-open', true);
-    problems.push({ key: 'not-open', ticket: '758', title: `next hour seated but none open: ${notOpen.map(([k]) => k).join(', ')}`,
-      lines: notOpen.map(([name, c]) => `${name}: ${c.t}\n  ${c.tip.split('\n').slice(1).join('\n  ')}`), tried: ['nothing (no runbook)'], needs: 'a look at why seated rounds take no entries', alert: n >= cfg.notOpenPasses });
+    const counts = appCounts(f.lists, nowMs, f.answering);
+    problems.push({ key: 'not-open', ticket: '758', title: 'seated but none open (next hour)',
+      lines: notOpen.map(([name]) => { const x = counts.get(name) || {}; return `${appName(name)}: ${x.seated ?? '?'} seated, 0 open`; }), tried: ['nothing (no runbook)'], needs: 'a look at why, see #758', alert: n >= cfg.notOpenPasses });
   }
   if (unknown.length && f.lists.every((x) => !x)) {
     const n = streak('rounds-unread', true);
-    problems.push({ key: 'rounds-unread', ticket: '759', title: `no seat answered GET ${NOW_ROUNDS}`, lines: [`asked: ${cfg.listSeats.map(short).join(', ')}`], tried: ['nothing'], needs: 'the seats checked', alert: n >= cfg.confirm });
+    problems.push({ key: 'rounds-unread', ticket: '759', title: 'no seat lists rounds', lines: [`asked: ${cfg.listSeats.map(seatName).join(', ')}`], tried: ['nothing'], needs: 'seats checked, see #759', alert: n >= cfg.confirm });
   }
   for (const [name, c] of cells) if (c.c === 'warn' && /not seated/.test(c.t)) problems.push({ key: `partly:${name}`, ticket: '758', title: `${name}: ${c.t}`, lines: [], alert: false });
 
@@ -179,32 +177,31 @@ export function assess(f, prev, cfg) {
     if (down.passes < cfg.confirm) continue;
     seen.add(`seat-down:${k}`);
     const u = s.unit ? f.units[s.unit] || {} : null;
-    const lines = [`${short(k)} (${s.machine}${s.unit ? `, ${s.unit}` : ''}) has not answered GET /identity for ${down.passes} passes, ${mins(nowMs - down.downSince)} min${s.why ? `: ${s.why}` : ''}`];
-    if (u) lines.push(`unit: ${u.active || '?'}/${u.sub || '?'}, NRestarts ${u.nRestarts ?? '?'}`);
-    lines.push(`load ${l1} / ${l5} / ${l15}`);
+    const lines = [`down ${mins(nowMs - down.downSince)} min${s.why ? ` (${String(s.why).slice(0, 40)})` : ''}${u ? `, unit ${u.active || '?'}, ${u.nRestarts ?? '?'} restarts` : ''}`];
     const tried = [];
     let alert = nowMs - down.downSince >= cfg.seatDownAlertMs, needs = '';
-    if (!s.unit) { alert = true; needs = `the seat restarted on the test host (${short(k)}) - the watcher restarts test host seats only`; tried.push('nothing: not a test host unit'); }
+    if (!s.unit) { alert = true; needs = 'restart on the test host, see #759'; tried.push('nothing (second-host seat)'); }
     else {
       if (fx && fx.recheck === 'pending') { fx.recheck = 'failed'; }
-      if (fx && fx.recheck === 'failed') { tried.push(`restarted ${s.unit} at ${hm(fx.atMs)} UTC; the recheck found it still down`); alert = true; }
-      const blocked = [];
-      if (!(l1 < cfg.loadMax)) blocked.push(`1-min load ${l1} >= ${cfg.loadMax}`);
-      if (!inRestartMinutes(nowMs)) blocked.push(`${hm(nowMs)} UTC is not :03-:08 of a quarter (seating)`);
-      if (st.lastSeatRestartMs && nowMs - st.lastSeatRestartMs < cfg.restartGapMs) blocked.push(`a seat was restarted ${mins(nowMs - st.lastSeatRestartMs)} min ago (one at a time, ${mins(cfg.restartGapMs)} min apart)`);
-      if (fx && nowMs - fx.atMs < cfg.restartSameMs) blocked.push(`${s.unit} was restarted ${mins(nowMs - fx.atMs)} min ago (once per ${mins(cfg.restartSameMs)} min)`);
-      if (u && u.active === 'activating') blocked.push('systemd is restarting it already (activating)');
-      if (restartPlanned) blocked.push('another seat restarts this pass');
+      if (fx && fx.recheck === 'failed') { tried.push(`restarted ${hm(fx.atMs)} UTC, still down`); alert = true; }
+      const blocked = [], held = [];   // blocked: the log's words; held: the alert's
+      if (!(l1 < cfg.loadMax)) { blocked.push(`1-min load ${l1} >= ${cfg.loadMax}`); held.push(`load ${l1} >= ${cfg.loadMax}`); }
+      if (!inRestartMinutes(nowMs)) { blocked.push(`${hm(nowMs)} UTC is not :03-:08 of a quarter (seating)`); held.push('seating minutes'); }
+      if (st.lastSeatRestartMs && nowMs - st.lastSeatRestartMs < cfg.restartGapMs) { blocked.push(`a seat was restarted ${mins(nowMs - st.lastSeatRestartMs)} min ago (one at a time, ${mins(cfg.restartGapMs)} min apart)`); held.push('another seat just restarted'); }
+      if (fx && nowMs - fx.atMs < cfg.restartSameMs) { blocked.push(`${s.unit} was restarted ${mins(nowMs - fx.atMs)} min ago (once per ${mins(cfg.restartSameMs)} min)`); held.push('once per hour'); }
+      if (u && u.active === 'activating') { blocked.push('systemd is restarting it already (activating)'); held.push('systemd restarting it'); }
+      if (restartPlanned) { blocked.push('another seat restarts this pass'); held.push('one per pass'); }
       const allowed = !blocked.length;
       fixes.push({ key: fixKey, kind: 'restart-seat', unit: s.unit, base: k, allowed, blocked });
       if (allowed) restartPlanned = true;
       else {
-        tried.push(`restart of ${s.unit} held: ${blocked.join('; ')}`);
+        tried.push(`restart held (${held.join(', ')})`);
         if (blocked.some((b) => /load|restarting it already|restarted \d+ min ago \(once/.test(b))) alert = true;
       }
-      needs = allowed ? 'nothing yet: restarting it now, rechecked next pass' : `the seat restarted by hand when safe: systemctl --user restart ${s.unit}`;
+      if (allowed) tried.push('restarting it now');
+      needs = allowed ? 'nothing yet (recheck next pass)' : 'manual restart when safe, see #759';
     }
-    problems.push({ key: `seat-down:${k}`, ticket: '759', title: `seat ${short(k)} not answering`, lines, tried, needs, alert });
+    problems.push({ key: `seat-down:${k}`, ticket: '759', title: `${seatName(k)} not answering`, lines, tried, needs, alert });
   }
   // a seat unit restarting by itself over and over (NRestarts climbing)
   for (const [unit, u] of Object.entries(f.units)) {
@@ -215,15 +212,15 @@ export function assess(f, prev, cfg) {
     const climb = xs.length ? xs[xs.length - 1][1] - xs[0][1] - ours : 0;
     if (climb >= cfg.flapRestarts) {
       seen.add(`flapping:${unit}`);
-      problems.push({ key: `flapping:${unit}`, ticket: '759', title: `${unit} restarting over and over`, lines: [`NRestarts ${xs[0][1]} -> ${xs[xs.length - 1][1]} since ${hm(xs[0][0])} UTC (${climb} in ${mins(nowMs - xs[0][0])} min)`, `log: ~/blwp-testnet4/stock-node-${unit.replace(/\D/g, '')}.log`],
-        tried: ['nothing: a restart does not cure a crash loop'], needs: 'its log read for the crash', alert: true });
+      problems.push({ key: `flapping:${unit}`, ticket: '759', title: `seat ${(/@(\d+)/.exec(unit) || [, unit])[1]} crash-looping`, lines: [`${climb} restarts in ${mins(nowMs - xs[0][0])} min (NRestarts ${xs[0][1]} -> ${xs[xs.length - 1][1]})`],
+        tried: ['nothing (a restart does not cure it)'], needs: 'its log read, see #759', alert: true });
     }
   }
 
   // c. POSTING per day and app (the seats' GET /duty)
   if (!f.duty.length) {
     const n = streak('duty-unread', true);
-    problems.push({ key: 'duty-unread', ticket: '759', title: 'no seat answered GET /duty', lines: [`asked: ${cfg.dutySeats.map(short).join(', ')}`], tried: ['nothing'], needs: 'the seats\' round posters checked', alert: n >= cfg.confirm });
+    problems.push({ key: 'duty-unread', ticket: '759', title: 'no seat answers /duty', lines: [`asked: ${cfg.dutySeats.map(seatName).join(', ')}`], tried: ['nothing'], needs: 'round posters checked, see #759', alert: n >= cfg.confirm });
   } else {
     const hour = new Date(nowMs).getUTCHours();
     for (const day of bestDuty(f.duty).days || []) {
@@ -236,9 +233,9 @@ export function assess(f, prev, cfg) {
         const key = `posting:${day.covers}:${name}`;
         if (!late) { streak(key, false); continue; }
         const n = streak(key, true);
-        problems.push({ key, ticket: '759', title: `${day.period === 'today' ? 'today' : 'tomorrow'} (${day.covers}) has no posting for ${name}`,
-          lines: roles.map((r) => `${r.role}: ${r.state} (${(r.postings || []).length} posting(s))`).concat([`duty order: ${(day.order || []).map((o) => `rank ${o.rank} ${short(o.endpoint || o.key.slice(0, 8))}`).join(', ')}`]),
-          tried: ['nothing: an emergency grid is not posted automatically'], needs: `a posting for ${day.covers}: ${emergencyRunbook(nowMs, day.covers)}`, alert: n >= cfg.confirm });
+        problems.push({ key, ticket: '759', title: `no posting ${day.period === 'today' ? 'today' : 'tomorrow'} (${day.covers.slice(5)}): ${appName(name)}`,
+          lines: [roles.map((r) => `${r.role} ${r.state}`).join(', ')],
+          tried: ['nothing (no automatic emergency grid)'], needs: `emergency grid for ${day.covers.slice(5)}, see #757`, alert: n >= cfg.confirm });
       }
     }
   }
@@ -249,7 +246,7 @@ export function assess(f, prev, cfg) {
   for (const id of Object.keys(st.pendingSeen)) if (!now.has(id)) delete st.pendingSeen[id];
   if (f.minerc === null && txs.some((t) => nowMs - st.pendingSeen[t.txid] >= cfg.pendingAgeMs)) {
     const n = streak('minerc-unreachable', true);
-    problems.push({ key: 'minerc-unreachable', ticket: '759', title: 'miner C\'s list could not be read', lines: [`ssh ${cfg.minerc.host} failed; ${txs.length} pending tx(s) wait`], tried: ['ssh'], needs: 'the second machine checked', alert: n >= cfg.confirm });
+    problems.push({ key: 'minerc-unreachable', ticket: '759', title: 'miner C unreachable', lines: [`${txs.length} pending tx(s) wait`], tried: ['ssh'], needs: 'second machine checked, see #759', alert: n >= cfg.confirm });
   }
   if (f.minerc) {
     const missing = f.minerc.missing || [], fx = st.fixes['minerc-add'];
@@ -261,17 +258,15 @@ export function assess(f, prev, cfg) {
       if (fx && nowMs - fx.atMs < cfg.minercGapMs) blocked.push(`miner C's list was changed ${mins(nowMs - fx.atMs)} min ago (once per ${mins(cfg.minercGapMs)} min)`);
       if (again) blocked.push('the last append did not keep them on the list');
       fixes.push({ key: 'minerc-add', kind: 'minerc-add', txids: missing, allowed: !blocked.length, blocked });
-      const kinds = txs.filter((t) => missing.includes(t.txid)).map((t) => `${t.txid.slice(0, 10)} ${t.kind || '?'}${t.game ? ` ${t.game}` : ''}, ${mins(nowMs - st.pendingSeen[t.txid])} min`);
-      problems.push({ key: 'pending-unlisted', ticket: '759', title: `${missing.length} pending tx(s) not on miner C's list`, lines: kinds,
-        tried: blocked.length ? [`append held: ${blocked.join('; ')}`] : ['appending them to miner C\'s list (watch-pending.txt) and restarting its miner'],
-        needs: again ? `a look at ~/${cfg.minerc.dir} on ${cfg.minerc.host}` : 'nothing yet', alert: !!again });
+      problems.push({ key: 'pending-unlisted', ticket: '759', title: `${missing.length} pending tx(s) not on miner C's list`, lines: txLines(txs.filter((t) => missing.includes(t.txid)), st, nowMs),
+        tried: again ? ['added to the list, still missing'] : blocked.length ? ['append held (once per 15 min)'] : ['adding them to the list'],
+        needs: again ? 'miner C checked, see #759' : 'nothing yet', alert: !!again });
     } else if (fx && fx.recheck === 'pending') fx.recheck = 'helped';
     const stuck = txs.filter((t) => (f.minerc.listed || []).includes(t.txid) && nowMs - st.pendingSeen[t.txid] >= cfg.stuckMs);
     if (stuck.length) {
       seen.add('pending-stuck');
       problems.push({ key: 'pending-stuck', ticket: '759', title: `${stuck.length} listed tx(s) unconfirmed for ${mins(Math.max(...stuck.map((t) => nowMs - st.pendingSeen[t.txid])))} min`,
-        lines: stuck.map((t) => `${t.txid.slice(0, 10)} ${t.kind || '?'}${t.game ? ` ${t.game}` : ''}, seen ${mins(nowMs - st.pendingSeen[t.txid])} min`).slice(0, 8).concat([`tip ${tipOf(f.pending) ?? '?'}`]),
-        tried: ['nothing: they are on miner C\'s list already'], needs: `miner C checked (ssh ${cfg.minerc.host}, ~/${cfg.minerc.dir}/start-c.log; loop-c.sh restarts it after pkill -f "node miner-lean-c.mjs")`, alert: true });
+        lines: txLines(stuck, st, nowMs), tried: ['nothing (already on miner C\'s list)'], needs: 'miner C checked, see #759', alert: true });
     }
   }
   const tip = tipOf(f.pending);
@@ -280,15 +275,15 @@ export function assess(f, prev, cfg) {
     else if (nowMs - st.tip.sinceMs >= cfg.tipStallMs) {
       seen.add('tip-stalled');
       problems.push({ key: 'tip-stalled', ticket: '759', title: `no new block for ${mins(nowMs - st.tip.sinceMs)} min (tip ${tip})`, lines: [`tip ${tip} since ${hm(st.tip.sinceMs)} UTC`],
-        tried: ['nothing'], needs: `miner C checked (ssh ${cfg.minerc.host}, ~/${cfg.minerc.dir}/start-c.log) and arena-minerc-release / arena-minerc-tunnel on the test host`, alert: true });
+        tried: ['nothing'], needs: 'miner C checked, see #759', alert: true });
     }
   }
 
   // e. LOAD
   if (l15 > cfg.loadMax) {
     const n = streak('load', true);
-    problems.push({ key: 'load', ticket: '759', title: `test host 15-min load ${l15} > ${cfg.loadMax}`, lines: [`load ${l1} / ${l5} / ${l15}`, ...(f.top ? [`top: ${f.top}`] : [])],
-      tried: ['nothing: no safe automatic cut'], needs: 'the heaviest jobs stopped or moved to the test host', alert: n >= cfg.confirm });
+    problems.push({ key: 'load', ticket: '759', title: `test host load ${l15} (15 min) > ${cfg.loadMax}`, plain: f.top ? [`top: ${f.top}`] : [],
+      tried: ['nothing (no safe automatic cut)'], needs: 'heavy jobs stopped or moved, see #759', alert: n >= cfg.confirm });
   } else streak('load', false);
 
   // problems that ended: their streak cleared
@@ -305,21 +300,38 @@ export function postedApps(duty, period) {
   for (const day of bestDuty(duty).days || []) if (day.period === period) for (const a of day.apps || []) if (a.state === 'posted' || a.state === 'in mempool') out.add(a.name);
   return out;
 }
-/** How many of an unseated round's drawn game committee are our answering seats: "min-max of N" over the hour's unseated rounds. */
-export function liveDrawn(lists, ourKeys, nowMs) {
-  const xs = [], seen = new Set(); let of = 0;
-  for (const body of lists) for (const r of (body && body.rounds) || []) {
-    if (!r || seen.has(r.id) || r.played === false || !(Number(r.entryCloseMs) > nowMs && Number(r.startTimeMs) <= nowMs + 3600000)) continue;
-    const c = r.committee || {};
-    if (c.seated && c.seated.game && c.seated.settlement) continue;
-    const drawn = c.drawn && Array.isArray(c.drawn.game) ? c.drawn.game : Array.isArray(c.game) ? c.game : [];
-    if (!drawn.length) continue;
-    seen.add(r.id); of = Math.max(of, drawn.length);
-    xs.push(drawn.filter((k) => ourKeys.has(String(k).toLowerCase().slice(0, 16))).length);
+
+const APPS = { 'rock-paper-scissors': 'RPS', nextblock: 'Next Block', 'btc-updown-15m': 'Up/Down' };
+/** An app's short name for the chat. */
+export const appName = (name) => APPS[name] || name;
+/** A seat by its number, as the operators say it: test host port 31211 + 10 N is "seat N", macOS port 6211 + 10 N "second-host seat N". */
+export const seatName = (base) => { const p = Number((/:(\d+)(\/|$)/.exec(String(base)) || [])[1]) || 0;
+  return p > 31211 && (p - 31211) % 10 === 0 && p < 31300 ? `seat ${(p - 31211) / 10}` : p > 6211 && (p - 6211) % 10 === 0 && p < 6300 ? `second-host seat ${(p - 6211) / 10}` : short(base); };
+const txLines = (ts, st, nowMs) => { const xs = ts.slice(0, 3).map((t) => `${t.txid.slice(0, 8)} ${t.kind || '?'}${t.game ? ` ${appName(t.game)}` : ''}, ${mins(nowMs - st.pendingSeen[t.txid])} min`);
+  if (ts.length > 3) xs.push(`and ${ts.length - 3} more`); return xs; };
+/** Per app, the next hour's rounds counted once each: listed, seated, and how many of an unseated round's drawn game committee answer ("lo-hi/N"). */
+export function appCounts(lists, nowMs, answering = []) {
+  const live = new Set((answering || []).map((k) => String(k).toLowerCase().slice(0, 16)));
+  const byId = new Map(), names = new Map();
+  for (const body of lists) {
+    for (const g of (body && body.games) || []) names.set(String(g.id).toLowerCase().slice(0, 16), g.name);
+    for (const r of (body && body.rounds) || []) {
+      if (!r || !r.id || r.played === false || !(Number(r.entryCloseMs) > nowMs && Number(r.startTimeMs) <= nowMs + 3600000)) continue;
+      const c = r.committee || {}, seated = !!(c.seated && c.seated.game && c.seated.settlement), w = byId.get(r.id);
+      const drawn = c.drawn && Array.isArray(c.drawn.game) ? c.drawn.game : Array.isArray(c.game) ? c.game : [];
+      const name = names.get(String(r.game && r.game.id).toLowerCase().slice(0, 16)) || (r.game && r.game.name) || '?';
+      if (!w) byId.set(r.id, { name, seated, drawn }); else { w.seated = w.seated || seated; if (!w.drawn.length) w.drawn = drawn; }
+    }
   }
-  if (!xs.length) return null;
-  const lo = Math.min(...xs), hi = Math.max(...xs);
-  return `${lo === hi ? lo : `${lo}-${hi}`} of ${of} (${xs.length} rounds)`;
+  const out = new Map();
+  for (const r of byId.values()) {
+    const x = out.get(r.name) || { listed: 0, seated: 0, ups: [], of: 0 };
+    x.listed++; if (r.seated) x.seated++;
+    else if (r.drawn.length) { x.ups.push(r.drawn.filter((k) => live.has(String(k).toLowerCase().slice(0, 16))).length); x.of = Math.max(x.of, r.drawn.length); }
+    out.set(r.name, x);
+  }
+  for (const x of out.values()) { const lo = Math.min(...x.ups), hi = Math.max(...x.ups); x.live = x.ups.length ? `${lo === hi ? lo : `${lo}-${hi}`}/${x.of}` : null; delete x.ups; }
+  return out;
 }
 
 /** The runbook line for an emergency grid (memory emergency-day-post; the last day's tool is ops/emergency-1028.sh). */
@@ -352,9 +364,12 @@ export function alertsDue(problems, st, cfg, nowMs) {
   }
   return out;
 }
+// SHORT AND SCANNABLE (the owner on the first live alerts, 2026-10-28: "Übersichtlichere Ausgabe, weniger wall of text"): a head line, one
+// "•" line per app or item, one "Tried:" and one "Needs:" line of a few words - the runbooks stay on the card; STILL is the head line alone
 export function alertText(p, cfg, was) {
-  return [`[health-watcher] #${p.ticket} ${cfg.chat.mention} ${was ? `STILL (since ${hm(was.firstMs)} UTC)` : 'PROBLEM'}: ${p.title}`,
-    ...p.lines, `Tried: ${(p.tried || []).join('; ') || 'nothing'}`, `Needs: ${p.needs || '-'}`].join('\n');
+  const head = `[health-watcher] #${p.ticket} ${cfg.chat.mention} ${was ? `STILL (since ${hm(was.firstMs)} UTC)` : 'PROBLEM'}: ${p.title}`;
+  if (was) return head;
+  return [head, ...(p.lines || []).map((l) => `• ${l}`), ...(p.plain || []), `Tried: ${(p.tried || []).join('; ') || 'nothing'}`, `Needs: ${p.needs || '-'}`].join('\n');
 }
 /** The kept state after an alert was posted (only then: a failed post is tried again next pass). */
 export function markAlerted(st, a, problems, nowMs) {
@@ -405,7 +420,7 @@ export function realIo(cfg) {
   return {
     now: () => Date.now(),
     loadavg: async () => readFileSync('/proc/loadavg', 'utf8').split(' ').slice(0, 3).map(Number),
-    topProcs: async () => { try { return (await run('ps', ['-eo', 'pcpu,args', '--sort=-pcpu', '--no-headers'])).split('\n').slice(0, 4).map((l) => l.trim().replace(/\s+/, '% ').replace(/\S*\/(node|bin)\/(\S+)/g, '$2').slice(0, 70)).join(' | '); } catch { return null; } },
+    topProcs: async () => { try { return topLine(await run('ps', ['-eo', 'pcpu,args', '--sort=-pcpu', '--no-headers'])); } catch { return null; } },
     get,
     identity: async (base) => {
       try {
@@ -447,6 +462,17 @@ export function realIo(cfg) {
       if (!r.ok) throw new Error(`chat HTTP ${r.status}`);
     },
   };
+}
+
+/** `ps -eo pcpu,args` as "seat 6 70%, seat 1 68%, bitcoind 51%": a seat by its port, anything else by its program's name. */
+export function topLine(ps, k = 4) {
+  return ps.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, k).map((l) => {
+    const [pct, ...args] = l.split(/\s+/), a = args.join(' ');
+    const seat = /src\/main\.js (\d+)/.exec(a);
+    const prog = String(args[0] || '?').replace(/^\[|\]$/g, '').split('/').pop();
+    const script = prog === 'node' ? (/\S+\.m?js/.exec(a) || [''])[0].split('/').pop() : '';
+    return `${seat ? seatName(`x:${seat[1]}`) : script ? `node ${script}` : prog} ${Math.round(Number(pct))}%`;
+  }).join(', ');
 }
 
 export function loadState(path) { try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return {}; } }
