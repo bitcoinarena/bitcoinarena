@@ -4918,7 +4918,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // and each paid seat's peg-in as this guardian proved it from the federation's coins (kanban #559/#543): signed with the seats,
           // the weights of the gateways' part under peg-in pressure (§23A.3a part 2); a seat it could not check is left out
           { const paid = paidSeatsOf(v);
-            const pegIns = provedPegInsOf(paid, v.gateways);
+            // from 2.0 floored to whole 100,000 sat (ruling 1): a seating is no round's, so by the newest version this build speaks
+            const pegIns = provedPegInsOf(paid, v.gateways, { version: Math.max(...SUPPORTED_PROTOCOL_VERSIONS) });
             const own = signGatewaySeating({ federationId: v.federationId, epoch, seats: paid, ...(Object.keys(pegIns).length ? { pegIns } : {}) }, toHex(round.pubkey), (h) => schnorr.sign(h, round.identity.secret));
             ownSeatings.set(`${v.federationId}:${epoch}`, own); keepSeating('own', v.federationId, epoch, own); }
       }
