@@ -27,7 +27,7 @@ export async function readHealth(env, fetchImpl = fetch) {
     used = new Map();
     const fromKept = async (base, path) => { const k = keyOf(base, path); used.set(k, [base, path]);
       const a = answers[k]; return a ? { ok: a.ok, status: a.status, why: a.why, ms: a.ms, body: a.body } : { ok: false, status: 0, why: 'not read yet', ms: 0 }; };
-    if (!(await health.read({ transport: fromKept, daily: async () => daily }))) throw new Error('the health read failed on the kept answers');
+    if (!(await health.read({ transport: fromKept, daily: async () => daily, tips: (was && was.tips) || [] }))) throw new Error('the health read failed on the kept answers');
     if (pass === HEALTH_PASSES || limited) break;
     const now = Date.now();
     const due = [...used].filter(([k]) => !answers[k] || now - Number(answers[k].atMs || 0) > HEALTH_FRESH_MS)
@@ -48,7 +48,8 @@ export async function readHealth(env, fetchImpl = fetch) {
   }
   // the doors the last read asked, small (keepable: what the cards use)
   const kept = keepable(Object.fromEntries([...used.keys()].filter((k) => answers[k]).map((k) => [k, answers[k]])), health.spare());
-  const snap = { atMs: 0, builtMs: Date.now(), daily, answers: kept, complete: [...used.keys()].every((k) => answers[k]) };
+  // the tips seen, every 2 min (kanban #758): the page's measure of how long a block takes
+  const snap = { atMs: 0, builtMs: Date.now(), daily, answers: kept, complete: [...used.keys()].every((k) => answers[k]), tips: health.tips() };
   snap.atMs = ageOf(snap);
   await env.EXPLORER.put('health', JSON.stringify(snap));
   const n = { doors: used.size, asked, limited, complete: snap.complete, ageS: Math.round((Date.now() - snap.atMs) / 1000), ms: Date.now() - t0 };
