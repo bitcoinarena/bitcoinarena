@@ -99,6 +99,10 @@ export class RolesPanel extends React.Component {
     const { mine, guardian, gateway, liquidity, gatewayRuns, setup } = this.state;
     const guarding = !!(guardian && guardian.guardian);
     const gatewayWaits = !(gateway && gateway.gatewayUrl) && !!gatewayRuns;
+    // A GATEWAY NEEDS CUSTODY (kanban #729, the owner: "trying to set up Lightning gateway or Liquidity provider redirects to the overview
+    // page without error, notice, or any meaningful information"; the Overview was 1.9.10's links to card ids, fixed in 77488d99): a node
+    // without custody has no gateway row in Services, so its Set up goes to the Custody card, which adds custody with its gateway
+    const custodyNode = guarding || !!(mine && mine.guardianCapable) || !!(gateway && gateway.gatewayUrl) || gatewayWaits;
     return [
       ['play', '🎮', 'Play and check rounds', 'A share of every round\'s node fee', 'Replays the rounds it is drawn for and signs who won.'],
       ['settlement', '💸', 'Pay out winners', 'A share of every round\'s node fee', 'Co-signs the payout once a result is signed.'],
@@ -106,7 +110,7 @@ export class RolesPanel extends React.Component {
       // GUARDING IS ON (kanban #731, the owner: "the guardian box is marked as Guarding ... but has no green border showing its active and
       // also the label should be green"): a running guardian counts as on, also before the census names custody for this node
       ['custody', '🛡️', 'Guardian (custody)', 'The guardians\' share of every round', guarding ? 'Guards players\' bitcoin in a federation with other guardians.' : 'Ready to be drawn as a guardian when a federation is founded.', guarding ? 'Guarding' : null, guarding],
-      ['gateway', '⚡', 'Lightning gateway', 'The routing fees of its federation', gatewayWaits ? gatewayWaitsFor(setup) : 'Takes deposits and pays winners over Lightning. Up to 2 per federation.', gatewayWaits ? 'Waiting' : null, !!(gateway && gateway.gatewayUrl) || gatewayWaits, 'services:svc-gateway'],
+      ['gateway', '⚡', 'Lightning gateway', 'The routing fees of its federation', gatewayWaits ? gatewayWaitsFor(setup) : `Takes deposits and pays winners over Lightning. Up to 2 per federation.${custodyNode ? '' : ' It runs on a custody node: add custody first.'}`, gatewayWaits ? 'Waiting' : null, !!(gateway && gateway.gatewayUrl) || gatewayWaits, custodyNode ? 'services:svc-gateway' : 'roles:custody'],
       ['liquidity', '💧', 'Liquidity provider', 'A share of the 1 % liquidity pool', 'Opens incoming Lightning channels to new nodes.', null, !!liquidity, 'roles:liquidity'],
     ].map(([k, icon, name, highlight, does, label, onOther, section]) => ({ k, icon, name, highlight, does, label, onOther, section, mine }));
   }
