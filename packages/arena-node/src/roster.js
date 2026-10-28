@@ -219,6 +219,16 @@ export class Roster {
   // PER-ROUND ANSWERS (a seed, a committee) FOR A SERIES' WORTH OF ROUNDS (2026-09-30: ~440 listed rounds of
   // series 3cfbe516 missed a 64-entry cache on every listing and were drawn again each time).
   static PER_ROUND_KEPT = 4096;
+  // ...AND NEVER FEWER THAN THE STORE HOLDS OPEN (kanban #742: ~11,400 open rounds on a test host seat, two roles each, cycled through a
+  // 4,096-entry cache - every pass drew every committee again): three answers a round (two roles and the attestors) for each open one
+  #perRoundKept() { return Math.max(Roster.PER_ROUND_KEPT, 3 * (Number(this.round.openCount) || 0) + 512); }
+
+  /** A held round's contract, decoded once while it is open (Round.contractOf, kanban #742); null for none. Shared: never changed. */
+  #held(roundIdBytes) {
+    if (typeof this.round.contractOf === 'function') return this.round.contractOf(roundIdBytes);
+    const row = this.round.get(roundIdBytes);
+    return row ? decodeRoundContract(new Uint8Array(row.contract)) : null;
+  }
 
   /**
    * THE SEED THIS ROUND'S SIGNER NODES ARE ASSIGNED WITH, from the beacon and never from the
@@ -250,7 +260,7 @@ export class Roster {
       () => this.#seedFor(roundIdBytes, contract, view), { over: 20 });
     if (kept && answer.ok) {
       this.seeds.set(kept, answer);
-      if (this.seeds.size > Roster.PER_ROUND_KEPT) this.seeds.delete(this.seeds.keys().next().value);
+      if (this.seeds.size > this.#perRoundKept()) this.seeds.delete(this.seeds.keys().next().value);
     }
     return answer;
   }
@@ -406,9 +416,8 @@ export class Roster {
   censusFor(roundIdBytes, atHeight = null, { asRoundsOwn = true, posted = null } = {}) {
     let asStored = posted;
     if (!asStored) {
-      const row = this.round.get(roundIdBytes);
-      if (!row) return { ok: false, why: 'this node holds no such round' };
-      asStored = decodeRoundContract(new Uint8Array(row.contract));
+      asStored = this.#held(roundIdBytes);
+      if (!asStored) return { ok: false, why: 'this node holds no such round' };
     }
     // The only thing a named height changes is which height the census is read at.
     const contract = atHeight === null ? asStored : { ...asStored, censusHeight: atHeight };
@@ -526,7 +535,7 @@ export class Roster {
   guardiansFor(roundIdBytes) {
     const census = this.censusFor(roundIdBytes);
     if (!census.ok) return census;
-    const contract = decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract));
+    const contract = this.#held(roundIdBytes);
     const fid = toHex(contract.federationId);
     // AND THE DRAINING PREDECESSOR'S SEATED GUARDIANS (§23A.6 step 5,: "one share per seat across both
     // federations, so a guardian seated in both ... earns two shares"), until its record is CLOSED - a key listed twice
@@ -545,7 +554,7 @@ export class Roster {
     const out = new Map();
     const census = this.censusFor(roundIdBytes);
     if (!census.ok) return out;
-    const contract = decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract));
+    const contract = this.#held(roundIdBytes);
     if (!(Number(contract.protocolVersion) >= SEATED_GUARDIAN_VERSION)) return out;
     for (const e of census.entries || []) {
       const pk = guardianPayoutKeyOf(e.advert && e.advert.payoutPubkey);
@@ -557,7 +566,7 @@ export class Roster {
   guardianBondsFor(roundIdBytes) {
     const census = this.censusFor(roundIdBytes);
     if (!census.ok) return census;
-    const contract = decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract));
+    const contract = this.#held(roundIdBytes);
     const fid = toHex(contract.federationId);
     const view = this.chainFor({ contract, roundIdBytes });
 
@@ -601,7 +610,7 @@ export class Roster {
   censusEvidenceFor(roundIdBytes) {
     const census = this.censusFor(roundIdBytes);
     if (!census.ok) return census;
-    const contract = decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract));
+    const contract = this.#held(roundIdBytes);
     const view = this.chainFor({ contract, roundIdBytes });
     let where = view && typeof view === 'object' ? whereOf.get(view) : null;
     if (!where) {
@@ -727,9 +736,9 @@ export class Roster {
   // game's source round fetched from its seats (game-market.js, feature 6). The draw is the same: the census at the
   // contract's height (its root checked against the chain), the beacon's seed. A round the seat holds is drawn on its own copy.
   committeeFor(roundIdBytes, role, { posted = null } = {}) {
-    const row = this.round.get(roundIdBytes);
-    const contract = row ? decodeRoundContract(new Uint8Array(row.contract)) : posted;
-    const given = row ? null : posted;
+    const held = this.#held(roundIdBytes);
+    const contract = held || posted;
+    const given = held ? null : posted;
     const census = contract ? this.censusFor(roundIdBytes, null, given ? { posted: given } : {}) : null;
     const seeded = contract ? this.seedFor(roundIdBytes, contract) : null;
     // AND TAKE THE TABLE'S SEATING (pick (c)): the certificate of the table's first round seats every round of it
@@ -742,7 +751,7 @@ export class Roster {
       () => this.#committeeFor(roundIdBytes, role, seated, given), { over: 20 });
     if (kept && answer.ok) {
       this.committees.set(kept, answer);
-      if (this.committees.size > Roster.PER_ROUND_KEPT) this.committees.delete(this.committees.keys().next().value);
+      if (this.committees.size > this.#perRoundKept()) this.committees.delete(this.committees.keys().next().value);
     }
     return answer;
   }
@@ -752,9 +761,8 @@ export class Roster {
    * beacon its committees are drawn on, so every seat names the same 7. { ok, attestors: [entry], root } or why it cannot say.
    */
   attestorsFor(roundIdBytes) {
-    const row = this.round.get(roundIdBytes);
-    if (!row) return { ok: false, why: 'this node holds no such round' };
-    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const contract = this.#held(roundIdBytes);
+    if (!contract) return { ok: false, why: 'this node holds no such round' };
     const census = this.censusFor(roundIdBytes);
     if (!census.ok) return census;
     const seeded = this.seedFor(roundIdBytes, contract);
@@ -765,7 +773,7 @@ export class Roster {
     try { attestors = drawAttestors({ entries: census.entries, contract, committeeSeed: seeded.seed }); } catch (e) { return { ok: false, why: e.message, root: census.root }; }
     const answer = { ok: true, attestors, root: census.root };
     this.committees.set(kept, answer);
-    if (this.committees.size > Roster.PER_ROUND_KEPT) this.committees.delete(this.committees.keys().next().value);
+    if (this.committees.size > this.#perRoundKept()) this.committees.delete(this.committees.keys().next().value);
     return answer;
   }
 
@@ -773,7 +781,7 @@ export class Roster {
     const census = this.censusFor(roundIdBytes, null, posted ? { posted } : {});
     if (!census.ok) return census;
 
-    const contract = posted || decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract));
+    const contract = posted || this.#held(roundIdBytes);
 
     // THE LOTTERY IS DRAWN ON THE BEACON'S SEED. Not on `contract.committeeSeed`:
     // that field is the author's claim about it, and 34 offline tries were
