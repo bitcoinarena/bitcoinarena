@@ -108,6 +108,42 @@ test('the claims are asked quietly', async () => {
   assert.deepEqual(asked.filter((p) => /claim/.test(p)), ['/gateway-claim?quiet=1', '/liquidity-claim?quiet=1']);
 });
 
+// SET UP GOES WHERE IT IS SET UP (kanban #729, the owner on 1.9.10: "trying to set up Lightning gateway or Liquidity provider redirects to
+// the overview page without error, notice, or any meaningful information" - its links named card ids, #custody and #liquidity, which are
+// no sections, so the area fell back to the Overview; 77488d99 made them section:card). Every tile's link names a section the area has
+// and a card it draws; a node without custody is sent to the Custody card, since Services has no gateway row for it
+test('every Set up / Manage link opens a section of the owner area and its card; the gateway of a node without custody goes to Custody', async () => {
+  const { OwnerArea, SECTIONS } = await import('../dist/test/owner-area.mjs');
+  const { goTo } = await import('../dist/test/roles.mjs');
+  const area = renderToStaticMarkup(React.createElement(OwnerArea, { node: 'ab'.repeat(32), owner: 'cd'.repeat(32), claimedAtMs: 0, how: 'words', games: [],
+    onShowWords() {}, onForget() {}, signManifest() {} }));
+  const linksOf = (initial) => {
+    const c = new RolesPanel({ node: 'me', initial: { loaded: true, ...initial } });
+    return Object.fromEntries(c.tiles().filter((t) => t.section).map((t) => [t.k, t.section]));
+  };
+  const custody = linksOf({ mine, guardian: { guardian: true }, was: switchesOf(mine), now: switchesOf(mine) });
+  const bare = linksOf({ mine: null, guardian: null, was: {}, now: {} });
+  assert.deepEqual([custody.gateway, custody.liquidity, bare.gateway, bare.liquidity], ['services:svc-gateway', 'roles:liquidity', 'roles:custody', 'roles:liquidity']);
+  for (const target of [custody.gateway, bare.gateway, bare.liquidity]) {
+    const [section, card] = target.split(':');
+    assert.ok(SECTIONS.some(([s]) => s === section), `${section} is a section`);
+    if (card !== 'svc-gateway') assert.match(area, new RegExp(`id="${card}"`), `${card} is drawn in the area`);
+  }
+  assert.match(renderToStaticMarkup(React.createElement(RolesPanel, { node: 'me', initial: { loaded: true, mine: null, guardian: null, was: {}, now: {} } })),
+    /id="tile-gateway"[\s\S]*?It runs on a custody node: add custody first\.[\s\S]*?<a class="go" href="#roles">Set up →<\/a>/);
+  // the click: the section in the #, then its card scrolled to
+  const was = [globalThis.location, globalThis.document, globalThis.setTimeout];
+  try {
+    const scrolled = [];
+    globalThis.location = { hash: '#overview' };
+    globalThis.document = { getElementById: (id) => ({ scrollIntoView: () => scrolled.push(id) }) };
+    globalThis.setTimeout = (f) => f();
+    let prevented = false;
+    goTo('roles:custody')({ preventDefault: () => { prevented = true; } });
+    assert.deepEqual([globalThis.location.hash, scrolled, prevented], ['roles', ['custody'], true]);
+  } finally { [globalThis.location, globalThis.document, globalThis.setTimeout] = was; }
+});
+
 // GUARDING IS ON (kanban #731, the owner: "the guardian box is marked as Guarding which i assume is on, but has no green border showing its
 // active and also the label should be green in that case"): measured on a node not in the census yet, its guardian running
 test('a guarding node\'s Guardian tile is on: green border and a green Guarding pill, in the census or not', () => {
