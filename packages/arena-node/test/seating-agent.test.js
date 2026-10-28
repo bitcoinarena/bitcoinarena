@@ -387,12 +387,18 @@ test('kanban #738 (protocol 22): a second signature without its justification is
     assert.equal(!!row, counted, counted ? 'justified: counted' : 'stripped of its justification: not counted');
     if (row) assert.ok(row.justification, 'and kept with its justification, for the certificate');
   }
-  // protocol 20: no justification is signed, and the second signature is counted as before
-  const net = await seatingNet({ protocolVersion: 20 });
+  // protocol 20: no justification is signed, the second signature counts as before - seat 3, holding every signature over the seating
+  // of 7 once it re-signs, certifies it at once and hands it on - and the certificate is the old bytes
+  const net = await seatingNet({ protocolVersion: 20, sigOf: strip });
   await net.tickAll(2); net.close();
-  await net.tickAll(1, [3]); await net.tickAll(1, [0, 1, 2, 4, 5, 6, 7]); await net.tickAll(1, [3]); await net.tickAll(1, [0, 1, 2, 4, 5, 6]);
+  await net.tickAll(1, [3]); await net.tickAll(1, [0, 1, 2, 4, 5, 6, 7]); await net.tickAll(1, [3]);
+  assert.deepEqual(net.signedOf(3), upTo(7));
   assert.equal(net.agents.get(3).mySignature(net.rid, 'game').justification, undefined, 'below 22 nothing is carried');
-  assert.equal(sigRowAt(net, 0, 3, sevenId(net.rid)).justification, null);
+  const cert = net.agents.get(0).certOf(net.rid, 'game');
+  assert.ok(cert, 'the seating of 7 stands at seat 0');
+  const d = decodeSeatingCertificate(Buffer.from(cert, 'hex'));
+  assert.deepEqual([d.seen, d.justifications], [null, null]);
+  assert.deepEqual(Buffer.from(cert, 'hex'), Buffer.from(encodeSeatingCertificate({ roundId: net.rid, role: 'game', seated: d.seated, signatures: d.signatures })));
 });
 
 test('kanban #738 (protocol 22): a forged justification refuses the signature it came with', async () => {
