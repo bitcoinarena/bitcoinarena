@@ -9,7 +9,8 @@
 //   ARENA_ROUTE_MAP              "public prefix=direct prefix,...": a URL starting with the public prefix is fetched at the direct
 //                                one instead (the longest prefix wins), e.g. https://seat.example.com/guardian-2=http://127.0.0.1:31231
 //   ARENA_FETCH_MAX_PER_ORIGIN   requests in flight per origin at once (default 8); more wait their turn instead of opening more
-//   ARENA_FETCH_TIMEOUT_MS       a request that brings no signal of its own is aborted after this (default 30 000)
+//   ARENA_FETCH_TIMEOUT_MS       a request that brings no signal of its own is aborted after this (default 30 000); a host that
+//                                did not resolve (ENOTFOUND) is not dialed again for as long
 export function parseRoutes(text) {
   return String(text || '').split(',').map((x) => x.trim()).filter(Boolean).map((x) => {
     const i = x.indexOf('=');
@@ -53,16 +54,34 @@ export function cappedFetch(inner, { routes = [], maxPerOrigin = 8, timeoutMs = 
     l.busy++;
     return () => { l.busy--; const next = l.waiting.shift(); if (next) next.go(); };
   };
+  // A HOST THAT DOES NOT RESOLVE IS NOT DIALED AGAIN UNTIL A TIMEOUT HAS PASSED (kanban #742, measured 2026-10-28 on test host seat 3:
+  // 112,473 TLSSocket objects alive an hour after its start, 111,216 of them destroyed, all to eight *.trycloudflare.com quick tunnels
+  // of stopped installer test nodes still in the census - ~3.6 dials a second to each, every one failing at DNS and leaving its socket
+  // behind; the heap reached the 1,024 MB limit about hourly and the 137 DNS lookups a second were nearly all misses). After ENOTFOUND
+  // the host is answered at once with that failure, without a socket, for the same `timeoutMs` a request is allowed; then dialed again.
+  const unresolved = new Map();   // hostname -> { untilMs, code } of its last ENOTFOUND; one entry per host that failed, none kept once it resolves
+  const notFound = (e) => { for (let c = e, i = 0; c && i < 4; c = c.cause, i++) if (c.code === 'ENOTFOUND') return c.code; return null; };
   const f = async (input, init = {}) => {
     const called = typeof input === 'string' || input instanceof URL ? String(input) : input.url;
     const url = routed(called, routes);
     let lane; try { lane = laneOf(called); } catch { return inner(input, init); }
+    let host; try { host = new URL(url).hostname; } catch { host = null; }
+    const gone = host && unresolved.get(host);
+    if (gone) {
+      if (Date.now() < gone.untilMs) throw new TypeError('fetch failed', { cause: Object.assign(new Error(`getaddrinfo ${gone.code} ${host} (not dialed again until the timeout has passed)`), { code: gone.code, hostname: host }) });
+      unresolved.delete(host);
+    }
     const opts = init && init.signal ? init : { ...init, signal: AbortSignal.timeout(timeoutMs) };
     const done = await take(lane, opts.signal);
     try {
       return await inner(typeof input === 'string' || input instanceof URL ? url : new Request(url, input), opts);
+    } catch (e) {
+      const code = host && notFound(e);
+      if (code) unresolved.set(host, { untilMs: Date.now() + timeoutMs, code });
+      throw e;
     } finally { done(); }
   };
+  f.unresolved = () => Object.fromEntries([...unresolved].map(([h, x]) => [h, { untilMs: x.untilMs, code: x.code }]));
   f.inFlight = () => Object.fromEntries([...lanes].map(([o, l]) => [o, { busy: l.busy, waiting: l.waiting.length }]));
   return f;
 }
