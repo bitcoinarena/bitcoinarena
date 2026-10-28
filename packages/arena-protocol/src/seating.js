@@ -29,6 +29,11 @@
 // second signature carries a valid justification. B is still caught: T and S are an equivocation of their own
 // (seatingEquivocation `signedTwice`, seatingSignedTwice). Below 22 nothing carries one, byte for byte as before.
 //
+// A CHAIN OF DEPARTURES EXCUSES (kanban #744, RULED 2026-10-28). A proof over two seatings X before Y of one draw stands against a
+// node only if it signed both and cannot present a chain X -> S1 -> ... -> Y of justified departures: honest M that signed S, S2
+// and T is excused for S and T, whichever seating its citer cited. A second signature carries the signer's steps before with it
+// (`prior`), at most 8 steps in all, and a proof that names nobody is a fault record only.
+//
 // A client enters a round only with a certificate it checked against the draw
 // it computes itself (client-committee.js). The round contract is unchanged (2026-10-11, decision A): it names the
 // round; who serves it is this certificate.
@@ -146,32 +151,72 @@ export const signSeen = (s, sign) => sign(seenId(s));
 //   vec(seated: 32-byte node keys)  T, the member's seating, in score order
 //   member: 32 bytes                M
 //   signature: 64 bytes             M's signature over T (signSeating)
-//   u8 0 | 1, then a justification  M's own, when M's signature over T was itself a second one (its `of` the seating M left)
+//   u8 flags                        bit 0: M's own justification follows (M's signature over T was itself a second one)
+//                                   bit 1: the signer's step before follows (its signature over S was itself a second one)
+//   [justification]                 bit 0: M's own, cut to its chain from S to T (justificationFrom)
+//   [signature: 64 bytes,           bit 1: the signer's signature over S and its justification for it - so the whole chain of
+//    justification]                 the signer's departures rides with its last signature (kanban #744)
 //
-// Nested at most JUSTIFICATION_DEPTH deep: only what is encoded can excuse anyone, so justifications never go round in a circle,
-// and a chain of them ends at a member that signed a seating not before S with no reason - the one a proof names.
+// One with neither is byte for byte the #738 one (flags 0 or 1).
+//
+// A CHAIN OF DEPARTURES (kanban #744, RULED 2026-10-28). Honest M signs S, then S2, then T, each time because its seating could
+// never stand, and H cites M's T to leave S. M's reason for T is about S2, not S - but M left S for S2 with a reason too, so M is
+// excused: a node that signed two seatings X before Y of one draw is excused when it presents a chain X = S0 -> S1 -> ... -> Sk =
+// Y, strictly increasing, its signature over every Si, each step a justification that Si can never stand. The `prior` links carry
+// exactly that chain, and the excuse does not depend on which seating a citer cited.
+//
+// AT MOST JUSTIFICATION_DEPTH STEPS IN ALL - the step, its member's reasons, the signer's steps before - so a justification is
+// finite and small. An honest seat refuses to sign a seating whose justification would carry more (arena-node seating-agent.js
+// resign): no honest seat ever needs a longer one to be excused.
 export const JUSTIFICATION_DEPTH = 8;
+/** How many steps a justification carries in all: itself, its member's (nested) and the signer's steps before (prior). */
+export const justificationSteps = (j) => (j ? 1 + justificationSteps(j.nested) + (j.prior ? justificationSteps(j.prior.justification) : 0) : 0);
 /** Does seating `a` come before seating `b` (node keys hex, both in score order) in a draw (`rank`: node key hex -> draw index)? */
 export function seatingBefore(rank, a, b) {
   if (a.join(',') === b.join(',') || b.length < a.length) return false;
   return a.every((k, i) => rank.has(k) && rank.has(b[i]) && rank.get(b[i]) <= rank.get(k));
 }
-function writeJustification(j, w, depth = 1) {
+const listOf = (keys) => keys.map(toHex).join(',');
+/** The steps of a justification's own chain, last first: it, then the signer's step before (prior), and so on. */
+export function justificationChain(j) { const out = []; for (let at = j; at; at = at.prior ? at.prior.justification : null) out.push(at); return out; }
+/**
+ * A JUSTIFICATION CUT TO WHAT EXCUSES ITS SIGNER FROM `from` (node keys) ON: its chain down to the step that leaves `from` (the
+ * signer's steps before that one dropped), the member's reason kept only on that step, cut the same way - or null when its chain
+ * never leaves `from`. What a node nests when it cites this signer for leaving `from` (kanban #744).
+ */
+export function justificationFrom(j, from) {
+  if (!j) return null;
+  const f = listOf(from);
+  if (listOf(j.of) === f) return { of: j.of, seated: j.seated, member: j.member, signature: j.signature, nested: justificationFrom(j.nested, from) };
+  const p = j.prior ? justificationFrom(j.prior.justification, from) : null;
+  return p ? { of: j.of, seated: j.seated, member: j.member, signature: j.signature, nested: null, prior: { signature: j.prior.signature, justification: p } } : null;
+}
+function writeSteps(j, w) {
   if (!j || !Array.isArray(j.of) || !Array.isArray(j.seated) || !j.of.every(is32Seat) || !j.seated.every(is32Seat) || !is32Seat(j.member)
     || !(j.signature instanceof Uint8Array) || j.signature.length !== 64) throw new Error('a justification names the seating left, the member\'s seating, the member and its signature');
+  if (j.prior && !(j.prior.signature instanceof Uint8Array && j.prior.signature.length === 64 && j.prior.justification)) throw new Error('a justification\'s step before is the signer\'s signature over the seating left and its justification');
   w.vec(j.of, (k, ww) => ww.bytes32(k));
   w.vec(j.seated, (k, ww) => ww.bytes32(k));
   w.bytes32(j.member); w.bytes(j.signature, 64);
-  // deeper than the limit the member's own reason is left off: the justification then excuses the signer, not the member
-  if (j.nested && depth < JUSTIFICATION_DEPTH) { w.u8(1); writeJustification(j.nested, w, depth + 1); } else w.u8(0);
+  w.u8((j.nested ? 1 : 0) | (j.prior ? 2 : 0));
+  if (j.nested) writeSteps(j.nested, w);
+  if (j.prior) { w.bytes(j.prior.signature, 64); writeSteps(j.prior.justification, w); }
 }
-function readJustification(r, depth = 1) {
+function writeJustification(j, w) {
+  // more steps than the cap: refused, never cut - a cut chain could leave out the reason that excuses an honest seat
+  if (justificationSteps(j) > JUSTIFICATION_DEPTH) throw new Error(`a justification carries at most ${JUSTIFICATION_DEPTH} steps`);
+  writeSteps(j, w);
+}
+function readJustification(r, budget = { left: JUSTIFICATION_DEPTH }) {
+  if (--budget.left < 0) throw new Error(`a justification carries at most ${JUSTIFICATION_DEPTH} steps`);
   const of = r.vec((x) => x.bytes32()); const seated = r.vec((x) => x.bytes32());
   const member = r.bytes32(); const signature = r.bytes(64);
-  const more = r.u8();
-  if (more > 1) throw new Error('a justification\'s nested flag is 0 or 1');
-  if (more && depth >= JUSTIFICATION_DEPTH) throw new Error(`a justification nests at most ${JUSTIFICATION_DEPTH} deep`);
-  return { of, seated, member, signature, nested: more ? readJustification(r, depth + 1) : null };
+  const flags = r.u8();
+  if (flags > 3) throw new Error('a justification\'s flags are bits 0 and 1');
+  const nested = flags & 1 ? readJustification(r, budget) : null;
+  if (!(flags & 2)) return { of, seated, member, signature, nested };
+  const prior = { signature: r.bytes(64), justification: readJustification(r, budget) };
+  return { of, seated, member, signature, nested, prior };
 }
 /** A justification's bytes (GET /seating-sig and GET /seating-batch carry them as hex, `justification`). */
 export function encodeJustification(j) { const w = new Writer(); writeJustification(j, w); return w.finish(); }
@@ -185,25 +230,38 @@ export function decodeJustification(bytes) {
  * A JUSTIFICATION THAT STANDS for `signer`'s signature over the seating `onto` (node keys), against the round's draw: `of` (S) and
  * `seated` (T) are seatings of the draw - drawn nodes in score order, no more than the slots; the signer is in S and in `onto`; the
  * member is in S and in T and is not the signer; T does not come before S; `onto` comes after S; the member's signature over T
- * verifies; and a nested justification stands for the member's signature over T. Answers { ok } or { ok: false, why }.
+ * verifies; a nested justification stands for the member's signature over T; and a step before (prior) is the signer's signature
+ * over S with a justification that stands for it. At most JUSTIFICATION_DEPTH steps in all. With `onto` null the steps are checked
+ * without the seating the last one was signed onto (one presented to a judge, kanban #744). Answers { ok } or { ok: false, why }.
  */
-export function verifyJustification(j, { roundId, role, drawn, slots, verify, signer, onto }, depth = 1) {
-  if (depth > JUSTIFICATION_DEPTH) return { ok: false, why: `a justification nests at most ${JUSTIFICATION_DEPTH} deep` };
+export function verifyJustification(j, ctx) {
+  if (justificationSteps(j) > JUSTIFICATION_DEPTH) return { ok: false, why: `a justification carries at most ${JUSTIFICATION_DEPTH} steps` };
+  return verifyStep(j, ctx);
+}
+function verifyStep(j, { roundId, role, drawn, slots, verify, signer, onto }) {
   const rank = new Map(drawn.map((k, i) => [toHex(k), i]));
   const shaped = (list) => list.length >= 1 && list.length <= slots && list.every((k, i) => rank.has(toHex(k)) && (i === 0 || rank.get(toHex(list[i - 1])) < rank.get(toHex(k))));
-  if (!shaped(j.of) || !shaped(j.seated) || !shaped(onto)) return { ok: false, why: 'a justification names a seating that is not of drawn nodes in score order within the seats' };
-  const of = j.of.map(toHex), seated = j.seated.map(toHex), on = onto.map(toHex), s = toHex(signer), m = toHex(j.member);
-  if (!of.includes(s) || !on.includes(s)) return { ok: false, why: 'a justification for a node not in the seating it left or not in the one it signed' };
+  if (!shaped(j.of) || !shaped(j.seated) || (onto && !shaped(onto))) return { ok: false, why: 'a justification names a seating that is not of drawn nodes in score order within the seats' };
+  const of = j.of.map(toHex), seated = j.seated.map(toHex), s = toHex(signer), m = toHex(j.member);
+  const on = onto ? onto.map(toHex) : null;
+  if (!of.includes(s) || (on && !on.includes(s))) return { ok: false, why: 'a justification for a node not in the seating it left or not in the one it signed' };
   if (m === s) return { ok: false, why: 'a justification that names the signer itself' };
   if (!of.includes(m)) return { ok: false, why: `the justification's member ${m.slice(0, 16)} is not in the seating it says can never stand` };
   if (!seated.includes(m)) return { ok: false, why: `the justification's member ${m.slice(0, 16)} is not in its own seating` };
   if (of.join(',') === seated.join(',') || seatingBefore(rank, seated, of)) return { ok: false, why: 'the justification\'s seating comes before the seating left: that one may still stand' };
-  if (!seatingBefore(rank, of, on)) return { ok: false, why: 'the seating signed does not come after the seating left' };
+  if (on && !seatingBefore(rank, of, on)) return { ok: false, why: 'the seating signed does not come after the seating left' };
   let good = false; try { good = verify(j.signature, seatingId({ roundId, role, seated: j.seated }), j.member); } catch { good = false; }
   if (!good) return { ok: false, why: `the justification's signature is not ${m.slice(0, 16)}'s over its seating` };
   if (j.nested) {
-    const n = verifyJustification(j.nested, { roundId, role, drawn, slots, verify, signer: j.member, onto: j.seated }, depth + 1);
+    const n = verifyStep(j.nested, { roundId, role, drawn, slots, verify, signer: j.member, onto: j.seated });
     if (!n.ok) return { ok: false, why: `the member's own justification: ${n.why}` };
+  }
+  if (j.prior) {
+    // THE SIGNER'S STEP BEFORE (kanban #744): its own signature over the seating it left, and why it signed that one
+    let mine = false; try { mine = verify(j.prior.signature, seatingId({ roundId, role, seated: j.of }), signer); } catch { mine = false; }
+    if (!mine) return { ok: false, why: `the signer ${s.slice(0, 16)}'s signature over the seating it left does not verify` };
+    const p = verifyStep(j.prior.justification, { roundId, role, drawn, slots, verify, signer, onto: j.of });
+    if (!p.ok) return { ok: false, why: `the signer's step before: ${p.why}` };
   }
   return { ok: true };
 }
@@ -328,17 +386,55 @@ export function verifySeating(bytes, { roundId, role, drawn, slots, verify, list
   return { ok: true, seating: c, id, present: [...present].sort(), leftOut: [...(leftOut || [])].sort() };
 }
 
+// ---- THE JUDGE (kanban #744, RULED 2026-10-28) ----
+// A proof over two seatings X before Y of one draw stands against a node only if it signed both and cannot present a valid chain
+// X = S0 -> ... -> Sk = Y (justificationChain). What it can present: every justification the certificates carry, every one nested
+// in those (a citer carries its member's chain from the seating it left, justificationFrom), and whatever the judge holds itself
+// (`presented`: [{ nodePubkey, justification, seated? }] - a seat passes the justifications it kept with the signatures it holds).
+function judgeOf(certs, check, presented) {
+  const { roundId, role } = certs[0].seating;
+  const ctx = { roundId, role, drawn: check.drawn, slots: check.slots, verify: check.verify };
+  const rank = new Map(check.drawn.map((k, i) => [toHex(k), i]));
+  // every step that stands, with its signer: a certificate's were checked with it (verifySeating), a presented one is checked here
+  const pool = [];
+  const add = (signer, j) => {
+    pool.push({ signer: toHex(signer), j });
+    if (j.nested) add(j.member, j.nested);
+    if (j.prior) add(signer, j.prior.justification);
+  };
+  for (const c of certs) for (const x of c.seating.justifications || []) add(x.nodePubkey, x.justification);
+  for (const x of presented || []) {
+    if (!x || !is32Seat(x.nodePubkey) || !x.justification) continue;
+    if (verifyJustification(x.justification, { ...ctx, signer: x.nodePubkey, onto: x.seated || null }).ok) add(x.nodePubkey, x.justification);
+  }
+  const memo = new Map();
+  /** Does `node` (hex) present a chain between the seatings `a` and `b` (node keys), from the earlier to the later? */
+  const excused = (node, a, b) => {
+    const ah = a.map(toHex), bh = b.map(toHex);
+    const [from, to] = seatingBefore(rank, ah, bh) ? [a, b] : seatingBefore(rank, bh, ah) ? [b, a] : [null, null];
+    if (!from) return false;   // neither comes before the other: no chain joins them
+    const key = `${node}|${listOf(from)}|${listOf(to)}`;
+    if (memo.has(key)) return memo.get(key);
+    const f = listOf(from);
+    const ok = pool.some((e) => e.signer === node && justificationChain(e.j).some((s) => listOf(s.of) === f)
+      && verifyJustification(e.j, { ...ctx, signer: keyBytes(node), onto: to }).ok);
+    memo.set(key, ok);
+    return ok;
+  };
+  return { pool, excused };
+}
+
 /**
- * TWO SEATINGS FOR ONE ROUND AND ROLE (§5A.7): each valid against the same draw, and different - proof of equivocation by
- * every node that signed both, but one whose signature on one of them carries a justification (kanban #738) that the other can
- * never stand: NO RULE MAY EVER SLASH AN HONEST SEAT. Its justification names the member that killed the other seating - in it,
- * so it signed that certificate - and that member's signature over a seating not before it: the two are an equivocation of their
- * own, against that member, unless its own justification (nested) shows the same seating could never stand, and so on down.
- * Answers `signers`, every node proved against (never empty while 2 x threshold > drawn); `excused`, the nodes a justification
- * clears; and `signedTwice`, the proofs from justifications - { node, certificate: 'a' | 'b' (the one it signed), seated,
- * signature (its signature over `seated`) }.
+ * TWO SEATINGS FOR ONE ROUND AND ROLE (§5A.7): each valid against the same draw, and different - the round is void. Proof of
+ * equivocation by every node that signed both, but one that presents a chain of justified departures from the earlier to the later
+ * (kanban #744): NO RULE MAY EVER SLASH AN HONEST SEAT. Every step of a chain names the member that killed the seating it left; a
+ * member of one of the two certificates signed it, and its seating not before it: the two are an equivocation of their own against
+ * that member, unless it presents a chain between them in turn. Answers `signers`, every node proved against; `excused`, the nodes a
+ * chain clears; `signedTwice`, the proofs from the steps - { node, certificate: 'a' | 'b' (the one it signed), seated, signature
+ * (its signature over `seated`) }; and `unnamed`: true when it names nobody - every signer of both excused - a fault record that
+ * feeds no slash, exclusion or reputation count. `presented`: justifications the judge holds besides the certificates' (judgeOf).
  */
-export function seatingEquivocation(a, b, check) {
+export function seatingEquivocation(a, b, check, presented = []) {
   const x = verifySeating(a, check), y = verifySeating(b, check);
   if (!x.ok) return { ok: false, why: `the first seating does not stand: ${x.why}` };
   if (!y.ok) return { ok: false, why: `the second seating does not stand: ${y.why}` };
@@ -347,37 +443,32 @@ export function seatingEquivocation(a, b, check) {
   const inB = new Set(y.seating.seated.map(toHex));
   const both = x.seating.seated.filter((k) => inB.has(toHex(k)));
   if (!both.length) return { ok: false, why: 'those seatings share no signer' };
-  const listOf = (keys) => keys.map(toHex).join(',');
-  const justified = (v) => new Map((v.seating.justifications || []).map((j) => [toHex(j.nodePubkey), j.justification]));
-  const jx = justified(x), jy = justified(y), xs = listOf(x.seating.seated), ys = listOf(y.seating.seated);
-  const proved = new Map(), excused = new Map(), signedTwice = [];
-  for (const k of both) {
-    const h = toHex(k);
-    // its second signature is on b, justified by a never standing - or on a, justified by b never standing
-    let j = jy.get(h), certificate = 'a';
-    if (!j || listOf(j.of) !== xs) { j = jx.get(h); certificate = 'b'; }
-    if (!j || listOf(j.of) !== (certificate === 'a' ? xs : ys)) { proved.set(h, k); continue; }
-    excused.set(h, k);
-    // the member it names signed `certificate` (it is in that seating) and a seating not before it: excused only by its own reason
-    for (let at = j; at; ) {
-      const m = toHex(at.member);
-      if (at.nested && listOf(at.nested.of) === listOf(at.of)) { excused.set(m, at.member); at = at.nested; continue; }
-      if (!proved.has(m)) proved.set(m, at.member);
-      signedTwice.push({ node: at.member, certificate, seated: at.seated, signature: at.signature });
-      at = null;
+  const { pool, excused: hasChain } = judgeOf([x, y], check, presented);
+  const proved = new Map(), excused = new Map(), signedTwice = [], seen = new Set();
+  for (const k of both) (hasChain(toHex(k), x.seating.seated, y.seating.seated) ? excused : proved).set(toHex(k), k);
+  // EVERY STEP THAT LEAVES ONE OF THE TWO: its member signed that certificate and the member's own seating
+  for (const [certificate, v] of [['a', x], ['b', y]]) {
+    const c = listOf(v.seating.seated);
+    for (const e of pool) {
+      if (listOf(e.j.of) !== c) continue;
+      const m = toHex(e.j.member);
+      if (hasChain(m, v.seating.seated, e.j.seated)) { excused.set(m, e.j.member); continue; }
+      if (!proved.has(m)) proved.set(m, e.j.member);
+      const key = `${m}|${certificate}|${listOf(e.j.seated)}`;
+      if (!seen.has(key)) { seen.add(key); signedTwice.push({ node: e.j.member, certificate, seated: e.j.seated, signature: e.j.signature }); }
     }
   }
   for (const h of proved.keys()) excused.delete(h);
-  return { ok: true, signers: [...proved.values()], excused: [...excused.values()], signedTwice, roundId: x.seating.roundId, role: x.seating.role };
+  return { ok: true, signers: [...proved.values()], excused: [...excused.values()], signedTwice, unnamed: proved.size === 0, roundId: x.seating.roundId, role: x.seating.role };
 }
 
 /**
  * A CERTIFICATE AND A SECOND SIGNATURE (kanban #738): `node` signed the certified seating and, by `signature`, the seating `seated`
- * - proof of equivocation by it unless one of the two signatures carries a justification that the other seating can never stand:
- * `justification` (its justification for `seated`, as GET /seating-sig hands it) or the certificate's own for it. This is the proof
- * a justification yields against the member it names (seatingEquivocation `signedTwice`), and it stands on its own.
+ * - proof of equivocation by it unless it presents a chain of justified departures between the two (kanban #744): `justification`
+ * (its justification for `seated`, as GET /seating-sig hands it), the certificate's justifications, nested ones, or `presented`. This
+ * is the proof a step yields against the member it names (seatingEquivocation `signedTwice`), and it stands on its own.
  */
-export function seatingSignedTwice(cert, { node, seated, signature, justification = null }, check) {
+export function seatingSignedTwice(cert, { node, seated, signature, justification = null }, check, presented = []) {
   const x = verifySeating(cert, check);
   if (!x.ok) return { ok: false, why: `the certificate does not stand: ${x.why}` };
   const { roundId, role } = x.seating;
@@ -389,10 +480,7 @@ export function seatingSignedTwice(cert, { node, seated, signature, justificatio
     return { ok: false, why: 'the second seating is not of drawn nodes in score order within the seats, with that node in it' };
   let good = false; try { good = check.verify(signature, seatingId({ roundId, role, seated }), node); } catch { good = false; }
   if (!good) return { ok: false, why: 'that signature is not the node\'s over the second seating' };
-  if (justification && justification.of.map(toHex).join(',') === certified.join(',')
-    && verifyJustification(justification, { roundId, role, drawn: check.drawn, slots: check.slots, verify: check.verify, signer: node, onto: seated }).ok)
-    return { ok: false, why: 'its second signature carries a justification: the certified seating could never stand when it signed' };
-  const own = (x.seating.justifications || []).find((j) => toHex(j.nodePubkey) === h);
-  if (own && own.justification.of.map(toHex).join(',') === list.join(',')) return { ok: false, why: 'its signature on the certificate carries a justification: the other seating could never stand' };
+  const { excused } = judgeOf([x], check, [...(justification ? [{ nodePubkey: node, seated, justification }] : []), ...(presented || [])]);
+  if (excused(h, x.seating.seated, seated)) return { ok: false, why: 'it carries a justification for every step between the two seatings: each one it left could never stand when it signed the next' };
   return { ok: true, node, roundId, role };
 }

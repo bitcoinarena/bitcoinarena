@@ -3040,36 +3040,71 @@ justification = vec(S)            the seating left, node keys in score order
                 vec(T)            the member's seating, node keys in score order
                 member            32 bytes, M
                 signature         64 bytes, M's SEATING signature over T
-                u8 0|1 [justification]   M's own, when M's signature over T was
-                                         itself a second one (at most 8 deep)
+                u8 flags          bit 0: M's own justification follows
+                                  bit 1: the signer's step before follows
+                [justification]   bit 0: M's own, when M's signature over T was
+                                  itself a second one, cut to M's chain from S
+                                  to T
+                [signature        bit 1: the signer's own SEATING signature over
+                 justification]   S and its justification for it, when its
+                                  signature over S was itself a second one
 ```
 
-Round and role are the signature's own. It stands when S and T are seatings of
-the draw (drawn nodes in score order, at most the seats), the signer is in S
-and in the seating it signs now, which comes after S, M is in S and in T and is
-not the signer, T does not come before S, M's signature over T verifies, and a
-nested justification stands for M's signature over T. GET /seating-sig and the
+Round and role are the signature's own. A justification with neither flag
+bit, or bit 0 alone, is byte for byte the first form (flags 0|1). It stands
+when S and T are seatings of the draw (drawn nodes in score order, at most the
+seats), the signer is in S and in the seating it signs now, which comes after
+S, M is in S and in T and is not the signer, T does not come before S, M's
+signature over T verifies, a nested justification stands for M's signature
+over T, and a step before is the signer's valid signature over S with a
+justification that stands for it. A justification carries **at most 8 steps
+in all** (itself, nested ones and steps before, counted together); one with
+more is not encoded, not read and not counted, and an honest seat whose next
+signature would need more signs nothing (so no honest seat ever needs a longer
+chain to be excused). GET /seating-sig and the
 batch door hand it as `justification` (hex) beside the signature, and an older
 seat reads past it; the certificate carries, after its SEEN groups, one
 `(node key, justification)` per seated node whose signature on it is a second
 one, sorted by node key, and nothing when there is none - so a certificate
 with no second signature, and every certificate below 22, is byte for byte as
 before. A seat counts another node's signature over a seating other than one
-it already holds of that node only with a justification that leaves one held
-for this (or one held that leaves this one), and refuses a signature whose
+it already holds of that node only with a justification whose chain leaves one
+held (or one held whose chain leaves this one), and refuses a signature whose
 justification does not stand; a certificate carrying one that does not stand
 does not stand either.
 
-A seating equivocation proof against a member is **invalid** if that member's
-second signature carries a valid justification that the other seating could
-never stand. The attacker is still caught: T and S are an equivocation of
-their own - B signed the certificate of S (it is in S) and T, a seating not
-before S, with no reason (`seatingSignedTwice`; the proof by two certificates
-names it too). If B's signature over T carries a justification of its own
-(nested), B is excused in turn and the member that one names is proved
-against; a chain of them is finite, so it always ends at a member that signed
-both without a reason. GET /seating-equivocation names who is proved against
-(`signers`), who is excused (`excused`) and the T-and-S proofs (`signedTwice`).
+**A chain of departures excuses** *(protocol 22, kanban #744, RULED
+2026-10-28)*. A seating equivocation proof over two seatings X and Y of one
+draw, X before Y, is valid against a member M only if M signed both and M
+**cannot** present a valid chain X = S0 -> S1 -> ... -> Sk = Y: seatings of
+that draw in strictly increasing order, M's signature over every Si, and each
+step Si -> Si+1 a justification that Si can never stand. Honest M that signs
+S, then S2, then T is excused for S and T even when H cited M's T to leave S
+and M's reason for T is about S2: M left S for S2 with a reason too. The
+excuse never depends on which seating a citer cited. Two seatings neither of
+which comes before the other are joined by no chain.
+
+A chain reaches the judge on the signatures themselves: M's justification for
+its last signature carries its steps before (bit 1), so the certificate of Y
+holds M's whole chain; a node that cites M nests M's chain from the seating it
+left (bit 0); and a seat judging a proof also counts every justification it
+kept with a signature it holds (its own included). A presented justification
+is checked like any other; a forged step - one whose member is not in the
+seating it leaves, or whose signature does not verify - breaks the chain.
+
+The attacker is still caught: every step names a member that killed the
+seating it left. When that seating is one of the two certificates, the member
+signed it (it is seated in it) and its own seating, not before it: the two are
+an equivocation of their own (`seatingSignedTwice`; the proof by two
+certificates names it too) unless that member presents a chain between them in
+turn. Two completed seatings still void the round. If every signer of both is
+excused, the proof names nobody: it is kept as an unnamed fault record
+(`unnamed`) that never feeds a slash, an exclusion or a reputation count.
+Slashing on seating equivocation stays as built (none today); when it comes it
+applies only to the members a proof is valid against under this rule. GET
+/seating-equivocation names who is proved against (`signers`), who is excused
+(`excused`), the step proofs (`signedTwice`) and whether it names nobody
+(`unnamed`).
 
 **Who was present** *(protocol 22, kanban #727, RULED 2026-10-27)*. From
 22 the certificate also says who was present, because it is the only proof
