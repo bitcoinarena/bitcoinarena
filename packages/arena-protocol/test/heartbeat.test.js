@@ -53,26 +53,28 @@ function certify({ roundId, slot, signers, heard, leftOut = [], lists = {}, sign
  * slots (a committee of 9 each; a certificate when 5 members are live, listing every live node - each hands its heartbeat to all 9).
  * `silent(h, closeMs)`: a live node not heard at that moment (flooded, restarting). Answers every proof slot with what a checker draws.
  */
-function day(entries, d, w, { silent = () => false } = {}) {
+function day(entries, d, w, { silent = () => false, rounds = 96, self = () => false } = {}) {
   const inCensus = entries.map((e) => toHex(e.pubkey));
   const leftOut = chainKeys.filter((h) => !inCensus.includes(h));
   const out = [];
-  for (let i = 0; i < 96; i++) {
+  for (let i = 0; i < rounds; i++) {
     const roundId = toHex(seed(1000 + i, d));
-    const closeMs = w.fromMs + BigInt(i + 1) * 900000n;
+    const closeMs = w.fromMs + BigInt((i % 96) + 1) * 900000n;
     const roundSeed = seed(i, d);
     const drawn = drawCommittee({ entries, contract, role: 'settlement', committeeSeed: roundSeed }).map((e) => toHex(e.pubkey));
     const heardAt = (c) => [...liveSet].filter((h) => !silent(h, c));
     const present = drawn.filter((h) => heardAt(closeMs).includes(h));
     const seated = present.slice(0, 7);
-    out.push({ kind: 'seating', roundId, role: 'settlement', closeMs, drawn, slots: 7, present, leftOut, seated: seated.length >= 5 ? seated : null });
+    // `self`: a round of a series someone posted themselves, not the day's duty grid (kanban #727: it proves nothing)
+    const isSelf = !!self(i);
+    out.push({ kind: 'seating', roundId, role: 'settlement', closeMs, drawn, slots: 7, present, leftOut, seated: seated.length >= 5 ? seated : null, self: isSelf });
     for (let j = 0; j < HEARTBEAT_SLOTS_PER_ROUND; j++) {
       const c = closeMs - BigInt(j) * 300000n;
       const committee = drawHeartbeat({ entries, contract, committeeSeed: roundSeed, slot: j }).map((e) => toHex(e.pubkey));
       const heard = heardAt(c);
       const signers = committee.filter((h) => heard.includes(h));
       out.push({ kind: 'heartbeat', roundId, role: heartbeatRole(j), slot: j, closeMs: c, drawn: committee, expected: inCensus, census: inCensus,
-        present: heard, leftOut, seated: signers.length >= HEARTBEAT_THRESHOLD ? signers : null });
+        present: heard, leftOut, seated: signers.length >= HEARTBEAT_THRESHOLD ? signers : null, self: isSelf });
     }
   }
   return out;
@@ -88,11 +90,13 @@ function seatingCert({ roundId, role, seated, present, leftOut }) {
     signatures: seated.map((h) => ({ nodePubkey: fromHex(h), signature: signSeating({ roundId: rid, role, seated: keys }, signBy(h)) })),
     seen: [{ present, leftOut, signatures: seated.map((h) => ({ nodePubkey: fromHex(h), signature: signSeen({ roundId: rid, role, seating: id, present, leftOut }, signBy(h)) })) }] });
 }
-/** What a checker has: its own draw of each slot, and the certificates (signed when first asked). */
+/** What a checker has: its own draw of each slot, the certificates (signed when first asked), and whether a round is a duty posting's. */
 function checker(slots) {
   const by = new Map(slots.map((s) => [`${s.roundId}:${s.role}`, s]));
+  const byRound = new Map(slots.map((s) => [s.roundId, s]));
   const certs = new Map();
   return {
+    dutyOf: (rid) => { const s = byRound.get(rid); return !s ? null : s.self ? { ok: false, why: 'its publication carries no duty marker: not a duty posting, so no proof' } : { ok: true, rank: 1 }; },
     drawOf: (rid, role) => {
       const s = by.get(`${rid}:${role}`);
       if (!s) return null;
@@ -166,18 +170,57 @@ test('the 10-27 shape with the heartbeat: all 20 stopped nodes are proven out by
     const slots = day(entries, d, w);
     const seatedRounds = slots.filter((s) => s.kind === 'seating' && s.seated).length;
     const beats = slots.filter((s) => s.kind === 'heartbeat' && s.seated).length;
-    const claims = absentFrom({ seatings: proven(slots), census: chainKeys, window: w });
+    const ch = checker(slots);
+    // every round here is the day's duty grid's (kanban #727: only those prove)
+    const claims = absentFrom({ seatings: proven(slots), census: chainKeys, window: w, dutyOf: ch.dutyOf });
     assert.ok(claims.every((c) => !liveSet.has(c.node)), `day ${d}: no live node is proven absent`);
     assert.ok(claims.every((c) => c.proofs.length === ABSENCE_PROOF_SEATINGS), 'each absence names 3 slots');
-    const ch = checker(slots);
     assert.deepEqual(checkAbsenceProof(claims, { census: chainKeys, window: w, verify, ...ch }), { ok: true }, `day ${d}: the claim stands at a checker`);
     facts.push(`day ${d}: census ${entries.length}, seated ${seatedRounds}/96, heartbeat certificates ${beats}/${96 * HEARTBEAT_SLOTS_PER_ROUND}, proven absent ${claims.length}`);
     if (allOutAt === null && claims.length === DEAD.length) allOutAt = d;
     entries = withoutAbsent(census, claims);
     T += PRESENCE_WINDOW_MS;
   }
-  console.log(`  FACTS: 28 bonded, 20 stopped, with the heartbeat; ${facts.join('; ')}`);
+  console.log(`  FACTS: 28 bonded, 20 stopped, with the heartbeat, duty-only rounds; ${facts.join('; ')}`);
   assert.equal(allOutAt, 0, 'the first census after the stop already leaves out all 20 stopped nodes');
+});
+
+// ONLY THE DUTY GRID'S ROUNDS PROVE (kanban #727; the heartbeat helper's open hole: a group that posts many rounds of its own gets more
+// chances to land 5 of its nodes in a slot's 9). A self-posted grid of 96 beside the duty grid: its slots are never named by the posting
+// node, a claim naming one is refused as 'not-duty' at every checker, and the colluding group's chances stay the duty grid's.
+test('a self-posted grid adds no draws: its slots are never named, a claim naming one is refused (not-duty), and a colluding group\'s chances stay the duty grid\'s', () => {
+  const w = presenceWindow(T0);
+  const slots = day(census, 0, w, { rounds: 192, self: (i) => i >= 96 });
+  const ch = checker(slots);
+  const dutyOnly = absentFrom({ seatings: proven(slots), census: chainKeys, window: w, dutyOf: ch.dutyOf });
+  const anyRound = absentFrom({ seatings: proven(slots), census: chainKeys, window: w });
+  const selfNamed = anyRound.flatMap((c) => c.proofs).filter((p) => slots.find((s) => s.roundId === p.roundId).self).length;
+  assert.ok(selfNamed > 0, 'without the rule the self-posted grid\'s slots would be named');
+  assert.ok(dutyOnly.every((c) => c.proofs.every((p) => !slots.find((s) => s.roundId === p.roundId).self)), 'with it, every proof names a duty round');
+  assert.deepEqual(dutyOnly, absentFrom({ seatings: proven(slots.filter((s) => !s.self)), census: chainKeys, window: w, dutyOf: ch.dutyOf }), 'the same claim as from the duty grid alone');
+  assert.deepEqual(checkAbsenceProof(dutyOnly, { census: chainKeys, window: w, verify, ...ch }), { ok: true });
+  const victim = dutyOnly[0];
+  const selfSlot = slots.find((s) => s.self && s.seated && s.role === 'heartbeat-0' && !s.present.includes(victim.node));
+  assert.ok(selfSlot, 'the self-posted grid has a certified slot the stopped node missed');
+  const r = checkAbsenceProof([{ node: victim.node, proofs: [{ roundId: selfSlot.roundId, role: selfSlot.role }, ...victim.proofs.slice(1)] }], { census: chainKeys, window: w, verify, ...ch });
+  assert.equal(r.ok, false); assert.equal(r.proof, 'not-duty'); assert.match(r.why, /no duty marker/);
+  // THE GROUP'S CHANCES: slots of 20 days on which a group of 7 of the 28 holds 5 of 9 seats - the duty grid alone, and with a
+  // self-posted grid of its own beside it (what the rule takes away)
+  const group = new Set(Array.from({ length: 7 }, (_, i) => hex(i + 1)));
+  const days = { duty: 0, both: 0 };
+  for (let d = 0; d < 20; d++) {
+    const closes = { duty: [], both: [] };
+    for (let i = 0; i < 192; i++) {
+      const m = drawHeartbeat({ entries: census, contract, committeeSeed: seed(i, 100 + d), slot: 0 }).filter((e) => group.has(toHex(e.pubkey))).length;
+      if (m < HEARTBEAT_THRESHOLD) continue;
+      closes.both.push(BigInt((i % 96) * 900000));
+      if (i < 96) closes.duty.push(BigInt(i * 900000));
+    }
+    if (spacedCloses(closes.duty) >= 3) days.duty++;
+    if (spacedCloses(closes.both) >= 3) days.both++;
+  }
+  assert.ok(days.both >= days.duty, 'a second grid never takes chances away');
+  console.log(`  FACTS: a self-posted grid of 96 beside the duty grid: ${selfNamed} of its slots would have been named as proofs without the rule, 0 with it; a group of 7 of 28 has 3 slots an hour apart on ${days.duty}/20 days from the duty grid (the rule), ${days.both}/20 days with its own grid beside it (before)`);
 });
 
 test('DoS and short outages: a node missed at 2 slots stays in; an outage under 2 h is never proof; 3 misses an hour apart are', () => {

@@ -2329,7 +2329,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // of the censuses this seat holds. The roster checks every proof of a 22 root that leaves nodes out against it (the owner 2026-10-27:
   // absence only with proof); a claim not held yet is asked of the seats once a minute per root, so a seat that missed the posting
   // node's POST /absent learns it
-  const presence = presenceBook({ round, roster, verify: verifySchnorrKept, log: (m) => console.log(m) });
+  // `creatorOf`: the creator's signature GET /absent hands a client with a proof round (kanban #727, only the duty postings' rounds prove):
+  // a series round's is the series line's (over the series id), a round's own is kept beside it (POST /round ?creator=)
+  const presence = presenceBook({ round, roster, verify: verifySchnorrKept, log: (m) => console.log(m),
+    creatorOf: (rid, c) => {
+      if (!(c.seriesId instanceof Uint8Array)) return round.creatorSignature(rid);
+      const t = series.find((x) => { try { const id = seriesId(x); return id.length === c.seriesId.length && id.every((b, i) => b === c.seriesId[i]); } catch { return false; } });
+      return t && t.creatorSignature instanceof Uint8Array ? t.creatorSignature : null;
+    } });
   const claimAsked = new Map();
   const fetchClaim = async (rootHex) => {
     for (const u of networkSeats()) {
@@ -9688,9 +9695,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!/^[0-9a-f]{64}$/.test(root)) return text(res, 400, 'root: a census root, 32 bytes hex');
         const held = presence.claimFor(root);
         if (!held) return text(res, 404, 'no absent claim is held here for that root');
-        const contracts = {};
-        for (const k of Object.keys(held.certs || {})) { const rid = k.split(':')[0]; const row = contracts[rid] ? null : round.get(fromHex(rid)); if (row) contracts[rid] = toHex(new Uint8Array(row.contract)); }
-        return json(res, 200, { root, claims: held.claims, certs: held.certs || {}, contracts });
+        // and, per named round, its publication with a merkle branch and its creator's signature: the client checks it is a duty
+        // posting's round (kanban #727, client-committee.js absenceFromChain)
+        const contracts = {}, publications = {}, creators = {};
+        for (const k of Object.keys(held.certs || {})) {
+          const rid = k.split(':')[0];
+          const row = contracts[rid] ? null : round.get(fromHex(rid));
+          if (!row) continue;
+          contracts[rid] = toHex(new Uint8Array(row.contract));
+          const pub = presence.publicationProofOf(rid); if (pub) publications[rid] = pub;
+          const cr = presence.creatorSignatureOf(rid); if (cr) creators[rid] = cr;
+        }
+        return json(res, 200, { root, claims: held.claims, certs: held.certs || {}, contracts, publications, creators });
       }
       if (req.method === 'POST' && url.pathname === '/absent') {
         let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a JSON body { root, claims }'); }

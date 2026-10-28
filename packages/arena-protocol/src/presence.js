@@ -31,6 +31,13 @@
 // them are present, so on 10-27 the stopped nodes took three days to be proven out. A heartbeat certificate (heartbeat.js) proves EVERY
 // node of its round's census missed that it does not list, one slot per round (the owner 2026-10-27). A proof names a seating (role game or
 // settlement) or a heartbeat slot (role heartbeat-0); both count towards the 3 closes an hour apart, and a listing in either keeps the node in.
+//
+// AND ONLY THE DUTY POSTINGS' ROUNDS PROVE (kanban #727, the heartbeat helper's open hole: rounds anyone posts add draws, so a group that
+// posts many rounds of its own gets more chances to land 5 of its nodes in one). A proof's round must be of a duty posting of its day -
+// the primary, the backup or an emergency grid: its publication marked for that day and item, its creator within the first 3 of the
+// day's duty order (duty.js dutyRoundStands) - which an attacker cannot be on demand: that order is the chain census's rank. A round of
+// any other series proves nothing; its certificate still keeps the nodes it lists in. Every seat and the client decide it the same way
+// (`dutyOf` below: presence-book.js at a seat, client-committee.js at the client).
 import { toHex } from './hash.js';
 import { PRESENCE_VERSION, ABSENCE_PROOF_SEATINGS, ABSENCE_PROOF_SPACING_MS } from './constants.js';
 import { medianTimePast } from './beacon.js';
@@ -109,13 +116,19 @@ export function provenProof(bytes, { roundId, role, d, verify }) {
  * sorted by node: [{ node, proofs: [{ roundId, role }] }], each naming the ABSENCE_PROOF_SEATINGS newest seatings it missed, at different
  * closes. ABSENT STAYS ABSENT UNTIL SEEN: a node the census of a window seating left out is missed there too, so it is not back the day
  * after for having been drawn for nothing; it comes back by signing a PRESENT that a seated node lists.
+ * ONLY THE DUTY POSTINGS' ROUNDS PROVE (kanban #727, duty.js): `dutyOf(ridHex)` answers { ok } for a round of a duty posting of its
+ * day, { ok: false } for any other (or null: not known yet - treated as no proof). A certificate of any round keeps the nodes it lists
+ * in (it is evidence of presence); only a duty round's certificate is named as proof of a miss.
  */
-export function absentFrom({ seatings, census, window, seen = [] }) {
+export function absentFrom({ seatings, census, window, seen = [], dutyOf = null }) {
   const inCensus = [...new Set([...census].map(hexOfPresence))].sort();
   const sawIt = new Set([...seen].map(hexOfPresence));
-  const proven = (seatings || []).filter((s) => inWindow(window, s.closeMs))
+  const evidence = (seatings || []).filter((s) => inWindow(window, s.closeMs))
     .sort((a, b) => (a.closeMs === b.closeMs ? (a.roundId + a.role < b.roundId + b.role ? -1 : 1) : (a.closeMs > b.closeMs ? -1 : 1)));
-  for (const s of proven) { for (const k of s.present) sawIt.add(k); for (const k of s.seated) sawIt.add(k); }
+  for (const s of evidence) { for (const k of s.present) sawIt.add(k); for (const k of s.seated) sawIt.add(k); }
+  const dutyKept = new Map();
+  const isDuty = (s) => { if (!dutyOf) return true; if (!dutyKept.has(s.roundId)) { const d = dutyOf(s.roundId); dutyKept.set(s.roundId, !!(d && d.ok)); } return dutyKept.get(s.roundId); };
+  const proven = evidence.filter(isDuty);
   const claims = [];
   for (const node of inCensus) {
     if (sawIt.has(node)) continue;
@@ -152,14 +165,17 @@ export function absentImplied(chainEntries, committedEntries) {
  * keys the claimed nodes must be in (a seat: its chain census; the client: none, it cannot see a node a census left out); `certOf(ridHex,
  * role)` the certificate bytes the claim attached (or the checker holds); `drawOf(ridHex, role)` the checker's own draw of that seating
  * - { drawn, slots, closeMs } - or null when it cannot draw it yet; `seen` node keys the checker holds other window evidence of (a seat's
- * own PRESENTs and certificates; the owner ruled that refusal stays the seat's own). Answers { ok: true } or { ok: false, node, why, proof }
- * - proof 'seen', 'present', 'not-missed', 'certificate', 'too-few', 'outside' - or { ok: false, notYet: true, node, why } when a
- * named seating cannot be drawn here yet. Any wrong proof makes the census invalid: it is a plain check of what was committed.
+ * own PRESENTs and certificates; the owner ruled that refusal stays the seat's own). `dutyOf(ridHex)`: is the named round a duty posting's
+ * (duty.js dutyRoundStands) - { ok } / { ok: false, why } / null (not known here yet); a round of any other series proves nothing
+ * (kanban #727: rounds anyone posts would add draws). Answers { ok: true } or { ok: false, node, why, proof } - proof 'seen', 'present',
+ * 'not-missed', 'certificate', 'too-few', 'outside', 'not-duty' - or { ok: false, notYet: true, node, why } when a named seating cannot
+ * be drawn here yet. Any wrong proof makes the census invalid: it is a plain check of what was committed.
  */
-export function checkAbsenceProof(claims, { census = null, window, certOf, drawOf, verify, seen = [] }) {
+export function checkAbsenceProof(claims, { census = null, window, certOf, drawOf, verify, seen = [], dutyOf = null }) {
   const inCensus = census ? new Set([...census].map(hexOfPresence)) : null;
   const sawIt = new Set([...seen].map(hexOfPresence));
   const proven = new Map();      // `${rid}:${role}` -> the seating, checked once per claim
+  const duty = new Map();        // rid -> dutyOf's answer, once per round
   let last = '';
   for (const c of claims || []) {
     const node = hexOfPresence(c.node);
@@ -178,6 +194,12 @@ export function checkAbsenceProof(claims, { census = null, window, certOf, drawO
       if (!s) {
         const d = drawOf(rid, p.role);
         if (!d) return { ok: false, notYet: true, node, why: `the seating ${rid.slice(0, 16)} ${p.role} that proves ${short} absent cannot be drawn here yet` };
+        if (dutyOf) {
+          if (!duty.has(rid)) duty.set(rid, dutyOf(rid));
+          const du = duty.get(rid);
+          if (!du) return { ok: false, notYet: true, node, why: `whether round ${rid.slice(0, 16)} that proves ${short} absent is a duty posting's cannot be read here yet` };
+          if (!du.ok) return { ok: false, node, proof: 'not-duty', why: `the round ${rid.slice(0, 16)} that proves ${short} absent is no duty posting's: ${du.why}` };
+        }
         const bytes = certOf(rid, p.role);
         if (!bytes) return { ok: false, node, proof: 'certificate', why: `the proof that ${short} is absent names seating ${rid.slice(0, 16)} ${p.role} and carries no certificate of it` };
         const got = provenProof(bytes, { roundId: rid, role: p.role, d, verify });

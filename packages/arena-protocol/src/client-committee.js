@@ -34,6 +34,11 @@ import { decodeRoundContract, roundId } from './contracts.js';
 import { seatingCloseMs } from './seating.js';
 import { checkAbsenceProof, presenceWindow, dropsAbsent } from './presence.js';
 import { drawHeartbeat, heartbeatSlotOf, heartbeatCloseMs, hasHeartbeats } from './heartbeat.js';
+import { dutyMarkerOf, dutyRoundStands } from './duty.js';
+import { creatorMessage, seriesCreatorMessage } from './creator.js';
+import { publishesRound } from './publication.js';
+import { seriesPublicationPayload } from './series.js';
+import { TAG_SWITCH } from './tag-switch.js';
 
 const sameCC = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
 const bytesOfCC = (v) => (v instanceof Uint8Array ? v : typeof v === 'string' ? fromHex(v) : null);
@@ -220,6 +225,12 @@ export function committeeFromChain({ contract, roundId, headers, firstHeight, ev
  * there or left out already, listed present by none, at 3 different seating closes in the census's 24 h. A claimed node that is in the
  * round's own census is refused too. What the client cannot see is a node a census left out that the claim does not name: that root is
  * the seats' check against their chains, as every omission always was (§5A.6).
+ * AND ONLY A DUTY POSTING'S ROUND PROVES (kanban #727, duty.js dutyRoundStands): the claim hands over each named round's publication
+ * with its merkle branch (`publications[ridHex]` { transaction, branch, position }) and the creator's signature (`creators[ridHex]`,
+ * over the series id for a series round, the round id otherwise). The client proves the publication into its agreed headers, reads the
+ * duty marker off it (the day, the item), checks the creator signed, and reads the creator's rank in that day's duty order over the
+ * round's census it just checked. What it cannot see is whether an earlier posting of the same day and item exists (the first confirmed
+ * one counts): that is the seats' check against their chains, as completeness is.
  * `entries`: the round's own census as this client checked it (committeeFromChain's checkedCensus.entries).
  * Answers { ok: true, absent: [node hex] } or { ok: false, why, node? }.
  */
@@ -261,7 +272,29 @@ export function absenceFromChain({ contract, claim, evidenceOf, headers, firstHe
     }
     return { drawn: d.drawn[role].map(toHex), slots: slotsForRole(d.contract, role), closeMs: seatingCloseMs(d.contract) };
   };
-  const r = checkAbsenceProof(claim.claims, { window, verify, drawOf,
+  // IS THE NAMED ROUND A DUTY POSTING'S (above): its publication proven into the headers and publishing it, its creator's signature,
+  // the marker's day and item, the creator's rank over the round's checked census - the tag by the contract's network's switch
+  const dutyOf = (ridHex) => {
+    const d = drawn.get(ridHex);
+    if (!d) return null;
+    const c = d.contract;
+    const p = claim.publications && claim.publications[ridHex];
+    if (!p || !p.transaction) return { ok: false, why: 'its publication was not handed over with the claim' };
+    let tx; try { tx = parseTransaction(bytesOfCC(p.transaction)); } catch (e) { return { ok: false, why: `its publication is not a transaction: ${e.message}` }; }
+    if (provenAt(headers, firstHeight, tx.txid, proofOf(p)) === null) return { ok: false, why: 'its publication is not in any block of the agreed headers' };
+    const series = c.seriesId instanceof Uint8Array;
+    const publishes = series ? commitmentsOf(tx).some((x) => sameCC(x, seriesPublicationPayload(c.seriesId))) : publishesRound(tx, fromHex(ridHex));
+    if (!publishes) return { ok: false, why: 'the transaction handed over as its publication does not publish it' };
+    const marker = dutyMarkerOf(tx);
+    if (!marker || !(c.creatorPubkey instanceof Uint8Array)) return dutyRoundStands({ contract: c, marker, orderKeys: [] });   // no marker, no creator: why
+    const sigHex = claim.creators && claim.creators[ridHex];
+    const sig = sigHex ? bytesOfCC(sigHex) : null;
+    let signed = false;
+    try { signed = !!sig && sig.length === 64 && verify(sig, series ? seriesCreatorMessage(c.seriesId) : creatorMessage(fromHex(ridHex)), c.creatorPubkey) === true; } catch { signed = false; }
+    if (!signed) return { ok: false, why: 'its creator\'s signature was not handed over, or is not the named creator\'s' };
+    return dutyRoundStands({ contract: c, marker, orderKeys: d.entries.map((e) => e.pubkey), sw: TAG_SWITCH[networkOf(c.networkId)] || null });
+  };
+  const r = checkAbsenceProof(claim.claims, { window, verify, drawOf, dutyOf,
     certOf: (ridHex, role) => { const h = claim.certs && claim.certs[`${ridHex}:${role}`]; return h ? fromHex(h) : null; } });
   if (!r.ok) return { ok: false, node: r.node, why: r.notYet ? `${r.why}: its contract or census was not handed over` : r.why };
   return { ok: true, absent: claim.claims.map((c) => String(c.node).toLowerCase()) };

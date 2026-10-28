@@ -26,7 +26,44 @@ import { slotsForRole } from '../../arena-protocol/src/sortition.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { absentFrom, checkAbsenceProof, provenProof, presentAt, missedAt, inWindow, ABSENCE_PROOF_SEATINGS } from '../../arena-protocol/src/presence.js';
 import { heartbeatSlotOf, decodeHeartbeatCertificate, HEARTBEAT_ROLES, HEARTBEAT_SLOTS_PER_ROUND, HEARTBEAT_SPACING_MS } from '../../arena-protocol/src/heartbeat.js';
-import { TYPE_HEARTBEAT_HEARD } from '../../arena-protocol/src/constants.js';
+import { TYPE_HEARTBEAT_HEARD, networkOf } from '../../arena-protocol/src/constants.js';
+import { dutyMarkerOf, dutyRoundStands, dutyPostingsOf, DUTY_EMERGENCY_CAP } from '../../arena-protocol/src/duty.js';
+import { TAG_SWITCH } from '../../arena-protocol/src/tag-switch.js';
+import { parseTransaction, commitmentsOf } from '../../arena-protocol/src/tx.js';
+import { seriesPublicationPayload } from '../../arena-protocol/src/series.js';
+import { publicationPayload } from '../../arena-protocol/src/publication.js';
+import { merkleBranchOf } from '../../arena-protocol/src/chain.js';
+
+// ONLY THE DUTY POSTINGS' ROUNDS PROVE (kanban #727, duty.js): a block's duty-marked transactions, read once per block object (the
+// blocks are shared objects, main.js blockCache) - their txids, markers and OP_RETURN payloads - and every block's txids for a merkle branch
+const blockIndexKept = new WeakMap();
+function blockIndexOf(block) {
+  let got = blockIndexKept.get(block);
+  if (got) return got;
+  const txids = [], marked = [];
+  try {
+    (block.transactions || []).forEach((raw, position) => {
+      const tx = parseTransaction(raw);
+      txids.push(tx.txid);
+      const marker = dutyMarkerOf(tx);
+      if (marker) marked.push({ position, txid: toHex(tx.txid), marker, payloads: new Set(commitmentsOf(tx).map((p) => toHex(p))) });
+    });
+    got = { txids, marked };
+  } catch { got = { txids: null, marked: [] }; }
+  blockIndexKept.set(block, got);
+  return got;
+}
+// THE DAY'S POSTINGS OF A VIEW: the first confirmed transaction per day, item and kind (duty.js dutyPostingsOf), once per view object
+const postingsKept = new WeakMap();
+function postingsIn(view) {
+  let got = postingsKept.get(view);
+  if (got) return got;
+  const marked = [];
+  for (const block of view.blocks) for (const m of blockIndexOf(block).marked) marked.push({ txid: m.txid, marker: m.marker });
+  got = dutyPostingsOf(marked);
+  postingsKept.set(view, got);
+  return got;
+}
 
 /** What a proof names: a seating's role, or a heartbeat slot's. */
 export const PROOF_ROLES = Object.freeze([...SEATING_ROLES, ...HEARTBEAT_ROLES]);
@@ -41,9 +78,10 @@ export const CERTS_PER_ANSWER = 256;
 const STORED_LEAD_MS = 4 * 86400000;
 const HEX64 = /^[0-9a-f]{64}$/;
 
-export function presenceBook({ round, roster, verify, log = () => {}, closeOfRound = null, rootOfRound = null, slotsOfRound = null }) {
+export function presenceBook({ round, roster, verify, log = () => {}, closeOfRound = null, rootOfRound = null, slotsOfRound = null, creatorOf = null }) {
   // `closeOfRound(rid)`: a round's seating close (bigint) or null; `rootOfRound(rid)`: its census root (hex); `slotsOfRound(rid, role)`:
-  // its seats - read off its stored contract unless handed in
+  // its seats - read off its stored contract unless handed in; `creatorOf(rid, contract)`: the creator's signature this seat holds of a
+  // round (a series round: the series line's, over the series id; else the round's own), for GET /absent
   const db = round.db;
   db.exec(`
     CREATE TABLE IF NOT EXISTS presence_proofs (node TEXT NOT NULL, round_id BLOB NOT NULL, role TEXT NOT NULL, close_ms INTEGER NOT NULL,
@@ -117,6 +155,80 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
     const c = roster.committeeFor(rid, role, { asCommitted: true });
     if (!c || !c.ok || !Array.isArray(c.drawn)) return null;
     return { drawn: c.drawn.map((e) => toHex(e.pubkey)), slots, closeMs };
+  };
+
+  /** A stored round's contract, decoded once; null for a round this seat does not hold. */
+  const contractOf = (rid) => {
+    const h = toHex(rid);
+    if (contracts.has(h)) return contracts.get(h);
+    let c = null;
+    const row = round.get(rid);
+    if (row) { try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { c = null; } }
+    contracts.set(h, c);
+    return c;
+  };
+  const viewOf = (rid, c) => {
+    let view; try { view = roster.chainFor ? roster.chainFor({ contract: c, roundIdBytes: rid }) : null; } catch { view = null; }
+    return view && Array.isArray(view.blocks) && !view.pending ? view : null;
+  };
+  const publicationPayloadOf = (rid, c) => toHex(c.seriesId instanceof Uint8Array ? seriesPublicationPayload(c.seriesId) : publicationPayload(rid));
+  /**
+   * IS THIS ROUND A DUTY POSTING'S (§5A.3, kanban #727; presence.js `dutyOf`): its publication - its series' for a series round - is a
+   * duty-marked transaction of this seat's chain view, the day's first confirmed of that item and kind (duty.js dutyPostingsOf), and the
+   * round stands by duty.js dutyRoundStands over its census as its root commits. { ok, rank } / { ok: false, why }; null while this seat
+   * cannot read it yet (no such round, no chain view, no census). A round the seat can draw (drawOf) has its publication in the view.
+   */
+  const dutyKept = new Map();
+  const dutyOf = (ridHex) => {
+    if (dutyKept.has(ridHex)) return dutyKept.get(ridHex);
+    let rid; try { rid = fromHex(ridHex); } catch { return { ok: false, why: 'that is no round id' }; }
+    const c = contractOf(rid);
+    if (!c) return null;
+    const view = viewOf(rid, c);
+    if (!view) return null;
+    const want = publicationPayloadOf(rid, c);
+    let pub = null;
+    for (const block of view.blocks) { const m = blockIndexOf(block).marked.find((x) => x.payloads.has(want)); if (m) { pub = m; break; } }
+    let answer;
+    if (!pub) answer = { ok: false, why: 'its publication carries no duty marker: not a duty posting, so no proof' };
+    else if (!postingsIn(view).has(pub.txid)) {
+      answer = { ok: false, why: `its publication is not the day's first confirmed ${pub.marker.item} ${pub.marker.kind === 'B' ? 'backup' : 'posting'}`
+        + `${pub.marker.emergency ? ` (the first ${DUTY_EMERGENCY_CAP} count)` : ''}: a later duplicate proves nothing` };
+    } else {
+      const census = roster.censusFor(rid, null, { asCommitted: true });
+      if (!census || !census.ok) return null;
+      answer = dutyRoundStands({ contract: c, marker: pub.marker, orderKeys: census.entries.map((e) => e.pubkey), sw: TAG_SWITCH[networkOf(c.networkId)] || null });
+    }
+    dutyKept.set(ridHex, answer);
+    if (dutyKept.size > 20000) dutyKept.delete(dutyKept.keys().next().value);
+    return answer;
+  };
+  /** A round's publication (its series' for a series round) with its merkle branch, for a client to prove: { transaction, branch, position } or null. */
+  const publicationProofOf = (ridHex) => {
+    let rid; try { rid = fromHex(ridHex); } catch { return null; }
+    const c = contractOf(rid);
+    if (!c) return null;
+    const view = viewOf(rid, c);
+    if (!view) return null;
+    const want = publicationPayloadOf(rid, c);
+    for (const block of view.blocks) {
+      const ix = blockIndexOf(block);
+      if (!ix.txids) continue;
+      let position = (ix.marked.find((x) => x.payloads.has(want)) || { position: -1 }).position;
+      if (position < 0) position = (block.transactions || []).findIndex((raw) => { try { return commitmentsOf(parseTransaction(raw)).some((p) => toHex(p) === want); } catch { return false; } });
+      if (position < 0) continue;
+      return { transaction: toHex(block.transactions[position]), position, branch: merkleBranchOf(ix.txids, position).map(toHex) };
+    }
+    return null;
+  };
+  /** The creator's signature this seat holds of a round, hex - or null. */
+  const creatorSignatureOf = (ridHex) => {
+    if (!creatorOf) return null;
+    let rid; try { rid = fromHex(ridHex); } catch { return null; }
+    const c = contractOf(rid);
+    if (!c) return null;
+    let sig = null; try { sig = creatorOf(rid, c); } catch { sig = null; }
+    return sig instanceof Uint8Array && sig.length === 64 ? toHex(sig) : null;
   };
 
   /** A certificate this seat holds for a seating: its own (seat_certs) or one gathered (presence_certs). */
@@ -242,7 +354,8 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
    * (presence.js absentFrom) and, by `${roundId}:${role}`, the certificate of every seating they name, hex.
    */
   async function absentForPosting({ census, w, ask = null }) {
-    let claims = absentFrom({ seatings: seatingsIn(w), census, window: w, seen: presentsIn(w) });
+    // only the duty postings' rounds are named as proofs (dutyOf); every certificate still keeps the nodes it lists in
+    let claims = absentFrom({ seatings: seatingsIn(w), census, window: w, seen: presentsIn(w), dutyOf });
     // THE CANDIDATES: every node of the census this seat saw nowhere - the certificates it holds are only of seatings it was drawn for
     const seen = seenIn(w);
     const unseen = [...new Set([...census].map((k) => String(k).toLowerCase()))].filter((n) => !seen.has(n));
@@ -251,7 +364,7 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
       try { got = await ask(unseen, w); } catch { got = null; }
       for (const b of (got && got.presents) || []) { try { takeProof(b instanceof Uint8Array ? b : fromHex(b), w); } catch { /* not one */ } }
       for (const b of (got && got.certs) || []) { try { takeCert(b instanceof Uint8Array ? b : fromHex(b)); } catch { /* not one */ } }
-      claims = absentFrom({ seatings: seatingsIn(w), census, window: w, seen: presentsIn(w) });
+      claims = absentFrom({ seatings: seatingsIn(w), census, window: w, seen: presentsIn(w), dutyOf });
     }
     const certs = {};
     for (const c of claims) for (const p of c.proofs) {
@@ -293,7 +406,7 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
   }
 
   /** A SEAT'S CHECK of a claim ({ claims, certs }): every proof (presence.js checkAbsenceProof), and nothing it holds against it. */
-  const check = (claim, { census, w }) => checkAbsenceProof(claim.claims, { census, window: w, verify, drawOf, seen: seenIn(w),
+  const check = (claim, { census, w }) => checkAbsenceProof(claim.claims, { census, window: w, verify, drawOf, dutyOf, seen: seenIn(w),
     certOf: (ridHex, role) => { const h = claim.certs && claim.certs[`${ridHex}:${role}`]; return h ? fromHex(h) : heldCert(fromHex(ridHex), role); } });
 
   /**
@@ -313,5 +426,6 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
     return out;
   }
 
-  return { seatingsIn, seenIn, presentsIn, proofsOf, certsOf, takeProof, takeCert, absentForPosting, claimFor, keepClaim, check, drawOf, roundsToReturn };
+  return { seatingsIn, seenIn, presentsIn, proofsOf, certsOf, takeProof, takeCert, absentForPosting, claimFor, keepClaim, check, drawOf, dutyOf,
+    publicationProofOf, creatorSignatureOf, roundsToReturn };
 }
