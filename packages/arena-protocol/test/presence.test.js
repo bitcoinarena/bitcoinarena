@@ -12,7 +12,7 @@ import { drawCommittee } from '../src/sortition.js';
 import { censusRootOf } from '../src/census.js';
 import { toHex, fromHex } from '../src/hash.js';
 import { PRESENCE_VERSION, ABSENCE_PROOF_SEATINGS } from '../src/constants.js';
-import { encodeSeatingCertificate, decodeSeatingCertificate, verifySeating, signSeating, signSeen, seatingId, seatingListsPresent } from '../src/seating.js';
+import { encodeSeatingCertificate, decodeSeatingCertificate, verifySeating, signSeating, signSeatingBound, signSeen, seatingId, seatingListsPresent } from '../src/seating.js';
 import { absentFrom, withoutAbsent, absentImplied, checkAbsenceProof, provenSeating, presenceWindow, inWindow, dropsAbsent, PRESENCE_WINDOW_MS } from '../src/presence.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
@@ -41,7 +41,8 @@ const signBy = (h) => (m) => schnorr.sign(m, secretOf(byHex.get(h)));
 function certify({ roundId, role, seated, present, leftOut = [], lists = {}, signers = seated, seenBy = seated, seenSigner = (h) => signBy(h) }) {
   const rid = fromHex(roundId);
   const seatedKeys = seated.map(fromHex);
-  const signatures = signers.map((h) => ({ nodePubkey: fromHex(h), signature: signSeating({ roundId: rid, role, seated: seatedKeys }, signBy(h)) }));
+  // a 22 SEATING signature binds its justification's hash - none here, a first signature (kanban #746)
+  const signatures = signers.map((h) => ({ nodePubkey: fromHex(h), signature: signSeatingBound({ roundId: rid, role, seated: seatedKeys }, signBy(h)) }));
   const id = seatingId({ roundId: rid, role, seated: seatedKeys });
   const groups = new Map();
   for (const h of seenBy) {

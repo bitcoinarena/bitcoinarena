@@ -15,7 +15,7 @@ import { PRESENCE_VERSION, ABSENCE_PROOF_SEATINGS, HEARTBEAT_THRESHOLD, HEARTBEA
 import { drawHeartbeat, signHeartbeat, verifyHeartbeat, decodeHeartbeat, signHeard, encodeHeartbeatCertificate, decodeHeartbeatCertificate,
   verifyHeartbeatCertificate, heartbeatRole, heartbeatSlotOf, hasHeartbeats, heartbeatCloseMs, HEARTBEAT_BYTES, HEARTBEAT_ROLES } from '../src/heartbeat.js';
 import { absentFrom, withoutAbsent, checkAbsenceProof, presenceWindow, PRESENCE_WINDOW_MS, spacedCloses, provenProof } from '../src/presence.js';
-import { seatingCloseMs, signSeating, signSeen, seatingId, encodeSeatingCertificate } from '../src/seating.js';
+import { seatingCloseMs, signSeatingBound, signSeen, seatingId, encodeSeatingCertificate } from '../src/seating.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -87,7 +87,7 @@ function seatingCert({ roundId, role, seated, present, leftOut }) {
   const rid = fromHex(roundId), keys = seated.map(fromHex);
   const id = seatingId({ roundId: rid, role, seated: keys });
   return encodeSeatingCertificate({ roundId: rid, role, seated: keys,
-    signatures: seated.map((h) => ({ nodePubkey: fromHex(h), signature: signSeating({ roundId: rid, role, seated: keys }, signBy(h)) })),
+    signatures: seated.map((h) => ({ nodePubkey: fromHex(h), signature: signSeatingBound({ roundId: rid, role, seated: keys }, signBy(h)) })),
     seen: [{ present, leftOut, signatures: seated.map((h) => ({ nodePubkey: fromHex(h), signature: signSeen({ roundId: rid, role, seating: id, present, leftOut }, signBy(h)) })) }] });
 }
 /** What a checker has: its own draw of each slot, the certificates (signed when first asked), and whether a round is a duty posting's. */

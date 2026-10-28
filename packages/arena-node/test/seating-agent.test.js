@@ -10,7 +10,8 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { seatingAgent } from '../src/seating-agent.js';
 import { encodeRoundContract, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
 import { signPresent, signSeating, encodeSeatingCertificate, seatedFrom, seatingId, verifySeating, seatingEquivocation,
-  decodeSeatingCertificate, signSeen, encodeJustification, decodeJustification, verifyJustification } from '../../arena-protocol/src/seating.js';
+  decodeSeatingCertificate, signSeen, encodeJustification, decodeJustification, verifyJustification, signSeatingBound, justificationHash,
+  justificationSteps } from '../../arena-protocol/src/seating.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { contractFor } from './window-fixture.js';
 
@@ -364,7 +365,7 @@ test('kanban #738 (protocol 22): Byzantine members complete the seating seat 3 l
   const byz = [0, 1, 2, 4];
   const present = five.seated.map(toHex).sort();
   const cert5 = encodeSeatingCertificate({ ...five,
-    signatures: [...byz.map((i) => ({ nodePubkey: nodes[i].pubkey, signature: signSeating(five, signer(nodes[i])) })), { nodePubkey: nodes[3].pubkey, signature: new Uint8Array(own.signature) }],
+    signatures: [...byz.map((i) => ({ nodePubkey: nodes[i].pubkey, signature: signSeatingBound(five, signer(nodes[i])) })), { nodePubkey: nodes[3].pubkey, signature: new Uint8Array(own.signature) }],
     seen: [{ present, leftOut: [], signatures: [...byz.map((i) => ({ nodePubkey: nodes[i].pubkey, signature: signSeen({ roundId: net.rid, role: 'game', seating: seatingId(five), present, leftOut: [] }, signer(nodes[i])) })),
       { nodePubkey: nodes[3].pubkey, signature: new Uint8Array(seen3.signature) }] }] });
   assert.deepEqual([JSON.parse(seen3.present), JSON.parse(seen3.left_out)], [present, []], 'seat 3 held the five at the close');
@@ -402,7 +403,7 @@ test('kanban #738 (protocol 22): a second signature without its justification is
 });
 
 test('kanban #738 (protocol 22): a forged justification refuses the signature it came with', async () => {
-  // the member's signature in it, one byte off (the last byte is the nested flag, the 64 before it the signature)
+  // the hash the member's signature binds, one byte off (the last byte is the flags, the 32 before it that hash - kanban #746)
   const forge = (from, to, sig) => {
     if (to !== 3 || !sig.justification) return sig;
     const b = Buffer.from(sig.justification, 'hex'); b[b.length - 2] ^= 1;
@@ -421,7 +422,9 @@ test('kanban #738 (protocol 22): a forged justification refuses the signature it
 // Its last signature carries the whole chain S5 -> S6 -> S7. Peers are scripted: each hands the PRESENTs of `presents` and its
 // signature from `sigs` (index -> { seated, justification }).
 const keysOf = (idx) => idx.map((i) => nodes[i].pubkey);
-const sigBy = (rid, i, idx) => signSeating({ roundId: rid, role: 'game', seated: keysOf(idx) }, signer(nodes[i]));
+// a 22 signature binds the justification it comes with (kanban #746): none, the empty string's hash
+const sigBy = (rid, i, idx, j = null) => signSeatingBound({ roundId: rid, role: 'game', seated: keysOf(idx) }, signer(nodes[i]), j);
+const H0 = justificationHash(null);
 function chainSeat() {
   const c = { ...contractFor(nodes.slice(0, 7).map((n) => n.pubkey)), startTimeMs: START, protocolVersion: 22 };
   const bytes = encodeRoundContract(c);
@@ -439,15 +442,19 @@ function chainSeat() {
     const presents = seat.presents.flatMap((k) => ['game', 'settlement'].map((role) => ({ role, node: toHex(nodes[k].pubkey),
       present: toHex(signPresent({ roundId: rid, role, nodePubkey: nodes[k].pubkey }, signer(nodes[k]))) })));
     const s = seat.sigs[i];
-    const sig = { game: s ? { node: toHex(nodes[i].pubkey), seated: keysOf(s.seated).map(toHex), signature: toHex(sigBy(rid, i, s.seated)),
+    // `boundTo`: what the signature binds when not the justification handed with it (kanban #746: one attached after the signing)
+    const sig = { game: s ? { node: toHex(nodes[i].pubkey), seated: keysOf(s.seated).map(toHex), signature: toHex(sigBy(rid, i, s.seated, s.boundTo !== undefined ? s.boundTo : s.justification || null)),
       ...(s.justification ? { justification: toHex(encodeJustification(s.justification)) } : {}) } : null };
     return new Response(JSON.stringify({ rounds: { [toHex(rid)]: { presents, sig, cert: {} } } }), { status: 200 });
   };
-  seat.agent = seatingAgent({ round, roster: { committeeFor: () => ({ ok: true, drawn }) }, sign: signer(nodes[0]), fetcher, nowMs: () => seat.now,
+  // the seat's agent over its store; made again on the same store, it is the seat restarted
+  seat.make = (sign = signer(nodes[0])) => seatingAgent({ round, roster: { committeeFor: () => ({ ok: true, drawn }) }, sign, fetcher, nowMs: () => seat.now,
     verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, log: (l) => seat.logs.push(l) });
+  seat.agent = seat.make();
   seat.signed = () => { const s = seat.agent.mySignature(rid, 'game'); return s ? s.seated.map((k) => nodes.findIndex((n) => toHex(n.pubkey) === k)) : null; };
-  // S5 at the close; S6 once B signed it; then N signs S7 (with `nJustification`, when given)
-  seat.run = async (nJustification = null) => {
+  // S5 at the close; S6 once B signed it; then N signs S7 (with `nJustification`, when given, bound in its signature unless `nBound`
+  // says what the signature binds instead)
+  seat.run = async (nJustification = null, nBound = undefined) => {
     await seat.agent.tick();
     seat.now = Number(START - 120000n) + 1000;
     await seat.agent.tick();
@@ -455,7 +462,7 @@ function chainSeat() {
     seat.presents = upTo(6).slice(1); seat.sigs[4] = { seated: upTo(6) };
     await seat.agent.tick();
     assert.deepEqual(seat.signed(), upTo(6), 'B signed S6: M re-signs it');
-    seat.presents = upTo(7).slice(1); seat.sigs[5] = { seated: upTo(7), justification: nJustification };
+    seat.presents = upTo(7).slice(1); seat.sigs[5] = { seated: upTo(7), justification: nJustification, ...(nBound !== undefined ? { boundTo: nBound } : {}) };
     await seat.agent.tick();
   };
   return seat;
@@ -466,8 +473,9 @@ function chainCert(seat, idx, justifications = []) {
   const own = seat.db.prepare('SELECT signature FROM seat_sigs WHERE role = ? AND seating = ? AND node = ?').get('game', id, toHex(nodes[0].pubkey));
   const seen = seat.db.prepare('SELECT present, left_out, signature FROM seat_seen WHERE role = ? AND seating = ? AND node = ?').get('game', id, toHex(nodes[0].pubkey));
   const present = JSON.parse(seen.present), leftOut = JSON.parse(seen.left_out);
+  const jOf = (i) => (justifications.find((x) => toHex(x.nodePubkey) === toHex(nodes[i].pubkey)) || {}).justification || null;
   return encodeSeatingCertificate({ roundId: seat.rid, role: 'game', seated, justifications,
-    signatures: idx.map((i) => ({ nodePubkey: nodes[i].pubkey, signature: i === 0 ? new Uint8Array(own.signature) : sigBy(seat.rid, i, idx) })),
+    signatures: idx.map((i) => ({ nodePubkey: nodes[i].pubkey, signature: i === 0 ? new Uint8Array(own.signature) : sigBy(seat.rid, i, idx, jOf(i)) })),
     seen: [{ present, leftOut, signatures: idx.map((i) => ({ nodePubkey: nodes[i].pubkey, signature: i === 0 ? new Uint8Array(seen.signature)
       : signSeen({ roundId: seat.rid, role: 'game', seating: fromHexT(id), present, leftOut }, signer(nodes[i])) })) }] });
 }
@@ -485,12 +493,12 @@ test('kanban #744 (protocol 22): a seat that signed S5, S6 and S7 carries its wh
     assert.deepEqual([j.prior.justification.of.length, toHex(j.prior.justification.member)], [5, toHex(nodes[4].pubkey)], 'it left S5 because B signed S6');
     assert.equal(verifyJustification(j, { roundId: seat.rid, role: 'game', drawn: keysOf(upTo(9)), slots: 7, verify: (s, m, k) => schnorr.verify(s, m, k),
       signer: nodes[0].pubkey, onto: keysOf(upTo(7)) }).ok, true);
-    // S7 certified: 2 and 3 left S5 because B signed S6; H = 1 cites M's S7 (and nests M's chain) - or, the second time, B's S6 too,
-    // and M's own justification is left out of the certificate: the chain this seat holds with its own signature excuses it
-    const byB = { of: keysOf(upTo(5)), seated: keysOf(upTo(6)), member: nodes[4].pubkey, signature: sigBy(seat.rid, 4, upTo(6)), nested: null };
-    const hJ = citedByH ? { of: keysOf(upTo(5)), seated: keysOf(upTo(7)), member: nodes[0].pubkey, signature: fromHexT(mine.signature), nested: j } : byB;
+    // S7 certified: 2 and 3 left S5 because B signed S6; H = 1 cites M's S7 (its signature and the hash it binds) - or, the second
+    // time, B's S6 too. M's chain is bound in its signature over S7, so the certificate carries it (kanban #746)
+    const byB = { of: keysOf(upTo(5)), seated: keysOf(upTo(6)), member: nodes[4].pubkey, signature: sigBy(seat.rid, 4, upTo(6)), bound: H0 };
+    const hJ = citedByH ? { of: keysOf(upTo(5)), seated: keysOf(upTo(7)), member: nodes[0].pubkey, signature: fromHexT(mine.signature), bound: justificationHash(fromHexT(mine.justification)) } : byB;
     const ju = [{ nodePubkey: nodes[1].pubkey, justification: hJ }, ...[2, 3].map((i) => ({ nodePubkey: nodes[i].pubkey, justification: byB })),
-      ...(citedByH ? [{ nodePubkey: nodes[0].pubkey, justification: j }] : [])];
+      { nodePubkey: nodes[0].pubkey, justification: j }];
     const k7 = seat.agent.keepCert(seat.rid, 'game', chainCert(seat, upTo(7), ju));
     assert.deepEqual(k7, { ok: true, kept: true }, k7.why);
     // B signs S5 as well, and it completes with M's first signature
@@ -503,16 +511,100 @@ test('kanban #744 (protocol 22): a seat that signed S5, S6 and S7 carries its wh
   }
 });
 
+// AT MOST 8 STEPS (kanban #744, cap = total steps, #746). With nothing nested a seat's chain is its own departures, one per seating
+// it left, and among 9 drawn a seat holds 9 PRESENT sets at most - 8 departures. So this draw has 12: M = 0 holds {0, 11} at the
+// close and, one PRESENT more each time, a member of its seating signs the seating of what it holds next. Its ninth departure would
+// carry 9 steps: it keeps the seating it holds.
 test('kanban #744 (protocol 22): a seat refuses a second signature whose justification would carry more than 8 steps', async () => {
-  // N's own justification for S7: 1 and 2 cite each other's S7, n deep; M's would be its step, N's n and its own step before
-  const deep = (rid, n, signer = 5) => { const m = signer === 1 ? 2 : 1;
-    return { of: keysOf(upTo(6)), seated: keysOf(upTo(7)), member: nodes[m].pubkey, signature: sigBy(rid, m, upTo(7)), nested: n > 1 ? deep(rid, n - 1, m) : null }; };
-  for (const [n, signs] of [[6, true], [7, false]]) {
+  const all = Array.from({ length: 12 }, (_, i) => { const secret = new Uint8Array(32).fill(i + 1); return { secret, pubkey: schnorr.getPublicKey(secret), endpoint: `http://seat-${i}` }; });
+  const c = { ...contractFor(all.slice(0, 7).map((n) => n.pubkey)), startTimeMs: START, protocolVersion: 22 };
+  const bytes = encodeRoundContract(c), rid = roundIdOf(c);
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE rounds (round_id BLOB, contract BLOB)');
+  db.prepare('INSERT INTO rounds (round_id, contract) VALUES (?, ?)').run(rid, bytes);
+  const drawn = all.map((n) => ({ pubkey: n.pubkey, advert: { endpoint: n.endpoint } }));
+  const keys = (idx) => idx.map((i) => all[i].pubkey);
+  const seatingOf = (held) => seatedFrom({ drawn: all.map((n) => n.pubkey), present: keys(held).map(toHex), slots: 7 }).map((k) => all.findIndex((n) => toHex(n.pubkey) === toHex(k)));
+  let now = NOW, held = [0, 11];
+  const sigs = {};
+  const fetcher = async (url) => {
+    const u = new URL(url);
+    if (u.pathname !== '/seating-batch') return new Response('ok', { status: 200 });
+    const i = all.findIndex((n) => n.endpoint === `${u.protocol}//${u.host}`);
+    const presents = held.filter((k) => k !== 0).flatMap((k) => ['game', 'settlement'].map((role) => ({ role, node: toHex(all[k].pubkey),
+      present: toHex(signPresent({ roundId: rid, role, nodePubkey: all[k].pubkey }, signer(all[k]))) })));
+    const s = sigs[i];
+    const sig = { game: s ? { node: toHex(all[i].pubkey), seated: keys(s).map(toHex), signature: toHex(signSeatingBound({ roundId: rid, role: 'game', seated: keys(s) }, signer(all[i]))) } : null };
+    return new Response(JSON.stringify({ rounds: { [toHex(rid)]: { presents, sig, cert: {} } } }), { status: 200 });
+  };
+  const logs = [];
+  const agent = seatingAgent({ round: { db, pubkey: all[0].pubkey, get: (id) => (toHex(id) === toHex(rid) ? { contract: bytes } : null) },
+    roster: { committeeFor: () => ({ ok: true, drawn }) }, sign: signer(all[0]), fetcher, nowMs: () => now,
+    verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, log: (l) => logs.push(l) });
+  const signed = () => agent.mySignature(rid, 'game').seated.map((k) => all.findIndex((n) => toHex(n.pubkey) === k));
+  await agent.tick();
+  now = Number(START - 120000n) + 1000;
+  await agent.tick();
+  assert.deepEqual(signed(), [0, 11], 'M signs the seating of what it holds at the close');
+  for (let k = 1; k <= 9; k++) {
+    // one PRESENT more, and the newest member of M's seating signs the seating of what M holds then (its first signature)
+    const from = seatingOf(held);
+    held = [...held, 11 - k];
+    const next = seatingOf(held), member = from.find((i) => i !== 0 && next.includes(i) && !sigs[i]);
+    sigs[member] = next;
+    await agent.tick();
+    if (k <= 8) {
+      assert.deepEqual(signed(), next, `departure ${k}: M signs the next seating`);
+      assert.equal(justificationSteps(decodeJustification(fromHexT(agent.mySignature(rid, 'game').justification))), k, `its justification carries ${k} steps`);
+    } else {
+      assert.deepEqual(signed(), from, 'the ninth departure: M keeps the seating it holds');
+    }
+  }
+  assert.equal(logs.filter((l) => /no second signature - its justification would carry 9 steps, more than 8/.test(l)).length > 0, true, logs.join('\n'));
+});
+
+// AN HONEST SEAT RESTARTED MID-DRAW RE-SENDS ITS STORED SIGNATURE (kanban #746, RULED 2026-10-28): it wrote its signature over S6,
+// with the justification it binds, before any door handed it out. Made again on the same store it hands out exactly those bytes and
+// signs nothing - a new signature over S6 would be its second over one seating (a random nonce alone makes other bytes).
+test('kanban #746 (protocol 22): a seat restarted mid-draw hands out its stored signature byte for byte, and signs no seating again', async () => {
+  const seat = chainSeat();
+  await seat.agent.tick();
+  seat.now = Number(START - 120000n) + 1000;
+  await seat.agent.tick();
+  seat.presents = upTo(6).slice(1); seat.sigs[4] = { seated: upTo(6) };
+  await seat.agent.tick();
+  assert.deepEqual(seat.signed(), upTo(6), 'M signed S5, then S6 because B signed S6');
+  const before = seat.agent.batchOf([toHex(seat.rid)]).rounds[toHex(seat.rid)].sig;
+  assert.ok(before.game.justification, 'its signature over S6 binds a justification');
+  // the restart: the same store, a new agent; every signature it would make is counted
+  let signs = 0;
+  const counted = (m) => { signs++; return signer(nodes[0])(m); };
+  seat.agent = seat.make(counted);
+  for (let i = 0; i < 3; i++) await seat.agent.tick();
+  const after = seat.agent.batchOf([toHex(seat.rid)]).rounds[toHex(seat.rid)].sig;
+  assert.deepEqual(after, before, 'the stored signatures, byte for byte, with their justifications and SEEN');
+  assert.deepEqual(seat.agent.mySignature(seat.rid, 'game'), before.game);
+  assert.equal(signs, 0, 'no seating, SEEN or PRESENT signed again');
+  // it goes on from there: N signs S7, and M's signature over S7 carries its stored S6 signature as the step before
+  seat.presents = upTo(7).slice(1); seat.sigs[5] = { seated: upTo(7) };
+  await seat.agent.tick();
+  assert.deepEqual(seat.signed(), upTo(7));
+  const j = decodeJustification(fromHexT(seat.agent.mySignature(seat.rid, 'game').justification));
+  assert.equal(toHex(j.prior.signature), before.game.signature, 'the step before is the signature it stored over S6');
+  assert.equal(toHex(encodeJustification(j.prior.justification)), before.game.justification);
+});
+
+// A JUSTIFICATION ATTACHED AFTER THE SIGNING IS NO STEP (kanban #746): N signs S7 with no reason (its signature binds the empty
+// string's hash) and hands a valid step with it afterwards - the seat does not count that signature, and M does not leave S6 for it.
+// The same step bound in N's signature is counted, and M moves on.
+test('kanban #746 (protocol 22): a seat counts no signature whose justification it does not bind', async () => {
+  for (const bound of [false, true]) {
     const seat = chainSeat();
-    await seat.run(deep(seat.rid, n));
-    assert.ok(seat.db.prepare('SELECT 1 FROM seat_sigs WHERE role = ? AND node = ? AND seating = ?').get('game', toHex(nodes[5].pubkey),
-      toHex(seatingId({ roundId: seat.rid, role: 'game', seated: keysOf(upTo(7)) }))), `N's signature with ${n} steps is counted`);
-    assert.deepEqual(seat.signed(), signs ? upTo(7) : upTo(6), signs ? `${n + 2} steps: it signs S7` : `${n + 2} steps: it keeps S6`);
-    assert.equal(seat.logs.some((l) => /no second signature - its justification would carry 9 steps, more than 8/.test(l)), !signs);
+    const nJ = (rid) => ({ of: keysOf(upTo(6)), seated: keysOf(upTo(7)), member: nodes[1].pubkey, signature: sigBy(rid, 1, upTo(7)), bound: H0 });
+    await seat.run(nJ(seat.rid), bound ? undefined : null);
+    const n7 = seat.db.prepare('SELECT 1 FROM seat_sigs WHERE role = ? AND node = ? AND seating = ?').get('game', toHex(nodes[5].pubkey),
+      toHex(seatingId({ roundId: seat.rid, role: 'game', seated: keysOf(upTo(7)) })));
+    assert.equal(!!n7, bound, bound ? 'bound: N\'s signature is counted' : 'attached afterwards: not counted');
+    assert.deepEqual(seat.signed(), bound ? upTo(7) : upTo(6), bound ? 'M re-signs S7' : 'M keeps S6');
   }
 });
