@@ -176,8 +176,8 @@ export const CUSTODY_GATEWAY_VERSION = 22;
  * the same epoch apply the same rules. null: never - every guardian signs and judges as 1.9.x (exact peg-ins, the record held now).
  * ONE CONSTANT PER NETWORK (the owner's ruling, 2026-10-28), keyed by the network's name as networkOf() answers it; nobody switches it by
  * hand. regtest/devnet 0: the rules on from the first epoch, so tests run with them. A network not named here: null.
- * testnet4/mainnet: set at the 2.0 tag to floor(tag height / 144) + 14; deploy gate: every guardian of every live federation on 2.0 by
- * epoch N-2.
+ * testnet4/mainnet: set at the 2.0 tag to N = floor(tag height / 144) + 14; deploy gate: every guardian of every live federation on 2.0
+ * by epoch N-2.
  */
 export const SEATING_RULES_EPOCH = Object.freeze({ regtest: 0, devnet: 0, testnet4: null, mainnet: null });
 /** The activation epoch of the 2.0 seating rules on `network` (SEATING_RULES_EPOCH; 'testnet' is testnet4, as networkAnchor reads it). */
