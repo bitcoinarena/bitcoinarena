@@ -1325,9 +1325,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     },
     lowestBondMinSatsFor: () => ballot.lowestBondMinSats,
     // regtest votes on its short schedule (1 / 6 / 1); every other network on the genesis one (27A.7.4)
-    scheduleFor: (net) => (isRegtestNet(net) ? SCHEDULES.regtest : SCHEDULES.mainnet),
+    scheduleFor: (net) => (isRegtestNet(net) ? SCHEDULES.regtest : toHex(fromHex(net)) === toHex(NETWORK_ID_TESTNET4) ? SCHEDULES.testnet4 : SCHEDULES.mainnet),   // testnet4: a day each (kanban #785)
     // AND ITS REPEAL SCHEDULE (27A.7.6), read against the history live at the proposal's publication - the tally's
-    repealScheduleFor: (net) => (isRegtestNet(net) ? REPEAL_SCHEDULES.regtest : REPEAL_SCHEDULES.mainnet),
+    repealScheduleFor: (net) => (isRegtestNet(net) ? REPEAL_SCHEDULES.regtest : toHex(fromHex(net)) === toHex(NETWORK_ID_TESTNET4) ? REPEAL_SCHEDULES.testnet4 : REPEAL_SCHEDULES.mainnet),
     ...(counts ? { historyFor: (net, height) => (ballotTally ? ballotTally.historyAt(net, height) : null) } : {}),
     verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } },
     store: { read: () => { try { return round.db.prepare('SELECT json FROM ballot_proposals').all().map((r) => JSON.parse(r.json)); } catch { return []; } },
@@ -1600,7 +1600,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // comments by anyone, signals by nodes - kept here and handed on to every seat once. A signal is decided once its 1008 blocks are
   // over, on the nodes that served a round (signed FINALs, this seat's and every other's) in the 432 blocks before its end, on the
   // chain's median time (`blockTimeAt`). ARENA_FUNDING_SCHEDULE=short runs a live proof's 1-block signal.
-  const fundingSchedule = process.env.ARENA_FUNDING_SCHEDULE === 'short' ? FUNDING_SCHEDULES.short : FUNDING_SCHEDULES.spec;
+  // testnet4's day-long signal and vote (kanban #785); a live proof's short schedule by ARENA_FUNDING_SCHEDULE=short
+  const fundingSchedule = process.env.ARENA_FUNDING_SCHEDULE === 'short' ? FUNDING_SCHEDULES.short : chain === 'bitcoin-testnet4' ? FUNDING_SCHEDULES.testnet4 : FUNDING_SCHEDULES.spec;
   const servedRoundsBetween = async (from, to) => {
     const held = [round.finalSigsBetween(from, to).map((r) => ({ ...r, committee: round.signerNodes(r.roundId) }))];
     let seats = []; try { seats = networkSeats(); } catch { seats = []; }
