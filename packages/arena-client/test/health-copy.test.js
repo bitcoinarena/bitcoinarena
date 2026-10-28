@@ -6,7 +6,7 @@
 // asks every door the page asks, the oldest first within its budget, and serves the copy at /api/health for any page to read.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeHealth, recorder, replay, keepable, ageOf, keyOf, live, roundPosting, etaHm, dutyNotes, withDuty, nodeLabel } from '../../../src/arena-ui/health/network.js';
+import { makeHealth, recorder, replay, keepable, ageOf, keyOf, live, roundPosting, etaHm, playablePostings, dutyNotes, withDuty, nodeLabel } from '../../../src/arena-ui/health/network.js';
 import { readHealth, HEALTH_DAILY, HEALTH_CRON } from '../../../src/website/explorer/health.js';
 import explorer from '../../../src/website/explorer/worker.js';
 
@@ -326,4 +326,23 @@ test('the read asks the seats\' GET /duty, keeps the best answer in the copy, an
   const b = cards();
   assert.equal(await b.health.read({ transport: replay(copy), daily: async () => DAILY }), true);
   assert.equal(b.last.apps, a.last.apps);
+});
+
+// POSTED ONLY WHEN IT CAN BE PLAYED (kanban #778): a today cell "posted (N)" whose next hour the seats list unseated reads "posted · not
+// playable" in red, with the seats' reason; a playable app, a scheduled next day and an app with no seating cell are kept as they were
+test('the APPS table says posted only for rounds that can be played (kanban #778)', () => {
+  const postings = new Map([
+    ['updown', { today: { t: 'posted (8)', c: 'ok', tip: 'version 24' }, next: { t: 'scheduled (3) · live in 9 h 0 min', c: 'ok' } }],
+    ['rps', { today: { t: 'posted (12)', c: 'ok', tip: 'version 5' }, next: { t: 'posted (12)', c: 'ok' } }],
+    ['nextblock', { today: { t: 'posted (5)', c: 'ok' }, next: { t: '-', c: 'muted' } }]]);
+  const seating = new Map([
+    ['updown', { t: 'no joinable rounds - posted but not seated (1-5 of 9 drawn answer)', c: 'bad' }],
+    ['rps', { t: '4 joinable · 4 of 4 seated', c: 'ok' }]]);
+  const got = playablePostings(postings, seating);
+  assert.deepEqual([got.get('updown').today.t, got.get('updown').today.c], ['posted · not playable: not seated (1-5 of 9 drawn answer)', 'bad']);
+  assert.match(got.get('updown').today.summary, /^The rounds are posted but cannot be played now/);
+  assert.equal(got.get('updown').next.t, 'scheduled (3) · live in 9 h 0 min');
+  assert.deepEqual([got.get('rps').today.t, got.get('rps').today.c], ['posted (12)', 'ok']);
+  assert.equal(got.get('nextblock').today.t, 'posted (5)');
+  assert.equal(playablePostings(null, seating), null);
 });
