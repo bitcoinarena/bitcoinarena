@@ -103,7 +103,9 @@ export class RolesPanel extends React.Component {
       ['play', '🎮', 'Play and check rounds', 'A share of every round\'s node fee', 'Replays the rounds it is drawn for and signs who won.'],
       ['settlement', '💸', 'Pay out winners', 'A share of every round\'s node fee', 'Co-signs the payout once a result is signed.'],
       ['relay', '📡', 'Relay for other nodes', 'Keeps rounds reachable', 'Every node does this: it serves round data to players and other nodes. Always on.', 'On', true],
-      ['custody', '🛡️', 'Guardian (custody)', 'The guardians\' share of every round', guarding ? 'Guards players\' bitcoin in a federation with other guardians.' : 'Ready to be drawn as a guardian when a federation is founded.', guarding ? 'Guarding' : null],
+      // GUARDING IS ON (kanban #731, the owner: "the guardian box is marked as Guarding ... but has no green border showing its active and
+      // also the label should be green"): a running guardian counts as on, also before the census names custody for this node
+      ['custody', '🛡️', 'Guardian (custody)', 'The guardians\' share of every round', guarding ? 'Guards players\' bitcoin in a federation with other guardians.' : 'Ready to be drawn as a guardian when a federation is founded.', guarding ? 'Guarding' : null, guarding],
       ['gateway', '⚡', 'Lightning gateway', 'The routing fees of its federation', gatewayWaits ? gatewayWaitsFor(setup) : 'Takes deposits and pays winners over Lightning. Up to 2 per federation.', gatewayWaits ? 'Waiting' : null, !!(gateway && gateway.gatewayUrl) || gatewayWaits, 'services:svc-gateway'],
       ['liquidity', '💧', 'Liquidity provider', 'A share of the 1 % liquidity pool', 'Opens incoming Lightning channels to new nodes.', null, !!liquidity, 'roles:liquidity'],
     ].map(([k, icon, name, highlight, does, label, onOther, section]) => ({ k, icon, name, highlight, does, label, onOther, section, mine }));
@@ -119,7 +121,7 @@ export class RolesPanel extends React.Component {
         <div className="tiles">
           {this.tiles().map((t) => {
             const switchable = SWITCHABLE.includes(t.k);
-            const on = switchable ? !!was[t.k] : t.onOther;
+            const on = switchable ? !!was[t.k] || !!t.onOther : t.onOther;
             const state = changed.includes(t.k) ? 'changed' : on ? 'on' : null;
             const footer = switchable
               ? (mine ? [<span key="s" />, <Switch key="w" id={`rl-${t.k}`} label={t.name} checked={!!now[t.k]} disabled={sent} onChange={(v) => this.toggle(t.k, v)} />]
