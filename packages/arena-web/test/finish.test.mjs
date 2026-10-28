@@ -38,6 +38,8 @@ test('lightning: LND set up and watched until it runs; the gateway started, its 
   assert.doesNotMatch(lnHtml, /id="ln-gw"/, 'LND\'s page holds no gateway');
   c.setState({ gwPage: true });
   assert.doesNotMatch(renderToStaticMarkup(c.render()), /id="ln-own"/, 'the gateway page holds no LND setup');
+  // no way back to LND's page, which only led to the gateway again (kanban #730: "this is confusing")
+  assert.doesNotMatch(renderToStaticMarkup(c.render()), /Back to LND/);
   await c.gwSetup();
   for (let i = 0; i < 20 && !c.state.funds; i++) await tick();
   assert.equal(c.state.gwMsg.text, 'The gateway runs (Running) on LND 03ababababababab…, testnet4, block 157193. No federation joined yet.');
