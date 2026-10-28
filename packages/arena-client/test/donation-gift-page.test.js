@@ -4,7 +4,7 @@
 // transaction to the set's keys with the donor's key as their image, the record the seats read, handed to the first seat that keeps it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { giftDonation, giftAmountOf, giftRecipientsLine } from '../src/donation-gift-page.js';
 import { ledgerRows, ledgerHistory } from '../src/page-lock.js';
 import { decodeDonationGift, donationGiftId, giftStands, GIFT_TO_GAME, GIFT_TO_NETWORK } from '../../arena-protocol/src/donation-gift.js';
