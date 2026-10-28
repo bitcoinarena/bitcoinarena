@@ -35,3 +35,12 @@ test('upcoming rounds counted; rounds older than a day explain nothing', () => {
   const old = roundsForOwner({ rows: [row({ gameSeated: true, startMs: NOW - 3 * 86400000 })], own, nowMs: NOW });
   assert.equal(old.why.kind, 'no rounds', 'a seat from three days ago is listed, but today there was nothing');
 });
+
+test('a node holding no round at all says so, not that its bond does not count (kanban #757)', () => {
+  const r = roundsForOwner({ rows: [], own: null, nowMs: NOW });
+  assert.equal(r.why.kind, 'no rounds held');
+  assert.match(r.why.says, /holds none of the network's rounds yet/);
+  // a drawn reserve of a round it holds is listed as one
+  const d = roundsForOwner({ rows: [row({ drawn: true, startMs: NOW + 600000, endMs: NOW + 900000, phase: 'upcoming' })], own: null, nowMs: NOW });
+  assert.deepEqual([d.why, d.upcoming, d.rounds[0].does], [null, 1, ['Reserve (drawn, not seated)']]);
+});
