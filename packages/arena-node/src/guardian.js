@@ -325,7 +325,7 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
       const had = keptFingerprint(dataDir);
       if (!had || !keptSha || had === keptSha) {
         log(`[guardian] ${unit} already runs: adopted, not restarted; endpoint ${endpoint}, api 127.0.0.1:${ports.api}`);
-        return { running: true, kept: true, adopted: true, unit, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot, cookieSha, stop: async () => {}, halt: () => units.stop(unit) };
+        return { running: true, kept: true, adopted: true, unit, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot, cookieSha, stop: async () => {}, halt: () => units.stop(unit), alive: () => units.active(unit) };
       }
       log(`[guardian] ${unit} runs with an old bitcoind cookie or old peer addresses: started again`);
       await units.stop(unit);
@@ -334,7 +334,7 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
     await units.start(unit, bin, { ...fmEnv, PATH: env.PATH || '' }, join(dataDir, 'fedimintd.log'));
     keepFingerprint(dataDir, keptSha);
     log(`[guardian] fedimintd started as ${unit} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}; it outlives this node`);
-    return { running: true, kept: true, adopted: false, unit, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot, cookieSha, stop: async () => {}, halt: () => units.stop(unit) };
+    return { running: true, kept: true, adopted: false, unit, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot, cookieSha, stop: async () => {}, halt: () => units.stop(unit), alive: () => units.active(unit) };
   }
   // A GUARDIAN THAT OUTLIVES ITS NODE WITHOUT SYSTEMD (pidfileUnits): adopted whenever it still runs - a setup kept across a restart that
   // has since finished its DKG runs the federation on these ports, and a second fedimintd would not start - and started kept when the
@@ -342,7 +342,7 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
   if (storePath !== ':memory:') {
     const kept = (adopted, pid, sha) => { const follow = ramFollow(() => pids.pid(dataDir));
       return { running: true, kept: true, adopted, pid, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot,
-        cookieSha: sha, ram: !!follow, stop: async () => { if (follow) follow.stop(); }, halt: async () => { if (follow) follow.stop(); await pids.stop(dataDir); await ramClean(); } }; };
+        cookieSha: sha, ram: !!follow, stop: async () => { if (follow) follow.stop(); }, halt: async () => { if (follow) follow.stop(); await pids.stop(dataDir); await ramClean(); }, alive: () => pids.active(dataDir) }; };
     if (await pids.active(dataDir)) {
       const had = keptFingerprint(dataDir);
       // a guardian adopted only while it reads bitcoind with the cookie bitcoind has now (one started before the fingerprint was kept: as before)
@@ -383,5 +383,6 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
     child.kill('SIGTERM');
     setTimeout(() => { if (!exited) child.kill('SIGKILL'); }, 10000).unref();
   });
-  return { running: true, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, pid: child.pid, slot, cookieSha, stop, halt: stop };
+  // `alive`: whether its process still runs (node-start.js starts an exited one again)
+  return { running: true, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, pid: child.pid, slot, cookieSha, stop, halt: stop, alive: () => !exited };
 }
