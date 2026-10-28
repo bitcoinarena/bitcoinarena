@@ -489,3 +489,25 @@ test('§23A.9 P3: one gateway seat takes the whole gateway third; an unearned se
     }
   }
 });
+
+// kanban #559: P3 WITH NO ELIGIBLE GUARDIAN. fee.js splits the gateway third off the guardian pool, and with no guardian named or
+// eligible there is no guardian pool: the round keeps the two-pool table (two halves of the fee, the odd msat to settlement), and a
+// seated gateway is paid nothing from the fee - on every version that has gateway seats. §23A.9 does not name this case (every seat
+// is a guardian, so it arises only when the round's guardian list misses the seat holders); this pins what the code does.
+test('§23A.9 P3: with no eligible guardian the round keeps the two-pool table and the gateway seats get nothing', () => {
+  const a = b32(0x51), b = b32(0x52);
+  const ragged = [player(0xa1, 'DELIVERED', 100003n), player(0xa2, 'FAILED', 123457n), player(0xa3, 'FAILED', 98761n)];
+  for (const v of [15, 16, 20]) {
+    for (const [why, guardian] of [['no guardian named', []], ['guardians named, none eligible', [b32(0x53), b32(0x54)]]]) {
+      const t = nodeFeeTable({ contract: { ...contract, protocolVersion: v }, entries: ragged,
+        pools: { ...pools, guardian, gateway: [a, b], liquidity: [b32(0x71)] }, eligible: new Set([...game, ...settle, a, b, b32(0x71)].map(toHex)) });
+      const half = t.fee / 2n;
+      assert.ok(t.fee % 2n === 1n, 'the volume leaves an odd msat');
+      assert.deepEqual(t.pools, { [GAME_VERIFY]: half, [SETTLEMENT]: t.fee - half, [GUARDIAN]: 0n }, `v${v} ${why}: the two-pool table`);
+      assert.equal([...t.signerNodes.keys()].filter((k) => !k.startsWith(`${GAME_VERIFY}:`) && !k.startsWith(`${SETTLEMENT}:`)).length, 0,
+        `v${v} ${why}: no gateway, guardian or liquidity share`);
+      assert.equal(t.unallocated, 0n, `v${v} ${why}: nothing unallocated`);
+      assert.equal(paid(t), t.fee, `v${v} ${why}: the committees take the whole fee`);
+    }
+  }
+});
