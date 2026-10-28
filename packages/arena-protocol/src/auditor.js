@@ -31,25 +31,25 @@ export const AUDIT_PROOF_BYTES = 81;
 export const AUDIT_LEAD_MS = 30000;
 export const AUDIT_TOLERANCE_MS = 5000;
 
-const is32 = (b) => b instanceof Uint8Array && b.length === 32;
-const beInt = (b) => b.reduce((n, x) => (n << 8n) | BigInt(x), 0n);
+const is32Audit = (b) => b instanceof Uint8Array && b.length === 32;
+const beIntAudit = (b) => b.reduce((n, x) => (n << 8n) | BigInt(x), 0n);
 
 /** The VRF input of a round's draw: fixed by the round id, before any result exists. */
 export const auditAlpha = (roundId) => {
-  if (!is32(roundId)) throw new Error('an audit draw is over a 32-byte round id');
+  if (!is32Audit(roundId)) throw new Error('an audit draw is over a 32-byte round id');
   return taggedHash(TAG.auditor, roundId);
 };
 
 /** A node's VRF public key: its x-only key as the even-y point. */
 export const vrfPublicKey = (nodePubkey) => {
-  if (!is32(nodePubkey)) throw new Error('a node key is 32 bytes (x-only)');
+  if (!is32Audit(nodePubkey)) throw new Error('a node key is 32 bytes (x-only)');
   const out = new Uint8Array(33); out[0] = 0x02; out.set(nodePubkey, 1); return out;
 };
 
 /** A node's VRF secret: its node secret, negated when that gives the odd-y point (BIP-340's rule), so it proves under vrfPublicKey. */
 export function vrfSecretFor(secret, Point) {
   const q = Point.Fn.ORDER;
-  const x = typeof secret === 'bigint' ? secret : beInt(secret);
+  const x = typeof secret === 'bigint' ? secret : beIntAudit(secret);
   const y = Point.BASE.multiply(x).toBytes(true)[0];
   return y === 0x02 ? x : q - x;
 }
@@ -81,7 +81,7 @@ export function auditEligible({ entries, bondMinSats, drawn = [], players = [], 
 export function isAuditor({ beta, weight, total }) {
   if (!(beta instanceof Uint8Array) || beta.length < 8) throw new Error('a VRF output is at least 8 bytes');
   if (typeof weight !== 'bigint' || typeof total !== 'bigint' || weight <= 0n || total <= 0n) return false;
-  return beInt(beta.subarray(0, 8)) * total < AUDITORS * weight * (1n << 64n);
+  return beIntAudit(beta.subarray(0, 8)) * total < AUDITORS * weight * (1n << 64n);
 }
 
 /**
@@ -90,7 +90,7 @@ export function isAuditor({ beta, weight, total }) {
  */
 export function auditResultsHash(results) {
   const rows = (results || []).map((r) => {
-    if (!is32(r.entryId) || !is32(r.resultDigest)) throw new Error('an audited result is (32-byte entry id, 32-byte result digest)');
+    if (!is32Audit(r.entryId) || !is32Audit(r.resultDigest)) throw new Error('an audited result is (32-byte entry id, 32-byte result digest)');
     return r;
   }).sort((a, b) => (toHex(a.entryId) < toHex(b.entryId) ? -1 : 1));
   const w = new Writer();
@@ -100,7 +100,7 @@ export function auditResultsHash(results) {
 }
 
 export function encodeAudit(a) {
-  if (!is32(a.roundId) || !is32(a.resultsHash) || !is32(a.nodePubkey)) throw new Error('an AUDIT names a round, its results and its node (32 bytes each)');
+  if (!is32Audit(a.roundId) || !is32Audit(a.resultsHash) || !is32Audit(a.nodePubkey)) throw new Error('an AUDIT names a round, its results and its node (32 bytes each)');
   if (!(a.vrfProof instanceof Uint8Array) || a.vrfProof.length !== AUDIT_PROOF_BYTES) throw new Error(`an AUDIT carries its ${AUDIT_PROOF_BYTES}-byte VRF proof`);
   const w = new Writer();
   w.u8(TYPE_AUDIT); w.u16(PROTOCOL_VERSION);

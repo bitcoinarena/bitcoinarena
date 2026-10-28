@@ -57,7 +57,7 @@ export const ABSENT_WHY = `proven drawn and not present at ${ABSENCE_PROOF_SEATI
 /** Does this round's census leave out its absent nodes (protocol 22 on)? */
 export const dropsAbsent = (contract) => !!contract && Number(contract.protocolVersion) >= PRESENCE_VERSION;
 
-const hexOf = (k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k));
+const hexOfPresence = (k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k));
 
 /** The window of a census whose block's median time past is `censusTimeMs`: (from, to]. */
 export function presenceWindow(censusTimeMs) {
@@ -80,7 +80,7 @@ export function provenSeating(bytes, { roundId, role, drawn, slots, closeMs, ver
   const v = verifySeating(bytes, { roundId: typeof roundId === 'string' ? Uint8Array.from(roundId.match(/../g).map((h) => parseInt(h, 16))) : roundId,
     role, drawn: drawn.map((k) => (typeof k === 'string' ? Uint8Array.from(k.match(/../g).map((h) => parseInt(h, 16))) : k)), slots, verify, listsPresent: true });
   if (!v.ok) return v;
-  return { ok: true, seating: { roundId: toHex(v.seating.roundId), role: v.seating.role, closeMs: BigInt(closeMs), drawn: drawn.map(hexOf),
+  return { ok: true, seating: { roundId: toHex(v.seating.roundId), role: v.seating.role, closeMs: BigInt(closeMs), drawn: drawn.map(hexOfPresence),
     seated: v.seating.seated.map(toHex), present: v.present, leftOut: v.leftOut } };
 }
 /** Was `node` present at this seating (listed by a seated node, or seated)? */
@@ -111,8 +111,8 @@ export function provenProof(bytes, { roundId, role, d, verify }) {
  * after for having been drawn for nothing; it comes back by signing a PRESENT that a seated node lists.
  */
 export function absentFrom({ seatings, census, window, seen = [] }) {
-  const inCensus = [...new Set([...census].map(hexOf))].sort();
-  const sawIt = new Set([...seen].map(hexOf));
+  const inCensus = [...new Set([...census].map(hexOfPresence))].sort();
+  const sawIt = new Set([...seen].map(hexOfPresence));
   const proven = (seatings || []).filter((s) => inWindow(window, s.closeMs))
     .sort((a, b) => (a.closeMs === b.closeMs ? (a.roundId + a.role < b.roundId + b.role ? -1 : 1) : (a.closeMs > b.closeMs ? -1 : 1)));
   for (const s of proven) { for (const k of s.present) sawIt.add(k); for (const k of s.seated) sawIt.add(k); }
@@ -134,8 +134,8 @@ export function absentFrom({ seatings, census, window, seen = [] }) {
 
 /** The census less every output of an absent node (a node is its key: all its bonds go with it). */
 export function withoutAbsent(entries, absent) {
-  const out = new Set((absent || []).map((a) => hexOf(a.node || a)));
-  return (entries || []).filter((e) => !out.has(hexOf(e.pubkey)));
+  const out = new Set((absent || []).map((a) => hexOfPresence(a.node || a)));
+  return (entries || []).filter((e) => !out.has(hexOfPresence(e.pubkey)));
 }
 
 /**
@@ -143,8 +143,8 @@ export function withoutAbsent(entries, absent) {
  * that holds the chain census and the round's entries (GET /census) recovers the claim's node list from the root alone.
  */
 export function absentImplied(chainEntries, committedEntries) {
-  const kept = new Set((committedEntries || []).map((e) => hexOf(e.pubkey)));
-  return [...new Set((chainEntries || []).map((e) => hexOf(e.pubkey)))].filter((h) => !kept.has(h)).sort();
+  const kept = new Set((committedEntries || []).map((e) => hexOfPresence(e.pubkey)));
+  return [...new Set((chainEntries || []).map((e) => hexOfPresence(e.pubkey)))].filter((h) => !kept.has(h)).sort();
 }
 
 /**
@@ -157,12 +157,12 @@ export function absentImplied(chainEntries, committedEntries) {
  * named seating cannot be drawn here yet. Any wrong proof makes the census invalid: it is a plain check of what was committed.
  */
 export function checkAbsenceProof(claims, { census = null, window, certOf, drawOf, verify, seen = [] }) {
-  const inCensus = census ? new Set([...census].map(hexOf)) : null;
-  const sawIt = new Set([...seen].map(hexOf));
+  const inCensus = census ? new Set([...census].map(hexOfPresence)) : null;
+  const sawIt = new Set([...seen].map(hexOfPresence));
   const proven = new Map();      // `${rid}:${role}` -> the seating, checked once per claim
   let last = '';
   for (const c of claims || []) {
-    const node = hexOf(c.node);
+    const node = hexOfPresence(c.node);
     if (node <= last) return { ok: false, node, why: 'that absent list is not sorted by node key, or names a node twice' };
     last = node;
     const short = node.slice(0, 16);
@@ -171,7 +171,7 @@ export function checkAbsenceProof(claims, { census = null, window, certOf, drawO
     const proofs = Array.isArray(c.proofs) ? c.proofs : [];
     const closes = new Set(), named = new Set();
     for (const p of proofs) {
-      const rid = hexOf(String(p.roundId || '')), key = `${rid}:${p.role}`;
+      const rid = hexOfPresence(String(p.roundId || '')), key = `${rid}:${p.role}`;
       if (named.has(key)) return { ok: false, node, proof: 'too-few', why: `the proof that ${short} is absent names one seating twice` };
       named.add(key);
       let s = proven.get(key);
