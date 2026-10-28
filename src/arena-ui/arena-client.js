@@ -614,13 +614,53 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22]);
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
 const BOND_SUM_VERSION = 19;
 /** Under capacity pressure the guardians' custody share is weighted by bond up to B*, squared (§23A.3a part 1, kanban #559/#543). */
 const PRESSURE_WEIGHT_VERSION = 20;
+/** About three auditors, drawn in secret by a VRF, replay every paid round and object to a false result (§13A.1, kanban #725). */
+const AUDITOR_VERSION = 22;
+/**
+ * A node that seating certificates prove drawn and not present at 3 seatings of the 24 h before the census, and present at none,
+ * leaves the census (§5A.3, presence.js, kanban #727); from the same version the certificate names who was present (seating.js SEEN).
+ * Folded into 22 with the auditors: 2.0 is unreleased and no series of 22 is posted on any network, so one number keeps 2.0's rules one set.
+ */
+const PRESENCE_VERSION = 22;
+/**
+ * ABSENCE ONLY WITH PROOF, AND NOT FOR A FEW MISSED SEATINGS (§5A.3, kanban #727, the owner 2026-10-27): a node leaves a 22 census only
+ * when threshold-signed seating certificates of at least this many window seatings show it drawn (or left out already) and not present,
+ * and it is present at none. One or two missed seatings - a restart, a network blip, an attacker flooding it while it is drawn - keep it in.
+ */
+const ABSENCE_PROOF_SEATINGS = 3;
+/**
+ * THE HEARTBEAT (§5A.3, protocol 22, kanban #727, the owner 2026-10-27). On 10-27 20 of 28 bonded nodes were stopped, almost no round
+ * reached 5 present, so almost no seating certificate existed and the stopped nodes took 3 days to be proven out. So from 22 every
+ * node also signs a HEARTBEAT for each heartbeat slot of a round and hands it to that slot's heartbeat committee; the committee's live
+ * members sign who they heard (HEARD), and a certificate of at least HEARTBEAT_THRESHOLD of them proves every census node it does not
+ * list missed at that slot - not only the drawn. A round that seats itself has HEARTBEAT_SLOTS_PER_ROUND slots, closing
+ * HEARTBEAT_SPACING_MS apart up to its seating close (heartbeat.js).
+ *
+ * ONE SLOT PER ROUND (the owner 2026-10-27, ruling the trade-off): any rule that lets a few live nodes prove many stopped ones out in a
+ * day lets as many colluding nodes make the same proofs against honest ones. On 28 nodes over 100 simulated days: with 1 slot per
+ * round a stopped node is out within a day on 83 % of days (3 slots: 100 %), and a colluding group of 7 has the proofs on 36 % of days
+ * (3 slots: 90 %), 6 on 2 %, 5 never. A 15-min grid gives a slot every 15 min, 96 a day, closing with the round's seating.
+ * HEARTBEAT_DRAWN members per slot, drawn on the round's own census and beacon (one key one seat, by bond, on their own seed).
+ * The threshold is 5 of 9, as a seating's: 2 x 5 > 9, so two certificates of one slot share a signer, and no group of fewer than 5
+ * nodes can make one at all.
+ */
+const HEARTBEAT_SLOTS_PER_ROUND = 1;
+/**
+ * THE 3 MISSED CLOSES LIE AT LEAST 1 H APART (kanban #727, the owner 2026-10-27: not out for a short outage). With a heartbeat slot every
+ * 5 min, a 10-min restart misses three of them; so the closes a proof counts are each at least this far from the next, and one outage
+ * shorter than 2 h - a restart, an upgrade, a blackout - is never proof. Seatings and heartbeat slots alike.
+ */
+const ABSENCE_PROOF_SPACING_MS = 3600000n;
+const HEARTBEAT_SPACING_MS = 300000n;
+const HEARTBEAT_DRAWN = 9;
+const HEARTBEAT_THRESHOLD = 5;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -947,6 +987,19 @@ const TYPE_ABSENCE_ATTESTATION = 0x24;
 const TYPE_DEPARTURE_NOTICE = 0x25;
 /** A leave request signed by a node's emergency key, for a node that is offline (§23A.5a). */
 const TYPE_EMERGENCY_DEPARTURE = 0x35;
+/** An auditor's AUDIT of a round (§13A.1, protocol 22, kanban #725). */
+const TYPE_AUDIT = 0x36;
+/**
+ * A slash proof against a contradicted AUDIT (§13A.1, kanban #724, #725): its own type byte, so neither the proof nor its id can be
+ * read as the player-result kind's (TYPE_SLASH_PROOF) - the two share the slash-proof tag and differ from their first byte on.
+ */
+const TYPE_AUDIT_SLASH_PROOF = 0x37;
+/** A seated node's word on who was present at a 22 seating (§5A.7, protocol 22, kanban #727): carried in the seating certificate. */
+const TYPE_SEATING_SEEN = 0x38;
+/** A node's HEARTBEAT for one heartbeat slot of a 22 round (§5A.3, protocol 22, kanban #727): its word that it is up, to that slot's committee. */
+const TYPE_HEARTBEAT = 0x39;
+/** A heartbeat committee member's HEARD: who it held a HEARTBEAT of at the slot's close; a heartbeat certificate carries them (kanban #727). */
+const TYPE_HEARTBEAT_HEARD = 0x3a;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 const TYPE_SPENT_SET = 0x26;
@@ -1143,6 +1196,12 @@ const TAG = {
   // §5A.7 reserve seats
   seatPresent: 'ARENA/v1/SeatPresent',
   seating: 'ARENA/v1/Seating',
+  // §5A.3/§5A.7 protocol 22: who a seated node held a PRESENT of at the seating close, and who the round's census left out
+  seatingSeen: 'ARENA/v1/SeatingSeen',
+  // §5A.3 protocol 22 the heartbeat (kanban #727): a node's HEARTBEAT, a member's HEARD, and the seed a slot's committee is drawn on
+  heartbeat: 'ARENA/v1/Heartbeat',
+  heartbeatHeard: 'ARENA/v1/HeartbeatHeard',
+  heartbeatDraw: 'ARENA/v1/HeartbeatDraw',
   // §23A.5 a guardian's signed copy of a halted federation's spent-note set
   spentSet: 'ARENA/v1/SpentSet',
   // §13 who won a price round: BULLS / BEARS / FLAT by its attested open and close
@@ -1168,6 +1227,11 @@ const TAG = {
   emergencyKey: 'ARENA/v1/EmergencyKey',
   emergencySecret: 'ARENA/v1/EmergencySecret',
   emergencyDeparture: 'ARENA/v1/EmergencyDeparture',
+  auditor: 'ARENA/v1/Auditor',
+  audit: 'ARENA/v1/Audit',
+  auditResults: 'ARENA/v1/AuditResults',
+  // a seat handing an AUDIT on to the round's other seats signs this over its id: the forwarded copy counts until the close (§13A.1)
+  auditForward: 'ARENA/v1/AuditForward',
   abandonmentProof: 'ARENA/v1/AbandonmentProof',
 };
 
@@ -1218,8 +1282,9 @@ const slashRemainderOf = (byte) => {
  */
 const SLASH_TO_PLAYERS_BPS = 5000;
 
-/** Roles a bonded node can stand for. Order is protocol: it indexes roleByte. */
-const ROLES = ['game', 'verify', 'settlement', 'relay'];
+/** Roles a bonded node can stand for. Order is protocol: it indexes roleByte. `audit` (§13A.1, protocol 22): replays rounds it is
+ * drawn to audit; a decoder from protocol 22 on skips a role index it does not know instead of refusing the advertisement. */
+const ROLES = ['game', 'verify', 'settlement', 'relay', 'audit'];
 const roleByte = (role) => {
   const i = ROLES.indexOf(role);
   if (i < 0) throw new Error('unknown role: ' + role);
@@ -5499,11 +5564,9 @@ function decodeAdvert(bytes) {
     nodePubkey: r.bytes32(),
     operatorId: r.str(),
     protocolVersions: r.vec((rr) => rr.u16()),
-    roles: r.vec((rr) => {
-      const i = rr.u8();
-      if (i < 0 || i >= ROLES.length) throw new Error('unknown role index ' + i);
-      return ROLES[i];
-    }),
+    // A ROLE THIS BUILD DOES NOT KNOW IS SKIPPED, not refused (kanban #725, protocol 22): refusing it dropped the whole node from the
+    // census of every older seat the day a newer one named a new role, so the census differed seat by seat
+    roles: r.vec((rr) => { const i = rr.u8(); return i < ROLES.length ? ROLES[i] : null; }).filter((x) => x !== null),
     endpoint: r.str(),
     region: r.str(),
     capacityClass: r.u8(),
@@ -8011,6 +8074,2004 @@ function donationKeysFor(network) {
 
 // THE SAME TWO KEYS BY NETWORK ID: donation-keys.js, re-exported (M3.2 6e).
 
+// ---- arena-protocol/src/committee-seed.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE COMMITTEE SEED, ALONE IN ITS MODULE (2026-10-04): the round's shared world (seed.js) is H(committee_seed ||
+// "world") (§5A.5), so seed.js needs this one formula - and beacon.js, which also reads the chain and the genesis, is not a
+// module the page's bundle may carry. Both import it from here; there is one copy.
+
+
+const catSeedParts = (...parts) => {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+};
+const isSeedPart32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+/**
+ * THE SEED, EXACTLY AS 5A.5 WRITES IT.
+ *
+ * Four 32-byte inputs in that order and nothing else. The order is not a
+ * detail: two nodes concatenating differently would select different
+ * committees from identical facts, which is the one thing a committee cannot
+ * survive.
+ */
+function committeeSeedFrom({
+  censusRootGameVerify, censusRootSettlement, roundId, roundRandomness,
+}) {
+  for (const [name, value] of [
+    ['the game/verify census root', censusRootGameVerify],
+    ['the settlement census root', censusRootSettlement],
+    ['the round id', roundId],
+    ['the round randomness', roundRandomness],
+  ]) if (!isSeedPart32(value)) throw new TypeError(`${name} is not 32 bytes`);
+
+  return taggedHash(TAG.committeeSeed,
+    catSeedParts(censusRootGameVerify, censusRootSettlement, roundId, roundRandomness));
+}
+
+
+// ---- arena-protocol/src/beacon.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE COMMITTEE SEED, AND WHY IT CANNOT BE A NUMBER THE ROUND'S CREATOR KNOWS.
+//
+// Section 5A.5:
+//
+//     committee_seed = H(census_root_game_verify || census_root_settlement
+//                        || round_id || round_randomness)
+//
+// with the hard rule that `round_randomness` is "a public randomness beacon
+// value that DOES NOT EXIST YET when round_id is published. The Round Contract
+// commits to WHICH beacon round will be used, not to its value."
+//
+// THE ATTACK THIS CLOSES, in the spec's own words: in v4.4 "the creator chose
+// round_id while public_randomness was already known, so committee selection
+// was a pure function of a value the attacker controlled. Grinding round_ids
+// offline until both committees consisted of his own nodes was trivial and
+// undetectable - 5A.11's 'committee cannot be overwritten' check passed,
+// because nothing was overwritten."
+//
+// So the ordering is the security property, not the hashing. Two nodes given
+// the same published value must reach the same signer node list, and a value the
+// creator could have known when they chose their round must not be usable at
+// all. The first is arithmetic; the second is evidence, and evidence is what
+// this file asks the caller for and refuses to assume.
+
+
+
+
+const cat_beacon = (...parts) => {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+};
+
+const is32_beacon = (b) => b instanceof Uint8Array && b.length === 32;
+
+// committeeSeedFrom lives in committee-seed.js (one copy; seed.js needs it for the round's world)
+
+/**
+ * WAS THIS VALUE UNKNOWABLE WHEN THE ROUND WAS MADE?
+ *
+ * A beacon is only worth anything if it came AFTER the round it seeds, and a
+ * hash on its own carries no date - so the caller brings the height it was
+ * published at, and the contract is asked what it already knew.
+ *
+ * WHAT THE CONTRACT CAN PROVE TODAY, and it is less than the whole rule: it
+ * commits to `census_height`, so a beacon at or below that height is one whose
+ * chain state the creator demonstrably had in hand - refused. Above it, this
+ * check cannot yet say whether the creator had already seen the block, because
+ * the contract carries no publication height and no `committee_time`: 5A.5
+ * ties the beacon to `committee_time`, and that field does not exist here.
+ * Until it does, this refuses what it can prove and says so rather than
+ * implying a guarantee it cannot make.
+ *
+ * It is deliberately not a default: a caller with no height gets a refusal,
+ * because "I do not know when this was published" and "it was published late
+ * enough" must never be the same answer.
+ */
+function beaconIsAfterRound(contract, { height, timeMs } = {}) {
+  // WHICH BEACON, AND WHEN: both are the contract's now, and 5A.5 ties the
+  // randomness to `committee_time` rather than to anything about the census.
+  // Before this the check measured the beacon against `census_height` and said
+  // so - what it could prove, not what the rule asks - because the field did
+  // not exist. It does now.
+  if (!contract || typeof contract.committeeTimeMs !== 'bigint')
+    return { ok: false, why: 'that round names no committee time, so nothing says when its beacon is due' };
+  if (typeof contract.randomnessRule !== 'string' || !contract.randomnessRule)
+    return { ok: false, why: 'that round names no randomness rule, so nothing says which beacon seeds it' };
+
+  const network = contract.networkId ? networkOf(contract.networkId) : null;
+  if (network === null)
+    return { ok: false, why: 'that round names a network this build has no genesis for' };
+  const source = genesisFor(network).randomnessSource;
+  if (contract.randomnessRule !== source)
+    return {
+      ok: false,
+      why: `that round names randomness rule "${contract.randomnessRule}" where ${network} was `
+        + `born reading "${source}"`,
+    };
+
+  // AND A FALLBACK IS THE SAME BEACON OR IT IS NOTHING.
+  //
+  // Spec v4.6.2 has no fallback beacon: §6 dropped `randomness_fallback`, and
+  // 5A.5's beacon is the first Bitcoin block after committee_time. On a network
+  // born reading `bitcoin-block-hash` that IS the rule - there is nothing else
+  // a fallback could name - so the only honest values are absent, empty, or
+  // the born rule itself. Anything else is a
+  // SECOND randomness source, and a second source is a second committee: a
+  // creator who could fall back to a beacon of their own choosing would pick
+  // the one that signer nodes their nodes, which is 5A.5's whole attack with an extra
+  // step.
+  //
+  // The field does not encode, so a foreign fallback cannot arrive over the
+  // wire at all - `decodeRoundContract` produces none. This refuses one on a
+  // contract OBJECT, which is the only place it could still appear.
+  const fallback = contract.randomnessFallback;
+  if (fallback !== undefined && fallback !== null && fallback !== ''
+      && fallback !== source)
+    return {
+      ok: false,
+      why: `that round names randomness fallback "${fallback}" where ${network} was born `
+        + `reading "${source}" - a fallback is the same beacon or it is nothing`,
+    };
+
+  // A BEACON WITH NO TIME IS NOT A LATE BEACON. "I do not know when this was
+  // published" and "it was published after committee_time" must never be the
+  // same answer, so a caller with no timestamp gets a refusal.
+  if (typeof timeMs !== 'bigint')
+    return { ok: false, why: 'that randomness names no time, so nothing says it came after committee_time' };
+  if (timeMs <= contract.committeeTimeMs)
+    return {
+      ok: false,
+      why: `that randomness is from ${timeMs}, at or before this round's committee time `
+        + `${contract.committeeTimeMs} - the creator could have held it when the round was made`,
+    };
+
+  return { ok: true, height, timeMs, provenAfter: contract.committeeTimeMs };
+}
+
+function committeeSeedFromBeacon(contract, { roundId, randomness, height, timeMs }) {
+  const later = beaconIsAfterRound(contract, { height, timeMs });
+  if (!later.ok) return later;
+  if (!is32_beacon(contract.censusRoot))
+    return { ok: false, why: 'that round names no census root' };
+
+  // ONE ROOT WHERE THE SPEC NAMES TWO. 5A.5 hashes the game/verify root and
+  // the settlement root; this contract carries a single `censusRoot`, so both
+  // positions are filled from it and the seed is honest about that rather than
+  // silently hashing 32 fewer bytes. Two roots is a contract field and belongs
+  // with the letter that adds one.
+  try {
+    return {
+      ok: true,
+      seed: committeeSeedFrom({
+        censusRootGameVerify: contract.censusRoot,
+        censusRootSettlement: contract.censusRoot,
+        roundId,
+        roundRandomness: randomness,
+      }),
+      height,
+      timeMs,
+      rootsAreOne: true,
+    };
+  } catch (err) { return { ok: false, why: err.message }; }
+}
+
+/**
+ * BIP-113's span: a block's time is the median of ELEVEN, itself included.
+ *
+ * Bitcoin Core's `CBlockIndex::GetMedianTimePast` walks back eleven entries
+ * starting at the block itself, so the median covers heights N-10..N. Written
+ * out rather than guessed, because eleven-with-itself and eleven-before-it are
+ * different numbers on the same chain.
+ */
+const MEDIAN_TIME_SPAN = 11;
+
+/**
+ * The median time past at `at`, in seconds, from headers in height order.
+ *
+ * `headers[0]` is `firstHeight`. Answers null when the view does not reach
+ * back far enough - "I cannot compute it here" and "it is early" must never
+ * be the same answer.
+ */
+function medianTimePast(headers, firstHeight, at) {
+  const last = at - firstHeight;
+  const first = last - MEDIAN_TIME_SPAN + 1;
+  if (first < 0 || last >= headers.length) return null;
+  const times = [];
+  for (let i = first; i <= last; i++) times.push(blockTimeOf(headers[i]));
+  times.sort((a, b) => a - b);
+  return times[(MEDIAN_TIME_SPAN - 1) >> 1];
+}
+
+/**
+ * WHICH BLOCK SEEDS THIS ROUND'S COMMITTEE, from the chain and nothing else.
+ *
+ * 5A.5 (spec v4.6.2) names a beacon by TIME - the first Bitcoin block whose
+ * median-time-past is after committee_time - so that every node lands on the
+ * same value without anybody naming it (`genesis.randomnessSource` is
+ * `bitcoin-block-hash`). round_randomness is hash(beacon_block) itself - the
+ * double SHA-256 of its 80-byte header in internal order, `blockHashOf` below -
+ * and the callers seed with that block hash and nothing else (§5A.5 and §12,
+ * RULED 2026-09-24: no height term; BIP34 already commits the height, and both
+ * uses re-hash it under their own tag). The height only chooses and checks the
+ * block. But a source is not a selection: two honest nodes
+ * polling at different moments would take different tips, derive different
+ * seeds and signer node different committees. This is the missing half.
+ *
+ * THE HEIGHT IS DERIVED, NEVER NAMED. It is not on the contract, not on the
+ * entry and not an argument: an author who names the height picks the block,
+ * and picking the block is grinding the committee, which is the whole attack
+ * 5A.5 exists to close. What the contract commits to is `committee_time` and
+ * the source, and that is the commitment.
+ *
+ * THE FIRST BLOCK WHOSE MEDIAN TIME PAST IS AFTER `committee_time`. Not the
+ * tip, which moves; not the header's own nTime, which a miner may write two
+ * hours ahead and which need not increase. STRICTLY after, and that is a
+ * correction to the instruction rather than a liberty: `beaconIsAfterRound`
+ * already refuses a beacon AT committee_time - the creator could have held it
+ * when the round was made - so selecting a block at that instant would hand
+ * the validator a block it must reject. Selection and validation agree, and
+ * the stricter of the two wins.
+ *
+ * AND DEEP ENOUGH, by the round's own `censusConfirmations` rather than a
+ * second knob. A hash one block deep can be reorged out, and a reorg that
+ * changes the seed changes who sits. Too shallow is refused - not assigned on,
+ * not closed on, not invented around.
+ */
+function beaconFromChain(contract, view) {
+  if (!contract || typeof contract.committeeTimeMs !== 'bigint')
+    return { ok: false, why: 'that round names no committee time, so nothing says which block seeds it' };
+  if (!Number.isInteger(contract.censusConfirmations) || contract.censusConfirmations < 1)
+    return { ok: false, why: 'that round names no confirmation depth, so nothing says when a beacon is settled' };
+
+  // HEADERS, WHICH IS WHAT A PROVIDER SERVES. 25.1's sources hand 80-byte
+  // headers back to back and `agreedChain` weighs those; a beacon needs a
+  // hash and a time and neither is in a transaction, so asking for whole
+  // blocks here would demand of a provider something the protocol never asks
+  // it for. Mined and linked are still checked, by the same function the
+  // work comparison uses.
+  if (!view || !Array.isArray(view.headers) || !view.headers.length)
+    return { ok: false, why: 'a chain view is at least one header' };
+  if (!Number.isInteger(view.firstHeight))
+    return { ok: false, why: 'a chain view says which height it starts at' };
+  const chain = chainWork(view.headers);
+  if (!chain.ok)
+    return { ok: false, why: `this view is not a chain: ${chain.why}` };
+
+  const headers = view.headers;
+  const firstHeight = view.firstHeight;
+  const tipHeight = firstHeight + headers.length - 1;
+  const after = contract.committeeTimeMs;
+  let chosen = null;
+  for (let h = firstHeight; h <= tipHeight; h++) {
+    const mtp = medianTimePast(headers, firstHeight, h);
+    if (mtp === null) continue;                  // no median here yet
+    if (BigInt(mtp) * 1000n > after) { chosen = { height: h, mtp }; break; }
+  }
+
+  if (chosen === null) {
+    const reach = medianTimePast(headers, firstHeight, tipHeight);
+    return {
+      ok: false,
+      why: reach === null
+        ? `this view is ${headers.length} blocks and a median time past is taken over `
+          + `${MEDIAN_TIME_SPAN}, so it says nothing about when any of them was`
+        : `no block in this view is after this round's committee time ${after}: the `
+          + `last one's median time past is ${BigInt(reach) * 1000n}`,
+    };
+  }
+
+  // AND THE VIEW HAS TO REACH BACK FAR ENOUGH TO KNOW IT IS THE FIRST.
+  //
+  // Found by running this on a real regtest, not by reading it: the answer was
+  // window-dependent. A node reading 64 headers to the tip named block 69; a
+  // node whose view began at 103 named block 112 - of the same chain, for the
+  // same round. "The first block in THIS VIEW after committee_time" is not
+  // "the first block after committee_time" unless the view starts before that
+  // instant, and two honest nodes with different windows would have joined
+  // different committees, which is the whole property this rule exists for.
+  //
+  // So: if the EARLIEST median this view can compute is already after
+  // committee_time, the view may be starting too late to see the real first
+  // block, and it says so instead of answering. A view that reaches back
+  // before the instant can answer, and every such view answers the same.
+  const earliest = medianTimePast(headers, firstHeight, firstHeight + MEDIAN_TIME_SPAN - 1);
+  if (earliest !== null && BigInt(earliest) * 1000n > after)
+    return {
+      ok: false,
+      why: `this view begins at height ${firstHeight} and its earliest median time is `
+        + `${BigInt(earliest) * 1000n}, already after this round's committee time ${after}: `
+        + 'it cannot say which block is the FIRST one, only which is the first it holds',
+    };
+
+  const depth = tipHeight - chosen.height + 1;
+  if (depth < contract.censusConfirmations)
+    return {
+      ok: false,
+      why: `the block that seeds this round is ${depth} deep and this round asks for `
+        + `${contract.censusConfirmations}: a hash that shallow can be reorged out, and a `
+        + 'reorg that changes the seed changes who sits',
+    };
+
+  return {
+    ok: true,
+    height: chosen.height,
+    hash: blockHashOf(headers[chosen.height - firstHeight]),
+    timeMs: BigInt(chosen.mtp) * 1000n,
+    depth,
+  };
+}
+
+/**
+ * IS THE BEACON SOMEBODY HANDED ME THE ONE THIS CHAIN NAMES?
+ *
+ * `beaconFromChain` derives the answer; this refuses a different one. They are
+ * two directions of the same rule and both are needed, because a node does not
+ * always derive its own: `roster.js` and `verify.js` take a beacon from their
+ * caller, and `beaconIsAfterRound` only asks whether it came AFTER
+ * committee_time. Late is not the same as right. A block six hours past
+ * committee_time is late, and if it is not the FIRST such block then whoever
+ * chose it chose the seed, which is the grinding this letter closes with one
+ * extra step.
+ *
+ * So: same height, same hash, same time, or a refusal that names both.
+ */
+function beaconIsTheChains(contract, beacon, view) {
+  const named = beaconFromChain(contract, view);
+  if (!named.ok) return named;
+  if (!beacon || typeof beacon !== 'object')
+    return { ok: false, why: 'no beacon was offered to check against the chain' };
+
+  if (beacon.height !== named.height)
+    return {
+      ok: false,
+      why: `that beacon is block ${beacon.height} where this chain names ${named.height} `
+        + `as the first after committee time ${contract.committeeTimeMs}: a later block is `
+        + 'a block somebody chose',
+    };
+  if (!(beacon.hash instanceof Uint8Array) || toHex(beacon.hash) !== toHex(named.hash))
+    return {
+      ok: false,
+      why: `that beacon carries a hash block ${named.height} does not have`,
+    };
+  if (beacon.timeMs !== named.timeMs)
+    return {
+      ok: false,
+      why: `that beacon says it was published at ${beacon.timeMs} where block `
+        + `${named.height}'s median time past is ${named.timeMs}`,
+    };
+  return { ok: true, height: named.height, hash: named.hash, timeMs: named.timeMs, depth: named.depth };
+}
+
+// ---- arena-protocol/src/seating.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// RESERVE SEATS (multiplayer_p2p.md §5A.7, RULED 2026-09-28).
+//
+// A node drawn up to 72 h ahead may be offline when its round comes, so each role draws more nodes than it seats
+// (sortition.js drawCommittee: 9 for 7 seats) and seats the ones that show up:
+//
+//   present = drawn nodes that signed PRESENT(round_id, role, node_pubkey) before seating_close = start_time - 120 s
+//   seated  = the first min(slots, |present|) present nodes in score order
+//   a round opens for entries iff |seated| >= threshold
+//
+// The seated nodes sign SEATING(round_id, role, seated list); a seating is valid only with the signature of EVERY node it
+// seats, and each node signs at most one per round and role. Two valid seatings for one round and role always share a
+// signer (2 x threshold > drawn), so two certificates are proof of equivocation by that signer: the round is void (§13C)
+// and the signer's bond is slashable (§5A.3B). A client enters a round only with a certificate it checked against the draw
+// it computes itself (client-committee.js). The round contract is unchanged (2026-10-11, decision A): it names the
+// round; who serves it is this certificate.
+//
+// FROM PROTOCOL 22 THE CERTIFICATE ALSO SAYS WHO WAS PRESENT (§5A.3, kanban #727, the owner 2026-10-27). A node may be left out of a
+// census as absent only with proof, and the proof is this certificate: besides its SEATING signature, every seated node signs a
+// SEEN over that seating - every node it held a valid PRESENT of at the seating close (drawn, or one the round's census left out as
+// absent coming back) and the nodes the round's census left out as absent. The certificate carries them after its signatures, one
+// group per distinct list. A node is present at the seating if ANY seated node lists it, so to hide an honest node's PRESENT every
+// seated node must lie. A PRESENT that reaches the seated after the close is in no list: for the proof that seating is missed. The
+// SEATING body, its id and the equivocation rule are untouched, and a certificate below 22 carries no SEEN - byte for byte as before.
+
+
+
+/** seating_close is this long before the round's start: round i+1 is seated before round i (90 s earlier) starts. */
+const SEATING_LEAD_MS = 120000n;
+const ROLE_BYTE = Object.freeze({ game: 1, settlement: 2 });
+const roleOfSeat = (b) => Object.keys(ROLE_BYTE).find((k) => ROLE_BYTE[k] === b);
+const SEATING_ROLES = Object.freeze(['game', 'settlement']);
+
+/**
+ * When a round's seating closes: start_time - 120 s. A MARKET'S (2026-10-11: "Der prediction market läuft immer z.B.
+ * zwischen 19:45 und 20:00. Man darf davor und danach nicht am Markt teilnehmen") is seated 120 s before its WINDOW opens
+ * (attested.js marketWindowOf: entry_close - period), so its seats are certified when its first order may come.
+ */
+const seatingCloseMs = (contract, window = null) =>
+  (window && window.startMs < BigInt(contract.startTimeMs) ? window.startMs : BigInt(contract.startTimeMs)) - SEATING_LEAD_MS;
+
+/** Does this round's certificate carry who was present (protocol 22 on)? */
+const seatingListsPresent = (contract) => !!contract && Number(contract.protocolVersion) >= PRESENCE_VERSION;
+
+/** The threshold a seated committee needs (receiptsNeeded): 5 of 7, 2 of 2. */
+const seatedThreshold = (slots) => (slots === 7 ? 5 : slots === 2 ? 2 : Math.floor(slots / 2) + 1);
+
+const is32Seat = (b) => b instanceof Uint8Array && b.length === 32;
+const sameBytesSeat = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+const cmpSeat = (a, b) => { for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
+const keyBytes = (k) => (typeof k === 'string' ? Uint8Array.from(k.match(/../g).map((h) => parseInt(h, 16))) : k);
+const sortedKeys = (list) => [...new Map((list || []).map(keyBytes).map((k) => [toHex(k), k])).values()].sort(cmpSeat);
+const strictlySorted = (list) => list.every((k, i) => i === 0 || cmpSeat(list[i - 1], k) < 0);
+
+// ---- PRESENT ----
+function presentBody({ roundId, role, nodePubkey }) {
+  if (!is32Seat(roundId) || !is32Seat(nodePubkey) || !ROLE_BYTE[role]) throw new Error('a PRESENT names a round, a role and a node key');
+  const w = new Writer();
+  w.u8(TYPE_PRESENT); w.u16(PROTOCOL_VERSION); w.bytes32(roundId); w.u8(ROLE_BYTE[role]); w.bytes32(nodePubkey);
+  return w.finish();
+}
+const presentId = (p) => taggedHash(TAG.seatPresent, presentBody(p));
+/** A node's PRESENT, signed with its node key: `sign(messageId)` answers 64 bytes. */
+function signPresent({ roundId, role, nodePubkey }, sign) {
+  const body = presentBody({ roundId, role, nodePubkey });
+  return Uint8Array.from([...body, ...sign(taggedHash(TAG.seatPresent, body))]);
+}
+function decodePresent(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_PRESENT) throw new Error('that is not a PRESENT');
+  if (!speaksVersion(r.u16())) throw new Error('a PRESENT of another protocol version');
+  const roundId = r.bytes32(); const role = roleOfSeat(r.u8()); const nodePubkey = r.bytes32(); const signature = r.bytes(64);
+  if (!role) throw new Error('a PRESENT for no role');
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the PRESENT');
+  return { roundId, role, nodePubkey, signature };
+}
+/** A PRESENT that stands: decodes, names this round, and is signed by the node it names. */
+function verifyPresent(bytes, { roundId, verify }) {
+  let p; try { p = decodePresent(bytes); } catch (e) { return { ok: false, why: e.message }; }
+  if (roundId && !sameBytesSeat(p.roundId, roundId)) return { ok: false, why: 'that PRESENT names another round' };
+  let good = false; try { good = verify(p.signature, presentId(p), p.nodePubkey); } catch { good = false; }
+  return good ? { ok: true, present: p } : { ok: false, why: 'that PRESENT is not signed by the node it names' };
+}
+
+// ---- SEATED: who serves ----
+/**
+ * THE SEATED, from the draw (node keys in score order) and the keys a node holds a PRESENT from: the first min(slots,
+ * |present|) present ones in score order. A node seats itself only in that order - a node ranked below a present one is
+ * seated only if that one is too.
+ */
+function seatedFrom({ drawn, present, slots }) {
+  const held = new Set([...present].map((k) => (typeof k === 'string' ? k : toHex(k))));
+  return drawn.filter((k) => held.has(toHex(k))).slice(0, slots);
+}
+
+// ---- SEATING ----
+function seatingBody({ roundId, role, seated }) {
+  if (!is32Seat(roundId) || !ROLE_BYTE[role] || !Array.isArray(seated) || !seated.every(is32Seat)) throw new Error('a SEATING names a round, a role and its seated node keys');
+  const w = new Writer();
+  w.u8(TYPE_SEATING); w.u16(PROTOCOL_VERSION); w.bytes32(roundId); w.u8(ROLE_BYTE[role]);
+  w.vec(seated, (k, ww) => ww.bytes32(k));
+  return w.finish();
+}
+const seatingId = (s) => taggedHash(TAG.seating, seatingBody(s));
+/** One seated node's signature over a seating. */
+const signSeating = (s, sign) => sign(seatingId(s));
+// ---- SEEN (protocol 22): one seated node's word on who was present at a seating ----
+function seenBody({ roundId, role, seating, present, leftOut }) {
+  if (!is32Seat(roundId) || !ROLE_BYTE[role] || !is32Seat(seating)) throw new Error('a SEEN names a round, a role and the seating it goes with');
+  const w = new Writer();
+  w.u8(TYPE_SEATING_SEEN); w.u16(PROTOCOL_VERSION); w.bytes32(roundId); w.u8(ROLE_BYTE[role]); w.bytes32(seating);
+  w.vec(sortedKeys(present), (k, ww) => ww.bytes32(k));
+  w.vec(sortedKeys(leftOut), (k, ww) => ww.bytes32(k));
+  return w.finish();
+}
+/** The id a seated node signs: `seating` the seating's id (seatingId), `present` and `leftOut` node keys (sorted here). */
+const seenId = (s) => taggedHash(TAG.seatingSeen, seenBody(s));
+/** One seated node's SEEN signature. */
+const signSeen = (s, sign) => sign(seenId(s));
+
+/**
+ * THE CERTIFICATE: the body and every signature over it, sorted by node key - and, for a 22 round, `seen`: [{ present, leftOut,
+ * signatures }], the seated nodes' SEEN signatures grouped by the lists they signed (each sorted, the groups in id order).
+ */
+function encodeSeatingCertificate({ roundId, role, seated, signatures, seen = null }) {
+  const w = new Writer();
+  const body = seatingBody({ roundId, role, seated });
+  w.bytes(body, body.length);
+  const sigs = [...signatures].sort((a, b) => cmpSeat(a.nodePubkey, b.nodePubkey));
+  w.vec(sigs, (x, ww) => { ww.bytes32(x.nodePubkey); ww.bytes(x.signature, 64); });
+  if (seen) {
+    const seating = taggedHash(TAG.seating, body);
+    const groups = seen.map((g) => ({ present: sortedKeys(g.present), leftOut: sortedKeys(g.leftOut),
+      signatures: [...g.signatures].sort((a, b) => cmpSeat(a.nodePubkey, b.nodePubkey)),
+      id: seenId({ roundId, role, seating, present: g.present, leftOut: g.leftOut }) })).sort((a, b) => cmpSeat(a.id, b.id));
+    w.vec(groups, (g, ww) => {
+      ww.vec(g.present, (k, w3) => w3.bytes32(k));
+      ww.vec(g.leftOut, (k, w3) => w3.bytes32(k));
+      ww.vec(g.signatures, (x, w3) => { w3.bytes32(x.nodePubkey); w3.bytes(x.signature, 64); });
+    });
+  }
+  return w.finish();
+}
+function decodeSeatingCertificate(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_SEATING) throw new Error('that is not a SEATING');
+  if (!speaksVersion(r.u16())) throw new Error('a SEATING of another protocol version');
+  const roundId = r.bytes32(); const role = roleOfSeat(r.u8());
+  if (!role) throw new Error('a SEATING for no role');
+  const seated = r.vec((rr) => rr.bytes32());
+  const signatures = r.vec((rr) => ({ nodePubkey: rr.bytes32(), signature: rr.bytes(64) }));
+  // a 22 certificate's SEEN groups follow; below 22 the certificate ends here
+  const seen = r.at < bytes.length ? r.vec((rr) => ({ present: rr.vec((x) => x.bytes32()), leftOut: rr.vec((x) => x.bytes32()),
+    signatures: rr.vec((x) => ({ nodePubkey: x.bytes32(), signature: x.bytes(64) })) })) : null;
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the SEATING');
+  return { roundId, role, seated, signatures, seen };
+}
+
+/**
+ * A CERTIFICATE THAT STANDS for this round and role, against the draw the checker computed itself: the seated are drawn
+ * nodes, in score order, no more than the slots and at least the threshold, each once - and EVERY seated node signed it.
+ * `listsPresent` (seatingListsPresent of the round's contract): true for a 22 round - every seated node must also have signed one
+ * SEEN over this seating; false below 22 - a certificate carrying SEEN is refused; left out - SEEN is checked when carried. A
+ * certificate with SEEN answers `present` (every node any seated node listed, and the seated) and `leftOut` (the nodes every seated
+ * node says the round's census left out as absent), node keys hex, sorted.
+ */
+function verifySeating(bytes, { roundId, role, drawn, slots, verify, listsPresent = undefined }) {
+  let c; try { c = decodeSeatingCertificate(bytes); } catch (e) { return { ok: false, why: e.message }; }
+  if (roundId && !sameBytesSeat(c.roundId, roundId)) return { ok: false, why: 'that seating names another round' };
+  if (role && c.role !== role) return { ok: false, why: `that seating is for ${c.role}, not ${role}` };
+  const t = seatedThreshold(slots);
+  if (c.seated.length > slots) return { ok: false, why: `that seating seats ${c.seated.length}, more than the round's ${slots} seats` };
+  if (c.seated.length < t) return { ok: false, why: `that seating seats ${c.seated.length}, fewer than the ${t} a round needs: it opens no entries` };
+  const rank = new Map(drawn.map((k, i) => [toHex(k), i]));
+  let last = -1;
+  for (const k of c.seated) {
+    const i = rank.get(toHex(k));
+    if (i === undefined) return { ok: false, why: `that seating seats ${toHex(k).slice(0, 16)}, which the draw did not draw` };
+    if (i <= last) return { ok: false, why: 'that seating is not in score order (or seats a node twice)' };
+    last = i;
+  }
+  const id = seatingId(c);
+  const by = new Map(c.signatures.map((x) => [toHex(x.nodePubkey), x.signature]));
+  for (const k of c.seated) {
+    const sig = by.get(toHex(k));
+    if (!sig) return { ok: false, why: `seated node ${toHex(k).slice(0, 16)} did not sign that seating` };
+    let good = false; try { good = verify(sig, id, k); } catch { good = false; }
+    if (!good) return { ok: false, why: `seated node ${toHex(k).slice(0, 16)}'s signature on that seating does not verify` };
+  }
+  if (c.seen && listsPresent === false) return { ok: false, why: 'that seating is of a round below protocol 22 and carries a present list' };
+  if (!c.seen && listsPresent === true) return { ok: false, why: 'that seating is of a 22 round and names nobody present: every seated node signs who it held a PRESENT of' };
+  if (!c.seen) return { ok: true, seating: c, id };
+  // WHO WAS PRESENT (protocol 22, kanban #727): every seated node signed exactly one SEEN over this seating
+  const seatedHex = new Set(c.seated.map(toHex));
+  const drawnHex = new Set(drawn.map((k) => toHex(k)));
+  const signed = new Set();
+  const present = new Set(seatedHex);
+  let leftOut = null;
+  for (const g of c.seen) {
+    if (!strictlySorted(g.present) || !strictlySorted(g.leftOut) || !strictlySorted(g.signatures.map((x) => x.nodePubkey)))
+      return { ok: false, why: 'a present list of that seating is not sorted by node key, or names a node twice' };
+    if (!g.signatures.length) return { ok: false, why: 'a present list of that seating is signed by nobody' };
+    if (g.leftOut.some((k) => drawnHex.has(toHex(k)))) return { ok: false, why: 'that seating says the round\'s census left out a node the round drew' };
+    const sid = seenId({ roundId: c.roundId, role: c.role, seating: id, present: g.present, leftOut: g.leftOut });
+    for (const x of g.signatures) {
+      const h = toHex(x.nodePubkey);
+      if (!seatedHex.has(h)) return { ok: false, why: `${h.slice(0, 16)} signed who was present at that seating and is not seated in it` };
+      if (signed.has(h)) return { ok: false, why: `seated node ${h.slice(0, 16)} signed two present lists for that seating` };
+      let good = false; try { good = verify(x.signature, sid, x.nodePubkey); } catch { good = false; }
+      if (!good) return { ok: false, why: `seated node ${h.slice(0, 16)}'s signature on who was present does not verify` };
+      signed.add(h);
+    }
+    for (const k of g.present) present.add(toHex(k));
+    const lo = new Set(g.leftOut.map(toHex));
+    leftOut = leftOut === null ? lo : new Set([...leftOut].filter((h) => lo.has(h)));
+  }
+  for (const k of c.seated) if (!signed.has(toHex(k))) return { ok: false, why: `seated node ${toHex(k).slice(0, 16)} did not sign who was present at that seating` };
+  return { ok: true, seating: c, id, present: [...present].sort(), leftOut: [...(leftOut || [])].sort() };
+}
+
+/**
+ * TWO SEATINGS FOR ONE ROUND AND ROLE (§5A.7): each valid against the same draw, and different - proof of equivocation by
+ * every node that signed both. Answers those nodes (never empty while 2 x threshold > drawn).
+ */
+function seatingEquivocation(a, b, check) {
+  const x = verifySeating(a, check), y = verifySeating(b, check);
+  if (!x.ok) return { ok: false, why: `the first seating does not stand: ${x.why}` };
+  if (!y.ok) return { ok: false, why: `the second seating does not stand: ${y.why}` };
+  if (!sameBytesSeat(x.seating.roundId, y.seating.roundId) || x.seating.role !== y.seating.role) return { ok: false, why: 'those seatings are for different rounds or roles' };
+  if (sameBytesSeat(x.id, y.id)) return { ok: false, why: 'that is one seating twice, not two' };
+  const inB = new Set(y.seating.seated.map(toHex));
+  const both = x.seating.seated.filter((k) => inB.has(toHex(k)));
+  if (!both.length) return { ok: false, why: 'those seatings share no signer' };
+  return { ok: true, signers: both, roundId: x.seating.roundId, role: x.seating.role };
+}
+
+// ---- arena-protocol/src/rules.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE RULES A ROUND IS SETTLED UNDER, NAMED IN ITS CONTRACT (§6 equivocation_rule_hash, no_quorum_rule_hash, finality_rule,
+// slashing_rules_hash, disconnect_rule, claim_window_days, bond_min per role2026.0.3). Until now these were bound only
+// implicitly - through the code a seat runs and the config_hash. A v3 contract may name them: each rule a fixed text whose tagged hash
+// the contract carries, so a seat running other rules refuses the round by name (as a config it does not run), and a player's client
+// shows which rules it stakes under. The texts are the rules as built; changing one is a new hash, i.e. a new rule.
+
+
+const te = new TextEncoder();
+const RULE_TEXTS = Object.freeze({
+  equivocation: 'ARENA rule equivocation v1 (§10, kanban #25, RULED 2026-10-05 (b)): two checkpoints of one entry, each signed by its session key, '
+    + 'with different ids and the same tick or the same parent, forfeit the entry (FORFEIT, its stake to the loser pool); a pair from one later '
+    + 'parent forfeits only when both marks were receipted by a seat. The pair is the proof; no replay.',
+  noQuorum: 'ARENA rule no-quorum v1 (§5A.7, §5A.13, §16): a round with fewer than its threshold of drawn nodes present never opens for entries; '
+    + 'signer nodes unavailable at a run\'s start make it ENTRY_VOID (refund); conflicts that leave a committee under its threshold make its '
+    + 'entries ENTRY_VOID.',
+  finality: 'ARENA rule finality v1 (§13A, WINDOW-10-SPEC 2026-10-01): a result is PROVISIONAL until its objection window of exactly 600000 ms '
+    + 'closes without a standing objection, then FINAL; a standing objection is decided by deterministic re-run, SUSPENDED meanwhile.',
+  slashing: 'ARENA rule slashing v1 (§5A.3, §5A.3B): the offences of §5A.3 (double result, signing a result the re-run contradicts, signing for a '
+    + 'round its operator played, a false operator declaration), each with its one-artifact proof, slash the bond; 75 % evenly to the active '
+    + 'census nodes, 25 % to the donation set.',
+});
+/** A rule's hash: its text under the rule tag. */
+const ruleHash = (text) => taggedHash(TAG.contractRule, te.encode(text));
+const RULE_HASHES = Object.freeze(Object.fromEntries(Object.entries(RULE_TEXTS).map(([k, t]) => [k, ruleHash(t)])));
+/** disconnect_rule: what a player who stops sending inputs gets - 1, the run ends at its last receipted checkpoint (§15). */
+const DISCONNECT_LAST_MARK = 1;
+const DISCONNECT_RULES = Object.freeze([DISCONNECT_LAST_MARK]);
+
+/** The rules this build settles under, as a contract names them (with the round's own claim window and floors). */
+function buildRules({ claimWindowDays = 1, bondMinGameVerifySats, bondMinSettlementSats } = {}) {
+  return { equivocation: RULE_HASHES.equivocation, noQuorum: RULE_HASHES.noQuorum, finality: RULE_HASHES.finality, slashing: RULE_HASHES.slashing,
+    disconnect: DISCONNECT_LAST_MARK, claimWindowDays, bondMinGameVerifySats, bondMinSettlementSats };
+}
+
+/**
+ * DOES THIS BUILD SETTLE UNDER THE RULES A CONTRACT NAMES? { ok, why }. A contract naming none is bound only implicitly, as before;
+ * one naming them must name this build's four hashes and a disconnect rule it runs, a claim window of 1 day or more, and a floor per
+ * role no lower than the round's bond_min.
+ */
+function rulesStand(contract) {
+  const r = contract && contract.rules;
+  if (!r) return { ok: true, why: 'that round names no rules: bound by its config only' };
+  const eq = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
+  for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing'])
+    if (!eq(r[k], RULE_HASHES[k])) return { ok: false, why: `that round names a ${k} rule this build does not run: it is not selectable here, not slashed` };
+  if (!DISCONNECT_RULES.includes(r.disconnect)) return { ok: false, why: `that round names disconnect rule ${r.disconnect}, which this build does not run` };
+  if (!Number.isInteger(r.claimWindowDays) || r.claimWindowDays < 1) return { ok: false, why: 'a claim window is 1 day or more' };
+  for (const k of ['bondMinGameVerifySats', 'bondMinSettlementSats'])
+    if (typeof r[k] !== 'bigint' || r[k] < contract.bondMinSats) return { ok: false, why: `that round's ${k} is under its bond_min: a role's floor is the round's or above` };
+  return { ok: true, why: 'that round names the rules this build settles under' };
+}
+
+/** The bond floor of a role: the contract's own for that role when it names its rules, its bond_min otherwise. */
+function roleFloorSats(contract, role) {
+  const r = contract && contract.rules;
+  if (!r) return contract.bondMinSats;
+  return role === 'game' || role === 'game-verify' ? r.bondMinGameVerifySats : role === 'settlement' ? r.bondMinSettlementSats : contract.bondMinSats;
+}
+
+// ---- arena-protocol/src/sortition.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// Committee selection: bond-weighted, linear, and decided in integers.
+
+
+
+
+
+
+
+/**
+ * HOW MANY SIGNER NODES THIS ROUND GIVES THE POOL A ROLE SERVES IN.
+ *
+ * 5A.7 sizes the two pools, not the four roles - "GAME/VERIFY: 7 slots,
+ * threshold 5; SETTLEMENT: 7 slots, threshold 5" - so the mapping is the one
+ * 22A already uses for the fee shares, imported rather than written twice: a
+ * second copy of a protocol mapping is a second place for it to drift.
+ *
+ * A role with no pool has no committee, and that is answered rather than
+ * silently given zero signer nodes.
+ */
+function slotsForRole(contract, role) {
+  const pool = poolOfRole(role);
+  if (pool === GAME_VERIFY) return contract.gameVerifySlots;
+  if (pool === SETTLEMENT) return contract.settlementSlots;
+  return undefined;
+}
+
+/**
+ * A node's ticket for a role. Deterministic, and unchooseable in advance
+ * because the committee seed is not known when the bond is funded.
+ */
+function ticketFor(committeeSeed, entry, role) {
+  const w = new Writer();
+  w.bytes32(committeeSeed);
+  w.bytes32(entry.txid);
+  w.u32(entry.vout);
+  w.u8(roleByte(role));
+  return bytesToBigInt(taggedHash(TAG.ticket, w.finish()));
+}
+
+/**
+ * Selection weight: LINEAR in the bond, floored, never below one.
+ *
+ * A comment rather than a line of code, because square root looks like the
+ * obvious anti-whale choice and somebody will try to reintroduce it. Under
+ * sqrt, four nodes at 1x have total weight 4 against one node at 4x with
+ * weight 2 - so splitting a bond DOUBLES a node's chances, which is the exact
+ * opposite of what the anti-whale intent wanted.
+ */
+function weightOf(bondSats, bondMin) {
+  if (bondMin <= 0n) throw new Error('bondMin must be positive');
+  const w = bondSats / bondMin;
+  return w < 1n ? 1n : w;
+}
+
+/**
+ * Selects `slots` entries for a role.
+ *
+ * The score is ticket/weight, and it is NEVER computed. Cross-multiplied
+ * BigInts instead: a float comparison here is a consensus bug whose only
+ * symptom is two nodes disagreeing when their scores are close, which is the
+ * worst failure profile there is - rare, unreproducible, and load-dependent.
+ */
+/**
+ * HOW MANY A ROLE DRAWS (§5A.7 reserve seats, RULED 2026-09-28): more nodes than it seats, so a drawn node that
+ * is offline when its round comes is replaced - two reserves over the seats, capped where two seatings could stop sharing a
+ * signer (`2 x threshold > drawn`): 9 for 7 seats (threshold 5), 3 for 2 (threshold 2). The census may hold fewer.
+ */
+/**
+ * THE ROLE A DRAW IS TICKETED ON: its own, and for a v2 round (2026.0.2) the settlement pool's for both - one
+ * ordered list, so the seats of both roles are one set and the round's signer nodes are those 7.
+ */
+const drawRoleOf = (contract, role) => (namesNoDraw(contract) ? 'settlement' : role);
+
+function drawnForRole(contract, role) {
+  const slots = slotsForRole(contract, role);
+  if (!Number.isInteger(slots)) return undefined;
+  const t = slots === 7 ? 5 : slots === 2 ? 2 : Math.floor(slots / 2) + 1;
+  return Math.min(slots + 2, 2 * t - 1);
+}
+
+function selectCommittee({ entries, contract, role, exclude, committeeSeed, count }) {
+  // EVERY NUMBER THAT DECIDES THE COMMITTEE COMES OFF THE CONTRACT.
+  //
+  // All three used to be arguments. Section 6 on the slot counts: "echoed for
+  // readability; MUST equal genesis_parameters... A contract disagreeing with
+  // the network it names is invalid, NOT A SMALLER COMMITTEE." Nobody had to
+  // forge a census to shrink one - a smaller `slots` did it. And the seed
+  // decides who wins the tickets, while `bondMin` normalises the weights, so a
+  // caller free to choose either chose the committee as surely as the seed.
+  const slots = slotsForRole(contract, role);
+  if (!Number.isInteger(slots))
+    throw new Error(`that round names no committee size for ${role}`);
+  // THE SEED IS THE BEACON'S, AND IT IS AN ARGUMENT.
+  //
+  // It used to be read off `contract.committeeSeed` - thirty-two bytes the
+  // round's AUTHOR wrote - so the lottery was a function of a value the
+  // creator chose. Measured on a fixed census of eight bonded nodes with two
+  // slots: 34 offline candidate seeds were enough to assign a chosen pair, and
+  // since the assigned set became the only trusted list that is the whole
+  // committee. That is v4.4's grinding attack, which 5A.5 exists to close:
+  //
+  //   committee_seed = H(census_root_gv || census_root_settle
+  //                      || round_id || round_randomness)
+  //
+  // and the spec's Round Contract (v4.6.2) carries `randomness_rule`,
+  // `committee_time` and `entry_open_time` - and NO
+  // committee seed, because a contract cannot name one: `round_id` hashes the
+  // contract, so a contract carrying the seed derived from its own id has no
+  // fixed point. Measured, six iterations, never equal.
+  //
+  // So the caller brings the seed its beacon produced. No fallback to the
+  // field: a caller with no beacon gets a refusal, because "I have no
+  // randomness" and "the committee is whatever the contract says" must never
+  // be the same answer.
+  if (!(committeeSeed instanceof Uint8Array) || committeeSeed.length !== 32)
+    throw new Error('a committee is drawn on the seed its beacon produced, not on one a contract names');
+  // A POSITIVE FLOOR, because the weight is bond/floor and a floor of zero is
+  // not a small floor - it is a division by zero, and `weightOf` threw from
+  // underneath here rather than this answering. It is also the thing 5A.3
+  // warns about: a floor of nothing makes identity free, "the flaw that made
+  // v4.4 unsafe".
+  if (typeof contract.bondMinSats !== 'bigint' || contract.bondMinSats <= 0n)
+    throw new Error('that round names no positive bond floor to weigh against');
+  // A ROLE'S OWN FLOOR, WHERE THE CONTRACT NAMES ITS RULES (§6 bond_min per rolerules.js): the role's floor weighs and
+  // admits; one draw for both roles (a v2 round) takes the higher. A contract naming no rules: its bond_min, as before.
+  const bondMin = namesNoDraw(contract)
+    ? [roleFloorSats(contract, 'game'), roleFloorSats(contract, 'settlement')].reduce((a, b) => (a > b ? a : b))
+    : roleFloorSats(contract, role);
+
+  // AND THE CENSUS HAS TO BE BIG ENOUGH TO HOLD A ROUND AT ALL.
+  //
+  // Without this the function ended in `slice(0, slots)`, so a census with one
+  // eligible node and a contract naming two slots gave back a COMMITTEE OF
+  // ONE - silently, with no refusal anywhere - which is the thing section 13
+  // exists to prevent arriving through the front door. `census_min_nodes` is
+  // the network's own answer to "too small", and on all three networks it is
+  // at least the slot count, so meeting it also means there are enough nodes
+  // to fill the signer nodes.
+  //
+  // BEFORE EXCLUSIONS, on purpose: `exclude` is for a re-draw, and excluding a
+  // node does not unbond it. What is measured here is the census, not the
+  // attempt.
+  const enough = meetsCensusMinimum(entries, contract, role);
+  if (!enough.ok) throw new Error(enough.why);
+
+  const excluded = new Set((exclude || []).map((e) => outpointKey(e)));
+
+  // ONE NODE KEY, ONE SEAT (RULED 2026-09-30, after testnet4 round 5eaa0966: a census still holding extra bond
+  // rows under two node keys seated node 7 and node 4 twice in the game pool and node 2 twice in settlement, and the
+  // stake's handout could not be dealt - "two signer nodes of that handout are one key"). A node key is drawn at most
+  // once: all its bonds for the role count as ONE entry - their sats summed into its weight, its ticket drawn on its
+  // lowest outpoint - so extra bond rows under one key never fill two seats. An outpoint excluded for a re-draw
+  // excludes its key.
+  const keyOf = (e) => toHex(e.pubkey);
+  const out = new Set(entries.filter((e) => excluded.has(outpointKey(e))).map(keyOf));
+  const byKey = new Map();
+  for (const e of entries) {
+    // the role, and for game/verify the round's game hosted (census.js eligibleFor)
+    // ONE DRAW FOR BOTH ROLES (2026.0.2): a v2 round's node serves both, so it is eligible for both
+    if (!(namesNoDraw(contract) ? eligibleFor(e, contract, 'game') && eligibleFor(e, contract, 'settlement') : eligibleFor(e, contract, role))
+      || out.has(keyOf(e))) continue;
+    const had = byKey.get(keyOf(e));
+    if (!had) { byKey.set(keyOf(e), { entry: e, bondSats: e.bondSats }); continue; }
+    had.bondSats += e.bondSats;
+    if (compareEntries(e, had.entry) < 0) had.entry = e;
+  }
+  // FEWER NODE KEYS THAN SEATS: each key once, as each entry was once before - never a key twice to fill a seat. The
+  // census minimum above is what refuses a census too small to hold a round (roster.test pins the smaller honest answer).
+
+  const scored = [...byKey.values()].filter(({ bondSats }) => bondSats >= bondMin).map(({ entry, bondSats }) => ({
+    entry,
+    ticket: ticketFor(committeeSeed, entry, drawRoleOf(contract, role)),
+    weight: weightOf(bondSats, bondMin),
+  }));
+
+  scored.sort((a, b) => {
+    const left = a.ticket * b.weight;
+    const right = b.ticket * a.weight;
+    if (left < right) return -1;
+    if (left > right) return 1;
+    // A tie is astronomically unlikely and must still be decided the same way
+    // everywhere, so it falls back to the census order.
+    return compareEntries(a.entry, b.entry);
+  });
+
+  // `count` is the reserve draw (drawCommittee, §5A.7): the same order, more of it
+  return scored.slice(0, Number.isInteger(count) ? count : slots).map((s) => s.entry);
+}
+
+/** THE DRAW (§5A.7): the role's `drawnForRole` lowest scores, in score order - of whom at most `slots` are seated. */
+const drawCommittee = (args) => selectCommittee({ ...args, count: drawnForRole(args.contract, args.role) });
+
+const outpointKey = (e) => {
+  let s = '';
+  for (let i = 0; i < 32; i++) s += e.txid[i].toString(16).padStart(2, '0');
+  return s + ':' + e.vout;
+};
+
+/**
+ * A ROUND'S ATTESTORS (kanban #630, protocol 21): ATTESTORS_DRAWN node keys of its census, drawn as its committees are (one key one
+ * seat, weighed by bond) but on their own seed - H("ARENA/v1/AttestorDraw" || committee seed) - so every node draws the same seven from
+ * the round's beacon, before the round, and not the settlement committee. An outcome stands with ATTEST_DRAW_THRESHOLD of them.
+ */
+const ATTESTORS_DRAWN = 7;
+const ATTEST_DRAW_THRESHOLD = 5;
+function drawAttestors({ entries, contract, committeeSeed }) {
+  if (!(committeeSeed instanceof Uint8Array) || committeeSeed.length !== 32)
+    throw new Error('a round\'s attestors are drawn on the seed its beacon produced');
+  return selectCommittee({ entries, contract, role: 'settlement', committeeSeed: taggedHash(TAG.attestorDraw, committeeSeed), count: ATTESTORS_DRAWN });
+}
+
+// ---- arena-protocol/src/known-games.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// GENERATED by packages/arena-protocol/tools/known-games.js from each game's signed manifest - do not edit by hand.
+//
+// The games this client lets a player stake on (§0A.6, §5), by game_id: each with the cores (sim_wasm_hash)
+// and, per core, the configs its manifest lists, and the configs the game plays as one world per round (seed.js asks
+// them through known-game.js sharedWorldOf). A paying round naming any other game, or a core or config its
+// game does not list, is refused by `gameIsKnownGood` (known-game.js).
+const KNOWN_GOOD_GAMES = Object.freeze({
+  '495516ae59539661062cd72fd8716afbb378bd386297ab09b20aba0a2cd44150': Object.freeze({
+    name: 'nextblock',
+    cores: Object.freeze({
+      '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+      '68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      'd15c39bb83b7cb63ce2b232a7b62b0078d78d9944013ce42799c80a29bf005ef': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+      'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1', 'dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801']),
+    }),
+    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
+  'c693585b01cef147f311e39c304f7b40f99774afc032f58db35ef8094cfa78dc': Object.freeze({
+    name: 'nextblock',
+    // 2026.0.2: manifest version 2, parent 495516ae, requires the round that names no draw
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+      '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+      '68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      'd15c39bb83b7cb63ce2b232a7b62b0078d78d9944013ce42799c80a29bf005ef': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+      'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1', 'dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801']),
+    }),
+    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
+  'd09982face63f0f097c0d5358bb00152d44a0f4cd2bbd76eb8cfd129afc0a5d3': Object.freeze({
+    name: 'btc-close',
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'd6f5a5555f9089e167d41d62cc0f09c4c3f13776e15ab29c0a18f13048d926c6',
+    attested: Object.freeze({ outcomes: Object.freeze(['above 100k','between','below 90k']), attestors: Object.freeze(['54c08074d9d9fdabed70d5ad9f7d46fbb84370b277cd88fbd96bd87de3fa01d2', 'c7e6f51dba95e5b0ea999a066d17244963a47af07d8b87d2f36b5e0a2f14477d', 'd7abf30bda6d21708f7498e7a972436d22584c0624741d4cc5385faa396b8f61']),
+      threshold: 2, devKey: 'd372fd794e1c9af6e1fc819b5d1f033f65b79a95ad46c1c660c32eb429d7848f', networks: Object.freeze(['9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38']) }),
+  }),
+  'a1d5b445f5c223769a295d43e541dfedba431cd58d813f0dc75708dc5b094f8b': Object.freeze({
+    name: 'btc-close',
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'd6f5a5555f9089e167d41d62cc0f09c4c3f13776e15ab29c0a18f13048d926c6',
+    attested: Object.freeze({ outcomes: Object.freeze(['above 100k','between','below 90k']), attestors: Object.freeze(['54c08074d9d9fdabed70d5ad9f7d46fbb84370b277cd88fbd96bd87de3fa01d2', 'c7e6f51dba95e5b0ea999a066d17244963a47af07d8b87d2f36b5e0a2f14477d', 'd7abf30bda6d21708f7498e7a972436d22584c0624741d4cc5385faa396b8f61']),
+      threshold: 2, devKey: 'd372fd794e1c9af6e1fc819b5d1f033f65b79a95ad46c1c660c32eb429d7848f', networks: Object.freeze(['9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38']) }),
+  }),
+  'fc4e9ec3d268b5dd89078ffa68f4f51cb8eaea601e6c705c428e5fd92c9d09ab': Object.freeze({
+    name: 'btc-updown-15m',
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'ce97df184bd2a5281886159c2a23b954d158f94c1e41bc10bafc46cf912ae37a',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['128a875bfbe1b6f7a426ad0dabc8b87288e1ca18b2aee2a8a13872f372bf4779', '1dd88fb738cb409f2ec319c6efd32f63a4f4c4288890a0c1b6d8e4d2ca5530de', '89c9eba543b9dcbd6aa66006e5ebe865de391c78e391dc3b51a55f99d0027fa3']),
+      threshold: 2, devKey: 'e47762fea394d539fe33a117bb410e318e8ae6c0e23d333babe3bed0e8e998d8', networks: Object.freeze(['9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '647425b6e6a053a0e29ff6fc188b4b3b64360b7703cf956a0c2e62d96bcc8ae9': Object.freeze({
+    name: 'btc-updown-15m',
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'ce97df184bd2a5281886159c2a23b954d158f94c1e41bc10bafc46cf912ae37a',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['128a875bfbe1b6f7a426ad0dabc8b87288e1ca18b2aee2a8a13872f372bf4779', '1dd88fb738cb409f2ec319c6efd32f63a4f4c4288890a0c1b6d8e4d2ca5530de', '89c9eba543b9dcbd6aa66006e5ebe865de391c78e391dc3b51a55f99d0027fa3']),
+      threshold: 2, devKey: 'e47762fea394d539fe33a117bb410e318e8ae6c0e23d333babe3bed0e8e998d8', networks: Object.freeze(['9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '850a05e817c295c677cdddd0833e390955daa351008eb49fcb144b9ae023ff0b': Object.freeze({
+    name: 'btc-updown-15m',
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: '9daa58a96bc560d9b4f60a8328634a7457a2b4af6b748a7847f9bac3ce181076',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['128a875bfbe1b6f7a426ad0dabc8b87288e1ca18b2aee2a8a13872f372bf4779', '1dd88fb738cb409f2ec319c6efd32f63a4f4c4288890a0c1b6d8e4d2ca5530de', '89c9eba543b9dcbd6aa66006e5ebe865de391c78e391dc3b51a55f99d0027fa3']),
+      threshold: 2, devKey: 'e47762fea394d539fe33a117bb410e318e8ae6c0e23d333babe3bed0e8e998d8', networks: Object.freeze(['9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  'fc98353b00f69133210b6e3e79392f3a1faf6bdde466e50459627a7081129f4b': Object.freeze({
+    name: 'rock-paper-scissors',
+    cores: Object.freeze({
+      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
+  'd92d4349351bdc9a840e70c62cfbf5b2c6f72d66da40a3f33f4679b9e9d26d0c': Object.freeze({
+    name: 'rock-paper-scissors',
+    cores: Object.freeze({
+      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
+  '322d870270344015dd8278df5c6c58b962e3b7f3f1c83c5f3cbf2ee8986d40f3': Object.freeze({
+    name: 'rock-paper-scissors',
+    cores: Object.freeze({
+      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
+  'c55f026bdb01b09725e493145ee569a5a11f87f423db3f9d6101f247143aed40': Object.freeze({
+    name: 'rock-paper-scissors',
+    cores: Object.freeze({
+      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
+  '4cf2bfcbb9f44821f8f108d4b3860b8615b12a0b390b695158a526a6e5a9f2c0': Object.freeze({
+    name: 'rock-paper-scissors',
+    cores: Object.freeze({
+      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
+  '1e9ab4b7d402d51f46def727e6db58da0ad70c4afafc295c82357d612543cd50': Object.freeze({
+    name: 'rock-paper-scissors',
+    cores: Object.freeze({
+      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
+  'a75f54fd4f978a29ab6d39d9ef85c7adbe0576614634c679ae33d3e1c06164ea': Object.freeze({
+    name: 'rock-paper-scissors',
+    // 2026.0.2: manifest version 2, parent 1e9ab4b7, requires the round that names no draw
+    requiredProtocolVersion: 2,
+    // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
+    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
+    seatsPerTable: true,
+    cores: Object.freeze({
+      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
+  '90f462c823bdd382dce3a72c2bf25999575d727e8ea81459b8b4dce80b63339c': Object.freeze({
+    name: 'rock-paper-scissors',
+    //: manifest version 3, parent a75f54fd - version 2 in every term, with the new client ("← Arena")
+    requiredProtocolVersion: 2,
+    // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
+    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
+    seatsPerTable: true,
+    cores: Object.freeze({
+      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
+  '672415c814e61b47ce038cd7f9a9431be8b41123c59502c371d5cd6a79c7684f': Object.freeze({
+    name: 'btc-updown-15m',
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  'f5f3f18753b4167fe36d2e18f72c72b6e5cfea93cd5ef98c716d3b9137890375': Object.freeze({
+    name: 'btc-updown-15m',
+    // 2026.0.2: manifest version 2, parent 672415c8, requires the round that names no draw
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '122a4478c7bf905996155e8136b165706a9f1a2b45a72d92871ec96c5a6e3a40': Object.freeze({
+    name: 'btc-updown-15m',
+    //: manifest version 3, parent f5f3f187 - version 2 in every term, with the new client (back button on its own row)
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '6f4174f6ccf973683fc36faae6afe42ab73f0ad4cf1e69b657c7a05e5034eedb': Object.freeze({
+    name: 'btc-updown-15m',
+    //: manifest version 4, parent 122a4478 - version 3 in every term, with the new client ("← Arena")
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '8b9fceafac13fe11ccb81df7cd3eb67809d96c40b027689cfd570a660f7cbaaa': Object.freeze({
+    name: 'btc-updown-15m',
+    //: manifest version 5, parent 6f4174f6 - version 4 in every term, with the new client (an order's progress in the sheet)
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '33b8b298a55ed50e9da12d2cee8a394f206841c7702c3ea8f613ab331dcc5b31': Object.freeze({
+    name: 'btc-updown-15m',
+    //: manifest version 6, parent 8b9fceaf - version 5 in every term, with the new client (My orders as cards)
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  'c5478ded0e29d0f394d30b97400729b28bb852806bed60cf9366e18f2f314256': Object.freeze({
+    name: 'btc-updown-15m',
+    //: manifest version 7, parent 33b8b298 - version 6 in every term, with the new client (the history)
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '50ae86410ae55b8c2d3d08c5edf5b6fb53cd0834900b58b0fdef02ac999bb9ea': Object.freeze({
+    name: 'btc-updown-15m',
+    //: manifest version 8, parent c5478ded - version 7 in every term, with the new client (the desktop exchange view)
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  'ade9f9792562e603f307b638160a5fef51c17665082aa713692060cd089002af': Object.freeze({
+    name: 'btc-updown-15m',
+    //: manifest version 9, parent 50ae8641 - version 8 in every term, with the new client (past orders)
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '5c77c967d4e2c6798ec4fbc2bba246e8ff14779ead6da9b004e4f74c2e9ff519': Object.freeze({
+    name: 'btc-updown-15m',
+    //: manifest version 10, parent ade9f979 - version 9 in every term, with the new client (its history logic in one tested block)
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '51f7c1fb4997064fb90f8bed8b17502e57f12eedbca58a2bcf3f3bb28e82ab8e': Object.freeze({
+    name: 'btc-updown-15m',
+    //: manifest version 11, parent 5c77c967 - version 10 in every term, with the new client (the totals in one line on a phone)
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '7432324ab5a82bebb6bfba44a964204ab5c26b04fd41c83239a198b1f109a781': Object.freeze({
+    name: 'btc-updown-15m',
+    //: manifest version 12, parent 51f7c1fb - version 11 in every term, with the new client (the amount's − / + steps, kept)
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  'fa9a348f9ac4441a05e8ee134d4f3615c758e907626539ef453107e306aaef72': Object.freeze({
+    name: 'btc-updown-15m',
+    //: manifest version 13, parent 7432324a - version 12 in every term but the fee: 0.4 % nodes, 0.6 % donation of which 0.2 % protocol reserve
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  'fe07fe23585bc61ae8dfd2f1ef4a15258025ca416ed3772920fd624ff0b852ac': Object.freeze({
+    name: 'btc-updown-15m',
+    //: manifest version 14, parent fa9a348f - version 13 in every term, with the new client (a phone's Compact / Advanced switch)
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '0860b4a7b5007bf5e21d421b66a3773bba892d9a8747602d5a8bb4cdaf3e3584': Object.freeze({
+    name: 'btc-updown-15m',
+    // manifest version 15, parent fe07fe23 - version 14 in every term, with the new client (every order's round with its day)
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '8be37be1196aa62cca1f7066b40ccad10f7b33555b5315b3b174568e3585fa8c': Object.freeze({
+    name: 'btc-updown-15m',
+    // manifest version 16, parent 0860b4a7 - version 15 in every term, with the new client (everything drawn by React, kanban #564)
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '5add5235b912410e9afaf2d7b38fab7deeb82fe455bbc730f5c38da1d7b81dbc': Object.freeze({
+    name: 'btc-updown-15m',
+    // manifest version 17, parent 8be37be1 - version 16 in every term, its client's comments cleaned
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '600ef6dde43f818e8ff46a78da9fb8c907fcbaa01ea5af59a756dc2c62459613': Object.freeze({
+    name: 'btc-updown-15m',
+    // manifest version 18, parent 5add5235 - version 17 in every term, its client both halves of the book: Buy or Sell (kanban #588)
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  'ac082fd8491611d4f2a8c1d1b977b2b3389d1e2f12fee3832fdf6ce0c3bf6d9a': Object.freeze({
+    name: 'btc-updown-15m',
+    // manifest version 19, parent 600ef6dd - version 18 in every term, a cancel on each resting sell (kanban #591)
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '04f468bf514c2af3cefee153d1cccf7b06c18ce1cb08f8e5fede7e92338857d6': Object.freeze({
+    name: 'btc-updown-15m',
+    // manifest version 20, parent ac082fd8 - version 19 in every term but its clients: only the pages with no names or ticket numbers (kanban #523)
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '5fba7f5e0d4eb5da10c1eb6472ba862f8099e7c2e94be4645c483eb3a03b4a4f': Object.freeze({
+    name: 'btc-updown-15m',
+    // manifest version 21, parent 04f468bf - version 20 in every term, each order's times on its card and in the past orders
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '9a49869c11c5cd52cf0e5a2ca49f42a549c20f7b86f1fbd9fba0f065bc608556': Object.freeze({
+    name: 'btc-updown-15m',
+    // manifest version 22, parent 5fba7f5e - version 21 in every term, the card's times named submitted, placed, lock
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '90fcf7464f555e003049361ee370f392c766146dd840032cd6954640047711ea': Object.freeze({
+    name: 'btc-updown-15m',
+    // manifest version 23, parent 9a49869c - version 22 in every term, each order's transaction id to the explorer
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '13699356aae534eeb753de4d441dc223698f429f25aeb30ea3e25f4b4e24993e': Object.freeze({
+    name: 'rock-paper-scissors',
+    //: manifest version 4, parent 90f462c8 - version 3's rules (core f86afd62, the same decide), the table drawn by React (kanban #564, #523)
+    requiredProtocolVersion: 2,
+    // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
+    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
+    seatsPerTable: true,
+    cores: Object.freeze({
+      'f86afd62734989cca3004021d00879af5d57008958908ca28973100625d7f031': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
+  '62a940ae282fe143b65802e2a36a1dd46618738fb55c12ab1f77e5955637573e': Object.freeze({
+    name: 'rock-paper-scissors',
+    //: manifest version 5, parent 13699356 - version 4 in every term, everything drawn by React (kanban #564)
+    requiredProtocolVersion: 2,
+    // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
+    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
+    seatsPerTable: true,
+    cores: Object.freeze({
+      'f86afd62734989cca3004021d00879af5d57008958908ca28973100625d7f031': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
+  'b8b88e233baac6671c8ac6da8193f816d7f552423a3888b184018b7b49839651': Object.freeze({
+    name: 'nextblock',
+    // 2026.0.3: manifest version 3, parent c693585b, sells the larger truck (core f0cc7b7b), protocol 10 - added by hand
+    // from the generator's output for known-v3.js, which would drop the hand-kept fields above (seatsPerTable)
+    cores: Object.freeze({
+      '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+      '68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      'd15c39bb83b7cb63ce2b232a7b62b0078d78d9944013ce42799c80a29bf005ef': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+      'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1', 'dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801']),
+      'f0cc7b7b2e75e350149ff8a6e58a1cc861a3ab4969d1c81b2206564b57ffb7a8': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+    }),
+    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    requiredProtocolVersion: 10,
+  }),
+  //: manifest version 4, parent b8b88e23 - version 3 in every term, requiring protocol 11 (its items pay the reserves)
+  '76f505108cfdb664e7f390c2a9390ad21ddb85d46966743695b02be3242bc93b': Object.freeze({
+    name: 'nextblock',
+    cores: Object.freeze({
+      '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+      '68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      'd15c39bb83b7cb63ce2b232a7b62b0078d78d9944013ce42799c80a29bf005ef': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+      'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1', 'dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801']),
+      'f0cc7b7b2e75e350149ff8a6e58a1cc861a3ab4969d1c81b2206564b57ffb7a8': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+    }),
+    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    requiredProtocolVersion: 11,
+  }),
+  //: manifest version 5, parent 76f50510 (kanban #523) - version 4 in every term but its cores and clients: the two cores with their
+  // comments cleaned of names, ticket numbers and blwp (a5c5766a the truck, 0847c99f the truck that knows the larger truck), their bundles
+  '09bfe97a6a2b640b69ee9f4a175d25e091ee7229e536f1f3e1adc431f60afb1b': Object.freeze({
+    name: 'nextblock',
+    cores: Object.freeze({
+      '0847c99f60e694e106fce0a79ac252b3e6170a343db52a95e3b5052a7e00a5f1': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      'a5c5766a7902b6703ebe9382cea9154adc777af3e5cafa766265e971efa52c5a': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+    }),
+    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    requiredProtocolVersion: 11,
+  }),
+  //: manifest version 6, parent 09bfe97a (kanban #523) - version 5 in every term but the game's mark: the icon and the wordmark cleaned
+  'd325744b4a6b7351a8ba28ae235ef7f72e843eeac6ce5e05d65374aed77f8659': Object.freeze({
+    name: 'nextblock',
+    cores: Object.freeze({
+      '0847c99f60e694e106fce0a79ac252b3e6170a343db52a95e3b5052a7e00a5f1': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      'a5c5766a7902b6703ebe9382cea9154adc777af3e5cafa766265e971efa52c5a': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+    }),
+    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    requiredProtocolVersion: 11,
+  }),
+  // UP/DOWN VERSION 24 (kanban #630): no attestor keys - each round's 7 are drawn from its census, 5 decide; protocol 2, as version 23
+  '8e47d27fd39597cfa6e29412efa450a994f013b5db8d553ce55304da000cb3ca': Object.freeze({
+    name: 'btc-updown-15m',
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze([]),
+      threshold: 0, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']), attestDraw: Object.freeze({ count: 7, threshold: 5 }) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    requiredProtocolVersion: 2,
+  }),
+});
+
+// ---- arena-protocol/src/known-game.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// A PAYING ROUND PLAYS A GAME THIS CLIENT KNOWS, ON A CORE AND CONFIG THAT GAME LISTS, OR IT IS REFUSED (§5, §0A.6;
+//).
+//
+// Section 5 (v4.6): "The sim_wasm_hash is chosen by the round creator, so the client must not accept it blindly. For
+// real-money rounds the client MUST verify the hash against its known-good list of reproducibly built core versions,
+// and MUST refuse ... for unknown hashes." Since games are plugins the list is per game: a round names its game
+// (game_id, §0A.3), and a core is known only as a core of the game the round names, under a config that game lists for
+// it. This client refuses. There is no override: no flag, no query parameter, nothing that lets an unknown game through.
+// (§0A.6's confirmed stake on an unlisted game, shown with its developer key and manifest id, is the lobby's,.)
+//
+// F2's second clause rests on it (FEDERATION.md): the player's key is theirs only if the code that decides the round is
+// code they can know.
+
+
+
+
+const isGameBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+/** The configs (hex) the round's game shares one world under, as this client knows the game - none for a game it does not. */
+function sharedWorldOf(gameId) {
+  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
+  return game && Array.isArray(game.sharedWorld) ? [...game.sharedWorld] : [];
+}
+
+/** The id of the game dev's donation set its manifest names (§0A.8), as this client knows the game - or null. */
+function gameDonationSetIdOf(gameId) {
+  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
+  return game && typeof game.gameDonationSetId === 'string' ? game.gameDonationSetId : null;
+}
+
+/**
+ * THE MARKET THIS CLIENT PINS FOR A GAME (§0A.7a): an attested game's outcomes, attestor keys (hex),
+ * threshold, developer key and the networks it is pinned for - or null for a game it does not pin, or one that is not attested.
+ */
+function marketOf(gameId) {
+  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
+  return game && game.attested ? { gameId: toHex(gameId), name: game.name, known: true, ...game.attested } : null;
+}
+
+const isZero32 = (b) => isGameBytes32(b) && b.every((x) => x === 0);
+
+// `networkId`: the round's network - a pinned market is good only on the networks it is pinned for. `confirmed`: game ids
+// (hex) of ATTESTED games the player confirmed a second time on this page (§0A.6) - an unpinned market is let through only
+// then, and only with no core and no config (there is nothing of it to run).
+function gameIsKnownGood(gameId, simCoreHash, configHash, { networkId = null, confirmed = null, protocolVersion } = {}) {
+  if (!isGameBytes32(gameId)) return { ok: false, why: 'that round names no 32-byte game, so nothing says which game decides it' };
+  const game = KNOWN_GOOD_GAMES[toHex(gameId)];
+  // THE VERSION THE GAME REQUIRES (manifest.js REQUIRED_VERSION_MARKER): this build must speak it, and the
+  // round must run it or a later one. A pinned game that requires none passes as before.
+  if (game && game.requiredProtocolVersion) {
+    if (!speaksVersion(game.requiredProtocolVersion))
+      return { ok: false, why: `${game.name} requires protocol version ${protocolVersionName(game.requiredProtocolVersion)}, which this client does not speak: update the page` };
+    if (!(Number.isInteger(protocolVersion) && protocolVersion >= game.requiredProtocolVersion))
+      return { ok: false, why: `${game.name} requires protocol version ${protocolVersionName(game.requiredProtocolVersion)}; that round runs ${Number.isInteger(protocolVersion) ? protocolVersionName(protocolVersion) : 'none'}` };
+  }
+  // A MARKET (§0A.7a): no core, no config; pinned for this network, or confirmed twice by the player
+  if ((game && game.attested) || (!game && confirmed && confirmed.has && confirmed.has(toHex(gameId)))) {
+    if (!isZero32(simCoreHash) || (configHash !== undefined && !isZero32(configHash)))
+      return { ok: false, why: 'that round names a core or a config, and its game is a market: a market has nothing to run (§0A.7a)' };
+    if (!game) return { ok: true, game: 'an unpinned market the player confirmed', confirmed: true };
+    const nets = game.attested.networks || [];
+    if (nets.length && !(networkId instanceof Uint8Array && nets.includes(toHex(networkId))))
+      return { ok: false, why: `market ${game.name} is pinned only for network${nets.length === 1 ? '' : 's'} ${nets.map((n) => n.slice(0, 16)).join(', ')}: refused on this one` };
+    return { ok: true, game: game.name, market: true };
+  }
+  if (!game)
+    return { ok: false, why: `that round plays game ${toHex(gameId).slice(0, 16)}..., which is not on this client's known-good list `
+      + 'of games: a paying round on an unknown game is refused (§5, §0A.6)' };
+  if (!isGameBytes32(simCoreHash))
+    return { ok: false, why: 'that round names no 32-byte core hash, so nothing says which simulation decides it' };
+  const hex = toHex(simCoreHash);
+  const configs = game.cores[hex];
+  if (!configs)
+    return { ok: false, why: `that round runs core ${hex.slice(0, 16)}..., which ${game.name}'s manifest does not list: `
+      + 'a paying round on an unknown core is refused (§5)' };
+  // AND THE CONFIG IT RUNS, when the caller names one (as coreIsKnownGood had it before games: a round always carries one)
+  if (configHash === undefined) return { ok: true, game: game.name };
+  if (!isGameBytes32(configHash))
+    return { ok: false, why: 'that round names no 32-byte config hash, so nothing says which rules decide it' };
+  if (!configs.includes(toHex(configHash)))
+    return { ok: false, why: `that round runs core ${hex.slice(0, 16)}... under config ${toHex(configHash).slice(0, 16)}..., which is `
+      + `not a config ${game.name} lists for that core: refused, as an unknown core is (§5, §27A.6)` };
+  return { ok: true, game: game.name };
+}
+
+/**
+ * THE NODE FEE AND DONATION A PINNED GAME CHARGES: a market's own (its manifest's terms), else the market default
+ * 0.5 % + 0.5 % (2026-10-09), else a game's network 5 % and the player's donation choice (null). null for a game this
+ * client does not pin - the caller then knows its rate another way (an unpinned market the player confirmed: its manifest).
+ */
+function feeOfKnownGame(gameId) {
+  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
+  if (!game) return null;
+  if (game.fee) return { nodeBps: game.fee.nodeBps, donationBps: game.fee.donationBps, reserveBps: game.fee.reserveBps || 0 };   // the reserve inside the donation
+  return game.attested ? { nodeBps: 50, donationBps: 50 } : { nodeBps: 500, donationBps: null };
+}
+
+/**
+ * A PINNED MARKET'S TERMS: its resolution delay and void deadline as the generator wrote them (decimal ms), the
+ * ones its rounds' lock span is checked by on the page (lock-expiry.js); null for a game, or a market pinned without terms.
+ */
+function termsOfKnownGame(gameId) {
+  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
+  if (!game || !game.terms) return null;
+  return { resolveAfterCloseMs: BigInt(game.terms.resolveAfterCloseMs), deadlineAfterResolveMs: BigInt(game.terms.deadlineAfterResolveMs) };
+}
+
+/**
+ * A TABLE'S ANCHOR (2026-10-13 pick (c): "A waiting player gets one committee and one key for that table, then
+ * 8-second rounds on that key until the table is empty"). For a round of a game whose known entry says `seatsPerTable` - a v2 round of
+ * a grid series, one series being one table - the round the table is drawn and seated by: its series' round 0. Every round of the
+ * table draws its committee on that round's id (beacon.js committeeSeedFromBeacon) and takes that round's seating certificate, so
+ * all of them name one committee and one claim key (the seats' DKG is per committee). null for every other round: it draws and seats
+ * itself, as before.
+ */
+function tableAnchorOf(contract) {
+  if (!contract || !(contract.seriesId instanceof Uint8Array) || !Number.isInteger(contract.roundIndex)) return null;
+  if (!(Number.isInteger(contract.protocolVersion) && contract.protocolVersion >= 2)) return null;
+  const known = KNOWN_GOOD_GAMES[toHex(contract.gameId)];
+  if (!known || known.seatsPerTable !== true) return null;
+  const body = new Uint8Array(36); body.set(contract.seriesId, 0);      // round 0's id: H(series_id || 0), as contracts.js roundId
+  return { anchorId: taggedHash(TAG.seriesRound, body), first: contract.roundIndex === 0 };
+}
+
+// ---- arena-protocol/src/heartbeat.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE HEARTBEAT (multiplayer_p2p.md §5A.3 "The heartbeat", protocol 22, kanban #727, the owner 2026-10-27).
+//
+// WHY. A node leaves a 22 census only on proof (presence.js): threshold-signed certificates of 3 moments of the 24 h that show it
+// missed. Seating certificates alone were that proof, and a seating certificate exists only when 5 of a round's 9 drawn are present.
+// On 10-27 (28 bonded, 20 stopped) almost no round reached 5, so almost nothing was proven: the days seated 1, 7, 56, then 96 of 96
+// rounds, and the stopped nodes were out only by the third census. the owner chose a heartbeat, so a stopped node is proven out within a day.
+//
+// WHAT.
+//   slot        a 22 round that seats itself (not a table's later round) has HEARTBEAT_SLOTS_PER_ROUND heartbeat slots j = 0 ..,
+//               closing at seating_close - j x HEARTBEAT_SPACING_MS. the owner 2026-10-27 ruled 1 slot per round: it closes with
+//               the round's seating, and a 15-min grid gives one every 15 min, 96 a day (constants.js has the trade-off)
+//   committee   HEARTBEAT_DRAWN node keys of the round's census, drawn as its committees are (one key one seat, weighed by bond) on
+//               their own seed H("ARENA/v1/HeartbeatDraw" || committee seed || j) - every seat and the client draw the sameBeat 9 from the
+//               round's census and beacon, which they already check for the round's seating
+//   HEARTBEAT   every node of the round's census, and every node its census left out as absent (that is how it comes back), signs
+//               HEARTBEAT(round, j, node) and hands it to the slot's committee before the slot's close
+//   HEARD       each live member signs, after the close, the sorted node keys it held a HEARTBEAT of, and the nodes the round's census
+//               left out; members exchange them
+//   certificate the HEARDs of at least HEARTBEAT_THRESHOLD = 5 distinct members of the slot's committee. Every node any signer lists,
+//               and every signer, was present at the slot; every other node of the round's census, or left out by it, missed it
+//
+// WHY IT IS SAFE (the sameBeat bar as a seating certificate). A certificate needs 5 signatures of the slot's committee, so no group of
+// fewer than 5 nodes can make one, ever. To leave out an honest node a group must hold 5 of the 9 seats of a random draw at 3
+// different moments of one day - the draw is the round's beacon's, after the round was posted. With 5 of 9, two certificates of one
+// slot share a signer, so a member that signed two different HEARDs for one slot has equivocated. On top, every seat that holds a
+// node's HEARTBEAT of the 24 h refuses a census that leaves it out (presence-book.js), and a live node hands its heartbeats to 9
+// members every 15 min, so nearly every seat holds one.
+//
+// WHAT IT COSTS. Per node per day: 96 x 9 HEARTBEATs out (132 bytes each, ~114 KB), as many in as a member on average, and one HEARD
+// per membership to 8 others; a seat keeps its memberships' certificates. See §5A.3 for the numbers.
+
+
+
+
+
+
+
+/** A HEARTBEAT's length: type, version, round id, slot, node key, signature. */
+const HEARTBEAT_BYTES = 1 + 2 + 32 + 1 + 32 + 64;
+/** The slots of a round, as the proof names them (presence.js): `heartbeat-0` .. `heartbeat-2`. */
+const HEARTBEAT_ROLES = Object.freeze(Array.from({ length: HEARTBEAT_SLOTS_PER_ROUND }, (_, j) => `heartbeat-${j}`));
+const heartbeatRole = (j) => `heartbeat-${j}`;
+/** The slot a proof role names, or null for a seating role. */
+const heartbeatSlotOf = (role) => {
+  const m = /^heartbeat-(\d+)$/.exec(String(role || ''));
+  const j = m ? Number(m[1]) : null;
+  return j !== null && j < HEARTBEAT_SLOTS_PER_ROUND ? j : null;
+};
+
+const is32Beat = (b) => b instanceof Uint8Array && b.length === 32;
+const sameBeat = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+const cmpBeat = (a, b) => { for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
+const keyBytesBeat = (k) => (typeof k === 'string' ? Uint8Array.from(k.match(/../g).map((h) => parseInt(h, 16))) : k);
+const hexOfBeat = (k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k));
+const sortedKeysBeat = (list) => [...new Map((list || []).map(keyBytesBeat).map((k) => [toHex(k), k])).values()].sort(cmpBeat);
+const strictlySortedBeat = (list) => list.every((k, i) => i === 0 || cmpBeat(list[i - 1], k) < 0);
+const slotOkBeat = (j) => Number.isInteger(j) && j >= 0 && j < HEARTBEAT_SLOTS_PER_ROUND;
+
+/**
+ * DOES THIS ROUND HAVE HEARTBEAT SLOTS: a 22 round that seats itself. A table's later rounds share its first round's draw, so slots of
+ * theirs would let one lucky committee sign at many moments - they have none.
+ */
+function hasHeartbeats(contract) {
+  if (!contract || Number(contract.protocolVersion) < PRESENCE_VERSION || typeof contract.startTimeMs !== 'bigint') return false;
+  const anchor = tableAnchorOf(contract);
+  return !(anchor && !anchor.first);
+}
+/** When heartbeat slot j of a round closes: its seating close less j x 5 min. */
+const heartbeatCloseMs = (contract, j) => seatingCloseMs(contract) - BigInt(j) * HEARTBEAT_SPACING_MS;
+
+/** THE SLOT'S COMMITTEE: HEARTBEAT_DRAWN entries of the round's census, on the round's committee seed and the slot. */
+function drawHeartbeat({ entries, contract, committeeSeed, slot }) {
+  if (!is32Beat(committeeSeed)) throw new Error('a heartbeat committee is drawn on the seed the round\'s beacon produced');
+  if (!slotOkBeat(slot)) throw new Error(`a round has heartbeat slots 0 to ${HEARTBEAT_SLOTS_PER_ROUND - 1}`);
+  const w = new Writer(); w.bytes32(committeeSeed); w.u8(slot);
+  return selectCommittee({ entries, contract, role: 'settlement', committeeSeed: taggedHash(TAG.heartbeatDraw, w.finish()), count: HEARTBEAT_DRAWN });
+}
+
+// ---- HEARTBEAT: a node's word that it is up, for one slot ----
+function heartbeatBody({ roundId, slot, nodePubkey }) {
+  if (!is32Beat(roundId) || !slotOkBeat(slot) || !is32Beat(nodePubkey)) throw new Error('a HEARTBEAT names a round, a slot and a node key');
+  const w = new Writer();
+  w.u8(TYPE_HEARTBEAT); w.u16(PROTOCOL_VERSION); w.bytes32(roundId); w.u8(slot); w.bytes32(nodePubkey);
+  return w.finish();
+}
+const heartbeatId = (h) => taggedHash(TAG.heartbeat, heartbeatBody(h));
+function signHeartbeat({ roundId, slot, nodePubkey }, sign) {
+  const body = heartbeatBody({ roundId, slot, nodePubkey });
+  return Uint8Array.from([...body, ...sign(taggedHash(TAG.heartbeat, body))]);
+}
+function decodeHeartbeat(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_HEARTBEAT) throw new Error('that is not a HEARTBEAT');
+  if (!speaksVersion(r.u16())) throw new Error('a HEARTBEAT of another protocol version');
+  const roundId = r.bytes32(); const slot = r.u8(); const nodePubkey = r.bytes32(); const signature = r.bytes(64);
+  if (!slotOkBeat(slot)) throw new Error('a HEARTBEAT for no slot');
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the HEARTBEAT');
+  return { roundId, slot, nodePubkey, signature };
+}
+/** A HEARTBEAT that stands: decodes, names this round (when given), and is signed by the node it names. */
+function verifyHeartbeat(bytes, { roundId = null, verify }) {
+  let h; try { h = decodeHeartbeat(bytes); } catch (e) { return { ok: false, why: e.message }; }
+  if (roundId && !sameBeat(h.roundId, roundId)) return { ok: false, why: 'that HEARTBEAT names another round' };
+  let good = false; try { good = verify(h.signature, heartbeatId(h), h.nodePubkey); } catch { good = false; }
+  return good ? { ok: true, heartbeat: h } : { ok: false, why: 'that HEARTBEAT is not signed by the node it names' };
+}
+
+// ---- HEARD: one member's word on who it held a HEARTBEAT of at the slot's close ----
+function heardBody({ roundId, slot, heard, leftOut }) {
+  if (!is32Beat(roundId) || !slotOkBeat(slot)) throw new Error('a HEARD names a round and a slot');
+  const w = new Writer();
+  w.u8(TYPE_HEARTBEAT_HEARD); w.u16(PROTOCOL_VERSION); w.bytes32(roundId); w.u8(slot);
+  w.vec(sortedKeysBeat(heard), (k, ww) => ww.bytes32(k));
+  w.vec(sortedKeysBeat(leftOut), (k, ww) => ww.bytes32(k));
+  return w.finish();
+}
+const heardId = (h) => taggedHash(TAG.heartbeatHeard, heardBody(h));
+const signHeard = (h, sign) => sign(heardId(h));
+
+/**
+ * THE HEARTBEAT CERTIFICATE: type, version, round, slot, and the members' HEARDs grouped by the lists they signed - [{ heard, leftOut,
+ * signatures: [{ nodePubkey, signature }] }], each list sorted, the signatures by key, the groups by HEARD id.
+ */
+function encodeHeartbeatCertificate({ roundId, slot, groups }) {
+  if (!is32Beat(roundId) || !slotOkBeat(slot)) throw new Error('a heartbeat certificate names a round and a slot');
+  const w = new Writer();
+  w.u8(TYPE_HEARTBEAT_HEARD); w.u16(PROTOCOL_VERSION); w.bytes32(roundId); w.u8(slot);
+  const gs = groups.map((g) => ({ heard: sortedKeysBeat(g.heard), leftOut: sortedKeysBeat(g.leftOut),
+    signatures: [...g.signatures].map((x) => ({ nodePubkey: keyBytesBeat(x.nodePubkey), signature: x.signature })).sort((a, b) => cmpBeat(a.nodePubkey, b.nodePubkey)),
+    id: heardId({ roundId, slot, heard: g.heard, leftOut: g.leftOut }) })).sort((a, b) => cmpBeat(a.id, b.id));
+  w.vec(gs, (g, ww) => {
+    ww.vec(g.heard, (k, w3) => w3.bytes32(k));
+    ww.vec(g.leftOut, (k, w3) => w3.bytes32(k));
+    ww.vec(g.signatures, (x, w3) => { w3.bytes32(x.nodePubkey); w3.bytes(x.signature, 64); });
+  });
+  return w.finish();
+}
+function decodeHeartbeatCertificate(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_HEARTBEAT_HEARD) throw new Error('that is not a heartbeat certificate');
+  if (!speaksVersion(r.u16())) throw new Error('a heartbeat certificate of another protocol version');
+  const roundId = r.bytes32(); const slot = r.u8();
+  if (!slotOkBeat(slot)) throw new Error('a heartbeat certificate for no slot');
+  const groups = r.vec((rr) => ({ heard: rr.vec((x) => x.bytes32()), leftOut: rr.vec((x) => x.bytes32()),
+    signatures: rr.vec((x) => ({ nodePubkey: x.bytes32(), signature: x.bytes(64) })) }));
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the heartbeat certificate');
+  return { roundId, slot, groups };
+}
+
+/**
+ * A HEARTBEAT CERTIFICATE THAT STANDS, against the committee and the round's census the checker drew itself: at least
+ * HEARTBEAT_THRESHOLD distinct members of `committee` each signed exactly one HEARD, and none says the census left out a node the census
+ * holds. Answers { ok, signers, heard, leftOut } (keys hex, sorted): `heard` every node any signer listed, and the signers; `leftOut` the
+ * nodes every signer says the round's census left out.
+ */
+function verifyHeartbeatCertificate(bytes, { roundId = null, slot = null, committee, census, verify }) {
+  let c; try { c = decodeHeartbeatCertificate(bytes); } catch (e) { return { ok: false, why: e.message }; }
+  if (roundId && !sameBeat(c.roundId, keyBytesBeat(roundId))) return { ok: false, why: 'that heartbeat certificate names another round' };
+  if (slot !== null && c.slot !== slot) return { ok: false, why: `that heartbeat certificate is for slot ${c.slot}, not ${slot}` };
+  const members = new Set(committee.map(hexOfBeat));
+  const inCensus = new Set(census.map(hexOfBeat));
+  const signed = new Set(), heard = new Set();
+  let leftOut = null;
+  for (const g of c.groups) {
+    if (!strictlySortedBeat(g.heard) || !strictlySortedBeat(g.leftOut) || !strictlySortedBeat(g.signatures.map((x) => x.nodePubkey)))
+      return { ok: false, why: 'a heard list of that certificate is not sorted by node key, or names a node twice' };
+    if (!g.signatures.length) return { ok: false, why: 'a heard list of that certificate is signed by nobody' };
+    if (g.leftOut.some((k) => inCensus.has(toHex(k)))) return { ok: false, why: 'that certificate says the round\'s census left out a node the census holds' };
+    const id = heardId({ roundId: c.roundId, slot: c.slot, heard: g.heard, leftOut: g.leftOut });
+    for (const x of g.signatures) {
+      const h = toHex(x.nodePubkey);
+      if (!members.has(h)) return { ok: false, why: `${h.slice(0, 16)} signed who was heard at that slot and is not drawn for its committee` };
+      if (signed.has(h)) return { ok: false, why: `member ${h.slice(0, 16)} signed two heard lists for that slot` };
+      let good = false; try { good = verify(x.signature, id, x.nodePubkey); } catch { good = false; }
+      if (!good) return { ok: false, why: `member ${h.slice(0, 16)}'s signature on who was heard does not verify` };
+      signed.add(h);
+    }
+    for (const k of g.heard) heard.add(toHex(k));
+    const lo = new Set(g.leftOut.map(toHex));
+    leftOut = leftOut === null ? lo : new Set([...leftOut].filter((h) => lo.has(h)));
+  }
+  if (signed.size < HEARTBEAT_THRESHOLD)
+    return { ok: false, why: `that heartbeat certificate is signed by ${signed.size} of the slot's committee, fewer than the ${HEARTBEAT_THRESHOLD} it needs` };
+  for (const h of signed) heard.add(h);
+  return { ok: true, roundId: c.roundId, slot: c.slot, signers: [...signed].sort(), heard: [...heard].sort(), leftOut: [...(leftOut || [])].sort() };
+}
+
+/**
+ * A HEARTBEAT SLOT AS PROOF (presence.js): the certificate checked on the checker's own draw. Answers the record presence.js reads -
+ * { roundId, role, closeMs, drawn (the committee), expected (the round's census), seated (the signers), present, leftOut } - or why not.
+ */
+function provenHeartbeat(bytes, { roundId, slot, committee, census, closeMs, verify }) {
+  const v = verifyHeartbeatCertificate(bytes, { roundId, slot, committee, census, verify });
+  if (!v.ok) return v;
+  return { ok: true, seating: { roundId: toHex(v.roundId), role: heartbeatRole(v.slot), closeMs: BigInt(closeMs), drawn: committee.map(hexOfBeat),
+    expected: census.map(hexOfBeat), seated: v.signers, present: v.heard, leftOut: v.leftOut } };
+}
+
+// ---- arena-protocol/src/presence.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// ONLY NODES SEEN IN THE LAST 24 H ARE DRAWN (multiplayer_p2p.md §5A.3 "Absent from its seatings", protocol 22, kanban #727).
+//
+// Measured on testnet4 2026-10-27: every Up/Down v23 round drew 9 nodes, 7-9 of them stopped test nodes whose bonds were still locked,
+// so no round was seated all day. the owner 14:00Z: "Können die adverts nur gezogen werden von nodes die in den letzten 24h auch online
+// waren?" - yes, from 2.0. "Online" from pings is no shared fact, so the rule reads only threshold-signed seating certificates:
+//
+//   window      (T - 24 h, T], T the median time past of the census block
+//   a seating   one (round, role) whose seating_close (seating.js) falls in the window and whose 22 certificate stands - every seated
+//               node signed it and signed who it held a PRESENT of at the close (seating.js SEEN)
+//   present     listed by any seated node of the certificate, or seated in it
+//   missed      drawn for the seating by the round's own draw - or left out of the round's census as absent, as every seated node
+//               says - and not present
+//   absent      in the chain census, present at no window seating, and missed at ABSENCE_PROOF_SEATINGS (3) or more seatings or
+//               heartbeat slots whose closes lie at least ABSENCE_PROOF_SPACING_MS (1 h) apart
+//   census      from protocol 22 the census is the chain census less every output of an absent node; its root commits to that set
+//
+// ABSENCE ONLY WITH PROOF (the owner 2026-10-27, "can it be manipulated which nodes are offline so others are chosen?"). As first built the
+// posting node chose the absent from the PRESENTs it collected, and a seat could refuse it only with a signature it happened to hold: a
+// posting node could leave out honest nodes to raise its own share of the draw. Now every absent node in a claim comes with three
+// certificates the round's seated signed, and any seat and the client check them alone: the signers are the seated of the round's own
+// draw, the node was drawn there (or left out already) and no seated node listed it. A claim without that is not a census at all.
+// To hide an honest node's PRESENT every seated node of a seating must lie, three times at three moments.
+//
+// AND NOT FOR A FEW MISSED SEATINGS (the owner 2026-10-27, an attacker flooding a node while it is drawn): fewer than 3 missed seatings,
+// or present once, and the node is kept. 3 closes at least 1 h apart (ABSENCE_PROOF_SPACING_MS), so one blackout - on two games' grids,
+// or a restart across several heartbeat slots - counts once.
+//
+// AND THE HEARTBEAT, SO A DAY IS ENOUGH (kanban #727, the owner 2026-10-27): a seating proves only its 9 drawn missed, and only when 5 of
+// them are present, so on 10-27 the stopped nodes took three days to be proven out. A heartbeat certificate (heartbeat.js) proves EVERY
+// node of its round's census missed that it does not list, one slot per round (the owner 2026-10-27). A proof names a seating (role game or
+// settlement) or a heartbeat slot (role heartbeat-0); both count towards the 3 closes an hour apart, and a listing in either keeps the node in.
+
+
+
+
+
+
+/**
+ * HOW MANY OF THESE CLOSES COUNT: the most that lie pairwise at least ABSENCE_PROOF_SPACING_MS apart (newest first, each the next
+ * one at least 1 h older - the greedy pick is the largest such set on a line).
+ */
+function spacedCloses(closes) {
+  let n = 0, last = null;
+  for (const c of [...new Set([...closes].map(BigInt))].sort((a, b) => (a > b ? -1 : a < b ? 1 : 0))) {
+    if (last === null || last - c >= ABSENCE_PROOF_SPACING_MS) { n++; last = c; }
+  }
+  return n;
+}
+/** The window's length: 24 h of median time past before the census block (the owner 2026-10-27). */
+const PRESENCE_WINDOW_MS = 24n * 3600n * 1000n;
+/** What a census says of an output it leaves out as absent. */
+const ABSENT_WHY = `proven drawn and not present at ${ABSENCE_PROOF_SEATINGS} or more seatings of the 24 h before the census, and present at none: left out of the census, its bond untouched`;
+
+/** Does this round's census leave out its absent nodes (protocol 22 on)? */
+const dropsAbsent = (contract) => !!contract && Number(contract.protocolVersion) >= PRESENCE_VERSION;
+
+const hexOfPresence = (k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k));
+
+/** The window of a census whose block's median time past is `censusTimeMs`: (from, to]. */
+function presenceWindow(censusTimeMs) {
+  const to = BigInt(censusTimeMs);
+  return { fromMs: to - PRESENCE_WINDOW_MS, toMs: to };
+}
+/** T: the median time past of the census block, in ms, off a view's headers - null where the view does not reach it. */
+function censusTimeMs(view, censusHeight) {
+  if (!view || !Array.isArray(view.blocks)) return null;
+  const t = medianTimePast(view.blocks.map((b) => b.header), view.firstHeight, censusHeight);
+  return t === null ? null : BigInt(t) * 1000n;
+}
+const inWindow = (w, ms) => BigInt(ms) > w.fromMs && BigInt(ms) <= w.toMs;
+
+/**
+ * A SEATING AS PROOF: a 22 certificate checked against the draw the checker computed itself (`drawn`, `slots`) and the seating's close.
+ * Answers { ok, seating: { roundId, role, closeMs, drawn, seated, present, leftOut } } (keys hex) or { ok: false, why }.
+ */
+function provenSeating(bytes, { roundId, role, drawn, slots, closeMs, verify }) {
+  const v = verifySeating(bytes, { roundId: typeof roundId === 'string' ? Uint8Array.from(roundId.match(/../g).map((h) => parseInt(h, 16))) : roundId,
+    role, drawn: drawn.map((k) => (typeof k === 'string' ? Uint8Array.from(k.match(/../g).map((h) => parseInt(h, 16))) : k)), slots, verify, listsPresent: true });
+  if (!v.ok) return v;
+  return { ok: true, seating: { roundId: toHex(v.seating.roundId), role: v.seating.role, closeMs: BigInt(closeMs), drawn: drawn.map(hexOfPresence),
+    seated: v.seating.seated.map(toHex), present: v.present, leftOut: v.leftOut } };
+}
+/** Was `node` present at this seating (listed by a seated node, or seated)? */
+const presentAt = (node, s) => s.present.includes(node) || s.seated.includes(node);
+/**
+ * Did `node` miss this seating: drawn for it, or left out of its census already - and not present? A heartbeat slot expects every node
+ * of its round's census (`expected`), not only its committee.
+ */
+const missedAt = (node, s) => ((s.expected || s.drawn).includes(node) || s.leftOut.includes(node)) && !presentAt(node, s);
+
+/**
+ * ONE PROOF, CHECKED ON THE CHECKER'S OWN DRAW: a seating certificate (`d` { drawn, slots, closeMs }) or a heartbeat certificate (`d`
+ * { heartbeat: j, drawn: the slot's committee, census: the round's census keys, closeMs }). Answers { ok, seating } as provenSeating.
+ */
+function provenProof(bytes, { roundId, role, d, verify }) {
+  if (heartbeatSlotOf(role) !== null) {
+    if (d.heartbeat !== heartbeatSlotOf(role) || !Array.isArray(d.census)) return { ok: false, why: `that draw is not of heartbeat slot ${role}` };
+    return provenHeartbeat(bytes, { roundId, slot: d.heartbeat, committee: d.drawn, census: d.census, closeMs: d.closeMs, verify });
+  }
+  return provenSeating(bytes, { roundId, role, drawn: d.drawn, slots: d.slots, closeMs: d.closeMs, verify });
+}
+
+/**
+ * THE ABSENT, AS A POSTING NODE FINDS THEM. `seatings` the window's proven seatings it holds (provenSeating), `census` the chain census's
+ * node keys, `seen` node keys it holds any other window evidence of (a PRESENT a seat would refuse the claim with). Answers the claims
+ * sorted by node: [{ node, proofs: [{ roundId, role }] }], each naming the ABSENCE_PROOF_SEATINGS newest seatings it missed, at different
+ * closes. ABSENT STAYS ABSENT UNTIL SEEN: a node the census of a window seating left out is missed there too, so it is not back the day
+ * after for having been drawn for nothing; it comes back by signing a PRESENT that a seated node lists.
+ */
+function absentFrom({ seatings, census, window, seen = [] }) {
+  const inCensus = [...new Set([...census].map(hexOfPresence))].sort();
+  const sawIt = new Set([...seen].map(hexOfPresence));
+  const proven = (seatings || []).filter((s) => inWindow(window, s.closeMs))
+    .sort((a, b) => (a.closeMs === b.closeMs ? (a.roundId + a.role < b.roundId + b.role ? -1 : 1) : (a.closeMs > b.closeMs ? -1 : 1)));
+  for (const s of proven) { for (const k of s.present) sawIt.add(k); for (const k of s.seated) sawIt.add(k); }
+  const claims = [];
+  for (const node of inCensus) {
+    if (sawIt.has(node)) continue;
+    const proofs = [];
+    let last = null;
+    for (const s of proven) {
+      if (proofs.length >= ABSENCE_PROOF_SEATINGS) break;
+      if ((last !== null && last - s.closeMs < ABSENCE_PROOF_SPACING_MS) || !missedAt(node, s)) continue;
+      last = s.closeMs;
+      proofs.push({ roundId: s.roundId, role: s.role });
+    }
+    if (proofs.length >= ABSENCE_PROOF_SEATINGS) claims.push({ node, proofs });
+  }
+  return claims;
+}
+
+/** The census less every output of an absent node (a node is its key: all its bonds go with it). */
+function withoutAbsent(entries, absent) {
+  const out = new Set((absent || []).map((a) => hexOfPresence(a.node || a)));
+  return (entries || []).filter((e) => !out.has(hexOfPresence(e.pubkey)));
+}
+
+/**
+ * THE ABSENT A COMMITTED CENSUS IMPLIES: the node keys of the chain census none of whose outputs are in the committed one. A seat
+ * that holds the chain census and the round's entries (GET /census) recovers the claim's node list from the root alone.
+ */
+function absentImplied(chainEntries, committedEntries) {
+  const kept = new Set((committedEntries || []).map((e) => hexOfPresence(e.pubkey)));
+  return [...new Set((chainEntries || []).map((e) => hexOfPresence(e.pubkey)))].filter((h) => !kept.has(h)).sort();
+}
+
+/**
+ * THE CHECK OF AN ABSENT CLAIM'S PROOFS - the same at every seat and at the client. `claims` as absentFrom answers; `census` the node
+ * keys the claimed nodes must be in (a seat: its chain census; the client: none, it cannot see a node a census left out); `certOf(ridHex,
+ * role)` the certificate bytes the claim attached (or the checker holds); `drawOf(ridHex, role)` the checker's own draw of that seating
+ * - { drawn, slots, closeMs } - or null when it cannot draw it yet; `seen` node keys the checker holds other window evidence of (a seat's
+ * own PRESENTs and certificates; the owner ruled that refusal stays the seat's own). Answers { ok: true } or { ok: false, node, why, proof }
+ * - proof 'seen', 'present', 'not-missed', 'certificate', 'too-few', 'outside' - or { ok: false, notYet: true, node, why } when a
+ * named seating cannot be drawn here yet. Any wrong proof makes the census invalid: it is a plain check of what was committed.
+ */
+function checkAbsenceProof(claims, { census = null, window, certOf, drawOf, verify, seen = [] }) {
+  const inCensus = census ? new Set([...census].map(hexOfPresence)) : null;
+  const sawIt = new Set([...seen].map(hexOfPresence));
+  const proven = new Map();      // `${rid}:${role}` -> the seating, checked once per claim
+  let last = '';
+  for (const c of claims || []) {
+    const node = hexOfPresence(c.node);
+    if (node <= last) return { ok: false, node, why: 'that absent list is not sorted by node key, or names a node twice' };
+    last = node;
+    const short = node.slice(0, 16);
+    if (inCensus && !inCensus.has(node)) return { ok: false, node, why: `that census leaves out ${short} as absent, and it is not in the chain census` };
+    if (sawIt.has(node)) return { ok: false, node, proof: 'seen', why: `that census leaves out ${short} as absent, and this seat holds its signature of a seating in the 24 h` };
+    const proofs = Array.isArray(c.proofs) ? c.proofs : [];
+    const closes = new Set(), named = new Set();
+    for (const p of proofs) {
+      const rid = hexOfPresence(String(p.roundId || '')), key = `${rid}:${p.role}`;
+      if (named.has(key)) return { ok: false, node, proof: 'too-few', why: `the proof that ${short} is absent names one seating twice` };
+      named.add(key);
+      let s = proven.get(key);
+      if (!s) {
+        const d = drawOf(rid, p.role);
+        if (!d) return { ok: false, notYet: true, node, why: `the seating ${rid.slice(0, 16)} ${p.role} that proves ${short} absent cannot be drawn here yet` };
+        const bytes = certOf(rid, p.role);
+        if (!bytes) return { ok: false, node, proof: 'certificate', why: `the proof that ${short} is absent names seating ${rid.slice(0, 16)} ${p.role} and carries no certificate of it` };
+        const got = provenProof(bytes, { roundId: rid, role: p.role, d, verify });
+        if (!got.ok) return { ok: false, node, proof: 'certificate', why: `the certificate that proves ${short} absent at ${rid.slice(0, 16)} ${p.role} does not stand: ${got.why}` };
+        s = got.seating;
+        proven.set(key, s);
+      }
+      if (!inWindow(window, s.closeMs)) return { ok: false, node, proof: 'outside', why: `the seating ${rid.slice(0, 16)} ${p.role} that proves ${short} absent closes outside the census's 24 h` };
+      if (presentAt(node, s)) return { ok: false, node, proof: 'present', why: `that census leaves out ${short} as absent, and the certificate of ${rid.slice(0, 16)} ${p.role} lists it present` };
+      if (!missedAt(node, s)) return { ok: false, node, proof: 'not-missed', why: `that census leaves out ${short} as absent, and ${rid.slice(0, 16)} ${p.role} neither drew it (a heartbeat slot: held it in its census) nor had it left out` };
+      closes.add(s.closeMs);
+    }
+    const spaced = spacedCloses(closes);
+    if (spaced < ABSENCE_PROOF_SEATINGS)
+      return { ok: false, node, proof: 'too-few', why: `that census leaves out ${short} as absent on ${spaced} missed close(s) at least 1 h apart; it takes ${ABSENCE_PROOF_SEATINGS}` };
+  }
+  return { ok: true };
+}
+
 // ---- arena-protocol/src/census.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -8045,6 +10106,7 @@ function txidHexOf(tx) {
   if (h === undefined) { h = toHex(tx.txid); txidHexKept.set(tx, h); }
   return h;
 }
+
 
 
 
@@ -9349,7 +11411,7 @@ function newestPerNode(eligible, updates) {
  * spent, and the advertisement signature needs a curve this package does not
  * carry. Neither is skipped quietly.
  */
-function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond, verifyUpdate }) {
+function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond, verifyUpdate, absent = null }) {
   // MOST WORK WINS, HERE, before anything is read. Two chains that disagree
   // about Bitcoin are not two censuses: one of them is the chain.
   const chain = bestChainView(views);
@@ -9497,6 +11559,18 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
     sumOut.push(...f.out);
   }
 
+  // AND THE ABSENT NODES (§5A.3, protocol 22, kanban #727): a node that seating certificates prove drawn and not present at 3 or more
+  // seatings of the 24 h before the census, and present at none, leaves it, every output of it. The list is the posting node's claim
+  // (presence.js absentFrom), whose proofs every seat and the client check (checkAbsenceProof) - this only applies it, so the root
+  // commits to the set the claim names. Below 22, or with no claim, nothing.
+  const absentOut = [];
+  if (Array.isArray(absent) && absent.length && dropsAbsent(contract)) {
+    const kept = withoutAbsent(eligible, absent);
+    const keptSet = new Set(kept);
+    for (const e of eligible) if (!keptSet.has(e)) absentOut.push({ ...e, absent: true, why: ABSENT_WHY });
+    eligible = kept;
+  }
+
   let census;
   try {
     census = commitCensus(eligible, { contract, view: chain });
@@ -9518,6 +11592,7 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
       ...reaffirmOut.map((e) => ({ ...e, step: 'reaffirm' })),
       ...updatedOut.map((e) => ({ ...e, step: 'update' })),
       ...sumOut.map((e) => ({ ...e, step: 'sum' })),
+      ...absentOut.map((e) => ({ ...e, step: 'absent' })),
     ],
     unchecked: resolved.unchecked,
     chainChecked: resolved.chainChecked,
@@ -10925,45 +13000,6 @@ async function dealHandout({ preimage, signerNodes, roundId, playerPubkey,
   return { ok: true, handout, id: handoutId(handout) };
 }
 
-// ---- arena-protocol/src/committee-seed.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE COMMITTEE SEED, ALONE IN ITS MODULE (2026-10-04): the round's shared world (seed.js) is H(committee_seed ||
-// "world") (§5A.5), so seed.js needs this one formula - and beacon.js, which also reads the chain and the genesis, is not a
-// module the page's bundle may carry. Both import it from here; there is one copy.
-
-
-const catSeedParts = (...parts) => {
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-  let at = 0;
-  for (const p of parts) { out.set(p, at); at += p.length; }
-  return out;
-};
-const isSeedPart32 = (b) => b instanceof Uint8Array && b.length === 32;
-
-/**
- * THE SEED, EXACTLY AS 5A.5 WRITES IT.
- *
- * Four 32-byte inputs in that order and nothing else. The order is not a
- * detail: two nodes concatenating differently would select different
- * committees from identical facts, which is the one thing a committee cannot
- * survive.
- */
-function committeeSeedFrom({
-  censusRootGameVerify, censusRootSettlement, roundId, roundRandomness,
-}) {
-  for (const [name, value] of [
-    ['the game/verify census root', censusRootGameVerify],
-    ['the settlement census root', censusRootSettlement],
-    ['the round id', roundId],
-    ['the round randomness', roundRandomness],
-  ]) if (!isSeedPart32(value)) throw new TypeError(`${name} is not 32 bytes`);
-
-  return taggedHash(TAG.committeeSeed,
-    catSeedParts(censusRootGameVerify, censusRootSettlement, roundId, roundRandomness));
-}
-
-
 // ---- arena-protocol/src/seed.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -11295,715 +13331,6 @@ function itemsSecretFor(seed) {
     if (v > 0n && v < FIELD) return secret;
   }
   throw new Error('no scalar of the group in 256 tries, which should not happen');
-}
-
-// ---- arena-protocol/src/known-games.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// GENERATED by packages/arena-protocol/tools/known-games.js from each game's signed manifest - do not edit by hand.
-//
-// The games this client lets a player stake on (§0A.6, §5), by game_id: each with the cores (sim_wasm_hash)
-// and, per core, the configs its manifest lists, and the configs the game plays as one world per round (seed.js asks
-// them through known-game.js sharedWorldOf). A paying round naming any other game, or a core or config its
-// game does not list, is refused by `gameIsKnownGood` (known-game.js).
-const KNOWN_GOOD_GAMES = Object.freeze({
-  '495516ae59539661062cd72fd8716afbb378bd386297ab09b20aba0a2cd44150': Object.freeze({
-    name: 'nextblock',
-    cores: Object.freeze({
-      '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
-      '68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
-      '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
-      'd15c39bb83b7cb63ce2b232a7b62b0078d78d9944013ce42799c80a29bf005ef': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
-      'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1', 'dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801']),
-    }),
-    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-  }),
-  'c693585b01cef147f311e39c304f7b40f99774afc032f58db35ef8094cfa78dc': Object.freeze({
-    name: 'nextblock',
-    // 2026.0.2: manifest version 2, parent 495516ae, requires the round that names no draw
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-      '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
-      '68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
-      '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
-      'd15c39bb83b7cb63ce2b232a7b62b0078d78d9944013ce42799c80a29bf005ef': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
-      'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1', 'dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801']),
-    }),
-    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-  }),
-  'd09982face63f0f097c0d5358bb00152d44a0f4cd2bbd76eb8cfd129afc0a5d3': Object.freeze({
-    name: 'btc-close',
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'd6f5a5555f9089e167d41d62cc0f09c4c3f13776e15ab29c0a18f13048d926c6',
-    attested: Object.freeze({ outcomes: Object.freeze(['above 100k','between','below 90k']), attestors: Object.freeze(['54c08074d9d9fdabed70d5ad9f7d46fbb84370b277cd88fbd96bd87de3fa01d2', 'c7e6f51dba95e5b0ea999a066d17244963a47af07d8b87d2f36b5e0a2f14477d', 'd7abf30bda6d21708f7498e7a972436d22584c0624741d4cc5385faa396b8f61']),
-      threshold: 2, devKey: 'd372fd794e1c9af6e1fc819b5d1f033f65b79a95ad46c1c660c32eb429d7848f', networks: Object.freeze(['9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38']) }),
-  }),
-  'a1d5b445f5c223769a295d43e541dfedba431cd58d813f0dc75708dc5b094f8b': Object.freeze({
-    name: 'btc-close',
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'd6f5a5555f9089e167d41d62cc0f09c4c3f13776e15ab29c0a18f13048d926c6',
-    attested: Object.freeze({ outcomes: Object.freeze(['above 100k','between','below 90k']), attestors: Object.freeze(['54c08074d9d9fdabed70d5ad9f7d46fbb84370b277cd88fbd96bd87de3fa01d2', 'c7e6f51dba95e5b0ea999a066d17244963a47af07d8b87d2f36b5e0a2f14477d', 'd7abf30bda6d21708f7498e7a972436d22584c0624741d4cc5385faa396b8f61']),
-      threshold: 2, devKey: 'd372fd794e1c9af6e1fc819b5d1f033f65b79a95ad46c1c660c32eb429d7848f', networks: Object.freeze(['9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38']) }),
-  }),
-  'fc4e9ec3d268b5dd89078ffa68f4f51cb8eaea601e6c705c428e5fd92c9d09ab': Object.freeze({
-    name: 'btc-updown-15m',
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'ce97df184bd2a5281886159c2a23b954d158f94c1e41bc10bafc46cf912ae37a',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['128a875bfbe1b6f7a426ad0dabc8b87288e1ca18b2aee2a8a13872f372bf4779', '1dd88fb738cb409f2ec319c6efd32f63a4f4c4288890a0c1b6d8e4d2ca5530de', '89c9eba543b9dcbd6aa66006e5ebe865de391c78e391dc3b51a55f99d0027fa3']),
-      threshold: 2, devKey: 'e47762fea394d539fe33a117bb410e318e8ae6c0e23d333babe3bed0e8e998d8', networks: Object.freeze(['9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38']) }),
-    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  '647425b6e6a053a0e29ff6fc188b4b3b64360b7703cf956a0c2e62d96bcc8ae9': Object.freeze({
-    name: 'btc-updown-15m',
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'ce97df184bd2a5281886159c2a23b954d158f94c1e41bc10bafc46cf912ae37a',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['128a875bfbe1b6f7a426ad0dabc8b87288e1ca18b2aee2a8a13872f372bf4779', '1dd88fb738cb409f2ec319c6efd32f63a4f4c4288890a0c1b6d8e4d2ca5530de', '89c9eba543b9dcbd6aa66006e5ebe865de391c78e391dc3b51a55f99d0027fa3']),
-      threshold: 2, devKey: 'e47762fea394d539fe33a117bb410e318e8ae6c0e23d333babe3bed0e8e998d8', networks: Object.freeze(['9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38']) }),
-    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  '850a05e817c295c677cdddd0833e390955daa351008eb49fcb144b9ae023ff0b': Object.freeze({
-    name: 'btc-updown-15m',
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: '9daa58a96bc560d9b4f60a8328634a7457a2b4af6b748a7847f9bac3ce181076',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['128a875bfbe1b6f7a426ad0dabc8b87288e1ca18b2aee2a8a13872f372bf4779', '1dd88fb738cb409f2ec319c6efd32f63a4f4c4288890a0c1b6d8e4d2ca5530de', '89c9eba543b9dcbd6aa66006e5ebe865de391c78e391dc3b51a55f99d0027fa3']),
-      threshold: 2, devKey: 'e47762fea394d539fe33a117bb410e318e8ae6c0e23d333babe3bed0e8e998d8', networks: Object.freeze(['9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38']) }),
-    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  'fc98353b00f69133210b6e3e79392f3a1faf6bdde466e50459627a7081129f4b': Object.freeze({
-    name: 'rock-paper-scissors',
-    cores: Object.freeze({
-      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-  }),
-  'd92d4349351bdc9a840e70c62cfbf5b2c6f72d66da40a3f33f4679b9e9d26d0c': Object.freeze({
-    name: 'rock-paper-scissors',
-    cores: Object.freeze({
-      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-  }),
-  '322d870270344015dd8278df5c6c58b962e3b7f3f1c83c5f3cbf2ee8986d40f3': Object.freeze({
-    name: 'rock-paper-scissors',
-    cores: Object.freeze({
-      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-  }),
-  'c55f026bdb01b09725e493145ee569a5a11f87f423db3f9d6101f247143aed40': Object.freeze({
-    name: 'rock-paper-scissors',
-    cores: Object.freeze({
-      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-  }),
-  '4cf2bfcbb9f44821f8f108d4b3860b8615b12a0b390b695158a526a6e5a9f2c0': Object.freeze({
-    name: 'rock-paper-scissors',
-    cores: Object.freeze({
-      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-  }),
-  '1e9ab4b7d402d51f46def727e6db58da0ad70c4afafc295c82357d612543cd50': Object.freeze({
-    name: 'rock-paper-scissors',
-    cores: Object.freeze({
-      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-  }),
-  'a75f54fd4f978a29ab6d39d9ef85c7adbe0576614634c679ae33d3e1c06164ea': Object.freeze({
-    name: 'rock-paper-scissors',
-    // 2026.0.2: manifest version 2, parent 1e9ab4b7, requires the round that names no draw
-    requiredProtocolVersion: 2,
-    // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
-    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
-    seatsPerTable: true,
-    cores: Object.freeze({
-      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-  }),
-  '90f462c823bdd382dce3a72c2bf25999575d727e8ea81459b8b4dce80b63339c': Object.freeze({
-    name: 'rock-paper-scissors',
-    //: manifest version 3, parent a75f54fd - version 2 in every term, with the new client ("← Arena")
-    requiredProtocolVersion: 2,
-    // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
-    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
-    seatsPerTable: true,
-    cores: Object.freeze({
-      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-  }),
-  '672415c814e61b47ce038cd7f9a9431be8b41123c59502c371d5cd6a79c7684f': Object.freeze({
-    name: 'btc-updown-15m',
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  'f5f3f18753b4167fe36d2e18f72c72b6e5cfea93cd5ef98c716d3b9137890375': Object.freeze({
-    name: 'btc-updown-15m',
-    // 2026.0.2: manifest version 2, parent 672415c8, requires the round that names no draw
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  '122a4478c7bf905996155e8136b165706a9f1a2b45a72d92871ec96c5a6e3a40': Object.freeze({
-    name: 'btc-updown-15m',
-    //: manifest version 3, parent f5f3f187 - version 2 in every term, with the new client (back button on its own row)
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  '6f4174f6ccf973683fc36faae6afe42ab73f0ad4cf1e69b657c7a05e5034eedb': Object.freeze({
-    name: 'btc-updown-15m',
-    //: manifest version 4, parent 122a4478 - version 3 in every term, with the new client ("← Arena")
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  '8b9fceafac13fe11ccb81df7cd3eb67809d96c40b027689cfd570a660f7cbaaa': Object.freeze({
-    name: 'btc-updown-15m',
-    //: manifest version 5, parent 6f4174f6 - version 4 in every term, with the new client (an order's progress in the sheet)
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  '33b8b298a55ed50e9da12d2cee8a394f206841c7702c3ea8f613ab331dcc5b31': Object.freeze({
-    name: 'btc-updown-15m',
-    //: manifest version 6, parent 8b9fceaf - version 5 in every term, with the new client (My orders as cards)
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  'c5478ded0e29d0f394d30b97400729b28bb852806bed60cf9366e18f2f314256': Object.freeze({
-    name: 'btc-updown-15m',
-    //: manifest version 7, parent 33b8b298 - version 6 in every term, with the new client (the history)
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  '50ae86410ae55b8c2d3d08c5edf5b6fb53cd0834900b58b0fdef02ac999bb9ea': Object.freeze({
-    name: 'btc-updown-15m',
-    //: manifest version 8, parent c5478ded - version 7 in every term, with the new client (the desktop exchange view)
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  'ade9f9792562e603f307b638160a5fef51c17665082aa713692060cd089002af': Object.freeze({
-    name: 'btc-updown-15m',
-    //: manifest version 9, parent 50ae8641 - version 8 in every term, with the new client (past orders)
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  '5c77c967d4e2c6798ec4fbc2bba246e8ff14779ead6da9b004e4f74c2e9ff519': Object.freeze({
-    name: 'btc-updown-15m',
-    //: manifest version 10, parent ade9f979 - version 9 in every term, with the new client (its history logic in one tested block)
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  '51f7c1fb4997064fb90f8bed8b17502e57f12eedbca58a2bcf3f3bb28e82ab8e': Object.freeze({
-    name: 'btc-updown-15m',
-    //: manifest version 11, parent 5c77c967 - version 10 in every term, with the new client (the totals in one line on a phone)
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  '7432324ab5a82bebb6bfba44a964204ab5c26b04fd41c83239a198b1f109a781': Object.freeze({
-    name: 'btc-updown-15m',
-    //: manifest version 12, parent 51f7c1fb - version 11 in every term, with the new client (the amount's − / + steps, kept)
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  'fa9a348f9ac4441a05e8ee134d4f3615c758e907626539ef453107e306aaef72': Object.freeze({
-    name: 'btc-updown-15m',
-    //: manifest version 13, parent 7432324a - version 12 in every term but the fee: 0.4 % nodes, 0.6 % donation of which 0.2 % protocol reserve
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  'fe07fe23585bc61ae8dfd2f1ef4a15258025ca416ed3772920fd624ff0b852ac': Object.freeze({
-    name: 'btc-updown-15m',
-    //: manifest version 14, parent fa9a348f - version 13 in every term, with the new client (a phone's Compact / Advanced switch)
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  '0860b4a7b5007bf5e21d421b66a3773bba892d9a8747602d5a8bb4cdaf3e3584': Object.freeze({
-    name: 'btc-updown-15m',
-    // manifest version 15, parent fe07fe23 - version 14 in every term, with the new client (every order's round with its day)
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  '8be37be1196aa62cca1f7066b40ccad10f7b33555b5315b3b174568e3585fa8c': Object.freeze({
-    name: 'btc-updown-15m',
-    // manifest version 16, parent 0860b4a7 - version 15 in every term, with the new client (everything drawn by React, kanban #564)
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  '5add5235b912410e9afaf2d7b38fab7deeb82fe455bbc730f5c38da1d7b81dbc': Object.freeze({
-    name: 'btc-updown-15m',
-    // manifest version 17, parent 8be37be1 - version 16 in every term, its client's comments cleaned
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  '600ef6dde43f818e8ff46a78da9fb8c907fcbaa01ea5af59a756dc2c62459613': Object.freeze({
-    name: 'btc-updown-15m',
-    // manifest version 18, parent 5add5235 - version 17 in every term, its client both halves of the book: Buy or Sell (kanban #588)
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  'ac082fd8491611d4f2a8c1d1b977b2b3389d1e2f12fee3832fdf6ce0c3bf6d9a': Object.freeze({
-    name: 'btc-updown-15m',
-    // manifest version 19, parent 600ef6dd - version 18 in every term, a cancel on each resting sell (kanban #591)
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  '04f468bf514c2af3cefee153d1cccf7b06c18ce1cb08f8e5fede7e92338857d6': Object.freeze({
-    name: 'btc-updown-15m',
-    // manifest version 20, parent ac082fd8 - version 19 in every term but its clients: only the pages with no names or ticket numbers (kanban #523)
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  '5fba7f5e0d4eb5da10c1eb6472ba862f8099e7c2e94be4645c483eb3a03b4a4f': Object.freeze({
-    name: 'btc-updown-15m',
-    // manifest version 21, parent 04f468bf - version 20 in every term, each order's times on its card and in the past orders
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  '9a49869c11c5cd52cf0e5a2ca49f42a549c20f7b86f1fbd9fba0f065bc608556': Object.freeze({
-    name: 'btc-updown-15m',
-    // manifest version 22, parent 5fba7f5e - version 21 in every term, the card's times named submitted, placed, lock
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  '90fcf7464f555e003049361ee370f392c766146dd840032cd6954640047711ea': Object.freeze({
-    name: 'btc-updown-15m',
-    // manifest version 23, parent 9a49869c - version 22 in every term, each order's transaction id to the explorer
-    requiredProtocolVersion: 2,
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
-      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
-    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-  }),
-  '13699356aae534eeb753de4d441dc223698f429f25aeb30ea3e25f4b4e24993e': Object.freeze({
-    name: 'rock-paper-scissors',
-    //: manifest version 4, parent 90f462c8 - version 3's rules (core f86afd62, the same decide), the table drawn by React (kanban #564, #523)
-    requiredProtocolVersion: 2,
-    // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
-    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
-    seatsPerTable: true,
-    cores: Object.freeze({
-      'f86afd62734989cca3004021d00879af5d57008958908ca28973100625d7f031': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-  }),
-  '62a940ae282fe143b65802e2a36a1dd46618738fb55c12ab1f77e5955637573e': Object.freeze({
-    name: 'rock-paper-scissors',
-    //: manifest version 5, parent 13699356 - version 4 in every term, everything drawn by React (kanban #564)
-    requiredProtocolVersion: 2,
-    // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
-    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
-    seatsPerTable: true,
-    cores: Object.freeze({
-      'f86afd62734989cca3004021d00879af5d57008958908ca28973100625d7f031': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-  }),
-  'b8b88e233baac6671c8ac6da8193f816d7f552423a3888b184018b7b49839651': Object.freeze({
-    name: 'nextblock',
-    // 2026.0.3: manifest version 3, parent c693585b, sells the larger truck (core f0cc7b7b), protocol 10 - added by hand
-    // from the generator's output for known-v3.js, which would drop the hand-kept fields above (seatsPerTable)
-    cores: Object.freeze({
-      '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
-      '68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
-      '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
-      'd15c39bb83b7cb63ce2b232a7b62b0078d78d9944013ce42799c80a29bf005ef': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
-      'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1', 'dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801']),
-      'f0cc7b7b2e75e350149ff8a6e58a1cc861a3ab4969d1c81b2206564b57ffb7a8': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
-    }),
-    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    requiredProtocolVersion: 10,
-  }),
-  //: manifest version 4, parent b8b88e23 - version 3 in every term, requiring protocol 11 (its items pay the reserves)
-  '76f505108cfdb664e7f390c2a9390ad21ddb85d46966743695b02be3242bc93b': Object.freeze({
-    name: 'nextblock',
-    cores: Object.freeze({
-      '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
-      '68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
-      '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
-      'd15c39bb83b7cb63ce2b232a7b62b0078d78d9944013ce42799c80a29bf005ef': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
-      'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1', 'dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801']),
-      'f0cc7b7b2e75e350149ff8a6e58a1cc861a3ab4969d1c81b2206564b57ffb7a8': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
-    }),
-    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    requiredProtocolVersion: 11,
-  }),
-  //: manifest version 5, parent 76f50510 (kanban #523) - version 4 in every term but its cores and clients: the two cores with their
-  // comments cleaned of names, ticket numbers and blwp (a5c5766a the truck, 0847c99f the truck that knows the larger truck), their bundles
-  '09bfe97a6a2b640b69ee9f4a175d25e091ee7229e536f1f3e1adc431f60afb1b': Object.freeze({
-    name: 'nextblock',
-    cores: Object.freeze({
-      '0847c99f60e694e106fce0a79ac252b3e6170a343db52a95e3b5052a7e00a5f1': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
-      'a5c5766a7902b6703ebe9382cea9154adc777af3e5cafa766265e971efa52c5a': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
-    }),
-    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    requiredProtocolVersion: 11,
-  }),
-  //: manifest version 6, parent 09bfe97a (kanban #523) - version 5 in every term but the game's mark: the icon and the wordmark cleaned
-  'd325744b4a6b7351a8ba28ae235ef7f72e843eeac6ce5e05d65374aed77f8659': Object.freeze({
-    name: 'nextblock',
-    cores: Object.freeze({
-      '0847c99f60e694e106fce0a79ac252b3e6170a343db52a95e3b5052a7e00a5f1': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
-      'a5c5766a7902b6703ebe9382cea9154adc777af3e5cafa766265e971efa52c5a': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
-    }),
-    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    requiredProtocolVersion: 11,
-  }),
-  // UP/DOWN VERSION 24 (kanban #630): no attestor keys - each round's 7 are drawn from its census, 5 decide; protocol 2, as version 23
-  '8e47d27fd39597cfa6e29412efa450a994f013b5db8d553ce55304da000cb3ca': Object.freeze({
-    name: 'btc-updown-15m',
-    cores: Object.freeze({
-
-    }),
-    sharedWorld: Object.freeze([]),
-    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
-    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze([]),
-      threshold: 0, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']), attestDraw: Object.freeze({ count: 7, threshold: 5 }) }),
-    fee: Object.freeze({ nodeBps: 40, donationBps: 60 }),
-    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
-    requiredProtocolVersion: 2,
-  }),
-});
-
-// ---- arena-protocol/src/known-game.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A PAYING ROUND PLAYS A GAME THIS CLIENT KNOWS, ON A CORE AND CONFIG THAT GAME LISTS, OR IT IS REFUSED (§5, §0A.6;
-//).
-//
-// Section 5 (v4.6): "The sim_wasm_hash is chosen by the round creator, so the client must not accept it blindly. For
-// real-money rounds the client MUST verify the hash against its known-good list of reproducibly built core versions,
-// and MUST refuse ... for unknown hashes." Since games are plugins the list is per game: a round names its game
-// (game_id, §0A.3), and a core is known only as a core of the game the round names, under a config that game lists for
-// it. This client refuses. There is no override: no flag, no query parameter, nothing that lets an unknown game through.
-// (§0A.6's confirmed stake on an unlisted game, shown with its developer key and manifest id, is the lobby's,.)
-//
-// F2's second clause rests on it (FEDERATION.md): the player's key is theirs only if the code that decides the round is
-// code they can know.
-
-
-
-
-const isGameBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
-
-/** The configs (hex) the round's game shares one world under, as this client knows the game - none for a game it does not. */
-function sharedWorldOf(gameId) {
-  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
-  return game && Array.isArray(game.sharedWorld) ? [...game.sharedWorld] : [];
-}
-
-/** The id of the game dev's donation set its manifest names (§0A.8), as this client knows the game - or null. */
-function gameDonationSetIdOf(gameId) {
-  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
-  return game && typeof game.gameDonationSetId === 'string' ? game.gameDonationSetId : null;
-}
-
-/**
- * THE MARKET THIS CLIENT PINS FOR A GAME (§0A.7a): an attested game's outcomes, attestor keys (hex),
- * threshold, developer key and the networks it is pinned for - or null for a game it does not pin, or one that is not attested.
- */
-function marketOf(gameId) {
-  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
-  return game && game.attested ? { gameId: toHex(gameId), name: game.name, known: true, ...game.attested } : null;
-}
-
-const isZero32 = (b) => isGameBytes32(b) && b.every((x) => x === 0);
-
-// `networkId`: the round's network - a pinned market is good only on the networks it is pinned for. `confirmed`: game ids
-// (hex) of ATTESTED games the player confirmed a second time on this page (§0A.6) - an unpinned market is let through only
-// then, and only with no core and no config (there is nothing of it to run).
-function gameIsKnownGood(gameId, simCoreHash, configHash, { networkId = null, confirmed = null, protocolVersion } = {}) {
-  if (!isGameBytes32(gameId)) return { ok: false, why: 'that round names no 32-byte game, so nothing says which game decides it' };
-  const game = KNOWN_GOOD_GAMES[toHex(gameId)];
-  // THE VERSION THE GAME REQUIRES (manifest.js REQUIRED_VERSION_MARKER): this build must speak it, and the
-  // round must run it or a later one. A pinned game that requires none passes as before.
-  if (game && game.requiredProtocolVersion) {
-    if (!speaksVersion(game.requiredProtocolVersion))
-      return { ok: false, why: `${game.name} requires protocol version ${protocolVersionName(game.requiredProtocolVersion)}, which this client does not speak: update the page` };
-    if (!(Number.isInteger(protocolVersion) && protocolVersion >= game.requiredProtocolVersion))
-      return { ok: false, why: `${game.name} requires protocol version ${protocolVersionName(game.requiredProtocolVersion)}; that round runs ${Number.isInteger(protocolVersion) ? protocolVersionName(protocolVersion) : 'none'}` };
-  }
-  // A MARKET (§0A.7a): no core, no config; pinned for this network, or confirmed twice by the player
-  if ((game && game.attested) || (!game && confirmed && confirmed.has && confirmed.has(toHex(gameId)))) {
-    if (!isZero32(simCoreHash) || (configHash !== undefined && !isZero32(configHash)))
-      return { ok: false, why: 'that round names a core or a config, and its game is a market: a market has nothing to run (§0A.7a)' };
-    if (!game) return { ok: true, game: 'an unpinned market the player confirmed', confirmed: true };
-    const nets = game.attested.networks || [];
-    if (nets.length && !(networkId instanceof Uint8Array && nets.includes(toHex(networkId))))
-      return { ok: false, why: `market ${game.name} is pinned only for network${nets.length === 1 ? '' : 's'} ${nets.map((n) => n.slice(0, 16)).join(', ')}: refused on this one` };
-    return { ok: true, game: game.name, market: true };
-  }
-  if (!game)
-    return { ok: false, why: `that round plays game ${toHex(gameId).slice(0, 16)}..., which is not on this client's known-good list `
-      + 'of games: a paying round on an unknown game is refused (§5, §0A.6)' };
-  if (!isGameBytes32(simCoreHash))
-    return { ok: false, why: 'that round names no 32-byte core hash, so nothing says which simulation decides it' };
-  const hex = toHex(simCoreHash);
-  const configs = game.cores[hex];
-  if (!configs)
-    return { ok: false, why: `that round runs core ${hex.slice(0, 16)}..., which ${game.name}'s manifest does not list: `
-      + 'a paying round on an unknown core is refused (§5)' };
-  // AND THE CONFIG IT RUNS, when the caller names one (as coreIsKnownGood had it before games: a round always carries one)
-  if (configHash === undefined) return { ok: true, game: game.name };
-  if (!isGameBytes32(configHash))
-    return { ok: false, why: 'that round names no 32-byte config hash, so nothing says which rules decide it' };
-  if (!configs.includes(toHex(configHash)))
-    return { ok: false, why: `that round runs core ${hex.slice(0, 16)}... under config ${toHex(configHash).slice(0, 16)}..., which is `
-      + `not a config ${game.name} lists for that core: refused, as an unknown core is (§5, §27A.6)` };
-  return { ok: true, game: game.name };
-}
-
-/**
- * THE NODE FEE AND DONATION A PINNED GAME CHARGES: a market's own (its manifest's terms), else the market default
- * 0.5 % + 0.5 % (2026-10-09), else a game's network 5 % and the player's donation choice (null). null for a game this
- * client does not pin - the caller then knows its rate another way (an unpinned market the player confirmed: its manifest).
- */
-function feeOfKnownGame(gameId) {
-  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
-  if (!game) return null;
-  if (game.fee) return { nodeBps: game.fee.nodeBps, donationBps: game.fee.donationBps, reserveBps: game.fee.reserveBps || 0 };   // the reserve inside the donation
-  return game.attested ? { nodeBps: 50, donationBps: 50 } : { nodeBps: 500, donationBps: null };
-}
-
-/**
- * A PINNED MARKET'S TERMS: its resolution delay and void deadline as the generator wrote them (decimal ms), the
- * ones its rounds' lock span is checked by on the page (lock-expiry.js); null for a game, or a market pinned without terms.
- */
-function termsOfKnownGame(gameId) {
-  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
-  if (!game || !game.terms) return null;
-  return { resolveAfterCloseMs: BigInt(game.terms.resolveAfterCloseMs), deadlineAfterResolveMs: BigInt(game.terms.deadlineAfterResolveMs) };
-}
-
-/**
- * A TABLE'S ANCHOR (2026-10-13 pick (c): "A waiting player gets one committee and one key for that table, then
- * 8-second rounds on that key until the table is empty"). For a round of a game whose known entry says `seatsPerTable` - a v2 round of
- * a grid series, one series being one table - the round the table is drawn and seated by: its series' round 0. Every round of the
- * table draws its committee on that round's id (beacon.js committeeSeedFromBeacon) and takes that round's seating certificate, so
- * all of them name one committee and one claim key (the seats' DKG is per committee). null for every other round: it draws and seats
- * itself, as before.
- */
-function tableAnchorOf(contract) {
-  if (!contract || !(contract.seriesId instanceof Uint8Array) || !Number.isInteger(contract.roundIndex)) return null;
-  if (!(Number.isInteger(contract.protocolVersion) && contract.protocolVersion >= 2)) return null;
-  const known = KNOWN_GOOD_GAMES[toHex(contract.gameId)];
-  if (!known || known.seatsPerTable !== true) return null;
-  const body = new Uint8Array(36); body.set(contract.seriesId, 0);      // round 0's id: H(series_id || 0), as contracts.js roundId
-  return { anchorId: taggedHash(TAG.seriesRound, body), first: contract.roundIndex === 0 };
 }
 
 // ---- arena-protocol/src/donation.js
@@ -15383,6 +16710,161 @@ function lockFromClient(answer, { point, hash, claimPk, refundPk }) {
   };
 }
 
+// ---- arena-protocol/src/auditor.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE ROUND'S AUDITORS (spec §13A.1, kanban #725, protocol 22): about three census nodes outside a round's committees, drawn in
+// secret by a VRF over the round id, replay every run of the round and publish an AUDIT ("checked, it matches") or the objection of
+// §13A. FINAL does not wait for them; 10 % of the nodes' fee, after the website's line, goes to the auditors whose AUDIT arrived in time.
+//
+//   WHO MAY    the census at the round's census_height advertising `audit`, less every node drawn for the round's roles and the
+//              nodes and operators of its players (auditEligible)
+//   THE DRAW   alpha = H_tag(ARENA/v1/Auditor, round_id); (beta, pi) = ECVRF(node secret, alpha); auditor iff
+//              int(beta[0..8]) / 2^64 < AUDITORS x weight / W (isAuditor) - in integers, never a fraction
+//   THE AUDIT  (round_id, results_hash, node_pubkey, pi), signed by the node key under ARENA/v1/Audit (encodeAudit, auditId)
+//   THE PAY    auditorShares: floor(nodes' part after the website x 10 %), equally over the valid AUDITs; the rest to the pools
+//
+// NO CURVE: the VRF (vrf.js makeVrf) and `verify(signature, digest, pubkey)` (BIP-340) are injected, as everywhere here.
+// A node key is x-only (BIP-340); its VRF key is the even-y point 02 || x, and its VRF secret the node secret or its negation.
+
+
+
+
+const AUDITORS = 3n;
+/** The auditors' share of the nodes' part of the fee, after the website's line (§13A.1, RULED 2026-10-27: 10 %). */
+const AUDIT_SHARE_BPS = 1000n;
+const AUDIT_PROOF_BYTES = 81;
+/**
+ * WHEN AN AUDIT COUNTS (§13A.1): signed at most AUDIT_LEAD_MS before window_close, and taken by a seat only if its signed time is within
+ * AUDIT_TOLERANCE_MS of the seat's clock (§13A rule 3) - or, forwarded by another seat, by window_close. Every seat that takes one hands it
+ * to the round's other seats, so the 30 s between the last AUDIT and the window's close are for every seat to hold the same set: the
+ * auditors' lines are part of the payout every seat signs byte for byte.
+ */
+const AUDIT_LEAD_MS = 30000;
+const AUDIT_TOLERANCE_MS = 5000;
+
+const is32Audit = (b) => b instanceof Uint8Array && b.length === 32;
+const beIntAudit = (b) => b.reduce((n, x) => (n << 8n) | BigInt(x), 0n);
+
+/** The VRF input of a round's draw: fixed by the round id, before any result exists. */
+const auditAlpha = (roundId) => {
+  if (!is32Audit(roundId)) throw new Error('an audit draw is over a 32-byte round id');
+  return taggedHash(TAG.auditor, roundId);
+};
+
+/** A node's VRF public key: its x-only key as the even-y point. */
+const vrfPublicKey = (nodePubkey) => {
+  if (!is32Audit(nodePubkey)) throw new Error('a node key is 32 bytes (x-only)');
+  const out = new Uint8Array(33); out[0] = 0x02; out.set(nodePubkey, 1); return out;
+};
+
+/** A node's VRF secret: its node secret, negated when that gives the odd-y point (BIP-340's rule), so it proves under vrfPublicKey. */
+function vrfSecretFor(secret, Point) {
+  const q = Point.Fn.ORDER;
+  const x = typeof secret === 'bigint' ? secret : beIntAudit(secret);
+  const y = Point.BASE.multiply(x).toBytes(true)[0];
+  return y === 0x02 ? x : q - x;
+}
+
+/**
+ * WHO MAY AUDIT A ROUND: `entries` the census at its census_height, `drawn` the node keys (hex) drawn for any of its roles (all of
+ * them, seated or not), `players` the node keys (hex) of its players' nodes and `operators` their operator ids. One node key is one
+ * auditor: its bonds summed, as in a committee draw. Answers { eligible: Map(keyHex -> weight BigInt), total: W }.
+ */
+function auditEligible({ entries, bondMinSats, drawn = [], players = [], operators = [] }) {
+  if (typeof bondMinSats !== 'bigint' || bondMinSats <= 0n) throw new Error('an audit draw weighs against a positive bond floor');
+  const out = new Set([...drawn, ...players].map((k) => String(k).toLowerCase()));
+  const ops = new Set(operators.map(String));
+  const sats = new Map();
+  for (const e of entries || []) {
+    if (!(e.roles || []).includes('audit')) continue;
+    const key = toHex(e.pubkey);
+    const op = e.operatorId !== undefined ? e.operatorId : e.advert && e.advert.operatorId;   // a census entry names it in its advert
+    if (out.has(key) || (op !== undefined && op !== null && ops.has(String(op)))) continue;
+    sats.set(key, (sats.get(key) || 0n) + BigInt(e.bondSats));
+  }
+  const eligible = new Map();
+  let total = 0n;
+  for (const [key, s] of sats) { if (s < bondMinSats) continue; const w = weightOf(s, bondMinSats); eligible.set(key, w); total += w; }
+  return { eligible, total };
+}
+
+/** Whether a VRF output draws its node: int(beta[0..8]) x W < AUDITORS x weight x 2^64, all in integers. */
+function isAuditor({ beta, weight, total }) {
+  if (!(beta instanceof Uint8Array) || beta.length < 8) throw new Error('a VRF output is at least 8 bytes');
+  if (typeof weight !== 'bigint' || typeof total !== 'bigint' || weight <= 0n || total <= 0n) return false;
+  return beIntAudit(beta.subarray(0, 8)) * total < AUDITORS * weight * (1n << 64n);
+}
+
+/**
+ * THE RESULTS AN AUDIT VOUCHES FOR: H_tag(ARENA/v1/AuditResults, n || (entry_id 32, run id 32)*), in entry id order - for every entry
+ * of the round the run id its committee signed (verdict.js runId; the run FINAL is about, §13C), as `resultDigest`.
+ */
+function auditResultsHash(results) {
+  const rows = (results || []).map((r) => {
+    if (!is32Audit(r.entryId) || !is32Audit(r.resultDigest)) throw new Error('an audited result is (32-byte entry id, 32-byte result digest)');
+    return r;
+  }).sort((a, b) => (toHex(a.entryId) < toHex(b.entryId) ? -1 : 1));
+  const w = new Writer();
+  w.u32(rows.length);
+  for (const r of rows) { w.bytes32(r.entryId); w.bytes32(r.resultDigest); }
+  return taggedHash(TAG.auditResults, w.finish());
+}
+
+function encodeAudit(a) {
+  if (!is32Audit(a.roundId) || !is32Audit(a.resultsHash) || !is32Audit(a.nodePubkey)) throw new Error('an AUDIT names a round, its results and its node (32 bytes each)');
+  if (!(a.vrfProof instanceof Uint8Array) || a.vrfProof.length !== AUDIT_PROOF_BYTES) throw new Error(`an AUDIT carries its ${AUDIT_PROOF_BYTES}-byte VRF proof`);
+  const w = new Writer();
+  w.u8(TYPE_AUDIT); w.u16(PROTOCOL_VERSION);
+  if (typeof a.atMs !== 'bigint' || a.atMs < 0n) throw new Error('an AUDIT carries the time it was signed (BigInt ms)');
+  w.bytes32(a.roundId); w.bytes32(a.resultsHash); w.bytes32(a.nodePubkey); w.u64(a.atMs); w.bytes(a.vrfProof, AUDIT_PROOF_BYTES);
+  return w.finish();
+}
+
+function decodeAudit(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_AUDIT) throw new Error('not an AUDIT');
+  r.u16();
+  const a = { roundId: r.bytes32(), resultsHash: r.bytes32(), nodePubkey: r.bytes32(), atMs: r.u64(), vrfProof: r.bytes(AUDIT_PROOF_BYTES) };
+  r.end();
+  return a;
+}
+
+/** What the node key signs. */
+const auditId = (a) => taggedHash(TAG.audit, encodeAudit(a));
+
+/**
+ * A SEAT'S CHECK OF ONE AUDIT (§13A.1 "A settlement seat counts an AUDIT only if"): signed by its node, its VRF proof good for the
+ * round under that node's key, the node eligible and drawn, and its results hash the one being settled. The arrival time is the
+ * seat's to check (signed times, §13A rule 3). Answers { ok, beta } or { ok: false, why }.
+ */
+function auditStands(a, { signature, vrf, verify, eligible, total, resultsHash, windowCloseMs = null }) {
+  if (windowCloseMs !== null && a.atMs > BigInt(windowCloseMs) - BigInt(AUDIT_LEAD_MS)) return { ok: false, why: `an AUDIT is signed at least ${AUDIT_LEAD_MS / 1000} s before the window closes` };
+  if (!(signature instanceof Uint8Array) || signature.length !== 64) return { ok: false, why: 'an AUDIT is signed (64 bytes)' };
+  if (!verify(signature, auditId(a), a.nodePubkey)) return { ok: false, why: 'the AUDIT is not signed by the node it names' };
+  const key = toHex(a.nodePubkey);
+  const weight = eligible.get(key);
+  if (!weight) return { ok: false, why: 'that node may not audit this round (not in its eligible set)' };
+  const beta = vrf.verify(vrfPublicKey(a.nodePubkey), auditAlpha(a.roundId), a.vrfProof);
+  if (!beta) return { ok: false, why: 'the VRF proof does not verify for that node and round' };
+  if (!isAuditor({ beta, weight, total })) return { ok: false, why: 'that node was not drawn to audit this round' };
+  if (resultsHash && toHex(resultsHash) !== toHex(a.resultsHash)) return { ok: false, why: 'the AUDIT vouches for other results than these' };
+  return { ok: true, beta };
+}
+
+/**
+ * THE AUDITORS' LINE (§13A.1 "Pay"): `nodesMsat` the nodes' part of the fee after the website's line, `auditors` the node keys
+ * whose AUDIT stood at final_after. Answers { each: [{ key, msat }], backMsat } - backMsat stays in the pools.
+ */
+function auditorShares({ nodesMsat, auditors }) {
+  if (typeof nodesMsat !== 'bigint' || nodesMsat < 0n) throw new Error('the nodes\' part is a BigInt of msat');
+  const keys = [...new Set((auditors || []).map((k) => String(k).toLowerCase()))].sort();
+  const share = (nodesMsat * AUDIT_SHARE_BPS) / 10000n;
+  if (!keys.length) return { each: [], backMsat: nodesMsat };
+  const one = share / BigInt(keys.length);
+  return { each: keys.map((key) => ({ key, msat: one })), backMsat: nodesMsat - one * BigInt(keys.length) };
+}
+
 // ---- arena-protocol/src/lock-action.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -15745,6 +17227,7 @@ const payableKey = (pubkey) => {
 // the round's order), each signer node one pre-expired payout contract to its own key -
 // never to the donation recipients, and no split invented here. A VOID or
 // ENTRY_VOID entry's fee lock is not claimed: §22A's fee base leaves it out.
+
 
 
 
@@ -16345,13 +17828,30 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
     frontendGross += got + lnv2FeeMsat(fees, got);
     payouts.push({ pubkey: payoutPk.subarray(1), payoutPk, owedMsat: siteMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'frontend' });
   }
-  const nodesSpendable = nodePartMsat - publisherGross - frontendGross;
+  // THE ROUND'S AUDITORS (§13A.1, protocol 22): 10 % of the nodes' part after the website's line, equally to the auditors whose AUDIT
+  // the seats hold (`signerNodes.auditors`, node keys hex, the same set on every seat by §13A.1's rule) - one line each, before the seats'.
+  // None held: nothing taken, the seats share all of it as before.
+  let auditorGross = 0n, auditorBps = 0n;
+  const auditors = Number(contract.protocolVersion) >= AUDITOR_VERSION && Array.isArray(signerNodes.auditors) ? signerNodes.auditors : [];
+  if (auditors.length) {
+    const shares = auditorShares({ nodesMsat: nodePartMsat - publisherGross - frontendGross, auditors });
+    for (const { key, msat } of shares.each) {
+      const pubkey = fromHex(key);
+      const got = largestPayoutMsat(fees, msat);
+      if (got === 0n) { unpaid.push({ pubkey, owedMsat: msat, why: 'the auditor\'s share does not pay its own output fee' }); continue; }
+      auditorGross += got + lnv2FeeMsat(fees, got);
+      payouts.push({ pubkey, payoutPk: refundKeyOf(pubkey), owedMsat: msat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'auditor' });
+    }
+    auditorBps = 1000n;
+  }
+  const nodesSpendable = nodePartMsat - publisherGross - frontendGross - auditorGross;
   for (const [key, msat] of owed) {
     const guardianPk = key.startsWith('payout:') ? fromHex(key.slice(7)) : null;
     const pubkey = guardianPk ? guardianPk.subarray(1) : fromHex(key);
     // what this node is owed once the websites' 20% is taken from the nodes' fee (its table share, scaled down by their total)
-    const owedMsat = sites.totalMsat ? (msat * (table.fee - sites.totalMsat)) / table.fee : msat;
-    const got = largestPayoutMsat(fees, publisherGross || frontendGross ? (msat * nodesSpendable) / table.fee : (msat * spendable) / poolMsat);
+    const afterSites = sites.totalMsat ? (msat * (table.fee - sites.totalMsat)) / table.fee : msat;
+    const owedMsat = auditorBps ? (afterSites * (10000n - auditorBps)) / 10000n : afterSites;
+    const got = largestPayoutMsat(fees, publisherGross || frontendGross || auditorGross ? (msat * nodesSpendable) / table.fee : (msat * spendable) / poolMsat);
     if (got === 0n) { unpaid.push({ pubkey, owedMsat, why: 'its fee share does not pay its own output fee' }); continue; }
     payouts.push({ pubkey, payoutPk: guardianPk || refundKeyOf(pubkey), owedMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: guardianPk ? 'guardian payout key' : 'signer node' });
   }
@@ -26554,779 +28054,6 @@ function nextRoundLine({ grids, game, nowMs = Date.now(), blockMs = 600000 }) {
   return { text: `${when} · ${draw}.`, grid: g, opensMs };
 }
 
-// ---- arena-protocol/src/seating.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// RESERVE SEATS (multiplayer_p2p.md §5A.7, RULED 2026-09-28).
-//
-// A node drawn up to 72 h ahead may be offline when its round comes, so each role draws more nodes than it seats
-// (sortition.js drawCommittee: 9 for 7 seats) and seats the ones that show up:
-//
-//   present = drawn nodes that signed PRESENT(round_id, role, node_pubkey) before seating_close = start_time - 120 s
-//   seated  = the first min(slots, |present|) present nodes in score order
-//   a round opens for entries iff |seated| >= threshold
-//
-// The seated nodes sign SEATING(round_id, role, seated list); a seating is valid only with the signature of EVERY node it
-// seats, and each node signs at most one per round and role. Two valid seatings for one round and role always share a
-// signer (2 x threshold > drawn), so two certificates are proof of equivocation by that signer: the round is void (§13C)
-// and the signer's bond is slashable (§5A.3B). A client enters a round only with a certificate it checked against the draw
-// it computes itself (client-committee.js). The round contract is unchanged (2026-10-11, decision A): it names the
-// round; who serves it is this certificate.
-
-
-
-/** seating_close is this long before the round's start: round i+1 is seated before round i (90 s earlier) starts. */
-const SEATING_LEAD_MS = 120000n;
-const ROLE_BYTE = Object.freeze({ game: 1, settlement: 2 });
-const roleOfSeat = (b) => Object.keys(ROLE_BYTE).find((k) => ROLE_BYTE[k] === b);
-const SEATING_ROLES = Object.freeze(['game', 'settlement']);
-
-/**
- * When a round's seating closes: start_time - 120 s. A MARKET'S (2026-10-11: "Der prediction market läuft immer z.B.
- * zwischen 19:45 und 20:00. Man darf davor und danach nicht am Markt teilnehmen") is seated 120 s before its WINDOW opens
- * (attested.js marketWindowOf: entry_close - period), so its seats are certified when its first order may come.
- */
-const seatingCloseMs = (contract, window = null) =>
-  (window && window.startMs < BigInt(contract.startTimeMs) ? window.startMs : BigInt(contract.startTimeMs)) - SEATING_LEAD_MS;
-
-/** The threshold a seated committee needs (receiptsNeeded): 5 of 7, 2 of 2. */
-const seatedThreshold = (slots) => (slots === 7 ? 5 : slots === 2 ? 2 : Math.floor(slots / 2) + 1);
-
-const is32Seat = (b) => b instanceof Uint8Array && b.length === 32;
-const sameBytesSeat = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
-const cmpSeat = (a, b) => { for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
-
-// ---- PRESENT ----
-function presentBody({ roundId, role, nodePubkey }) {
-  if (!is32Seat(roundId) || !is32Seat(nodePubkey) || !ROLE_BYTE[role]) throw new Error('a PRESENT names a round, a role and a node key');
-  const w = new Writer();
-  w.u8(TYPE_PRESENT); w.u16(PROTOCOL_VERSION); w.bytes32(roundId); w.u8(ROLE_BYTE[role]); w.bytes32(nodePubkey);
-  return w.finish();
-}
-const presentId = (p) => taggedHash(TAG.seatPresent, presentBody(p));
-/** A node's PRESENT, signed with its node key: `sign(messageId)` answers 64 bytes. */
-function signPresent({ roundId, role, nodePubkey }, sign) {
-  const body = presentBody({ roundId, role, nodePubkey });
-  return Uint8Array.from([...body, ...sign(taggedHash(TAG.seatPresent, body))]);
-}
-function decodePresent(bytes) {
-  const r = new Reader(bytes);
-  if (r.u8() !== TYPE_PRESENT) throw new Error('that is not a PRESENT');
-  if (!speaksVersion(r.u16())) throw new Error('a PRESENT of another protocol version');
-  const roundId = r.bytes32(); const role = roleOfSeat(r.u8()); const nodePubkey = r.bytes32(); const signature = r.bytes(64);
-  if (!role) throw new Error('a PRESENT for no role');
-  if (r.at !== bytes.length) throw new Error('trailing bytes after the PRESENT');
-  return { roundId, role, nodePubkey, signature };
-}
-/** A PRESENT that stands: decodes, names this round, and is signed by the node it names. */
-function verifyPresent(bytes, { roundId, verify }) {
-  let p; try { p = decodePresent(bytes); } catch (e) { return { ok: false, why: e.message }; }
-  if (roundId && !sameBytesSeat(p.roundId, roundId)) return { ok: false, why: 'that PRESENT names another round' };
-  let good = false; try { good = verify(p.signature, presentId(p), p.nodePubkey); } catch { good = false; }
-  return good ? { ok: true, present: p } : { ok: false, why: 'that PRESENT is not signed by the node it names' };
-}
-
-// ---- SEATED: who serves ----
-/**
- * THE SEATED, from the draw (node keys in score order) and the keys a node holds a PRESENT from: the first min(slots,
- * |present|) present ones in score order. A node seats itself only in that order - a node ranked below a present one is
- * seated only if that one is too.
- */
-function seatedFrom({ drawn, present, slots }) {
-  const held = new Set([...present].map((k) => (typeof k === 'string' ? k : toHex(k))));
-  return drawn.filter((k) => held.has(toHex(k))).slice(0, slots);
-}
-
-// ---- SEATING ----
-function seatingBody({ roundId, role, seated }) {
-  if (!is32Seat(roundId) || !ROLE_BYTE[role] || !Array.isArray(seated) || !seated.every(is32Seat)) throw new Error('a SEATING names a round, a role and its seated node keys');
-  const w = new Writer();
-  w.u8(TYPE_SEATING); w.u16(PROTOCOL_VERSION); w.bytes32(roundId); w.u8(ROLE_BYTE[role]);
-  w.vec(seated, (k, ww) => ww.bytes32(k));
-  return w.finish();
-}
-const seatingId = (s) => taggedHash(TAG.seating, seatingBody(s));
-/** One seated node's signature over a seating. */
-const signSeating = (s, sign) => sign(seatingId(s));
-/** THE CERTIFICATE: the body and every signature over it, sorted by node key. */
-function encodeSeatingCertificate({ roundId, role, seated, signatures }) {
-  const w = new Writer();
-  const body = seatingBody({ roundId, role, seated });
-  w.bytes(body, body.length);
-  const sigs = [...signatures].sort((a, b) => cmpSeat(a.nodePubkey, b.nodePubkey));
-  w.vec(sigs, (x, ww) => { ww.bytes32(x.nodePubkey); ww.bytes(x.signature, 64); });
-  return w.finish();
-}
-function decodeSeatingCertificate(bytes) {
-  const r = new Reader(bytes);
-  if (r.u8() !== TYPE_SEATING) throw new Error('that is not a SEATING');
-  if (!speaksVersion(r.u16())) throw new Error('a SEATING of another protocol version');
-  const roundId = r.bytes32(); const role = roleOfSeat(r.u8());
-  if (!role) throw new Error('a SEATING for no role');
-  const seated = r.vec((rr) => rr.bytes32());
-  const signatures = r.vec((rr) => ({ nodePubkey: rr.bytes32(), signature: rr.bytes(64) }));
-  if (r.at !== bytes.length) throw new Error('trailing bytes after the SEATING');
-  return { roundId, role, seated, signatures };
-}
-
-/**
- * A CERTIFICATE THAT STANDS for this round and role, against the draw the checker computed itself: the seated are drawn
- * nodes, in score order, no more than the slots and at least the threshold, each once - and EVERY seated node signed it.
- */
-function verifySeating(bytes, { roundId, role, drawn, slots, verify }) {
-  let c; try { c = decodeSeatingCertificate(bytes); } catch (e) { return { ok: false, why: e.message }; }
-  if (roundId && !sameBytesSeat(c.roundId, roundId)) return { ok: false, why: 'that seating names another round' };
-  if (role && c.role !== role) return { ok: false, why: `that seating is for ${c.role}, not ${role}` };
-  const t = seatedThreshold(slots);
-  if (c.seated.length > slots) return { ok: false, why: `that seating seats ${c.seated.length}, more than the round's ${slots} seats` };
-  if (c.seated.length < t) return { ok: false, why: `that seating seats ${c.seated.length}, fewer than the ${t} a round needs: it opens no entries` };
-  const rank = new Map(drawn.map((k, i) => [toHex(k), i]));
-  let last = -1;
-  for (const k of c.seated) {
-    const i = rank.get(toHex(k));
-    if (i === undefined) return { ok: false, why: `that seating seats ${toHex(k).slice(0, 16)}, which the draw did not draw` };
-    if (i <= last) return { ok: false, why: 'that seating is not in score order (or seats a node twice)' };
-    last = i;
-  }
-  const id = seatingId(c);
-  const by = new Map(c.signatures.map((x) => [toHex(x.nodePubkey), x.signature]));
-  for (const k of c.seated) {
-    const sig = by.get(toHex(k));
-    if (!sig) return { ok: false, why: `seated node ${toHex(k).slice(0, 16)} did not sign that seating` };
-    let good = false; try { good = verify(sig, id, k); } catch { good = false; }
-    if (!good) return { ok: false, why: `seated node ${toHex(k).slice(0, 16)}'s signature on that seating does not verify` };
-  }
-  return { ok: true, seating: c, id };
-}
-
-/**
- * TWO SEATINGS FOR ONE ROUND AND ROLE (§5A.7): each valid against the same draw, and different - proof of equivocation by
- * every node that signed both. Answers those nodes (never empty while 2 x threshold > drawn).
- */
-function seatingEquivocation(a, b, check) {
-  const x = verifySeating(a, check), y = verifySeating(b, check);
-  if (!x.ok) return { ok: false, why: `the first seating does not stand: ${x.why}` };
-  if (!y.ok) return { ok: false, why: `the second seating does not stand: ${y.why}` };
-  if (!sameBytesSeat(x.seating.roundId, y.seating.roundId) || x.seating.role !== y.seating.role) return { ok: false, why: 'those seatings are for different rounds or roles' };
-  if (sameBytesSeat(x.id, y.id)) return { ok: false, why: 'that is one seating twice, not two' };
-  const inB = new Set(y.seating.seated.map(toHex));
-  const both = x.seating.seated.filter((k) => inB.has(toHex(k)));
-  if (!both.length) return { ok: false, why: 'those seatings share no signer' };
-  return { ok: true, signers: both, roundId: x.seating.roundId, role: x.seating.role };
-}
-
-// ---- arena-protocol/src/rules.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE RULES A ROUND IS SETTLED UNDER, NAMED IN ITS CONTRACT (§6 equivocation_rule_hash, no_quorum_rule_hash, finality_rule,
-// slashing_rules_hash, disconnect_rule, claim_window_days, bond_min per role2026.0.3). Until now these were bound only
-// implicitly - through the code a seat runs and the config_hash. A v3 contract may name them: each rule a fixed text whose tagged hash
-// the contract carries, so a seat running other rules refuses the round by name (as a config it does not run), and a player's client
-// shows which rules it stakes under. The texts are the rules as built; changing one is a new hash, i.e. a new rule.
-
-
-const te = new TextEncoder();
-const RULE_TEXTS = Object.freeze({
-  equivocation: 'ARENA rule equivocation v1 (§10, kanban #25, RULED 2026-10-05 (b)): two checkpoints of one entry, each signed by its session key, '
-    + 'with different ids and the same tick or the same parent, forfeit the entry (FORFEIT, its stake to the loser pool); a pair from one later '
-    + 'parent forfeits only when both marks were receipted by a seat. The pair is the proof; no replay.',
-  noQuorum: 'ARENA rule no-quorum v1 (§5A.7, §5A.13, §16): a round with fewer than its threshold of drawn nodes present never opens for entries; '
-    + 'signer nodes unavailable at a run\'s start make it ENTRY_VOID (refund); conflicts that leave a committee under its threshold make its '
-    + 'entries ENTRY_VOID.',
-  finality: 'ARENA rule finality v1 (§13A, WINDOW-10-SPEC 2026-10-01): a result is PROVISIONAL until its objection window of exactly 600000 ms '
-    + 'closes without a standing objection, then FINAL; a standing objection is decided by deterministic re-run, SUSPENDED meanwhile.',
-  slashing: 'ARENA rule slashing v1 (§5A.3, §5A.3B): the offences of §5A.3 (double result, signing a result the re-run contradicts, signing for a '
-    + 'round its operator played, a false operator declaration), each with its one-artifact proof, slash the bond; 75 % evenly to the active '
-    + 'census nodes, 25 % to the donation set.',
-});
-/** A rule's hash: its text under the rule tag. */
-const ruleHash = (text) => taggedHash(TAG.contractRule, te.encode(text));
-const RULE_HASHES = Object.freeze(Object.fromEntries(Object.entries(RULE_TEXTS).map(([k, t]) => [k, ruleHash(t)])));
-/** disconnect_rule: what a player who stops sending inputs gets - 1, the run ends at its last receipted checkpoint (§15). */
-const DISCONNECT_LAST_MARK = 1;
-const DISCONNECT_RULES = Object.freeze([DISCONNECT_LAST_MARK]);
-
-/** The rules this build settles under, as a contract names them (with the round's own claim window and floors). */
-function buildRules({ claimWindowDays = 1, bondMinGameVerifySats, bondMinSettlementSats } = {}) {
-  return { equivocation: RULE_HASHES.equivocation, noQuorum: RULE_HASHES.noQuorum, finality: RULE_HASHES.finality, slashing: RULE_HASHES.slashing,
-    disconnect: DISCONNECT_LAST_MARK, claimWindowDays, bondMinGameVerifySats, bondMinSettlementSats };
-}
-
-/**
- * DOES THIS BUILD SETTLE UNDER THE RULES A CONTRACT NAMES? { ok, why }. A contract naming none is bound only implicitly, as before;
- * one naming them must name this build's four hashes and a disconnect rule it runs, a claim window of 1 day or more, and a floor per
- * role no lower than the round's bond_min.
- */
-function rulesStand(contract) {
-  const r = contract && contract.rules;
-  if (!r) return { ok: true, why: 'that round names no rules: bound by its config only' };
-  const eq = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
-  for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing'])
-    if (!eq(r[k], RULE_HASHES[k])) return { ok: false, why: `that round names a ${k} rule this build does not run: it is not selectable here, not slashed` };
-  if (!DISCONNECT_RULES.includes(r.disconnect)) return { ok: false, why: `that round names disconnect rule ${r.disconnect}, which this build does not run` };
-  if (!Number.isInteger(r.claimWindowDays) || r.claimWindowDays < 1) return { ok: false, why: 'a claim window is 1 day or more' };
-  for (const k of ['bondMinGameVerifySats', 'bondMinSettlementSats'])
-    if (typeof r[k] !== 'bigint' || r[k] < contract.bondMinSats) return { ok: false, why: `that round's ${k} is under its bond_min: a role's floor is the round's or above` };
-  return { ok: true, why: 'that round names the rules this build settles under' };
-}
-
-/** The bond floor of a role: the contract's own for that role when it names its rules, its bond_min otherwise. */
-function roleFloorSats(contract, role) {
-  const r = contract && contract.rules;
-  if (!r) return contract.bondMinSats;
-  return role === 'game' || role === 'game-verify' ? r.bondMinGameVerifySats : role === 'settlement' ? r.bondMinSettlementSats : contract.bondMinSats;
-}
-
-// ---- arena-protocol/src/sortition.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// Committee selection: bond-weighted, linear, and decided in integers.
-
-
-
-
-
-
-
-/**
- * HOW MANY SIGNER NODES THIS ROUND GIVES THE POOL A ROLE SERVES IN.
- *
- * 5A.7 sizes the two pools, not the four roles - "GAME/VERIFY: 7 slots,
- * threshold 5; SETTLEMENT: 7 slots, threshold 5" - so the mapping is the one
- * 22A already uses for the fee shares, imported rather than written twice: a
- * second copy of a protocol mapping is a second place for it to drift.
- *
- * A role with no pool has no committee, and that is answered rather than
- * silently given zero signer nodes.
- */
-function slotsForRole(contract, role) {
-  const pool = poolOfRole(role);
-  if (pool === GAME_VERIFY) return contract.gameVerifySlots;
-  if (pool === SETTLEMENT) return contract.settlementSlots;
-  return undefined;
-}
-
-/**
- * A node's ticket for a role. Deterministic, and unchooseable in advance
- * because the committee seed is not known when the bond is funded.
- */
-function ticketFor(committeeSeed, entry, role) {
-  const w = new Writer();
-  w.bytes32(committeeSeed);
-  w.bytes32(entry.txid);
-  w.u32(entry.vout);
-  w.u8(roleByte(role));
-  return bytesToBigInt(taggedHash(TAG.ticket, w.finish()));
-}
-
-/**
- * Selection weight: LINEAR in the bond, floored, never below one.
- *
- * A comment rather than a line of code, because square root looks like the
- * obvious anti-whale choice and somebody will try to reintroduce it. Under
- * sqrt, four nodes at 1x have total weight 4 against one node at 4x with
- * weight 2 - so splitting a bond DOUBLES a node's chances, which is the exact
- * opposite of what the anti-whale intent wanted.
- */
-function weightOf(bondSats, bondMin) {
-  if (bondMin <= 0n) throw new Error('bondMin must be positive');
-  const w = bondSats / bondMin;
-  return w < 1n ? 1n : w;
-}
-
-/**
- * Selects `slots` entries for a role.
- *
- * The score is ticket/weight, and it is NEVER computed. Cross-multiplied
- * BigInts instead: a float comparison here is a consensus bug whose only
- * symptom is two nodes disagreeing when their scores are close, which is the
- * worst failure profile there is - rare, unreproducible, and load-dependent.
- */
-/**
- * HOW MANY A ROLE DRAWS (§5A.7 reserve seats, RULED 2026-09-28): more nodes than it seats, so a drawn node that
- * is offline when its round comes is replaced - two reserves over the seats, capped where two seatings could stop sharing a
- * signer (`2 x threshold > drawn`): 9 for 7 seats (threshold 5), 3 for 2 (threshold 2). The census may hold fewer.
- */
-/**
- * THE ROLE A DRAW IS TICKETED ON: its own, and for a v2 round (2026.0.2) the settlement pool's for both - one
- * ordered list, so the seats of both roles are one set and the round's signer nodes are those 7.
- */
-const drawRoleOf = (contract, role) => (namesNoDraw(contract) ? 'settlement' : role);
-
-function drawnForRole(contract, role) {
-  const slots = slotsForRole(contract, role);
-  if (!Number.isInteger(slots)) return undefined;
-  const t = slots === 7 ? 5 : slots === 2 ? 2 : Math.floor(slots / 2) + 1;
-  return Math.min(slots + 2, 2 * t - 1);
-}
-
-function selectCommittee({ entries, contract, role, exclude, committeeSeed, count }) {
-  // EVERY NUMBER THAT DECIDES THE COMMITTEE COMES OFF THE CONTRACT.
-  //
-  // All three used to be arguments. Section 6 on the slot counts: "echoed for
-  // readability; MUST equal genesis_parameters... A contract disagreeing with
-  // the network it names is invalid, NOT A SMALLER COMMITTEE." Nobody had to
-  // forge a census to shrink one - a smaller `slots` did it. And the seed
-  // decides who wins the tickets, while `bondMin` normalises the weights, so a
-  // caller free to choose either chose the committee as surely as the seed.
-  const slots = slotsForRole(contract, role);
-  if (!Number.isInteger(slots))
-    throw new Error(`that round names no committee size for ${role}`);
-  // THE SEED IS THE BEACON'S, AND IT IS AN ARGUMENT.
-  //
-  // It used to be read off `contract.committeeSeed` - thirty-two bytes the
-  // round's AUTHOR wrote - so the lottery was a function of a value the
-  // creator chose. Measured on a fixed census of eight bonded nodes with two
-  // slots: 34 offline candidate seeds were enough to assign a chosen pair, and
-  // since the assigned set became the only trusted list that is the whole
-  // committee. That is v4.4's grinding attack, which 5A.5 exists to close:
-  //
-  //   committee_seed = H(census_root_gv || census_root_settle
-  //                      || round_id || round_randomness)
-  //
-  // and the spec's Round Contract (v4.6.2) carries `randomness_rule`,
-  // `committee_time` and `entry_open_time` - and NO
-  // committee seed, because a contract cannot name one: `round_id` hashes the
-  // contract, so a contract carrying the seed derived from its own id has no
-  // fixed point. Measured, six iterations, never equal.
-  //
-  // So the caller brings the seed its beacon produced. No fallback to the
-  // field: a caller with no beacon gets a refusal, because "I have no
-  // randomness" and "the committee is whatever the contract says" must never
-  // be the same answer.
-  if (!(committeeSeed instanceof Uint8Array) || committeeSeed.length !== 32)
-    throw new Error('a committee is drawn on the seed its beacon produced, not on one a contract names');
-  // A POSITIVE FLOOR, because the weight is bond/floor and a floor of zero is
-  // not a small floor - it is a division by zero, and `weightOf` threw from
-  // underneath here rather than this answering. It is also the thing 5A.3
-  // warns about: a floor of nothing makes identity free, "the flaw that made
-  // v4.4 unsafe".
-  if (typeof contract.bondMinSats !== 'bigint' || contract.bondMinSats <= 0n)
-    throw new Error('that round names no positive bond floor to weigh against');
-  // A ROLE'S OWN FLOOR, WHERE THE CONTRACT NAMES ITS RULES (§6 bond_min per rolerules.js): the role's floor weighs and
-  // admits; one draw for both roles (a v2 round) takes the higher. A contract naming no rules: its bond_min, as before.
-  const bondMin = namesNoDraw(contract)
-    ? [roleFloorSats(contract, 'game'), roleFloorSats(contract, 'settlement')].reduce((a, b) => (a > b ? a : b))
-    : roleFloorSats(contract, role);
-
-  // AND THE CENSUS HAS TO BE BIG ENOUGH TO HOLD A ROUND AT ALL.
-  //
-  // Without this the function ended in `slice(0, slots)`, so a census with one
-  // eligible node and a contract naming two slots gave back a COMMITTEE OF
-  // ONE - silently, with no refusal anywhere - which is the thing section 13
-  // exists to prevent arriving through the front door. `census_min_nodes` is
-  // the network's own answer to "too small", and on all three networks it is
-  // at least the slot count, so meeting it also means there are enough nodes
-  // to fill the signer nodes.
-  //
-  // BEFORE EXCLUSIONS, on purpose: `exclude` is for a re-draw, and excluding a
-  // node does not unbond it. What is measured here is the census, not the
-  // attempt.
-  const enough = meetsCensusMinimum(entries, contract, role);
-  if (!enough.ok) throw new Error(enough.why);
-
-  const excluded = new Set((exclude || []).map((e) => outpointKey(e)));
-
-  // ONE NODE KEY, ONE SEAT (RULED 2026-09-30, after testnet4 round 5eaa0966: a census still holding extra bond
-  // rows under two node keys seated node 7 and node 4 twice in the game pool and node 2 twice in settlement, and the
-  // stake's handout could not be dealt - "two signer nodes of that handout are one key"). A node key is drawn at most
-  // once: all its bonds for the role count as ONE entry - their sats summed into its weight, its ticket drawn on its
-  // lowest outpoint - so extra bond rows under one key never fill two seats. An outpoint excluded for a re-draw
-  // excludes its key.
-  const keyOf = (e) => toHex(e.pubkey);
-  const out = new Set(entries.filter((e) => excluded.has(outpointKey(e))).map(keyOf));
-  const byKey = new Map();
-  for (const e of entries) {
-    // the role, and for game/verify the round's game hosted (census.js eligibleFor)
-    // ONE DRAW FOR BOTH ROLES (2026.0.2): a v2 round's node serves both, so it is eligible for both
-    if (!(namesNoDraw(contract) ? eligibleFor(e, contract, 'game') && eligibleFor(e, contract, 'settlement') : eligibleFor(e, contract, role))
-      || out.has(keyOf(e))) continue;
-    const had = byKey.get(keyOf(e));
-    if (!had) { byKey.set(keyOf(e), { entry: e, bondSats: e.bondSats }); continue; }
-    had.bondSats += e.bondSats;
-    if (compareEntries(e, had.entry) < 0) had.entry = e;
-  }
-  // FEWER NODE KEYS THAN SEATS: each key once, as each entry was once before - never a key twice to fill a seat. The
-  // census minimum above is what refuses a census too small to hold a round (roster.test pins the smaller honest answer).
-
-  const scored = [...byKey.values()].filter(({ bondSats }) => bondSats >= bondMin).map(({ entry, bondSats }) => ({
-    entry,
-    ticket: ticketFor(committeeSeed, entry, drawRoleOf(contract, role)),
-    weight: weightOf(bondSats, bondMin),
-  }));
-
-  scored.sort((a, b) => {
-    const left = a.ticket * b.weight;
-    const right = b.ticket * a.weight;
-    if (left < right) return -1;
-    if (left > right) return 1;
-    // A tie is astronomically unlikely and must still be decided the same way
-    // everywhere, so it falls back to the census order.
-    return compareEntries(a.entry, b.entry);
-  });
-
-  // `count` is the reserve draw (drawCommittee, §5A.7): the same order, more of it
-  return scored.slice(0, Number.isInteger(count) ? count : slots).map((s) => s.entry);
-}
-
-/** THE DRAW (§5A.7): the role's `drawnForRole` lowest scores, in score order - of whom at most `slots` are seated. */
-const drawCommittee = (args) => selectCommittee({ ...args, count: drawnForRole(args.contract, args.role) });
-
-const outpointKey = (e) => {
-  let s = '';
-  for (let i = 0; i < 32; i++) s += e.txid[i].toString(16).padStart(2, '0');
-  return s + ':' + e.vout;
-};
-
-/**
- * A ROUND'S ATTESTORS (kanban #630, protocol 21): ATTESTORS_DRAWN node keys of its census, drawn as its committees are (one key one
- * seat, weighed by bond) but on their own seed - H("ARENA/v1/AttestorDraw" || committee seed) - so every node draws the same seven from
- * the round's beacon, before the round, and not the settlement committee. An outcome stands with ATTEST_DRAW_THRESHOLD of them.
- */
-const ATTESTORS_DRAWN = 7;
-const ATTEST_DRAW_THRESHOLD = 5;
-function drawAttestors({ entries, contract, committeeSeed }) {
-  if (!(committeeSeed instanceof Uint8Array) || committeeSeed.length !== 32)
-    throw new Error('a round\'s attestors are drawn on the seed its beacon produced');
-  return selectCommittee({ entries, contract, role: 'settlement', committeeSeed: taggedHash(TAG.attestorDraw, committeeSeed), count: ATTESTORS_DRAWN });
-}
-
-// ---- arena-protocol/src/beacon.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE COMMITTEE SEED, AND WHY IT CANNOT BE A NUMBER THE ROUND'S CREATOR KNOWS.
-//
-// Section 5A.5:
-//
-//     committee_seed = H(census_root_game_verify || census_root_settlement
-//                        || round_id || round_randomness)
-//
-// with the hard rule that `round_randomness` is "a public randomness beacon
-// value that DOES NOT EXIST YET when round_id is published. The Round Contract
-// commits to WHICH beacon round will be used, not to its value."
-//
-// THE ATTACK THIS CLOSES, in the spec's own words: in v4.4 "the creator chose
-// round_id while public_randomness was already known, so committee selection
-// was a pure function of a value the attacker controlled. Grinding round_ids
-// offline until both committees consisted of his own nodes was trivial and
-// undetectable - 5A.11's 'committee cannot be overwritten' check passed,
-// because nothing was overwritten."
-//
-// So the ordering is the security property, not the hashing. Two nodes given
-// the same published value must reach the same signer node list, and a value the
-// creator could have known when they chose their round must not be usable at
-// all. The first is arithmetic; the second is evidence, and evidence is what
-// this file asks the caller for and refuses to assume.
-
-
-
-
-const cat_beacon = (...parts) => {
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-  let at = 0;
-  for (const p of parts) { out.set(p, at); at += p.length; }
-  return out;
-};
-
-const is32_beacon = (b) => b instanceof Uint8Array && b.length === 32;
-
-// committeeSeedFrom lives in committee-seed.js (one copy; seed.js needs it for the round's world)
-
-/**
- * WAS THIS VALUE UNKNOWABLE WHEN THE ROUND WAS MADE?
- *
- * A beacon is only worth anything if it came AFTER the round it seeds, and a
- * hash on its own carries no date - so the caller brings the height it was
- * published at, and the contract is asked what it already knew.
- *
- * WHAT THE CONTRACT CAN PROVE TODAY, and it is less than the whole rule: it
- * commits to `census_height`, so a beacon at or below that height is one whose
- * chain state the creator demonstrably had in hand - refused. Above it, this
- * check cannot yet say whether the creator had already seen the block, because
- * the contract carries no publication height and no `committee_time`: 5A.5
- * ties the beacon to `committee_time`, and that field does not exist here.
- * Until it does, this refuses what it can prove and says so rather than
- * implying a guarantee it cannot make.
- *
- * It is deliberately not a default: a caller with no height gets a refusal,
- * because "I do not know when this was published" and "it was published late
- * enough" must never be the same answer.
- */
-function beaconIsAfterRound(contract, { height, timeMs } = {}) {
-  // WHICH BEACON, AND WHEN: both are the contract's now, and 5A.5 ties the
-  // randomness to `committee_time` rather than to anything about the census.
-  // Before this the check measured the beacon against `census_height` and said
-  // so - what it could prove, not what the rule asks - because the field did
-  // not exist. It does now.
-  if (!contract || typeof contract.committeeTimeMs !== 'bigint')
-    return { ok: false, why: 'that round names no committee time, so nothing says when its beacon is due' };
-  if (typeof contract.randomnessRule !== 'string' || !contract.randomnessRule)
-    return { ok: false, why: 'that round names no randomness rule, so nothing says which beacon seeds it' };
-
-  const network = contract.networkId ? networkOf(contract.networkId) : null;
-  if (network === null)
-    return { ok: false, why: 'that round names a network this build has no genesis for' };
-  const source = genesisFor(network).randomnessSource;
-  if (contract.randomnessRule !== source)
-    return {
-      ok: false,
-      why: `that round names randomness rule "${contract.randomnessRule}" where ${network} was `
-        + `born reading "${source}"`,
-    };
-
-  // AND A FALLBACK IS THE SAME BEACON OR IT IS NOTHING.
-  //
-  // Spec v4.6.2 has no fallback beacon: §6 dropped `randomness_fallback`, and
-  // 5A.5's beacon is the first Bitcoin block after committee_time. On a network
-  // born reading `bitcoin-block-hash` that IS the rule - there is nothing else
-  // a fallback could name - so the only honest values are absent, empty, or
-  // the born rule itself. Anything else is a
-  // SECOND randomness source, and a second source is a second committee: a
-  // creator who could fall back to a beacon of their own choosing would pick
-  // the one that signer nodes their nodes, which is 5A.5's whole attack with an extra
-  // step.
-  //
-  // The field does not encode, so a foreign fallback cannot arrive over the
-  // wire at all - `decodeRoundContract` produces none. This refuses one on a
-  // contract OBJECT, which is the only place it could still appear.
-  const fallback = contract.randomnessFallback;
-  if (fallback !== undefined && fallback !== null && fallback !== ''
-      && fallback !== source)
-    return {
-      ok: false,
-      why: `that round names randomness fallback "${fallback}" where ${network} was born `
-        + `reading "${source}" - a fallback is the same beacon or it is nothing`,
-    };
-
-  // A BEACON WITH NO TIME IS NOT A LATE BEACON. "I do not know when this was
-  // published" and "it was published after committee_time" must never be the
-  // same answer, so a caller with no timestamp gets a refusal.
-  if (typeof timeMs !== 'bigint')
-    return { ok: false, why: 'that randomness names no time, so nothing says it came after committee_time' };
-  if (timeMs <= contract.committeeTimeMs)
-    return {
-      ok: false,
-      why: `that randomness is from ${timeMs}, at or before this round's committee time `
-        + `${contract.committeeTimeMs} - the creator could have held it when the round was made`,
-    };
-
-  return { ok: true, height, timeMs, provenAfter: contract.committeeTimeMs };
-}
-
-function committeeSeedFromBeacon(contract, { roundId, randomness, height, timeMs }) {
-  const later = beaconIsAfterRound(contract, { height, timeMs });
-  if (!later.ok) return later;
-  if (!is32_beacon(contract.censusRoot))
-    return { ok: false, why: 'that round names no census root' };
-
-  // ONE ROOT WHERE THE SPEC NAMES TWO. 5A.5 hashes the game/verify root and
-  // the settlement root; this contract carries a single `censusRoot`, so both
-  // positions are filled from it and the seed is honest about that rather than
-  // silently hashing 32 fewer bytes. Two roots is a contract field and belongs
-  // with the letter that adds one.
-  try {
-    return {
-      ok: true,
-      seed: committeeSeedFrom({
-        censusRootGameVerify: contract.censusRoot,
-        censusRootSettlement: contract.censusRoot,
-        roundId,
-        roundRandomness: randomness,
-      }),
-      height,
-      timeMs,
-      rootsAreOne: true,
-    };
-  } catch (err) { return { ok: false, why: err.message }; }
-}
-
-/**
- * BIP-113's span: a block's time is the median of ELEVEN, itself included.
- *
- * Bitcoin Core's `CBlockIndex::GetMedianTimePast` walks back eleven entries
- * starting at the block itself, so the median covers heights N-10..N. Written
- * out rather than guessed, because eleven-with-itself and eleven-before-it are
- * different numbers on the same chain.
- */
-const MEDIAN_TIME_SPAN = 11;
-
-/**
- * The median time past at `at`, in seconds, from headers in height order.
- *
- * `headers[0]` is `firstHeight`. Answers null when the view does not reach
- * back far enough - "I cannot compute it here" and "it is early" must never
- * be the same answer.
- */
-function medianTimePast(headers, firstHeight, at) {
-  const last = at - firstHeight;
-  const first = last - MEDIAN_TIME_SPAN + 1;
-  if (first < 0 || last >= headers.length) return null;
-  const times = [];
-  for (let i = first; i <= last; i++) times.push(blockTimeOf(headers[i]));
-  times.sort((a, b) => a - b);
-  return times[(MEDIAN_TIME_SPAN - 1) >> 1];
-}
-
-/**
- * WHICH BLOCK SEEDS THIS ROUND'S COMMITTEE, from the chain and nothing else.
- *
- * 5A.5 (spec v4.6.2) names a beacon by TIME - the first Bitcoin block whose
- * median-time-past is after committee_time - so that every node lands on the
- * same value without anybody naming it (`genesis.randomnessSource` is
- * `bitcoin-block-hash`). round_randomness is hash(beacon_block) itself - the
- * double SHA-256 of its 80-byte header in internal order, `blockHashOf` below -
- * and the callers seed with that block hash and nothing else (§5A.5 and §12,
- * RULED 2026-09-24: no height term; BIP34 already commits the height, and both
- * uses re-hash it under their own tag). The height only chooses and checks the
- * block. But a source is not a selection: two honest nodes
- * polling at different moments would take different tips, derive different
- * seeds and signer node different committees. This is the missing half.
- *
- * THE HEIGHT IS DERIVED, NEVER NAMED. It is not on the contract, not on the
- * entry and not an argument: an author who names the height picks the block,
- * and picking the block is grinding the committee, which is the whole attack
- * 5A.5 exists to close. What the contract commits to is `committee_time` and
- * the source, and that is the commitment.
- *
- * THE FIRST BLOCK WHOSE MEDIAN TIME PAST IS AFTER `committee_time`. Not the
- * tip, which moves; not the header's own nTime, which a miner may write two
- * hours ahead and which need not increase. STRICTLY after, and that is a
- * correction to the instruction rather than a liberty: `beaconIsAfterRound`
- * already refuses a beacon AT committee_time - the creator could have held it
- * when the round was made - so selecting a block at that instant would hand
- * the validator a block it must reject. Selection and validation agree, and
- * the stricter of the two wins.
- *
- * AND DEEP ENOUGH, by the round's own `censusConfirmations` rather than a
- * second knob. A hash one block deep can be reorged out, and a reorg that
- * changes the seed changes who sits. Too shallow is refused - not assigned on,
- * not closed on, not invented around.
- */
-function beaconFromChain(contract, view) {
-  if (!contract || typeof contract.committeeTimeMs !== 'bigint')
-    return { ok: false, why: 'that round names no committee time, so nothing says which block seeds it' };
-  if (!Number.isInteger(contract.censusConfirmations) || contract.censusConfirmations < 1)
-    return { ok: false, why: 'that round names no confirmation depth, so nothing says when a beacon is settled' };
-
-  // HEADERS, WHICH IS WHAT A PROVIDER SERVES. 25.1's sources hand 80-byte
-  // headers back to back and `agreedChain` weighs those; a beacon needs a
-  // hash and a time and neither is in a transaction, so asking for whole
-  // blocks here would demand of a provider something the protocol never asks
-  // it for. Mined and linked are still checked, by the same function the
-  // work comparison uses.
-  if (!view || !Array.isArray(view.headers) || !view.headers.length)
-    return { ok: false, why: 'a chain view is at least one header' };
-  if (!Number.isInteger(view.firstHeight))
-    return { ok: false, why: 'a chain view says which height it starts at' };
-  const chain = chainWork(view.headers);
-  if (!chain.ok)
-    return { ok: false, why: `this view is not a chain: ${chain.why}` };
-
-  const headers = view.headers;
-  const firstHeight = view.firstHeight;
-  const tipHeight = firstHeight + headers.length - 1;
-  const after = contract.committeeTimeMs;
-  let chosen = null;
-  for (let h = firstHeight; h <= tipHeight; h++) {
-    const mtp = medianTimePast(headers, firstHeight, h);
-    if (mtp === null) continue;                  // no median here yet
-    if (BigInt(mtp) * 1000n > after) { chosen = { height: h, mtp }; break; }
-  }
-
-  if (chosen === null) {
-    const reach = medianTimePast(headers, firstHeight, tipHeight);
-    return {
-      ok: false,
-      why: reach === null
-        ? `this view is ${headers.length} blocks and a median time past is taken over `
-          + `${MEDIAN_TIME_SPAN}, so it says nothing about when any of them was`
-        : `no block in this view is after this round's committee time ${after}: the `
-          + `last one's median time past is ${BigInt(reach) * 1000n}`,
-    };
-  }
-
-  // AND THE VIEW HAS TO REACH BACK FAR ENOUGH TO KNOW IT IS THE FIRST.
-  //
-  // Found by running this on a real regtest, not by reading it: the answer was
-  // window-dependent. A node reading 64 headers to the tip named block 69; a
-  // node whose view began at 103 named block 112 - of the same chain, for the
-  // same round. "The first block in THIS VIEW after committee_time" is not
-  // "the first block after committee_time" unless the view starts before that
-  // instant, and two honest nodes with different windows would have joined
-  // different committees, which is the whole property this rule exists for.
-  //
-  // So: if the EARLIEST median this view can compute is already after
-  // committee_time, the view may be starting too late to see the real first
-  // block, and it says so instead of answering. A view that reaches back
-  // before the instant can answer, and every such view answers the same.
-  const earliest = medianTimePast(headers, firstHeight, firstHeight + MEDIAN_TIME_SPAN - 1);
-  if (earliest !== null && BigInt(earliest) * 1000n > after)
-    return {
-      ok: false,
-      why: `this view begins at height ${firstHeight} and its earliest median time is `
-        + `${BigInt(earliest) * 1000n}, already after this round's committee time ${after}: `
-        + 'it cannot say which block is the FIRST one, only which is the first it holds',
-    };
-
-  const depth = tipHeight - chosen.height + 1;
-  if (depth < contract.censusConfirmations)
-    return {
-      ok: false,
-      why: `the block that seeds this round is ${depth} deep and this round asks for `
-        + `${contract.censusConfirmations}: a hash that shallow can be reorged out, and a `
-        + 'reorg that changes the seed changes who sits',
-    };
-
-  return {
-    ok: true,
-    height: chosen.height,
-    hash: blockHashOf(headers[chosen.height - firstHeight]),
-    timeMs: BigInt(chosen.mtp) * 1000n,
-    depth,
-  };
-}
-
-/**
- * IS THE BEACON SOMEBODY HANDED ME THE ONE THIS CHAIN NAMES?
- *
- * `beaconFromChain` derives the answer; this refuses a different one. They are
- * two directions of the same rule and both are needed, because a node does not
- * always derive its own: `roster.js` and `verify.js` take a beacon from their
- * caller, and `beaconIsAfterRound` only asks whether it came AFTER
- * committee_time. Late is not the same as right. A block six hours past
- * committee_time is late, and if it is not the FIRST such block then whoever
- * chose it chose the seed, which is the grinding this letter closes with one
- * extra step.
- *
- * So: same height, same hash, same time, or a refusal that names both.
- */
-function beaconIsTheChains(contract, beacon, view) {
-  const named = beaconFromChain(contract, view);
-  if (!named.ok) return named;
-  if (!beacon || typeof beacon !== 'object')
-    return { ok: false, why: 'no beacon was offered to check against the chain' };
-
-  if (beacon.height !== named.height)
-    return {
-      ok: false,
-      why: `that beacon is block ${beacon.height} where this chain names ${named.height} `
-        + `as the first after committee time ${contract.committeeTimeMs}: a later block is `
-        + 'a block somebody chose',
-    };
-  if (!(beacon.hash instanceof Uint8Array) || toHex(beacon.hash) !== toHex(named.hash))
-    return {
-      ok: false,
-      why: `that beacon carries a hash block ${named.height} does not have`,
-    };
-  if (beacon.timeMs !== named.timeMs)
-    return {
-      ok: false,
-      why: `that beacon says it was published at ${beacon.timeMs} where block `
-        + `${named.height}'s median time past is ${named.timeMs}`,
-    };
-  return { ok: true, height: named.height, hash: named.hash, timeMs: named.timeMs, depth: named.depth };
-}
-
 // ---- arena-protocol/src/client-committee.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -27346,6 +28073,11 @@ function beaconIsTheChains(contract, beacon, view) {
 //             (beaconFromChain), its hash the randomness (committeeSeedFromBeacon);
 //   SORTITION selectCommittee over the verified entries, the function a seat's Roster.committeeFor runs.
 // This package carries no curve and no signature scheme: `bond` brings the curve operations, `verify` BIP-340.
+
+
+
+
+
 
 
 
@@ -27531,7 +28263,64 @@ function committeeFromChain({ contract, roundId, headers, firstHeight, evidence,
   let attestors = null;
   try { attestors = drawAttestors({ entries: census.entries, contract, committeeSeed: seeded.seed }).map((e) => e.pubkey); } catch { attestors = null; }
   return { ok: true, committees, drawn, attestors, beacon: { height: beacon.height, hash: beacon.hash }, census: { root: census.root, entries: census.entries.length },
-    checkedCensus: { root: census.root, entries: census.entries } };
+    checkedCensus: { root: census.root, entries: census.entries }, seed: seeded.seed };
+}
+
+/**
+ * THE CLIENT CHECKS A 22 ROUND'S ABSENT CLAIM ITSELF (§5A.3, kanban #727, the owner 2026-10-27: "absence only with proof" - every seat AND
+ * the client). `claim` is what GET /absent answers for the round's census root: { claims, certs, contracts } - each absent node with the
+ * seatings that prove it, the certificates of those seatings and the contracts of their rounds (hex). `evidenceOf(ridHex)` the census
+ * evidence of a named round (GET /census?round=, as for the round itself). Each named round is drawn here as committeeFromChain draws
+ * the client's own round - its contract by its id, its census from evidence hashing to its root, its beacon off the same headers - and
+ * every proof is checked on that draw (presence.js checkAbsenceProof): the certificate signed by that draw's seated, the node drawn
+ * there or left out already, listed present by none, at 3 different seating closes in the census's 24 h. A claimed node that is in the
+ * round's own census is refused too. What the client cannot see is a node a census left out that the claim does not name: that root is
+ * the seats' check against their chains, as every omission always was (§5A.6).
+ * `entries`: the round's own census as this client checked it (committeeFromChain's checkedCensus.entries).
+ * Answers { ok: true, absent: [node hex] } or { ok: false, why, node? }.
+ */
+function absenceFromChain({ contract, claim, evidenceOf, headers, firstHeight, bond, verify, entries = null }) {
+  if (!dropsAbsent(contract)) return { ok: true, absent: [] };
+  if (!claim || !Array.isArray(claim.claims)) return { ok: false, why: 'no absent claim for that census root' };
+  const t = medianTimePast(headers, firstHeight, Number(contract.censusHeight));
+  if (t === null) return { ok: false, why: 'the agreed headers do not reach the census block\'s median time, so its 24 h cannot be read' };
+  const window = presenceWindow(BigInt(t) * 1000n);
+  const inRound = new Set((entries || []).map((e) => toHex(e.pubkey)));
+  for (const c of claim.claims) if (inRound.has(String(c.node).toLowerCase())) return { ok: false, node: c.node, why: `the claim names ${String(c.node).slice(0, 16)} absent, and the round's own census holds it` };
+  const drawn = new Map();
+  const checkedCensus = new Map();
+  const drawOf = (ridHex, role) => {
+    if (!drawn.has(ridHex)) {
+      let got = null;
+      try {
+        const hex = claim.contracts && claim.contracts[ridHex];
+        const c = hex ? decodeRoundContract(fromHex(hex)) : null;
+        if (c && toHex(roundId(c)) === ridHex) {
+          const kept = checkedCensus.get(toHex(c.censusRoot)) || null;
+          const r = committeeFromChain({ contract: c, roundId: fromHex(ridHex), headers, firstHeight, evidence: kept ? null : evidenceOf(ridHex), bond, verify, census: kept });
+          if (r.ok) { checkedCensus.set(toHex(c.censusRoot), r.checkedCensus); got = { contract: c, drawn: r.drawn, entries: r.checkedCensus.entries, seed: r.seed }; }
+        }
+      } catch { got = null; }
+      drawn.set(ridHex, got);
+    }
+    const d = drawn.get(ridHex);
+    if (!d) return null;
+    // A HEARTBEAT SLOT (kanban #727): its committee drawn here on the round's census and seed, the census every node of which it expects
+    const j = heartbeatSlotOf(role);
+    if (j !== null) {
+      // a round with no heartbeat slots (below 22, a table's later round) is a wrong proof, not one to ask again
+      if (!hasHeartbeats(d.contract)) return { heartbeat: null, drawn: [], census: null, closeMs: 0n };
+      try {
+        return { heartbeat: j, drawn: drawHeartbeat({ entries: d.entries, contract: d.contract, committeeSeed: d.seed, slot: j }).map((e) => toHex(e.pubkey)),
+          census: d.entries.map((e) => toHex(e.pubkey)), closeMs: heartbeatCloseMs(d.contract, j) };
+      } catch { return null; }
+    }
+    return { drawn: d.drawn[role].map(toHex), slots: slotsForRole(d.contract, role), closeMs: seatingCloseMs(d.contract) };
+  };
+  const r = checkAbsenceProof(claim.claims, { window, verify, drawOf,
+    certOf: (ridHex, role) => { const h = claim.certs && claim.certs[`${ridHex}:${role}`]; return h ? fromHex(h) : null; } });
+  if (!r.ok) return { ok: false, node: r.node, why: r.notYet ? `${r.why}: its contract or census was not handed over` : r.why };
+  return { ok: true, absent: claim.claims.map((c) => String(c.node).toLowerCase()) };
 }
 
 // ---- arena-client/src/explorer-check.js
@@ -27596,6 +28385,7 @@ async function explorerAgrees({ base, points, fetcher = fetch, timeoutMs = 8000 
 
 
 
+
 /**
  * THE ARBITRATION SET AND BOND TERMS A BOND IS REBUILT WITH, per network: genesis' own (testnetShape: 5 of the 7 keys,
  * template-1 maturity 100). Read from genesis-ids.js rather than genesis.js, which the page's bundle does not carry;
@@ -27626,6 +28416,7 @@ const keptChains = new Map();     // network:explorer -> [{ at, chain, firstHeig
 const keptCensus = new Map();     // round's census root -> evidence
 const keptTooOld = new Map();     // round's census root -> the nodes a seat left out for their protocol version
 const keptChecked = new Map();    // round's census root -> the census this client checked (entries), for the series' other rounds
+const keptAbsence = new Map();    // a 22 round's census root -> the absent claim this client checked against it (kanban #727)
 
 const baseOf = (u) => String(u).replace(/\/+$/, '');
 // ONE SOURCE PER SEAT, as join.js counts its chain sources (sourceKey): the origin and the first path segment - testnet4's
@@ -27706,6 +28497,24 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
   return { ok: false, why: `no node handed over the census: ${refused.join('; ')}` };
 }
 
+/** The absent claim of a 22 round's census root, checked here (client-committee.js absenceFromChain); no claim held anywhere: none. */
+async function absenceFor(contract, nodes, { fetcher, headers, firstHeight, entries, bond, verify }) {
+  const rootHex = toHex(contract.censusRoot);
+  let claim = null, from = null;
+  for (const u of nodes) {
+    try { const r = await fetcher(`${baseOf(u)}/absent?root=${rootHex}`); if (r.ok) { const j = await r.json(); if (j && Array.isArray(j.claims)) { claim = j; from = u; break; } } } catch { /* the next */ }
+  }
+  if (!claim) return { ok: true, absent: [] };
+  const evidence = new Map();
+  for (const rid of Object.keys(claim.contracts || {}).slice(0, 64)) {
+    for (const u of [from, ...nodes.filter((x) => x !== from)]) {
+      try { const r = await readWithOneRetry(fetcher, `${baseOf(u)}/census?round=${rid}`); if (r.ok) { const j = await r.json(); if (j && Array.isArray(j.entries)) { evidence.set(rid, j.entries); break; } } } catch { /* the next */ }
+    }
+  }
+  const r = absenceFromChain({ contract, claim, evidenceOf: (rid) => evidence.get(rid) || [], headers, firstHeight, bond, verify, entries });
+  return r.ok ? r : { ...r, from };
+}
+
 /**
  * THIS ROUND'S COMMITTEES, AS THIS CLIENT DERIVES THEM. `curve`: the page's (ARENA_CURVE: bondTweakPoint, bondCombine, verify).
  * Answers { ok, committees: { game, settlement }, beacon, census, headers: { from, agreed, firstHeight, count }, seats: [{ node,
@@ -27761,6 +28570,21 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
   if (!got.ok) return { ...got, censusRefused };
   keptCensus.set(toHex(contract.censusRoot), evidence.entries);
   keptChecked.set(toHex(contract.censusRoot), got.checkedCensus ? { ...got.checkedCensus, height: Number(contract.censusHeight) } : got.checkedCensus);
+  // A 22 CENSUS LEAVES OUT A NODE ONLY WITH PROOF, AND THE CLIENT CHECKS IT TOO (§5A.3, kanban #727, the owner 2026-10-27): the claim held
+  // for the root (GET /absent), each named seating drawn here from its round's contract and census evidence, every certificate checked
+  // on that draw. A wrong proof refuses the round. No claim at any node: nothing named, nothing to check - an omission without a claim
+  // is a root no honest seat serves.
+  if (dropsAbsent(contract)) {
+    const rootHex = toHex(contract.censusRoot);
+    let absence = keptAbsence.get(rootHex);
+    if (!absence) {
+      absence = await absenceFor(contract, nodes, { fetcher, headers: chain.chain.headers, firstHeight: chain.firstHeight, entries: got.checkedCensus ? got.checkedCensus.entries : [],
+        bond: { arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity, tweakPoint: curve.bondTweakPoint, combine: curve.bondCombine }, verify: curve.verify });
+      if (absence.ok) keptAbsence.set(rootHex, absence);
+    }
+    if (!absence.ok) return { ok: false, why: `the round's census leaves out a node without proof: ${absence.why}`, absentRefused: absence };
+    got.absent = absence.absent;
+  }
   // THE SEATING (§5A.7 reserve seats): each role's certificate, asked of the seats and checked against the draw
   // this client made itself - every seated node signed it, in score order, within the seats and at least the threshold. A
   // checked certificate's seated are the committee. `seating[role]`: { seated, from } checked; { missing } when a seat
