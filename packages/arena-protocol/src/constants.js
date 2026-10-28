@@ -169,12 +169,14 @@ export const LIQUIDITY_VERSION = 16;
  */
 export const CUSTODY_GATEWAY_VERSION = 22;
 /**
- * THE GATEWAY SEATINGS FROM 2.0 (§23A.9, kanban #559, the owner's rulings 1 and 2): a guardian floors each paid seat's proved peg-in to
+ * THE GATEWAY SEATING RULES OF 2.0 (§23A.9, kanban #559, the owner's rulings 1 and 2): a guardian floors each paid seat's proved peg-in to
  * whole PEG_IN_FLOOR_SATS before it signs (guardians reading the federation's coins minutes apart sign one body), and a seating of epoch
- * E is judged against the federation record in force at E's last block. A seating belongs to an epoch, not a round, so a guardian applies
- * both from the newest version its build speaks (max of SUPPORTED_PROTOCOL_VERSIONS); 2.0 is unreleased, as PRESENCE_VERSION.
+ * E is judged against the federation record in force at E's last block. A seating belongs to an epoch, not a round, so both apply by the
+ * SEATING'S epoch - from this gateway epoch (144 blocks) on - never by a build's version or the clock: 1.9.x and 2.0 guardians signing
+ * the same epoch apply the same rules. null: never - every guardian signs and judges as 1.9.x (exact peg-ins, the record held now).
+ * SET TO A CONCRETE EPOCH AT THE 2.0 TAG.
  */
-export const SEATING_RULES_VERSION = 22;
+export const SEATING_RULES_EPOCH = null;
 /** The owner's emergency key (§23A.5a): the advert names it, a request it signs takes an offline node out without losing its bond. */
 export const EMERGENCY_VERSION = 17;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);

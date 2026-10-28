@@ -4918,8 +4918,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // and each paid seat's peg-in as this guardian proved it from the federation's coins (kanban #559/#543): signed with the seats,
           // the weights of the gateways' part under peg-in pressure (§23A.3a part 2); a seat it could not check is left out
           { const paid = paidSeatsOf(v);
-            // from 2.0 floored to whole 100,000 sat (ruling 1): a seating is no round's, so by the newest version this build speaks
-            const pegIns = provedPegInsOf(paid, v.gateways, { version: Math.max(...SUPPORTED_PROTOCOL_VERSIONS) });
+            // floored to whole 100,000 sat from the activation epoch (ruling 1, SEATING_RULES_EPOCH), by the epoch signed
+            const pegIns = provedPegInsOf(paid, v.gateways, { epoch });
             const own = signGatewaySeating({ federationId: v.federationId, epoch, seats: paid, ...(Object.keys(pegIns).length ? { pegIns } : {}) }, toHex(round.pubkey), (h) => schnorr.sign(h, round.identity.secret));
             ownSeatings.set(`${v.federationId}:${epoch}`, own); keepSeating('own', v.federationId, epoch, own); }
       }
@@ -4930,9 +4930,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rec = fedRecords.recordOf(fid);
         const seatedHex = (fedRecords.seatedGuardians(fid) || []).map((k) => toHex(k));
         if (!rec || !rec.record || !seatedHex.length) continue;
-        // JUDGED BY THE RECORD IN FORCE AT THE EPOCH'S LAST BLOCK from 2.0 (ruling 2; a seating is no round's, so by the newest version this
-        // build speaks): its seated guardians and threshold, not today's; the record held now where this seat holds none that old
-        const judged = seatingRecordFor({ epoch: ep, version: Math.max(...SUPPORTED_PROTOCOL_VERSIONS), recordAt: fedRecords.recordAt ? (h) => fedRecords.recordAt(fid, h) : null, current: rec.record });
+        // JUDGED BY THE RECORD IN FORCE AT THE EPOCH'S LAST BLOCK from the activation epoch (ruling 2, SEATING_RULES_EPOCH), by the epoch
+        // judged: its seated guardians and threshold, not today's; the record held now before it, or where this seat holds none that old
+        const judged = seatingRecordFor({ epoch: ep, recordAt: fedRecords.recordAt ? (h) => fedRecords.recordAt(fid, h) : null, current: rec.record });
         const judgedHex = judged.at === 'epoch' ? seatedOfRecord(judged.record).map((k) => toHex(k)) : seatedHex;
         const signed = ownSeatings.has(`${fid}:${ep}`) ? [ownSeatings.get(`${fid}:${ep}`)] : [];
         for (const node of [...new Set([...judgedHex, ...seatedHex])]) {

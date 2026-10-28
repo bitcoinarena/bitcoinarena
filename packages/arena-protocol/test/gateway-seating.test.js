@@ -160,39 +160,48 @@ test('the proved peg-ins a guardian signs: each checked paid seat as a decimal s
   assert.deepEqual(provedPegInsOf([], gateways), {});
 });
 
-// kanban #559, the owner's ruling 1 (§23A.9, from protocol 22): each guardian floors a seat's proved peg-in to whole 100,000 sat before it
-// signs, so guardians reading the federation's coins minutes apart sign one body; a real disagreement (one sees the coin, one does not)
-// still splits them; below 22 the amounts stay exact, as before
-test('from protocol 22 a proved peg-in is signed floored to 100,000 sat: near amounts make one body that stands; a seat seen by some only does not', async () => {
-  const { provedPegInsOf, PEG_IN_FLOOR_SATS } = await import('../src/gateway-seating.js');
+// kanban #559, the owner's ruling 1 (§23A.9, from the activation epoch SEATING_RULES_EPOCH): each guardian floors a seat's proved peg-in to
+// whole 100,000 sat before it signs, so guardians reading the federation's coins minutes apart sign one body; a real disagreement (one
+// sees the coin, one does not) still splits them. Decided by the seating's epoch: before the activation epoch - and at every epoch while
+// it is null, as it ships until the 2.0 tag - the amounts stay exact, as 1.9.x signs them. The activation epoch is passed in here.
+test('the activation epoch: a proved peg-in is signed floored to 100,000 sat in a seating of that epoch or later; null - never', async () => {
+  const { provedPegInsOf, PEG_IN_FLOOR_SATS, seatingRulesActive } = await import('../src/gateway-seating.js');
+  const { SEATING_RULES_EPOCH } = await import('../src/constants.js');
   assert.equal(PEG_IN_FLOOR_SATS, 100_000n);
-  const signWith = (i, gateways, version) => signGatewaySeating({ federationId: fid, epoch: 7, seats: [A, B], ...((p) => (Object.keys(p).length ? { pegIns: p } : {}))(provedPegInsOf([A, B], gateways, { version })) },
-    g[i].hex, (h) => schnorr.sign(h, g[i].secret));
+  const signWith = (i, gateways, epoch, rulesEpoch) => signGatewaySeating({ federationId: fid, epoch, seats: [A, B],
+    ...((p) => (Object.keys(p).length ? { pegIns: p } : {}))(provedPegInsOf([A, B], gateways, { epoch, rulesEpoch })) }, g[i].hex, (h) => schnorr.sign(h, g[i].secret));
+  const stand = (signed, epoch) => standingSeating({ signed, federationId: fid, epoch, seated, threshold: 3, verify });
   const seen = [{ [A]: { provedPegInSats: 1_234_567n }, [B]: { provedPegInSats: 99_999n } },
     { [A]: { provedPegInSats: 1_201_000n }, [B]: { provedPegInSats: 0n } },
     { [A]: { provedPegInSats: 1_299_999n }, [B]: { provedPegInSats: 50_000n } }];
-  // 22: three guardians, three readings, one body - it stands at threshold 3, naming 1,200,000 and 0
-  assert.deepEqual(provedPegInsOf([A], seen[0], { version: 22 }), { [A]: '1200000' });
-  const at22 = standingSeating({ signed: seen.map((s, i) => signWith(i, s, 22)), federationId: fid, epoch: 7, seated, threshold: 3, verify });
-  assert.equal(at22.ok, true, at22.why);
-  assert.deepEqual([at22.signers, at22.seating.pegIns], [3, { [A]: '1200000', [B]: '0' }]);
-  // a real disagreement: the third guardian could not check A (its coin not seen) - A is left out of its body, and nothing stands
+  // AS IT SHIPS: no activation epoch - off at every epoch, exact amounts, three bodies, nothing stands (a 1.9.x guardian signs the same)
+  assert.equal(SEATING_RULES_EPOCH, null, 'no activation epoch until the 2.0 tag');
+  for (const e of [7, 1_000_000]) {
+    assert.equal(seatingRulesActive(e), false);
+    assert.deepEqual(provedPegInsOf([A], seen[0], { epoch: e }), { [A]: '1234567' }, `epoch ${e}: exact`);
+    const off = stand(seen.map((s, i) => signWith(i, s, e)), e);
+    assert.equal(off.ok, false); assert.match(off.why, /at most 1/);
+  }
+  // ACTIVATION EPOCH 7: a seating of epoch 6 as 1.9.x - three bodies; one of epoch 7 - one body of 1,200,000 and 0 that stands at 3
+  const at6 = stand(seen.map((s, i) => signWith(i, s, 6, 7)), 6);
+  assert.equal(at6.ok, false, 'the epoch before the activation: exact, three bodies');
+  assert.deepEqual(provedPegInsOf([A], seen[0], { epoch: 6, rulesEpoch: 7 }), { [A]: '1234567' });
+  assert.deepEqual(provedPegInsOf([A], seen[0], { epoch: 7, rulesEpoch: 7 }), { [A]: '1200000' });
+  const at7 = stand(seen.map((s, i) => signWith(i, s, 7, 7)), 7);
+  assert.equal(at7.ok, true, at7.why);
+  assert.deepEqual([at7.signers, at7.seating.pegIns], [3, { [A]: '1200000', [B]: '0' }]);
+  // a real disagreement at 7: the third guardian could not check A - A is left out of its body, and nothing stands
   const blind = { [A]: { provedPegInSats: null }, [B]: { provedPegInSats: 50_000n } };
-  const split = standingSeating({ signed: [signWith(0, seen[0], 22), signWith(1, seen[1], 22), signWith(2, blind, 22)], federationId: fid, epoch: 7, seated, threshold: 3, verify });
-  assert.equal(split.ok, false);
-  assert.match(split.why, /at most 2/);
-  // below 22: exact amounts, three bodies, as before
-  assert.deepEqual(provedPegInsOf([A], seen[0], { version: 20 }), { [A]: '1234567' });
-  assert.deepEqual(provedPegInsOf([A], seen[0]), { [A]: '1234567' }, 'no version named: exact');
-  const at20 = standingSeating({ signed: seen.map((s, i) => signWith(i, s, 20)), federationId: fid, epoch: 7, seated, threshold: 3, verify });
-  assert.equal(at20.ok, false);
-  assert.match(at20.why, /at most 1/);
+  const split = stand([signWith(0, seen[0], 7, 7), signWith(1, seen[1], 7, 7), signWith(2, blind, 7, 7)], 7);
+  assert.equal(split.ok, false); assert.match(split.why, /at most 2/);
+  assert.deepEqual(provedPegInsOf([A], seen[0]), { [A]: '1234567' }, 'no epoch named: exact');
 });
 
-// kanban #559, the owner's ruling 2 (§23A.9, from protocol 22): a seating of epoch E is judged against the federation record in force at
-// E's last block, height (E+1)*144 - 1 - not the record the seat holds when it gathers. The guardian set changes in epoch E+1 (guardian 0
-// leaves, guardian 4 comes in): E's seating signed at threshold by the old set still stands; one signed by the new set alone does not.
-test('from protocol 22 a seating of epoch E is judged by the record in force at E\'s last block, not the guardian set of today', async () => {
+// kanban #559, the owner's ruling 2 (§23A.9, from the activation epoch SEATING_RULES_EPOCH): a seating of epoch E is judged against the
+// federation record in force at E's last block, height (E+1)*144 - 1 - not the record the seat holds when it gathers. The guardian set
+// changes in epoch E+1 (guardian 0 leaves, guardian 4 comes in): with the rule on, E's seating signed at threshold by the old set stands
+// and one signed by the new set alone does not; off (before the activation epoch, or none named), today's record judges, as 1.9.x.
+test('the activation epoch: a seating of that epoch or later is judged by the record in force at its last block; before it or null - today\'s', async () => {
   const { seatingRecordFor, seatingJudgeHeight } = await import('../src/gateway-seating.js');
   const E = 1000;
   assert.equal(seatingJudgeHeight(E), 1001 * 144 - 1);
@@ -201,24 +210,28 @@ test('from protocol 22 a seating of epoch E is judged by the record in force at 
   const history = [old, next];
   const recordAt = (h) => history.filter((r) => r.height <= h).sort((a, b) => b.height - a.height)[0] || null;   // as federation-records.js
   const seatedOf = (r) => r.guardians.map((x) => x.nodePubkey);
-  const judge = (signers, version) => {
-    const { record, at } = seatingRecordFor({ epoch: E, version, recordAt, current: next });
+  const judge = (signers, rulesEpoch) => {
+    const { record, at } = seatingRecordFor({ epoch: E, recordAt, current: next, ...(rulesEpoch === undefined ? {} : { rulesEpoch }) });
     const st = standingSeating({ signed: signers.map((i) => sign(i, [A, B], E)), federationId: fid, epoch: E, seated: seatedOf(record), threshold: record.threshold, verify });
     return [st.ok, at];
   };
-  // 22: by the record of E's last block - the old set
-  assert.deepEqual(judge([0, 1, 2], 22), [true, 'epoch'], 'signed at threshold by the set seated in E: it stands');
-  assert.deepEqual(judge([2, 3, 4], 22), [false, 'epoch'], 'the new set alone: guardian 4 was not seated in E, two of three - it does not');
-  // below 22: by the record held now, as before
-  assert.deepEqual(judge([0, 1, 2], 20), [false, 'now'], 'below 22 guardian 0, gone today, does not count');
-  assert.deepEqual(judge([2, 3, 4], 20), [true, 'now']);
-  // the edge: a record signed at E's last block is E's; one a block later is not
+  // AS IT SHIPS (no activation epoch) and with none named: today's record - guardian 0, gone today, does not count
+  assert.deepEqual(judge([0, 1, 2]), [false, 'now'], 'as it ships: by the record held now');
+  assert.deepEqual(judge([2, 3, 4]), [true, 'now']);
+  assert.deepEqual(judge([0, 1, 2], null), [false, 'now']);
+  // ACTIVATION AT E+1: E is the epoch before it - as 1.9.x
+  assert.deepEqual(judge([0, 1, 2], E + 1), [false, 'now'], 'the epoch before the activation: today\'s record');
+  assert.deepEqual(judge([2, 3, 4], E + 1), [true, 'now']);
+  // ACTIVATION AT E: by the record of E's last block - the old set
+  assert.deepEqual(judge([0, 1, 2], E), [true, 'epoch'], 'signed at threshold by the set seated in E: it stands');
+  assert.deepEqual(judge([2, 3, 4], E), [false, 'epoch'], 'the new set alone: guardian 4 was not seated in E, two of three - it does not');
+  // the record edge: a record signed at E's last block is E's; one a block later is not
   history.push(recordOf([1, 2, 3, 4], seatingJudgeHeight(E)));
-  assert.deepEqual(judge([2, 3, 4], 22), [true, 'epoch'], 'a record signed at the last block of E is in force for E');
+  assert.deepEqual(judge([2, 3, 4], E), [true, 'epoch'], 'a record signed at the last block of E is in force for E');
   history.pop();
   history.push(recordOf([1, 2, 3, 4], seatingJudgeHeight(E) + 1));
-  assert.deepEqual(judge([0, 1, 2], 22), [true, 'epoch'], 'one signed at the first block of E+1 is not');
+  assert.deepEqual(judge([0, 1, 2], E), [true, 'epoch'], 'one signed at the first block of E+1 is not');
   // a seat that holds no record that old judges by the one it holds, as before
-  const fresh = seatingRecordFor({ epoch: E, version: 22, recordAt: () => null, current: next });
+  const fresh = seatingRecordFor({ epoch: E, recordAt: () => null, current: next, rulesEpoch: E });
   assert.deepEqual([fresh.at, fresh.record], ['now', next]);
 });
