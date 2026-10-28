@@ -329,6 +329,16 @@ const wizard = createWizard({ state, release, seatPort, bridgePort, cloudflared,
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { try { if (tunnel && tunnel.close) tunnel.close(); } catch { /* ending anyway */ } process.exit(130); });
 
 server = http.createServer((req, res) => wizard.handle(req, res));
+// THE SETUP PORT TAKEN (kanban #762: a second installer, or the "add more nodes" child of one still open, threw an
+// unhandled EADDRINUSE): say which port and what most likely holds it, then end without a stack trace
+server.on('error', (e) => {
+  if (e && e.code === 'EADDRINUSE') {
+    console.error(`\nPort ${port} on this machine is already in use, most likely by another Bitcoin Arena setup that is still running.`
+      + `\nFinish or stop that setup first (Ctrl-C in its terminal), then run this one again. (--port <n> picks another setup port.)`);
+    process.exit(1);
+  }
+  throw e;
+});
 server.listen(port, '127.0.0.1', async () => {
   const local = `http://127.0.0.1:${port}/?t=${wizard.token}`;
   log.tag('install').verbose(`the setup page listens on 127.0.0.1:${port} (--port, else 7800${port !== 7800 ? ' + this node\'s port offset' : ''}); the node's seat will be on port ${seatPort}, its home ${home}`);
