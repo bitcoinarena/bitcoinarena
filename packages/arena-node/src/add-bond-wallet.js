@@ -175,13 +175,20 @@ export function ownAdvertAfter(now, { guardianOf, hostedGames = null, nowMs = Da
 // AND THE GAMES IT HOSTS (kanban #685, measured 2026-10-27: the seats loaded Up/Down v24 and never announced it, so every v24 round drew only
 // the 3 outside nodes that did and none could be seated): `hostedGames` (32-byte ids) are added to what the advertisement names - nothing is
 // removed - in the same update as the guardians, so a new game version counts once that update does
-export async function guardianOfFromWallet({ cli, wallet, network = 'testnet4', secret, guardianOf, hostedGames = null, post = false }) {
+// `keep`: the guardians the advertisement names stay, those in `guardianOf` added or their keys made current (a seat's own check, kanban #741:
+// one read of the chain answers both the advertisement in force and the update, where the check read it twice); `scan` as regtest takes it
+export async function guardianOfFromWallet({ cli, wallet, network = 'testnet4', secret, guardianOf, hostedGames = null, post = false, keep = false, scan = null }) {
   const { regtest } = await import('../tools/regtest-bond.mjs');
-  const rt = regtest(cli, { network, wallet: wallet || 'arena' });
+  const rt = regtest(cli, { network, wallet: wallet || 'arena', scan });
   const bonds = rt.bondsOf(secret);
-  if (!bonds.length) return { ok: false, why: 'this node has no confirmed bond whose advertisement could be updated' };
+  if (!bonds.length) return { ok: false, noBond: true, why: 'this node has no confirmed bond whose advertisement could be updated' };
   const bond = bonds[0];
   const now = (rt.newestUpdateOf(bond) || {}).advert || bond.advert;
+  if (keep) {
+    const want = new Map(((now && now.guardianOf) || []).map((g) => [toHex(g.federationId), g]));
+    for (const e of guardianOf || []) want.set(toHex(e.federationId), e);
+    guardianOf = [...want.values()];
+  }
   const next = ownAdvertAfter(now, { guardianOf, hostedGames });
   if (next.same) return { ok: false, same: true, why: 'the advertisement names these guardians and games already' };
   const { advert, before, after, addedGames } = next;

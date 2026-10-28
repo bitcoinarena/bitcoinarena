@@ -34,7 +34,7 @@ import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 import { tweakPoint, combine } from '../src/curve.js';
 
 /** Everything a caller needs against one running regtest. */
-export function regtest(cli, { wallet = 'arena', network = 'regtest' } = {}) {
+export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = null } = {}) {
   const g = genesisFor(network);
 
   if (!JSON.parse(cli('listwallets')).includes(wallet)) {
@@ -43,7 +43,8 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest' } = {}) {
   // ONE UTXO SCAN AT A TIME, WAITED FOR (measured 2026-10-13: two runners started on one bitcoind at once - the
   // Up/Down keeper beside the Tick Tock keeper, on the test host and on the test host - and the second died on "Scan already in
   // progress", error -8): a scan another process runs is waited out, 2 s at a time, up to 4 min, then asked again
-  const scanUtxos = (descriptors) => {
+  // `scan` IN PLACE OF THIS WAIT (kanban #741): a caller that must not wait - a seat's own advert check - answers the scans itself
+  const scanUtxos = scan || ((descriptors) => {
     for (let i = 0; ; i++) {
       try { return JSON.parse(cli('scantxoutset', 'start', JSON.stringify(descriptors))); }
       catch (e) {
@@ -52,7 +53,7 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest' } = {}) {
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2000);
       }
     }
-  };
+  });
   const height = () => Number(cli('getblockcount'));
   const mine = (n = 1) => cli('generatetoaddress', String(n), cli('getnewaddress'));
   // A CHAIN THE OPERATOR MINES IS A CHAIN THE OPERATOR GRINDS (RULED 2026-09-21 17:01).

@@ -65,6 +65,7 @@ import { publicationFee, publisherPayoutMsat, publisherRoundIndex } from '../../
 import { seriesRoundIdOf, stakePointIsTheHandouts } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
+import { createAdvertSelf, firstCheckDelayMs } from './advert-self.js';
 import { paysBondMarker } from '../../arena-protocol/src/chain.js';
 import { createServer, request as httpRequest } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
@@ -4761,31 +4762,38 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return { federationId: typeof fid === 'string' ? fromHex(fid) : fid, guardianKey: fromHex(key) };
       } catch { return null; }     // a guardian still in setup has no invite yet
     };
-    const advertSelf = async () => {
-      const mine = [guardian, guardianNext].filter((g) => g && g.dataDir).map((g) => entryOf(g.dataDir)).filter(Boolean);
-      const hostedGames = [...new Set([...hosted.values()].filter((h) => h && h.gameId).map((h) => toHex(h.gameId)))];
-      if (!mine.length && !hostedGames.length) return;
-      let last = null; try { last = selfFile ? JSON.parse(readFileSync(selfFile, 'utf8')) : null; } catch { last = null; }
-      const dry = process.env.ARENA_ADVERT_SELF === 'dry';
-      // bitcoin-cli runs synchronously: in a worker, never on the seat's thread (#705)
-      const { advertSelfInWorker } = await import('./advert-self.js');
-      const r = await advertSelfInWorker({ mine, hostedGames, secret: round.identity.secret, last, network: process.env.ARENA_DONATION_NETWORK || 'testnet4', dry });
-      if (!r) return;
-      if (r.same) return;
-      if (!r.ok) { console.log(`[advert] own advertisement not posted: ${r.why}`); return; }
-      console.log(`[advert] own advertisement ${dry ? 'would be' : 'posted'}: guardian_of ${r.plan.after.split(',').map((x) => x.slice(0, 8)).join(' ') || 'none'} (was ${r.plan.before.split(',').map((x) => x.slice(0, 8)).join(' ') || 'none'})${(r.plan.addedGames || []).length ? `, ${r.plan.addedGames.length} game(s) added: ${r.plan.addedGames.map((g) => g.slice(0, 8)).join(' ')}` : ''}${r.update ? `, ${r.update.txid}` : ''}`);
-      if (r.update && selfFile) { try { writeFileSync(selfFile, JSON.stringify({ txid: r.update.txid, after: r.plan.after, atMs: Date.now() })); } catch { /* checked on chain next time */ } }
-    };
+    // NO WALLET READ WHEN NOTHING CAN BE DUE (kanban #741, measured 2026-10-28: seven seats scanning the UTXO set every 10 min kept one
+    // testnet4 bitcoind busy and their own chain reads timed out): the seat's own census entry is compared first (advert-self.js)
+    const selfFrom = Date.now();
+    const selfCheck = createAdvertSelf({
+      // no census reader an hour after the start: this seat reads none, and the wallet is the only view (read at most once per 6 h)
+      census: () => {
+        if (!fedRecords || !fedRecords.censusNewestAt) return Date.now() - selfFrom > 3600000 ? null : [];
+        const cn = fedRecords.censusNewestAt();
+        return cn && cn.entries ? cn.entries : [];
+      },
+      pubkey: round.pubkey, secret: round.identity.secret,
+      mine: () => [guardian, guardianNext].filter((g) => g && g.dataDir).map((g) => entryOf(g.dataDir)).filter(Boolean),
+      hostedGames: () => [...new Set([...hosted.values()].filter((h) => h && h.gameId).map((h) => toHex(h.gameId)))],
+      selfFile,
+      // one UTXO scan per bitcoind on this machine: the lock beside the seats' stores (their stores' parent), or where named
+      lockDir: process.env.ARENA_SCAN_LOCK_DIR || (db && db.arenaPath ? joinPath(db.arenaPath, '..', '..') : null),
+      network: process.env.ARENA_DONATION_NETWORK || 'testnet4', dry: process.env.ARENA_ADVERT_SELF === 'dry',
+    });
     let selfBusy = false;          // one check at a time: a slow wallet never stacks them
     const selfRun = () => {
       if (selfBusy) return;
       selfBusy = true;
-      advertSelf().catch((e) => console.log(`[advert] guardian_of: ${e.message}`)).finally(() => { selfBusy = false; });
+      selfCheck.check().catch((e) => console.log(`[advert] guardian_of: ${e.message}`)).finally(() => { selfBusy = false; });
     };
-    const selfStart = setTimeout(selfRun, 60000);
+    // the first check 5-15 min after the start, by the seat's key: seven seats restarted together never check together
+    let selfTimer = null;
+    const selfStart = setTimeout(() => {
+      selfRun();
+      selfTimer = setInterval(selfRun, 600000);
+      if (selfTimer.unref) selfTimer.unref();
+    }, firstCheckDelayMs(round.pubkey));
     if (selfStart.unref) selfStart.unref();
-    const selfTimer = setInterval(selfRun, 600000);
-    if (selfTimer.unref) selfTimer.unref();
   }
   if (guardian && guardian.dataDir && (process.env.ARENA_SPENT_SET_CLIENT_DIR || guardian.endpoint)) {
     guardianWiring.spentSet = true;
