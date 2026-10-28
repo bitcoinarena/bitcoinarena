@@ -166,7 +166,7 @@ test('the proved peg-ins a guardian signs: each checked paid seat as a decimal s
 // it is null, as it ships until the 2.0 tag - the amounts stay exact, as 1.9.x signs them. The activation epoch is passed in here.
 test('the activation epoch: a proved peg-in is signed floored to 100,000 sat in a seating of that epoch or later; null - never', async () => {
   const { provedPegInsOf, PEG_IN_FLOOR_SATS, seatingRulesActive } = await import('../src/gateway-seating.js');
-  const { SEATING_RULES_EPOCH } = await import('../src/constants.js');
+  const { SEATING_RULES_EPOCH, seatingRulesEpochOf } = await import('../src/constants.js');
   assert.equal(PEG_IN_FLOOR_SATS, 100_000n);
   const signWith = (i, gateways, epoch, rulesEpoch) => signGatewaySeating({ federationId: fid, epoch, seats: [A, B],
     ...((p) => (Object.keys(p).length ? { pegIns: p } : {}))(provedPegInsOf([A, B], gateways, { epoch, rulesEpoch })) }, g[i].hex, (h) => schnorr.sign(h, g[i].secret));
@@ -174,13 +174,27 @@ test('the activation epoch: a proved peg-in is signed floored to 100,000 sat in 
   const seen = [{ [A]: { provedPegInSats: 1_234_567n }, [B]: { provedPegInSats: 99_999n } },
     { [A]: { provedPegInSats: 1_201_000n }, [B]: { provedPegInSats: 0n } },
     { [A]: { provedPegInSats: 1_299_999n }, [B]: { provedPegInSats: 50_000n } }];
-  // AS IT SHIPS: no activation epoch - off at every epoch, exact amounts, three bodies, nothing stands (a 1.9.x guardian signs the same)
-  assert.equal(SEATING_RULES_EPOCH, null, 'no activation epoch until the 2.0 tag');
+  // AS IT SHIPS, PER NETWORK (the owner's ruling 2026-10-28): testnet4 and mainnet carry no activation epoch until the 2.0 tag - off at
+  // every epoch, exact amounts, three bodies, nothing stands (a 1.9.x guardian signs the same); so does a network not named, or none
+  assert.deepEqual({ ...SEATING_RULES_EPOCH }, { regtest: 0, devnet: 0, testnet4: null, mainnet: null });
+  for (const net of ['testnet4', 'testnet', 'mainnet', 'signet', null, undefined]) assert.equal(seatingRulesEpochOf(net), null, String(net));
   for (const e of [7, 1_000_000]) {
     assert.equal(seatingRulesActive(e), false);
+    assert.equal(seatingRulesActive(e, seatingRulesEpochOf('testnet4')), false);
     assert.deepEqual(provedPegInsOf([A], seen[0], { epoch: e }), { [A]: '1234567' }, `epoch ${e}: exact`);
+    assert.deepEqual(provedPegInsOf([A], seen[0], { epoch: e, network: 'testnet4' }), { [A]: '1234567' }, `testnet4 epoch ${e}: exact`);
     const off = stand(seen.map((s, i) => signWith(i, s, e)), e);
     assert.equal(off.ok, false); assert.match(off.why, /at most 1/);
+  }
+  // REGTEST AND DEVNET: the rules on from epoch 0, so the tests run with them - floored at every epoch, one body that stands
+  for (const net of ['regtest', 'devnet']) {
+    assert.equal(seatingRulesEpochOf(net), 0);
+    for (const e of [0, 1, 7]) {
+      assert.equal(seatingRulesActive(e, seatingRulesEpochOf(net)), true, `${net} epoch ${e}`);
+      assert.deepEqual(provedPegInsOf([A], seen[0], { epoch: e, network: net }), { [A]: '1200000' }, `${net} epoch ${e}: floored`);
+    }
+    const on = stand(seen.map((s, i) => signWith(i, s, 0, seatingRulesEpochOf(net))), 0);
+    assert.equal(on.ok, true, on.why);
   }
   // ACTIVATION EPOCH 7: a seating of epoch 6 as 1.9.x - three bodies; one of epoch 7 - one body of 1,200,000 and 0 that stands at 3
   const at6 = stand(seen.map((s, i) => signWith(i, s, 6, 7)), 6);
@@ -231,6 +245,9 @@ test('the activation epoch: a seating of that epoch or later is judged by the re
   history.pop();
   history.push(recordOf([1, 2, 3, 4], seatingJudgeHeight(E) + 1));
   assert.deepEqual(judge([0, 1, 2], E), [true, 'epoch'], 'one signed at the first block of E+1 is not');
+  // BY THE SEAT'S NETWORK: regtest judges by the epoch's record (activation 0), testnet4 by today's until its epoch is set at the tag
+  { const { record, at } = seatingRecordFor({ epoch: E, recordAt, current: next, network: 'regtest' }); assert.deepEqual([at, record], ['epoch', old]); }
+  { const { record, at } = seatingRecordFor({ epoch: E, recordAt, current: next, network: 'testnet4' }); assert.deepEqual([at, record], ['now', next]); }
   // a seat that holds no record that old judges by the one it holds, as before
   const fresh = seatingRecordFor({ epoch: E, recordAt: () => null, current: next, rulesEpoch: E });
   assert.deepEqual([fresh.at, fresh.record], ['now', next]);

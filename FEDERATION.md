@@ -234,8 +234,9 @@ two. Every deposit and withdrawal above goes "through any of several gateways", 
   5. a ticket on the epoch's beacon.
 
   The two are signed as a separate gateway seating per epoch (not in the federation record), once the epoch is over; it stands only with
-  the threshold of the seated guardians' signatures over the same seats. From the activation epoch named at the 2.0 release (`SEATING_RULES_EPOCH`),
-  decided by the seating's own epoch, each guardian floors a seat's proved peg-in to whole 100,000 sat before signing, and a seating of
+  the threshold of the seated guardians' signatures over the same seats. From the activation epoch N of the seat's network (`SEATING_RULES_EPOCH`, one
+  constant per network: regtest/devnet 0; testnet4 and mainnet fixed at the 2.0 tag to `floor(tag height / 144) + 14`, every guardian of
+  every live federation on 2.0 by epoch N − 2; nobody switches it by hand), decided by the seating's own epoch, each guardian floors a seat's proved peg-in to whole 100,000 sat before signing, and a seating of
   epoch E is judged against the federation record in force at E's last block (`(E + 1) × 144 − 1`), not today's guardian set; until
   that epoch is named every guardian signs and judges as 1.9.x does. The seats rotate every epoch (144 blocks, 2026-10-20): last epoch's holders step back for the eligible operators that did not hold a seat; with nobody else eligible they keep it. A draining federation has one seat, and a federation is never without a gateway (the best one that can serve holds a seat below the minimums, unpaid). An empty seat is stated.
 - **What it earns, from the custody fee** (protocol 2026.0.15, so the 4 % node fee of protocol 11 on): the guardian pool (4/3 % of every
