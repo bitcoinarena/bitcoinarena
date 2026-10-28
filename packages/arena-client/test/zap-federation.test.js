@@ -6,7 +6,7 @@
 // own page finds it on the seats and spends it into its wallet with the identity secret - once.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr, secp256k1 } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { zapPlayer } from '../src/donation-gift-page.js';
 import { collectZaps, tabIdentity, ZAPS_COLLECTED_KEY } from '../src/identity.js';
 import { decodeDonationGift, encodeDonationGift, donationGiftId, giftStands, playerGiftRecipients, GIFT_TO_PLAYER } from '../../arena-protocol/src/donation-gift.js';

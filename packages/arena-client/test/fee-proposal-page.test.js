@@ -6,7 +6,7 @@
 // not today's default.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { fetchFees, feeChangesFrom, signedFeeProposal, earliestActivation, roundFeesLine, marketFeesLine, marketFeeBpsOf } from '../src/fee-proposal-page.js';
 import { reservesDonationForRound } from '../src/reserves-page.js';
 import { feeBpsForRound } from '../src/join.js';

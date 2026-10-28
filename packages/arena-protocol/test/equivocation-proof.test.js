@@ -10,7 +10,7 @@
 // the injected verify was awaited with no catch, so a verifier that throws rejected the proof.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ed25519 } from '../../arena-node/node_modules/@noble/curves/ed25519.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import {
   encodeCheckpoint, checkpointId, joinSigned, splitSigned, provesEquivocation, NO_PREVIOUS,
   CHECKPOINT_BYTES, SIGNATURE_BYTES, SIGNED_CHECKPOINT_BYTES,

@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { votesInBlock, liveConfig, depositOf, depositOutputsExpected, depositScriptOf, configServesRound, configForNewRound, BALLOT_GENESIS } from '../src/ballot-chain.js';
 import { TESTNET4_DONATION_SET } from '../src/testnet4-donation-set.js';
 import { encodeVote, voteMessage, decodeVote, CHOICE, CLASS, proposalStands, proposalBodyId, isRepeal, SCHEDULES, REPEAL_SCHEDULES, configHashOf } from '../src/ballot.js';

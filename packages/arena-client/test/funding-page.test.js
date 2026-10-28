@@ -5,7 +5,7 @@
 // reader; an nsec and its npub go both ways; a proposal is shown only when five nodes hold it, with every comment any of them holds.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { signedProposal, signedComment, keyOfNsec, npubOf, npubOfKey, fetchProposals, postFunding, newProposalKey } from '../src/funding-page.js';
 import { readSignedFunding } from '../../arena-protocol/src/funding.js';
 import { bech32Encode, convertBits } from '../../arena-protocol/src/bech32.js';
