@@ -24,6 +24,10 @@ export const SCHEDULES = Object.freeze({
     [CLASS.UPGRADE]: { review: 2016, voting: 2016, cooldown: 4320 } }),
   regtest: Object.freeze({ [CLASS.DESIGN]: { review: 1, voting: 6, cooldown: 1 }, [CLASS.MONEY]: { review: 1, voting: 6, cooldown: 1 },
     [CLASS.UPGRADE]: { review: 1, voting: 6, cooldown: 1 } }),
+  // TESTNET4: a day of review and a day of voting for every class (kanban #785, a tester 2026-10-28: "for Testnet you can set the
+  // signal and voting periods to 1 day for all types of proposals"); the cooldowns as mainnet's
+  testnet4: Object.freeze({ [CLASS.DESIGN]: { review: 144, voting: 144, cooldown: 2016 }, [CLASS.MONEY]: { review: 144, voting: 144, cooldown: 2016 },
+    [CLASS.UPGRADE]: { review: 144, voting: 144, cooldown: 4320 } }),
 });
 /**
  * A REPEAL (§27A.7.6): "review 0, voting 720, cooldown 0 - but only if its config is byte-identical to an ancestor that was live
@@ -32,6 +36,7 @@ export const SCHEDULES = Object.freeze({
 export const REPEAL_SCHEDULES = Object.freeze({
   mainnet: Object.freeze({ review: 0, voting: 720, cooldown: 0 }),
   regtest: Object.freeze({ review: 0, voting: 6, cooldown: 0 }),
+  testnet4: Object.freeze({ review: 0, voting: 144, cooldown: 0 }),   // a day (kanban #785)
 });
 /** Is `p` a repeal: its config byte-identical to one in `history` - the configs that were live before, [{ config }] - other than the current. */
 export function isRepeal(p, history = []) {
