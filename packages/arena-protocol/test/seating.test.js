@@ -145,3 +145,67 @@ test('kanban #738: below protocol 22 nothing carries a justification - the certi
   assert.throws(() => encodeSeatingCertificate({ roundId, role: 'game', seated, signatures: sigs, justifications: [{ nodePubkey: drawn[0], justification: why }] }), /only with who was present/);
   assert.equal(decodeSeatingCertificate(encodeSeatingCertificate({ roundId, role: 'game', seated, signatures: sigs })).justifications, null);
 });
+
+// A CHAIN OF DEPARTURES EXCUSES (kanban #744, RULED 2026-10-28). Honest M = 0 signs S5 = {0..4}, then S6 = {0..5} because the
+// Byzantine B = 4 (in S5) signed S6, then S7 = {0..6} because N = 5 (in S6) signed S7. H = 1 cites M's S7 to leave S5. B signs S5
+// as well: S5 and S7 both complete. M's reason for S7 is about S6, not S5 - but M left S5 for S6 with a reason too, so M is excused.
+const S5 = drawn.slice(0, 5), S6 = drawn.slice(0, 6), S7 = drawn.slice(0, 7);
+const [M744, H744, B744, N744] = [drawn[0], drawn[1], drawn[4], drawn[5]];
+const mLeft5 = { of: S5, seated: S6, member: B744, signature: sigOver(S6, B744), nested: null };
+const mChain = { of: S6, seated: S7, member: N744, signature: sigOver(S7, N744), nested: null, prior: { signature: sigOver(S6, M744), justification: mLeft5 } };
+const hViaM = { of: S5, seated: S7, member: M744, signature: sigOver(S7, M744), nested: mChain };
+const byB5 = [2, 3].map((i) => ({ nodePubkey: drawn[i], justification: { of: S5, seated: S6, member: B744, signature: sigOver(S6, B744), nested: null } }));
+
+test('kanban #744 (protocol 22): honest M on S5 -> S6 -> S7 and a Byzantine completing S5 - M is excused by its chain, the Byzantine named', () => {
+  const a = cert22(S5);
+  const b = cert22(S7, [{ nodePubkey: M744, justification: mChain }, { nodePubkey: H744, justification: hViaM }, ...byB5]);
+  const vb = verifySeating(b, check22);
+  assert.equal(vb.ok, true, vb.why);
+  const e = seatingEquivocation(a, b, check22);
+  assert.equal(e.ok, true, e.why);
+  assert.deepEqual(e.signers.map(toHex), [toHex(B744)], 'the proof names the Byzantine alone');
+  for (const k of [M744, H744, drawn[2], drawn[3]]) assert.ok(e.excused.some((x) => toHex(x) === toHex(k)), `${toHex(k).slice(0, 8)} excused`);
+  assert.ok(e.signedTwice.some((x) => toHex(x.node) === toHex(B744) && x.certificate === 'a' && x.seated.map(toHex).join() === S6.map(toHex).join()), 'B signed S5 and S6');
+  assert.equal(e.unnamed, false);
+  // the excuse does not depend on which seating H cited, nor on M carrying its own chain in the certificate: H's nests it
+  const bare = cert22(S7, [{ nodePubkey: H744, justification: hViaM }, ...byB5]);
+  assert.deepEqual(seatingEquivocation(a, bare, check22).signers.map(toHex), [toHex(B744)], 'M\'s chain, nested in H\'s, excuses M');
+  // and the proof S5 against M's signature over S7 alone does not stand: its chain runs S5 -> S6 -> S7
+  const r = seatingSignedTwice(a, { node: M744, seated: S7, signature: sigOver(S7, M744), justification: mChain }, check22);
+  assert.equal(r.ok, false); assert.match(r.why, /carries a justification/);
+  assert.equal(seatingSignedTwice(a, { node: M744, seated: S7, signature: sigOver(S7, M744) }, check22).ok, true, 'with no chain presented it would');
+  // the chain rides on the wire with M's last signature
+  const back = decodeJustification(encodeJustification(mChain));
+  assert.deepEqual([back.of.length, back.prior.justification.of.length, toHex(back.prior.justification.member)], [6, 5, toHex(B744)]);
+});
+
+test('kanban #744 (protocol 22): a justification carries at most 8 steps - one more is never encoded, read or counted', () => {
+  // all of S, onto T: 1 and 2 cite each other's T, n deep under H = 0's
+  const deep = (n, signer = drawn[0]) => { const m = signer === drawn[1] ? drawn[2] : drawn[1];
+    return { of: S, seated: T, member: m, signature: sigOver(T, m), nested: n > 1 ? deep(n - 1, m) : null }; };
+  const on = { roundId, role: 'game', drawn, slots: 7, verify, signer: drawn[0], onto: T };
+  assert.equal(verifyJustification(deep(8), on).ok, true, 'eight stand');
+  assert.match(verifyJustification(deep(9), on).why, /at most 8 steps/);
+  assert.throws(() => encodeJustification(deep(9)), /at most 8 steps/);
+  // nine on the wire: an outer step whose nested flag is set, ahead of the eight
+  const outer = encodeJustification({ ...deep(1), nested: null }); outer[outer.length - 1] = 1;
+  assert.throws(() => decodeJustification(Uint8Array.from([...outer, ...encodeJustification(deep(8, drawn[1]))])), /at most 8 steps/);
+});
+
+test('kanban #744 (protocol 22): a forged step - signed by a non-member of the seating it leaves - breaks the chain, and M is named', () => {
+  const U = [0, 1, 2, 3, 4, 6].map((i) => drawn[i]), stranger = drawn[6];   // 6 is not in S5
+  const forged = { ...mChain, prior: { signature: sigOver(S6, M744), justification: { of: S5, seated: U, member: stranger, signature: sigOver(U, stranger), nested: null } } };
+  const on = { roundId, role: 'game', drawn, slots: 7, verify, signer: M744, onto: S7 };
+  assert.match(verifyJustification(forged, on).why, /step before: the justification's member [0-9a-f]+ is not in the seating it says can never stand/);
+  const a = cert22(S5);
+  assert.equal(seatingSignedTwice(a, { node: M744, seated: S7, signature: sigOver(S7, M744), justification: forged }, check22).ok, true, 'S5 and S7 against M');
+  // H cites M with the forged chain presented beside it: M is named with the Byzantine
+  const b = cert22(S7, [{ nodePubkey: H744, justification: { ...hViaM, nested: null } }, ...byB5]);
+  const e = seatingEquivocation(a, b, check22, [{ nodePubkey: M744, seated: S7, justification: forged }]);
+  assert.equal(e.ok, true, e.why);
+  assert.deepEqual(e.signers.map(toHex).sort(), [toHex(B744), toHex(M744)].sort());
+  // the honest chain presented the same way excuses it
+  assert.deepEqual(seatingEquivocation(a, b, check22, [{ nodePubkey: M744, seated: S7, justification: mChain }]).signers.map(toHex), [toHex(B744)]);
+  // and a certificate carrying the forged one does not stand
+  assert.match(verifySeating(cert22(S7, [{ nodePubkey: M744, justification: forged }]), check22).why, /justification does not stand/);
+});
