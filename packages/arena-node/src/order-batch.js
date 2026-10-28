@@ -59,8 +59,11 @@ export function marketRates(manifest, fees = null) {
 }
 
 export class OrderBook {
-  constructor(round, { plugins, peersFor = () => [], fetcher = (u, o) => fetch(u, o), now = () => Date.now(), intervalMs = Number(BATCH_MS), feesFor = null } = {}) {
+  constructor(round, { plugins, peersFor = () => [], fetcher = (u, o) => fetch(u, o), now = () => Date.now(), intervalMs = Number(BATCH_MS), feesFor = null,
+    syncTimeoutMs = 4000 } = {}) {
     this.round = round;
+    // how long a seat waits for another seat's certified batches before it settles (sync, kanban #740)
+    this.syncTimeoutMs = syncTimeoutMs;
     // THE FEES IN FORCE AT A ROUND: `feesFor(contract)` -> the fee set at its census height (server.js, funding-book.js
     // feesAt). A market that pays the protocol reserve (its terms name one) trades at that set's market rates
     this.feesFor = feesFor;
@@ -477,44 +480,112 @@ export class OrderBook {
     return !ref || ref.every((b) => b === 0) || typeof this.round.handout !== 'function' || !!this.round.handout(ref);
   }
 
-  /** Before a settlement: every certified batch another seat holds and this one does not, imported on its certificate. */
-  async carry(roundIdBytes) {
+  /** Before a settlement: every certified batch another seat holds and this one does not, imported on its certificate - read again now. */
+  async carry(roundIdBytes) { return this.sync(roundIdBytes, { force: true }); }
+
+  /**
+   * THE ROUND'S CERTIFIED BATCHES FROM THE OTHER SEATS, ONCE PER ROUND (kanban #740, measured 2026-10-28 00:2xZ, Up/Down round 5d4cbd41,
+   * 7 seats, threshold 5: five seats held batches 3586289144 (one Up order) and 3586289193 (one Down order), 193 filled at 40c; two
+   * overloaded seats never received 144's record or certificate, cleared 193 alone - price null, no fill - and answered the settlement
+   * "no order filled: nothing is claimed", so 3 of the 5 signer nodes needed committed and nothing settled. Batch numbers are time
+   * slots: a seat cannot see that a batch it never heard of exists, and "the book does not move on before an earlier batch is decided"
+   * covers only the batches it knows). Every other signer seat of the round is asked GET /book-certificates at once, each with a short
+   * timeout, and every certificate this seat lacks is taken through certify - the door POST /batch-certificate uses, signatures checked.
+   * The read ends once the threshold of seats (this one counted) answered, or at the timeout; an answer that comes later is still
+   * taken. The threshold matters: any batch the seats certified carries that many signatures, so any threshold of seats holds at least
+   * one that signed it. Answers { ok, heard, needed, fresh } - not ok while fewer than the threshold answered (the settlement then says
+   * "not yet", never "no order filled"). KEPT PER ROUND once the threshold answered, every certificate offered was taken, every order
+   * is whole here and no seat named a batch still pending there: one read per round per seat (the seats that hit this are the
+   * overloaded ones), not one per settle pass. `force` reads again (a settlement whose fills another seat rebuilt otherwise).
+   */
+  async sync(roundIdBytes, { force = false } = {}) {
+    const key = toHex(roundIdBytes);
+    const kept = this.#synced.get(key);
+    if (kept && !force) return { ok: true, heard: kept.heard, needed: kept.needed, fresh: 0, kept: true };
+    if (this.#syncing.has(key)) return this.#syncing.get(key);
+    const p = this.#syncOnce(roundIdBytes).finally(() => this.#syncing.delete(key));
+    this.#syncing.set(key, p);
+    return p;
+  }
+  #synced = new Map();    // round id hex -> { heard, needed } once a read was complete
+  #syncing = new Map();   // round id hex -> the read in flight
+
+  async #syncOnce(roundIdBytes) {
+    const m = this.market(roundIdBytes);
+    if (!m.ok) return m;
     const rid = toHex(roundIdBytes);
+    const peers = this.peersFor(roundIdBytes);
     // A BATCH CERTIFIED HERE ALREADY IS NOT LOOKED AT AGAIN (kanban #576, profiled 2026-10-24 12:4xZ on test host seat 1: every peer hands
     // every certified batch of the round, and certify() read and decoded the round's contract and hashed the batch for each one - ~3 % of
-    // the main thread - to answer "held already" or refuse; carry uses neither answer)
+    // the main thread - to answer "held already" or refuse)
     const held = new Set(this.db.prepare('SELECT k FROM market_batches WHERE round_id = ? AND certificate IS NOT NULL').all(Buffer.from(roundIdBytes)).map((r) => String(r.k)));
-    for (const base of this.peersFor(roundIdBytes)) {
+    const state = { answered: 0, fresh: 0, complete: true, unheard: [] };
+    let reached = () => {};
+    const enough = new Promise((resolve) => { reached = resolve; });
+    const ask = async (base) => {
       let body;
-      try { const r = await this.fetcher(`${base}/book-certificates?round=${rid}`); if (!r.ok) continue; body = await r.json(); } catch { continue; }
-      for (const cert of (body && body.certificates) || []) {
-        const k = cert && cert.record ? String(cert.record.k) : null;
-        // A BATCH HELD HERE WHOSE ORDER IS NOT WHOLE HERE (kanban #620, fed2-3 16:51Z: the entry and locks replayed, then "a loser's P could
-        // not be opened: this node accepted no handout for that entry"): what is missing is replayed from this peer
-        if (k !== null && held.has(k)) {
-          if (typeof this.replayOrder === 'function' && Array.isArray(cert.record.orders))
-            for (const o of cert.record.orders) if (isHex(String(o), 32) && !this.#orderWhole(String(o)))
-              try { const r = await this.replayOrder(String(o), base); if (!r.ok) console.log(`[orders] ${rid.slice(0, 16)} batch ${k}: order ${String(o).slice(0, 16)} not replayed from ${base}: ${r.why}`); }
-              catch (e) { console.log(`[orders] ${rid.slice(0, 16)} batch ${k}: order ${String(o).slice(0, 16)} not replayed from ${base}: ${e.message}`); }
-          continue;
-        }
-        let got = this.certify(roundIdBytes, cert);
-        // A CERTIFIED BATCH NAMING AN ORDER THAT NEVER REACHED THIS SEAT (kanban #620: round 42835aaa never settled - two seats lacked
-        // one order of batch 3585700432, refused its certificate here without a word, and rebuilt another settlement): the batch's orders
-        // this seat lacks are replayed from the seat that handed it (replayOrder: the entry checked by its hash, its locks by the
-        // federation), then the certificate is taken again. A refusal that stands is said.
-        if (!got.ok && /holds no entry/.test(String(got.why)) && typeof this.replayOrder === 'function' && Array.isArray(cert.record.orders)) {
-          for (const o of cert.record.orders) {
-            if (!isHex(String(o), 32) || this.#orderWhole(String(o))) continue;
-            try { const r = await this.replayOrder(String(o), base); if (!r.ok) console.log(`[orders] ${rid.slice(0, 16)} batch ${k}: order ${String(o).slice(0, 16)} not replayed from ${base}: ${r.why}`); }
-            catch (e) { console.log(`[orders] ${rid.slice(0, 16)} batch ${k}: order ${String(o).slice(0, 16)} not replayed from ${base}: ${e.message}`); }
-          }
-          got = this.certify(roundIdBytes, cert);
-        }
-        if (got.ok && k !== null) held.add(k);
-        else if (!got.ok) console.log(`[orders] ${rid.slice(0, 16)} batch ${k}: the certificate ${base} holds is not taken here: ${got.why}`);
+      const ac = typeof AbortController === 'function' ? new AbortController() : null;
+      let timer = null;
+      try {
+        const late = new Promise((_, reject) => { timer = setTimeout(() => { if (ac) ac.abort(); reject(new Error(`no answer in ${this.syncTimeoutMs} ms`)); }, this.syncTimeoutMs); });
+        late.catch(() => {});
+        const r = await Promise.race([this.fetcher(`${base}/book-certificates?round=${rid}`, ac ? { signal: ac.signal } : undefined), late]);
+        if (!r.ok) throw new Error(`answered ${r.status}`);
+        body = await Promise.race([r.json(), late]);
+        if (!body || !Array.isArray(body.certificates)) throw new Error('answered no list of certificates');
+      } catch (e) { state.unheard.push(`${base}: ${e.message}`); return; } finally { clearTimeout(timer); }
+      await this.#take(roundIdBytes, rid, base, body, held, state);
+      state.answered += 1;
+      if (1 + state.answered >= m.needed) reached();
+    };
+    const all = Promise.all(peers.map(ask));
+    if (1 >= m.needed) reached();
+    await Promise.race([enough, all]);
+    const heard = 1 + state.answered;
+    if (heard < m.needed)
+      return { ok: false, status: 409, heard, needed: m.needed, fresh: state.fresh,
+        why: `${heard} of the ${m.needed} seats' certified batches heard here${state.unheard.length ? ` (${state.unheard.slice(0, 3).join('; ')})` : ''}` };
+    if (state.complete) this.#synced.set(rid, { heard, needed: m.needed });
+    if (this.#synced.size > 4096) this.#synced.delete(this.#synced.keys().next().value);
+    if (state.fresh) console.log(`[orders] ${rid.slice(0, 16)}: ${state.fresh} certified batch(es) this seat had missed taken from the other seats (${heard} of ${m.needed} heard)`);
+    return { ok: true, heard, needed: m.needed, fresh: state.fresh };
+  }
+
+  /** One seat's GET /book-certificates answer taken here: what this seat lacks certified, and the orders a held batch lacks. */
+  async #take(roundIdBytes, rid, base, body, held, state) {
+    // A BATCH STILL PENDING AT THAT SEAT (its answer's `pending`, absent from an older seat): it may be certified after this read, so
+    // the read is not kept and the next settle pass asks again
+    for (const k of Array.isArray(body.pending) ? body.pending : []) if (!held.has(String(k))) state.complete = false;
+    for (const cert of body.certificates) {
+      const k = cert && cert.record ? String(cert.record.k) : null;
+      // A BATCH HELD HERE WHOSE ORDER IS NOT WHOLE HERE (kanban #620, fed2-3 16:51Z: the entry and locks replayed, then "a loser's P could
+      // not be opened: this node accepted no handout for that entry"): what is missing is replayed from this peer
+      if (k !== null && held.has(k)) {
+        if (typeof this.replayOrder === 'function' && Array.isArray(cert.record.orders))
+          for (const o of cert.record.orders) if (isHex(String(o), 32) && !this.#orderWhole(String(o)))
+            if (!(await this.#replay(rid, k, String(o), base))) state.complete = false;
+        continue;
       }
+      let got = this.certify(roundIdBytes, cert);
+      // A CERTIFIED BATCH NAMING AN ORDER THAT NEVER REACHED THIS SEAT (kanban #620: round 42835aaa never settled - two seats lacked
+      // one order of batch 3585700432, refused its certificate here without a word, and rebuilt another settlement): the batch's orders
+      // this seat lacks are replayed from the seat that handed it (replayOrder: the entry checked by its hash, its locks by the
+      // federation), then the certificate is taken again. A refusal that stands is said.
+      if (!got.ok && /holds no entry/.test(String(got.why)) && typeof this.replayOrder === 'function' && Array.isArray(cert.record.orders)) {
+        for (const o of cert.record.orders) if (isHex(String(o), 32) && !this.#orderWhole(String(o))) await this.#replay(rid, k, String(o), base);
+        got = this.certify(roundIdBytes, cert);
+      }
+      if (got.ok && k !== null) { held.add(k); if (got.fresh) state.fresh += 1; }
+      else if (!got.ok) { state.complete = false; console.log(`[orders] ${rid.slice(0, 16)} batch ${k}: the certificate ${base} holds is not taken here: ${got.why}`); }
     }
+  }
+
+  async #replay(rid, k, o, base) {
+    try {
+      const r = await this.replayOrder(o, base);
+      if (!r.ok) console.log(`[orders] ${rid.slice(0, 16)} batch ${k}: order ${o.slice(0, 16)} not replayed from ${base}: ${r.why}`);
+      return !!r.ok;
+    } catch (e) { console.log(`[orders] ${rid.slice(0, 16)} batch ${k}: order ${o.slice(0, 16)} not replayed from ${base}: ${e.message}`); return false; }
   }
 
   /** The batches of the round this seat signed and nobody certified or voided yet. */
