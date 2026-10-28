@@ -65,6 +65,8 @@ export function keepable(answers, spare = new Set()) {
 //                draws - the tooltip names the seat's reason
 // roundPosting({ games, pending, expected, rounds, nowMs, fedNo }) -> Map(app name -> { today, next }), each a table cell { t, c, tip }
 const BLOCK_MS = 600000, GAP_MS = 15 * 60000;
+// a wait in hours and minutes: "9 h 15 min", "40 min" (kanban #777)
+export const etaHm = (ms) => { const m = Math.max(1, Math.ceil(Number(ms) / 60000)); const h = Math.floor(m / 60); return h ? `${h} h ${m % 60} min` : `${m} min`; };
 const hm = (ms) => new Date(Number(ms)).toISOString().slice(11, 16), dhm = (ms) => new Date(Number(ms)).toISOString().slice(5, 16).replace('T', ' ');
 export function roundPosting({ games = [], pending = [], expected = [], rounds = [], nowMs = Date.now(), fedNo = () => null }) {
   const keyOf3 = (x) => `${x.publication ? x.publication.txid : ''}:${x.committeeTimeMs}:${x.federation}`;
@@ -140,13 +142,18 @@ export function roundPosting({ games = [], pending = [], expected = [], rounds =
       // A DELAYED GRID SAYS HOW FAR IT IS MINED (2026-10-26, the owner: "if it is confirmed and says delayed it should say delayed(1) for example
       // for 1 confirmation"): the round table's confirmations in () - the least of the grids that give the status, never another grid's
       // (2026-10-26 ~15:35Z: today's Tick Tock read "delayed (60)" from tomorrow's scheduled grid while its own had 1)
-      return { t: (st === 'posted' ? `posted (${Math.max(...depths)})` : (st === 'delayed' || st === 'scheduled') && Math.min(...waits[st]) > 0 ? `${st} (${Math.min(...waits[st])})` : st) + (gap && st !== 'failed' ? ' · gap' : ''), c: (st === 'posted' || st === 'scheduled') && !gap ? 'ok' : st === 'failed' ? 'bad' : 'warn',
+      // NOT LIVE YET: HOW LONG TILL IT IS (kanban #777, a tester 2026-10-28: "If the rounds are posted and confirmed but not yet live
+      // for the day we need the (number) as confirmations in (). We also need the ETA in hours,minutes"): posted or scheduled, and no
+      // grid giving that status has started - the time to the first one's first round, in h and min
+      const firstLive = Math.min(...per.filter(([, r]) => r >= 3).map(([g]) => Number(g.firstWindowMs)));
+      const eta = (st === 'posted' || st === 'scheduled') && Number.isFinite(firstLive) && firstLive > nowMs ? ` · live in ${etaHm(firstLive - nowMs)}` : '';
+      return { t: (st === 'posted' ? `posted (${Math.max(...depths)})` : (st === 'delayed' || st === 'scheduled') && Math.min(...waits[st]) > 0 ? `${st} (${Math.min(...waits[st])})` : st) + eta + (gap && st !== 'failed' ? ' · gap' : ''), c: (st === 'posted' || st === 'scheduled') && !gap ? 'ok' : st === 'failed' ? 'bad' : 'warn',
         // one line per reading (several series share a round table and a committee block): the same words once, with how many
         tip: (st === 'posted' ? `version ${app.version}; in () the confirmations of the committee block - the block whose hash draws each round's committee\n` : st === 'delayed' || st === 'scheduled' ? `version ${app.version}; in () the confirmations of the round table\n` : `version ${app.version}\n`)
           + [...lines.reduce((m, l) => m.set(l, (m.get(l) || 0) + 1), new Map())].map(([l, k]) => (k > 1 ? `${l} (${k} grids)` : l)).join('\n'),
         // THE SAME, READABLE (2026-10-26 11:44, the owner on the panel: "Wall of text make it more readable and much easier to understand"):
         // one line on what it means, then one short row per grid - the live ones first, the ones that cannot be played folded below
-        summary: (st === 'posted' ? 'Rounds are playable.' : st === 'scheduled' ? 'The rounds are mined and start on time.' : st === 'delayed' ? 'The rounds should have started: they still wait for their committee block.' : st === 'unconfirmed' ? 'The next rounds wait to be mined.' : 'No rounds can be played.')
+        summary: (st === 'posted' ? (eta ? `Rounds are posted and confirmed; they go live in ${etaHm(firstLive - nowMs)}.` : 'Rounds are playable.') : st === 'scheduled' ? `The rounds are mined and start on time${eta ? `, in ${etaHm(firstLive - nowMs)}` : ''}.` : st === 'delayed' ? 'The rounds should have started: they still wait for their committee block.' : st === 'unconfirmed' ? 'The next rounds wait to be mined.' : 'No rounds can be played.')
           + (gap && st !== 'failed' ? ' Some hours have no rounds.' : ''),
         version: app.version,
         // WHAT WAS DONE ABOUT IT (2026-10-26, the owner: "Also post resolution what has been done to fix the problem"): each stretch that cannot

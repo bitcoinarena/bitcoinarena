@@ -6,7 +6,7 @@
 // asks every door the page asks, the oldest first within its budget, and serves the copy at /api/health for any page to read.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeHealth, recorder, replay, keepable, ageOf, keyOf, live, roundPosting, dutyNotes, withDuty, nodeLabel } from '../../../src/arena-ui/health/network.js';
+import { makeHealth, recorder, replay, keepable, ageOf, keyOf, live, roundPosting, etaHm, dutyNotes, withDuty, nodeLabel } from '../../../src/arena-ui/health/network.js';
 import { readHealth, HEALTH_DAILY, HEALTH_CRON } from '../../../src/website/explorer/health.js';
 import explorer from '../../../src/website/explorer/worker.js';
 
@@ -179,14 +179,21 @@ test('the APPS table\'s rounds: posted (N), delayed, failed - only the newest ve
   // the next 24 h: the next day's grid draws in 2 of 6
   // its round table 10 deep: the confirmations in () (2026-10-26: "delayed(1) for example for 1 confirmation")
   // its first round not started yet: on time, not delayed (2026-10-26 ~15:20Z: "I wouldn't call that delayed")
-  assert.deepEqual([rps.next.t, rps.next.c], ['scheduled (10)', 'ok']);
+  assert.deepEqual([rps.next.t, rps.next.c], ['scheduled (10) · live in 14 h 0 min', 'ok']);   // and the ETA to live (kanban #777)
   assert.match(rps.next.tip, /^version 2; in \(\) the confirmations of the round table/);
   assert.match(rps.next.tip, /scheduled: published in block 110; its committee block 115 has 2 of 6 confirmations, before its first round at 10-27 00:00 UTC/);
-  assert.equal(rps.next.summary, 'The rounds are mined and start on time.');
+  assert.equal(rps.next.summary, 'The rounds are mined and start on time, in 14 h 0 min.');
   // a day grid from 23:45 to 23:45: tomorrow's last 15 min are the next day's grid's, no gap (2026-10-26 ~15:30Z)
   const day = Date.UTC(2026, 9, 27), ud = grid('bb'.repeat(32), day - 15 * 60000, day + 86400000 - 15 * 60000, 8, F1, { height: 110, confirmations: 60 }, { height: null, depth: 0 });
   const u2 = roundPosting({ games: [{ name: 'updown', version: 7, id: W }], pending: [{ grids: [ud] }], expected: [ex(ud, W)], nowMs: now, fedNo }).get('updown');
-  assert.deepEqual([u2.next.t, u2.next.c], ['scheduled (60)', 'ok']);
+  assert.deepEqual([u2.next.t, u2.next.c], ['scheduled (60) · live in 13 h 45 min', 'ok']);
+  // POSTED AND CONFIRMED BUT NOT LIVE YET (kanban #777): the committee block's confirmations in () and the ETA in h and min
+  const soon = grid('be'.repeat(32), now + 2 * H + 5 * 60000, now + 20 * H, 10, F1, { height: 140, confirmations: 12 }, { height: 141, depth: 11 });
+  const s7 = roundPosting({ games: [{ name: 'updown', version: 7, id: W }], pending: [{ grids: [soon] }], expected: [ex(soon, W)], nowMs: now, fedNo }).get('updown');
+  assert.equal(s7.today.t.replace(' · gap', ''), 'posted (11) · live in 2 h 5 min');
+  assert.match(s7.today.summary, /^Rounds are posted and confirmed; they go live in 2 h 5 min\./);
+  assert.equal(etaHm(40 * 60000), '40 min');
+  assert.equal(etaHm(9 * H + 15 * 60000), '9 h 15 min');
   // the number is the delayed grid's own, not the scheduled one's beside it (today's Tick Tock read "delayed (60)" with 1 of its own)
   const slow = grid('bc'.repeat(32), now - H, now + 13 * H + 45 * 60000, 9, F1, { height: 150, confirmations: 1 }, { height: null, depth: 0 });
   const both2 = roundPosting({ games: [{ name: 'updown', version: 7, id: W }], pending: [{ grids: [slow, ud] }], expected: [ex(slow, W), ex(ud, W)], nowMs: now, fedNo }).get('updown');
