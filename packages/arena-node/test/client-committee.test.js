@@ -215,35 +215,50 @@ test('the bond terms the page carries are genesis\' own', () => {
   }
 });
 
+// THE SEATS ANSWER PER ROLE (since e9df1bd5, 2026-10-16, the client compares EVERY role's /committee answer, and a seat that names
+// another set refuses the round): a fixture that handed the settlement set for the game role too made every honest seat a liar - the
+// game and settlement draws of this census are two different triples - and this test was red from that day. The seat answers each role
+// with its own committee; the liar answers both with keys of its choosing.
 test('the page derives the settlement committee over the seats\' doors, deals to it, and names a seat that says otherwise', async () => {
   const { roster, rid, view, ev, contract } = setup();
   const headerBytes = Buffer.concat(headersOf(view).map((h) => Buffer.from(h)));
-  const seatSet = Buffer.concat(roster.committeeFor(rid, 'settlement').committee.map((e) => Buffer.from(e.pubkey)));
+  const seatSetOf = (role) => Buffer.concat(roster.committeeFor(rid, role).committee.map((e) => Buffer.from(e.pubkey)));
+  const seatSet = { game: seatSetOf('game'), settlement: seatSetOf('settlement') };
+  assert.notEqual(seatSet.game.toString('hex'), seatSet.settlement.toString('hex'), 'this census draws two different committees');
   const liarSet = Buffer.concat([1, 2, 3].map((n) => Buffer.from(keyFor(n))));
   const asked = [];
   const fetcher = async (url) => {
     asked.push(url.replace(/^https?:\/\/[^/]+/, ''));
     const liar = url.startsWith('https://liar.example');
+    const role = (/\/committee\?role=(game|settlement)&/.exec(url) || [])[1];
     const body = url.endsWith('/headers') ? headerBytes : url.includes('/census?') ? Buffer.from(JSON.stringify(ev))
-      : url.includes('/committee?') ? (liar ? liarSet : seatSet) : null;
+      : role ? (liar ? liarSet : seatSet[role]) : null;
     if (!body) return new Response('no', { status: 404 });
     return new Response(body, { status: 200 });
   };
   const rhex = toHex(rid);
-  const nodes = ['https://seat-a.example', 'https://seat-b.example', 'https://liar.example'];
+  const honest = ['https://seat-a.example', 'https://seat-b.example'];
+  const nodes = [...honest, 'https://liar.example'];
   const anchorAt = { hash: blockHashOf(headersOf(view)[0]), height: view.firstHeight };
   const got = await clientCommittee(rhex, contract, nodes, { curve: pageCurve, fetcher, anchorAt });
   assert.equal(got.ok, true, got.why);
-  assert.deepEqual(keys(got.committees.settlement), keys(roster.committeeFor(rid, 'settlement').committee.map((e) => e.pubkey)));
+  for (const role of ['game', 'settlement'])
+    assert.deepEqual(keys(got.committees[role]), keys(roster.committeeFor(rid, role).committee.map((e) => e.pubkey)), `${role}: the client's draw is the seat's`);
   assert.deepEqual(got.seats.map((s) => [s.node, s.agrees]).sort(), [['https://liar.example', false], ['https://seat-a.example', true], ['https://seat-b.example', true]]);
+  const liar = got.seats.find((s) => s.node === 'https://liar.example');
+  assert.match(liar.why, /names another game committee \(.*\) than the one this client derived \(.*\); names another settlement committee/);
   assert.equal(got.headers.agreed, 3, 'three sources agreed the headers');
-  const dealt = await clientSettlementSignerNodes(rhex, contract, nodes, { curve: pageCurve, fetcher, anchorAt });
+  // the honest seats alone: the stake is dealt to the client's own committee
+  const dealt = await clientSettlementSignerNodes(rhex, contract, honest, { curve: pageCurve, fetcher, anchorAt });
   assert.deepEqual(keys(dealt.signerNodes), keys(got.committees.settlement), 'the stake goes to the client\'s own committee');
-  assert.match(dealt.refused[0], /^https:\/\/liar.example: names another settlement committee/);
-  // and when every seat names another set, nothing is dealt
+  assert.equal(dealt.agreed, 2);
+  // with the liar among the seats the round is refused and the liar named with what it answered (RULED 2026-09-28)
+  await assert.rejects(clientSettlementSignerNodes(rhex, contract, nodes, { curve: pageCurve, fetcher, anchorAt }),
+    /^Error: the round is refused: https:\/\/liar\.example names another game committee .*; names another settlement committee .* - nothing is sealed, locked or signed$/);
+  // and when every seat names another set, nothing is dealt either
   const allLie = async (url) => (url.includes('/committee?') ? new Response(liarSet, { status: 200 }) : fetcher(url));
   await assert.rejects(clientSettlementSignerNodes(rhex, contract, nodes, { curve: pageCurve, fetcher: allLie, anchorAt, nowMs: Date.now() + 1 }),
-    /every node that answered names another settlement committee/);
+    /the round is refused: https:\/\/seat-a\.example names another game committee .*https:\/\/seat-b\.example .*https:\/\/liar\.example /);
 });
 
 test('an explorer outside the network: the census block must be its block; a tip that differs is said, not refused', async () => {
