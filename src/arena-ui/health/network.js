@@ -51,7 +51,7 @@ export function keepable(answers, spare = new Set()) {
       const at = Number(a.atMs) || Number(a.body.nowMs) || Date.now(), keys = [], place = new Map();
       const ix = (x) => { const h = String(x).toLowerCase().slice(0, 16); if (!place.has(h)) { place.set(h, keys.length); keys.push(h); } return place.get(h); };
       out[k] = { ...a, body: { nowMs: a.body.nowMs, keys, rounds: (a.body.rounds || []).filter((r) => inNow(r, at)).map((r) => ({ id: String(r.id).slice(0, 16), game: { id: String(r.game && r.game.id).slice(0, 16), name: r.game && r.game.name },
-        entryOpen: !!r.entryOpen, played: r.played, startTimeMs: r.startTimeMs, entryCloseMs: r.entryCloseMs,
+        entryOpen: !!r.entryOpen, played: r.played, startTimeMs: r.startTimeMs, entryCloseMs: r.entryCloseMs, committeeTimeMs: r.committeeTimeMs, federation: String(r.federation || '').slice(0, 16),
         committee: r.committee ? { seated: r.committee.seated || null, drawnCount: r.committee.drawnCount || null,
           ...(isSeated(r.committee) ? {} : { drawnAt: drawnGame(r).map(ix) }) } : null })) } };
     } else if (a.ok && a.body && /\/rounds\?/.test(k)) {
@@ -125,6 +125,20 @@ export function roundSeating({ games = [], lists = [], nowMs = Date.now(), answe
   const fin = ({ summary, ...c }) => (summary ? { ...c, tip: `${summary}\n${c.tip}` } : c);
   for (const [name, rs] of apps) out.set(name, fin(cellOf(name, rs)));
   for (const g of games || []) { const name = g.name || g.title; if (!out.has(name)) out.set(name, fin(cellOf(name, []))); }
+  return out;
+}
+
+/** The grids of the next hour's rounds, seated or not (kanban #758): Map(seatKey(game, committee time, federation) -> true seated | false). */
+export function seatingOf({ games = [], lists = [], nowMs = Date.now(), windowMs = NOW_WINDOW_MS }) {
+  nowMs = Number(nowMs);
+  const nameOfId = new Map((games || []).map((g) => [String(g.id).toLowerCase().slice(0, 16), g.name || g.title]));
+  const out = new Map();
+  for (const body of lists) for (const r of (body && body.rounds) || []) {
+    if (!r || r.played === false || !inNow(r, nowMs, windowMs) || r.committeeTimeMs == null) continue;
+    const name = nameOfId.get(String(r.game && r.game.id).toLowerCase().slice(0, 16)) || (r.game && (r.game.name || r.game.title));
+    const k = seatKey(name, r.committeeTimeMs, r.federation);
+    out.set(k, out.get(k) === true || isSeated(r.committee));
+  }
   return out;
 }
 
@@ -237,27 +251,62 @@ export function roundPosting({ games = [], pending = [], expected = [], rounds =
   return out;
 }
 
+// THE CHAIN'S OWN CLOCK (kanban #758, 2026-10-28, the owner on "reaches the seats at ~14:40": "I thought the timing was much later"): no
+// 10 min a block - our testnet4 branch runs ~15 min a block, its miner stamps +20 min. Measured from the tips the reads saw (`tips`: each
+// height with the median time past the seats' GET /pending gave for it and when a read first saw it, kept with the copy, the explorer's every
+// 2 min): the wall time a block takes (the middle half of the last 24 intervals, a range) and how far the median time moves a block.
+// noteTip(tips, { h, mtpMs, atMs }) -> tips with a new height added; blockClock(tips) -> { lo, hi, step, n, seen } | null (fewer than two heights)
+export const TIPS_KEPT = 48;
+export function noteTip(tips, { h, mtpMs, atMs }) {
+  const list = (Array.isArray(tips) ? tips : []).filter((x) => x && Number.isFinite(Number(x.h)) && Number.isFinite(Number(x.atMs)));
+  if (!Number(h) || !Number.isFinite(Number(atMs)) || list.some((x) => Number(x.h) >= Number(h))) return list.slice(-TIPS_KEPT);
+  return [...list, { h: Number(h), mtpMs: mtpMs == null ? null : Number(mtpMs), atMs: Number(atMs) }].slice(-TIPS_KEPT);
+}
+export function blockClock(tips) {
+  const t = (Array.isArray(tips) ? tips : []).map((x) => ({ h: Number(x.h), atMs: Number(x.atMs), mtpMs: x.mtpMs == null ? null : Number(x.mtpMs) })).sort((a, b) => a.h - b.h);
+  if (t.length < 2) return null;
+  const per = [], steps = [];
+  for (let i = 1; i < t.length; i++) {
+    const dh = t[i].h - t[i - 1].h, dt = t[i].atMs - t[i - 1].atMs;
+    if (dh > 0 && dt > 0) for (let k = 0; k < Math.min(dh, 6); k++) per.push(dt / dh);
+    if (dh > 0 && t[i].mtpMs != null && t[i - 1].mtpMs != null) steps.push((t[i].mtpMs - t[i - 1].mtpMs) / dh);
+  }
+  const last = per.slice(-24).sort((a, b) => a - b);
+  if (!last.length) return null;
+  const q = (f) => last[Math.min(last.length - 1, Math.floor(f * (last.length - 1) + 0.5))];
+  const st = steps.slice(-24).sort((a, b) => a - b);
+  return { lo: q(0.25), hi: q(0.75), step: st.length ? st[Math.floor(st.length / 2)] : null, n: last.length, seen: t[t.length - 1] };
+}
+const between = (a, b) => (Math.abs(b - a) < 10 * 60000 ? `~${hm((a + b) / 2)}` : `~${hm(a)}-${hm(b)}`);
+
 // EVERY POSTING OF THE DAY, NOT ONLY THE DUTY'S (kanban #758, 2026-10-28, the owner: "Is health showing the newly posted rounds? It needs to
-// support that as well."). On 10-28 (#757) emergency grids were published for the rest of the day by an ops tool, not by the daily duty:
-// "Rounds today" read the duty's grids and the seating column sees a grid's rounds only once its committee block is 6 deep (~2.5 h after
-// publishing). Here every publication of the day, one row each, from what the seats already answer:
+// support that as well."). On 10-28 (#757) emergency grids were published for the rest of the day by an ops tool, not by the daily duty.
+// Every publication of the day, one row each, from what the seats already answer:
 //   GET /duty      the duty's postings, primary and backup, and every grid carrying the duty's emergency marker, with the key that signed it
 //                  (height null: seen in the mempool)
-//   GET /pending   every grid a seat reads on its chain: its publication's block or mempool, its committee block and how deep
+//   GET /pending   every grid a seat reads on its chain: its publication's block or mempool, its beacon (committee) block - the first whose
+//                  median time passes the committee time - and how deep; the tip and its median time
 //   GET /expected  every grid announced to a seat, read or not
-// A grid that is in /pending or /expected and that no /duty posting names is an EXTRA POSTING (another creator key, e.g. an ops tool's
-// emergency grid); the seats do not say its creator (GET /expected drops the signed series line's key). Each posting's state:
-//   on the seats          committee block 6 deep: its rounds are listed and can be drawn
-//   reaches the seats ~HH:MM  mined; waiting for its committee block (the first whose median time passes the committee time, the median
-//                         running about an hour behind) and its 6 confirmations
-//   waiting to be mined   in the mempool
-//   not on chain          neither mined nor in any seat's mempool
-// allPostings({ games, pending, expected, duty, nowMs }) -> Map(app name -> { today, next }), each a cell { t, c, tip, summary, items }
-const MTP_LAG_MS = 3600000;
-export function allPostings({ games = [], pending = [], expected = [], duty = null, nowMs = Date.now() }) {
+// A grid in /pending or /expected that no /duty posting names is an EXTRA POSTING (another creator key, e.g. an ops tool's emergency grid);
+// the seats do not say its creator (GET /expected drops the signed series line's key).
+// EACH ROW SAYS WHERE ITS PUBLICATION IS ON THE CHAIN (2026-10-28, the owner: "And show confirmations on the chain"): "in the mempool", or
+// "mined in <height> · N confirmations" (from the newest tip), and "beacon <height> · k/6 deep" once its beacon block is there. Its state:
+//   listed and seated / listed by the seats (not yet seated)   beacon 6 deep: the seats hold its series and list its rounds - seated or not
+//                  as the seats say for its rounds of the next hour (`seating`); "listed by the seats" alone when none is in that hour
+//                  ("2 on the seats" read as playable - the owner: "what do you mean by '2 on the seats'")
+//   reaches the seats ~HH:MM-HH:MM   mined: the blocks to its beacon block (from the tip's median time and how far it moves a block) and
+//                  to 6 deep, at the measured wall time a block takes (blockClock), a range; not said until two heights were seen
+//   waiting to be mined / announced, not read on chain / not on chain
+// allPostings({ games, pending, expected, duty, nowMs, tip, clock, seating }) -> Map(app name -> { today, next }), each a cell
+// seating: Map(seatKey(game name, committeeTimeMs, federation) -> true seated | false listed, not seated), for the rounds of the next hour
+// (the committee time to the minute: a round lists 1793102400000 where its grid says 1793102399998)
+export const seatKey = (game, committeeTimeMs, federation) => `${game}:${Math.round(Number(committeeTimeMs) / 60000)}:${String(federation || '').toLowerCase().slice(0, 16)}`;
+export function allPostings({ games = [], pending = [], expected = [], duty = null, nowMs = Date.now(), tip = null, clock = null, seating = null }) {
   nowMs = Number(nowMs);
   const k16 = (t) => String(t || '').toLowerCase().slice(0, 16);
   const nameOfId = new Map((games || []).map((g) => [String(g.id).toLowerCase(), g.name || g.title]));
+  // the newest tip any seat read, and its median time past
+  const { top, mtp } = tipOf(pending, tip);
   // every grid read or announced, by publication; the furthest reading kept
   const grids = new Map();
   const deeper = (g, w) => !w || (Number(g.beacon && g.beacon.depth) || 0) > (Number(w.beacon && w.beacon.depth) || 0) || (Number(g.publication && g.publication.confirmations) || 0) > (Number(w.publication && w.publication.confirmations) || 0)
@@ -278,6 +327,21 @@ export function allPostings({ games = [], pending = [], expected = [], duty = nu
   const periodOf = (g) => { if (Number(g.lastCloseMs) <= nowMs) return null; const mid = (Number(g.firstWindowMs) + Number(g.lastCloseMs)) / 2;
     return mid < endOfDay ? 'today' : mid < endOfDay + 86400000 ? 'next' : null; };
   const who = (key, endpoint) => (key ? nodeLabel(key, endpoint || (order.get(String(key).toLowerCase()) || {}).endpoint) : null);
+  const num = (x) => Number(x).toLocaleString('en-US');
+  // when a mined grid reaches the seats: the blocks to its beacon block, then to 6 deep, at the measured block time - [from, to, blocks]
+  const reach = (g, bc, depth, need) => {
+    if (!clock || !top) return null;
+    let blocks;
+    if (bc.height != null) blocks = Math.max(0, need - depth);
+    else {
+      if (mtp == null || !(clock.step > 0)) return null;
+      const toBeacon = Number(g.committeeTimeMs) < mtp ? 1 : Math.floor((Number(g.committeeTimeMs) - mtp) / clock.step) + 1;
+      blocks = toBeacon + need - 1;
+    }
+    // counted from when the tip was first seen, never before now
+    const from = clock.seen && clock.seen.h === top ? clock.seen.atMs : nowMs;
+    return [Math.max(nowMs, from + blocks * clock.lo), Math.max(nowMs, from + blocks * clock.hi), blocks];
+  };
   const rows = [];
   for (const k of new Set([...grids.keys(), ...byDuty.keys()])) {
     const g = grids.get(k) || null, d = byDuty.get(k) || null;
@@ -285,41 +349,66 @@ export function allPostings({ games = [], pending = [], expected = [], duty = nu
     const period = d && (d.period === 'today' || d.period === 'next') ? d.period : g ? periodOf(g) : null;
     if (!app || !period) continue;
     const p = g ? g.publication || {} : {}, bc = g ? g.beacon || {} : {}, need = Number(bc.needed) || 6;
-    let st, s, eta = null;
-    if (g && bc.height != null && (Number(bc.depth) || 0) >= need) { st = 'on the seats'; s = 'ok'; }
-    else if (g && p.height) {
-      eta = bc.height != null ? nowMs + (need - (Number(bc.depth) || 0)) * BLOCK_MS : Math.max(nowMs, Number(g.committeeTimeMs) + MTP_LAG_MS) + need * BLOCK_MS;
-      st = `posted, reaches the seats at ~${hm(eta)} UTC`; s = 'warn';
+    const height = p.height || (d && d.height) || null;
+    // where its publication is on the chain, counted from the newest tip
+    const conf = height ? Math.max(Number(p.confirmations) || 1, top ? top - Number(height) + 1 : 1) : 0;
+    const depth = bc.height != null ? Math.max(Number(bc.depth) || 0, top ? top - Number(bc.height) + 1 : 0) : 0;
+    const chain = height ? `mined in ${num(height)} · ${conf} confirmation${conf === 1 ? '' : 's'}${bc.height != null ? ` · beacon ${num(bc.height)} · ${Math.min(depth, need)}/${need} deep` : ''}`
+      : (g && p.inMempool) || (d && !(g && g.read)) ? 'in the mempool' : g && !g.read ? 'not read on any seat\'s chain' : 'in no block and no mempool';
+    let st, s, eta = null, listed = false;
+    if (g && bc.height != null && depth >= need) {
+      listed = true;
+      const se = seating ? seating.get(seatKey(app, g.committeeTimeMs, g.federation)) : undefined;
+      st = se === true ? 'listed and seated' : se === false ? 'listed by the seats (not yet seated)' : 'listed by the seats';
+      s = se === false ? 'warn' : 'ok';
+    } else if (g && height && g.read) {
+      eta = reach(g, bc, depth, need);
+      st = eta ? `reaches the seats ${between(eta[0], eta[1])} UTC (${eta[2]} more block${eta[2] === 1 ? '' : 's'})` : 'reaches the seats after its beacon block is 6 deep (block times not measured yet)';
+      s = 'warn';
     } else if (g && !g.read) { st = 'announced to the seats, not read on their chain yet'; s = 'warn'; }
     else if ((g && p.inMempool) || (d && d.height == null && !(g && g.read))) { st = 'waiting to be mined'; s = 'warn'; }
-    else if (d && d.height != null) { eta = null; st = `mined in block ${Number(d.height).toLocaleString('en-US')}, not read by the seats yet`; s = 'warn'; }
+    else if (d && d.height != null) { st = 'mined, not read by the seats yet'; s = 'warn'; }
     else { st = 'not on chain: neither mined nor in any seat\'s mempool'; s = 'bad'; }
     const kind = d ? (d.emergency ? 'emergency grid (duty marker)' : `duty ${d.role}`) : 'extra posting';
     const by = d ? (d.poster ? who(d.poster, d.posterEndpoint) : 'a key outside the census') : 'creator not named by the seats';
-    const rounds = g && Number(g.slots) ? `${Number(g.slots).toLocaleString('en-US')} rounds from ${dhm(g.firstWindowMs)} UTC` : 'its rounds not read yet';
-    rows.push({ app, period, s, st, eta, extra: !d || d.emergency, live: s !== 'bad', item: { s, live: s !== 'bad', when: kind[0].toUpperCase() + kind.slice(1), say: `${rounds} · ${st}`,
+    const rounds = g && Number(g.slots) ? `${num(g.slots)} rounds from ${dhm(g.firstWindowMs)} UTC` : 'its rounds not read yet';
+    rows.push({ app, period, s, st, eta, conf, listed, extra: !d || d.emergency, live: s !== 'bad', item: { s, live: s !== 'bad', when: kind[0].toUpperCase() + kind.slice(1), say: `${rounds} · ${st} · ${chain}`,
       detail: `publication ${String(d ? d.txid : p.txid).slice(0, 16)} · by ${by}${g && g.federation ? ` · federation ${String(g.federation).slice(0, 8)}` : ''}` },
-      line: `${kind} ${String(d ? d.txid : p.txid).slice(0, 10)} by ${by}: ${rounds}; ${st}` });
+      line: `${kind} ${String(d ? d.txid : p.txid).slice(0, 10)} by ${by}: ${rounds}; ${st}; ${chain}` });
   }
   const out = new Map();
   const names = new Set([...(games || []).map((g) => g.name || g.title), ...rows.map((r) => r.app)]);
+  const clockSays = clock ? `block times measured: ${Math.round(clock.lo / 60000)}-${Math.round(clock.hi / 60000)} min a block (${clock.n} seen)${clock.step ? `; the median time moves ${Math.round(clock.step / 60000)} min a block` : ''}`
+    : 'block times not measured yet: the page has not seen two tips';
   for (const name of names) {
     const cell = (period) => {
       const rs = rows.filter((r) => r.app === name && r.period === period);
       if (!rs.length) return { t: '-', c: 'muted', tip: `no posting of this app read for ${period === 'today' ? 'the rest of today' : 'tomorrow'}` };
-      const on = rs.filter((r) => r.s === 'ok').length, coming = rs.filter((r) => r.s === 'warn'), extra = rs.filter((r) => r.extra && r.live);
-      // the extra postings each by its state; of the duty's still coming, the soonest to reach the seats
-      const extraSays = extra.map((r) => (r.s === 'ok' ? 'extra posting on the seats' : r.eta ? `extra posting reaches the seats ~${hm(r.eta)}` : `extra posting ${r.st}`));
-      const duty = coming.filter((r) => !r.extra), soon = duty.filter((r) => r.eta).sort((x, y) => x.eta - y.eta)[0];
-      const t = [`${rs.length} posting${rs.length === 1 ? '' : 's'} · ${on} on the seats`, ...[...new Set(extraSays)].map((x) => (extraSays.filter((y) => y === x).length > 1 ? `${x} (${extraSays.filter((y) => y === x).length})` : x)),
-        ...(soon ? [`next reaches the seats ~${hm(soon.eta)}`] : duty.length ? [`${duty.length} waiting`] : [])].join(' · ');
-      const c = on && !coming.length ? 'ok' : on || coming.length ? 'warn' : 'bad';
-      return { t, c, tip: rs.map((r) => r.line).join('\n'), summary: `Every grid of ${period === 'today' ? 'today' : 'tomorrow'} the seats know of - the duty's, its emergency grids and any other creator's.`,
+      const listed = rs.filter((r) => r.listed).length, coming = rs.filter((r) => !r.listed && r.live), extra = coming.filter((r) => r.extra);
+      // each extra posting on its way by its state and its confirmations; of the duty's on their way, the soonest
+      const way = (r) => (r.eta ? `reaches the seats ${between(r.eta[0], r.eta[1])}` : r.st) + (r.conf ? ` (${r.conf} conf.)` : '');
+      const extraSays = extra.map((r) => `extra posting ${way(r)}`);
+      const duty = coming.filter((r) => !r.extra), soon = duty.filter((r) => r.eta).sort((x, y) => x.eta[0] - y.eta[0])[0];
+      const t = [`${rs.length} posting${rs.length === 1 ? '' : 's'} · ${listed} listed by the seats`, ...[...new Set(extraSays)].map((x) => (extraSays.filter((y) => y === x).length > 1 ? `${x} (${extraSays.filter((y) => y === x).length})` : x)),
+        ...(soon ? [`next ${way(soon)}`] : duty.length ? [`${duty.length} on the way`] : [])].join(' · ');
+      const c = listed && !coming.length && !rs.some((r) => r.listed && r.s === 'warn') ? 'ok' : listed || coming.length ? 'warn' : 'bad';
+      return { t, c, tip: `${rs.map((r) => r.line).join('\n')}\n${clockSays}`,
+        summary: `Every grid of ${period === 'today' ? 'today' : 'tomorrow'} the seats know of - the duty's, its emergency grids and any other creator's. Listed means the seats hold its rounds; whether they can be joined is the next-hour column.`,
         items: rs.sort((x, y) => Number(y.live) - Number(x.live)).map((r) => r.item), fold: 'Not on chain' };
     };
     out.set(name, { today: cell('today'), next: cell('next') });
   }
   return out;
+}
+/** The newest tip the seats' GET /pending answers read, with its median time past: { top, mtp }. */
+export function tipOf(pending, tip = null) {
+  let top = Number(tip) || 0, mtp = null;
+  for (const a of pending || []) {
+    if (!a || !Number(a.tip)) continue;
+    const g = (a.grids || []).find((x) => x.beacon && x.beacon.medianTimeMs != null), m = g ? Number(g.beacon.medianTimeMs) : null;
+    if (Number(a.tip) > top) { top = Number(a.tip); mtp = m; } else if (Number(a.tip) === top && mtp == null) mtp = m;
+  }
+  return { top: top || null, mtp };
 }
 
 // WHO POSTS EACH DAY'S ROUNDS, AND WHO DID (kanban #702, 2026-10-26, the owner: "In health also say who posted that round" - "Since its pre
@@ -480,13 +569,14 @@ export function makeHealth({ H, $, window = {} }) {
     return got[0] || null;
   };
 
-  let reading = false;
+  let reading = false, TIPS = [];   // the tips seen, kept with the copy (kanban #758): the chain's measured block time
   const say = (text, bad = false) => H.draw($('read'), 'line', { text, bad });   // the reading state, drawn by React like the rest
   // read({ transport, daily, atMs }): daily() gives daily.json, transport(base, path) each answer, atMs the time the data is of (a kept
   // copy's); true when every card was drawn, null while another read runs
   async function read(how = {}) {
     if (reading) return null; reading = true; say('reading …');
     transport = how.transport || live; spare = new Set();
+    if (Array.isArray(how.tips)) TIPS = how.tips.slice();
     try {
       const daily = await (how.daily ? how.daily() : (await fetch('../daily.json', { cache: 'no-store' })).json());
       const net = daily.testnet || daily;
@@ -562,12 +652,14 @@ export function makeHealth({ H, $, window = {} }) {
       duties = dutyNotes(dt ? dt.body : null);
       postings = roundPosting({ games: games ? games.body.games : [], pending: pendingRead || [], expected: ex ? ex.body.expected || [] : [],
         rounds: rd ? rd.body.rounds || [] : [], nowMs: Date.now(), fedNo: fedNoOf });
-      every = allPostings({ games: games ? games.body.games : [], pending: pendingRead || [], expected: ex ? ex.body.expected || [] : [], duty: dt ? dt.body : null, nowMs: how.atMs || Date.now() });
-      paintApps(games, nodes);
+      // the tip the seats read, noted with when it was first seen: the chain's measured block time (blockClock)
+      { const { top, mtp } = tipOf(pendingRead || []); TIPS = noteTip(TIPS, { h: top, mtpMs: mtp, atMs: how.atMs || Date.now() }); }
       const lists = (await nowP).map((a) => (a.ok && a.body ? a.body : null));
       nowRounds = roundSeating({ games: games ? games.body.games : [], lists, nowMs: how.atMs || Date.now(),
         answering: nodes.filter((n) => n.node && n.version && n.version.ok).map((n) => n.node),
         posted: (name) => { const p = postings && postings.get(name); return !!(p && p.today && /^(posted|scheduled)/.test(String(p.today.t))); } });
+      every = allPostings({ games: games ? games.body.games : [], pending: pendingRead || [], expected: ex ? ex.body.expected || [] : [], duty: dt ? dt.body : null,
+        nowMs: how.atMs || Date.now(), clock: blockClock(TIPS), seating: seatingOf({ games: games ? games.body.games : [], lists, nowMs: how.atMs || Date.now() }) });
       paintApps(games, nodes);
       window.ARENA_HEALTH = { atMs: how.atMs || Date.now(), tip, nodes: nodes.length, answered: nodes.filter((n) => n.version && n.version.ok).length };
       return true;
@@ -875,5 +967,5 @@ export function makeHealth({ H, $, window = {} }) {
   }
 
   // read(how); spare(): the doors the last read asked and did not use
-  return { read, spare: () => new Set(spare) };
+  return { read, spare: () => new Set(spare), tips: () => TIPS.slice() };
 }
