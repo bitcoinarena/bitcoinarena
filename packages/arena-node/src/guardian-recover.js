@@ -29,6 +29,15 @@
 //                         (ram-snaps/pre-repair-*), 0x05 and 0x01 deleted on all, all started together (the federation A repair, now
 //                         automatic); different - REFUSED, none started, the reason in the log (the states are not one; no automatic
 //                         choice of whose state wins)
+//   k = n, mixed, in      (rehearsal 2026-10-28 B: 4 guardians at 7 finished, 2 at 8, 1 at 9 - snapshots of a running federation are a
+//   different sessions    session or two apart.) The guardians at the highest count (the TOP) hold the signed outcome of every session
+//                         below it, so those sessions are closed: the ones BEHIND take them from the top by fedimint's catch-up, which
+//                         asserts their accepted items are the outcome's first items. Checked first, per session: the accepted items of
+//                         the guardians at one count must be prefixes of each other (one ordering seen at different moments); items that
+//                         differ in the same session - REFUSED, none started. The top's session is the open one, its units lost in
+//                         different stretches on all: the top's items must be equal, and are repaired as above (0x05 + 0x01 deleted, each
+//                         kept first). The ones behind are not touched and take the lone path: each waits until a peer (the top, started
+//                         at once) is past its session - so the closed session is taken from the top, not ordered again among them
 //   k <= f                a LONE guardian (or a few) whose peers elsewhere ran on: it waits, before fedimintd starts, until a peer's
 //                         session count is past the session it was in. That session is then closed - its saved units are of a session no
 //                         peer runs any more, so nothing it makes can fork - and fedimint's own catch-up takes the signed outcome, its
@@ -131,12 +140,27 @@ export function decideGroup({ n, members }) {
     const set = members[0].snap;
     if (set && members.every((m) => m.snap === set)) return { action: 'consistent', set, why: `all ${n} guardians restored from one snapshot set (${set}): one moment of the whole federation, started as they are` };
     if (members.some((m) => !Number.isInteger(m.finished) || !Array.isArray(m.accepted))) return { action: 'unchecked', why: `all ${n} guardians restored from different moments, but their databases could not be read (no fedimint-dbtool): started as before, a stuck session needs the repair by hand` };
-    const fin = new Set(members.map((m) => m.finished));
-    if (fin.size > 1) return { action: 'refuse', why: `REFUSED: the ${n} guardians restored from different moments are in different sessions (${members.map((m) => `guardian ${m.id}: ${m.finished} finished`).join(', ')}) - none started; repair by hand` };
-    const dig = members.map((m) => ({ id: m.id, count: m.accepted.length, digest: digestOf(m.accepted) }));
-    if (new Set(dig.map((d) => d.digest)).size > 1) return { action: 'refuse', why: `REFUSED: the accepted items of session ${members[0].finished} differ (${dig.map((d) => `guardian ${d.id}: ${d.count} items ${d.digest}`).join(', ')}) - deleting the AlephBFT units would split the federation's state; none started, the databases untouched` };
-    return { action: 'repair', finished: members[0].finished, digest: dig[0].digest, items: dig[0].count,
-      why: `all ${n} guardians restored from different moments, session ${members[0].finished} with the same ${dig[0].count} accepted items on all (${dig[0].digest}): their AlephBFT units and the session's accepted items deleted on all, started together - the session is ordered afresh` };
+    const top = Math.max(...members.map((m) => m.finished));
+    const desc = (ms) => ms.map((m) => `guardian ${m.id}: ${m.accepted.length} items ${digestOf(m.accepted)}`).join(', ');
+    // BEHIND THE TOP: per session, the accepted items of its guardians prefixes of each other (one ordering, different moments)
+    const behind = members.filter((m) => m.finished < top);
+    for (const s of [...new Set(behind.map((m) => m.finished))].sort((a, b) => a - b)) {
+      const at = behind.filter((m) => m.finished === s).sort((a, b) => a.accepted.length - b.accepted.length);
+      for (let i = 1; i < at.length; i++) {
+        if (at[i - 1].accepted.some((x, j) => at[i].accepted[j] !== x)) return { action: 'refuse', why: `REFUSED: the accepted items of session ${s} differ (${desc(at)}) - not one ordering; none started, the databases untouched` };
+      }
+    }
+    const tops = members.filter((m) => m.finished === top);
+    const dig = tops.map((m) => ({ id: m.id, count: m.accepted.length, digest: digestOf(m.accepted) }));
+    if (new Set(dig.map((d) => d.digest)).size > 1) return { action: 'refuse', why: `REFUSED: the accepted items of session ${top} differ (${dig.map((d) => `guardian ${d.id}: ${d.count} items ${d.digest}`).join(', ')}) - deleting the AlephBFT units would split the federation's state; none started, the databases untouched` };
+    if (!behind.length) {
+      return { action: 'repair', finished: top, digest: dig[0].digest, items: dig[0].count, behind: [],
+        why: `all ${n} guardians restored from different moments, session ${top} with the same ${dig[0].count} accepted items on all (${dig[0].digest}): their AlephBFT units and the session's accepted items deleted on all, started together - the session is ordered afresh` };
+    }
+    const ids = (ms) => ms.map((m) => `${m.id} (${m.finished})`).join(', ');
+    return { action: 'repair', finished: top, digest: dig[0].digest, items: dig[0].count, behind: behind.map((m) => ({ id: m.id, finished: m.finished })),
+      why: `all ${n} guardians restored from different moments, in sessions ${Math.min(...behind.map((m) => m.finished))}..${top} with the accepted items of each session in one order: guardians ${tops.map((m) => m.id).join(', ')} at ${top} finished (the same ${dig[0].count} accepted items, ${dig[0].digest}) repaired - AlephBFT units and the session's accepted items deleted - and started; guardians ${ids(behind)} untouched, each waits until the top is past its session and takes the closed sessions from it`,
+      whyBehind: (m) => `the federation restored from different moments; this guardian is behind at ${m.finished} finished (the top at ${top}, repaired): untouched, it waits until a peer is past session ${m.finished}, then takes the closed sessions from its peers` };
   }
   if (k <= f) return { action: 'lone', why: `${k} of ${n} guardians (${ids}) restored here, within the ${f} out of step the federation tolerates: each waits until its peers have closed the session it was in, then starts` };
   return { action: 'refuse', why: `REFUSED: ${k} of ${n} guardians (${ids}) restored here - more than the ${f} out of step the federation tolerates, and not all of them, so no repair on this machine alone makes them one. Stop all ${n} guardians, compare their accepted items and delete the AlephBFT units (0x05) and accepted items (0x01) on every one, then start all together (tools/guardian-recover.mjs on each machine)` };
@@ -267,10 +291,12 @@ async function decideNow(fed, members, db, now, log) {
   for (const m of members) facts.push(needFacts && m.finished === undefined ? await factsOf(db, m) : m);
   for (const f of facts) if (f.readError) log(`[guardian-recover] guardian ${f.id}: database not read: ${f.readError}`);
   let d = decideGroup({ n: fed.n, members: facts });
+  const behind = new Map(((d.action === 'repair' && d.behind) || []).map((b) => [b.id, b]));
   if (d.action === 'repair') {
-    try { await repairAll(db, facts, { nowMs: now(), log }); } catch (e) { d = { action: 'refuse', why: `REFUSED: the repair failed (${e.message}) - none started; each database before it is in ram-snaps/pre-repair-*` }; }
+    try { await repairAll(db, facts.filter((f) => !behind.has(f.id)), { nowMs: now(), log }); } catch (e) { d = { action: 'refuse', why: `REFUSED: the repair failed (${e.message}) - none started; each database before it is in ram-snaps/pre-repair-*` }; behind.clear(); }
   }
-  return { d, entries: facts.map((f) => ({ id: f.id, at: f.at, action: d.action, why: d.why, finished: Number.isInteger(f.finished) ? f.finished : null })) };
+  // the guardians behind the repaired top: untouched, the lone path (each waits until a peer is past its session)
+  return { d, entries: facts.map((f) => ({ id: f.id, at: f.at, action: behind.has(f.id) ? 'lone' : d.action, why: behind.has(f.id) ? d.whyBehind(f) : d.why, finished: Number.isInteger(f.finished) ? f.finished : null })) };
 }
 
 /** The decider: the registered members' facts read, the group decided (and repaired), the verdict written for every member. */
@@ -320,6 +346,7 @@ async function latecomer({ old, me, db, now, log }) {
     if (Number.isInteger(f.finished) && f.finished === old.finished && digestOf(f.accepted) === old.digest) {
       try { await repairAll(db, [f], { nowMs: now(), log }); return { ofGroup: true, facts: f, out: add('repair', `its group was repaired; its session ${f.finished} and accepted items are the group's (${old.digest}): repaired the same way`) }; } catch (e) { return { ofGroup: true, facts: f, out: add('refuse', `REFUSED: the repair failed (${e.message})`) }; }
     }
+    if (Number.isInteger(f.finished) && f.finished < old.finished) return { ofGroup: true, facts: f, out: add('lone', `its group was repaired at session ${old.finished}; this guardian is behind at ${f.finished} finished: untouched, it waits until a peer is past its session and takes the closed sessions from its peers`, f.finished) };
     return { ofGroup: false, facts: f, out: add('refuse', `REFUSED: its group was repaired (session ${old.finished}, items ${old.digest}), but this guardian is at ${f.finished ?? '?'} with items ${Array.isArray(f.accepted) ? digestOf(f.accepted) : '?'} - repair it by hand`) };
   }
   if (old.action === 'refuse') return { ofGroup: true, facts: f, out: add('refuse', `REFUSED: its group was refused (${old.why})`) };

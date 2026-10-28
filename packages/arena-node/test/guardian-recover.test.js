@@ -24,8 +24,14 @@ test('decideGroup: one set, agreeing, differing items, differing sessions, unrea
   assert.equal(rep.action, 'repair'); assert.equal(rep.finished, 7753); assert.equal(rep.items, 28); assert.match(rep.why, /same 28 accepted items/);
   const dif = decideGroup({ n: 7, members: all(7, (i) => (i === 3 ? { accepted: ITEMS.slice(0, 27) } : {})) });
   assert.equal(dif.action, 'refuse'); assert.match(dif.why, /accepted items of session 7753 differ.*guardian 3: 27 items/);
+  // different sessions, one ordering: the top (guardian 0 at 7754) repaired, the six behind at 7753 untouched (lone path)
   const ses = decideGroup({ n: 7, members: all(7, (i) => (i === 0 ? { finished: 7754, accepted: [] } : {})) });
-  assert.equal(ses.action, 'refuse'); assert.match(ses.why, /different sessions.*guardian 0: 7754 finished/);
+  assert.equal(ses.action, 'repair'); assert.equal(ses.finished, 7754); assert.deepEqual(ses.behind.map((b) => b.id), [1, 2, 3, 4, 5, 6]);
+  // behind at one session, items that are prefixes of each other: one ordering seen at different moments
+  assert.equal(decideGroup({ n: 7, members: all(7, (i) => (i === 0 ? { finished: 7754, accepted: [] } : { accepted: ITEMS.slice(0, 20 + i) })) }).action, 'repair');
+  // behind at one session, items that differ: a real disagreement
+  const split = decideGroup({ n: 7, members: all(7, (i) => (i === 0 ? { finished: 7754, accepted: [] } : i === 4 ? { accepted: [...ITEMS.slice(0, 5), '01ff 00bad'] } : {})) });
+  assert.equal(split.action, 'refuse'); assert.match(split.why, /accepted items of session 7753 differ.*guardian 4: 6 items/);
   assert.equal(decideGroup({ n: 7, members: all(7, () => ({ finished: null, accepted: null })) }).action, 'unchecked');
   assert.equal(decideGroup({ n: 7, members: all(2, () => ({})) }).action, 'lone', '2 of 7: within f = 2');
   assert.equal(decideGroup({ n: 4, members: all(1, () => ({})) }).action, 'lone', 'one installer node of a 4');
@@ -220,6 +226,38 @@ test('B then C with no announcement on this machine: peers answering their API r
     ramAnnounce(fx.base, '0-guardian', { dataDir: fx.guardians[0].dataDir, ram: fx.guardians[0].ram, pid: 4190000 });
     const d = await ramRecover({ base: fx.base, dataDir: g.dataDir, ram: g.ram, restored: { ...g.restored, snap: 'snap-d' }, db: fx.db, ...fast, gatherMs: 50, alive: () => false });
     assert.equal(d.start, false); assert.match(d.why, /repair it by hand/);
+  } finally { fx.done(); }
+});
+
+// THE REHEARSAL OF 2026-10-28 09:51Z (phase B, second run): staggered snapshots of a running federation a session or two apart - guardians
+// 3-6 at 7 finished, 0 and 1 at 8, 2 at 9. One ordering: guardian 2 (the top) repaired and started, the six behind untouched, each started
+// once a peer is past its session. Items that differ at a common session: all refused, nothing deleted.
+const AT = { 0: 8, 1: 8, 2: 9, 3: 7, 4: 7, 5: 7, 6: 7 };
+const SESSION_ITEMS = { 7: ITEMS.slice(0, 6), 8: ITEMS.slice(6, 10), 9: ITEMS.slice(10, 12) };
+test('7 guardians at 7/8/9 finished, each session\'s items in one order: the top repaired, the ones behind untouched, all started', async () => {
+  // the ones at 7 snapshotted at different moments of session 7: 4, 5 or 6 of its items
+  const fx = fixture(7, [0, 1, 2, 3, 4, 5, 6], { finished: (id) => AT[id], accepted: (id) => (AT[id] === 7 ? SESSION_ITEMS[7].slice(0, 3 + (id % 4)) : SESSION_ITEMS[AT[id]]) });
+  try {
+    const lines = [];
+    let asked = 0;
+    const out = await all(fx, { sessionCountOf: async () => (++asked > 3 ? 9 : -1), loneWaitMs: 5000, log: (l) => lines.push(l) });
+    assert.ok(out.every((o) => o.start), out.map((o) => o.why).join('\n'));
+    assert.deepEqual(out.map((o) => o.action), ['lone', 'lone', 'repair', 'lone', 'lone', 'lone', 'lone']);
+    assert.match(out[3].why, /session 9, past session 7/);
+    for (const g of fx.guardians) assert.deepEqual(fx.state[join(g.ram, 'database')].dropped, g.id === 2 ? ['05', '01'] : [], `guardian ${g.id}`);
+    assert.ok(readdirSync(join(fx.guardians[2].dataDir, 'ram-snaps')).some((x) => x.startsWith('pre-repair-')));
+    assert.ok(lines.some((l) => /in sessions 7\.\.9 .* guardians 2 at 9 finished .* repaired/.test(l)), lines.join('\n'));
+    assert.ok(!lines.some((l) => /REFUSED/.test(l)));
+  } finally { fx.done(); }
+});
+
+test('7 guardians at 7/8/9 finished, one with other items in a common session: all refused, nothing deleted', async () => {
+  const fx = fixture(7, [0, 1, 2, 3, 4, 5, 6], { finished: (id) => AT[id], accepted: (id) => (id === 1 ? [...SESSION_ITEMS[8].slice(0, 2), '01ff 00bad'] : SESSION_ITEMS[AT[id]]) });
+  try {
+    const out = await all(fx, { sessionCountOf: async () => 9 });
+    assert.ok(out.every((o) => !o.start && o.action === 'refuse'));
+    assert.match(out[0].why, /accepted items of session 8 differ.*guardian 1: 3 items/);
+    assert.ok(Object.values(fx.state).every((s) => s.dropped.length === 0), 'the databases untouched');
   } finally { fx.done(); }
 });
 
