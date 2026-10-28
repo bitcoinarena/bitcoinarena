@@ -2438,7 +2438,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   function settlementPeers(roundIdBytes) {
     const picked = roster.committeeFor(roundIdBytes, 'settlement');
     if (!picked.ok) {
-      console.error(`[custody] ${toHex(roundIdBytes).slice(0, 16)} reads no settlement signer node addresses: ${picked.why}`);
+      if (!VIEW_NOT_YET.test(picked.why || ''))
+        console.error(`[custody] ${toHex(roundIdBytes).slice(0, 16)} reads no settlement signer node addresses: ${picked.why}`);
       return [];
     }
     return endpointsOf(picked.committee, round.pubkey);
@@ -2469,7 +2470,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     peersFor: (roundIdBytes) => {
       const picked = roster.committeeFor(roundIdBytes, 'game');
       if (!picked.ok) {
-        console.error(`[verify] ${toHex(roundIdBytes).slice(0, 16)} reads no signer node addresses: ${picked.why}`);
+        // NOT READ YET IS NOT A FAULT (kanban #745): a view still being read - or one whose read failed, which main.js says
+        // once a minute as "[chain] view ... did not read" - is asked again at the next pass. Logged here it was one line per
+        // round: 408 on seat 7 in the minutes after its 07:02Z restart, all of them rounds whose view arrived seconds later.
+        if (!VIEW_NOT_YET.test(picked.why || '')) console.error(`[verify] ${toHex(roundIdBytes).slice(0, 16)} reads no signer node addresses: ${picked.why}`);
         return [];
       }
       return endpointsOf(picked.committee, round.pubkey);
