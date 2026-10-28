@@ -202,6 +202,21 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   // THE RELEASE'S APPS (kanban #569): read once - the release folder does not change under a running wizard
   const releaseApps = (() => { try { return appsIn(release); } catch (e) { log(`apps: ${e.message}`); return []; } })();
   const mark = (step, patch = {}) => { const s = state.read(); return state.save({ ...patch, done: { ...(s.done || {}), [step]: Date.now() } }); };
+  // A FUNDAMENTAL CHANGED ON AN INSTALLED NODE (kanban #734, the owner: "when re-running the install script and changing fundamental options
+  // like bitcoin, lightning, roles, reach, the new setting should reflect in the owners page correctly instead of raising errors"): the
+  // node's settings (arena.conf) are written only by "Install and start", which stayed done on a re-run - so a new Bitcoin source or new
+  // roles were kept in the installer's state while the node ran on the old ones, and the owner page read the two against each other. When
+  // the settings the node would get now differ from the ones before this save, "Install and start" opens again, as another way to be
+  // reached does (kanban #666). Only a step saved before (a change, not its first save). Answers 'service' when it did.
+  const reopenInstall = (was, step) => {
+    const s = state.read();
+    if (!(was.done || {})[step] || !(was.done || {}).service || !(s.done || {}).service) return null;
+    const confOf = (x) => { try { return seatConf({ ...x, port: (x.reach || {}).port, bridgePort }, { home: state.home, release }); } catch { return null; } };
+    if (confOf(was) === confOf(s)) return null;
+    const { service: _s, ...rest } = s.done;
+    state.save({ done: rest });
+    return 'service';
+  };
 
   // THE SERVICE STEP'S PROGRESS (kanban #651, 2026-10-25: "this hangs alot and user doesn't know what it is doing. Provide more
   // details and context and a progress bar"): POST /api/service moves through these stages; GET /api/service/progress tells the page
@@ -419,7 +434,12 @@ const serviceRun = async (b) => {
 
     'POST /api/chain/test': async (b) => ({ ok: true, result: await test(chainOf(b)) }),
     'POST /api/chain/save': async (b) => {
+      const was = state.read();
       let conn = chainOf(b);
+      // AN ELECTRUM SERVER UNDER A NODE THAT RUNS LND (kanban #734: a re-run that changes the Bitcoin source): custody and a liquidity provider
+      // need the node's own Bitcoin Core, so the source is not changed under them - the roles step refuses the other way round already
+      const needCore = (was.roles || []).filter((r) => r === 'custody' || r === 'liquidity');
+      if (needCore.length && conn.kind === 'electrum' && !ownCoreOf({ ...was, chain: conn })) return { ok: false, why: `this node runs ${needCore.join(' and ')}, which need${needCore.length === 1 ? 's' : ''} your own Bitcoin Core: LND cannot run on an Electrum server. Keep Bitcoin Core, or install it here` };
       let r = await test(conn);
       // AN ELECTRUM SERVER THAT FAILS BETWEEN THE CHOICE AND THE SAVE (kanban #638, the owner's playtest 2026-10-25: "sometimes the selected
       // electrum node fails after selecting but before moving to the next stage"): asked once more, then the other known servers in turn;
@@ -442,7 +462,8 @@ const serviceRun = async (b) => {
         conn.cookiePath = state.path('bitcoind.auth'); delete conn.password;
       }
       mark('chain', { chain: conn, chainTest: { atMs: Date.now(), why: r.why, latencyMs: r.source.latencyMs, height: r.source.height }, chainSwitchedFrom: switchedFrom });
-      return { ok: true, result: r, chain: conn, switchedFrom };
+      const again = reopenInstall(was, 'chain');   // kanban #734: the node takes the new source
+      return { ok: true, result: r, chain: conn, switchedFrom, ...(again ? { again } : {}) };
     },
 
     // BITCOIN CORE, INSTALLED WHEN ASKED (ruling 8): the plan (one already here? the disk against what mainnet and testnet4 need),
@@ -502,6 +523,26 @@ const serviceRun = async (b) => {
       const roles = [...new Set((b.roles || []).map(String))];
       const refused = rolesRefusal(roles);
       if (refused) return { ok: false, why: refused };
+      const was = state.read();
+      // ROLES OF A NODE WHOSE BOND IS POSTED (kanban #734, a re-run that changes the roles): the bond's advertisement names them, and the census
+      // the owner page reads is that advertisement - so the roles state alone would leave the page and the node at odds. Custody chosen now is
+      // custody added later (--add-custody: the custody steps, then an update of the advertisement); every other change is the owner page's,
+      // which posts the update (Roles), sets up a provider (Liquidity) or lets a guardian go (Leave); custody added and then left out again
+      // returns the node as it was (below)
+      const had = was.roles || [], bonded = !!(was.bond && was.bond.txid) && !!(was.done || {}).roles;
+      const same = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
+      if (bonded && !same(roles, had) && !(laterCustody(was) && same(roles, had.filter((x) => x !== 'custody')))) {
+        const added = roles.filter((x) => !had.includes(x)), dropped = had.filter((x) => !roles.includes(x));
+        if (!(added.length === 1 && added[0] === 'custody' && !dropped.length)) {
+          const why = dropped.includes('custody') ? 'a guardian leaves only with Leave on its owner page, so its bond is kept'
+            : [...added, ...dropped].some((x) => x === 'liquidity') ? 'a liquidity provider is set up on the owner page (Roles, Liquidity provider)'
+              : 'your bond names them: switch them on the owner page (Roles), which updates the bond for a small fee';
+          return { ok: false, why: `This node's bond is posted, so its roles change on its owner page, not here: ${why}. Custody can be added here.` };
+        }
+        state.save({ custodyLater: { atMs: Date.now() } });
+        const { service: _s, lightning: _l, federation: _f, promise: _p, bond: _b, done: _d, ...rest } = state.read().done || {};
+        state.save({ done: rest });
+      }
       const ln = roles.includes('custody') || roles.includes('liquidity');   // the roles that run LND
       mark('roles', { roles });
       // no custody: no Lightning, federation or bond-rules step (2026-10-18: "No slashing for leaving if you have no custody, so that will only come then")
@@ -515,7 +556,8 @@ const serviceRun = async (b) => {
         const { lightning: _, federation: __, promise: ___, ...rest } = state.read().done || {};
         state.save({ done: roles.includes('custody') ? rest : { ...rest, federation: (state.read().done || {}).federation, promise: (state.read().done || {}).promise } });
       }
-      return { ok: true, roles };
+      const again = reopenInstall(was, 'roles');   // kanban #734: an installed node without a bond takes its new roles' settings
+      return { ok: true, roles, ...(again ? { again } : {}) };
     },
 
     // THE APPS (kanban #569, 2026-10-21: "The node still comes with the 3 apps pre installed, that is a step in the installer
