@@ -5419,6 +5419,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // how old a kept listing may be and still be answered at once while the next is built (kanban #782; LOBBY_SKEW_MS is 60 s)
   const LISTING_STALE_MS = 50000;
   const LISTING_WAIT_MS = 800;
+  // the longest a kept listing is answered without new information (its rows are signed with its time; a page takes 60 s)
+  const LISTING_MAX_AGE_MS = 45000;
+  // WHAT A LISTING IS MADE OF, AS ONE MARK (kanban #782): the newest round, entry and seating certificate written here; read at most once
+  // a second - a listing kept under another mark is built again
+  // (and the rounds closed: a close rewrites its row, it adds none)
+  let markKept = null, markSql = null;
+  const listingMark = () => {
+    const now = Date.now();
+    if (markKept && now - markKept.at < 1000) return markKept.mark;
+    let mark;
+    try {
+      // prepared on the first ask: seat_certs is the seating agent's table, made when it starts
+      markSql = markSql || round.db.prepare(`SELECT (SELECT MAX(rowid) FROM rounds) AS r, (SELECT MAX(rowid) FROM entries) AS e,
+        (SELECT COUNT(*) FROM rounds WHERE closed_ms IS NOT NULL) AS c, (SELECT COUNT(*) FROM seat_certs) AS s`);
+      const m = markSql.get(); mark = `${m.r}:${m.e}:${m.c}:${m.s}`;
+    } catch { mark = String(now); }
+    markKept = { at: now, mark };
+    return mark;
+  };
   const listingBuilding = new Map();              // GET /rounds query -> the listing being built (one at a time)
   // THE DOORS' FEDERATION FACTS, KEPT A MINUTE (ORDER-2116, measured on testnet4 2026-10-02 03:5xZ): POST /round asked the
   // lock port for the federation's gateways and fee rule on every call - a client process each, pinging the gateways - and
@@ -7305,7 +7324,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // installer node took 44 s, the page gave up and showed no round): a kept listing past its age but younger than
         // LISTING_STALE_MS (a page takes one up to 60 s old) and of the same series is answered as it is when the next build takes
         // longer than LISTING_WAIT_MS, and that build goes on behind it - only an asker with no listing, or one too old, waits for it
-        const stale = body && nowReal - body.at > (body.large ? 30000 : 5000);
+        // BUILT AGAIN ONLY ON NEW INFORMATION (kanban #782, a tester 2026-10-28 ~19:20Z: "cache es solange bis es neue Informationen gibt"):
+        // a kept listing stands while nothing it shows can have changed - no round, entry or seating certificate written since, no listed
+        // round's start or entry close passed - and it is younger than LISTING_MAX_AGE_MS, past which its rows' signed time is too old for
+        // a page (LOBBY_SKEW_MS 60 s)
+        const changed = body && (body.mark !== listingMark() || nowReal >= body.nextChangeMs);
+        const stale = body && (changed || nowReal - body.at > LISTING_MAX_AGE_MS);
         const servable = body && body.version === seriesVersion && nowReal - body.at <= LISTING_STALE_MS;
         if (!body || stale || body.version !== seriesVersion) {
           // ONE BUILD PER QUERY AT A TIME: every asker that comes while it yields waits for the same listing
@@ -7314,7 +7338,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             building = (async () => {
               const version = seriesVersion;
               const { nowMs, listed } = await announcedRounds(url);
-              const made = { at: nowReal, version, large: listed.length > 100,
+              const mark = listingMark();
+              // the soonest moment a listed row's state turns by the clock alone: a start, an entry close or an end still ahead
+              const ahead = listed.flatMap((x) => [Number(x.startTimeMs), Number(x.entryCloseMs), Number(x.endTime)]).filter((t) => Number.isFinite(t) && t > nowReal);
+              const made = { at: nowReal, version, mark, nextChangeMs: ahead.length ? Math.min(...ahead) : nowReal + LISTING_MAX_AGE_MS, large: listed.length > 100,
                 json: JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), rounds: listed, games: groupedByGame(listed) }) };
               listingKept.set(q, made);
               if (listingKept.size > 16) listingKept.delete(listingKept.keys().next().value);
