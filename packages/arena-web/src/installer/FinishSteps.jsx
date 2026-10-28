@@ -203,7 +203,8 @@ export class LightningStep extends React.Component {
         {s.prog && s.prog.gateway && s.prog.gateway.elapsedMs !== undefined ? <ServiceProgress id="gw-progress" progress={s.prog.gateway} hints={GW_HINT} budgets={GW_BUDGET}
           slowAt={{ answer: 60000 }} slowText="The gateway takes longer than usual. Setup keeps asking it; the log below says what it is doing." logOf="The gateway's last messages:" /> : null}
         <Msg r={s.gwMsg} />
-        {!s.gwOk ? <p className="sub"><button type="button" className="link" onClick={() => this.setState({ gwPage: false })}>Back to LND</button></p> : null}
+        {/* NO "BACK TO LND" (kanban #730, the owner: its page said only what LND is, and its "Continue to the gateway" led back here - "this is
+          confusing"): with LND running there is nothing to do on LND's page, and the line above already says it runs */}
       </div>
     );
   }
