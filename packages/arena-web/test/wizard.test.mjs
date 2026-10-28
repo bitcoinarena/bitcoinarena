@@ -145,3 +145,16 @@ test('the steps along the top: done ticked, the current one marked; the page\'s 
   assert.deepEqual(picked, ['chain', 'roles']);
   assert.equal(renderToStaticMarkup(React.createElement(SetupRefused, { why: 'no disk <here>' })), '<h1>Bitcoin Arena setup</h1><p>no disk &lt;here&gt;</p>');
 });
+
+// THE WHOLE TEXT, NO SCROLLBAR (kanban #732, the owner: "make the overlays for the detailed description that opens by clicking the "more"-link,
+// fit the whole text without scrollbars"): measured in Chrome at 1100 and 390 px, custody's and liquidity's text was 247 px in a 238 px box
+// with a scrollbar; the box now grows with its text, in the stylesheet the wizard's bundle carries
+test('roles: a role\'s "more" box has no height limit and no scrollbar, in the source and in the shipped wizard.js', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../src/installer/wizard.css', import.meta.url), 'utf8');
+  const rule = /\.aw \.more-pop\{([^}]*)\}/.exec(css)[1];
+  assert.doesNotMatch(rule, /max-height|overflow/, rule);
+  assert.match(readFileSync(new URL('../../arena-installer/www/wizard.js', import.meta.url), 'utf8'), /\.aw \.more-pop\{position:absolute;left:8px;right:8px;bottom:48px;z-index:5;[^}]*padding:10px 12px;box-shadow:/);
+  const html = renderToStaticMarkup(React.createElement(RolesStep, { st: { roleInfo, roles: [] }, post: async () => ({ ok: true }) }));
+  assert.match(html, /<details class="more"><summary>more<\/summary><div class="more-pop"><p>[^<]*<\/p><p>Holds the players&#x27; bitcoin\.<\/p><\/div><\/details>/);
+});
