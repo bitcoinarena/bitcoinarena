@@ -11,6 +11,7 @@
 //                         Up/Down v24 and never announced it, so no v24 round drew them)
 //   not drawn             it is in every draw it can be in, and the lottery picked others - with its share of the bonds as the odds
 //   no rounds             no round was posted in the last day
+//   no rounds held        this node holds no round at all (kanban #757): it has not fetched the network's series yet
 //
 // Pure: the seat hands in the rows and the census row (server.js, GET /owner/rounds).
 
@@ -37,6 +38,9 @@ export function roundsForOwner({ rows = [], own = null, share = null, nowMs = Da
   const upcoming = mine.filter((r) => Number(r.endMs) > nowMs).length;
   if (mine.some((r) => Number(r.startMs) >= nowMs - DAY_MS)) return { rounds: mine, upcoming, why: null };
   const said = (kind, says) => ({ rounds: mine, upcoming, why: { kind, says } });
+  // NO ROUND HELD AT ALL (kanban #757, the owner's installed node b36828fa on 2026-10-28: drawn in 67 rounds, holding none, and the section
+  // said its bond did not count - its census row is read from the rounds it holds, so with none there is no row to read)
+  if (!rows.length && !own) return said('no rounds held', 'Your node holds none of the network\'s rounds yet, so it can\'t tell which ones draw it. It fetches the day\'s rounds from other nodes every few minutes, once their publication is confirmed on its own chain.');
   if (!own) return said('not in the census', 'Your node\'s bond doesn\'t count yet, so no round can draw it. A bond counts once it is confirmed and matured; check Bond for its state.');
   if (own.serving === false) return said('not in the census', 'Your node stepped out of the draw (serving = false). Turn it back on in Bond to be drawn again.');
   const roles = own.roles || [];
