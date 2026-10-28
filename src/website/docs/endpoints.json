@@ -11515,5 +11515,1184 @@
   "changesState": false,
   "needsAuth": "none",
   "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/favicon.ico",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 image/x-icon (cache 1 day); 204 when the release carries no icon",
+  "purpose": "The icon of the node's own pages (dashboard, owner page, rounds page), so a browser logs no missing favicon.",
+  "audience": "operator/monitoring",
+  "line": 5682,
+  "summary": "Page icon",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "image/x-icon",
+    "description": "The icon (cache-control max-age=86400)."
+   },
+   {
+    "status": "204",
+    "description": "No icon file beside this release's pages."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/owner/rounds",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {rounds:[{round, game, startMs, endMs, phase, gameSeated, settleSeated, drawn, hostedHere, paid, does}], upcoming, why: null | {kind, says}}",
+  "purpose": "The rounds of the last 36 h and the coming ones this node is drawn or seated for, what it does in each (play and check, pay out winners, reserve), and when there is none the first reason that holds in plain words: not in the census, serving off, no round role, no rounds, no game announced, not drawn (with its odds). The owner page's Rounds card.",
+  "audience": "operator/monitoring",
+  "line": 5804,
+  "summary": "Rounds this node is drawn for",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{rounds[], upcoming, why} (owner-rounds.js roundsForOwner)."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "Node runs without an owner area."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/owner/app-devs",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {devs:[{devKey, apps:[{name, title, id, version, split[], versions[{version, id, split}], donations{count, appMsat, byClient[]}}]}]}",
+  "purpose": "The game developers' overview: for each developer key installed on this node, the apps it signs with the split in force, every version with its split, and the donations this node's dev clients received for the app. Read by the owner page's Apps card.",
+  "audience": "operator/monitoring",
+  "line": 5929,
+  "summary": "Installed developers' apps and splits",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{devs[]}; empty when no developer key is installed here."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "Node runs without an owner area."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/owner/dev/donations",
+  "params": "query slug, app, origin, q, limit, offset",
+  "auth": "none",
+  "returns": "200 JSON {ok, slug, total, offset, limit, apps[], origins[], sums, rows[]}; 404 no dev clients or no such client",
+  "purpose": "One dev client's donations, newest first, each with its app or item, its protocol and app parts and its value in EUR, USD, CHF and GBP at its own rate; filtered by app and origin, searched in player, round, entry and item; paged. The owner page's donations table.",
+  "audience": "operator/monitoring",
+  "line": 5990,
+  "summary": "A dev client's donations, filtered and paged",
+  "query": [
+   {
+    "name": "slug",
+    "required": true,
+    "type": "string",
+    "description": "The dev client's slug (as /owner/dev lists them)."
+   },
+   {
+    "name": "app",
+    "required": false,
+    "type": "string",
+    "description": "Only this app (its items with it); 'items' for every item.",
+    "example": "nextblock"
+   },
+   {
+    "name": "origin",
+    "required": false,
+    "type": "string",
+    "description": "Only donations of this origin."
+   },
+   {
+    "name": "q",
+    "required": false,
+    "type": "string",
+    "description": "Searched in player, round, entry and item."
+   },
+   {
+    "name": "limit",
+    "required": false,
+    "type": "integer",
+    "description": "Rows per page (25 by default).",
+    "example": 25
+   },
+   {
+    "name": "offset",
+    "required": false,
+    "type": "integer",
+    "description": "First row (0 by default).",
+    "example": 0
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok:true, slug, total, offset, limit, apps[], origins[], sums, rows[]} (dev-clients.js donationsPage); the fiat rates waited for at most 12 s."
+   },
+   {
+    "status": "404",
+    "contentType": "application/json",
+    "description": "This node runs no dev clients, or no client has that slug."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "Node runs without an owner area."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/apps/split",
+  "params": "body JSON signed request, action \"apps/split\", args {game, recipients[] | manifest, donationSet[], info?}",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 {ok, ...the adopted version}; 400 bad manifest or split; 403 no developer key for that app here; 404 no such app; 409 that split already, a newer version runs, or no plugins directory; 500",
+  "purpose": "Changes an app's donation split by hosting a new version of it: either signed here with the developer key installed on this node (args.recipients, the next version is built and signed), or a version its developer signed elsewhere (args.manifest hex with its donationSet). The new version is checked and activated at once, as an install is.",
+  "audience": "operator/monitoring",
+  "line": 6101,
+  "summary": "Change an app's donation split",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request {pubkey, action:\"apps/split\", args {game, recipients[] | manifest, donationSet[], info?}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The adopted version (as /owner/plugins/install answers)."
+   },
+   {
+    "status": "400",
+    "contentType": "application/json",
+    "description": "Not a manifest, not a version of this app, or not a valid split."
+   },
+   {
+    "status": "403",
+    "contentType": "application/json",
+    "description": "No key of this app's developer is installed on this node."
+   },
+   {
+    "status": "404",
+    "contentType": "application/json",
+    "description": "This node hosts no such app."
+   },
+   {
+    "status": "409",
+    "contentType": "application/json",
+    "description": "That is the split it already has, a newer version runs here, or this node keeps no installed apps."
+   },
+   {
+    "status": "500",
+    "contentType": "application/json",
+    "description": "The version could not be built or packaged."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Signature or request does not verify (stale, replayed or malformed)."
+   },
+   {
+    "status": "403",
+    "contentType": "application/json",
+    "description": "Key is not the claimed owner."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "Node runs without an owner area."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/apps/dev-key",
+  "params": "body JSON signed request, action \"apps/dev-key\", args {key} | {remove: pubkey}",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 {ok, pubkey, removed?, apps[]}; 400 not a key, or no such key",
+  "purpose": "Installs a game developer's key on this node (args.key: the text the developer has), or removes one (args.remove: its public key). The key travels in the owner's signed request, so only over https or on the node's own machine; the answer names the public key and the apps hosted here that it signs, never the key.",
+  "audience": "operator/monitoring",
+  "line": 6113,
+  "summary": "Install or remove a developer key",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request {pubkey, action:\"apps/dev-key\", args {key} | {remove: pubkey}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok:true, pubkey, removed (on a removal), apps[]: the titles of the hosted apps that key signs}."
+   },
+   {
+    "status": "400",
+    "contentType": "application/json",
+    "description": "Not a developer key, no store folder, or no such key installed."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Signature or request does not verify (stale, replayed or malformed)."
+   },
+   {
+    "status": "403",
+    "contentType": "application/json",
+    "description": "Key is not the claimed owner."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "Node runs without an owner area."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/first-bond",
+  "params": "body JSON signed request, action \"first-bond\", args {post: boolean}",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 {ok, plan, bond?, done?, agent?}; 400 the plan does not stand (nothing arrived, too little); 501 not installed by the installer; 500",
+  "purpose": "The node's first bond from the owner area, for a node whose installer wizard left it for later: without post the plan (the node wallet's address, what to send, what arrived); with post: true the bond is built and broadcast as the wizard would have (arena-installer add-bond.js firstBondOnNode), and the setup card then counts its confirmations. One plan read runs at a time per node.",
+  "audience": "operator/monitoring",
+  "line": 6338,
+  "summary": "Post the node's first bond",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request {pubkey, action:\"first-bond\", args {post: boolean}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok:true, plan, bond: {txid, sats} when posted, done when the node has its bond already}."
+   },
+   {
+    "status": "400",
+    "contentType": "application/json",
+    "description": "The plan does not stand: what is missing is named."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "Not a node set up by the installer (no ARENA_HOME)."
+   },
+   {
+    "status": "500",
+    "contentType": "application/json",
+    "description": "The bond could not be posted."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Signature or request does not verify (stale, replayed or malformed)."
+   },
+   {
+    "status": "403",
+    "contentType": "application/json",
+    "description": "Key is not the claimed owner."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "Node runs without an owner area."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/key-from-words",
+  "params": "body JSON signed request, action \"key-from-words\", args {post: boolean}",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 {ok, plan, already, bond, restarting}; 400 the move cannot be made; 501 no 24 words in this node's home; 500",
+  "purpose": "Moves an installed node to the key its 24 words give: without post the plan (the key now, the key next, the bond to post); with post: true a new bond under the new key is posted from the node's wallet, the old key is kept for its old bond's return (GET /owner/bond lists it, POST /owner/old-bond-withdraw takes it back) and the seat restarts on the new key about 1.5 s after the answer. Never done unasked.",
+  "audience": "operator/monitoring",
+  "line": 6357,
+  "summary": "Move the node to the key of its 24 words",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request {pubkey, action:\"key-from-words\", args {post: boolean}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok:true, plan, already (the node runs on that key already), bond, restarting}."
+   },
+   {
+    "status": "400",
+    "contentType": "application/json",
+    "description": "The move cannot be made: the reason is named."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "A node set up by hand keeps its key: there are no 24 words in its home."
+   },
+   {
+    "status": "500",
+    "contentType": "application/json",
+    "description": "The key could not be moved."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Signature or request does not verify (stale, replayed or malformed)."
+   },
+   {
+    "status": "403",
+    "contentType": "application/json",
+    "description": "Key is not the claimed owner."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "Node runs without an owner area."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/gateway/setup",
+  "params": "body JSON signed request, action \"gateway/setup\", args {progress?: true}",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 {ok, progress} with args.progress, else {ok, ...started}; 409 set up already, nothing to fix, or already running; 501 not installed by the installer; 500",
+  "purpose": "A custody node whose setup left Lightning or the gateway for later sets them up from here: args {progress: true} reads how far the custody runner is (custody-add.json); otherwise the runner's two steps are started in the background (arena-installer add-custody.js startGatewaySetup). The owner page's Federation card polls the progress.",
+  "audience": "operator/monitoring",
+  "line": 6477,
+  "summary": "Set up the gateway of a custody node",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request {pubkey, action:\"gateway/setup\", args {progress?: true}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok:true, progress} (a read) or the started run."
+   },
+   {
+    "status": "409",
+    "contentType": "application/json",
+    "description": "The gateway is set up already, the gap cannot be fixed from here, or a run is already going (its progress is named)."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "Not a node set up by the installer (no ARENA_HOME)."
+   },
+   {
+    "status": "500",
+    "contentType": "application/json",
+    "description": "The gateway could not be set up."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Signature or request does not verify (stale, replayed or malformed)."
+   },
+   {
+    "status": "403",
+    "contentType": "application/json",
+    "description": "Key is not the claimed owner."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "Node runs without an owner area."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/referrer/setup",
+  "params": "body JSON signed request, action \"referrer/setup\", args {name}",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 {ok, slug, site, name, told}; 400 bad name; 404; 501 this node runs no clients",
+  "purpose": "Creates a referral program on this node: a client of kind 'referrer' with a new key, its name signed by that key (referral-name.js) and sent to every seat (POST /referral-name), so the explorer and Health name the program. The owner can have several; each earns the website fees of the entries it refers.",
+  "audience": "operator/monitoring",
+  "line": 6502,
+  "summary": "Create a referral program",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request {pubkey, action:\"referrer/setup\", args {name}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok:true, slug, site: the program's payout key (hex), name, told: seats that took the name}."
+   },
+   {
+    "status": "400",
+    "contentType": "application/json",
+    "description": "The name does not encode."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "This node runs no clients (start it with ARENA_DEV_WASM_PKG)."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Signature or request does not verify (stale, replayed or malformed)."
+   },
+   {
+    "status": "403",
+    "contentType": "application/json",
+    "description": "Key is not the claimed owner."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "Node runs without an owner area."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/referrer/name",
+  "params": "body JSON signed request, action \"referrer/name\", args {slug, name?}",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 {ok, slug, site, name, told}; 400 bad name; 404 no such program; 501 this node runs no clients",
+  "purpose": "Says a referral program's name again, signed by its key: a new name for the program (args.name), or the one it has, to seats that missed it. Kept here and handed to every seat (POST /referral-name).",
+  "audience": "operator/monitoring",
+  "line": 6502,
+  "summary": "Rename a referral program or resend its name",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request {pubkey, action:\"referrer/name\", args {slug, name?}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok:true, slug, site, name, told}."
+   },
+   {
+    "status": "400",
+    "contentType": "application/json",
+    "description": "The name does not encode."
+   },
+   {
+    "status": "404",
+    "contentType": "application/json",
+    "description": "No such referral program on this node."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "This node runs no clients (start it with ARENA_DEV_WASM_PKG)."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Signature or request does not verify (stale, replayed or malformed)."
+   },
+   {
+    "status": "403",
+    "contentType": "application/json",
+    "description": "Key is not the claimed owner."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "Node runs without an owner area."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/old-bond-withdraw",
+  "params": "body JSON signed request, action \"old-bond-withdraw\", args {txid, vout, address, feeRate?}",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 {ok, txid, value, fee}; 400 not an address of that network, or the spend failed; 404 no old bond with that txid; 409 key no longer held, or still locked; 503 no chain",
+  "purpose": "Takes back a bond left under an old key after the node moved to the key of its 24 words (POST /owner/key-from-words): the bond named by txid and vout, as GET /owner/bond lists the old bonds, is spent at its maturity through its template-2 recovery leaf with the old key this node still holds, to the owner's address, and broadcast.",
+  "audience": "operator/monitoring",
+  "line": 6622,
+  "summary": "Withdraw an old bond after a key switch",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request {pubkey, action:\"old-bond-withdraw\", args {txid, vout, address, feeRate?}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok:true, txid, value, fee}."
+   },
+   {
+    "status": "400",
+    "contentType": "application/json",
+    "description": "Not an address of that network, or the spend failed."
+   },
+   {
+    "status": "404",
+    "contentType": "application/json",
+    "description": "No old bond of this node with that txid and vout."
+   },
+   {
+    "status": "409",
+    "contentType": "application/json",
+    "description": "This node no longer holds that bond's key, or the bond is locked until its maturity (the height and the blocks left are named)."
+   },
+   {
+    "status": "503",
+    "contentType": "application/json",
+    "description": "This seat reads no chain to send to."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Signature or request does not verify (stale, replayed or malformed)."
+   },
+   {
+    "status": "403",
+    "contentType": "application/json",
+    "description": "Key is not the claimed owner."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "Node runs without an owner area."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/setup-status",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {ok, core, bond, pegIn, founding?, tip, node, atMs, release} or {ok:false, why}",
+  "purpose": "The setup's progress of a node the installer set up, for the dashboards: Bitcoin Core's background sync, the bond's and the peg-in's confirmations, and while the node waits for a founding how many nodes are ready of how many needed (ready/needed). Public: txids, heights and progress only. Read at most once a minute.",
+  "audience": "operator/monitoring",
+  "line": 6652,
+  "summary": "Setup progress of an installed node",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok:true, core, bond, pegIn, founding, tip, node, atMs, release} (each part null when the node has none), or {ok:false, why} on a node the installer did not set up."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/tx",
+  "params": "query id (entry id, 64 hex)",
+  "auth": "none",
+  "returns": "200 JSON {found, transaction:{entry, storedAt, locks, book, settlement, steps, client, processed, result}}; 400; 404",
+  "purpose": "One transaction of this seat as explorer.bitcoin-arena.io shows it: the entry (round, app, federation, player, stake, fee, donation, price, pick, handout, lock outpoints), when it was stored, the locks as verified here, its place in the certified batch, its settlement, every step this seat timed, the page's own timing (POST /tx-timing), and its result.",
+  "audience": "player/page",
+  "line": 7970,
+  "summary": "One transaction's record",
+  "query": [
+   {
+    "name": "id",
+    "required": true,
+    "type": "string",
+    "description": "The transaction id: the entry id, 64 hex."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The transaction's record (bigints as strings, bytes as hex)."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a 64-hex id."
+   },
+   {
+    "status": "404",
+    "contentType": "application/json",
+    "description": "This seat holds no such transaction."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/txs",
+  "params": "query since (ms, optional), limit (1..500, 200 by default), full (1: each with its record)",
+  "auth": "none",
+  "returns": "200 JSON {seat, txs:[{id, round, storedMs, app, federation, detail?}]}",
+  "purpose": "The newest transactions stored here: the entries stored after `since`, oldest first, at most `limit`, each with its app and federation; with full=1 each carries its whole record as GET /tx answers it. What explorer.bitcoin-arena.io polls.",
+  "audience": "player/page",
+  "line": 7977,
+  "summary": "Newest transactions",
+  "query": [
+   {
+    "name": "since",
+    "required": false,
+    "type": "integer",
+    "description": "Only entries stored after this time (ms since the epoch); 0 by default.",
+    "example": 1761600000000
+   },
+   {
+    "name": "limit",
+    "required": false,
+    "type": "integer",
+    "description": "At most this many (1 to 500; 200 by default).",
+    "example": 200
+   },
+   {
+    "name": "full",
+    "required": false,
+    "type": "string",
+    "description": "1: each with its record as GET /tx answers it.",
+    "example": "1"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{seat, txs[]}."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/tx-timing",
+  "params": "query id (entry id, 64 hex); body JSON {timing, sig}",
+  "auth": "the order's session key: sig is its Ed25519 signature over timingMessage(id, JSON of timing)",
+  "returns": "201 'timing kept'; 400 not JSON or no signature; 403 not signed by the order's session key; 404 no such transaction",
+  "purpose": "The page's own timing of its order, kept beside the seat's steps for GET /tx. Only the page that holds the order's session key can write it.",
+  "audience": "player/page",
+  "line": 8009,
+  "summary": "Keep the page's timing of its order",
+  "query": [
+   {
+    "name": "id",
+    "required": true,
+    "type": "string",
+    "description": "The transaction id: the entry id, 64 hex."
+   }
+  ],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "{timing: the page's timing object, sig: 64 bytes hex, the session key's Ed25519 signature over timingMessage(id, JSON.stringify(timing))}."
+  },
+  "responses": [
+   {
+    "status": "201",
+    "contentType": "text/plain",
+    "description": "timing kept"
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not JSON, no timing, or the timing was refused."
+   },
+   {
+    "status": "403",
+    "contentType": "text/plain",
+    "description": "Not signed by the order's session key."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "This seat holds no such transaction."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signature",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/order-locks",
+  "params": "query entry (64 hex)",
+  "auth": "none",
+  "returns": "200 JSON {entry, stake, fee}; 400; 404 no lock of that entry verified here",
+  "purpose": "An order's stake lock and fee lock as this seat verified them: the fields the federation holds at the outpoints the entry names. For a seat that holds the order's certified batch but never received its locks (replayOrder).",
+  "audience": "node-to-node",
+  "line": 8023,
+  "summary": "An order's locks as verified here",
+  "query": [
+   {
+    "name": "entry",
+    "required": true,
+    "type": "string",
+    "description": "The entry id, 64 hex."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{entry, stake: fields or null, fee: fields or null}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not an entry id."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "This seat verified no lock of that entry."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/attestation-word",
+  "params": "query round (64 hex)",
+  "auth": "none",
+  "returns": "200 JSON the drawn attestor's signed word on the round; 400; 404 no word of its own",
+  "purpose": "A drawn attestor seat's own word on a round's outcome, as it signed it, for the round's other drawn attestors to combine into the attestation.",
+  "audience": "node-to-node",
+  "line": 8356,
+  "summary": "A drawn attestor's word on a round",
+  "query": [
+   {
+    "name": "round",
+    "required": true,
+    "type": "string",
+    "description": "The round id, 64 hex."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The seat's signed word (drawn-attestor.js wordToJson)."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a round id."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "This seat holds no word of its own on that round."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/referral-fees",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {node, totalMsat, sites:[{site, name, msat, payouts}], programs:[{site, name, atMs}]}",
+  "purpose": "What each website (referral program) earned from the settlements this seat indexed: the 'website' payouts per payout key, each with its program's name where its key has said one, largest first, and the total. The explorer's referrer metrics.",
+  "audience": "game/market developer",
+  "line": 9285,
+  "summary": "Referral fees per website",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{node, totalMsat, sites[], programs[]}."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/referral-name",
+  "params": "body JSON {record, signature} (hex)",
+  "auth": "the record's site key: a BIP-340 signature over the record's id (referral-name.js)",
+  "returns": "200 JSON {ok, kept: 'new' | 'same' | 'older', ...}; 400 not a record; 422 not signed by its site key or dated ahead",
+  "purpose": "A referral program's name: kept when its site key signed it (newer names replace older ones), and a new one handed on to every seat once. Posted by the owner doors /owner/referrer/setup and /owner/referrer/name and by seats forwarding it.",
+  "audience": "node-to-node",
+  "line": 9298,
+  "summary": "Keep a referral program's name",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "{record: the encoded referral name (hex), signature: the site key's signature (hex)}."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok:true, kept} (keepReferralName)."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a referral name record."
+   },
+   {
+    "status": "422",
+    "contentType": "text/plain",
+    "description": "Not signed by its site key, or dated more than 10 min ahead of this seat's clock."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signature",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/audit-slash-proofs",
+  "params": "query round (64 hex)",
+  "auth": "none",
+  "returns": "200 octet-stream: the proofs one after another, header x-slash-proofs = count; 400",
+  "purpose": "A round's fraud proofs against contradicted audits (§13A.1, protocol 22), as published: each proof with the AUDIT, its signature and the rows it contradicts, concatenated. The arbiter and the explorer read them; GET /slashes lists them under auditSlashes.",
+  "audience": "node-to-node",
+  "line": 9547,
+  "summary": "A round's proofs against contradicted audits",
+  "query": [
+   {
+    "name": "round",
+    "required": true,
+    "type": "string",
+    "description": "The round id, 64 hex."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/octet-stream",
+    "description": "The proofs' bytes, one after another."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a round id."
+   }
+  ],
+  "headers": [
+   "x-slash-proofs"
+  ],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/round-peers",
+  "params": "query round (64 hex)",
+  "auth": "none",
+  "returns": "200 JSON {round, peers:{game:[{node, endpoint}], settlement:[...]}, fromRoster:{game, settlement}}; 400",
+  "purpose": "The round's seated signer nodes' addresses as kept at seating, per role: each seated node's key and the endpoint off its census advert then (a table's later round reads its anchor's). What a peer that lost its own roster view for the round asks for; fromRoster says whether this seat's roster answers the committee itself right now.",
+  "audience": "node-to-node",
+  "line": 9726,
+  "summary": "The round's seated nodes and their endpoints",
+  "query": [
+   {
+    "name": "round",
+    "required": true,
+    "type": "string",
+    "description": "The round id, 64 hex."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{round, peers, fromRoster}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a round id."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/liquidations/events",
+  "params": "body JSON {event, signatures:[{key, sig}]}",
+  "auth": "the arbitration set: at least k of its members' signatures over the event",
+  "returns": "201 JSON {ok, kept:true, event}; 200 {ok, kept:false, why} held already; 400 not JSON; 422 not enough signatures of the set; 503 no arbitration set known",
+  "purpose": "An event of the arbitration set (a liquidation or a slash it published): taken when k members signed it and it is newer than the one held, then handed on to every seat this one can name, so the explorer finds it at any seat (GET /liquidations lists them as events).",
+  "audience": "node-to-node",
+  "line": 9809,
+  "summary": "Keep an arbitration set event",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "{event, signatures: [{key, sig}]} - the arbitration set's signatures over the event."
+  },
+  "responses": [
+   {
+    "status": "201",
+    "contentType": "application/json",
+    "description": "{ok:true, kept:true, event}."
+   },
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok:true, kept:false, why}: held here already, as new or newer."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not JSON."
+   },
+   {
+    "status": "422",
+    "contentType": "text/plain",
+    "description": "The signatures do not reach the set's threshold, or the event is malformed."
+   },
+   {
+    "status": "503",
+    "contentType": "text/plain",
+    "description": "This seat keeps no arbitration events yet, or knows no arbitration set for its chain."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signature",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/audit",
+  "params": "body: the AUDIT bytes followed by the auditor's 64-byte signature; headers x-audit-seat, x-audit-forward when a seat forwards it",
+  "auth": "the auditor's signature over the AUDIT; a forwarded one also the forwarding seat's signature (a seat of the round)",
+  "returns": "201 'AUDIT kept'; 200 'already held'; 400 not an AUDIT; 403 forwarder not a seat of the round or its signature wrong; 409 does not stand or too late",
+  "purpose": "An auditor's audit of a paid round (§13A.1, protocol 22): taken once when it stands - signed by the node it names, its VRF proof good for this round under that key, the node eligible and drawn as an auditor, its results the ones this seat holds - and in time: signed within 5 s of this seat's clock and before the window close, or forwarded by another seat of the round by the close. A new one is handed on to the other seats.",
+  "audience": "node-to-node",
+  "line": 9931,
+  "summary": "Keep an auditor's AUDIT",
+  "query": [],
+  "body": {
+   "contentType": "application/octet-stream",
+   "required": true,
+   "description": "The AUDIT's bytes with the auditor's 64-byte signature appended."
+  },
+  "responses": [
+   {
+    "status": "201",
+    "contentType": "text/plain",
+    "description": "AUDIT kept"
+   },
+   {
+    "status": "200",
+    "contentType": "text/plain",
+    "description": "already held"
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not an AUDIT, or a forwarded one without x-audit-seat (64 hex) and x-audit-forward (128 hex)."
+   },
+   {
+    "status": "403",
+    "contentType": "text/plain",
+    "description": "The forwarding seat is not a seat of the round, or its signature does not verify."
+   },
+   {
+    "status": "409",
+    "contentType": "text/plain",
+    "description": "The AUDIT does not stand here, its time is off, or the round's window has closed."
+   }
+  ],
+  "headers": [
+   "x-audit-seat",
+   "x-audit-forward"
+  ],
+  "changesState": true,
+  "needsAuth": "signature",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/audits",
+  "params": "query round (64 hex)",
+  "auth": "none",
+  "returns": "200 JSON {round, audits:[...]}; 400",
+  "purpose": "The audits this seat holds for a round, a contradicted one with its bytes and signature - the evidence of a fraud proof against it.",
+  "audience": "node-to-node",
+  "line": 9952,
+  "summary": "The audits held for a round",
+  "query": [
+   {
+    "name": "round",
+    "required": true,
+    "type": "string",
+    "description": "The round id, 64 hex."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{round, audits[]} (audit-seat.js list)."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a round id."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/audit-run",
+  "params": "query round (64 hex)",
+  "auth": "none",
+  "returns": "200 JSON {round, entries:[{id, entry, results[]}]}; 400; 404 no such round",
+  "purpose": "What an auditor reads of a round it is not seated in: every entry an AUDIT is over, with the entry's bytes and every signed result this seat holds for it. The auditor counts the agreed run itself, against the committee it draws; nothing here is taken on trust.",
+  "audience": "node-to-node",
+  "line": 9960,
+  "summary": "A round's entries and results for an auditor",
+  "query": [
+   {
+    "name": "round",
+    "required": true,
+    "type": "string",
+    "description": "The round id, 64 hex."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{round, entries[]} (bytes as hex)."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a round id."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "No such round."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
  }
 ]

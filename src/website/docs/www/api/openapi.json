@@ -172,7 +172,7 @@
      "Nodes"
     ],
     "summary": "Absent claim of a census",
-    "description": "The absent claim of a protocol-22 census root: the nodes its posting node left out as drawn in the 24 h and seen at none of those seatings, each with up to 3 seatings it was drawn for (\u00a75A.3, kanban #727). A seat checks it before it serves the census.\n\nAccess: none\n\nReturns: 200 JSON {root, claims:[{node, drawnIn}]}; 400; 404\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "description": "The absent claim of a protocol-22 census root: each node its posting node left out, with the 3 seatings (3 different closes in the 24 h) whose threshold-signed certificates show it drawn, or left out already, and present at none; the certificates; and the contracts of those rounds, so a client draws each itself (\u00a75A.3, kanban #727). Every seat and the client check the proofs; a wrong one makes the census invalid.\n\nAccess: none\n\nReturns: 200 JSON {root, claims:[{node, proofs}], certs, contracts}; 400; 404\n\nSource: `packages/arena-node/src/server.js` line 0.",
     "operationId": "get_absent",
     "parameters": [
      {
@@ -187,7 +187,7 @@
     ],
     "responses": {
      "200": {
-      "description": "{root, claims}.",
+      "description": "{root, claims:[{node, proofs:[{roundId, role}]}], certs:{'roundId:role': certificate hex}, contracts:{roundId: contract hex}}.",
       "content": {
        "application/json": {}
       }
@@ -211,11 +211,11 @@
      "Nodes"
     ],
     "summary": "Hand over an absent claim",
-    "description": "Keep the absent claim of a census root, as the posting node sends it before its grid (\u00a75A.3, kanban #727). Kept as given; the root decides whether it is the census's, and the seat checks it against what it holds before it serves.\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none\n\nReturns: 201 JSON {ok, root, nodes}; 400\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "description": "Keep the absent claim of a census root, as the posting node sends it before its grid (\u00a75A.3, kanban #727). Kept as given; the root decides whether it is the census's, and the seat checks every proof - the certificates against its own draw of each seating - before it serves.\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none\n\nReturns: 201 JSON {ok, root, nodes, certs}; 400\n\nSource: `packages/arena-node/src/server.js` line 0.",
     "operationId": "post_absent",
     "requestBody": {
      "required": true,
-     "description": "{root: 64 hex, claims: [{node: 64 hex, drawnIn: [{roundId, role}]}]}",
+     "description": "{root: 64 hex, claims: [{node: 64 hex, proofs: [{roundId, role}]}], certs: {'roundId:role': seating certificate hex}}",
      "content": {
       "application/json": {
        "schema": {}
@@ -367,6 +367,218 @@
       "description": "{node, nowMs, upcoming[], finished[] (up to 200), games}.",
       "content": {
        "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/attestation-word": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "A drawn attestor's word on a round",
+    "description": "A drawn attestor seat's own word on a round's outcome, as it signed it, for the round's other drawn attestors to combine into the attestation.\n\nAccess: none\n\nReturns: 200 JSON the drawn attestor's signed word on the round; 400; 404 no word of its own\n\nSource: `packages/arena-node/src/server.js` line 8356.",
+    "operationId": "get_attestation_word",
+    "parameters": [
+     {
+      "name": "round",
+      "in": "query",
+      "required": true,
+      "description": "The round id, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The seat's signed word (drawn-attestor.js wordToJson).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not a round id.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "404": {
+      "description": "This seat holds no word of its own on that round.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/audit": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "[signed] Keep an auditor's AUDIT",
+    "description": "An auditor's audit of a paid round (\u00a713A.1, protocol 22): taken once when it stands - signed by the node it names, its VRF proof good for this round under that key, the node eligible and drawn as an auditor, its results the ones this seat holds - and in time: signed within 5 s of this seat's clock and before the window close, or forwarded by another seat of the round by the close. A new one is handed on to the other seats.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the auditor's signature over the AUDIT; a forwarded one also the forwarding seat's signature (a seat of the round)\n\nReturns: 201 'AUDIT kept'; 200 'already held'; 400 not an AUDIT; 403 forwarder not a seat of the round or its signature wrong; 409 does not stand or too late\n\nHeaders: `x-audit-seat`, `x-audit-forward`\n\nSource: `packages/arena-node/src/server.js` line 9931.",
+    "operationId": "post_audit",
+    "requestBody": {
+     "required": true,
+     "description": "The AUDIT's bytes with the auditor's 64-byte signature appended.",
+     "content": {
+      "application/octet-stream": {
+       "schema": {
+        "type": "string",
+        "format": "binary"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "AUDIT kept",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "200": {
+      "description": "already held",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "400": {
+      "description": "Not an AUDIT, or a forwarded one without x-audit-seat (64 hex) and x-audit-forward (128 hex).",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "403": {
+      "description": "The forwarding seat is not a seat of the round, or its signature does not verify.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "409": {
+      "description": "The AUDIT does not stand here, its time is off, or the round's window has closed.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/audit-run": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "A round's entries and results for an auditor",
+    "description": "What an auditor reads of a round it is not seated in: every entry an AUDIT is over, with the entry's bytes and every signed result this seat holds for it. The auditor counts the agreed run itself, against the committee it draws; nothing here is taken on trust.\n\nAccess: none\n\nReturns: 200 JSON {round, entries:[{id, entry, results[]}]}; 400; 404 no such round\n\nSource: `packages/arena-node/src/server.js` line 9960.",
+    "operationId": "get_audit_run",
+    "parameters": [
+     {
+      "name": "round",
+      "in": "query",
+      "required": true,
+      "description": "The round id, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{round, entries[]} (bytes as hex).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not a round id.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "404": {
+      "description": "No such round.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/audit-slash-proofs": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "A round's proofs against contradicted audits",
+    "description": "A round's fraud proofs against contradicted audits (\u00a713A.1, protocol 22), as published: each proof with the AUDIT, its signature and the rows it contradicts, concatenated. The arbiter and the explorer read them; GET /slashes lists them under auditSlashes.\n\nAccess: none\n\nReturns: 200 octet-stream: the proofs one after another, header x-slash-proofs = count; 400\n\nHeaders: `x-slash-proofs`\n\nSource: `packages/arena-node/src/server.js` line 9547.",
+    "operationId": "get_audit_slash_proofs",
+    "parameters": [
+     {
+      "name": "round",
+      "in": "query",
+      "required": true,
+      "description": "The round id, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The proofs' bytes, one after another.",
+      "content": {
+       "application/octet-stream": {
+        "schema": {
+         "type": "string",
+         "format": "binary"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Not a round id.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/audits": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "The audits held for a round",
+    "description": "The audits this seat holds for a round, a contradicted one with its bytes and signature - the evidence of a fraud proof against it.\n\nAccess: none\n\nReturns: 200 JSON {round, audits:[...]}; 400\n\nSource: `packages/arena-node/src/server.js` line 9952.",
+    "operationId": "get_audits",
+    "parameters": [
+     {
+      "name": "round",
+      "in": "query",
+      "required": true,
+      "description": "The round id, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{round, audits[]} (audit-seat.js list).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not a round id.",
+      "content": {
+       "text/plain": {}
       }
      }
     }
@@ -2601,6 +2813,27 @@
     }
    }
   },
+  "/favicon.ico": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "Page icon",
+    "description": "The icon of the node's own pages (dashboard, owner page, rounds page), so a browser logs no missing favicon.\n\nAccess: none\n\nReturns: 200 image/x-icon (cache 1 day); 204 when the release carries no icon\n\nSource: `packages/arena-node/src/server.js` line 5682.",
+    "operationId": "get_favicon_ico",
+    "responses": {
+     "200": {
+      "description": "The icon (cache-control max-age=86400).",
+      "content": {
+       "image/x-icon": {}
+      }
+     },
+     "204": {
+      "description": "No icon file beside this release's pages."
+     }
+    }
+   }
+  },
   "/federation-invoice": {
    "get": {
     "tags": [
@@ -4121,6 +4354,139 @@
     }
    }
   },
+  "/heard": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "[signed] Hand HEARDs to the other members of a heartbeat committee",
+    "description": "Other members' HEARDs of a heartbeat slot (\u00a75A.3, kanban #727): with 5 of the committee's, the slot's certificate is kept.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: each signed by a member of that slot's heartbeat committee; only when seating is on (ARENA_SEATING=1)\n\nReturns: 201 JSON {ok, taken, refused[]}; 400\n\nSource: `packages/arena-node/src/server.js` line 6063.",
+    "operationId": "post_heard",
+    "requestBody": {
+     "required": true,
+     "description": "A list of HEARDs, keys and signature hex.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "{ok, taken, refused[]}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not a JSON list of HEARDs.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "404": {
+      "description": "No such door: seating is off (ARENA_SEATING unset).",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/heartbeat-cert": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "A heartbeat slot's certificate",
+    "description": "The heartbeat certificate of one slot of a 22 round held here (\u00a75A.3, kanban #727): who 5 or more of its committee heard; every census node it does not list missed that slot.\n\nAccess: none; only when seating is on (ARENA_SEATING=1)\n\nReturns: 200 JSON {cert}; 400; 404\n\nSource: `packages/arena-node/src/server.js` line 6063.",
+    "operationId": "get_heartbeat_cert",
+    "parameters": [
+     {
+      "name": "round",
+      "in": "query",
+      "required": true,
+      "description": "The round id, 32 bytes hex.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "slot",
+      "in": "query",
+      "required": true,
+      "description": "The heartbeat slot: 0 (one per round, the owner 2026-10-27).",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{cert}, hex.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "No round or slot named.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "404": {
+      "description": "No certificate for that slot here, or seating is off.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/heartbeats": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "[signed] Hand HEARTBEATs to a heartbeat committee member",
+    "description": "A node's HEARTBEATs for 22 rounds' heartbeat slots (\u00a75A.3, kanban #727): the committee member keeps each until the slot closes and lists it in its HEARD.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: each signed by the node it names; kept only by a member of that slot's heartbeat committee, before the slot closes; only when seating is on (ARENA_SEATING=1)\n\nReturns: 201 JSON {ok, taken, refused[]}; 400\n\nSource: `packages/arena-node/src/server.js` line 6063.",
+    "operationId": "post_heartbeats",
+    "requestBody": {
+     "required": true,
+     "description": "HEARTBEAT messages back to back.",
+     "content": {
+      "application/octet-stream": {
+       "schema": {
+        "type": "string",
+        "format": "binary"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "{ok, taken, refused[]}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not a whole number of HEARTBEATs.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "404": {
+      "description": "No such door: seating is off (ARENA_SEATING unset).",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
   "/here": {
    "get": {
     "tags": [
@@ -4419,6 +4785,58 @@
       }
      }
     }
+   }
+  },
+  "/liquidations/events": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "[signed] Keep an arbitration set event",
+    "description": "An event of the arbitration set (a liquidation or a slash it published): taken when k members signed it and it is newer than the one held, then handed on to every seat this one can name, so the explorer finds it at any seat (GET /liquidations lists them as events).\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the arbitration set: at least k of its members' signatures over the event\n\nReturns: 201 JSON {ok, kept:true, event}; 200 {ok, kept:false, why} held already; 400 not JSON; 422 not enough signatures of the set; 503 no arbitration set known\n\nSource: `packages/arena-node/src/server.js` line 9809.",
+    "operationId": "post_liquidations_events",
+    "requestBody": {
+     "required": true,
+     "description": "{event, signatures: [{key, sig}]} - the arbitration set's signatures over the event.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "{ok:true, kept:true, event}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "200": {
+      "description": "{ok:true, kept:false, why}: held here already, as new or newer.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not JSON.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "422": {
+      "description": "The signatures do not reach the set's threshold, or the event is malformed.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "503": {
+      "description": "This seat keeps no arbitration events yet, or knows no arbitration set for its chain.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
    }
   },
   "/liquidations/spent-set": {
@@ -5164,6 +5582,47 @@
     ]
    }
   },
+  "/order-locks": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "An order's locks as verified here",
+    "description": "An order's stake lock and fee lock as this seat verified them: the fields the federation holds at the outpoints the entry names. For a seat that holds the order's certified batch but never received its locks (replayOrder).\n\nAccess: none\n\nReturns: 200 JSON {entry, stake, fee}; 400; 404 no lock of that entry verified here\n\nSource: `packages/arena-node/src/server.js` line 8023.",
+    "operationId": "get_order_locks",
+    "parameters": [
+     {
+      "name": "entry",
+      "in": "query",
+      "required": true,
+      "description": "The entry id, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{entry, stake: fields or null, fee: fields or null}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not an entry id.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "404": {
+      "description": "This seat verified no lock of that entry.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
   "/outcome": {
    "post": {
     "tags": [
@@ -5337,6 +5796,146 @@
      },
      "502": {
       "description": "The provider service did not answer or failed.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/owner/app-devs": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "Installed developers' apps and splits",
+    "description": "The game developers' overview: for each developer key installed on this node, the apps it signs with the split in force, every version with its split, and the donations this node's dev clients received for the app. Read by the owner page's Apps card.\n\nAccess: none\n\nReturns: 200 JSON {devs:[{devKey, apps:[{name, title, id, version, split[], versions[{version, id, split}], donations{count, appMsat, byClient[]}}]}]}\n\nSource: `packages/arena-node/src/server.js` line 5929.",
+    "operationId": "get_owner_app_devs",
+    "responses": {
+     "200": {
+      "description": "{devs[]}; empty when no developer key is installed here.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "Node runs without an owner area.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/owner/apps/dev-key": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Install or remove a developer key",
+    "description": "Installs a game developer's key on this node (args.key: the text the developer has), or removes one (args.remove: its public key). The key travels in the owner's signed request, so only over https or on the node's own machine; the answer names the public key and the apps hosted here that it signs, never the key.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, pubkey, removed?, apps[]}; 400 not a key, or no such key\n\nSource: `packages/arena-node/src/server.js` line 6113.",
+    "operationId": "post_owner_apps_dev_key",
+    "requestBody": {
+     "required": true,
+     "description": "Owner-signed request {pubkey, action:\"apps/dev-key\", args {key} | {remove: pubkey}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok:true, pubkey, removed (on a removal), apps[]: the titles of the hosted apps that key signs}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not a developer key, no store folder, or no such key installed.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Signature or request does not verify (stale, replayed or malformed).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "403": {
+      "description": "Key is not the claimed owner.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "Node runs without an owner area.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/owner/apps/split": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Change an app's donation split",
+    "description": "Changes an app's donation split by hosting a new version of it: either signed here with the developer key installed on this node (args.recipients, the next version is built and signed), or a version its developer signed elsewhere (args.manifest hex with its donationSet). The new version is checked and activated at once, as an install is.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, ...the adopted version}; 400 bad manifest or split; 403 no developer key for that app here; 404 no such app; 409 that split already, a newer version runs, or no plugins directory; 500\n\nSource: `packages/arena-node/src/server.js` line 6101.",
+    "operationId": "post_owner_apps_split",
+    "requestBody": {
+     "required": true,
+     "description": "Owner-signed request {pubkey, action:\"apps/split\", args {game, recipients[] | manifest, donationSet[], info?}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "The adopted version (as /owner/plugins/install answers).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not a manifest, not a version of this app, or not a valid split.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "403": {
+      "description": "No key of this app's developer is installed on this node.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "This node hosts no such app.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "409": {
+      "description": "That is the split it already has, a newer version runs here, or this node keeps no installed apps.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "500": {
+      "description": "The version could not be built or packaged.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Signature or request does not verify (stale, replayed or malformed).",
       "content": {
        "application/json": {}
       }
@@ -5608,6 +6207,89 @@
       "description": "Node runs without an owner area.",
       "content": {
        "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/owner/dev/donations": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "A dev client's donations, filtered and paged",
+    "description": "One dev client's donations, newest first, each with its app or item, its protocol and app parts and its value in EUR, USD, CHF and GBP at its own rate; filtered by app and origin, searched in player, round, entry and item; paged. The owner page's donations table.\n\nAccess: none\n\nReturns: 200 JSON {ok, slug, total, offset, limit, apps[], origins[], sums, rows[]}; 404 no dev clients or no such client\n\nSource: `packages/arena-node/src/server.js` line 5990.",
+    "operationId": "get_owner_dev_donations",
+    "parameters": [
+     {
+      "name": "slug",
+      "in": "query",
+      "required": true,
+      "description": "The dev client's slug (as /owner/dev lists them).",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "app",
+      "in": "query",
+      "required": false,
+      "description": "Only this app (its items with it); 'items' for every item.",
+      "schema": {
+       "type": "string"
+      },
+      "example": "nextblock"
+     },
+     {
+      "name": "origin",
+      "in": "query",
+      "required": false,
+      "description": "Only donations of this origin.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "q",
+      "in": "query",
+      "required": false,
+      "description": "Searched in player, round, entry and item.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "description": "Rows per page (25 by default).",
+      "schema": {
+       "type": "integer"
+      },
+      "example": 25
+     },
+     {
+      "name": "offset",
+      "in": "query",
+      "required": false,
+      "description": "First row (0 by default).",
+      "schema": {
+       "type": "integer"
+      },
+      "example": 0
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{ok:true, slug, total, offset, limit, apps[], origins[], sums, rows[]} (dev-clients.js donationsPage); the fiat rates waited for at most 12 s.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "This node runs no dev clients, or no client has that slug.",
+      "content": {
+       "application/json": {}
       }
      }
     }
@@ -6013,6 +6695,70 @@
     "x-changes-state": true
    }
   },
+  "/owner/first-bond": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Post the node's first bond",
+    "description": "The node's first bond from the owner area, for a node whose installer wizard left it for later: without post the plan (the node wallet's address, what to send, what arrived); with post: true the bond is built and broadcast as the wizard would have (arena-installer add-bond.js firstBondOnNode), and the setup card then counts its confirmations. One plan read runs at a time per node.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, plan, bond?, done?, agent?}; 400 the plan does not stand (nothing arrived, too little); 501 not installed by the installer; 500\n\nSource: `packages/arena-node/src/server.js` line 6338.",
+    "operationId": "post_owner_first_bond",
+    "requestBody": {
+     "required": true,
+     "description": "Owner-signed request {pubkey, action:\"first-bond\", args {post: boolean}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok:true, plan, bond: {txid, sats} when posted, done when the node has its bond already}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "The plan does not stand: what is missing is named.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "501": {
+      "description": "Not a node set up by the installer (no ARENA_HOME).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "500": {
+      "description": "The bond could not be posted.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Signature or request does not verify (stale, replayed or malformed).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "403": {
+      "description": "Key is not the claimed owner.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "Node runs without an owner area.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
   "/owner/funding-comment": {
    "post": {
     "tags": [
@@ -6145,6 +6891,134 @@
       "description": "This node reads no chain height or network.",
       "content": {
        "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/owner/gateway/setup": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Set up the gateway of a custody node",
+    "description": "A custody node whose setup left Lightning or the gateway for later sets them up from here: args {progress: true} reads how far the custody runner is (custody-add.json); otherwise the runner's two steps are started in the background (arena-installer add-custody.js startGatewaySetup). The owner page's Federation card polls the progress.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, progress} with args.progress, else {ok, ...started}; 409 set up already, nothing to fix, or already running; 501 not installed by the installer; 500\n\nSource: `packages/arena-node/src/server.js` line 6477.",
+    "operationId": "post_owner_gateway_setup",
+    "requestBody": {
+     "required": true,
+     "description": "Owner-signed request {pubkey, action:\"gateway/setup\", args {progress?: true}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok:true, progress} (a read) or the started run.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "409": {
+      "description": "The gateway is set up already, the gap cannot be fixed from here, or a run is already going (its progress is named).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "501": {
+      "description": "Not a node set up by the installer (no ARENA_HOME).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "500": {
+      "description": "The gateway could not be set up.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Signature or request does not verify (stale, replayed or malformed).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "403": {
+      "description": "Key is not the claimed owner.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "Node runs without an owner area.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/owner/key-from-words": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Move the node to the key of its 24 words",
+    "description": "Moves an installed node to the key its 24 words give: without post the plan (the key now, the key next, the bond to post); with post: true a new bond under the new key is posted from the node's wallet, the old key is kept for its old bond's return (GET /owner/bond lists it, POST /owner/old-bond-withdraw takes it back) and the seat restarts on the new key about 1.5 s after the answer. Never done unasked.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, plan, already, bond, restarting}; 400 the move cannot be made; 501 no 24 words in this node's home; 500\n\nSource: `packages/arena-node/src/server.js` line 6357.",
+    "operationId": "post_owner_key_from_words",
+    "requestBody": {
+     "required": true,
+     "description": "Owner-signed request {pubkey, action:\"key-from-words\", args {post: boolean}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok:true, plan, already (the node runs on that key already), bond, restarting}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "The move cannot be made: the reason is named.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "501": {
+      "description": "A node set up by hand keeps its key: there are no 24 words in its home.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "500": {
+      "description": "The key could not be moved.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Signature or request does not verify (stale, replayed or malformed).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "403": {
+      "description": "Key is not the claimed owner.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "Node runs without an owner area.",
+      "content": {
+       "text/plain": {}
       }
      }
     },
@@ -6712,6 +7586,70 @@
     "x-changes-state": true
    }
   },
+  "/owner/old-bond-withdraw": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Withdraw an old bond after a key switch",
+    "description": "Takes back a bond left under an old key after the node moved to the key of its 24 words (POST /owner/key-from-words): the bond named by txid and vout, as GET /owner/bond lists the old bonds, is spent at its maturity through its template-2 recovery leaf with the old key this node still holds, to the owner's address, and broadcast.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, txid, value, fee}; 400 not an address of that network, or the spend failed; 404 no old bond with that txid; 409 key no longer held, or still locked; 503 no chain\n\nSource: `packages/arena-node/src/server.js` line 6622.",
+    "operationId": "post_owner_old_bond_withdraw",
+    "requestBody": {
+     "required": true,
+     "description": "Owner-signed request {pubkey, action:\"old-bond-withdraw\", args {txid, vout, address, feeRate?}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok:true, txid, value, fee}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not an address of that network, or the spend failed.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "No old bond of this node with that txid and vout.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "409": {
+      "description": "This node no longer holds that bond's key, or the bond is locked until its maturity (the height and the blocks left are named).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "503": {
+      "description": "This seat reads no chain to send to.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Signature or request does not verify (stale, replayed or malformed).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "403": {
+      "description": "Key is not the claimed owner.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
   "/owner/operator/list": {
    "post": {
     "tags": [
@@ -7183,6 +8121,122 @@
     }
    }
   },
+  "/owner/referrer/name": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Rename a referral program or resend its name",
+    "description": "Says a referral program's name again, signed by its key: a new name for the program (args.name), or the one it has, to seats that missed it. Kept here and handed to every seat (POST /referral-name).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, slug, site, name, told}; 400 bad name; 404 no such program; 501 this node runs no clients\n\nSource: `packages/arena-node/src/server.js` line 6502.",
+    "operationId": "post_owner_referrer_name",
+    "requestBody": {
+     "required": true,
+     "description": "Owner-signed request {pubkey, action:\"referrer/name\", args {slug, name?}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok:true, slug, site, name, told}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "The name does not encode.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "No such referral program on this node.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "501": {
+      "description": "This node runs no clients (start it with ARENA_DEV_WASM_PKG).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Signature or request does not verify (stale, replayed or malformed).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "403": {
+      "description": "Key is not the claimed owner.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/owner/referrer/setup": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Create a referral program",
+    "description": "Creates a referral program on this node: a client of kind 'referrer' with a new key, its name signed by that key (referral-name.js) and sent to every seat (POST /referral-name), so the explorer and Health name the program. The owner can have several; each earns the website fees of the entries it refers.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, slug, site, name, told}; 400 bad name; 404; 501 this node runs no clients\n\nSource: `packages/arena-node/src/server.js` line 6502.",
+    "operationId": "post_owner_referrer_setup",
+    "requestBody": {
+     "required": true,
+     "description": "Owner-signed request {pubkey, action:\"referrer/setup\", args {name}, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok:true, slug, site: the program's payout key (hex), name, told: seats that took the name}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "The name does not encode.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "501": {
+      "description": "This node runs no clients (start it with ARENA_DEV_WASM_PKG).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Signature or request does not verify (stale, replayed or malformed).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "403": {
+      "description": "Key is not the claimed owner.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "Node runs without an owner area.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
   "/owner/roles": {
    "post": {
     "tags": [
@@ -7227,6 +8281,30 @@
      }
     },
     "x-changes-state": true
+   }
+  },
+  "/owner/rounds": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "Rounds this node is drawn for",
+    "description": "The rounds of the last 36 h and the coming ones this node is drawn or seated for, what it does in each (play and check, pay out winners, reserve), and when there is none the first reason that holds in plain words: not in the census, serving off, no round role, no rounds, no game announced, not drawn (with its odds). The owner page's Rounds card.\n\nAccess: none\n\nReturns: 200 JSON {rounds:[{round, game, startMs, endMs, phase, gameSeated, settleSeated, drawn, hostedHere, paid, does}], upcoming, why: null | {kind, says}}\n\nSource: `packages/arena-node/src/server.js` line 5804.",
+    "operationId": "get_owner_rounds",
+    "responses": {
+     "200": {
+      "description": "{rounds[], upcoming, why} (owner-rounds.js roundsForOwner).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "Node runs without an owner area.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
    }
   },
   "/owner/seatings": {
@@ -8152,7 +9230,7 @@
      "Nodes"
     ],
     "summary": "Presence proofs of nodes",
-    "description": "The PRESENTs this seat holds of those nodes for seatings in the 24 h before a census (\u00a75A.3, protocol 22, kanban #727): a posting node asks before it leaves a node out of the census as absent.\n\nAccess: none\n\nReturns: 200 JSON {node, presents:[hex]}; 400\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "description": "The PRESENTs this seat holds of those nodes for seatings in the 24 h before a census, and the protocol-22 seating certificates it holds that name them present or missed (\u00a75A.3, kanban #727): a posting node asks before it leaves a node out of the census as absent, and leaves out only a node the certificates prove absent.\n\nAccess: none\n\nReturns: 200 JSON {node, presents:[hex], certs:[hex]}; 400\n\nSource: `packages/arena-node/src/server.js` line 0.",
     "operationId": "get_presence",
     "parameters": [
      {
@@ -8176,7 +9254,7 @@
     ],
     "responses": {
      "200": {
-      "description": "{node, presents:[PRESENT hex, at most 3 per node]}.",
+      "description": "{node, presents:[PRESENT hex, at most 3 per node], certs:[seating certificate hex, at most 256]}.",
       "content": {
        "application/json": {}
       }
@@ -8804,6 +9882,64 @@
       }
      }
     }
+   }
+  },
+  "/referral-fees": {
+   "get": {
+    "tags": [
+     "Builders"
+    ],
+    "summary": "Referral fees per website",
+    "description": "What each website (referral program) earned from the settlements this seat indexed: the 'website' payouts per payout key, each with its program's name where its key has said one, largest first, and the total. The explorer's referrer metrics.\n\nAccess: none\n\nReturns: 200 JSON {node, totalMsat, sites:[{site, name, msat, payouts}], programs:[{site, name, atMs}]}\n\nSource: `packages/arena-node/src/server.js` line 9285.",
+    "operationId": "get_referral_fees",
+    "responses": {
+     "200": {
+      "description": "{node, totalMsat, sites[], programs[]}.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/referral-name": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "[signed] Keep a referral program's name",
+    "description": "A referral program's name: kept when its site key signed it (newer names replace older ones), and a new one handed on to every seat once. Posted by the owner doors /owner/referrer/setup and /owner/referrer/name and by seats forwarding it.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the record's site key: a BIP-340 signature over the record's id (referral-name.js)\n\nReturns: 200 JSON {ok, kept: 'new' | 'same' | 'older', ...}; 400 not a record; 422 not signed by its site key or dated ahead\n\nSource: `packages/arena-node/src/server.js` line 9298.",
+    "operationId": "post_referral_name",
+    "requestBody": {
+     "required": true,
+     "description": "{record: the encoded referral name (hex), signature: the site key's signature (hex)}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok:true, kept} (keepReferralName).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not a referral name record.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "422": {
+      "description": "Not signed by its site key, or dated more than 10 min ahead of this seat's clock.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
    }
   },
   "/refused-first-mark": {
@@ -9741,6 +10877,41 @@
      },
      "404": {
       "description": "None held.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/round-peers": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "The round's seated nodes and their endpoints",
+    "description": "The round's seated signer nodes' addresses as kept at seating, per role: each seated node's key and the endpoint off its census advert then (a table's later round reads its anchor's). What a peer that lost its own roster view for the round asks for; fromRoster says whether this seat's roster answers the committee itself right now.\n\nAccess: none\n\nReturns: 200 JSON {round, peers:{game:[{node, endpoint}], settlement:[...]}, fromRoster:{game, settlement}}; 400\n\nSource: `packages/arena-node/src/server.js` line 9726.",
+    "operationId": "get_round_peers",
+    "parameters": [
+     {
+      "name": "round",
+      "in": "query",
+      "required": true,
+      "description": "The round id, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{round, peers, fromRoster}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not a round id.",
       "content": {
        "text/plain": {}
       }
@@ -11212,6 +12383,24 @@
     }
    }
   },
+  "/setup-status": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "Setup progress of an installed node",
+    "description": "The setup's progress of a node the installer set up, for the dashboards: Bitcoin Core's background sync, the bond's and the peg-in's confirmations, and while the node waits for a founding how many nodes are ready of how many needed (ready/needed). Public: txids, heights and progress only. Read at most once a minute.\n\nAccess: none\n\nReturns: 200 JSON {ok, core, bond, pegIn, founding?, tip, node, atMs, release} or {ok:false, why}\n\nSource: `packages/arena-node/src/server.js` line 6652.",
+    "operationId": "get_setup_status",
+    "responses": {
+     "200": {
+      "description": "{ok:true, core, bond, pegIn, founding, tip, node, atMs, release} (each part null when the node has none), or {ok:false, why} on a node the installer did not set up.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
   "/share": {
    "get": {
     "tags": [
@@ -11801,6 +12990,154 @@
       "description": "None under that hash.",
       "content": {
        "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/tx": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "One transaction's record",
+    "description": "One transaction of this seat as explorer.bitcoin-arena.io shows it: the entry (round, app, federation, player, stake, fee, donation, price, pick, handout, lock outpoints), when it was stored, the locks as verified here, its place in the certified batch, its settlement, every step this seat timed, the page's own timing (POST /tx-timing), and its result.\n\nAccess: none\n\nReturns: 200 JSON {found, transaction:{entry, storedAt, locks, book, settlement, steps, client, processed, result}}; 400; 404\n\nSource: `packages/arena-node/src/server.js` line 7970.",
+    "operationId": "get_tx",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "query",
+      "required": true,
+      "description": "The transaction id: the entry id, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The transaction's record (bigints as strings, bytes as hex).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not a 64-hex id.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "404": {
+      "description": "This seat holds no such transaction.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/tx-timing": {
+   "post": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "[signed] Keep the page's timing of its order",
+    "description": "The page's own timing of its order, kept beside the seat's steps for GET /tx. Only the page that holds the order's session key can write it.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the order's session key: sig is its Ed25519 signature over timingMessage(id, JSON of timing)\n\nReturns: 201 'timing kept'; 400 not JSON or no signature; 403 not signed by the order's session key; 404 no such transaction\n\nSource: `packages/arena-node/src/server.js` line 8009.",
+    "operationId": "post_tx_timing",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "query",
+      "required": true,
+      "description": "The transaction id: the entry id, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "description": "{timing: the page's timing object, sig: 64 bytes hex, the session key's Ed25519 signature over timingMessage(id, JSON.stringify(timing))}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "timing kept",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "400": {
+      "description": "Not JSON, no timing, or the timing was refused.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "403": {
+      "description": "Not signed by the order's session key.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "404": {
+      "description": "This seat holds no such transaction.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/txs": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Newest transactions",
+    "description": "The newest transactions stored here: the entries stored after `since`, oldest first, at most `limit`, each with its app and federation; with full=1 each carries its whole record as GET /tx answers it. What explorer.bitcoin-arena.io polls.\n\nAccess: none\n\nReturns: 200 JSON {seat, txs:[{id, round, storedMs, app, federation, detail?}]}\n\nSource: `packages/arena-node/src/server.js` line 7977.",
+    "operationId": "get_txs",
+    "parameters": [
+     {
+      "name": "since",
+      "in": "query",
+      "required": false,
+      "description": "Only entries stored after this time (ms since the epoch); 0 by default.",
+      "schema": {
+       "type": "integer"
+      },
+      "example": 1761600000000
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "description": "At most this many (1 to 500; 200 by default).",
+      "schema": {
+       "type": "integer"
+      },
+      "example": 200
+     },
+     {
+      "name": "full",
+      "in": "query",
+      "required": false,
+      "description": "1: each with its record as GET /tx answers it.",
+      "schema": {
+       "type": "string"
+      },
+      "example": "1"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{seat, txs[]}.",
+      "content": {
+       "application/json": {}
       }
      }
     }
