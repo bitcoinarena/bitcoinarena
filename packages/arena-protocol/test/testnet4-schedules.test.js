@@ -12,7 +12,8 @@ test('testnet4 runs a 144-block signal and a 144-block vote; other networks the 
   assert.equal(fundingScheduleFor(NETWORK_ID_TESTNET4), FUNDING_SCHEDULES.testnet4);
   assert.equal(FUNDING_SCHEDULES.testnet4.signal, 144);
   assert.equal(FUNDING_SCHEDULES.testnet4.vote, 144);
-  assert.equal(FUNDING_SCHEDULES.testnet4.season, FUNDING_SCHEDULES.spec.season);
+  assert.equal(FUNDING_SCHEDULES.testnet4.season, 144);   // a bond a day old counts for a funding signal
+  assert.equal(FUNDING_SCHEDULES.spec.season, 12960);
   assert.equal(fundingScheduleFor(NETWORK_ID_REGTEST), FUNDING_SCHEDULES.spec);
   assert.equal(fundingScheduleFor(null), FUNDING_SCHEDULES.spec);
   for (const k of [CLASS.DESIGN, CLASS.MONEY, CLASS.UPGRADE]) {

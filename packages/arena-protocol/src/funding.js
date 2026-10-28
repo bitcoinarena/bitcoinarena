@@ -43,8 +43,9 @@ export const FUNDING_SCHEDULES = Object.freeze({
     season: 24, lockAfterVote: 48, year: 72, delay: 6, trancheEvery: 6, capWindow: 144, week: 108 }),
   // TESTNET4: A DAY TO SIGNAL AND A DAY TO VOTE (kanban #785, a tester 2026-10-28: "for Testnet you can set the signal and voting
   // periods to 1 day for all types of proposals"): 144 blocks each; everything else as the spec
+  // and a bond a day old counts for a funding signal (a tester 2026-10-28 ~21:25Z: "bei 785 für funding 1 Tag Bond bei Testnet")
   testnet4: Object.freeze({ signal: 144, activeWindow: 432, vote: 144, decideDepth: 6,
-    season: 12960, lockAfterVote: 12960, year: 52560, delay: 2016, trancheEvery: 4320, capWindow: 12960, week: 1008 }),
+    season: 144, lockAfterVote: 12960, year: 52560, delay: 2016, trancheEvery: 4320, capWindow: 12960, week: 1008 }),
 });
 /** The funding schedule a network runs (kanban #785): testnet4's day-long signal and vote, the spec's everywhere else. */
 export const fundingScheduleFor = (networkId) => (networkId && toHex(networkId) === toHex(NETWORK_ID_TESTNET4) ? FUNDING_SCHEDULES.testnet4 : FUNDING_SCHEDULES.spec);
