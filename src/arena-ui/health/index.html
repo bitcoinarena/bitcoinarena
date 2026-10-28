@@ -137,7 +137,7 @@
   // a copy drawn by the page's own read, from its answers (no node asked); its draws held and let go together
   async function show(snap) {
     held = [];
-    const ok = await health.read({ transport: N.replay(snap), daily: async () => snap.daily, atMs: N.ageOf(snap) });
+    const ok = await health.read({ transport: N.replay(snap), daily: async () => snap.daily, atMs: N.ageOf(snap), tips: snap.tips || (shown && shown.tips) || [] });
     const draws = held; held = null;
     if (!ok) return false;
     for (const d of draws) H.draw(...d);
@@ -151,11 +151,11 @@
     const rec = N.recorder(), atMs = Date.now();
     let daily = null;
     held = shown ? [] : null;
-    const ok = await health.read({ transport: rec.transport, daily: async () => (daily = await (await fetch('../daily.json', { cache: 'no-store' })).json()), atMs });
+    const ok = await health.read({ transport: rec.transport, daily: async () => (daily = await (await fetch('../daily.json', { cache: 'no-store' })).json()), atMs, tips: (shown && shown.tips) || [] });
     const draws = held; held = null; refreshing = false;
     if (ok) {
       for (const d of draws || []) H.draw(...d);
-      shown = { atMs, daily, answers: N.keepable(rec.answers, health.spare()) }; keepWrite(shown);
+      shown = { atMs, daily, answers: N.keepable(rec.answers, health.spare()), tips: health.tips() }; keepWrite(shown);
     } else if (ok === false) failed = 'could not read the nodes just now';
     stamp();
   }
