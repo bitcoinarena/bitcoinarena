@@ -4700,7 +4700,9 @@ is divided evenly among the guardians **seated** (§23A.1: not gone) at the
 round's `FINAL`, and paid as one payout contract per guardian in the round's
 settlement transaction (§23.2), to the `payout_pubkey` of the guardian's
 census advertisement. A guardian earns it only if seated; a gone guardian's
-share goes pro rata to the other seated ones. While the federation's
+share goes pro rata to the other seated ones. With no eligible guardian at
+all, from protocol 22 the pool goes where §23A.9 says (the gateway seats,
+else the two committees). While the federation's
 predecessor is DRAINING, the pool is shared per seat with the predecessor's
 seated guardians (§23A.6 step 5). Testnet: 5/3 % over seven guardians.
 From protocol 2026.0.16 the node fee is split into **four pools of 1 %**: game/verify,
@@ -6219,7 +6221,13 @@ GUARDIAN pool (4/3 %)
   round's epoch: the seating the guardians sign names only eligible seats. A gateway that holds its seat below the minimums
   (never without a gateway, above) serves but is not paid; its share goes to the other seat, or to the guardians.
 - An empty or unearned gateway share goes to the other gateway seat. With no
-  gateway seated, it goes to the guardians.
+  gateway seated, it goes to the guardians. The mirror, from protocol 22: with
+  no eligible guardian in a round, the custody pool's guardian part goes to the
+  eligible gateway seats, evenly; only the custody pool moves, and the gateway
+  seats' own share and the liquidity providers' shares are paid as with
+  guardians. Only with no eligible gateway seat either does the custody pool
+  go to the two committees (game/verify and settlement), half each, the odd
+  millisatoshi to settlement.
 - Paid like every share: one payout contract per seat in the round's
   settlement transaction, to the advertisement's `payout_pubkey` (§23,
   2026.0.13).

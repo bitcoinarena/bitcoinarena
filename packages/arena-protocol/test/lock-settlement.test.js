@@ -582,3 +582,64 @@ test('§23A.9 P4: a gateway seat with a placeholder payout key is paid all its s
   assert.deepEqual(tx.settlements[0].payouts.filter((p) => p.kind !== 'qualifier').map((p) => toHex(p.payoutPk)).sort(), [...keys].sort(),
     'the settlement transaction carries the same three outputs');
 });
+
+// kanban #559, the owner's rule (§23A.9, from protocol 22): a round with no eligible guardian pays the custody pool's guardian part to the
+// eligible gateway seats. In the settlement each seat is still one output at its advert's payout key, holding its gateway share and
+// its part of the guardian part; the provider and the committees are paid as with guardians. With no gateway either, the committees.
+test('§23A.9 from protocol 22: no eligible guardian - each gateway seat one output with its gateway and guardian parts; sums are the fee', async () => {
+  const { guardianPayoutKeyOf } = await import('../src/guardian-payout.js');
+  const { nodeFeeTable } = await import('../src/fee.js');
+  const { splitByFederation } = await import('../src/federation-settlement.js');
+  const xs = ['79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798', 'c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5']
+    .map((h) => Uint8Array.from(Buffer.from(h, 'hex')));
+  const W = entry(1, DELIVERED, 3);
+  const L = entry(2, FAILED, 0);
+  const c1 = SIGNER_NODE(1), c2 = SIGNER_NODE(2), s1 = SIGNER_NODE(7), s2 = SIGNER_NODE(8), p1 = SIGNER_NODE(9);
+  const committee = [c1, c2];
+  const payoutOf = new Map([[toHex(s1), guardianPayoutKeyOf(xs[0])], [toHex(s2), guardianPayoutKeyOf(xs[1])]]);
+  const contract = { ...contractOf(committee), protocolVersion: 22 };
+  // the rate the fixture's fee locks were made at (5 %), named: a 22 round would otherwise be read at the reserves rate
+  const settle = (signerNodes) => lockSettlement({ roundId: RID, entries: [W, L], minScore: 1, fees: NO_FEES, contract, feeBps: NODE_FEE_BPS, signerNodes,
+    addressed: named(W), locks: new Map([lockFor(W, 1), lockFor(L, 2)]), feeLocks: new Map([feeLockFor(W, 1), feeLockFor(L, 2)]) });
+  const owedTo = (table, k) => [...table.signerNodes].filter(([key]) => key.endsWith(`:${toHex(k)}`)).reduce((a, [, v]) => a + v, 0n);
+
+  // NO GUARDIAN (the round's guardian list is empty), TWO GATEWAY SEATS, ONE PROVIDER
+  const nodes = { gameVerify: committee, settlement: committee, guardian: [], gateway: [s1, s2], liquidity: [p1], guardianPayout: payoutOf };
+  const s = settle(nodes);
+  assert.equal(s.ok, true, s.why);
+  const table = nodeFeeTable({ contract, entries: [W, L], pools: nodes, eligible: new Set([c1, c2, s1, s2, p1].map(toHex)), feeBps: NODE_FEE_BPS });
+  assert.ok(table.pools.guardian > 0n && table.pools.gateway > 0n && table.pools.liquidity > 0n, 'custody, gateway and liquidity pools all stand');
+  const out = s.signerNodePayouts;
+  const keys = out.map((p) => toHex(p.payoutPk));
+  assert.equal(new Set(keys).size, keys.length, 'no key paid twice');
+  assert.deepEqual([...keys].sort(), [toHex(refundKeyOf(c1)), toHex(refundKeyOf(c2)), toHex(refundKeyOf(p1)), '02' + toHex(xs[0]), '02' + toHex(xs[1])].sort(),
+    'five outputs: the two committee nodes, the provider, and one per gateway seat at its payout key');
+  for (const k of [s1, s2]) assert.equal(keys.includes(toHex(refundKeyOf(k))), false, 'no seat paid at its node key');
+  const at = (hexKey) => out.find((p) => toHex(p.payoutPk) === hexKey);
+  for (const [i, k] of [[0, s1], [1, s2]]) {
+    const rows = [...table.signerNodes.keys()].filter((key) => key.endsWith(`:${toHex(k)}`)).map((key) => key.split(':')[0]).sort();
+    assert.deepEqual(rows, ['gateway', 'guardian'], 'a seat holds its gateway share and its part of the guardian part');
+    assert.equal(at('02' + toHex(xs[i])).owedMsat, owedTo(table, k), 'both in its one output');
+  }
+  const seats = at('02' + toHex(xs[0])).owedMsat + at('02' + toHex(xs[1])).owedMsat;
+  assert.equal(seats, table.pools.guardian + table.pools.gateway, 'the two seats hold the whole custody pool');
+  const dd = at('02' + toHex(xs[0])).owedMsat - at('02' + toHex(xs[1])).owedMsat;
+  assert.ok(dd >= -2n && dd <= 2n, 'evenly, within the remainder msats');
+  assert.equal(at(toHex(refundKeyOf(p1))).owedMsat, table.pools.liquidity, 'the provider\'s quarter');
+  assert.equal(out.reduce((a, p) => a + p.owedMsat, 0n), 2n * FEE, 'the whole fee, nothing lost');
+  assert.equal(out.reduce((a, p) => a + p.msat, 0n), 2n * FEE);
+  const tx = splitByFederation(s, { roundId: RID, federationOf: () => toHex(TEST_FEDERATION_ID), feesOf: () => NO_FEES });
+  assert.equal(tx.ok, true, tx.why);
+  assert.deepEqual(tx.settlements[0].payouts.filter((p) => p.kind !== 'qualifier').map((p) => toHex(p.payoutPk)).sort(), [...keys].sort(),
+    'the settlement transaction carries the same five outputs');
+
+  // NO GUARDIAN AND NO GATEWAY: the custody pool to the two committees; the provider keeps its quarter
+  const bare = { gameVerify: committee, settlement: committee, guardian: [], gateway: [], liquidity: [p1], guardianPayout: payoutOf };
+  const r = settle(bare);
+  assert.equal(r.ok, true, r.why);
+  const rt = nodeFeeTable({ contract, entries: [W, L], pools: bare, eligible: new Set([c1, c2, p1].map(toHex)), feeBps: NODE_FEE_BPS });
+  assert.deepEqual(r.signerNodePayouts.map((p) => toHex(p.payoutPk)).sort(), [c1, c2, p1].map((k) => toHex(refundKeyOf(k))).sort(), 'the committees and the provider');
+  assert.equal(r.signerNodePayouts.find((p) => toHex(p.payoutPk) === toHex(refundKeyOf(p1))).owedMsat, table.pools.liquidity, 'the provider as before');
+  assert.equal(rt.pools.gameVerify + rt.pools.settlement, 2n * FEE - table.pools.liquidity, 'the committees hold the rest');
+  assert.equal(r.signerNodePayouts.reduce((a, p) => a + p.owedMsat, 0n), 2n * FEE, 'the whole fee');
+});

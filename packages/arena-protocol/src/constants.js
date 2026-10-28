@@ -161,6 +161,13 @@ export const GATEWAY_SEAT_VERSION = 15;
 /** 2026.0.16 (§23A.10): the node fee in four pools of a quarter each - game/verify, settlement, custody, liquidity (the
  * federation's liquidity providers, who open incoming channels to new nodes). */
 export const LIQUIDITY_VERSION = 16;
+/**
+ * A ROUND WITH NO ELIGIBLE GUARDIAN (§23A.9, kanban #559): the custody pool's guardian part goes to the eligible gateway seats, evenly;
+ * the gateway seats' own third and the liquidity quarter are paid as with guardians; only with no eligible gateway either does the
+ * custody pool fall to the two committees. Below it such a round kept the two-pool table, which zeroed the gateways and the providers.
+ * 2.0's number, as PRESENCE_VERSION: 2.0 is unreleased and no series of 22 is posted on any network.
+ */
+export const CUSTODY_GATEWAY_VERSION = 22;
 /** The owner's emergency key (§23A.5a): the advert names it, a request it signs takes an offline node out without losing its bond. */
 export const EMERGENCY_VERSION = 17;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
