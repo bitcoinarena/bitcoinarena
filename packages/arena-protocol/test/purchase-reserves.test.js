@@ -5,7 +5,7 @@
 // and a record that leaves the reserves' share out, pays it short or long, or to another key, does not stand.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { encodePurchase, decodePurchase, purchaseId, purchaseOutputs, purchaseOutputsReserves, purchaseStands, PURCHASE_RESERVES_LAYOUT } from '../src/purchase.js';
 import { gameIdOf } from '../src/manifest.js';
 import { ITEMS_VERSION, RESERVES_VERSION } from '../src/constants.js';

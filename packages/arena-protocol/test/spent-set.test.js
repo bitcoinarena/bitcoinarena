@@ -3,7 +3,7 @@
 // A HALTED FEDERATION'S SPENT-NOTE SET (spec §23A.5 liquidation step 1).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { encodeSpentSet, decodeSpentSet, signSpentSet, spentSetStands, newestSpentSet, spentNonceSet } from '../src/spent-set.js';
 import { settleClaims, TESTNET_CLOCKS } from '../src/federation-slash.js';
 import { toHex } from '../src/hash.js';

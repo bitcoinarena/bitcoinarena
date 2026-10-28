@@ -6,7 +6,7 @@
 // advertisement update, which spends no bond.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { selectCommittee } from '../src/sortition.js';
 import { meetsCensusMinimum, leafHash } from '../src/census.js';
 import { encodeAdvert, decodeAdvert, advertId, hostsGame } from '../src/advert.js';

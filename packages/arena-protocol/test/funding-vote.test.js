@@ -8,7 +8,7 @@
 // a failed signal opens no vote.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { fundingTally, votePeriodOf, fundingProposalId, FUNDING_SCHEDULES } from '../src/funding.js';
 import { encodeVote, voteMessage, CHOICE } from '../src/ballot.js';
 
