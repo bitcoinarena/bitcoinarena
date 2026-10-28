@@ -234,9 +234,10 @@ two. Every deposit and withdrawal above goes "through any of several gateways", 
   5. a ticket on the epoch's beacon.
 
   The two are signed as a separate gateway seating per epoch (not in the federation record), once the epoch is over; it stands only with
-  the threshold of the seated guardians' signatures over the same seats. From protocol 22 each guardian floors a seat's proved peg-in to
-  whole 100,000 sat before signing, and a seating of epoch E is judged against the federation record in force at E's last block
-  (`(E + 1) × 144 − 1`), not today's guardian set. The seats rotate every epoch (144 blocks, 2026-10-20): last epoch's holders step back for the eligible operators that did not hold a seat; with nobody else eligible they keep it. A draining federation has one seat, and a federation is never without a gateway (the best one that can serve holds a seat below the minimums, unpaid). An empty seat is stated.
+  the threshold of the seated guardians' signatures over the same seats. From the activation epoch named at the 2.0 release (`SEATING_RULES_EPOCH`),
+  decided by the seating's own epoch, each guardian floors a seat's proved peg-in to whole 100,000 sat before signing, and a seating of
+  epoch E is judged against the federation record in force at E's last block (`(E + 1) × 144 − 1`), not today's guardian set; until
+  that epoch is named every guardian signs and judges as 1.9.x does. The seats rotate every epoch (144 blocks, 2026-10-20): last epoch's holders step back for the eligible operators that did not hold a seat; with nobody else eligible they keep it. A draining federation has one seat, and a federation is never without a gateway (the best one that can serve holds a seat below the minimums, unpaid). An empty seat is stated.
 - **What it earns, from the custody fee** (protocol 2026.0.15, so the 4 % node fee of protocol 11 on): the guardian pool (4/3 % of every
   round's volume) splits **2/3 to the guardians, 1/3 to the two gateway seats**. With ten guardians that is about **0.222 %** of volume
   per gateway seat against 0.089 % per guardian (a seat holder is a guardian too: 0.311 % in all), plus the gateway's own Lightning

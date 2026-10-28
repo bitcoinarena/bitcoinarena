@@ -6186,10 +6186,14 @@ The flooring makes honest guardians measure the same values.
   the minimums) and each paid seat's peg-in as that guardian proved it. The seating **stands only when at least the threshold of
   the seated guardians signed the same body**; a guardian that ranks differently is outvoted by the threshold, and a seating
   without enough signatures does not stand.
-  - From protocol 22 each guardian floors a paid seat's proved peg-in to whole 100,000 sat before it signs, so guardians reading
-    the federation's coins minutes apart sign the same body; a seat one guardian proved and another could not check still splits them.
-  - From protocol 22 a seating of epoch E is judged against the federation record in force at E's last block, height
-    `(E + 1) × 144 − 1`: its seated guardians and threshold, not those of the record a seat holds when it gathers.
+  - From the activation epoch named at the 2.0 release (`SEATING_RULES_EPOCH`), decided by the seating's own epoch, each guardian
+    floors a paid seat's proved peg-in to whole 100,000 sat before it signs, so guardians reading the federation's coins minutes apart
+    sign the same body; a seat one guardian proved and another could not check still splits them.
+  - From the activation epoch named at the 2.0 release (`SEATING_RULES_EPOCH`), decided by the seating's own epoch, a seating of
+    epoch E is judged against the federation record in force at E's last block, height `(E + 1) × 144 − 1`: its seated guardians
+    and threshold, not those of the record a seat holds when it gathers.
+  - Never by a build's version or the clock: until the activation epoch is named, every guardian signs and judges as 1.9.x does
+    (exact peg-ins, the record held now), so a mixed 1.9.x / 2.0 rollout signs the same bodies.
 - **The seats rotate every epoch** *(2026-10-20: "rotate the guardians daily every 144 blocks among those that want to be
   gateways in the federation")*: the holders of the epoch before step back, with all of their operator's nodes. The eligible
   operators that did not hold a seat take the seats first, in rank order. The holders fill what is left, in rank order, so with
