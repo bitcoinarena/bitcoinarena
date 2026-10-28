@@ -4003,8 +4003,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       settlement: settle.ok ? settle.committee.map((e) => e.pubkey) : contract.nodes, guardian };
   };
   // THE STORE'S KEPT OPEN LIST (Round.openHeld, kanban #742): one list, the same id objects while their rounds stay open
+  // A SERIES WHOSE CENSUS BLOCK IS OFF THIS NODE'S CHAIN (kanban #786, measured 10-28: seat 2 held 105 series, among them the
+  // 8 grids of 10-28 00:00 and the 10-29 postings of the private branch, 1,222 and 449 rounds each, every one decoded, swept and
+  // listed on every pass): its rounds are no longer held - the open list leaves them out - and the series is not taken back
+  const offChainSeries = new Map();             // series id hex -> census height
+  const offChainRounds = new Set();             // their round ids, hex
+  let offChainVersion = 0;
+  let openKept = { ids: null, version: -1, list: [] };
   const openHeld = () => {
-    const ids = round.openHeld();
+    let ids = round.openHeld();
+    if (offChainRounds.size) {
+      if (openKept.ids !== ids || openKept.version !== offChainVersion)
+        openKept = { ids, version: offChainVersion, list: ids.filter((r) => !offChainRounds.has(hexId(r))) };
+      ids = openKept.list;
+    }
     if (heldKept.size > ids.length + 500) {
       const open = new Set(ids.map((r) => hexId(r)));
       for (const k of heldKept.keys()) if (!open.has(k)) heldKept.delete(k);
@@ -4290,7 +4302,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try { w = seriesWriter(round, t); } catch (e) { console.error(`[series] a new line refused: ${e.message}`); continue; }
       const id = toHex(w.id);
       named.add(id);
-      if (held.has(id)) continue;
+      if (held.has(id) || offChainSeries.has(id)) continue;
       if (droppedSeries.delete(id)) seriesVersion++;
       series.push(t); writers.push(w); held.add(id); seriesVersion++;
       console.log(`[series] ${id.slice(0, 16)}: taken from the series file without a restart`);
@@ -4396,6 +4408,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const lead = seriesLeadIsValid(t);
     if (!lead.ok) return { ok: false, code: 409, why: lead.why };
     const sid = seriesId(t), id = toHex(sid);
+    if (offChainSeries.has(id)) return { ok: false, code: 409, why: `series ${id.slice(0, 16)}: its census block (height ${offChainSeries.get(id)}) is not on this node's chain` };
     if (writers.some((w) => toHex(w.id) === id)) return { ok: true, series: id, rounds: t.seriesCount, held: true };
     // A SERIES THAT NAMES ITS CREATOR COMES WITH THE CREATOR'S SIGNATURE OVER ITS ID: the line's creator=<signature>
     { const cr = seriesCreatorStands(t, t.creatorSignature || null, { verify: (sg, m, k) => schnorr.verify(sg, m, k), seriesIdOf: seriesId });
@@ -4429,6 +4442,51 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!view) return { ok: false, why: 'this node is still reading its chain view for that series' };
     return findSeriesPublicationIndexed(view, seriesId(t)) ? { ok: true } : { ok: false, why: 'this node\'s chain holds no confirmed publication of that series yet' };
   };
+  // DROP ONE (kanban #786): no longer written, held, listed or checked, and kept so across a restart (the grid file still names it)
+  const offChainFile = gridSeriesFile ? `${gridSeriesFile}.off-chain` : null;
+  const dropOffChain = (id, height, { persist = true } = {}) => {
+    if (offChainSeries.has(id)) return;
+    offChainSeries.set(id, height);
+    const sid = fromHex(id);
+    const t = series.find((x) => toHex(seriesId(x)) === id);
+    const n = t && Number(t.seriesCount) > 0 ? Number(t.seriesCount) : ROUNDS_PER_SERIES;
+    for (let i = 0; i < n; i++) offChainRounds.add(toHex(seriesRoundIdOf(sid, i)));
+    for (let i = writers.length - 1; i >= 0; i--) if (toHex(writers[i].id) === id) writers.splice(i, 1);
+    for (let i = series.length - 1; i >= 0; i--) if (toHex(seriesId(series[i])) === id) series.splice(i, 1);
+    storeSeries.delete(id); postedSeries.delete(id); droppedSeries.add(id);
+    offChainVersion++; seriesVersion++;
+    if (persist && offChainFile) { try { appendFileSync(offChainFile, `${id} ${height}\n`); } catch (e) { console.error(`[series] #786 ${id.slice(0, 16)} not kept as off-chain: ${e.message}`); } }
+    console.log(`[series] ${id.slice(0, 16)}: its census block (height ${height}) is not on this node's chain - dropped, ${n} rounds no longer held`);
+  };
+  if (offChainFile && existsSync(offChainFile)) {
+    try {
+      for (const l of readFileSync(offChainFile, 'utf8').split('\n')) {
+        const [id, h] = l.trim().split(/\s+/);
+        if (/^[0-9a-f]{64}$/.test(id || '')) dropOffChain(id, Number(h), { persist: false });
+      }
+    } catch (e) { console.error(`[series] #786 the off-chain file did not read: ${e.message}`); }
+  }
+  // THE CHECK, one series at a time (a census on a branch the chain left takes ~3.5 s to derive and refuse): a series' first round is
+  // asked for its census as the round's own; a root the chain does not give at that height means the chain left its census block
+  const offChainChecked = new Set();
+  const offChainPass = () => {
+    if (shuttingDown) return;
+    const t = series.find((x) => !offChainChecked.has(toHex(seriesId(x))));
+    if (!t) return;
+    const id = toHex(seriesId(t)); offChainChecked.add(id);
+    const first = seriesRound(t, 0);
+    let c; try { c = roster.censusFor(roundIdOf(first), null, { posted: first }); } catch { c = null; }
+    if (c && c.ok) return;
+    if (c && /names census root .* and the chain gives /.test(c.why || '')) {
+      try { dropOffChain(id, Number(first.censusHeight)); } catch (e) { console.error(`[series] #786 ${id.slice(0, 16)} not dropped: ${e.message}`); }
+      return;
+    }
+    offChainChecked.delete(id);              // not read yet (no view, a census height above the tip): asked again later
+  };
+  const offChainTimer = setInterval(offChainPass, Number(process.env.ARENA_OFF_CHAIN_EVERY_MS || 2000));
+  if (offChainTimer.unref) offChainTimer.unref();
+  const offChainRecheck = setInterval(() => offChainChecked.clear(), 3600000);
+  if (offChainRecheck.unref) offChainRecheck.unref();
   // THE GRIDS POSTED BEFORE A RESTART, read back - not one whose last entry closed a day ago
   if (gridSeriesFile && existsSync(gridSeriesFile)) {
     let lines = [];
@@ -5236,7 +5294,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     for (const t of r.series) {
       const id = toHex(seriesId(t));
       seriesIdsHeld.add(id);
-      if (held.has(id)) continue;
+      if (held.has(id) || offChainSeries.has(id)) continue;
       refusedSeries.delete(id);
       if (refuseSeries(t)) continue;
       const w = seriesWriter(round, t);
