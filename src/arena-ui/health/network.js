@@ -152,6 +152,25 @@ export function seatingOf({ games = [], lists = [], nowMs = Date.now(), windowMs
 //   delayed      a round's start passed and its committee block is not there or not 6 deep - the tooltip says which and when
 //   failed       part of the period no grid of the newest version covers, a publication on no chain, or a grid whose committee no seat
 //                draws - the tooltip names the seat's reason
+// POSTED ONLY WHEN IT CAN BE PLAYED (kanban #778, a tester 2026-10-28 ~15:00Z: "Wenn die Runden nicht gepostet sind, darf nicht posted da
+// stehen. Da muss geprüft werden ob sie auch gespielt werden kann und der Status angepasst werden"; that afternoon the APPS table read
+// "posted (N)" in green for grids whose committees too few drawn nodes answered): a today cell that says posted is checked against the
+// seats' next hour (roundSeating) - none joinable, listed but not seated or listed by no seat, and it reads "posted · not playable" in red
+// with the seats' reason; the next 24 h, not started yet, keep their status
+// playablePostings(postings, seating) -> the same Map, today cells adjusted
+export function playablePostings(postings, seating) {
+  if (!postings || !seating) return postings;
+  const out = new Map();
+  for (const [name, p] of postings) {
+    const s = seating.get(name), t = p && p.today;
+    if (t && /^posted/.test(String(t.t)) && s && s.c === 'bad') {
+      const why = String(s.t).replace(/^no joinable rounds - (posted but )?/, '');
+      out.set(name, { ...p, today: { ...t, t: `posted · not playable: ${why}`, c: 'bad', summary: `The rounds are posted but cannot be played now: ${why}.`,
+        tip: `posted on the chain, but not playable: ${why}\n${t.tip || ''}` } });
+    } else out.set(name, p);
+  }
+  return out;
+}
 // roundPosting({ games, pending, expected, rounds, nowMs, fedNo }) -> Map(app name -> { today, next }), each a table cell { t, c, tip }
 const BLOCK_MS = 600000, GAP_MS = 15 * 60000;
 // a wait in hours and minutes: "9 h 15 min", "40 min" (kanban #777)
@@ -665,6 +684,7 @@ export function makeHealth({ H, $, window = {} }) {
       nowRounds = roundSeating({ games: games ? games.body.games : [], lists, nowMs: how.atMs || Date.now(),
         answering: nodes.filter((n) => n.node && n.version && n.version.ok).map((n) => n.node),
         posted: (name) => { const p = postings && postings.get(name); return !!(p && p.today && /^(posted|scheduled)/.test(String(p.today.t))); } });
+      postings = playablePostings(postings, nowRounds);
       every = allPostings({ games: games ? games.body.games : [], pending: pendingRead || [], expected: ex ? ex.body.expected || [] : [], duty: dt ? dt.body : null,
         nowMs: how.atMs || Date.now(), clock: blockClock(TIPS), seating: seatingOf({ games: games ? games.body.games : [], lists, nowMs: how.atMs || Date.now() }) });
       paintApps(games, nodes);
