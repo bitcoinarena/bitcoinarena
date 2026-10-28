@@ -11,6 +11,7 @@
 import React from 'react';
 import { SetupStatus, FoundingWait, PegInCard, NoBondCard, noBond } from './SetupStatus.jsx';
 import { CopyButton } from '../design/components.jsx';
+import { UptimeStats } from './Uptime.jsx';
 
 /** msat to the page's sat: three decimals under 10, one under 1,000, none above. */
 export const sat = (m) => { const n = Number(m || 0) / 1000; return `${(n < 10 ? n.toFixed(3) : n.toFixed(n < 1000 ? 1 : 0)).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')} sat`; };
@@ -222,6 +223,8 @@ export class DashboardPage extends React.Component {
         {D.setup && D.setup.ok ? <section><SetupStatus status={D.setup} node={D.node} /></section> : null}
         {D.setup && D.setup.ok && D.setup.founding && D.setup.founding.waiting && !noBond(D.setup) ? <section><FoundingWait status={D.setup} /></section> : null}
         {D.capacity ? <section><h2>Capacity</h2><div className="card"><p className={D.capacity.level === 'bad' ? 'bad' : 'warn'}>{String(D.capacity.says)}</p></div></section> : null}
+        {/* ITS UPTIME (kanban #756, GET /uptime): 24 h, 7 days, 30 days, all time; the 24 h marked when below inclusion */}
+        {D.uptime && Array.isArray(D.uptime.windows) ? <section><h2>Uptime</h2><UptimeStats uptime={D.uptime} /></section> : null}
         <section><h2>Earnings</h2><Earnings totals={D.totals} period={period} onPeriod={(p) => this.setState({ period: p })} /></section>
         <section><div className="card"><Chart days={D.days || []} /></div></section>
         {devs.length || L || G || (D.byGame || []).length || notes.length ? (

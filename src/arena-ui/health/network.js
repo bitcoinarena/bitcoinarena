@@ -439,8 +439,9 @@ export function makeHealth({ H, $, window = {} }) {
       paintNodes(nodes, tip);
       say('reading each node … (' + nodes.filter((n) => n.version.ok).length + ' of ' + nodes.length + ' answered)');
       await Promise.all(nodes.filter((n) => n.version.ok).map(async (n) => {
-        const [b, d, lc, gc, fd] = await Promise.all([ask(n.base, '/owner/bond'), ask(n.base, '/dashboard.json'), ask(n.base, '/liquidity-claim'), ask(n.base, '/gateway-claim'), ask(n.base, '/founding')]);
-        Object.assign(n, { bond: b, dash: d, liq: lc, gw: gc, found: fd });
+        // and its uptime (kanban #756, GET /uptime): 24 h, 7 days, 30 days, all time - the 24 h marked when below inclusion
+        const [b, d, lc, gc, fd, up] = await Promise.all([ask(n.base, '/owner/bond'), ask(n.base, '/dashboard.json'), ask(n.base, '/liquidity-claim'), ask(n.base, '/gateway-claim'), ask(n.base, '/founding'), ask(n.base, '/uptime')]);
+        Object.assign(n, { bond: b, dash: d, liq: lc, gw: gc, found: fd, uptime: up });
       }));
       [feds, reserves, funding] = await Promise.all([fedsP, reservesP, fundingP]);
       paintNetwork({ tip, nodes, seats, roles, feds, reserves, funding });
