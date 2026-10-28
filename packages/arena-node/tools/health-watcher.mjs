@@ -27,11 +27,12 @@
  *   node tools/health-watcher.mjs [--dry] [--once]       (env HW_DRY=1, HW_ONCE=1; the rest below in CONFIG)
  * --dry prints what it would fix or post and keeps its state apart (<state>.dry.json). Importing this file does nothing.
  */
-import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { execFile } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { roundSeating, NOW_ROUNDS } from '../../../src/arena-ui/health/network.js';
+import { pubsConfig, gatherPubs, assessPubs, pubMemTxs, doResend, doCpfp, doPublicMine, lookScript, parseLook, callsScript, parseCalls, opsPublished } from './health-watcher-pubs.mjs';
 
 const H = process.env.HOME || '/home/arena';
 const range = (host, from, to) => { const out = []; for (let p = from; p <= to; p += 10) out.push(`http://${host}:${p}`); return out; };
@@ -72,6 +73,7 @@ export function config(env = process.env, argv = []) {
     chat: { url: env.HW_CHAT_URL || 'https://seat.example.com/arenachat/api/channels/1/messages', tokenFile: env.HW_CHAT_TOKEN_FILE || `${H}/.config/blwp/arenachat-token`,
       mention: env.HW_MENTION || '@owner @a tester' },
     probeCensus: env.HW_PROBE_CENSUS !== '0',
+    pubs: pubsConfig(env, H),                           // f. the round publications on both chains (./health-watcher-pubs.mjs)
   };
 }
 
@@ -117,7 +119,13 @@ export async function gather(io, cfg, state, nowMs) {
     }
   }
   // d. miner C's list, only for the pending txids that are old
-  const old = pendingTxs(f.pending).filter((t) => state.pendingSeen && state.pendingSeen[t.txid] && nowMs - state.pendingSeen[t.txid] >= cfg.pendingAgeMs).map((t) => t.txid);
+  // f. every round publication of ours, on our branch and on the public chain
+  if (io.chainLook) {
+    const ex = await io.get(cfg.pendingSeats[0] || cfg.test-host[0], '/expected', 20000); f.expected = ex.ok ? [ex.body] : [];
+    await gatherPubs(io, cfg.pubs, state, f);
+  }
+  const memPubs = pubMemTxs(f, state.pubs).map((t) => t.txid);
+  const old = [...new Set([...memPubs, ...pendingTxs(f.pending).filter((t) => state.pendingSeen && state.pendingSeen[t.txid] && nowMs - state.pendingSeen[t.txid] >= cfg.pendingAgeMs).map((t) => t.txid)])];
   if (old.length) f.minerc = await io.minercCheck(old);
   if (io.topProcs && f.load[2] > cfg.loadMax) f.top = await io.topProcs();
   return f;
@@ -241,7 +249,9 @@ export function assess(f, prev, cfg) {
   }
 
   // d. PENDING TRANSACTIONS AND MINER C
-  const txs = pendingTxs(f.pending), now = new Set(txs.map((t) => t.txid));
+  // f. the round publications first: their mempool ones join the pending txs for miner C
+  if (f.chains) assessPubs(f, st, cfg.pubs, problems, fixes, nowMs);
+  const txs = [...new Map([...pendingTxs(f.pending), ...pubMemTxs(f, st.pubs)].map((t) => [t.txid, t])).values()], now = new Set(txs.map((t) => t.txid));
   for (const t of txs) if (!st.pendingSeen[t.txid]) st.pendingSeen[t.txid] = nowMs;
   for (const id of Object.keys(st.pendingSeen)) if (!now.has(id)) delete st.pendingSeen[id];
   if (f.minerc === null && txs.some((t) => nowMs - st.pendingSeen[t.txid] >= cfg.pendingAgeMs)) {
@@ -386,12 +396,16 @@ export async function pass(io, cfg, prev) {
   if (f.censusProbe) state.census = { atMs: f.censusProbe.atMs, answering: f.censusProbe.answering };
   const did = [];
   for (const x of fixes.filter((y) => y.allowed)) {
-    if (cfg.dry) { did.push({ ...x, dry: true }); continue; }
+    if (cfg.dry) { did.push({ ...x, dry: true, why: x.kind === 'cpfp' ? (await doCpfp(io, state, cfg.pubs, x.txid, nowMs, { plan: true }).catch((e) => ({ text: e.message }))).text : null }); continue; }
     try {
+      let ok = true, why = null;
       if (x.kind === 'restart-seat') { await io.restartUnit(x.unit); state.lastSeatRestartMs = nowMs; }
       else if (x.kind === 'minerc-add') await io.minercAdd(x.txids);
+      else if (x.kind === 'resend') why = await doResend(io, state, x, nowMs);
+      else if (x.kind === 'cpfp') ({ ok, text: why } = await doCpfp(io, state, cfg.pubs, x.txid, nowMs));
+      else if (x.kind === 'public-mine') why = String(await doPublicMine(io, cfg.pubs, x.txids)).trim().split('\n').pop();
       state.fixes[x.key] = { kind: x.kind, unit: x.unit, txids: x.txids, atMs: nowMs, recheck: 'pending' };
-      did.push({ ...x, ok: true });
+      did.push({ ...x, ok, why });
     } catch (e) { did.push({ ...x, ok: false, why: e.message }); problems.push({ key: `fix-failed:${x.key}`, ticket: '759', title: `the fix ${x.kind} ${x.unit || ''} failed`, lines: [e.message], tried: [x.kind], needs: 'a hand', alert: true }); }
   }
   const alerts = alertsDue(problems, state, cfg, nowMs), posted = [];
@@ -409,6 +423,11 @@ const run = (cmd, args, { timeout = 30000, input } = {}) => new Promise((ok, no)
   if (input != null) { c.stdin.end(input); }
 });
 export function realIo(cfg) {
+  // a chain's bitcoin-cli in a bash script: ours here, the public chain's over one ssh to the test host (its login shell is zsh: bash -s)
+  const onChain = (chain, script, timeout = 120000) => (chain === 'public'
+    ? run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', cfg.pubs.publicHost, 'bash -s'], { timeout, input: script })
+    : run('bash', ['-s'], { timeout, input: script }));
+  const cliOf = (chain) => (chain === 'public' ? cfg.pubs.publicCli : cfg.pubs.oursCli.join(' '));
   const get = async (base, path, ms = 10000) => {
     try {
       const r = await fetch(base + path, { signal: AbortSignal.timeout(ms) });
@@ -452,6 +471,22 @@ export function realIo(cfg) {
       } catch { return null; }
     },
     // as ops/pending-to-minerc.sh / minerc-727.sh: a backup, the txids appended once each, then the miner stopped - loop-c.sh starts it again with the list
+    chainLook: async (chain, opts) => parseLook(await onChain(chain, lookScript(cliOf(chain), opts), 300000)),
+    chainCalls: async (chain, calls) => (calls.length ? parseCalls(await onChain(chain, callsScript(cliOf(chain), calls)), calls.length) : []),
+    run: (cmd, args, timeout) => run(cmd, args, { timeout }),
+    // the ops grids of the last HW_PUB_SOURCE_H: ~/blwp-testnet4/emergency-*.log
+    opsPublished: async () => {
+      const out = [];
+      try {
+        for (const n of readdirSync(cfg.pubs.opsDir)) {
+          if (!/^emergency-.*\.log$/.test(n)) continue;
+          const path = `${cfg.pubs.opsDir}/${n}`;
+          if (Date.now() - statSync(path).mtimeMs > cfg.pubs.sourceMs) continue;
+          out.push(...opsPublished(readFileSync(path, 'utf8')));
+        }
+      } catch { /* none */ }
+      return out;
+    },
     minercAdd: async (txids) => {
       await ssh(`cd ~/${cfg.minerc.dir} && cp watch-pending.txt watch-pending.txt.pre-hw && while read t; do grep -qx "$t" watch-pending.txt || echo "$t" >> watch-pending.txt; done && (pkill -f "node miner-lean-c.mjs" || true)`, txids.join('\n') + '\n');
     },
@@ -483,8 +518,8 @@ export function report(r, cfg) {
   const out = [JSON.stringify({ hw: 'pass', at: new Date(r.facts.nowMs).toISOString(), dry: cfg.dry, load: r.facts.load,
     seats: `${r.facts.seats.filter((s) => s.ok).length}/${r.facts.seats.length}`, lists: `${r.facts.lists.filter(Boolean).length}/${r.facts.lists.length}`,
     problems: r.problems.map((p) => `${p.alert ? '!' : '-'} ${p.key}: ${p.title}`),
-    fixes: r.fixes.map((x) => `${x.allowed ? (cfg.dry ? 'would' : 'do') : 'held'} ${x.kind} ${x.unit || (x.txids || []).length + ' txid(s)'}${x.blocked.length ? ` (${x.blocked.join('; ')})` : ''}`),
-    did: r.did.map((x) => `${x.kind} ${x.unit || ''}${x.dry ? ' (dry)' : x.ok ? ' ok' : ` FAILED ${x.why}`}`),
+    fixes: r.fixes.map((x) => `${x.allowed ? (cfg.dry ? 'would' : 'do') : 'held'} ${x.kind} ${x.unit || (x.txid ? x.txid.slice(0, 8) : `${x.chain ? `${x.chain} ` : ''}${(x.txids || []).length} txid(s)`)}${x.blocked.length ? ` (${x.blocked.join('; ')})` : ''}`),
+    did: r.did.map((x) => `${x.kind} ${x.unit || x.chain || (x.txid || '').slice(0, 8)}${x.txids ? ` ${x.txids.map((t) => t.slice(0, 8)).join(',')}` : ''}${x.dry ? ' (dry)' : x.ok ? ' ok' : ' FAILED'}${x.why ? `: ${x.why}` : ''}`),
     alerts: r.alerts.map((a) => `${a.kind} ${a.key}${a.dry ? ' (dry: not posted)' : a.ok ? ' posted' : ` NOT POSTED ${a.why}`}`) })];
   if (cfg.dry) {
     for (const p of r.problems) out.push(`--- detected ${p.key}${p.alert ? '' : ' (no alert yet)'}\n${alertText(p, cfg, null)}`);
