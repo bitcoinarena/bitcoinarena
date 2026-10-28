@@ -2205,3 +2205,31 @@ test('a fee-free federation: no lockCostMsat at the funding check or the lock; t
   const empty = lockClient({ feeRule: { ppm: 0n, baseMsat: 0n }, lockFee: 0n });
   await assert.rejects(() => ask({ LockClient: empty.LockClient, storage: tabStorage() }), /the player wallet holds 0 msat and this round's locks need/);
 });
+
+// kanban #559 (spec §23A.9: "a deposit into F ... tries F's seated gateways before any other gateway F lists"): the join's own top-up
+// (fundPlayerWallet with no deposit offer on the page) asks the federation's seated gateways first - seat-1 refuses, seat-2 makes the
+// invoice - and neither the lobby's gateway nor the federation's list is asked while a seat answers
+test('the join-funding deposit asks the federation\'s seated gateways before the lobby\'s gateway and the federation\'s list', async () => {
+  const { useSeatedGateways } = await import('../src/page-lock.js');
+  const F = toHex(TEST_FEDERATION_ID);
+  const looked = [];
+  useSeatedGateways(async (fid) => { looked.push(fid); return fid === F ? ['https://seat-1', 'https://seat-2'] : []; });
+  try {
+    const { LockClient, log } = lockClient();
+    LockClient.prototype.gateways = async () => JSON.stringify(['https://fed-1', 'https://seat-2']);
+    const receive = LockClient.prototype.receive;
+    LockClient.prototype.receive = async function (msat, gateway) {
+      if (gateway === 'https://seat-1') { log.push({ receive: { msat, gateway } }); throw new Error('seat-1 refused'); }
+      return receive.call(this, msat, gateway);
+    };
+    const deposits = [];
+    await fundPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: tabStorage(), gateways: ['https://lobby'], onDeposit: (d) => deposits.push(d) });
+    const asked = log.filter((l) => l.receive).map((l) => l.receive.gateway);
+    assert.ok(looked.includes(F), 'the round\'s federation\'s seats were asked');
+    assert.deepEqual(asked.slice(0, 2), ['https://seat-1', 'https://seat-2'], 'the seated two first');
+    assert.ok(deposits.length >= 1);
+    assert.equal(deposits[0].gateway, 'https://seat-2', 'the invoice is the seated gateway\'s');
+    assert.deepEqual(deposits[0].tried.map((t) => t.gateway), ['https://seat-1'], 'only the refusing seat before it');
+    assert.equal(asked.includes('https://lobby') || asked.includes('https://fed-1'), false, 'the lobby\'s and the list are not reached while a seat answers');
+  } finally { useSeatedGateways(null); }
+});
