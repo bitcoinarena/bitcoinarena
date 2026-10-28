@@ -40,3 +40,15 @@ test('owner.html: the React bundle loaded once and unconditionally; every screen
   // the area itself is React's (kanban #564, OwnerArea): drawn with the need() list, again on each change
   assert.match(script, /O\.areaInto\(\$\('view'\), \{ \.\.\.areaProps, needs:/);
 });
+
+// THE PUBLIC DASHBOARD IN THE MENU (kanban #733): the page hands the area its address and hides the line under the page while the area is
+// shown (it moved down as each panel loaded); a new start (signed out, the welcome) shows the line again
+test('owner.html: the public dashboard goes to the area\'s menu; the line under the page only before the login', () => {
+  const html = readFileSync(new URL('../pages/owner.html', import.meta.url), 'utf8');
+  assert.match(html, /<p class="sub" id="public-line"><a id="public" href="#">← Public dashboard<\/a><\/p>/);
+  assert.match(html, /areaProps = \{[^\n]*publicLink: at\('\/Dashboard'\)/);
+  const area = html.slice(html.indexOf('async function area()'), html.indexOf('function keySwitchPanel()'));
+  assert.match(area, /drawArea\(\);\n[^\n]*\n {2}\$\('public-line'\)\.hidden = true;/);
+  const start = html.slice(html.indexOf('async function start()'));
+  assert.match(start, /areaProps = null; needs\.clear\(\);[^\n]*\n {2}\$\('public-line'\)\.hidden = false;/);
+});

@@ -46,7 +46,10 @@ export class OwnerArea extends React.Component {
     const games = p.games || [];
     return (
       <div className="layout">
-        <nav className="side" id="side">{SECTIONS.filter(([id]) => id !== 'money' || p.hasDevs).map(([id, t]) => <a key={id} href={'#' + id} data-s={id} className={on === id ? 'on' : undefined}>{t}<span className={'dot' + (dots.has(id) ? ' d-' + dots.get(id) : '')} id={'dot-' + id} /></a>)}</nav>
+        <nav className="side" id="side">{SECTIONS.filter(([id]) => id !== 'money' || p.hasDevs).map(([id, t]) => <a key={id} href={'#' + id} data-s={id} className={on === id ? 'on' : undefined}>{t}<span className={'dot' + (dots.has(id) ? ' d-' + dots.get(id) : '')} id={'dot-' + id} /></a>)}
+          {/* THE PUBLIC DASHBOARD AS AN ENTRY OF THE MENU (kanban #733, the owner: "make the link to the public dashboard a regular button in the
+            navigation, would look nicer and not jump around"): it stood under the page and moved down as each panel loaded */}
+          {p.publicLink ? <a href={p.publicLink} className="out" id="side-public">Public dashboard <span aria-hidden="true">↗</span></a> : null}</nav>
         <main>
           <Place id="setup-banner-place" className={null} />
           {sec('overview', <><h2>Overview</h2>
