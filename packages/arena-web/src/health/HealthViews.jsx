@@ -4,6 +4,7 @@
 // node as a row (active first, the inactive folded), and each federation's capacity band. The page still reads everything itself - six
 // requests at a time, every 60 s - and hands each section its data; these class components only draw it. Its words are the page's own.
 import React from 'react';
+import { uptimeCell } from '../dashboard/Uptime.jsx';
 
 const sat = (v) => (v == null || v === '' ? '-' : Number(v).toLocaleString('en-US'));
 const short = (h, n = 8) => (h ? String(h).slice(0, n) : '-');
@@ -43,7 +44,9 @@ export function nodeView(n, { tip, served = {}, fedNo = () => null, active }) {
     release: v && v.ok ? `${v.body.version || 'checkout'}` : '-', commit: v && v.ok && v.body.commit ? short(v.body.commit, 7) : null,
     protocol: v && v.ok ? Math.max(...(v.body.protocols || [0])) : null, tags, serving: n.serving,
     bond: bond ? `${sat(bond.sats)} sat` : '-', lock: lock ? (lock.blocksLeft > 0 ? `matures in ${lock.blocksLeft}` : 'mature') : null, lockWaits: !!(lock && lock.blocksLeft > 0),
-    active, rounds24h: served[n.node] || 0, asked: !!v, earned: nodeEarnings(n) };
+    active, rounds24h: served[n.node] || 0, asked: !!v, earned: nodeEarnings(n),
+    // ITS UPTIME (kanban #756): its own GET /uptime, null for a node that did not answer it (a release before 756)
+    uptime: n.uptime && n.uptime.ok ? uptimeCell(n.uptime.body) : null };
 }
 
 export class NodesTable extends React.Component {
@@ -59,6 +62,7 @@ export class NodesTable extends React.Component {
         <td>{r.serving == null ? '-' : r.serving ? <span className="ok">yes</span> : <span className="warn">no</span>}</td>
         <td>{r.bond}</td><td>{r.lock ? <span className={r.lockWaits ? 'warn' : ''}>{r.lock}</span> : '-'}</td>
         <td>{r.earned ? sat(r.earned.total) : '-'}</td><td>{r.earned ? sat(r.earned.month) : '-'}</td>
+        <td className="nowrap" title={r.uptime && r.uptime.since ? `kept since ${r.uptime.since}` : undefined}>{!r.uptime ? '-' : <>{r.uptime.text}{r.uptime.below ? <span className="bad"> · below inclusion</span> : null}</>}</td>
         <td>{!r.asked ? <span className="muted">-</span> : r.active ? <><span className="ok">active</span>{r.rounds24h ? <span className="muted"> · {r.rounds24h} round{r.rounds24h === 1 ? '' : 's'} in 24 h</span> : null}</> : <span className="muted">inactive</span>}</td>
       </tr>);
   }
@@ -68,10 +72,10 @@ export class NodesTable extends React.Component {
     const open = this.state.idleOpen;
     return (
       <table>
-        <thead><tr><th></th><th>Node key</th><th>Address</th><th>Answer</th><th>Release</th><th>Protocol</th><th>Roles</th><th>Serving</th><th>Bond</th><th>Bond lock</th><th>Earned (sat)</th><th>This month</th><th>Last 24 h</th></tr></thead>
+        <thead><tr><th></th><th>Node key</th><th>Address</th><th>Answer</th><th>Release</th><th>Protocol</th><th>Roles</th><th>Serving</th><th>Bond</th><th>Bond lock</th><th>Earned (sat)</th><th>This month</th><th>Uptime 24 h · 7 d · 30 d · all</th><th>Last 24 h</th></tr></thead>
         <tbody>
           {act.map((r, i) => this.row(r, i))}
-          {idle.length ? <tr><td colSpan={13}><button type="button" className="fold" onClick={() => this.setState({ idleOpen: !open })}>{open ? '▾' : '▸'} {idle.length} inactive node{idle.length === 1 ? '' : 's'} - bonded, not answering and no round signed in 24 h</button></td></tr> : null}
+          {idle.length ? <tr><td colSpan={14}><button type="button" className="fold" onClick={() => this.setState({ idleOpen: !open })}>{open ? '▾' : '▸'} {idle.length} inactive node{idle.length === 1 ? '' : 's'} - bonded, not answering and no round signed in 24 h</button></td></tr> : null}
           {open ? idle.map((r, i) => this.row(r, act.length + i)) : null}
         </tbody>
       </table>);
