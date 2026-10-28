@@ -2318,7 +2318,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // only rounds whose committee is drawn count as live (kanban #685); committeeOf is the listing's own draw, set up before any request
   const liveNow = gameLive(round, { windowOf: marketWindowFor, drawable: (rid) => {
-    if (committeeOf(fromHex(rid)).drawn !== true) return false;
+    // DRAWN IS AN OBJECT WHERE THE SEATS SEAT (kanban #781, 1.9.12 04585985): drawOf spreads the reserve seats' `drawn: { game, settlement }`
+    // over its `drawn: true`, so `!== true` refused every round once ARENA_SEATING was on; a refusal is { drawn: false }
+    if (!committeeOf(fromHex(rid)).drawn) return false;
     // AND PLAYED IN ITS WINDOW (the backup rule, §5A.5): a backup round under a drawn primary is no live round
     const c = round.contractOf(fromHex(rid)); if (!c) return true;
     try { return playedHere(fromHex(rid), c).played; } catch { return true; }
@@ -5375,7 +5377,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const r = fromHex(id);
       const cc = id === toHex(rid) ? c : round.contractOf(r);
       if (!cc) continue;
-      rows.push({ id, backup: isBackupRound(r, cc), drawn: committeeOf(r).drawn === true, entries: round.entriesOf(r).length });
+      rows.push({ id, backup: isBackupRound(r, cc), drawn: !!committeeOf(r).drawn, entries: round.entriesOf(r).length });   // an object where the seats seat (kanban #781)
     }
     const me = rows.find((x) => x.id === toHex(rid));
     const played = playedOfWindow(rows).has(toHex(rid));
