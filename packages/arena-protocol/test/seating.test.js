@@ -7,7 +7,9 @@ import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { drawnForRole } from '../src/sortition.js';
 import { signPresent, verifyPresent, decodePresent, seatedFrom, signSeating, encodeSeatingCertificate, verifySeating,
-  seatingEquivocation, seatingCloseMs, seatedThreshold } from '../src/seating.js';
+  seatingEquivocation, seatingCloseMs, seatedThreshold, seatingId, signSeen, decodeSeatingCertificate, seatingSignedTwice, verifyJustification,
+  encodeJustification, decodeJustification } from '../src/seating.js';
+import { toHex } from '../src/hash.js';
 
 const nodes = Array.from({ length: 9 }, (_, i) => { const secret = new Uint8Array(32).fill(i + 1); return { secret, pubkey: schnorr.getPublicKey(secret) }; });
 const drawn = nodes.map((n) => n.pubkey);
@@ -62,4 +64,84 @@ test('two seatings for one round and role: proof of equivocation by the nodes th
   assert.equal(e.ok, true);
   assert.equal(e.signers.length, 5, 'the five both seat signed both');
   assert.match(seatingEquivocation(a, a, check).why, /one seating twice/);
+});
+
+// NO RULE MAY EVER SLASH AN HONEST SEAT (kanban #738, RULED 2026-10-28, protocol 22). Nine drawn, seven seats. The honest seats 0,
+// 2, 4 and 5 hold five PRESENTs at the close and sign S = {0, 1, 2, 4, 5}; the Byzantine B = 1 signs T = {0..6}, which does not come
+// before S, so S can never stand and they move on to S' = T, each with B's signed T as its justification. Then B signs S as well:
+// S and S' both complete, and they share 0, 1, 2, 4 and 5.
+const S = [0, 1, 2, 4, 5].map((i) => drawn[i]), T = drawn.slice(0, 7), B = drawn[1];
+const sigOver = (seated, k) => signSeating({ roundId, role: 'game', seated }, sign(nodes.find((n) => n.pubkey === k)));
+// a 22 certificate: every seated node also signs who it held a PRESENT of (here: the seated)
+const cert22 = (seated, justifications = null, sigs = new Map()) => encodeSeatingCertificate({ roundId, role: 'game', seated, justifications,
+  signatures: seated.map((k) => ({ nodePubkey: k, signature: sigs.get(k) || sigOver(seated, k) })),
+  seen: [{ present: seated, leftOut: [], signatures: seated.map((k) => ({ nodePubkey: k,
+    signature: signSeen({ roundId, role: 'game', seating: seatingId({ roundId, role: 'game', seated }), present: seated, leftOut: [] }, sign(nodes.find((n) => n.pubkey === k))) })) }] });
+const byB = sigOver(T, B);
+const why = { of: S, seated: T, member: B, signature: byB, nested: null };
+const honestLeft = [0, 2, 4, 5].map((i) => drawn[i]);
+const check22 = { ...check, listsPresent: true };
+
+test('kanban #738 (protocol 22): B kills S with T and signs S too - the proof by S and S\' names B, never the honest seats that left S with B\'s T', () => {
+  const a = cert22(S), b = cert22(T, honestLeft.map((k) => ({ nodePubkey: k, justification: why })), new Map([[B, byB]]));
+  assert.equal(verifySeating(a, check22).ok, true);
+  const vb = verifySeating(b, check22);
+  assert.equal(vb.ok, true, vb.why);
+  const e = seatingEquivocation(a, b, check22);
+  assert.equal(e.ok, true, e.why);
+  assert.deepEqual(e.signers.map(toHex), [toHex(B)], 'the proof stands against B alone');
+  assert.deepEqual(e.excused.map(toHex).sort(), honestLeft.map(toHex).sort(), 'each honest seat\'s second signature carries B\'s T: excused');
+  assert.ok(e.signedTwice.some((x) => toHex(x.node) === toHex(B) && x.certificate === 'a' && x.seated.map(toHex).join() === T.map(toHex).join()), 'T and S: B\'s own equivocation');
+  // the same proof, T against S, on its own: B signed the certificate of S and T, with no reason
+  assert.equal(seatingSignedTwice(a, { node: B, seated: T, signature: byB }, check22).ok, true);
+  // and never against an honest seat: H's signature over T carries the justification
+  const H = drawn[0];
+  const r = seatingSignedTwice(a, { node: H, seated: T, signature: sigOver(T, H), justification: why }, check22);
+  assert.equal(r.ok, false); assert.match(r.why, /carries a justification/);
+  // the certificates' order does not matter
+  const e2 = seatingEquivocation(b, a, check22);
+  assert.deepEqual([e2.signers.map(toHex), e2.signedTwice[0].certificate], [[toHex(B)], 'b']);
+});
+
+test('kanban #738 (protocol 22): a member whose own T was a second signature is excused by its own justification, carried nested - the chain ends at B', () => {
+  // M = 2 left S for T because B signed T; H = 0 left S because M signed T, and carries M's justification inside its own
+  const M = drawn[2], byM = sigOver(T, M);
+  const viaM = { of: S, seated: T, member: M, signature: byM, nested: why };
+  const ju = [{ nodePubkey: drawn[0], justification: viaM }, ...[2, 4, 5].map((i) => ({ nodePubkey: drawn[i], justification: why }))];
+  const b = cert22(T, ju, new Map([[B, byB], [M, byM]]));
+  assert.equal(verifySeating(b, check22).ok, true);
+  const e = seatingEquivocation(cert22(S), b, check22);
+  assert.deepEqual(e.signers.map(toHex), [toHex(B)]);
+  assert.ok(e.excused.some((k) => toHex(k) === toHex(M)));
+  // without its nested reason, the member it names is the one proved against
+  const bare = cert22(T, [{ nodePubkey: drawn[0], justification: { ...viaM, nested: null } }, ...[4, 5].map((i) => ({ nodePubkey: drawn[i], justification: why }))], new Map([[B, byB], [M, byM]]));
+  assert.deepEqual(seatingEquivocation(cert22(S), bare, check22).signers.map(toHex).sort(), [toHex(B), toHex(M)].sort());
+});
+
+test('kanban #738 (protocol 22): a forged justification stands for nothing - not by a member of S, a T before S, a bad signature, an S\' not after S', () => {
+  const stranger = drawn[8], H = drawn[0];
+  const on = { roundId, role: 'game', drawn, slots: 7, verify, signer: H, onto: T };
+  assert.equal(verifyJustification(why, on).ok, true);
+  const T8 = [0, 1, 2, 3, 4, 5, 8].map((i) => drawn[i]);
+  assert.match(verifyJustification({ ...why, seated: T8, member: stranger, signature: sigOver(T8, stranger) }, on).why, /not in the seating it says can never stand/);
+  const before = [0, 1, 2, 4].map((i) => drawn[i]);                 // fewer seated: it comes before S
+  assert.match(verifyJustification({ ...why, seated: before, signature: sigOver(before, B) }, on).why, /comes before the seating left/);
+  assert.match(verifyJustification({ ...why, signature: sigOver(T, drawn[3]) }, on).why, /signature is not/);
+  assert.match(verifyJustification(why, { ...on, onto: [0, 1, 2, 4, 6].map((i) => drawn[i]) }).why, /does not come after/);
+  assert.match(verifyJustification({ ...why, member: H, signature: sigOver(T, H) }, on).why, /names the signer itself/);
+  // a certificate that carries a forged one does not stand
+  const forged = cert22(T, [{ nodePubkey: H, justification: { ...why, signature: sigOver(T, drawn[3]) } }]);
+  assert.match(verifySeating(forged, check22).why, /justification does not stand/);
+  // the wire form round-trips
+  const back = decodeJustification(encodeJustification({ ...why, nested: why }));
+  assert.deepEqual([back.member, back.nested.member].map(toHex), [toHex(B), toHex(B)]);
+});
+
+test('kanban #738: below protocol 22 nothing carries a justification - the certificate is byte for byte as before', () => {
+  const seated = drawn.slice(0, 7);
+  const sigs = seated.map((k) => ({ nodePubkey: k, signature: sigOver(seated, k) }));
+  assert.deepEqual(encodeSeatingCertificate({ roundId, role: 'game', seated, signatures: sigs, justifications: [] }),
+    encodeSeatingCertificate({ roundId, role: 'game', seated, signatures: sigs }));
+  assert.throws(() => encodeSeatingCertificate({ roundId, role: 'game', seated, signatures: sigs, justifications: [{ nodePubkey: drawn[0], justification: why }] }), /only with who was present/);
+  assert.equal(decodeSeatingCertificate(encodeSeatingCertificate({ roundId, role: 'game', seated, signatures: sigs })).justifications, null);
 });

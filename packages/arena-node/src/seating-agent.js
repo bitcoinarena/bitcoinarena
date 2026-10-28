@@ -10,7 +10,8 @@
 //                                         (GET /seating-sig); with every one, the certificate (GET /seating)
 //   after seating_close, before start     a seated node whose seating can never stand - a member of it signed a seating that does
 //                                         not come before it (kanban #738) - takes the PRESENTs it lacked from the others and signs
-//                                         once more: the seating of what it holds now, and only one another node has signed
+//                                         once more: the seating of what it holds now, and only one another node has signed -
+//                                         in a 22 round with its justification, the member's signed seating (RULED 2026-10-28)
 //   any time                              a second valid certificate for one round and role is equivocation: both are
 //                                         kept as the proof (GET /seating-equivocation), and the round takes no entries
 //
@@ -24,7 +25,8 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { slotsForRole } from '../../arena-protocol/src/sortition.js';
 import { signPresent, verifyPresent, decodePresent, seatedFrom, signSeating, seatingId, encodeSeatingCertificate, verifySeating,
-  seatingEquivocation, seatingCloseMs, decodeSeatingCertificate, SEATING_ROLES, signSeen, seenId, seatingListsPresent } from '../../arena-protocol/src/seating.js';
+  seatingEquivocation, seatingCloseMs, decodeSeatingCertificate, SEATING_ROLES, signSeen, seenId, seatingListsPresent, seatingBefore as comesBefore,
+  encodeJustification, decodeJustification, verifyJustification } from '../../arena-protocol/src/seating.js';
 import { endpointsOf } from './roster.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 
@@ -56,6 +58,10 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     CREATE TABLE IF NOT EXISTS seat_seen (round_id BLOB NOT NULL, role TEXT NOT NULL, seating TEXT NOT NULL, node TEXT NOT NULL, present TEXT NOT NULL,
       left_out TEXT NOT NULL, signature BLOB NOT NULL, PRIMARY KEY (round_id, role, seating, node));
   `);
+  // A SECOND SIGNATURE'S JUSTIFICATION (protocol 22, kanban #738): kept with it, here and at the peers that hold it
+  for (const t of ['seat_signed', 'seat_sigs']) {
+    if (!db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'justification')) db.exec(`ALTER TABLE ${t} ADD COLUMN justification BLOB`);
+  }
   const me = toHex(round.pubkey);
   // THE SEATED LISTS OF THE SEATINGS SIGNED (kanban #738): `${rid}:${role}:${seating id}` -> node keys hex, for every seating a
   // signature over it was kept of - a seating this node did not sign is known by its id only in seat_sigs. Lost at a restart: the
@@ -105,7 +111,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       if (!e.ok) return { ok: false, why: e.why };
       db.prepare('INSERT OR IGNORE INTO seat_equivocations (round_id, role, a, b) VALUES (?, ?, ?, ?)').run(rid, role, old, bytes);
       certs.set(key, null);
-      log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: two seatings - equivocation by ${e.signers.map((k) => toHex(k).slice(0, 8)).join(', ')}; the round takes no entries`);
+      log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: two seatings - equivocation by ${e.signers.map((k) => toHex(k).slice(0, 8)).join(', ')}${e.excused.length ? ` (justified, excused: ${e.excused.map((k) => toHex(k).slice(0, 8)).join(', ')})` : ''}; the round takes no entries`);
       return { ok: true, equivocation: true, signers: e.signers.map(toHex) };
     }
     db.prepare('INSERT OR IGNORE INTO seat_certs (round_id, role, cert) VALUES (?, ?, ?)').run(rid, role, bytes);
@@ -205,21 +211,33 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     .map((r) => ({ role: r.role, node: r.node, present: toHex(new Uint8Array(r.bytes)) }));
   const leftOutHex = (rid) => { try { return (leftOutOf(rid) || []).map((k) => String(k).toLowerCase()); } catch { return []; } };
   const mySignature = (rid, role) => {
-    const r = db.prepare('SELECT seated, signature FROM seat_signed WHERE round_id = ? AND role = ?').get(rid, role);
+    const r = db.prepare('SELECT seated, signature, justification FROM seat_signed WHERE round_id = ? AND role = ?').get(rid, role);
     if (!r) return null;
     const seated = JSON.parse(r.seated);
     // AND, FOR A 22 ROUND, WHO IT HELD A PRESENT OF (kanban #727)
     const id = toHex(seatingId({ roundId: rid, role, seated: seated.map(fromHex) }));
     const seen = db.prepare('SELECT present, left_out, signature FROM seat_seen WHERE round_id = ? AND role = ? AND seating = ? AND node = ?').get(rid, role, id, me);
     return { node: me, seated, signature: toHex(new Uint8Array(r.signature)),
-      ...(seen ? { seen: { present: JSON.parse(seen.present), leftOut: JSON.parse(seen.left_out), signature: toHex(new Uint8Array(seen.signature)) } } : {}) };
+      ...(seen ? { seen: { present: JSON.parse(seen.present), leftOut: JSON.parse(seen.left_out), signature: toHex(new Uint8Array(seen.signature)) } } : {}),
+      // A SECOND SIGNATURE (a 22 round, kanban #738) carries why: an older seat reads past it
+      ...(r.justification ? { justification: toHex(new Uint8Array(r.justification)) } : {}) };
   };
   const certOf = (rid, role) => {
     const r = db.prepare('SELECT cert FROM seat_certs WHERE round_id = ? AND role = ?').get(rid, role);
     return r ? toHex(new Uint8Array(r.cert)) : null;
   };
-  const equivocationOf = (rid) => db.prepare('SELECT role, a, b FROM seat_equivocations WHERE round_id = ?').all(rid)
-    .map((r) => ({ role: r.role, a: toHex(new Uint8Array(r.a)), b: toHex(new Uint8Array(r.b)) }));
+  // WHO THE PROOF STANDS AGAINST (kanban #738): judged again on the draw - a node whose second signature carries a justification
+  // is excused, and the member its justification names is proved against by its signature over that seating and the certificate
+  const equivocationOf = (rid) => db.prepare('SELECT role, a, b FROM seat_equivocations WHERE round_id = ?').all(rid).map((r) => {
+    const out = { role: r.role, a: toHex(new Uint8Array(r.a)), b: toHex(new Uint8Array(r.b)) };
+    try {
+      const check = checkFor(rid, r.role);
+      const e = check && !check.refused ? seatingEquivocation(new Uint8Array(r.a), new Uint8Array(r.b), check) : null;
+      if (e && e.ok) Object.assign(out, { signers: e.signers.map(toHex), excused: e.excused.map(toHex),
+        signedTwice: e.signedTwice.map((x) => ({ node: toHex(x.node), certificate: x.certificate, seated: x.seated.map(toHex), signature: toHex(x.signature) })) });
+    } catch { /* the pair alone */ }
+    return out;
+  });
 
   // ---- the work, every tick ----
   // ONE EXCHANGE PER NODE PER TICK (measured on testnet4 2026-10-11: an RPS grid of 2 tables per 8 s slot kept
@@ -370,14 +388,14 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: signed the seating of ${seated.length} (${held.length} present of ${w.drawnKeys.length} drawn)`);
   }
   /** This node's signature over `seated` (and, for a 22 round, its SEEN of `held`): the one seat_signed names, kept with the others'. */
-  function signSeatingOf(w, seated, held) {
+  function signSeatingOf(w, seated, held, justification = null) {
     const sig = signSeating({ roundId: w.t.rid, role: w.role, seated }, sign);
     const list = seated.map(toHex);
-    db.prepare('INSERT INTO seat_signed (round_id, role, seated, signature) VALUES (?, ?, ?, ?) ON CONFLICT (round_id, role) DO UPDATE SET seated = excluded.seated, signature = excluded.signature')
-      .run(w.t.rid, w.role, JSON.stringify(list), sig);
+    db.prepare('INSERT INTO seat_signed (round_id, role, seated, signature, justification) VALUES (?, ?, ?, ?, ?) ON CONFLICT (round_id, role) DO UPDATE SET seated = excluded.seated, signature = excluded.signature, justification = excluded.justification')
+      .run(w.t.rid, w.role, JSON.stringify(list), sig, justification);
     const id = toHex(seatingId({ roundId: w.t.rid, role: w.role, seated }));
     rememberSeating(w.t.rid, w.role, id, list);
-    db.prepare('INSERT OR IGNORE INTO seat_sigs (round_id, role, seating, node, signature) VALUES (?, ?, ?, ?, ?)').run(w.t.rid, w.role, id, me, sig);
+    db.prepare('INSERT OR IGNORE INTO seat_sigs (round_id, role, seating, node, signature, justification) VALUES (?, ?, ?, ?, ?, ?)').run(w.t.rid, w.role, id, me, sig, justification);
     // A 22 ROUND: WHO WAS PRESENT, signed with it (kanban #727) - every PRESENT held at the close (the table takes none after it, but
     // at a seat whose first seating can never stand, kanban #738), and the round's census's absent
     if (seatingListsPresent(w.t.contract)) {
@@ -401,14 +419,17 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   // signatures then come one after another in that order; the first seat to leave S saw a member that had never signed S and from
   // T can only go on to seatings after T - never to S. So S never completes, at most one certificate stands, and no two can prove
   // equivocation against an honest seat.
+  //
+  // BUT A BYZANTINE MEMBER CAN COMPLETE S (kanban #738, RULED 2026-10-28: no rule may ever slash an honest seat): it signs T, the
+  // honest seats leave S, then it signs S as well, and S and S' both complete with the honest seats in both. So in a 22 round the
+  // second signature carries its justification - the member's signed T, with the member's own justification when T was its second
+  // - kept with every copy of the signature and carried in the certificate; a peer counts no second signature without one; and a
+  // proof by two certificates does not stand against a node whose second signature carries one (seating.js seatingEquivocation).
+  // The member is proved against by its two signatures, over T and over S.
   const rankOf = (w) => w.rank || (w.rank = new Map(w.drawnKeys.map((k, i) => [toHex(k), i])));
   /** Does seating `a` come before seating `b` (node keys hex, both in score order) in this round's draw? */
-  function seatingBefore(w, a, b) {
-    if (a.join(',') === b.join(',') || b.length < a.length) return false;
-    const r = rankOf(w);
-    return a.every((k, i) => r.has(k) && r.has(b[i]) && r.get(b[i]) <= r.get(k));
-  }
-  /** The member of this node's seating that signed a seating not before it (kanban #738), or null while the seating may still stand. */
+  const seatingBefore = (w, a, b) => comesBefore(rankOf(w), a, b);
+  /** The member of this node's seating that signed a seating not before it, and that seating's id (kanban #738), or null while it may still stand. */
   function canNeverStand(w) {
     if (db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(w.t.rid, w.role)) return null;
     const signed = mySignature(w.t.rid, w.role);
@@ -417,14 +438,15 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     for (const r of db.prepare('SELECT node, seating FROM seat_sigs WHERE round_id = ? AND role = ? AND seating != ? AND node != ?').all(w.t.rid, w.role, id, me)) {
       if (!signed.seated.includes(r.node)) continue;
       const other = seatings.get(`${w.ridHex}:${w.role}:${r.seating}`);
-      if (other && !seatingBefore(w, other, signed.seated)) return r.node;
+      if (other && !seatingBefore(w, other, signed.seated)) return { node: r.node, seating: r.seating, seated: other };
     }
     return null;
   }
   /** This node's second seating, when its first can never stand (kanban #738): the rule above. */
   function resign(w) {
-    const member = canNeverStand(w);
-    if (!member) return;
+    const never = canNeverStand(w);
+    if (!never) return;
+    const member = never.node;
     const signed = mySignature(w.t.rid, w.role);
     const held = db.prepare('SELECT node FROM seat_presents WHERE round_id = ? AND role = ?').all(w.t.rid, w.role).map((r) => r.node);
     const seated = seatedFrom({ drawn: w.drawnKeys, present: held, slots: w.slots });
@@ -432,7 +454,17 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (!list.includes(me) || !seatingBefore(w, signed.seated, list)) return;
     const id = toHex(seatingId({ roundId: w.t.rid, role: w.role, seated }));
     if (!db.prepare('SELECT 1 FROM seat_sigs WHERE round_id = ? AND role = ? AND seating = ? AND node != ?').get(w.t.rid, w.role, id, me)) return;
-    signSeatingOf(w, seated, held);
+    // A 22 ROUND: THE SECOND SIGNATURE CARRIES WHY (kanban #738, RULED 2026-10-28) - the member's signed seating that does not come
+    // before the first, and the member's own justification for it when it carries one; no justification, no second signature
+    let justification = null;
+    if (seatingListsPresent(w.t.contract)) {
+      const row = db.prepare('SELECT signature, justification FROM seat_sigs WHERE round_id = ? AND role = ? AND seating = ? AND node = ?').get(w.t.rid, w.role, never.seating, member);
+      if (!row) return;
+      let nested = null;
+      try { nested = row.justification ? decodeJustification(new Uint8Array(row.justification)) : null; } catch { nested = null; }
+      justification = encodeJustification({ of: signed.seated.map(fromHex), seated: never.seated.map(fromHex), member: fromHex(member), signature: new Uint8Array(row.signature), nested });
+    }
+    signSeatingOf(w, seated, held, justification);
     log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: re-signed the seating of ${list.length} (member ${member.slice(0, 8)} signed another; the seating of ${signed.seated.length} can never stand)`);
   }
 
@@ -450,14 +482,32 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       if (!list.length || list.length > w.slots || !list.includes(node) || !list.every((k, i) => r.has(k) && (i === 0 || r.get(list[i - 1]) < r.get(k)))) return;
     }
     const id = toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: list.map(fromHex) }));
+    // A 22 ROUND: A SECOND SIGNATURE'S JUSTIFICATION (kanban #738, RULED 2026-10-28) is checked before anything of it is kept - a
+    // forged one (not signed by a member of the seating left, or a seating that comes before it) refuses the signature with it.
+    // Below 22 a signature carries none, and one carried is not read.
+    const listsPresent = seatingListsPresent(w.t.contract);
+    let justification = null, leftId = null;
+    if (listsPresent && got.justification) {
+      let j; try { j = decodeJustification(fromHex(String(got.justification))); } catch { return; }
+      if (!verifyJustification(j, { roundId: w.t.rid, role: w.role, drawn: w.drawnKeys, slots: w.slots, verify, signer: fromHex(node), onto: list.map(fromHex) }).ok) return;
+      justification = fromHex(String(got.justification));
+      leftId = toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: j.of }));
+    }
     rememberSeating(w.t.rid, w.role, id, list);
     // its SEEN is kept once it is over this node's seating: a seat that signs that one too reads it on the next tick
     if (mine) keepSeen(w, id, { ...got, node });
     if (db.prepare('SELECT 1 FROM seat_sigs WHERE round_id = ? AND role = ? AND seating = ? AND node = ?').get(w.t.rid, w.role, id, node)) return;   // held already
     // a node's signatures over other seatings, a few at most: an honest one signs one, or two (kanban #738)
     if (!mine && db.prepare('SELECT COUNT(*) AS n FROM seat_sigs WHERE round_id = ? AND role = ? AND node = ?').get(w.t.rid, w.role, node).n >= 3) return;
+    // A 22 ROUND: A SIGNATURE OVER ANOTHER SEATING THAN ONE OF THE NODE'S HELD HERE counts only justified - it left one held for
+    // this, or one held left this for it (signatures arrive in any order); an unjustified second signature is not counted
+    if (listsPresent) {
+      const others = db.prepare('SELECT seating, justification FROM seat_sigs WHERE round_id = ? AND role = ? AND node = ? AND seating != ?').all(w.t.rid, w.role, node, id);
+      const left = (o) => { try { return o.justification ? toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: decodeJustification(new Uint8Array(o.justification)).of })) : null; } catch { return null; } };
+      if (others.length && !others.some((o) => o.seating === leftId || left(o) === id)) return;
+    }
     let good = false; try { good = verify(fromHex(got.signature), fromHex(id), fromHex(node)); } catch { good = false; }
-    if (good) db.prepare('INSERT OR IGNORE INTO seat_sigs (round_id, role, seating, node, signature) VALUES (?, ?, ?, ?, ?)').run(w.t.rid, w.role, id, node, fromHex(got.signature));
+    if (good) db.prepare('INSERT OR IGNORE INTO seat_sigs (round_id, role, seating, node, signature, justification) VALUES (?, ?, ?, ?, ?, ?)').run(w.t.rid, w.role, id, node, fromHex(got.signature), justification);
   }
   /** A seated node's SEEN over the seating this node signed (a 22 round), kept when it verifies. */
   function keepSeen(w, id, got) {
@@ -479,7 +529,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (!signed) return;
     const list = signed.seated.map(fromHex);
     const id = toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: list }));
-    const sigs = db.prepare('SELECT node, signature FROM seat_sigs WHERE round_id = ? AND role = ? AND seating = ?').all(w.t.rid, w.role, id);
+    const sigs = db.prepare('SELECT node, signature, justification FROM seat_sigs WHERE round_id = ? AND role = ? AND seating = ?').all(w.t.rid, w.role, id);
     if (!signed.seated.every((k) => sigs.some((x) => x.node === k))) return;
     // A 22 ROUND'S CERTIFICATE CARRIES EVERY SEATED NODE'S SEEN (kanban #727): not made before each is held
     let seen = null;
@@ -495,7 +545,10 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       }
       seen = [...groups.values()];
     }
-    const cert = encodeSeatingCertificate({ roundId: w.t.rid, role: w.role, seated: list, seen,
+    // AND, A 22 ROUND, THE JUSTIFICATION OF EVERY SECOND SIGNATURE IN IT (kanban #738): what clears its signer of a proof by two seatings
+    const justifications = seen ? sigs.filter((x) => x.justification && signed.seated.includes(x.node))
+      .map((x) => ({ nodePubkey: fromHex(x.node), justification: decodeJustification(new Uint8Array(x.justification)) })) : null;
+    const cert = encodeSeatingCertificate({ roundId: w.t.rid, role: w.role, seated: list, seen, justifications,
       signatures: sigs.filter((x) => signed.seated.includes(x.node)).map((x) => ({ nodePubkey: fromHex(x.node), signature: new Uint8Array(x.signature) })) });
     const k = keepCert(w.t.rid, w.role, cert);
     if (k.ok && k.kept) {

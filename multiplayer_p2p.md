@@ -3028,6 +3028,49 @@ seatings after it - never to S. So S never completes, at most one certificate
 stands, and two certificates still prove equivocation only against a node that
 broke the rule.
 
+**No rule may ever slash an honest seat** *(protocol 22, kanban #738, RULED
+2026-10-28)*. A Byzantine member B of S can sign T, let an honest H move on to
+S', and then sign S as well: if S and S' both complete, the two certificates
+share H. So from 22 a second seating signature carries its **justification**:
+the departing member's signed conflicting seating T, which shows S can never
+stand.
+
+```text
+justification = vec(S)            the seating left, node keys in score order
+                vec(T)            the member's seating, node keys in score order
+                member            32 bytes, M
+                signature         64 bytes, M's SEATING signature over T
+                u8 0|1 [justification]   M's own, when M's signature over T was
+                                         itself a second one (at most 8 deep)
+```
+
+Round and role are the signature's own. It stands when S and T are seatings of
+the draw (drawn nodes in score order, at most the seats), the signer is in S
+and in the seating it signs now, which comes after S, M is in S and in T and is
+not the signer, T does not come before S, M's signature over T verifies, and a
+nested justification stands for M's signature over T. GET /seating-sig and the
+batch door hand it as `justification` (hex) beside the signature, and an older
+seat reads past it; the certificate carries, after its SEEN groups, one
+`(node key, justification)` per seated node whose signature on it is a second
+one, sorted by node key, and nothing when there is none - so a certificate
+with no second signature, and every certificate below 22, is byte for byte as
+before. A seat counts another node's signature over a seating other than one
+it already holds of that node only with a justification that leaves one held
+for this (or one held that leaves this one), and refuses a signature whose
+justification does not stand; a certificate carrying one that does not stand
+does not stand either.
+
+A seating equivocation proof against a member is **invalid** if that member's
+second signature carries a valid justification that the other seating could
+never stand. The attacker is still caught: T and S are an equivocation of
+their own - B signed the certificate of S (it is in S) and T, a seating not
+before S, with no reason (`seatingSignedTwice`; the proof by two certificates
+names it too). If B's signature over T carries a justification of its own
+(nested), B is excused in turn and the member that one names is proved
+against; a chain of them is finite, so it always ends at a member that signed
+both without a reason. GET /seating-equivocation names who is proved against
+(`signers`), who is excused (`excused`) and the T-and-S proofs (`signedTwice`).
+
 **Who was present** *(protocol 22, kanban #727, RULED 2026-10-27)*. From
 22 the certificate also says who was present, because it is the only proof
 that leaves a node out of a census (§5A.3, "Absent from its seatings"). With

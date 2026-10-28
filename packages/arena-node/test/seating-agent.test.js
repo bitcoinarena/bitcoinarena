@@ -10,7 +10,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { seatingAgent } from '../src/seating-agent.js';
 import { encodeRoundContract, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
 import { signPresent, signSeating, encodeSeatingCertificate, seatedFrom, seatingId, verifySeating, seatingEquivocation,
-  decodeSeatingCertificate } from '../../arena-protocol/src/seating.js';
+  decodeSeatingCertificate, signSeen } from '../../arena-protocol/src/seating.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { contractFor } from './window-fixture.js';
 
@@ -195,7 +195,7 @@ test('a 22 round: the seated sign who was present, and the certificate names the
 // present) and never again - no certificate, the round unseated. Eight live seats of nine drawn, node 8 stopped; until the close
 // `slow` hears only nodes 0, 1, 2 and 4 (the others' PRESENTs never reach it), after it every node hears every node.
 const upTo = (n) => Array.from({ length: n }, (_, i) => i);
-async function seatingNet({ slow = 3, protocolVersion = 20, lateStrips = () => [] } = {}) {
+async function seatingNet({ slow = 3, protocolVersion = 20, lateStrips = () => [], sigOf = (from, to, sig) => sig } = {}) {
   const hears = (from, to) => (from !== slow || [0, 1, 2, 4].includes(to)) && (to !== slow || [0, 1, 2, 4].includes(from));
   const c = { ...contractFor(nodes.slice(0, 7).map((n) => n.pubkey)), startTimeMs: START, protocolVersion };
   const bytes = encodeRoundContract(c);
@@ -214,6 +214,8 @@ async function seatingNet({ slow = 3, protocolVersion = 20, lateStrips = () => [
       // before the close the slow seat gets no PRESENT of a node it does not hear, at first hand or relayed
       const strip = closed() ? lateStrips(from, to) : from === slow ? upTo(9).filter((k) => ![0, 1, 2, 4, slow].includes(k)) : [];
       for (const r of Object.values(j.rounds)) r.presents = r.presents.filter((p) => !strip.includes(nodes.findIndex((n) => toHex(n.pubkey) === p.node)));
+      // a seating signature as it reaches `from` (kanban #738: stripped of, or with a forged, justification)
+      for (const r of Object.values(j.rounds)) for (const role of Object.keys(r.sig)) if (r.sig[role]) r.sig[role] = sigOf(from, to, r.sig[role]);
       return new Response(JSON.stringify(j), { status: 200 });
     }
     if (u.pathname === '/seating') { const b = new Uint8Array(await new Response(init.body).arrayBuffer()); const r = a.keepCert(rid, decodeSeatingCertificate(b).role, b); return new Response(JSON.stringify(r), { status: r.ok ? 201 : 409 }); }
@@ -329,4 +331,81 @@ test('kanban #738: a seat that holds a certificate signs nothing more', async ()
   assert.deepEqual(net.signedOf(3, 'game'), [0, 1, 2, 3, 4], 'a certificate stands: the game seating is not signed again');
   assert.ok(!net.logs.get(3).some((l) => /game: re-signed/.test(l)));
   assert.ok(net.logs.get(3).some((l) => /settlement: re-signed/.test(l)), 'the settlement seating, with no certificate, is');
+});
+
+// NO RULE MAY EVER SLASH AN HONEST SEAT (kanban #738, RULED 2026-10-28, protocol 22). The #738 run above: seat 3 signed the seating of
+// 5, left it for the seating of 7 once a member signed that, and the seating of 7 was certified. Now the members 0, 1, 2 and 4 -
+// Byzantine - sign the seating of 5 as well, so with seat 3's first signature it completes: two certificates, sharing 0, 1, 2, 3, 4.
+// Seat 3 broke no rule; its second signature carries the member's signed seating of 7, and the proof stands against the four only.
+const fiveOf = (rid) => ({ roundId: rid, role: 'game', seated: [0, 1, 2, 3, 4].map((i) => nodes[i].pubkey) });
+async function resignedAt22(opts = {}) {
+  const net = await seatingNet({ protocolVersion: 22, ...opts });
+  await net.tickAll(2);
+  net.close();
+  await net.tickAll(1, [3]);
+  await net.tickAll(1, [0, 1, 2, 4, 5, 6, 7]);                            // the others sign the seating of 7, and keep seat 3's over 5
+  await net.tickAll(1, [3]);                                              // seat 3 re-signs: the seating of 7
+  return net;
+}
+const sigRowAt = (net, at, i, seating) => net.dbs.get(at).prepare('SELECT signature, justification FROM seat_sigs WHERE role = ? AND seating = ? AND node = ?')
+  .get('game', seating, toHex(nodes[i].pubkey));
+const sevenId = (rid) => toHex(seatingId({ roundId: rid, role: 'game', seated: nodes.slice(0, 7).map((n) => n.pubkey) }));
+
+test('kanban #738 (protocol 22): Byzantine members complete the seating seat 3 left - the proof by both certificates names them, never seat 3', async () => {
+  const net = await resignedAt22();
+  await net.tickAll(4);
+  assert.ok(net.agents.get(5).certOf(net.rid, 'game'), 'the seating of 7 is certified');
+  assert.ok(net.agents.get(3).mySignature(net.rid, 'game').justification, 'seat 3\'s second signature carries its justification');
+  // the four sign the seating of 5 and who was present at it; seat 3's signature and SEEN over it are its own, from the close
+  const five = fiveOf(net.rid), fid = toHex(seatingId(five));
+  const db3 = net.dbs.get(3);
+  const own = db3.prepare('SELECT signature FROM seat_sigs WHERE role = ? AND seating = ? AND node = ?').get('game', fid, toHex(nodes[3].pubkey));
+  const seen3 = db3.prepare('SELECT present, left_out, signature FROM seat_seen WHERE role = ? AND seating = ? AND node = ?').get('game', fid, toHex(nodes[3].pubkey));
+  const byz = [0, 1, 2, 4];
+  const present = five.seated.map(toHex).sort();
+  const cert5 = encodeSeatingCertificate({ ...five,
+    signatures: [...byz.map((i) => ({ nodePubkey: nodes[i].pubkey, signature: signSeating(five, signer(nodes[i])) })), { nodePubkey: nodes[3].pubkey, signature: new Uint8Array(own.signature) }],
+    seen: [{ present, leftOut: [], signatures: [...byz.map((i) => ({ nodePubkey: nodes[i].pubkey, signature: signSeen({ roundId: net.rid, role: 'game', seating: seatingId(five), present, leftOut: [] }, signer(nodes[i])) })),
+      { nodePubkey: nodes[3].pubkey, signature: new Uint8Array(seen3.signature) }] }] });
+  assert.deepEqual([JSON.parse(seen3.present), JSON.parse(seen3.left_out)], [present, []], 'seat 3 held the five at the close');
+  const k = net.agents.get(5).keepCert(net.rid, 'game', cert5);
+  assert.equal(k.ok, true, k.why); assert.equal(k.equivocation, true, 'two certificates: the round takes no entries');
+  assert.deepEqual([...k.signers].sort(), byz.map((i) => toHex(nodes[i].pubkey)).sort(), 'the proof names the four that signed both, not seat 3');
+  const [eq] = net.agents.get(5).equivocationOf(net.rid);
+  assert.deepEqual(eq.excused, [toHex(nodes[3].pubkey)], 'seat 3 is excused by its justification');
+  assert.ok(eq.signedTwice.length && eq.signedTwice.every((x) => byz.map((i) => toHex(nodes[i].pubkey)).includes(x.node) && x.certificate === 'b'),
+    'and the member its justification names is proved against by its seating of 7 and the certificate of 5');
+});
+
+test('kanban #738 (protocol 22): a second signature without its justification is not counted - one with it is, and below 22 none is asked', async () => {
+  const strip = (from, to, sig) => { if (to !== 3) return sig; const { justification, ...rest } = sig; return rest; };
+  for (const [opts, counted] of [[{}, true], [{ sigOf: strip }, false]]) {
+    const net = await resignedAt22(opts);
+    assert.ok(net.agents.get(3).mySignature(net.rid, 'game').justification);
+    await net.tickAll(1, [0, 1, 2, 4, 5, 6]);                               // they read seat 3's second signature
+    const row = sigRowAt(net, 0, 3, sevenId(net.rid));
+    assert.equal(!!row, counted, counted ? 'justified: counted' : 'stripped of its justification: not counted');
+    if (row) assert.ok(row.justification, 'and kept with its justification, for the certificate');
+  }
+  // protocol 20: no justification is signed, and the second signature is counted as before
+  const net = await seatingNet({ protocolVersion: 20 });
+  await net.tickAll(2); net.close();
+  await net.tickAll(1, [3]); await net.tickAll(1, [0, 1, 2, 4, 5, 6, 7]); await net.tickAll(1, [3]); await net.tickAll(1, [0, 1, 2, 4, 5, 6]);
+  assert.equal(net.agents.get(3).mySignature(net.rid, 'game').justification, undefined, 'below 22 nothing is carried');
+  assert.equal(sigRowAt(net, 0, 3, sevenId(net.rid)).justification, null);
+});
+
+test('kanban #738 (protocol 22): a forged justification refuses the signature it came with', async () => {
+  // the member's signature in it, one byte off (the last byte is the nested flag, the 64 before it the signature)
+  const forge = (from, to, sig) => {
+    if (to !== 3 || !sig.justification) return sig;
+    const b = Buffer.from(sig.justification, 'hex'); b[b.length - 2] ^= 1;
+    return { ...sig, justification: b.toString('hex') };
+  };
+  const net = await resignedAt22({ sigOf: forge });
+  await net.tickAll(1, [0, 1, 2, 4, 5, 6]);
+  assert.equal(sigRowAt(net, 0, 3, sevenId(net.rid)), undefined, 'not counted');
+  const junk = await resignedAt22({ sigOf: (from, to, sig) => (to === 3 && sig.justification ? { ...sig, justification: '00' } : sig) });
+  await junk.tickAll(1, [0, 1, 2, 4, 5, 6]);
+  assert.equal(sigRowAt(junk, 0, 3, sevenId(junk.rid)), undefined, 'an undecodable one neither');
 });
