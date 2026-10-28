@@ -352,6 +352,7 @@ async function area() {
   ballotsPanel();
   gameDevs();
   standingPanel();
+  uptimePanel();
   roundsPanel();
   capacityPlea();
   bondAnswer();
@@ -407,6 +408,12 @@ function roundsPanel() { mount('rounds', 'mountRounds', { api: { get: getJson } 
 // THIS NODE'S STANDING (§5A.3, §5A.10B): the draws it missed and its bond against the bracket now common; missed draws on the Overview
 function standingPanel() {
   mount('standing', 'mountStanding', { api: { get: getJson }, onMissed: (k) => need('missed', 'bad', `Your node missed ${k} draws in a row: check its services.`, 'services') });
+}
+// THIS NODE'S UPTIME (kanban #756, GET /uptime): the four figures and where the 24 h matters; below the line, said on the Overview
+function uptimePanel() {
+  mount('uptime', 'mountUptime', { api: { get: getJson }, onBelow: (u) => need('uptime', u.inclusion && u.inclusion.inForce ? 'bad' : 'warn',
+    u.inclusion && u.inclusion.inForce ? 'Your node was not up 15 minutes without a break in the last 24 hours: it is left out of the next draw.'
+      : 'Your node was not up 15 minutes without a break in the last 24 hours: from 2.0 that leaves it out of the draw.', 'overview') });
 }
 let standingRead = null;   // GET /owner/standing, read once for the Bond answer
 const readStanding = () => (standingRead = standingRead || getJson('/owner/standing'));
