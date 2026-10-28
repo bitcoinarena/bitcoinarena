@@ -91,14 +91,21 @@ export const NO_BEACON = () => undefined;
  * base the doors are on. This node is never its own peer, and a signer node that
  * advertised nowhere is left out rather than guessed at. One rule, used by
  * the payout path and the close alike.
+ *
+ * ITS ANNOUNCED ADDRESS FIRST (kanban #757): `endpointOf(entry)`, when given, is the address book's (address-book.js): the
+ * node's newest valid signed address announcement, else its advert endpoint. A node whose quick tunnel restarted is dialed
+ * at its new address, not the dead one its bond names (measured 2026-10-28: drawn in 67 rounds, advert host gone). Without
+ * one, or for a node with no announcement, the advert endpoint as before.
  */
-export function endpointsOf(committee, selfPubkey) {
+export function endpointsOf(committee, selfPubkey, endpointOf = null) {
   const self = selfPubkey ? toHex(selfPubkey) : null;
   const found = new Set();
   for (const e of committee || []) {
     if (!e || !e.advert || !e.advert.endpoint) continue;
     if (self && toHex(e.pubkey) === self) continue;
-    found.add(String(e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, ''));
+    let at = e.advert.endpoint;
+    if (endpointOf) { try { at = endpointOf(e) || at; } catch { /* the advert endpoint */ } }
+    found.add(String(at).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, ''));
   }
   return [...found];
 }
