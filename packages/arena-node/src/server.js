@@ -39,7 +39,7 @@ import { BOND_TEMPLATE_V2 } from '../../arena-protocol/src/bond-script.js';
 import { latestReleaseReader } from './release-latest.js';
 import { createGatewayWatch } from './gateway-watch.js';
 import { lnv2ModuleId, federationCoins, incomingSince } from './gateway-volume.js';
-import { signGatewaySeating, standingSeating, seatingEpochAt, paidSeatsOf, provedPegInsOf } from '../../arena-protocol/src/gateway-seating.js';
+import { signGatewaySeating, standingSeating, seatingEpochAt, paidSeatsOf, provedPegInsOf, seatingRecordFor } from '../../arena-protocol/src/gateway-seating.js';
 import { signLiquiditySeating, standingLiquiditySeating, liquiditySeatingFrom } from '../../arena-protocol/src/liquidity-seating.js';
 import { checkLiquidityClaim, provenFreeSats } from '../../arena-protocol/src/liquidity.js';
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
@@ -131,7 +131,7 @@ import { createEcashExchange } from './ecash-exchange.js';
 import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
 import { readInvite } from './invite.js';
 import { holdsNothing, guardedFederationOf, auditGuardian, createRetireBook } from './federation-retire.js';
-import { federationRecords } from './federation-records.js';
+import { federationRecords, seatedOf as seatedOfRecord } from './federation-records.js';
 import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departureHex, readEmergencyHex, emergencyHex } from './absences.js';
 import { emergencyDepartureStands } from '../../arena-protocol/src/emergency.js';
 import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture } from './absence-producer.js';
@@ -4930,8 +4930,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rec = fedRecords.recordOf(fid);
         const seatedHex = (fedRecords.seatedGuardians(fid) || []).map((k) => toHex(k));
         if (!rec || !rec.record || !seatedHex.length) continue;
+        // JUDGED BY THE RECORD IN FORCE AT THE EPOCH'S LAST BLOCK from 2.0 (ruling 2; a seating is no round's, so by the newest version this
+        // build speaks): its seated guardians and threshold, not today's; the record held now where this seat holds none that old
+        const judged = seatingRecordFor({ epoch: ep, version: Math.max(...SUPPORTED_PROTOCOL_VERSIONS), recordAt: fedRecords.recordAt ? (h) => fedRecords.recordAt(fid, h) : null, current: rec.record });
+        const judgedHex = judged.at === 'epoch' ? seatedOfRecord(judged.record).map((k) => toHex(k)) : seatedHex;
         const signed = ownSeatings.has(`${fid}:${ep}`) ? [ownSeatings.get(`${fid}:${ep}`)] : [];
-        for (const node of seatedHex) {
+        for (const node of [...new Set([...judgedHex, ...seatedHex])]) {
           if (node === toHex(round.pubkey)) continue;
           const e = entries.find((x) => toHex(x.pubkey) === node);
           if (!e || !e.advert || !e.advert.endpoint) continue;
@@ -4941,7 +4945,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           } catch { /* that guardian's signature is missing this time */ }
         }
         if (!signed.length) continue;
-        const st = standingSeating({ signed, federationId: fid, epoch: ep, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
+        const st = standingSeating({ signed, federationId: fid, epoch: ep, seated: judgedHex, threshold: judged.record.threshold, verify: schnorrVerify });
         if (st.ok) { gatewaySeatings.set(`${fid}:${ep}`, st.seating); keepSeating('standing', fid, ep, st.seating); console.log(`[gateways] ${fid.slice(0, 12)} epoch ${ep}: seating stands, ${st.seating.seats.length} seat(s), ${st.signers} signer(s)`); }
       }
       for (const m of [gatewaySeatings, ownSeatings]) for (const k of [...m.keys()]) if (Number(k.split(':')[1]) < epoch - 6) m.delete(k);

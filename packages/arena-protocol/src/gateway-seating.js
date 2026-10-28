@@ -30,6 +30,23 @@ export const seatingEpochAt = (height) => Math.floor(Number(height) / GATEWAY_EP
  */
 export const paidSeatsOf = (ranking) => ((ranking && ranking.seated) || []).filter((n) => !((ranking && ranking.belowMinimums) || []).includes(n));
 
+/** THE HEIGHT A SEATING OF `epoch` IS JUDGED AT, from SEATING_RULES_VERSION (§23A.9 ruling 2): the last block of that epoch. */
+export const seatingJudgeHeight = (epoch) => (Number(epoch) + 1) * GATEWAY_EPOCH_BLOCKS - 1;
+
+/**
+ * THE FEDERATION RECORD A SEATING OF `epoch` IS JUDGED AGAINST - its seated guardians who may sign, its threshold (§23A.9 ruling 2): from
+ * SEATING_RULES_VERSION (`version`: the version the seat gathers by) the record in force at the epoch's last block (`recordAt(height)`,
+ * federation-records.js), so a guardian set that changed after the epoch neither adds signers to it nor takes them away; below it, or
+ * where this seat holds no record that old, the record it holds now (`current`), as before. Answers { record, at: 'epoch' | 'now' }.
+ */
+export function seatingRecordFor({ epoch, version = 0, recordAt = null, current = null }) {
+  if (Number(version) >= SEATING_RULES_VERSION && typeof recordAt === 'function') {
+    let r = null; try { r = recordAt(seatingJudgeHeight(epoch)); } catch { r = null; }
+    if (r) return { record: r, at: 'epoch' };
+  }
+  return { record: current || null, at: 'now' };
+}
+
 /**
  * THE PROVED PEG-INS A GUARDIAN SIGNS (§23A.3a part 2, kanban #559/#543): { node hex: sat string } for each paid seat whose peg-in this
  * guardian proved from the federation's coins (`gateways`: its watch's view, node hex -> { provedPegInSats }); a seat it could not check
