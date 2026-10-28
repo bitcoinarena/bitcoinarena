@@ -8257,9 +8257,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!/^[0-9]{1,15}$/.test(k)) return text(res, 400, 'GET /batch-proposal?round=<id>&k=<batch>');
           got = orderBook.proposal(rid, Number(k));
         // AND THE BATCHES STILL PENDING HERE (kanban #740): a seat reading this list before it settles reads it again while one is
-        // undecided (an older seat ignores the field)
-        } else if (url.pathname === '/book-certificates') got = { certificates: orderBook.certificates(rid), pending: orderBook.pending(rid).map(String) };
-        else { got = orderBook.cleared(rid); if (!got.ok) return text(res, got.status || 409, got.why); }
+        // undecided (an older seat ignores the field). With `after=<k>` (the reader's cursor) only the batches numbered after k, so a
+        // seat that reads again is not handed the whole round each time; without it the whole list, as an older seat asks
+        } else if (url.pathname === '/book-certificates') {
+          const after = url.searchParams.get('after');
+          if (after !== null && !/^[0-9]{1,15}$/.test(after)) return text(res, 400, 'GET /book-certificates?round=<id>[&after=<batch>]');
+          const k = after === null ? null : Number(after);
+          got = { certificates: orderBook.certificates(rid, k), pending: orderBook.pending(rid).filter((x) => k === null || x > k).map(String) };
+        } else { got = orderBook.cleared(rid); if (!got.ok) return text(res, got.status || 409, got.why); }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(got, (key, v) => (typeof v === 'bigint' ? String(v) : v)));
       }
