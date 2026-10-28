@@ -215,3 +215,33 @@ test('the read from the census height goes up to the tip, not one window: a beac
   assert.equal(seen.ok, true, seen.why);
   assert.equal(seen.height, whole.height);
 });
+
+// A HELD BEACON THE CHAIN LEFT IS DROPPED AND READ AGAIN (kanban #727, public testnet4 2026-10-28: an 11-block side branch held the
+// seats' beacon eight deep and then lost; the seats kept the branch's block and drew every committee on it)
+test('a held beacon whose block the chain replaced is dropped and the chain\'s block is read again', async () => {
+  const node = chainNode({ blocks: 40 });
+  const beacon = chainBeacon({ call: node.call, recheckMs: 0 });
+  const c = contract();
+  const first = await beacon.refresh(c);
+  assert.equal(first.ok, true);
+  const held = beacon.for({ contract: c });
+  assert.equal(toHex(held.hash), toHex(blockHashOf(node.headers[first.height])));
+  // the chain reorganises from two blocks below the beacon: other blocks at the same heights, and two more
+  const from = first.height - 2;
+  let previous = blockHashOf(node.headers[from - 1]);
+  node.headers.length = from;
+  for (let i = from; i < 42; i++) {
+    const { header } = blockOf(hash256, [b32(200 + i)], { previous, time: NOW + (i - 20) * 600 });
+    node.headers.push(header);
+    previous = blockHashOf(header);
+  }
+  await new Promise((r) => setTimeout(r, 5));
+  beacon.for({ contract: c });                     // reads the window again
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(beacon.for({ contract: c }), undefined, 'the branch\'s block is not answered once the chain left it');
+  await new Promise((r) => setTimeout(r, 20));
+  const again = beacon.for({ contract: c });
+  assert.ok(again, 'the chain\'s own block is read again');
+  assert.equal(toHex(again.hash), toHex(blockHashOf(node.headers[again.height])));
+  assert.notEqual(toHex(again.hash), toHex(held.hash));
+});
