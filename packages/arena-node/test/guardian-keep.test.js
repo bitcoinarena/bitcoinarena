@@ -185,3 +185,27 @@ test('the dashboard port: the slot\'s when free, the next free one when taken', 
   await new Promise((ok) => setTimeout(ok, 50));
   assert.equal(await freeLocalPort(taken, { step: 1, tries: 5 }), taken, 'a free port is kept');
 });
+
+// kanban #577 (2026-10-29): fedimintd exits by itself on "Consensus session timed out"; node-start.js starts an exited guardian again by
+// asking `alive` every 30 s - a spawned one, a kept one (pidfile) and a unit each answer it
+test('a guardian answers whether its process still runs: spawned, kept by pidfile, or a unit', async () => {
+  const { dir, cookie, bin, call } = setup();
+  writeFileSync(join(bin, 'fedimintd'), '#!/bin/sh\nexit 3\n'); chmodSync(join(bin, 'fedimintd'), 0o755);
+  const g = await startGuardian({ nodePort: 6531, host: '127.0.0.1', storePath: join(dir, 'd.db'), bitcoindUrl: 'http://127.0.0.1:48332',
+    cookiePath: cookie, call, env: { PATH: `${bin}:/usr/bin:/bin` }, tailscale: TS, log: () => {}, pids: fakePids() });
+  assert.equal(g.running, true);
+  for (let i = 0; i < 50 && g.alive(); i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(g.alive(), false, 'the spawned fedimintd that exited is not alive');
+  const pids = fakePids();
+  const k = await startGuardian({ nodePort: 6541, host: '127.0.0.1', storePath: join(dir, 'e.db'), bitcoindUrl: 'http://127.0.0.1:48332',
+    cookiePath: cookie, call, env: { PATH: `${bin}:/usr/bin:/bin` }, tailscale: TS, log: () => {}, keep: true, pids });
+  assert.equal(await k.alive(), true);
+  await k.halt();
+  assert.equal(await k.alive(), false, 'a kept one whose pidfile process is gone');
+  const running = new Set();
+  const u = await startGuardian({ nodePort: 6551, host: '127.0.0.1', storePath: join(dir, 'f.db'), bitcoindUrl: 'http://127.0.0.1:48332',
+    cookiePath: cookie, call, env: { PATH: `${bin}:/usr/bin:/bin`, ARENA_GUARDIAN_KEEP: '1' }, tailscale: TS, log: () => {}, units: fakeUnits(running) });
+  assert.equal(await u.alive(), true);
+  running.clear();
+  assert.equal(await u.alive(), false, 'a unit no longer active');
+});

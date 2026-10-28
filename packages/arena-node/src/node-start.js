@@ -148,8 +148,29 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
     }
   }, Number((chain.env || process.env).ARENA_COOKIE_WATCH_MS || 30000)) : null;
   if (cookieWatch && cookieWatch.unref) cookieWatch.unref();
+  // A GUARDIAN THAT EXITED IS STARTED AGAIN (kanban #577, measured 10-29 on the seven installed inst577 nodes, 2026.1.9.11): fedimintd exits
+  // by itself on "Consensus session timed out" (e2f42eea, session 892, 10-28 07:09Z) and nothing started it again - all ten guardians of the
+  // federation stayed down for 17 h and every seat observed its halt. Every 30 s a guardian the node runs whose process is gone is started
+  // again, at most once a minute per slot.
+  const startedAgainAt = { guardian: 0, next: 0 };
+  const exitWatch = setInterval(async () => {
+    for (const slot of ['guardian', 'next']) {
+      const g = slot === 'guardian' ? guardian : next;
+      if (!g.running || typeof g.alive !== 'function' || Date.now() - startedAgainAt[slot] < 60000) continue;
+      let up = true; try { up = await g.alive(); } catch { up = true; }
+      if (up) continue;
+      startedAgainAt[slot] = Date.now();
+      try {
+        const fresh = await start(slot);
+        if ((slot === 'guardian' ? guardian : next) !== g) { if (fresh.running) await (fresh.halt || fresh.stop)(); continue; }   // stopped or replaced meanwhile
+        if (slot === 'guardian') guardian = fresh.running ? fresh : none; else next = fresh.running ? fresh : none;
+        (chain.log || console.log)(`[guardian] the ${slot === 'guardian' ? 'guardian' : 'guardian-next'} had exited: started again${fresh.running ? '' : ` - and did not start: ${fresh.why}`}`);
+      } catch (e) { (chain.log || console.log)(`[guardian] the ${slot} could not be started again after it exited: ${e.message}`); }
+    }
+  }, Number((chain.env || process.env).ARENA_GUARDIAN_EXIT_WATCH_MS || 30000));
+  if (exitWatch.unref) exitWatch.unref();
   const closeNode = node.close;
-  node.close = async () => { if (cookieWatch) clearInterval(cookieWatch); try { await closeNode(); } finally { await stopBoth(); } };
+  node.close = async () => { if (cookieWatch) clearInterval(cookieWatch); clearInterval(exitWatch); try { await closeNode(); } finally { await stopBoth(); } };
   node.guardianRunning = guardian.running;
   node.guardianSetup = guardian.running && plan.own === 'setup';
   node.guardianNextRunning = next.running;
