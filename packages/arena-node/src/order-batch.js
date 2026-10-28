@@ -465,9 +465,15 @@ export class OrderBook {
       timings: { proposalsMs: tProposals - t0, signedMs: tSigned - t0, certifiedMs: this.now() - t0 } };
   }
 
-  /** Every certified batch of the round with its certificate (GET /book-certificates), for a seat that missed one. */
-  certificates(roundIdBytes) {
-    return this.db.prepare('SELECT k, record, certificate FROM market_batches WHERE round_id = ? AND certificate IS NOT NULL ORDER BY k').all(Buffer.from(roundIdBytes))
+  /**
+   * Every certified batch of the round with its certificate (GET /book-certificates), for a seat that missed one - with `after`, only
+   * those numbered after it (the reader's cursor, kanban #740).
+   */
+  certificates(roundIdBytes, after = null) {
+    const rows = after === null
+      ? this.db.prepare('SELECT k, record, certificate FROM market_batches WHERE round_id = ? AND certificate IS NOT NULL ORDER BY k').all(Buffer.from(roundIdBytes))
+      : this.db.prepare('SELECT k, record, certificate FROM market_batches WHERE round_id = ? AND certificate IS NOT NULL AND k > ? ORDER BY k').all(Buffer.from(roundIdBytes), Number(after));
+    return rows
       .map((r) => ({ k: String(r.k), record: JSON.parse(r.record), sigs: JSON.parse(r.certificate) }));
   }
 
@@ -509,6 +515,9 @@ export class OrderBook {
   }
   #synced = new Map();    // round id hex -> { heard, needed } once a read was complete
   #syncing = new Map();   // round id hex -> the read in flight
+  // THE CURSOR PER ROUND AND SEAT (kanban #740 ruling, 2026-10-28: the seats ran out of memory): round id hex -> Map(seat base -> k),
+  // the last batch of that seat's list this seat holds with every earlier one it listed - the next read asks only for later batches
+  #after = new Map();
 
   async #syncOnce(roundIdBytes) {
     const m = this.market(roundIdBytes);
@@ -520,6 +529,9 @@ export class OrderBook {
     // the main thread - to answer "held already" or refuse)
     const held = new Set(this.db.prepare('SELECT k FROM market_batches WHERE round_id = ? AND certificate IS NOT NULL').all(Buffer.from(roundIdBytes)).map((r) => String(r.k)));
     const state = { answered: 0, fresh: 0, complete: true, unheard: [] };
+    if (!this.#after.has(rid)) this.#after.set(rid, new Map());
+    if (this.#after.size > 4096) this.#after.delete(this.#after.keys().next().value);
+    const cursors = this.#after.get(rid);
     let reached = () => {};
     const enough = new Promise((resolve) => { reached = resolve; });
     const ask = async (base) => {
@@ -529,12 +541,15 @@ export class OrderBook {
       try {
         const late = new Promise((_, reject) => { timer = setTimeout(() => { if (ac) ac.abort(); reject(new Error(`no answer in ${this.syncTimeoutMs} ms`)); }, this.syncTimeoutMs); });
         late.catch(() => {});
-        const r = await Promise.race([this.fetcher(`${base}/book-certificates?round=${rid}`, ac ? { signal: ac.signal } : undefined), late]);
+        // ONLY THE BATCHES AFTER THE CURSOR (an older seat ignores `after` and lists them all; what is held here is skipped)
+        const after = cursors.get(base);
+        const r = await Promise.race([this.fetcher(`${base}/book-certificates?round=${rid}${after === undefined ? '' : `&after=${after}`}`, ac ? { signal: ac.signal } : undefined), late]);
         if (!r.ok) throw new Error(`answered ${r.status}`);
         body = await Promise.race([r.json(), late]);
         if (!body || !Array.isArray(body.certificates)) throw new Error('answered no list of certificates');
       } catch (e) { state.unheard.push(`${base}: ${e.message}`); return; } finally { clearTimeout(timer); }
-      await this.#take(roundIdBytes, rid, base, body, held, state);
+      const next = await this.#take(roundIdBytes, rid, base, body, held, state, cursors.get(base));
+      if (next !== undefined) cursors.set(base, next);
       state.answered += 1;
       if (1 + state.answered >= m.needed) reached();
     };
@@ -551,19 +566,31 @@ export class OrderBook {
     return { ok: true, heard, needed: m.needed, fresh: state.fresh };
   }
 
-  /** One seat's GET /book-certificates answer taken here: what this seat lacks certified, and the orders a held batch lacks. */
-  async #take(roundIdBytes, rid, base, body, held, state) {
+  /**
+   * One seat's GET /book-certificates answer taken here: what this seat lacks certified, and the orders a held batch lacks. Answers that
+   * seat's next cursor: the last batch it listed up to which every listed batch is held and whole here, below any batch still pending
+   * there - a batch refused or an order not replayed is listed again on the next read (undefined: no batch to move the cursor to).
+   */
+  async #take(roundIdBytes, rid, base, body, held, state, after) {
+    const done = new Map();   // k -> whether the batch is held here with every order whole
+    let below = Infinity;     // the cursor stays below a batch still pending at that seat
     // A BATCH STILL PENDING AT THAT SEAT (its answer's `pending`, absent from an older seat): it may be certified after this read, so
     // the read is not kept and the next settle pass asks again
-    for (const k of Array.isArray(body.pending) ? body.pending : []) if (!held.has(String(k))) state.complete = false;
+    for (const k of Array.isArray(body.pending) ? body.pending : []) {
+      if (!held.has(String(k))) state.complete = false;
+      if (/^[0-9]{1,15}$/.test(String(k))) below = Math.min(below, Number(k));
+    }
     for (const cert of body.certificates) {
       const k = cert && cert.record ? String(cert.record.k) : null;
+      if (k === null || !/^[0-9]{1,15}$/.test(k)) continue;
+      done.set(k, false);
       // A BATCH HELD HERE WHOSE ORDER IS NOT WHOLE HERE (kanban #620, fed2-3 16:51Z: the entry and locks replayed, then "a loser's P could
       // not be opened: this node accepted no handout for that entry"): what is missing is replayed from this peer
       if (k !== null && held.has(k)) {
         if (typeof this.replayOrder === 'function' && Array.isArray(cert.record.orders))
           for (const o of cert.record.orders) if (isHex(String(o), 32) && !this.#orderWhole(String(o)))
-            if (!(await this.#replay(rid, k, String(o), base))) state.complete = false;
+            if (!(await this.#replay(rid, k, String(o), base))) { state.complete = false; done.set(k, null); }
+        if (done.get(k) === false) done.set(k, true);
         continue;
       }
       let got = this.certify(roundIdBytes, cert);
@@ -575,9 +602,15 @@ export class OrderBook {
         for (const o of cert.record.orders) if (isHex(String(o), 32) && !this.#orderWhole(String(o))) await this.#replay(rid, k, String(o), base);
         got = this.certify(roundIdBytes, cert);
       }
-      if (got.ok && k !== null) { held.add(k); if (got.fresh) state.fresh += 1; }
-      else if (!got.ok) { state.complete = false; console.log(`[orders] ${rid.slice(0, 16)} batch ${k}: the certificate ${base} holds is not taken here: ${got.why}`); }
+      if (got.ok) { held.add(k); done.set(k, true); if (got.fresh) state.fresh += 1; }
+      else { state.complete = false; console.log(`[orders] ${rid.slice(0, 16)} batch ${k}: the certificate ${base} holds is not taken here: ${got.why}`); }
     }
+    let next = after;
+    for (const k of [...done.keys()].map(Number).sort((x, y) => x - y)) {
+      if (k >= below || done.get(String(k)) !== true) break;
+      if (next === undefined || k > next) next = k;
+    }
+    return next;
   }
 
   async #replay(rid, k, o, base) {
