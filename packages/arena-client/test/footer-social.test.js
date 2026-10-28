@@ -5,7 +5,8 @@
 // inline SVG, a new tab, no referrer, named for a screen reader - and each page whose footer site-chrome.js draws still loads it.
 // GITHUB BESIDE THEM, NO BUILD LINE, CLEAR OF DONATE (kanban #753, a tester 2026-10-28: "donate button is too close to donate button",
 // "Remove the static build display", "create a page on docs to link them all and add a GitHub icon"): a fourth link, GitHub, to the docs'
-// Repositories page; no footer carries a build or release line; the links stand well clear of Donate.
+// Repositories page; the links stand well clear of Donate. The footers keep "UI n" (the node pages their release) but never the static
+// build (the owner 2026-10-28: "I want 'UI xxx' still there, just not 'build 0.0.10' which was static").
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -56,36 +57,35 @@ test('the pages whose footer is site-chrome.js\'s still load it: the menu pages,
     assert.match(read(p), /<script src="(?:https:\/\/testnet\.bitcoin-arena\.io)?\/site-chrome\.js"/, p);
 });
 
-test('no footer carries a build or release line (#753); the node pages show their release beside the title instead', () => {
-  // the node's pages: the footer is the links alone; nothing writes into it
+test('every footer says the UI number or the release, never the static build (#753, the owner 2026-10-28: "just not build 0.0.10 which was static")', () => {
+  // the node's pages: the release alone in its own span before the links, no build commit
   for (const p of ['packages/arena-node/pages/owner.html', 'packages/arena-installer/www/index.html', 'packages/arena-node/src/dashboard.js']) {
     const src = read(p);
-    assert.match(src, /<footer class="build"><span class="social">.*?<\/span><\/footer>/, p);
-    assert.ok(!/id="build"|getElementById\('build'\)/.test(src), `${p}: no release line in the footer`);
+    assert.match(src, /<footer class="build"><span id="build"><\/span><span class="social">.*?<\/span><\/footer>/, p);
+    assert.match(src, /getElementById\('build'\)\.textContent ?= ?(?:'Bitcoin Arena ' ?\+ ?v\.version|`Bitcoin Arena \$\{st\.build\.version\}`)/, p);
+    assert.ok(!/'build ' ?\+|· build \$\{/.test(src), `${p}: no build commit in the footer`);
+    assert.match(src, /footer\.build #build:not\(:empty\)\{margin-right:16px\}/, p);
   }
   assert.ok(!read('packages/arena-node/src/dashboard.js').includes("createElement('footer')"), 'the dashboard\'s footer is in the page, not made after the fetch');
-  // ... the release beside the title: the owner page and the installer fill .ver; the dashboard's React title carries it (#674)
   assert.match(read('packages/arena-node/pages/owner.html'), /<h1>Bitcoin Arena · Node Owner <span class="ver" id="ver"><\/span><\/h1>/);
-  assert.match(read('packages/arena-node/pages/owner.html'), /document\.getElementById\('ver'\)\.textContent = v\.version/);
-  const inst = read('packages/arena-installer/www/index.html');
-  assert.match(inst, /<h1>Bitcoin Arena setup <span class="ver" id="ver"><\/span><\/h1>/);
-  assert.match(inst, /if \(st\.build && st\.build\.version\) document\.getElementById\('ver'\)\.textContent = st\.build\.version;/);
-  assert.match(read('packages/arena-web/src/dashboard/DashboardPage.jsx'), /<span className="ver" id="release">/);
-  // site-chrome.js: no stamp and no build span; its footer is the links and Donate
+  assert.match(read('packages/arena-installer/www/index.html'), /<h1>Bitcoin Arena setup <span class="ver" id="ver"><\/span><\/h1>/);
+  // site-chrome.js: "UI n" left, then the links and Donate
   const chrome = read('src/arena-ui/site-chrome.js');
-  assert.ok(!/STAMP|asc-build|\{\{\{/.test(chrome), 'site-chrome.js has no build line');
-  assert.match(chrome, /f\.innerHTML = '<span class="asc-social">.*?<\/span>'\n\s+\+ '<a class="asc-donate"/);
-  // the Arena page: no fixed build line, none in the games screen's foot row; the build stays on the loading screen's last line
+  assert.match(chrome, /var STAMP = 'UI \{\{\{ UI_VERSION \}\}\}';/);
+  assert.ok(!chrome.includes('PRODUCT_VERSION'));
+  assert.match(chrome, /f\.innerHTML = '<span class="asc-build" aria-hidden="true">' \+ [^\n]*\n\s+\+ '<span class="asc-social">.*?<\/span>'\n\s+\+ '<a class="asc-donate"/);
+  // the Arena page: the fixed line, the games row and the loading screen say "UI n"; the static build is nowhere visible
   const page = read('src/arena-ui/index.html');
-  assert.ok(!page.includes('arena-build'), 'no #arena-build');
-  assert.match(page, /<div class="foot-row"><span class="arena-social">.*?<\/span><button type="button" class="donate-btn"[^>]*>&hearts; Donate<\/button><\/div>/);
-  assert.equal((page.match(/build \{\{\{ PRODUCT_VERSION \}\}\} · UI \{\{\{ UI_VERSION \}\}\}/g) || []).length, 2, 'the loading screen\'s line and the order timing\'s ui');
-  assert.match(page, /<div class="build-line" id="boot-build">build \{\{\{ PRODUCT_VERSION \}\}\} · UI \{\{\{ UI_VERSION \}\}\}<\/div>/);
-  assert.ok(!/#boot-build \{ display: none; \}/.test(page), 'the loading screen\'s build line is no longer hidden for a footer line');
-  assert.match(page, /ui: 'build \{\{\{ PRODUCT_VERSION \}\}\} · UI \{\{\{ UI_VERSION \}\}\}', agent:/);
-  // over a game's own client the foot is still its 30 px strip, empty
-  assert.match(page, /<div id="arena-foot" aria-hidden="true"><\/div>/);
-  assert.match(page, /html body\.arena-own-client #arena-foot \{ height: calc\(30px \+ env\(safe-area-inset-bottom, 0px\)\); \}/);
+  assert.match(page, /<div id="arena-build" aria-hidden="true">UI \{\{\{ UI_VERSION \}\}\}<\/div>/);
+  assert.match(page, /<div class="foot-row"><span class="build-line">UI \{\{\{ UI_VERSION \}\}\}<\/span><span class="arena-social">.*?<\/span><button type="button" class="donate-btn"[^>]*>&hearts; Donate<\/button><\/div>/);
+  assert.match(page, /<div class="build-line" id="boot-build">UI \{\{\{ UI_VERSION \}\}\}<\/div>/);
+  // PRODUCT_VERSION only where nobody reads it on screen: #boot's data attribute, the page's config and the order timing's ui
+  const uses = [...page.matchAll(/.{0,40}\{\{\{ PRODUCT_VERSION \}\}\}/g)].map((m) => m[0]);
+  assert.equal(uses.length, 3, uses.join(' | '));
+  assert.ok(uses.some((u) => u.includes('data-build="')) && uses.some((u) => u.includes("productVersion: '")) && uses.some((u) => u.includes("ui: 'build ")), uses.join(' | '));
+  // the fixed line ends 16 px left of the links (their left edge 214 px from the right) wherever it shows
+  assert.equal((page.match(/padding: 0 230px 0 8px;/g) || []).length, 2);
+  assert.match(page, /html body\.arena-own-client #arena-build \{ height: calc\(30px \+ env\(safe-area-inset-bottom, 0px\)\); line-height: 30px; padding-right: 230px; font-size: 10px; \}/);
 });
 
 test('the links stand clear of Donate (#753): 16 px more than the row gap in site-chrome, 14 px in the games row, 20 px left of the fixed Donate', () => {
