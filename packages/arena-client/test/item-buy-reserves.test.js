@@ -5,7 +5,7 @@
 // signs a layout-12 record naming the key and the version; with no key from five nodes it pays nothing at all.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { buyItem, itemTermsOf, itemShareOn, itemPriceOn } from '../src/item-buy.js';
 import { signFinalSig } from '../../arena-protocol/src/final-sig.js';
 import { decodePurchase, purchaseStands, PURCHASE_RESERVES_LAYOUT } from '../../arena-protocol/src/purchase.js';

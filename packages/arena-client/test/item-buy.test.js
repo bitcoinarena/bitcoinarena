@@ -4,7 +4,7 @@
 // standing in, the record a seat receives is one purchaseStands takes.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { buyItem, ownedItems, itemsKeyFor, entryItemsFor, entryUnlocks, shopOf, itemUnlocksOf } from '../src/item-buy.js';
 import { entryItemDigest, encodeEntryContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
 import { signFinalSig } from '../../arena-protocol/src/final-sig.js';
