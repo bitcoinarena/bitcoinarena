@@ -42,3 +42,108 @@ test('proved peg-ins in the seating: signed with the seats, the same amounts mak
   const forged = { ...withP(2, { [A]: '50000' }), pegIns: { [A]: '90000' } };
   assert.equal(standingSeating({ signed: [withP(0, { [A]: '90000' }), withP(1, { [A]: '90000' }), forged], federationId: fid, epoch: 7, seated, threshold: 3, verify }).ok, false, 'the amounts are signed');
 });
+
+// kanban #559 P2 (spec §23A.9: "A seat earns its share for a round only if it was eligible in that round's epoch: the seating the
+// guardians sign names only eligible seats"). The whole path a seat takes, without a live seat: each guardian ranks the epoch
+// (seatGateways), signs its paid seats (paidSeatsOf), a seating stands at threshold (standingSeating), and a round reads the standing
+// seating of seatingEpochAt(its census height) - as server.js signerNodesFor does - into the fee table.
+test('§23A.9 P2: a seat is paid in a round only if the standing seating of the round\'s epoch names it; no standing seating, no gateway', async () => {
+  const { seatGateways } = await import('../src/gateway-seats.js');
+  const { seatingEpochAt, paidSeatsOf } = await import('../src/gateway-seating.js');
+  const { GATEWAY_EPOCH_BLOCKS } = await import('../src/gateway-seats.js');
+  const { nodeFeeTable } = await import('../src/fee.js');
+  const { fromHex } = await import('../src/hash.js');
+  const { TEST_FEDERATION_ID } = await import('../src/test-federation.js');
+  const b32 = (n) => new Uint8Array(32).fill(n);
+  const E = 20000, edge = (e) => e * GATEWAY_EPOCH_BLOCKS;   // epoch e starts at block edge(e)
+  // THE EPOCH A HEIGHT READS: the last whole one. A guardian at the last block of E cannot sign E yet; at the first block of E+1 it can,
+  // and a round whose census height is there reads E - the same function, so a round never reads an epoch not yet signable.
+  assert.equal(seatingEpochAt(edge(E + 1) - 1), E - 1, 'the last block of E: E is not whole yet');
+  assert.equal(seatingEpochAt(edge(E + 1)), E, 'the first block of E+1: E is whole');
+  assert.equal(seatingEpochAt(edge(E + 2) - 1), E, 'the last block of E+1 still reads E');
+  assert.equal(seatingEpochAt(edge(E + 2)), E + 1, 'the next block reads E+1');
+
+  // the gateways are seated guardians of the federation: a = guardian 0, b = guardian 1
+  const a = g[0].hex, b = g[1].hex;
+  const cand = (hex, over = {}) => ({ node: fromHex(hex), operatorId: hex.slice(0, 8), seatedGuardian: true, registered: true, volumeSats: 0n, inboundSats: 300_000n,
+    outsideInboundSats: 150_000n, outboundSats: 150_000n, pegInSats: 60_000n, availabilityPct: 99, bondSats: 50_000n, ...over });
+  const rank = (epoch, candidates, incumbents = []) => seatGateways({ candidates, beacon: b32(0xbe), epoch, incumbents, network: 'testnet4', bondMinGuardian: 50_000n });
+  const fidHex = toHex(TEST_FEDERATION_ID);
+  const standing = new Map();   // epoch -> the standing seating, as every seat keeps it (server.js gatewaySeatings)
+  const gather = (epoch, seats, signers = [0, 1, 2, 3]) => {
+    const signed = signers.map((i) => signGatewaySeating({ federationId: fidHex, epoch, seats: Array.isArray(seats) ? seats : seats[i] }, g[i].hex, (h) => schnorr.sign(h, g[i].secret)));
+    const st = standingSeating({ signed, federationId: fidHex, epoch, seated, threshold: 3, verify });
+    if (st.ok) standing.set(epoch, st.seating);
+    return st;
+  };
+  const committee = [b32(0x21), b32(0x22)];
+  const contract = { networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 1, gameVerifySlots: 2, settlementSlots: 2, gameId: b32(0x47), simCoreHash: b32(1),
+    startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID,
+    stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b32(0xd0), censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
+    stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150,
+    minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes: committee };
+  const entries = [1, 2, 3].map((n) => ({ pubkey: b32(0xa0 + n), outcome: n === 1 ? 'DELIVERED' : 'FAILED', score: 1, stakeMsat: 100_003n * BigInt(n) }));
+  // A ROUND: the gateway list is the standing seating of its epoch, else none (server.js signerNodesFor)
+  const round = (censusHeight, { v = 15, guardian = seated } = {}) => {
+    const s = standing.get(seatingEpochAt(censusHeight));
+    const gateway = s ? s.seats.map(fromHex) : [];
+    const pools = { gameVerify: committee, settlement: committee, guardian: guardian.map(fromHex), gateway };
+    const t = nodeFeeTable({ contract: { ...contract, censusHeight, protocolVersion: v }, entries, pools,
+      eligible: new Set([...committee.map(toHex), ...guardian, ...gateway.map(toHex)]) });
+    assert.equal([...t.signerNodes.values()].reduce((x, y) => x + y, 0n) + t.unallocated, t.fee);
+    assert.equal(t.unallocated, 0n);
+    return { t, gw: (hex) => t.signerNodes.get(`gateway:${hex}`) || 0n };
+  };
+
+  // (a) EPOCH E: a is below the minimums (up 80 %), b eligible - a is not seated, and E's seating names b alone
+  const rE = rank(E, [cand(a, { availabilityPct: 80 }), cand(b)]);
+  assert.deepEqual([rE.seated, rE.belowMinimums], [[b], []]);
+  assert.deepEqual(paidSeatsOf(rE), [b]);
+  assert.equal(gather(E, paidSeatsOf(rE)).ok, true);
+  for (const h of [edge(E + 1), edge(E + 2) - 1]) {   // the first and the last census height that reads E
+    const { t, gw } = round(h);
+    assert.equal(gw(a), 0n, `census ${h}: a, below the minimums in E, earns no gateway share`);
+    assert.equal(gw(b), t.pools.gateway, `census ${h}: the other seat takes the whole gateway third (P3)`);
+    assert.ok(t.signerNodes.get(`guardian:${a}`) > 0n, 'a is still paid as a guardian');
+  }
+  // the same, when nobody is eligible: a holds the one seat below the minimums, serves, and the signed seating names nobody
+  const alone = rank(E - 1, [cand(a, { availabilityPct: 80 })]);
+  assert.deepEqual([alone.seated, alone.belowMinimums], [[a], [a]]);
+  assert.deepEqual(paidSeatsOf(alone), [], 'the seat held below the minimums is not signed');
+  assert.equal(gather(E - 1, paidSeatsOf(alone)).ok, true, 'a seating of no paid seat stands');
+  const { t: tAlone } = round(edge(E));
+  assert.equal(tAlone.pools.gateway, undefined, 'no paid seat: no gateway pool, the guardians keep the custody pool');
+  assert.equal(tAlone.signerNodes.has(`gateway:${a}`), false);
+
+  // (b) EPOCH E+1: a eligible again; b held a seat in E and steps back behind it, both seated (two seats), both signed
+  const rE1 = rank(E + 1, [cand(a), cand(b)], rE.seated);
+  assert.deepEqual([...paidSeatsOf(rE1)].sort(), [a, b].sort());
+  assert.equal(gather(E + 1, paidSeatsOf(rE1)).ok, true);
+  { const { t, gw } = round(edge(E + 2));   // the first census height that reads E+1, one block after the last that reads E
+    assert.ok(gw(a) > 0n && gw(b) > 0n, 'a, eligible in E+1, is paid in a round of E+1');
+    assert.equal(gw(a) + gw(b), t.pools.gateway); }
+
+  // (c) EPOCH E+2: only two of the four seated guardians (threshold 3) sign a's and b's seats, the third another body - no seating
+  // stands; a round of E+2 does not fall back to E+1's seating: it pays no gateway, and the guardians keep the custody pool
+  const split = gather(E + 2, { 0: [a, b], 1: [a, b], 2: [b] }, [0, 1, 2]);
+  assert.equal(split.ok, false);
+  assert.match(split.why, /at most 2/);
+  assert.equal(standing.has(E + 2), false);
+  { const { t } = round(edge(E + 3));
+    assert.equal(t.pools.gateway, undefined, 'below the threshold: no gateway seats in the epoch');
+    assert.equal([...t.signerNodes.keys()].some((k) => k.startsWith('gateway:')), false);
+    const third = t.fee / 3n;
+    assert.equal(t.pools.guardian, t.fee - 2n * third, 'the guardians keep the whole custody pool (P3, protocol 15)'); }
+
+  // (d) EPOCH E+3: nothing signed at all - the same; and at protocol 22 with no guardian either, the custody pool to the two committees
+  { const { t } = round(edge(E + 4));
+    assert.equal(t.pools.gateway, undefined);
+    const { t: t22 } = round(edge(E + 4), { v: 22, guardian: [] });
+    assert.equal(t22.pools.gateway, undefined);
+    assert.equal(t22.pools.guardian, 0n);
+    assert.equal(t22.pools.gameVerify + t22.pools.settlement, t22.fee, 'protocol 22, no guardian, no standing seating: the committees take the fee');
+    // and at 22 with the E+1 seating standing and no guardian, the custody pool goes to the seats (e7815f21) - the seating decides who
+    const { t: s22, gw } = round(edge(E + 2), { v: 22, guardian: [] });
+    assert.ok(gw(a) > 0n && gw(b) > 0n);
+    assert.equal((s22.signerNodes.get(`guardian:${a}`) || 0n) + (s22.signerNodes.get(`guardian:${b}`) || 0n), s22.pools.guardian); }
+});

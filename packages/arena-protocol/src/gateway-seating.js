@@ -8,8 +8,23 @@
 import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
 import { tagAt, tagsAccepted, TAG_PAIRS } from './tag-switch.js';
+import { GATEWAY_EPOCH_BLOCKS } from './gateway-seats.js';
 
 export const GATEWAY_SEATING_TAG = TAG_PAIRS.gatewaySeating[0];   // the tag before the switch (tag-switch.js, kanban #525)
+
+/**
+ * THE EPOCH WHOSE SEATING A HEIGHT READS (§23A.9, kanban #559 P2): the last whole epoch before the one `height` is in. A guardian at chain
+ * tip `height` signs this epoch's seating (it measured all of it), and a round whose census height is `height` is paid by this epoch's
+ * standing seating: a seat earns in a round only if that seating names it. One function for both, so a round never reads an epoch
+ * the guardians could not yet have signed.
+ */
+export const seatingEpochAt = (height) => Math.floor(Number(height) / GATEWAY_EPOCH_BLOCKS) - 1;
+
+/**
+ * THE SEATS A GUARDIAN SIGNS (§23A.9: "the seating the guardians sign names only eligible seats"): its ranking's seated gateways
+ * (gateway-seats.js seatGateways) but the one holding its seat below the minimums - it serves, and is not paid.
+ */
+export const paidSeatsOf = (ranking) => ((ranking && ranking.seated) || []).filter((n) => !((ranking && ranking.belowMinimums) || []).includes(n));
 
 /**
  * THE PROVED PEG-INS A SEATING NAMES (kanban #559/#543, §23A.3a part 2): { node hex: sat string } for its seats whose peg-in the

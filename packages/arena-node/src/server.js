@@ -39,12 +39,12 @@ import { BOND_TEMPLATE_V2 } from '../../arena-protocol/src/bond-script.js';
 import { latestReleaseReader } from './release-latest.js';
 import { createGatewayWatch } from './gateway-watch.js';
 import { lnv2ModuleId, federationCoins, incomingSince } from './gateway-volume.js';
-import { signGatewaySeating, standingSeating } from '../../arena-protocol/src/gateway-seating.js';
+import { signGatewaySeating, standingSeating, seatingEpochAt, paidSeatsOf } from '../../arena-protocol/src/gateway-seating.js';
 import { signLiquiditySeating, standingLiquiditySeating, liquiditySeatingFrom } from '../../arena-protocol/src/liquidity-seating.js';
 import { checkLiquidityClaim, provenFreeSats } from '../../arena-protocol/src/liquidity.js';
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
 import { capacityView, capacityPlea, bondIncentive, guardianWeights as capacityGuardianWeights, gatewayWeights as capacityGatewayWeights } from '../../arena-protocol/src/capacity.js';
-import { GATEWAY_EPOCH_BLOCKS, GATEWAY_MINIMUMS } from '../../arena-protocol/src/gateway-seats.js';
+import { GATEWAY_MINIMUMS } from '../../arena-protocol/src/gateway-seats.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
 import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.js';
 import { BADGES } from '../../arena-protocol/src/badges.js';
@@ -2225,14 +2225,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // round's census height - none standing, none paid (the guardians keep the pool)
       let gateway = [], gatewaySeating = null;
       if (Number(contract.protocolVersion) >= GATEWAY_SEAT_VERSION && contract.federationId) {
-        const seating = gatewaySeatings.get(`${toHex(contract.federationId)}:${Math.floor(Number(contract.censusHeight) / GATEWAY_EPOCH_BLOCKS) - 1}`);
+        const seating = gatewaySeatings.get(`${toHex(contract.federationId)}:${seatingEpochAt(contract.censusHeight)}`);
         if (seating) { gateway = seating.seats.map((k) => fromHex(k)); gatewaySeating = seating; }
       }
       // AND THE LIQUIDITY PROVIDERS (2026.0.16, §23A.10): the standing liquidity seating of the same epoch, with the weights the
       // quarter is split by - none standing, the quarter is custody's
       let liquidity = [], liquidityWeights = null;
       if (Number(contract.protocolVersion) >= LIQUIDITY_VERSION && contract.federationId) {
-        const ls = liquiditySeatings.get(`${toHex(contract.federationId)}:${Math.floor(Number(contract.censusHeight) / GATEWAY_EPOCH_BLOCKS) - 1}`);
+        const ls = liquiditySeatings.get(`${toHex(contract.federationId)}:${seatingEpochAt(contract.censusHeight)}`);
         if (ls) { liquidity = ls.providers.map((p) => fromHex(p.node)); liquidityWeights = new Map(ls.providers.map((p) => [p.node, BigInt(p.weight)])); }
       }
       // AND UNDER CAPACITY PRESSURE THE GUARDIANS' WEIGHTS (2026.0.20, §23A.3a part 1): each guardian's bond from the round's census, the
@@ -4910,14 +4910,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A guardian seat signs its own ranking of the last whole epoch first.
   if (fedRecords && typeof chainTip === 'function') {
     const gatherSeatings = async () => {
-      const epoch = Math.floor(Number(await chainTip()) / GATEWAY_EPOCH_BLOCKS) - 1;
+      const epoch = seatingEpochAt(await chainTip());
       for (const { watch } of gatewayWatches) {
         const v = await watch.view().catch(() => ({ ok: false }));
         if (v.ok && v.measuredEpoch === 'whole' && v.epoch === epoch && !ownSeatings.has(`${v.federationId}:${epoch}`))
           // the seats it signs are the ones that earn: a gateway holding its seat below the minimums serves, but is not paid (§23A.9)
           // and each paid seat's peg-in as this guardian proved it from the federation's coins (kanban #559/#543): signed with the seats,
           // the weights of the gateways' part under peg-in pressure (§23A.3a part 2); a seat it could not check is left out
-          { const paid = v.seated.filter((n) => !(v.belowMinimums || []).includes(n));
+          { const paid = paidSeatsOf(v);
             const pegIns = Object.fromEntries(paid.filter((n) => v.gateways && v.gateways[n] && v.gateways[n].provedPegInSats != null).map((n) => [n, String(v.gateways[n].provedPegInSats)]));
             const own = signGatewaySeating({ federationId: v.federationId, epoch, seats: paid, ...(Object.keys(pegIns).length ? { pegIns } : {}) }, toHex(round.pubkey), (h) => schnorr.sign(h, round.identity.secret));
             ownSeatings.set(`${v.federationId}:${epoch}`, own); keepSeating('own', v.federationId, epoch, own); }
@@ -4951,7 +4951,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // federation's custody nodes' LND keys from their gateway claims - and signs it once per epoch; every seat keeps the standing one
     const getJson = async (u) => { try { const r = await fetch(u, { signal: AbortSignal.timeout(10000) }); return r.status === 200 ? await r.json() : null; } catch { return null; } };
     const gatherLiquidity = async () => {
-      const epoch = Math.floor(Number(await chainTip()) / GATEWAY_EPOCH_BLOCKS) - 1;
+      const epoch = seatingEpochAt(await chainTip());
       const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
       const entries = now.ok ? now.entries : [];
       const endpointOf = (node) => { const e = entries.find((x) => toHex(x.pubkey) === node); return e && e.advert && e.advert.endpoint ? String(e.advert.endpoint).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '') : null; };
