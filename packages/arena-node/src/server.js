@@ -49,6 +49,7 @@ import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
 import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.js';
 import { BADGES } from '../../arena-protocol/src/badges.js';
 import { missedInARow, seatingWarning } from './seatings.js';
+import { createUptime } from './uptime.js';
 import { devClientSnapshot } from './dev-client.js';
 import { attributeDonations, devEarnings, donationParts, donationsPage } from './dev-clients.js';
 import { nodeStanding, endpointWarning } from './node-standing.js';
@@ -3663,6 +3664,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // rounds' count or their newest row, which one covering-index read tells.
   let openList = { key: null, ids: [] };
   let dashboardKept = null;   // /dashboard.json, kept 30 s
+  // HOW LONG THIS NODE WAS UP (kanban #756, uptime.js): its own record of every stretch it ran, kept in its store from this release on -
+  // GET /uptime serves the four figures (24 h, 7 days, 30 days, all time) and the 24 h test the draw reads from protocol 22; the owner page,
+  // the node dashboard and the health page read that one door
+  const uptime = createUptime({ db: round.db, inForce: false, rule: 'protocol 22 (2.0): only nodes seen in the 24 h before the census are drawn' }).start();
+  let uptimeKept = null;      // /uptime, kept 30 s
   let setupStatusKept = null;
   // THE RELEASE THIS NODE RUNS (kanban #674): the release's VERSION and COMMIT files (tools/release/build-release.sh writes them at its
   // root), read once; a node run from a checkout has neither
@@ -6407,6 +6413,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           setupStatusKept = { at: nowMs, body };
         }
         return send({ ...setupStatusKept.body, node: toHex(round.pubkey), atMs: setupStatusKept.at, release: releaseHere() });
+      }
+      // THE NODE'S UPTIME (kanban #756): public, as /dashboard.json is - the figures off its own record (uptime.js), kept 30 s
+      if (req.method === 'GET' && url.pathname === '/uptime') {
+        const nowMs = Date.now();
+        if (!uptimeKept || nowMs - uptimeKept.at > 30000) uptimeKept = { at: nowMs, body: JSON.stringify({ node: toHex(round.pubkey), ...uptime.figures() }) };
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(uptimeKept.body);
       }
       if (req.method === 'GET' && url.pathname === '/dashboard.json') {
         const nowMs = Date.now();
@@ -10293,6 +10306,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         for (const c of p2pWss.clients) c.terminate();
         wss.close();
         if (duty) duty.stop();
+        uptime.stop();
         http.closeAllConnections();
         http.close(r);
       }),

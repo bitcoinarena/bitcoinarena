@@ -5,10 +5,13 @@
 // dashboard.json answers. GuardianCheck: every guardian of the two testnet4 federations as this device reached it - its sessions and the
 // time it took, or why not - with each federation's agreement and the total. WayOut: the /wallet/ page's link to where it goes. The pages keep reading the nodes; these draw what they read.
 import React from 'react';
+import { uptimeCell } from '../dashboard/Uptime.jsx';
 
 const fmtSat = (msat) => (Number(msat) / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 }) + ' sat';
 
-/** rows: [{ n, href, read: null (reading) | false (not answering) | { node, dayMsat, rounds } }] */
+// ITS UPTIME (kanban #756): 24 h · 7 d · 30 d · all from its GET /uptime, the 24 h marked when below inclusion
+const uptimeLine = (u) => { const c = uptimeCell(u); return c ? <> · uptime <span className="v">{c.text}</span>{c.below ? <span className="bad"> below inclusion</span> : null}</> : null; };
+/** rows: [{ n, href, read: null (reading) | false (not answering) | { node, dayMsat, rounds, uptime } }] */
 export class NodesList extends React.Component {
   render() {
     const { rows } = this.props;
@@ -17,7 +20,7 @@ export class NodesList extends React.Component {
       <div className="row" key={r.n}>
         <a href={r.href}>Node {r.n}</a>
         <span className="k">{r.read === null ? 'reading…' : r.read === false ? 'not answering now'
-          : <><span>{r.read.node.slice(0, 12)}…</span> · today <span className="v">{fmtSat(r.read.dayMsat)}</span> · {r.read.rounds} rounds checked</>}</span>
+          : <><span>{r.read.node.slice(0, 12)}…</span> · today <span className="v">{fmtSat(r.read.dayMsat)}</span> · {r.read.rounds} rounds checked{uptimeLine(r.read.uptime)}</>}</span>
       </div>));
   }
 }
