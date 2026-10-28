@@ -107,3 +107,17 @@ test('the claims are asked quietly', async () => {
   await c.componentDidMount();
   assert.deepEqual(asked.filter((p) => /claim/.test(p)), ['/gateway-claim?quiet=1', '/liquidity-claim?quiet=1']);
 });
+
+// GUARDING IS ON (kanban #731, the owner: "the guardian box is marked as Guarding which i assume is on, but has no green border showing its
+// active and also the label should be green in that case"): measured on a node not in the census yet, its guardian running
+test('a guarding node\'s Guardian tile is on: green border and a green Guarding pill, in the census or not', () => {
+  const guardian = { guardian: true, endpoint: 'ws://127.0.0.1:18174' };
+  for (const m of [null, { ...mine, guardianCapable: false }, mine]) {
+    const was = switchesOf(m);
+    const html = renderToStaticMarkup(React.createElement(RolesPanel, { node: 'me', initial: { loaded: true, mine: m, guardian, was, now: { ...was } } }));
+    assert.match(html, /class="tile on" id="tile-custody"[\s\S]*?<span class="pill on">Guarding<\/span>/, `census row ${JSON.stringify(m)}`);
+  }
+  // no guardian and no custody in the census: off, as before
+  const html = renderToStaticMarkup(React.createElement(RolesPanel, { node: 'me', initial: { loaded: true, mine: null, guardian: null, was: {}, now: {} } }));
+  assert.match(html, /class="tile" id="tile-custody"[\s\S]*?<span class="pill">Off<\/span>/);
+});
