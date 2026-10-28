@@ -2293,7 +2293,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // only rounds whose committee is drawn count as live (kanban #685); committeeOf is the listing's own draw, set up before any request
   const liveNow = gameLive(round, { windowOf: marketWindowFor, drawable: (rid) => {
-    if (committeeOf(fromHex(rid)).drawn !== true) return false;
+    const k = committeeOf(fromHex(rid));
+    if (k.drawn !== true) return false;
+    // AND SEATED (kanban #761): where the seats seat (§5A.7), a round whose roles are not both seated takes no entry - no live round either
+    if (k.seated && !(k.seated.game && k.seated.settlement)) return false;
     // AND PLAYED IN ITS WINDOW (the backup rule, §5A.5): a backup round under a drawn primary is no live round
     const row = round.get(fromHex(rid)); if (!row) return true;
     try { return playedHere(fromHex(rid), decodeRoundContract(new Uint8Array(row.contract))).played; } catch { return true; }
