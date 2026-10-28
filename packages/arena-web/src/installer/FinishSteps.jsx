@@ -228,6 +228,9 @@ export const foundText = (r) => (r.coins.length
 /** Public testnet4 faucets for the guided way (kanban #635). */
 export const FAUCETS = Object.freeze([['mempool.space', 'https://mempool.space/testnet4/faucet'], ['coinfaucet.eu', 'https://coinfaucet.eu/en/btc-testnet4/'], ['testnet4.dev', 'https://faucet.testnet4.dev/']]);
 
+/** How often the bond step looks for the deposit by itself (kanban #763). */
+export const BOND_CHECK_EVERY_MS = 15000;
+
 export class BondStep extends React.Component {
   constructor(props) {
     super(props);
@@ -235,12 +238,26 @@ export class BondStep extends React.Component {
     this.state = { pegIn: '50000', need: needText(w.needSats, w.parts), found: null, busy: false, msg: null, coins: 'auto', ...(props.initial || {}) };
     this.check = this.check.bind(this); this.postBond = this.postBond.bind(this); this.later = this.later.bind(this); this.autoCoins = this.autoCoins.bind(this);
   }
+  // THE DEPOSIT LOOKED FOR WITHOUT A CLICK (kanban #763, 2026-10-28: "when opening step 11, we could automatically check for deposits and
+  // not wait for the user to click on the button. at least if the install script recognizes a previous installation"): asked once when the
+  // step opens and again every BOND_CHECK_EVERY_MS until the deposit is enough; the button still asks at once
+  componentDidMount() { if (this.props.post) this.auto(); }
+  componentWillUnmount() { this.gone = true; clearTimeout(this.autoTimer); }
+  async auto() {
+    if (this.gone) return;
+    if (!this.state.busy) await this.check({ quiet: true });
+    if (this.gone || (this.state.found && this.state.found.enough)) return;
+    this.autoTimer = setTimeout(() => this.auto(), BOND_CHECK_EVERY_MS);
+  }
   custody() { return (this.props.st.roles || []).includes('custody'); }
   body() { return this.custody() ? { pegInSats: Number(this.state.pegIn) } : {}; }
-  async check() {
-    this.setState({ busy: true });
+  async check({ quiet = false } = {}) {
+    if (!quiet) this.setState({ busy: true });
     const r = await this.props.post('/api/bond/check', this.body());
+    if (this.gone) return;
     this.setState({ busy: false });
+    // an automatic ask that finds nothing yet says nothing: the step's own text already says what to send
+    if (quiet && (!r.ok || !(r.found || r.sats || r.enough))) return;
     if (!r.ok) return this.setState({ msg: said(r), found: null });
     this.setState({ found: r, msg: { ok: !!r.enough, text: foundText(r) }, ...(r.parts && Object.keys(r.parts).length > 2 ? { need: needText(r.needSats, r.parts) } : {}) });
   }
@@ -312,7 +329,7 @@ export class BondStep extends React.Component {
         {this.custody() ? <div>
           {later ? null : this.covers()}
           <label htmlFor="b-pegin">Peg-in for the gateway (sat)</label><input id="b-pegin" value={pegIn} onChange={(e) => this.setState({ pegIn: e.target.value })} /></div> : null}
-        <button type="button" className="ghost" id="b-check" disabled={busy} onClick={this.check}>Check for my deposit</button>
+        <button type="button" className="ghost" id="b-check" disabled={busy} onClick={() => this.check()}>Check for my deposit</button>
         <Msg r={msg} />
         {found && found.lock ? <p className="sub">{lockText(found.lock)}</p> : null}
         <button type="button" id="b-post" disabled={busy || !(found && found.enough)} onClick={this.postBond}>{later ? 'Update my bond for custody' : 'Post the bond'}</button>
