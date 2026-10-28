@@ -194,7 +194,8 @@ import { Ghosts } from './ghosts.js';
 import { gameLive } from './game-live.js';
 import { readReserve } from './federation-reserve.js';
 import { thresholdOf as thresholdOfFederation } from '../../arena-protocol/src/federation-record.js';
-import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY } from './roster.js';
+import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY, findSeriesPublication as findSeriesPublicationIndexed } from './roster.js';
+import { createSeriesPull, PULL_EVERY_MS } from './series-pull.js';
 import { seatingAgent } from './seating-agent.js';
 import { decodeSeatingCertificate, encodeSeatingCertificate } from '../../arena-protocol/src/seating.js';
 import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../../arena-protocol/src/genesis.js';
@@ -4085,7 +4086,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // the donation set in force, and funded - the operator names its series id as it names a paying round's id. Its rounds
   // are written by the series writer like any series'; an entry still needs its "ARN" SERIES publication below the beacon
   // (roster.js). Answers { ok, series, rounds, held } or { ok: false, why }.
-  const takeGridSeries = (t, { persist = true } = {}) => {
+  // `published`: the series' publication is confirmed on this node's own chain (publishedHere) - what stands in for the operator naming it
+  // funded on a node no operator of the series runs (kanban #757)
+  const takeGridSeries = (t, { persist = true, published = false } = {}) => {
     if (!isGridSeries(t)) return { ok: false, code: 400, why: 'this door takes a grid series (a line naming grid, period=N and count=N)' };
     const lead = seriesLeadIsValid(t);
     if (!lead.ok) return { ok: false, code: 409, why: lead.why };
@@ -4097,7 +4100,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // AND A 2026.0.3 SERIES' BOND_MIN, ONCE FOR ALL ITS ROUNDS: they share its template's census height and floor
     { const r0 = seriesRound(t, 0); const bm = bondMinStands(r0, roundIdOf(r0)); if (!bm.ok) return { ok: false, code: 409, why: `series ${id.slice(0, 16)}: ${bm.why}` }; }
     if (refuseSeries(t)) return { ok: false, code: 409, why: `series ${id.slice(0, 16)} is not written here: its game is not hosted, or its donation set or federation is refused` };
-    if (persist && !funded({ kind: 'series', contract: { stakeMsat: t.stakeMsat, seriesIdBytes: sid }, node: fundingView }))
+    if (persist && !published && !funded({ kind: 'series', contract: { stakeMsat: t.stakeMsat, seriesIdBytes: sid }, node: fundingView }))
       return { ok: false, code: 402, why: `this node stores nothing for a series nobody has funded (series ${id.slice(0, 16)})` };
     let w;
     try { w = seriesWriter(round, t); } catch (e) { return { ok: false, code: 409, why: e.message }; }
@@ -4112,6 +4115,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (seriesTimerStarted && writeSeriesNow) setImmediate(writeSeriesNow); else startSeriesTimer();
     return { ok: true, series: id, rounds: t.seriesCount, held: false };
   };
+  // IS A SERIES' PUBLICATION CONFIRMED ON THIS NODE'S OWN CHAIN (kanban #757): read in the view of its first round, as POST
+  // /series-publication reads it. A paying series' publication is its creator's spend; a node no operator of the series runs takes the
+  // series on it, as an operator's seat takes one its operator names funded. -> { ok, why }
+  const publishedHere = async (t) => {
+    if (typeof chainFor !== 'function') return { ok: false, why: 'this node reads no chain' };
+    if (!(BigInt(t.stakeMsat || 0n) > 0n)) return { ok: false, why: 'a free series is taken only where its operator runs it' };
+    const first = seriesRound(t, 0);
+    let view; try { view = await chainFor({ contract: first, roundIdBytes: roundIdOf(first) }); } catch (e) { return { ok: false, why: `this node cannot read its chain: ${e.message}` }; }
+    if (!view) return { ok: false, why: 'this node is still reading its chain view for that series' };
+    return findSeriesPublicationIndexed(view, seriesId(t)) ? { ok: true } : { ok: false, why: 'this node\'s chain holds no confirmed publication of that series yet' };
+  };
   // THE GRIDS POSTED BEFORE A RESTART, read back - not one whose last entry closed a day ago
   if (gridSeriesFile && existsSync(gridSeriesFile)) {
     let lines = [];
@@ -4122,6 +4136,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const got = takeGridSeries(t, { persist: false });
       if (!got.ok) console.error(`[series] a grid from the grid file refused: ${got.why}`);
     }
+  }
+  // THE SERIES THIS NODE DOES NOT HOLD, PULLED FROM THE NODES IT KNOWS (kanban #757, series-pull.js): the poster's push reaches a node
+  // only at the address its advert names, and a node no operator of the series runs refused it as unfunded. Every node asks a few
+  // others what they hold and takes each paying series whose publication its own chain confirms. ARENA_SERIES_PULL=0 turns it off.
+  const seriesPull = chainFor && process.env.ARENA_SERIES_PULL !== '0' ? createSeriesPull({
+    peers: () => everySeat(),
+    held: () => writers.map((w) => toHex(w.id)),
+    take: async (t) => { const p = await publishedHere(t); if (!p.ok) return p; const got = takeGridSeries(t, { published: true }); return got.ok ? got : { ok: false, why: got.why }; },
+    parse: parseSeriesLine, idOf: (t) => toHex(seriesId(t)), fetchFn: (u, o) => seasonFetch(u, o), say: (l) => console.log(l),
+  }) : null;
+  let seriesPullTimer = null, seriesPullFirst = null;
+  if (seriesPull) {
+    seriesPullFirst = setTimeout(() => { seriesPull.pass().catch(() => {}); }, Number(process.env.ARENA_SERIES_PULL_FIRST_MS || 20000));
+    if (seriesPullFirst.unref) seriesPullFirst.unref();
+    seriesPullTimer = setInterval(() => { seriesPull.pass().catch(() => {}); }, Number(process.env.ARENA_SERIES_PULL_MS || PULL_EVERY_MS));
+    if (seriesPullTimer.unref) seriesPullTimer.unref();
   }
 
   // THE NETWORK STORE ON THIS SEAT (2026-10-10: networks are updated from the owner page like games; a
@@ -5551,7 +5581,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const me = toHex(round.pubkey), now = Date.now();
           const rows = [];
           let own = null, share = null;
-          for (const r of round.db.prepare('SELECT round_id, contract FROM rounds WHERE opened_ms > ? ORDER BY opened_ms DESC LIMIT 400').all(now - 36 * 3600000)) {
+          // THE ROUNDS THIS NODE IS ASSIGNED TO FIRST (kanban #757): a node holding the day's grids holds thousands of rounds written 3 h
+          // ahead, and the 400 written last are the far end of that horizon - the ones it sits in, from its own signer_nodes rows, are
+          // read whatever their place; then the newest 400 as before, for the reserves and the reasons
+          const candidates = new Map();
+          const since = now - 36 * 3600000;
+          try {
+            for (const r of round.db.prepare('SELECT r.round_id, r.contract FROM signer_nodes s JOIN rounds r ON r.round_id = s.round_id WHERE s.pubkey = ? AND r.opened_ms > ? ORDER BY r.opened_ms DESC LIMIT 400')
+              .all(Buffer.from(round.pubkey), since)) candidates.set(toHex(new Uint8Array(r.round_id)), r);
+          } catch { /* no assignment table read */ }
+          for (const r of round.db.prepare('SELECT round_id, contract FROM rounds WHERE opened_ms > ? ORDER BY opened_ms DESC LIMIT 400').all(since))
+            if (!candidates.has(toHex(new Uint8Array(r.round_id)))) candidates.set(toHex(new Uint8Array(r.round_id)), r);
+          for (const r of candidates.values()) {
             let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
             const rid = new Uint8Array(r.round_id);
             let g = null, st = null;
@@ -5574,6 +5615,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             rows.push({ round: toHex(rid), game: (() => { const x = gameOfContract(c); const h = hosted.get(toHex(c.gameId)); return x ? { ...x, version: h && h.manifest ? h.manifest.version : null } : null; })(), startMs, endMs, phase: now < startMs ? 'upcoming' : now < endMs ? 'running' : 'done',
               gameSeated: has(g, 'committee'), settleSeated: has(st, 'committee'), drawn: has(g, 'drawn') || has(st, 'drawn'), hostedHere, paid: c.stakeMsat > 0n });
           }
+          rows.sort((a, b) => b.startMs - a.startMs);
           const { roundsForOwner } = await import('./owner-rounds.js');
           return answer(200, roundsForOwner({ rows, own, share, nowMs: now }));
         }
@@ -7142,7 +7184,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let t;
         try { t = parseSeriesLine(Buffer.from(await read(req)).toString('utf8')); }
         catch (e) { return text(res, 400, `that is not a series line: ${e.message}`); }
-        const got = takeGridSeries(t);
+        let got = takeGridSeries(t);
+        // NOT NAMED FUNDED HERE, BUT PUBLISHED ON THIS NODE'S CHAIN (kanban #757): taken as a pulled series is
+        if (!got.ok && got.code === 402) { const p = await publishedHere(t); if (p.ok) got = takeGridSeries(t, { published: true }); }
         if (!got.ok) return text(res, got.code, got.why);
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(got));
@@ -10293,6 +10337,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (endTimer) clearInterval(endTimer);
         if (doorTimer) clearInterval(doorTimer);
         if (seriesTimer) clearInterval(seriesTimer);
+        if (seriesPullTimer) clearInterval(seriesPullTimer);
+        if (seriesPullFirst) clearTimeout(seriesPullFirst);
         if (ballotTimer) clearInterval(ballotTimer);
         for (const t of finalityTimers) clearTimeout(t);
         finalityTimers.clear();
