@@ -114,7 +114,7 @@ test('the Apps table: a "Next hour" column, red in the outage (1 of 9 drawn answ
   assert.equal(await a.health.read({ transport: rec.transport, daily: async () => DAILY }), true);
   const apps = a.last.apps;
   const col = apps.head.indexOf('Next hour: seated / joinable');
-  assert.ok(col > 0 && apps.head.indexOf('Rounds today') === col + 1 && apps.head.includes('Tomorrow'), apps.head.join(' | '));
+  assert.ok(col > 0 && apps.head.indexOf('Postings today') === col + 1 && apps.head.indexOf('Rounds today') === col + 2 && apps.head.includes('Tomorrow'), apps.head.join(' | '));
   assert.equal(apps.rows.length, 3);
   for (const r of apps.rows) {
     assert.equal(r.dot, 'bad', r.key);
