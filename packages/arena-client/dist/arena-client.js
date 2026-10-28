@@ -8462,9 +8462,17 @@ function beaconIsTheChains(contract, beacon, view) {
 //   a round opens for entries iff |seated| >= threshold
 //
 // The seated nodes sign SEATING(round_id, role, seated list); a seating is valid only with the signature of EVERY node it
-// seats, and each node signs at most one per round and role. Two valid seatings for one round and role always share a
-// signer (2 x threshold > drawn), so two certificates are proof of equivocation by that signer: the round is void (§13C)
-// and the signer's bond is slashable (§5A.3B). A client enters a round only with a certificate it checked against the draw
+// seats, and each node signs at most one seating per round and role that can still stand. Two valid seatings for one round
+// and role always share a signer (2 x threshold > drawn), so two certificates are proof of equivocation by that signer: the
+// round is void (§13C) and the signer's bond is slashable (§5A.3B).
+//
+// A SECOND SIGNATURE ONLY AFTER A MEMBER OF THE FIRST SIGNED ANOTHER (kanban #738, measured 2026-10-27 23:30Z: one overloaded seat
+// signed the seating of 5 it held at the close, six signed the seating of 7, and no certificate formed). Seatings are ordered: S
+// comes before T when T seats at least as many and its i-th seated ranks no lower in the draw than S's i-th, for every i of S.
+// A node that signed S, holding no certificate, signs S' only when a member of S other than itself signed a seating that does
+// not come before S, S' is the seating of the PRESENTs it holds now and comes after S, it is in S', and another node signed S'
+// already (arena-node seating-agent.js resign). An honest node's signatures then come one after another in that order, the
+// seating it left never completes, and two certificates still prove equivocation only by a node that broke this rule. A client enters a round only with a certificate it checked against the draw
 // it computes itself (client-committee.js). The round contract is unchanged (2026-10-11, decision A): it names the
 // round; who serves it is this certificate.
 //
