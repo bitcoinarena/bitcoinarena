@@ -114,6 +114,16 @@ export class Round {
     // A COUNT THAT MOVES WHENEVER A ROUND OPENS, CLOSES OR HAS ITS CONTRACT CHANGED (kanban #576): a caller that keeps what it read
     // of the open rounds reads them again only once this has moved
     this.openSeq = 0;
+    // EACH OPEN ROUND'S CONTRACT, DECODED ONCE (kanban #742, test host seat 6 idle 2026-10-28: 46 MB/s allocated, 21 % of the seat in
+    // the garbage collector; the committee draws, the listing, the attestor's `due`, the held/price/prune scans re-read and re-decoded
+    // every one of ~11,400 open rounds' contracts each pass, past the 8,192-contract parse cache below). Round id hex -> the decoded
+    // contract (null: it does not parse), kept only while the store holds the round OPEN: dropped at its close, when its contract is
+    // rewritten, when it is deleted, and whenever the open list is read again. Callers share the object and never change it.
+    this.contracts = new Map();
+    // THE OPEN IDS, read again only once a round opened, closed or was deleted (their count or newest row moved): the same id objects
+    // are handed out again, so a caller keeps what it derived from them; `hexOf` is each one's hex
+    this.openList = { key: null, ids: [] };
+    this.hexOfId = new WeakMap();
     // THE GAMES THIS NODE HOSTS (§0A.4; M3 R1): a round is opened only on one of them, on a core installed for
     // it, and its run length is that core's.
     this.plugins = hostedPlugins(plugins);
@@ -161,6 +171,7 @@ export class Round {
     if (want.join() === had.join() && want.join() === recorded.join()) return false;
     const bytes = encodeRoundContract({ ...c, nodes: keys });
     this.db.prepare('UPDATE rounds SET contract = ? WHERE round_id = ?').run(bytes, roundIdBytes);
+    this.contracts.delete(this.hexOf(roundIdBytes));
     this.openSeq++;
     this.db.prepare('DELETE FROM signer_nodes WHERE round_id = ?').run(roundIdBytes);
     this.recordSignerNodes(roundIdBytes, keys);
@@ -403,8 +414,60 @@ export class Round {
 
   get(id) {
     const row = this.db.prepare('SELECT * FROM rounds WHERE round_id = ?').get(id);
-    return row && parses(row.contract) ? row : null;
+    if (!row) return null;
+    if (row.state === OPEN) return this.contractOf(id, row) ? row : null;
+    return parses(row.contract) ? row : null;
   }
+
+  /** A round id's hex, kept for the open list's id objects. */
+  hexOf(id) {
+    let h = this.hexOfId.get(id);
+    if (h === undefined) { h = toHex(id); if (typeof id === 'object') this.hexOfId.set(id, h); }
+    return h;
+  }
+
+  /**
+   * A HELD ROUND'S CONTRACT, DECODED (kanban #742): once per open round, then the kept object; a closed round's is decoded on each
+   * ask (nothing of it is kept). null for no such round, or a contract this network cannot parse. `row`: the round's row when the
+   * caller already read it. The object is shared - read it, never change it.
+   */
+  contractOf(id, row = undefined) {
+    const k = id instanceof Uint8Array ? this.hexOf(id) : null;
+    if (k !== null && this.contracts.has(k)) return this.contracts.get(k);
+    const r = row === undefined ? this.db.prepare('SELECT contract, state FROM rounds WHERE round_id = ?').get(id) : row;
+    if (!r) return null;
+    let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { c = null; }
+    if (k !== null && r.state === OPEN) this.contracts.set(k, c);
+    return c;
+  }
+
+  /** Lets go of what is kept of a round (deleted from the store). */
+  forget(id) { if (id instanceof Uint8Array || typeof id === 'string') this.contracts.delete(typeof id === 'string' ? id : this.hexOf(id)); }
+
+  /**
+   * THE OPEN ROUNDS' IDS, KEPT (kanban #742): read again only once their count or newest row moved; the ids are the same objects
+   * from one read to the next while their rounds stay open. What is kept of rounds no longer open is let go on each read.
+   */
+  openHeld() {
+    const q = this.db.prepare('SELECT count(*) AS n, max(rowid) AS m FROM rounds WHERE state = ?').get(OPEN);
+    const key = `${q.n}:${q.m}`;
+    if (this.openList.key === key) return this.openList.ids;
+    const had = new Map();
+    for (const id of this.openList.ids) had.set(this.hexOf(id), id);
+    const ids = [];
+    for (const r of this.db.prepare('SELECT lower(hex(round_id)) AS h FROM rounds WHERE state = ? ORDER BY opened_ms').all(OPEN)) {
+      let id = had.get(r.h);
+      if (!id) { id = fromHex(r.h); this.hexOfId.set(id, r.h); }
+      ids.push(id);
+    }
+    const open = new Set(ids.map((id) => this.hexOf(id)));
+    for (const k of this.contracts.keys()) if (!open.has(k)) this.contracts.delete(k);
+    this.openList = { key, ids };
+    return ids;
+  }
+
+  /** How many rounds the store held open at the last read of the open list (what per-round caches are bounded by). */
+  get openCount() { return this.openList.ids.length; }
 
   /** Takes an entry. Refused after the round is closed, and refused twice. */
   enter(contract) {
@@ -1527,6 +1590,7 @@ export class Round {
     if (round.state === CLOSED) return false;
     this.db.prepare('UPDATE rounds SET state = ?, closed_ms = ? WHERE round_id = ?')
       .run(CLOSED, this.now(), id);
+    this.contracts.delete(this.hexOf(id));
     this.openSeq++;
     return true;
   }
