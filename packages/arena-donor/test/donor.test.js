@@ -4,7 +4,7 @@
 // withdraws - with the seats, the federation and the LND faked; the live pass is measured on testnet4.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { secp256k1 } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 
 import { newKey, keyFromSecret, walletSecretFor, gatherDonations, donationFields, splitOutpoint, redeemAll, withdrawToLnd } from '../src/donor.js';
 import { donationContractFields, lockFieldsToJson } from '../../arena-node/src/stake-lock-signer-node.js';
