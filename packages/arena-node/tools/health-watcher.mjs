@@ -325,8 +325,8 @@ export function liveDrawn(lists, ourKeys, nowMs) {
 /** The runbook line for an emergency grid (memory emergency-day-post; the last day's tool is ops/emergency-1028.sh). */
 export function emergencyRunbook(nowMs, day = new Date(nowMs).toISOString().slice(0, 10)) {
   const md = day.slice(5, 7) + day.slice(8, 10);
-  return `Copy ~/blwp-testnet4/ops/emergency-1028.sh to emergency-${md}.sh (END = the day after ${day} 00:00Z, GRID_MIN_CENSUS = a census without the stopped nodes, `
-    + `GRID_EXPECT_GAME = the ids the seats list), then per game a DRY run first: systemd-run --user --unit=emergency${md}-dry-<game> --collect -E DRY=1 /bin/bash `
+  return `The tool for ${day} is ~/blwp-testnet4/ops/emergency-${md}.sh (if missing, a copy of the last one, emergency-1028.sh, with END = the next day 00:00Z, GRID_MIN_CENSUS = a census `
+    + `without the stopped nodes, GRID_EXPECT_GAME = the ids the seats list). Per game a DRY run first: systemd-run --user --unit=emergency${md}-dry-<game> --collect -E DRY=1 /bin/bash `
     + `~/blwp-testnet4/ops/emergency-${md}.sh <game>, and without DRY once it passes. Never Next Block via PAID_NB90_GRID with the runner's built-in core.`;
 }
 /** THE HOOK to automate the emergency grid later (kanban #759: "do NOT post emergency grids automatically yet"). Not called. */
@@ -405,7 +405,7 @@ export function realIo(cfg) {
   return {
     now: () => Date.now(),
     loadavg: async () => readFileSync('/proc/loadavg', 'utf8').split(' ').slice(0, 3).map(Number),
-    topProcs: async () => { try { return (await run('ps', ['-eo', 'pcpu,comm', '--sort=-pcpu', '--no-headers'])).split('\n').slice(0, 4).map((l) => l.trim().replace(/\s+/, '% ')).join(', '); } catch { return null; } },
+    topProcs: async () => { try { return (await run('ps', ['-eo', 'pcpu,args', '--sort=-pcpu', '--no-headers'])).split('\n').slice(0, 4).map((l) => l.trim().replace(/\s+/, '% ').replace(/\S*\/(node|bin)\/(\S+)/g, '$2').slice(0, 70)).join(' | '); } catch { return null; } },
     get,
     identity: async (base) => {
       try {
