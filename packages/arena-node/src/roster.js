@@ -249,8 +249,12 @@ export class Roster {
    */
   seedFor(roundIdBytes, contract) {
     const view = this.chainFor({ contract, roundIdBytes });
+    // AND THE BEACON'S OWN BLOCK IN THE KEY (kanban #727): a chain that left the beacon's block for another at the same height keeps
+    // the view's start and length - the seed drawn on the block it left was kept and every committee drawn on it again
+    const beacon = this.randomnessFor({ contract, roundIdBytes });
+    const beaconHash = beacon instanceof Uint8Array ? beacon : beacon && beacon.hash;
     const kept = view && Array.isArray(view.blocks)
-      ? `${toHex(roundIdBytes)}:${view.firstHeight}:${view.blocks.length}` : null;
+      ? `${toHex(roundIdBytes)}:${view.firstHeight}:${view.blocks.length}:${beaconHash ? toHex(beaconHash) : '-'}` : null;
     if (kept && this.seeds.has(kept)) return this.seeds.get(kept);
     // TIMED WHERE THE PROFILE POINTED: this is the chain check - every header hashed, its proof of work read - and it
     // runs when the view is new or a header has arrived, never twice for the same one.
