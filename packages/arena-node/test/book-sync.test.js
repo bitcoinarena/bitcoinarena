@@ -50,12 +50,47 @@ test('a seat that missed a batch certificate reads the other seats\' batches bef
     leadA.orderBook.peersFor = peersA;
     assert.equal(a.ok, true, a.why);
     assert.deepEqual([a.certified, a.heldBy, a.orderIds.length], [true, 5, 1]);
+    // THE CURSOR (kanban #740 ruling, 2026-10-28: the seats ran out of memory): a seat's first read of the round asks every seat for the
+    // whole list; it then holds batch A from the five, so its next read asks those only for the batches after A
+    const reader = healthy[0], asks = [];
+    const spy = (ob) => {
+      const was = ob.fetcher;
+      ob.fetcher = async (u, opt) => {
+        const r = await was(u, opt);
+        if (/\/book-certificates/.test(u)) asks.push({ u, ks: (await r.clone().json()).certificates.map((c) => String(c.record.k)) });
+        return r;
+      };
+      return () => { ob.fetcher = was; };
+    };
+    // a read ends once a threshold answered; the other seats' answers are still taken after it
+    const allSix = async () => { for (const stop = Date.now() + 5000; asks.length < 6 && Date.now() < stop;) await wait(10); await wait(50); };
+    { const unspy = spy(reader.orderBook);
+      assert.equal((await reader.orderBook.sync(w.rid, { force: true })).ok, true);
+      await allSix();
+      unspy();
+      assert.equal(asks.length, 6);
+      for (const x of asks) assert.doesNotMatch(x.u, /after=/, 'a first read asked with a cursor'); }
     // 2. BATCH B: ONE DOWN ORDER, at all seven - it crosses the Up order resting at the five
     const down = await lockAndPlay(w, player(2), { noMarks: true, pick: NO, order: { price: 45000n } });
     const kB = await nextK();
     const b = await w.nodes.find((d) => d.orderBook.leads(w.rid, kB)).orderBook.lead(w.rid, kB);
     assert.equal(b.ok, true, b.why);
     assert.deepEqual([b.certified, b.heldBy, b.orderIds], [true, 7, [toHex(down.eid)]]);
+    // THE NEXT READ: the four other healthy seats are asked after=A and hand batch B only; the two lagging ones, which listed nothing to
+    // that seat before, are asked for the whole list - it is B alone there too
+    { asks.length = 0;
+      const unspy = spy(reader.orderBook);
+      assert.equal((await reader.orderBook.sync(w.rid, { force: true })).ok, true);
+      await allSix();
+      unspy();
+      assert.equal(asks.length, 6);
+      for (const x of asks) {
+        const d = w.nodes.find((n) => x.u.startsWith(`${base(n)}/`));
+        if (lagging.includes(d)) assert.doesNotMatch(x.u, /after=/, 'a seat that listed nothing was asked with a cursor');
+        else assert.match(x.u, new RegExp(`&after=${kA}$`));
+        assert.deepEqual(x.ks, [String(kB)]);
+      }
+      facts.cursor = asks.map((x) => (x.u.match(/after=(\d+)/) || [null, 'all'])[1]).sort().join(','); }
     // THE MEASURED SPLIT: the five fill batch B, the two clear it alone - price null, no fill
     const seen = await Promise.all(w.nodes.map(book));
     const shape = (x) => x.batches.map((y) => `${y.k}:${y.price}:${(y.fills || []).length}`).join(' ');
@@ -120,14 +155,31 @@ test('a seat that missed a batch certificate reads the other seats\' batches bef
       facts.resync = c.ok ? 'committed' : c.why;
       assert.equal(c.ok, true, c.why);
       assert.equal((await book(d)).batches.length, 2, 'the batch was not taken on the mismatch'); }
-    // 6. WITH ITS PEERS HEARD: batch A taken through certify, the same book as the five, and one settlement built by all seven
+    // 6. WITH ITS PEERS HEARD: batch A taken through certify, the same book as the five, and one settlement built by all seven. The
+    // lagging seat holds batch B and not A: its cursor is never its highest batch held - it was taken from no seat's list yet, so
+    // every seat is asked for the whole list and A comes with it
+    asks.length = 0;
+    const unspyLag = spy(lagging[0].orderBook);
     const plans = await Promise.all(w.nodes.map((d) => d.settlements.message(w.rid)));
+    await allSix();
+    unspyLag();
+    assert.equal(asks.length, 6);
+    for (const x of asks) assert.doesNotMatch(x.u, /after=/, `the lagging seat asked with a cursor: ${x.u}`);
     for (const p of plans) assert.equal(p.ok, true, p.why);
     facts.txids = [...new Set(plans.map((p) => p.txid))].length;
     assert.equal(facts.txids, 1, 'the seats built different settlements');
     const after = await Promise.all(w.nodes.map(book));
     for (const x of after) assert.equal(shape(x), facts.before.healthy, 'a seat holds the book otherwise after the read');
     facts.after = shape(after[w.nodes.indexOf(lagging[0])]);
+    // THE DOOR: without `after` the whole list as before, with it only the later batches, a malformed cursor refused
+    { const list = async (q) => { const r = await fetch(`${base(healthy[1])}/book-certificates?round=${rid}${q}`); return r.ok ? (await r.json()) : r.status; };
+      const all = await list('');
+      assert.deepEqual(all.certificates.map((c) => String(c.record.k)), [String(kA), String(kB)]);
+      assert.deepEqual(all.pending, []);
+      assert.deepEqual((await list(`&after=${kA}`)).certificates.map((c) => String(c.record.k)), [String(kB)]);
+      assert.deepEqual((await list(`&after=${kB}`)).certificates, []);
+      assert.deepEqual((await list(`&after=${kA - 1}`)).certificates, all.certificates);
+      assert.equal(await list('&after=x'), 400); }
     // ONE READ PER ROUND: the next plan asks no seat again
     { const ob = lagging[1].orderBook, was = ob.fetcher; let asked = 0;
       ob.fetcher = async (u, opt) => { if (/\/book-certificates/.test(u)) asked += 1; return was(u, opt); };
