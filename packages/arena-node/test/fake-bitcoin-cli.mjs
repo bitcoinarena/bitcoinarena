@@ -16,7 +16,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 const args = process.argv.slice(2).filter((a) => !/^-(datadir|rpcwallet|rpcport|rpcuser|rpcpassword|testnet4|chain)=?/.test(a) && a !== '-testnet4');
 let [method, ...params] = args;
 if (method === '-named') [method, ...params] = params;
-appendFileSync(process.env.FAKE_CLI_LOG, JSON.stringify({ args: process.argv.slice(2), method, params }) + '\n');
+appendFileSync(process.env.FAKE_CLI_LOG, JSON.stringify({ args: process.argv.slice(2), method, params, t: Date.now() }) + '\n');
 const spec = JSON.parse(readFileSync(process.env.FAKE_CLI_SPEC, 'utf8'));
 const out = (v) => { process.stdout.write(typeof v === 'string' ? v + '\n' : JSON.stringify(v) + '\n'); process.exit(0); };
 if (spec.fail && spec.fail[method]) { process.stderr.write(`error code: -1\nerror message:\n${spec.fail[method]}\n`); process.exit(1); }
@@ -37,14 +37,19 @@ switch (method) {
   case 'fundrawtransaction': out({ hex: `funded:${params[0]}`, fee: 0.000003, changepos: 1 });
   case 'signrawtransactionwithwallet': out({ hex: `signed:${params[0]}`, complete: true });
   case 'listwallets': out(spec.wallets || []);
-  case 'scantxoutset': out({ success: true, unspents: (spec.scan || {})[JSON.parse(params[1])[0]] || [] });
+  case 'scantxoutset': {   // every descriptor asked, each unspent naming its own; `scanMs` holds the scan that long, its end logged
+    if (spec.scanMs) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, spec.scanMs);
+    const unspents = JSON.parse(params[1]).flatMap((d) => ((spec.scan || {})[d] || []).map((u) => ({ desc: d, ...u })));
+    if (spec.scanMs) appendFileSync(process.env.FAKE_CLI_LOG, JSON.stringify({ method: 'scantxoutset-end', t: Date.now() }) + '\n');
+    out({ success: true, unspents });
+  }
   case 'getrawtransaction': if ((spec.raw || {})[params[0]]) out(spec.raw[params[0]]); process.stderr.write('No such mempool or blockchain transaction\n'); process.exit(5);
   case 'gettxout': { const o = (spec.txout || {})[`${params[0]}:${params[1]}`]; if (o) out(o); process.exit(0); } // bitcoin-cli prints nothing for a spent output
   case 'getnewaddress': out(`addr:0014${'dd'.repeat(20)}`);
   case 'getaddressinfo': out({ address: params[0], scriptPubKey: params[0].replace(/^addr:/, '') });
   case 'decodescript': out({ address: `addr:${params[0]}` });
   case 'walletcreatefundedpsbt': {
-    const ins = named.inputs;
+    const ins = named.inputs && named.inputs.length ? named.inputs : (spec.utxos || []).map((u) => ({ txid: u.txid, vout: u.vout }));   // none named: the wallet picks its coins
     const outs = named.outputs.map((o) => { const [a, btc] = Object.entries(o)[0]; return { spk: [...fromHex(a.replace(/^addr:/, ''))], sats: Math.round(btc * 1e8) }; });
     const inSats = ins.reduce((s, i) => s + Math.round(((spec.txout || {})[`${i.txid}:${i.vout}`] || { value: 0 }).value * 1e8), 0);
     const fee = 600, change = inSats - fee - outs.reduce((s, o) => s + o.sats, 0);
