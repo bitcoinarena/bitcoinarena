@@ -8,6 +8,7 @@
 import { majorityThenGrace, COMPARE_GRACE_MS } from './committee.js';
 import { FEES, FEES_TODAY, feeProposalStands, encodeFeeProposal, feeProposalId, roundSplitBps, marketBps } from '../../arena-protocol/src/fee-proposal.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { fundingScheduleFor } from '../../arena-protocol/src/funding.js';
 
 const feesBaseOf = (n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
 const feesCurveOf = (curve) => { const c = curve || globalThis.ARENA_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
@@ -57,7 +58,8 @@ export function signedFeeProposal({ secretKey, networkId, publishedHeight, activ
   const c = feesCurveOf(curve);
   if (!changes || !changes.length) return { ok: false, why: 'change at least one fee' };
   const p = { networkId: fromHex(networkId), author: c.pointX(secretKey), publishedHeight, activationHeight, changes, purpose: String(purpose) };
-  const st = feeProposalStands(p, schedule ? { current, schedule } : { current });
+  // the network's own schedule unless one is given: testnet4 signals and votes a day each (kanban #785)
+  const st = feeProposalStands(p, { current, schedule: schedule || fundingScheduleFor(p.networkId) });
   if (!st.ok) return { ok: false, why: st.why };
   const id = feeProposalId(p);
   return { ok: true, id: toHex(id), hex: toHex(Uint8Array.from([...encodeFeeProposal(p), ...c.signSchnorr(id, secretKey)])), donations: st.donations };
