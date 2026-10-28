@@ -7,7 +7,7 @@
 // wait 2 weeks and come in tranches (rule 5); the signal counts nodes active in 3 of 4 weeks.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { fundingTally, voteWeights, ageFactor, capStands, trancheSchedule, activeInWeeks, fundingProposalId, FUNDING_SCHEDULES } from '../src/funding.js';
 import { encodeVote, voteMessage, CHOICE } from '../src/ballot.js';
 

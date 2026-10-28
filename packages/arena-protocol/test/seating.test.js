@@ -4,7 +4,7 @@
 // protocol's own code.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { drawnForRole } from '../src/sortition.js';
 import { signPresent, verifyPresent, decodePresent, seatedFrom, signSeating, encodeSeatingCertificate, verifySeating,
   seatingEquivocation, seatingCloseMs, seatedThreshold } from '../src/seating.js';

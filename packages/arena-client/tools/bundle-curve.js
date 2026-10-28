@@ -29,6 +29,9 @@ const r = spawnSync(bin, [
   '--preserve-symlinks',
   `--outfile=${out}`,
 ], { stdio: 'inherit', cwd: resolve(here, '..') });
+// (a missing esbuild - this package's node_modules is a tracked link into one machine's install - used to fall through to a stat of
+// the output that was never written; say what is missing instead)
+if (r.error) { console.error(`bundle-curve: cannot run ${bin}: ${r.error.message}`); process.exit(1); }
 if (r.status) process.exit(r.status || 1);
 
 const kb = (statSync(out).size / 1024).toFixed(1);

@@ -6,7 +6,7 @@
 // not count, one active 432 blocks before does.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { encodeFundingProposal, decodeFundingProposal, fundingProposalId, encodeFundingComment, fundingCommentId, encodeFundingSignal, fundingSignalId,
   readSignedFunding, signalOutcome, activeNodesBefore, lnurlStands, FUNDING_SCHEDULES } from '../src/funding.js';
 import { signFinalSig } from '../src/final-sig.js';

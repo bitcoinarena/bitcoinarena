@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { newKey, walletSecretFor, redeemAll } from '../src/donor.js';
 
 const env = process.env;
