@@ -94,3 +94,11 @@ test('Donations only with a developer on this node - a dev client or a game deve
   assert.match(without, /<section id="s-developer"[^>]*><h2>Developer<\/h2><div id="dev-add"><\/div><div id="gamedev-add"><\/div>/, 'where a dev client or a key is added');
   assert.match(area({ hasDevs: true }).html(), /href="#money"[^>]*>Donations/);
 });
+
+// THE PUBLIC DASHBOARD IN THE MENU (kanban #733, the owner: "make the link to the public dashboard a regular button in the navigation, would
+// look nicer and not jump around"): the menu's last entry, after the sections, to the node's own dashboard
+test('the public dashboard is the menu\'s last entry, not a link under the page', () => {
+  const h = area({ needs: [], publicLink: 'http://127.0.0.1:8770/Dashboard' }).html();
+  assert.match(h, /data-s="login">Your login<span class="dot" id="dot-login"><\/span><\/a><a href="http:\/\/127\.0\.0\.1:8770\/Dashboard" class="out" id="side-public">Public dashboard <span aria-hidden="true">↗<\/span><\/a><\/nav>/);
+  assert.doesNotMatch(area({ needs: [] }).html(), /side-public/, 'none without an address');
+});
