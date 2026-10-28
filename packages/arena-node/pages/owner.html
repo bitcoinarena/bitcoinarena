@@ -32,6 +32,7 @@ label{display:block;margin:8px 0 4px;color:var(--dim)}
 nav.side{position:sticky;top:12px;display:flex;flex-direction:column;gap:2px}
 nav.side a{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-radius:9px;color:var(--text);text-decoration:none}
 nav.side a:hover{background:var(--card)}nav.side a.on{background:var(--card);border:1px solid var(--line);font-weight:600}
+/* the public dashboard as a menu entry (kanban #733), set apart from the sections */nav.side a.out{margin-top:10px}
 .dot{width:9px;height:9px;min-width:9px;border-radius:50%;flex:0 0 9px;display:inline-block}.dot:not(.d-bad):not(.d-warn){visibility:hidden}.dot.d-bad{background:var(--bad)}.dot.d-warn{background:var(--gv)}
 main section h2{margin-top:4px}.lead{color:var(--dim);margin:0 0 12px}h3.sh{font-size:15px;margin:18px 0 6px}
 details.more>summary,details>summary{cursor:pointer;color:var(--st);margin:8px 0}
@@ -152,7 +153,7 @@ select:focus{outline:2px solid var(--st);outline-offset:1px}
 .choice-fields{display:flex;flex-direction:column;gap:6px;margin-top:6px}label.boot{display:flex;align-items:center;gap:8px;margin:0;color:var(--dim);font-size:13px}
 @media (max-width:820px){.layout{display:block}
   nav.side{position:sticky;top:0;z-index:5;flex-direction:row;overflow-x:auto;background:var(--bg);margin:0 -16px 8px;padding:8px 16px;border-bottom:1px solid var(--line)}
-  nav.side a{white-space:nowrap;border:1px solid var(--line);gap:6px}}
+  nav.side a{white-space:nowrap;border:1px solid var(--line);gap:6px}nav.side a.out{margin-top:0}}
 /* the owner area waits for the setup (playtest 2026-10-25): a screen over the whole page until every part is done */.setup-gate{position:fixed;inset:0;z-index:1000;background:var(--bg,#0d1117);overflow:auto;padding:32px 16px}.setup-gate-in{max-width:760px;margin:0 auto}.setup-gate h2{margin:0 0 10px;font-size:24px;text-transform:none;letter-spacing:0;color:var(--text,#e6edf3)}.setup-gate-fix{margin-top:16px}.setup-banner{border:1px solid var(--accent,#f7931a);border-left-width:4px;border-radius:10px;padding:10px 14px;margin:0 0 14px;background:rgba(247,147,26,.08)}body[data-setup="open"] #side a[data-s="roles"],body[data-setup="open"] #side a[data-s="bond"],body[data-setup="open"] #side a[data-s="apps"],body[data-setup="open"] #side a[data-s="money"],body[data-setup="open"] #side a[data-s="leave"],body[data-setup="open"] #side a[data-s="developer"]{pointer-events:none;opacity:.35}body[data-setup="open"] #needs,body[data-setup="open"] #s-roles,body[data-setup="open"] #s-bond,body[data-setup="open"] #s-apps,body[data-setup="open"] #s-money,body[data-setup="open"] #s-leave,body[data-setup="open"] #s-developer{display:none!important}.setup-gate-msg{border:1px solid var(--accent,#f7931a);border-left-width:4px;border-radius:10px;padding:10px 14px;margin:0 0 16px;background:rgba(247,147,26,.08)}
 /* the Overview's Custody when its guardian does not run (the 2026.1.9.11 install test) */.stat b.bad{color:var(--bad)}
 /* no bond (kanban #728): no empty offer card, the red card on the Overview; no place drawn as an empty box (the 2026.1.9.11 install test) */#bond-answer:empty,main .card:empty{display:none}.no-bond{border-color:#f85149}.no-bond p{margin:10px 0}.no-bond .btn{display:inline-block;padding:8px 14px;border-radius:10px;text-decoration:none;font-weight:600}
@@ -161,7 +162,7 @@ select:focus{outline:2px solid var(--st);outline-offset:1px}
 <h1>Bitcoin Arena · Node Owner <span class="ver" id="ver"></span></h1>
 <div class="sub" id="who">loading…</div>
 <div id="view"></div>
-<p class="sub"><a id="public" href="#">← Public dashboard</a></p>
+<p class="sub" id="public-line"><a id="public" href="#">← Public dashboard</a></p>
 <script type="module">
 // The node's address: this page is <base>/Dashboard/owner, its doors are <base>/owner...
 // THE OWNER PAGE ON THE ARENA SITE (kanban #668, the owner's playtest 2026-10-25: logged out after a restart - "Das reicht nicht wenn der
@@ -338,13 +339,15 @@ async function area() {
   // a node driven by Nostr (kanban #653): its seed comes from the owner's nsec, so the nsec makes the emergency code the words would
   const nsecSecret = who.how === 'nsec' && state.nostrSeed ? (readNostr() || {}).secret : null;
   const seed = readSeed() || (nsecSecret ? C.nodeSeedFromNsecSecret(C.fromHex(nsecSecret)) : null), devSeed = who.devSeed, devPub = devSeed ? C.devPubkeyOf(devSeed) : null;
-  areaProps = { node: state.node, owner: state.owner, claimedAtMs: state.claimedAtMs, guardian: !!me.guardian, games, how: who.how,
+  areaProps = { node: state.node, owner: state.owner, claimedAtMs: state.claimedAtMs, guardian: !!me.guardian, games, how: who.how, publicLink: at('/Dashboard'),
     onShowWords: () => C.phraseFromSeed(readSeed()).words,
     onForget: () => { if (confirm('Sign out on this browser? You need your 24 words or your Nostr key to come back.')) forget(); },
     emergencyCode: seed ? C.emergencyCodeText(C.emergencyCodeBytes(seed)) : null, emergencyLink: at('/Dashboard/emergency'),
     devKey: devPub ? C.toHex(devPub) : null,
     signManifest: (text) => { const out = C.signManifestWithSeed(C.bodyFromJson(text, { devPubkey: devPub }), devSeed); window.OWNER_SIGNED = out; return out; } };
   drawArea();
+  // the public dashboard is the menu's last entry now (kanban #733): the line under the page is for the screens before the login
+  $('public-line').hidden = true;
   setupPanel();
   rolesPanel();
   if (who.how === 'words') keySwitchPanel();   // a node of 24 words may move to their key (kanban #650); a Nostr login has no words here
@@ -546,6 +549,7 @@ function showNode(key) {
 }
 async function start() {
   areaProps = null; needs.clear();   // a new start draws no old area again
+  $('public-line').hidden = false;
   try { state = await (await fetch(at('/owner'), { cache: 'no-store' })).json(); }
   catch (e) { $('who').textContent = 'This node did not answer: ' + e.message; return; }
   showNode(state.node);
