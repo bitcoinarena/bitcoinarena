@@ -28,7 +28,8 @@
 // Fedimint's stock `wallet` module, not walletv2 (RULED 2026-09-26). Base fees off (§23A.2). Founding - which four nodes are drawn and run that ceremony - is §23A.2's
 // sortition, not this file: a guardian started here waits in Fedimint's setup until it is drawn.
 import { spawn, execFile } from 'node:child_process';
-import { ramDirOf, ramSupported, ramRestore, ramLoop } from './guardian-ram.js';
+import { ramDirOf, ramSupported, ramRestore, ramLoop, ramFinal, ramBaseOf } from './guardian-ram.js';
+import { ramRecover, fedimintDb, findDbtool } from './guardian-recover.js';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, accessSync, unlinkSync, constants } from 'node:fs';
 import { join, delimiter } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
@@ -269,18 +270,33 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
     ? env[`ARENA_GUARDIAN_NEXT_ENDPOINT_${nodePort}`] || (named ? named.replace(/\/guardian\/?$/, '') + S.path : guardianEndpoint(nodePort, { host, tailscale: ts, path: S.path }))
     : named || guardianEndpoint(nodePort, { host, tailscale: ts });
   // FEDIMINT ON A RAM DISK (kanban #596, ARENA_FEDIMINT_RAM=1 - the installer's choice from more than 5 nodes): the database moved into
-  // RAM (or back from its newest snapshot) before fedimintd starts, never while it runs; a snapshot every minute at this node's own second
+  // RAM (or back from its newest snapshot) before fedimintd starts, never while it runs; a snapshot set of all the machine's guardians every
+  // minute (kanban #718: frozen together, written one after another), taken by whichever node ticks first at its own second
   const ramOn = env.ARENA_FEDIMINT_RAM === '1' && storePath !== ':memory:';
-  const ram = ramDirOf({ instance: String(nodePort), slot });
-  const ramReady = () => {
+  const ramBase = ramBaseOf(env);
+  const ram = ramDirOf({ instance: String(nodePort), slot, base: ramBase });
+  // AND RESTORED AFTER AN UNCLEAN STOP, CHECKED BEFORE IT STARTS (kanban #718, guardian-recover.js): the machine's guardians of the same
+  // federation restored in this boot found together; repaired, held for their peers, or refused - the reason in the log
+  const ramReady = async () => {
     if (!ramOn) return true;
-    if (!ramSupported()) { log('[guardian] ARENA_FEDIMINT_RAM=1, but this machine has no RAM disk the guardian can use (Linux /dev/shm): it runs on disk'); return true; }
+    if (!ramSupported(process.platform, ramBase)) { log('[guardian] ARENA_FEDIMINT_RAM=1, but this machine has no RAM disk the guardian can use (Linux /dev/shm): it runs on disk'); return true; }
     const r = ramRestore(dataDir, ram, { log });
-    if (!r.ok) log(`[guardian] not started: ${r.why}`);
-    return r.ok;
+    if (!r.ok) { log(`[guardian] not started: ${r.why}`); return false; }
+    const dbtool = findDbtool(env, bin);
+    const v = await ramRecover({ base: ramBase, dataDir, ram, restored: r, db: dbtool ? fedimintDb(dbtool) : null, log,
+      gatherMs: Number(env.ARENA_FEDIMINT_RECOVER_GATHER_MS) || undefined, loneWaitMs: Number(env.ARENA_FEDIMINT_RECOVER_LONE_MS) || undefined,
+      sessionCountOf: async (peer) => (await import('./halts.js')).wsSessionCount(peer.url, { overrides: apiOverrides || env.FM_WS_API_CONNECT_OVERRIDES || '', timeoutMs: 5000 }) });
+    if (!v.start) log(`[guardian] not started: ${v.why}`);
+    return v.start;
   };
-  const ramFollow = (pidOf) => (ramOn && ramSupported()
-    ? ramLoop({ dataDir, ram, pidOf, offsetMs: (Math.floor(nodePort / 10) % 12) * 5000 + (slot === 'next' ? 2500 : 0), log }) : null);
+  const ramFollow = (pidOf) => (ramOn && ramSupported(process.platform, ramBase)
+    ? ramLoop({ dataDir, ram, pidOf, base: ramBase, key: `${nodePort}-${slot}`, group: env.ARENA_FEDIMINT_RAM_SET !== '0',
+      offsetMs: (Math.floor(nodePort / 10) % 12) * 5000 + (slot === 'next' ? 2500 : 0), log }) : null);
+  // A CLEAN STOP LEAVES ITS LAST SNAPSHOT (kanban #718): written after fedimintd exited and marked clean, so the next start knows nothing was lost
+  const ramClean = async () => {
+    if (!ramOn || !ramSupported(process.platform, ramBase)) return;
+    try { const r = await ramFinal(dataDir, ram); if (!r.ok) log(`[guardian] no last snapshot at the stop: ${r.why}`); } catch (e) { log(`[guardian] no last snapshot at the stop: ${e.message}`); }
+  };
   const cookieSha = cookieFingerprint(cookiePath);
   // its federation's peers, once there is one: their API addresses as the config names them, carried through this seat
   let apiOverrides = '';
@@ -314,7 +330,7 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
       log(`[guardian] ${unit} runs with an old bitcoind cookie or old peer addresses: started again`);
       await units.stop(unit);
     }
-    if (!ramReady()) return not('its database is neither in RAM nor in a snapshot');
+    if (!(await ramReady())) return not('its RAM database was not restored, or its recovery refused it (the line before says why)');
     await units.start(unit, bin, { ...fmEnv, PATH: env.PATH || '' }, join(dataDir, 'fedimintd.log'));
     keepFingerprint(dataDir, keptSha);
     log(`[guardian] fedimintd started as ${unit} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}; it outlives this node`);
@@ -326,7 +342,7 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
   if (storePath !== ':memory:') {
     const kept = (adopted, pid, sha) => { const follow = ramFollow(() => pids.pid(dataDir));
       return { running: true, kept: true, adopted, pid, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot,
-        cookieSha: sha, ram: !!follow, stop: async () => { if (follow) follow.stop(); }, halt: () => pids.stop(dataDir) }; };
+        cookieSha: sha, ram: !!follow, stop: async () => { if (follow) follow.stop(); }, halt: async () => { if (follow) follow.stop(); await pids.stop(dataDir); await ramClean(); } }; };
     if (await pids.active(dataDir)) {
       const had = keptFingerprint(dataDir);
       // a guardian adopted only while it reads bitcoind with the cookie bitcoind has now (one started before the fingerprint was kept: as before)
@@ -337,7 +353,7 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
       log(`[guardian] fedimintd ${pids.pid(dataDir)} on ${dataDir} runs with an old bitcoind cookie or old peer addresses: started again`);
       await pids.stop(dataDir);
       if (!keep) {
-        if (!ramReady()) return not('its database is neither in RAM nor in a snapshot');
+        if (!(await ramReady())) return not('its RAM database was not restored, or its recovery refused it (the line before says why)');
         const pid = await pids.start(dataDir, bin, { ...env, ...fmEnv }, join(dataDir, 'fedimintd.log'));
         keepFingerprint(dataDir, keptSha);
         log(`[guardian] fedimintd ${pid} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}; kept: it outlives this node`);
@@ -345,14 +361,14 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
       }
     }
     if (keep) {
-      if (!ramReady()) return not('its database is neither in RAM nor in a snapshot');
+      if (!(await ramReady())) return not('its RAM database was not restored, or its recovery refused it (the line before says why)');
       const pid = await pids.start(dataDir, bin, { ...env, ...fmEnv }, join(dataDir, 'fedimintd.log'));
       keepFingerprint(dataDir, keptSha);
       log(`[guardian] fedimintd ${pid} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}; kept: it outlives this node`);
       return kept(false, pid, cookieSha);
     }
   }
-  if (!ramReady()) return not('its database is neither in RAM nor in a snapshot');
+  if (!(await ramReady())) return not('its RAM database was not restored, or its recovery refused it (the line before says why)');
   const out = openSync(join(dataDir, 'fedimintd.log'), 'a');
   const child = spawn(bin, [], { env: { ...env, ...fmEnv }, stdio: ['ignore', out, out] });
   const follow = ramFollow(() => (exited ? null : child.pid));
@@ -363,7 +379,7 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
   const stop = () => new Promise((r) => {
     if (follow) follow.stop();
     if (exited) return r();
-    child.once('exit', () => r());
+    child.once('exit', () => { ramClean().finally(r); });
     child.kill('SIGTERM');
     setTimeout(() => { if (!exited) child.kill('SIGKILL'); }, 10000).unref();
   });
