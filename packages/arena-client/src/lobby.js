@@ -550,14 +550,55 @@ export function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null
  * (seats older than the committee listing) is offered, as before. Before, such a round was offered for 2 h after its committee time.
  */
 export function lobbyRowOffered(r) {
-  if (!r) return false;
-  if (r.free) return true;
+  return !!r && lobbyRowNotOffered(r) === null;
+}
+
+/**
+ * WHY A ROUND IS NOT OFFERED, or null when it is (kanban #761, 2026-10-28 ~10:50Z, the owner on Up/Down: "BTC up or down, 10:45-11:00 UTC?"
+ * with Buy Up 50c active, and every order "Order not placed: this round is no longer listed in the lobby" - no round was seated that
+ * morning, #757). A paid round is offered only when its committee is drawn AND, where the seats seat (§5A.7 reserve seats), seated in both
+ * roles - the lobby's own `joinable` rule (seating 'named'); one drawn but not seated can take no order, so no app offers it.
+ *   'not played'  most seats that say so do not play it in its window (the backup rule)
+ *   'not drawn'   no seat has drawn its committee
+ *   'not seated'  drawn, but no seat names both roles seated (or two certificates void it)
+ */
+export function lobbyRowNotOffered(r) {
+  if (!r) return 'not listed';
+  if (r.free) return null;
   // ONE GRID PLAYED PER WINDOW (§5A.5 the backup rule, kanban #702, 2026-10-26: "Yes make it part of the design, in the spec"): a seat names
   // a round it does not play in its window - a backup under a drawn primary, a primary whose backup took entries there - played: false;
   // a round most of the seats that say so do not play is not offered
   const plays = (r.said || []).filter((c) => c && typeof c.played === 'boolean');
-  if (plays.length && plays.filter((c) => !c.played).length * 2 > plays.length) return false;
+  if (plays.length && plays.filter((c) => !c.played).length * 2 > plays.length) return 'not played';
   const said = (r.said || []).map((c) => c && c.committee).filter(Boolean);
   // a seat names a drawn committee by its members ({ drawn: { game: [...], settlement: [...] } }), an undrawn one drawn: false and why
-  return !said.length || said.some((c) => !!c.drawn);
+  if (said.length && !said.some((c) => !!c.drawn)) return 'not drawn';
+  // SEATED (§5A.7): where any seat speaks of seating, one names both roles seated (fetchLobby's `seating`, else the seats' own words)
+  const seating = r.seating !== undefined ? r.seating : (() => {
+    const s = said.filter((x) => x && x.seated);
+    return !s.length ? null : s.some((x) => x.seated.game && x.seated.settlement) ? { state: 'named' } : { state: 'pending' };
+  })();
+  if (seating && seating.state !== 'named') return 'not seated';
+  return null;
+}
+
+/**
+ * WHAT A MARKET OR GAME SAYS WHEN ITS SOONEST WINDOW HAS NO PLAYABLE ROUND (kanban #761): `unoffered` the listed rounds of the game that are
+ * not offered (each { id, entryCloseMs, startTimeMs, why }), `offered` the ones that are. Null when the soonest open window is playable, or
+ * when no unplayable one is listed (the page's "next round" line says that). The text says why, and names the next playable window if any.
+ */
+export function unplayableWindowLine({ unoffered = [], offered = [], nowMs = Date.now(), periodMs = 0 } = {}) {
+  const open = (xs) => xs.filter((r) => r && Number(r.entryCloseMs) > nowMs).sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs));
+  const bad = open(unoffered), good = open(offered);
+  if (!bad.length) return null;
+  const first = bad[0];
+  if (good.length && Number(good[0].entryCloseMs) <= Number(first.entryCloseMs)) return null;
+  const hm = (ms) => new Date(Number(ms)).toISOString().slice(11, 16);
+  const span = (r) => { const end = Number(r.entryCloseMs), start = periodMs ? end - periodMs : Number(r.startTimeMs) || 0;
+    return start && start < end ? `${hm(start)}-${hm(end)} UTC` : `closing ${hm(end)} UTC`; };
+  const why = first.why === 'not seated' ? 'its committee is not seated' : first.why === 'not drawn' ? 'its committee is not drawn'
+    : first.why === 'not played' ? 'its window is played on another grid' : 'it is not listed';
+  const next = good[0];
+  return { text: `No playable round for the ${span(first)} window - ${why}. ` + (next ? `Next playable window: ${span(next)}.` : 'No later window is playable yet.'),
+    why: first.why, round: first.id || null, next: next ? next.id || null : null, nextCloseMs: next ? Number(next.entryCloseMs) : null };
 }
