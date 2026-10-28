@@ -29,7 +29,7 @@ import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { bondSetFor } from '../src/curve.js';
 import { committeeFromChain, absenceFromChain } from '../../arena-protocol/src/client-committee.js';
 import { presenceWindow, censusTimeMs } from '../../arena-protocol/src/presence.js';
-import { signSeating, signSeen, seatingId, encodeSeatingCertificate, signPresent } from '../../arena-protocol/src/seating.js';
+import { signSeatingBound, signSeen, seatingId, encodeSeatingCertificate, signPresent } from '../../arena-protocol/src/seating.js';
 import { PRESENCE_VERSION } from '../../arena-protocol/src/constants.js';
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH, NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
@@ -131,7 +131,7 @@ function certOf(s, { present = s.seated, seated = s.seated, seenSigner = signBy 
   const rid = fromHex(s.roundId), keys = seated.map(fromHex);
   const id = seatingId({ roundId: rid, role: s.role, seated: keys });
   return toHex(encodeSeatingCertificate({ roundId: rid, role: s.role, seated: keys,
-    signatures: seated.map((h) => ({ nodePubkey: fromHex(h), signature: signSeating({ roundId: rid, role: s.role, seated: keys }, signBy(h)) })),
+    signatures: seated.map((h) => ({ nodePubkey: fromHex(h), signature: signSeatingBound({ roundId: rid, role: s.role, seated: keys }, signBy(h)) })),
     seen: [{ present, leftOut: [], signatures: seated.map((h) => ({ nodePubkey: fromHex(h), signature: signSeen({ roundId: rid, role: s.role, seating: id, present, leftOut: [] }, seenSigner(h)) })) }] }));
 }
 

@@ -3035,62 +3035,98 @@ share H. So from 22 a second seating signature carries its **justification**:
 the departing member's signed conflicting seating T, which shows S can never
 stand.
 
+**The signature binds the justification** *(protocol 22, kanban #746, RULED
+2026-10-28, option B)*. From 22 a SEATING signature is over the seating and
+the hash of the justification it carries, under its own domain tag:
+
+```text
+justification_hash = H_tag("ARENA/v1/SeatingJustification", justification bytes)
+                     (the empty string's hash for a first signature)
+signed             = H_tag("ARENA/v1/SeatingSigned", seating_id || justification_hash)
+```
+
+`seating_id` is the SEATING id as before (its body, its id and SEEN over it are
+untouched). Below 22 the signature is over `seating_id` alone, byte for byte as
+before, and shipped rounds are unchanged.
+
 ```text
 justification = vec(S)            the seating left, node keys in score order
                 vec(T)            the member's seating, node keys in score order
                 member            32 bytes, M
                 signature         64 bytes, M's SEATING signature over T
-                u8 flags          bit 0: M's own justification follows
-                                  bit 1: the signer's step before follows
-                [justification]   bit 0: M's own, when M's signature over T was
-                                  itself a second one, cut to M's chain from S
-                                  to T
-                [signature        bit 1: the signer's own SEATING signature over
-                 justification]   S and its justification for it, when its
+                bound             32 bytes, the justification_hash M's
+                                  signature over T binds
+                u8 flags          bit 0: the signer's step before follows
+                [signature        bit 0: the signer's own SEATING signature over
+                 justification]   S and the justification it binds, when its
                                   signature over S was itself a second one
 ```
 
-Round and role are the signature's own. A justification with neither flag
-bit, or bit 0 alone, is byte for byte the first form (flags 0|1). It stands
-when S and T are seatings of the draw (drawn nodes in score order, at most the
-seats), the signer is in S and in the seating it signs now, which comes after
-S, M is in S and in T and is not the signer, T does not come before S, M's
-signature over T verifies, a nested justification stands for M's signature
-over T, and a step before is the signer's valid signature over S with a
-justification that stands for it. A justification carries **at most 8 steps
-in all** (itself, nested ones and steps before, counted together); one with
-more is not encoded, not read and not counted, and an honest seat whose next
-signature would need more signs nothing (so no honest seat ever needs a longer
-chain to be excused). GET /seating-sig and the
-batch door hand it as `justification` (hex) beside the signature, and an older
-seat reads past it; the certificate carries, after its SEEN groups, one
-`(node key, justification)` per seated node whose signature on it is a second
-one, sorted by node key, and nothing when there is none - so a certificate
-with no second signature, and every certificate below 22, is byte for byte as
-before. A seat counts another node's signature over a seating other than one
-it already holds of that node only with a justification whose chain leaves one
+Round and role are the signature's own. A step carries M's signature and the
+hash it binds, not M's own justification: M's reasons are M's to present, so
+nothing is nested (the #738 nested form, flag bit 0 then, is gone; any flag
+beyond bit 0 is refused). A justification stands when S and T are seatings of
+the draw (drawn nodes in score order, at most the seats), the signer is in S
+and in the seating it signs now, which comes after S, M is in S and in T and
+is not the signer, T does not come before S, M's signature over T verifies
+binding `bound`, and a step before is the signer's signature over S, binding
+the justification with it, which stands for it. The signature the
+justification comes with must bind it: a justification attached afterwards,
+or one whose hash the signature does not bind, is no step. A justification
+carries **at most 8 steps in all** (itself and its steps before, counted
+together, not nesting depth); one with more is not encoded, not read and not
+counted, and an honest seat whose next signature would need more signs
+nothing (so no honest seat ever needs a longer chain to be excused). GET
+/seating-sig and the batch door hand it as `justification` (hex) beside the
+signature, and an older seat reads past it; the certificate carries, after its
+SEEN groups, one `(node key, justification)` per seated node whose signature
+on it is a second one, sorted by node key, and nothing when there is none -
+and each seated node's signature in a 22 certificate is checked binding the
+justification the certificate carries for it (none: the empty string's hash).
+A seat counts another node's signature over a seating other than one it
+already holds of that node only with a justification whose chain leaves one
 held (or one held whose chain leaves this one), and refuses a signature whose
-justification does not stand; a certificate carrying one that does not stand
-does not stand either.
+justification does not stand or that does not bind it; a certificate carrying
+one that does not stand does not stand either.
+
+**One seating, signed once** *(kanban #746)*. A member signs each seating of a
+draw once. Two signatures by one member over the same seating binding
+different justification hashes are a fault on their own: the member is named,
+with no excuse. An honest seat writes its signature, with its justification,
+before any door hands it out; after a restart it hands out the one written and
+never makes a new one.
 
 **A chain of departures excuses** *(protocol 22, kanban #744, RULED
 2026-10-28)*. A seating equivocation proof over two seatings X and Y of one
 draw, X before Y, is valid against a member M only if M signed both and M
 **cannot** present a valid chain X = S0 -> S1 -> ... -> Sk = Y: seatings of
 that draw in strictly increasing order, M's signature over every Si, and each
-step Si -> Si+1 a justification that Si can never stand. Honest M that signs
-S, then S2, then T is excused for S and T even when H cited M's T to leave S
-and M's reason for T is about S2: M left S for S2 with a reason too. The
-excuse never depends on which seating a citer cited. Two seatings neither of
-which comes before the other are joined by no chain.
+step Si -> Si+1 a justification that Si can never stand, bound in M's own
+signature over Si+1 (#746). Honest M that signs S, then S2, then T is excused
+for S and T even when H cited M's T to leave S and M's reason for T is about
+S2: M left S for S2 with a reason too. The excuse never depends on which
+seating a citer cited. Two seatings neither of which comes before the other
+are joined by no chain.
 
 A chain reaches the judge on the signatures themselves: M's justification for
-its last signature carries its steps before (bit 1), so the certificate of Y
-holds M's whole chain; a node that cites M nests M's chain from the seating it
-left (bit 0); and a seat judging a proof also counts every justification it
-kept with a signature it holds (its own included). A presented justification
-is checked like any other; a forged step - one whose member is not in the
-seating it leaves, or whose signature does not verify - breaks the chain.
+its last signature carries its steps before (bit 0), each bound in M's
+signature over the seating it left, so the certificate of Y holds M's whole
+chain; and a seat judging a proof also counts every signature it holds with
+the justification it binds (its own included). A presented justification is
+checked like any other and counts only beside the signature that binds it; a
+forged step - one whose member is not in the seating it leaves, or whose
+signature does not verify - breaks the chain.
+
+**Why binding closes it** *(kanban #746)*. A lone Byzantine B could otherwise
+sign T first, let H leave X citing B's T, sign X too, and then hang on its own
+T a justification citing H's T: a chain that clears B. Bound, B's T carries the
+empty string's hash, so B has no step; if B signs T again bound to H's T, its
+first signature over T sits inside H's justification and the two name B
+outright. A signature can bind only a signature that exists already, so
+justifications never cite each other in a circle: the earliest signature by
+any member of a completed X over a seating that conflicts with X has no
+justification that stands, and its signer signed X too. So a proof by two
+completed seatings always names at least one signer.
 
 The attacker is still caught: every step names a member that killed the
 seating it left. When that seating is one of the two certificates, the member
@@ -3100,11 +3136,12 @@ certificates names it too) unless that member presents a chain between them in
 turn. Two completed seatings still void the round. If every signer of both is
 excused, the proof names nobody: it is kept as an unnamed fault record
 (`unnamed`) that never feeds a slash, an exclusion or a reputation count.
-Slashing on seating equivocation stays as built (none today); when it comes it
+Slashing on seating equivocation stays as built (none in 2.0); when it comes it
 applies only to the members a proof is valid against under this rule. GET
 /seating-equivocation names who is proved against (`signers`), who is excused
-(`excused`), the step proofs (`signedTwice`) and whether it names nobody
-(`unnamed`).
+(`excused`), the step proofs (`signedTwice`, each with the hash its signature
+binds), the members that signed one seating twice (`doubleSigned`) and whether
+it names nobody (`unnamed`).
 
 **Who was present** *(protocol 22, kanban #727, RULED 2026-10-27)*. From
 22 the certificate also says who was present, because it is the only proof

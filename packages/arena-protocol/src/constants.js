@@ -633,6 +633,10 @@ export const TAG = {
   seating: 'ARENA/v1/Seating',
   // §5A.3/§5A.7 protocol 22: who a seated node held a PRESENT of at the seating close, and who the round's census left out
   seatingSeen: 'ARENA/v1/SeatingSeen',
+  // §5A.7 protocol 22 (kanban #746): a seated node's SEATING signature binds the hash of its justification - the id it signs, and
+  // that hash (of the empty string for a first signature). Below 22 a SEATING signature is over the seating id alone, as before.
+  seatingSigned: 'ARENA/v1/SeatingSigned',
+  seatingJustification: 'ARENA/v1/SeatingJustification',
   // §5A.3 protocol 22 the heartbeat (kanban #727): a node's HEARTBEAT, a member's HEARD, and the seed a slot's committee is drawn on
   heartbeat: 'ARENA/v1/Heartbeat',
   heartbeatHeard: 'ARENA/v1/HeartbeatHeard',
