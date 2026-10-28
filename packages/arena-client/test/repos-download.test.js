@@ -92,7 +92,7 @@ test('docs.bitcoin-arena.io/repos/ links the five public repositories, each with
   // the docs' contents and its first boxes lead to it, the GitHub icon in every footer too (footer-social.test.js)
   for (const p of ['src/website/docs/www/index.html', 'src/website/www/docs/index.html']) {
     const d = read(p);
-    assert.match(d, /<b>Source<\/b>\n  <a href="https:\/\/docs\.bitcoin-arena\.io\/repos\/">Repositories ↗<\/a>\n  <a href="https:\/\/github\.com\/a tester\/bitcoin-arena\/releases\/latest">Latest release ↗<\/a>\n<\/aside>/, p);
+    assert.match(d, /<b>Source<\/b>\n  <a href="https:\/\/docs\.bitcoin-arena\.io\/repos\/">Repositories ↗<\/a>\n  <a href="https:\/\/github\.com\/a tester\/bitcoin-arena\/releases\/latest">Latest release<span class="relv" data-arena-release-version><\/span> ↗<\/a>\n<\/aside>/, p);
     assert.match(d, /<a class="box link" href="https:\/\/docs\.bitcoin-arena\.io\/repos\/"><h4>Repositories<\/h4>/, p);
   }
 });
