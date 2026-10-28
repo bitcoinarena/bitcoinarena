@@ -6,7 +6,7 @@
 // winner's payout needs nothing here: it is a payout contract to the winner's identity key, recorded on the seats under that key, which
 // the page's zap collector (identity.js collectZaps) already reads and spends into the wallet.
 import { encodeLeaderboardPayout, leaderboardPayoutId, leaderboardVotePeriod, LB_SCOPE, LB_PERIOD_DAYS, LB_TOP_MAX } from '../../arena-protocol/src/leaderboard-payout.js';
-import { FUNDING_SCHEDULES } from '../../arena-protocol/src/funding.js';
+import { fundingScheduleFor } from '../../arena-protocol/src/funding.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 const lbCurveOf = (curve) => { const c = curve || globalThis.ARENA_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
@@ -20,13 +20,13 @@ export const heightAtDate = ({ tip, nowMs, dateMs }) => tip + Math.max(1, Math.c
  * or { ok: false, why }.
  */
 export function signedLeaderboardPayout({ secretKey, networkId, publishedHeight, scope, gameName = '', top, amountSats, federationId, splitBps = [], periodDays,
-  paymentHeight, purpose = '', schedule = FUNDING_SCHEDULES.spec, curve }) {
+  paymentHeight, purpose = '', schedule = fundingScheduleFor(fromHex(networkId)), curve }) {   // the network's own (kanban #785)
   const c = lbCurveOf(curve);
   const p = { networkId: fromHex(networkId), author: c.pointX(secretKey), publishedHeight, scope, gameName: scope === LB_SCOPE.ALL ? '' : String(gameName),
     top: Number(top), amountSats: BigInt(amountSats), federationId: fromHex(federationId), splitBps, periodDays: Number(periodDays), paymentHeight, purpose: String(purpose) };
   try { encodeLeaderboardPayout(p); } catch (e) { return { ok: false, why: e.message }; }
   const vp = leaderboardVotePeriod({ proposal: p, schedule });
-  if (paymentHeight < vp.decidableAt) return { ok: false, why: `the payment comes before its 2-week vote is decided (block ${vp.decidableAt})` };
+  if (paymentHeight < vp.decidableAt) return { ok: false, why: `the payment comes before its vote is decided (block ${vp.decidableAt})` };
   const id = leaderboardPayoutId(p);
   return { ok: true, id: toHex(id), hex: toHex(Uint8Array.from([...encodeLeaderboardPayout(p), ...c.signSchnorr(id, secretKey)])), decidableAt: vp.decidableAt };
 }
