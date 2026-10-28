@@ -233,13 +233,15 @@ two. Every deposit and withdrawal above goes "through any of several gateways", 
   4. bond;
   5. a ticket on the epoch's beacon.
 
-  The seats rotate every epoch (144 blocks, 2026-10-20): last epoch's holders step back for the eligible operators that did not hold a seat; with nobody else eligible they keep it. A draining federation has one seat, and a federation is never without a gateway (the best one that can serve holds a seat below the minimums, unpaid). An empty seat is stated.
+  The two are signed as a separate gateway seating per epoch (not in the federation record), once the epoch is over; it stands only with
+  the threshold of the seated guardians' signatures over the same seats. The seats rotate every epoch (144 blocks, 2026-10-20): last epoch's holders step back for the eligible operators that did not hold a seat; with nobody else eligible they keep it. A draining federation has one seat, and a federation is never without a gateway (the best one that can serve holds a seat below the minimums, unpaid). An empty seat is stated.
 - **What it earns, from the custody fee** (protocol 2026.0.15, so the 4 % node fee of protocol 11 on): the guardian pool (4/3 % of every
   round's volume) splits **2/3 to the guardians, 1/3 to the two gateway seats**. With ten guardians that is about **0.222 %** of volume
   per gateway seat against 0.089 % per guardian (a seat holder is a guardian too: 0.311 % in all), plus the gateway's own Lightning
   routing fees.
   - Unearned shares go to the other seat, then to the guardians.
-  - With no seating standing, the guardians keep the pool.
+  - A round is paid from the signed seating of the last whole epoch before its census height (`floor(census_height / 144) - 1`); with no
+    seating standing for that epoch, no gateway is paid and the guardians keep the pool - no fallback to an older epoch.
   - The mirror, from protocol 22: with no eligible guardian in a round, the custody pool's guardian part goes to the eligible gateway
     seats, evenly; only the custody pool moves, and the gateway seats' own share and the liquidity providers' shares are paid as with
     guardians. Only with no eligible gateway seat either does the custody pool go to the two committees (game/verify and settlement),
