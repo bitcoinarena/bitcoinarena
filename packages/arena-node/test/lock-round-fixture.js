@@ -37,8 +37,9 @@ import { refundKeyOf, lockFieldsToJson } from '../../arena-protocol/src/stake-lo
 import { toHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { HOSTED } from './plugins/hosted.js';
-import { splitDonation } from '../../arena-protocol/src/donation.js';
+import { splitDonation, donationSetPaysKeys } from '../../arena-protocol/src/donation.js';
 import { donationContractFields } from '../src/stake-lock-signer-node.js';
+import { paysReserves, entryPaysReserves, entryFeeBpsForRound, roundSplit } from '../../arena-protocol/src/reserves.js';
 
 // A WINNER NAMES A LIGHTNING ADDRESS (ruled 2026-09-23: only a qualifier who named one is paid; the others' shares
 // are pooled over those who did). `lnurl` is that address: it answers LUD-16/LUD-06 with real-format invoices whose
@@ -154,7 +155,24 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
   const beacon = slot.randomnessFor({ contract: c });
   assert.ok(beacon && beacon.hash, 'the bonded chain names no beacon for the round');
   console.log(`  BEACON (lockRound): ${toHex(beacon.hash)} at ${beacon.height}`);
-  return { ...on, needed: receiptsNeeded(n), c, rid, claimPk: held.pool.groupPublicKey, randomness: beacon.hash };
+  // THE FEDERATION'S RESERVE KEY (§27A.9.2, protocol 11; kanban #725): a round that pays the reserves takes an entry only once its
+  // seat knows the entry's federation's reserve key - the key the federation's guardian seats made by their own DKG (server.js
+  // reserveKeyFor: the seat's own share when it guards the federation, read from the census its bonds derive to). The fixture's
+  // bonds name every node a guardian of TEST_FEDERATION_ID, so the round's nodes ARE its guardian seats: their reserve DKG is run
+  // here, as the claim key's is above, and every seat then answers the key from its own share. `reserveKey`: what the entries'
+  // reserve outputs are made to (lockAndPlay). Null on a round before protocol 11, which pays no reserve.
+  let reserveKey = null;
+  if (paysReserves(c)) {
+    const fedHex = toHex(c.federationId);
+    const peersOf = (d) => nodes.filter((o) => o !== d).map((o) => `http://127.0.0.1:${o.port}`);
+    for (let pass = 0; pass < 2; pass++) for (const d of nodes) await d.reserves.make(fedHex, c.nodes, peersOf(d));
+    const sorted = [...c.nodes].sort((x, y) => (toHex(x) < toHex(y) ? -1 : toHex(x) > toHex(y) ? 1 : 0));
+    const own = a.reserves.dkgOf(fedHex).signerNodeFor(sorted);
+    assert.equal(own.ok, true, `the round's nodes made no reserve key for their federation: ${own.why}`);
+    reserveKey = own.pool.groupPublicKey;
+    console.log(`  RESERVE KEY (lockRound): ${toHex(reserveKey)} of ${n} guardian seats`);
+  }
+  return { ...on, needed: receiptsNeeded(n), c, rid, claimPk: held.pool.groupPublicKey, randomness: beacon.hash, reserveKey };
 }
 
 // `feeLock` DEFAULTS TO TRUE (2026-09-21): on a federation that charges no base fee this round's gate mints
@@ -169,7 +187,12 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
 // an entry plays no run either (noMarks), and reveals after entry close (POST /reveal).
 // THE ROUND'S GAME'S ENTRY FEE: a market's node fee and donation together (1 % by default, both in the fee lock
 // until it resolves), a game's the network's - as the page pays it
-const gameFeeBps = (w) => { const f = pluginForRound(w.c, (w.a || w.nodes[0]).round.plugins); return f.ok ? entryFeeBpsOf(f.plugin.manifest) : undefined; };
+const gameFeeBps = (w) => { const f = pluginForRound(w.c, (w.a || w.nodes[0]).round.plugins); return f.ok ? entryFeeBpsForRound(w.c, f.plugin.manifest) : undefined; };
+// A ROUND THAT PAYS THE RESERVES (§27A.9.2, protocol 11): its split of the gross stake - or null for an older round, or a market's
+const reservesOf = (w) => { const f = pluginForRound(w.c, (w.a || w.nodes[0]).round.plugins); return f.ok && entryPaysReserves(w.c, f.plugin.manifest) ? roundSplit(w.c.stakeMsat) : null; };
+// THE ROUND'S DONATION TARGET, AS THE SEAT READS IT (the network's set in force and the game's): what a protocol-11 entry's developer
+// outputs are split over when the test names no `donation.target`
+const donationTargetOf = (w) => { const d = (w.a || w.nodes[0]); const t = d.settlements && d.settlements.donationTargetFor ? d.settlements.donationTargetFor(w.c) : null; return t && t.ok ? t.target : null; };
 // `order`: { price (PRICE_SCALE units), expiryMs } - a market order: the entry buys `pick` at that limit
 export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, expirySpan = null, frontendPk = null } = {}) {
   const session = ed25519.utils.randomSecretKey();
@@ -185,9 +208,15 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
   const outpoint = { txid: rand(32), outIdx: 0n };
   await warmPlay(who, w.randomness);
   const play = playFor(who, w.randomness);
+  // ON PROTOCOL 11 (§27A.9.2) THE ENTRY'S MONEY IS THE ROUND'S SPLIT, as the page makes it: the nodes' 4 % in the fee lock, the
+  // developers' 4 % and the reserves' 2 % in its donation - the developers' part as donation outputs over the round's target, the
+  // reserves' part one output to the federation's reserve key (`w.reserveKey`), named as the entry's reserve lock. A test may still name
+  // `donation` to choose the target; its msat is then the split's, not its own.
+  const reserves = reservesOf(w);
   const entry = {
     roundId: w.rid, playerPubkey: who.key, sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: sha256(preimage), stakeMsat: w.c.stakeMsat, feeMsat: entryFeeMsat(w.c.stakeMsat, gameFeeBps(w)), donationMsat: donation ? donation.msat : 0n,
+    stakeCommitment: sha256(preimage), stakeMsat: w.c.stakeMsat, feeMsat: reserves ? reserves.nodesMsat : entryFeeMsat(w.c.stakeMsat, gameFeeBps(w)),
+    donationMsat: reserves ? reserves.protocolDevsMsat + reserves.gameDevsMsat + reserves.reservesMsat : (donation ? donation.msat : 0n),
     joinTick: 0, worldSecret: play.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
     feePreimage: feeSecret, stakeLockOutpoint: outpoint, feeLockOutpoint: feeOutpoint,
     claimKeyAttestationRef: b32(0x9a),
@@ -199,8 +228,11 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
   if (hidden) entry.commit = headToHeadCommit({ roundId: w.rid, entryKey: entry.sessionPubkey, move: hidden.move, salt: hidden.salt });
   // THE DONATION'S OUTPUTS: one payout contract per share, to its key, for exactly its amount
   const donated = [];
-  if (donation && donation.msat > 0n) {
-    const split = splitDonation({ donationMsat: donation.msat, recipients: donation.target });
+  const devsMsat = reserves ? reserves.protocolDevsMsat + reserves.gameDevsMsat : (donation ? donation.msat : 0n);
+  const target = donation && donation.target ? donation.target : (reserves ? donationTargetOf(w) : null);
+  // a set that pays LNURLs (the fixtures' regtest default) owes no output in the federation; a set of keys one per share
+  if (devsMsat > 0n && target && donationSetPaysKeys(target)) {
+    const split = splitDonation({ donationMsat: devsMsat, recipients: target });
     assert.ok(split.owed, split.why);
     for (const sh of split.shares.filter((x) => x.amountMsat > 0n)) {
       const outpoint = { txid: rand(32), outIdx: 0n };
@@ -208,6 +240,15 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
       donated.push({ outpoint, recipientPk: sh.recipientPk, amountMsat: sh.amountMsat });
     }
     entry.donationOutpoints = donated.map((d) => d.outpoint);
+  }
+  // AND THE RESERVE OUTPUT (§27A.9.2): the reserves' 2 % to the federation's reserve key, a payout contract as a donation output is
+  let reserved = null;
+  if (reserves) {
+    assert.ok(w.reserveKey instanceof Uint8Array && w.reserveKey.length === 33, 'a round that pays the reserves names its federation\'s reserve key (lockRound makes it)');
+    const reserveOutpoint = { txid: rand(32), outIdx: 2n };
+    await w.port.put(reserveOutpoint, donationContractFields({ recipientPk: w.reserveKey, amountMsat: reserves.reservesMsat }));
+    reserved = { outpoint: reserveOutpoint, recipientPk: w.reserveKey, amountMsat: reserves.reservesMsat };
+    entry.reserveOutpoint = reserveOutpoint;
   }
   const eid = entryId(entry);
   // THE LOCK SPAN: the round's own when it names more than the ruled 144 (a market's, - as the page locks for
@@ -283,7 +324,8 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
       }
       continue;
     }
-    assert.equal(await say(d.port, encodeInputBatch(input)), String(who.ticks));
+    // a later seat may already hold the batch, forwarded by the first (its answer is then 0 new ticks) - as the game run above
+    { const took = await say(d.port, encodeInputBatch(input)); assert.ok(took === String(who.ticks) || (d !== (w.nodes || [w.a, w.b])[0] && took === '0'), `the batch was answered ${String(took).slice(0, 160)}`); }
     const receipt = await say(d.port, signedMark);
     assert.equal(receipt.length, SIGNED_RECEIPT_BYTES, typeof receipt === 'string' ? `the mark was refused: ${receipt}` : undefined);
   }
@@ -340,7 +382,7 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
     }
   }
   // `late`: the run's batch and first mark, for a test that sends them after the start deadline (§15's same door)
-  const played = { eid, entry, fields, outpoint, feeOutpoint, session, late: [encodeInputBatch(input), signedMark], forked, donated };
+  const played = { eid, entry, fields, outpoint, feeOutpoint, session, late: [encodeInputBatch(input), signedMark], forked, donated, reserved };
   if (address) await nameAddress(w.nodes || [w.a, w.b], played, address === true ? ADDRESS : address);
   return played;
 }
@@ -355,7 +397,9 @@ export const proposerOf = (w) => {
 export const standing = async (d, w) => (await fetch(`http://127.0.0.1:${d.port}/lock-settlement?round=${toHex(w.rid)}`)).json();
 // CLOSE, AND - THE REPLAYS DONE, EVERY RESULT HELD INSIDE THE WINDOW - SKIP THE FIXTURES' CLOCK PAST final_after (the round's
 // end + 600 s + 5 s), where a seat decides the window and may sign FINAL. `window: false` stays inside the window.
-export async function closeRound(w, { window = true } = {}) {
+// `inside`: an async step run INSIDE the window, once every run is agreed and published and before the clock skips past
+// final_after - what an auditor does there (§13A.1: its AUDIT is taken until window_close, never after).
+export async function closeRound(w, { window = true, inside = null } = {}) {
   const nodes = w.nodes || [w.a, w.b];
   const said = await Promise.all(nodes.map((d) => say(d.port, `close ${toHex(w.rid)}`)));
   for (const d of nodes) for (const p of d.verifier.done || []) { try { await p; } catch { /* a close that failed says so itself */ } }
@@ -372,6 +416,7 @@ export async function closeRound(w, { window = true } = {}) {
       return f.state === PROVISIONALLY_FINAL && f.published === true;
     }));
     for (const stop = Date.now() + 30000; Date.now() < stop && !ready(); await wait(100));
+    if (inside) await inside();
     skipTo(Number(win.finalAfterMs) + 50);
   }
   return said;
