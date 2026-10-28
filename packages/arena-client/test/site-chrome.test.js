@@ -45,9 +45,9 @@ test('the header: the logo to bitcoin-arena.io, "← Arena" back to the games, �
   assert.match(page, /if \(location\.hash === '#donate'\) \{ try \{ history\.replaceState\(null, '', location\.pathname \+ location\.search\); \} catch \{ \/\* the box opens anyway \*\/ \} window\.ARENA_DONATE_OPEN\(\); \}/);
 });
 
-test('the footer\'s build line is the Arena page\'s, filled when the page is built', () => {
+test('the footer has no build line (kanban #753: "Remove the static build display"); filling the page leaves the script as it is', () => {
   const out = fillChrome(CHROME, { pin: { productVersion: '0.0.10' }, ui: 499 });
-  assert.match(out, /var STAMP = 'build 0\.0\.10 · UI 499';/);
-  assert.ok(!out.includes('{{{'));
+  assert.equal(out, CHROME, 'no token left to fill');
+  assert.ok(!/STAMP|asc-build|0\.0\.10/.test(out));
   assert.throws(() => fillChrome(CHROME + '\n// {{{ OTHER }}}', { pin: { productVersion: '1' }, ui: 1 }), /unfilled template token/);
 });
