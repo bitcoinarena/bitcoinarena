@@ -2,7 +2,7 @@
  "openapi": "3.0.3",
  "info": {
   "title": "Bitcoin Arena node API",
-  "version": "2026-10-28",
+  "version": "2026-10-29",
   "description": "Every request a Bitcoin Arena node (`arena-node`) answers, generated from `packages/arena-node/src/server.js` by `src/website/docs/gen-docs.py`. Concepts and guides: https://docs.bitcoin-arena.io/"
  },
  "servers": [
@@ -9841,6 +9841,30 @@
     }
    }
   },
+  "/reach-nonce": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "Direct-check nonce for the installer",
+    "description": "Lets the installer's direct check reach an installed node on its own port: the seats ask this address, and the node answers with the installer's nonce (kanban #734).\n\nAccess: none\n\nReturns: 200 text: the nonce the installer wrote into this node's home, while it is under 5 minutes old; else 404\n\nSource: `packages/arena-node/src/server.js` line 7850.",
+    "operationId": "get_reach_nonce",
+    "responses": {
+     "200": {
+      "description": "The nonce from <ARENA_HOME>/reach-nonce, written by the installer less than 5 minutes ago.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "404": {
+      "description": "No nonce, or one older than 5 minutes.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
   "/receipts": {
    "get": {
     "tags": [
@@ -10989,11 +11013,21 @@
       "name": "next",
       "in": "query",
       "required": false,
-      "description": "At most this many upcoming rounds per series.",
+      "description": "At most this many upcoming rounds per series. With neither next nor ahead the node lists the next 8 of each series (kanban #742).",
       "schema": {
        "type": "integer"
       },
       "example": 8
+     },
+     {
+      "name": "all",
+      "in": "query",
+      "required": false,
+      "description": "1: every announced round this node holds, unbounded (slow at grid density: tens of thousands of rows). Without it, a bare /rounds is next=8.",
+      "schema": {
+       "type": "integer"
+      },
+      "example": 1
      }
     ],
     "responses": {
@@ -13136,6 +13170,24 @@
     "responses": {
      "200": {
       "description": "{seat, txs[]}.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/uptime": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "Node uptime",
+    "description": "The node's uptime figures (24 h, 7 days, 30 days, all time) from its own record, kept 30 s (kanban #756).\n\nAccess: none\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 6640.",
+    "operationId": "get_uptime",
+    "responses": {
+     "200": {
+      "description": "200 application/json",
       "content": {
        "application/json": {}
       }
