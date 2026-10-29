@@ -74,6 +74,35 @@
  },
  {
   "method": "GET",
+  "path": "/reach-nonce",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 text: the nonce the installer wrote into this node's home, while it is under 5 minutes old; else 404",
+  "purpose": "Lets the installer's direct check reach an installed node on its own port: the seats ask this address, and the node answers with the installer's nonce (kanban #734).",
+  "audience": "operator/monitoring",
+  "line": 7543,
+  "summary": "Direct-check nonce for the installer",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "text/plain",
+    "description": "The nonce from <ARENA_HOME>/reach-nonce, written by the installer less than 5 minutes ago."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "No nonce, or one older than 5 minutes."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
   "path": "/dashboard (also /Dashboard)",
   "params": "none",
   "auth": "none",
@@ -2441,7 +2470,7 @@
  {
   "method": "GET",
   "path": "/rounds",
-  "params": "query ahead (ms or Nh, optional), next (per-series count, optional)",
+  "params": "query ahead (ms or Nh, optional), next (per-series count, optional; 8 when neither is given), all (1: every announced round)",
   "auth": "none",
   "returns": "200 JSON {node, nowMs, rounds:[{id, phase, entryOpen, game, event? {question, outcomes, resolveAtMs}, outcome, startTime, endTime, committee, stakeMsat, free (development rounds only), wallet, joined, playing, watching, names, needed, signerNodes, sig, ...}], games}",
   "purpose": "Lobby listing of announced rounds this node holds, each row signed by the node.",
@@ -2460,8 +2489,15 @@
     "name": "next",
     "required": false,
     "type": "integer",
-    "description": "At most this many upcoming rounds per series.",
+    "description": "At most this many upcoming rounds per series. With neither next nor ahead the node lists the next 8 of each series (kanban #742).",
     "example": 8
+   },
+   {
+    "name": "all",
+    "required": false,
+    "type": "integer",
+    "description": "1: every announced round this node holds, unbounded (slow at grid density: tens of thousands of rows). Without it, a bare /rounds is next=8.",
+    "example": 1
    }
   ],
   "body": null,
@@ -10799,7 +10835,7 @@
   "auth": "none",
   "returns": "200 application/json",
   "purpose": "What this drawn seat signed for a round, for the round's other drawn attestors to combine (kanban #630).",
-  "audience": "seat/peer",
+  "audience": "node-to-node",
   "line": 8350,
   "summary": "A drawn seat's attestation word",
   "query": [
@@ -10853,7 +10889,7 @@
   "auth": "none",
   "returns": "200 application/json",
   "purpose": "An order's stake lock and fee lock as this seat verified them, for a seat that holds the order's certified batch but never received its locks (kanban #620).",
-  "audience": "seat/peer",
+  "audience": "node-to-node",
   "line": 8017,
   "summary": "An order's verified locks",
   "query": [],
@@ -11197,7 +11233,7 @@
   "auth": "none",
   "returns": "200 application/json",
   "purpose": "Keeps a referral program's name when its site key signed it, and hands it on to every seat once (kanban #675).",
-  "audience": "seat/peer",
+  "audience": "node-to-node",
   "line": 9291,
   "summary": "Keep a referral program's name",
   "query": [],
@@ -11277,7 +11313,7 @@
   "auth": "none",
   "returns": "200 application/json",
   "purpose": "One order or payment this seat stored, with its timing when the page sent one (kanban #624).",
-  "audience": "explorer",
+  "audience": "player/page",
   "line": 7964,
   "summary": "One transaction",
   "query": [],
@@ -11301,7 +11337,7 @@
   "auth": "none",
   "returns": "200 application/json",
   "purpose": "The ids of the transactions stored here since `since` (ms), oldest first, at most 500 - what explorer.bitcoin-arena.io polls (kanban #624).",
-  "audience": "explorer",
+  "audience": "player/page",
   "line": 7971,
   "summary": "Newest transactions",
   "query": [],
