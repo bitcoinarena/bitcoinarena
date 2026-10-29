@@ -62,7 +62,7 @@ export async function installLnd({ home, platform = process.platform, arch = pro
  * <home>/lnd and its lnd.conf for testnet4 on the node's Bitcoin Core. `chain`: the wizard's chain step ({ url, cookiePath } or
  * { url, user, password }). Answers { lnddir, conf, passwordFile, restUrl, tlsCert, macaroon }.
  */
-export function configureLnd({ home, chain, alias = 'arena-node', ports = LND_PORTS, tor = null, externalIp = null }) {
+export function configureLnd({ home, chain, alias = 'arena-node', ports = LND_PORTS, tor = null, externalIp = null, nat = false }) {
   const lnddir = join(home, 'lnd');
   mkdirSync(lnddir, { recursive: true, mode: 0o700 });
   const passwordFile = join(lnddir, 'wallet-password');
@@ -74,11 +74,13 @@ export function configureLnd({ home, chain, alias = 'arena-node', ports = LND_PO
     // nat: LND asks the router (UPnP / NAT-PMP) to forward its peer port and announces the outside address - only when the wizard knows
     // neither: a node reached from outside announces externalip, one that is not runs Tor. LND STOPS when no router answers
     // (measured on the test host, rc.12: "unable to discover a NAT-PMP enabled device on the local network ... Shutting down"), so it is
-    // never set beside Tor or an outside address.
+    // never set beside Tor or an outside address - AND ONLY WHEN A ROUTER ANSWERED (`nat`, router-probe.js; kanban #730, measured 2026-10-29
+    // in the Linux VM: no Tor, no outside address and no router, nat=true, and LND quit 20 s after every start). With none of the three
+    // LND runs without it and dials out to its peers.
     // BEHIND TOR, ITS PEER PORT ON THIS MACHINE ONLY (the Windows VM 2026-10-19: listening on every network, lnd made Windows
     // Firewall ask to open it to public networks): inbound peers come through its onion, which Tor connects to locally (LND's own advice
     // for a Tor node, listen=localhost); a node reached from outside (externalip) or by its router (nat) listens on every interface
-    '[Application Options]', `alias=${alias}`, `listen=${tor && !externalIp ? '127.0.0.1' : '0.0.0.0'}:${ports.p2p}`, ...(!tor && !externalIp ? ['nat=true'] : []), ...(externalIp ? [`externalip=${externalIp}:${ports.p2p}`] : []), `rpclisten=127.0.0.1:${ports.rpc}`, `restlisten=127.0.0.1:${ports.rest}`,
+    '[Application Options]', `alias=${alias}`, `listen=${tor && !externalIp ? '127.0.0.1' : '0.0.0.0'}:${ports.p2p}`, ...(nat && !tor && !externalIp ? ['nat=true'] : []), ...(externalIp ? [`externalip=${externalIp}:${ports.p2p}`] : []), `rpclisten=127.0.0.1:${ports.rpc}`, `restlisten=127.0.0.1:${ports.rest}`,
     `wallet-unlock-password-file=${passwordFile}`, 'wallet-unlock-allow-create=true',
     '[Bitcoin]', 'bitcoin.active=true', 'bitcoin.testnet4=true', 'bitcoin.node=bitcoind',
     '[Bitcoind]', `bitcoind.rpchost=${rpc.hostname}:${rpc.port}`, ...auth, 'bitcoind.rpcpolling=true',
