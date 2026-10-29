@@ -12694,5 +12694,29 @@
   "changesState": false,
   "needsAuth": "none",
   "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/uptime",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 application/json",
+  "purpose": "The node's uptime figures (24 h, 7 days, 30 days, all time) from its own record, kept 30 s (kanban #756).",
+  "audience": "operator/monitoring",
+  "line": 6640,
+  "summary": "Node uptime",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
  }
 ]
