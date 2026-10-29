@@ -5406,6 +5406,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return scanBuilding;
   };
+  const LISTING_BARE_NEXT = Number(process.env.ARENA_LISTING_BARE_NEXT || 8);
   const announcedRounds = async (url) => {
     let sliceAt = performance.now();
     const yieldIfLong = async () => {
@@ -5430,7 +5431,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // its committees asked - and the page's lobby, which waits ~10 s a node, showed no paying row). Rounds of no series are
     // all listed; unnamed, nothing is left out. Only the rows kept are signed and have their committees asked.
     const nextRaw = url.searchParams.get('next');
-    const perSeries = nextRaw !== null && /^\d+$/.test(nextRaw) ? Number(nextRaw) : null;
+    // A BARE GET /rounds LISTS THE NEXT 8 OF EACH SERIES (kanban #742, the owner 2026-10-29 ~20:40Z "Fix rounds endpoint": at grid density -
+    // the RPS grids' 10,800 rounds a day, 72 h of them held - a listing with neither `next` nor `ahead` signed every row and did not answer
+    // in 90 s on any test host seat, while `next=1&ahead=50h` answered in 3-6 s). `all=1` asks for everything, as before.
+    const bare = nextRaw === null && aheadRaw === null && url.searchParams.get('all') !== '1';
+    const perSeries = bare ? LISTING_BARE_NEXT : nextRaw !== null && /^\d+$/.test(nextRaw) ? Number(nextRaw) : null;
     const candidates = [];
     // ONE DECODED CONTRACT PER ROUND FOR THE SWEEPS AND THIS LISTING ALIKE (NODE-OPT-1648): a decoded contract is ~7 KB
     // of heap, ~20 MB for the ~2,950 rounds a testnet4 seat holds, and this listing kept a second copy of each. The

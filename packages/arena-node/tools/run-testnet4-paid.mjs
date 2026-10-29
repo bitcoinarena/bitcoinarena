@@ -655,7 +655,7 @@ if (env.PAID_UPDOWN_GRID === '1') {
 if (env.PAID_RPS === '1')
   keepBackToBack(round, { fields: RPS_ROUND_FIELDS,
     tables: (() => { const count = tableCounter({ min: Number(env.RPS_MIN_TABLES || 3), spare: 1, gameId: toHex(ROCK_PAPER_SCISSORS.gameId) });
-      return async () => { try { const d = await (await fetch(`http://${NODE_HOST}:${pa}/rounds`)).json(); return count(d.rounds || [], Date.now()); } catch { return 3; } }; })(),
+      return async () => { try { const d = await (await fetch(`http://${NODE_HOST}:${pa}/rounds?all=1`)).json(); return count(d.rounds || [], Date.now()); } catch { return 3; } }; })(),
     onOpen: ({ id, entryCloseMs, tookMs }) => say({ rps: id, entryClose: new Date(Number(entryCloseMs)).toISOString(), stakeMsat: String(stakeMsat), tookMs }),
     onError: (e) => say({ rpsNotOpened: e.message }) });
 const stop = async () => { say({ stopping: true }); await round.close(); process.exit(0); };

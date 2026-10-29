@@ -489,7 +489,7 @@ async function status() {
   let rounds = [];
   if (nodes[0].up) {
     try {
-      const list = (await getJson(`${nodeUrl(0)}/rounds`, 10000)).rounds || [];
+      const list = (await getJson(`${nodeUrl(0)}/rounds?all=1`, 10000)).rounds || [];
       rounds = list.map((r) => ({ id: r.id, game: r.game && r.game.name, stakeMsat: r.stakeMsat, entryOpen: r.entryOpen,
         start: r.startTimeMs ? new Date(Number(r.startTimeMs)).toISOString() : undefined, entryClose: r.entryCloseMs ? new Date(Number(r.entryCloseMs)).toISOString() : undefined }));
     } catch (e) { rounds = [{ error: e.message }]; }

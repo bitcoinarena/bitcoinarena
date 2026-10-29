@@ -99,10 +99,16 @@ test('the node writes every round of the next 72 hours, the one 72 h out among t
     const all = await (await fetch(`http://127.0.0.1:${s.port}/rounds?ahead=72h`)).json();
     assert.equal(all.rounds.length, written, 'every written round is listed out to 72 h');
     assert.ok(all.rounds.some((r) => r.id === last.id), 'the round 72 h out is listed');
-    // ROUNDS-EP-1612: a plain /rounds lists every announced round, each with ISO-8601 UTC start and end and who is
+    // ROUNDS-EP-1612: /rounds?all=1 lists every announced round, each with ISO-8601 UTC start and end and who is
     // responsible - here nobody yet: this node has no chain view, so no committee is drawn, and the row says so
-    const lobby = await (await fetch(`http://127.0.0.1:${s.port}/rounds`)).json();
+    const lobby = await (await fetch(`http://127.0.0.1:${s.port}/rounds?all=1`)).json();
     assert.equal(lobby.rounds.length, written, 'nothing announced is left out');
+    // A BARE /rounds (kanban #742, 2026-10-29): the next 8 of each series - at grid density the full list did not answer in 90 s
+    const bare = await (await fetch(`http://127.0.0.1:${s.port}/rounds`)).json();
+    const heldSeries = await (await fetch(`http://127.0.0.1:${s.port}/series`)).json();
+    const seriesCount = (Array.isArray(heldSeries) ? heldSeries : heldSeries.series || []).length;
+    assert.ok(bare.rounds.length > 0 && bare.rounds.length < written, `a bare listing is the soonest rounds only (${bare.rounds.length} of ${written})`);
+    assert.ok(bare.rounds.length <= 8 * seriesCount, `at most 8 of each of the ${seriesCount} series`);
     const row = lobby.rounds.find((r) => r.id === last.id);
     assert.equal(row.startTime, new Date(Number(lastStart)).toISOString());
     assert.ok(Date.parse(row.endTime) > Date.parse(row.startTime), 'the end is the round\'s own end, after its start');
