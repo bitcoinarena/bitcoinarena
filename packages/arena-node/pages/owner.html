@@ -428,7 +428,7 @@ function setupPanel() {
   mount('setup-banner-place', 'mountSetup', { api: { get: getOrNull }, banner: true });   // the setup screen over the whole owner area until it is done
 }
 // THE FIRST BOND SET UP HERE (kanban #728): the node wallet's address as a QR too
-function bondPanel() { mount('bond', 'mountBond', { api: { get: getOk, post, signed }, qr: (t) => C.textQrSvg(t) }); }
+function bondPanel() { mount('bond', 'mountBond', { api: { get: getOk, post, signed }, qr: (t) => C.textQrSvg(t), onNeed: (level, text) => need('bond-state', level, text, 'bond') }); }
 
 // THE CAPACITY PLEA (§23A.3a, kanban #543): when a federation this node guards fills up, or the network does, the seat says how much
 // to add (GET /capacity?node=me: capacity.js capacityPlea); nothing while all is CALM - drawn by React (kanban #564, CapacityPlea)
