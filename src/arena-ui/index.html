@@ -832,7 +832,10 @@
        canvas with ~6 % of the height below it - on a phone's short window less than the foot, which lay over PLAY and SPECTATE. While the menu
        shows, the canvas ends under the bar and over the foot, so Unity lays its panel out in the room between them (the loading screen
        leaves the same room: loading-page.js); a round being played has the whole window again */
-    body.arena-unity-menu:not(.arena-clean) #canvas { top: calc(40px + env(safe-area-inset-top, 0px)); bottom: calc(30px + env(safe-area-inset-bottom, 0px)); height: auto; }
+    /* (the height spelled out and !important: Unity writes the canvas's height into its style, and a canvas's auto height is its pixel
+       height - measured on the first try, the canvas moved down 40 px and kept its 664 px, ending 40 px under the window) */
+    body.arena-unity-menu:not(.arena-clean) #canvas { top: calc(40px + env(safe-area-inset-top, 0px)); bottom: auto;
+      height: calc(100% - 70px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) !important; }
     body.arena-picking #arena-games .foot-row, body.arena-game-chosen:has(#boot:not(.done)) #boot-build { display: none; }
     body.arena-picking #arena-games .box { padding-bottom: 36px; }
     /* THE ARENA'S OWN LOADING SCREEN HAS THE HEADER AND THE FOOTER (kanban #535: "the arena loading page, the one which opens when clicking the
