@@ -42,7 +42,7 @@ export const BATCH_ROUNDS = 64;
 const joinBytes = (list) => { const out = new Uint8Array(list.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of list) { out.set(x, at); at += x.length; } return out; };
 
 export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, nowMs = () => Date.now(), log = () => {}, windowOf = () => null,
-  onSeated = () => {}, leftNode = () => false, contractOf = () => null, leftOutOf = () => [], testHoldPresents = null }) {
+  onSeated = () => {}, leftNode = () => false, contractOf = () => null, leftOutOf = () => [], testHoldPresents = null, endpointOf = null }) {
   // `leftOutOf(rid)`: the node keys (hex) the round's census left out as absent (protocol 22, kanban #727) - they may say PRESENT
   // undrawn, and every seated node names them in its SEEN
   // `leftNode(nodeHex)`: the node's owner took it out of every seating with the emergency key (§23A.5a, protocol 17) - its PRESENT is
@@ -319,7 +319,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
           const c = roster.committeeFor(t.rid, role);
           if (!c.ok) continue;
           const drawnKeys = c.drawn.map((e) => e.pubkey);
-          work.push({ t, ridHex, role, c, drawnKeys, amDrawn: drawnKeys.some((k) => toHex(k) === me), others: endpointsOf(c.drawn, round.pubkey),
+          work.push({ t, ridHex, role, c, drawnKeys, amDrawn: drawnKeys.some((k) => toHex(k) === me), others: endpointsOf(c.drawn, round.pubkey, endpointOf),
             slots: slotsForRole(t.contract, role), closed: now >= t.close, late });
         }
       }
@@ -410,7 +410,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       for (const role of lacking) {
         const c = roster.committeeFor(u.rid, role, posted ? { posted } : {});
         if (!c.ok) continue;
-        for (const b of endpointsOf(c.drawn, round.pubkey)) {
+        for (const b of endpointsOf(c.drawn, round.pubkey, endpointOf)) {
           const j = await getJson(b, `/seating?round=${a}&role=${role}`);
           if (j && j.cert && keepCert(u.rid, role, fromHex(j.cert)).ok) break;
         }
