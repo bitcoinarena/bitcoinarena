@@ -45,10 +45,15 @@ export function electrumSession({ host, port, tls: useTls = true, timeoutMs = 10
     let buf = '', id = 0, opened = false;
     const waiting = new Map();
     const fail = (e) => { for (const w of waiting.values()) w.reject(e); waiting.clear(); if (!opened) reject(e); };
+    // THE OPEN TIMER ENDS WHEN THE CONNECTION OPENS, AND A CLOSED SESSION FAILS AT ONCE (kanban #734, measured 2026-10-29 in the Linux VM:
+    // the timer was never cleared, so every session was torn down 20 s after it opened - "did not answer in 20000 ms" from a server that
+    // answered - and a call on a session torn down while idle waited for good: the chain bridge hung on getblockcount and never moved on).
+    // Each call has its own timeout.
+    let dead = null;
     const timer = setTimeout(() => { fail(new Error(`${host}:${port} did not answer in ${timeoutMs} ms`)); sock.destroy(); }, timeoutMs);
     sock.setEncoding('utf8');
-    sock.on('error', (e) => { clearTimeout(timer); fail(new Error(`${host}:${port}: ${e.code || e.message}`)); });
-    sock.on('close', () => fail(new Error(`${host}:${port} closed the connection`)));
+    sock.on('error', (e) => { clearTimeout(timer); dead = dead || new Error(`${host}:${port}: ${e.code || e.message}`); fail(dead); });
+    sock.on('close', () => { dead = dead || new Error(`${host}:${port} closed the connection`); fail(dead); });
     sock.on('data', (d) => {
       buf += d;
       let nl;
@@ -61,11 +66,14 @@ export function electrumSession({ host, port, tls: useTls = true, timeoutMs = 10
       }
     });
     sock.once(useTls && !connect ? 'secureConnect' : 'connect', () => {
-      opened = true;
+      opened = true; clearTimeout(timer);
       resolve({
         call: (method, params = []) => new Promise((ok, no) => {
-          id += 1; waiting.set(id, { resolve: ok, reject: no });
-          sock.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+          if (dead) { no(dead); return; }
+          id += 1; const my = id;
+          const t = setTimeout(() => { if (waiting.delete(my)) no(new Error(`${host}:${port} did not answer ${method} in ${timeoutMs} ms`)); }, timeoutMs);
+          waiting.set(my, { resolve: (v) => { clearTimeout(t); ok(v); }, reject: (e) => { clearTimeout(t); no(e); } });
+          sock.write(JSON.stringify({ jsonrpc: '2.0', id: my, method, params }) + '\n');
         }),
         close: () => { clearTimeout(timer); sock.removeAllListeners('close'); sock.destroy(); },
       });
@@ -85,9 +93,10 @@ export function electrumOverWebSocket({ host, port = 443, tls: useTls = true, pa
     let id = 0, opened = false;
     const waiting = new Map();
     const fail = (e) => { for (const w of waiting.values()) w.reject(e); waiting.clear(); if (!opened) reject(e); };
+    let dead = null;   // as electrumSession above (kanban #734): the open timer ends at the open, a closed session fails at once
     const timer = setTimeout(() => { fail(new Error(`${url} did not answer in ${timeoutMs} ms`)); try { sock.close(); } catch { /* gone */ } }, timeoutMs);
-    sock.onerror = (e) => { clearTimeout(timer); fail(new Error(`${url}: ${(e && e.message) || 'the connection failed'}`)); };
-    sock.onclose = () => fail(new Error(`${url} closed the connection`));
+    sock.onerror = (e) => { clearTimeout(timer); dead = dead || new Error(`${url}: ${(e && e.message) || 'the connection failed'}`); fail(dead); };
+    sock.onclose = () => { dead = dead || new Error(`${url} closed the connection`); fail(dead); };
     sock.onmessage = (ev) => {
       for (const line of String(ev.data).split('\n')) {
         if (!line.trim()) continue;
@@ -98,9 +107,15 @@ export function electrumOverWebSocket({ host, port = 443, tls: useTls = true, pa
       }
     };
     sock.onopen = () => {
-      opened = true;
+      opened = true; clearTimeout(timer);
       resolve({
-        call: (method, params = []) => new Promise((ok, no) => { id += 1; waiting.set(id, { resolve: ok, reject: no }); sock.send(JSON.stringify({ jsonrpc: '2.0', id, method, params })); }),
+        call: (method, params = []) => new Promise((ok, no) => {
+          if (dead) { no(dead); return; }
+          id += 1; const my = id;
+          const t = setTimeout(() => { if (waiting.delete(my)) no(new Error(`${url} did not answer ${method} in ${timeoutMs} ms`)); }, timeoutMs);
+          waiting.set(my, { resolve: (v) => { clearTimeout(t); ok(v); }, reject: (e) => { clearTimeout(t); no(e); } });
+          sock.send(JSON.stringify({ jsonrpc: '2.0', id: my, method, params }));
+        }),
         close: () => { clearTimeout(timer); sock.onclose = null; try { sock.close(); } catch { /* gone */ } },
       });
     };
