@@ -10791,5 +10791,555 @@
   ],
   "changesState": false,
   "needsAuth": "none"
+ },
+ {
+  "method": "GET",
+  "path": "/attestation-word",
+  "params": "query round",
+  "auth": "none",
+  "returns": "200 application/json",
+  "purpose": "What this drawn seat signed for a round, for the round's other drawn attestors to combine (kanban #630).",
+  "audience": "seat/peer",
+  "line": 8350,
+  "summary": "A drawn seat's attestation word",
+  "query": [
+   {
+    "name": "round",
+    "required": true,
+    "description": "round id, 64 hex"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/favicon.ico",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 image/x-icon, or 204",
+  "purpose": "The icon of the node's own pages.",
+  "audience": "player/page",
+  "line": 5638,
+  "summary": "Page icon",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "image/x-icon",
+    "description": "200 image/x-icon, or 204"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/order-locks",
+  "params": "query order",
+  "auth": "none",
+  "returns": "200 application/json",
+  "purpose": "An order's stake lock and fee lock as this seat verified them, for a seat that holds the order's certified batch but never received its locks (kanban #620).",
+  "audience": "seat/peer",
+  "line": 8017,
+  "summary": "An order's verified locks",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/owner/app-devs",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 application/json",
+  "purpose": "For each developer key the node holds: its apps, donations and proposals (kanban #582).",
+  "audience": "operator/monitoring",
+  "line": 5897,
+  "summary": "Game developers overview",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/apps/dev-key",
+  "params": "body JSON signed request",
+  "auth": "owner-style signed request (the owner key)",
+  "returns": "200 application/json",
+  "purpose": "Installs or removes a game developer's key; answers its public key and the apps it signs, never the key (kanban #582).",
+  "audience": "operator/monitoring",
+  "line": 6081,
+  "summary": "Install or remove a developer key",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Signed request with the developer key to install, or the key to remove."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/apps/split",
+  "params": "body JSON signed request",
+  "auth": "owner-style signed request (the owner key)",
+  "returns": "200 application/json",
+  "purpose": "Sets how an app's developer share is split between keys (kanban #582).",
+  "audience": "operator/monitoring",
+  "line": 6069,
+  "summary": "Set an app's split",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Signed request with the split."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/owner/dev/donations",
+  "params": "query slug, app, origin, q, limit, offset",
+  "auth": "none",
+  "returns": "200 application/json",
+  "purpose": "One dev client's donations, newest first, each with its app, filterable by app and protocol, paged (kanban #578).",
+  "audience": "operator/monitoring",
+  "line": 5958,
+  "summary": "One client's donations",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/first-bond",
+  "params": "body JSON signed request, args {post}",
+  "auth": "owner-style signed request (the owner key)",
+  "returns": "200 application/json",
+  "purpose": "The first bond from the owner area: the plan (the node wallet's address, what to send, what arrived), and with post: true the bond posted (kanban #728).",
+  "audience": "operator/monitoring",
+  "line": 6306,
+  "summary": "Post the first bond",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Signed request, args {post}."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/gateway/setup",
+  "params": "body JSON signed request, args {progress}",
+  "auth": "owner-style signed request (the owner key)",
+  "returns": "200 application/json",
+  "purpose": "For a custody node whose setup left Lightning or the gateway for later: starts the setup, or with {progress: true} reads how far it is (kanban #711).",
+  "audience": "operator/monitoring",
+  "line": 6445,
+  "summary": "Set up the gateway",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Signed request, args {progress}."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/key-from-words",
+  "params": "body JSON signed request",
+  "auth": "owner-style signed request (the owner key)",
+  "returns": "200 application/json",
+  "purpose": "An installed node moves to the key its 24 words give: a new bond under it, then the old one taken back at its maturity (kanban #650).",
+  "audience": "operator/monitoring",
+  "line": 6325,
+  "summary": "Move to the key of the 24 words",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Signed request."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/old-bond-withdraw",
+  "params": "body JSON signed request",
+  "auth": "owner-style signed request (the owner key)",
+  "returns": "200 application/json",
+  "purpose": "Spends an old bond with the old key at its maturity, signed by the owner like the bond's own withdrawal (kanban #650).",
+  "audience": "operator/monitoring",
+  "line": 6590,
+  "summary": "Take an old bond back",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Signed request."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/referrer/name",
+  "params": "body JSON signed request, args {slug, name}",
+  "auth": "owner-style signed request (the owner key)",
+  "returns": "200 application/json",
+  "purpose": "Names a referral program: the name signed by the program's key and sent to the seats, so the explorer and Health show it (kanban #675).",
+  "audience": "operator/monitoring",
+  "line": 6470,
+  "summary": "Name a referral program",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Signed request, args {slug, name}."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/referrer/setup",
+  "params": "body JSON signed request, args {name}",
+  "auth": "owner-style signed request (the owner key)",
+  "returns": "200 application/json",
+  "purpose": "A referral program: a client of kind referrer with a new key, earning the website fees of the entries its link brings (kanban #675).",
+  "audience": "operator/monitoring",
+  "line": 6470,
+  "summary": "Create a referral program",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Signed request, args {name}."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/owner/rounds",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 application/json",
+  "purpose": "Each round of the last day and the coming ones this node is drawn for, what it does in it, and the first reason when there is none (kanban #715).",
+  "audience": "operator/monitoring",
+  "line": 5760,
+  "summary": "Rounds this node is drawn for",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/referral-fees",
+  "params": "query frontend (optional)",
+  "auth": "none",
+  "returns": "200 application/json",
+  "purpose": "The website payouts of the settlements this seat indexed, per website payout key: their sum and count, and the total (kanban #676).",
+  "audience": "player/page",
+  "line": 9278,
+  "summary": "What each website earned",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/referral-name",
+  "params": "body JSON {name, key, sig}",
+  "auth": "none",
+  "returns": "200 application/json",
+  "purpose": "Keeps a referral program's name when its site key signed it, and hands it on to every seat once (kanban #675).",
+  "audience": "seat/peer",
+  "line": 9291,
+  "summary": "Keep a referral program's name",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "The name, the site key and its signature."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/setup-status",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 application/json",
+  "purpose": "The setup's progress for the dashboards: Core's background sync, the bond's and the peg-in's confirmations (kanban #635).",
+  "audience": "operator/monitoring",
+  "line": 6620,
+  "summary": "Setup progress",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/tx-timing",
+  "params": "body JSON {timing, sig}",
+  "auth": "none",
+  "returns": "200 application/json",
+  "purpose": "The page's own timing of its order, signed by the order's session key; kept for GET /tx (kanban #624).",
+  "audience": "player/page",
+  "line": 8003,
+  "summary": "A page's timing of its order",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "{timing, sig}: the session key's Ed25519 signature over the timing."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/tx",
+  "params": "query id",
+  "auth": "none",
+  "returns": "200 application/json",
+  "purpose": "One order or payment this seat stored, with its timing when the page sent one (kanban #624).",
+  "audience": "explorer",
+  "line": 7964,
+  "summary": "One transaction",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/txs",
+  "params": "query since",
+  "auth": "none",
+  "returns": "200 application/json",
+  "purpose": "The ids of the transactions stored here since `since` (ms), oldest first, at most 500 - what explorer.bitcoin-arena.io polls (kanban #624).",
+  "audience": "explorer",
+  "line": 7971,
+  "summary": "Newest transactions",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/uptime",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 application/json",
+  "purpose": "The node's uptime figures (24 h, 7 days, 30 days, all time) from its own record, kept 30 s (kanban #756).",
+  "audience": "operator/monitoring",
+  "line": 6640,
+  "summary": "Node uptime",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "200 application/json"
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
  }
 ]
