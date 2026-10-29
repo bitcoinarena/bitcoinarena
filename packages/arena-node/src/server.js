@@ -4216,12 +4216,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const EMERGENCY_TAGS = new Set(['updown-day', 'rps-day', 'nextblock-day'].map((i) => toHex(itemTag(`${i}-emergency`))));
   const gridPosting = new Map();                 // series id hex -> { group, role, height, txid }
   const gridAsked = new Map();                   // series id hex -> when its publication was last looked for in vain
+  // A SERIES WHOSE POSTING WAS NOT FOUND IS LOOKED FOR AGAIN EVERY 10 MINUTES, NOT EVERY MINUTE (kanban #786, measured 2026-10-29 18:4xZ on
+  // test host seat 4: this pass took 12.7 % of the seat's CPU, 12.6 % in findSeriesPublication parsing the blocks again and again for the
+  // series no posting names; a posting only comes with a block, and a day is decided hours before it begins)
+  const DUP_ASK_MS = Number(process.env.ARENA_DUP_ASK_MS || 600000);
   const dupSaid = new Set();
   const seatedRead = { at: 0, series: new Set(), of: new Map() };   // of: round id hex -> its series id hex (null: none), read once
   const dupPass = () => {
     if (shuttingDown || typeof chainFor !== 'function') return;
     const now = Date.now();
-    const t = series.find((x) => { const k = toHex(seriesId(x)); return isGridSeries(x) && BigInt(x.stakeMsat || 0n) > 0n && !gridPosting.has(k) && now - (gridAsked.get(k) || 0) > 60000; });
+    const t = series.find((x) => { const k = toHex(seriesId(x)); return isGridSeries(x) && BigInt(x.stakeMsat || 0n) > 0n && !gridPosting.has(k) && now - (gridAsked.get(k) || 0) > DUP_ASK_MS; });
     if (t) {
       const k = toHex(seriesId(t)); gridAsked.set(k, now);
       const first = seriesRound(t, 0);
