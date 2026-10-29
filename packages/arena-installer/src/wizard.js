@@ -699,11 +699,13 @@ const serviceRun = async (b) => {
       return { ok: true, owner: { mode, pubkey } };
     },
 
-    // REACH (ruling 7). The direct check first: its answer picks the default (direct when reached, else the permanent tunnel).
+    // REACH (ruling 7). The direct check first: its answer picks the default (direct when reached, else Funnel on a tailnet, else the permanent tunnel).
     'POST /api/reach/direct': async (b) => {
       const port = Number(b.port) || seatPort;
       // the node's home: an installed node on this port answers the check itself (kanban #734)
       const r = await reach.checkDirect({ port, fetcher, home: state.home });
+      // not reached: a machine on a tailnet is pointed at Funnel (kanban #734); nothing is opened on the router either way
+      if (!r.reached) r.tailnet = await reach.tailnetName({ bin: tailscale, sh: tailscaleSh });
       state.save({ direct: { ...r, atMs: Date.now() } });
       return { ok: true, result: r, default: reach.defaultReach(r) };
     },
@@ -724,7 +726,7 @@ const serviceRun = async (b) => {
         const s = state.read();
         const port = mode === 'direct' ? ((s.direct || {}).port || seatPort) : (Number(b.port) || seatPort);
         if (mode === 'direct') {
-          if (!s.direct || !s.direct.reached) return { ok: false, why: 'the direct check did not reach this machine: open the port as it says and test again, or choose a tunnel' };
+          if (!s.direct || !s.direct.reached) return { ok: false, why: s.direct ? `this machine is ${reach.notReachedText({ ...s.direct, port: s.direct.port || port })}` : 'test the direct connection first, or choose a tunnel' };
           return { ok: true, reach: mark('reach', { reach: { mode, port, url: `http://${s.direct.address.includes(':') ? `[${s.direct.address}]` : s.direct.address}:${port}` } }).reach };
         }
         if (mode === 'quick') return { ok: true, reach: mark('reach', { reach: { mode, port, url: null } }).reach };
