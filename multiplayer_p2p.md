@@ -2767,7 +2767,8 @@ on duty         the census at day d's anchor (the first block whose median time 
 primary         rank 1 posts from 00:00 UTC of day d; rank 2 from 01:00 and rank 3 from 02:00 if the day's marker is still not seen
                 (no later rank: nodes that post nothing cannot push it towards the evening). Marker OP_RETURN "ARN" 'D' d item_tag.
                 Census 6 below the tip, committee time 12 h before day d + 1, the newest app version that census can draw. A
-                day's rounds are posted by 12:00 UTC of day d, its committee time (kanban #775)
+                day's rounds are posted by 12:00 UTC of day d, its committee time (kanban #775) - and never later: from 12:00 UTC no node posts a
+                primary or a backup for it, only an emergency grid (kanban #742, DUTY_POST_BY_MS)
 backup          the node after rank 1 in the same order posts a second grid of the same day: rank 2 from 02:00 UTC, rank 3 from
                 03:00 if rank 2 has not, never the node that posted the primary. Its own coins and publication, a census 12 below
                 the tip (taken two hours later, so another block), committee time 9 h before day d + 1. Marker "ARN" 'B' d item_tag

@@ -120,12 +120,16 @@ export const DUTY_DAY_MS = 86400000;
 export const DUTY_FALLBACK_MS = 3600000;
 export const daySlotOf = (ms) => Math.floor(Number(ms) / DUTY_DAY_MS);
 export const dayStartMs = (slot) => slot * DUTY_DAY_MS;
+/** NO REGULAR POSTING AFTER 12:00 UTC OF THE POSTING DAY (kanban #742, the owner 2026-10-29 ~23:20Z: "neue Runden wirklich um 12 gepostet werden,
+ *  nicht später außer emergency"): a day's primary and backup are posted between 00:00 and 12:00 UTC of the day before it, never after - a
+ *  rank-11 node that did not see the day's posting re-posted the 10-30 primaries at 20:51Z; after 12:00 only an emergency grid is posted. */
+export const DUTY_POST_BY_MS = 12 * 3600000;
 /** The day whose rounds day `slot` posts: [start, end) ms - the next day. */
 export const targetDay = (slot) => ({ startMs: (slot + 1) * DUTY_DAY_MS, endMs: (slot + 2) * DUTY_DAY_MS });
 /** Is the day's post due from the node at `rank` (0 = first in duty order) now? Not once the day's marker is seen (`posted`). */
 export function dayPostDue({ nowMs, slot, rank, posted }) {
   if (posted || !Number.isInteger(rank) || rank < 0) return false;
-  return Number(nowMs) >= dayStartMs(slot) + rank * DUTY_FALLBACK_MS && Number(nowMs) < dayStartMs(slot + 1);
+  return Number(nowMs) >= dayStartMs(slot) + rank * DUTY_FALLBACK_MS && Number(nowMs) < dayStartMs(slot) + DUTY_POST_BY_MS;   // not after 12:00Z (#742)
 }
 
 // THE BACKUP GRID (2026-10-26, the owner: "Yes make it part of the design, in the spec" - a second grid for every day from another node, so
@@ -164,7 +168,7 @@ export const isBackupPublication = (raw) => dayMarkersOf(raw).some((m) => m.kind
  */
 export function backupPostDue({ nowMs, slot, rank, posted, postedPrimary = false, cap = DUTY_BACKUP_RANK_CAP }) {
   if (posted || postedPrimary || !Number.isInteger(rank) || rank < 1) return false;
-  return Number(nowMs) >= dayStartMs(slot) + DUTY_BACKUP_AFTER_MS + (Math.min(rank, cap) - 1) * DUTY_FALLBACK_MS && Number(nowMs) < dayStartMs(slot + 1);
+  return Number(nowMs) >= dayStartMs(slot) + DUTY_BACKUP_AFTER_MS + (Math.min(rank, cap) - 1) * DUTY_FALLBACK_MS && Number(nowMs) < dayStartMs(slot) + DUTY_POST_BY_MS;
 }
 /**
  * WHICH ROUNDS OF ONE WINDOW ARE PLAYED (the rule above), from what a seat sees of the rounds of one game, federation and start: `rows`

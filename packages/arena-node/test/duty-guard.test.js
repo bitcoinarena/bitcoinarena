@@ -271,3 +271,11 @@ test('another node\'s posting of the day counts as confirmed from its block on, 
   assert.equal(guard.emergencyDue({ nowMs: at(16), day, verdict, confirmedAny: false }).due, true);
   assert.equal(guard.emergencyDue({ nowMs: at(16), day, verdict: { state: 'dead', why: 'the chain left the branch its census was taken on' }, confirmedAny: true }).due, true);
 });
+
+test('a node past the cap posts the day no later than 12:00 UTC (kanban #742: a rank-11 node re-posted 10-30 at 20:51Z)', () => {
+  const slot = 20754, start = slot * 86400000, at = (h, m = 0) => start + h * 3600000 + m * 60000;
+  assert.equal(guard.dayDueCapped({ nowMs: at(2, 30), slot, rank: 11, posted: false }), true, 'rank 11 in the cap hour');
+  assert.equal(guard.dayDueCapped({ nowMs: at(11, 59), slot, rank: 11, posted: false }), true);
+  assert.equal(guard.dayDueCapped({ nowMs: at(12), slot, rank: 11, posted: false }), false, 'not from 12:00Z');
+  assert.equal(guard.dayDueCapped({ nowMs: at(20, 51), slot, rank: 11, posted: false }), false, 'not at 20:51Z');
+});
