@@ -104,3 +104,19 @@ test('old bonds after a key switch (kanban #650): listed with their lock; an unl
   assert.deepEqual(sent, [['/owner/old-bond-withdraw', 'old-bond-withdraw', { txid: olds[0].txid, vout: 1, address: 'tb1qold', feeRate: 2 }]]);
   assert.match(c.state.oldSaid[k], /^Sent: c{64} \(49,738 sat\)$/);
 });
+
+test('kanban #734: the Overview hears where the bond stands - no bond red, posted and not counted yellow, counted nothing', async () => {
+  const run = async (bond, setupBond) => {
+    const heard = [];
+    const api = { get: async (p) => (p === '/owner/bond' ? bond : { ok: true, bond: setupBond }), signed: async (a, args) => ({ a, args }), post: async () => ({ ok: false, why: 'no plan here' }) };
+    const c = new BondPanel({ api, everyMs: 3600000, onNeed: (level, text) => heard.push([level, text]) });
+    c.setState = (u) => { Object.assign(c.state, typeof u === 'function' ? u(c.state) : u); };
+    await c.componentDidMount(); c.componentWillUnmount();
+    return heard;
+  };
+  assert.deepEqual(await run({ ok: true, bond: null }, null), [['bad', 'No bond: this node is not drawn for rounds. Set up the bond.']]);
+  const [[level, text]] = await run({ ok: true, bond: null }, { sats: '50000', txid: 'b0'.repeat(32), seen: true, confirmations: 2, needed: 6 });
+  assert.equal(level, 'warn');
+  assert.match(text, /^Bond 50,000 sat posted, 2 of 6 confirmations\.$/);
+  assert.deepEqual(await run({ ok: true, bond: { sats: '50000' }, total: '50000' }, null), [[null, '']], 'a bond that counts: nothing to do');
+});
