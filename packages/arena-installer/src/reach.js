@@ -122,8 +122,24 @@ async function firewallTool(sh) {
   return null;
 }
 
-/** The default way, by ruling 7: direct when it was reached, else the permanent tunnel. */
-export const defaultReach = (direct) => (direct && direct.reached ? 'direct' : 'permanent');
+/** The default way, by ruling 7: direct when it was reached, else Tailscale Funnel on a machine that is on a tailnet (kanban #734), else
+ * the permanent tunnel. */
+export const defaultReach = (direct) => (direct && direct.reached ? 'direct' : direct && direct.tailnet ? 'tailscale' : 'permanent');
+
+/** This machine's tailnet name when Tailscale runs and is logged in, else null (asks nothing of the tailnet, opens nothing). */
+export async function tailnetName({ bin = 'tailscale', sh = run } = {}) {
+  let s = null;
+  try { s = JSON.parse((await sh(bin, ['status', '--json'])).out); } catch { s = null; }
+  const dns = String((s && s.BackendState === 'Running' && s.Self && s.Self.DNSName) || '').replace(/\.$/, '');
+  return dns || null;
+}
+
+/** What a direct check that did not reach this machine means, and the way that works instead (kanban #734: a machine behind a router
+ * with no forward - or reached only over the tailnet, whose 100.x address the seats refuse as not public - is not reachable directly;
+ * the installer opens no port on the router and says so). */
+export const notReachedText = (d) => `not reachable directly from the internet (port ${d.port}${d.address ? ` at ${d.address}` : ''})${d.tailnet
+  ? `. This machine is on your tailnet as ${d.tailnet}: choose Tailscale Funnel, which needs no port opened on your router`
+  : ': open the port as the check says and test again, or choose a tunnel'}`;
 
 // ---- the permanent tunnel: a named Cloudflare tunnel on the user's account ----
 
