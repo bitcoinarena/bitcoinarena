@@ -109,6 +109,8 @@ const sendRow = (r) => ({ entryId: new Uint8Array(r.entry_id), attempt: r.attemp
 export const TRANSCRIPT_BATCH_MAX_BYTES = 65535;
 
 export class Round {
+  /** How long openHeld trusts its last count of the open rows when this store wrote none (kanban #786). */
+  static OPEN_HELD_MS = 250;
   constructor(db, now = () => Date.now(), { plugins = [] } = {}) {
     this.db = db;
     this.now = now;
@@ -409,7 +411,7 @@ export class Round {
     const id = roundId(contract);
     const added = this.db.prepare('INSERT OR IGNORE INTO rounds (round_id, contract, state, opened_ms) VALUES (?, ?, ?, ?)')
       .run(id, bytes, OPEN, this.now());
-    if (added.changes) this.openSeq++;
+    if (added.changes) { this.openSeq++; this.openList.askedMs = 0; }   // this store's own write: the next openHeld asks at once
     return id;
   }
 
@@ -450,20 +452,35 @@ export class Round {
    * from one read to the next while their rounds stay open. What is kept of rounds no longer open is let go on each read.
    */
   openHeld() {
+    // ASKED AT MOST EVERY OPEN_HELD_MS (kanban #786, a seat's 30 s profile 2026-10-29 01:1xZ: openHeld 5 % of the CPU, its COUNT over the
+    // open rows run by every sweep and every listing): a round opened or closed in the last quarter second is seen on the next ask
+    const nowMs = Date.now();
+    if (this.openList.key !== null && nowMs - (this.openList.askedMs || 0) < Round.OPEN_HELD_MS) return this.openList.ids;
     const q = this.db.prepare('SELECT count(*) AS n, max(rowid) AS m FROM rounds WHERE state = ?').get(OPEN);
     const key = `${q.n}:${q.m}`;
-    if (this.openList.key === key) return this.openList.ids;
+    if (this.openList.key === key) { this.openList.askedMs = nowMs; return this.openList.ids; }
+    // ONLY ROUNDS ADDED, NONE CLOSED (the series writers open rounds all the time): the new rows appended, not the whole list read again
+    if (this.openList.key !== null && Number.isInteger(this.openList.m) && q.m > this.openList.m) {
+      const fresh = this.db.prepare('SELECT lower(hex(round_id)) AS h, opened_ms AS o FROM rounds WHERE state = ? AND rowid > ? ORDER BY opened_ms').all(OPEN, this.openList.m);
+      if (this.openList.ids.length + fresh.length === q.n && (!fresh.length || fresh[0].o >= (this.openList.lastOpenedMs ?? -Infinity))) {
+        const ids = this.openList.ids.slice();
+        for (const r of fresh) { const id = fromHex(r.h); this.hexOfId.set(id, r.h); ids.push(id); }
+        this.openList = { key, ids, m: q.m, askedMs: nowMs, lastOpenedMs: fresh.length ? fresh[fresh.length - 1].o : this.openList.lastOpenedMs };
+        return ids;
+      }
+    }
     const had = new Map();
     for (const id of this.openList.ids) had.set(this.hexOf(id), id);
     const ids = [];
-    for (const r of this.db.prepare('SELECT lower(hex(round_id)) AS h FROM rounds WHERE state = ? ORDER BY opened_ms').all(OPEN)) {
+    let lastOpenedMs = null;
+    for (const r of this.db.prepare('SELECT lower(hex(round_id)) AS h, opened_ms AS o FROM rounds WHERE state = ? ORDER BY opened_ms').all(OPEN)) {
       let id = had.get(r.h);
       if (!id) { id = fromHex(r.h); this.hexOfId.set(id, r.h); }
-      ids.push(id);
+      ids.push(id); lastOpenedMs = r.o;
     }
     const open = new Set(ids.map((id) => this.hexOf(id)));
     for (const k of this.contracts.keys()) if (!open.has(k)) this.contracts.delete(k);
-    this.openList = { key, ids };
+    this.openList = { key, ids, m: q.m, askedMs: nowMs, lastOpenedMs };
     return ids;
   }
 
@@ -1589,6 +1606,7 @@ export class Round {
     const round = this.get(id);
     if (!round) throw new Error('no such round');
     if (round.state === CLOSED) return false;
+    this.openList.askedMs = 0;
     this.db.prepare('UPDATE rounds SET state = ?, closed_ms = ? WHERE round_id = ?')
       .run(CLOSED, this.now(), id);
     this.contracts.delete(this.hexOf(id));
