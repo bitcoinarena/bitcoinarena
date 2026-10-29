@@ -87,6 +87,7 @@ import { createProposals } from './proposals.js';
 import { createBallotTally } from './ballot-tally.js';
 import { createOperatorTokens, operatorUri } from './operator-tokens.js';
 import { isBackupPublication, playedOfWindow, dayMarkersOf, itemTag } from '../../arena-protocol/src/duty.js';
+import { nextToAsk } from './dup-ask.js';
 import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf, entryFederation } from '../../arena-protocol/src/contracts.js';
 import { revealStands } from '../../arena-protocol/src/head-to-head.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
@@ -4507,7 +4508,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // and their series are dropped as an off-chain one is: no writer, their rounds out of the open list, not taken back.
   const EMERGENCY_TAGS = new Set(['updown-day', 'rps-day', 'nextblock-day'].map((i) => toHex(itemTag(`${i}-emergency`))));
   const gridPosting = new Map();                 // series id hex -> { group, role, height, txid }
-  const gridAsked = new Map();                   // series id hex -> when its publication was last looked for in vain
+  const gridAsked = new Map();                   // series id hex -> { at, pending }: its publication last looked for in vain (dup-ask.js)
   // A SERIES WHOSE POSTING WAS NOT FOUND IS LOOKED FOR AGAIN EVERY 10 MINUTES, NOT EVERY MINUTE (kanban #786, measured 2026-10-29 18:4xZ on
   // test host seat 4: this pass took 12.7 % of the seat's CPU, 12.6 % in findSeriesPublication parsing the blocks again and again for the
   // series no posting names; a posting only comes with a block, and a day is decided hours before it begins)
@@ -4517,11 +4518,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const dupPass = () => {
     if (shuttingDown || typeof chainFor !== 'function') return;
     const now = Date.now();
-    const t = series.find((x) => { const k = toHex(seriesId(x)); return isGridSeries(x) && BigInt(x.stakeMsat || 0n) > 0n && !gridPosting.has(k) && now - (gridAsked.get(k) || 0) > DUP_ASK_MS; });
+    // THE DAY STARTING SOONEST FIRST, AND A VIEW STILL BEING READ ASKED AGAIN SOON (dup-ask.js, kanban #742)
+    const undecided = [];
+    for (const x of series) { const k = toHex(seriesId(x)); if (isGridSeries(x) && BigInt(x.stakeMsat || 0n) > 0n && !gridPosting.has(k)) undecided.push({ k, startMs: Number(x.startTimeMs), x }); }
+    const next = nextToAsk(undecided, { asked: gridAsked, now, askMs: DUP_ASK_MS });
+    const t = next ? next.x : null;
     if (t) {
-      const k = toHex(seriesId(t)); gridAsked.set(k, now);
+      const k = next.k;
       const first = seriesRound(t, 0);
       let view = null; try { view = chainFor({ contract: first, roundIdBytes: roundIdOf(first) }); } catch { view = null; }
+      gridAsked.set(k, { at: now, pending: !view || !!view.pending });
       const pub = view && !view.pending ? findSeriesPublication(view, seriesId(t)) : null;
       if (pub) {
         const marks = dayMarkersOf(pub.tx);
