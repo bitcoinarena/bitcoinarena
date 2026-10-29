@@ -19,7 +19,7 @@ const rest = args.filter((_, i) => !(at >= 0 && (i === at || i === at + 1)) && !
 // the home's arena.conf names this node's instance: instance.js reads it from --home before the service names are made
 const { main } = await import('../src/bitcoinarena.js');
 const { defaultHome } = await import('../src/state.js');
-const { latestReleaseReader, latestUrlFrom } = await import('../../arena-node/src/release-latest.js');
+const { latestReleaseReader, latestUrlFrom, SERVICE_TTL_MS } = await import('../../arena-node/src/release-latest.js');
 const { sumsSigned } = await import('../src/release-verify.js');
 // the update source: production, or a test channel on the Arena testnet site named by ARENA_LATEST_URL or arena.conf latest_url (#546)
 let conf = {};
@@ -48,7 +48,7 @@ if (home) {
     if (c) log.tag('bitcoinarena').verbose(c.written ? `wrote ${c.written.file} and the old name ${c.written.legacy.file} for this release` : `the command was not written again: ${c.why}`);
   }
 }
-const reader = latestReleaseReader({ url: source.url, verify: sumsSigned });
+const reader = latestReleaseReader({ url: source.url, verify: sumsSigned, ttlMs: SERVICE_TTL_MS });   // kanban #765: the service's checks each read
 const code = await main(rest, { home: home || defaultHome(), name, log, deps: { latest: (own) => reader.read(own) } });
 // handles still closing close first (arena-install.mjs measured a libuv abort on Windows at an immediate exit)
 setTimeout(() => process.exit(code), process.platform === 'win32' ? 1500 : 50);

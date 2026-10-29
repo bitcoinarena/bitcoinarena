@@ -5,6 +5,10 @@
 // Offered only when the signature verifies with the release key and its version is newer than this node's; anything else says why.
 const LATEST_URL = 'https://testnet.bitcoin-arena.io/release/latest.json';
 const TTL_MS = 6 * 3600_000;
+// THE UPDATER SERVICE KEEPS A READ ONE MINUTE (kanban #765, measured 2026-10-29: 2026.1.9.12 live on the channel from ~12:14Z, and the
+// inst577 nodes' checks at 12:30, 12:34 and 12:35Z all said "up to date (2026.1.9.11)" - `bitcoinarena auto-update` holds one reader for its
+// whole life, and at the six hours above its "every 30 min" read the channel once in 6 h): below its 30-minute checks, so each check reads
+export const SERVICE_TTL_MS = 60_000;
 
 /**
  * WHERE THE NEWEST RELEASE IS READ (kanban #546, 2026-10-20: "a signed, unlisted latest.json, read only when ARENA_LATEST_URL is set,
