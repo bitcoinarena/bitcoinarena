@@ -5524,6 +5524,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       why: played ? null : me && me.backup ? 'this window is played on its primary grid, whose committee is drawn (the backup rule, §5A.5)'
         : 'this window\'s backup round already holds entries on this seat (the backup rule, §5A.5)' };
   };
+  // THE LISTING'S ANSWER, KEPT FOR A SECOND (kanban #786, profiled 2026-10-29 19:1xZ on test host seat 1: GET /rounds took 16 % of the
+  // seat's CPU, 10.5 % in playedHere - every listing asked each paid row's window again, each round of it drawn through committeeOf).
+  // Only the listing reads it: the entry and the live check ask playedHere itself, so a window that turns is refused at once.
+  const PLAYED_KEPT_MS = Number(process.env.ARENA_PLAYED_KEPT_MS || 1000);
+  const playedKept = new Map();                   // round id hex -> { at, size (of its window), answer }
+  const playedListed = (rid, c) => {
+    const k = toHex(rid), now = Date.now();
+    const was = playedKept.get(k);
+    const size = (windowRounds.get(windowKeyOf(c)) || { size: 0 }).size;
+    if (was && now - was.at < PLAYED_KEPT_MS && was.size === size) return was.answer;
+    const answer = playedHere(rid, c);
+    if (playedKept.size > 20000) playedKept.clear();
+    playedKept.set(k, { at: now, size: (windowRounds.get(windowKeyOf(c)) || { size: 0 }).size, answer });
+    return answer;
+  };
   // A DRAW NOT YET SEATED, KEPT WHILE WHAT IT IS MADE OF STANDS (kanban #742: with reserve seats a round 3 h ahead is drawn but not seated,
   // so committeeOf below drew it again on every listing, every lobby row's backup check and every live check - the keys hexed, the
   // overlap counted, the census's keys gathered each time): the roster keeps each role's answer by census root, seed and seating, so the
@@ -5799,7 +5814,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         outcome: outcomeOf(held.roundId, c),
         startTime: iso(c.startTimeMs), endTime: iso(endMs), committee: set.committees.get(id) || (() => { const k = committeeOf(held.roundId); set.committees.set(id, k); return k; })(),
         // THE BACKUP RULE (§5A.5): whether this round is a day's backup grid's, and whether it is the one played in its window here
-        ...(free ? {} : (() => { const p = playedHere(held.roundId, c); return { backup: p.backup, played: p.played }; })()),
+        ...(free ? {} : (() => { const p = playedListed(held.roundId, c); return { backup: p.backup, played: p.played }; })()),
         committeeTimeMs: String(c.committeeTimeMs), startTimeMs: String(c.startTimeMs),
         // THE RUN LENGTH, ANNOUNCED (the 82/90 fork, 2026-10-01: "It must be part of the round announcement"):
         // the contract's blockTicks - in the signed contract this row names - and what it is in seconds.
