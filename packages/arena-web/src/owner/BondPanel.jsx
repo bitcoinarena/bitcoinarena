@@ -66,6 +66,13 @@ export class BondPanel extends React.Component {
     }
     if (this.gone) return;
     this.setState({ loaded: true, bond: b, setup, first, firstWhy });
+    // THE OVERVIEW HEARS WHERE THE BOND STANDS (kanban #734, measured 2026-10-29 on a node with no bond: the Overview said "All good ✓ Running,
+    // bonded and up to date" beside "No bond", because nothing told it): no bond is a red line, one posted and not counted yet a yellow one
+    // with how far it is, a bond that counts nothing; a bond that could not be read says nothing
+    if (this.props.onNeed && b) {
+      const st = b.bond ? null : bondStateOf(b, setup && setup.bond);
+      this.props.onNeed(st ? (st.tone === 'bad' ? 'bad' : 'warn') : null, st ? (st.tone === 'bad' ? `${st.text}. Set up the bond.` : `${st.text}.`) : '');
+    }
     clearTimeout(this.timer);
     if (b && !b.bond) this.timer = setTimeout(this.load, this.props.everyMs || 30000);
   }
