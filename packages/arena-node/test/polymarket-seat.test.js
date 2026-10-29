@@ -115,6 +115,16 @@ test('a stock CLOB client\'s reads against /polymarket/ on a seat: markets, the 
     assert.equal((await post('/order', 'DELETE')).status, 501);
     assert.equal((await post('/auth/api-key')).status, 501);
     assert.equal((await get('/nothing')).status, 404);
+    // ONCE ITS ENTRIES CLOSED THE MARKET HAS NO BOOK, as Polymarket answers for a resolved one (measured 10-28): /book, /price, /midpoint,
+    // /spread 404 "No orderbook exists for the requested token id", /last-trade-price still answers, POST /books leaves it out
+    skipTo(Number(w.c.entryCloseMs) + 1000);
+    for (const path of [`/book?token_id=${up}`, `/price?token_id=${up}&side=BUY`, `/midpoint?token_id=${up}`, `/spread?token_id=${up}`]) {
+      const r = await get(path);
+      assert.deepEqual([r.status, r.body.error], [404, 'No orderbook exists for the requested token id'], path);
+    }
+    assert.equal((await get(`/last-trade-price?token_id=${up}`)).status, 200);
+    const books = await fetch(`${base}/books`, { method: 'POST', body: JSON.stringify([{ token_id: up }]) });
+    assert.deepEqual(await books.json(), []);
     console.log(`  POLYMARKET: market ${m0.market_slug} | book Up bids ${JSON.stringify(book.body.bids)} asks ${JSON.stringify(book.body.asks)} | Down bids ${JSON.stringify(downBook.body.bids)} | price ${JSON.stringify(q.price)} mid ${JSON.stringify(q.mid)} spread ${JSON.stringify(q.spread)} last ${q.last.price} | trades ${trades.body.map((t) => `${t.outcome}@${t.price}x${t.size}`).join(' ')} | orders ${upNow.status}/${downNow.status} matched ${upNow.size_matched}`);
   } finally { await w.close(); }
 });
