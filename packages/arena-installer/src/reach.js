@@ -18,7 +18,7 @@ import net from 'node:net';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { spawn, execFile } from 'node:child_process';
-import { existsSync, writeFileSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, writeFileSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { quickTunnelName } from './tunnel.js';
 
@@ -48,28 +48,48 @@ export const localAddresses = (ifaces = os.networkInterfaces()) => Object.values
 /**
  * IS THE PORT REACHABLE FROM OUTSIDE? Listen on it (all interfaces) with a one-time nonce, ask seats to connect back, and say what
  * blocks it when none could. Answers { ok, reached, address, port, askedSeats, answers, diagnosis: { cause, advice } }.
+ * `home`: an installed node's home - when that node holds the port, it serves the nonce (GET /reach-nonce from <home>/reach-nonce).
  */
-export async function checkDirect({ port = DEFAULT_NODE_PORT, seats, fetcher = fetch, ifaces = os.networkInterfaces(), want = 2, sh = run } = {}) {
+export async function checkDirect({ port = DEFAULT_NODE_PORT, seats, fetcher = fetch, ifaces = os.networkInterfaces(), want = 2, sh = run, home = null } = {}) {
   const nonce = randomBytes(18).toString('base64url');
   // A PORT ANOTHER PROGRAM HOLDS ON 127.0.0.1 IS BUSY TOO: macOS lets the wildcard listen below succeed beside it (measured on the test host,
   // the installer suite: "unknown", not "port-busy"), so a local connection is tried first - whatever answers there holds the port
   const held = await new Promise((ok) => { const c = net.connect({ port, host: '127.0.0.1' }); c.setTimeout(1500, () => { c.destroy(); ok(false); });
     c.once('connect', () => { c.destroy(); ok(true); }); c.once('error', () => ok(false)); });
-  if (held) return { ok: false, reached: false, port, diagnosis: { cause: 'port-busy', advice: `port ${port} is in use on this machine: choose another port, or stop what uses it` } };
+  // THIS NODE ON ITS OWN PORT (kanban #734, measured 2026-10-29: an installed node run through the installer again - its own seat held the
+  // port, and the check said "port-busy" every time, so direct could never be chosen): the nonce left in the node's home, and the node
+  // answers it at GET /reach-nonce; a program on the port that does not answer it is another program, busy as before
+  const nonceFile = home ? join(home, 'reach-nonce') : null;
+  let own = false;
+  if (held && nonceFile) {
+    try {
+      writeFileSync(nonceFile, nonce, { mode: 0o600 });
+      const r = await fetcher(`http://127.0.0.1:${port}/reach-nonce`, { signal: AbortSignal.timeout(5000) });
+      own = r.status === 200 && (await r.text()).trim() === nonce;
+    } catch { own = false; }
+    if (!own) rmSync(nonceFile, { force: true });
+  }
+  if (held && !own) return { ok: false, reached: false, port, diagnosis: { cause: 'port-busy', advice: `port ${port} is in use on this machine: choose another port, or stop what uses it` } };
+  if (own) {
+    try { return await askSeats({ port, nonce, seats, fetcher, ifaces, want, sh }); } finally { rmSync(nonceFile, { force: true }); }
+  }
   const server = http.createServer((q, s) => { s.writeHead(q.url === '/reach-nonce' ? 200 : 404, { 'content-type': 'text/plain' }); s.end(q.url === '/reach-nonce' ? nonce : ''); });
   const listening = await new Promise((ok) => { server.once('error', (e) => ok(e)); server.listen({ port, host: '::', ipv6Only: false }, () => ok(null)); });
   if (listening) return { ok: false, reached: false, port, diagnosis: { cause: 'port-busy', advice: listening.code === 'EADDRINUSE' ? `port ${port} is in use on this machine: choose another port, or stop what uses it` : `cannot listen on port ${port}: ${listening.message}` } };
+  try { return await askSeats({ port, nonce, seats, fetcher, ifaces, want, sh }); } finally { await new Promise((ok) => server.close(ok)); }
+}
+
+/** The seats asked to connect back to `port` for `nonce`; what they saw, and what blocks the port when none reached it. */
+async function askSeats({ port, nonce, seats, fetcher, ifaces, want, sh }) {
   const answers = [];
-  try {
-    for (const seat of seats || await reachSeats({ fetcher })) {
-      if (answers.filter((a) => a.ok).length >= want) break;
-      try {
-        const r = await fetcher(`${seat}/reach-check`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ port, nonce }), signal: AbortSignal.timeout(15000) });
-        const j = await r.json().catch(() => ({}));
-        answers.push({ seat, ok: r.status === 200 && j.ok === true, reached: Boolean(j.reached), address: j.address || null, status: r.status, why: j.why || null });
-      } catch (e) { answers.push({ seat, ok: false, reached: false, why: e.message }); }
-    }
-  } finally { await new Promise((ok) => server.close(ok)); }
+  for (const seat of seats || await reachSeats({ fetcher })) {
+    if (answers.filter((a) => a.ok).length >= want) break;
+    try {
+      const r = await fetcher(`${seat}/reach-check`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ port, nonce }), signal: AbortSignal.timeout(15000) });
+      const j = await r.json().catch(() => ({}));
+      answers.push({ seat, ok: r.status === 200 && j.ok === true, reached: Boolean(j.reached), address: j.address || null, status: r.status, why: j.why || null });
+    } catch (e) { answers.push({ seat, ok: false, reached: false, why: e.message }); }
+  }
   const asked = answers.filter((a) => a.ok);
   const reached = asked.length > 0 && asked.every((a) => a.reached);
   const address = (asked[0] && asked[0].address) || (answers.find((a) => a.address) || {}).address || null;

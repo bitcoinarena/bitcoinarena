@@ -24,7 +24,8 @@ import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CO
 import { nextStep, doneOf, seatConf, ROLES, guardianSetupOf, ownCoreOf } from './state.js';
 import { appsIn, appsView, chosenApps, hostedGameIdsOf } from './apps.js';
 import { installService, installProgram } from './service.js';
-import { control } from './node-services.js';
+import { control, nodeOf } from './node-services.js';
+import { newerVersion } from '../../arena-node/src/release-latest.js';
 import { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, freeCorePorts, NEEDS } from './bitcoind.js';
 import { createHash } from 'node:crypto';
 import * as reachKit from './reach.js';
@@ -338,6 +339,12 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
 const serviceRun = async (b) => {
     let s = state.read();
     for (const k of ['chain', 'roles', 'seed', 'owner', 'reach']) if (!(s.done || {})[k]) return { ok: false, why: `the ${k} step is not done` };
+    // AN OLDER INSTALLER DOES NOT MOVE A NEWER NODE BACK (kanban #734, measured 2026-10-29 in the Linux VM: the 2026.1.9.12 installer run
+    // again on a node updated to 2026.1.9.14 - its "Install and start" put the node's services on 2026.1.9.12, and the owner page said
+    // "A new release is out"): the release this node runs against this installer's own; a newer node is left as it is
+    const runs = (() => { try { return nodeOf(state.home).version; } catch { return null; } })();
+    let mine = null; try { mine = readFileSync(join(release, 'VERSION'), 'utf8').trim(); } catch { mine = null; }
+    if (runs && mine && newerVersion(runs, mine)) return { ok: false, why: `this node runs ${runs}, newer than this installer (${mine}): Install and start would move it back to ${mine}. Run the installer of ${runs} or newer instead (bitcoinarena update keeps the node current)` };
     const port = s.reach.port;
     const boot = b.boot !== false;
     const conf = { ...s, port, bridgePort };
@@ -695,7 +702,8 @@ const serviceRun = async (b) => {
     // REACH (ruling 7). The direct check first: its answer picks the default (direct when reached, else the permanent tunnel).
     'POST /api/reach/direct': async (b) => {
       const port = Number(b.port) || seatPort;
-      const r = await reach.checkDirect({ port, fetcher });
+      // the node's home: an installed node on this port answers the check itself (kanban #734)
+      const r = await reach.checkDirect({ port, fetcher, home: state.home });
       state.save({ direct: { ...r, atMs: Date.now() } });
       return { ok: true, result: r, default: reach.defaultReach(r) };
     },
