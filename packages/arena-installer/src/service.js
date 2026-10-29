@@ -81,6 +81,10 @@ export async function installService({ node = process.execPath, release, home, p
     // arena-chain-bridge unit below, which the node's unit starts after
     // a node that reads its own Core needs no bridge: one left from the interim Electrum chain is taken away (removeProgram)
     if (!bridgePort) await removeProgram({ id: 'chain-bridge', home, env, sh, platform });
+    // A WAY TO BE REACHED THAT RUNS NO TUNNEL TAKES THE OLD ONE AWAY (kanban #734, measured 2026-10-29 on the VM's arena-vm-734: reach moved
+    // from a quick tunnel to Tailscale Funnel, and arena-tunnel--3 - cloudflared to the node's port - kept running beside it, the node still
+    // reachable at its old random trycloudflare address): Funnel and direct run no tunnel, so one left from before is removed
+    if (!tunnel && !tunnelArgs) await removeProgram({ id: 'tunnel', home, env, sh, platform });
     if (bridgePort) {
       const b = await installProgram({ id: 'chain-bridge', description: 'Bitcoin Arena: chain bridge (Electrum + Esplora, testnet4)',
         args: [node, join(release, 'packages', 'arena-installer', 'bin', 'chain-bridge.mjs'), String(bridgePort), home], home, boot, env, sh, platform });
@@ -96,6 +100,7 @@ export async function installService({ node = process.execPath, release, home, p
   if (bridgePort) { writeFileSync(join(dir, BRIDGE_UNIT), bridgeUnit({ node, release, home, bridgePort })); units.unshift(BRIDGE_UNIT); }
   else await removeProgram({ id: 'chain-bridge', home, env, sh, platform });
   if (tunnel) { writeFileSync(join(dir, TUNNEL_UNIT), tunnel); units.push(TUNNEL_UNIT); }
+  else await removeProgram({ id: 'tunnel', home, env, sh, platform });   // Funnel and direct run no tunnel: one left from before goes (kanban #734)
   const t0 = Date.now();
   for (const args of [['--user', 'daemon-reload'], ['--user', boot ? 'enable' : 'disable', ...units], ['--user', 'restart', ...units]]) {
     const r = await sh('systemctl', args);
