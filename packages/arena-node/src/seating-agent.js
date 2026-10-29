@@ -108,7 +108,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
 
   // ROUNDS BY START TIME, read once each (the seats hold thousands)
   const starts = new Map();      // rid hex -> { rid, start: bigint, close: bigint }
-  const unwritten = new Map();   // anchor hex -> { rid, askedMs }: tables whose round 0 this seat does not hold
+  const unwritten = new Map();   // anchor hex -> { rid, askedMs }: tables whose round 0 this seat does not hold (or holds uncertified)
+  const heldChecked = new Set(); // anchor hex: a held round 0 already looked at for its certificates
   let lastRow = 0;
   const index = () => {
     for (const r of db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid > ? ORDER BY rowid').all(lastRow)) {
@@ -124,7 +125,21 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       if (anchor && !anchor.first) {
         // A TABLE WHOSE FIRST ROUND THIS SEAT NEVER WROTE (kanban #604): its certificate is asked of the table's seats
         const a = toHex(anchor.anchorId);
-        if (!unwritten.has(a) && !round.get(anchor.anchorId)) unwritten.set(a, { rid: anchor.anchorId, askedMs: -Infinity, sinceMs: nowMs() });
+        if (!unwritten.has(a)) {
+          const held = round.get(anchor.anchorId);
+          if (!held) unwritten.set(a, { rid: anchor.anchorId, askedMs: -Infinity, sinceMs: nowMs() });
+          // A TABLE WHOSE FIRST ROUND THIS SEAT HOLDS BUT WAS DOWN AT ITS SEATING (measured 2026-10-29 10:5xZ: test host seat 5 held round 0
+          // of RPS table 9ea77b85 and no certificate of it; round 0 had started hours before the restart, so it was never asked, and all day
+          // the seat named the drawn 7 against the seated 5 - a client checking the seats refused the table): asked as above once its
+          // seating has closed, and for 3 h from then
+          else if (!heldChecked.has(a)) {
+            heldChecked.add(a);
+            if (SEATING_ROLES.some((role) => !db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(anchor.anchorId, role))) {
+              let closeMs = 0; try { const c0 = decodeRoundContract(new Uint8Array(held.contract)); closeMs = Number(seatingCloseMs(c0, windowOf(c0))); } catch { /* asked now */ }
+              unwritten.set(a, { rid: anchor.anchorId, askedMs: -Infinity, sinceMs: Math.max(nowMs(), closeMs), held: true, closeMs });
+            }
+          }
+        }
         continue;
       }
       starts.set(toHex(new Uint8Array(r.round_id)), { rid: new Uint8Array(r.round_id), start: c.startTimeMs, close: seatingCloseMs(c, windowOf(c)), contract: c });
@@ -291,13 +306,14 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     for (const [a, u] of unwritten) {
       const lacking = SEATING_ROLES.filter((role) => !db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(u.rid, role));
       // asked for at most 3 h: a table nobody certified is not asked for all day
-      if (!lacking.length || round.get(u.rid) || t - u.sinceMs > 3 * 3600000) { unwritten.delete(a); continue; }
+      if (!lacking.length || (!u.held && round.get(u.rid)) || t - u.sinceMs > 3 * 3600000) { unwritten.delete(a); continue; }
+      if (u.held && t < u.closeMs) continue;     // its seating still open: the exchange above seats it
       if (t - u.askedMs < 60000) continue;
       u.askedMs = t;
-      const posted = contractOf(u.rid);
-      if (!posted) continue;
+      const posted = u.held ? null : contractOf(u.rid);
+      if (!u.held && !posted) continue;
       for (const role of lacking) {
-        const c = roster.committeeFor(u.rid, role, { posted });
+        const c = roster.committeeFor(u.rid, role, posted ? { posted } : {});
         if (!c.ok) continue;
         for (const b of endpointsOf(c.drawn, round.pubkey, endpointOf)) {
           const j = await getJson(b, `/seating?round=${a}&role=${role}`);

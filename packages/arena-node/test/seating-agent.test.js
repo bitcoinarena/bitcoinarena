@@ -11,7 +11,7 @@ import { seatingAgent } from '../src/seating-agent.js';
 import { encodeRoundContract, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
 import { signPresent, signSeating, encodeSeatingCertificate, seatedFrom, seatingId, verifySeating, seatingEquivocation,
   decodeSeatingCertificate } from '../../arena-protocol/src/seating.js';
-import { toHex } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { contractFor } from './window-fixture.js';
 
 const nodes = Array.from({ length: 9 }, (_, i) => { const secret = new Uint8Array(32).fill(i + 1); return { secret, pubkey: schnorr.getPublicKey(secret), endpoint: `http://seat-${i}` }; });
@@ -273,4 +273,55 @@ test('kanban #738: a seat that holds a certificate signs nothing more', async ()
   assert.deepEqual(net.signedOf(3, 'game'), [0, 1, 2, 3, 4], 'a certificate stands: the game seating is not signed again');
   assert.ok(!net.logs.get(3).some((l) => /game: re-signed/.test(l)));
   assert.ok(net.logs.get(3).some((l) => /settlement: re-signed/.test(l)), 'the settlement seating, with no certificate, is');
+});
+
+// A TABLE WHOSE FIRST ROUND THIS SEAT HOLDS BUT WAS DOWN AT ITS SEATING (kanban #765, measured 2026-10-29 10:5xZ: test host seat 5 held round 0
+// of RPS table 9ea77b85, no certificate of it, and named the drawn 7 against the seated 5 all day - a client checking the seats refused it)
+const RPS_V2 = fromHex('a75f54fd4f978a29ab6d39d9ef85c7adbe0576614634c679ae33d3e1c06164ea');
+function tableWorld({ now }) {
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE rounds (round_id BLOB, contract BLOB)');
+  const T0 = 10n * 3600000n;                   // round 0 starts at 10 h; round 7 a minute after `now`
+  const base = { ...contractFor(nodes.slice(0, 7).map((n) => n.pubkey)), gameId: RPS_V2, seriesId: new Uint8Array(32).fill(0x51), protocolVersion: 2 };
+  const rows = new Map();
+  for (const [i, start] of [[0, T0], [7, BigInt(now) + 60000n]]) {
+    const c = { ...base, roundIndex: i, startTimeMs: start };
+    const bytes = encodeRoundContract(c), rid = roundIdOf(c);
+    db.prepare('INSERT INTO rounds (round_id, contract) VALUES (?, ?)').run(rid, bytes);
+    rows.set(toHex(rid), { rid, contract: bytes });
+  }
+  const [rid0, rid7] = [...rows.values()].map((r) => r.rid);
+  const round = { db, pubkey: nodes[0].pubkey, get: (id) => rows.get(toHex(id)) || null };
+  const drawn = nodes.map((n) => ({ pubkey: n.pubkey, advert: { endpoint: n.endpoint } }));
+  const asked = [];
+  const fetcher = async (url, init = {}) => {
+    const u = new URL(url);
+    asked.push(`${init.method || 'GET'} ${u.pathname}${u.pathname === '/seating' ? `?${u.searchParams.get('role')}` : ''}`);
+    if (u.pathname === '/seating' && u.searchParams.get('round') === toHex(rid0)) return new Response(JSON.stringify({ cert: toHex(certFor(rid0, u.searchParams.get('role'))) }), { status: 200 });
+    if (u.pathname === '/seating-batch') return new Response(JSON.stringify({ rounds: {} }), { status: 200 });
+    return new Response('{}', { status: 200 });
+  };
+  const clock = { now };
+  const agent = seatingAgent({ round, roster: { committeeFor: () => ({ ok: true, drawn }) }, sign: signer(nodes[0]), fetcher, nowMs: () => clock.now,
+    verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } } });
+  return { agent, rid0, rid7, asked, clock };
+}
+
+test('kanban #765: a seat that holds a table\'s first round but was down at its seating asks the table\'s seats for its certificate', async () => {
+  const w = tableWorld({ now: 15 * 3600000 });  // 5 h after round 0 started: restarted long after its seating closed
+  assert.equal(w.agent.seatedFor(w.rid7, 'game'), null, 'no certificate held at the start');
+  await w.agent.tick();
+  assert.ok(w.asked.includes('GET /seating?game') && w.asked.includes('GET /seating?settlement'), 'both roles are asked of the table\'s seats');
+  assert.equal(w.agent.seatedFor(w.rid7, 'game').length, 7, 'the later round of the table is seated by round 0\'s certificate: the 7 it seats');
+  assert.equal(w.agent.seatedFor(w.rid7, 'settlement').length, 7);
+  w.asked.length = 0;
+  w.clock.now += 120000;
+  await w.agent.tick();
+  assert.equal(w.asked.filter((a) => a.startsWith('GET /seating?')).length, 0, 'held now: not asked again');
+});
+
+test('kanban #765: a held first round whose seating is still open is not asked for a certificate - its own exchange seats it', async () => {
+  const w = tableWorld({ now: 10 * 3600000 - 300000 });   // 5 min before round 0 starts: its seating closes in 3 min
+  await w.agent.tick();
+  assert.equal(w.asked.filter((a) => a.startsWith('GET /seating?')).length, 0, 'no certificate is asked before the seating closes');
 });
