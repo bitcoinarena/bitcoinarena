@@ -3,7 +3,7 @@
   "apps": {
     "arena-app-next-block": {
       "repo": "a tester/arena-app-next-block",
-      "commit": "5c19be53e78008e2b79a08d6d2472f536219e8d6",
+      "commit": "60af66702d3f2cb6ab5dd645b4e35f7589018e00",
       "paths": [
         "/*",
         "!/unity/",
