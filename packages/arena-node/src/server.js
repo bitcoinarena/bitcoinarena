@@ -4217,6 +4217,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const gridPosting = new Map();                 // series id hex -> { group, role, height, txid }
   const gridAsked = new Map();                   // series id hex -> when its publication was last looked for in vain
   const dupSaid = new Set();
+  const seatedRead = { at: 0, series: new Set(), of: new Map() };   // of: round id hex -> its series id hex (null: none), read once
   const dupPass = () => {
     if (shuttingDown || typeof chainFor !== 'function') return;
     const now = Date.now();
@@ -4233,12 +4234,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           role, height: pub.height, txid: toHex(pub.tx.txid) });
       }
     }
+    // A POSTING WITH A SEATED ROUND IS ALWAYS KEPT (measured 2026-10-29 09:4xZ: seven Up/Down series of more than one posting were seated
+    // that day): the series of every round this seat holds a seating certificate for, read again at most every minute
+    if (now - seatedRead.at > 60000) {
+      seatedRead.at = now;
+      try {
+        const out = new Set();
+        for (const r of round.db.prepare('SELECT DISTINCT lower(hex(round_id)) AS h FROM seat_certs').all()) {
+          if (!seatedRead.of.has(r.h)) {
+            let c = null; try { const row = round.db.prepare('SELECT contract FROM rounds WHERE round_id = ?').get(fromHex(r.h)); c = row ? decodeRoundContract(new Uint8Array(row.contract)) : null; } catch { c = null; }
+            seatedRead.of.set(r.h, c && c.seriesId instanceof Uint8Array ? toHex(c.seriesId) : null);
+          }
+          const sid = seatedRead.of.get(r.h); if (sid) out.add(sid);
+        }
+        seatedRead.series = out;
+      } catch { /* no seating table yet: nothing seated */ }
+    }
+    const seatedPostings = new Set();
+    for (const [k, p] of gridPosting) if (seatedRead.series.has(k)) seatedPostings.add(p.txid);
     const groups = new Map();
     for (const x of series) { const k = toHex(seriesId(x)); const p = gridPosting.get(k); if (!p) continue; if (!groups.has(p.group)) groups.set(p.group, []); groups.get(p.group).push({ k, ...p }); }
     for (const rows of groups.values()) {
       const firstOf = (role) => rows.filter((r) => r.role === role).sort((a, b) => (a.height - b.height) || (a.txid < b.txid ? -1 : a.txid > b.txid ? 1 : 0))[0];
       const lead = firstOf('emergency') || firstOf('primary'), back = firstOf('backup');
-      const keep = new Set([lead && lead.txid, back && back.txid].filter(Boolean));
+      const keep = new Set([lead && lead.txid, back && back.txid, ...rows.filter((r) => seatedPostings.has(r.txid)).map((r) => r.txid)].filter(Boolean));
       for (const r of rows) if (!keep.has(r.txid)) {
         // A DRY RUN UNLESS ARENA_DUP_DROP=1: the decision is logged once per series and checked against the grids the seats play first
         if (process.env.ARENA_DUP_DROP !== '1') {
