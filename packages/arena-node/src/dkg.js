@@ -48,6 +48,12 @@ export class Dkg {
     this.peers = peers;
     this.fetcher = fetcher;
     this.openedKept = new Map();          // epoch:contribution bytes -> openMyContribution's answer (finish)
+    // THE COMBINE AND THE SIGNED AGREEMENT, KEPT BY THE CONTRIBUTIONS THEY ARE MADE OF (kanban #786, profiled 2026-10-29 18:3xZ on two
+    // test host seats: finish took 14-20 % of a seat's CPU - while a committee waits for its agreements, finish is asked every second and
+    // combined the same contributions again (their proofs checked, the shares summed), and each peer's GET /dkg-agreement signed the same
+    // set again); a different stored set makes them anew
+    this.combinedKept = new Map();        // epoch + the stored contributions -> combineShares' answer
+    this.agreementKept = new Map();       // epoch + the stored contributions -> { ok, bytes } signed
   }
 
   get canDeal() { return !!(this.curve && this.random && this.round.identity); }
@@ -171,6 +177,14 @@ export class Dkg {
    * the whole committee has contributed. `combineShares` says so itself; this
    * is where the answer is kept.
    */
+  /** The key of what an epoch's stored contributions make (combinedKept, agreementKept): the epoch and each contribution's bytes. */
+  keptKeyOf(epochIdBytes, stored) {
+    return `${toHex(epochIdBytes)}:${stored.map((r) => Buffer.from(r.bytes).toString('base64')).join(',')}`;
+  }
+
+  /** A kept answer, the oldest dropped past 256. */
+  static keep(map, k, v) { map.set(k, v); if (map.size > 256) map.delete(map.keys().next().value); return v; }
+
   async finish(signerNodes, peers = this.peers) {
     const where = this.epochFor(signerNodes);
     if (!where.ok) return where;
@@ -208,10 +222,12 @@ export class Dkg {
       opened.push(one);
     }
 
-    const combined = combineShares({
+    const kk = this.keptKeyOf(where.epochId, stored);
+    const combined = this.combinedKept.get(kk) || combineShares({
       opened, signerNodes: held.signerNodes, contributions, curve: this.curve,
     });
     if (!combined.ok) return combined;
+    Dkg.keep(this.combinedKept, kk, combined);
 
     // AND EVERY SIGNER NODE COMBINED THE SAME SET, or this one keeps nothing.
     // Measured without it: a dealer sent two valid contributions to two halves
@@ -260,6 +276,9 @@ export class Dkg {
     const stored = this.round.contributionsOf(epochIdBytes);
     if (stored.length !== held.signerNodes.length)
       return { ok: false, why: `this node holds ${stored.length} of the committee's ${held.signerNodes.length} contributions and has combined nothing yet` };
+    const kk = this.keptKeyOf(epochIdBytes, stored);
+    const was = this.agreementKept.get(kk);
+    if (was) return was;
     const agreement = {
       epochId: epochIdBytes, signerNode: this.round.pubkey,
       held: contributionSetOf(stored.map((r) => decodeContribution(r.bytes))),
@@ -268,7 +287,7 @@ export class Dkg {
     const signature = schnorr.sign(agreementId(agreement), this.round.identity.secret);
     const bytes = new Uint8Array(body.length + signature.length);
     bytes.set(body, 0); bytes.set(signature, body.length);
-    return { ok: true, bytes };
+    return Dkg.keep(this.agreementKept, kk, { ok: true, bytes });
   }
 
   /**
