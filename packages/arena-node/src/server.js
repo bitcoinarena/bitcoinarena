@@ -4504,6 +4504,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const EMERGENCY_TAGS = new Set(['updown-day', 'rps-day', 'nextblock-day'].map((i) => toHex(itemTag(`${i}-emergency`))));
   const gridPosting = new Map();                 // series id hex -> { group, role, height, txid }
   const gridAsked = new Map();                   // series id hex -> when its publication was last looked for in vain
+  const dupSaid = new Set();
   const dupPass = () => {
     if (shuttingDown || typeof chainFor !== 'function') return;
     const now = Date.now();
@@ -4527,6 +4528,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const lead = firstOf('emergency') || firstOf('primary'), back = firstOf('backup');
       const keep = new Set([lead && lead.txid, back && back.txid].filter(Boolean));
       for (const r of rows) if (!keep.has(r.txid)) {
+        // A DRY RUN UNLESS ARENA_DUP_DROP=1: the decision is logged once per series and checked against the grids the seats play first
+        if (process.env.ARENA_DUP_DROP !== '1') {
+          if (!dupSaid.has(r.k)) { dupSaid.add(r.k); console.log(`[series] #742 would drop ${r.k.slice(0, 16)}: a ${r.role} posting (${r.txid.slice(0, 8)} at ${r.height}); held for its day: ${lead ? `${lead.role} ${lead.txid.slice(0, 8)} at ${lead.height}` : '-'}${back ? `, backup ${back.txid.slice(0, 8)} at ${back.height}` : ''}`); }
+          continue;
+        }
         try { dropOffChain(r.k, 'dup', { why: `a ${r.role} posting (${r.txid.slice(0, 8)} at ${r.height}) beside the ${lead && keep.has(lead.txid) ? `${lead.role} ${lead.txid.slice(0, 8)}` : '-'}${back ? ` and backup ${back.txid.slice(0, 8)}` : ''} held for its day` }); }
         catch (e) { console.error(`[series] #742 ${r.k.slice(0, 16)} not dropped: ${e.message}`); }
       }
