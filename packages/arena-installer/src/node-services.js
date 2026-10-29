@@ -203,7 +203,7 @@ async function probeAsk(svc, { node, fetcher, local, dnsRetries, dnsPauseMs, log
       const id = await getIdentity(`http://127.0.0.1:${node.port}`, fetcher);
       return { ok: true, says: `answers on port ${node.port} as ${id.slice(0, 16)}…`, identity: id };
     }
-    if (svc.id === 'tunnel') {
+    if (svc.id === 'tunnel' || svc.id === 'funnel') {
       if (!node.publicUrl) return { ok: false, says: 'no public_url in arena.conf' };
       // A QUICK TUNNEL'S NEW NAME TAKES A FEW SECONDS INTO DNS (measured on macOS node A, 10 s after an update restarted its tunnel:
       // ENOTFOUND, then answering): a name not found yet is asked again, twice, 5 s apart, before it counts
@@ -291,6 +291,9 @@ export async function overview({ home, platform = process.platform, env = proces
   log.verbose(`${svcs.length} service(s) installed: ${svcs.map((x) => x.id).join(', ') || 'none'}`);
   log.debug(() => `not installed (no file): ${SERVICES.filter((s) => !s.inside && !svcs.some((x) => x.id === s.id)).map((s) => `${s.id} (${serviceFile(s.id, { home, platform, env })})`).join(', ') || 'none'}`);
   const procs = platform === 'win32' ? await windowsProcesses(sh) : svcs.some((x) => x.inside) ? await unixProcesses(sh) : [];
+  // TAILSCALE FUNNEL, KEPT BY TAILSCALED (kanban #734, measured 2026-10-29: a node reached by Funnel showed its address under "Tunnel
+  // (cloudflared)" - the quick tunnel left from before): no service of the node's own, so one row of its own, asked like a tunnel
+  const funnel = node.state.reach && node.state.reach.mode === 'tailscale';
   const rows = [];
   let nodePid = null, nodeRunning = false;
   for (const svc of svcs) {
@@ -300,9 +303,15 @@ export async function overview({ home, platform = process.platform, env = proces
     if (svc.id === 'node') { nodePid = st.pid; nodeRunning = st.running; }
     rows.push({ id: svc.id, title: svc.title, name: svc.name, file: svc.file, inside: svc.inside || null, ...st });
   }
+  if (funnel) rows.push({ id: 'funnel', title: 'Tailscale Funnel', name: null, file: null, inside: null, running: null, kept: 'tailscaled' });
   if (probes) {
     const local = { identity: null };
     for (const r of rows) {
+      if (r.id === 'funnel') {
+        r.probe = await probeOf(r, { node, fetcher, local: local.identity, dnsPauseMs, log, guardianCheck });
+        r.running = r.probe ? r.probe.ok : null; r.detail = r.probe ? r.probe.says : null;
+        continue;
+      }
       if (r.running === null) {
         // not visible: running when it answers (a service with nothing to ask stays unknown)
         r.probe = await probeOf(r, { node, fetcher, local: local.identity, dnsPauseMs, log, guardianCheck });
