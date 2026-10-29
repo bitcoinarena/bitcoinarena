@@ -5300,7 +5300,8 @@
     }
     const drawReferral = () => {
       const me = myReferral(), e = window.ARENA_REFERRAL_EARNED;
-      const sat = (msat) => Number(BigInt(msat || 0) / 1000n).toLocaleString('en-US') + ' sat';
+      // to the msat (kanban #681: a referral share is 10 % of the nodes' fee, mostly part of a sat - 800 msat read "0 sat")
+      const sat = (msat) => (Number(BigInt(msat || 0)) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 }) + ' sat';
       const earned = !me ? '' : !e ? '' : e.payouts ? 'Earned so far: ' + sat(e.msat) + ' from ' + e.payouts + (e.payouts === 1 ? ' payout' : ' payouts') + '. It lands in your wallet on its own.'
         : 'Nothing earned yet.';
       window.ArenaSettings.referral(document.getElementById('arena-set-referral'), { link: me ? me.link : '', earned, onCopy: copyReferral });
