@@ -55,7 +55,7 @@ const FED_B = 'b18947f0';
 try {
   // THE ROUND: a version-11 nextblock round of federation B, open for entries
   if (!env.ROUND) {
-    const list = (await (await fetch(`${nodes[0]}/rounds`)).json()).rounds;
+    const list = (await (await fetch(`${nodes[0]}/rounds?all=1`)).json()).rounds;
     const now = Date.now();
     const pick = [];
     for (const x of list.filter((y) => y.entryOpen && y.game && y.game.name === 'nextblock' && String(y.federation).startsWith(FED_B) && Number(y.startTimeMs) - now > 75000)) {

@@ -62,7 +62,7 @@ const LEAD_MS = 150000n;
 // keepBackToBack - published ahead, the 8 s grid kept 150 s ahead
 // TABLES: as many rounds a slot as the tables in play now, plus one spare - read off seat A's own listing
 const countTables = tableCounter({ min: Number(env.RPS_MIN_TABLES || 3), spare: 1, windowMs: Number(WINDOW_MS), gameId: toHex(ROCK_PAPER_SCISSORS.gameId) });
-const rpsTables = async () => { try { const d = await (await fetch('http://127.0.0.1:21651/rounds')).json();
+const rpsTables = async () => { try { const d = await (await fetch('http://127.0.0.1:21651/rounds?all=1')).json();
   return countTables(d.rounds || [], Date.now()); } catch { return 3; } };
 keepBackToBack(round, { fields: RPS_FIELDS, windowMs: WINDOW_MS, leadMs: LEAD_MS, tables: rpsTables,
   onOpen: ({ id, entryCloseMs, table, tables, tookMs }) => say({ step: 'opened', game: 'rock-paper-scissors', round: id, entryClose: new Date(Number(entryCloseMs)).toISOString(), table, tables, tookMs }),
@@ -85,7 +85,7 @@ const keepMarket = async () => {
     const firstStart = reach % UPDOWN_PERIOD_MS === 0n ? reach : reach - (reach % UPDOWN_PERIOD_MS) + UPDOWN_PERIOD_MS;
     // THE WINDOWS ITS SEAT ALREADY HOLDS A ROUND FOR (a restart forgets what it opened; the seat does not)
     let held = [];
-    try { const r = await fetch(`http://127.0.0.1:21651/rounds`); const j = await r.json(); held = (Array.isArray(j) ? j : j.rounds || []).filter((x) => x.game && x.game.id === toHex(UPDOWN.registration.gameId)).map((x) => String(x.entryCloseMs)); } catch { /* none known */ }
+    try { const r = await fetch(`http://127.0.0.1:21651/rounds?all=1`); const j = await r.json(); held = (Array.isArray(j) ? j : j.rounds || []).filter((x) => x.game && x.game.id === toHex(UPDOWN.registration.gameId)).map((x) => String(x.entryCloseMs)); } catch { /* none known */ }
     for (let end = firstStart + UPDOWN_PERIOD_MS; end <= now + 3n * UPDOWN_PERIOD_MS; end += UPDOWN_PERIOD_MS) {
       if (opened.has(String(end)) || held.includes(String(end))) continue;
       const id = await round.openNext({ fields: UPDOWN_FIELDS, entryCloseAtMs: end,
