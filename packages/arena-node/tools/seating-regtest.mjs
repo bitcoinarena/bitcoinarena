@@ -74,6 +74,8 @@ const startSeat = (i) => {
   const e = { ...env, ARENA_BITCOIND_URL: `http://127.0.0.1:${RPC}`, ARENA_BITCOIND_COOKIE: `${WORK}/btc/regtest/.cookie`, ARENA_FUND_FREE_ROUNDS: '1',
     ARENA_APPS: new URL('../../nextblock/plugin/nextblock.js', import.meta.url).pathname, ARENA_DONATION_NETWORK: 'regtest',
     ARENA_SEATING: '1', ARENA_SEATING_TICK_MS: '1000',
+    // kanban #738: TEST_HOLD_SEAT=k TEST_HOLD_N=n - seat k is the forced overloaded seat (holds n PRESENTs before the close)
+    ...(Number(env.TEST_HOLD_SEAT) === i + 1 ? { ARENA_TEST_SEATING_HOLD: String(env.TEST_HOLD_N || 5) } : {}),
     // GET /headers for the client's own committee: headers.bin from the regtest genesis, extended by each seat every 30 s
     ARENA_ATTACH_PROOF_DIR: join(WORK, 'attach') };
   delete e.ARENA_SERIES_FILE;

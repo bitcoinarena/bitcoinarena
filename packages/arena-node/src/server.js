@@ -2526,6 +2526,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const emergencyFirstPull = setTimeout(() => { pullEmergencies().catch(() => {}); }, 30000);
   if (emergencyFirstPull.unref) emergencyFirstPull.unref();
   const seating = (seatingOn ?? process.env.ARENA_SEATING === '1') ? seatingAgent({ round, roster,
+    // kanban #738: the forced overloaded seat, regtest rounds only (seating-agent.js)
+    testHoldPresents: Number(process.env.ARENA_TEST_SEATING_HOLD) || null,
     // a table's round 0 this seat never wrote, built from the series it holds (kanban #604); `writers` is set further down
     contractOf: (rid) => {
       try {
