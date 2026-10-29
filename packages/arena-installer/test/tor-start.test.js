@@ -116,7 +116,9 @@ test('a Tor that does not come up: LND runs without it on the ports chosen, and 
         configureLnd: (o) => { configured.push(o); return { lnddir: join(home, 'lnd'), restUrl: 'https://127.0.0.1:8080', tlsCert: 'c', macaroon: 'm', passwordFile: 'p' }; },
         installProgram: async () => ({ ok: true }) },
       tor: { torBin: async () => '/r/runtime/tor/tor', freeTorPorts: async () => ({ socks: 19060, control: 19061 }), writeTorrc: (o) => { torrcs.push(o.ports); return join(home, 'tor', 'torrc'); },
-        torCommand: ({ tor }) => [tor], torUp: async (o) => { asked.push(o); return up; } } });
+        torCommand: ({ tor }) => [tor], torUp: async (o) => { asked.push(o); return up; } },
+      // no router that forwards ports on request (kanban #730): LND runs without nat
+      router: async () => ({ answered: false, by: null, why: 'no router here forwards ports on request' }) });
     return { r, configured, torrcs, asked, st: state.read() };
   };
   const down = await run({ ok: false, why: 'Tor stopped: Could not bind to 127.0.0.1:19061: Address already in use. Is Tor already running?' });
@@ -124,7 +126,8 @@ test('a Tor that does not come up: LND runs without it on the ports chosen, and 
   assert.deepEqual(down.asked[0], { port: 19061, home }, 'asked on that pair, for this node\'s own Tor');
   assert.equal(down.configured[0].tor, null, 'LND without Tor: it starts');
   assert.equal(down.st.tor.why, 'Tor did not start (Tor stopped: Could not bind to 127.0.0.1:19061: Address already in use. Is Tor already running?): LND runs without it');
-  assert.match(down.r.peers, /only nodes it dials reach it \(Tor did not start \(Tor stopped: Could not bind/, 'the Lightning step says why');
+  assert.match(down.r.peers, /^LND dials out to its peers only: .*it has no Tor \(Tor did not start \(Tor stopped: Could not bind/, 'the Lightning step says why');
+  assert.equal(down.configured[0].nat, false, 'and no nat=true with no router to ask (kanban #730)');
   const up = await run({ ok: true });
   assert.deepEqual(up.configured[0].tor, { socks: 19060, control: 19061 }, 'LND on the pair Tor runs on');
   assert.deepEqual(up.st.tor.ports, { socks: 19060, control: 19061 });
