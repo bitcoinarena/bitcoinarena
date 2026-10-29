@@ -81,7 +81,7 @@ test('chain: the folder checked for space, and the install moves on at once whil
 });
 
 test('reach: the direct test picks the default, Cloudflare\'s login waited for, the chosen way posted with its fields', async () => {
-  assert.equal(defaultMode(null), null); assert.equal(defaultMode({ reached: true }), 'direct'); assert.equal(defaultMode({ reached: false }), 'permanent');
+  assert.equal(defaultMode(null), null); assert.equal(defaultMode({ reached: true }), 'direct'); assert.equal(defaultMode({ reached: false }), 'permanent'); assert.equal(defaultMode({ reached: false, tailnet: 'm.ts.net' }), 'tailscale');
   const posts = []; let reloaded = 0; let polls = 0;
   const answers = { '/api/reach/direct': { ok: true, result: { reached: false, address: '203.0.113.5', port: 9090, diagnosis: { advice: 'behind NAT: forward port 9090' } } },
     '/api/reach/login': { ok: true, url: 'https://dash.cloudflare.com/argotunnel?x=1' }, '/api/reach/save': { ok: true } };
@@ -94,7 +94,7 @@ test('reach: the direct test picks the default, Cloudflare\'s login waited for, 
   assert.deepEqual(posts[0], ['/api/reach/direct', { port: 9090 }]);
   assert.equal(c.state.mode, 'permanent');
   let html = renderToStaticMarkup(c.render());
-  assert.match(html, /Not reachable from the internet: behind NAT: forward port 9090\nThe permanent tunnel is the default\./);
+  assert.match(html, /Not reachable directly from the internet: behind NAT: forward port 9090\nThe permanent tunnel is the default\./);
   assert.match(html, /<b>Permanent Cloudflare tunnel<\/b><span class="tag">recommended<\/span>/);
   await c.login();
   assert.match(renderToStaticMarkup(c.render()), /Open <a href="https:\/\/dash\.cloudflare\.com\/argotunnel\?x=1"/);
@@ -139,4 +139,12 @@ test('federation: ten guardians, seven lit; Continue posts and moves on', async 
   await c.go();
   assert.deepEqual(posts, ['/api/federation']); assert.equal(reloaded, 1);
   assert.equal(chainText({ ok: false, why: 'x', source: { ok: false, why: 'y' } }), 'Failed: x\nthis source: y');
+});
+
+test('reach on a tailnet (kanban #734): not reached directly, Funnel is the default and the limit is said; nothing claims direct reach', () => {
+  const d = { reached: false, address: '46.22.17.30', port: 6221, tailnet: 'macbook.example.com', diagnosis: { advice: 'a router in front of this machine does not forward port 6221' } };
+  const html = renderToStaticMarkup(React.createElement(ReachStep, { st: { direct: d, defaultPort: 6221 }, post: async () => ({ ok: true }), get: async () => ({}) }));
+  assert.match(html, /Not reachable directly from the internet: a router in front of this machine does not forward port 6221\nThis machine is on your tailnet as macbook\.example\.ts\.net\. Tailscale Funnel is the default: it needs no port opened on your router\./);
+  assert.match(html, /<input type="radio" name="rm" checked="" value="tailscale"\/>/, 'Funnel is chosen');
+  assert.doesNotMatch(html, /Reachable from the internet/);
 });

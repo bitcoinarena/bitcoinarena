@@ -172,11 +172,14 @@ export class ChainStep extends React.Component {
   }
 }
 
-// THE WAYS IN, most permanent first; the direct test picks the default (direct when it reached this machine, the permanent tunnel when not)
+// THE WAYS IN, most permanent first; the direct test picks the default (direct when it reached this machine, Tailscale Funnel when it did not
+// and the machine is on a tailnet - kanban #734 - else the permanent tunnel)
 export const REACH_MODES = Object.freeze(['direct', 'permanent', 'tailscale', 'workers', 'quick']);
-export const defaultMode = (direct) => (direct ? (direct.reached ? 'direct' : 'permanent') : null);
+export const defaultMode = (direct) => (direct ? (direct.reached ? 'direct' : direct.tailnet ? 'tailscale' : 'permanent') : null);
 export const directText = (d) => (d.reached ? `Reachable from the internet at ${d.address}:${d.port}. A direct connection is the default.`
-  : `Not reachable from the internet: ${d.diagnosis ? d.diagnosis.advice : d.why}\nThe permanent tunnel is the default.`);
+  : `Not reachable directly from the internet: ${d.diagnosis ? d.diagnosis.advice : d.why}\n${d.tailnet
+    ? `This machine is on your tailnet as ${d.tailnet}. Tailscale Funnel is the default: it needs no port opened on your router.`
+    : 'The permanent tunnel is the default.'}`);
 
 export class ReachStep extends React.Component {
   constructor(props) {
