@@ -6333,8 +6333,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!home) return answer(501, { ok: false, why: 'a node set up by hand keeps its key: there are no 24 words in its home' });
           try {
             const { switchToSeedKey } = await import('../../arena-installer/src/identity-switch.js');
-            const r = await switchToSeedKey({ home, release: fileURLToPath(new URL('../../../', import.meta.url)), post: (body.args || {}).post === true });
-            if (!r.ok) return answer(400, r);
+            const post = (body.args || {}).post === true;
+            const r = await switchToSeedKey({ home, release: fileURLToPath(new URL('../../../', import.meta.url)), post });
+            // THE QUESTION IS NO FAILURE (kanban #734, measured 2026-10-29: the owner page asks on every load whether the move is open - its
+            // key-switch panel hides itself when it is not - and a node with no bond yet answered 400 "this node has no bond yet" every time):
+            // asked without post, a move that is not open is answered 200 with ok: false and why; a move posted that fails is a 400
+            if (!r.ok) return answer(post ? 400 : 200, r);
             if (r.bond) {
               console.log(`[owner] node key moved to the one from the 24 words: ${r.plan.keyNow.slice(0, 16)} -> ${r.plan.keyNext.slice(0, 16)}, bond ${r.bond.txid}; the seat restarts`);
               const { spawn: sp } = await import('node:child_process');
