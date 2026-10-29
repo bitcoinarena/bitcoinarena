@@ -5224,7 +5224,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE LISTING'S ANSWER, KEPT FOR A SECOND (kanban #786, profiled 2026-10-29 19:1xZ on test host seat 1: GET /rounds took 16 % of the
   // seat's CPU, 10.5 % in playedHere - every listing asked each paid row's window again, each round of it drawn through committeeOf).
   // Only the listing reads it: the entry and the live check ask playedHere itself, so a window that turns is refused at once.
-  const PLAYED_KEPT_MS = Number(process.env.ARENA_PLAYED_KEPT_MS || 1000);
+  // 30 s (measured 2026-10-29 on seat 1: kept 1 s the answer was read again almost always - a row is listed less than once a second -
+  // and the listing stayed at 19.8 %; kept 30 s it fell to 6.6 %): a lobby may show a window's turn up to 30 s late, never take its entry
+  const PLAYED_KEPT_MS = Number(process.env.ARENA_PLAYED_KEPT_MS || 30000);
   const playedKept = new Map();                   // round id hex -> { at, size (of its window), answer }
   const playedListed = (rid, c) => {
     const k = toHex(rid), now = Date.now();
