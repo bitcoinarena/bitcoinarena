@@ -7511,6 +7511,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       // CAN THE INTERNET REACH A NEW NODE (ruling 7, reach-check.js): connects back to the asking address only, on the
       // port named, and answers whether GET /reach-nonce gave the nonce - and the address it saw
+      // THE NODE ANSWERS ITS OWN REACH CHECK (kanban #734, measured 2026-10-29 on an installed node: the installer's direct check bound the
+      // node's port to serve the nonce, found the node on it and said "port-busy" every time - direct could never be chosen on a run
+      // again): the nonce the installer wrote into this node's home, while it is fresh (5 min), for the seats that connect back
+      if (req.method === 'GET' && url.pathname === '/reach-nonce') {
+        const f = process.env.ARENA_HOME ? joinPath(process.env.ARENA_HOME, 'reach-nonce') : null;
+        let nonce = null;
+        try { if (f && Date.now() - statSync(f).mtimeMs < 300000) nonce = readFileSync(f, 'utf8').trim(); } catch { nonce = null; }
+        if (!nonce) return text(res, 404, 'no reach check is running on this node');
+        res.writeHead(200, { 'content-type': 'text/plain', 'cache-control': 'no-store' });
+        return res.end(nonce);
+      }
       if (req.method === 'POST' && url.pathname === '/reach-check') {
         let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a reach check is JSON { port, nonce }'); }
         const r = await reachCheck(req, j);
