@@ -20,7 +20,7 @@
  *     most rank DUTY_DAY_RANK_CAP of the duty order, so census nodes that run no duty runner cannot push it towards the evening
  */
 import { meetsCensusMinimum } from '../../arena-protocol/src/census.js';
-import { dayPostDue, dayStartMs, targetDay, DUTY_DAY_MS } from '../../arena-protocol/src/duty.js';
+import { dayPostDue, dayStartMs, targetDay, DUTY_DAY_MS, DUTY_POST_BY_MS } from '../../arena-protocol/src/duty.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
 const HOUR = 3600000;
@@ -271,7 +271,7 @@ export function emergencyPlan({ nowMs, mtpMs, day, shape, committeeLeadMs = DUTY
 /** The day's post due from this machine: the duty order's rank, capped at `cap` - no more than `cap` hours into the day. */
 export function dayDueCapped({ nowMs, slot, rank, posted, cap = DUTY_DAY_RANK_CAP }) {
   if (!Number.isInteger(rank) || rank < 0 || posted) return false;
-  return Number(nowMs) >= dayDueFromMs(slot, rank, cap) && Number(nowMs) < dayStartMs(slot + 1);
+  return Number(nowMs) >= dayDueFromMs(slot, rank, cap) && Number(nowMs) < dayStartMs(slot) + DUTY_POST_BY_MS;   // not after 12:00Z (#742)
 }
 // PAST THE CAP, ONE STEP PER RANK INSIDE THE CAP'S HOUR (kanban #788, measured 2026-10-29 02:00-02:01Z: every node ranked 2 or more was due at
 // 02:00Z at once, and four seats published the 10-30 Up/Down day in the same minute - four fees, four grids every seat holds): rank cap + k is

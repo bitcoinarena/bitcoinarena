@@ -71,3 +71,15 @@ test('one posting per game per day: the day posts the next day; the first in dut
   const a = await anchorHeight(d, { mtpAt: async (h) => mtp(h), tip: 100, slotMs: DUTY_DAY_MS });
   assert.equal(a, 4);                                                       // 3 h before = 1 h after the first block: 3 blocks, the first past it is 4
 });
+
+test('no regular day posting after 12:00 UTC of the posting day, only an emergency grid (kanban #742)', async () => {
+  const { dayPostDue, backupPostDue, dayStartMs, DUTY_POST_BY_MS } = await import('../src/duty.js');
+  const slot = 20754, at = (h, m = 0) => dayStartMs(slot) + h * 3600000 + m * 60000;   // 2026-10-29, posting 10-30
+  assert.equal(DUTY_POST_BY_MS, 12 * 3600000);
+  assert.equal(dayPostDue({ nowMs: at(2), slot, rank: 1, posted: false }), true, 'rank 1 at 02:00Z');
+  assert.equal(dayPostDue({ nowMs: at(11, 59), slot, rank: 1, posted: false }), true, 'still at 11:59Z');
+  assert.equal(dayPostDue({ nowMs: at(12), slot, rank: 1, posted: false }), false, 'not at 12:00Z');
+  assert.equal(dayPostDue({ nowMs: at(20, 51), slot, rank: 11, posted: false }), false, 'the 20:51Z repost of 10-29 is not due');
+  assert.equal(backupPostDue({ nowMs: at(11, 59), slot, rank: 2, posted: false }), true, 'a backup at 11:59Z');
+  assert.equal(backupPostDue({ nowMs: at(12), slot, rank: 2, posted: false }), false, 'no backup from 12:00Z');
+});
