@@ -248,23 +248,26 @@ test('the status line: one JSON object per game and day', () => {
   JSON.stringify(line);
 });
 
-test('another node\'s posting of the day, 6 deep, counts as confirmed until its rounds can be listed (kanban #775, option 1)', () => {
-  // the 10-30 measurement (2026-10-29): posted at 157984 (03:01Z); at 16:00Z no seat listed rounds - they are written from 21:00Z
+test('another node\'s posting of the day counts as confirmed from its block on, and no emergency is due for it (kanban #775)', () => {
+  // the 10-30 measurement (2026-10-29): primaries posted at 157984 (03:01Z); at 16:00Z no seat listed rounds - they are written from 21:00Z
   const dayStartMs = Date.UTC(2026, 9, 30), at = (h) => dayStartMs - (24 - h) * 3600000;
   const tag = 'aabbccdd', slot = 20755;
   const posting = { slot, tag, kind: 'D', height: 157984 };
-  const ask = (markers, nowMs, tipHeight = 158060) => guard.foreignConfirmed({ markers, slot, tag, tipHeight, nowMs, dayStartMs });
-  assert.equal(ask([posting], at(16)), true, '16:00Z: a primary 6 deep counts');
-  assert.equal(ask([posting], at(20) + 59 * 60000), true, 'still at 20:59Z');
-  assert.equal(ask([posting], at(21)), false, 'from 21:00Z only listed rounds count');
-  assert.equal(ask([{ ...posting, height: 158056 }], at(16), 158060), false, '5 deep is not enough');
-  assert.equal(ask([{ ...posting, height: null }], at(16)), false, 'a marker in the mempool is not confirmed');
-  assert.equal(ask([{ ...posting, kind: 'B' }], at(16)), false, 'a backup alone does not stand for the day');
-  assert.equal(ask([{ ...posting, slot: slot - 1 }], at(16)), false, 'another day\'s posting does not count');
-  assert.equal(ask([{ ...posting, tag: '00000000' }], at(16)), false, 'another game\'s does not');
-  // and with it the 16:00Z emergency stays away; with nothing confirmed it still comes
+  const ask = (markers, tipHeight = 158060) => guard.foreignConfirmed({ markers, slot, tag, tipHeight });
+  assert.equal(ask([posting], 157984), true, 'in its block (03:01Z): accepted');
+  assert.equal(ask([posting]), true, 'and later, at any hour');
+  assert.equal(ask([{ ...posting, height: null }]), false, 'a marker in the mempool is not confirmed');
+  assert.equal(ask([{ ...posting, kind: 'B' }]), false, 'a backup alone does not stand for the day');
+  assert.equal(ask([{ ...posting, slot: slot - 1 }]), false, 'another day\'s posting does not count');
+  assert.equal(ask([{ ...posting, tag: '00000000' }]), false, 'another game\'s does not');
+  // with it the 16:00Z emergency stays away (and at 21:00Z); with nothing confirmed it still comes; a dead posting still gets one
   const day = { startMs: dayStartMs, endMs: dayStartMs + 86400000 };
   const verdict = { state: 'pending', why: 'posted by another node; drawn on 0 of 0 seats' };
-  assert.equal(guard.emergencyDue({ nowMs: at(16), day, verdict, confirmedAny: ask([posting], at(16)) }).due, false);
+  // another node's posting is waited for until its committee time (day start - 6 h) + 4 h, as the duty does it: 22:00Z
+  const pendingCommitteeMs = dayStartMs - 6 * 3600000;
+  for (const h of [16, 21]) assert.equal(guard.emergencyDue({ nowMs: at(h), day, verdict, confirmedAny: ask([posting]), pendingCommitteeMs }).due, false, `${h}:00Z`);
+  // the standing safety net (kanban #689): still not drawable at 22:00Z, the emergency grid comes
+  assert.equal(guard.emergencyDue({ nowMs: at(22), day, verdict, confirmedAny: ask([posting]), pendingCommitteeMs }).due, true, '22:00Z, not drawable');
   assert.equal(guard.emergencyDue({ nowMs: at(16), day, verdict, confirmedAny: false }).due, true);
+  assert.equal(guard.emergencyDue({ nowMs: at(16), day, verdict: { state: 'dead', why: 'the chain left the branch its census was taken on' }, confirmedAny: true }).due, true);
 });

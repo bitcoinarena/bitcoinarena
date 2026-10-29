@@ -39,17 +39,15 @@ export const DUTY_DRAWABLE_BY_MS = 4 * HOUR;
 export const DUTY_CONFIRMED_BY_MS = 8 * HOUR;
 /** A posting whose publication is in a block and that is not dead: the day has confirmed rounds (kanban #775). */
 export const confirmedPosting = (v) => !!v && v.state !== 'dead' && ['published', 'beacon', 'seats', 'drawn'].includes(v.stage);
-/** The seats write a day's rounds 3 h before it starts (a grid series' horizon): before that no seat can list them (kanban #775). */
-export const DUTY_LISTED_LEAD_MS = 3 * HOUR;
 /**
- * ANOTHER NODE'S POSTING OF THE DAY, IN A BLOCK 6 DEEP, COUNTS AS CONFIRMED UNTIL ITS ROUNDS CAN BE LISTED (kanban #775, the owner 2026-10-29
- * ~21:00Z, option 1). Measured that evening: the 10-30 days were posted at 03:01Z and 04:41Z (blocks 157984 / 157997), well before 12:00Z,
- * but at 16:00Z no seat listed their rounds - the seats write them from 21:00Z - so every node that had not posted the day itself took it
- * for unconfirmed and posted an emergency grid (158082, 18:42Z). From DUTY_LISTED_LEAD_MS before the day a marker alone counts no more:
- * then only rounds the seats list do. `markers`: { slot, tag, kind, height } off this node's chain (height null: in the mempool).
+ * ANOTHER NODE'S POSTING OF THE DAY IN A BLOCK COUNTS AS CONFIRMED (kanban #775, the owner 2026-10-29 ~21:10Z: "Dann müssten die nodes um
+ * 3:01Z akzeptieren und nichts neues mehr posten"). Measured that evening: the 10-30 days were posted at 03:01Z (157984), but at 16:00Z no
+ * seat listed their rounds - the seats write them 3 h before the day - so every node that had not posted the day itself took it for
+ * unconfirmed and posted an emergency grid (158082, 18:42Z). Its rounds are still watched: a posting the chain leaves is dead, and a day
+ * not drawable DUTY_DRAWABLE_BY_MS before it gets its emergency grid as before. `markers`: { slot, tag, kind, height } off this node's chain
+ * (height null: in the mempool).
  */
-export function foreignConfirmed({ markers, slot, tag, tipHeight, nowMs, dayStartMs, depth = DUTY_BEACON_DEPTH, listedLeadMs = DUTY_LISTED_LEAD_MS }) {
-  if (nowMs >= dayStartMs - listedLeadMs) return false;
+export function foreignConfirmed({ markers, slot, tag, tipHeight, depth = 1 }) {
   return (markers || []).some((m) => m.slot === slot && m.tag === tag && m.kind !== 'B' && Number.isInteger(m.height) && tipHeight - m.height + 1 >= depth);
 }
 export const DUTY_EMERGENCY_COMMITTEE_LEAD_MS = 2 * HOUR;
