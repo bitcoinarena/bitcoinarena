@@ -827,6 +827,12 @@
     body:has(#arena-season.show) #arena-build, body:has(#arena-shop.show) #arena-build {
       display: block; left: auto; top: auto; right: 0; bottom: 0; height: calc(30px + env(safe-area-inset-bottom, 0px)); line-height: 30px; padding: 0 230px 0 8px;
       background: none; border-radius: 0; font-size: 10px; text-align: right; }
+    /* THE GAME'S MENU BETWEEN THE ARENA'S BAR AND ITS FOOT (kanban #789, the owner 2026-10-29 playtest on a phone: "der Footer schneidet in den
+       Rahmen"): the bar (to ~40 px) and the foot (30 px and the safe area) are fixed over the canvas, and Unity centres its panel in the
+       canvas with ~6 % of the height below it - on a phone's short window less than the foot, which lay over PLAY and SPECTATE. While the menu
+       shows, the canvas ends under the bar and over the foot, so Unity lays its panel out in the room between them (the loading screen
+       leaves the same room: loading-page.js); a round being played has the whole window again */
+    body.arena-unity-menu:not(.arena-clean) #canvas { top: calc(40px + env(safe-area-inset-top, 0px)); bottom: calc(30px + env(safe-area-inset-bottom, 0px)); height: auto; }
     body.arena-picking #arena-games .foot-row, body.arena-game-chosen:has(#boot:not(.done)) #boot-build { display: none; }
     body.arena-picking #arena-games .box { padding-bottom: 36px; }
     /* THE ARENA'S OWN LOADING SCREEN HAS THE HEADER AND THE FOOTER (kanban #535: "the arena loading page, the one which opens when clicking the
