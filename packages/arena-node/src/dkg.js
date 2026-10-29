@@ -54,6 +54,9 @@ export class Dkg {
     // set again); a different stored set makes them anew
     this.combinedKept = new Map();        // epoch + the stored contributions -> combineShares' answer
     this.agreementKept = new Map();       // epoch + the stored contributions -> { ok, bytes } signed
+    // A PEER'S SIGNED AGREEMENT, CHECKED ONCE (kanban #786, profiled 2026-10-29 20:25Z on test host seat 1: agreementHolds took 6.5 % - each
+    // second's finish verified every peer's same signature again): a signature check is a function of its bytes alone
+    this.verifiedKept = new Map();        // signature:digest:key hex -> true / false
   }
 
   get canDeal() { return !!(this.curve && this.random && this.round.identity); }
@@ -182,8 +185,8 @@ export class Dkg {
     return `${toHex(epochIdBytes)}:${stored.map((r) => Buffer.from(r.bytes).toString('base64')).join(',')}`;
   }
 
-  /** A kept answer, the oldest dropped past 256. */
-  static keep(map, k, v) { map.set(k, v); if (map.size > 256) map.delete(map.keys().next().value); return v; }
+  /** A kept answer, the oldest dropped past `cap` (256). */
+  static keep(map, k, v, cap = 256) { map.set(k, v); if (map.size > cap) map.delete(map.keys().next().value); return v; }
 
   async finish(signerNodes, peers = this.peers) {
     const where = this.epochFor(signerNodes);
@@ -250,7 +253,11 @@ export class Dkg {
     }
     const agreed = agreementHolds({
       epochId: where.epochId, signerNodes: held.signerNodes, statements,
-      verify: (sig, digest, key) => schnorr.verify(sig, digest, key),
+      verify: (sig, digest, key) => {
+        const k = `${toHex(sig)}:${toHex(digest)}:${toHex(key)}`;
+        const was = this.verifiedKept.get(k);
+        return was !== undefined ? was : Dkg.keep(this.verifiedKept, k, schnorr.verify(sig, digest, key), 4096);
+      },
     });
     if (!agreed.ok) return { ok: false, why: agreed.why };
 
