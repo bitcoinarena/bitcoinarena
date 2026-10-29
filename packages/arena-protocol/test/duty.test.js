@@ -114,6 +114,8 @@ test('a duty round: the marker of a duty item for its day, its creator within th
     mk('r1', [dutyMarkerOutput(d, 'rps-day')]), mk('x1', [seriesPublicationOutput(sid)])];
   assert.deepEqual([...dutyPostingsOf(marked)].sort(), ['a1', 'b1', 'e1', 'e2', 'e3', 'n1', 'r1']);
   assert.equal(DUTY_EMERGENCY_CAP, 3);
+});
+
 test('no regular day posting after 12:00 UTC of the posting day, only an emergency grid (kanban #742)', async () => {
   const { dayPostDue, backupPostDue, dayStartMs, DUTY_POST_BY_MS } = await import('../src/duty.js');
   const slot = 20754, at = (h, m = 0) => dayStartMs(slot) + h * 3600000 + m * 60000;   // 2026-10-29, posting 10-30
