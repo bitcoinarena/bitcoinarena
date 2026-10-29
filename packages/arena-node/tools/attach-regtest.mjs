@@ -94,7 +94,7 @@ round.keepOpen({ everyMs: 3000, leadMs: 90000, onOpen: (id) => { opened.push(id)
 // ---- 4. measure
 const alive = () => pids.map((p) => { try { process.kill(p, 0); return true; } catch { return false; } });
 const heldBy = async (rid) => (await Promise.all(ports.map(async (p) => {
-  try { return ((await (await fetch(`http://127.0.0.1:${p}/rounds`)).json()).rounds || []).some((r) => r.id === rid); } catch { return false; }
+  try { return ((await (await fetch(`http://127.0.0.1:${p}/rounds?all=1`)).json()).rounds || []).some((r) => r.id === rid); } catch { return false; }
 }))).filter(Boolean).length;
 // A ROUND'S CLAIM KEY, ASKED OF EACH NODE: the key is the committee's (dkg.signerNodeFor(nodes)), made once for these seven
 // by the first round and answered for every round after it - so "made" is logged once and "held" is asked per round
@@ -113,7 +113,7 @@ for (const rid of opened) rounds.push({ round: rid.slice(0, 16), heldBy: await h
 // settlement signer nodes, needed = receiptsNeeded(7)) - posted to all seven; each answer counted.
 const seats = [];
 for (const rid of opened) {
-  const row = ((await (await fetch(`http://127.0.0.1:${ports[0]}/rounds`)).json()).rounds || []).find((r) => r.id === rid);
+  const row = ((await (await fetch(`http://127.0.0.1:${ports[0]}/rounds?all=1`)).json()).rounds || []).find((r) => r.id === rid);
   const c = row && row.committee;
   if (!c || !c.drawn) { seats.push({ round: rid.slice(0, 16), drawn: false, why: c && c.why }); continue; }
   const signerNodes = c.settlement.map((k) => Uint8Array.from(Buffer.from(k, 'hex')));
