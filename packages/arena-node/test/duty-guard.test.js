@@ -11,6 +11,7 @@ import {
   catalogOf, hostsOf, pickNewestVersion, pinVerdict, pickCore, dutyFieldsOf, headerHashes, chainAgreement, postingVerdict, dayVerdict,
   emergencyDue, emergencyPlan, confirmedPosting, DUTY_CONFIRMED_BY_MS, dayDueCapped, dayDueFromMs, dayTimeline, drawCount, statusLine, dayShape, DUTY_DAY_COMMITTEE_LEAD_MS, DUTY_DRAWABLE_BY_MS,
 } from '../src/duty-guard.js';
+import * as guard from '../src/duty-guard.js';
 
 const H = 3600000;
 const id = (n) => toHex(new Uint8Array(32).fill(n));
@@ -245,4 +246,25 @@ test('the status line: one JSON object per game and day', () => {
   assert.equal(line.day, '2026-10-27');
   assert.deepEqual(line.postings[0], { txid: 'aa'.repeat(8), version: 24, game: id(24).slice(0, 16), emergency: false, firstStart: '2026-10-27T00:00:00.000Z', state: 'pending', stage: 'beacon', why: 'beacon 2 of 6 deep' });
   JSON.stringify(line);
+});
+
+test('another node\'s posting of the day, 6 deep, counts as confirmed until its rounds can be listed (kanban #775, option 1)', () => {
+  // the 10-30 measurement (2026-10-29): posted at 157984 (03:01Z); at 16:00Z no seat listed rounds - they are written from 21:00Z
+  const dayStartMs = Date.UTC(2026, 9, 30), at = (h) => dayStartMs - (24 - h) * 3600000;
+  const tag = 'aabbccdd', slot = 20755;
+  const posting = { slot, tag, kind: 'D', height: 157984 };
+  const ask = (markers, nowMs, tipHeight = 158060) => guard.foreignConfirmed({ markers, slot, tag, tipHeight, nowMs, dayStartMs });
+  assert.equal(ask([posting], at(16)), true, '16:00Z: a primary 6 deep counts');
+  assert.equal(ask([posting], at(20) + 59 * 60000), true, 'still at 20:59Z');
+  assert.equal(ask([posting], at(21)), false, 'from 21:00Z only listed rounds count');
+  assert.equal(ask([{ ...posting, height: 158056 }], at(16), 158060), false, '5 deep is not enough');
+  assert.equal(ask([{ ...posting, height: null }], at(16)), false, 'a marker in the mempool is not confirmed');
+  assert.equal(ask([{ ...posting, kind: 'B' }], at(16)), false, 'a backup alone does not stand for the day');
+  assert.equal(ask([{ ...posting, slot: slot - 1 }], at(16)), false, 'another day\'s posting does not count');
+  assert.equal(ask([{ ...posting, tag: '00000000' }], at(16)), false, 'another game\'s does not');
+  // and with it the 16:00Z emergency stays away; with nothing confirmed it still comes
+  const day = { startMs: dayStartMs, endMs: dayStartMs + 86400000 };
+  const verdict = { state: 'pending', why: 'posted by another node; drawn on 0 of 0 seats' };
+  assert.equal(guard.emergencyDue({ nowMs: at(16), day, verdict, confirmedAny: ask([posting], at(16)) }).due, false);
+  assert.equal(guard.emergencyDue({ nowMs: at(16), day, verdict, confirmedAny: false }).due, true);
 });

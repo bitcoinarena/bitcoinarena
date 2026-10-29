@@ -324,7 +324,9 @@ export function createDayDuty(o) {
         || foreign.some((m) => m.tag === emergencyTag && (m.height === null || idx.tip - m.height < 15));
       const postedAny = ks.length > 0 || foreign.length > 0;
       // CONFIRMED ROUNDS OF THE DAY (kanban #775): one of this node's postings in a block and not dead, or rounds of it the seats list
-      const confirmedAny = verdict.state === 'drawable' || ks.some((k) => guard.confirmedPosting(k.verdict)) || drawnNow.of > 0;
+      // and another node's posting of it 6 deep, until its rounds can be listed (option 1, the owner 2026-10-29 ~21:00Z)
+      const confirmedAny = verdict.state === 'drawable' || ks.some((k) => guard.confirmedPosting(k.verdict)) || drawnNow.of > 0
+        || guard.foreignConfirmed({ markers: foreign, slot, tag, tipHeight: idx.tip, nowMs, dayStartMs: day.startMs });
       const pending = ks.filter((k) => k.verdict && k.verdict.state === 'pending').map((k) => Number(k.committeeMs ?? (day.startMs - DUTY_COMMITTEE_LEAD_MS)));
       const due = backup ? { due: false } : guard.emergencyDue({ nowMs, day, verdict, emergencies, inFlight, postedAny, dutyOverMs: guard.dayTimeline(slot, { committeeLeadMs, cap: rankCap }).postByMs + 3600000, drawableByMs, confirmedAny,
         pendingCommitteeMs: pending.length ? Math.max(...pending) : foreign.some((m) => m.tag === tag) ? day.startMs - DUTY_COMMITTEE_LEAD_MS : null });
