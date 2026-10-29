@@ -786,6 +786,10 @@
     #boot #arena-backup-warn { flex: none; width: min(560px, 90vw); box-sizing: border-box; margin: 0; z-index: 3; position: relative; }
     @media (max-width: 480px) { #boot #arena-backup-warn { padding: 6px 10px; border: 2px solid #ff9d2e; background: rgba(58,32,0,0.94); }
       #boot #arena-backup-notice { display: inline; } #boot #arena-backup-cta::before { content: none; } }
+    /* INSIDE THE GAME'S FRAME (kanban #789, the owner 2026-10-29 playtest on a phone: "Der backup notice geht über den rahmen raus"): in Tick
+       Tock's framed loading screen the warning was min(560px, 90vw) wide - 351 px on a 390 px phone - while the frame's inside is
+       --iw (86 % of the width less its 7 % pads, ~281 px); it takes exactly that width now */
+    html:not(.other-game) #boot.paneled > #arena-backup-warn { width: var(--iw); max-width: var(--iw); }
     /* and in the deposit popup (paintMoney) */
     #arena-deposit .dep-backup, #arena-withdraw .dep-backup { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; padding: 6px 10px; text-align: left;
       background: rgba(58,32,0,0.94); border: 2px solid #ff9d2e; border-radius: 6px; color: #ffcf8a; font: 600 13px/1.25 system-ui, sans-serif; }
