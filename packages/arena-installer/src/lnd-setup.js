@@ -5,6 +5,8 @@
 // on the node's own Bitcoin Core, a service; then - LND takes some seconds to start - its wallet from the node's seed and the first
 // getinfo, after which the node's state names its Lightning pubkey.
 import { execFile } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, LND_PORTS } from './lnd.js';
 import { installProgram } from './service.js';
 import { torBin, writeTorrc, torCommand, freeTorPorts, torControlInfo, torComplaint, ownTorCookie, TOR_PORTS } from './tor.js';
@@ -31,6 +33,7 @@ export async function torUp({ port = TOR_PORTS.control, home = null, waitMs = 30
     : `its control port ${port} did not answer within ${Math.round(waitMs / 1000)} s`, said ? `Tor says: ${said.line}` : null].filter(Boolean).join('; ') };
 }
 import * as reachKit from './reach.js';
+import { routerForwards } from './router-probe.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
 import { ownCoreOf } from './state.js';
 
@@ -47,7 +50,7 @@ const which = async (x) => {
 export const lndChainOf = (s) => ownCoreOf(s);
 
 /** Install and start LND for the node at `state` (on its own Core, lndChainOf). Answers { ok, lnd, sha256, peers } or { ok: false, why }. */
-export async function setUpOwnLnd({ state, release, fetcher = fetch, reach = reachKit, lndKit = { installLnd, configureLnd, lndArgs, installProgram }, tor: torKit = { torBin, writeTorrc, torCommand, freeTorPorts, torUp }, boot = true, onStage = () => {} }) {
+export async function setUpOwnLnd({ state, release, fetcher = fetch, reach = reachKit, lndKit = { installLnd, configureLnd, lndArgs, installProgram }, tor: torKit = { torBin, writeTorrc, torCommand, freeTorPorts, torUp }, router = routerForwards, boot = true, onStage = () => {} }) {
   const s = state.read();
   const chain = lndChainOf(s);
   if (!chain) return { ok: false, why: 'LND needs your own Bitcoin Core, not an Electrum server' };
@@ -79,38 +82,75 @@ export async function setUpOwnLnd({ state, release, fetcher = fetch, reach = rea
     if (!t.ok) torWhy = `Tor could not be set up as a service: ${t.why}: LND runs without it`;
     else if (!torOn) torWhy = `Tor did not start (${(up && up.why) || 'its control port did not answer within 30 s'}): LND runs without it`;
   }
+  // NEITHER REACHED NOR TOR: A ROUTER THAT FORWARDS ON REQUEST, OR NOTHING (kanban #730, measured 2026-10-29 in the Linux VM: the
+  // linux-arm64 release has no Tor and none was installed, the port was not reached, nat=true was written anyway, and LND quit at every
+  // start because no router answered NAT-PMP) - asked as LND would ask it (router-probe.js); nat=true only when one answered. With none,
+  // LND runs and dials out to its peers; the step says how peers can reach it (a port forward, or Tor)
+  const fwd = !lnReach.reached && !torOn ? await router().catch((e) => ({ answered: false, by: null, why: e.message })) : null;
+  if (fwd) state.save({ lnReach: { ...state.read().lnReach, router: { answered: fwd.answered, by: fwd.by, why: fwd.why } } });
   onStage('start');
-  const cfg = lndKit.configureLnd({ home: state.home, chain, tor: torOn ? torPorts : null, externalIp: lnReach.reached ? lnReach.address : null });
+  const cfg = lndKit.configureLnd({ home: state.home, chain, tor: torOn ? torPorts : null, externalIp: lnReach.reached ? lnReach.address : null, nat: Boolean(fwd && fwd.answered) });
   const r = await lndKit.installProgram({ id: 'lnd', description: 'LND for Bitcoin Arena (custody)', args: lndKit.lndArgs({ lnd: got.lnd, lnddir: cfg.lnddir }), home: state.home, boot, partOf: torOn ? 'tor' : null,
     // LND STARTS ONCE ITS TOR'S SOCKS PORT ANSWERS (kanban #720)
     waitPort: torOn ? torPorts.socks : null });
   if (!r.ok) return { ok: false, why: r.why };
-  state.save({ tor: torOn ? { bin: tor, ports: torPorts } : { why: torWhy ? torWhy : lnReach.reached ? `not needed: others reach LND at ${lnReach.address}:${LND_PORTS.p2p}` : tor ? 'Tor did not start' : 'no Tor: the release has none for this system (linux-arm64: apt install tor)' },
+  state.save({ tor: torOn ? { bin: tor, ports: torPorts } : { why: torWhy ? torWhy : lnReach.reached ? `not needed: others reach LND at ${lnReach.address}:${LND_PORTS.p2p}` : tor ? 'Tor did not start' : 'no Tor: neither this release nor this system has one (on Linux: sudo apt install tor, then run this step again)' },
     lightning: { mode: 'own', restUrl: cfg.restUrl, tlsCert: cfg.tlsCert, macaroon: cfg.macaroon, passwordFile: cfg.passwordFile, lnddir: cfg.lnddir, startedMs: Date.now() } });
-  return { ok: true, lnd: got.lnd, sha256: got.sha256 || null, peers: lnReach.reached ? `reachable from outside at ${lnReach.address}:${LND_PORTS.p2p}` : torOn ? 'not reachable from outside: Tor gives LND an onion address' : `not reachable from outside and no Tor: only nodes it dials reach it${torWhy ? ` (${torWhy})` : ''}` };
+  return { ok: true, lnd: got.lnd, sha256: got.sha256 || null, peers: lnReach.reached ? `reachable from outside at ${lnReach.address}:${LND_PORTS.p2p}` : torOn ? 'not reachable from outside: Tor gives LND an onion address'
+    : fwd && fwd.answered ? `not reachable from outside and no Tor: LND asks your router (${fwd.by}) to forward its port ${LND_PORTS.p2p}`
+    : `LND dials out to its peers only: nothing outside reaches this computer, it has no Tor${torWhy ? ` (${torWhy})` : ''} and ${fwd ? fwd.why : 'no router forwards ports'}. For peers to reach it, forward TCP ${LND_PORTS.p2p} on your router to this computer, or install Tor (on Linux: sudo apt install tor), then run this step again` };
+}
+
+/**
+ * HAS LND STOPPED ITSELF SINCE IT WAS STARTED, AGAIN AND AGAIN? (kanban #730, measured 2026-10-29: LND quit 20 s after each start and its
+ * service started it again, five times in three minutes, while step 10 said "Waiting for LND's first answer" for good). LND's own log
+ * (logs/bitcoin/<network>/lnd.log, local time) is read for "Shutting down due to error in main method" after `sinceMs`: from the second
+ * one the wait ends with LND's reason and what to do. Answers null, or { exits, err, why }.
+ */
+export function lndCrashes({ lnddir, sinceMs = 0, readLog = (f) => readFileSync(f, 'utf8'), min = 2 }) {
+  let text = '';
+  for (const net of ['testnet4', 'mainnet']) { try { text = readLog(join(lnddir, 'logs', 'bitcoin', net, 'lnd.log')); break; } catch { /* not this network */ } }
+  const exits = [];
+  for (const line of text.split('\n')) {
+    const m = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(?:\.\d+)?) .*Shutting down due to error in main method.*?err="?([^"]*)"?\s*$/.exec(line);
+    if (m && new Date(`${m[1]}T${m[2]}`).getTime() >= sinceMs - 1000) exits.push(m[3]);
+  }
+  if (exits.length < min) return null;
+  const err = exits[exits.length - 1];
+  const todo = /NAT-PMP|UPnP/i.test(err) ? 'Its settings ask your router to forward a port (nat) and no router here answers. Choose "Set up LND here" again: setup now writes that only when a router answers, and LND runs without it.'
+    : /bitcoind|chain backend|connection refused/i.test(err) ? 'LND cannot use your Bitcoin Core: check that Bitcoin Core runs and answers, then choose "Set up LND here" again.'
+    : /address already in use|bind/i.test(err) ? 'Another program holds one of LND\'s ports: stop it, then choose "Set up LND here" again.'
+    : `LND's log says more: ${join(lnddir, 'logs', 'bitcoin', '<network>', 'lnd.log')}.`;
+  return { exits: exits.length, err, why: `LND stops right after it starts (${exits.length} times since setup started it): ${err}. ${todo}` };
 }
 
 /**
  * Is the node's LND up? Its wallet made from the seed (an own LND, once), then getinfo; the pubkey kept in the state. Answers
  * { ok, created, pubkey, alias, uris, peers } or { ok: false, why, waiting } - waiting while an own LND is still starting.
  */
-export async function lndReady({ state, lndKit = { createLndWallet, testLnd }, onStage = () => {} }) {
+export async function lndReady({ state, lndKit = { createLndWallet, testLnd }, onStage = () => {}, crashes = lndCrashes }) {
   const s = state.read(); const l = s.lightning;
   if (!l) return { ok: false, why: 'no Lightning node set up yet' };
   let created = false;
   if (l.mode === 'own') {
     onStage('wallet');
     const w = await lndKit.createLndWallet({ cfg: l, seed: fromHex(state.readSecret('seed.hex')) });
-    if (!w.ok) return { ok: false, why: w.why, waiting: true };
+    if (!w.ok) { const c = crashes({ lnddir: l.lnddir, sinceMs: l.startedMs }); return c ? { ok: false, why: c.why, waiting: false, crashed: c } : { ok: false, why: w.why, waiting: true }; }
     created = w.created;
   }
   onStage('answer');
   const t = await lndKit.testLnd(l);
-  if (!t.ok) return { ok: false, why: t.why, waiting: l.mode === 'own', created };
+  if (!t.ok) {
+    const c = l.mode === 'own' && l.lnddir ? crashes({ lnddir: l.lnddir, sinceMs: l.startedMs }) : null;
+    return c ? { ok: false, why: c.why, waiting: false, created, crashed: c } : { ok: false, why: t.why, waiting: l.mode === 'own', created };
+  }
   state.save({ lightning: { ...l, pubkey: t.pubkey, alias: t.alias, testedMs: Date.now() } });
   // how other Lightning nodes reach this one: the measured address, or the onion LND announces (Tor), or not at all
   const r = s.lnReach || {}; const onion = (t.uris || []).find((u) => /\.onion:/.test(u));
   const peers = r.reached ? `others reach it at ${r.address}:${r.port} (measured from outside)` : onion ? `no open port (measured), so it is reached over Tor at ${onion.split('@')[1]}`
-    : s.tor && s.tor.bin ? 'no open port (measured); Tor is making its onion address' : r.atMs ? `no open port (measured) and no Tor: ${(s.tor || {}).why || ''}` : null;
+    : s.tor && s.tor.bin ? 'no open port (measured); Tor is making its onion address'
+    // NO PORT, NO TOR (kanban #730): with a router that forwards on request LND asks it; with none it dials out only, and says how to change that
+    : r.atMs && r.router && r.router.answered ? `no open port (measured) and no Tor: LND asks your router (${r.router.by}) to forward its port ${r.port}`
+    : r.atMs ? `LND dials out to its peers only: no open port (measured), no Tor and no router that forwards ports. For peers to reach it, forward TCP ${r.port} on your router to this computer, or install Tor (on Linux: sudo apt install tor), then run this step again` : null;
   return { ok: true, created, ...t, peers };
 }
