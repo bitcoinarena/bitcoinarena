@@ -86,7 +86,7 @@ import { configServesRound } from '../../arena-protocol/src/ballot-chain.js';
 import { createProposals } from './proposals.js';
 import { createBallotTally } from './ballot-tally.js';
 import { createOperatorTokens, operatorUri } from './operator-tokens.js';
-import { isBackupPublication, playedOfWindow } from '../../arena-protocol/src/duty.js';
+import { isBackupPublication, playedOfWindow, dayMarkersOf, itemTag } from '../../arena-protocol/src/duty.js';
 import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf, entryFederation } from '../../arena-protocol/src/contracts.js';
 import { revealStands } from '../../arena-protocol/src/head-to-head.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
@@ -4124,7 +4124,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const lead = seriesLeadIsValid(t);
     if (!lead.ok) return { ok: false, code: 409, why: lead.why };
     const sid = seriesId(t), id = toHex(sid);
-    if (offChainSeries.has(id)) return { ok: false, code: 409, why: `series ${id.slice(0, 16)}: its census block (height ${offChainSeries.get(id)}) is not on this node's chain` };
+    if (offChainSeries.has(id)) return { ok: false, code: 409, why: offChainSeries.get(id) === 'dup' ? `series ${id.slice(0, 16)}: another posting of its day is held here (#742)` : `series ${id.slice(0, 16)}: its census block (height ${offChainSeries.get(id)}) is not on this node's chain` };
     if (writers.some((w) => toHex(w.id) === id)) return { ok: true, series: id, rounds: t.seriesCount, held: true };
     // A SERIES THAT NAMES ITS CREATOR COMES WITH THE CREATOR'S SIGNATURE OVER ITS ID: the line's creator=<signature>
     { const cr = seriesCreatorStands(t, t.creatorSignature || null, { verify: (sg, m, k) => schnorr.verify(sg, m, k), seriesIdOf: seriesId });
@@ -4160,7 +4160,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // DROP ONE (kanban #786): no longer written, held, listed or checked, and kept so across a restart (the grid file still names it)
   const offChainFile = gridSeriesFile ? `${gridSeriesFile}.off-chain` : null;
-  const dropOffChain = (id, height, { persist = true } = {}) => {
+  const dropOffChain = (id, height, { persist = true, why = null } = {}) => {
     if (offChainSeries.has(id)) return;
     offChainSeries.set(id, height);
     const sid = fromHex(id);
@@ -4172,13 +4172,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     storeSeries.delete(id); postedSeries.delete(id); droppedSeries.add(id);
     offChainVersion++; seriesVersion++;
     if (persist && offChainFile) { try { appendFileSync(offChainFile, `${id} ${height}\n`); } catch (e) { console.error(`[series] #786 ${id.slice(0, 16)} not kept as off-chain: ${e.message}`); } }
-    console.log(`[series] ${id.slice(0, 16)}: its census block (height ${height}) is not on this node's chain - dropped, ${n} rounds no longer held`);
+    console.log(`[series] ${id.slice(0, 16)}: ${why || `its census block (height ${height}) is not on this node's chain`} - dropped, ${n} rounds no longer held`);
   };
   if (offChainFile && existsSync(offChainFile)) {
     try {
       for (const l of readFileSync(offChainFile, 'utf8').split('\n')) {
         const [id, h] = l.trim().split(/\s+/);
-        if (/^[0-9a-f]{64}$/.test(id || '')) dropOffChain(id, Number(h), { persist: false });
+        if (/^[0-9a-f]{64}$/.test(id || '')) dropOffChain(id, h === 'dup' ? 'dup' : Number(h), { persist: false, why: h === 'dup' ? 'a posting beside the ones held for its day (kept from before the restart, #742)' : null });
       }
     } catch (e) { console.error(`[series] #786 the off-chain file did not read: ${e.message}`); }
   }
@@ -4207,6 +4207,45 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   if (offChainTimer.unref) offChainTimer.unref();
   const offChainRecheck = setInterval(() => offChainChecked.clear(), 3600000);
   if (offChainRecheck.unref) offChainRecheck.unref();
+  // ONE POSTING PER ROLE, GAME AND DAY (kanban #742, measured 2026-10-29: every seat held 18 RPS grids for 10-29 - one primary, four emergency
+  // postings by four nodes and a backup, three tables each - about 24,400 open 8 s rounds in the next 3 h, ~0.8-1 GB of heap at the 1,024 MB cap,
+  // and every seat died out of heap every 4.5-5 h). Per game, federation and UTC day a seat writes and holds the grids of two postings only:
+  // the earliest emergency posting if there is one (it replaces a dead primary), else the earliest primary, and the earliest backup - by
+  // confirmation height, then txid, read off the chain, so every seat keeps the same. The other postings stay on the chain and on disk,
+  // and their series are dropped as an off-chain one is: no writer, their rounds out of the open list, not taken back.
+  const EMERGENCY_TAGS = new Set(['updown-day', 'rps-day', 'nextblock-day'].map((i) => toHex(itemTag(`${i}-emergency`))));
+  const gridPosting = new Map();                 // series id hex -> { group, role, height, txid }
+  const gridAsked = new Map();                   // series id hex -> when its publication was last looked for in vain
+  const dupPass = () => {
+    if (shuttingDown || typeof chainFor !== 'function') return;
+    const now = Date.now();
+    const t = series.find((x) => { const k = toHex(seriesId(x)); return isGridSeries(x) && BigInt(x.stakeMsat || 0n) > 0n && !gridPosting.has(k) && now - (gridAsked.get(k) || 0) > 60000; });
+    if (t) {
+      const k = toHex(seriesId(t)); gridAsked.set(k, now);
+      const first = seriesRound(t, 0);
+      let view = null; try { view = chainFor({ contract: first, roundIdBytes: roundIdOf(first) }); } catch { view = null; }
+      const pub = view && !view.pending ? findSeriesPublication(view, seriesId(t)) : null;
+      if (pub) {
+        const marks = dayMarkersOf(pub.tx);
+        const role = marks.some((m) => m.kind === 'B') ? 'backup' : marks.some((m) => EMERGENCY_TAGS.has(m.tag)) ? 'emergency' : 'primary';
+        gridPosting.set(k, { group: `${toHex(t.gameId)}:${t.federationId instanceof Uint8Array ? toHex(t.federationId) : '-'}:${Math.floor(Number(t.startTimeMs) / 86400000)}`,
+          role, height: pub.height, txid: toHex(pub.tx.txid) });
+      }
+    }
+    const groups = new Map();
+    for (const x of series) { const k = toHex(seriesId(x)); const p = gridPosting.get(k); if (!p) continue; if (!groups.has(p.group)) groups.set(p.group, []); groups.get(p.group).push({ k, ...p }); }
+    for (const rows of groups.values()) {
+      const firstOf = (role) => rows.filter((r) => r.role === role).sort((a, b) => (a.height - b.height) || (a.txid < b.txid ? -1 : a.txid > b.txid ? 1 : 0))[0];
+      const lead = firstOf('emergency') || firstOf('primary'), back = firstOf('backup');
+      const keep = new Set([lead && lead.txid, back && back.txid].filter(Boolean));
+      for (const r of rows) if (!keep.has(r.txid)) {
+        try { dropOffChain(r.k, 'dup', { why: `a ${r.role} posting (${r.txid.slice(0, 8)} at ${r.height}) beside the ${lead && keep.has(lead.txid) ? `${lead.role} ${lead.txid.slice(0, 8)}` : '-'}${back ? ` and backup ${back.txid.slice(0, 8)}` : ''} held for its day` }); }
+        catch (e) { console.error(`[series] #742 ${r.k.slice(0, 16)} not dropped: ${e.message}`); }
+      }
+    }
+  };
+  const dupTimer = setInterval(dupPass, Number(process.env.ARENA_DUP_EVERY_MS || 2000));
+  if (dupTimer.unref) dupTimer.unref();
   // THE GRIDS POSTED BEFORE A RESTART, read back - not one whose last entry closed a day ago
   if (gridSeriesFile && existsSync(gridSeriesFile)) {
     let lines = [];
