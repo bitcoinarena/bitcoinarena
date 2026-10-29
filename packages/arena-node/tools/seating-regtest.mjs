@@ -28,6 +28,7 @@ import { feldmanGroup } from '../src/curve.js';
 import { NEXTBLOCK, TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { RUN_82_TICKS } from './round-2of2.mjs';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
+import { SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.js';
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donation-sets.js';
 import { donationSetId } from '../../arena-protocol/src/donation.js';
@@ -91,7 +92,9 @@ say({ step: 'nine seats', ports: PORTS });
 
 // ---- their bonds, buried past the regtest bond maturity
 // each bond mined right after it is posted: a template-2 bond's maturity is fixed at posting, against the next block
-const posted = ids.map((id, i) => { const p = rt.postBond(id.secret, { endpoint: `ws://127.0.0.1:${PORTS[i]}`, hostedGames: [NEXTBLOCK.gameId] }); rt.include([p.hex]); return p; });
+const posted = ids.map((id, i) => { const p = rt.postBond(id.secret, { endpoint: `ws://127.0.0.1:${PORTS[i]}`, hostedGames: [NEXTBLOCK.gameId],
+  // a round at ROUND_PROTOCOL draws only nodes whose advertisement speaks it (census.js): every version this build speaks
+  ...(env.ROUND_PROTOCOL ? { protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS] } : {}) }); rt.include([p.hex]); return p; });
 rt.mine(110);
 const H = rt.height();
 say({ step: 'bonds', bonds: posted.length, censusHeight: H });
