@@ -2,7 +2,7 @@
  "openapi": "3.0.3",
  "info": {
   "title": "Bitcoin Arena node API",
-  "version": "2026-10-28",
+  "version": "2026-10-29",
   "description": "Every request a Bitcoin Arena node (`arena-node`) answers, generated from `packages/arena-node/src/server.js` by `src/website/docs/gen-docs.py`. Concepts and guides: https://docs.bitcoin-arena.io/"
  },
  "servers": [
@@ -292,6 +292,35 @@
     "responses": {
      "200": {
       "description": "{node, nowMs, upcoming[], finished[] (up to 200), games}.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/attestation-word": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "A drawn seat's attestation word",
+    "description": "What this drawn seat signed for a round, for the round's other drawn attestors to combine (kanban #630).\n\nAccess: none\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 8350.",
+    "operationId": "get_attestation_word",
+    "parameters": [
+     {
+      "name": "round",
+      "in": "query",
+      "required": true,
+      "description": "round id, 64 hex",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "200 application/json",
       "content": {
        "application/json": {}
       }
@@ -2523,6 +2552,24 @@
       "description": "The view could not be read now.",
       "content": {
        "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/favicon.ico": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Page icon",
+    "description": "The icon of the node's own pages.\n\nAccess: none\n\nReturns: 200 image/x-icon, or 204\n\nSource: `packages/arena-node/src/server.js` line 5638.",
+    "operationId": "get_favicon_ico",
+    "responses": {
+     "200": {
+      "description": "200 image/x-icon, or 204",
+      "content": {
+       "image/x-icon": {}
       }
      }
     }
@@ -5091,6 +5138,24 @@
     ]
    }
   },
+  "/order-locks": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "An order's verified locks",
+    "description": "An order's stake lock and fee lock as this seat verified them, for a seat that holds the order's certified batch but never received its locks (kanban #620).\n\nAccess: none\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 8017.",
+    "operationId": "get_order_locks",
+    "responses": {
+     "200": {
+      "description": "200 application/json",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
   "/outcome": {
    "post": {
     "tags": [
@@ -5264,6 +5329,80 @@
      },
      "502": {
       "description": "The provider service did not answer or failed.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/owner/app-devs": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "Game developers overview",
+    "description": "For each developer key the node holds: its apps, donations and proposals (kanban #582).\n\nAccess: none\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 5897.",
+    "operationId": "get_owner_app_devs",
+    "responses": {
+     "200": {
+      "description": "200 application/json",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/owner/apps/dev-key": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Install or remove a developer key",
+    "description": "Installs or removes a game developer's key; answers its public key and the apps it signs, never the key (kanban #582).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner-style signed request (the owner key)\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 6081.",
+    "operationId": "post_owner_apps_dev_key",
+    "requestBody": {
+     "required": true,
+     "description": "Signed request with the developer key to install, or the key to remove.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "200 application/json",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/owner/apps/split": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Set an app's split",
+    "description": "Sets how an app's developer share is split between keys (kanban #582).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner-style signed request (the owner key)\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 6069.",
+    "operationId": "post_owner_apps_split",
+    "requestBody": {
+     "required": true,
+     "description": "Signed request with the split.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "200 application/json",
       "content": {
        "application/json": {}
       }
@@ -5535,6 +5674,24 @@
       "description": "Node runs without an owner area.",
       "content": {
        "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/owner/dev/donations": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "One client's donations",
+    "description": "One dev client's donations, newest first, each with its app, filterable by app and protocol, paged (kanban #578).\n\nAccess: none\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 5958.",
+    "operationId": "get_owner_dev_donations",
+    "responses": {
+     "200": {
+      "description": "200 application/json",
+      "content": {
+       "application/json": {}
       }
      }
     }
@@ -5940,6 +6097,34 @@
     "x-changes-state": true
    }
   },
+  "/owner/first-bond": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Post the first bond",
+    "description": "The first bond from the owner area: the plan (the node wallet's address, what to send, what arrived), and with post: true the bond posted (kanban #728).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner-style signed request (the owner key)\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 6306.",
+    "operationId": "post_owner_first_bond",
+    "requestBody": {
+     "required": true,
+     "description": "Signed request, args {post}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "200 application/json",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
   "/owner/funding-comment": {
    "post": {
     "tags": [
@@ -6070,6 +6255,62 @@
      },
      "503": {
       "description": "This node reads no chain height or network.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/owner/gateway/setup": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Set up the gateway",
+    "description": "For a custody node whose setup left Lightning or the gateway for later: starts the setup, or with {progress: true} reads how far it is (kanban #711).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner-style signed request (the owner key)\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 6445.",
+    "operationId": "post_owner_gateway_setup",
+    "requestBody": {
+     "required": true,
+     "description": "Signed request, args {progress}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "200 application/json",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/owner/key-from-words": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Move to the key of the 24 words",
+    "description": "An installed node moves to the key its 24 words give: a new bond under it, then the old one taken back at its maturity (kanban #650).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner-style signed request (the owner key)\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 6325.",
+    "operationId": "post_owner_key_from_words",
+    "requestBody": {
+     "required": true,
+     "description": "Signed request.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "200 application/json",
       "content": {
        "application/json": {}
       }
@@ -6639,6 +6880,34 @@
     "x-changes-state": true
    }
   },
+  "/owner/old-bond-withdraw": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Take an old bond back",
+    "description": "Spends an old bond with the old key at its maturity, signed by the owner like the bond's own withdrawal (kanban #650).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner-style signed request (the owner key)\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 6590.",
+    "operationId": "post_owner_old_bond_withdraw",
+    "requestBody": {
+     "required": true,
+     "description": "Signed request.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "200 application/json",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
   "/owner/operator/list": {
    "post": {
     "tags": [
@@ -7110,6 +7379,62 @@
     }
    }
   },
+  "/owner/referrer/name": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Name a referral program",
+    "description": "Names a referral program: the name signed by the program's key and sent to the seats, so the explorer and Health show it (kanban #675).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner-style signed request (the owner key)\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 6470.",
+    "operationId": "post_owner_referrer_name",
+    "requestBody": {
+     "required": true,
+     "description": "Signed request, args {slug, name}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "200 application/json",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/owner/referrer/setup": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Create a referral program",
+    "description": "A referral program: a client of kind referrer with a new key, earning the website fees of the entries its link brings (kanban #675).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner-style signed request (the owner key)\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 6470.",
+    "operationId": "post_owner_referrer_setup",
+    "requestBody": {
+     "required": true,
+     "description": "Signed request, args {name}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "200 application/json",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
   "/owner/roles": {
    "post": {
     "tags": [
@@ -7154,6 +7479,24 @@
      }
     },
     "x-changes-state": true
+   }
+  },
+  "/owner/rounds": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "Rounds this node is drawn for",
+    "description": "Each round of the last day and the coming ones this node is drawn for, what it does in it, and the first reason when there is none (kanban #715).\n\nAccess: none\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 5760.",
+    "operationId": "get_owner_rounds",
+    "responses": {
+     "200": {
+      "description": "200 application/json",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
    }
   },
   "/owner/seatings": {
@@ -8131,6 +8474,30 @@
     }
    }
   },
+  "/reach-nonce": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "Direct-check nonce for the installer",
+    "description": "Lets the installer's direct check reach an installed node on its own port: the seats ask this address, and the node answers with the installer's nonce (kanban #734).\n\nAccess: none\n\nReturns: 200 text: the nonce the installer wrote into this node's home, while it is under 5 minutes old; else 404\n\nSource: `packages/arena-node/src/server.js` line 7543.",
+    "operationId": "get_reach_nonce",
+    "responses": {
+     "200": {
+      "description": "The nonce from <ARENA_HOME>/reach-nonce, written by the installer less than 5 minutes ago.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "404": {
+      "description": "No nonce, or one older than 5 minutes.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
   "/receipts": {
    "get": {
     "tags": [
@@ -8172,6 +8539,52 @@
       }
      }
     }
+   }
+  },
+  "/referral-fees": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "What each website earned",
+    "description": "The website payouts of the settlements this seat indexed, per website payout key: their sum and count, and the total (kanban #676).\n\nAccess: none\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 9278.",
+    "operationId": "get_referral_fees",
+    "responses": {
+     "200": {
+      "description": "200 application/json",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/referral-name": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Keep a referral program's name",
+    "description": "Keeps a referral program's name when its site key signed it, and hands it on to every seat once (kanban #675).\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 9291.",
+    "operationId": "post_referral_name",
+    "requestBody": {
+     "required": true,
+     "description": "The name, the site key and its signature.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "200 application/json",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
    }
   },
   "/refused-first-mark": {
@@ -9186,11 +9599,21 @@
       "name": "next",
       "in": "query",
       "required": false,
-      "description": "At most this many upcoming rounds per series.",
+      "description": "At most this many upcoming rounds per series. With neither next nor ahead the node lists the next 8 of each series (kanban #742).",
       "schema": {
        "type": "integer"
       },
       "example": 8
+     },
+     {
+      "name": "all",
+      "in": "query",
+      "required": false,
+      "description": "1: every announced round this node holds, unbounded (slow at grid density: tens of thousands of rows). Without it, a bare /rounds is next=8.",
+      "schema": {
+       "type": "integer"
+      },
+      "example": 1
      }
     ],
     "responses": {
@@ -10580,6 +11003,24 @@
     }
    }
   },
+  "/setup-status": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "Setup progress",
+    "description": "The setup's progress for the dashboards: Core's background sync, the bond's and the peg-in's confirmations (kanban #635).\n\nAccess: none\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 6620.",
+    "operationId": "get_setup_status",
+    "responses": {
+     "200": {
+      "description": "200 application/json",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
   "/share": {
    "get": {
     "tags": [
@@ -11169,6 +11610,88 @@
       "description": "None under that hash.",
       "content": {
        "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/tx": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "One transaction",
+    "description": "One order or payment this seat stored, with its timing when the page sent one (kanban #624).\n\nAccess: none\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 7964.",
+    "operationId": "get_tx",
+    "responses": {
+     "200": {
+      "description": "200 application/json",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/tx-timing": {
+   "post": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "A page's timing of its order",
+    "description": "The page's own timing of its order, signed by the order's session key; kept for GET /tx (kanban #624).\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 8003.",
+    "operationId": "post_tx_timing",
+    "requestBody": {
+     "required": true,
+     "description": "{timing, sig}: the session key's Ed25519 signature over the timing.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "200 application/json",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/txs": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Newest transactions",
+    "description": "The ids of the transactions stored here since `since` (ms), oldest first, at most 500 - what explorer.bitcoin-arena.io polls (kanban #624).\n\nAccess: none\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 7971.",
+    "operationId": "get_txs",
+    "responses": {
+     "200": {
+      "description": "200 application/json",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/uptime": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "Node uptime",
+    "description": "The node's uptime figures (24 h, 7 days, 30 days, all time) from its own record, kept 30 s (kanban #756).\n\nAccess: none\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 6640.",
+    "operationId": "get_uptime",
+    "responses": {
+     "200": {
+      "description": "200 application/json",
+      "content": {
+       "application/json": {}
       }
      }
     }

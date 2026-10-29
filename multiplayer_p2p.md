@@ -2418,7 +2418,9 @@ missed          a primary nobody posts falls to rank 2 and 3 as above; a backup 
 dead            a posting whose census block the chain left, whose census the seats' chains (GET /headers) do not hold, whose
                 publication a reorg returned to the mempool and its beacon then passed, or whose coins a mined transaction spends
                 (conflicted) is dead at once. A day whose postings are all dead, that has no confirmed rounds by 16:00 UTC of day d
-                (no posting of its own in a block and not dead, and no rounds of it listed by the seats; kanban #775), or that is not
+                (no posting of its own in a block and not dead, no primary posting of it by any node in a block, and no rounds of it
+                listed by the seats; kanban #775 - a day posted by another node is accepted from its block and nothing new is posted
+                for it, 2026-10-29), or that is not
                 drawable on the seats for the newest version 4 h before it starts (or while it runs), gets an emergency grid of what is
                 left of it ("ARN" 'D' with the
                 item "<app>-day-emergency"), at most 3, from the day's duty node first and the next ranks 20 min apart. An
