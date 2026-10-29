@@ -317,7 +317,7 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
       const templateOf = (id) => (seat ? seat.heldTemplates().find((t) => { try { return toHex(seriesId(t)) === id; } catch { return false; } }) : null);
       days.push({ slot: s, covers: new Date(targetDay(s).startMs).toISOString().slice(0, 10), period, anchor: o ? o.anchor : null,
         order: order.slice(0, 3).map((k, i) => ({ rank: i + 1, key: toHex(k), endpoint: endpointOf.get(toHex(k)) || null, self: toHex(k) === node,
-          dueFrom: new Date(dayStartMs(s) + Math.min(i, guard.DUTY_DAY_RANK_CAP) * DUTY_FALLBACK_MS).toISOString(),
+          dueFrom: new Date(guard.dayDueFromMs(s, i)).toISOString(),
           // AND THE BACKUP (duty.js): rank 2 from DUTY_BACKUP_AFTER_MS into the day, each next rank an hour later
           ...(i >= 1 ? { backupDueFrom: new Date(dayStartMs(s) + DUTY_BACKUP_AFTER_MS + (Math.min(i, DUTY_BACKUP_RANK_CAP) - 1) * DUTY_FALLBACK_MS).toISOString() } : {}) })),
         apps: [...engines.values()].map((e) => {

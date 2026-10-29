@@ -259,8 +259,17 @@ export function emergencyPlan({ nowMs, mtpMs, day, shape, committeeLeadMs = DUTY
 
 /** The day's post due from this machine: the duty order's rank, capped at `cap` - no more than `cap` hours into the day. */
 export function dayDueCapped({ nowMs, slot, rank, posted, cap = DUTY_DAY_RANK_CAP }) {
-  if (!Number.isInteger(rank) || rank < 0) return false;
-  return dayPostDue({ nowMs, slot, rank: Math.min(rank, cap), posted });
+  if (!Number.isInteger(rank) || rank < 0 || posted) return false;
+  return Number(nowMs) >= dayDueFromMs(slot, rank, cap) && Number(nowMs) < dayStartMs(slot + 1);
+}
+// PAST THE CAP, ONE STEP PER RANK INSIDE THE CAP'S HOUR (kanban #788, measured 2026-10-29 02:00-02:01Z: every node ranked 2 or more was due at
+// 02:00Z at once, and four seats published the 10-30 Up/Down day in the same minute - four fees, four grids every seat holds): rank cap + k is
+// due DUTY_PAST_CAP_STEP_MS x k into that hour, never later than one step before its end - still posted by cap + 1 hours whatever the rank.
+// A pass runs every minute and reads the mempool first, so the first node in that hour that posts is seen by the next before its step.
+export const DUTY_PAST_CAP_STEP_MS = 3 * 60000;
+export function dayDueFromMs(slot, rank, cap = DUTY_DAY_RANK_CAP) {
+  if (rank <= cap) return dayStartMs(slot) + rank * HOUR;
+  return dayStartMs(slot) + cap * HOUR + Math.min((rank - cap) * DUTY_PAST_CAP_STEP_MS, HOUR - DUTY_PAST_CAP_STEP_MS);
 }
 
 /** The day `slot` posts and its explicit timeline (kanban #689 d). */

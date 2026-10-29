@@ -9,7 +9,7 @@ import { NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import {
   catalogOf, hostsOf, pickNewestVersion, pinVerdict, pickCore, dutyFieldsOf, headerHashes, chainAgreement, postingVerdict, dayVerdict,
-  emergencyDue, emergencyPlan, confirmedPosting, DUTY_CONFIRMED_BY_MS, dayDueCapped, dayTimeline, drawCount, statusLine, dayShape, DUTY_DAY_COMMITTEE_LEAD_MS, DUTY_DRAWABLE_BY_MS,
+  emergencyDue, emergencyPlan, confirmedPosting, DUTY_CONFIRMED_BY_MS, dayDueCapped, dayDueFromMs, dayTimeline, drawCount, statusLine, dayShape, DUTY_DAY_COMMITTEE_LEAD_MS, DUTY_DRAWABLE_BY_MS,
 } from '../src/duty-guard.js';
 
 const H = 3600000;
@@ -225,9 +225,14 @@ test('the timeline: committee 12 h before the day, posted by 03:00Z at the lates
   assert.equal(new Date(t.drawableByMs).toISOString(), '2026-10-26T20:00:00.000Z');
   assert.equal(t.startMs - t.committeeMs, DUTY_DAY_COMMITTEE_LEAD_MS);
   const at = (h) => Date.parse('2026-10-26T00:00:00Z') + h * H;
-  // rank 9 (10-24: census nodes running no duty runner first) posts at 02:00Z, not 09:00Z
-  assert.equal(dayDueCapped({ nowMs: at(1.9), slot, rank: 9, posted: false }), false);
-  assert.equal(dayDueCapped({ nowMs: at(2), slot, rank: 9, posted: false }), true);
+  // rank 9 (10-24: census nodes running no duty runner first) posts inside 02:00-03:00Z, not 09:00Z: at 02:21Z, its own 3-min step (#788)
+  assert.equal(dayDueCapped({ nowMs: at(2), slot, rank: 9, posted: false }), false);
+  assert.equal(dayDueCapped({ nowMs: at(2) + 21 * 60000, slot, rank: 9, posted: false }), true);
+  // EVERY RANK PAST THE CAP ITS OWN STEP (kanban #788: 10-30's Up/Down day was posted four times at 02:00Z): 2 at 02:00, 3 at 02:03, ... and
+  // the last steps at 02:57, so the day is posted by 03:00Z whatever the rank
+  assert.deepEqual([2, 3, 4, 21, 30, 200].map((r) => new Date(dayDueFromMs(slot, r)).toISOString().slice(11, 16)), ['02:00', '02:03', '02:06', '02:57', '02:57', '02:57']);
+  assert.deepEqual([0, 1].map((r) => new Date(dayDueFromMs(slot, r)).toISOString().slice(11, 16)), ['00:00', '01:00']);
+  assert.ok(dayDueFromMs(slot, 1e6) < t.postByMs);
   assert.equal(dayDueCapped({ nowMs: at(0), slot, rank: 0, posted: false }), true);
   assert.equal(dayDueCapped({ nowMs: at(5), slot, rank: 1, posted: true }), false);
   assert.equal(dayDueCapped({ nowMs: at(5), slot, rank: -1, posted: false }), false);
