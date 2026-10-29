@@ -10192,6 +10192,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (got.kept) {
           console.log(`[audit] ${got.round.slice(0, 16)}: AUDIT of ${got.node.slice(0, 16)} kept${forwarded ? ` (forwarded by ${seatHex.slice(0, 16)})` : ''}, handed on`);
           forwardAudit(body, fromHex(got.round));
+          // AND TO THE ROUND'S PUBLICATION RELAYS (§13A.1: "to the round's seats (POST /audit) and its publication_relays[]"), as an
+          // objection goes on (§25.2): one this seat kept for the first time, unawaited; a relay that holds it already answers
+          // "already held", so relaying relays do not loop
+          let relays = [];
+          try { relays = decodeRoundContract(new Uint8Array(round.get(fromHex(got.round)).contract)).publicationRelays || []; } catch { relays = []; }
+          if (relays.length) relayPost(relays, '/audit', body)
+            .then((r) => console.log(`[audit] ${got.round.slice(0, 16)}: AUDIT of ${got.node.slice(0, 16)} relayed to ${r.sent} of ${relays.length} publication relay(s)${r.failed.length ? `; ${r.failed[0]}` : ''}`), () => {});
         }
         return text(res, got.kept ? 201 : 200, got.kept ? 'AUDIT kept' : 'already held');
       }

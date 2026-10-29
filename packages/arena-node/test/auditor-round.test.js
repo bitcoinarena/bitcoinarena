@@ -23,14 +23,15 @@ import { toHex } from '../../arena-protocol/src/hash.js';
 import { resultFinality } from '../src/finality.js';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
+import { createServer } from 'node:http';
 
 const audits = async (d, rid) => (await (await fetch(`http://127.0.0.1:${d.port}/audits?round=${toHex(rid)}`)).json()).audits;
 
 /** The seat's round at protocol 22, and the auditor daemon beside it. */
-async function seatAndAuditor() {
+async function seatAndAuditor(relays = undefined) {
   const box = { key: null };
   const audit = { everyMs: 0, setFor: () => (box.key ? { eligible: new Map([[box.key, 1n]]), total: 1n } : null) };
-  const w = await sevenSignerNodes(WINDOW_MS, undefined, { endMs: testNow() + 4000, storedBeforeTheRule: true, round: { protocolVersion: AUDITOR_VERSION },
+  const w = await sevenSignerNodes(WINDOW_MS, relays, { endMs: testNow() + 4000, storedBeforeTheRule: true, round: { protocolVersion: AUDITOR_VERSION },
     serveOpts: { audit } });
   const auditor = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts, stakeLocks: w.slot.port, chainFor: w.slot.chainFor,
     randomnessFor: w.slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2), audit });
@@ -110,4 +111,31 @@ test('3. a valid objection contradicting a held AUDIT: the seat marks it, keeps 
     assert.ok(row.audit && row.audit.length > 128, 'its bytes and signature: the evidence against its signer');
     assert.deepEqual(w.holder.settlements.signerNodesFor(w.rid, w.contract).auditors, [], 'a contradicted AUDIT is paid nothing');
   } finally { await close(); }
+});
+
+// §13A.1: the AUDIT goes "to the round's seats (POST /audit) and its publication_relays[]" - the seat that keeps one hands it on to the
+// round's relays, as it does an objection (kanban #725)
+test('4. a kept AUDIT goes on to the round\'s publication relays, once', { timeout: 170000 }, async () => {
+  const got = [];
+  const relay = createServer((req, res) => { const parts = []; req.on('data', (d) => parts.push(d));
+    req.on('end', () => { got.push({ method: req.method, url: req.url, bytes: Buffer.concat(parts) }); res.writeHead(201); res.end('AUDIT kept'); }); });
+  await new Promise((r) => relay.listen(0, '127.0.0.1', r));
+  const { w, auditor, close } = await seatAndAuditor([`http://127.0.0.1:${relay.address().port}`]);
+  try {
+    w.sign('agrees', () => ({}));
+    w.sign('dissents', () => ({}));
+    skipTo(Number(windowsOf(w.contract).openMs) + 1000);
+    assert.deepEqual(await auditor.auditor.pass(), [{ round: toHex(w.rid), audited: 2, seats: 1 }]);
+    // the relay also gets the round's transcripts (PUT/GET /transcript); only its AUDITs are asked about here
+    const audited = () => got.filter((g) => g.url === '/audit');
+    for (let i = 0; i < 100 && !audited().length; i++) await wait(50);
+    const kept = w.holder.round.db.prepare('SELECT bytes, signature FROM audits').get();
+    const body = Buffer.from([...new Uint8Array(kept.bytes), ...new Uint8Array(kept.signature)]);
+    assert.deepEqual(audited().map((g) => [g.method, g.url, g.bytes.equals(body)]), [['POST', '/audit', true]], 'the AUDIT\'s own bytes, to the relay');
+    // THE SAME AUDIT AGAIN is already held: not relayed a second time
+    const again = await fetch(`http://127.0.0.1:${w.holder.port}/audit`, { method: 'POST', body: new Uint8Array(body) });
+    assert.equal(again.status, 200);
+    await wait(300);
+    assert.equal(audited().length, 1, 'relayed once');
+  } finally { await close(); await new Promise((r) => relay.close(r)); }
 });
