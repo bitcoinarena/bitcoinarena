@@ -33,6 +33,7 @@ import { endpointsOf } from './roster.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 
 /** How far ahead of its start a round is looked at: PRESENT is signed in the last minute before seating_close. */
+import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 export const PRESENT_WINDOW_MS = 60000n;
 /** A PRESENT's length: type, version, round id, role, node key, signature (seating.js presentBody + 64). */
 export const PRESENT_BYTES = 1 + 2 + 32 + 1 + 32 + 64;
@@ -41,7 +42,7 @@ export const BATCH_ROUNDS = 64;
 const joinBytes = (list) => { const out = new Uint8Array(list.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of list) { out.set(x, at); at += x.length; } return out; };
 
 export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, nowMs = () => Date.now(), log = () => {}, windowOf = () => null,
-  onSeated = () => {}, leftNode = () => false, contractOf = () => null, leftOutOf = () => [] }) {
+  onSeated = () => {}, leftNode = () => false, contractOf = () => null, leftOutOf = () => [], testHoldPresents = null }) {
   // `leftOutOf(rid)`: the node keys (hex) the round's census left out as absent (protocol 22, kanban #727) - they may say PRESENT
   // undrawn, and every seated node names them in its SEEN
   // `leftNode(nodeHex)`: the node's owner took it out of every seating with the emergency key (§23A.5a, protocol 17) - its PRESENT is
@@ -211,6 +212,13 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       return { ok: false, why: 'that node is not drawn for that round and role' };
     const t = starts.get(toHex(roundId));
     if (t && !afterClose && BigInt(nowMs()) >= t.close) return { ok: false, why: 'that round\'s seating has closed' };
+    // THE OVERLOADED SEAT, FORCED (kanban #738, a test switch, regtest rounds only - ARENA_TEST_SEATING_HOLD=n): before its seating closes
+    // this seat holds at most n PRESENTs per round and role, its own among them, and drops the rest - as the seat of 2026-10-27 that held 5
+    // of 9 at the close. After the close it takes them as any seat does (the late path, afterClose), so what it does then is measured.
+    if (Number.isInteger(testHoldPresents) && testHoldPresents > 0 && !afterClose && t && t.contract && toHex(t.contract.networkId || new Uint8Array(0)) === toHex(NETWORK_ID_REGTEST)
+      && db.prepare('SELECT COUNT(*) AS n FROM seat_presents WHERE round_id = ? AND role = ?').get(roundId, role).n >= testHoldPresents
+      && !db.prepare('SELECT 1 FROM seat_presents WHERE round_id = ? AND role = ? AND node = ?').get(roundId, role, toHex(nodePubkey)))
+      return { ok: false, why: `test switch: this seat holds ${testHoldPresents} PRESENTs before the close (ARENA_TEST_SEATING_HOLD)` };
     db.prepare('INSERT OR IGNORE INTO seat_presents (round_id, role, node, bytes) VALUES (?, ?, ?, ?)').run(roundId, role, toHex(nodePubkey), bytes);
     return { ok: true };
   }
