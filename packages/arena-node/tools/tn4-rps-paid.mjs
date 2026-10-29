@@ -167,8 +167,9 @@ async function paidEntry(c, rid, roundHex, move, who) {
     const hidden = hiddenMove(move, rand);
     entry.commit = moveCommitment({ roundId: rid, sessionPubkey: entry.sessionPubkey, move: hidden.move, salt: hidden.salt });
     const eid = entryId(entry);
-    const signerNodes = [];
-    for (const n of nodes) {
+    // EVERY SEAT AT ONCE (2026.1.9.12 release check, 2026-10-29: locked at 11:29:32Z, handed to the 14 seats one after another until
+    // 11:32:43Z - 35 s past the entry close; every signer node said "the round is closed")
+    const signerNodes = await Promise.all(nodes.map(async (n) => {
       const h = await fetch(`${n}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
       const en = await fetch(`${n}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
       const enWhy = (await en.text()).trim().slice(0, 140);
@@ -183,9 +184,9 @@ async function paidEntry(c, rid, roundHex, move, who) {
         if (!/holds no lock/.test(why)) break;
         await new Promise((ok) => setTimeout(ok, 3000));
       }
-      signerNodes.push({ node: n, handout: h.status, entry: en.status, ...(en.status >= 300 ? { entryWhy: enWhy } : {}),
-        lock: l.status, lockSaid: (await l.text()).trim().slice(0, 160) });
-    }
+      return { node: n, handout: h.status, entry: en.status, ...(en.status >= 300 ? { entryWhy: enWhy } : {}),
+        lock: l.status, lockSaid: (await l.text()).trim().slice(0, 160) };
+    }));
     log({ step: 'handed over', entry: toHex(eid).slice(0, 16), signerNodes });
     if (signerNodes.filter((x) => x.lock >= 200 && x.lock < 300).length < needed) throw new Error('fewer seats than needed took the lock');
 
