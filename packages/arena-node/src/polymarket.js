@@ -395,6 +395,15 @@ export function createPolymarketRouter(ctx) {
   }
   const page = (data) => ({ data, next_cursor: END_CURSOR, limit: data.length, count: data.length });
   const param = (url, k) => url.searchParams.get(k);
+  // A CLOSED MARKET HAS NO BOOK (kanban #736, measured on Polymarket 2026-10-28 by the second helper's run, btc-updown-15m-1793140200
+  // resolved: /book, /price, /midpoint and /spread answered 404 "No orderbook exists for the requested token id", /last-trade-price still
+  // 200): here the same once the market's entries closed - a stock bot that walks markets drops it as it drops a resolved one
+  const NO_BOOK = 'No orderbook exists for the requested token id';
+  const liveTokenParam = (url, res) => {
+    const x = tokenOf(param(url, 'token_id'));
+    if (!x || now() >= Number(x.contract.entryCloseMs)) { fail(res, 404, NO_BOOK); return null; }
+    return x;
+  };
   const tokenParam = (url, res) => { const x = tokenOf(param(url, 'token_id')); if (!x) fail(res, 404, `no market of token_id ${String(param(url, 'token_id') || '').slice(0, 40)} is held here: GET ${BASE}/markets lists them`); return x; };
 
   async function handle(req, res, url) {
@@ -428,18 +437,18 @@ export function createPolymarketRouter(ctx) {
       return json(res, 200, path === '/gamma/markets' ? kept.map(gammaMarketJson) : kept.map(eventJson));
     }
     if (req.method === 'GET' && path === '/book') {
-      const x = tokenParam(url, res); if (!x) return true;
+      const x = liveTokenParam(url, res); if (!x) return true;
       const L = ledgerOf(x);
       return json(res, 200, bookJson({ roundHex: x.hex, outcome: x.outcome, levels: L.levels, last: lastOf(L), nowMs: now() }));
     }
     if (req.method === 'POST' && path === '/books') {
       let asked; try { asked = JSON.parse(body || '[]'); } catch { return fail(res, 400, 'a body of [{ token_id }]'); }
       const out = [];
-      for (const b of Array.isArray(asked) ? asked : []) { const x = tokenOf(b && b.token_id); if (!x) continue; const L = ledgerOf(x); out.push(bookJson({ roundHex: x.hex, outcome: x.outcome, levels: L.levels, last: lastOf(L), nowMs: now() })); }
+      for (const b of Array.isArray(asked) ? asked : []) { const x = tokenOf(b && b.token_id); if (!x || now() >= Number(x.contract.entryCloseMs)) continue; const L = ledgerOf(x); out.push(bookJson({ roundHex: x.hex, outcome: x.outcome, levels: L.levels, last: lastOf(L), nowMs: now() })); }
       return json(res, 200, out);
     }
     if (req.method === 'GET' && (path === '/price' || path === '/midpoint' || path === '/spread' || path === '/last-trade-price')) {
-      const x = tokenParam(url, res); if (!x) return true;
+      const x = path === '/last-trade-price' ? tokenParam(url, res) : liveTokenParam(url, res); if (!x) return true;
       const L = ledgerOf(x), q = quoteOf(L.levels, x.outcome, lastOf(L));
       const dec = (v) => (v === null ? '' : priceDecimal(v));
       if (path === '/midpoint') return json(res, 200, { mid: dec(q.mid) });
