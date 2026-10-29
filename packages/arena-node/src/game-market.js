@@ -112,7 +112,7 @@ export function gameEvidenceOf(g) {
  * `self` this seat's node key (never its own peer), `fetcher` the seat's routed fetch.
  */
 export function gameMarkets({ round, plugins, committeeFor, verify, now = () => Date.now(), seriesHeld = () => [], sourcePeers = () => [],
-  ownResult = null, self = null, fetcher = (u, o) => fetch(u, o), timeoutMs = 5000, peersMax = 16 }) {
+  ownResult = null, self = null, fetcher = (u, o) => fetch(u, o), timeoutMs = 5000, peersMax = 16, endpointOf = null }) {
   // SOURCE CONTRACTS FETCHED AND CHECKED AGAINST THEIR IDS, by source id - fetched once, not on every ask (bounded)
   const fetched = new Map();
 
@@ -263,7 +263,7 @@ export function gameMarkets({ round, plugins, committeeFor, verify, now = () => 
     const hex = toHex(sid);
     const answers = [];
     if (ownResult) { try { const o = await ownResult(hex); if (o && o.ok) answers.push(o); } catch { /* none of its own */ } }
-    for (const base of endpointsOf(c.picked.committee, self)) {
+    for (const base of endpointsOf(c.picked.committee, self, endpointOf)) {
       try {
         const r = await fetcher(`${base}/round-result?round=${hex}`, { signal: AbortSignal.timeout(timeoutMs) });
         if (r.ok) answers.push(await r.json());
