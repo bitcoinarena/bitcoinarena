@@ -26,6 +26,18 @@ import { envToConfValues, formatConf, renameKeys, renameValues } from '../../are
 import { ensureApps } from '../../arena-node/src/app-fetch.js';
 import { writeCommand } from './launchers.js';
 import { control } from './node-services.js';
+
+// THE CHAIN BRIDGE ON THE PORT THE NODE CALLS (kanban #734, measured 2026-10-29 in the Linux VM: the third node of the machine, port_offset
+// 200, updated 2026.1.9.12 -> 2026.1.9.13 - its bridge unit was written for 127.0.0.1:8471 while arena.conf still sent the node to
+// 127.0.0.1:8671, so nothing answered the node's chain calls): the port of arena.conf's bitcoind_url when it is this machine's loopback,
+// else the state's, else the installer's own choice, 8471 plus this node's port offset
+export function bridgePortOf(home, state = {}, { read = (f) => readFileSync(f, 'utf8'), offset = PORT_OFFSET } = {}) {
+  try {
+    const m = /^bitcoind_url=http:\/\/127\.0\.0\.1:(\d+)\/?\s*$/m.exec(read(join(home, 'arena.conf')));
+    if (m) return Number(m[1]);
+  } catch { /* no settings: the defaults below */ }
+  return Number(state.bridgePort) || 8471 + (Number(offset) || 0);
+}
 import { quickTunnelUrl } from './reach.js';
 import { gatewayMetricsOwn } from './gateway.js';
 import { installLnd, LND_FILES } from './lnd.js';
@@ -297,7 +309,7 @@ function servicesOf({ platform, env, sh, home, port, node, selfPid = process.pid
   return {
     where: seatFile, seatText: () => (existsSync(seatFile) ? readFileSync(seatFile, 'utf8') : null), releaseOf: releaseOfUnit, files,
     seatFor: (release) => seatUnit({ node, release, home, port }), seatFile,
-    bridgeFor: (release, state) => bridgeUnit({ node, release, home, bridgePort: state.bridgePort || 8471 }),
+    bridgeFor: (release, state) => bridgeUnit({ node, release, home, bridgePort: bridgePortOf(home, state) }),
     stop: async (fs) => { const r = await sh('systemctl', ['--user', 'stop', ...fs.map(unit)]); return r.ok ? { ok: true } : { ok: false, why: `the node did not stop: ${r.err.trim().slice(0, 200)}` }; },
     start: async (fs) => { await sh('systemctl', ['--user', 'daemon-reload']); const r = await sh('systemctl', ['--user', 'start', ...fs.map(unit)]); return r.ok ? { ok: true } : { ok: false, why: (r.err || '').trim().slice(0, 200) }; },
     prepare: async () => {},
