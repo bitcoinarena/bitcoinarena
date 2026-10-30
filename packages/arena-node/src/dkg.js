@@ -31,6 +31,19 @@ import { toHex } from '../../arena-protocol/src/hash.js';
 const same = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
   && a.length === b.length && a.every((v, i) => v === b[i]);
 
+/**
+ * WHEN A CLAIM KEY'S RUN GOES AGAIN (kanban #791, measured 2026-10-30 01:3xZ on second-host seat 3: 232 keys ended "no key after" 30 to 5,878
+ * runs, one a second, waiting for a committee member that never dealt). `said` is run()'s answer; `waitMs` the last wait, `had` the
+ * contributions held at the last run short of some. With every contribution in (or no count at all) the next run is in `everyMs`; short
+ * of one, a run that added a peer or a contribution goes back to `everyMs`, one that added nothing doubles the wait, up to `maxMs`.
+ */
+export function runAgainIn(said, { waitMs, had = -1, everyMs = 1000, maxMs = 30000 }) {
+  const short = !!said && typeof said.have === 'number' && said.have < said.of;
+  if (!short) return { waitMs: everyMs, had };
+  const moved = (said.moved || 0) > 0 || said.have > had;
+  return { waitMs: moved ? everyMs : Math.min(Math.max(waitMs, everyMs) * 2, maxMs), had: said.have };
+}
+
 export class Dkg {
   /**
    * `curve` is the group the daemon already injects everywhere else. `random`
@@ -57,6 +70,11 @@ export class Dkg {
     // A PEER'S SIGNED AGREEMENT, CHECKED ONCE (kanban #786, profiled 2026-10-29 20:25Z on test host seat 1: agreementHolds took 6.5 % - each
     // second's finish verified every peer's same signature again): a signature check is a function of its bytes alone
     this.verifiedKept = new Map();        // signature:digest:key hex -> true / false
+    // WHICH PEERS ARE DONE FOR AN EPOCH (kanban #791, measured 2026-10-30 01:3xZ on second-host seat 3: 25,000 /dkg requests served and
+    // 39,000 sent a minute - a committee one member never deals to is run every second until its entry closes, up to 5,878 runs a
+    // key, and every run posted this node's contribution to each peer again and fetched each peer's again): a peer that took this
+    // node's contribution is not told again, a peer whose contribution this node holds is not asked again
+    this.peersDone = new Map();           // epoch hex -> { told: Set of peer urls, got: Set of peer urls }
   }
 
   get canDeal() { return !!(this.curve && this.random && this.round.identity); }
@@ -371,27 +389,32 @@ export class Dkg {
 
     // THE PEERS OF THIS COMMITTEE, when the caller names them: a daemon on many
     // rounds has one committee per round, read from each round's own census.
+    const done = this.peersDone.get(id) || Dkg.keep(this.peersDone, id, { told: new Set(), got: new Set() }, 4096);
     const told = [];
     const refused = [];
     for (const peer of peers) {
+      if (done.told.has(peer)) continue;
       const said = await this.tell(`${peer.replace(/\/+$/, '')}/dkg?epoch=${id}`, bytes);
-      if (said.ok) told.push(peer); else refused.push(`${peer}: ${said.why}`);
+      if (said.ok) { told.push(peer); done.told.add(peer); } else refused.push(`${peer}: ${said.why}`);
     }
 
     // AND ASK FOR THEIRS. A peer serves its own contribution for an epoch, so
     // this fills in whatever did not arrive by being pushed.
     const got = [];
     for (const peer of peers) {
+      if (done.got.has(peer)) continue;
       try {
         const r = await (this.fetcher || fetch)(`${peer.replace(/\/+$/, '')}/dkg?epoch=${id}`);
         if (!r.ok) { refused.push(`${peer}: ${r.status} ${(await r.text()).trim()}`); continue; }
         const theirs = new Uint8Array(await r.arrayBuffer());
         const took = await this.accept(theirs);
-        if (took.ok) got.push(peer); else refused.push(`${peer}: ${took.why}`);
+        if (took.ok) { got.push(peer); done.got.add(peer); } else refused.push(`${peer}: ${took.why}`);
       } catch (e) { refused.push(`${peer}: ${e.message}`); }
     }
 
-    const done = await this.finish(signerNodes, peers);
-    return { ok: done.ok, told: told.length, got: got.length, refused, ...done };
+    const finished = await this.finish(signerNodes, peers);
+    // `told` / `got`: the peers that hold this node's contribution / whose contribution this node holds, all runs together;
+    // `moved`: how many of them this run added
+    return { ok: finished.ok, told: done.told.size, got: done.got.size, moved: told.length + got.length, refused, ...finished };
   }
 }
