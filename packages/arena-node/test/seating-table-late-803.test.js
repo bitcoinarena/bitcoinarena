@@ -74,3 +74,24 @@ test('a later round of a table, and any started round that is no table\'s first,
     for (const role of ['game', 'settlement']) assert.equal(agent.mySignature(rid, role), null, JSON.stringify(Object.keys(opts)));
   }
 });
+
+test('the tick does not wait for the tables\' certificate asks (kanban #803: 35 s of a 35.2 s tick on test host seat 7)', async () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE rounds (round_id BLOB, contract BLOB)');
+  const c0 = { ...contractFor([]), gameId: RPS_V2, protocolVersion: 2, seriesId: new Uint8Array(32).fill(0x90), nodes: [], gameVerifySlots: 7, settlementSlots: 7, roundIndex: 0, startTimeMs: START };
+  const c5 = { ...c0, roundIndex: 5, startTimeMs: START + 40000n };
+  const b5 = encodeRoundContract(c5);
+  db.prepare('INSERT INTO rounds (round_id, contract) VALUES (?, ?)').run(roundIdOf(c5), b5);
+  const drawn = nodes.map((n) => ({ pubkey: n.pubkey, advert: { endpoint: n.endpoint } }));
+  let release; const slow = new Promise((r) => { release = r; }); let asks = 0;
+  const fetcher = async (url) => { if (new URL(url).pathname === '/seating') { asks++; await slow; return new Response('{}', { status: 404 }); } return new Response(JSON.stringify({ rounds: {} })); };
+  const agent = seatingAgent({ round: { db, pubkey: nodes[0].pubkey, get: (id) => (toHex(id) === toHex(roundIdOf(c5)) ? { contract: b5 } : null) },
+    roster: { committeeFor: () => ({ ok: true, drawn }) }, sign: signer(nodes[0]), verify, fetcher, nowMs: () => Number(START) - 150000, contractOf: () => c0 });
+  const t0 = Date.now();
+  await agent.tick();
+  assert.ok(Date.now() - t0 < 1000, 'the tick ended while every ask still hung');
+  assert.equal(asks, 2 * 6, 'every other drawn seat asked, both roles, at once');
+  await agent.tick();
+  assert.equal(asks, 2 * 6, 'a second pass does not start while one runs');
+  release(); await agent.settled();
+});

@@ -102,10 +102,11 @@ test('a seat holding a table\'s later rounds but not its first asks the table\'s
   const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
   const agent = seatingAgent({ round, roster: { committeeFor: () => ({ ok: true, drawn }) }, sign: signer(nodes[0]), verify, fetcher, nowMs: () => NOW,
     contractOf: (id) => (toHex(id) === toHex(rid0) ? c0 : null) });
-  await agent.tick();
+  await agent.tick(); await agent.settled();
   assert.equal(agent.seatedFor(rid5, 'game').length, 7);
   assert.equal(agent.seatedFor(rid5, 'settlement').length, 7);
-  assert.equal(asked.filter((a) => a.endsWith('/seating')).length, 2, 'one seat asked per role, the first that had it');
-  await agent.tick();
-  assert.equal(asked.filter((a) => a.endsWith('/seating')).length, 2, 'not asked again once both stand');
+  // every drawn seat but this one, both roles at once (kanban #803: one after another, it held the tick for 35 s)
+  assert.equal(asked.filter((a) => a.endsWith('/seating')).length, 2 * 8, 'each drawn seat asked once per role');
+  await agent.tick(); await agent.settled();
+  assert.equal(asked.filter((a) => a.endsWith('/seating')).length, 2 * 8, 'not asked again once both stand');
 });
