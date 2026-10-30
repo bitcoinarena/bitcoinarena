@@ -8068,6 +8068,23 @@ function txidHexOf(tx) {
 // them and be imported by the other. Re-exported here because the census is
 // where most callers meet it.
 
+/**
+ * HOW FAR BACK A CENSUS READS (§5A.2 "maturity is not expiry": a bond stands until it is spent). A census read only the 2,016 blocks below its
+ * height, so a bond older than that left it with no exclusion and no reason, though it was unspent and its node served. Measured on testnet4
+ * 2026-10-30: the seven guardians of federation 337ae01a, bonded together at 156,037, were last in the census of 158,052; from 158,053 the
+ * federation had 0 guardian seats and no reserve key while its guardians ran, and the test host seats' bonds would have followed at 158,282-158,298.
+ * the owner: "die bond muss weiterhin gültig bleiben". A round's census_root commits to its census, so the rule moves at a census height, never
+ * under rounds already posted: from `fromHeight` a network's census reads from `firstBlock` - testnet4's the first block of the window of the
+ * last census that held them all, so no bond but those comes back.
+ */
+const CENSUS_LOOKBACK = 2016;
+const CENSUS_WHOLE = { testnet4: { fromHeight: 158226, firstBlock: 156036 } };   // the newest posted round's census was 158,119
+function censusFirstBlock(censusHeight, network) {
+  const whole = CENSUS_WHOLE[network];
+  const window = Math.max(0, censusHeight - CENSUS_LOOKBACK);
+  return whole && censusHeight >= whole.fromHeight ? Math.min(window, whole.firstBlock) : window;
+}
+
 function encodeEntry(e) {
   const w = new Writer();
   w.bytes32(e.txid);
@@ -30381,6 +30398,22 @@ function approvalWords(f, tooOld = []) {
     ? ` · a selected operator is playing: ${f.operatorsPlaying.map((o) => o.slice(0, 8)).join(', ')}` : ' · no selected operator is playing') + old;
 }
 
+/**
+ * THE SETTLEMENT FACTS IN WORDS A PLAYER READS (kanban #821, the owner 2026-10-30, of "Settled by 5 of 9 drawn (d5faf2, ...) · 1 operator (2of2) · both
+ * committees 5/5 · no operator playing · left out,...": "Die Meldung ist eher verwirrend"). `facts`: the lobby line from "signer nodes" on. The
+ * whole line stays one tap away; one operator behind every node is said, never hidden.
+ */
+function settledWords(facts) {
+  const t = String(facts || '');
+  if (!t) return '';
+  if (/: pending\b/.test(t)) return 'The nodes that settle this round are not chosen yet';
+  const m = /(\d+) of \d+ drawn/.exec(t) || /nodes: (\d+)/.exec(t);
+  const who = m ? `${m[1]} nodes settle this round` : 'Nodes settle this round';
+  const one = /(^|· )1 operator\b/.test(t) ? ', all run by one operator' : '';
+  const playing = /a selected operator is playing/.test(t) ? ' - one of their operators plays in it' : '';
+  return who + one + playing;
+}
+
 function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null, tooOld = null } = {}) {
   // A MARKET'S ROW (§0A.7a): its name, its outcomes, its entry close - the pick sheet says the rest
   if (row.market || row.marketLike) {
@@ -35282,7 +35315,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          fetchGames: fetchGames, oneTilePerGame: oneTilePerGame, checkedGameInfoOfTile: checkedGameInfoOfTile, checkedGameInfo: checkedGameInfo, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          censusEndpoints: censusEndpoints, mergeNodes: mergeNodes,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, roundAttestors: roundAttestors, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, withdrawFederation: withdrawFederation, safeFederation: safeFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, evacuatePlayerWallet: evacuatePlayerWallet, movePlayerWallet: movePlayerWallet, moveCanMsat: moveCanMsat, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, rememberedInvite: rememberedInvite, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyRowOffered: lobbyRowOffered, lobbyRowNotOffered: lobbyRowNotOffered, unplayableWindowLine: unplayableWindowLine, fetchKeylessFederations: fetchKeylessFederations, keylessFundsLine: keylessFundsLine, gatewayUrlsOfView: gatewayUrlsOfView, nextRoundLine: nextRoundLine, inHoursMinutes: inHoursMinutes, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, roundAttestors: roundAttestors, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, withdrawFederation: withdrawFederation, safeFederation: safeFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, evacuatePlayerWallet: evacuatePlayerWallet, movePlayerWallet: movePlayerWallet, moveCanMsat: moveCanMsat, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, rememberedInvite: rememberedInvite, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyRowOffered: lobbyRowOffered, lobbyRowNotOffered: lobbyRowNotOffered, unplayableWindowLine: unplayableWindowLine, fetchKeylessFederations: fetchKeylessFederations, keylessFundsLine: keylessFundsLine, gatewayUrlsOfView: gatewayUrlsOfView, settledWords: settledWords, nextRoundLine: nextRoundLine, inHoursMinutes: inHoursMinutes, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          presentNotes: presentNotes, liquidationKeyFor: liquidationKeyFor, collectLiquidationPayouts: collectLiquidationPayouts, roundVerdict: roundVerdict, secureTranscript: secureTranscript,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
