@@ -53,7 +53,9 @@ test('a browser gets the rounds page; a finished round lists its players, outcom
     const page = await fetch(`${base}/rounds`, { headers: { accept: 'text/html,application/xhtml+xml' } });
     assert.match(page.headers.get('content-type'), /text\/html/);
     const html = await page.text();
-    assert.match(html, /<h2>Upcoming/); assert.match(html, /<h2>Finished/); assert.match(html, /api\/round-result/);
+    // THE PAGE IS REACT'S (kanban #564, 87c84753): its upcoming and finished sections are drawn by /rounds/react.js (arena-web's
+    // rounds test), so the page served here is the one that loads it and reads the node's own data for it (rounds-page.test.js)
+    assert.match(html, /\/rounds\/react\.js/); assert.match(html, /api\/rounds/); assert.match(html, /api\/round-result/);
     const list = await fetch(`${base}/rounds`);
     assert.match(list.headers.get('content-type'), /application\/json/, 'a fetch still gets the list');
 

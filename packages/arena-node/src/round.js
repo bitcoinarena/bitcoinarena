@@ -111,6 +111,8 @@ export const TRANSCRIPT_BATCH_MAX_BYTES = 65535;
 export class Round {
   /** How long openHeld trusts its last count of the open rows when this store wrote none (kanban #786). */
   static OPEN_HELD_MS = 250;
+  /** How many closed rounds closedSince remembers (kanban #791). */
+  static CLOSED_LOG = 4096;
   constructor(db, now = () => Date.now(), { plugins = [] } = {}) {
     this.db = db;
     this.now = now;
@@ -127,6 +129,8 @@ export class Round {
     // are handed out again, so a caller keeps what it derived from them; `hexOf` is each one's hex
     this.openList = { key: null, ids: [] };
     this.closedSinceList = new Set();   // hex of the rounds this store closed since the open list was last read (kanban #791)
+    this.closeSeq = 0;                  // how many rounds this store has closed, and the last CLOSED_LOG of them (closedSince)
+    this.closedLog = [];
     this.hexOfId = new WeakMap();
     // THE GAMES THIS NODE HOSTS (§0A.4; M3 R1): a round is opened only on one of them, on a core installed for
     // it, and its run length is that core's.
@@ -491,6 +495,17 @@ export class Round {
     for (const k of this.contracts.keys()) if (!open.has(k)) this.contracts.delete(k);
     this.openList = { key, ids, m: q.m, askedMs: nowMs, lastOpenedMs };
     return ids;
+  }
+
+  /**
+   * THE ROUNDS THIS STORE CLOSED SINCE `seq` (a closeSeq read earlier), as a Set of hex - or null when more were closed since than the
+   * log keeps (kanban #791: a listing's kept scan drops them instead of being built again on every close).
+   */
+  closedSince(seq) {
+    const n = this.closeSeq - seq;
+    if (n <= 0) return new Set();
+    if (n > this.closedLog.length) return null;
+    return new Set(this.closedLog.slice(this.closedLog.length - n));
   }
 
   /** How many rounds the store held open at the last read of the open list (what per-round caches are bounded by). */
@@ -1620,6 +1635,8 @@ export class Round {
       .run(CLOSED, this.now(), id);
     this.contracts.delete(this.hexOf(id));
     if (this.openList.key !== null) this.closedSinceList.add(this.hexOf(id));
+    this.closeSeq++; this.closedLog.push(this.hexOf(id));
+    if (this.closedLog.length > Round.CLOSED_LOG) this.closedLog.shift();
     this.openSeq++;
     return true;
   }
