@@ -6866,7 +6866,7 @@
         if (window.ARENA_UNITY_LOBBY && window.ARENA_UNITY_LOBBY.showing === false) return reply({ ok: false, why: 'a round is running in that tab' });
         let c = window.ARENA_WALLETS && window.ARENA_WALLETS.get(m.fed);
         // NOT OPEN HERE YET: this tab holds the phrase, so it is the one that may open that federation's wallet - opened with the verified
-        // record's invite, 30 s at most, then handed over (kanban #631, measured on live UI 394: "that tab has no wallet open in federation
+        // record's invite, 10 s at most, then handed over (kanban #631, measured on live UI 394: "that tab has no wallet open in federation
         // 337ae01a" and the merge stayed stuck for good)
         if (!c || typeof c.sendAllEcash !== 'function') {
           const st = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.get(m.fed);
@@ -6875,7 +6875,7 @@
             try {
               const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
               c = await Promise.race([ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(m.fed), invite: inv, seed: ARENACLIENT.fromHex(cur), LockClient: wasm.LockClient, storage: vault() }),
-                new Promise((_, no) => setTimeout(() => no(new Error('it did not open in 30 s')), 30000))]);
+                new Promise((_, no) => setTimeout(() => no(new Error('it did not open in 10 s')), 10000))]);
               if (c && window.ARENA_KEEP_WALLET) window.ARENA_KEEP_WALLET(m.fed, c);
             } catch (e) { return reply({ ok: false, why: 'that tab could not open its wallet in federation ' + m.fed.slice(0, 8) + ': ' + (e && e.message ? e.message : e) }); }
           }
