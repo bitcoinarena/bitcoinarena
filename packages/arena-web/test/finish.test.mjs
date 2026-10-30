@@ -173,3 +173,21 @@ test('#635: the faucet asked and the deposit checked; a refusal opens the guided
   assert.match(done, /id="done-core"[\s\S]*Still syncing/); assert.match(done, /id="finish">Open Node Dashboard</);
   assert.match(done, /Open <b>Bitcoin Arena<\/b> in your Applications/);
 });
+
+// kanban #813, the owner: "there should be some indication that the balance check is being performed"
+test('bond: a running check shows, the automatic one too, and says when it last looked', async () => {
+  let answer; const c = driven(BondStep, { st: { roles: ['verify'], wallet: { address: 'tb1pnode', needSats: 52000 } }, post: () => new Promise((ok) => { answer = ok; }) });
+  const shown = () => renderToStaticMarkup(c.render());
+  assert.doesNotMatch(shown(), /Checking/);
+  const run = c.check({ quiet: true });
+  assert.match(shown(), /Checking your node(&#x27;|')s wallet for the deposit/);
+  assert.match(shown(), /Checking…<\/button>/);
+  answer({ ok: true });
+  await run;
+  assert.doesNotMatch(shown(), /Checking/);
+  assert.match(shown(), /Last checked .*Setup checks again by itself/);
+  const second = c.check();
+  answer({ ok: true, found: true, enough: true, totalSats: 60000, coins: [{ height: 158300 }] });
+  await second;
+  assert.doesNotMatch(shown(), /Checking|Last checked/);
+});
