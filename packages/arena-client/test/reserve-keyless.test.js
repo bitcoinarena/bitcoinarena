@@ -133,3 +133,16 @@ test('a refused head-to-head entry says why the seats refused it (the owner 2026
   assert.doesNotMatch(src, /'the signer nodes refused the entry: ' \+ sent\.why;/);
   assert.match(src, /const saidWhy = sent\.why \|\| \[\.\.\.new Set\(sent\.entries\.map/);
 });
+
+test('a round\'s result is read from a seat that holds its players, not the first that answers (the owner 2026-10-30: "es gibt kein Ergebnis")', () => {
+  const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  const at = src.indexOf('result: async (id) => {');
+  const body = src.slice(at, src.indexOf('// A MARKET\'S CLIENT: place an order', at));
+  assert.match(body, /if \(!\(j\.players \|\| \[\]\)\.length\) \{ none = none \|\| \{ entries: \[\], match: null \}; continue; \}/);
+  assert.match(body, /return none;/);
+  // the seats' answers as measured on round 1b995103: seven seats with no players ahead of the five that signed
+  const answers = [...Array(7).fill({ players: [] }), { players: [{ entry: 'a', outcome: 'FAILED' }, { entry: 'b', outcome: 'DELIVERED' }] }];
+  let none = null, got = null;
+  for (const j of answers) { if (!(j.players || []).length) { none = none || { entries: [] }; continue; } got = j; break; }
+  assert.equal(got.players.length, 2);
+});
