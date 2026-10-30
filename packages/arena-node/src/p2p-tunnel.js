@@ -104,7 +104,11 @@ export function carryApi(ws, root, { openWs = (url) => new WebSocket(url, { maxP
 }
 
 /** A census endpoint as the root its websocket paths hang off: ws(s), no trailing slash. */
-export const tunnelRoot = (endpoint) => String(endpoint || '').trim().replace(/^http(s?):/i, 'ws$1:').replace(/\/+$/, '');
+// A MACHINE THAT CANNOT REACH THE FUNNEL HOST (kanban #808: the second machine gets no socket from seat.example.com, so its guardian never caught up with its peers):
+// ARENA_TUNNEL_HOST_MAP "from=to,from=to" sends a peer's tunnels over the host's other public name
+const TUNNEL_HOSTS = String(process.env.ARENA_TUNNEL_HOST_MAP || '').split(',').map((x) => x.split('=')).filter((x) => x.length === 2 && x[0] && x[1]);
+export const tunnelRoot = (endpoint) => TUNNEL_HOSTS.reduce((u, [from, to]) => u.split(`//${from}`).join(`//${to}`),
+  String(endpoint || '').trim().replace(/^http(s?):/i, 'ws$1:').replace(/\/+$/, ''));
 
 /**
  * OUTBOUND: the listeners for every other guardian-capable node of the census. `ownKey` this node's key; `sync(entries)`
