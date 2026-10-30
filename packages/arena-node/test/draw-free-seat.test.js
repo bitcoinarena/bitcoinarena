@@ -146,6 +146,32 @@ test('fourteen nodes: a v2 round is assigned 7 seats from the census and the bea
   assert.equal(round.seatDrawFree(rid, certified), false, 'the same seats again change nothing');
 });
 
+// kanban #786: the write-in is one transaction - all of it or none, one commit, and none of its own inside a caller's
+test('a v2 write-in is all or nothing: a bad key leaves the contract and the signer nodes as they were; inside a transaction it opens none', () => {
+  const root = rootFor(bonds14, []);
+  const round = new Round(openStore(':memory:'), () => AFTER_COMMITTEE, { plugins: HOSTED });
+  const roster = new Roster(round, { chainFor: ({ contract } = {}) => chainWith(bonds14, contract), randomnessFor: ({ contract }) => beaconOf(bonds14, contract) });
+  const rid = round.open({ ...seven(contractWith([], root)), protocolVersion: 2 });
+  const got = roster.assignSignerNodes(rid);
+  assert.equal(got.ok, true, got.why);
+  const before = { contract: Buffer.from(round.get(rid).contract).toString('hex'), signers: round.signerNodes(rid).map(toHex) };
+  const others = fourteen.filter((k) => !got.signerNodes.some((s) => toHex(s) === toHex(k)));
+  // a failure after the UPDATE and the DELETE ran (the signer nodes' write throws)
+  const record = round.recordSignerNodes;
+  round.recordSignerNodes = () => { throw new Error('disk full'); };
+  assert.throws(() => round.seatDrawFree(rid, [...got.signerNodes.slice(1), others[0]]), /disk full/);
+  round.recordSignerNodes = record;
+  assert.equal(Buffer.from(round.get(rid).contract).toString('hex'), before.contract, 'the contract is not rewritten');
+  assert.deepEqual(round.signerNodes(rid).map(toHex), before.signers, 'the signer nodes are not deleted');
+  assert.equal(round.db.isTransaction, false, 'and no transaction is left open');
+  const certified = [...got.signerNodes.slice(1), others[0]];
+  round.db.exec('BEGIN');
+  assert.equal(round.seatDrawFree(rid, certified), true, 'inside a caller\'s transaction: no BEGIN of its own');
+  assert.equal(round.db.isTransaction, true, 'the caller\'s transaction stays the caller\'s');
+  round.db.exec('COMMIT');
+  assert.deepEqual(round.signerNodes(rid).map(toHex), certified.map(toHex).sort());
+});
+
 test('fourteen nodes: a v1 contract naming 7 of them is refused - the draw it would have to name depends on its own id', () => {
   const root = rootFor(bonds14, fourteen.slice(0, 7));
   const round = new Round(openStore(':memory:'), () => AFTER_COMMITTEE, { plugins: HOSTED });
