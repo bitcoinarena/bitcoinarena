@@ -31,3 +31,12 @@ test('the reserve pass lets go of every key whose federation moved, and keeps on
   assert.deepEqual([...c.keys()].sort(), [A, O].sort());
   assert.equal([...c.values()].length, 2, 'values() reads as the Map it replaces');
 });
+
+test('a federation left with no guardian seats lets go of its kept key (test host seat 4, 10-30: 02533d74 for federation A, 0 members)', () => {
+  const c = reserveKeyCache();
+  const A = '337ae01a'.padEnd(64, '0');
+  c.setFor(A, 'a-before', OLD); c.setFor(B, '296aff8c', NOW);
+  const guards = { [B]: true };   // the reserve pass reads A as 'none' - no guardian seats, so no epoch of any key
+  assert.deepEqual(c.dropMoved((f) => (guards[f] ? '296aff8c' : 'none')), [A]);
+  assert.equal(c.get(A), undefined); assert.equal(c.get(B), NOW);
+});

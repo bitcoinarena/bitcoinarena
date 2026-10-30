@@ -1515,6 +1515,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const reserveEpochOf = (fedHex, g = reserveGuardians()[fedHex]) => (g ? toHex(reserveEpochId(fromHex(fedHex), sortedKeys(g.members))) : null);
   const reserveKeyFor = async (fedHex) => {
     const g = reserveGuardians()[fedHex];
+    // A FEDERATION WITH NO GUARDIAN SEATS HAS NO RESERVE KEY (kanban #803, measured 2026-10-30 10:0xZ: test host seat 4 still named 02533d74…
+    // for federation A while its GET /reserves listed 0 members - the key kept from before A's members fell under the bond floor; with no
+    // members there is no epoch, and a key without an epoch was answered as kept)
+    if (!g) return null;
     const epoch = reserveEpochOf(fedHex, g);
     const kept = reserveKeys.getFor(fedHex, epoch);
     if (kept) return kept;
@@ -1536,7 +1540,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const reserveRound = async () => {
     // a kept key whose federation's guardian seats are now others is let go (kanban #803), so no reader of the cache sees it
     const guards = reserveGuardians();
-    for (const fed of reserveKeys.dropMoved((f) => reserveEpochOf(f, guards[f]))) console.log(`[reserves] ${fed.slice(0, 8)}: its guardian seats changed - the kept reserve key is read anew`);
+    // and a key whose federation has no guardian seats any more is let go too ('none' is no epoch's id)
+    for (const fed of reserveKeys.dropMoved((f) => (guards[f] ? reserveEpochOf(f, guards[f]) : 'none'))) console.log(`[reserves] ${fed.slice(0, 8)}: its guardian seats changed - the kept reserve key is read anew`);
     for (const [fedHex, g] of Object.entries(guards)) {
       if (!g.members.some((k) => toHex(k) === toHex(round.pubkey)) || reserveNeeded(g.members.length) === null) continue;
       const nodes = sortedKeys(g.members);
