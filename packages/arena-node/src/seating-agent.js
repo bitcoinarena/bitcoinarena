@@ -335,6 +335,11 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   // that node is drawn for, its PRESENTs, its seating signature and the certificates it holds. The PRESENTs, seatings and
   // certificates are the same signed messages as before; a node without the batch doors is asked the old way.
   let busy = false;
+  // THE TABLES' CERTIFICATES ARE ASKED BESIDE THE TICK, NOT IN IT (kanban #803, measured 2026-10-30 07:5xZ on test host seat 7: a tick of
+  // 35,197 ms of which askUnwritten 35,014 and the reads 85 - each table lacking a certificate asked of its drawn seats one after another,
+  // up to 5 s each, every minute, before the tick signed a PRESENT. Each table no one certified made the next tick long, a long tick
+  // missed the next rounds' close, and that left more tables uncertified). One pass at a time, its own; the tick does not wait for it.
+  let asking = null;
   async function tick() {
     if (busy) return;
     busy = true;
@@ -344,7 +349,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     let mark = Date.now(); const lap = (k) => { const n = Date.now(); took[k] += n - mark; mark = n; };
     try {
       index();
-      await askUnwritten(); lap('unwritten');
+      if (!asking) asking = askUnwritten().catch((e) => log(`[seating] ${e.message}`)).finally(() => { asking = null; });
+      lap('unwritten');
       const now = BigInt(nowMs());
       const work = [];
       for (const [ridHex, t] of starts) {
@@ -467,14 +473,15 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       u.askedMs = t;
       const posted = u.held ? null : contractOf(u.rid);
       if (!u.held && !posted) continue;
-      for (const role of lacking) {
+      // every lacking role and every drawn seat at once, a resting one left out (#791): the first certificate that checks is kept
+      await Promise.all(lacking.map(async (role) => {
         const c = roster.committeeFor(u.rid, role, posted ? { posted } : {});
-        if (!c.ok) continue;
-        for (const b of endpointsOf(c.drawn, round.pubkey, endpointOf)) {
+        if (!c.ok) return;
+        await Promise.all(endpointsOf(c.drawn, round.pubkey, endpointOf).filter((b) => !rests(b)).map(async (b) => {
           const j = await getJson(b, `/seating?round=${a}&role=${role}`);
-          if (j && j.cert && keepCert(u.rid, role, fromHex(j.cert)).ok) break;
-        }
-      }
+          if (j && j.cert && !db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(u.rid, role)) keepCert(u.rid, role, fromHex(j.cert));
+        }));
+      }));
     }
   }
 
@@ -750,6 +757,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   };
   return {
     tick,
+    /** The certificate pass running beside the tick, if one is (kanban #803): for a caller that needs it finished. */
+    settled: () => asking || Promise.resolve(),
     /** For the roster: who the certificate seats (node keys hex), or null while none stands or after equivocation. */
     seatedFor: (rid, role) => { const s = certs.get(`${toHex(seatOf(rid))}:${role}`); return s || null; },
     /** A round's seating, for the doors, the lobby and the entry gate. */
