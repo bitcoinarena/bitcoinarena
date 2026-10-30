@@ -36,10 +36,7 @@
 // learns the other signer nodes' addresses, from the advertisements in their bonds. (It no longer finds a pool output or
 // sends a pool payout: that was the withdrawn custody's, §23.6, RULED 2026-09-25.)
 //
-// HOW FAR BACK A CENSUS IS READ: CENSUS_LOOKBACK blocks before a round's
-// census height. A bond funded earlier than that is not seen by a restarted
-// daemon, and a round whose committee holds one is refused by name.
-const CENSUS_LOOKBACK = 2016;
+// HOW FAR BACK A CENSUS IS READ: census.js censusFirstBlock (kanban #820).
 import { TESTNET4_DONATION_SET } from '../../arena-protocol/src/testnet4-donation-set.js';
 import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
 import { openStore } from './store.js';
@@ -61,8 +58,9 @@ import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { votesInBlock } from '../../arena-protocol/src/ballot-chain.js';
-import { PROTOCOL_VERSION } from '../../arena-protocol/src/constants.js';
+import { PROTOCOL_VERSION, networkOf } from '../../arena-protocol/src/constants.js';
 import { censusOfView, censusReplacer, censusReviver } from './roster.js';
+import { censusFirstBlock } from '../../arena-protocol/src/census.js';
 import { readSeriesLines } from './series-line.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../arena-protocol/src/test-donation-sets.js';
 import { TEST_DONATION_SET_KEYS_REGTEST } from '../../arena-protocol/src/test-donation-set-keys-regtest.js';
@@ -335,13 +333,14 @@ if (url) {
   // order. One census a day, read once and kept; a read that fails is said and asked again at the next pass
   const chainCensusKept = async (kind, networkIdHex, height, contract, { hold = true } = {}) => {
     const hash = String(await call('getblockhash', [height]));
-    const key = `chain:${kind}:${networkIdHex}:${height}:${hash}`;
+    // the first block in the key (kanban #820): a census kept from the old window is not this one
+    const key = `chain:${kind}:${networkIdHex}:${height}:${hash}:from${censusFirstBlock(height, networkOf(contract.networkId))}`;
     try { const row = db.prepare('SELECT body FROM census_kept WHERE key = ?').get(key); if (row) return JSON.parse(row.body, censusReviver); } catch { /* derived below */ }
     if (chainCensusInFlight.has(key)) return chainCensusInFlight.get(key);
     if (hold && Date.now() - blocksFailedAtMs < 60000) return { ok: false, why: 'a block read failed less than a minute ago: read again after it' };
     const p = (async () => {
       // a kept hash from a branch the chain left is dropped and the view read once more (censusWithFreshHashes, kanban #495)
-      const read = async () => { try { return await blocksOver(call, Math.max(0, height - CENSUS_LOOKBACK), height, { cache: blocksKept }); } catch (e) { blocksFailedAtMs = Date.now(); throw e; } };
+      const read = async () => { try { return await blocksOver(call, censusFirstBlock(height, networkOf(contract.networkId)), height, { cache: blocksKept }); } catch (e) { blocksFailedAtMs = Date.now(); throw e; } };
       const census = await censusWithFreshHashes({ read, derive: (view) => censusOfView(view, contract), cache: blocksKept });
       if (census.ok) {
         try {
@@ -371,7 +370,7 @@ if (url) {
     const deep = seen.ok ? seen.height + contract.censusConfirmations - 1 : 0;
     const to = Math.min(tip, Math.max(contract.censusHeight, deep));
     // a view that does not link - a kept hash from a branch the chain left - is read once more with fresh hashes (kanban #576)
-    const view = await viewWithFreshHashes({ read: () => blocksOver(call, Math.max(0, contract.censusHeight - CENSUS_LOOKBACK), to, { cache: blocksKept }), cache: blocksKept });
+    const view = await viewWithFreshHashes({ read: () => blocksOver(call, censusFirstBlock(contract.censusHeight, networkOf(contract.networkId)), to, { cache: blocksKept }), cache: blocksKept });
     // SHORT OF THE BEACON'S DEPTH, a view is read again later (ORDER-2116, measured on the free pair 2026-10-01: a round
     // posted 15 min ahead was read before its beacon existed, kept for good, and never drew a committee - "no block in
     // this view is after this round's committee time"; no free round posted ahead was joinable).
