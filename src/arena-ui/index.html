@@ -7732,11 +7732,30 @@
         const drawable = (r) => { const why = ARENACLIENT.lobbyRowNotOffered ? ARENACLIENT.lobbyRowNotOffered(r) : (ARENACLIENT.lobbyRowOffered(r) ? null : 'not drawn');
           if (why && r && r.id) unoffered.set(r.id, { id: r.id, game: r.game, entryCloseMs: Number(r.entryCloseMs), startTimeMs: Number(r.startTimeMs), why });
           return !why; };
+        // A PAID ROUND THIS WALLET CAN ENTER (the owner 2026-10-30, "Order not placed: this round pays the protocol reserves, and none of the
+        // round's 14 signer nodes names a reserve key for federation 337ae01a" - "But why can't I play then"): both federations' tables are
+        // listed together, the rows name no federation, and the page took federation A's - which takes no deposits (load 1338) and where
+        // the wallet holds nothing - while its 2,952 sat sat in B. A paid round is offered only when its federation takes deposits or the
+        // wallet already holds its stake there; a federation whose state the page has not read yet is not held back
+        const enterable = (r) => {
+          if (!r || r.free) return true;
+          const f = r.contract && r.contract.federationId instanceof Uint8Array ? ARENACLIENT.toHex(r.contract.federationId) : null;
+          if (!f || !/[1-9a-f]/.test(f)) return true;
+          const st = (window.ARENA_FED_LOADS || new Map()).get(f);
+          if (!st || !st.status) return true;
+          const takes = st.status === 'OPEN' && !(st.allows && st.allows.deposit === false);
+          const bal = window.ARENA_WALLET_BALANCE, part = bal && Array.isArray(bal.parts) ? bal.parts.find((x) => String(x.federation).toLowerCase() === f) : null;
+          const holdsSat = part ? Number(part.sats) || 0 : 0, stakeSat = Number(r.stakeMsat || (r.contract && r.contract.stakeMsat) || 0) / 1000;
+          if (takes || holdsSat >= stakeSat) return true;
+          if (r.id) unoffered.set(r.id, { id: r.id, game: r.game, entryCloseMs: Number(r.entryCloseMs), startTimeMs: Number(r.startTimeMs),
+            why: `federation ${f.slice(0, 8)} takes no deposits now and this wallet holds ${holdsSat} sat there` });
+          return false;
+        };
         const kept = window.ARENA_LOBBY_KEPT = window.ARENA_LOBBY_KEPT || { mine: [], theirs: [] };
         const mine = kept.mine = ARENACLIENT.lobbyKeepWhenUnanswered(kept.mine,
-          { ...got, rows: testnet ? got.rows.filter((r) => r.free) : got.rows.filter((r) => r.free || (paysHere(r) && drawable(r))) }, now);
+          { ...got, rows: testnet ? got.rows.filter((r) => r.free) : got.rows.filter((r) => r.free || (paysHere(r) && drawable(r) && enterable(r))) }, now);
         const theirs = kept.theirs = got2 ? ARENACLIENT.lobbyKeepWhenUnanswered(kept.theirs,
-          { ...got2, rows: got2.rows.filter((r) => !r.free && paysHere(r) && drawable(r)) }, now) : [];
+          { ...got2, rows: got2.rows.filter((r) => !r.free && paysHere(r) && drawable(r) && enterable(r)) }, now) : [];
         // the rounds held back, per side as the side last answered (a side not in yet keeps what it last said)
         { const ofSide = (g) => (g.rows || []).map((r) => unoffered.get(r.id)).filter(Boolean);
           if (!got.pending) kept.unMine = testnet ? [] : ofSide(got);
