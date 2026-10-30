@@ -48,6 +48,7 @@ import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { entrySplit, lockEntry } from './entry-locks.mjs';
 import { pickSeatedTableRound } from './seated-table-pick.mjs';
+import { addressBook } from './signer-addresses.mjs';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { worldIsShared } from '../../arena-protocol/src/seed.js';
@@ -241,6 +242,10 @@ try {
     catch (e) { if (!/no certificate/.test(e.message) || Date.now() > Number(c.entryCloseMs) - 150000) throw e; log({ step: 'certificate not yet', why: e.message.slice(0, 120) }); await new Promise((r) => setTimeout(r, 5000)); }
   }
   log({ step: 'seated', signerNodes: seated.signerNodes.length, agreed: seated.agreed });
+  // THE SIGNER NODES OUTSIDE NODES (kanban #804, signer-addresses.mjs): asked for the claim key and handed the entries at their own addresses
+  { const st = (seated.derived && seated.derived.seating) || {};
+    const out = await addressBook([...nodes]).outside([...c.nodes, ...(st.game && st.game.seated) || [], ...(st.settlement && st.settlement.seated) || []]);
+    if (out.length) { nodes.push(...out); log({ step: 'signer nodes outside NODES', addresses: out }); } }
   // NOTHING PAID FOR A ROUND TOO FEW SEATS TOOK
   if (seated.signerNodes.length < receiptsNeeded(c.settlementSlots ?? c.gameVerifySlots)) throw new Error(`seated ${seated.signerNodes.length}, fewer than the round needs: nothing paid`);
   if (env.DRY) { log({ step: 'dry run: nothing paid' }); process.exit(0); }
