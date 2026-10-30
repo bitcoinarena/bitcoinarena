@@ -252,7 +252,7 @@ import { decodeDonationProposal, donationProposalId, donationApprovalDigest, enc
 import { SLASH_PROOF_BYTES, splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES, splitAuditSlashEvidence, auditSlashProofId } from '../../arena-protocol/src/slash.js';
 import { slashOwing, entriesForSlash } from './slash-owing.js';
 import { StakeSecrets, encodeShareAnswer, SEALED_ANSWER_BYTES } from './stake-secret.js';
-import { Dkg } from './dkg.js';
+import { Dkg, runAgainIn } from './dkg.js';
 import { reserveEpochId, decodeContribution } from '../../arena-protocol/src/dkg.js';
 import { reservesEntryExpected, entryFeeBpsForRound, entryPaysReserves } from '../../arena-protocol/src/reserves.js';
 import { reserveFigures, verifyPeerReserveRow, RESERVES_LAST } from './reserve-book.js';
@@ -3078,6 +3078,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   const CLAIM_KEY_EVERY_MS = 1000;
   const CLAIM_KEY_MIN_TRIES = 30;
+  // A COMMITTEE STILL SHORT OF A CONTRIBUTION IS RUN LESS OFTEN WHILE NOTHING NEW ARRIVES (kanban #791, dkg.js runAgainIn): 1 s to 30 s
+  const CLAIM_KEY_MAX_WAIT_MS = Number(process.env.ARENA_CLAIM_KEY_MAX_WAIT_MS || 30000);
   const claimKeyRuns = new Set();
   // A TABLE'S KEY ONLY WHEN SOMEBODY WAITS AT IT (2026-10-13 pick (c): "an empty table must not create a round
   // key"): a round of a game seated per table (known-game.js tableAnchorOf) makes no claim key when it is assigned; the first page that
@@ -3139,7 +3141,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return [...found];
     };
     claimKeyRuns.add(key);
-    let tries = 0;
+    let tries = 0, waitMs = CLAIM_KEY_EVERY_MS, had = -1;
     const attempt = async () => {
       if (shuttingDown) { claimKeyRuns.delete(key); return; }
       let said;
@@ -3156,7 +3158,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         console.error(`[claim-key] ${key.slice(0, 16)}: no key after ${tries} runs - ${said && said.why}`);
         return;
       }
-      const t = setTimeout(attempt, CLAIM_KEY_EVERY_MS);
+      ({ waitMs, had } = runAgainIn(said, { waitMs, had, everyMs: CLAIM_KEY_EVERY_MS, maxMs: CLAIM_KEY_MAX_WAIT_MS }));
+      const t = setTimeout(attempt, waitMs);
       if (t.unref) t.unref();
     };
     attempt();
