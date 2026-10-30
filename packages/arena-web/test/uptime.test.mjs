@@ -45,12 +45,18 @@ test('the node dashboard: four tiles, the 24 h "inclusion reached" or "below inc
   assert.doesNotMatch(renderToStaticMarkup(React.createElement(DashboardPage, { data: base })), /<h2>Uptime<\/h2>/);
 });
 
-test('the owner page: the four figures, where the 24 h matters in plain words, and the warning with when it is reached again', () => {
+test('the owner page: the four figures as tiles (kanban #805), the 24 h\'s inclusion as its status, where it matters folded, and the warning', () => {
   const h = renderToStaticMarkup(React.createElement(UptimePanel, { initial: UP }));
-  for (const t of ['Uptime · 24 h', '99.9 %', 'Uptime · 30 days (since 25 Oct 12:00 UTC)', 'drawn into game and settlement committees only if it was seen online in the 24 hours',
-    'From Bitcoin Arena 2.0', 'The last 24 hours reach the inclusion line.', 'keeps its uptime from 25 Oct 12:00 UTC']) assert.ok(h.includes(t), t);
+  for (const t of ['Last 24 hours', '99.9 %', '30 days', 'since 25 Oct 12:00 UTC', 'Inclusion reached', 'Why the last 24 hours matter',
+    'drawn into game and settlement committees only if it was seen online in the 24 hours', 'From Bitcoin Arena 2.0', 'keeps its uptime from 25 Oct 12:00 UTC']) assert.ok(h.includes(t), t);
+  // four tiles, the figure large with its bar; the 24 h tile green; the explanation inside a <details>, not a wall of text
+  assert.equal((h.match(/class="up-tile[ "]/g) || []).length, 4);
+  assert.match(h, /class="up-tile ok"><span class="up-win">Last 24 hours<\/span><b class="up-pct">99\.9 %<\/b><span class="up-bar" aria-hidden="true"><i style="width:100%"><\/i><\/span><span class="pill on">Inclusion reached<\/span>/);
+  assert.match(h, /<i style="width:95%">/);
+  assert.match(h, /<details class="more up-why"><summary>Why the last 24 hours matter<\/summary><p class="sub">From Bitcoin Arena 2\.0/);
   const d = renderToStaticMarkup(React.createElement(UptimePanel, { initial: DOWN }));
-  assert.match(d, /class="err"><b>Below inclusion<\/b>/);
+  assert.match(d, /class="up-tile bad">.*<span class="pill bad">Below inclusion<\/span>/);
+  assert.match(d, /class="err up-warn"><b>Below inclusion<\/b>/);
   assert.ok(d.includes('has not run 15 minutes without a break in the last 24 hours, from 2.0 that leaves a node out of the draw'));
   assert.ok(d.includes('reached again at 28 Oct 12:10 UTC'));
   // on 2.0 (protocol 22 in force): the rule as it stands now, and the census after

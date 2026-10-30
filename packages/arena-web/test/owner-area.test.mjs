@@ -35,9 +35,9 @@ test('the sidebar marks the sections that need the owner; one section shown; the
   assert.match(h, /<a href="#overview" data-s="overview" class="on">Overview<span class="dot" id="dot-overview"><\/span><\/a>/);
   assert.match(h, /<section id="s-overview"><h2>Overview<\/h2><div id="setup-place"><\/div><div class="card" id="needs"><p class="sub">checking this node…<\/p><\/div>/);
   assert.match(h, /<section id="s-roles" hidden="">/);
-  assert.match(h, /<div class="stat"><span>Custody<\/span><b class="ok">Guardian<\/b>/);
-  assert.match(h, /<div class="stat"><span>Apps<\/span><b>2<\/b><small>nextblock v5, rock-paper-scissors v4<\/small>/);
-  assert.match(h, /<div class="stat"><span>Owner since<\/span><b>2026-10-21<\/b><small>signed in with your 24 words<\/small>/);
+  assert.match(h, /<div class="stat is-ok"><span><i class="si" aria-hidden="true">◈<\/i>Custody<\/span><b class="ok">Guardian<\/b>/);
+  assert.match(h, /<div class="stat is-ok"><span><i class="si" aria-hidden="true">▦<\/i>Apps<\/span><b>2<\/b><small>nextblock v5, rock-paper-scissors v4<\/small>/);
+  assert.match(h, /<div class="stat"><span><i class="si" aria-hidden="true">◷<\/i>Owner since<\/span><b>2026-10-21<\/b><small>signed in with your 24 words<\/small>/);
   const n = area({ needs: [{ level: 'warn', text: 'A new release is out: 2026.1.2.', section: 'release' }, { level: 'bad', text: 'Your bond is too small.', section: 'bond' }] }).html();
   assert.match(n, /data-s="bond">Bond<span class="dot d-bad" id="dot-bond"><\/span>/);
   assert.match(n, /data-s="release">Updates<span class="dot d-warn" id="dot-release"><\/span>/);
@@ -47,9 +47,9 @@ test('the sidebar marks the sections that need the owner; one section shown; the
 
 // GREEN ONLY WHILE ITS GUARDIAN RUNS (the 2026.1.9.11 install test: "Custody: Guardian" in green while this node's fedimintd had ended at its start)
 test('the Overview\'s Custody follows the Services card\'s guardian row: green while it runs, red when it does not, plain until it answered', () => {
-  assert.match(area({ guardianUp: false }).html(), /<span>Custody<\/span><b class="bad">Guardian, not running<\/b><small><a href="#services">See Services<\/a><\/small>/);
-  assert.match(area({ guardianUp: null }).html(), /<span>Custody<\/span><b>Guardian<\/b>/);
-  assert.match(area({ guardian: false, guardianUp: false }).html(), /<span>Custody<\/span><b>No custody<\/b>/);
+  assert.match(area({ guardianUp: false }).html(), /<div class="stat is-bad"><span><i class="si" aria-hidden="true">◈<\/i>Custody<\/span><b class="bad">Guardian, not running<\/b><small><a href="#services">See Services<\/a><\/small>/);
+  assert.match(area({ guardianUp: null }).html(), /<div class="stat"><span><i class="si" aria-hidden="true">◈<\/i>Custody<\/span><b>Guardian<\/b>/);
+  assert.match(area({ guardian: false, guardianUp: false }).html(), /<div class="stat"><span><i class="si" aria-hidden="true">◈<\/i>Custody<\/span><b>No custody<\/b>/);
 });
 
 test('every panel\'s place is there and empty, for the page to draw into', () => {
