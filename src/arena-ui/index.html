@@ -7737,18 +7737,23 @@
         // listed together, the rows name no federation, and the page took federation A's - which takes no deposits (load 1338) and where
         // the wallet holds nothing - while its 2,952 sat sat in B. A paid round is offered only when its federation takes deposits or the
         // wallet already holds its stake there; a federation whose state the page has not read yet is not held back
+        // (measured right after: the page reads federation A as OPEN and taking deposits - the load rule refuses them on mainnet only - so the
+        // rule that holds is the wallet's own federation): where the wallet already holds a game's stake in a federation that offers that
+        // game, that federation's paid tables are offered and the others' held back; a wallet holding no stake anywhere sees them all
+        const fedOf = (r) => { const f = r && r.contract && r.contract.federationId instanceof Uint8Array ? ARENACLIENT.toHex(r.contract.federationId) : null; return f && /[1-9a-f]/.test(f) ? f : null; };
+        const stakeSatOf = (r) => Number(r.stakeMsat || (r.contract && r.contract.stakeMsat) || 0) / 1000;
+        const holdsSatIn = (f) => { const bal = window.ARENA_WALLET_BALANCE, p = bal && Array.isArray(bal.parts) ? bal.parts.find((x) => String(x.federation).toLowerCase() === f) : null; return p ? Number(p.sats) || 0 : 0; };
+        const gameOf = (r) => (r && r.game && (r.game.id || r.game.name)) || '?';
+        const allPaid = [...(got.rows || []), ...((got2 && got2.rows) || [])].filter((r) => r && !r.free && fedOf(r));
+        const walletFedsFor = new Map();   // game -> the federations offering it where the wallet holds its stake
+        for (const r of allPaid) { const f = fedOf(r); if (holdsSatIn(f) >= stakeSatOf(r)) { const g = gameOf(r); (walletFedsFor.get(g) || walletFedsFor.set(g, new Set()).get(g)).add(f); } }
         const enterable = (r) => {
           if (!r || r.free) return true;
-          const f = r.contract && r.contract.federationId instanceof Uint8Array ? ARENACLIENT.toHex(r.contract.federationId) : null;
-          if (!f || !/[1-9a-f]/.test(f)) return true;
-          const st = (window.ARENA_FED_LOADS || new Map()).get(f);
-          if (!st || !st.status) return true;
-          const takes = st.status === 'OPEN' && !(st.allows && st.allows.deposit === false);
-          const bal = window.ARENA_WALLET_BALANCE, part = bal && Array.isArray(bal.parts) ? bal.parts.find((x) => String(x.federation).toLowerCase() === f) : null;
-          const holdsSat = part ? Number(part.sats) || 0 : 0, stakeSat = Number(r.stakeMsat || (r.contract && r.contract.stakeMsat) || 0) / 1000;
-          if (takes || holdsSat >= stakeSat) return true;
+          const f = fedOf(r); if (!f) return true;
+          const mineFeds = walletFedsFor.get(gameOf(r));
+          if (!mineFeds || !mineFeds.size || mineFeds.has(f)) return true;
           if (r.id) unoffered.set(r.id, { id: r.id, game: r.game, entryCloseMs: Number(r.entryCloseMs), startTimeMs: Number(r.startTimeMs),
-            why: `federation ${f.slice(0, 8)} takes no deposits now and this wallet holds ${holdsSat} sat there` });
+            why: `this wallet's stake for it is in federation ${[...mineFeds].map((x) => x.slice(0, 8)).join(', ')}, not ${f.slice(0, 8)}` });
           return false;
         };
         const kept = window.ARENA_LOBBY_KEPT = window.ARENA_LOBBY_KEPT || { mine: [], theirs: [] };
