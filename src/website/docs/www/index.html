@@ -154,7 +154,7 @@
   <a href="#census">The census</a>
   <a href="#duty">Who posts the rounds</a>
   <a href="#run">Run a node</a>
-  <a href="#bitcoinarena">bitcoinarena and arena.conf</a>
+  <a href="#bitcoinarena">The owner page</a>
   <a href="#dashboard">The dashboard</a>
   <a href="#owner">The owner area</a>
   <a href="#donor">Dev clients and donations</a>
@@ -559,37 +559,29 @@ node packages/nextblock/bin/node.mjs 31221 node.db</pre>
 
     </details>
 
-<h3 id="bitcoinarena">Manage your node: <code>bitcoinarena</code></h3>
-  <p>The installer puts one command on your PATH: <code>bitcoinarena</code>. On Linux it goes in <code>~/.local/bin</code>. On macOS it goes in <code>/opt/homebrew/bin</code> or <code>/usr/local/bin</code> when you may write there, else in <code>~/.local/bin</code>. On Windows it is <code>bitcoinarena.cmd</code> in the node's <code>bin</code> folder, which is added to your PATH. Open a new terminal after the install. The command needs no flags: it knows its node.</p>
-  <p>Until release 2026.1.9.8 the command was called <code>arenanode</code> and a node lived in <code>~/.arena-node</code>. The old name still works: it runs <code>bitcoinarena</code>. A node installed before stays in <code>~/.arena-node</code> and is found there; a new one goes in <code>~/.bitcoinarena</code> (<code>%USERPROFILE%\.bitcoinarena</code> on Windows).</p>
-  <table>
-    <tr><th>Command</th><th>What it does</th></tr>
-    <tr><td><code>bitcoinarena status</code></td><td>Every service of the node and what it answers: Bitcoin Core or the chain bridge, Tor, LND, the gateway, the guardian, the node itself, its tunnel, the liquidity provider. For each: running or stopped, its pid, and a probe. The probes ask the node <code>/identity</code>, ask the public address whether it reaches the same node, ask LND whether it is synced to the chain, ask the gateway which federations it serves, and check that the guardian's API port and Tor's SOCKS port answer.</td></tr>
-    <tr><td><code>bitcoinarena start</code> / <code>stop</code> / <code>restart</code></td><td>All services in order: the chain first, then the node and its tunnel last. Stop goes in reverse.</td></tr>
-    <tr><td><code>bitcoinarena restart lnd</code></td><td>One service: <code>node</code>, <code>guardian</code>, <code>lnd</code>, <code>gateway</code>, <code>tor</code>, <code>tunnel</code>, <code>bitcoind</code>, <code>chain-bridge</code>, <code>custody</code>, <code>liquidity</code>, <code>workers</code>. The guardian runs inside the node, so restarting it restarts the node.</td></tr>
-    <tr><td><code>bitcoinarena doctor</code></td><td>Every check, each problem with the command that fixes it. It checks the settings file, every service and its probe, a quick tunnel's current name against the one the node and its gateway announce, free disk space, whether the bond is confirmed, and whether a newer release is out.</td></tr>
-    <tr><td><code>bitcoinarena logs [service]</code></td><td>The last lines of a service's log (the node's by default).</td></tr>
-    <tr><td><code>bitcoinarena config</code></td><td>The settings. Also <code>config get &lt;key&gt;</code>, <code>config set &lt;key&gt; &lt;value&gt;</code> and <code>config unset &lt;key&gt;</code>; restart the node afterwards.</td></tr>
-    <tr><td><code>bitcoinarena open</code></td><td>Opens the owner page.</td></tr>
-  </table>
-  <p>A node on a temporary quick tunnel gets a new tunnel name each time the tunnel restarts. <code>bitcoinarena restart tunnel</code> (or <code>bitcoinarena restart</code>) reads the new name and writes it everywhere the node names it: <code>arena.conf</code> (its public address and guardian endpoint), its state, and the gateway's announced address. It then restarts the services that name it.</p>
-  <p><b>When something goes wrong: <code>--verbose</code> and <code>--debug</code>.</b> Add <code>--verbose</code> (or <code>-v</code>) to any <code>bitcoinarena</code> command, to <code>bitcoinarena-install</code> or to an update, and it tells you each step as it does it: which file it reads, which service, port or address it checks, what answered and how long it took. <code>--debug</code> shows all of that and more: the full error, the status and the start of an answer that failed, and every program it runs with how it ended. These lines go to the terminal's error output, so the normal output stays the same. Passwords, macaroons, cookies, keys, tokens and seed words are never shown. For the node's own services: <code>bitcoinarena config set log_level verbose</code> (or <code>debug</code>), then <code>bitcoinarena restart</code>, and their logs (<code>bitcoinarena logs</code>) say more. <code>bitcoinarena config unset log_level</code> puts it back.</p>
-  <p><b>Settings: <code>arena.conf</code>.</b> Every setting of an installed node is in one file, <code>arena.conf</code> in the node's folder: one <code>key=value</code> per line with <code>#</code> comments, like <code>bitcoin.conf</code>. The installer writes it, and the node's services start from it and nothing else, with no environment variables to set. Its keys:</p>
-  <ul>
-    <li><code>network</code></li>
-    <li><code>port</code> and <code>database</code></li>
-    <li><code>bind</code></li>
-    <li><code>public_url</code></li>
-    <li><code>roles</code></li>
-    <li><code>instance</code> and <code>port_offset</code></li>
-    <li><code>bitcoind_url</code> and <code>bitcoind_cookie</code></li>
-    <li><code>games</code> and <code>plugins_dir</code></li>
-    <li><code>donation_network</code> and <code>close_at_end</code></li>
-    <li>for custody: <code>gateway_port</code>, <code>founding</code>, <code>fedimintd</code>, <code>fedimint_cli</code> and <code>guardian_endpoint</code></li>
-    <li>for a liquidity provider: <code>liquidity_claim_file</code> and <code>liquidity_provider_url</code></li>
-    <li><code>log_level</code>: <code>info</code> (the default), <code>verbose</code> or <code>debug</code>, how much the node's services log</li>
-  </ul>
-  <p>LND and Tor keep their own files: <code>lnd/lnd.conf</code> and <code>tor/torrc</code> in the same folder. A node installed before <code>arena.conf</code> existed kept its settings in <code>node.env</code>. The next <code>bitcoinarena-install --update</code> moves them into <code>arena.conf</code> once and keeps the old file as <code>node.env.migrated</code>.</p>
+<h3 id="bitcoinarena">Manage your node: the owner page</h3>
+  <!-- THE OWNER PAGE, NOT THE COMMAND LINE (the owner 2026-10-30: "Manage your node explains how to use it with the CLI, instead just mention the
+       ownerpage and how to access it") -->
+  <p class="lead">Everything about your node is on its <b>owner page</b>: whether it runs, what it earns, its roles, its bond, its uptime, its services and its updates.</p>
+  <div class="run4">
+    <div class="run4-s"><span class="run4-i" aria-hidden="true">🖥️</span><h4>From the app</h4>
+      <p>Open <b>Bitcoin Arena</b> on the computer your node runs on and click <b>Owner page</b>.</p></div>
+    <div class="run4-s"><span class="run4-i" aria-hidden="true">🌐</span><h4>From any browser</h4>
+      <p><a href="https://testnet.bitcoin-arena.io/owner/">testnet.bitcoin-arena.io/owner</a>, with your node's key: the setup opens it for you at the end. Bookmark it; it finds your node wherever it runs.</p></div>
+    <div class="run4-s"><span class="run4-i" aria-hidden="true">🔑</span><h4>Sign in</h4>
+      <p>With your <b>24 words</b> or your <b>Nostr key</b>, once per browser. Nothing leaves your browser: the page signs each request itself.</p></div>
+  </div>
+  <figure class="shot"><img src="img/run-node-owner.png" alt="The owner page: your node at a glance and its uptime as tiles" loading="lazy" width="1440" height="1100">
+    <figcaption>The owner page's Overview: what needs you, your node at a glance, its uptime.</figcaption></figure>
+  <div class="run-steps">
+    <div><b>Overview</b><span>what needs you now, the node at a glance, its uptime</span></div>
+    <div><b>Roles</b><span>what your node does and earns; switch roles on and off</span></div>
+    <div><b>Bond</b><span>your bond, adding to it, leaving</span></div>
+    <div><b>Services</b><span>every part of the node: running or not, restart, stop</span></div>
+    <div><b>Apps</b><span>the games your node hosts</span></div>
+    <div><b>Updates</b><span>the release it runs and when a new one is out</span></div>
+  </div>
+
   <h3 id="dashboard">The dashboard</h3>
   <p>Open <code>/dashboard</code> on any node (<code>/dashboard.json</code> is the same as data). It shows what the node earned today, this month and this year (counted as earned once a settlement is accepted, otherwise as owed), a 30-day chart of its fees by role, the rounds it checked with each player's outcome and a replay link, its settlements and federations, the Lightning hosts and gateways it runs, and a dev-client card. Everything comes from the node's own store. The testnet page links the dashboards of its nodes.</p>
 
