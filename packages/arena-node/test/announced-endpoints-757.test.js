@@ -95,10 +95,11 @@ test('the seating agent asks a drawn node whose advert went stale at its announc
     asked.length = 0;
     const agent = seatingAgent({ round, roster, sign: (d) => schnorr.sign(d, me.secret), verify, fetcher, nowMs: () => NOW, endpointOf });
     await agent.tick();
-    return { agent, batches: asked.filter((a) => a.startsWith('GET') && a.endsWith('/seating-batch')) };
+    return { agent, batches: asked.filter((a) => a.startsWith('GET') && a.endsWith('/seating-batch')), dialed: [...asked] };
   };
   const before = await run(null);
-  assert.ok(before.batches.includes('GET http://dead-3/seating-batch'), 'without the book: the dead advert is dialed (the bug)');
+  // (the first request to it fails, and the node rests from then on - kanban #791 - so its batch read is not sent in the same tick)
+  assert.ok(before.dialed.some((a) => a.includes('//dead-3/')), 'without the book: the dead advert is dialed (the bug)');
   assert.equal(before.agent.presentsOf(rid).filter((p) => p.role === 'game').length, 8, 'node 3\'s PRESENT is missing');
   const after = await run(book.endpointOf);
   assert.ok(after.batches.includes('GET http://seat-3/seating-batch'), `the announced address is dialed: ${after.batches}`);
