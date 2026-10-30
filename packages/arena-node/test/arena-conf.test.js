@@ -24,7 +24,7 @@ test('arena.conf to the seat: ARENA_<KEY>, the port-named three, port and databa
     roles: 'verify,custody', instance: 'b', some_new_thing: 'x' });
   assert.equal(r.port, 8570); assert.equal(r.database, '/h/node.db');
   assert.deepEqual(r.env, { ARENA_BIND: '127.0.0.1', ARENA_WSS_8570: 'https://a.example', ARENA_GUARDIAN_ENDPOINT_8570: 'wss://a.example/guardian',
-    ARENA_ROLES: 'verify,custody', ARENA_INSTANCE: 'b', ARENA_SOME_NEW_THING: 'x' });
+    ARENA_ROLES: 'verify,custody', ARENA_INSTANCE: 'b', ARENA_SOME_NEW_THING: 'x', ARENA_SEATING: '1' });   // seating: on by default (#792)
   assert.deepEqual(unknownKeys({ port: '1', some_new_thing: 'x', public_url: 'u' }), ['some_new_thing']);
   assert.throws(() => confToRun({ port: 'x' }), /no port/);
 });
@@ -40,7 +40,8 @@ test('an older node.env moves into arena.conf with the same settings (macOS node
   assert.match(text, /^# the node's public https address, as it names itself\npublic_url=https:\/\/x\.trycloudflare\.com$/m);
   const back = confToRun(parseConf(text).values, { home: '/h' });
   const before = Object.fromEntries(env.split('\n').filter((l) => l.startsWith('ARENA_')).map((l) => l.split(/=(.*)/s).slice(0, 2)));
-  assert.deepEqual(back.env, before, 'the seat starts with exactly the settings node.env gave it');
+  // and seating on (kanban #792): an older node.env never named it, and such a node was never seated
+  assert.deepEqual(back.env, { ...before, ARENA_SEATING: '1' }, 'the seat starts with exactly the settings node.env gave it, and seats');
   assert.equal(back.port, 8570);
   assert.ok(formatConf(values, { eol: '\r\n' }).split('\r\n').length > 10, 'Windows line ends');
 });
@@ -78,4 +79,12 @@ test('games= becomes apps= in an installed node\'s arena.conf and in settings mo
   assert.equal(renameKeys(conf), '# written by the installer\n# the game plugins the seat loads\napps=/x/packages/nextblock/plugin/nextblock.js\nport=8471\n  apps = /y.js\n# games=in a comment\n');
   assert.equal(renameKeys(renameKeys(conf)), renameKeys(conf), 'once is enough');
   assert.deepEqual(renameValues({ games: '/a.js', port: '1' }), { apps: '/a.js', port: '1' });
+});
+
+// kanban #792: an installed node seats (§5A.7) unless its file says seating=0 - a file from before this release has no such line
+test('an installed node reserves seats by default: no `seating` line is ARENA_SEATING=1, seating=0 keeps it out', () => {
+  assert.equal(confToRun({ port: '8570' }).env.ARENA_SEATING, '1');
+  assert.equal(confToRun({ port: '8570', seating: '0' }).env.ARENA_SEATING, '0');
+  assert.equal(confToRun({ port: '8570', seating: '1' }).env.ARENA_SEATING, '1');
+  assert.deepEqual(unknownKeys({ seating: '1' }), [], 'a known key');
 });
