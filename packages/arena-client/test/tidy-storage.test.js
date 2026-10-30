@@ -80,7 +80,7 @@ test('a full browser: what the seed can give back goes, the playing wallet, mone
   assert.ok(L.getItem(db(CUR2, FED2) + '2f'), 'the playing wallet stays');
   assert.ok(L.getItem(db(RICH2, FED2) + '2f'), 'a wallet with a known balance stays');
   assert.ok(L.getItem(db(PLAYING, FED2) + '2f'), 'a phrase another tab plays with stays');
-  assert.ok(L.getItem(db(WAITING, FED3) + '2f'), 'a federation with a deposit on its way stays');
+  assert.equal(L.getItem(db(WAITING, FED3) + '2f'), null, 'a deposit on its way holds only the wallet that made it (kanban #803)');
   assert.ok(L.getItem('arena.lockdb.' + 'cc'.repeat(8) + '.' + 'bb'.repeat(8) + '.1'), 'an open round\'s lock wallet stays');
   assert.ok(r.bytes > 0);
 });
@@ -144,10 +144,23 @@ test('under pressure an open round\'s old lock wallet goes; a recent one and one
   const live = lockStoreFor(L, fromHex('c3'.repeat(32)), fromHex('d3'.repeat(32)));
   live.put('k', 'v'.repeat(1000));
   const kept = [];
-  tidyStorage(L, { seeds: [CUR], current: CUR, federations: [FED], now: () => now, pressureChars: 10, archive: (rows) => { kept.push(...rows); for (const [k] of rows) L.removeItem(k); } });
+  tidyStorage(L, { seeds: [CUR], current: CUR, federations: [FED], now: () => now, pressureChars: 10, archive: (rows) => { kept.push(...rows); } });
   assert.equal(L.getItem(db('a') + 'k'), null, 'old and open: out of this storage');
   assert.deepEqual(kept.map(([k]) => k), [db('a') + 'k'], 'and handed over whole, nothing lost');
   assert.notEqual(L.getItem(db('b') + 'k'), null, 'kept within the hour');
   assert.equal(JSON.parse(live.entries()).length, 1, 'a client of this page holds it');
+});
+
+test('a deposit waiting holds the wallet whose keys name it, not every wallet of its federation (kanban #803)', () => {
+  const L = store();
+  const op = 'ab'.repeat(32), HOLDER = '66'.repeat(32), IDLE2 = '77'.repeat(32);
+  L.setItem(dbOf(CUR) + '2f', 'x'.repeat(100));
+  L.setItem(dbOf(HOLDER) + '30' + op, 'x'.repeat(100));
+  L.setItem(dbOf(IDLE2) + '2f', 'x'.repeat(100));
+  L.setItem(`arena.deposit.pending.${FED}`, JSON.stringify([{ operation: op, invoice: 'lntb', msat: '1000000' }]));
+  tidyStorage(L, { seeds: [CUR, HOLDER, IDLE2], current: CUR, federations: [FED], pressureChars: 10 });
+  assert.equal(count(L, IDLE2), 0, 'an idle wallet of that federation goes');
+  assert.equal(count(L, HOLDER), 1, 'the wallet that made the deposit stays');
+  assert.equal(count(L, CUR), 1, 'the playing wallet stays');
 });
 
