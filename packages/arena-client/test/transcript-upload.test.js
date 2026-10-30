@@ -24,20 +24,29 @@ test('safe once two nodes hold the same whole transcript; one, a short one or a 
     if (!a) throw new Error('unreachable');
     return a;
   };
-  const two = await secureTranscript({ roundId: RID, entryId: EID, nodes: ['http://a', 'http://b', 'http://c'], finalTick: 100, mirror: 'http://mirror',
+  const two = await secureTranscript({ need: 2, roundId: RID, entryId: EID, nodes: ['http://a', 'http://b', 'http://c'], finalTick: 100, mirror: 'http://mirror',
     fetcher: fetcherFor({ 'http://a': answer(100), 'http://b': answer(120), 'http://c': answer(40) }) });
   assert.equal(two.safe, true, two.why); assert.deepEqual(two.holders, ['http://a', 'http://b']); assert.equal(two.mirrored, true);
   assert.equal(posted.length, 1); assert.match(posted[0].url, /^http:\/\/mirror\/transcript\?round=(01)+&entry=(02)+$/);
-  const one = await secureTranscript({ roundId: RID, entryId: EID, nodes: ['http://a', 'http://b'], finalTick: 100,
+  const one = await secureTranscript({ need: 2, roundId: RID, entryId: EID, nodes: ['http://a', 'http://b'], finalTick: 100,
     fetcher: fetcherFor({ 'http://a': answer(100), 'http://b': answer(99) }) });
   assert.equal(one.safe, false); assert.match(one.why, /1 of the 2 committee nodes/); assert.match(one.why, /holds 99 of 100 ticks/);
-  const split = await secureTranscript({ roundId: RID, entryId: EID, nodes: ['http://a', 'http://b'], finalTick: 100,
+  const split = await secureTranscript({ need: 2, roundId: RID, entryId: EID, nodes: ['http://a', 'http://b'], finalTick: 100,
     fetcher: fetcherFor({ 'http://a': answer(100), 'http://b': answer(100, 'ee'.repeat(32)) }) });
   assert.equal(split.safe, false, 'two different transcripts are not one held twice');
   // bytes that do not hash to the agreed transcript are never mirrored
   posted.length = 0;
-  const forged = await secureTranscript({ roundId: RID, entryId: EID, nodes: ['http://a', 'http://b'], finalTick: 1, mirror: 'http://mirror',
+  const forged = await secureTranscript({ need: 2, roundId: RID, entryId: EID, nodes: ['http://a', 'http://b'], finalTick: 1, mirror: 'http://mirror',
     fetcher: fetcherFor({ 'http://a': answer(5, HASH, encodeTranscript({ ...T, entryId: b32(9) })), 'http://b': answer(5, HASH, encodeTranscript({ ...T, entryId: b32(9) })) }) });
   assert.equal(forged.safe, true); assert.equal(forged.mirrored, false); assert.equal(posted.length, 0); assert.match(forged.why, /no node's bytes hash/);
   console.log('  ' + two.why + '\n  ' + one.why);
 });
+
+test('a round needs as many holders as settle it, and says the number (the owner 2026-10-30: "0 of 2 macht gar keinen sinn")', async () => {
+  const fetcher = async () => new Response(new Uint8Array(1), { status: 200, headers: { 'x-ticks': '100', 'x-transcript-hash': 'ab'.repeat(32) } });
+  const four = await secureTranscript({ roundId: RID, entryId: EID, nodes: ['http://a', 'http://b', 'http://c', 'http://d'], finalTick: 100, fetcher });
+  assert.equal(four.safe, false); assert.equal(four.need, 5); assert.equal(four.holders.length, 4);
+  const five = await secureTranscript({ roundId: RID, entryId: EID, nodes: ['http://a', 'http://b', 'http://c', 'http://d', 'http://e'], finalTick: 100, fetcher });
+  assert.equal(five.safe, true);
+});
+

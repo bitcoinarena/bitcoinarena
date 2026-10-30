@@ -10,14 +10,16 @@
 // hash the nodes agree on. Until two agree the page holds the victory screen and says why.
 import { decodeTranscript, transcriptHash } from '../../arena-protocol/src/transcript.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { SETTLEMENT_THRESHOLD } from '../../arena-protocol/src/payout.js';
 
-export const NODES_HOLDING = 2;
+// AS MANY AS SETTLE THE ROUND (the owner 2026-10-30: "0 of 2 macht gar keinen sinn"): the two was the two-node test network's; a run fewer than five signer nodes hold cannot settle
+export const NODES_HOLDING = SETTLEMENT_THRESHOLD;
 
 /**
  * `nodes` the committee's bases; `finalTick` the run's last tick (the client's own count); `mirror` an optional base. Answers
  * { safe, holders: [base], hash, ticks, mirrored, why }.
  */
-export async function secureTranscript({ roundId, entryId, nodes, finalTick, mirror = null, fetcher = fetch } = {}) {
+export async function secureTranscript({ roundId, entryId, nodes, finalTick, mirror = null, fetcher = fetch, need = NODES_HOLDING } = {}) {
   const q = `round=${toHex(roundId)}&entry=${toHex(entryId)}`;
   const said = [];
   const held = await Promise.all([...new Set(nodes || [])].map(async (base) => {
@@ -36,9 +38,9 @@ export async function secureTranscript({ roundId, entryId, nodes, finalTick, mir
     groups.get(h.hash).push(h);
   }
   const best = [...groups.values()].sort((a, b) => b.length - a.length)[0] || [];
-  if (best.length < NODES_HOLDING)
-    return { safe: false, holders: best.map((h) => h.base), hash: best[0] ? best[0].hash : null, ticks: best[0] ? best[0].ticks : null, mirrored: false,
-      why: `${best.length} of the ${NODES_HOLDING} committee nodes the run needs hold its whole transcript (${said.join('; ') || 'no answer'})` };
+  if (best.length < need)
+    return { safe: false, need, holders: best.map((h) => h.base), hash: best[0] ? best[0].hash : null, ticks: best[0] ? best[0].ticks : null, mirrored: false,
+      why: `${best.length} of the ${need} committee nodes the run needs hold its whole transcript (${said.join('; ') || 'no answer'})` };
   let mirrored = false, mirrorWhy = null;
   if (mirror) {
     const copy = best.find((h) => { try { return toHex(transcriptHash(decodeTranscript(h.bytes))) === h.hash; } catch { return false; } });
@@ -50,6 +52,6 @@ export async function secureTranscript({ roundId, entryId, nodes, finalTick, mir
       } catch (e) { mirrorWhy = e.message; }
     }
   }
-  return { safe: true, holders: best.map((h) => h.base), hash: best[0].hash, ticks: best[0].ticks, mirrored,
+  return { safe: true, need, holders: best.map((h) => h.base), hash: best[0].hash, ticks: best[0].ticks, mirrored,
     why: `${best.length} committee nodes hold the whole transcript${mirror ? (mirrored ? ', and the mirror took it' : ` (mirror: ${mirrorWhy})`) : ''}` };
 }
