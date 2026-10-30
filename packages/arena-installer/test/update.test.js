@@ -468,8 +468,8 @@ test('the new release\'s apps are fetched first: one that cannot be fetched leav
   const calls = [], asked = [];
   const sh = async (cmd, args) => { calls.push([cmd, ...args].join(' ')); return { ok: true, out: '', err: '' }; };
   const r = await updateNode({ home, newRelease: v2, port: 1, env, sh, nowMs: () => 0, platform: 'linux',
-    fetchApps: async (o) => { asked.push(o.release); return { ok: false, why: 'plugin/x.js answered 404 (from github.com/a tester/arena-app-up-or-down)' }; } });
-  assert.deepEqual(r, { ok: false, why: 'the new release\'s apps: plugin/x.js answered 404 (from github.com/a tester/arena-app-up-or-down)' });
+    fetchApps: async (o) => { asked.push(o.release); return { ok: false, why: 'plugin/x.js answered 404 (from github.com/bitcoin-arena/arena-app-up-or-down)' }; } });
+  assert.deepEqual(r, { ok: false, why: 'the new release\'s apps: plugin/x.js answered 404 (from github.com/bitcoin-arena/arena-app-up-or-down)' });
   assert.deepEqual(asked, [v2], 'the new release\'s apps, into the new release');
   assert.ok(!calls.some((c) => / stop /.test(c)), 'nothing stopped');
 });
