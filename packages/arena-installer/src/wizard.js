@@ -24,7 +24,7 @@ import { newSeed, confirmPositions, checkConfirm, ownerKeyOf, nostrPubkeyHex, CO
 import { nextStep, doneOf, seatConf, ROLES, guardianSetupOf, ownCoreOf } from './state.js';
 import { appsIn, appsView, chosenApps, hostedGameIdsOf } from './apps.js';
 import { installService, installProgram } from './service.js';
-import { control, nodeOf } from './node-services.js';
+import { control, followTunnelNow, nodeOf } from './node-services.js';
 import { newerVersion } from '../../arena-node/src/release-latest.js';
 import { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, freeCorePorts, NEEDS } from './bitcoind.js';
 import { createHash } from 'node:crypto';
@@ -146,7 +146,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   coreKit = { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, freeCorePorts, installProgram },
   lndKit = { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, installProgram, lndFunds, lndOpenChannel, lndChannels },
   gwKit = { findGatewayd, configureGateway, testGateway, joinFederation, installProgram }, launch = writeLaunchers, nowMs = () => Date.now(), onDone = () => {}, log = () => {},
-  restartSeat = (home) => control('restart', 'node', { home }), restartTunnel = (home) => control('restart', 'tunnel', { home }), fundFrom = null, trace: given = QUIET }) {
+  restartSeat = (home) => control('restart', 'node', { home }), restartTunnel = (home) => control('restart', 'tunnel', { home }), followTunnel = (home) => followTunnelNow({ home }), fundFrom = null, trace: given = QUIET }) {
   // EACH STEP AND STAGE SAID AT --verbose, WITH ITS TIME; WHAT EACH STEP WAS HANDED (its field names) AND FULL ERRORS AT --debug (kanban #693)
   const trace = given.tag('wizard');
   let token = b64u(32);
@@ -392,6 +392,10 @@ const serviceRun = async (b) => {
         // they started with - the quick tunnel's name, and with it the custody node's guardian and founding settings, came only after the start -
         // so they ran no guardian and could never be drawn into a founding): the seat alone restarted, never its tunnel (a new name)
         if (seatNeedsRestart(before, after)) { stage('restart'); const rs = await restartSeat(state.home); log(`[service] the seat restarted on its new settings: ${rs && rs.ok === false ? rs.why : 'ok'}`); }
+        // AND THE GATEWAY (kanban #818, a friend's node 2026-10-30: "der temporary tunnel, wenn der sich ändert beim Rerun vom installer, aber das
+        // script nicht anpasst, läuft der auch ins Leere"): a rerun gets a new name, the settings took it above, and its service and the address
+        // the node publishes for it kept the old one
+        if (s.gateway) { const f = await followTunnel(state.home).catch((e) => ({ restarted: [], why: e.message })); log(`[service] the gateway follows the tunnel's name: ${(f.restarted || []).join(', ') || f.why || 'nothing to change'}`); }
       }
     }
     // workers.dev: the Worker forwards to the quick tunnel's first name, and its keeper follows every new one

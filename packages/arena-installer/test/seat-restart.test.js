@@ -22,3 +22,11 @@ test('the wizard restarts the seat alone after the quick tunnel\'s name is writt
   assert.match(block, /state\.writeSecret\('arena\.conf', after\);[\s\S]*if \(seatNeedsRestart\(before, after\)\) \{ (?:stage\('restart'\); )?const rs = await restartSeat\(state\.home\)/);
   assert.match(src, /restartSeat = \(home\) => control\('restart', 'node', \{ home \}\)/, 'the seat (node), not its tunnel');
 });
+
+test('an installer rerun with a new quick tunnel name reaches the gateway (kanban #818)', () => {
+  const src = readFileSync(new URL('../src/wizard.js', import.meta.url), 'utf8');
+  const at = src.indexOf("if (s.reach.mode === 'quick') {");
+  const block = src.slice(at, src.indexOf('// workers.dev', at));
+  assert.match(block, /state\.writeSecret\('arena\.conf', after\);[\s\S]*if \(s\.gateway\) \{ const f = await followTunnel\(state\.home\)/, 'after the settings took the new name');
+  assert.match(src, /followTunnel = \(home\) => followTunnelNow\(\{ home \}\)/);
+});

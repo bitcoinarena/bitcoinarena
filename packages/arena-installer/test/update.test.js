@@ -310,6 +310,40 @@ test('a node on a quick tunnel: the tunnel starts first, its new name goes into 
   assert.equal(up.identity, first.identity);
 });
 
+test('a gateway left on the old folder layout moves with the update, its data path too; one that still exists stays (kanban #818, a friend\'s node)', async (t) => {
+  const { LAUNCHD_LABEL } = await import('../src/service.js');
+  const root = mkdtempSync(join(tmpdir(), 'arena-update-layout-'));
+  const env = { HOME: join(root, 'user') };
+  const agents = join(env.HOME, 'Library', 'LaunchAgents'); mkdirSync(agents, { recursive: true });
+  const home = join(root, 'bitcoinarena'); mkdirSync(home, { recursive: true });
+  const port = await freePort();
+  const sys = fakeLaunchd();
+  t.after(() => { sys.stopAll(); rmSync(root, { recursive: true, force: true }); });
+  const v1 = releaseFrom(join(root, 'releases/arena-node-2026.1.8-darwin-arm64')), v2 = releaseFrom(join(root, 'releases/bitcoin-arena-node-2026.1.9-darwin-arm64'));
+  writeFileSync(join(home, 'node.env'), 'ARENA_BIND=127.0.0.1\n');
+  writeFileSync(join(home, 'state.json'), JSON.stringify({ network: 'testnet4', roles: ['verify'], done: { service: 1 } }));
+  const seat = join(agents, `${LAUNCHD_LABEL}.plist`);
+  writeFileSync(seat, legacyPlist({ node: process.execPath, release: v1, home, port }));
+  // written under the old layout: a home and a release folder that are gone
+  const oldHome = join(root, 'arena-node'), gone = join(oldHome, 'releases/arena-node-2026.1.2-darwin-arm64');
+  const gateway = join(agents, `${LAUNCHD_LABEL}.gateway.plist`);
+  writeFileSync(gateway, `<plist><dict><key>Label</key><string>${LAUNCHD_LABEL}.gateway</string><key>ProgramArguments</key><array><string>${join(gone, 'runtime/custody/gatewayd')}</string><string>--data-dir=${join(oldHome, 'gateway/data')}</string></array></dict></plist>\n`);
+  // a program of another node of this machine, still there
+  const keptHome = join(root, 'other'), kept = join(keptHome, 'releases/arena-node-2026.1.2-darwin-arm64'); mkdirSync(kept, { recursive: true });
+  const other = join(agents, `${LAUNCHD_LABEL}.tor.plist`);
+  writeFileSync(other, `<plist><dict><key>Label</key><string>${LAUNCHD_LABEL}.tor</string><key>ProgramArguments</key><array><string>${join(kept, 'runtime/tor')}</string></array></dict></plist>\n`);
+  await sys.sh('launchctl', ['bootstrap', 'gui/501', seat]);
+  assert.equal((await waitHealthy({ port, waitMs: 60000, everyMs: 300 })).ok, true);
+
+  const up = await updateNode({ home, newRelease: v2, port, env, sh: sys.sh, nowMs: () => 0, platform: 'darwin' });
+  assert.equal(up.ok, true, up.why);
+  const gw = readFileSync(gateway, 'utf8');
+  assert.ok(gw.includes(join(v2, 'runtime/custody/gatewayd')), `the gateway starts the new release's program: ${gw}`);
+  assert.ok(gw.includes(`--data-dir=${join(home, 'gateway/data')}`), `its data follows the node's home: ${gw}`);
+  assert.ok(!gw.includes(oldHome), gw);
+  assert.ok(readFileSync(other, 'utf8').includes(join(kept, 'runtime/tor')), 'a path that still exists is not touched');
+});
+
 test('a rollback puts the backup back even while Windows still holds a file: busy ones are tried again, one that never frees is named, the rest go back (rc.14 -> rc.20 in the Windows VM threw and started nothing)', async () => {
   const backup = { dir: 'B', files: ['node.db', 'node.db-wal', 'node.db-shm', 'node.env'] };
   const busy = (code) => Object.assign(new Error(`${code}: resource busy or locked`), { code });
