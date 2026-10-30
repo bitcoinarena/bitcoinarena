@@ -88,3 +88,25 @@ test('a closed, rewritten or deleted round\'s contract is let go; the open list 
   assert.equal(round.contractOf(ids[2]), null);
   assert.ok(c1);
 });
+
+// kanban #791: an RPS grid closes a round every few seconds; each close made the next ask read every open row again
+test('a round this store closed is taken out of the kept open list, a new one appended, and the open rows are not all read again', () => {
+  const { round, ids } = held();
+  const listed = round.openHeld();
+  const asked = [];
+  const prepare = round.db.prepare.bind(round.db);
+  round.db.prepare = (sql) => { asked.push(sql); return prepare(sql); };
+  assert.equal(round.close(ids[0]), true);
+  const c = contractAt(1790600000000 + 3 * 600000);
+  prepare('INSERT INTO rounds (round_id, contract, state, opened_ms) VALUES (?, ?, 0, ?)').run(roundId(c), encodeRoundContract(c), 3);
+  round.openList.askedMs = 0;
+  const now = round.openHeld();
+  assert.deepEqual(now.map((id) => round.hexOf(id)), [ids[1], ids[2], new Uint8Array(roundId(c))].map((id) => round.hexOf(id)));
+  assert.equal(now[0], listed[1], 'the kept ids are the same objects');
+  assert.ok(!asked.some((q) => /WHERE state = \? ORDER BY opened_ms/.test(q)), `no full read of the open rows: ${asked.join(' | ')}`);
+  // and a round closed behind the store's back still reads the whole list (the count disagrees)
+  prepare('UPDATE rounds SET state = 1 WHERE round_id = ?').run(ids[1]);
+  round.openList.askedMs = 0;
+  assert.deepEqual(round.openHeld().map((id) => round.hexOf(id)), [ids[2], new Uint8Array(roundId(c))].map((id) => round.hexOf(id)));
+  assert.ok(asked.some((q) => /WHERE state = \? ORDER BY opened_ms/.test(q)), 'the full read');
+});
