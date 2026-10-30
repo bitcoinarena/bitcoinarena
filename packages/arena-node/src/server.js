@@ -76,6 +76,7 @@ import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX }
 import { WebSocketServer } from 'ws';
 import { createP2pTunnels, carryP2p, carryApi, P2P_TUNNEL_PATHS, GUARDIAN_API_RELAY_PATH } from './p2p-tunnel.js';
 import { createAddressBook, announceOwn, pullAnnouncements } from './address-book.js';
+import { reserveKeyCache } from './reserve-key-cache.js';
 import { ownServices } from './own-services.js';
 import { serviceSettings } from './service-settings.js';
 import { controlsOf, installerIdOf, INSIDE } from './service-control.js';
@@ -1528,15 +1529,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const RESERVE_DKG_MS = Number(process.env.ARENA_RESERVE_DKG_MS || 120000);
   // A FEDERATION'S RESERVE KEY, FOR AN ENTRY TO PAY: this seat's own when it guards the federation; else
   // the key its guardian seats serve at GET /reserves, taken only when at least the threshold of them name the same one. Kept.
-  const reserveKeys = new Map();
+  // KEPT WITH ITS EPOCH (kanban #803, reserve-key-cache.js): a key kept for an earlier set of guardian seats is not the federation's key now
+  const reserveKeys = reserveKeyCache();
+  const reserveEpochOf = (fedHex, g = reserveGuardians()[fedHex]) => (g ? toHex(reserveEpochId(fromHex(fedHex), sortedKeys(g.members))) : null);
   const reserveKeyFor = async (fedHex) => {
-    if (reserveKeys.has(fedHex)) return reserveKeys.get(fedHex);
     const g = reserveGuardians()[fedHex];
+    const epoch = reserveEpochOf(fedHex, g);
+    const kept = reserveKeys.getFor(fedHex, epoch);
+    if (kept) return kept;
     if (!g) return null;
     const nodes = sortedKeys(g.members); const needed = reserveNeeded(nodes.length);
     if (needed === null) return null;
     const own = reserveDkgOf(fedHex).signerNodeFor(nodes);
-    if (own.ok) { reserveKeys.set(fedHex, own.pool.groupPublicKey); return own.pool.groupPublicKey; }
+    if (own.ok) return reserveKeys.setFor(fedHex, epoch, own.pool.groupPublicKey);
     const said = new Map();
     await Promise.all(g.peers.map(async (u) => { try {
       const r = await (await fetch(`${u}/reserves`, { signal: AbortSignal.timeout(8000) })).json();
@@ -1545,10 +1550,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     } catch { /* a seat that does not answer names nothing */ } }));
     const best = [...said.entries()].sort((a, b) => b[1] - a[1])[0];
     if (!best || best[1] < needed) return null;
-    const key = fromHex(best[0]); reserveKeys.set(fedHex, key); return key;
+    return reserveKeys.setFor(fedHex, epoch, fromHex(best[0]));
   };
   const reserveRound = async () => {
-    for (const [fedHex, g] of Object.entries(reserveGuardians())) {
+    // a kept key whose federation's guardian seats are now others is let go (kanban #803), so no reader of the cache sees it
+    const guards = reserveGuardians();
+    for (const fed of reserveKeys.dropMoved((f) => reserveEpochOf(f, guards[f]))) console.log(`[reserves] ${fed.slice(0, 8)}: its guardian seats changed - the kept reserve key is read anew`);
+    for (const [fedHex, g] of Object.entries(guards)) {
       if (!g.members.some((k) => toHex(k) === toHex(round.pubkey)) || reserveNeeded(g.members.length) === null) continue;
       const nodes = sortedKeys(g.members);
       if (reserveDkgOf(fedHex).signerNodeFor(nodes).ok) continue;
