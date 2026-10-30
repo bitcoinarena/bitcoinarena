@@ -58,6 +58,11 @@ fetch() { # url sha file
 git -C "$ROOT" archive "$REF" LICENSE apps.lock.json apps.files.json packages/arena-installer packages/arena-node packages/arena-protocol packages/arena-client/src packages/arena-web/dist \
   packages/arena-sdk packages/node_modules/arena-sdk packages/arena-donor/src/manifest-sign.js packages/arena-attestor/package.json packages/arena-attestor/src \
   | tar -x -C "$STAGE"
+# THE TWO PIN FILES READ AS A NODE READS THEM (kanban #806: v2026.1.9.18 shipped Next Block at 2d75dadb in apps.lock.json and at 5c19be53 in
+# apps.files.json, and every fresh install stopped at "the release's app pins do not read"): no release is built from pins that disagree
+PIN_MOD="$STAGE/packages/arena-node/src/app-fetch.js" PIN_AT="$STAGE" node --input-type=module \
+  -e "const { appPins } = await import(process.env.PIN_MOD); appPins(process.env.PIN_AT);" \
+  || { echo "apps.lock.json and apps.files.json disagree: run node tools/fetch-apps.mjs && node tools/pin-apps.mjs" >&2; exit 1; }
 for p in arena-node arena-protocol arena-installer arena-sdk; do
   rm -rf "$STAGE/packages/$p/test"
   [ -L "$STAGE/packages/$p/node_modules" ] && rm "$STAGE/packages/$p/node_modules"
