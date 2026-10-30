@@ -163,3 +163,11 @@ test('the funds note is said once per page load, whatever the amount does after 
   assert.match(page, /x\.onclick = \(\) => \{ if \(window\.ARENA_WALLET_STOPPED\)[^\n]*else window\.ARENA_FUNDS_NOTE_SAID = true/);
 });
 
+test('only a lost write says the wallet stopped; idle sockets make room below the browser limit (kanban #803)', () => {
+  const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  assert.match(page, /\/blwp-lock-client panicked\/\.test\(m\) && \/quota\|Unrecoverable error\/i\.test\(m\)/);
+  const made = page.indexOf('makeSocketRoom();'), built = page.indexOf('super(r.url)', made);
+  assert.ok(made > 0 && built > made, 'room is made before a socket is opened');
+  assert.match(page, /openSockets\.delete\(w\); w\.close\(\)/);
+});
+

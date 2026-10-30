@@ -1753,12 +1753,27 @@
         return { url: u.toString(), key };
       } catch { return { url, key: null }; }
     }
+    // A TAB HAS 255 SOCKETS (kanban #803, the owner's console 2026-10-30 15:47Z: "WebSocket connection ... failed: Insufficient resources", 50 kept rounds
+    // each with its own wallet client, none ever closed, and every next wallet stopped reaching its guardians): past SOCKET_ROOM the sockets quiet
+    // longest are closed. A client opens its guardian's socket again at its next request, so only what is idle pays.
+    const SOCKET_ROOM = 150, SOCKET_QUIET_MS = 30000, openSockets = new Set();
+    const makeSocketRoom = () => {
+      if (openSockets.size < SOCKET_ROOM) return;
+      const quiet = [...openSockets].filter((w) => w.readyState === 1 && Date.now() - w.arenaUsedAt > SOCKET_QUIET_MS).sort((a, b) => a.arenaUsedAt - b.arenaUsedAt);
+      for (const w of quiet.slice(0, openSockets.size - SOCKET_ROOM + 1)) { openSockets.delete(w); w.close(); }
+    };
+    window.ARENA_SOCKETS_OPEN = () => openSockets.size;
     class RoutedWebSocket extends Real {
       constructor(url, protocols) {
+        makeSocketRoom();
         const r = routed(url);
         // a NUL in a socket address is the lock client's memory mixed up (see ARENA_LOCK_WASM): said, so it shows in the logs
         if (/\u0000|%00/.test(String(url))) console.error('[arena] a socket address with NUL bytes - the lock client\'s memory is mixed up; reload the page: ' + String(url).replace(/\u0000/g, '\\0'));
         if (protocols === undefined) super(r.url); else super(r.url, protocols);
+        this.arenaUsedAt = Date.now();
+        openSockets.add(this);
+        this.addEventListener('message', () => { this.arenaUsedAt = Date.now(); });
+        this.addEventListener('close', () => openSockets.delete(this));
         const log = window.ARENA_LOG_SOCKET || (() => {});
         log('new', r.url);
         this.addEventListener('open', () => log('open', r.url));
@@ -1769,6 +1784,7 @@
         this.addEventListener('open', () => { opened = true; });
         this.addEventListener('error', () => { if (!opened) viaAlt.set(r.key, !viaAlt.get(r.key)); });
       }
+      send(data) { this.arenaUsedAt = Date.now(); return super.send(data); }
     }
     window.WebSocket = RoutedWebSocket;
     // A URL OVER ITS SECOND ROUTE, for what is neither a socket nor a fetch - an <img> (measured 2026-10-13 in WebKit
@@ -7066,6 +7082,8 @@
       window.ARENA_MERGE_STATE = window.ARENA_MERGE_STATE || {};
       const mergeSaid = (fedHex, state, why = '') => { window.ARENA_MERGE_STATE[String(fedHex).slice(0, 16)] = { state, why, atMs: Date.now() };
         if (state === 'stuck') console.log('[arena] merge in federation ' + String(fedHex).slice(0, 8) + ' stuck: ' + why); };
+      // A WALLET THAT DID NOT OPEN IS NOT OPENED AGAIN THIS LOAD (kanban #803: its open goes on behind the 30 s, so each new try added its sockets to the last)
+      const mergeNoOpen = new Set();
       function combineIn(main, fedHex, invite, { legacy }) {
         fedHex = String(fedHex).toLowerCase();
         if (combiningBy.has(fedHex)) return combiningBy.get(fedHex);
@@ -7129,6 +7147,8 @@
           const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
           for (const x of others) {
             const from = x.hex.slice(0, 8) + (x.ancestor ? ' (BLWP)' : '');
+            const noOpenKey = fedHex + '.' + x.hex + (x.ancestor ? '.blwp' : '');
+            if (mergeNoOpen.has(noOpenKey)) continue;
             const take = async () => {
               mergeSaid(fedHex, 'merging', 'opening wallet ' + from);
               const other = await Promise.race([ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fedHex), invite, seed: ARENACLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L, ancestor: x.ancestor }),
@@ -7196,7 +7216,8 @@
                   else mergeSaid(fedHex, 'stuck', 'wallet ' + from + ' is open in another tab of this browser (' + r.why + ') - close that tab and its money merges here');
                 } else if (held) mergeSaid(fedHex, 'stuck', 'wallet ' + from + ' is open in another tab of this browser - close that tab and its money merges here');
               } else await take();
-            } catch (e) { console.log('[arena] wallet ' + from + ' not combined in federation ' + fedHex.slice(0, 8) + ': ' + (e && e.message ? e.message : e));
+            } catch (e) { if (/did not open in 30 s/.test(String(e && e.message))) mergeNoOpen.add(noOpenKey);
+              console.log('[arena] wallet ' + from + ' not combined in federation ' + fedHex.slice(0, 8) + ': ' + (e && e.message ? e.message : e));
               mergeSaid(fedHex, 'stuck', 'wallet ' + from + ': ' + (e && e.message ? e.message : e)); }
           }
           if (window.ARENA_READ_BALANCE) { await window.ARENA_READ_BALANCE(); if (typeof paintMoney === 'function') paintMoney(); }
@@ -7539,13 +7560,15 @@
       // browser holds notes in whose record says DRAINING or CRITICAL is emptied into its successor, else the lowest-load OPEN
       // one (safeFederation). Once per federation per page at a time; a status read, never a timer (W4: no interval spends).
       const evacuating = new Set();
+      // A FEDERATION ALREADY FOUND EMPTY IS NOT OPENED AGAIN AT EVERY STATUS READ (kanban #803: "moved, 0 msat in 0 chunk(s)" each minute, another client each time)
+      const evacuatedEmpty = new Set();
       window.ARENA_EVACUATE = async (all) => {
         if (!ARENACLIENT.evacuatePlayerWallet || !ARENACLIENT.safeFederation || !all) return;
         const seed = walletSeed(); if (!seed) return;
         const statuses = [...all.values()];
         for (const fid of ARENACLIENT.ledgerFederations(vault())) {
           const st = all.get(fid);
-          if (!st || !['DRAINING', 'CRITICAL'].includes(st.status) || evacuating.has(fid)) continue;
+          if (!st || !['DRAINING', 'CRITICAL'].includes(st.status) || evacuating.has(fid) || evacuatedEmpty.has(fid)) continue;
           const target = ARENACLIENT.safeFederation({ ...st, federation: fid }, statuses,
             { known: (f) => ARENACLIENT.federationIsKnown(f) || ARENACLIENT.federationConfirmed(window.ARENA_BROWSER_STORE(), f) });
           if (!target) { console.warn('[arena] federation ' + fid.slice(0, 16) + ' is ' + st.status + ' and no safe federation is OPEN: the notes stay, tried again at the next status read'); continue; }
@@ -7556,6 +7579,7 @@
               gateways: window.ARENA_LEDGER_GATEWAYS || [],
               onState: (m) => console.log(`[arena] moving out of federation ${fid.slice(0, 8)} (${st.status}) into ${String(target.federation).slice(0, 8)}: ${m.state}`
                 + (m.leftMsat !== undefined ? `, ${Math.floor(Number(m.leftMsat) / 1000)} sat to go` : '') + (m.why ? ` (${m.why})` : '')) });
+            if (String(r.moved) === '0' && Number(r.chunks) === 0) evacuatedEmpty.add(fid);
             window.ARENA_EVACUATED = { from: fid, to: String(target.federation), state: r.state, moved: String(r.moved), chunks: r.chunks };
             console.log(`[arena] out of federation ${fid.slice(0, 16)}: ${r.state}, ${r.moved} msat in ${r.chunks} chunk(s) to ${String(target.federation).slice(0, 16)}`);
             if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES();
@@ -7939,7 +7963,9 @@
       // said once per page load (the owner 2026-10-30: "die sollte nur einmal kommen nach einem Load"; closing used to hold only for the exact amount, so a
       // balance that moved brought it back), and gone by itself once the federation's key stands.
       if (!window.ARENA_PANIC_WATCH) { window.ARENA_PANIC_WATCH = true; const said = console.error.bind(console);
-        console.error = (...a) => { if (/blwp-lock-client panicked/.test(String(a[0]))) window.ARENA_WALLET_STOPPED = /quota/i.test(String(a[0])) ? 'Your browser\'s storage is full and the wallet stopped. Your money stays in the federation. Reload this page; close other tabs of this site first.' : 'The wallet stopped. Your money stays in the federation. Reload this page.'; said(...a); }; }
+        // ONLY A WRITE THAT WAS LOST STOPS IT (kanban #803, the owner's console 2026-10-30 15:47Z: "RefCell already borrowed" ten times at load, then 90000 msat
+        // collected and the balance up - one background task had died, the wallet went on, and this note said it stopped, reload after reload)
+        console.error = (...a) => { const m = String(a[0]); if (/blwp-lock-client panicked/.test(m) && /quota|Unrecoverable error/i.test(m)) window.ARENA_WALLET_STOPPED = /quota/i.test(m) ? 'Your browser\'s storage is full and the wallet stopped. Your money stays in the federation. Reload this page; close other tabs of this site first.' : 'The wallet stopped. Your money stays in the federation. Reload this page.'; said(...a); }; }
       if (!window.ARENA_FUNDS_NOTE_TIMER) window.ARENA_FUNDS_NOTE_TIMER = setInterval(() => {
         const k = window.ARENA_RESERVES_READ, bal = window.ARENA_WALLET_BALANCE;
         // THE WALLET CODE STOPPED (a panic: its write refused for room, or worse): nothing it was asked answers any more, so an order would hang unsaid
