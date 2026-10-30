@@ -9,6 +9,29 @@
 // and a kept copy is drawn by the very same code (`replay`): one read, so a kept copy cannot draw differently from a live one.
 export const ASK_MS = 10000, AT_ONCE = 6;
 
+/**
+ * A FEDERATION TEMPORARILY UNAVAILABLE (kanban #819, the owner 2026-10-30: "muss die stuck federation auch richtig anzeigen dass sie temporär nicht
+ * verfügbar ist, und sagen wann sie wieder funktioniert (block und zeit)"): OPEN on its record, but no seat names a reserve key for it, so no paid
+ * entry can pay in. `reserves`: GET /reserves; `expected`: daily.json's testnet.reserveExpected, { federation: block }. A Map of federation ->
+ * { block, atMs } (either null when the site names no block, or the tip is unknown). 10 minutes a block is an estimate.
+ */
+export function unavailableFederations(reserves, { expected = {}, tip = 0, nowMs = Date.now(), blockMs = 600000 } = {}) {
+  const out = new Map();
+  for (const f of (reserves && reserves.federations) || []) {
+    if (!f || /^0[23][0-9a-f]{64}$/.test(String(f.key || f.reserveKey || ''))) continue;
+    const block = Number(expected[f.federationId]) || null;
+    out.set(f.federationId, { block, atMs: block && tip ? nowMs + Math.max(0, block - tip) * blockMs : null });
+  }
+  return out;
+}
+/** The line under the table. */
+export function unavailableLine(no, fid, u, nowMs = Date.now()) {
+  const name = `Federation ${no || '?'} (${String(fid).slice(0, 8)})`;
+  const hours = u.atMs ? Math.max(1, Math.round((u.atMs - nowMs) / 3600000)) : 0;
+  const when = u.block ? ` Expected back from block ${u.block.toLocaleString('en-US')}${u.atMs ? `, around ${new Date(u.atMs).toISOString().slice(0, 16).replace('T', ' ')} UTC (in about ${hours} hour${hours === 1 ? '' : 's'})` : ''}.` : ' No return block is known yet.';
+  return `${name} is temporarily unavailable: no reserve key yet, so paid rounds there are paused.${when}`;
+}
+
 /** One answer from a node: { ok, status, why, ms, body } - never throws; a node that does not answer in ASK_MS is { ok: false }. */
 export async function live(base, path, fetchImpl = fetch) {
   const t0 = Date.now();
@@ -556,6 +579,8 @@ export function makeHealth({ H, $, window = {} }) {
   // the words for none; drawn by React's Table
   const cut = (h, n = 8) => (h ? String(h).slice(0, n) : '-');
   const fedCell = (fid) => { const n = fedNoOf(fid); return n ? [`Federation ${n}`, { t: cut(fid, 8), c: 'muted mono' }] : { t: cut(fid, 12), c: 'mono' }; };
+  let UNAVAILABLE = new Map(), READ_AT = 0;
+  const ATMS = () => READ_AT || Date.now();
   const drawTable = (id, head, rows, empty, foot) => H.draw($(id), 'table', { head, rows, empty, foot });
   // FEDERATIONS BY NUMBER (kanban #557, 2026-10-20: "give the federation a running number starting with 1, and in the node list say where
   // it belongs, federation 1,2,3 or more"): 1, 2, 3 ... by the oldest record first, then by id - the same number on every card of the page
@@ -645,6 +670,8 @@ export function makeHealth({ H, $, window = {} }) {
         Object.assign(n, { bond: b, dash: d, liq: lc, gw: gc, found: fd, uptime: up });
       }));
       [feds, reserves, funding] = await Promise.all([fedsP, reservesP, fundingP]);
+      READ_AT = how.atMs || Date.now();
+      UNAVAILABLE = unavailableFederations(reserves && reserves.body, { expected: (daily.testnet && daily.testnet.reserveExpected) || {}, tip: Number(tip) || 0, nowMs: READ_AT });
       paintNetwork({ tip, nodes, seats, roles, feds, reserves, funding });
       paintNodes(nodes, tip);
       const fedList = feds ? feds.body.federations : [];
@@ -732,6 +759,7 @@ export function makeHealth({ H, $, window = {} }) {
   }
 
   function paintFeds(list) {
+    const off = new Map([...UNAVAILABLE].filter(([fid]) => list.some((f) => f.federation === fid && String(f.status || '') !== 'CLOSED')));
     const rows = list.map((f) => {
       const load = f.exposureCapSats ? Number(f.load || 0) : null;
       // the dot is the worse of its status and its load (2026-10-20: "Why is Federation 1 green when the load is 433 %?"): an OPEN
@@ -739,11 +767,13 @@ export function makeHealth({ H, $, window = {} }) {
       const st = String(f.status || ''), byStatus = st === 'OPEN' || st === 'ACTIVE' ? 'ok' : st ? 'warn' : 'bad';
       const byLoad = load == null ? 'ok' : load >= 1 ? 'bad' : load >= 0.7 ? 'warn' : 'ok';
       const RANK = { ok: 0, warn: 1, bad: 2 }, c = RANK[byLoad] > RANK[byStatus] ? byLoad : byStatus;
-      return { key: f.federation, dot: c, cells: [fedCell(f.federation), st === 'OPEN' && load != null && load >= 1 ? [st, '·', { t: 'FULL', c: 'bad' }] : (st || '-'), sat(f.height),
+      const flags = [...(off.has(f.federation) ? [{ t: 'TEMPORARILY UNAVAILABLE', c: 'warn' }] : []), ...(st === 'OPEN' && load != null && load >= 1 ? [{ t: 'FULL', c: 'bad' }] : [])];
+      return { key: f.federation, dot: off.has(f.federation) && c === 'ok' ? 'warn' : c, cells: [fedCell(f.federation), flags.length ? [st, ...flags.flatMap((x) => ['·', x])] : (st || '-'), sat(f.height),
         Array.isArray(f.signers) ? f.signers.length : f.signers, sat(f.reserveSats), sat(f.exposureCapSats),
         load == null ? '-' : { t: `${(load * 100).toFixed(0)} %`, c: load >= 1 ? 'bad' : load >= 0.7 ? 'warn' : 'ok' }] };
     });
-    drawTable('feds', ['Federation', 'Status', 'Record height', 'Signers', 'Reserve (sat)', 'Cap (sat)', 'Load'], rows, 'no federation record read');
+    drawTable('feds', ['Federation', 'Status', 'Record height', 'Signers', 'Reserve (sat)', 'Cap (sat)', 'Load'], rows, 'no federation record read',
+      off.size ? [...off].map(([fid, u]) => unavailableLine(fedNoOf(fid), fid, u, ATMS())).join(' ') : undefined);
   }
 
   // WAITING FOR A FOUNDING (kanban #585, 2026-10-22: "shows the 10 nodes waiting for a founding event so we know in the future if
