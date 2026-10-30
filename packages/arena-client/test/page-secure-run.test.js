@@ -30,11 +30,11 @@ test('a DELIVERED run: asked until two nodes hold all of it, then "safe"', async
 });
 
 test('not delivered: not gated; still unsafe after its tries: the line stays and says why', async () => {
-  const p = page([{ safe: false, holders: [], why: '0 of the 2 committee nodes the run needs hold its whole transcript' }]);
+  const p = page([{ safe: false, need: 5, holders: [], why: '0 of the 5 committee nodes the run needs hold its whole transcript' }]);
   assert.equal(await p.window.ARENA_SECURE_RUN('FAILED', run, { everyMs: 0 }), null);
   assert.equal(p.asked.length, 0);
   const got = await p.window.ARENA_SECURE_RUN('DELIVERED', run, { tries: 2, everyMs: 0 });
   assert.equal(got.safe, false);
-  assert.match(p.els.get('arena-securing-host').drawn.say, /not yet held by two signer nodes - keep this tab open \(0 of the 2/);
+  assert.match(p.els.get('arena-securing-host').drawn.say, /not yet held by 5 signer nodes - keep this tab open \(0 of the 5/);
   assert.equal(p.els.get('arena-securing-host').drawn.tone, 'bad');
 });
