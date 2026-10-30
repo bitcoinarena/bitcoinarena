@@ -47,6 +47,7 @@ import { settlementOf, forfeitOf } from '../../arena-client/src/page-lock.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { entrySplit, lockEntry } from './entry-locks.mjs';
+import { pickSeatedTableRound } from './seated-table-pick.mjs';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { worldIsShared } from '../../arena-protocol/src/seed.js';
@@ -212,19 +213,17 @@ try {
     const rows = list.filter((r) => r.game && r.game.id === GAME && Number(r.entryCloseMs) - now > ahead
       && (!env.FEDERATION || String(r.federation || '').toLowerCase().startsWith(String(env.FEDERATION).toLowerCase()))).sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs) || (a.id < b.id ? -1 : 1));
     if (!rows.length) throw new Error(`no RPS round held whose entry closes more than ${ahead / 1000} s ahead`);
-    roundHex = rows[0].id;
-    // FEDERATION=<hex prefix>: only a table of the federation this payer's wallet pays into - both grids list together
-    // PROTOCOL=<n> (kanban #543, 2026-10-21): only a round of that protocol version - a grid published at one protocol beside the
-    // day's rounds of the same federation at another
-    if (env.FEDERATION || env.PROTOCOL) {
-      roundHex = null;
-      for (const r of rows.slice(0, 40)) {
-        const k = decodeRoundContract(new Uint8Array(await (await fetch(`${nodes[0]}/round?id=${r.id}`)).arrayBuffer()));
-        if (env.FEDERATION && !toHex(k.federationId).startsWith(String(env.FEDERATION).toLowerCase())) continue;
-        if (env.PROTOCOL && Number(k.protocolVersion) !== Number(env.PROTOCOL)) continue;
-        roundHex = r.id; break;
-      }
-      if (!roundHex) throw new Error(`no RPS round of federation ${env.FEDERATION || 'any'}${env.PROTOCOL ? ` at protocol ${env.PROTOCOL}` : ''} among the next 40`);
+    // ONLY A ROUND OF A SEATED TABLE (kanban #803, seated-table-pick.mjs); FEDERATION=<hex prefix>: only a table of the federation this
+    // payer's wallet pays into - both grids list together; PROTOCOL=<n> (kanban #543, 2026-10-21): only a round of that protocol version
+    {
+      const got = await pickSeatedTableRound(rows.map((r) => r.id), {
+        contractOf: async (id) => new Uint8Array(await (await fetch(`${nodes[0]}/round?id=${id}`)).arrayBuffer()),
+        // a seat not drawn for the table holds no certificate of it (404): every seat is asked, any one holding it is enough
+        seated: async (anchor, role) => (await Promise.all(nodes.map((n) => fetch(`${n}/seating?round=${anchor}&role=${role}`, { signal: AbortSignal.timeout(10000) }).then((r) => r.ok, () => false)))).some(Boolean),
+        accept: (k) => (!env.FEDERATION || toHex(k.federationId).startsWith(String(env.FEDERATION).toLowerCase())) && (!env.PROTOCOL || Number(k.protocolVersion) === Number(env.PROTOCOL)) });
+      for (const p of got.passed) log({ step: 'round passed', id: p.id.slice(0, 16), why: p.why });
+      roundHex = got.id;
+      if (!roundHex) throw new Error(`no RPS round of a seated table${env.FEDERATION ? ` of federation ${env.FEDERATION}` : ''}${env.PROTOCOL ? ` at protocol ${env.PROTOCOL}` : ''} among the next 40`);
     }
   }
   const c = decodeRoundContract(new Uint8Array(await (await fetch(`${nodes[0]}/round?id=${roundHex}`)).arrayBuffer()));
