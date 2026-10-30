@@ -178,9 +178,13 @@ select:focus{outline:2px solid var(--st);outline-offset:1px}
 .si{font-style:normal;font-size:13px;width:24px;height:24px;border-radius:7px;display:inline-grid;place-items:center;background:var(--bg);color:var(--gv);letter-spacing:0}
 /* THE TILES GO DOWN TO ONE COLUMN ON A NARROW PHONE (kanban #805, checked at 320 / 390 / 1440 px): no track wider than its screen */
 .stats{grid-template-columns:repeat(auto-fill,minmax(min(200px,100%),1fr))}.up-tiles{grid-template-columns:repeat(auto-fill,minmax(min(150px,100%),1fr))}
+/* THE PAGE SAYS WHAT IT WAITS FOR (kanban #809, the owner 2026-10-30 after 2026.1.9.20: "it shows loading for a really really long time. There
+   should be a progress bar"): a bar, the step and the seconds instead of one word */
+.boot{display:flex;flex-direction:column;gap:6px;max-width:420px}.boot-bar{display:block;height:6px;border-radius:999px;background:var(--line);overflow:hidden}
+.boot-bar i{display:block;height:100%;background:var(--st);border-radius:inherit;transition:width .4s}
 </style></head><body>
 <h1>Bitcoin Arena · Node Owner <span class="ver" id="ver"></span></h1>
-<div class="sub" id="who">loading…</div>
+<div class="sub" id="who"><div class="boot" id="boot"><span class="boot-bar"><i id="boot-i" style="width:5%"></i></span><span id="boot-t">Finding your node…</span></div></div>
 <div id="view"></div>
 <p class="sub" id="public-line"><a id="public" href="#">← Public dashboard</a></p>
 <script type="module">
@@ -222,6 +226,16 @@ if (ON_SITE) {
   keepNode();
   addEventListener('hashchange', keepNode);   // before the area's own listener: it reads the section from the # kept here
 }
+const BOOT_T0 = Date.now();
+let bootStep = 'Finding your node';
+/** The loading bar: how far, and what the page waits for now, with the seconds since it opened. */
+function boot(pct, step) {
+  if (step) bootStep = step;
+  const i = document.getElementById('boot-i'), t = document.getElementById('boot-t');
+  if (i && pct != null) i.style.width = pct + '%';
+  if (t) t.textContent = `${bootStep}… ${Math.round((Date.now() - BOOT_T0) / 1000)} s`;
+}
+const bootTick = setInterval(() => { if (!document.getElementById('boot')) clearInterval(bootTick); else boot(null); }, 1000);
 const HASH = new URLSearchParams(location.hash.slice(1));
 const NODE_KEY = ON_SITE ? String(HASH.get('node') || '').trim().toLowerCase() : null;
 async function siteBase() {
@@ -229,12 +243,30 @@ async function siteBase() {
   if (!/^[0-9a-f]{64}$/.test(NODE_KEY || '')) return null;
   let seats = ['https://tn4.bitcoin-arena.io/guardian-1', 'https://tn4.bitcoin-arena.io/guardian-2', 'https://tn4.bitcoin-arena.io/guardian-3'];
   try { const d = await (await fetch('/daily.json', { cache: 'no-store' })).json(); const t = (d && d.testnet) || d || {}; if (Array.isArray(t.node) && t.node.length) seats = t.node; } catch {}
-  const found = await Promise.any(seats.map(async (seat) => {
-    const r = await fetch(seat.replace(/\/+$/, '') + '/address-announcements', { cache: 'no-store', signal: AbortSignal.timeout(15000) });
-    const e = ((await r.json()).announcements || []).find((x) => x && x.node === NODE_KEY && /^https?:\/\//.test(x.endpoint || ''));
-    if (!e) throw new Error('not named here');
-    return e;
-  })).catch(() => null);
+  // THE NEWEST ADDRESS THAT ANSWERS (kanban #809, measured 2026-10-30 ~11:2xZ: the owner waited 2-3 minutes on "loading…" - test host
+  // seats 1 and 2, outside the census the node announces to, still named its quick tunnel of 10:14Z, gone since its restart; they answered
+  // first, and the page asked that dead address until the browser gave up). Every seat is asked at once; from the first that names the
+  // node, the others get 3 s more; the addresses are tried newest first, each for 4 s, and the first that answers is the node's
+  const named = [];
+  await new Promise((done) => {
+    let left = seats.length, grace = null;
+    const settle = () => { if (--left <= 0) done(); };
+    setTimeout(done, 15000);
+    for (const seat of seats) {
+      fetch(seat.replace(/\/+$/, '') + '/address-announcements', { cache: 'no-store', signal: AbortSignal.timeout(15000) }).then((r) => r.json()).then((j) => {
+        const e = ((j && j.announcements) || []).find((x) => x && x.node === NODE_KEY && /^https?:\/\//.test(x.endpoint || ''));
+        if (e) { named.push(e); if (!grace) grace = setTimeout(done, 3000); }
+      }).catch(() => {}).finally(settle);
+    }
+  });
+  const tried = new Set();
+  for (const e of named.sort((a, b) => Number(b.atMs) - Number(a.atMs))) {
+    const u = e.endpoint.replace(/\/+$/, '');
+    if (tried.has(u)) continue; tried.add(u);
+    boot(15 + tried.size * 5, 'Reaching your node at ' + u.replace(/^https?:\/\//, '').slice(0, 40));
+    try { const r = await fetch(u + '/owner/version', { cache: 'no-store', signal: AbortSignal.timeout(4000) }); if (r.ok) return u; } catch { /* the next, older one */ }
+  }
+  const found = named.length ? named[0] : null;
   if (found) return found.endpoint.replace(/\/+$/, '');
   // ON THIS MACHINE (kanban #687): a node no seat names - no tunnel, not announced yet - is asked at the loopback address the app or
   // the node's own page named (local=); start() still checks that the node answering is this key
@@ -278,6 +310,7 @@ if (ON_SITE && !BASE) {
   throw new Error('no node address');
 }
 const at = (p) => BASE + p;
+boot(40, 'Loading the owner screens');
 document.getElementById('public').href = at('/Dashboard');
 // THE RELEASE THIS NODE RUNS, BESIDE THE TITLE (kanban #674: "include version in node dashboard and owner dashboard") - asked of the
 // node, so the page on the Arena site shows it too; and in the footer, the release alone (kanban #753)
@@ -291,6 +324,7 @@ const C = await import(at('/owner/client.js'));
 // bundle is loaded once, here, and every ported panel is drawn by it alone
 await import(at('/owner/react.js'));
 const O = window.ArenaOwner;
+boot(70, 'Asking your node');
 const STORE = ON_SITE ? 'arena-owner-seed:node:' + NODE_KEY : 'arena-owner-seed:' + BASE;   // per node address (on the site: per node key), in this browser only
 const $ = (id) => document.getElementById(id);
 const readSeed = () => { try { const h = localStorage.getItem(STORE); return h && /^[0-9a-f]{64}$/.test(h) ? C.fromHex(h) : null; } catch { return null; } };
@@ -609,6 +643,7 @@ async function start() {
   $('public-line').hidden = false;
   try { state = await (await fetch(at('/owner'), { cache: 'no-store' })).json(); }
   catch (e) { $('who').textContent = 'This node did not answer: ' + e.message; return; }
+  boot(90, 'Signing in');
   showNode(state.node);
   // THE OWNER'S LOGIN IS ON THE ARENA SITE (kanban #687, the owner's playtest 2026-10-26 on 1.9.7: "the owner page still points to
   // http://127.0.0.1:8770/dashboard/owner which doesn't have my secret"): the installer hands the owner key to the site's owner page,
