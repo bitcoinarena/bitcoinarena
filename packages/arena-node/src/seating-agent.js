@@ -43,6 +43,8 @@ export const BATCH_ROUNDS = 64;
 export const NO_SEATING_REST_MS = Number(process.env.ARENA_NO_SEATING_REST_MS || 600000);
 /** A node that did not answer at all rests this long, doubled on each failure after, up to NO_SEATING_REST_MS (kanban #791). */
 export const UNREACHABLE_REST_MS = Number(process.env.ARENA_UNREACHABLE_REST_MS || 30000);
+/** How long after its start a table's first round without a certificate is still read, and joined late (kanban #803): its table plays all day. */
+export const TABLE_LATE_MS = BigInt(process.env.ARENA_TABLE_LATE_MS || 24 * 3600000);
 const joinBytes = (list) => { const out = new Uint8Array(list.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of list) { out.set(x, at); at += x.length; } return out; };
 
 export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, nowMs = () => Date.now(), log = () => {}, windowOf = () => null,
@@ -169,12 +171,14 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       lastRow = r.rowid;
       let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
       if (typeof c.startTimeMs !== 'bigint') continue;
-      // long started: nothing left to seat, never held (at a start that was every round in the store, 53,658
-      // contracts on seat 1, of which 5,950 had not started 10 min ago)
-      if (c.startTimeMs + 600000n < BigInt(nowMs())) continue;
       // A TABLE IS SEATED ONCE, BY ITS FIRST ROUND (pick (c), known-game.js tableAnchorOf): its later rounds exchange no
       // PRESENT and sign no seating - the roster seats them with the first round's certificate
       const anchor = tableAnchorOf(c);
+      // long started: nothing left to seat, never held (at a start that was every round in the store, 53,658
+      // contracts on seat 1, of which 5,950 had not started 10 min ago) - but a table's first round is read all day while no certificate
+      // of it stands (kanban #803, below)
+      if (c.startTimeMs + (anchor && anchor.first ? TABLE_LATE_MS : 600000n) < BigInt(nowMs())) continue;
+      if (anchor && anchor.first && c.startTimeMs + 600000n < BigInt(nowMs()) && SEATING_ROLES.every((role) => db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(new Uint8Array(r.round_id), role))) continue;
       if (anchor && !anchor.first) {
         // A TABLE WHOSE FIRST ROUND THIS SEAT NEVER WROTE (kanban #604): its certificate is asked of the table's seats
         const a = toHex(anchor.anchorId);
@@ -195,7 +199,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
         }
         continue;
       }
-      starts.set(toHex(new Uint8Array(r.round_id)), { rid: new Uint8Array(r.round_id), start: c.startTimeMs, close: seatingCloseMs(c, windowOf(c)), contract: c });
+      starts.set(toHex(new Uint8Array(r.round_id)), { rid: new Uint8Array(r.round_id), start: c.startTimeMs, close: seatingCloseMs(c, windowOf(c)), contract: c,
+        tableFirst: !!(anchor && anchor.first), askedMs: -Infinity });
     }
   };
 
@@ -334,20 +339,34 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (busy) return;
     busy = true;
     const t0 = Date.now(); let fellBack = 0, peers = 0, rounds = 0;
+    // WHERE A LONG TICK WENT (kanban #803: test host seat 7 ran ticks of 60-99 s with every node answering): each phase's time, logged with it
+    const took = { unwritten: 0, presents: 0, reads: 0, single: 0, 'take+certify': 0 };
+    let mark = Date.now(); const lap = (k) => { const n = Date.now(); took[k] += n - mark; mark = n; };
     try {
       index();
-      await askUnwritten();
+      await askUnwritten(); lap('unwritten');
       const now = BigInt(nowMs());
       const work = [];
       for (const [ridHex, t] of starts) {
-        if (t.start + 600000n < now) { starts.delete(ridHex); continue; }   // long started: nothing left to seat
+        const long = t.start + 600000n < now;
+        // long started: nothing left to seat - but a table's first round is kept while it lacks a certificate (kanban #803)
+        if (long && (!t.tableFirst || t.start + TABLE_LATE_MS < now || SEATING_ROLES.every((role) => db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(t.rid, role)))) { starts.delete(ridHex); continue; }
         if (now < t.close - PRESENT_WINDOW_MS) continue;
+        // and read once a minute from then on, not every tick
+        if (long) { if (nowMs() - t.askedMs < 60000) continue; t.askedMs = nowMs(); }
         // A ROUND ALREADY STARTED IS ONLY READ, for the certificate this node lacks (kanban #576, measured 2026-10-23 12:0xZ: seats
         // restarted after the 12:00 window started never asked for its certificates - a started round was skipped - so each
         // counted itself unseated and refused the claim key, "this node is not assigned to that round", and no order of that
         // window went in). It sends no PRESENT and signs no seating late: it keeps what the seated already certified (keepCert
         // checks it), until the round leaves the index 10 min after its start.
         const late = now > t.start;
+        // A TABLE'S FIRST ROUND THAT STARTED WITHOUT ITS CERTIFICATE (kanban #803, measured 2026-10-30 07:5xZ on RPS table 24d4c900 of
+        // 00:00Z, federation B): 5 present of the drawn, and four of the five seated - second-host seats 2, 3, 5, 7 - signed the seating of
+        // those 5; the fifth, test host seat 7 (fefa1945), held all five PRESENTs but was inside one seating tick of 364 s ("5 of 18
+        // node(s) answered no batch") from before the close until after the start. A started round is only read for its certificate,
+        // so it never signed, the four kept waiting for it, and the table - every round of the day - stayed unseated. Such a table is
+        // joined late: this node signs, once, a seating another seated member signed (joinLate below), and the certificate is built
+        const joins = late && t.tableFirst;
         for (const role of SEATING_ROLES) {
           // a certificate stands here: a second one reaches this node by POST /seating, and is then the proof of equivocation
           if (certs.has(`${ridHex}:${role}`) && db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(t.rid, role)) continue;
@@ -355,7 +374,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
           if (!c.ok) continue;
           const drawnKeys = c.drawn.map((e) => e.pubkey);
           work.push({ t, ridHex, role, c, drawnKeys, amDrawn: drawnKeys.some((k) => toHex(k) === me), others: endpointsOf(c.drawn, round.pubkey, endpointOf),
-            slots: slotsForRole(t.contract, role), closed: now >= t.close, late });
+            slots: slotsForRole(t.contract, role), closed: now >= t.close, late, joins });
         }
       }
       if (!work.length) return;
@@ -373,6 +392,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
         if (await post(b, '/presents', joinBytes(list))) return;
         for (const p of list) if (!rests(b)) await post(b, '/present', p);   // a node without the batch door
       }));
+      lap('presents');
       // 2. THIS NODE'S SEATING SIGNATURE for each closed round it is seated in, before the reads
       for (const w of work) if (w.closed && !w.late) signMine(w);
       // 3. ONE READ PER NODE, for every round of this tick it is drawn for
@@ -393,14 +413,16 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
         }
         answers.set(b, got);
       }));
+      lap('reads');
       peers = answers.size; fellBack = [...answers.values()].filter((a) => a === null).length; rounds = new Set(work.map((w) => w.ridHex)).size;
       // 4. WHAT EACH SAID: their PRESENTs, certificates and seating signatures; then this node's certificate where it can
       // a node that answered no batch is asked the old way - every round of it at once, not one after another
       const single = new Map();
       await Promise.all(work.flatMap((w) => (holds(w) ? [] : w.others.filter((b) => answers.get(b) === null && !rests(b)))
         .map(async (b) => { single.set(`${b}|${w.ridHex}|${w.role}`, await askOne(b, w)); })));
+      lap('single');
       for (const w of work) {
-        const said = [];
+        const said = []; const sigs = [];
         for (const b of w.others) {
           const batch = answers.get(b);
           const a = batch ? batch[w.ridHex] : single.get(`${b}|${w.ridHex}|${w.role}`);
@@ -412,18 +434,21 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
           if (cert) keepCert(w.t.rid, w.role, fromHex(cert));
           const sig = a.sig && a.sig[w.role];
           if (sig && w.closed && !w.late) keepSig(w, sig);
+          else if (sig && w.joins) sigs.push(sig);
         }
+        if (w.joins && w.closed) { joinLate(w, sigs); for (const s of sigs) keepSig(w, s); await certify(w); }
         if (w.closed && !w.late) {
           // A SEATING THAT CAN NEVER STAND (kanban #738): the PRESENTs the others held at the close are taken late, here only
           if (canNeverStand(w)) for (const a of said) for (const x of a.presents || []) if (x.role === w.role) takePresent(fromHex(x.present), { afterClose: true });
           signMine(w); resign(w); await certify(w);
         }
       }
+      lap('take+certify');
     } catch (e) { log(`[seating] ${e.message}`); }
     finally {
       busy = false;
-      const took = Date.now() - t0;
-      if (took > 5000) log(`[seating] a tick of ${rounds} round(s) took ${took} ms; ${fellBack} of ${peers} node(s) answered no batch`);
+      const all = Date.now() - t0;
+      if (all > 5000) log(`[seating] a tick of ${rounds} round(s) took ${all} ms; ${fellBack} of ${peers} node(s) answered no batch; ${Object.entries(took).map(([k, v]) => `${k} ${v}`).join(', ')} ms`);
     }
   }
 
@@ -569,6 +594,33 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     }
     if (!signSeatingOf(w, seated, held, justification)) return;
     log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: re-signed the seating of ${list.length} (member ${member.slice(0, 8)} signed another; the seating of ${signed.seated.length} can never stand)`);
+  }
+
+  /**
+   * A TABLE'S FIRST ROUND JOINED LATE (kanban #803): this node, not yet signed and with no certificate here, signs the seating another
+   * seated member signed - one that seats this node, all of whose members' PRESENTs this node holds - and no other. It adds no seating
+   * of its own, and it is this node's one signature, so the rule of the ordered seatings (#738) holds as before.
+   */
+  function joinLate(w, got) {
+    if (leftNode(me) || certOf(w.t.rid, w.role) || mySignature(w.t.rid, w.role)) return;
+    const held = new Set(db.prepare('SELECT node FROM seat_presents WHERE round_id = ? AND role = ?').all(w.t.rid, w.role).map((r) => r.node));
+    const r = rankOf(w);
+    const by = new Map();     // seating id -> { list, n }
+    for (const g of got) {
+      if (!g || !g.signature || !Array.isArray(g.seated) || !g.node) continue;
+      const node = String(g.node).toLowerCase();
+      let list; try { list = g.seated.map((k) => String(k).toLowerCase()); } catch { continue; }
+      if (node === me || !list.includes(node) || !list.includes(me) || list.length > w.slots) continue;
+      if (!list.every((k, i) => held.has(k) && r.has(k) && (i === 0 || r.get(list[i - 1]) < r.get(k)))) continue;
+      const id = toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: list.map(fromHex) }));
+      let good = false; try { good = verify(fromHex(g.signature), fromHex(id), fromHex(node)); } catch { good = false; }
+      if (!good) continue;
+      const e = by.get(id) || by.set(id, { list, n: 0 }).get(id); e.n++;
+    }
+    const best = [...by.values()].sort((a, b) => b.n - a.n)[0];
+    if (!best) return;
+    signSeatingOf(w, best.list.map(fromHex), [...held]);
+    log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: joined late - signed the seating of ${best.list.length} that ${best.n} seated member(s) signed (table's first round, started without its certificate)`);
   }
 
   /** Another seated node's signature, kept when it verifies: over the seating this node signed, or (kanban #738) over another one. */
