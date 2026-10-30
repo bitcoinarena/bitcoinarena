@@ -48,6 +48,17 @@ export function keylessFederations(answers, { minAnswers = 3 } = {}) {
 }
 
 /**
+ * THE FEDERATIONS THE PAGE DOES NOT PAY INTO (the owner 2026-10-30: "Wenn die Federation nicht aktiv ist, soll er in der UI auch nicht versuchen mit der zu
+ * bezahlen"): `statuses`, the Map of ARENA_FED_LOADS, federation -> { status, allows }. One whose record this page could not verify, or that takes no
+ * entries. A federation not read yet is not named, and when no federation at all stands OPEN the read failed, not the network: none is named.
+ */
+export function inactiveFederations(statuses) {
+  const list = statuses && typeof statuses.entries === 'function' ? [...statuses.entries()] : [];
+  if (!list.some(([, st]) => st && st.status === 'OPEN')) return new Set();
+  return new Set(list.filter(([, st]) => st && (st.status === 'unverified' || (st.allows && st.allows.join === false))).map(([f]) => String(f).toLowerCase()));
+}
+
+/**
  * WHY THIS WALLET CANNOT PLAY WITH ITS BALANCE (the owner 2026-10-30: "If it's unavailable to play because the funds are locked it should say so in a
  * message"): the part of the wallet held in federations no entry can pay into. `parts`: the wallet's [{ federation, sats }]. Null when none is.
  */
@@ -59,13 +70,12 @@ export function keylessFundsLine({ parts, keyless, expected = {}, tip = 0, block
   if (!stuck.length) return null;
   const sats = stuck.reduce((n, p) => n + Number(p.sats), 0);
   const where = [...new Set(stuck.map((p) => String(p.federation).slice(0, 8)))].join(', ');
-  const these = new Set(stuck.map((p) => String(p.federation).slice(0, 8))).size > 1 ? 'Those federations have' : 'That federation has';
   // WHEN IT CAN BE PLAYED (the owner 2026-10-30: "Sage, ab wann es funktionieren wird in der Meldung"): the block the site names for the federation
   const at = Math.max(0, ...stuck.map((p) => Number(expected[fullOf(p.federation)]) || 0));
   const left = at && tip ? at - tip : 0;
   const hours = left > 0 ? Math.max(1, Math.round((left * blockMinutes) / 60)) : 0;
   const when = at ? ` Expected to work from block ${at.toLocaleString('en-US')}${hours ? `, in about ${hours} hour${hours === 1 ? '' : 's'}` : ''}.` : '';
-  return { sats, text: `${sats.toLocaleString('en-US')} sat of your balance can't be played right now. It stays in your wallet, in federation ${where}. ${these} no reserve key yet, so paid rounds there are paused.${when} To play now, deposit into another federation.` };
+  return { sats, text: `${sats.toLocaleString('en-US')} sat of your balance can't be played right now. It stays in your wallet, in federation ${where}. Paid rounds there are paused.${when} To play now, deposit into another federation.` };
 }
 
 /** GET /reserves of up to `limit` nodes, read as keylessFederations reads them. Never throws. */

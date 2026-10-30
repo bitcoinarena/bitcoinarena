@@ -7783,12 +7783,13 @@
         // game, whatever the wallet holds; the seats' /reserves are read in the background each minute, so they come back by themselves
         // once its key stands. Not read yet, or too few answers: nothing is held back.
         const keyless = (window.ARENA_RESERVES_READ && window.ARENA_RESERVES_READ.keyless) || new Set();
+        const inactive = ARENACLIENT.inactiveFederations ? ARENACLIENT.inactiveFederations(window.ARENA_FED_LOADS) : new Set();
         const walletFedsFor = new Map();   // game -> the federations offering it where the wallet holds its stake
-        for (const r of allPaid) { const f = fedOf(r); if (!keyless.has(f) && holdsSatIn(f) >= stakeSatOf(r)) { const g = gameOf(r); (walletFedsFor.get(g) || walletFedsFor.set(g, new Set()).get(g)).add(f); } }
+        for (const r of allPaid) { const f = fedOf(r); if (!keyless.has(f) && !inactive.has(f) && holdsSatIn(f) >= stakeSatOf(r)) { const g = gameOf(r); (walletFedsFor.get(g) || walletFedsFor.set(g, new Set()).get(g)).add(f); } }
         const enterable = (r) => {
           if (!r || r.free) return true;
           const f = fedOf(r); if (!f) return true;
-          if (keyless.has(f)) { if (r.id) unoffered.set(r.id, { id: r.id, game: r.game, entryCloseMs: Number(r.entryCloseMs), startTimeMs: Number(r.startTimeMs), why: 'no reserve key' }); return false; }
+          if (keyless.has(f) || inactive.has(f)) { if (r.id) unoffered.set(r.id, { id: r.id, game: r.game, entryCloseMs: Number(r.entryCloseMs), startTimeMs: Number(r.startTimeMs), why: keyless.has(f) ? 'no reserve key' : 'federation not active' }); return false; }
           const mineFeds = walletFedsFor.get(gameOf(r));
           if (!mineFeds || !mineFeds.size || mineFeds.has(f)) return true;
           if (r.id) unoffered.set(r.id, { id: r.id, game: r.game, entryCloseMs: Number(r.entryCloseMs), startTimeMs: Number(r.startTimeMs),
@@ -7906,6 +7907,7 @@
       const notJoinableWhy = (id) => {
         const held = (window.ARENA_LOBBY_UNOFFERED || []).find((x) => x.id === id);
         if (held && held.why === 'no reserve key') return 'paid rounds in this federation are paused - it has no reserve key yet';
+        if (held && held.why === 'federation not active') return 'paid rounds in this federation are paused - it is not active right now';
         if (held) return held.why === 'not seated' ? 'no playable round for this window - its committee is not seated'
           : held.why === 'not drawn' ? 'no playable round for this window - its committee is not drawn' : 'no playable round for this window - it is played on another grid';
         const row = (window.ARENA_LOBBY_ROWS || []).find((x) => x.id === id);
@@ -7923,7 +7925,7 @@
       if (!window.ARENA_FUNDS_NOTE_TIMER) window.ARENA_FUNDS_NOTE_TIMER = setInterval(() => {
         const k = window.ARENA_RESERVES_READ, bal = window.ARENA_WALLET_BALANCE;
         // THE WALLET CODE STOPPED (a panic: its write refused for room, or worse): nothing it was asked answers any more, so an order would hang unsaid
-        const line = window.ARENA_WALLET_STOPPED ? { text: window.ARENA_WALLET_STOPPED } : k && bal && ARENACLIENT.keylessFundsLine ? ARENACLIENT.keylessFundsLine({ parts: bal.parts, keyless: k.keyless, expected: window.ARENA_RESERVE_EXPECTED || {},
+        const line = window.ARENA_WALLET_STOPPED ? { text: window.ARENA_WALLET_STOPPED } : k && bal && ARENACLIENT.keylessFundsLine ? ARENACLIENT.keylessFundsLine({ parts: bal.parts, keyless: new Set([...k.keyless, ...(ARENACLIENT.inactiveFederations ? ARENACLIENT.inactiveFederations(window.ARENA_FED_LOADS) : [])]), expected: window.ARENA_RESERVE_EXPECTED || {},
           tip: Math.max(0, ...[...(window.ARENA_FED_LOADS instanceof Map ? window.ARENA_FED_LOADS.values() : [])].map((x) => Number(x && x.height) || 0)) }) : null;
         let el = document.getElementById('arena-funds-note');
         if (!line || window.ARENA_FUNDS_NOTE_CLOSED === line.text) { if (el) el.remove(); return; }
