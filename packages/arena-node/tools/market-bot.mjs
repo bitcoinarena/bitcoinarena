@@ -25,6 +25,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { feldmanGroup } from '../src/curve.js';
 import { lockFieldsToJson } from '../src/stake-lock-signer-node.js';
 import { attestedClaimKey, playerFor, feeBpsForRound } from '../../arena-client/src/join.js';
+import { addressBook } from './signer-addresses.mjs';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
@@ -427,20 +428,10 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
 // a seat that has not answered one order post in this long is counted as not taking the order (kanban #605)
 const SEAT_LIMIT_MS = Number(env.SEAT_LIMIT_MS || 30000);
 const CLAIM_KEYS = new Map();
-// THE SIGNER NODES' OWN ADDRESSES, asked beside the seats (kanban #804, measured 2026-10-30 08:42Z, federation B round 76c7d631: six
-// signer nodes, two of them installed nodes outside the 14 seats; only the 14 seats were asked, so "4 of 6 signer nodes attest this
-// claim key, and this round needs 5" though both installed nodes served it): each signer's endpoint from the seats' address book
-// (GET /address-announcements), read at most every 5 min
-let book = { at: 0, map: new Map() };
-async function signerEndpoints(signers) {
-  if (Date.now() - book.at > 300000) {
-    for (const n of nodes) {
-      try { const j = await getJson(`${n}/address-announcements`, 15000); book = { at: Date.now(), map: new Map((j.announcements || []).map((x) => [String(x.node).toLowerCase(), x.endpoint])) }; break; } catch { /* the next seat */ }
-    }
-  }
-  const mine = new Set(nodes.map((n) => n.replace(/\/+$/, '')));
-  return signers.map((k) => book.map.get((typeof k === 'string' ? k : toHex(k)).toLowerCase())).filter((e) => e && /^https?:\/\//.test(e) && !mine.has(e.replace(/\/+$/, '')));   // a seat's wss:// guardian address is no door
-}
+// THE SIGNER NODES' OWN ADDRESSES, asked beside the seats (kanban #804, signer-addresses.mjs: federation B round 76c7d631 had two installed
+// nodes among its six signer nodes, and "4 of 6 signer nodes attest this claim key" while both served it)
+const book = addressBook(nodes);
+const signerEndpoints = (signers) => book.outside(signers);
 async function claimKeyOf(c, rid, signers) {
   const key = `${toHex(rid)}:${signers.map((x) => String(x)).join(',')}`;
   let p = CLAIM_KEYS.get(key);
