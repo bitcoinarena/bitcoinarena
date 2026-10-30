@@ -393,7 +393,9 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
   const limit = () => AbortSignal.timeout(SEAT_LIMIT_MS);
   let held = 0, enough;
   const enoughHeld = new Promise((r) => { enough = r; });
-  const all = Promise.all(nodes.map(async (n) => {
+  // and each signer node outside NODES at its own address (kanban #804): an installed node seated in the round takes its shares too
+  const to = [...nodes, ...await signerEndpoints(signers)];
+  const all = Promise.all(to.map(async (n) => {
     try {
       const h = await fetch(`${n}/handout`, { method: 'POST', body: encodeHandout(dealt.handout), signal: limit() });
       const hWhy = h.status >= 300 ? (await h.text()).trim().slice(0, 200) : null;
@@ -425,11 +427,26 @@ async function placeOrder(c, rid, rung, orderIndex, signers, closeMs, marginMs =
 // a seat that has not answered one order post in this long is counted as not taking the order (kanban #605)
 const SEAT_LIMIT_MS = Number(env.SEAT_LIMIT_MS || 30000);
 const CLAIM_KEYS = new Map();
-function claimKeyOf(c, rid, signers) {
+// THE SIGNER NODES' OWN ADDRESSES, asked beside the seats (kanban #804, measured 2026-10-30 08:42Z, federation B round 76c7d631: six
+// signer nodes, two of them installed nodes outside the 14 seats; only the 14 seats were asked, so "4 of 6 signer nodes attest this
+// claim key, and this round needs 5" though both installed nodes served it): each signer's endpoint from the seats' address book
+// (GET /address-announcements), read at most every 5 min
+let book = { at: 0, map: new Map() };
+async function signerEndpoints(signers) {
+  if (Date.now() - book.at > 300000) {
+    for (const n of nodes) {
+      try { const j = await getJson(`${n}/address-announcements`, 15000); book = { at: Date.now(), map: new Map((j.announcements || []).map((x) => [String(x.node).toLowerCase(), x.endpoint])) }; break; } catch { /* the next seat */ }
+    }
+  }
+  const mine = new Set(nodes.map((n) => n.replace(/\/+$/, '')));
+  return signers.map((k) => book.map.get((typeof k === 'string' ? k : toHex(k)).toLowerCase())).filter((e) => e && /^https?:\/\//.test(e) && !mine.has(e.replace(/\/+$/, '')));   // a seat's wss:// guardian address is no door
+}
+async function claimKeyOf(c, rid, signers) {
   const key = `${toHex(rid)}:${signers.map((x) => String(x)).join(',')}`;
   let p = CLAIM_KEYS.get(key);
   if (!p) {
-    p = attestedClaimKey({ round: { ...c, id: rid }, signerNodes: signers, nodes, curve: pageCurve });
+    const asked = [...nodes, ...await signerEndpoints(signers)];
+    p = attestedClaimKey({ round: { ...c, id: rid }, signerNodes: signers, nodes: asked, curve: pageCurve });
     CLAIM_KEYS.set(key, p);
     p.then((a) => { if (!a.ok) CLAIM_KEYS.delete(key); }, () => CLAIM_KEYS.delete(key));
     if (CLAIM_KEYS.size > 64) CLAIM_KEYS.delete(CLAIM_KEYS.keys().next().value);
