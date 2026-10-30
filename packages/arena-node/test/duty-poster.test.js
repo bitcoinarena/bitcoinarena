@@ -397,3 +397,24 @@ test('the node\'s poster: off says so on GET /duty and runs nothing; auto on an 
   assert.equal(s2.node, toHex(KEYS[0]));
   electrum.stop();
 });
+
+// kanban #791: the chain index is made once per chain view and shared by every day duty; a view grown in place is indexed anew
+test('one chain view, two day duties: both see the posted marker; a block appended to the same view in place is indexed again', async () => {
+  const marked = txOf([dutyMarkerOutput(DAY, 'nextblock-day'), seriesPublicationOutput(new Uint8Array(32).fill(9))]);
+  const base = world({ local: [ORDER[0]], nowMs: T0 + 70 * MIN });
+  const shared = { blocks: base.blocks, firstHeight: base.firstHeight };       // one object, as the duty poster's chainView hands out
+  const a = world({ local: [ORDER[0]], nowMs: T0 + 70 * MIN, view: async () => shared });
+  const st0 = await createDayDuty(a.opts).look();
+  assert.equal(a.did.published.length, 1, 'no marker yet: the duty node posts');
+  assert.equal(st0.markers.filter((m) => m.slot === DAY && m.txid === marked.txid).length, 0);
+  // the marker arrives in a new block, appended to the same view object
+  shared.blocks.push({ header: header(Math.floor((T0 + 71 * MIN) / 1000), shared.blocks.length), transactions: [marked.raw], t: T0 + 71 * MIN });
+  const b = world({ local: [ORDER[0]], nowMs: T0 + 72 * MIN, view: async () => shared });
+  const c = world({ local: [ORDER[1]], nowMs: T0 + 72 * MIN, view: async () => shared });
+  const sb = await createDayDuty(b.opts).look(), sc = await createDayDuty(c.opts).look();
+  for (const [s, who] of [[sb, 'rank 0'], [sc, 'rank 1']]) {
+    assert.equal(s.posted, true, `${who} sees the day posted`);
+    assert.deepEqual(s.markers.filter((m) => m.slot === DAY && m.txid === marked.txid)[0].series, ['09'.repeat(32)], `${who} reads its series`);
+  }
+  assert.equal(b.did.published.length + c.did.published.length, 0, 'and neither posts again');
+});
