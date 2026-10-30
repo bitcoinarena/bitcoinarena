@@ -125,6 +125,7 @@ export class Round {
     // THE OPEN IDS, read again only once a round opened, closed or was deleted (their count or newest row moved): the same id objects
     // are handed out again, so a caller keeps what it derived from them; `hexOf` is each one's hex
     this.openList = { key: null, ids: [] };
+    this.closedSinceList = new Set();   // hex of the rounds this store closed since the open list was last read (kanban #791)
     this.hexOfId = new WeakMap();
     // THE GAMES THIS NODE HOSTS (§0A.4; M3 R1): a round is opened only on one of them, on a core installed for
     // it, and its run length is that core's.
@@ -459,15 +460,23 @@ export class Round {
     const key = `${q.n}:${q.m}`;
     if (this.openList.key === key) { this.openList.askedMs = nowMs; return this.openList.ids; }
     // ONLY ROUNDS ADDED, NONE CLOSED (the series writers open rounds all the time): the new rows appended, not the whole list read again
-    if (this.openList.key !== null && Number.isInteger(this.openList.m) && q.m > this.openList.m) {
-      const fresh = this.db.prepare('SELECT lower(hex(round_id)) AS h, opened_ms AS o FROM rounds WHERE state = ? AND rowid > ? ORDER BY opened_ms').all(OPEN, this.openList.m);
-      if (this.openList.ids.length + fresh.length === q.n && (!fresh.length || fresh[0].o >= (this.openList.lastOpenedMs ?? -Infinity))) {
-        const ids = this.openList.ids.slice();
+    // AND THE ROUNDS THIS STORE CLOSED, TAKEN OUT (kanban #791, allocation sampled 2026-10-30 02:3xZ on test host seat 6: openHeld 46 MB
+    // in 30 s - an RPS grid closes a round every few seconds, and each close made the next ask read all ~24,000 open rows again): what
+    // close() closed is dropped from the kept list. The count check stands: a round closed or deleted any other way reads the whole list.
+    if (this.openList.key !== null && Number.isInteger(this.openList.m) && q.m >= this.openList.m) {
+      const fresh = q.m > this.openList.m
+        ? this.db.prepare('SELECT lower(hex(round_id)) AS h, opened_ms AS o FROM rounds WHERE state = ? AND rowid > ? ORDER BY opened_ms').all(OPEN, this.openList.m) : [];
+      const gone = this.closedSinceList;
+      const kept = gone.size ? this.openList.ids.filter((id) => !gone.has(this.hexOf(id))) : this.openList.ids;
+      if (kept.length + fresh.length === q.n && (!fresh.length || fresh[0].o >= (this.openList.lastOpenedMs ?? -Infinity))) {
+        const ids = kept === this.openList.ids ? kept.slice() : kept;
         for (const r of fresh) { const id = fromHex(r.h); this.hexOfId.set(id, r.h); ids.push(id); }
+        this.closedSinceList = new Set();
         this.openList = { key, ids, m: q.m, askedMs: nowMs, lastOpenedMs: fresh.length ? fresh[fresh.length - 1].o : this.openList.lastOpenedMs };
         return ids;
       }
     }
+    this.closedSinceList = new Set();
     const had = new Map();
     for (const id of this.openList.ids) had.set(this.hexOf(id), id);
     const ids = [];
@@ -1609,6 +1618,7 @@ export class Round {
     this.db.prepare('UPDATE rounds SET state = ?, closed_ms = ? WHERE round_id = ?')
       .run(CLOSED, this.now(), id);
     this.contracts.delete(this.hexOf(id));
+    if (this.openList.key !== null) this.closedSinceList.add(this.hexOf(id));
     this.openSeq++;
     return true;
   }
