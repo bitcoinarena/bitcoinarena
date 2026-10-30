@@ -3106,14 +3106,24 @@
       // AND THE ROUND'S TWO SETS (§0A.8): what the lock pays - half to the protocol devs, half to the game dev
       let donationTarget = null, donationAnswer = null;
       if (pays) {
-        const ds = await joinStep('fetchDonationSet', () => (ROUND_PREP.get(named.roundIdHex) && ROUND_PREP.get(named.roundIdHex).donation)
-          || ARENACLIENT.fetchDonationSet({ round: named.round, nodes: named.nodes, verifyEd25519: pageEd25519Verify, keepBySet: true }));
+        const askDonationSet = () => ARENACLIENT.fetchDonationSet({ round: named.round, nodes: named.nodes, verifyEd25519: pageEd25519Verify, keepBySet: true });
+        let ds = await joinStep('fetchDonationSet', () => (ROUND_PREP.get(named.roundIdHex) && ROUND_PREP.get(named.roundIdHex).donation) || askDonationSet());
+        // ONE MISSED READ IS NOT THE ROUND'S ANSWER (kanban #803): a read that failed on a phone's connection is asked once more
+        if (!ds.ok && !/donation set in force/.test(String(ds.why))) ds = await joinStep('fetchDonationSet', askDonationSet);
         if (ds.ok) { donationSet = ds.set; donationTarget = ds.target || null; donationAnswer = ds; }
         // A ROUND ITS SIGNER NODES REFUSE FOR ITS DONATION SET IS REFUSED HERE, BEFORE ANY LOCK (measured live
         // 2026-10-06 05:31Z: round 49a50535 named serial 2 where serial 3 was in force; this step said "no donation" and the
         // join went on to lock 100 sat, which the session then refused - the stake back only after its expiry)
         else if (/donation set in force/.test(String(ds.why))) {
           window.ARENA_JOIN_REFUSED = 'the signer nodes refuse this round: ' + String(ds.why).replace(/^not every signer node of this round serves its donation set: /, '').slice(0, 240);
+          console.error('[arena] join refused before any lock: ' + window.ARENA_JOIN_REFUSED);
+          return;
+        }
+        // A ROUND THAT PAYS THE RESERVES CANNOT GO ON WITHOUT ITS SET (kanban #803, measured 2026-10-30 15:29Z: the page locked the stake with
+        // a donation of 0, and every seat refused the entry: "the developers' 4 % and the reserves' 2 % are 6000 msat, not 0")
+        else if (ARENACLIENT.roundPaysReserves && ARENACLIENT.roundPaysReserves(named.round)) {
+          console.error('[arena] no donation set: ' + ds.why);
+          window.ARENA_JOIN_REFUSED = 'the round\'s nodes could not be read just now. Nothing was locked, your sats stay in your wallet. Please try again.';
           console.error('[arena] join refused before any lock: ' + window.ARENA_JOIN_REFUSED);
           return;
         }
@@ -7926,7 +7936,8 @@
       };
       // A BALANCE THAT CANNOT BE PLAYED SAYS SO (the owner 2026-10-30: "If it's unavailable to play because the funds are locked it should say so in a
       // message"): the tables of such a federation are not offered, so nothing else would tell the player why. Every game, lobby and table alike;
-      // closed for this balance by its button, and gone by itself once the federation's key stands.
+      // said once per page load (the owner 2026-10-30: "die sollte nur einmal kommen nach einem Load"; closing used to hold only for the exact amount, so a
+      // balance that moved brought it back), and gone by itself once the federation's key stands.
       if (!window.ARENA_PANIC_WATCH) { window.ARENA_PANIC_WATCH = true; const said = console.error.bind(console);
         console.error = (...a) => { if (/blwp-lock-client panicked/.test(String(a[0]))) window.ARENA_WALLET_STOPPED = /quota/i.test(String(a[0])) ? 'Your browser\'s storage is full and the wallet stopped. Your money stays in the federation. Reload this page; close other tabs of this site first.' : 'The wallet stopped. Your money stays in the federation. Reload this page.'; said(...a); }; }
       if (!window.ARENA_FUNDS_NOTE_TIMER) window.ARENA_FUNDS_NOTE_TIMER = setInterval(() => {
@@ -7935,16 +7946,18 @@
         const line = window.ARENA_WALLET_STOPPED ? { text: window.ARENA_WALLET_STOPPED } : k && bal && ARENACLIENT.keylessFundsLine ? ARENACLIENT.keylessFundsLine({ parts: bal.parts, keyless: new Set([...k.keyless, ...(ARENACLIENT.inactiveFederations ? ARENACLIENT.inactiveFederations(window.ARENA_FED_LOADS) : [])]), expected: window.ARENA_RESERVE_EXPECTED || {},
           tip: Math.max(0, ...[...(window.ARENA_FED_LOADS instanceof Map ? window.ARENA_FED_LOADS.values() : [])].map((x) => Number(x && x.height) || 0)) }) : null;
         let el = document.getElementById('arena-funds-note');
-        if (!line || window.ARENA_FUNDS_NOTE_CLOSED === line.text) { if (el) el.remove(); return; }
+        if (!line) { if (el) { if (!el.dataset.stopped) window.ARENA_FUNDS_NOTE_SAID = true; el.remove(); } return; }
+        if (window.ARENA_WALLET_STOPPED ? window.ARENA_FUNDS_NOTE_CLOSED === line.text : window.ARENA_FUNDS_NOTE_SAID) { if (el) el.remove(); return; }
         if (!el) {
           el = document.createElement('div'); el.id = 'arena-funds-note'; el.setAttribute('role', 'status');
           el.style.cssText = 'position:fixed;left:16px;right:16px;bottom:64px;max-width:480px;margin:0 auto;z-index:2147483000;display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:12px;background:#12161c;color:#e8edf2;border:1px solid #f7931a;font:14px/1.4 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.5)';
           const t = document.createElement('span'); t.style.flex = '1'; el.appendChild(t);
           const x = document.createElement('button'); x.type = 'button'; x.textContent = '\u00d7'; x.setAttribute('aria-label', 'Close');
           x.style.cssText = 'background:none;border:0;color:inherit;font-size:20px;line-height:1;cursor:pointer;padding:0 2px';
-          x.onclick = () => { window.ARENA_FUNDS_NOTE_CLOSED = el.firstChild.textContent; el.remove(); };
+          x.onclick = () => { if (window.ARENA_WALLET_STOPPED) window.ARENA_FUNDS_NOTE_CLOSED = el.firstChild.textContent; else window.ARENA_FUNDS_NOTE_SAID = true; el.remove(); };
           el.appendChild(x); document.body.appendChild(el);
         }
+        if (window.ARENA_WALLET_STOPPED) el.dataset.stopped = '1'; else delete el.dataset.stopped;
         if (el.firstChild.textContent !== line.text) el.firstChild.textContent = line.text;
       }, 2000);
       window.ARENA_LOBBY_ACT = {

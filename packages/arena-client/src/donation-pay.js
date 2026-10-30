@@ -263,7 +263,8 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
         if (rr.status === 200) rotations = (await rr.json()).rotations || [];
       } catch { rotations = []; }
       return { node: base, bytes, rotations };
-    } catch (e) { return { node: base, why: e.message, late: !!e.late }; }
+    // A READ THAT NEVER GOT AN ANSWER (kanban #803: "Load failed" on a phone) is a node that did not answer, as one past ANSWER_MS is
+    } catch (e) { return { node: base, why: e.message, late: true }; }
   }), nodes.map((node) => String(node).replace(/\/+$/, '')))).filter((a) => a.bytes || !a.late);
   const missing = answers.filter((a) => !a.bytes);
   if (missing.length)
