@@ -20,6 +20,19 @@ export function missedInARow(rows) {
   return n;
 }
 
+/**
+ * ONE ROW PER SEATING (kanban #809, the owner 2026-10-30 after 2026.1.9.19: his owner page said "Your node missed 42 draws in a row" with every
+ * service running and its PRESENTs reaching the seats): a table is seated once, by its first round, and its later rounds - one every 8 s on
+ * an RPS grid, most of the newest 60 rounds a node holds - take that seating. Each was counted as a seating of its own, so one table this
+ * node was drawn for and not seated in counted dozens of times. `rows` carry `seating` (the table's first round, else the round itself);
+ * the newest row of each seating is kept.
+ */
+export function oncePerSeating(rows) {
+  const seen = new Set(), out = [];
+  for (const r of [...rows].sort((a, b) => b.atMs - a.atMs)) { const k = r.seating || r.round; if (seen.has(k)) continue; seen.add(k); out.push(r); }
+  return out;
+}
+
 /** The warning and the offer, once three are missed in a row; null before. */
 export function seatingWarning(missed, { nodeLabel = 'this node' } = {}) {
   if (missed < 3) return null;
