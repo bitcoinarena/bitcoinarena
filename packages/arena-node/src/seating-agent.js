@@ -529,9 +529,12 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       signatures: sigs.filter((x) => signed.seated.includes(x.node)).map((x) => ({ nodePubkey: fromHex(x.node), signature: new Uint8Array(x.signature) })) });
     const k = keepCert(w.t.rid, w.role, cert);
     if (k.ok && k.kept) {
-      // HANDED TO EVERY OTHER DRAWN NODE, so each holds it - the reserves too - before an entry comes
-      await Promise.all(w.others.map((b) => post(b, '/seating', cert)));
-      log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: certificate of ${list.length} seated, every one signed - handed to ${w.others.length}`);
+      // HANDED TO EVERY OTHER DRAWN NODE, so each holds it - the reserves too - before an entry comes; a resting node (#791) is left
+      // out, and the tick does not wait for the hand-out (kanban #803, measured 08:0xZ 10-30 on test host seat 2: take+certify 10,581 ms of
+      // a 12,189 ms tick, two certificates each waiting out a drawn node that never answers; a node left out reads it by its batch)
+      const to = w.others.filter((b) => !rests(b));
+      Promise.all(to.map((b) => post(b, '/seating', cert))).catch(() => {});
+      log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: certificate of ${list.length} seated, every one signed - handed to ${to.length}`);
     }
   }
 
