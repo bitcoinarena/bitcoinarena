@@ -59,3 +59,30 @@ test('the page shows a bar with its step and seconds, not one word, until the no
   for (const step of ['Loading the owner screens', 'Asking your node', 'Signing in']) assert.ok(HTML.includes(`'${step}'`), step);
   assert.match(HTML, /\.boot-bar\{/, 'its own styles');
 });
+
+test('a bar counts the answers from the node while the page first loads, then goes (the owner: "Needs a progress bar while it\'s loading from the node")', async () => {
+  const start = HTML.indexOf('const LOAD = {'), end = HTML.indexOf('// never longer than two minutes');
+  assert.ok(start > 0 && end > start);
+  const code = HTML.slice(start, HTML.indexOf('\n}', end) + 2);
+  const els = { loadbar: { hidden: true }, 'loadbar-i': { style: {} }, 'loadbar-t': { textContent: '' } };
+  const document = { getElementById: (id) => els[id] || null };
+  const calls = [];
+  const window = { fetch: (u) => { calls.push(u); return new Promise((ok) => setTimeout(() => ok({ ok: true }), u.includes('slow') ? 60 : 10)); } };
+  window.fetch.bind = () => window.fetch;
+  const run = new Function('window', 'document', 'BASE', 'setInterval', 'setTimeout', `${code}; return { LOAD, drawLoad };`);
+  // the page's own timers, but not its two-minute cap
+  const { LOAD } = run(window, document, 'https://node.example', () => 0, (f, ms) => (ms > 10000 ? 0 : setTimeout(f, ms)));
+  const a = window.fetch('https://node.example/owner/version'), b = window.fetch('https://node.example/owner/rounds?slow'), c = window.fetch('https://elsewhere.example/x');
+  assert.equal(LOAD.started, 2, 'only requests to the node are counted');
+  assert.equal(els.loadbar.hidden, false, 'the bar shows while they are open');
+  await a;
+  assert.match(els['loadbar-t'].textContent, /^Loading from your node… 1 of 2 answers, \d+ s$/);
+  assert.equal(els['loadbar-i'].style.width, '50%');
+  LOAD.area = true;
+  await Promise.all([b, c]);
+  await new Promise((r) => setTimeout(r, 1700));
+  assert.equal(LOAD.over, true, 'over once every request answered and the area is drawn');
+  assert.equal(els.loadbar.hidden, true, 'and the bar is gone');
+  window.fetch('https://node.example/owner/rounds');
+  assert.equal(LOAD.started, 2, 'a later request does not bring it back');
+});
