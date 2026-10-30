@@ -41,6 +41,8 @@ export const PRESENT_BYTES = 1 + 2 + 32 + 1 + 32 + 64;
 export const BATCH_ROUNDS = 64;
 /** How long a node that runs no seating (its seating door: 404 "no such door") is left out of the exchange (kanban #791). */
 export const NO_SEATING_REST_MS = Number(process.env.ARENA_NO_SEATING_REST_MS || 600000);
+/** A node that did not answer at all rests this long, doubled on each failure after, up to NO_SEATING_REST_MS (kanban #791). */
+export const UNREACHABLE_REST_MS = Number(process.env.ARENA_UNREACHABLE_REST_MS || 30000);
 const joinBytes = (list) => { const out = new Uint8Array(list.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of list) { out.set(x, at); at += x.length; } return out; };
 
 export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, nowMs = () => Date.now(), log = () => {}, windowOf = () => null,
@@ -201,17 +203,38 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   // /seating-sig a minute to each of two installed nodes drawn into its rounds, every answer 404 "no such door" - they run without
   // ARENA_SEATING, have no batch door, and so were asked the old way for every round and role on every 2 s tick): a node whose
   // seating door says it has none rests NO_SEATING_REST_MS - no PRESENT handed to it, no batch, no single read - then is asked again
+  //
+  // AND A NODE THAT DOES NOT ANSWER AT ALL (kanban #791, measured 2026-10-30 01:2xZ on the test host seats: seating ticks of 85-141 s, "5 of
+  // 18 node(s) answered no batch" - five drawn nodes whose quick tunnels are gone, each request waiting out its 5 s timeout, and every
+  // PRESENT posted to them one after another): a timeout, a refusal or a name that no longer resolves rests the node
+  // UNREACHABLE_REST_MS, doubled on each failure after, up to NO_SEATING_REST_MS; its first answer ends it
   const resting = new Map();             // base -> until (ms)
+  const failing = new Map();             // base -> requests that failed in a row
   const rests = (base) => { const u = resting.get(base); if (u === undefined) return false; if (nowMs() < u) return true; resting.delete(base); return false; };
+  const unreachable = (base) => { const n = (failing.get(base) || 0) + 1; failing.set(base, n);
+    resting.set(base, nowMs() + Math.min(UNREACHABLE_REST_MS * 2 ** Math.min(n - 1, 10), NO_SEATING_REST_MS)); };
+  const reached = (base) => { if (failing.delete(base)) resting.delete(base); };
+  // a tunnel whose node behind it is gone answers for it: 502-504, or Cloudflare's 530
+  const gone = (r) => (r.status >= 502 && r.status <= 504) || r.status === 530;
   const noDoor = async (base, path, r) => {
     if (r.status !== 404 || !/^\/(present|seating)/.test(path)) return;
     try { if ((await r.text()).trim() === 'no such door' && !path.startsWith('/seating-batch') && !path.startsWith('/presents')) resting.set(base, nowMs() + NO_SEATING_REST_MS); } catch { /* not read: asked again */ }
   };
   const post = async (base, path, body) => {
-    try { const r = await fetcher(`${base}${path}`, { method: 'POST', body, signal: AbortSignal.timeout(5000) }); if (!r.ok) await noDoor(base, path, r); return r.ok; } catch { return false; }
+    let r;
+    try { r = await fetcher(`${base}${path}`, { method: 'POST', body, signal: AbortSignal.timeout(5000) }); } catch { unreachable(base); return false; }
+    if (gone(r)) { unreachable(base); return false; }
+    reached(base);
+    try { if (!r.ok) await noDoor(base, path, r); } catch { /* the answer's body is not needed */ }
+    return r.ok;
   };
   const getJson = async (base, path) => {
-    try { const r = await fetcher(`${base}${path}`, { signal: AbortSignal.timeout(5000) }); if (r.ok) return await r.json(); await noDoor(base, path, r); return null; } catch { return null; }
+    let r;
+    try { r = await fetcher(`${base}${path}`, { signal: AbortSignal.timeout(5000) }); } catch { unreachable(base); return null; }
+    if (gone(r)) { unreachable(base); return null; }
+    reached(base);
+    try { if (r.ok) return await r.json(); await noDoor(base, path, r); } catch { /* an answer that is not JSON says nothing */ }
+    return null;
   };
 
   // ---- the doors ----

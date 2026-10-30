@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { seatingAgent, NO_SEATING_REST_MS } from '../src/seating-agent.js';
+import { seatingAgent, NO_SEATING_REST_MS, UNREACHABLE_REST_MS } from '../src/seating-agent.js';
 import { encodeRoundContract, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
 import { signPresent } from '../../arena-protocol/src/seating.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
@@ -17,8 +17,9 @@ const nodes = Array.from({ length: 9 }, (_, i) => { const secret = new Uint8Arra
 const signer = (n) => (m) => schnorr.sign(m, n.secret);
 const START = 60500n;
 
-/** Node 8 runs no seating (every seating door: 404 "no such door"); node 7 has the single doors but no batch door. */
-function world() {
+/** Node 8 runs no seating (every seating door: 404 "no such door"); node 7 has the single doors but no batch door; node 6 (when `down`)
+ * does not answer at all, or (`down: 530`) its tunnel answers for it. */
+function world({ down = null } = {}) {
   const db = new DatabaseSync(':memory:');
   db.exec('CREATE TABLE rounds (round_id BLOB, contract BLOB)');
   const c = { ...contractFor(nodes.slice(0, 7).map((n) => n.pubkey)), startTimeMs: START };
@@ -37,6 +38,8 @@ function world() {
     const u = new URL(url); const i = nodes.findIndex((n) => n.endpoint === `${u.protocol}//${u.host}`);
     asked.push({ i, method: init.method || 'GET', path: u.pathname });
     if (i === 8) return new Response('no such door', { status: 404 });
+    if (i === 6 && down === true) throw new TypeError('fetch failed');
+    if (i === 6 && typeof down === 'number') return new Response('origin gone', { status: down });
     if (u.pathname === '/seating-batch' || u.pathname === '/presents') {
       if (i === 7) return new Response('no such door', { status: 404 });
       if (u.pathname === '/presents') return new Response('ok');
@@ -70,3 +73,19 @@ test('a node without the batch door but with its single doors is asked the old w
   w.asked.length = 0; w.clock.now += 2000; await w.agent.tick();
   assert.ok(w.asked.some((a) => a.i === 7), 'asked again: node 8\'s PRESENTs are still missing, and node 7 is not rested');
 });
+
+for (const down of [true, 530]) {
+  test(`a node that does not answer (${down === true ? 'no answer' : 'its tunnel answers 530'}) is asked once, rests 30 s, then twice as long after failing again`, async () => {
+    const w = world({ down });
+    await w.agent.tick();
+    const first = w.asked.filter((a) => a.i === 6).map((a) => `${a.method} ${a.path}`);
+    assert.deepEqual(first, ['POST /presents'], 'one request in the first tick: no PRESENT posted one by one, no batch');
+    for (let k = 0; k < 5; k++) { w.asked.length = 0; w.clock.now += 2000; await w.agent.tick(); assert.equal(w.asked.filter((a) => a.i === 6).length, 0, `tick ${k + 2}: resting`); }
+    w.asked.length = 0; w.clock.now += UNREACHABLE_REST_MS; await w.agent.tick();
+    assert.equal(w.asked.filter((a) => a.i === 6).length, 1, 'asked again after 30 s, and fails again');
+    w.asked.length = 0; w.clock.now += UNREACHABLE_REST_MS + 2000; await w.agent.tick();
+    assert.equal(w.asked.filter((a) => a.i === 6).length, 0, 'the second rest is 60 s');
+    w.asked.length = 0; w.clock.now += UNREACHABLE_REST_MS; await w.agent.tick();
+    assert.ok(w.asked.some((a) => a.i === 6), 'asked after 60 s');
+  });
+}
