@@ -17,7 +17,7 @@
 // and no committee; those are M2.1 steps 4 and later, and each is refused
 // rather than half-built.
 import { gzipSync } from 'node:zlib';
-import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
+import { tableAnchorOf, feeOfKnownGame } from '../../arena-protocol/src/known-game.js';
 import { seriesWriter, writeGuarded } from './series-writer.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../arena-protocol/src/old-series.js';
 import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid, findSeriesPublication, seriesPublicationOutput } from '../../arena-protocol/src/series.js';
@@ -3889,7 +3889,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const id = toHex(roundIdOf(contract));
     return refuseFile.ids.has(id) ? `this signer node's operator refuses round ${id.slice(0, 16)} (refuse-rounds file)` : null;
   };
-  const offerRefusal = (contract) => seriesRefusal(contract) || droppedRefusal(contract) || donationInForceRefusal(contract)
+  // A MARKET WHOSE FEDERATION HAS NO RESERVE KEY TAKES NO ORDER (kanban #803, the owner 2026-10-30 ~09:3xZ: "Pause A's paid market until it
+  // works"; measured 09:2xZ: of 274 paid rounds in 24 h, 197 Up/Down rounds of federation A took orders and locks that could not settle -
+  // "no lock is claimed: this market pays the protocol reserve, and no reserve key is known for its federation" - the stakes held in their
+  // locks): a market that pays the protocol reserve is refused here - handout, entry, lock - while this seat has found no reserve key for
+  // its federation, and opens again by itself once one stands. A federation not asked yet is not refused: it is asked now, in the background,
+  // and again each minute.
+  const reserveMissing = new Set(), reserveAsked = new Map();   // federation hex; federation hex -> ms asked
+  const reserveRefusal = (contract) => {
+    if (takesAnyFederation(contract)) return null;
+    const fee = feeOfKnownGame(contract.gameId);
+    if (!fee || !(fee.reserveBps > 0)) return null;
+    const fed = toHex(contract.federationId), now = Date.now();
+    if (now - (reserveAsked.get(fed) || 0) > 60000) {
+      reserveAsked.set(fed, now);
+      reserveKeyFor(fed).then((k) => { if (k) reserveMissing.delete(fed); else reserveMissing.add(fed); }, () => {});
+    }
+    return reserveMissing.has(fed) ? `paused: this market pays the protocol reserve, and its federation ${fed.slice(0, 8)} has no reserve key yet - an order could not settle; orders open again once the key stands` : null;
+  };
+  const offerRefusal = (contract) => seriesRefusal(contract) || droppedRefusal(contract) || donationInForceRefusal(contract) || reserveRefusal(contract)
     || drainingRefusal(contract) || fileRefusal(contract) || (typeof refusedFor === 'function' ? refusedFor(contract) : null)
     // AND A CONFIG THE BALLOT DID NOT MAKE LIVE FOR IT (27A.7.5): not listed, entered or locked here - "it serves nothing"
     || configRefusal(contract);
