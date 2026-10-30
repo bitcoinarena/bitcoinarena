@@ -140,6 +140,13 @@ export function createGridBase({ chainCall, prepare = null, censusEntriesAt, con
  *   say(o), now()
  * -> { look(), state() }: look() runs one pass (never throws); state() what the last pass saw, for GET /duty.
  */
+// ONE CHAIN INDEX PER CHAIN VIEW, FOR EVERY DAY DUTY (kanban #791, allocation sampled 2026-10-30 02:3xZ on test host seat 6: 250 of 815 MB
+// allocated in 30 s were parseTransaction, its txid hashing and the index around them - every day duty (Up/Down, RPS, Next Block, each
+// primary and backup) parsed every transaction of the last 300 blocks on each 60 s pass, while the duty poster's chain view only changes
+// with the best block). The view is the key: a new tip is a new view, and the index of the old one goes with it. The index is only
+// read (its markers spread, filtered, its `at` asked), and its markers carry no per-duty field (markersOf's 'B:' names every backup alike).
+const indexOfView = new WeakMap();
+
 export function createDayDuty(o) {
   const { game, item, networkId, local, dir, chain, chainCall, walletRpc, gridBase, openGrid, postSeries, fedsNow, seatCatalog, devOf = {},
     creator = {}, stakeMsat, feeRate = 0.1, maxFeeRate = 1, dry = false, gridDry = false, fromDay = 0,
@@ -196,8 +203,17 @@ export function createDayDuty(o) {
       version: base.version, gameId: String(base.id || '').slice(0, 16), censusHeight: base.censusHeight, committeeTime: new Date(times.committeeMs).toISOString(), firstStart: new Date(times.firstStartMs).toISOString() });
     return k;
   };
-  // THE BLOCKS OF THE LAST 300: which transactions are in which block, and the day markers in them (with the series they publish)
+  // THE BLOCKS OF THE LAST 300: which transactions are in which block, and the day markers in them (with the series they publish) -
+  // made once per chain view (indexOfView), not once per pass of each day duty
   const chainIndex = (view) => {
+    const kept = indexOfView.get(view), n = view.blocks.length, last = view.blocks[n - 1];
+    // the same view object grown or changed in place (a caller that appends to it) is indexed anew
+    if (kept && kept.n === n && kept.last === last && kept.firstHeight === view.firstHeight) return kept.idx;
+    const idx = chainIndexOf(view);
+    indexOfView.set(view, { n, last, firstHeight: view.firstHeight, idx });
+    return idx;
+  };
+  const chainIndexOf = (view) => {
     const tip = view.firstHeight + view.blocks.length - 1;
     const at = new Map(), markers = [];
     const from = Math.max(0, view.blocks.length - 300);
