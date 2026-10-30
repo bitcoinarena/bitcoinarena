@@ -55,17 +55,18 @@ export class OwnerArea extends React.Component {
           {sec('overview', <><h2>Overview</h2>
             <Place id="setup-place" className={null} />
             <div className="card" id="needs">{p.needs ? <NeedsPanel items={p.needs} /> : <p className="sub">checking this node…</p>}</div>
-            {/* THE NODE AT A GLANCE (kanban #565): one card per fact, the label small, the value large */}
-            <div className="stats">
-              <div className="stat"><span>Node</span><b className="mono">{p.node.slice(0, 12)}… <CopyButton text={p.node} label="Copy the node key" /></b></div>
+            {/* THE NODE AT A GLANCE (kanban #565): one card per fact, the label small, the value large; each with its sign and an edge in the
+              colour of its state (kanban #805: "make sure that the owner dashboard main page looks more attractive and nicer") */}
+            <div className="stats glance">
+              <div className="stat"><span><i className="si" aria-hidden="true">⬢</i>Node</span><b className="mono">{p.node.slice(0, 12)}… <CopyButton text={p.node} label="Copy the node key" /></b></div>
               {/* GREEN ONLY WHILE ITS GUARDIAN RUNS (the 2026.1.9.11 install test: "Custody: Guardian" in green while this node's fedimintd had
                 ended at its start): `guardianUp` is the Services card's guardian row - true, false, or null while it has not answered */}
-              <div className="stat"><span>Custody</span>{!p.guardian ? <b>No custody</b> : p.guardianUp === false
+              <div className={'stat' + (p.guardian ? (p.guardianUp === false ? ' is-bad' : p.guardianUp ? ' is-ok' : '') : '')}><span><i className="si" aria-hidden="true">◈</i>Custody</span>{!p.guardian ? <b>No custody</b> : p.guardianUp === false
                 ? <><b className="bad">Guardian, not running</b><small><a href="#services">See Services</a></small></>
                 : <b className={p.guardianUp ? 'ok' : undefined}>Guardian</b>}</div>
-              <div className="stat"><span>Apps</span><b>{games.length}</b><small>{games.length ? games.map((g) => `${g.name} v${g.version ?? '?'}`).join(', ') : 'none installed'}</small></div>
-              <div className="stat"><span>Owner since</span><b>{new Date(p.claimedAtMs).toISOString().slice(0, 10)}</b><small>signed in with {HOW[p.how] || p.how}</small></div>
-              <div className="stat"><span>Owner key</span><b className="mono">{p.owner.slice(0, 12)}… <CopyButton text={p.owner} label="Copy the owner key" /></b></div>
+              <div className={'stat' + (games.length ? ' is-ok' : '')}><span><i className="si" aria-hidden="true">▦</i>Apps</span><b>{games.length}</b><small>{games.length ? games.map((g) => `${g.name} v${g.version ?? '?'}`).join(', ') : 'none installed'}</small></div>
+              <div className="stat"><span><i className="si" aria-hidden="true">◷</i>Owner since</span><b>{new Date(p.claimedAtMs).toISOString().slice(0, 10)}</b><small>signed in with {HOW[p.how] || p.how}</small></div>
+              <div className="stat"><span><i className="si" aria-hidden="true">⚿</i>Owner key</span><b className="mono">{p.owner.slice(0, 12)}… <CopyButton text={p.owner} label="Copy the owner key" /></b></div>
             </div>
             {/* ITS UPTIME (kanban #756): drawn by UptimePanel from GET /uptime */}
             <h3 className="sh">Uptime</h3><Place id="uptime" /></>)}

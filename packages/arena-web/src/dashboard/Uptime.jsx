@@ -22,7 +22,7 @@ export const belowInclusion = (U) => !!(U && U.inclusion && U.inclusion.met === 
 /** The four figures: { key, label, value, since } - `since` the date the record starts when the window reaches back past it. */
 export function uptimeRows(U) {
   if (!U || !Array.isArray(U.windows)) return [];
-  return U.windows.map((w) => ({ key: w.key, label: w.label, value: uptimePct(w.share),
+  return U.windows.map((w) => ({ key: w.key, label: w.label, value: uptimePct(w.share), share: typeof w.share === 'number' ? w.share : null,
     since: (w.partial || w.key === 'all') && U.sinceMs ? uptimeWhen(U.sinceMs) : null }));
 }
 
@@ -60,7 +60,9 @@ export function belowWarning(U) {
   return `Your node has not run ${need} minutes without a break in the last 24 hours, ${what}.${again} Keep it running and online.`;
 }
 
-/** THE OWNER'S CARD: the four figures, where the 24 h matters, the warning when it is not reached. Reads GET /uptime itself. */
+/** THE OWNER'S CARD: the four figures as tiles, the 24 h's inclusion as its status, the warning when it is not reached, and where the 24 h
+ *  matters folded under one line (kanban #805, a tester in Arena Chat 9213: "do this not as a wall of text but as nice looking tiles").
+ *  Reads GET /uptime itself. */
 export class UptimePanel extends React.Component {
   constructor(props) { super(props); this.state = { uptime: null, error: null, ...(props.initial ? { uptime: props.initial } : {}) }; }
   async componentDidMount() {
@@ -75,18 +77,28 @@ export class UptimePanel extends React.Component {
     const { uptime: U, error } = this.state;
     if (error) return <p className="sub">Uptime not readable: {error}</p>;
     if (!U || !Array.isArray(U.windows)) return null;
-    const warn = belowWarning(U);
+    const warn = belowWarning(U), below = belowInclusion(U);
     return (
       <div className="uptime">
-        {uptimeRows(U).map((r) => (
-          <div key={r.key} className="row"><span>Uptime · {r.label}{r.since ? ` (since ${r.since})` : ''}</span>
-            <b className={r.key === '24h' ? (belowInclusion(U) ? 'bad' : 'ok') : undefined}>{r.value}</b></div>))}
-        {/* ON 2.0 THE RULE'S OWN PROOF (protocol 22): a certificate or PRESENT this node holds that lists it in the 24 h */}
-        {U.inclusion && typeof U.inclusion.seen === 'boolean' ? <div className="row"><span>Listed at a heartbeat or seating in the last 24 h</span>
-          <b className={U.inclusion.seen ? 'ok' : undefined}>{U.inclusion.seen ? 'yes' : 'none held by this node'}</b></div> : null}
-        <p className="sub">{whereItMatters(U)}</p>
-        {warn ? <p className="err"><b>Below inclusion</b>: {warn}</p> : <p className="sub ok">The last 24 hours reach the inclusion line.</p>}
-        {U.sinceMs ? <p className="sub">This node keeps its uptime from {uptimeWhen(U.sinceMs)}, when it first ran a release that records it; nothing before is counted.</p> : null}
+        <div className="up-tiles">{uptimeRows(U).map((r) => {
+          const day = r.key === '24h';
+          return (
+            <div key={r.key} className={'up-tile' + (day ? (below ? ' bad' : ' ok') : '')}>
+              <span className="up-win">{day ? 'Last 24 hours' : r.label}</span>
+              <b className="up-pct">{r.value}</b>
+              <span className="up-bar" aria-hidden="true"><i style={{ width: `${Math.round((r.share ?? 0) * 100)}%` }} /></span>
+              {day ? <span className={'pill ' + (below ? 'bad' : 'on')}>{below ? 'Below inclusion' : 'Inclusion reached'}</span>
+                : r.since ? <small>since {r.since}</small> : <small>&nbsp;</small>}
+              {/* ON 2.0 THE RULE'S OWN PROOF (protocol 22): a certificate or PRESENT this node holds that lists it in the 24 h */}
+              {day && U.inclusion && typeof U.inclusion.seen === 'boolean' ? <small className={U.inclusion.seen ? 'ok' : undefined}>
+                {U.inclusion.seen ? 'Listed at a heartbeat or seating in the last 24 h' : 'Listed at a heartbeat or seating: none held by this node'}</small> : null}
+            </div>);
+        })}</div>
+        {warn ? <p className="err up-warn"><b>Below inclusion</b>: {warn}</p> : null}
+        <details className="more up-why"><summary>Why the last 24 hours matter</summary>
+          <p className="sub">{whereItMatters(U)}</p>
+          {U.sinceMs ? <p className="sub">This node keeps its uptime from {uptimeWhen(U.sinceMs)}, when it first ran a release that records it; nothing before is counted.</p> : null}
+        </details>
       </div>);
   }
 }
