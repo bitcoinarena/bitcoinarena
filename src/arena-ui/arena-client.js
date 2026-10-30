@@ -25948,6 +25948,34 @@ async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher = (u, 
   return { ok: true, key: fromHex(best[0]), agreeing: best[1], asked: asked.length };
 }
 
+/**
+ * THE FEDERATIONS NO ENTRY CAN PAY INTO (the owner 2026-10-30, the second time at a table of federation 337ae01a: "Order not placed: this round pays
+ * the protocol reserves, and none of the round's 14 signer nodes names a reserve key"): a federation at least `minAnswers` nodes list on
+ * GET /reserves and none names a key for. Too few answers, or a page that could not ask, holds nothing back. Answers a Set of federation hex.
+ */
+function keylessFederations(answers, { minAnswers = 3 } = {}) {
+  const seen = new Map();
+  const read = (answers || []).filter((a) => a && Array.isArray(a.federations));
+  if (read.length < minAnswers) return new Set();
+  for (const a of read) for (const f of a.federations) {
+    if (typeof f.federationId !== 'string') continue;
+    const was = seen.get(f.federationId) || { listed: 0, keyed: false };
+    was.listed++;
+    if (/^0[23][0-9a-f]{64}$/.test(String(f.key || f.reserveKey || ''))) was.keyed = true;   // `key` only on a member of the federation; `reserveKey` on every seat that knows it
+    seen.set(f.federationId, was);
+  }
+  return new Set([...seen].filter(([, v]) => !v.keyed && v.listed >= minAnswers).map(([f]) => f));
+}
+
+/** GET /reserves of up to `limit` nodes, read as keylessFederations reads them. Never throws. */
+async function fetchKeylessFederations({ nodes, limit = 6, fetcher = (u, o) => fetch(u, o), timeoutMs = 5000, minAnswers = 3 } = {}) {
+  const asked = [...new Set((nodes || []).map((n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')))].slice(0, limit);
+  const answers = await Promise.all(asked.map(async (base) => {
+    try { const r = await fetcher(`${base}/reserves`, { signal: AbortSignal.timeout(timeoutMs) }); return r.ok ? await r.json() : null; } catch { return null; }
+  }));
+  return keylessFederations(answers, { minAnswers });
+}
+
 /** What a version-11 entry gives beside its stake: { bps, donationMsat, reserveMsat, mandatory } - the developers' 4 % and the reserves' 2 %. */
 // `split`: the round's split in force at its census height (fee-proposal.js roundSplitBps); unset, today's
 function reservesDonation(stakeMsat, split = ROUND_SPLIT_BPS) {
@@ -26575,9 +26603,17 @@ function nextRoundLine({ grids, game, nowMs = Date.now(), blockMs = 600000 }) {
 //   a round opens for entries iff |seated| >= threshold
 //
 // The seated nodes sign SEATING(round_id, role, seated list); a seating is valid only with the signature of EVERY node it
-// seats, and each node signs at most one per round and role. Two valid seatings for one round and role always share a
-// signer (2 x threshold > drawn), so two certificates are proof of equivocation by that signer: the round is void (§13C)
-// and the signer's bond is slashable (§5A.3B). A client enters a round only with a certificate it checked against the draw
+// seats, and each node signs at most one seating per round and role that can still stand. Two valid seatings for one round
+// and role always share a signer (2 x threshold > drawn), so two certificates are proof of equivocation by that signer: the
+// round is void (§13C) and the signer's bond is slashable (§5A.3B).
+//
+// A SECOND SIGNATURE ONLY AFTER A MEMBER OF THE FIRST SIGNED ANOTHER (kanban #738, measured 2026-10-27 23:30Z: one overloaded seat
+// signed the seating of 5 it held at the close, six signed the seating of 7, and no certificate formed). Seatings are ordered: S
+// comes before T when T seats at least as many and its i-th seated ranks no lower in the draw than S's i-th, for every i of S.
+// A node that signed S, holding no certificate, signs S' only when a member of S other than itself signed a seating that does
+// not come before S, S' is the seating of the PRESENTs it holds now and comes after S, it is in S', and another node signed S'
+// already (arena-node seating-agent.js resign). An honest node's signatures then come one after another in that order, the
+// seating it left never completes, and two certificates still prove equivocation only by a node that broke this rule. A client enters a round only with a certificate it checked against the draw
 // it computes itself (client-committee.js). The round contract is unchanged (2026-10-11, decision A): it names the
 // round; who serves it is this certificate.
 
@@ -30406,7 +30442,7 @@ function unplayableWindowLine({ unoffered = [], offered = [], nowMs = Date.now()
   const span = (r) => { const end = Number(r.entryCloseMs), start = periodMs ? end - periodMs : Number(r.startTimeMs) || 0;
     return start && start < end ? `${hm(start)}-${hm(end)} UTC` : `closing ${hm(end)} UTC`; };
   const why = first.why === 'not seated' ? 'its committee is not seated' : first.why === 'not drawn' ? 'its committee is not drawn'
-    : first.why === 'not played' ? 'its window is played on another grid' : 'it is not listed';
+    : first.why === 'not played' ? 'its window is played on another grid' : first.why === 'no reserve key' ? 'its federation has no reserve key yet' : 'it is not listed';
   const next = good[0];
   return { text: `No playable round for the ${span(first)} window - ${why}. ` + (next ? `Next playable window: ${span(next)}.` : 'No later window is playable yet.'),
     why: first.why, round: first.id || null, next: next ? next.id || null : null, nextCloseMs: next ? Number(next.entryCloseMs) : null };
@@ -35215,7 +35251,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          fetchGames: fetchGames, oneTilePerGame: oneTilePerGame, checkedGameInfoOfTile: checkedGameInfoOfTile, checkedGameInfo: checkedGameInfo, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          censusEndpoints: censusEndpoints, mergeNodes: mergeNodes,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, roundAttestors: roundAttestors, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, withdrawFederation: withdrawFederation, safeFederation: safeFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, evacuatePlayerWallet: evacuatePlayerWallet, movePlayerWallet: movePlayerWallet, moveCanMsat: moveCanMsat, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, rememberedInvite: rememberedInvite, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyRowOffered: lobbyRowOffered, lobbyRowNotOffered: lobbyRowNotOffered, unplayableWindowLine: unplayableWindowLine, nextRoundLine: nextRoundLine, inHoursMinutes: inHoursMinutes, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, roundAttestors: roundAttestors, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, withdrawFederation: withdrawFederation, safeFederation: safeFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, evacuatePlayerWallet: evacuatePlayerWallet, movePlayerWallet: movePlayerWallet, moveCanMsat: moveCanMsat, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, rememberedInvite: rememberedInvite, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyRowOffered: lobbyRowOffered, lobbyRowNotOffered: lobbyRowNotOffered, unplayableWindowLine: unplayableWindowLine, fetchKeylessFederations: fetchKeylessFederations, nextRoundLine: nextRoundLine, inHoursMinutes: inHoursMinutes, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          presentNotes: presentNotes, liquidationKeyFor: liquidationKeyFor, collectLiquidationPayouts: collectLiquidationPayouts, roundVerdict: roundVerdict, secureTranscript: secureTranscript,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,

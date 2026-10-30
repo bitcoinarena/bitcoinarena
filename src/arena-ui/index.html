@@ -7695,6 +7695,19 @@
         // yet is `pending`, and keeps the rows it last had.
         const NOT_YET = { rows: [], refused: [], unanswered: [], pending: true };
         let mineGot = null; let theirsGot = null;
+        // the seats' /reserves, asked each minute beside the rounds (draw, A FEDERATION NO ENTRY CAN PAY INTO); the first time up to 1.5 s are waited
+        // for it, and a table drawn before it answers is taken back then
+        const reservesRead = () => (window.ARENA_RESERVES_READ = window.ARENA_RESERVES_READ || { atMs: 0, keyless: new Set(), asking: null });
+        { const k = reservesRead(), nodesNow = [...(named.nodes || []), ...((testnet && testnet.named.nodes) || [])];
+          if (ARENACLIENT.fetchKeylessFederations && nodesNow.length && Date.now() - k.atMs > 60000 && !k.asking) {
+            const firstRead = !k.atMs;
+            k.asking = ARENACLIENT.fetchKeylessFederations({ nodes: nodesNow }).then((x) => {
+              const changed = [...x].sort().join() !== [...k.keyless].sort().join();
+              k.keyless = x; k.atMs = Date.now(); k.asking = null;
+              if (changed && mineGot) draw(mineGot, testnet ? (theirsGot || NOT_YET) : null);
+            }, () => { k.asking = null; });
+            if (firstRead) await Promise.race([k.asking, new Promise((ok) => setTimeout(ok, 1500))]);
+          } }
         const pMine = read(named.nodes);
         const pTheirs = testnet ? read(testnet.named.nodes) : Promise.resolve(null);
         pMine.then((g) => { mineGot = g; draw(g, testnet ? (theirsGot || NOT_YET) : null); });
@@ -7745,11 +7758,17 @@
         const holdsSatIn = (f) => { const bal = window.ARENA_WALLET_BALANCE, p = bal && Array.isArray(bal.parts) ? bal.parts.find((x) => String(x.federation).toLowerCase() === f) : null; return p ? Number(p.sats) || 0 : 0; };
         const gameOf = (r) => (r && r.game && (r.game.id || r.game.name)) || '?';
         const allPaid = [...(got.rows || []), ...((got2 && got2.rows) || [])].filter((r) => r && !r.free && fedOf(r));
+        // A FEDERATION NO ENTRY CAN PAY INTO (the owner 2026-10-30 ~12:44Z, UI 423, "Nope": the wallet's stake was in federation A, so A was the
+        // wallet's federation and its table was offered, and the order failed on the reserve key): its paid tables are not offered, for any
+        // game, whatever the wallet holds; the seats' /reserves are read in the background each minute, so they come back by themselves
+        // once its key stands. Not read yet, or too few answers: nothing is held back.
+        const keyless = (window.ARENA_RESERVES_READ && window.ARENA_RESERVES_READ.keyless) || new Set();
         const walletFedsFor = new Map();   // game -> the federations offering it where the wallet holds its stake
-        for (const r of allPaid) { const f = fedOf(r); if (holdsSatIn(f) >= stakeSatOf(r)) { const g = gameOf(r); (walletFedsFor.get(g) || walletFedsFor.set(g, new Set()).get(g)).add(f); } }
+        for (const r of allPaid) { const f = fedOf(r); if (!keyless.has(f) && holdsSatIn(f) >= stakeSatOf(r)) { const g = gameOf(r); (walletFedsFor.get(g) || walletFedsFor.set(g, new Set()).get(g)).add(f); } }
         const enterable = (r) => {
           if (!r || r.free) return true;
           const f = fedOf(r); if (!f) return true;
+          if (keyless.has(f)) { if (r.id) unoffered.set(r.id, { id: r.id, game: r.game, entryCloseMs: Number(r.entryCloseMs), startTimeMs: Number(r.startTimeMs), why: 'no reserve key' }); return false; }
           const mineFeds = walletFedsFor.get(gameOf(r));
           if (!mineFeds || !mineFeds.size || mineFeds.has(f)) return true;
           if (r.id) unoffered.set(r.id, { id: r.id, game: r.game, entryCloseMs: Number(r.entryCloseMs), startTimeMs: Number(r.startTimeMs),
