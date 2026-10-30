@@ -312,6 +312,15 @@ try {
       stakes.push({ kind, accepted: said.accepted === true, ...(said.accepted === true ? {} : { said: JSON.stringify(said).slice(0, 200) }) });
     }
     log({ step: 'collected', player: who, payout, stakes, balanceBeforeMsat: before, balanceAfterMsat: await p.lc.balanceMsat() });
+    // WITHDRAW=1 (kanban #808): the winner takes the money out over Lightning, to an invoice of the payer lnd, as the page's withdraw does
+    if (env.WITHDRAW && payout && payout.accepted) {
+      const can = BigInt(await p.lc.withdrawableMsat()); const sat = can / 1000n - 10n;
+      const inv = JSON.parse((await payer('addinvoice', '--amt', String(sat), '--memo', 'kanban 808 B payout')).out);
+      const said = JSON.parse(await p.lc.withdraw(inv.payment_request, env.GATEWAY || undefined));
+      const held = JSON.parse((await payer('lookupinvoice', inv.r_hash)).out);
+      log({ step: 'lightning payout', player: who, sat: String(sat), paymentHash: inv.r_hash, state: said.state, settled: held.state, amtPaidSat: held.amt_paid_sat,
+        balanceBeforeMsat: said.balance_before, balanceAfterMsat: said.balance_after });
+    }
   }
 } catch (e) { code = 1; log({ step: 'stopped', why: String(e.stack || e.message).slice(0, 600) }); }
 process.exit(code);
