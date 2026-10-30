@@ -7160,6 +7160,17 @@
                 // placen" - 3,285 sat "still merging" for good, his own phrase's wallets empty): the merge skipped the locked phrase without a
                 // word, every time. That tab is asked to hand its notes in this federation over (ARENA_ASK_HANDOVER); a tab that does not
                 // answer is named, so the player knows which tab to close
+                // A LOCK NO LIVING TAB STANDS BEHIND (the owner 2026-10-30: "Es ist kein weiteres Browser Fenster offen, aber es besteht ein lock", 131 sat "merging"
+                // for good): a tab that plays with a phrase writes its heartbeat every 4 s, a tab in the background at least once a minute. No heartbeat for
+                // two minutes means nobody plays with it: the lock is taken over (`steal`), and that tab is not asked, for it will never answer
+                if (held) {
+                  let beat = null; try { beat = JSON.parse(vault().getItem('arena.seed.held.' + x.hex.slice(0, 16)) || 'null'); } catch { beat = null; }
+                  if (!beat || Date.now() - Number(beat.at) > 120000) {
+                    console.log('[arena] wallet ' + from + ': its lock has no living tab behind it - taken over');
+                    held = false;
+                    await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { steal: true }, hold);
+                  }
+                }
                 if (held && !x.ancestor) {
                   mergeSaid(fedHex, 'merging', 'wallet ' + from + ' is open in another tab - asking that tab to hand its money over');
                   const r = await window.ARENA_ASK_HANDOVER(x.hex.slice(0, 16), fedHex, cur.slice(0, 16));
