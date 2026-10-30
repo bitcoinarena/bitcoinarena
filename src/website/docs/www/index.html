@@ -57,6 +57,24 @@
   .lead { font-size: 19px; color: #e3d5cb; max-width: 70ch; }
   .pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 8px; }
   .pill { padding: 6px 12px; border-radius: 999px; font: 600 13px Inter; border: 1px solid rgba(247,147,26,.5); background: rgba(247,147,26,.12); color: #ffd9a6; }
+  /* RUN A NODE IN PICTURES (kanban #812) */
+  .lead { font-size: 17px; color: var(--text); }
+  .run4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(210px,100%), 1fr)); gap: 12px; margin: 18px 0; }
+  .run4-s { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px 16px 16px; }
+  .run4-s h4 { margin: 8px 0 6px; font: 700 17px "Space Grotesk"; color: var(--text); }
+  .run4-s p { margin: 0 0 6px; font-size: 14.5px; }
+  .run4-n { position: absolute; top: 12px; right: 14px; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--btc); color: #1a1000; font: 700 14px "Space Grotesk"; }
+  .run4-i { font-size: 30px; line-height: 1; }
+  .run4-os { display: flex; flex-wrap: wrap; gap: 6px; }
+  .run4-os span { background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: 13px; }
+  .shot { margin: 18px 0; }
+  .shot img { width: 100%; height: auto; border-radius: 14px; border: 1px solid var(--line); display: block; }
+  .shot figcaption { color: var(--dim); font-size: 13.5px; margin-top: 6px; }
+  .run-steps { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(250px,100%), 1fr)); gap: 8px; margin: 10px 0 14px; }
+  .run-steps div { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+  .run-steps b { color: var(--text); font-size: 15px; } .run-steps span { color: var(--dim); font-size: 13.5px; }
+  .run-steps .opt { border-style: dashed; }
+  details.more { margin: 10px 0; } details.more > summary { cursor: pointer; color: var(--gold); font-weight: 600; padding: 6px 0; }
   .note { border-left: 3px solid var(--gold); background: rgba(255,209,102,.06); padding: 12px 16px; border-radius: 0 10px 10px 0; margin: 18px 0; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin: 18px 0; }
   .box { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px; }
@@ -457,15 +475,34 @@
     <li><b>Turning it off.</b> <code>duty_post=off</code> in <code>arena.conf</code>. The default, <code>auto</code>, posts while the wallet holds confirmed coins. <code>duty_wallet</code> names the wallet, <code>duty_fee_rate</code> and <code>duty_max_fee_rate</code> set the fees.</li>
   </ul>
   <h3 id="run">Run a node</h3>
-  <h4 id="installer">With the installer (Linux, macOS, Windows)</h4>
-  <p>The releases are on GitHub in the repository <a href="https://github.com/bitcoin-arena/bitcoin-arena">bitcoin-arena/bitcoin-arena</a>: <b><a href="https://github.com/bitcoin-arena/bitcoin-arena/releases/latest">download the latest release<span class="relv" data-arena-release-version></span></a></b>, or pick your system's file on <a href="https://bitcoin-arena.io/#download">bitcoin-arena.io</a>. Every repository: <a href="https://docs.bitcoin-arena.io/repos/">Repositories</a>. The simplest way is the package for your system. Each package contains Node.js, the node, the installer, <code>cloudflared</code> and Tor. Each opens a small Bitcoin Arena window that starts the installer and opens its setup page in your browser.</p>
-  <ul>
-    <li><b>Windows</b>: <code>bitcoin-arena-node-setup-&lt;version&gt;-windows-x64.exe</code>. It installs into your user folder (no administrator) and adds <b>Bitcoin Arena</b> to the Start menu and the desktop. Windows SmartScreen warns about an unsigned program: choose “More info”, then “Run anyway”. If Windows Firewall asks whether <code>cloudflared</code> may use public and private networks, choose <b>Cancel</b>: your node's tunnel only connects out and works either way.</li>
-    <li><b>macOS</b>: <code>bitcoin-arena-node-&lt;version&gt;-darwin-arm64.dmg</code> (Apple silicon) or <code>-darwin-x64.dmg</code> (Intel). Drag <b>Bitcoin Arena</b> to Applications. The first time, right-click it and choose Open: the app is not signed with an Apple Developer ID yet.</li>
-    <li><b>Linux</b>: <code>bitcoin-arena-node_&lt;version&gt;_amd64.deb</code> or <code>_arm64.deb</code>. Install it with <code>sudo apt install ./bitcoin-arena-node_*.deb</code>, then open <b>Bitcoin Arena</b> from your menu or run <code>bitcoin-arena-node-setup</code>. With a desktop and <code>zenity</code> you get a small window; without one, the terminal shows the link.</li>
-  </ul>
-  <p>Once your node is installed, the same window shows its services (the <code>bitcoinarena status</code> view) with Owner page, Restart and Doctor.
-  Or take the plain release for your machine: download it with <code>SHA256SUMS</code> and <code>SHA256SUMS.sig</code>, unpack it, and run <code>./bitcoinarena-install</code> (on Windows <code>bitcoinarena-install.cmd</code>, on macOS <code>bitcoinarena-install.command</code>). <b>On a server, or over ssh</b> (Linux without a display, or a macOS you are logged in to remotely), the installer shows no window: it says so in the terminal, opens a temporary Cloudflare link by itself and prints it - open it on your phone or laptop (<code>--local</code> keeps a link for that machine only, for an ssh port forward). Every package's checksum is in the same signed <code>SHA256SUMS</code>. Open the link it prints; it works once and for 30 minutes. The wizard runs on testnet4 and tests every step before it saves it, and you can close the page and come back.</p>
+  <!-- RUN A NODE IN PICTURES (kanban #812, the owner 2026-10-30: "Run a Node in docs is way too much text. Make it easier, more pictures and less
+       wall of text"): four steps with a picture each; every detail of before kept, folded -->
+  <p class="lead">Your computer checks the games, pays out the winners and earns <b>4 % of every paid round</b>. Setting it up takes about 15 minutes.</p>
+  <div class="run4" id="installer">
+    <div class="run4-s"><span class="run4-n">1</span><span class="run4-i" aria-hidden="true">⬇️</span><h4>Download</h4>
+      <p><a href="https://github.com/bitcoin-arena/bitcoin-arena/releases/latest">The latest release<span class="relv" data-arena-release-version></span></a> for your computer:</p>
+      <p class="run4-os"><span>🪟 Windows <code>.exe</code></span><span>🍎 macOS <code>.dmg</code></span><span>🐧 Linux <code>.deb</code></span></p></div>
+    <div class="run4-s"><span class="run4-n">2</span><span class="run4-i" aria-hidden="true">🧭</span><h4>Follow the setup</h4>
+      <p>Open <b>Bitcoin Arena</b>. Your browser shows the setup; each step is checked before it is saved.</p></div>
+    <div class="run4-s"><span class="run4-n">3</span><span class="run4-i" aria-hidden="true">🔒</span><h4>Bond 50,000 sat</h4>
+      <p>Free testnet4 coins: the setup can get them for you. The bond is locked for a while, then yours again.</p></div>
+    <div class="run4-s"><span class="run4-n">4</span><span class="run4-i" aria-hidden="true">📊</span><h4>Watch it earn</h4>
+      <p>Your owner page shows what your node does and earns. It updates itself.</p></div>
+  </div>
+  <figure class="shot"><img src="img/run-node-setup.png" alt="The Bitcoin Arena setup: what your node does, what it earns, and what you need" loading="lazy" width="1100" height="1000">
+    <figcaption>The setup's first screen: what your node does, what it earns, and what you need.</figcaption></figure>
+  <h4>The setup, step by step</h4>
+  <div class="run-steps">
+    <div><b>Bitcoin</b><span>your own Bitcoin Core, a public server, or installed for you</span></div>
+    <div><b>Roles</b><span>verify and settle are on; custody and liquidity on purpose</span></div>
+    <div><b>Seed</b><span>24 words, shown once: your wallet and your owner login</span></div>
+    <div><b>Owner</b><span>your 24 words or your Nostr key</span></div>
+    <div><b>Reach</b><span>how others reach your node: no open port needed</span></div>
+    <div><b>Install</b><span>runs as a service and starts again after a reboot</span></div>
+    <div><b>Bond</b><span>the amount and your node's address; free test coins</span></div>
+    <div class="opt"><b>Custody only</b><span>Lightning, federation and the bond rules</span></div>
+  </div>
+  <details class="more"><summary>Every step in detail</summary>
   <ol class="steps">
     <li><b>Bitcoin</b><p>Your own Bitcoin Core (RPC address and cookie, or user and password), an Electrum server from the built-in list (mempool.space, c3-soft), or <b>Install Bitcoin Core for me</b>. The last one checks your free disk against what mainnet (about 950 GB, 20 GB pruned) and testnet4 (about 25 GB, 6 GB pruned) need and warns when both do not fit, installs Bitcoin Core 31.1 (checked against bitcoincore.org's checksums) as a service, and shows the sync with an ETA. Bookmark that page: a mainnet sync can take days. Setup goes on once testnet4 is synced. Every connection is checked by the genesis block and against a second source.</p></li>
     <li><b>Roles</b><p>Game / verify (replays a round and signs who won) and settlement (co-signs paying the winners) start ticked. <b>Custody</b> (one of a federation's 10 guardians, maybe one of its 2 gateways) and <b>liquidity provider</b> (opens incoming channels to new nodes) are chosen on purpose: each needs your own Bitcoin Core (LND cannot run on an Electrum server), LND and coins. Each role is one line with what it needs as chips; the details are behind "more". The page shows how the 4 % node fee is split into four pools of 1 %. Custody adds the Lightning, Federation and Bond rules steps.</p></li>
@@ -478,9 +515,23 @@
     <li><b>Bond rules</b> (custody only)<p>Why a bond, and that switching off without pressing LEAVE on the owner page slashes it. You type I UNDERSTAND.</p></li>
     <li><b>Bond</b><p>The wizard shows your node's own wallet address and the amount with its parts: the bond (50,000 sat on testnet4) and about 2,000 for fees; a custody node adds the advertisement update (5,000), the peg-in (50,000) and its gateway's channels (an outside channel of 103,000 and a ring channel of 153,000: 363,000 sat in all); a liquidity provider adds its deposit (500,000). Free testnet4 coins: <a href="https://coinfaucet.eu/en/btc-testnet4/" target="_blank" rel="noopener">coinfaucet.eu</a>. Once the deposit arrives it posts the bond and says the lock: the block it unlocks at, how many blocks that is, and an estimated date. You can also post it later from the same address.</p></li>
   </ol>
+  </details>
+  <details class="more"><summary>Notes for Windows, macOS and Linux</summary>
+  <ul>
+    <li><b>Windows</b>: <code>bitcoin-arena-node-setup-&lt;version&gt;-windows-x64.exe</code>. It installs into your user folder (no administrator) and adds <b>Bitcoin Arena</b> to the Start menu and the desktop. Windows SmartScreen warns about an unsigned program: choose “More info”, then “Run anyway”. If Windows Firewall asks whether <code>cloudflared</code> may use public and private networks, choose <b>Cancel</b>: your node's tunnel only connects out and works either way.</li>
+    <li><b>macOS</b>: <code>bitcoin-arena-node-&lt;version&gt;-darwin-arm64.dmg</code> (Apple silicon) or <code>-darwin-x64.dmg</code> (Intel). Drag <b>Bitcoin Arena</b> to Applications. The first time, right-click it and choose Open: the app is not signed with an Apple Developer ID yet.</li>
+    <li><b>Linux</b>: <code>bitcoin-arena-node_&lt;version&gt;_amd64.deb</code> or <code>_arm64.deb</code>. Install it with <code>sudo apt install ./bitcoin-arena-node_*.deb</code>, then open <b>Bitcoin Arena</b> from your menu or run <code>bitcoin-arena-node-setup</code>. With a desktop and <code>zenity</code> you get a small window; without one, the terminal shows the link.</li>
+  </ul>
+  </details>
+  <figure class="shot"><img src="img/run-node-owner.png" alt="The owner page: your node at a glance and its uptime as tiles" loading="lazy" width="1440" height="1100">
+    <figcaption>Your owner page: the node at a glance and its uptime.</figcaption></figure>
+  <p><b>Updates are automatic.</b> Your node fetches each new release, checks its signature, backs itself up, and goes back by itself if the new release does not start. To update right away: <code>bitcoinarena update</code>.</p>
+  <details class="more"><summary>More about updates</summary>
   <p><b>Auto update</b> (on by default): your node updates itself. A few hours after a newer release is published, the node's <i>Auto update</i> service fetches its own package. It checks the package against the Arena release key and updates in place the same way as by hand: it waits out a market's seating window, backs the node up, and rolls back by itself if the new release does not come up. <code>auto_update=0</code> in <code>arena.conf</code> turns it off; <code>bitcoinarena update</code> updates now. Releases are numbered <b>2026.xx.yy</b>, a fix <b>2026.xx.yy.zz</b>; the protocol a round runs on is a separate number (protocol 1, 2, … 16).</p>
   <p><b>Updates:</b> the owner page's Release card says when a newer release is out (it reads <code>testnet.bitcoin-arena.io/release/latest.json</code> every six hours and believes it only when the release key signed it). <code>./bitcoinarena-install --update &lt;new release&gt;</code> checks the release's signature, backs your node up, moves it to the new release with the same settings, and goes back to the old one by itself if the new one does not come up. It works on Linux (systemd), macOS (launchd; the bundled Tor is signed for the new release) and Windows (logon tasks, or the Startup folder without administrator rights), moves every service of the node, and the settings' paths into older releases with them. A node on a temporary quick tunnel gets a new tunnel name at every restart: the update starts the tunnel first and writes its new name into the node's settings before the node starts, so its public address and guardian endpoint stay right. On Windows it waits up to five minutes for the node to answer (a Windows node starts slower), starts the services so they keep running after the window that ran the update is closed, and if it has to roll back it always starts the old release again, even when a file the node held cannot be restored at once. <b>Several nodes on one machine:</b> start the installer for the second node once with <code>--home &lt;folder&gt; --instance &lt;name&gt; --port-offset &lt;n&gt;</code> (name a-z, 0-9, up to 12; n 0-20000). Its services get their own names (<code>arena-node--&lt;name&gt;</code>), every fixed port (seat, LND, gateway, Tor, liquidity provider, wizard) moves by n, and its command is <code>bitcoinarena-&lt;name&gt;</code>. Both values are written into its <code>arena.conf</code>, so nothing has to be given again. Each node needs its own LND, because a gateway cannot share one. <b>Checking a release yourself:</b> <code>SHA256SUMS.sig</code> is an Ed25519 signature by the key published at <a href="https://testnet.bitcoin-arena.io/release-key.txt">testnet.bitcoin-arena.io/release-key.txt</a> (<code>ce8d1ee7…c892</code>). With access to the source, the same release is built with <code>tools/release/build-release.sh &lt;version&gt; &lt;linux|darwin|windows&gt; &lt;x64|arm64&gt; out</code> (the same commit gives the same bytes).</p>
-  <h4 id="manual">By hand</h4>
+  </details>
+  <details class="more" id="manual"><summary>Advanced: run a node by hand</summary>
+
   <p>You need a computer that is always on with a public HTTPS address (a tunnel works), Node.js 24, the Bitcoin Arena source (<a href="https://github.com/bitcoin-arena/bitcoin-arena">bitcoin-arena/bitcoin-arena</a>; every repository on <a href="https://docs.bitcoin-arena.io/repos/">Repositories</a>), and a Bitcoin node (<code>bitcoind</code>) on the same network, testnet4 today, so your node reads the chain itself. For the guardian role you also need <code>fedimintd</code> and a seat in a federation. On testnet4, about 50,000 test sats is the practical floor for a bond.</p>
 <pre># start a node on port 31221 with its database in node.db
 node packages/arena-node/src/main.js 31221 node.db
@@ -505,7 +556,9 @@ node packages/nextblock/bin/node.mjs 31221 node.db</pre>
   </tbody></table></div>
   <div class="note"><b>Not built yet:</b> a tool to withdraw node fees, publishing manifests on chain, and automatic slashing. Game cores run in a worker sandbox, not yet in a separate process.</div>
 
-  <h3 id="bitcoinarena">Manage your node: <code>bitcoinarena</code></h3>
+    </details>
+
+<h3 id="bitcoinarena">Manage your node: <code>bitcoinarena</code></h3>
   <p>The installer puts one command on your PATH: <code>bitcoinarena</code>. On Linux it goes in <code>~/.local/bin</code>. On macOS it goes in <code>/opt/homebrew/bin</code> or <code>/usr/local/bin</code> when you may write there, else in <code>~/.local/bin</code>. On Windows it is <code>bitcoinarena.cmd</code> in the node's <code>bin</code> folder, which is added to your PATH. Open a new terminal after the install. The command needs no flags: it knows its node.</p>
   <p>Until release 2026.1.9.8 the command was called <code>arenanode</code> and a node lived in <code>~/.arena-node</code>. The old name still works: it runs <code>bitcoinarena</code>. A node installed before stays in <code>~/.arena-node</code> and is found there; a new one goes in <code>~/.bitcoinarena</code> (<code>%USERPROFILE%\.bitcoinarena</code> on Windows).</p>
   <table>
