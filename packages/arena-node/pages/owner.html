@@ -182,9 +182,13 @@ select:focus{outline:2px solid var(--st);outline-offset:1px}
    should be a progress bar"): a bar, the step and the seconds instead of one word */
 .boot{display:flex;flex-direction:column;gap:6px;max-width:420px}.boot-bar{display:block;height:6px;border-radius:999px;background:var(--line);overflow:hidden}
 .boot-bar i{display:block;height:100%;background:var(--st);border-radius:inherit;transition:width .4s}
+/* THE FIRST LOAD FROM THE NODE (kanban #809, the owner 2026-10-30: the Overview said "checking this node…" and the uptime stayed empty with nothing
+   moving - "Needs a progress bar while it's loading from the node"): the answers the page waits for, counted, under the title */
+.loadbar{display:flex;flex-direction:column;gap:6px;max-width:420px;margin:6px 0 10px}.loadbar[hidden]{display:none}#loadbar-t{color:var(--dim);font-size:13px}
 </style></head><body>
 <h1>Bitcoin Arena · Node Owner <span class="ver" id="ver"></span></h1>
 <div class="sub" id="who"><div class="boot" id="boot"><span class="boot-bar"><i id="boot-i" style="width:5%"></i></span><span id="boot-t">Finding your node…</span></div></div>
+<div class="loadbar" id="loadbar" hidden><span class="boot-bar"><i id="loadbar-i"></i></span><span id="loadbar-t"></span></div>
 <div id="view"></div>
 <p class="sub" id="public-line"><a id="public" href="#">← Public dashboard</a></p>
 <script type="module">
@@ -311,6 +315,32 @@ if (ON_SITE && !BASE) {
 }
 const at = (p) => BASE + p;
 boot(40, 'Loading the owner screens');
+// EVERY REQUEST TO THE NODE COUNTED while the page first loads (kanban #809): the bar under the title shows how many of them have answered,
+// and goes once none is left waiting; requests after that (refreshes, polls) do not bring it back
+const LOAD = { started: 0, done: 0, over: false, area: false, t0: Date.now() };
+function drawLoad() {
+  const el = document.getElementById('loadbar'); if (!el) return;
+  if (LOAD.over) { el.hidden = true; return; }
+  el.hidden = LOAD.started === 0;
+  document.getElementById('loadbar-i').style.width = (LOAD.started ? Math.round(100 * LOAD.done / LOAD.started) : 0) + '%';
+  document.getElementById('loadbar-t').textContent = `Loading from your node… ${LOAD.done} of ${LOAD.started} answers, ${Math.round((Date.now() - LOAD.t0) / 1000)} s`;
+}
+{
+  const inner = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    if (LOAD.over || !url.startsWith(BASE)) return inner(input, init);
+    LOAD.started++; drawLoad();
+    return inner(input, init).finally(() => {
+      LOAD.done++;
+      // the first load is over once every request asked so far has answered and the area is drawn
+      if (LOAD.done >= LOAD.started && LOAD.area) setTimeout(() => { if (LOAD.done >= LOAD.started) { LOAD.over = true; drawLoad(); } }, 1500);
+      drawLoad();
+    });
+  };
+  const tick = setInterval(() => { if (LOAD.over) clearInterval(tick); else drawLoad(); }, 1000);
+  setTimeout(() => { LOAD.over = true; drawLoad(); }, 120000);   // never longer than two minutes
+}
 document.getElementById('public').href = at('/Dashboard');
 // THE RELEASE THIS NODE RUNS, BESIDE THE TITLE (kanban #674: "include version in node dashboard and owner dashboard") - asked of the
 // node, so the page on the Arena site shows it too; and in the footer, the release alone (kanban #753)
@@ -391,7 +421,7 @@ const message = (props) => mount('view', 'mountMessage', props);
 // lists them, the sidebar marks the section - both React's (kanban #564, OwnerArea), drawn again with the list on each change
 const needs = new Map();   // key -> { level: 'bad' | 'warn', text, section }
 let areaProps = null;
-const drawArea = () => { if (areaProps) O.areaInto($('view'), { ...areaProps, needs: needs.size || areaProps.said ? [...needs.values()] : null }); };
+const drawArea = () => { if (areaProps) LOAD.area = true; if (areaProps) O.areaInto($('view'), { ...areaProps, needs: needs.size || areaProps.said ? [...needs.values()] : null }); };
 function need(key, level, text, section) {
   if (level) needs.set(key, { level, text, section }); else needs.delete(key);
   if (areaProps) { areaProps.said = true; drawArea(); }
