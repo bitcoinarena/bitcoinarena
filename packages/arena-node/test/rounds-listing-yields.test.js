@@ -40,6 +40,10 @@ test('a whole /rounds listing does not hold the loop: /identity answers every 10
   const s = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, roundClock: () => NOW, series });
   try {
     const at = `http://127.0.0.1:${s.port}`;
+    // THE SERIES WRITTEN FIRST: the writer writes a series' rounds in steps (444, then 617, then 343 more ...), so 30 ms after the
+    // start the store held 266 - the large listing this test is about exists only once they are in (up to 60 s)
+    const stored = () => s.round.db.prepare('SELECT count(*) AS n FROM rounds').get().n;
+    for (let i = 0; i < 600 && stored() <= 2000; i++) await new Promise((r) => setTimeout(r, 100));
     const waits = [];
     let listing = true;
     const pinger = (async () => {
