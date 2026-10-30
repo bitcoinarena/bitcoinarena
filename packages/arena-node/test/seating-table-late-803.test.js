@@ -21,7 +21,7 @@ const RPS_V2 = fromHex('a75f54fd4f978a29ab6d39d9ef85c7adbe0576614634c679ae33d3e1
 const START = 60500n;
 const LATER = Number(START) + 30 * 60000;     // half an hour after the table's first round started
 
-function table({ roundIndex = 0, others = 4, game = RPS_V2 } = {}) {
+function table({ roundIndex = 0, others = 4, game = RPS_V2, hangPosts = null } = {}) {
   const db = new DatabaseSync(':memory:');
   db.exec('CREATE TABLE rounds (round_id BLOB, contract BLOB)');
   const c = { ...contractFor([]), gameId: game, protocolVersion: 2, seriesId: new Uint8Array(32).fill(0x80), nodes: [], gameVerifySlots: 7, settlementSlots: 7, roundIndex, startTimeMs: START };
@@ -35,7 +35,7 @@ function table({ roundIndex = 0, others = 4, game = RPS_V2 } = {}) {
   const posted = [];
   const fetcher = async (url, init = {}) => {
     const u = new URL(url);
-    if ((init.method || 'GET') === 'POST') { posted.push(`${u.host}${u.pathname}`); return new Response('{}', { status: 200 }); }
+    if ((init.method || 'GET') === 'POST') { posted.push(`${u.host}${u.pathname}`); if (hangPosts) await hangPosts; return new Response('{}', { status: 200 }); }
     if (u.pathname !== '/seating-batch') return new Response('{}', { status: 200 });
     const n = nodes.find((x) => x.endpoint === `http://${u.host}`);
     const sig = (role) => (signers.includes(n) ? { node: toHex(n.pubkey), seated: seated.map(toHex), signature: toHex(signSeating({ roundId: rid, role, seated }, signer(n))) } : null);
@@ -94,4 +94,15 @@ test('the tick does not wait for the tables\' certificate asks (kanban #803: 35 
   await agent.tick();
   assert.equal(asks, 2 * 6, 'a second pass does not start while one runs');
   release(); await agent.settled();
+});
+
+test('the tick does not wait for the certificate\'s hand-out (kanban #803: take+certify 10.6 s of a 12.2 s tick on test host seat 2)', async () => {
+  let release; const hang = new Promise((r) => { release = r; });
+  const { agent, rid, posted } = table({ hangPosts: hang });
+  const t0 = Date.now();
+  await agent.tick();
+  assert.ok(Date.now() - t0 < 1000, 'the tick ended while every hand-out still hung');
+  assert.ok(agent.certOf(rid, 'game') && agent.certOf(rid, 'settlement'), 'both certificates stand');
+  assert.equal(posted.filter((p) => p.endsWith('/seating')).length, 2 * 6, 'and were handed to the six other drawn seats');
+  release();
 });
