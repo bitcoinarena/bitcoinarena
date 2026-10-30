@@ -15,7 +15,7 @@ function peersServing(map, { lie = {} } = {}) {
     const m = /^(https?:\/\/[^/]+)(\/.*)$/.exec(u); const root = m[1], path = m[2];
     const held = map[root];
     if (!held) throw new Error('fetch failed');
-    if (path === '/series') return { ok: true, json: async () => ({ series: held.map((x) => ({ series: x.id, ahead: x.ahead ?? 10 })) }) };
+    if (path === '/series') return { ok: true, json: async () => ({ series: held.map((x) => ({ series: x.id, ahead: x.ahead ?? 10, ...(x.startTimeMs !== undefined ? { startTimeMs: String(x.startTimeMs) } : {}) })) }) };
     const id = /id=([0-9a-f]{64})/.exec(path)[1];
     if (!held.some((x) => x.id === id)) return { ok: false, text: async () => 'no such series' };
     return { ok: true, text: async () => `${lie[root] || id}\n` };
@@ -57,4 +57,19 @@ test('a few peers a pass, in turn', async () => {
   const p = createSeriesPull({ peers: () => roots, held: () => [], parse, idOf, fetchFn, take: async () => ({ ok: true }), askPeers: 4 });
   await p.pass(); await p.pass();
   assert.deepEqual(asked.map((u) => u.slice(8, 10)), ['p0', 'p1', 'p2', 'p3', 'p4', 'p5', 'p0', 'p1']);
+});
+
+// kanban #788, measured 2026-10-30 03:0xZ: the day posted at 02:00Z lists `ahead: 0` on every seat until its rounds are written, 3 h
+// before it starts - the test host seats, which the poster does not reach, pulled none of 10-31's series for an hour
+test('a series not begun is pulled though no round of it is written ahead yet; one whose start has passed with nothing ahead is not', async () => {
+  const NOW = 1793326000000;                       // 2026-10-30 ~02:46Z
+  const E = 'e'.repeat(64);
+  const taken = [];
+  const { fetchFn, asked } = peersServing({ 'https://s1': [{ id: D, ahead: 0, startTimeMs: NOW + 21 * 3600000 }, { id: E, ahead: 0, startTimeMs: NOW - 60000 }] });
+  const p = createSeriesPull({ peers: () => ['https://s1'], held: () => taken, parse, idOf, fetchFn, now: () => NOW,
+    take: async (t) => { taken.push(t.id); return { ok: true }; } });
+  const r = await p.pass();
+  assert.deepEqual(taken, [D], 'the next day\'s series, written nowhere yet, is taken');
+  assert.equal(r.missing, 1);
+  assert.ok(!asked.some((u) => u.includes(`id=${E}`)), 'a series begun with nothing ahead is not fetched');
 });
