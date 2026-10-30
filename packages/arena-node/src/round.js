@@ -178,11 +178,19 @@ export class Round {
     const recorded = this.signerNodes(roundIdBytes).map((k) => toHex(k)).sort();
     if (want.join() === had.join() && want.join() === recorded.join()) return false;
     const bytes = encodeRoundContract({ ...c, nodes: keys });
-    this.db.prepare('UPDATE rounds SET contract = ? WHERE round_id = ?').run(bytes, roundIdBytes);
+    // ONE TRANSACTION FOR THE WRITE-IN (kanban #786, measured 2026-10-30 03:2xZ on second-host seat 3 over 60 s: 71 write-ins a minute, each an
+    // UPDATE, a DELETE and ~6 INSERTs - 8 commits writing the same table and index pages into the WAL 8 times): one commit, unless the
+    // caller already holds a transaction
+    const own = !this.db.isTransaction;
+    if (own) this.db.exec('BEGIN');
+    try {
+      this.db.prepare('UPDATE rounds SET contract = ? WHERE round_id = ?').run(bytes, roundIdBytes);
+      this.db.prepare('DELETE FROM signer_nodes WHERE round_id = ?').run(roundIdBytes);
+      this.recordSignerNodes(roundIdBytes, keys);
+      if (own) this.db.exec('COMMIT');
+    } catch (e) { if (own) { try { this.db.exec('ROLLBACK'); } catch { /* none open */ } } throw e; }
     this.contracts.delete(this.hexOf(roundIdBytes));
     this.openSeq++;
-    this.db.prepare('DELETE FROM signer_nodes WHERE round_id = ?').run(roundIdBytes);
-    this.recordSignerNodes(roundIdBytes, keys);
     return true;
   }
 
@@ -2764,9 +2772,14 @@ export class Round {
   }
 
   /** Keep the beacon this signer node's chain named for a round: the block, its height, its time. */
+  // THE SAME BEACON AGAIN WRITES NOTHING (kanban #786, measured 2026-10-30 03:2xZ on second-host seat 3: 136 INSERT OR REPLACE a minute - the seat
+  // keeps which beacons it wrote only in memory, so after each restart every held round's beacon was replaced by the same row): a row
+  // that already says this block, height and time is left as it is. Answers whether anything was written.
   putBeacon(roundIdBytes, { hash, height, timeMs }) {
-    this.db.prepare('INSERT OR REPLACE INTO round_beacons (round_id, hash, height, time_ms) VALUES (?, ?, ?, ?)')
-      .run(roundIdBytes, hash, height, Number(timeMs));
+    return this.db.prepare('INSERT INTO round_beacons (round_id, hash, height, time_ms) VALUES (?, ?, ?, ?) '
+      + 'ON CONFLICT (round_id) DO UPDATE SET hash = excluded.hash, height = excluded.height, time_ms = excluded.time_ms '
+      + 'WHERE round_beacons.hash IS NOT excluded.hash OR round_beacons.height IS NOT excluded.height OR round_beacons.time_ms IS NOT excluded.time_ms')
+      .run(roundIdBytes, hash, height, Number(timeMs)).changes > 0;
   }
 
   /** The beacon kept for a round, or nothing. */
