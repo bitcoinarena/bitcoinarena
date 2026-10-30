@@ -597,7 +597,7 @@ export function unplayableWindowLine({ unoffered = [], offered = [], nowMs = Dat
   const span = (r) => { const end = Number(r.entryCloseMs), start = periodMs ? end - periodMs : Number(r.startTimeMs) || 0;
     return start && start < end ? `${hm(start)}-${hm(end)} UTC` : `closing ${hm(end)} UTC`; };
   const why = first.why === 'not seated' ? 'its committee is not seated' : first.why === 'not drawn' ? 'its committee is not drawn'
-    : first.why === 'not played' ? 'its window is played on another grid' : 'it is not listed';
+    : first.why === 'not played' ? 'its window is played on another grid' : first.why === 'no reserve key' ? 'its federation has no reserve key yet' : 'it is not listed';
   const next = good[0];
   return { text: `No playable round for the ${span(first)} window - ${why}. ` + (next ? `Next playable window: ${span(next)}.` : 'No later window is playable yet.'),
     why: first.why, round: first.id || null, next: next ? next.id || null : null, nextCloseMs: next ? Number(next.entryCloseMs) : null };
