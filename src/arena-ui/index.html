@@ -6996,11 +6996,12 @@
           const tab = sessionStorage.getItem('arena.tab.id');
           const held = (hex) => { try { const h = JSON.parse(L.getItem('arena.seed.held.' + hex.slice(0, 16)) || 'null'); return !!(h && h.tab !== tab && Date.now() - h.at <= 12000); } catch { return true; } };
           const federations = [...(window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.keys ? window.ARENA_FED_LOADS.keys() : []), ...(window.ARENA_WALLETS ? window.ARENA_WALLETS.keys() : [])];
-          const r = ARENACLIENT.tidyStorage(L, { seeds: kept, current: cur, federations, held });
+          const r = ARENACLIENT.tidyStorage(L, { seeds: kept, current: cur, federations, held, pressureChars: 3500000 });
           if (r.removed) console.log('[arena] storage tidied: ' + r.wallets + ' old wallet database(s), ' + r.removed + ' entries, ' + Math.round(r.bytes / 1024) + ' KB freed');
           return r;
         } catch (e) { console.log('[arena] storage not tidied: ' + (e && e.message ? e.message : e)); return null; }
       };
+      window.ARENA_TIDY_STORAGE();   // at once as well: a browser whose storage is full cannot open the wallet at all (2026-10-30)
       setTimeout(() => window.ARENA_TIDY_STORAGE(), 8000);
       const combiningBy = new Map();
       function combineWallets(main, named, round) { return combineIn(main, ARENACLIENT.toHex(round.federationId), named.federation, { legacy: true }); }
