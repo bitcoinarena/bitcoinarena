@@ -49,8 +49,12 @@ export function createSeriesPull({ peers, held, take, parse, idOf, fetchFn = fet
         out.answered++;
         for (const s of got.series) {
           const id = String((s && s.series) || '').toLowerCase();
-          // a series whose rounds have all started is of no use here any more
-          if (!/^[0-9a-f]{64}$/.test(id) || have.has(id) || !(Number(s.ahead) > 0)) continue;
+          // a series whose rounds have all started is of no use here any more - but one not begun yet is: its rounds are written only
+          // a horizon ahead (3 h), so a whole day posted at 02:00Z shows `ahead: 0` until 21:00Z (kanban #788, measured 2026-10-30
+          // 03:0xZ: the 7 test host seats, which the day's poster does not reach, held none of 10-31's 12 series an hour after their
+          // posting confirmed, every second-host seat listing them with ahead 0 - pulled only after their committee time)
+          const notBegun = Number(s.startTimeMs) > now();
+          if (!/^[0-9a-f]{64}$/.test(id) || have.has(id) || !(Number(s.ahead) > 0 || notBegun)) continue;
           if (!from.has(id)) from.set(id, []);
           from.get(id).push(u);
         }
