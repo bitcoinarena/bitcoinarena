@@ -1,8 +1,8 @@
 # Bitcoin Arena
 
-> **⬇ Run a node: [download the latest release](https://github.com/a tester/bitcoin-arena/releases/latest)** (testnet4):
+> **⬇ Run a node: [download the latest release](https://github.com/bitcoin-arena/bitcoin-arena/releases/latest)** (testnet4):
 > Windows `bitcoin-arena-node-setup-*.exe` · macOS `bitcoin-arena-node-*.dmg` · Linux `bitcoin-arena-node_*.deb` · or the plain archives.
-> All releases: [Releases](https://github.com/a tester/bitcoin-arena/releases). Guide: [docs.bitcoin-arena.io](https://docs.bitcoin-arena.io/#run).
+> All releases: [Releases](https://github.com/bitcoin-arena/bitcoin-arena/releases). Guide: [docs.bitcoin-arena.io](https://docs.bitcoin-arena.io/#run).
 
 Bitcoin Arena is a set of games and prediction markets played for bitcoin, with **no central server**. The nodes *are* the arena:
 
@@ -27,7 +27,7 @@ The game page is at [testnet.bitcoin-arena.io](https://testnet.bitcoin-arena.io)
 
 ## Run a node
 
-1. **Download** the package for your system from the [latest release](https://github.com/a tester/bitcoin-arena/releases/latest) and open it. A small *Bitcoin Arena* window starts the installer and opens its setup page in your browser.
+1. **Download** the package for your system from the [latest release](https://github.com/bitcoin-arena/bitcoin-arena/releases/latest) and open it. A small *Bitcoin Arena* window starts the installer and opens its setup page in your browser.
 2. **Set it up** in the browser wizard. It tests each step before saving it:
    - **chain:** your own Bitcoin Core, or an Electrum server;
    - **roles:** verify, settlement, custody, liquidity;
