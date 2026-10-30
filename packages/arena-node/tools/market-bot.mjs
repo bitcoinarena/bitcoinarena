@@ -80,6 +80,9 @@ mkdirSync(DIR, { recursive: true, mode: 0o700 });
 const J = (o) => JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v));
 const say = (o) => console.log(J({ at: new Date().toISOString(), bot: NAME, ...o }));
 const rand = (n) => new Uint8Array(randomBytes(n));
+// the address of the last fetch that failed outright, for the pass failure line (kanban #804)
+let lastFailedFetch = null;
+{ const inner = globalThis.fetch; globalThis.fetch = async (u, init) => { try { return await inner(u, init); } catch (e) { lastFailedFetch = String(u && u.url ? u.url : u).slice(0, 160); throw e; } }; }
 const getJson = async (u, ms = 8000) => { const r = await fetch(u, { cache: 'no-store', signal: AbortSignal.timeout(ms) }); if (!r.ok) throw new Error(`${u} answered ${r.status}`); return r.json(); };
 // THE APP'S OWN PRICING (its page/book-bot.js, as the app published it): its `arena-sdk/...` imports read from this tree's arena-sdk
 // through its export map - the app lives outside this tree, where `arena-sdk` names no package
@@ -589,7 +592,10 @@ async function pass() {
 }
 
 for (;;) {
-  try { await pass(); } catch (e) { say({ step: 'pass failed', why: String(e.stack || e.message).slice(0, 400) }); }
+  try { await pass(); } catch (e) {
+    // A FAILED FETCH NAMES ITS ADDRESS AND CAUSE (kanban #804: "TypeError: fetch failed" on every pass of a bot, with no address)
+    const c = e && e.cause; say({ step: 'pass failed', why: String(e.stack || e.message).slice(0, 400), ...(c ? { cause: String(c.code || c.message || c).slice(0, 160) } : {}), ...(lastFailedFetch ? { url: lastFailedFetch } : {}) });
+  }
   if (!DRY) { try { await collectPass(); } catch (e) { say({ step: 'collect pass failed', why: String(e.message).slice(0, 200) }); } }
   if (!DRY) { try { await payNeeds(); } catch (e) { say({ step: 'pay bots failed', why: String(e.message).slice(0, 200) }); } }
   if (env.ONCE) break;
