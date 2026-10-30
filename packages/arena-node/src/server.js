@@ -5394,10 +5394,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const SCAN_KEEP_MS = 5000;
   let scanKept = null; let scanBuilding = null;
   const openScan = async (nowMs, yieldIfLong) => {
-    if (scanKept && scanKept.version === seriesVersion && Date.now() - scanKept.at < SCAN_KEEP_MS) return scanKept.list;
+    if (scanKept && scanKept.version === seriesVersion && Date.now() - scanKept.at < SCAN_KEEP_MS) {
+      // A ROUND CLOSED SINCE THE SCAN IS DROPPED FROM IT (kanban #791, rounds-endpoint: a closed round was still "upcoming" in
+      // /api/rounds for up to SCAN_KEEP_MS), not the scan built again on every close - an RPS grid closes one every few seconds
+      if (scanKept.closeSeq === round.closeSeq) return scanKept.list;
+      const gone = typeof round.closedSince === 'function' ? round.closedSince(scanKept.closeSeq) : null;
+      if (gone) { scanKept = { ...scanKept, closeSeq: round.closeSeq, list: scanKept.list.filter((x) => !gone.has(round.hexOf(x.held.roundId))) }; return scanKept.list; }
+    }
     if (!scanBuilding) {
       scanBuilding = (async () => {
-        const version = seriesVersion; const at = Date.now(); const list = [];
+        const version = seriesVersion; const at = Date.now(); const list = []; const closeSeq = round.closeSeq;
         for (const roundId of openHeld()) {
           await yieldIfLong();
           const kept = heldOf(roundId);
@@ -5409,7 +5415,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!gameOfContract(c)) continue;
           list.push({ held: { roundId }, c, endMs });
         }
-        scanKept = { version, at, list };
+        scanKept = { version, at, list, closeSeq };
         return list;
       })().finally(() => { scanBuilding = null; });
     }
