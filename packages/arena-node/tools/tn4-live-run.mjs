@@ -138,7 +138,9 @@ try {
     if (!list) throw new Error('no seat answered GET /rounds');
     const now = Date.now();
     const next = list.filter((x) => x.entryOpen && x.game && x.game.name === 'nextblock' && Number(x.startTimeMs) - now > 75000
-      && (!env.GAME_ID || String(x.game.id).startsWith(env.GAME_ID.toLowerCase())))
+      && (!env.GAME_ID || String(x.game.id).startsWith(env.GAME_ID.toLowerCase()))
+      // FEDERATION=<hex prefix> (kanban #804): only a round of the federation this payer's wallet pays into - both list together
+      && (!env.FEDERATION || String(x.federation || '').toLowerCase().startsWith(String(env.FEDERATION).toLowerCase())))
       .sort((a, b) => Number(a.startTimeMs) - Number(b.startTimeMs))[0];
     if (!next) throw new Error('no nextblock round open for entries and starting more than 75 s ahead');
     env.ROUND = next.id;
