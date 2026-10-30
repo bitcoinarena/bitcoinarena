@@ -621,7 +621,7 @@ node packages/nextblock/bin/node.mjs 31221 node.db</pre>
 
     </details>
 
-<h3 id="bitcoinarena">Manage your node: the owner page</h3>
+  <h2 id="bitcoinarena">Manage your node: the owner page</h2>
   <!-- THE OWNER PAGE, NOT THE COMMAND LINE (the owner 2026-10-30: "Manage your node explains how to use it with the CLI, instead just mention the
        ownerpage and how to access it") -->
   <p class="lead">Everything about your node is on its <b>owner page</b>: whether it runs, what it earns, its roles, its bond, its uptime, its services and its updates.</p>
@@ -648,7 +648,9 @@ node packages/nextblock/bin/node.mjs 31221 node.db</pre>
   <details class="more" id="dashboard"><summary>The public dashboard (technical): what /dashboard shows</summary>
   <p>Open <code>/dashboard</code> on any node (<code>/dashboard.json</code> is the same as data). It shows what the node earned today, this month and this year (counted as earned once a settlement is accepted, otherwise as owed), a 30-day chart of its fees by role, the rounds it checked with each player's outcome and a replay link, its settlements and federations, the Lightning hosts and gateways it runs, and a dev-client card. Everything comes from the node's own store. The testnet page links the dashboards of its nodes.</p>
   </details>
-  <h3 id="owner">The owner area</h3>
+  <!-- THE OWNER AREA'S WALL OF TEXT, FOLDED (the owner 2026-10-30: "Create a new section Manage your node: the owner page and hide the The Owner area
+       wall of text") -->
+  <details class="more" id="owner"><summary>The owner area in detail: signing in, each section, how requests are signed</summary>
   <p>Open <code>/dashboard/owner</code> on your node (the dashboard links it as “Owner area”). There are no passwords and no cookies: every request you make is signed with your owner key, valid for 2 minutes and only once.</p>
   <ol class="steps">
     <li><b>Sign in</b>
@@ -669,6 +671,7 @@ node packages/nextblock/bin/node.mjs 31221 node.db</pre>
       </ul></li>
   </ol>
   <p>Through the API only: the node's half of a cooperative bond spend with the arbitration set (<code>/owner/musig/nonce</code>, <code>/owner/musig/partial</code>), and operator tokens (<code>/owner/operator/mint|list|revoke</code>) for <code>/operator/status</code> and <code>/operator/vote</code>, which hands back a vote payload that you broadcast yourself. The node never moves money for a vote.</p>
+  </details>
 
   <h3 id="donor">Dev clients and donations</h3>
   <p>Donations are paid in the round's settlement as payout contracts to the developers' keys. A developer collects them with the <b>dev client</b>, <code>packages/arena-donor</code>:</p>
