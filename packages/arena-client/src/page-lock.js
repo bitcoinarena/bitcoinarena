@@ -65,23 +65,50 @@ export function putRoomy(storage, key, value) {
 }
 
 /**
+ * THE PLAYER'S WALLET KEEPS ITS ROOM (the owner 2026-10-30: "Your browser's storage is full", and 1000 sat paid but not claimed: each kept round's lock wallet
+ * takes ~150 KB, 50 kept rounds fill the 5 million characters a browser gives, and the next write of the player's wallet then ends its task). Past
+ * LOCK_ROOM_CHARS a round's lock wallet goes on in memory: it is the seed's and the round's, and joined anew when needed. Safari gives half of Chrome's room.
+ */
+const LOCK_ROOM_CHARS = 1500000;
+const liveLockDbs = new Set();
+const charsRead = new WeakMap();
+function storageChars(storage) {
+  const seen = charsRead.get(storage);
+  if (seen && Date.now() - seen.atMs < 5000) return seen.chars;
+  let chars = 0;
+  for (let i = 0; i < storage.length; i++) { const k = storage.key(i); if (k) chars += k.length + String(storage.getItem(k) || '').length; }
+  charsRead.set(storage, { atMs: Date.now(), chars });
+  return chars;
+}
+
+/**
  * WHERE THE LOCK CLIENT'S WALLET IS KEPT: the tab's storage, one key per
  * database key, under this round and this seed's secret (its hash, never the
  * secret). The shape `lock-client/src/store.rs` reads: `entries()` as JSON.
  */
 export function lockStoreFor(storage, roundId, secret) {
   const prefix = `arena.lockdb.${toHex(roundId).slice(0, 16)}.${toHex(sha256(secret)).slice(0, 16)}.`;
+  liveLockDbs.add(prefix);
+  const kept = () => {
+    const out = [];
+    for (let i = 0; i < storage.length; i++) {
+      const k = storage.key(i);
+      if (k && k.startsWith(prefix)) out.push([k.slice(prefix.length), storage.getItem(k)]);
+    }
+    return out;
+  };
+  let inMemory = null;   // the whole database or none of it: a part of one left in storage would not open again
+  const toMemory = () => { const all = kept(); inMemory = new Map(all); for (const [k] of all) storage.removeItem(prefix + k); };
   return {
-    entries() {
-      const out = [];
-      for (let i = 0; i < storage.length; i++) {
-        const k = storage.key(i);
-        if (k && k.startsWith(prefix)) out.push([k.slice(prefix.length), storage.getItem(k)]);
+    entries() { return JSON.stringify(inMemory ? [...inMemory] : kept()); },
+    put(k, v) {
+      if (!inMemory && storageChars(storage) >= LOCK_ROOM_CHARS) toMemory();
+      if (!inMemory) {
+        try { putRoomy(storage, prefix + k, v); return; } catch (e) { if (!/quota/i.test(`${e && e.name} ${e && e.message}`)) throw e; toMemory(); }
       }
-      return JSON.stringify(out);
+      inMemory.set(k, v);
     },
-    put(k, v) { putRoomy(storage, prefix + k, v); },
-    remove(k) { storage.removeItem(prefix + k); },
+    remove(k) { if (inMemory) inMemory.delete(k); else storage.removeItem(prefix + k); },
   };
 }
 
@@ -246,7 +273,7 @@ export function forgetPhrase(storage, seedHex) {
  * A database whose federation is not named here in full (`federations`, 64 hex, and every federation with a history) is left alone.
  * Answers { removed: keys, bytes: what they held (UTF-16), wallets: databases }.
  */
-export function tidyStorage(storage, { seeds = [], current = null, federations = [], held = () => false, now = () => Date.now(), pressureChars = 0 } = {}) {
+export function tidyStorage(storage, { seeds = [], current = null, federations = [], held = () => false, now = () => Date.now(), pressureChars = 0, archive = null } = {}) {
   if (!storage) return { removed: 0, bytes: 0, wallets: 0 };
   const keys = storageKeys(storage);
   const feds = new Set([...federations.map((f) => String(f).toLowerCase()),
@@ -311,6 +338,24 @@ export function tidyStorage(storage, { seeds = [], current = null, federations =
       const byDb = new Map();
       for (const k of storageKeys(storage)) { const m = /^(arena\.lockdb\.([0-9a-f]{16})\.[0-9a-f]{16}\.)/.exec(k); if (m && done.has(m[2])) { if (!byDb.has(m[1])) byDb.set(m[1], []); byDb.get(m[1]).push(k); } }
       for (const [, ks] of byDb) { if (now_ <= pressureChars) break; take(ks); }
+    }
+    // AND A LOCK WALLET OF A ROUND STILL OPEN, an hour after it was kept and with no client of this page on it: handed to `archive` (the page's IndexedDB,
+    // which removes the keys once they are written there), so nothing of it is lost, and joined anew from the seed when needed (LOCK_ROOM_CHARS)
+    if (now_ > pressureChars && archive) {
+      const recent = new Set();
+      for (const k of storageKeys(storage)) {
+        if (!k.startsWith('arena.collect.')) continue;
+        try { const r = JSON.parse(storage.getItem(k)); if (r && r.roundIdHex && now() - Number(r.savedMs || 0) <= 3600000) recent.add(String(r.roundIdHex).toLowerCase().slice(0, 16)); } catch { /* unreadable: its wallet goes as any other */ }
+      }
+      const byDb = new Map();
+      for (const k of storageKeys(storage)) { const m = /^(arena\.lockdb\.([0-9a-f]{16})\.[0-9a-f]{16}\.)/.exec(k); if (m && !recent.has(m[2]) && !liveLockDbs.has(m[1])) { if (!byDb.has(m[1])) byDb.set(m[1], []); byDb.get(m[1]).push(k); } }
+      for (const [, ks] of byDb) {
+        if (now_ <= pressureChars) break;
+        const rows = ks.map((k) => [k, storage.getItem(k)]);
+        for (const [k, v] of rows) { const c = k.length + String(v || '').length; bytes += c * 2; now_ -= c; removed++; }
+        wallets++;
+        archive(rows);
+      }
     }
     if (now_ > pressureChars) {
       const travelling = new Set();
