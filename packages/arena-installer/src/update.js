@@ -466,7 +466,12 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
   // a release of either name (kanban #688: since 2026.1.8 the folders are bitcoin-arena-node-<v>-..., and this matched none of them)
   const olderRe = new RegExp(`${releasesDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\\\/](?:bitcoin-)?arena-node-[^\\\\/"'\\s]+`, 'g');
   const oldersIn = (t) => [...new Set(t.match(olderRe) || [])].filter((x) => x !== from && x !== newRelease && !String(newRelease).startsWith(x));
-  const moving = svcFiles.filter((f) => { const t = readFileSync(f, 'utf8'); return f === svc.seatFile || f === lndFile || t.includes(from) || oldersIn(t).length > 0; });
+  // A SERVICE LEFT ON A PATH THAT IS GONE (kanban #818, a friend's gateway 2026-10-30: "die Pfad Struktur [hat] sich geändert ... das wurde nicht
+  // migriert"): a release under another home - the layout before this one - is in none of the above, so that file was never moved and kept
+  // starting a program that no longer exists. It names the old home, so its data paths move with it. A path that still exists is left alone.
+  const staleHomesIn = (t) => [...new Set([...t.matchAll(/((?:[A-Za-z]:)?[\\/][^\s"'<>=]*?)[\\/]releases[\\/](?:bitcoin-)?arena-node-[^\\/"'\s<>]+/g)]
+    .filter((m) => m[1] !== home && !m[0].startsWith(releasesDir) && !existsSync(m[0])).map((m) => m[1]))];
+  const moving = svcFiles.filter((f) => { const t = readFileSync(f, 'utf8'); return f === svc.seatFile || f === lndFile || t.includes(from) || oldersIn(t).length > 0 || staleHomesIn(t).length > 0; });
   const oldTexts = new Map(moving.map((f) => [f, readFileSync(f, 'utf8')]));
   step(`${moving.length} of ${svcFiles.length} service file(s) move: ${moving.map((f) => f.split(/[\\/]/).pop()).join(', ')}`);
   trace.debug(`not moved (they name neither ${from} nor an older release): ${svcFiles.filter((f) => !moving.includes(f)).map((f) => f.split(/[\\/]/).pop()).join(', ') || 'none'}`);
@@ -528,7 +533,8 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
     if (noBridge && isBridge(f)) continue;
     const moved = f === svc.seatFile ? svc.seatFor(newRelease, oldTexts.get(f))
       : svc.bridgeFor && f.endsWith(BRIDGE_UNIT) ? svc.bridgeFor(newRelease, state)
-        : oldersIn(oldTexts.get(f)).reduce((t, o) => t.split(o).join(newRelease), oldTexts.get(f).split(from).join(newRelease));
+        : staleHomesIn(oldTexts.get(f)).reduce((t, h) => t.replace(new RegExp(`${h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\\\/]releases[\\\\/](?:bitcoin-)?arena-node-[^\\\\/"'\\s<>]+`, 'g'), newRelease).split(h).join(home),
+          oldersIn(oldTexts.get(f)).reduce((t, o) => t.split(o).join(newRelease), oldTexts.get(f).split(from).join(newRelease)));
     const text = f === lndFile ? lnd.swap(moved) : moved;
     // the gateway of an older install gets its own metrics port (gateway.js: by itself it took the liquidity provider's)
     writeFileSync(f, /gateway/.test(f.split(/[\\/]/).pop()) ? gatewayMetricsOwn(text) : text);
