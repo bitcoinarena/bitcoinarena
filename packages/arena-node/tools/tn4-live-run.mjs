@@ -40,6 +40,7 @@ import { decodeRoundContract, roundId, encodeEntryContract, entryId } from '../.
 import { seatingCloseMs } from '../../arena-protocol/src/seating.js';
 import { clientSettlementSignerNodes } from '../../arena-client/src/committee.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
+import { addressBook } from './signer-addresses.mjs';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { settlementOf, forfeitOf } from '../../arena-client/src/page-lock.js';
@@ -157,6 +158,7 @@ try {
   if (!ids.every((x) => x === env.ROUND)) throw new Error(`preflight: the seats do not all hold round ${env.ROUND.slice(0, 16)}: ${ids.map((h) => h.slice(0, 12)).join(' ')}`);
   if (new Set(copies).size !== 1) log({ step: 'copies differ in bytes, not in id', distinct: new Set(copies).size });
   log({ step: "preflight", round: env.ROUND.slice(0, 16), seats: copies.length });
+  let seatedKeys = [];
   // SEATED BEFORE ANYTHING IS PAID (§5A.7): a seat running ARENA_SEATING takes no entry without the round's
   // seating certificate, which exists from seating_close (start - 120 s) - so wait for it, and check it as the page does
   {
@@ -170,6 +172,7 @@ try {
       try {
         const got = await clientSettlementSignerNodes(env.ROUND, c0, nodes, { curve: pageCurve });
         const st = got.derived.seating || {};
+        seatedKeys = [...(st.game && st.game.seated) || [], ...(st.settlement && st.settlement.seated) || []];
         log({ step: 'seated', signerNodes: got.signerNodes.length, agreed: got.agreed,
           game: st.game && st.game.seated ? st.game.seated.length : null, settlement: st.settlement && st.settlement.seated ? st.settlement.seated.length : null });
         break;
@@ -188,6 +191,8 @@ try {
   const STAKE = BigInt(c.stakeMsat);
   log({ step: 'round', id: env.ROUND.slice(0, 16), stakeMsat: STAKE, custody: c.custody, federation: toHex(c.federationId).slice(0, 16),
     nodes: c.nodes.length, needed: receiptsNeeded(c.gameVerifySlots), entryClose: new Date(Number(c.entryCloseMs)).toISOString() });
+  // THE SIGNER NODES OUTSIDE NODES (kanban #804, signer-addresses.mjs): asked for the claim key and handed the entry at their own addresses
+  { const out = await addressBook([...nodes]).outside([...c.nodes, ...seatedKeys]); if (out.length) { nodes.push(...out); log({ step: 'signer nodes outside NODES', addresses: out }); } }
 
   // ASKED AGAIN WHILE THE SIGNER NODES ARE STILL MAKING IT (kanban #675, measured 2026-10-26 07:16Z: "holds no claim key for that round
   // yet: it is making it now, ask again in a few seconds" from three of them, right after the seating; still so after 60 s at 07:21Z), every 5 s for up to 100 s
