@@ -157,7 +157,11 @@ async function openWindows() {
         .filter((r) => !walletFed || !r.federation || String(r.federation.id || r.federation).toLowerCase().startsWith(walletFed.slice(0, 16)))
         // NOT A ROUND DRAWN TOO SHORT TO BE SEATED (2026-10-27: today's v24 rounds drew 3 nodes - their census predates the seats'
         // adverts naming v24 - and every pass stopped at "that round has no signer nodes yet", so no order reached the v23 round)
-        .filter((r) => !(r.committee && r.committee.drawnCount && Number(r.committee.drawnCount.game) < 5));
+        .filter((r) => !(r.committee && r.committee.drawnCount && Number(r.committee.drawnCount.game) < 5))
+        // NOT A BACKUP ROUND (kanban #804, measured 2026-10-30 08:39Z, federation B: each order on the 08:30 window's backup round
+        // 28a49f3e was paid and locked, then refused by every seat - "this window is played on its primary grid, whose committee is
+        // drawn (the backup rule, §5A.5)" - its stake left in the lock until the refund)
+        .filter((r) => !r.backup);
       // A SEATED ROUND OVER ONE THAT NEVER WILL BE (2026-10-27 22:04Z: the bots quoted the day's v23 rounds - drawn 9, onto stopped nodes,
       // never seated - and never reached the seated v24 emergency round of the same window): once any round of a window is seated, only those
       const seated = rows.filter((r) => r.committee && r.committee.seated && r.committee.seated.game);
