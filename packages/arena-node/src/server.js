@@ -48,7 +48,7 @@ import { GATEWAY_EPOCH_BLOCKS, GATEWAY_MINIMUMS } from '../../arena-protocol/src
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
 import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.js';
 import { BADGES } from '../../arena-protocol/src/badges.js';
-import { missedInARow, seatingWarning } from './seatings.js';
+import { missedInARow, seatingWarning, oncePerSeating } from './seatings.js';
 import { createUptime } from './uptime.js';
 import { devClientSnapshot } from './dev-client.js';
 import { attributeDonations, devEarnings, donationParts, donationsPage } from './dev-clients.js';
@@ -5825,11 +5825,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (Number(c.committeeTimeMs) > Date.now()) continue;
             let s; try { s = roster.committeeFor(new Uint8Array(r.round_id), 'settlement'); } catch { continue; }
             if (!s || !s.ok || !s.seated) continue;
-            rows.push({ round: toHex(new Uint8Array(r.round_id)), atMs: Number(c.committeeTimeMs), drawn: (s.drawn || []).some((e) => toHex(e.pubkey) === me),
+            const table = tableAnchorOf(c);
+            rows.push({ round: toHex(new Uint8Array(r.round_id)), seating: table ? toHex(table.anchorId) : undefined, atMs: Number(c.committeeTimeMs), drawn: (s.drawn || []).some((e) => toHex(e.pubkey) === me),
               seated: s.committee.some((e) => toHex(e.pubkey) === me), present: !!(seating && seating.presentHere && seating.presentHere(new Uint8Array(r.round_id))) });
           }
-          const missed = missedInARow(rows);
-          return answer(200, { missedInARow: missed, warning: seatingWarning(missed), rounds: rows.slice(0, 20) });
+          // a table's rounds are one seating (kanban #809): counted once
+          const once = oncePerSeating(rows), missed = missedInARow(once);
+          return answer(200, { missedInARow: missed, warning: seatingWarning(missed), rounds: once.slice(0, 20) });
         }
         // THE ROUNDS THIS NODE IS DRAWN FOR (kanban #715): each round of the last day and the coming ones, what the node does in it (Play and
         // check / Pay out winners / reserve), and when there is none the first reason that holds, in plain words (owner-rounds.js)
