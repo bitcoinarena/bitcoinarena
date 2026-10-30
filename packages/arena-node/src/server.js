@@ -10573,16 +10573,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const p2pWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024 });
   // THIS NODE'S OWN ADDRESS, ANNOUNCED (kanban #562, 2026-10-21 "1 default, 2 for updates so no needed updates"): signed for the
   // address it names itself and pushed to every census node's seat every ARENA_ADDRESS_ANNOUNCE_MS (10 min) - no advertisement update
-  const announceAddress = async () => {
+  const censusForAddresses = async () => {
     let list = null;
     try { if (ballot && typeof ballot.censusEntriesAt === 'function' && chainNetworkId()) list = await ballot.censusEntriesAt(chainNetworkId(), Number(await chainTip())); } catch { list = null; }
     if (!list) { try { const cn = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null; list = cn ? cn.entries : null; } catch { list = null; } }
-    // THE OTHERS' NEWEST ADDRESSES, PULLED as well (address-book.js pullAnnouncements, kanban #577): a node a push missed learns them here
+    return list;
+  };
+  // THE OTHERS' NEWEST ADDRESSES, PULLED as well (address-book.js pullAnnouncements, kanban #577): a node a push missed learns them here
+  const pullAddresses = async (list) => {
     try {
       const get = async (u) => { const r = await fetch(u, { signal: AbortSignal.timeout(15000) }); return r.ok ? r.json() : null; };
       const p = await pullAnnouncements({ entries: list || [], book: addressBook, ownKey: toHex(round.pubkey), get });
       if (p.kept) console.log(`[address] ${p.kept} newer address(es) taken from ${p.answered} of ${p.asked} seat(s)`);
     } catch { /* the next round */ }
+  };
+  const announceAddress = async () => {
+    const list = await censusForAddresses();
+    await pullAddresses(list);
     if (!publicEndpoint) return null;
     const a = addressBook.own({ node: toHex(round.pubkey), endpoint: publicEndpoint, sign: (d) => schnorr.sign(d, round.identity.secret) });
     const post = async (u, body) => (await fetch(u, { method: 'POST', body: JSON.stringify(body), signal: AbortSignal.timeout(15000) })).ok;
@@ -10604,6 +10611,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     },
   };
   if (publicEndpoint && svcSettings.atBoot('announcements')) ownToggles.announcements.start();
+  // A NODE THAT ANNOUNCES NOTHING STILL PULLS (kanban #791, measured 2026-10-30 01:3xZ): the seven test host seats have no public address
+  // of their own (no ARENA_WSS_<port>), so announceAddress - and the pull inside it - never ran there; their books still named the
+  // quick tunnels two installed nodes left on 10-27/10-28 when the test host seats held the new ones from 10-29 22:1xZ, and every seating
+  // tick waited out those dead names. Pulled on the same clock, from a minute after start; ARENA_ADDRESS_PULL=0 stops it
+  if (!announceTimer && process.env.ARENA_ADDRESS_PULL !== '0') {
+    const pullTimer = setInterval(() => { if (!announceTimer) censusForAddresses().then(pullAddresses).catch(() => {}); }, Number(process.env.ARENA_ADDRESS_ANNOUNCE_MS || 600000));
+    pullTimer.unref();
+    setTimeout(() => { if (!announceTimer) censusForAddresses().then(pullAddresses).catch(() => {}); }, Number(process.env.ARENA_ADDRESS_PULL_FIRST_MS || 60000)).unref();
+  }
   const p2pTunnels = (guardian || guardianNext) && process.env.ARENA_P2P_TUNNEL !== '0' ? createP2pTunnels({ ownKey: round.pubkey, say: (m) => console.log(m) }) : null;
   const p2pTunnelSync = async () => {
     let list = null;
