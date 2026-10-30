@@ -5,7 +5,7 @@
 // emptied; this tab's own, one with money (not noted empty), one another tab plays with, and one of a federation not named stay.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { tidyStorage, phraseWalletEntries, walletSecretFor, seedRecovers } from '../src/page-lock.js';
+import { tidyStorage, phraseWalletEntries, walletSecretFor, seedRecovers, lockStoreFor, onStorageFull } from '../src/page-lock.js';
 import { readFileSync } from 'node:fs';
 import { sha256, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
@@ -116,3 +116,38 @@ test('a phrase lock with no heartbeat for two minutes is taken over, not asked o
   assert.match(block, /Date\.now\(\) - Number\(beat\.at\) > 120000/);
   assert.match(block, /\{ steal: true \}, hold\)/);
 });
+
+test('past its room a lock wallet goes on in memory, whole, and the browser\'s refusal never reaches the lock client (kanban #803)', () => {
+  const full = store();
+  full.setItem('other', 'x'.repeat(1600000));
+  const a = lockStoreFor(full, fromHex('a1'.repeat(32)), fromHex('b1'.repeat(32)));
+  a.put('k', 'v');
+  assert.deepEqual(JSON.parse(a.entries()), [['k', 'v']]);
+  assert.equal([...full.map.keys()].filter((k) => k.startsWith('arena.lockdb.')).length, 0);
+  a.remove('k'); assert.deepEqual(JSON.parse(a.entries()), []);
+  // kept so far, then refused: all of it moves to memory, no part stays behind
+  const L = store(), setItem = L.setItem; let refuse = false;
+  L.setItem = (k, v) => { if (refuse) throw Object.assign(new Error('exceeded the quota'), { name: 'QuotaExceededError' }); return setItem(k, v); };
+  onStorageFull(() => {});
+  const b = lockStoreFor(L, fromHex('a2'.repeat(32)), fromHex('b2'.repeat(32)));
+  b.put('one', '1'); refuse = true; b.put('two', '2');
+  assert.deepEqual(JSON.parse(b.entries()).sort(), [['one', '1'], ['two', '2']]);
+  assert.equal([...L.map.keys()].filter((k) => k.startsWith('arena.lockdb.')).length, 0);
+  onStorageFull(null);
+});
+
+test('under pressure an open round\'s old lock wallet goes; a recent one and one a client of this page holds stay (kanban #803)', () => {
+  const L = store(), now = 1e13, db = (r) => `arena.lockdb.${r.repeat(16)}.${'0'.repeat(16)}.`;
+  L.setItem(`arena.ledger.${FED}`, '[]');
+  for (const r of ['a', 'b']) L.setItem(db(r) + 'k', 'v'.repeat(1000));
+  L.setItem('arena.collect.b', JSON.stringify({ roundIdHex: 'b'.repeat(64), savedMs: now - 1000 }));
+  const live = lockStoreFor(L, fromHex('c3'.repeat(32)), fromHex('d3'.repeat(32)));
+  live.put('k', 'v'.repeat(1000));
+  const kept = [];
+  tidyStorage(L, { seeds: [CUR], current: CUR, federations: [FED], now: () => now, pressureChars: 10, archive: (rows) => { kept.push(...rows); for (const [k] of rows) L.removeItem(k); } });
+  assert.equal(L.getItem(db('a') + 'k'), null, 'old and open: out of this storage');
+  assert.deepEqual(kept.map(([k]) => k), [db('a') + 'k'], 'and handed over whole, nothing lost');
+  assert.notEqual(L.getItem(db('b') + 'k'), null, 'kept within the hour');
+  assert.equal(JSON.parse(live.entries()).length, 1, 'a client of this page holds it');
+});
+
