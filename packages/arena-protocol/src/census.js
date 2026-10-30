@@ -60,6 +60,23 @@ import { genesisFor } from './genesis.js';
 // where most callers meet it.
 export { recognizeBond, isTaprootOutput, BOND_UNCHECKED };
 
+/**
+ * HOW FAR BACK A CENSUS READS (§5A.2 "maturity is not expiry": a bond stands until it is spent). A census read only the 2,016 blocks below its
+ * height, so a bond older than that left it with no exclusion and no reason, though it was unspent and its node served. Measured on testnet4
+ * 2026-10-30: the seven guardians of federation 337ae01a, bonded together at 156,037, were last in the census of 158,052; from 158,053 the
+ * federation had 0 guardian seats and no reserve key while its guardians ran, and the test host seats' bonds would have followed at 158,282-158,298.
+ * the owner: "die bond muss weiterhin gültig bleiben". A round's census_root commits to its census, so the rule moves at a census height, never
+ * under rounds already posted: from `fromHeight` a network's census reads from `firstBlock` - testnet4's the first block of the window of the
+ * last census that held them all, so no bond but those comes back.
+ */
+export const CENSUS_LOOKBACK = 2016;
+export const CENSUS_WHOLE = { testnet4: { fromHeight: 158226, firstBlock: 156036 } };   // the newest posted round's census was 158,119
+export function censusFirstBlock(censusHeight, network) {
+  const whole = CENSUS_WHOLE[network];
+  const window = Math.max(0, censusHeight - CENSUS_LOOKBACK);
+  return whole && censusHeight >= whole.fromHeight ? Math.min(window, whole.firstBlock) : window;
+}
+
 export function encodeEntry(e) {
   const w = new Writer();
   w.bytes32(e.txid);
