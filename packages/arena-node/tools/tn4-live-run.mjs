@@ -139,6 +139,9 @@ try {
     const now = Date.now();
     const next = list.filter((x) => x.entryOpen && x.game && x.game.name === 'nextblock' && Number(x.startTimeMs) - now > 75000
       && (!env.GAME_ID || String(x.game.id).startsWith(env.GAME_ID.toLowerCase()))
+      // NOT A BACKUP ROUND (kanban #804, measured 08:29Z 10-30: round 5aa07386 was its window's backup, and all 14 seats refused the
+      // entry - "this window is played on its primary grid, whose committee is drawn (the backup rule, §5A.5)" - after it was paid and locked)
+      && !x.backup
       // FEDERATION=<hex prefix> (kanban #804): only a round of the federation this payer's wallet pays into - both list together
       && (!env.FEDERATION || String(x.federation || '').toLowerCase().startsWith(String(env.FEDERATION).toLowerCase())))
       .sort((a, b) => Number(a.startTimeMs) - Number(b.startTimeMs))[0];
