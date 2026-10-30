@@ -110,3 +110,10 @@ test('a reload in the middle of a join puts no refusal over the page (the owner 
   const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   assert.match(src, /window\.ARENA_JOIN = coreOnly \? null : window\.ARENA_REFUSED_JOIN/);
 });
+
+test('a lock held by notes still arriving says so (the owner 2026-10-30: "kommt mit der order nicht weiter")', () => {
+  const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  const at = src.indexOf('is being issued (\\d+) msat more');
+  assert.ok(at > 0 && at < src.indexOf("return 'locking your stake in the federation'"), 'read before the general line');
+  assert.match("the player wallet holds 89000 msat and is being issued 11000 msat more (a restore, a deposit or a payment's change): waiting for those notes", /is being issued (\d+) msat more/);
+});
