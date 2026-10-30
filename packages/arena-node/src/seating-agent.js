@@ -39,6 +39,8 @@ export const PRESENT_WINDOW_MS = 60000n;
 export const PRESENT_BYTES = 1 + 2 + 32 + 1 + 32 + 64;
 /** At most this many rounds in one GET /seating-batch. */
 export const BATCH_ROUNDS = 64;
+/** How long a node that runs no seating (its seating door: 404 "no such door") is left out of the exchange (kanban #791). */
+export const NO_SEATING_REST_MS = Number(process.env.ARENA_NO_SEATING_REST_MS || 600000);
 const joinBytes = (list) => { const out = new Uint8Array(list.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of list) { out.set(x, at); at += x.length; } return out; };
 
 export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, nowMs = () => Date.now(), log = () => {}, windowOf = () => null,
@@ -195,11 +197,21 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     }
   };
 
+  // A NODE THAT RUNS NO SEATING IS NOT ASKED EVERY TICK (kanban #791, measured 2026-10-30 01:1xZ on second-host seat 3: 1,150 GET /seating and
+  // /seating-sig a minute to each of two installed nodes drawn into its rounds, every answer 404 "no such door" - they run without
+  // ARENA_SEATING, have no batch door, and so were asked the old way for every round and role on every 2 s tick): a node whose
+  // seating door says it has none rests NO_SEATING_REST_MS - no PRESENT handed to it, no batch, no single read - then is asked again
+  const resting = new Map();             // base -> until (ms)
+  const rests = (base) => { const u = resting.get(base); if (u === undefined) return false; if (nowMs() < u) return true; resting.delete(base); return false; };
+  const noDoor = async (base, path, r) => {
+    if (r.status !== 404 || !/^\/(present|seating)/.test(path)) return;
+    try { if ((await r.text()).trim() === 'no such door' && !path.startsWith('/seating-batch') && !path.startsWith('/presents')) resting.set(base, nowMs() + NO_SEATING_REST_MS); } catch { /* not read: asked again */ }
+  };
   const post = async (base, path, body) => {
-    try { const r = await fetcher(`${base}${path}`, { method: 'POST', body, signal: AbortSignal.timeout(5000) }); return r.ok; } catch { return false; }
+    try { const r = await fetcher(`${base}${path}`, { method: 'POST', body, signal: AbortSignal.timeout(5000) }); if (!r.ok) await noDoor(base, path, r); return r.ok; } catch { return false; }
   };
   const getJson = async (base, path) => {
-    try { const r = await fetcher(`${base}${path}`, { signal: AbortSignal.timeout(5000) }); return r.ok ? await r.json() : null; } catch { return null; }
+    try { const r = await fetcher(`${base}${path}`, { signal: AbortSignal.timeout(5000) }); if (r.ok) return await r.json(); await noDoor(base, path, r); return null; } catch { return null; }
   };
 
   // ---- the doors ----
@@ -331,12 +343,12 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
         if (db.prepare('SELECT 1 FROM seat_presents WHERE round_id = ? AND role = ? AND node = ?').get(w.t.rid, w.role, me)) continue;
         const p = signPresent({ roundId: w.t.rid, role: w.role, nodePubkey: round.pubkey }, sign);
         takePresent(p);
-        for (const b of w.others) (outbox.get(b) || outbox.set(b, []).get(b)).push(p);
+        for (const b of w.others) if (!rests(b)) (outbox.get(b) || outbox.set(b, []).get(b)).push(p);
         log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: PRESENT signed, handed to ${w.others.length}`);
       }
       await Promise.all([...outbox].map(async ([b, list]) => {
         if (await post(b, '/presents', joinBytes(list))) return;
-        for (const p of list) await post(b, '/present', p);             // a node without the batch door
+        for (const p of list) if (!rests(b)) await post(b, '/present', p);   // a node without the batch door
       }));
       // 2. THIS NODE'S SEATING SIGNATURE for each closed round it is seated in, before the reads
       for (const w of work) if (w.closed && !w.late) signMine(w);
@@ -347,7 +359,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       // has nothing more to learn until then; after the close it is asked until its certificate stands (the work above)
       const holds = (w) => !w.closed && db.prepare('SELECT COUNT(*) AS n FROM seat_presents WHERE round_id = ? AND role = ?').get(w.t.rid, w.role).n >= w.drawnKeys.length;
       const asks = new Map();
-      for (const w of work) { if (holds(w)) continue; for (const b of w.others) (asks.get(b) || asks.set(b, new Set()).get(b)).add(w.ridHex); }
+      for (const w of work) { if (holds(w)) continue; for (const b of w.others) if (!rests(b)) (asks.get(b) || asks.set(b, new Set()).get(b)).add(w.ridHex); }
       const answers = new Map();
       await Promise.all([...asks].map(async ([b, set]) => {
         const ids = [...set]; const got = {};
@@ -362,7 +374,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       // 4. WHAT EACH SAID: their PRESENTs, certificates and seating signatures; then this node's certificate where it can
       // a node that answered no batch is asked the old way - every round of it at once, not one after another
       const single = new Map();
-      await Promise.all(work.flatMap((w) => w.others.filter((b) => answers.get(b) === null)
+      await Promise.all(work.flatMap((w) => (holds(w) ? [] : w.others.filter((b) => answers.get(b) === null && !rests(b)))
         .map(async (b) => { single.set(`${b}|${w.ridHex}|${w.role}`, await askOne(b, w)); })));
       for (const w of work) {
         const said = [];
