@@ -2205,3 +2205,10 @@ test('a fee-free federation: no lockCostMsat at the funding check or the lock; t
   const empty = lockClient({ feeRule: { ppm: 0n, baseMsat: 0n }, lockFee: 0n });
   await assert.rejects(() => ask({ LockClient: empty.LockClient, storage: tabStorage() }), /the player wallet holds 0 msat and this round's locks need/);
 });
+
+test('a seat\'s gateways: seated first, then the others that stand, each once (a tunnel\'s new name comes from here, not from the site)', async () => {
+  const { gatewayUrlsOfView } = await import('../src/page-lock.js');
+  assert.deepEqual(gatewayUrlsOfView({ seated: ['b'], gateways: { a: { url: 'https://a/' }, b: { url: 'https://b/' }, c: { url: 'https://a/' }, d: {} } }), ['https://b/', 'https://a/']);
+  assert.deepEqual(gatewayUrlsOfView({}), []);
+  assert.deepEqual(gatewayUrlsOfView(null), []);
+});

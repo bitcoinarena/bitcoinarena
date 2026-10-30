@@ -63,3 +63,38 @@ test('draw reads the keyless set from the page, not from a helper of paint: out 
   assert.doesNotMatch(draw, /reservesRead/);
   assert.match(draw, /window\.ARENA_RESERVES_READ && window\.ARENA_RESERVES_READ\.keyless/);
 });
+
+test('a balance in such a federation says so; one elsewhere says nothing (the owner: "it should say so in a message")', async () => {
+  const { keylessFundsLine } = await import('../src/reserves-page.js');
+  const keyless = new Set([A]);
+  const l = keylessFundsLine({ parts: [{ federation: A, sats: 279 }, { federation: B, sats: 500 }], keyless });
+  assert.equal(l.sats, 279);
+  assert.match(l.text, /^279 sat of your balance can't be played right now/);
+  assert.match(l.text, /aaaaaaaa/);
+  assert.equal(keylessFundsLine({ parts: [{ federation: B, sats: 500 }], keyless }), null);
+  assert.equal(keylessFundsLine({ parts: [{ federation: A, sats: 0 }], keyless }), null);
+  assert.equal(keylessFundsLine({ parts: undefined, keyless }), null);
+});
+
+test('the bundle exports the line, and the page shows it', () => {
+  assert.match(readFileSync(new URL('../tools/bundle.js', import.meta.url), 'utf8'), /keylessFundsLine: keylessFundsLine/);
+  assert.match(readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8'), /ARENACLIENT\.keylessFundsLine\(\{ parts: bal\.parts, keyless: k\.keyless, expected:/);
+});
+
+test('the message says from when it will work (the owner: "Sage, ab wann es funktionieren wird")', async () => {
+  const { keylessFundsLine } = await import('../src/reserves-page.js');
+  const keyless = new Set([A]);
+  const l = keylessFundsLine({ parts: [{ federation: A, sats: 279 }], keyless, expected: { [A]: 158325 }, tip: 158234 });
+  assert.match(l.text, /Expected to work from block 158,325, in about 15 hours\./);
+  assert.match(keylessFundsLine({ parts: [{ federation: A, sats: 1 }], keyless, expected: { [A]: 158325 } }).text, /from block 158,325\./, 'no tip: the block alone');
+  assert.doesNotMatch(keylessFundsLine({ parts: [{ federation: A, sats: 1 }], keyless }).text, /Expected/, 'no block named: no promise');
+});
+
+test('the whole stuck balance is counted: a part under the federation\'s first 16 hex too ("Er sagt 5 Sats aber es sind 310")', async () => {
+  const { keylessFundsLine } = await import('../src/reserves-page.js');
+  const l = keylessFundsLine({ parts: [{ federation: A, sats: 5 }, { federation: A.slice(0, 16), sats: 305, merging: 305 }, { federation: B, sats: 40 }], keyless: new Set([A]), expected: { [A]: 158325 } });
+  assert.equal(l.sats, 310);
+  assert.match(l.text, /^310 sat of your balance/);
+  assert.match(l.text, /in federation aaaaaaaa\. That federation has/);
+  assert.match(l.text, /block 158,325/);
+});

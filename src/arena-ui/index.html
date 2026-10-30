@@ -5788,6 +5788,8 @@
         const search = d && d.testnet ? ARENACLIENT.dailyLobbySearch(d.testnet) : null;
         if (d && d.testnet && d.testnet.alt && typeof d.testnet.alt === 'object') Object.assign(window.ARENA_ALT_ROUTES || {}, d.testnet.alt);
         // THE ARBITRATION SERVICE: where a slash's payouts to wronged players are listed (collectSlashPayouts)
+        // the block a federation's reserve key is expected from, as the site states it (keylessFundsLine)
+        if (d && d.testnet && d.testnet.reserveExpected && typeof d.testnet.reserveExpected === 'object') window.ARENA_RESERVE_EXPECTED = d.testnet.reserveExpected;
         if (d && d.testnet && typeof d.testnet.arbiter === 'string' && /^https:\/\//.test(d.testnet.arbiter)) window.ARENA_ARBITER = d.testnet.arbiter;
         const named = search ? ARENACLIENT.lobbyQuery(search) : null;
         if (!named || (first && named.nodes.join(',') === first.nodes.join(','))) return null;
@@ -7584,21 +7586,21 @@
       }
       // THE FEDERATION'S SEATED GATEWAYS FIRST (spec §23A.9: "clients use those two first"; kanban #559): a deposit into a federation, and
       // each leg of a swap, tries the gateways that federation's guardians seated before the named and listed ones. Asked of the seats
-      // (GET /gateway-seats?federation=, answered only by a seat that guards it), kept 10 minutes per federation
+      // (GET /gateway-seats?federation=, answered only by a seat that guards it), kept 2 minutes per federation: a tunnel's new name reaches a page that is open
       if (ARENACLIENT.useSeatedGateways) {
         const seatBases = [...new Set([...((testnet && testnet.named && testnet.named.nodes) || []), ...((named && named.nodes) || [])]
           .map((u) => String(u).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')).filter(Boolean))];
         const seatedKept = new Map();
         ARENACLIENT.useSeatedGateways(async (fid) => {
           const k = String(fid).toLowerCase(), was = seatedKept.get(k);
-          if (was && Date.now() - was.at < 600000) return was.urls;
+          if (was && Date.now() - was.at < 120000) return was.urls;
           for (const base of seatBases) {
             try {
               const r = await fetch(base + '/gateway-seats?federation=' + k, { signal: AbortSignal.timeout(2500) });
               if (!r.ok) continue;
               const v = await r.json();
               if (!v || String(v.federationId || '').toLowerCase() !== k) continue;
-              const urls = (v.seated || []).map((n) => v.gateways && v.gateways[n] && v.gateways[n].url).filter(Boolean);
+              const urls = ARENACLIENT.gatewayUrlsOfView(v);
               seatedKept.set(k, { at: Date.now(), urls });
               return urls;
             } catch (e) { /* the next seat */ }
@@ -7885,6 +7887,7 @@
       // "its entry has closed" with ten minutes of entry left)
       const notJoinableWhy = (id) => {
         const held = (window.ARENA_LOBBY_UNOFFERED || []).find((x) => x.id === id);
+        if (held && held.why === 'no reserve key') return 'paid rounds in this federation are paused - it has no reserve key yet';
         if (held) return held.why === 'not seated' ? 'no playable round for this window - its committee is not seated'
           : held.why === 'not drawn' ? 'no playable round for this window - its committee is not drawn' : 'no playable round for this window - it is played on another grid';
         const row = (window.ARENA_LOBBY_ROWS || []).find((x) => x.id === id);
@@ -7894,6 +7897,26 @@
         if (row.phase === 'pending') return 'this round takes no orders yet - its committee is not drawn';
         return 'this round takes no orders yet - ' + (row.signerNodesAgree || 0) + ' of the ' + (row.needed || '?') + ' signer nodes needed list it open';
       };
+      // A BALANCE THAT CANNOT BE PLAYED SAYS SO (the owner 2026-10-30: "If it's unavailable to play because the funds are locked it should say so in a
+      // message"): the tables of such a federation are not offered, so nothing else would tell the player why. Every game, lobby and table alike;
+      // closed for this balance by its button, and gone by itself once the federation's key stands.
+      if (!window.ARENA_FUNDS_NOTE_TIMER) window.ARENA_FUNDS_NOTE_TIMER = setInterval(() => {
+        const k = window.ARENA_RESERVES_READ, bal = window.ARENA_WALLET_BALANCE;
+        const line = k && bal && ARENACLIENT.keylessFundsLine ? ARENACLIENT.keylessFundsLine({ parts: bal.parts, keyless: k.keyless, expected: window.ARENA_RESERVE_EXPECTED || {},
+          tip: Math.max(0, ...[...(window.ARENA_FED_LOADS instanceof Map ? window.ARENA_FED_LOADS.values() : [])].map((x) => Number(x && x.height) || 0)) }) : null;
+        let el = document.getElementById('arena-funds-note');
+        if (!line || window.ARENA_FUNDS_NOTE_CLOSED === line.text) { if (el) el.remove(); return; }
+        if (!el) {
+          el = document.createElement('div'); el.id = 'arena-funds-note'; el.setAttribute('role', 'status');
+          el.style.cssText = 'position:fixed;left:16px;right:16px;bottom:64px;max-width:480px;margin:0 auto;z-index:2147483000;display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:12px;background:#12161c;color:#e8edf2;border:1px solid #f7931a;font:14px/1.4 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.5)';
+          const t = document.createElement('span'); t.style.flex = '1'; el.appendChild(t);
+          const x = document.createElement('button'); x.type = 'button'; x.textContent = '\u00d7'; x.setAttribute('aria-label', 'Close');
+          x.style.cssText = 'background:none;border:0;color:inherit;font-size:20px;line-height:1;cursor:pointer;padding:0 2px';
+          x.onclick = () => { window.ARENA_FUNDS_NOTE_CLOSED = el.firstChild.textContent; el.remove(); };
+          el.appendChild(x); document.body.appendChild(el);
+        }
+        if (el.firstChild.textContent !== line.text) el.firstChild.textContent = line.text;
+      }, 2000);
       window.ARENA_LOBBY_ACT = {
         // PLAY: the round's own link, so the round is joined by exactly the path a
         // shared round link takes - IN THIS PAGE (2026-09-13 07:11: "after
