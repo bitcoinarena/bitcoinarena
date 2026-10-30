@@ -18781,7 +18781,7 @@ function forgetPhrase(storage, seedHex) {
  * A database whose federation is not named here in full (`federations`, 64 hex, and every federation with a history) is left alone.
  * Answers { removed: keys, bytes: what they held (UTF-16), wallets: databases }.
  */
-function tidyStorage(storage, { seeds = [], current = null, federations = [], held = () => false, now = () => Date.now() } = {}) {
+function tidyStorage(storage, { seeds = [], current = null, federations = [], held = () => false, now = () => Date.now(), pressureChars = 0 } = {}) {
   if (!storage) return { removed: 0, bytes: 0, wallets: 0 };
   const keys = storageKeys(storage);
   const feds = new Set([...federations.map((f) => String(f).toLowerCase()),
@@ -18827,6 +18827,41 @@ function tidyStorage(storage, { seeds = [], current = null, federations = [], he
     if (!go) continue;
     for (const k of ks) { bytes += (k.length + String(storage.getItem(k) || '').length) * 2; storage.removeItem(k); removed++; }
     wallets++;
+  }
+  // A BROWSER STILL FULL (the owner 2026-10-30: "exceeded the quota" on the wallet of federation 4dc88be7 itself, 19 kept phrases: the wallet would not
+  // open, a paid deposit could not be claimed, the order hung): above `pressureChars` what can be had again from the seed goes too. A done round's
+  // lock wallet at any age, then the database of a kept phrase that no tab plays with, that holds no known balance, has no e-cash on its way and no
+  // deposit waiting in its federation; the phrase stays kept and is marked to recover, so its next open reads it back from the federation. The
+  // playing phrase is never touched. Oldest words of the rule: nothing here can be spent from a removed database, and nothing is lost by it.
+  if (pressureChars) {
+    const used = () => storageKeys(storage).reduce((n, k) => n + k.length + String(storage.getItem(k) || '').length, 0);
+    let now_ = used();
+    const take = (ks) => { for (const k of ks) { if (storage.getItem(k) === null) continue; const c = k.length + String(storage.getItem(k) || '').length; bytes += c * 2; now_ -= c; storage.removeItem(k); removed++; } wallets++; };
+    if (now_ > pressureChars) {
+      const done = new Set();
+      for (const k of storageKeys(storage)) {
+        if (!k.startsWith('arena.collect.')) continue;
+        try { const r = JSON.parse(storage.getItem(k)); if (r && r.done && r.roundIdHex) done.add(String(r.roundIdHex).toLowerCase().slice(0, 16)); } catch { /* unreadable: kept */ }
+      }
+      const byDb = new Map();
+      for (const k of storageKeys(storage)) { const m = /^(arena\.lockdb\.([0-9a-f]{16})\.[0-9a-f]{16}\.)/.exec(k); if (m && done.has(m[2])) { if (!byDb.has(m[1])) byDb.set(m[1], []); byDb.get(m[1]).push(k); } }
+      for (const [, ks] of byDb) { if (now_ <= pressureChars) break; take(ks); }
+    }
+    if (now_ > pressureChars) {
+      const travelling = new Set();
+      for (const k of storageKeys(storage)) if (k.startsWith('arena.ecash.pending.')) { try { travelling.add(String(JSON.parse(storage.getItem(k)).fed || '').slice(0, 16)); } catch { /* unreadable: its federation stays */ } }
+      for (const k of storageKeys(storage)) if (k.startsWith(PENDING_PREFIX)) travelling.add(k.slice(PENDING_PREFIX.length, PENDING_PREFIX.length + 16));
+      for (const [prefix] of groups) {
+        if (now_ <= pressureChars) break;
+        const o = owned.get(prefix);
+        if (!o || o.hex === cur || held(o.hex) || travelling.has(o.fed.slice(0, 16))) continue;
+        let known = 0n; try { known = BigInt(storage.getItem(`arena.wallet.known.${o.fed.slice(0, 16)}.${o.hex.slice(0, 16)}`) || 0); } catch { known = 1n; }
+        if (known > 0n) continue;
+        const ks = storageKeys(storage).filter((k) => k.startsWith(prefix));
+        if (!ks.length) continue;
+        take(ks); markSeedRecover(storage, o.hex);
+      }
+    }
   }
   return { removed, bytes, wallets };
 }
