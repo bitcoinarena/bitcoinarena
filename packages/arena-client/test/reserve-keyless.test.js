@@ -98,3 +98,10 @@ test('the whole stuck balance is counted: a part under the federation\'s first 1
   assert.match(l.text, /in federation aaaaaaaa\. That federation has/);
   assert.match(l.text, /block 158,325/);
 });
+
+test('a head-to-head move the seats took ends the join, not in a refusal (the owner 2026-10-30: "this page did not join that round")', () => {
+  const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  const hidden = src.indexOf("if (window.ARENA_HIDDEN && window.ARENA_HIDDEN.round === id) {"), refusal = src.indexOf("refuse(window.ARENA_JOIN_REFUSED || 'this page did not join that round')");
+  assert.ok(hidden > 0 && hidden < refusal, 'read before the refusal');
+  assert.match(src.slice(hidden, hidden + 400), /join\.state = 'picked'/);
+});

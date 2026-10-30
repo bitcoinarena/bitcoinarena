@@ -8091,6 +8091,16 @@
                 console.error('[arena] a join answered after it was refused' + (join.why ? ' (' + String(join.why).slice(0, 120) + ')' : '') + ': dropped');
                 return;
               }
+              // A HEAD-TO-HEAD MOVE TAKEN BY THE SEATS: no run and no ARENA_ENTRY either, so it fell through to the refusal below
+              // (the owner 2026-10-30, RPS in A: "Order not placed: this page did not join that round" while the seats held his entry)
+              if (window.ARENA_HIDDEN && window.ARENA_HIDDEN.round === id) {
+                join.held = false; join.loaded = false; join.state = 'picked'; join.stage = 'move hidden';
+                window.ARENA_ROUND = undefined; window.ARENA_HIDDEN_CHOSEN = null;
+                history.replaceState(null, '', location.pathname + back);
+                console.log('[arena] hidden move ' + String(id).slice(0, 16) + ': taken, no run');
+                readMarketOutcomes().catch(() => {});
+                return;
+              }
               // A MARKET'S PICK: handed to the seats, no run - the join ends 'picked', the lobby's address
               // back, nothing named for Unity to open; the lobby's market line says the pick from here on
               if (window.ARENA_PICKED && window.ARENA_PICKED.round === id) {
