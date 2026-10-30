@@ -61,8 +61,9 @@ test('rows are signed when a listing asks, once a window: nothing unasked, next=
     assert.ok(nextRows >= 1 && nextRows <= series.length, `next=1 listed ${nextRows} rows`);
     assert.equal(s.listingSignatures(), nextRows, 'next=1 signed more than it listed');
     assert.ok(pageChecks(next.body), 'a next=1 row does not check the page\'s way');
-    // THE FULL LISTING: every announced row, the ones next=1 signed served from the window, the rest signed now
-    const full = await ask('?probe=a');
+    // THE FULL LISTING: every announced row, the ones next=1 signed served from the window, the rest signed now (?all=1 since c8784218,
+    // kanban #742: a bare GET /rounds lists the next 8 of each series)
+    const full = await ask('?all=1&probe=a');
     const rows = full.body.rounds.length;
     assert.ok(rows > 2000, `the node lists ${rows} rounds - not a large listing`);
     assert.equal(full.body.nowMs, next.body.nowMs, 'two listings of one window carry different times');
@@ -70,14 +71,14 @@ test('rows are signed when a listing asks, once a window: nothing unasked, next=
     // A SECOND FULL LISTING IN THE WINDOW: no signature, the same rows, quick
     // (asked before the first listing's signatures are checked: on a loaded machine that check outlasted the test
     // server's 5 s keep-alive, and fetch reused the closed connection - ECONNRESET, measured on the test host 2026-10-06)
-    const again = await ask('?probe=b');
+    const again = await ask('?all=1&probe=b');
     assert.equal(s.listingSignatures(), rows, 'a second listing in the window signed again');
     assert.deepEqual(again.body.rounds.map((x) => x.sig), full.body.rounds.map((x) => x.sig));
     // ONE ROW'S SIGNED FACTS CHANGE: a player joins it - signed again at once, for the same time, and nothing else
     const pick = full.body.rounds[5];
     const own = s.round.playersOf.bind(s.round);
     s.round.playersOf = (rid) => (Buffer.from(rid).toString('hex') === pick.id ? { joined: 1, playing: 0 } : own(rid));
-    const after = await ask('?probe=c');
+    const after = await ask('?all=1&probe=c');
     const row = after.body.rounds.find((x) => x.id === pick.id);
     assert.equal(row.joined, 1, 'the changed row still shows its old count');
     assert.notEqual(row.sig, pick.sig, 'the changed row kept its old signature');
