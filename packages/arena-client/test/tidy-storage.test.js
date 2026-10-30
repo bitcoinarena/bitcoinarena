@@ -89,3 +89,19 @@ test('below the pressure line nothing more goes', () => {
   const L = { get length() { return m.size; }, key: (i) => [...m.keys()][i] ?? null, getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, v), removeItem: (k) => m.delete(k) };
   assert.equal(tidyStorage(L, { seeds: ['11'.repeat(32)], current: '11'.repeat(32), federations: [], pressureChars: 3500000 }).removed, 0);
 });
+
+test('a write refused for room frees storage and goes in; with no room to free it still throws, and another error is not swallowed (the owner 2026-10-30)', async () => {
+  const { putRoomy, onStorageFull } = await import('../src/page-lock.js');
+  let full = true, freed = 0;
+  const q = () => Object.assign(new Error('exceeded the quota'), { name: 'QuotaExceededError' });
+  const m = new Map(), L = { setItem(k, v) { if (full) throw q(); m.set(k, v); } };
+  onStorageFull(() => { freed++; full = false; });
+  putRoomy(L, 'a', '1');
+  assert.equal(m.get('a'), '1'); assert.equal(freed, 1);
+  full = true; onStorageFull(() => {});
+  assert.throws(() => putRoomy(L, 'b', '2'), /quota/);
+  const bad = { setItem() { throw new Error('another'); } };
+  let asked = 0; onStorageFull(() => { asked++; });
+  assert.throws(() => putRoomy(bad, 'c', '3'), /another/); assert.equal(asked, 0);
+  onStorageFull(null);
+});

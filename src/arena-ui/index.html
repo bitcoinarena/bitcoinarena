@@ -7006,7 +7006,7 @@
       // OLD WALLET DATABASES OUT OF THE BROWSER'S STORAGE (kanban #616, 2026-10-24: "exceeded the quota" on an order; "You need to clean
       // up old storages"): ARENACLIENT.tidyStorage, once after the page's federations are read and again before each order; a phrase another
       // tab plays with (its heartbeat within 12 s) is never touched
-      window.ARENA_TIDY_STORAGE = () => {
+      window.ARENA_TIDY_STORAGE = (pressureChars = 3500000) => {
         try {
           if (!ARENACLIENT.tidyStorage) return null;
           const L = vault(); const cur = ((window.sessionStorage && sessionStorage.getItem('arena.player.seed')) || '').toLowerCase();
@@ -7015,11 +7015,12 @@
           const tab = sessionStorage.getItem('arena.tab.id');
           const held = (hex) => { try { const h = JSON.parse(L.getItem('arena.seed.held.' + hex.slice(0, 16)) || 'null'); return !!(h && h.tab !== tab && Date.now() - h.at <= 12000); } catch { return true; } };
           const federations = [...(window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.keys ? window.ARENA_FED_LOADS.keys() : []), ...(window.ARENA_WALLETS ? window.ARENA_WALLETS.keys() : [])];
-          const r = ARENACLIENT.tidyStorage(L, { seeds: kept, current: cur, federations, held, pressureChars: 3500000 });
+          const r = ARENACLIENT.tidyStorage(L, { seeds: kept, current: cur, federations, held, pressureChars });
           if (r.removed) console.log('[arena] storage tidied: ' + r.wallets + ' old wallet database(s), ' + r.removed + ' entries, ' + Math.round(r.bytes / 1024) + ' KB freed');
           return r;
         } catch (e) { console.log('[arena] storage not tidied: ' + (e && e.message ? e.message : e)); return null; }
       };
+      if (ARENACLIENT.onStorageFull) ARENACLIENT.onStorageFull(() => window.ARENA_TIDY_STORAGE(1500000));   // a refused write frees more, and is tried again
       window.ARENA_TIDY_STORAGE();   // at once as well: a browser whose storage is full cannot open the wallet at all (2026-10-30)
       setTimeout(() => window.ARENA_TIDY_STORAGE(), 8000);
       const combiningBy = new Map();
@@ -7906,9 +7907,12 @@
       // A BALANCE THAT CANNOT BE PLAYED SAYS SO (the owner 2026-10-30: "If it's unavailable to play because the funds are locked it should say so in a
       // message"): the tables of such a federation are not offered, so nothing else would tell the player why. Every game, lobby and table alike;
       // closed for this balance by its button, and gone by itself once the federation's key stands.
+      if (!window.ARENA_PANIC_WATCH) { window.ARENA_PANIC_WATCH = true; const said = console.error.bind(console);
+        console.error = (...a) => { if (/blwp-lock-client panicked/.test(String(a[0]))) window.ARENA_WALLET_STOPPED = /quota/i.test(String(a[0])) ? 'Your browser\'s storage is full and the wallet stopped. Your money stays in the federation. Reload this page; close other tabs of this site first.' : 'The wallet stopped. Your money stays in the federation. Reload this page.'; said(...a); }; }
       if (!window.ARENA_FUNDS_NOTE_TIMER) window.ARENA_FUNDS_NOTE_TIMER = setInterval(() => {
         const k = window.ARENA_RESERVES_READ, bal = window.ARENA_WALLET_BALANCE;
-        const line = k && bal && ARENACLIENT.keylessFundsLine ? ARENACLIENT.keylessFundsLine({ parts: bal.parts, keyless: k.keyless, expected: window.ARENA_RESERVE_EXPECTED || {},
+        // THE WALLET CODE STOPPED (a panic: its write refused for room, or worse): nothing it was asked answers any more, so an order would hang unsaid
+        const line = window.ARENA_WALLET_STOPPED ? { text: window.ARENA_WALLET_STOPPED } : k && bal && ARENACLIENT.keylessFundsLine ? ARENACLIENT.keylessFundsLine({ parts: bal.parts, keyless: k.keyless, expected: window.ARENA_RESERVE_EXPECTED || {},
           tip: Math.max(0, ...[...(window.ARENA_FED_LOADS instanceof Map ? window.ARENA_FED_LOADS.values() : [])].map((x) => Number(x && x.height) || 0)) }) : null;
         let el = document.getElementById('arena-funds-note');
         if (!line || window.ARENA_FUNDS_NOTE_CLOSED === line.text) { if (el) el.remove(); return; }
