@@ -26044,6 +26044,17 @@ function keylessFederations(answers, { minAnswers = 3 } = {}) {
 }
 
 /**
+ * THE FEDERATIONS THE PAGE DOES NOT PAY INTO (the owner 2026-10-30: "Wenn die Federation nicht aktiv ist, soll er in der UI auch nicht versuchen mit der zu
+ * bezahlen"): `statuses`, the Map of ARENA_FED_LOADS, federation -> { status, allows }. One whose record this page could not verify, or that takes no
+ * entries. A federation not read yet is not named, and when no federation at all stands OPEN the read failed, not the network: none is named.
+ */
+function inactiveFederations(statuses) {
+  const list = statuses && typeof statuses.entries === 'function' ? [...statuses.entries()] : [];
+  if (!list.some(([, st]) => st && st.status === 'OPEN')) return new Set();
+  return new Set(list.filter(([, st]) => st && (st.status === 'unverified' || (st.allows && st.allows.join === false))).map(([f]) => String(f).toLowerCase()));
+}
+
+/**
  * WHY THIS WALLET CANNOT PLAY WITH ITS BALANCE (the owner 2026-10-30: "If it's unavailable to play because the funds are locked it should say so in a
  * message"): the part of the wallet held in federations no entry can pay into. `parts`: the wallet's [{ federation, sats }]. Null when none is.
  */
@@ -26055,13 +26066,12 @@ function keylessFundsLine({ parts, keyless, expected = {}, tip = 0, blockMinutes
   if (!stuck.length) return null;
   const sats = stuck.reduce((n, p) => n + Number(p.sats), 0);
   const where = [...new Set(stuck.map((p) => String(p.federation).slice(0, 8)))].join(', ');
-  const these = new Set(stuck.map((p) => String(p.federation).slice(0, 8))).size > 1 ? 'Those federations have' : 'That federation has';
   // WHEN IT CAN BE PLAYED (the owner 2026-10-30: "Sage, ab wann es funktionieren wird in der Meldung"): the block the site names for the federation
   const at = Math.max(0, ...stuck.map((p) => Number(expected[fullOf(p.federation)]) || 0));
   const left = at && tip ? at - tip : 0;
   const hours = left > 0 ? Math.max(1, Math.round((left * blockMinutes) / 60)) : 0;
   const when = at ? ` Expected to work from block ${at.toLocaleString('en-US')}${hours ? `, in about ${hours} hour${hours === 1 ? '' : 's'}` : ''}.` : '';
-  return { sats, text: `${sats.toLocaleString('en-US')} sat of your balance can't be played right now. It stays in your wallet, in federation ${where}. ${these} no reserve key yet, so paid rounds there are paused.${when} To play now, deposit into another federation.` };
+  return { sats, text: `${sats.toLocaleString('en-US')} sat of your balance can't be played right now. It stays in your wallet, in federation ${where}. Paid rounds there are paused.${when} To play now, deposit into another federation.` };
 }
 
 /** GET /reserves of up to `limit` nodes, read as keylessFederations reads them. Never throws. */
@@ -30555,7 +30565,7 @@ function unplayableWindowLine({ unoffered = [], offered = [], nowMs = Date.now()
   const span = (r) => { const end = Number(r.entryCloseMs), start = periodMs ? end - periodMs : Number(r.startTimeMs) || 0;
     return start && start < end ? `${hm(start)}-${hm(end)} UTC` : `closing ${hm(end)} UTC`; };
   const why = first.why === 'not seated' ? 'its committee is not seated' : first.why === 'not drawn' ? 'its committee is not drawn'
-    : first.why === 'not played' ? 'its window is played on another grid' : first.why === 'no reserve key' ? 'its federation has no reserve key yet' : 'it is not listed';
+    : first.why === 'not played' ? 'its window is played on another grid' : first.why === 'no reserve key' ? 'its federation has no reserve key yet' : first.why === 'federation not active' ? 'its federation is not active right now' : 'it is not listed';
   const next = good[0];
   return { text: `No playable round for the ${span(first)} window - ${why}. ` + (next ? `Next playable window: ${span(next)}.` : 'No later window is playable yet.'),
     why: first.why, round: first.id || null, next: next ? next.id || null : null, nextCloseMs: next ? Number(next.entryCloseMs) : null };
@@ -35364,7 +35374,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          fetchGames: fetchGames, oneTilePerGame: oneTilePerGame, checkedGameInfoOfTile: checkedGameInfoOfTile, checkedGameInfo: checkedGameInfo, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          censusEndpoints: censusEndpoints, mergeNodes: mergeNodes,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, roundAttestors: roundAttestors, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, withdrawFederation: withdrawFederation, safeFederation: safeFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, evacuatePlayerWallet: evacuatePlayerWallet, movePlayerWallet: movePlayerWallet, moveCanMsat: moveCanMsat, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, rememberedInvite: rememberedInvite, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyRowOffered: lobbyRowOffered, lobbyRowNotOffered: lobbyRowNotOffered, unplayableWindowLine: unplayableWindowLine, fetchKeylessFederations: fetchKeylessFederations, keylessFundsLine: keylessFundsLine, gatewayUrlsOfView: gatewayUrlsOfView, settledWords: settledWords, onStorageFull: onStorageFull, nextRoundLine: nextRoundLine, inHoursMinutes: inHoursMinutes, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, roundAttestors: roundAttestors, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, withdrawFederation: withdrawFederation, safeFederation: safeFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, evacuatePlayerWallet: evacuatePlayerWallet, movePlayerWallet: movePlayerWallet, moveCanMsat: moveCanMsat, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, rememberedInvite: rememberedInvite, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyRowOffered: lobbyRowOffered, lobbyRowNotOffered: lobbyRowNotOffered, unplayableWindowLine: unplayableWindowLine, fetchKeylessFederations: fetchKeylessFederations, keylessFundsLine: keylessFundsLine, gatewayUrlsOfView: gatewayUrlsOfView, settledWords: settledWords, onStorageFull: onStorageFull, inactiveFederations: inactiveFederations, nextRoundLine: nextRoundLine, inHoursMinutes: inHoursMinutes, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          presentNotes: presentNotes, liquidationKeyFor: liquidationKeyFor, collectLiquidationPayouts: collectLiquidationPayouts, roundVerdict: roundVerdict, secureTranscript: secureTranscript,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
