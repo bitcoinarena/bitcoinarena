@@ -6,6 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { tidyStorage, phraseWalletEntries, walletSecretFor, seedRecovers } from '../src/page-lock.js';
+import { readFileSync } from 'node:fs';
 import { sha256, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 const store = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k),
@@ -104,4 +105,14 @@ test('a write refused for room frees storage and goes in; with no room to free i
   let asked = 0; onStorageFull(() => { asked++; });
   assert.throws(() => putRoomy(bad, 'c', '3'), /another/); assert.equal(asked, 0);
   onStorageFull(null);
+});
+
+test('a phrase lock with no heartbeat for two minutes is taken over, not asked of a tab that is not there (the owner 2026-10-30)', () => {
+  const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  const at = src.indexOf('A LOCK NO LIVING TAB STANDS BEHIND');
+  const ask = src.indexOf("is open in another tab - asking that tab to hand its money over", at);
+  assert.ok(at > 0 && ask > at, 'looked at before any tab is asked');
+  const block = src.slice(at, ask);
+  assert.match(block, /Date\.now\(\) - Number\(beat\.at\) > 120000/);
+  assert.match(block, /\{ steal: true \}, hold\)/);
 });
