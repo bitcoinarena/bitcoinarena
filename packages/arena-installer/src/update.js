@@ -367,12 +367,44 @@ export async function seatLogTail({ home, platform = process.platform, sh = run,
  * THE MOVE REPORTED, 0 TO 100 % (kanban #706): `progress` takes { pct, step, detail } at each step (update-progress.js), then { done } -
  * or { failed, step, why }: the step it failed at, and why.
  */
-export async function updateNode({ progress = () => {}, ...o }) {
+/**
+ * ONE UPDATE OF A NODE AT A TIME (kanban #809, the owner 2026-10-30: "Node doesn't start", exit 78 after 2026.1.9.19): the desktop app's update
+ * and the auto-updater moved the same node to 2026.1.9.19 at once - two backups 2 s apart - and the one that finished second removed, as an
+ * older release, the folder the other had already moved the services to; launchd could not even enter it. `<home>/update.lock` names the
+ * update that holds the node ({ pid, atMs }); another waits for it (up to `waitLockMs`), and one whose holder has ended or is older than
+ * `staleMs` is taken over.
+ */
+export async function takeUpdateLock(home, { pid = process.pid, now = Date.now, alive = (p) => { try { process.kill(p, 0); return true; } catch (e) { return e.code === 'EPERM'; } },
+  waitLockMs = 20 * 60000, staleMs = 45 * 60000, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), onWait = () => {} } = {}) {
+  // no node home, nothing to hold: the update says itself why it cannot move it
+  if (!home || !existsSync(home)) return { file: null, waited: false, release: () => {} };
+  const file = join(home, 'update.lock');
+  const t0 = now();
+  let waited = false;
+  for (;;) {
+    try { writeFileSync(file, JSON.stringify({ pid, atMs: now() }), { flag: 'wx' }); return { file, waited, release: () => { try { const h = JSON.parse(readFileSync(file, 'utf8')); if (h.pid === pid) rmSync(file, { force: true }); } catch { /* gone */ } } }; }
+    catch (e) { if (e.code !== 'EEXIST') throw e; }
+    let held = null; try { held = JSON.parse(readFileSync(file, 'utf8')); } catch { /* half written or gone: read again */ }
+    if (held && (!alive(held.pid) || now() - held.atMs > staleMs)) { rmSync(file, { force: true }); continue; }
+    if (now() - t0 > waitLockMs) throw new Error(`another update of this node is still running (pid ${held ? held.pid : '?'}); try again when it has ended`);
+    if (!waited) onWait(held); waited = true;
+    await sleep(2000);
+  }
+}
+
+export async function updateNode({ progress = () => {}, lock = takeUpdateLock, ...o }) {
   let at = { pct: 0, step: 'Checking the new release' };
   const say = (pct, step, detail = '') => { at = { pct: pct ?? at.pct, step, detail }; try { progress(at); } catch { /* a reporter never stops the update */ } };
   const end = (p) => { try { progress(p); } catch { /* the same */ } };
+  let held;
+  try { held = await lock(o.home, { onWait: () => say(at.pct, 'Waiting for the other update of this node to finish') }); }
+  catch (e) { end({ failed: true, pct: at.pct, step: at.step, why: e.message }); throw e; }
   let r;
-  try { r = await moveNode({ ...o, say, failedAt: () => at.step }); } catch (e) { end({ failed: true, pct: at.pct, step: at.step, why: e.message }); throw e; }
+  try {
+    try { r = await moveNode({ ...o, say, failedAt: () => at.step }); } catch (e) { end({ failed: true, pct: at.pct, step: at.step, why: e.message }); throw e; }
+    // the other update moved the node to this very release while this one waited: done, nothing to move
+    if (!r.ok && held.waited && r.why === 'that release is the one running') r = { ok: true, already: true, to: o.newRelease };
+  } finally { held.release(); }
   if (r.ok) end({ done: true, pct: 100 });
   else end({ failed: true, pct: at.pct, step: r.failedAt || at.step, why: r.rolledBack ? `${r.why}. ${r.restored ? 'The old release runs again.' : 'The old release was started again but does not answer.'}` : r.why });
   return r;
@@ -439,7 +471,7 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
   step(`${moving.length} of ${svcFiles.length} service file(s) move: ${moving.map((f) => f.split(/[\\/]/).pop()).join(', ')}`);
   trace.debug(`not moved (they name neither ${from} nor an older release): ${svcFiles.filter((f) => !moving.includes(f)).map((f) => f.split(/[\\/]/).pop()).join(', ') || 'none'}`);
 
-  if (inSeatingWindow(nowMs())) { step('inside a market seating window (minutes 11-14 of a quarter hour): waiting it out before anything stops'); say(22, 'Waiting for the market to seat its players', 'up to 3 minutes'); }
+  if (inSeatingWindow(nowMs())) { step('inside a market seating window (minutes 11-14 of a quarter hour): waiting it out before anything stops'); say(22, 'Waiting until this round\'s committee is seated, so the restart does not cost your node its seat', 'up to 3 minutes'); }
   while (inSeatingWindow(nowMs())) await sleep(5000);
   say(24, 'Stopping your node');
   await svc.prepare(newRelease);
