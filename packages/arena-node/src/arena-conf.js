@@ -26,6 +26,7 @@ export const CONF_KEYS = Object.freeze([
   ['plugins_dir', 'where installed plugins are kept'],
   ['donation_network', 'the network whose donation set the node pays'],
   ['close_at_end', '1: rounds are closed when they end'],
+  ['seating', '1 (the default): the node reserves its seat in every round it is drawn for (§5A.7); 0 takes it out of every seating'],
   ['gateway_port', 'custody: the Lightning gateway\'s local port (the seat carries <public_url>/gateway/ to it)'],
   ['gateway_claim_file', 'custody: the gateway seat\'s claim'],
   ['founding', 'custody: 1 = the guardian starts in setup mode, ready to found a federation'],
@@ -84,6 +85,10 @@ export function confToRun(values, { home = '.' } = {}) {
     if (k === 'port' || k === 'database') continue;
     env[PORT_NAMED[k] ? `${PORT_NAMED[k]}${port}` : `ARENA_${k.toUpperCase()}`] = v;
   }
+  // SEATING ON UNLESS THE FILE SAYS OTHERWISE (kanban #792, measured 2026-10-30 01:1xZ: two installed 2026.1.9.17 nodes answered 404
+  // "no such door" at every seating door - the seat seats only with ARENA_SEATING=1, which no installer wrote - yet the census drew
+  // them into rounds, a slot never present). A file written before this release has no `seating` line and is seated from its update.
+  if (!('seating' in values)) env.ARENA_SEATING = '1';
   return { port, database, env };
 }
 
