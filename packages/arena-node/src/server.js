@@ -7506,7 +7506,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // round's start or entry close passed - and it is younger than LISTING_MAX_AGE_MS, past which its rows' signed time is too old for
         // a page (LOBBY_SKEW_MS 60 s)
         const changed = body && (body.mark !== listingMark() || nowReal >= body.nextChangeMs);
-        const stale = body && (changed || nowReal - body.at > LISTING_MAX_AGE_MS);
+        // AND NO LISTING WHOSE SIGNED TIME IS A WINDOW OLD ON THE NODE'S OWN CLOCK (kanban #791: on a node whose round clock moves apart
+        // from the wall clock - a test's, measured in rounds-signed-set on 2.0 - a kept ?next=1 came back 45 s on with its old time)
+        const stale = body && (changed || nowReal - body.at > LISTING_MAX_AGE_MS
+          || (Number.isFinite(body.signedAtMs) && Number(round.now()) - body.signedAtMs >= LISTING_MAX_AGE_MS));
         const servable = body && body.version === seriesVersion && nowReal - body.at <= LISTING_STALE_MS;
         if (!body || stale || body.version !== seriesVersion) {
           // ONE BUILD PER QUERY AT A TIME: every asker that comes while it yields waits for the same listing
@@ -7518,7 +7521,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
               const mark = listingMark();
               // the soonest moment a listed row's state turns by the clock alone: a start, an entry close or an end still ahead
               const ahead = listed.flatMap((x) => [Number(x.startTimeMs), Number(x.entryCloseMs), Number(x.endTime)]).filter((t) => Number.isFinite(t) && t > nowReal);
-              const made = { at: nowReal, version, mark, nextChangeMs: ahead.length ? Math.min(...ahead) : nowReal + LISTING_MAX_AGE_MS, large: listed.length > 100,
+              const made = { at: nowReal, signedAtMs: Number(nowMs), version, mark, nextChangeMs: ahead.length ? Math.min(...ahead) : nowReal + LISTING_MAX_AGE_MS, large: listed.length > 100,
                 json: JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), rounds: listed, games: groupedByGame(listed) }) };
               listingKept.set(q, made);
               if (listingKept.size > 16) listingKept.delete(listingKept.keys().next().value);
