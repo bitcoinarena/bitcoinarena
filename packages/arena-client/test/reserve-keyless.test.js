@@ -105,3 +105,8 @@ test('a head-to-head move the seats took ends the join, not in a refusal (the ow
   assert.ok(hidden > 0 && hidden < refusal, 'read before the refusal');
   assert.match(src.slice(hidden, hidden + 400), /join\.state = 'picked'/);
 });
+
+test('a reload in the middle of a join puts no refusal over the page (the owner 2026-10-30: "carries no such core")', () => {
+  const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  assert.match(src, /window\.ARENA_JOIN = coreOnly \? null : window\.ARENA_REFUSED_JOIN/);
+});
