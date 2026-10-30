@@ -56,3 +56,36 @@ test('a collected round\'s lock wallet goes once its collect is done and an hour
   assert.equal(r.removed, 36); assert.ok(r.bytes > 36 * 2000);
   assert.ok(L.getItem(`arena.collect.${R1}`), 'the collect record itself stays');
 });
+
+test('a full browser: what the seed can give back goes, the playing wallet, money and deposits on their way stay (the owner 2026-10-30, 19 kept phrases, "exceeded the quota")', () => {
+  const fake = () => { const m = new Map(); return { get length() { return m.size; }, key: (i) => [...m.keys()][i] ?? null, getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { m.set(k, String(v)); }, removeItem: (k) => { m.delete(k); } }; };
+  const L = fake();
+  const FED2 = 'cd'.repeat(32);
+  const CUR2 = '11'.repeat(32), IDLE = '22'.repeat(32), RICH2 = '33'.repeat(32), PLAYING = '44'.repeat(32), WAITING = '55'.repeat(32);
+  const db = (hex, fed) => `arena.walletdb.${fed.slice(0, 16)}.${toHex(sha256(walletSecretFor(fromHex(hex), fromHex(fed)))).slice(0, 16)}.`;
+  const big = 'x'.repeat(400000);
+  for (const hex of [CUR2, IDLE, RICH2, PLAYING]) L.setItem(db(hex, FED2) + '2f', big);
+  L.setItem(`arena.wallet.known.${FED2.slice(0, 16)}.${RICH2.slice(0, 16)}`, '1000000');
+  const FED3 = 'ef'.repeat(32);
+  L.setItem(db(WAITING, FED3) + '2f', big);
+  L.setItem(`arena.deposit.pending.${FED3}`, JSON.stringify([{ operation: 'op', invoice: 'lntb', msat: '1000000' }]));
+  L.setItem('arena.lockdb.' + 'aa'.repeat(8) + '.' + 'bb'.repeat(8) + '.1', big);
+  L.setItem('arena.collect.x', JSON.stringify({ done: true, roundIdHex: 'aa'.repeat(32), savedMs: Date.now() }));
+  L.setItem('arena.lockdb.' + 'cc'.repeat(8) + '.' + 'bb'.repeat(8) + '.1', big);
+  const r = tidyStorage(L, { seeds: [CUR2, IDLE, RICH2, PLAYING, WAITING], current: CUR2, federations: [FED2, FED3], held: (h) => h === PLAYING, pressureChars: 1000000 });
+  assert.equal(L.getItem(db(IDLE, FED2) + '2f'), null, 'an idle phrase with no known balance goes');
+  assert.equal(seedRecovers(L, fromHex(IDLE)), true, 'and reads itself back from the federation at its next open');
+  assert.equal(L.getItem('arena.lockdb.' + 'aa'.repeat(8) + '.' + 'bb'.repeat(8) + '.1'), null, 'a done round\'s lock wallet goes, even under an hour old');
+  assert.ok(L.getItem(db(CUR2, FED2) + '2f'), 'the playing wallet stays');
+  assert.ok(L.getItem(db(RICH2, FED2) + '2f'), 'a wallet with a known balance stays');
+  assert.ok(L.getItem(db(PLAYING, FED2) + '2f'), 'a phrase another tab plays with stays');
+  assert.ok(L.getItem(db(WAITING, FED3) + '2f'), 'a federation with a deposit on its way stays');
+  assert.ok(L.getItem('arena.lockdb.' + 'cc'.repeat(8) + '.' + 'bb'.repeat(8) + '.1'), 'an open round\'s lock wallet stays');
+  assert.ok(r.bytes > 0);
+});
+
+test('below the pressure line nothing more goes', () => {
+  const m = new Map([[`arena.walletdb.${'cd'.repeat(8)}.${'00'.repeat(8)}.2f`, 'x']]);
+  const L = { get length() { return m.size; }, key: (i) => [...m.keys()][i] ?? null, getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, v), removeItem: (k) => m.delete(k) };
+  assert.equal(tidyStorage(L, { seeds: ['11'.repeat(32)], current: '11'.repeat(32), federations: [], pressureChars: 3500000 }).removed, 0);
+});
