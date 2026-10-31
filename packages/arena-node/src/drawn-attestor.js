@@ -59,7 +59,7 @@ export class DrawnAttestor {
       for (const r of this.opening()) {
         const id = toHex(r.roundId);
         if (r.source.rule !== MARKET_RULE.RISES || this.starts.has(id)) continue;
-        const got = await this.runSource({ ...r.source, rule: MARKET_RULE.VALUE }, { outcomes: r.outcomes });
+        const got = await this.runSource({ ...r.source, rule: MARKET_RULE.VALUE }, { outcomes: r.outcomes }, r.hosts);
         if (got.ok) this.starts.set(id, got.out);
       }
     }
@@ -73,7 +73,7 @@ export class DrawnAttestor {
     if (!drawn || !drawn.includes(this.selfKey)) return null;
     if (BigInt(this.now()) < r.window.endMs + BigInt(SETTLE_MS)) return null;
     if (r.source.rule === MARKET_RULE.RISES && !this.starts.has(id)) return null;
-    const got = await this.runSource(r.source, { outcomes: r.outcomes, start: this.starts.get(id) });
+    const got = await this.runSource(r.source, { outcomes: r.outcomes, start: this.starts.get(id) }, r.hosts);
     const outcome = got.ok ? outcomeIndex(got.out, r.outcomes) : null;
     if (outcome === null) return null;
     const body = { roundId: r.roundId, outcome, observedAtMs: r.window.endMs };
