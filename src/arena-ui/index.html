@@ -689,6 +689,13 @@
     body.arena-game-chosen:not(.arena-own-client) #arena-game-home, body:has(#arena-season.show) #arena-game-home, body:has(#arena-shop.show) #arena-game-home, body:not(.arena-clean):has(#arena-settings:not([style*="none"])) #arena-game-home { display: inline-grid; flex: none; place-items: center; width: 29px; height: 29px; border-radius: 7px;
       text-decoration: none; font: 800 16px/1 system-ui, sans-serif; color: #1a0f00; background: conic-gradient(from 210deg, #f7931a, #ffd166, #f7931a); }
     #arena-game-home i { font-style: normal; }
+    /* THE LOGO STAYS ON THE SCREEN (kanban #827, the owner 2026-10-31: "Auf dem iphone duo ist die header navigation kaputt, das Logo ist abgeschnitten"): the row ends at the right edge, so
+       what did not fit ran off the left, the logo first (measured: left -115 at 600 px, -9 at 390 px). The name gives way first, then the row tightens */
+    body #arena-money #arena-game-home { flex: 0 1 auto; min-width: 26px; overflow: hidden; margin-right: auto; }
+    #arena-game-home i { flex: none; }
+    #arena-game-home span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    #arena-money > *:not(#arena-game-home) { flex-shrink: 0; }
+    @media (max-width: 420px) { body #arena-money { gap: 3px; } #arena-money > button { padding-left: 6px !important; padding-right: 6px !important; } }
     body.arena-clean #arena-game-home { display: none !important; }
     /* THE GAMES SCREEN'S FOOT, AS IN A GAME (2026-10-17: "have the donate button be the same as in the game"): the links and the same
        "Donate" button in one row at its right, the UI line at its left (kanban #753) */
