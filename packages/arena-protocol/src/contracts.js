@@ -21,6 +21,7 @@ import {
   TAG, PROTOCOL_VERSION, speaksVersion, SUPPORTED_PROTOCOL_VERSIONS, namesNoDraw, takesAnyFederation, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
   GAME_MARKET_VERSION,
   SCALAR_TEMPLATE_VERSION,
+  SOURCE_HOSTS_VERSION,
   CUSTODY, custodyByte, custodyName, slashRemainderByte, slashRemainderOf, MIN_ENTRY_WINDOW_MS,
   STAKE_EXPIRY_BLOCKS, START_DEADLINE_TICKS, OBJECTION_WINDOW_MS,
   SCORE_SCALE,
@@ -287,6 +288,11 @@ export function encodeRoundContract(c) {
       if (!(version >= SCALAR_TEMPLATE_VERSION)) throw new Error(`a round names its own scalar bounds from protocol version ${SCALAR_TEMPLATE_VERSION} on`);
       w.i64(c.event.scalar.low); w.i64(c.event.scalar.high);
     }
+    // A MARKET WITH A SOURCE IS HOSTED BY EVERY BONDED NODE (kanban #920): one byte after the rest, inside the tail, so a question without it keeps its bytes
+    if (c.event.allBonded === true) {
+      if (!(version >= SOURCE_HOSTS_VERSION)) throw new Error(`a round opens to every bonded node from protocol version ${SOURCE_HOSTS_VERSION} on`);
+      w.u8(1);
+    }
     w.u16(w.len - start + 3);
     w.u8(EVENT_MARKER);
     return w.finish();
@@ -365,7 +371,8 @@ export function contractEventTail(bytes, left) {
     const r = new Reader(bytes.subarray(end - size + 1, end - 3));
     const ev = { question: r.str(), outcomes: r.vec((rr) => rr.str()), resolveAtMs: r.u64() };
     // a scalar template's round (2026.0.8): its bounds, two i64, are what is left - the decoder holds the version to them
-    if (r.b.length - r.at === 16) ev.scalar = { low: r.i64(), high: r.i64() };
+    if (r.b.length - r.at >= 16) ev.scalar = { low: r.i64(), high: r.i64() };
+    if (r.b.length - r.at === 1) { if (r.u8() !== 1) return null; ev.allBonded = true; }
     r.end();
     if (!contractEventFits(ev).ok) return null;
     return { event: ev, size };
@@ -515,6 +522,7 @@ export function decodeRoundContract(bytes) {
     r.bytes(asked.size);                                      // read whole by contractEventTail
     c.event = asked.event;
     if (!(c.protocolVersion >= EVENT_VERSION)) throw new Error(`a round asks its own question from protocol version ${EVENT_VERSION} on`);
+    if (c.event.allBonded && !(c.protocolVersion >= SOURCE_HOSTS_VERSION)) throw new Error(`a round opens to every bonded node from protocol version ${SOURCE_HOSTS_VERSION} on`);
     if (c.event.scalar && !(c.protocolVersion >= SCALAR_TEMPLATE_VERSION)) throw new Error(`a round names its own scalar bounds from protocol version ${SCALAR_TEMPLATE_VERSION} on`);
     if (c.seriesId !== undefined) throw new Error('a round that asks its own question is no round of a series');
   }

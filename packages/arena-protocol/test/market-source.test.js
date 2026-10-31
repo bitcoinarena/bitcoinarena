@@ -7,6 +7,7 @@ import { encodeManifestBody, manifestBodyId, MARKET_SOURCE_MARKER, RESULT_TYPE, 
 import { codeOfSource, outcomeIndex } from '../src/market-rule.js';
 import { MARKET_HOSTS, decodeHostList, encodeSourceList, hostListProblem, marketHostProblem } from '../src/market-check.js';
 import { SOURCES_GENESIS } from '../src/ballot-chain.js';
+import { eligibleFor } from '../src/census.js';
 import { CLASS, isHostRemoval } from '../src/ballot.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -69,4 +70,12 @@ test('a list is one canonical thing, public names only, each host with an exampl
   assert.equal(isHostRemoval({ class: CLASS.SOURCES, config: encodeSourceList([entry('a.example.org'), entry('c.example.org')]) }, history), false);
   assert.equal(marketHostProblem('https://b.example.org/x', ['b.example.org']), null);
   assert.match(marketHostProblem('https://attacker.example/x'), /not a listed source/);
+});
+
+test('every bonded node hosts a market with a source: a node that lists nothing is eligible, and only for such a round', () => {
+  const gameId = b32(9), entry = { roles: ['game', 'verify', 'settlement'], hostedGames: [] }, event = { question: 'BTC over 100k?', outcomes: ['Yes', 'No'], resolveAtMs: 1000n };
+  assert.equal(eligibleFor(entry, { gameId, event: { ...event, allBonded: true } }, 'game'), true);
+  assert.equal(eligibleFor(entry, { gameId, event }, 'game'), false);
+  assert.equal(eligibleFor(entry, { gameId }, 'game'), false);
+  assert.equal(eligibleFor({ ...entry, roles: ['settlement'] }, { gameId, event: { ...event, allBonded: true } }, 'game'), false, 'it still declares the role');
 });
