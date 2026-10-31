@@ -23,6 +23,8 @@ textarea{min-height:110px}
 .words span::before{counter-increment:w;content:counter(w) ". ";color:var(--dim)}
 .warn{border-left:3px solid var(--gv);padding:8px 12px;background:rgba(242,169,59,.08);border-radius:0 8px 8px 0;margin:10px 0}
 .err{color:var(--bad);min-height:1.5em}.ok{color:var(--ok)}
+/* an error at its field takes no room until it has something to say (kanban #841); focus on a new screen's heading draws no ring (kanban #843) */
+.field-err:empty{min-height:0}h2[tabindex="-1"]:focus,h3[tabindex="-1"]:focus{outline:none}
 label{display:block;margin:8px 0 4px;color:var(--dim)}
   .info { margin: 2px 0 6px; } .info a { color: inherit; }
   /* the dev key's earnings by period: scrolls sideways on a phone, numbers right-aligned */
@@ -437,6 +439,10 @@ const getOrNull = async (p) => { try { return await getOk(p); } catch { return n
 const fetchJson = async (u) => { const r = await fetch(u, { cache: 'no-store' }); if (!r.ok) throw new Error((await r.text()).trim()); return r.json(); };
 // A REACT SCREEN INTO ITS ELEMENT (kanban #564): the one drawn there before is unmounted first
 const mount = (id, how, props) => { const el = $(id); if (el._react) el._react.unmount(); el.innerHTML = ''; return (el._react = O[how](el, props)); };
+// BACK FROM A CARD (kanban #843): the way in follows the browser by itself (OwnerStart); the claim and a message are no steps of it, so Back from
+// one starts the page again, with nothing held. `card` is true while one is drawn
+let card = false;
+addEventListener('popstate', () => { if (card) { held = null; me = null; start(); } });
 
 // 1. THE WAY IN (kanban #564: drawn by React, OwnerStart): the welcome - new 24 words, restore them, or Login with Nostr - and 2. the
 // claim with the code from the node's log. The page hands over what it keeps and how; React draws the screens
@@ -444,11 +450,11 @@ const startProps = () => ({ client: C, holdSeed, holdNostr, random32: () => glob
   claim: async (code) => post('/owner/claim', signed('claim', { code })), onIn: () => { me = null; loadAgain(); start(); },
   onNostr: (o) => { window.OWNER_NOSTR = o; }, onConnectUri: (u) => { window.OWNER_CONNECT_URI = u; } });
 // a node with an owner asks for that owner's words or Nostr key, never offers new words (playtest 2026-10-25) or a new Nostr account (kanban #833)
-function welcome() { loadEnd(); mount('view', 'mountStart', { ...startProps(), screen: 'welcome', claimed: !!(state && state.claimed) }); }
+function welcome() { loadEnd(); card = false; mount('view', 'mountStart', { ...startProps(), screen: 'welcome', claimed: !!(state && state.claimed) }); }
 // (kanban #550, 2026-10-20: "show the complete path to the file instead of showing it cryptic"): the node names the file's full path
-function claim(mine, file) { loadEnd(); mount('view', 'mountStart', { ...startProps(), screen: 'claim', mine, claimFile: file }); }
+function claim(mine, file) { loadEnd(); card = true; mount('view', 'mountStart', { ...startProps(), screen: 'claim', mine, claimFile: file }); }
 // A ONE-CARD MESSAGE (no answer, not the owner), drawn by React (OwnerMessage)
-const message = (props) => { loadEnd(); return mount('view', 'mountMessage', props); };
+const message = (props) => { loadEnd(); card = true; return mount('view', 'mountMessage', props); };
 // WHAT NEEDS THE OWNER (kanban #553): each section that finds something to do says it here, in one line, with a link to it; the Overview
 // lists them, the sidebar marks the section - both React's (kanban #564, OwnerArea), drawn again with the list on each change
 const needs = new Map();   // key -> { level: 'bad' | 'warn', text, section }
@@ -492,9 +498,15 @@ async function area() {
     emergencyCode: seed ? C.emergencyCodeText(C.emergencyCodeBytes(seed)) : null, emergencyLink: at('/Dashboard/emergency'),
     devKey: devPub ? C.toHex(devPub) : null,
     signManifest: (text) => { const out = C.signManifestWithSeed(C.bodyFromJson(text, { devPubkey: devPub }), devSeed); window.OWNER_SIGNED = out; return out; } };
+  card = false;
+  // THE WAY IN IS OVER (kanban #843): no step left in the address, and focus on the section it opened
+  const hash = new URLSearchParams(location.hash.slice(1));
+  if (hash.has('step')) { hash.delete('step'); history.replaceState(history.state, '', location.pathname + location.search + (hash.toString() ? '#' + hash : '')); }
   drawArea();
   // the public dashboard is the menu's last entry now (kanban #733): the line under the page is for the screens before the login
   $('public-line').hidden = true;
+  const heading = $('view').querySelector('section:not([hidden]) h2');
+  if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
   if (!kept) need('kept', 'warn', 'This browser does not keep your login (private mode?): you sign in again after a reload.', 'login');
   setupPanel();
   rolesPanel();
