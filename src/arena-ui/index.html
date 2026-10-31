@@ -8296,7 +8296,11 @@
         if (!onARound) throw e;
         const why = e && e.message ? e.message : String(e);
         window.ARENA_ROUND = undefined; window.ARENA_ENTRY = undefined; window.ARENA_CHAIN = undefined; window.ARENA_ADVERT = undefined;
-        window.ARENA_JOIN = window.ARENA_REFUSED_JOIN(why, new URLSearchParams(location.search.replace(/^\?/, '')).get('round'));
+        // A RELOAD IN THE MIDDLE OF A JOIN of a game with its own client (RPS, Up/Down) leaves round= in the address, and this load has no game chosen yet:
+        // the round was weighed against Tick Tock's cores and "Order not placed: ... carries no such core" stood over the page (the owner 2026-10-30). The
+        // player placed nothing here: back to the lobby without a word
+        const coreOnly = /this page carries no such core/.test(why);
+        window.ARENA_JOIN = coreOnly ? null : window.ARENA_REFUSED_JOIN(why, new URLSearchParams(location.search.replace(/^\?/, '')).get('round'));
         console.error('[arena] that round link cannot be joined (' + why + '): back to the lobby');
         const q = new URLSearchParams(location.search.replace(/^\?/, ''));
         q.delete('round'); q.delete('play');
