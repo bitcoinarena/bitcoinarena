@@ -1409,8 +1409,8 @@
     #arena-games.compact button.tile { padding: 10px 10px 10px; gap: 6px; }
     #arena-games.compact .head { gap: 6px; }
     #arena-games.compact .logo { width: min(96px, 66%); border-radius: 20px; }
-    /* kanban #919: on a short phone the images give up what two rows of tiles lack; 440 px is the rest of the screen, measured */
-    @media (max-width: 559px) and (max-height: 800px) { #arena-games.compact .logo { width: clamp(40px, calc((100dvh - 440px) / 2), min(96px, 66%)); border-radius: 14px; font-size: 22px; } }
+    /* kanban #919: on a short phone the images give up what two rows of tiles lack; 472 px is the rest of the screen with a gap above the foot, measured */
+    @media (max-width: 559px) and (max-height: 800px) { #arena-games.compact .logo { width: clamp(40px, calc((100dvh - 472px) / 2), min(96px, 66%)); border-radius: 14px; font-size: 22px; } }
     #arena-games.compact .name { min-height: 2.2em; }
     #arena-games .more { margin-top: 0; }
     #arena-games .foot-row { margin-top: 6px; }
