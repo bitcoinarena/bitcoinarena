@@ -2,7 +2,8 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A MARKET IN THE MAKING (kanban #920, docs/MARKET-CREATOR.md): the templates the form starts from, what each step still lacks, and the
 // reading of a source's answer. Plain functions, so the form, the tests and later the node's own check read one rule.
-import { marketHostProblem, marketUrlProblem } from '../../../arena-protocol/src/market-check.js';
+import { CHECK_VERSION, marketHostProblem, marketUrlProblem } from '../../../arena-protocol/src/market-check.js';
+import { MARKET_READ, MARKET_RULE, MARKET_SOURCE_KIND } from '../../../arena-protocol/src/manifest.js';
 
 export const OUTCOMES_MIN = 2, OUTCOMES_MAX = 8, TITLE_MAX = 120, READS_MAX = 3;
 // FIXED, AS POLYMARKET'S TOP BAR IS (the owner 2026-10-31: "Tu die Kategorie hart verdrahten kein textfeld"): a filter needs the same word on every market
@@ -142,3 +143,21 @@ export function outcomeOfCode(d, out) {
 }
 
 export const KEPT = 'arena-market-draft';
+
+const READ_OF = { json: MARKET_READ.JSON, regex: MARKET_READ.PATTERN, text: MARKET_READ.TEXT };
+const RULE_OF = { above: MARKET_RULE.ABOVE, below: MARKET_RULE.BELOW, rises: MARKET_RULE.RISES, equals: MARKET_RULE.EQUALS, found: MARKET_RULE.FOUND };
+
+/** The draft's source as a manifest carries it. */
+export function manifestSource(s) {
+  if (s.kind === 'code') return { kind: MARKET_SOURCE_KIND.CODE, reads: s.reads.map((r) => ({ id: r.id, socket: r.kind === 'ws', url: r.url, subscribe: r.kind === 'ws' ? r.subscribe || '' : '' })), code: s.code, checkVersion: CHECK_VERSION };
+  return { kind: MARKET_SOURCE_KIND.URL, reads: [{ id: 'page', socket: false, url: s.url, subscribe: '' }], read: READ_OF[s.read], path: s.read === 'text' ? '' : s.path, rule: RULE_OF[s.rule], level: String(s.value ?? '') };
+}
+
+/** THE MANIFEST BODY OF A FINISHED DRAFT, as `signManifest` takes it. A market's nodes are drawn per round, and a number between bounds is not drawn yet, so it cannot be signed. */
+export function manifestOfDraft(d, { donationSetId }) {
+  if (d.kind === 'number') throw new Error('A market on a number cannot be published yet');
+  const s = d.schedule;
+  return { gameName: d.title.trim().slice(0, 64), version: 1, resultType: 'ATTESTED', cores: [], runTicksMax: 0, roundPeriodMs: String(s.mode === 'repeat' ? EVERY.find(([k]) => k === s.every)[2] : 86400000),
+    payoutRule: 'PARI_MUTUEL', rankNumerator: 0, rankDenominator: 0, minScore: 0, clients: [], gameDonationSetId: donationSetId, outcomes: d.outcomes.map((o) => o.trim()),
+    attestors: [], attestThreshold: 0, attestDraw: { count: 7, threshold: 5 }, requiredProtocolVersion: 2, source: manifestSource(d.source) };
+}
