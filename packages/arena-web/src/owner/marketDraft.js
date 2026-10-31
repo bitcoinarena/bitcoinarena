@@ -80,6 +80,18 @@ export function readAnswer(source, text) {
   return typeof v === 'object' ? { why: 'That field holds more than one value' } : { value: String(v) };
 }
 
+/** The fields an answer holds, as paths with their values: what the Result step offers to pick. Empty when the answer is not JSON. */
+export function fieldsOf(text, most = 24) {
+  let v; try { v = JSON.parse(String(text)); } catch { return []; }
+  const out = [];
+  const walk = (x, at, depth) => {
+    if (out.length >= most || depth > 6) return;
+    if (x !== null && typeof x === 'object') { for (const k of Object.keys(x)) walk(x[k], at ? `${at}.${k}` : k, depth + 1); } else if (at) out.push([at, String(x).slice(0, 40)]);
+  };
+  walk(v, '', 0);
+  return out;
+}
+
 /** The outcome a value gives under the draft's rule. `start` is the value at the window's start, for "rises". */
 export function outcomeOf(d, value, start = null) {
   const s = d.source; const [a, b] = d.outcomes;
