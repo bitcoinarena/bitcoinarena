@@ -5725,8 +5725,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // THE OWNER AREA: the page, its crypto, and the owner's doors - each POST a request the owner signed
       if (req.method === 'GET' && (url.pathname === '/Dashboard/owner' || url.pathname === '/dashboard/owner')) {
         if (!owner) return text(res, 404, 'this node runs without an owner area');
+        // the built copy, without the notes of pages/owner.html (kanban #838; packages/arena-web/tools/build.mjs)
+        let body; try { body = readFileSync(new URL('../../arena-web/dist/owner-page.html', import.meta.url)); } catch { return text(res, 404, 'this release carries no owner page'); }
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-        return res.end(readFileSync(new URL('../pages/owner.html', import.meta.url)));
+        return res.end(body);
       }
       // THE OWNER DASHBOARD'S REACT SCREENS (kanban #564, packages/arena-web): the bundle and its stylesheet, when this release carries
       // them - the page mounts them in place of its own panels, and keeps its own where they are missing
