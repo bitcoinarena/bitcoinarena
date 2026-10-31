@@ -3352,7 +3352,11 @@
             let have = 0n; try { have = c ? BigInt(await c.balanceMsat()) : 0n; } catch { have = 0n; }
             if (have < needMsat && window.ARENA_SUM_BALANCES) { try { await window.ARENA_SUM_BALANCES(); } catch { /* the last read */ } }
             const merging = (window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.merging) || 0;
-            if (ARENACLIENT.notSpendableYet({ haveMsat: have, mergingSat: merging, needMsat }) && !(earlyDeposit && await earlyDeposit)) {
+            // MONEY HELD BY ANOTHER LIVING TAB IS NOT COMING (kanban #827, the owner's two clients in one browser, UI 450: "that tab did not answer in 45 s" on every federation,
+            // the second client could never join): when every merge is stuck the join goes on and asks for a deposit, as for any wallet that holds too little
+            const mergeStates = Object.values(window.ARENA_MERGE_STATE || {}).filter((v) => v && (v.state === 'stuck' || v.state === 'merging'));
+            const onlyStuck = mergeStates.length > 0 && mergeStates.every((v) => v.state === 'stuck');
+            if (!onlyStuck && ARENACLIENT.notSpendableYet({ haveMsat: have, mergingSat: merging, needMsat }) && !(earlyDeposit && await earlyDeposit)) {
               const why = Object.entries(window.ARENA_MERGE_STATE || {}).filter(([, v]) => v && v.why && (v.state === 'stuck' || v.state === 'merging'))
                 .map(([f, v]) => `federation ${f.slice(0, 8)}: ${v.state === 'merging' ? 'still ' : ''}${v.why}`).join('; ');
               const text = `${merging.toLocaleString('en-US')} sat of your balance are still merging in from your other wallets in this browser and cannot be spent yet`
