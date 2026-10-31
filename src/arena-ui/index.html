@@ -1166,6 +1166,8 @@
     #arena-wallet-modal .wl-tabs button.on { color: #f7931a; border-bottom-color: #f7931a; }
     /* the old text line over the balance (kanban #631: "Remove the old text only stuff at the top"): the Federations tab says where it sits */
     #arena-wallet-modal #arena-balance-line { display: none; }
+    /* WHY MONEY IS ARRIVING STAYS READABLE (kanban #908): the line above went with #631 and a title never shows on a phone */
+    #arena-arriving-why:not(:empty) { margin: 10px 0 0; color: #f0b72f; font-size: 13px; line-height: 1.35; }
     #arena-wallet-modal .ow { margin: 12px 0 0; padding: 10px 0 0; border-top: 1px solid #2a3440; }
     #arena-wallet-modal .ow-head { font-weight: 700; color: #f7931a; margin: 0 0 6px; }
     #arena-wallet-modal .ow-wallet { margin: 6px 0; }
@@ -1485,6 +1487,7 @@
         <div class="bal-box"><span class="bal-ico pend">&#8987;</span><div><div class="bal-what">Pending</div><div class="bal-sats" id="arena-bal-pending">&ndash;</div><div class="bal-what" id="arena-bal-pending-when"></div></div></div>
       </div>
       <div class="muted" id="arena-balance-line"></div>
+      <div class="muted" id="arena-arriving-why"></div>
       <div id="arena-other-wallets"></div>
       <div id="arena-history">
         <div class="muted" id="arena-history-fed"></div>
@@ -1605,7 +1608,7 @@
     // MONEY THAT DID NOT ARRIVE (kanban #883, the owner 2026-10-31: "Fehlermeldung dass das Geld nicht abgeholt werden kann, Summe für alle"): the sum over every
     // federation of the deposits this browser could not collect, and whether its storage refused a wallet write. A kept deposit may never have been paid, hence "up to".
     window.ARENA_MONEY_ALERT = (() => {
-      const lost = new Map(); let full = false, tight = false, creditedMsat = 0n, okTimer = null;
+      const lost = new Map(); let full = false, tight = false, creditedMsat = 0n, okTimer = null, wasStuck = false; const creditedSats = new Set();
       const store = () => (window.ARENA_BROWSER_STORE && window.ARENA_BROWSER_STORE()) || localStorage;
       const paint = () => {
         const el = document.getElementById('arena-money-alert'); if (!el) return;
@@ -1637,14 +1640,18 @@
           try { const S = localStorage; for (let i = 0; i < S.length; i++) { const k = S.key(i); if (k && k.startsWith('arena.deposit.pending.')) for (const d of JSON.parse(S.getItem(k) || '[]')) lost.set(String(d.operation), { msat: String(d.msat), atMs: d.atMs }); } } catch { /* unreadable: not summed */ }
           paint(); },
         // WHAT WAS STUCK AND CAME IN AFTER ALL (the owner 2026-10-31: "eine Meldung nach dem reload das XXX Satoshi credited worden sind die stuck waren"), summed over the deposits of this load
-        credited: (msat) => { try { creditedMsat += BigInt(msat); } catch { return; }
+        // AND EVERY OTHER CREDIT (kanban #909, the owner 2026-10-31: 600 sat came in on the desktop with no message): a deposit claimed in a window this
+        // page opened is `plain`, and money that landed after waiting says so here too; creditedHas keeps one amount from being said twice
+        credited: (msat, plain = false) => { try { creditedMsat += BigInt(msat); creditedSats.add(String(BigInt(msat) / 1000n)); } catch { return; }
+          if (!plain) wasStuck = true;
           const el = document.getElementById('arena-money-ok'); if (!el) return;
-          el.textContent = (creditedMsat / 1000n).toLocaleString('en-US') + ' sat that were stuck have been credited to your wallet.';
-          el.classList.add('show'); clearTimeout(okTimer); okTimer = setTimeout(() => el.classList.remove('show'), 15000); },
+          el.textContent = (creditedMsat / 1000n).toLocaleString('en-US') + (wasStuck ? ' sat that were stuck have' : ' sat have') + ' been credited to your wallet.';
+          el.classList.add('show'); clearTimeout(okTimer); okTimer = setTimeout(() => { el.classList.remove('show'); creditedMsat = 0n; wasStuck = false; }, 30000); },
         // ROOM BEFORE A DEPOSIT (the owner 2026-10-31: "Vor einem Deposit prüfst du ob der Fehler auftreten kann ... dass erst der Storage komprimiert werden muss bevor der Deposit erlaubt wird"): a claim writes up to some 100 KB, Safari gives 5 million characters
         room: () => { try { const S = store(); let used = 0; for (let i = 0; i < S.length; i++) { const k = S.key(i); if (k) used += k.length + String(S.getItem(k) || '').length; }
           if (used > 3500000) return false; S.setItem('arena.room.probe', 'x'.repeat(300000)); S.removeItem('arena.room.probe'); return true; } catch { try { store().removeItem('arena.room.probe'); } catch { /* none */ } return false; } },
         needRoom: () => { tight = true; paint(); },
+        creditedHas: (sats) => creditedSats.has(String(sats)),
         settled: (ops) => { for (const o of ops) lost.delete(String(o)); paint(); },
         view: () => ({ full, msat: [...lost.values()].map((v) => v.msat).join('+') }), paint };
     })();
@@ -4602,6 +4609,7 @@
       const mergingLine = known && bal.merging > 0 ? ' (' + sat(bal.merging) + ' of it still merging in from your other wallets in this browser)' : '';
       // AND WHAT IS ARRIVING, WHY AND BY WHEN (kanban #617): its own sentence under the split
       const arrivingSay = known && bal.arrivingLine ? (split || mergingLine ? '. ' : '') + bal.arrivingLine.charAt(0).toUpperCase() + bal.arrivingLine.slice(1) : '';
+      window.ArenaText.say(document.getElementById('arena-arriving-why'), known && bal.arrivingLine ? bal.arrivingLine.charAt(0).toUpperCase() + bal.arrivingLine.slice(1) : '');
       window.ArenaText.say(document.getElementById('arena-balance-line'), known ? (split || (mergingLine ? 'Total' : '')) + mergingLine + arrivingSay : loadingBal ? 'Loading your wallet \u2026' : 'No balance in this wallet yet');
       const why = document.getElementById('arena-money-why');
       if (why && !isBackedUp()) window.ArenaText.say(why, '');
@@ -4814,7 +4822,7 @@
             const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
             const federationId = ARENACLIENT.fromHex(String(wasm.LockClient.federationIdOf(fixed.invite)));
             const offer = await ARENACLIENT.walletDepositOffer({ federationId, invite: fixed.invite, seed: seedF, LockClient: wasm.LockClient, storage: vault(),
-              gateways: window.ARENA_LEDGER_GATEWAYS || [], onClaimed: () => { paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } });
+              gateways: window.ARENA_LEDGER_GATEWAYS || [], onClaimed: (d) => { if (d && d.amountMsat) window.ARENA_MONEY_ALERT.credited(d.amountMsat, true); paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } });
             window.ARENA_DEPOSIT_FIXED = String(fixed.federation);
             if (offer.client && window.ARENA_KEEP_WALLET) window.ARENA_KEEP_WALLET(String(fixed.federation).toLowerCase(), offer.client);
             showDepositOffer(offer, { title: 'Deposit into federation ' + String(fixed.federation).slice(0, 8) + '\u2026 (debug)', overSettings: true });
@@ -4844,7 +4852,7 @@
             const into = depositPick(lob0.federation).invite || lob0.federation;
             const federationId = ARENACLIENT.fromHex(String(wasm.LockClient.federationIdOf(into)));
             const offer = await ARENACLIENT.walletDepositOffer({ federationId, invite: into, seed: seed0, LockClient: wasm.LockClient, storage: vault(),
-              gateways: window.ARENA_LEDGER_GATEWAYS || [], onClaimed: () => { paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } });
+              gateways: window.ARENA_LEDGER_GATEWAYS || [], onClaimed: (d) => { if (d && d.amountMsat) window.ARENA_MONEY_ALERT.credited(d.amountMsat, true); paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } });
             showDepositOffer(offer, { title: 'Deposit into your player wallet', overSettings: true });
             say('');
             return { ok: true };
@@ -4899,7 +4907,7 @@
             settingsBps: donationBps(), storage: window.sessionStorage });
           const offer = await ARENACLIENT.settingsDepositOffer({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient,
             storage: vault(), gateways: ctx.gateways, donationMsat,
-            donationRecipients: window.ARENA_DONATION_TARGET || null, onClaimed: () => { paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } });
+            donationRecipients: window.ARENA_DONATION_TARGET || null, onClaimed: (d) => { if (d && d.amountMsat) window.ARENA_MONEY_ALERT.credited(d.amountMsat, true); paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } });
           showDepositOffer(offer, { title: 'Deposit into your player wallet', overSettings: true });
           say('');
           return { ok: true };
@@ -7045,14 +7053,48 @@
         const ago = (ms) => { const m = Math.round((now - ms) / 60000); return m >= 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : m + ' min'; };
         for (const p of parts || []) {
           const f = String(p.federation).slice(0, 16);
-          if (!(Number(p.arriving) > 0)) { if (all[f]) { delete all[f]; changed = true; } continue; }
+          // what waited over two minutes and has landed is said (kanban #909); `held` keeps a wallet that read 0 arriving and no more money from claiming it
+          if (!(Number(p.arriving) > 0)) { const was = all[f];
+            if (was) { if (was.sats > 0 && now - was.sinceMs > 120000 && Number(p.sats) > Number(was.held) && !window.ARENA_MONEY_ALERT.creditedHas(was.sats)) window.ARENA_MONEY_ALERT.credited(BigInt(was.sats) * 1000n);
+              delete all[f]; changed = true; } continue; }
           if (!all[f]) { all[f] = { why: 'notes the federation is still issuing to this wallet (a deposit, a merge or an order\'s change)', sinceMs: now, etaMs: now + 60000 }; changed = true; }
           const r = all[f];
+          if (r.sats !== Number(p.arriving) || r.held !== Number(p.sats)) { r.sats = Number(p.arriving); r.held = Number(p.sats); changed = true; }
           const when = now <= r.etaMs ? 'expected by ' + hhmm(r.etaMs) : 'late: expected by ' + hhmm(r.etaMs) + ', arriving since ' + ago(r.sinceMs) + ' - the federation ' + f.slice(0, 8) + ' has not issued them yet';
-          lines.push(Number(p.arriving).toLocaleString('en-US') + ' sat arriving: ' + r.why + ' · ' + when);
+          lines.push(Number(p.arriving).toLocaleString('en-US') + ' sat arriving: ' + (r.truth ? r.truth + ' Waiting since ' + ago(r.sinceMs) + '.' : r.why + ' · ' + when));
         }
         if (changed) arrivingPut(all);
         return lines.join('; ');
+      };
+      // AND WHAT IT WAITS FOR, ASKED WHEN THE WALLET OPENS (kanban #908: "Es sind immernoch 95 arriving, wenn ich draufklicke muss da stehen wann es
+      // arrived oder woran es liegt"): each output still in issuance, and whether its federation has accepted the transaction behind it. A
+      // transaction refused or unknown ten minutes on is said so; the machine holding it would wait for ever and show "arriving" just the same.
+      let arrivingChecking = false;
+      window.ARENA_ARRIVING_CHECK = async () => {
+        const bal = window.ARENA_WALLET_BALANCE;
+        if (arrivingChecking || !bal || !(bal.arriving > 0) || !window.ARENA_WALLETS) return;
+        arrivingChecking = true; let changed = false;
+        try {
+          for (const p of bal.parts || []) {
+            if (!(Number(p.arriving) > 0)) continue;
+            const f = String(p.federation).slice(0, 16);
+            const c = [...window.ARENA_WALLETS].find(([fid]) => String(fid).startsWith(f));
+            if (!c || typeof c[1].issuingDetail !== 'function') continue;
+            const rows = JSON.parse(await c[1].issuingDetail());
+            console.log('[arena] #908 arriving in ' + f.slice(0, 8) + ': ' + JSON.stringify(rows));
+            const all = arrivingAll(); const r = all[f]; if (!r || !rows.length) continue;
+            const old = Date.now() - r.sinceMs > 600000;
+            const unknown = rows.filter((x) => x.txid && !x.accepted);
+            const sum = (l) => Math.round(l.reduce((n, x) => n + Number(x.msat), 0) / 1000).toLocaleString('en-US');
+            const truth = unknown.length && old
+              ? 'the federation ' + f.slice(0, 8) + ' does not know transaction ' + unknown[0].txid.slice(0, 8) + (unknown.length > 1 ? ' and ' + (unknown.length - 1) + ' more' : '') + ', so ' + sum(unknown) + ' sat will not arrive and are not in your balance. Storage that was full when it was sent is the likely cause.'
+              : rows.every((x) => x.accepted) ? 'the federation accepted the transaction, the wallet is waiting for the guardians\' signatures and keeps asking.'
+              : rows.every((x) => !x.txid) ? 'a restore is fetching these notes from the guardians.' : '';
+            if (truth !== (r.truth || '')) { r.truth = truth; arrivingPut(all); changed = true; }
+          }
+        } catch (e) { console.log('[arena] #908 the arriving check failed: ' + (e && e.message ? e.message : e)); }
+        finally { arrivingChecking = false; }
+        if (changed && window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES();
       };
       // THE ORDER'S OWN TIMING TO THE SEATS (kanban #624): from the press, submitted / placed / lock and each step, signed with the order's
       // session key (Ed25519 over the seats' timingMessage: sha256 of "arena/tx-timing/v1\n" + id + "\n" + the timing's JSON), POST /tx-timing
@@ -7619,7 +7661,7 @@
         }
         // the top: the balance, then what can be done with it (the withdraw panel opens under its button)
         const actions = part('arena-money-actions');
-        for (const id of ['arena-money-why', 'arena-withdraw-panel']) { const e = part(id); if (e && actions) actions.after(e); }
+        for (const id of ['arena-money-why', 'arena-withdraw-panel', 'arena-arriving-why']) { const e = part(id); if (e && actions) actions.after(e); }
         const anchor = part('arena-withdraw-panel') || actions;
         if (anchor) anchor.after(tabs); else sec.append(tabs);
         tabs.after(panes.tx, panes.fed);
@@ -7638,6 +7680,7 @@
         window.ARENA_WALLET_TAB = show;
       }
       window.ARENA_SHOW_BALANCE_SPLIT = () => {
+        if (window.ARENA_ARRIVING_CHECK) window.ARENA_ARRIVING_CHECK();
         const el = splitEl(); if (!el) return;
         const m = walletModal(), body = document.getElementById('arena-wallet-modal-body'), sec = document.getElementById('arena-set-wallet');
         if (m && body) {
