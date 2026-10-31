@@ -53,7 +53,7 @@ import { protocolVersionName } from './protocol-version.js';
 import { itemsFit, writeItems, readItems, ITEMS_MARKER } from './items.js';
 import { EVENT_VERSION } from './contracts.js';
 import { payoutSharesFit } from './payout.js';
-import { CHECK_VERSION, CODE_MAX_BYTES, marketUrlProblem } from './market-check.js';
+import { CHECK_VERSION, CODE_MAX_BYTES, marketHostProblem, marketUrlProblem } from './market-check.js';
 
 /**
  * What a game's result is (§0A.7, §0A.7a): a replayed run, or an outcome its attestors sign (a price, an
@@ -289,7 +289,7 @@ export function marketSourceFits(s, m) {
   if (!Array.isArray(s.reads) || s.reads.length > MARKET_READS_MAX) return { ok: false, why: `a source makes at most ${MARKET_READS_MAX} reads` };
   for (const r of s.reads) {
     if (!r || !/^[a-z][a-zA-Z0-9]{0,31}$/.test(String(r.id))) return { ok: false, why: 'each read has a name in letters' };
-    const bad = marketUrlProblem(r.url, !!r.socket); if (bad) return { ok: false, why: `read ${r.id}: ${bad}` };
+    const bad = marketUrlProblem(r.url, !!r.socket) || marketHostProblem(r.url); if (bad) return { ok: false, why: `read ${r.id}: ${bad}` };
     if (typeof r.subscribe !== 'string' || r.subscribe.length > 1024 || (r.subscribe && !r.socket)) return { ok: false, why: `read ${r.id}: only a socket sends a message, of at most 1 KB` };
   }
   if (new Set(s.reads.map((r) => r.id)).size !== s.reads.length) return { ok: false, why: 'each read has a name of its own' };
