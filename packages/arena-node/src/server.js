@@ -81,7 +81,7 @@ import { ownServices } from './own-services.js';
 import { serviceSettings } from './service-settings.js';
 import { controlsOf, installerIdOf, INSIDE } from './service-control.js';
 import { connect as netConnect } from 'node:net';
-import { relayPost, relayMarks } from './relay.js';
+import { relayPost, relayMarks, relayTargets } from './relay.js';
 import { CHOICE, voteMessage, encodeVote, SCHEDULES, REPEAL_SCHEDULES } from '../../arena-protocol/src/ballot.js';
 import { configServesRound } from '../../arena-protocol/src/ballot-chain.js';
 import { createProposals } from './proposals.js';
@@ -472,7 +472,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // proof names each accused signer node's own bond. Defaults to this node's census.
   advertsFor = null,
   // THE ROUND'S FEDERATION, as a port (23.1 step 5): `status(outpoint)` and
-  // `contractId(fields)`, the stock client's answers (blwp-stake-lock). Null:
+  // `contractId(fields)`, the stock client's answers (arena-stake-lock). Null:
   // this node verifies no stake lock.
   stakeLocks = null,
   // HOW A WINNER'S LIGHTNING ADDRESS IS FETCHED (winnings-send.js), and the round network its invoices are for.
@@ -826,7 +826,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // signed marks over each relay's /play, where the relay records the pair itself; unawaited, best effort
   round.onEquivocation = ({ roundId, entryId, tick, stored, offered }) => {
     let relays = [];
-    try { relays = decodeRoundContract(new Uint8Array(round.get(roundId).contract)).publicationRelays || []; } catch { relays = []; }
+    try { relays = relayTargets(decodeRoundContract(new Uint8Array(round.get(roundId).contract)).publicationRelays, verifier.peersOf(roundId)); } catch { relays = []; }
     if (!relays.length) return;
     relayMarks(relays, [stored, offered])
       .then((r) => console.log(`[equivocation] ${toHex(entryId).slice(0, 16)} tick ${tick}: both marks relayed to ${r.sent} of ${relays.length} publication relay(s)${r.failed.length ? `; ${r.failed[0]}` : ''}`), () => {});
@@ -2723,7 +2723,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   /**
    * THE ROUND'S FEDERATION IS BONDED (§23.6, P3; 2026-09-15 07:33: "every guardian / node
    * must have its own bond or it may not take part. federationIsBonded stays on"). Its guardians
-   * come from the federation's own config, through this signer node's stake-lock port (blwp-stake-lock
+   * come from the federation's own config, through this signer node's stake-lock port (arena-stake-lock
    * --mode guardians: the broadcast keys and NumPeers' threshold); the census is the one this signer node
    * derived from the chain for the round. At least the federation's threshold of its guardian keys
    * must be advertised under guardian_of[] by distinct census nodes bonded at or above the round's
@@ -9958,7 +9958,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // it on its own evidence, and one holding it already answers "already objected" - so relaying relays do not loop
         if (taken.status === 201) {
           let relays = [];
-          try { relays = decodeRoundContract(new Uint8Array(round.get(rid).contract)).publicationRelays || []; } catch { relays = []; }
+          try { relays = relayTargets(decodeRoundContract(new Uint8Array(round.get(rid).contract)).publicationRelays, verifier.peersOf(rid)); } catch { relays = []; }
           relayPost(relays, `/objection?round=${toHex(rid)}&entry=${toHex(eid)}${/^[0-9a-f]{64}$/.test(blockHex) ? `&block=${blockHex}` : ''}`, bundle)
             .then((r) => console.log(`[objection] ${toHex(eid).slice(0, 16)} relayed to ${r.sent} of ${relays.length} publication relay(s)${r.failed.length ? `; ${r.failed[0]}` : ''}`), () => {});
         }
