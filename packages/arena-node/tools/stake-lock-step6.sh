@@ -27,11 +27,11 @@
 #
 # Everything is stopped at the end: every process group and bitcoind.
 #
-#   FEDIMINT_BIN=<released v0.12.0 builds> LOCK_BIN=<blwp-stake-lock> \
+#   FEDIMINT_BIN=<released v0.12.0 builds> LOCK_BIN=<arena-stake-lock> \
 #     bash tools/stake-lock-step6.sh [deposit-msat=5000000] [lock-msat=980000] [withdraw-sat=500]
 set -uo pipefail
 : "${FEDIMINT_BIN:?FEDIMINT_BIN must name the directory holding the released Fedimint v0.12.0 builds}"
-: "${LOCK_BIN:?LOCK_BIN must name the built blwp-stake-lock}"
+: "${LOCK_BIN:?LOCK_BIN must name the built arena-stake-lock}"
 F=$FEDIMINT_BIN
 FH=${FEDIMINT_HOME:-$F/home}
 P=${PROBE_DIR:-$(mktemp -d /tmp/stake-lock-step6-XXXXXX)}

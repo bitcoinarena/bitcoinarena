@@ -7,7 +7,7 @@
 # withdrawn. Stock fedimintd 0.12.0, 4 guardians, one gateway, regtest; the
 # Daily's 2-of-2 on it, the signer nodes making their own claim key; then outage.mjs.
 #
-#   FEDIMINT_BIN=<released v0.12.0> LOCK_BIN=<blwp-stake-lock> bash tools/outage-regtest.sh
+#   FEDIMINT_BIN=<released v0.12.0> LOCK_BIN=<arena-stake-lock> bash tools/outage-regtest.sh
 set -uo pipefail
 : "${FEDIMINT_BIN:?}" ; : "${LOCK_BIN:?}"
 F=$FEDIMINT_BIN; FH=${FEDIMINT_HOME:-$F/home}

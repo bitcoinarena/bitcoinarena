@@ -6,7 +6,7 @@
 # settle-live-regtest.mjs - two signer nodes, a winner and a loser, a 100 sat round and a
 # 1000 sat round, each settled by the signer nodes' one committee signature.
 #
-#   FEDIMINT_BIN=<released v0.12.0> LOCK_BIN=<blwp-stake-lock, the signer nodes' port>
+#   FEDIMINT_BIN=<released v0.12.0> LOCK_BIN=<arena-stake-lock, the signer nodes' port>
 #   WASM_PKG=<wasm-bindgen --target nodejs output of blwp-lock-client>
 #     bash tools/settle-live-regtest.sh
 set -uo pipefail

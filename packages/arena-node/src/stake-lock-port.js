@@ -3,7 +3,7 @@
 // THE ROUND'S FEDERATION, AS A SIGNER NODE ASKS IT (v4.6.2 §23.1 step 5).
 //
 // Two answers, both the stock Fedimint 0.12.0 client's own, through
-// blwp-stake-lock (tools/stake-lock, our code on the stock client crates):
+// arena-stake-lock (tools/stake-lock, our code on the stock client crates):
 //   status(outpoint)    what the guardians hold there - the contract id and
 //                       the blocks LEFT to its expiry - and their block count
 //   contractId(fields)  the stock hash of a contract the player handed over
@@ -27,10 +27,10 @@ const run = (bin, args, timeoutMs) => new Promise((done, fail) => {
     // whole command>", which hid why a round never settled)
     if (err && !line && err.killed) {
       const last = String(stderr || '').trim().split('\n').filter(Boolean).pop();
-      return fail(new Error(`blwp-stake-lock ${args[1] || ''} timed out after ${timeoutMs} ms${last ? ` (its last word: ${last.slice(0, 300)})` : ''}`));
+      return fail(new Error(`arena-stake-lock ${args[1] || ''} timed out after ${timeoutMs} ms${last ? ` (its last word: ${last.slice(0, 300)})` : ''}`));
     }
-    if (err && !line) return fail(new Error(`blwp-stake-lock: ${String(stderr || err.message).trim().split('\n').pop()}`));
-    try { done(JSON.parse(line)); } catch { fail(new Error(`blwp-stake-lock answered no JSON: ${String(stdout).slice(0, 200)}`)); }
+    if (err && !line) return fail(new Error(`arena-stake-lock: ${String(stderr || err.message).trim().split('\n').pop()}`));
+    try { done(JSON.parse(line)); } catch { fail(new Error(`arena-stake-lock answered no JSON: ${String(stdout).slice(0, 200)}`)); }
   });
 });
 
@@ -38,7 +38,7 @@ const outpointArg = (o) => `${toHex(o.txid)}:${o.outIdx}`;
 
 // ONE LONG-LIVED TOOL FOR THE READ-ONLY QUESTIONS (measured 2026-10-10 on the test host's paid RPS stack: a process
 // per question opened the client's database and reached the guardians each time - with 8 s paid rounds, dozens of them at
-// 60-80 % CPU each, the machine at load 50 and a paid tap past 1.5 s at p95). `blwp-stake-lock --mode serve` keeps its client
+// 60-80 % CPU each, the machine at load 50 and a paid tap past 1.5 s at p95). `arena-stake-lock --mode serve` keeps its client
 // open and answers one JSON line per question. A binary without that mode (an older build), a tool that exits, or a question
 // it does not answer in time: the question is asked the old way, one run, and the next start of the server waits a minute.
 export function stakeLockServer({ bin, dataDir, timeoutMs = 60000, spawnFn = spawn, now = () => Date.now(), log = (m) => console.log(m) }) {
@@ -79,7 +79,7 @@ export function stakeLockServer({ bin, dataDir, timeoutMs = 60000, spawnFn = spa
           const w = waiting.get(j.id);
           if (!w) continue;
           waiting.delete(j.id); clearTimeout(w.timer);
-          if (j.ok) w.resolve(j.result); else w.reject(new Error(`blwp-stake-lock: ${j.error}`));
+          if (j.ok) w.resolve(j.result); else w.reject(new Error(`arena-stake-lock: ${j.error}`));
         }
       });
       setTimeout(() => { if (!up) { reject(new Error('the stake-lock server did not come up')); try { c.kill(); } catch { /* gone */ } } }, timeoutMs).unref?.();
@@ -299,7 +299,7 @@ export function federationPorts({ home, bin, baseDir, inviteOf = () => null, mak
   runJoin = (args) => run(bin, args, joinTimeoutMs), exists = (p) => existsSync(p), log = () => {},
   copyDir = (from, to) => cpSync(from, to, { recursive: true, filter: (src) => !/client\.db\.lock$/.test(src) }) }) {
   // A READ COPY OF ITS OWN FOR EVERY OTHER FEDERATION (kanban #586, measured 2026-10-23 15:53Z under 20 market bots: the test host seats'
-  // locks in federation 4dc88be7 were checked one run per question - `blwp-stake-lock --mode status` at 30-85 % CPU each, the
+  // locks in federation 4dc88be7 were checked one run per question - `arena-stake-lock --mode status` at 30-85 % CPU each, the
   // test host at load 128): the joined directory is copied once beside it, `<dir>.read`, and its read-only questions (status,
   // guardians, gateways, fees) go through one long-lived server there, as the home federation's do; send and settle stay on the
   // joined directory. No copy (a full disk, a test): every question the old way, as before.

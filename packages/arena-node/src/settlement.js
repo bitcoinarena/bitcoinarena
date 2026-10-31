@@ -16,7 +16,7 @@
 // decision is protocol's `lockSettlement` (the hold path's own verdict over one
 // payout table). Each loser's P is opened by the signer nodes' share conversation and
 // must be the scalar of the point that loser's lock names. The transaction is
-// rebuilt by the stock client (blwp-stake-lock --mode settle, dry), and the signer node
+// rebuilt by the stock client (arena-stake-lock --mode settle, dry), and the signer node
 // signs only the 32 bytes it got back.
 //
 // FEES ARE NOT IN IT. The fee locks' claim hash and §22A's node slots are not
@@ -135,7 +135,7 @@ export function cancelCarryDue(carried, key, nowMs, entries, everyMs = CANCEL_CA
 export class LockSettlement {
   /**
    * `dkg` holds this signer node's share of the round's claim key; `port` is the
-   * federation (blwp-stake-lock); `stakeSecrets` opens a loser's P with the other
+   * federation (arena-stake-lock); `stakeSecrets` opens a loser's P with the other
    * signer nodes; `peersFor(rid)` names the other settlement signer nodes' bases.
    */
   constructor(round, { dkg, port, curve, random, stakeSecrets, peersFor = () => [], fetcher = (u, o) => fetch(u, o),
@@ -1199,7 +1199,7 @@ export class LockSettlement {
    */
   async settle(roundIdBytes) {
     // ONE SETTLE OF A ROUND AT A TIME (measured 2026-10-10 on the regtest Up/Down market: the attested sweep asks
-    // every 5 s, a settle of a book round with 26 locks ran longer than that, and the asks piled up - 80 blwp-stake-lock
+    // every 5 s, a settle of a book round with 26 locks ran longer than that, and the asks piled up - 80 arena-stake-lock
     // processes at once over the one client database, each killed at its timeout, and the round never settled). A second
     // ask while one runs waits for that one's answer instead of starting another.
     const k = toHex(roundIdBytes);

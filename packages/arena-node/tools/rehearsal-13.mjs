@@ -3,7 +3,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // FEDERATION.md REHEARSAL 13, SUCCESSION (§23A.6), the key half; tools/rehearsal-13-regtest.sh runs the federations.
 //   keys                          the open lock's preimage and keys: the committee's claim key, p3's refund key, p1's (the winner's)
-//   sign MESSAGE_HEX              the committee's BIP-340 signature over a settlement txid (blwp-stake-lock --mode settle)
+//   sign MESSAGE_HEX              the committee's BIP-340 signature over a settlement txid (arena-stake-lock --mode settle)
 //   records FED1 FED2 INV1 INV2   the records: the old federation DRAINING with its successor named once g3 is proven gone (3 of
 //                                 3 seated attest), then CLOSED; the successor OPEN - each signed by its seated guardians and
 //                                 verified as a client verifies one

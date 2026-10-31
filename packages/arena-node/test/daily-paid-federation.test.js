@@ -31,7 +31,7 @@ function launch(extra) {
 }
 
 const SEVEN = '18671,18672,18673,18674,18675,18676,18677';
-const FEDERATION = { ARENA_STAKE_LOCK_BIN: '/nowhere/blwp-stake-lock', ARENA_FEDERATION_CLIENT_DIR: '/nowhere/client',
+const FEDERATION = { ARENA_STAKE_LOCK_BIN: '/nowhere/arena-stake-lock', ARENA_FEDERATION_CLIENT_DIR: '/nowhere/client',
   ARENA_FEDERATION_INVITE: 'fed11nowhere', ARENA_PAID_PORTS: SEVEN };
 
 test('a paying Daily round without its federation is refused by name, and nothing is created', () => {

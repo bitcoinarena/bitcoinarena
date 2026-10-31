@@ -96,7 +96,7 @@ export function gatewaysAreIndependent({ gateways, need = 2, minInboundSat = GAT
  * withdrawals through any of at least two gateways ... run by different operators"; RULED 2026-09-23).
  *
  * `listed` is what the guardians registered and what each registered name said for itself when asked
- * (`blwp-stake-lock --mode gateways`): `{ url, live, lightningPublicKey }`. IDENTITY IS THE LIGHTNING NODE KEY -
+ * (`arena-stake-lock --mode gateways`): `{ url, live, lightningPublicKey }`. IDENTITY IS THE LIGHTNING NODE KEY -
  * it signs the gateway's invoices. A name that did not answer `routing_info` is not live and is not counted.
  * Two registered names on one node key are ONE gateway: they are merged, and then counted - the set is not
  * refused for containing them (that is `gatewaysAreIndependent`'s operator-side rule, not this one).
