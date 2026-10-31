@@ -7048,13 +7048,14 @@
           const tab = sessionStorage.getItem('arena.tab.id');
           const held = (hex) => { try { const h = JSON.parse(L.getItem('arena.seed.held.' + hex.slice(0, 16)) || 'null'); return !!(h && h.tab !== tab && Date.now() - h.at <= 12000); } catch { return true; } };
           const federations = [...(window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.keys ? window.ARENA_FED_LOADS.keys() : []), ...(window.ARENA_WALLETS ? window.ARENA_WALLETS.keys() : [])];
-          // an open round's lock wallet leaves this storage only once IndexedDB holds it (kanban #803)
+          // a copy of an open round's lock wallet goes to IndexedDB (kanban #803)
           const archive = (rows) => { try { const o = indexedDB.open('arena-lockdb-archive', 1);
             o.onupgradeneeded = () => o.result.createObjectStore('kv');
-            o.onsuccess = () => { const db = o.result, tx = db.transaction('kv', 'readwrite'), kv = tx.objectStore('kv'); for (const [k, v] of rows) kv.put(v, k);
-              tx.oncomplete = () => { for (const [k] of rows) L.removeItem(k); db.close(); }; }; } catch { /* stays where it is */ } };
+            o.onsuccess = () => { const db = o.result, tx = db.transaction('kv', 'readwrite'), kv = tx.objectStore('kv'); for (const [k, v] of rows) kv.put(v, k); tx.oncomplete = () => db.close(); }; } catch { /* the seed joins it anew */ } };
           const r = ARENACLIENT.tidyStorage(L, { seeds: kept, current: cur, federations, held, pressureChars, archive });
           if (r.removed) console.log('[arena] storage tidied: ' + r.wallets + ' old wallet database(s), ' + r.removed + ' entries, ' + Math.round(r.bytes / 1024) + ' KB freed');
+          { let chars = 0, lock = 0, wallet = 0, n = 0; for (let i = 0; i < L.length; i++) { const k = L.key(i); if (!k) continue; const c = k.length + String(L.getItem(k) || '').length; chars += c; n++; if (k.startsWith('arena.lockdb.')) lock += c; else if (k.startsWith('arena.walletdb.')) wallet += c; }
+            if (chars > pressureChars) console.log('[arena] storage: ' + chars + ' characters in ' + n + ' keys after tidying (wallets ' + wallet + ', lock wallets ' + lock + ', other ' + (chars - wallet - lock) + ', ' + kept.length + ' kept phrases)'); }
           return r;
         } catch (e) { console.log('[arena] storage not tidied: ' + (e && e.message ? e.message : e)); return null; }
       };
