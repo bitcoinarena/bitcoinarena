@@ -51,7 +51,8 @@ export class MarketCreator extends React.Component {
   async readCode() {
     const { draft: d } = this.state;
     this.setState({ reading: true, test: null });
-    const got = await readAll(d.source.reads);
+    // read by the node when there is one: that is what a round will do, and no site can refuse it as sites refuse a browser
+    const got = this.props.tryOnNode ? await this.props.tryOnNode({ reads: d.source.reads }).catch((e) => ({ why: e.message })) : await readAll(d.source.reads);
     if (got.why) { this.setState({ reading: false, held: null, test: { why: `Could not read ${got.why}` } }); return; }
     this.setState({ reading: false, held: got.reads }, () => this.tryCode());
   }
@@ -75,6 +76,12 @@ export class MarketCreator extends React.Component {
     if (bad) { this.setState({ test: { why: bad } }); return; }
     this.setState({ reading: true, test: null });
     try {
+      if (this.props.tryOnNode) {
+        const got = await this.props.tryOnNode({ reads: [{ id: 'page', kind: 'http', url: this.state.draft.source.url }] });
+        if (!got.ok) throw new Error(got.why);
+        const text = typeof got.reads.page === 'string' ? got.reads.page : JSON.stringify(got.reads.page);
+        this.setState({ sample: text.slice(0, 1000000), reading: false }); this.run(text); return;
+      }
       const r = await fetch(this.state.draft.source.url, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(10000) });
       const text = await r.text();
       if (!r.ok) throw new Error(`answered ${r.status}`);

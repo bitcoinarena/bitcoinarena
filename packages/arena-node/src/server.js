@@ -6888,6 +6888,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           dashboardKept = null;
           return answer(200, { ok: true, slug, site: k.recipientPkHex, name: rec.name, told });
         }
+        // TRYING A MARKET ON THIS NODE (kanban #920): its reads made here and its code in the market sandbox, for the owner's form only. Signed, so the node reads for nobody else
+        if (url.pathname === '/owner/market-test') {
+          const a = owner.authorize(body, 'market-test');
+          if (!a.ok) return answer(a.status || 401, a);
+          const { testMarket } = await import('./market-test.js');
+          return answer(200, await testMarket(body.args || {}));
+        }
         if (url.pathname === '/owner/dev/setup' || url.pathname === '/owner/dev/withdraw' || url.pathname === '/owner/dev/remove') {
           const action = url.pathname.slice('/owner/'.length);
           const a = owner.authorize(body, action);
