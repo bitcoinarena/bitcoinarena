@@ -149,8 +149,9 @@ import { createSettleBackoff } from './settle-backoff.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
 import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
 import { DrawnAttestor } from './drawn-attestor.js';
-import { runSourceOnce } from './market-test.js';
-import { MARKET_HOSTS } from '../../arena-protocol/src/market-check.js';
+import { runSourceOnce, tryExample } from './market-test.js';
+import { MARKET_HOSTS, encodeSourceList, hostListProblem } from '../../arena-protocol/src/market-check.js';
+import { SOURCE_ENTRIES } from '../../arena-protocol/src/market-sources.js';
 import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
@@ -1318,6 +1319,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     repealScheduleFor: (net) => (isRegtestNet(net) ? REPEAL_SCHEDULES.regtest : REPEAL_SCHEDULES.mainnet),
     ...(counts ? { historyFor: (net, height, cls) => (ballotTally ? ballotTally.historyAt(net, height, cls) : null) } : {}),
     verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } },
+    exampleCheck: (e) => tryExample(e),
     store: { read: () => { try { return round.db.prepare('SELECT json FROM ballot_proposals').all().map((r) => JSON.parse(r.json)); } catch { return []; } },
       write: (list) => { round.db.exec('CREATE TABLE IF NOT EXISTS ballot_proposals (id TEXT PRIMARY KEY, json TEXT NOT NULL)');
         const put = round.db.prepare('INSERT OR REPLACE INTO ballot_proposals (id, json) VALUES (?, ?)'); for (const x of list) put.run(x.id, JSON.stringify(x)); },
@@ -6591,6 +6593,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const a = owner.authorize(body, 'market-test');
           if (!a.ok) return answer(a.status || 401, a);
           const { testMarket } = await import('./market-test.js');
+          const example = body.args && body.args.example;
+          if (example) {
+            const bad = hostListProblem(encodeSourceList([example]));
+            return answer(200, bad ? { ok: false, why: bad } : await tryExample(example));
+          }
           return answer(200, await testMarket(body.args || {}, ballotTally && chainNetworkId() ? { hosts: ballotTally.sources(chainNetworkId()).hosts } : {}));
         }
         if (url.pathname === '/owner/dev/setup' || url.pathname === '/owner/dev/withdraw' || url.pathname === '/owner/dev/remove') {
@@ -6806,7 +6813,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (url.pathname === '/market-sources' && req.method === 'GET') {
         const net = String(url.searchParams.get('network') || chainNetworkId() || '').toLowerCase();
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify(ballotTally && /^[0-9a-f]{64}$/.test(net) ? ballotTally.sources(net) : { hosts: [...MARKET_HOSTS], since: 0, by: null, history: [] }));
+        return res.end(JSON.stringify(ballotTally && /^[0-9a-f]{64}$/.test(net) ? ballotTally.sources(net) : { hosts: [...MARKET_HOSTS], entries: SOURCE_ENTRIES, since: 0, by: null, history: [] }));
       }
       if (url.pathname === '/config' && req.method === 'GET') {
         if (!ballotTally) return text(res, 404, 'this seat counts no ballot: it reads no chain for it');

@@ -43,6 +43,12 @@ export function isRepeal(p, history = []) {
 }
 /** A host dropped from the list goes faster than one added, a day of voting at most: a source gone bad must not stay listed. */
 export const HOST_REMOVAL_VOTING = 144;
+/** The hosts a list adds to the one live before it. A vote reads each one's example, so one proposal adds few. */
+export const SOURCES_ADDED_MAX = 8;
+export function addedHosts(p, history = []) {
+  const last = history.length ? history[history.length - 1] : null, before = new Set(last ? decodeHostList(last.config) : []);
+  return decodeHostList(p.config).filter((h) => !before.has(h));
+}
 export function isHostRemoval(p, history = []) {
   if (p.class !== CLASS.SOURCES || !history.length) return false;
   const now = new Set(decodeHostList(history[history.length - 1].config)), next = decodeHostList(p.config);
@@ -116,7 +122,10 @@ export function proposalStands(p, { publishedAt, depositSats, lowestBondMinSats,
   if (named !== carried) return { ok: false, why: `config_hash ${named} is not the hash of the config the proposal carries (${carried}): config_hash = H(canonical(game_config)), 27A.7.1` };
   if (typeof verify !== 'function' || !verify(p.signature, proposalBodyId(p), p.proposer)) return { ok: false, why: 'the proposal is not signed by the node it names as proposer' };
   // a config the network already ran - before the current one - is a repeal, on the short schedule (§27A.7.6)
-  if (p.class === CLASS.SOURCES) { const bad = hostListProblem(p.config); if (bad) return { ok: false, why: bad }; }
+  if (p.class === CLASS.SOURCES) {
+    const bad = hostListProblem(p.config); if (bad) return { ok: false, why: bad };
+    if (history && addedHosts(p, history).length > SOURCES_ADDED_MAX) return { ok: false, why: `One proposal adds at most ${SOURCES_ADDED_MAX} hosts` };
+  }
   const removal = !!history && isHostRemoval(p, history);
   const repeal = removal || (!!history && isRepeal(p, history));
   const s = removal ? { review: 0, voting: Math.min(HOST_REMOVAL_VOTING, repealSchedule.voting), cooldown: 0 } : repeal ? repealSchedule : schedule[p.class];

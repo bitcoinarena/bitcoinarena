@@ -99,17 +99,28 @@ export function marketHostProblem(text, hosts = MARKET_HOSTS) {
   return hosts.includes(h) ? null : `${h} is not a listed source`;
 }
 
-/** The list as a proposal carries it: sorted hosts, one a line, so one list has one hash. */
-export const encodeHostList = (hosts) => new TextEncoder().encode([...new Set(hosts)].sort().join('\n'));
-export const decodeHostList = (bytes) => new TextDecoder().decode(bytes).split('\n').filter(Boolean);
+// NO HOST WITHOUT AN EXAMPLE (the owner 2026-10-31: "Die Votings für neue Quellen müssen auch ein example beinhalten und das wird live in der ui validiert und getestet, ohne gehts nicht raus"):
+// the list a proposal carries names, per host, a working read and its documentation, so a voter can try what is voted on and a node can refuse what does not answer.
+const FIELDS = ['host', 'url', 'read', 'path', 'docs'];
+/** The list as a proposal carries it: sorted by host, each host once, its fields tab-separated, so one list has one hash. */
+export const encodeSourceList = (entries) => new TextEncoder().encode([...new Map(entries.map((e) => [e.host, e])).values()].sort((a, b) => (a.host < b.host ? -1 : 1))
+  .map((e) => FIELDS.map((k) => String(e[k] ?? '')).join('\t')).join('\n'));
+export const decodeSourceList = (bytes) => new TextDecoder().decode(bytes).split('\n').filter(Boolean).map((l) => Object.fromEntries(l.split('\t').map((x, i) => [FIELDS[i], x])));
+export const decodeHostList = (bytes) => decodeSourceList(bytes).map((e) => e.host);
 /** Why these bytes are no list of hosts a market may read, or null. */
 export function hostListProblem(bytes) {
-  const hosts = decodeHostList(bytes);
-  if (!hosts.length) return 'A list names at least one host';
-  if (hosts.length > 256) return 'A list names at most 256 hosts';
-  const canonical = encodeHostList(hosts);
+  const list = decodeSourceList(bytes);
+  if (!list.length) return 'A list names at least one host';
+  if (list.length > 256) return 'A list names at most 256 hosts';
+  const canonical = encodeSourceList(list);
   if (canonical.length !== bytes.length || canonical.some((x, i) => x !== bytes[i])) return 'A list is sorted, each host once';
-  for (const h of hosts) if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(h) || marketUrlProblem(`https://${h}/`)) return `${h} is not a public host name`;
+  for (const e of list) {
+    if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(e.host) || marketUrlProblem(`https://${e.host}/`)) return `${e.host} is not a public host name`;
+    const socket = String(e.url).startsWith('wss:');
+    if (marketUrlProblem(e.url, socket) || new URL(e.url).hostname !== e.host) return `${e.host} needs an example address on that host`;
+    if (!['json', 'regex', 'text'].includes(e.read) || (e.read !== 'text' && !e.path)) return `${e.host} needs an example that names what it reads`;
+    if (!/^https:\/\/\S+$/.test(String(e.docs))) return `${e.host} needs a link to its documentation`;
+  }
   return null;
 }
 

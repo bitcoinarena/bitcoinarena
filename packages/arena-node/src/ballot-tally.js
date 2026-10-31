@@ -30,7 +30,7 @@
 // asked again, and the vote cache drops every height below the lowest phase still open.
 import { tally, CLASS } from '../../arena-protocol/src/ballot.js';
 import { liveConfig, BALLOT_GENESIS, SOURCES_GENESIS, hostsLiveAt } from '../../arena-protocol/src/ballot-chain.js';
-import { decodeHostList } from '../../arena-protocol/src/market-check.js';
+import { decodeHostList, decodeSourceList } from '../../arena-protocol/src/market-check.js';
 import { decodeConfigProposalBody } from '../../arena-protocol/src/ballot.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
@@ -212,7 +212,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     sources(net) {
       const l = liveConfig({ genesis: SOURCES_GENESIS, passed: passedSources(net), height: tip === null ? 0 : tip });
       const now = l.history[l.history.length - 1];
-      return { network: net, tip, hosts: decodeHostList(now.config), since: now.since, by: now.by ? toHex(now.by) : null,
+      return { network: net, tip, hosts: decodeHostList(now.config), entries: decodeSourceList(now.config), configHash: toHex(now.configHash), since: now.since, by: now.by ? toHex(now.by) : null,
         history: l.history.map((x) => ({ hosts: decodeHostList(x.config), since: x.since, by: x.by ? toHex(x.by) : null })) };
     },
     /** The hosts a round of census height `height` may read. */
