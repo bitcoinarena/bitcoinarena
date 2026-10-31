@@ -1404,7 +1404,7 @@
   <link rel="stylesheet" href="games/nextblock/unity-page.css">
   <!-- its loading screen's markup is put in while the page is parsed (#boot): fetched from the start, beside the styles -->
   <link rel="preload" href="games/nextblock/loading-page.js" as="script">
-  <script defer src="https://seat.example.com:8443/script.js" data-website-id="024ff09e-c3a6-4dfd-bede-3163eb8be36a" data-domains="testnet.bitcoin-arena.io"></script>
+  <script defer src="https://stats.bitcoin-arena.io/script.js" data-website-id="024ff09e-c3a6-4dfd-bede-3163eb8be36a" data-domains="testnet.bitcoin-arena.io"></script>
 </head>
 <body>
   <!-- §24B: the wallet's own line, in the LOBBY and never over the drive. `arena-money` is hidden while a
@@ -7102,6 +7102,11 @@
               arrivingPut(all); if (window.ARENA_SUM_BALANCES) await window.ARENA_SUM_BALANCES();
               const got = JSON.parse(await c[1].recoverStuck());
               console.log('[arena] #910 stuck outputs in ' + f.slice(0, 8) + ': ' + JSON.stringify(got));
+              // the machines' end clears the record, so the landing is watched here: the credit names what came back
+              if (Number(got.reissuingMsat) > 0) {
+                window.ARENA_NOTE_ARRIVING(f, 'the wallet is fetching these sat back from the federation', 60000);
+                for (let i = 0; i < 45; i++) { await new Promise((r) => setTimeout(r, 2000)); if (BigInt(await c[1].issuingMsat()) === 0n) { window.ARENA_MONEY_ALERT.credited(got.reissuingMsat); break; } }
+              }
               if (!(Number(got.reissuingMsat) > 0)) arrivingGone = sum(unknown) + ' sat in federation ' + f.slice(0, 8) + ' were lost with those transactions: the federation holds nothing more for this wallet.';
               changed = true; continue;
             }
