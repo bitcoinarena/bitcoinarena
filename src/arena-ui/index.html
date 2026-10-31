@@ -1608,7 +1608,10 @@
         el.classList.toggle('show', !!el.textContent);
       };
       return { lost: (fed, p) => { lost.set(String(p.operation), String(p.msat)); console.error('[arena] deposit not collected: ' + p.msat + ' msat, federation ' + String(fed).slice(0, 8) + ', operation ' + String(p.operation).slice(0, 12)); paint(); },
-        full: () => { if (!full) console.error('[arena] the browser\u2019s storage refused a wallet write: deposits cannot be collected'); full = true; paint(); },
+        full: () => { if (!full) console.error('[arena] the browser\u2019s storage refused a wallet write: deposits cannot be collected'); full = true;
+          // every deposit still waiting, in every federation: with a full store the wallet may not open at all, so none of them reports itself
+          try { const S = localStorage; for (let i = 0; i < S.length; i++) { const k = S.key(i); if (k && k.startsWith('arena.deposit.pending.')) for (const d of JSON.parse(S.getItem(k) || '[]')) lost.set(String(d.operation), String(d.msat)); } } catch { /* unreadable: not summed */ }
+          paint(); },
         view: () => ({ full, msat: [...lost.values()].join('+') }), paint };
     })();
     const KEY = 'arena.clientlog', MOST = 400, LONGEST = 300;
