@@ -471,6 +471,7 @@ async function area() {
     onForget: () => { if (confirm('Sign out on this browser? You need your 24 words or your Nostr key to come back.')) forget(); },
     emergencyCode: seed ? C.emergencyCodeText(C.emergencyCodeBytes(seed)) : null, emergencyLink: at('/Dashboard/emergency'),
     devKey: devPub ? C.toHex(devPub) : null,
+    tryOnNode: (args) => post('/owner/market-test', signed('market-test', args)),
     signManifest: (text) => { const out = C.signManifestWithSeed(C.bodyFromJson(text, { devPubkey: devPub }), devSeed); window.OWNER_SIGNED = out; return out; } };
   drawArea();
   // the public dashboard is the menu's last entry now (kanban #733): the line under the page is for the screens before the login
