@@ -159,6 +159,7 @@ import { auditEligible, vrfSecretFor, decodeAudit, auditId, auditResultsHash } f
 import { makeVrf, SUITE_SECP256K1_TAI } from '../../arena-protocol/src/vrf.js';
 import { entryId as entryIdOfContract } from '../../arena-protocol/src/contracts.js';
 import { runSourceOnce } from './market-test.js';
+import { MARKET_HOSTS } from '../../arena-protocol/src/market-check.js';
 import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
@@ -1334,7 +1335,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     scheduleFor: (net) => (isRegtestNet(net) ? SCHEDULES.regtest : toHex(fromHex(net)) === toHex(NETWORK_ID_TESTNET4) ? SCHEDULES.testnet4 : SCHEDULES.mainnet),   // testnet4: a day each (kanban #785)
     // AND ITS REPEAL SCHEDULE (27A.7.6), read against the history live at the proposal's publication - the tally's
     repealScheduleFor: (net) => (isRegtestNet(net) ? REPEAL_SCHEDULES.regtest : toHex(fromHex(net)) === toHex(NETWORK_ID_TESTNET4) ? REPEAL_SCHEDULES.testnet4 : REPEAL_SCHEDULES.mainnet),
-    ...(counts ? { historyFor: (net, height) => (ballotTally ? ballotTally.historyAt(net, height) : null) } : {}),
+    ...(counts ? { historyFor: (net, height, cls) => (ballotTally ? ballotTally.historyAt(net, height, cls) : null) } : {}),
     verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } },
     store: { read: () => { try { return round.db.prepare('SELECT json FROM ballot_proposals').all().map((r) => JSON.parse(r.json)); } catch { return []; } },
       write: (list) => { round.db.exec('CREATE TABLE IF NOT EXISTS ballot_proposals (id TEXT PRIMARY KEY, json TEXT NOT NULL)');
@@ -2474,13 +2475,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const drawnContracts = new Map();   // round hex -> { c, window, openedMs }: the drawn-attestation rounds of the last 4 h only
   // A MARKET WITH ITS OWN SOURCE (kanban #920) may end weeks after it opened: its rounds are kept to their end, and read from the store that far back
   const sourceHosted = [...hosted.values()].some((h) => h && h.manifest && h.manifest.source);
+  // ITS SOURCES ARE JUDGED BY THE LIST LIVE AT ITS CENSUS HEIGHT (kanban #921): the same answer on every seat, whenever the seat asks
+  const hostsOfRound = (c) => (ballotTally && c.networkId instanceof Uint8Array ? ballotTally.hostsAt(toHex(c.networkId), c.censusHeight) : MARKET_HOSTS);
   let drawnAfterRowid = 0;             // the rounds row read last (kanban #791)
   const drawnAttestor = drawnHosted ? new DrawnAttestor({
     readPrice: () => prices.readPrice(), selfKey: toHex(round.pubkey), sign: (d) => schnorr.sign(d, round.identity.secret),
     attestorsFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? got.attestors.map((e) => toHex(e.pubkey)) : null; },
     peersFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? peerEndpointsOf(got.attestors, round.pubkey) : []; },
-    runSource: sourceHosted ? (source, market) => runSourceOnce(source, market) : null,
-    opening: () => { const now = round.now(), out = []; for (const [k, d] of drawnContracts) if (d.source && Number(d.window.startMs) <= now && Number(d.window.endMs) > now) out.push({ roundId: fromHex(k), source: d.source, outcomes: d.outcomes }); return out; },
+    runSource: sourceHosted ? (source, market, hosts) => runSourceOnce(source, market, { hosts }) : null,
+    opening: () => { const now = round.now(), out = []; for (const [k, d] of drawnContracts) if (d.source && Number(d.window.startMs) <= now && Number(d.window.endMs) > now) out.push({ roundId: fromHex(k), source: d.source, outcomes: d.outcomes, hosts: hostsOfRound(d.c) }); return out; },
     due: () => {
       // THE IDS ONLY, EVERY 10 S (kanban #742: every contract of the last 4 h was read out of the store and its id hexed on each
       // pass): a round seen for the first time has its contract read once (the store's decoded copy while it is open), and what is
@@ -2500,7 +2503,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       for (const [k, d] of drawnContracts) {
         if (d.openedMs <= now - 4 * 3600000 && !(d.source && Number(d.window.endMs) > now - 1800000)) { drawnContracts.delete(k); continue; }
-        if (Number(d.window.endMs) <= now && Number(d.window.endMs) > now - 1800000) out.push({ roundId: fromHex(k), window: d.window, ...(d.source ? { source: d.source, outcomes: d.outcomes } : {}) });
+        if (Number(d.window.endMs) <= now && Number(d.window.endMs) > now - 1800000) out.push({ roundId: fromHex(k), window: d.window, ...(d.source ? { source: d.source, outcomes: d.outcomes, hosts: hostsOfRound(d.c) } : {}) });
       }
       return out;
     },
@@ -6900,7 +6903,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const a = owner.authorize(body, 'market-test');
           if (!a.ok) return answer(a.status || 401, a);
           const { testMarket } = await import('./market-test.js');
-          return answer(200, await testMarket(body.args || {}));
+          return answer(200, await testMarket(body.args || {}, ballotTally && chainNetworkId() ? { hosts: ballotTally.sources(chainNetworkId()).hosts } : {}));
         }
         if (url.pathname === '/owner/dev/setup' || url.pathname === '/owner/dev/withdraw' || url.pathname === '/owner/dev/remove') {
           const action = url.pathname.slice('/owner/'.length);
@@ -7112,6 +7115,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       // THE CONFIG LIVE ON THIS SEAT'S CHAIN (27A.7.5): { configHash, since, by, history } - ?network=<hex>, this seat's chain's by
       // default. What a round created now names; `history` (genesis first) is what a repeal is read against (27A.7.6).
+      if (url.pathname === '/market-sources' && req.method === 'GET') {
+        const net = String(url.searchParams.get('network') || chainNetworkId() || '').toLowerCase();
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify(ballotTally && /^[0-9a-f]{64}$/.test(net) ? ballotTally.sources(net) : { hosts: [...MARKET_HOSTS], since: 0, by: null, history: [] }));
+      }
       if (url.pathname === '/config' && req.method === 'GET') {
         if (!ballotTally) return text(res, 404, 'this seat counts no ballot: it reads no chain for it');
         const net = String(url.searchParams.get('network') || chainNetworkId() || '').toLowerCase();
