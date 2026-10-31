@@ -26,9 +26,9 @@ test('/owner/react.js and /owner/react.css: the React bundle and its stylesheet'
 test('owner.html: the React bundle loaded once and unconditionally; every screen it mounts is one window.ArenaOwner offers', () => {
   const html = readFileSync(new URL('../pages/owner.html', import.meta.url), 'utf8');
   const script = html.slice(html.indexOf('<script type="module">'));
-  assert.equal(script.split("import(at('/owner/react.js'))").length - 1, 1, 'imported once');
-  assert.match(script, /\nawait import\(at\('\/owner\/react\.js'\)\);\nconst O = window\.ArenaOwner;\n/, 'at the top level, not in a try');
-  assert.ok(script.indexOf("import(at('/owner/react.js'))") < script.indexOf('function area()'));
+  assert.equal(script.split("loaded('/owner/react.js')").length - 1, 1, 'imported once');
+  assert.match(script, /\nawait loaded\('\/owner\/react\.js'\);\nconst O = window\.ArenaOwner;\n/, 'at the top level, and a failure still stops the page (loaded says so and throws, kanban #834)');
+  assert.ok(script.indexOf("loaded('/owner/react.js')") < script.indexOf('function area()'));
   assert.doesNotMatch(script, /window\.ArenaOwner\s*&&|if \(!window\.ArenaOwner\)|reactInstalled|the page's own (panel|list)/, 'no fallback left');
   const main = readFileSync(new URL('../../arena-web/src/owner/main.jsx', import.meta.url), 'utf8');
   const offered = new Set(/window\.ArenaOwner = \{([^}]*)\}/.exec(main)[1].split(',').map((x) => x.trim()));
@@ -45,10 +45,10 @@ test('owner.html: the React bundle loaded once and unconditionally; every screen
 // shown (it moved down as each panel loaded); a new start (signed out, the welcome) shows the line again
 test('owner.html: the public dashboard goes to the area\'s menu; the line under the page only before the login', () => {
   const html = readFileSync(new URL('../pages/owner.html', import.meta.url), 'utf8');
-  assert.match(html, /<p class="sub" id="public-line"><a id="public" href="#">← Public dashboard<\/a><\/p>/);
+  assert.match(html, /<p class="sub" id="public-line" hidden><a id="public"><\/a><\/p>/, 'no target yet, no link (kanban #835)');
   assert.match(html, /areaProps = \{[^\n]*publicLink: at\('\/Dashboard'\)/);
   const area = html.slice(html.indexOf('async function area()'), html.indexOf('function keySwitchPanel()'));
   assert.match(area, /drawArea\(\);\n[^\n]*\n {2}\$\('public-line'\)\.hidden = true;/);
   const start = html.slice(html.indexOf('async function start()'));
-  assert.match(start, /areaProps = null; needs\.clear\(\);[^\n]*\n {2}\$\('public-line'\)\.hidden = false;/);
+  assert.match(start, /areaProps = null; needs\.clear\(\);[^\n]*\n {2}\$\('public-line'\)\.hidden = !\$\('public'\)\.hasAttribute\('href'\);/);
 });
