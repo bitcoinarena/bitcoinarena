@@ -4866,8 +4866,13 @@
       if (ap) {
         const paid = (window.ARENA_LOBBY || []).find((r) => !r.free && r.line);
         const at = paid ? paid.line.search(/(signer|selected) nodes: /) : -1;
-        const say = at >= 0 ? 'Settled by ' + paid.line.slice(at).replace(/^(signer|selected) nodes: /, '').replace(/\b([0-9a-f]{6})[0-9a-f]{2}\b/g, '$1')
+        const facts = at >= 0 ? paid.line.slice(at) : '';
+        const whole = at >= 0 ? 'Settled by ' + facts.replace(/^(signer|selected) nodes: /, '').replace(/\b([0-9a-f]{6})[0-9a-f]{2}\b/g, '$1')
           .replace('no selected operator is playing', 'no operator playing').replace(/in both committees: (\d+) of (\d+)/, 'both committees $1/$2') : '';
+        // the plain sentence; a tap on it shows the whole line (kanban #821)
+        const say = ap.dataset.whole === '1' ? whole : (ARENACLIENT.settledWords ? ARENACLIENT.settledWords(facts) : whole);
+        ap.title = whole; ap.style.cursor = whole ? 'pointer' : '';
+        if (!ap.dataset.tap) { ap.dataset.tap = '1'; ap.addEventListener('click', () => { ap.dataset.whole = ap.dataset.whole === '1' ? '' : '1'; }); }
         // THE FEES OF THE ROUND JOINED: the set in force at its census height
         const jf = window.ARENA_JOIN_FEES;
         const said = jf ? (say ? say + ' · ' : '') + 'Fees ' + jf.line : say;

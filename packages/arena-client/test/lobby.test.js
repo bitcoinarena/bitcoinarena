@@ -486,3 +486,12 @@ test('a listed round whose entry closed 10 min ago is no row but is named closed
   assert.equal(got.closed[0].entryCloseMs, NOW - 600000);
   assert.equal(toHex(roundId(got.closed[0].contract)), id.recent);
 });
+
+test('the settlement facts in plain words (kanban #821)', async () => {
+  const { settledWords } = await import('../src/lobby.js');
+  assert.equal(settledWords('signer nodes: 5 of 9 drawn (d5faf2aa, dc5194bb) · 1 operator (2of2abcd) · in both committees: 5 of 5 · no selected operator is playing · left out, protocol too old: 0656b934'), '5 nodes settle this round, all run by one operator');
+  assert.equal(settledWords('signer nodes: 5 of 9 drawn (a) · 3 operators (x, y, z) · in both committees: 5 of 5 · no selected operator is playing'), '5 nodes settle this round');
+  assert.equal(settledWords('selected nodes: 5 of 9 drawn (a) · 2 operators (x, y) · a selected operator is playing: x'), '5 nodes settle this round - one of their operators plays in it');
+  assert.equal(settledWords('selected nodes: pending (§5A.5)'), 'The nodes that settle this round are not chosen yet');
+  assert.equal(settledWords(''), '');
+});

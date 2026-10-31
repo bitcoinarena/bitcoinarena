@@ -505,6 +505,22 @@ export function approvalWords(f, tooOld = []) {
     ? ` · a selected operator is playing: ${f.operatorsPlaying.map((o) => o.slice(0, 8)).join(', ')}` : ' · no selected operator is playing') + old;
 }
 
+/**
+ * THE SETTLEMENT FACTS IN WORDS A PLAYER READS (kanban #821, the owner 2026-10-30, of "Settled by 5 of 9 drawn (d5faf2, ...) · 1 operator (2of2) · both
+ * committees 5/5 · no operator playing · left out,...": "Die Meldung ist eher verwirrend"). `facts`: the lobby line from "signer nodes" on. The
+ * whole line stays one tap away; one operator behind every node is said, never hidden.
+ */
+export function settledWords(facts) {
+  const t = String(facts || '');
+  if (!t) return '';
+  if (/: pending\b/.test(t)) return 'The nodes that settle this round are not chosen yet';
+  const m = /(\d+) of \d+ drawn/.exec(t) || /nodes: (\d+)/.exec(t);
+  const who = m ? `${m[1]} nodes settle this round` : 'Nodes settle this round';
+  const one = /(^|· )1 operator\b/.test(t) ? ', all run by one operator' : '';
+  const playing = /a selected operator is playing/.test(t) ? ' - one of their operators plays in it' : '';
+  return who + one + playing;
+}
+
 export function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null, tooOld = null } = {}) {
   // A MARKET'S ROW (§0A.7a): its name, its outcomes, its entry close - the pick sheet says the rest
   if (row.market || row.marketLike) {
