@@ -7039,7 +7039,7 @@
       // OLD WALLET DATABASES OUT OF THE BROWSER'S STORAGE (kanban #616, 2026-10-24: "exceeded the quota" on an order; "You need to clean
       // up old storages"): ARENACLIENT.tidyStorage, once after the page's federations are read and again before each order; a phrase another
       // tab plays with (its heartbeat within 12 s) is never touched
-      window.ARENA_TIDY_STORAGE = (pressureChars = 3500000) => {
+      window.ARENA_TIDY_STORAGE = (pressureChars = 1500000) => {
         try {
           if (!ARENACLIENT.tidyStorage) return null;
           const L = vault(); const cur = ((window.sessionStorage && sessionStorage.getItem('arena.player.seed')) || '').toLowerCase();
@@ -7048,12 +7048,17 @@
           const tab = sessionStorage.getItem('arena.tab.id');
           const held = (hex) => { try { const h = JSON.parse(L.getItem('arena.seed.held.' + hex.slice(0, 16)) || 'null'); return !!(h && h.tab !== tab && Date.now() - h.at <= 12000); } catch { return true; } };
           const federations = [...(window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.keys ? window.ARENA_FED_LOADS.keys() : []), ...(window.ARENA_WALLETS ? window.ARENA_WALLETS.keys() : [])];
-          const r = ARENACLIENT.tidyStorage(L, { seeds: kept, current: cur, federations, held, pressureChars });
+          // an open round's lock wallet leaves this storage only once IndexedDB holds it (kanban #803)
+          const archive = (rows) => { try { const o = indexedDB.open('arena-lockdb-archive', 1);
+            o.onupgradeneeded = () => o.result.createObjectStore('kv');
+            o.onsuccess = () => { const db = o.result, tx = db.transaction('kv', 'readwrite'), kv = tx.objectStore('kv'); for (const [k, v] of rows) kv.put(v, k);
+              tx.oncomplete = () => { for (const [k] of rows) L.removeItem(k); db.close(); }; }; } catch { /* stays where it is */ } };
+          const r = ARENACLIENT.tidyStorage(L, { seeds: kept, current: cur, federations, held, pressureChars, archive });
           if (r.removed) console.log('[arena] storage tidied: ' + r.wallets + ' old wallet database(s), ' + r.removed + ' entries, ' + Math.round(r.bytes / 1024) + ' KB freed');
           return r;
         } catch (e) { console.log('[arena] storage not tidied: ' + (e && e.message ? e.message : e)); return null; }
       };
-      if (ARENACLIENT.onStorageFull) ARENACLIENT.onStorageFull(() => window.ARENA_TIDY_STORAGE(1500000));   // a refused write frees more, and is tried again
+      if (ARENACLIENT.onStorageFull) ARENACLIENT.onStorageFull(() => window.ARENA_TIDY_STORAGE(800000));   // a refused write frees more, and is tried again
       window.ARENA_TIDY_STORAGE();   // at once as well: a browser whose storage is full cannot open the wallet at all (2026-10-30)
       setTimeout(() => window.ARENA_TIDY_STORAGE(), 8000);
       const combiningBy = new Map();
