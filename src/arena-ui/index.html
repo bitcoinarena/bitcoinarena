@@ -1606,7 +1606,9 @@
       const lost = new Map(); let full = false, creditedMsat = 0n, okTimer = null;
       const paint = () => {
         const el = document.getElementById('arena-money-alert'); if (!el) return;
-        let msat = 0n; for (const v of lost.values()) { try { msat += BigInt(v); } catch { /* unreadable: not summed */ } }
+        // ONE DEPOSIT, ONE AMOUNT (the owner 2026-10-31: 14,400 shown for 7,200): a deposit keeps an invoice per gateway, all made within seconds, so what was waiting at once counts once
+        let msat = 0n; const once = new Set();
+        for (const v of lost.values()) { const key = v.msat + '|' + Math.round(Number(v.atMs || 0) / 60000); if (once.has(key)) continue; once.add(key); try { msat += BigInt(v.msat); } catch { /* unreadable: not summed */ } }
         const sats = (msat / 1000n).toLocaleString('en-US');
         const money = msat > 0n ? 'Up to ' + sats + ' sat you deposited could not be collected into your wallet. ' : '';
         el.textContent = money + (full ? (msat > 0n ? 'This browser\u2019s storage is full.' : 'This browser\u2019s storage is full: a deposit cannot be collected now.') : '');
@@ -1625,17 +1627,18 @@
           el.textContent = 'Room made, reading your wallet again \u2026'; location.reload();
         } catch (e) { el.textContent = 'This could not be fixed here: ' + (e && e.message ? e.message : e); console.error('[arena] fix it: ' + (e && e.message ? e.message : e)); }
       };
-      return { lost: (fed, p) => { lost.set(String(p.operation), String(p.msat)); console.error('[arena] deposit not collected: ' + p.msat + ' msat, federation ' + String(fed).slice(0, 8) + ', operation ' + String(p.operation).slice(0, 12)); paint(); },
+      return { lost: (fed, p) => { lost.set(String(p.operation), { msat: String(p.msat), atMs: p.atMs }); console.error('[arena] deposit not collected: ' + p.msat + ' msat, federation ' + String(fed).slice(0, 8) + ', operation ' + String(p.operation).slice(0, 12)); paint(); },
         full: () => { if (!full) console.error('[arena] the browser\u2019s storage refused a wallet write: deposits cannot be collected'); full = true;
           // every deposit still waiting, in every federation: with a full store the wallet may not open at all, so none of them reports itself
-          try { const S = localStorage; for (let i = 0; i < S.length; i++) { const k = S.key(i); if (k && k.startsWith('arena.deposit.pending.')) for (const d of JSON.parse(S.getItem(k) || '[]')) lost.set(String(d.operation), String(d.msat)); } } catch { /* unreadable: not summed */ }
+          try { const S = localStorage; for (let i = 0; i < S.length; i++) { const k = S.key(i); if (k && k.startsWith('arena.deposit.pending.')) for (const d of JSON.parse(S.getItem(k) || '[]')) lost.set(String(d.operation), { msat: String(d.msat), atMs: d.atMs }); } } catch { /* unreadable: not summed */ }
           paint(); },
         // WHAT WAS STUCK AND CAME IN AFTER ALL (the owner 2026-10-31: "eine Meldung nach dem reload das XXX Satoshi credited worden sind die stuck waren"), summed over the deposits of this load
         credited: (msat) => { try { creditedMsat += BigInt(msat); } catch { return; }
           const el = document.getElementById('arena-money-ok'); if (!el) return;
           el.textContent = (creditedMsat / 1000n).toLocaleString('en-US') + ' sat that were stuck have been credited to your wallet.';
           el.classList.add('show'); clearTimeout(okTimer); okTimer = setTimeout(() => el.classList.remove('show'), 15000); },
-        view: () => ({ full, msat: [...lost.values()].join('+') }), paint };
+        settled: (ops) => { for (const o of ops) lost.delete(String(o)); paint(); },
+        view: () => ({ full, msat: [...lost.values()].map((v) => v.msat).join('+') }), paint };
     })();
     const KEY = 'arena.clientlog', MOST = 400, LONGEST = 300;
     let lines = [];
@@ -7381,14 +7384,22 @@
             || (ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(vault(), k) : null);
           if (!inv) { console.log('[arena] wallets not combined in ' + k.slice(0, 8) + ': no invite for it'); return; }
           window.ARENA_COMBINE_IN(client, k, inv).catch((e) => console.log('[arena] wallets not combined in ' + k.slice(0, 8) + ': ' + (e && e.message ? e.message : e))); };
+        const lostHere = [];
         ARENACLIENT.resumeDeposits({ client, storage: vault(), federationId: ARENACLIENT.fromHex(k), others,
-          onLost: (p) => { window.ARENA_MONEY_ALERT.lost(k, p); },
+          onLost: (p) => { lostHere.push(p); window.ARENA_MONEY_ALERT.lost(k, p); },
           onClaimed: (d) => { console.log('[arena] a deposit an earlier page made is claimed: ' + d.amountMsat + ' msat' + (d.from ? ' (in wallet ' + d.from.label + ')' : ''));
             window.ARENA_MONEY_ALERT.credited(d.amountMsat);
             Promise.resolve(d.from ? sweep(d.from) : null).catch((e) => console.log('[arena] the claimed deposit stays in wallet ' + d.from.label + ': ' + (e && e.message ? e.message : e)))
               .then(() => { if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); if (typeof paintHistory === 'function') paintHistory(); }); } })
           .then((finals = []) => { finals = finals || []; window.ARENA_DEPOSITS_RESUMED = (window.ARENA_DEPOSITS_RESUMED || []).concat(finals.map((f) => k.slice(0, 8) + ' ' + f));
-            if (finals.length) console.log('[arena] deposits an earlier page left, federation ' + k.slice(0, 8) + ': ' + finals.join(', ')); },
+            if (finals.length) console.log('[arena] deposits an earlier page left, federation ' + k.slice(0, 8) + ': ' + finals.join(', '));
+            // THE ONES THE WALLET LOST ARE LOOKED FOR AT THE FEDERATION (kanban #883)
+            if (lostHere.length && ARENACLIENT.scanLostDeposits) ARENACLIENT.scanLostDeposits({ client, storage: vault(), federationId: ARENACLIENT.fromHex(k), lost: lostHere,
+              onClaimed: (d) => { console.log('[arena] a lost deposit found at the federation and claimed: ' + d.amountMsat + ' msat'); window.ARENA_MONEY_ALERT.credited(d.amountMsat); } })
+              .then((r) => { console.log('[arena] lost deposits, federation ' + k.slice(0, 8) + ': ' + (r.read ? r.found + ' found, ' + r.msat + ' msat claimed' : 'the federation could not be read'));
+                if (r.read) window.ARENA_MONEY_ALERT.settled(lostHere.map((p) => p.operation)); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); },
+              (e) => console.log('[arena] lost deposits not looked for: ' + (e && e.message ? e.message : e)));
+          },
           () => { RESUMED.delete(k); });
         mergeHere();
       };

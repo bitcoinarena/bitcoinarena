@@ -1047,6 +1047,34 @@ export function resumeDeposits({ client, storage, federationId, onClaimed = () =
       return `unknown (operation ${String(p.operation).slice(0, 12)}: ${why.slice(0, 160)})`;
     })));
 }
+/**
+ * THE DEPOSITS THE WALLET'S DATABASE LOST, FOUND AT THE FEDERATION (kanban #883, a full browser: the invoice paid, the operation never written, "Operation not found"). The
+ * federation's incoming contracts are read from the start and each is tried against this wallet's key: only a deposit really paid has one, so what this credits is
+ * what arrived, and `lost` - invoices that may never have been paid - is dropped once the whole stream was read. The federation holds a read at the stream's end: `timeoutMs` ends it.
+ */
+export async function scanLostDeposits({ client, storage, federationId, lost = [], onClaimed = () => {}, timeoutMs = 15000 } = {}) {
+  if (typeof client.scanDeposits !== 'function') return { read: false, msat: 0n, found: 0 };
+  let next = '0', done = false, msat = 0n, foundN = 0;
+  const waits = [];
+  while (!done) {
+    let got;
+    try { got = JSON.parse(await withinMs(client.scanDeposits(next), timeoutMs, 'the federation held the read')); }
+    catch { if (next === '0') return { read: false, msat: 0n, found: 0 }; break; }
+    next = got.next; done = got.done;
+    for (const f of got.found) {
+      foundN++;
+      waits.push(client.awaitReceive(f.operation).then((final) => {
+        if (final !== 'Claimed') return;
+        msat += BigInt(f.msat);
+        ledgerAppend(storage, federationId, { kind: 'deposit', msat: String(f.msat), invoiceHash: null });
+        onClaimed({ amountMsat: BigInt(f.msat), operation: f.operation });
+      }, () => {}));
+    }
+  }
+  await Promise.all(waits);
+  for (const p of lost) pendingDrop(storage, federationId, p.operation);
+  return { read: true, msat, found: foundN };
+}
 /** A deposit into the player wallet from Settings: the same tabs, this round's stake, no round to fund. */
 export async function settingsDepositOffer({ round, invite, seed, LockClient, storage, gateways = [], donationMsat = 0n, donationRecipients = null, onDeposit = () => {}, onClaimed = () => {} } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
