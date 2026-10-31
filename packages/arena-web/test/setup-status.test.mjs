@@ -9,6 +9,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { SetupStatus, SetupCard, SetupBanner, SETUP_OPEN_SECTIONS, PegInCard, FoundingWait, NoBondCard, noBond } from '../dist/test/setup-status.mjs';
 
 const card = (status) => renderToStaticMarkup(React.createElement(SetupStatus, { status: { ok: true, ...status } }));
+const BONDED = { txid: 'b0'.repeat(32), seen: true, sats: 50000, confirmations: 19, counts: true, blocksToMaturity: 266, confirmBy: 157700 };
 
 test('every part under way, in words; a problem counted in the heading', () => {
   const html = card({ tip: 157559,
@@ -29,7 +30,7 @@ test('every part under way, in words; a problem counted in the heading', () => {
 });
 
 test('all done: complete; nothing to show: nothing', () => {
-  const html = card({ address: { ok: true, url: 'https://n.example' }, lnd: { ok: true, synced: true, height: 1, channels: 2, pending: 0 }, gateway: { ok: true, federations: 1 } });
+  const html = card({ address: { ok: true, url: 'https://n.example' }, lnd: { ok: true, synced: true, height: 1, channels: 2, pending: 0 }, gateway: { ok: true, federations: 1 }, bond: BONDED });
   assert.match(html, /<h3>Setup<\/h3><span class="setup-pill ok">Complete<\/span>/);
   assert.equal(card({}), '');
 });
@@ -40,7 +41,7 @@ test('a complete setup: a Don\'t show again link, hidden per node once clicked; 
   const store = new Map();
   globalThis.localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) };
   try {
-    const done = { ok: true, node: 'ab'.repeat(32), address: { ok: true, url: 'https://n.example' }, lnd: { ok: true, synced: true, height: 1, channels: 2, pending: 0 }, gateway: { ok: true, federations: 1 } };
+    const done = { ok: true, node: 'ab'.repeat(32), address: { ok: true, url: 'https://n.example' }, lnd: { ok: true, synced: true, height: 1, channels: 2, pending: 0 }, gateway: { ok: true, federations: 1 }, bond: BONDED };
     assert.match(renderToStaticMarkup(React.createElement(SetupStatus, { status: done })), /<button type="button" class="setup-hide">Don&#x27;t show again<\/button>/);
     const c = new SetupStatus({ status: done }); c.setState = (u) => Object.assign(c.state, u);
     c.hide();
@@ -68,7 +69,7 @@ test('no bond: a red card with "Set up the bond", no founding count, the gateway
   const html = card(none);
   assert.doesNotMatch(html, /federation is founded|3\/10|founding/i);
   assert.match(html, /id="setup-gateway"[\s\S]*?joins a federation once your node has a bond/);
-  assert.match(html, /setup-pill ok">Complete/, 'a missing bond does not hold the setup screen');
+  assert.match(html, /setup-pill bad">Bond missing/, 'no bond, so not complete (kanban #837)');
   // the owner's Overview: the card first, linking to the Bond section; no Federation card
   const ov = renderToStaticMarkup(new SetupCard({ initial: none }).render());
   assert.match(ov, /^<div class="card no-bond" id="no-bond"[\s\S]*href="#bond">Set up the bond/);
@@ -132,8 +133,8 @@ test('the coins the bond was made from count once the bond is on the chain; the 
     core: { interim: false }, address: { ok: true, url: 'https://n.example' } });
   assert.match(html, /id="setup-faucet"[\s\S]*363,000 sat arrived; your bond was made from them/);
   assert.match(html, /<span class="setup-pill ok">Complete<\/span>/, 'all four parts done');
-  const part = card({ core: { interim: true, sync: { blocks: 1, headers: 2, progress: 0.5 } }, address: { ok: true, url: 'https://n.example' } });
-  assert.match(part, /<span class="setup-pill wait">1 of 2 done<\/span><\/div><div class="setup-total" role="progressbar" aria-valuemin="0" aria-valuemax="2" aria-valuenow="1"><i style="width:50%"><\/i>/);
+  const part = card({ core: { interim: true, sync: { blocks: 1, headers: 2, progress: 0.5 } }, address: { ok: true, url: 'https://n.example' }, bond: BONDED });
+  assert.match(part, /<span class="setup-pill wait">2 of 3 done<\/span><\/div><div class="setup-total" role="progressbar" aria-valuemin="0" aria-valuemax="3" aria-valuenow="2"><i style="width:67%"><\/i>/);
 });
 
 // HOW LONG IT STILL TAKES (the owner's playtest 2026-10-25: "We need one big number on top until the node is ready, and for each item
@@ -169,7 +170,7 @@ test('one big number until the node is ready, and each part\'s own time', async 
 // "left for later" with the way to set it up, the heading says so, and the owner area is not closed for it
 test('Lightning left for later: not complete, its tiles say how to set it up, and the owner area stays open', () => {
   const later = { lnd: true, gateway: true, fix: true, why: 'Not set up: Lightning was left for later in setup, so the gateway was never started.' };
-  const html = card({ address: { ok: true, url: 'https://n.example' }, later });
+  const html = card({ address: { ok: true, url: 'https://n.example' }, later, bond: BONDED });
   assert.match(html, /<span class="setup-pill wait">Lightning left for later<\/span>/);
   assert.doesNotMatch(html, /Complete/);
   assert.match(html, /class="setup-step s-later" id="setup-lnd"><span class="setup-ic" aria-hidden="true">–<\/span><div class="setup-body"><b>LND<\/b><span class="setup-text">Left for later\. Set it up in the owner area: Services, Lightning gateway, Set up the gateway\./);
@@ -179,6 +180,25 @@ test('Lightning left for later: not complete, its tiles say how to set it up, an
   assert.match(electrum, /Left for later\. Not set up: the gateway needs Lightning, and Lightning needs your own Bitcoin Core/);
   assert.match(card({ address: { ok: true, url: 'https://n.example' }, lnd: { ok: true, synced: true, height: 1, channels: 1, pending: 0 }, later: { lnd: false, gateway: true, fix: true, why: 'x' } }),
     /id="setup-lnd"[\s\S]*synced at block 1[\s\S]*id="setup-gateway"[\s\S]*Left for later/);
+});
+
+// NO BOND, NOT COMPLETE (kanban #837: a green "Complete" under the red "No bond" card): a Bond step, marked; the heading says so; a problem elsewhere
+// still counts first; the owner area stays open, and a setup hidden on this device comes back
+test('no bond: the setup has a Bond step and reads Bond missing, never Complete', () => {
+  const rest = { address: { ok: true, url: 'https://n.example' }, lnd: { ok: true, synced: true, height: 1, channels: 2, pending: 0 }, gateway: { ok: true, federations: 0 }, faucet: { txid: 'fa'.repeat(32), sats: 52000, seen: true, confirmations: 2 } };
+  const html = card(rest);
+  assert.match(html, /<span class="setup-pill bad">Bond missing<\/span>/);
+  assert.doesNotMatch(html, /Complete|Don&#x27;t show again/);
+  assert.match(html, /class="setup-step s-bad" id="setup-bond"><span class="setup-ic" aria-hidden="true">!<\/span><div class="setup-body"><b>Bond<\/b><span class="setup-text">none yet\. Your node is not drawn for rounds and earns nothing until it has one\.<\/span>/);
+  assert.match(html, /aria-valuemax="5" aria-valuenow="4"/, '4 of 5 on the bar');
+  assert.ok(html.indexOf('id="setup-faucet"') < html.indexOf('id="setup-bond"') && html.indexOf('id="setup-bond"') < html.indexOf('id="setup-lnd"'), 'in its place, after the coins');
+  assert.match(card({ ...rest, address: { ok: false, url: 'https://n.example', why: 'x' } }), /setup-pill bad">1 problem</, 'a real problem is named first');
+  assert.match(card({ ...rest, core: { interim: true } }), /setup-pill bad">Bond missing</, 'still missing while another step runs');
+  assert.equal(card({}), '', 'no other part to show: the red card says it alone');
+  assert.equal(renderToStaticMarkup(React.createElement(SetupBanner, { status: { ok: true, ...rest, gateway: { ok: true, federations: 1 } } })), '', 'the owner area stays open: the bond is set up there');
+  const store = new Map([[`arena-setup-hidden:${'ab'.repeat(32)}`, '1']]);
+  globalThis.localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: () => {} };
+  try { assert.match(renderToStaticMarkup(React.createElement(SetupStatus, { status: { ok: true, node: 'ab'.repeat(32), ...rest } })), /Bond missing/, 'hidden on this device, and back'); } finally { delete globalThis.localStorage; }
 });
 
 // A BOND ON ITS WAY NEVER CLOSES THE OWNER AREA (kanban #728, the 2026.1.9.11 install test: posted from the Bond section, it shut the
