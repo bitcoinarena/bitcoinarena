@@ -61,7 +61,7 @@ export async function readMarketSources(list, options = {}) {
   const reads = {};
   for (const r of list) {
     if (!r || !/^[a-z][a-zA-Z0-9]*$/.test(String(r.id))) return { why: 'Name each read in letters' };
-    const unlisted = marketHostProblem(r.url); if (unlisted && marketUrlProblem(r.url, r.kind === 'ws') === null) return { why: `${r.id}: ${unlisted}` };
+    const unlisted = marketHostProblem(r.url, options.hosts); if (unlisted && marketUrlProblem(r.url, r.kind === 'ws') === null) return { why: `${r.id}: ${unlisted}` };
     try { reads[r.id] = r.kind === 'ws' ? await readSocket(r, options.socket) : parsed(await readPage(r.url, options.page)); } catch (e) { return { why: `${r.id}: ${e.message}` }; }
   }
   return { reads };

@@ -5,6 +5,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { encodeManifestBody, manifestBodyId, MARKET_SOURCE_MARKER, RESULT_TYPE, PAYOUT_RULE, NO_PARENT, MARKET_SOURCE_KIND, MARKET_READ, MARKET_RULE, decodeManifest, encodeManifest } from '../src/manifest.js';
 import { codeOfSource, outcomeIndex } from '../src/market-rule.js';
+import { decodeHostList, encodeHostList, hostListProblem, marketHostProblem } from '../src/market-check.js';
+import { CLASS, isHostRemoval } from '../src/ballot.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const BODY = { gameName: 'btc-100k', gameDevPubkey: b32(1), version: 1, parentManifestId: NO_PARENT, resultType: RESULT_TYPE.ATTESTED, cores: [], runTicksMax: 0, roundPeriodMs: 0n,
@@ -33,8 +35,6 @@ test('what does not fit is refused by name', () => {
     [body({ ...URL_SOURCE, reads: [{ ...read, url: 'http://a.example/' }] }), /Only https/],
     [body({ ...URL_SOURCE, reads: [{ ...read, url: 'https://127.0.0.1/' }] }), /public host/],
     [body({ ...URL_SOURCE, reads: [read, { ...read, id: 'b' }] }), /one address/],
-    [body({ ...URL_SOURCE, reads: [{ ...read, url: 'https://attacker.example/price' }] }), /not a listed source/],
-    [body({ ...CODE_SOURCE, reads: [{ ...read, id: 'btc', url: 'https://attacker.example/price' }] }), /not a listed source/],
     [body({ ...CODE_SOURCE, reads: [read, read] }), /of its own/],
     [body({ ...CODE_SOURCE, reads: [1, 2, 3, 4].map((n) => ({ ...read, id: `a${n}` })) }), /at most 3/],
     [body({ ...CODE_SOURCE, code: 'x'.repeat(40000) }), /KB/],
@@ -48,4 +48,17 @@ test('a URL source is code like any other: a fixed function, the market only its
   assert.ok(!code.includes('\n"; process'));
   assert.equal(codeOfSource(CODE_SOURCE), CODE_SOURCE.code);
   assert.equal(outcomeIndex('No', ['Yes', 'No']), 1); assert.equal(outcomeIndex(0, ['Yes', 'No']), 0); assert.equal(outcomeIndex('Maybe', ['Yes', 'No']), null); assert.equal(outcomeIndex(5, ['Yes', 'No']), null);
+});
+
+test('a list of hosts is one canonical thing, public names only; dropping a host is fast, adding one is not', () => {
+  const list = encodeHostList(['b.example.org', 'a.example.org', 'a.example.org']);
+  assert.deepEqual(decodeHostList(list), ['a.example.org', 'b.example.org']);
+  assert.equal(hostListProblem(list), null);
+  for (const bad of ['b.example.org\na.example.org', 'localhost', '127.0.0.1', 'a.ts.net', 'not a host', '']) assert.ok(hostListProblem(new TextEncoder().encode(bad)), bad);
+  const history = [{ config: encodeHostList(['a.example.org', 'b.example.org']) }];
+  assert.equal(isHostRemoval({ class: CLASS.SOURCES, config: encodeHostList(['a.example.org']) }, history), true);
+  assert.equal(isHostRemoval({ class: CLASS.SOURCES, config: encodeHostList(['a.example.org', 'c.example.org']) }, history), false);
+  assert.equal(isHostRemoval({ class: CLASS.SOURCES, config: encodeHostList(['a.example.org', 'b.example.org', 'c.example.org']) }, history), false);
+  assert.equal(marketHostProblem('https://b.example.org/x', ['b.example.org']), null);
+  assert.match(marketHostProblem('https://attacker.example/x'), /not a listed source/);
 });
