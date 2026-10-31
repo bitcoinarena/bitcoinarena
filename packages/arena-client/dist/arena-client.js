@@ -10499,6 +10499,23 @@ function txidHexOf(tx) {
 // them and be imported by the other. Re-exported here because the census is
 // where most callers meet it.
 
+/**
+ * HOW FAR BACK A CENSUS READS (§5A.2 "maturity is not expiry": a bond stands until it is spent). A census read only the 2,016 blocks below its
+ * height, so a bond older than that left it with no exclusion and no reason, though it was unspent and its node served. Measured on testnet4
+ * 2026-10-30: the seven guardians of federation 337ae01a, bonded together at 156,037, were last in the census of 158,052; from 158,053 the
+ * federation had 0 guardian seats and no reserve key while its guardians ran, and the test host seats' bonds would have followed at 158,282-158,298.
+ * the owner: "die bond muss weiterhin gültig bleiben". A round's census_root commits to its census, so the rule moves at a census height, never
+ * under rounds already posted: from `fromHeight` a network's census reads from `firstBlock` - testnet4's the first block of the window of the
+ * last census that held them all, so no bond but those comes back.
+ */
+const CENSUS_LOOKBACK = 2016;
+const CENSUS_WHOLE = { testnet4: { fromHeight: 158226, firstBlock: 156036 } };   // the newest posted round's census was 158,119
+function censusFirstBlock(censusHeight, network) {
+  const whole = CENSUS_WHOLE[network];
+  const window = Math.max(0, censusHeight - CENSUS_LOOKBACK);
+  return whole && censusHeight >= whole.fromHeight ? Math.min(window, whole.firstBlock) : window;
+}
+
 function encodeEntry(e) {
   const w = new Writer();
   w.bytes32(e.txid);
@@ -18600,23 +18617,64 @@ function lockSecretFor(seed, roundId) {
 }
 
 /**
+ * A WRITE THE BROWSER REFUSES FOR ROOM (the owner 2026-10-30, order at "locking your stake": a wallet's write that throws QuotaExceededError ends in the lock
+ * client's panic, and every wallet call of that page then hangs until a reload): `onStorageFull` frees what it can, and the write is tried once more.
+ */
+let storageFull = null;
+function onStorageFull(fn) { storageFull = typeof fn === 'function' ? fn : null; }
+function putRoomy(storage, key, value) {
+  try { storage.setItem(key, value); } catch (e) {
+    if (!storageFull || !/quota/i.test(`${e && e.name} ${e && e.message}`)) throw e;
+    storageFull();
+    storage.setItem(key, value);
+  }
+}
+
+/**
+ * THE PLAYER'S WALLET KEEPS ITS ROOM (the owner 2026-10-30: "Your browser's storage is full", and 1000 sat paid but not claimed: each kept round's lock wallet
+ * takes ~150 KB, 50 kept rounds fill the 5 million characters a browser gives, and the next write of the player's wallet then ends its task). Past
+ * LOCK_ROOM_CHARS a round's lock wallet goes on in memory: it is the seed's and the round's, and joined anew when needed. Safari gives half of Chrome's room.
+ */
+const LOCK_ROOM_CHARS = 1500000;
+const liveLockDbs = new Set();
+const charsRead = new WeakMap();
+function storageChars(storage) {
+  const seen = charsRead.get(storage);
+  if (seen && Date.now() - seen.atMs < 5000) return seen.chars;
+  let chars = 0;
+  for (let i = 0; i < storage.length; i++) { const k = storage.key(i); if (k) chars += k.length + String(storage.getItem(k) || '').length; }
+  charsRead.set(storage, { atMs: Date.now(), chars });
+  return chars;
+}
+
+/**
  * WHERE THE LOCK CLIENT'S WALLET IS KEPT: the tab's storage, one key per
  * database key, under this round and this seed's secret (its hash, never the
  * secret). The shape `lock-client/src/store.rs` reads: `entries()` as JSON.
  */
 function lockStoreFor(storage, roundId, secret) {
   const prefix = `arena.lockdb.${toHex(roundId).slice(0, 16)}.${toHex(sha256(secret)).slice(0, 16)}.`;
+  liveLockDbs.add(prefix);
+  const kept = () => {
+    const out = [];
+    for (let i = 0; i < storage.length; i++) {
+      const k = storage.key(i);
+      if (k && k.startsWith(prefix)) out.push([k.slice(prefix.length), storage.getItem(k)]);
+    }
+    return out;
+  };
+  let inMemory = null;   // the whole database or none of it: a part of one left in storage would not open again
+  const toMemory = () => { const all = kept(); inMemory = new Map(all); for (const [k] of all) storage.removeItem(prefix + k); };
   return {
-    entries() {
-      const out = [];
-      for (let i = 0; i < storage.length; i++) {
-        const k = storage.key(i);
-        if (k && k.startsWith(prefix)) out.push([k.slice(prefix.length), storage.getItem(k)]);
+    entries() { return JSON.stringify(inMemory ? [...inMemory] : kept()); },
+    put(k, v) {
+      if (!inMemory && storageChars(storage) >= LOCK_ROOM_CHARS) toMemory();
+      if (!inMemory) {
+        try { putRoomy(storage, prefix + k, v); return; } catch (e) { if (!/quota/i.test(`${e && e.name} ${e && e.message}`)) throw e; toMemory(); }
       }
-      return JSON.stringify(out);
+      inMemory.set(k, v);
     },
-    put(k, v) { storage.setItem(prefix + k, v); },
-    remove(k) { storage.removeItem(prefix + k); },
+    remove(k) { if (inMemory) inMemory.delete(k); else storage.removeItem(prefix + k); },
   };
 }
 
@@ -18781,7 +18839,7 @@ function forgetPhrase(storage, seedHex) {
  * A database whose federation is not named here in full (`federations`, 64 hex, and every federation with a history) is left alone.
  * Answers { removed: keys, bytes: what they held (UTF-16), wallets: databases }.
  */
-function tidyStorage(storage, { seeds = [], current = null, federations = [], held = () => false, now = () => Date.now(), pressureChars = 0 } = {}) {
+function tidyStorage(storage, { seeds = [], current = null, federations = [], held = () => false, now = () => Date.now(), pressureChars = 0, archive = null } = {}) {
   if (!storage) return { removed: 0, bytes: 0, wallets: 0 };
   const keys = storageKeys(storage);
   const feds = new Set([...federations.map((f) => String(f).toLowerCase()),
@@ -18847,10 +18905,29 @@ function tidyStorage(storage, { seeds = [], current = null, federations = [], he
       for (const k of storageKeys(storage)) { const m = /^(arena\.lockdb\.([0-9a-f]{16})\.[0-9a-f]{16}\.)/.exec(k); if (m && done.has(m[2])) { if (!byDb.has(m[1])) byDb.set(m[1], []); byDb.get(m[1]).push(k); } }
       for (const [, ks] of byDb) { if (now_ <= pressureChars) break; take(ks); }
     }
+    // AND A LOCK WALLET OF A ROUND STILL OPEN, an hour after it was kept and with no client of this page on it: copied to `archive` (the page's IndexedDB) and
+    // removed here at once, because a refused write is tried again right after this returns (kanban #803); joined anew from the seed when needed (LOCK_ROOM_CHARS)
+    if (now_ > pressureChars && archive) {
+      const recent = new Set();
+      for (const k of storageKeys(storage)) {
+        if (!k.startsWith('arena.collect.')) continue;
+        try { const r = JSON.parse(storage.getItem(k)); if (r && r.roundIdHex && now() - Number(r.savedMs || 0) <= 3600000) recent.add(String(r.roundIdHex).toLowerCase().slice(0, 16)); } catch { /* unreadable: its wallet goes as any other */ }
+      }
+      const byDb = new Map();
+      for (const k of storageKeys(storage)) { const m = /^(arena\.lockdb\.([0-9a-f]{16})\.[0-9a-f]{16}\.)/.exec(k); if (m && !recent.has(m[2]) && !liveLockDbs.has(m[1])) { if (!byDb.has(m[1])) byDb.set(m[1], []); byDb.get(m[1]).push(k); } }
+      for (const [, ks] of byDb) {
+        if (now_ <= pressureChars) break;
+        archive(ks.map((k) => [k, storage.getItem(k)]));
+        take(ks);
+      }
+    }
     if (now_ > pressureChars) {
       const travelling = new Set();
       for (const k of storageKeys(storage)) if (k.startsWith('arena.ecash.pending.')) { try { travelling.add(String(JSON.parse(storage.getItem(k)).fed || '').slice(0, 16)); } catch { /* unreadable: its federation stays */ } }
-      for (const k of storageKeys(storage)) if (k.startsWith(PENDING_PREFIX)) travelling.add(k.slice(PENDING_PREFIX.length, PENDING_PREFIX.length + 16));
+      // A DEPOSIT WAITING HOLDS ONLY THE WALLET THAT MADE IT (kanban #803: one unclaimed invoice in a federation held all 22 kept phrases' wallets there, so the
+      // storage stayed full and the claim could not be written): that wallet's keys name its operation
+      const waitingOps = [];
+      for (const k of storageKeys(storage)) if (k.startsWith(PENDING_PREFIX)) { try { for (const p of JSON.parse(storage.getItem(k))) waitingOps.push(String(p.operation).toLowerCase()); } catch { travelling.add(k.slice(PENDING_PREFIX.length, PENDING_PREFIX.length + 16)); } }
       for (const [prefix] of groups) {
         if (now_ <= pressureChars) break;
         const o = owned.get(prefix);
@@ -18858,7 +18935,7 @@ function tidyStorage(storage, { seeds = [], current = null, federations = [], he
         let known = 0n; try { known = BigInt(storage.getItem(`arena.wallet.known.${o.fed.slice(0, 16)}.${o.hex.slice(0, 16)}`) || 0); } catch { known = 1n; }
         if (known > 0n) continue;
         const ks = storageKeys(storage).filter((k) => k.startsWith(prefix));
-        if (!ks.length) continue;
+        if (!ks.length || ks.some((k) => waitingOps.some((op) => k.toLowerCase().includes(op)))) continue;
         take(ks); markSeedRecover(storage, o.hex);
       }
     }
@@ -18878,7 +18955,7 @@ function walletStoreFor(storage, federationId, secret) {
       }
       return JSON.stringify(out);
     },
-    put(k, v) { storage.setItem(prefix + k, v); },
+    put(k, v) { putRoomy(storage, prefix + k, v); },
     remove(k) { storage.removeItem(prefix + k); },
   };
 }
@@ -19147,6 +19224,16 @@ const federationOfClient = new WeakMap();
 function useSeatedGateways(lookup) { seatedLookup = typeof lookup === 'function' ? lookup : null; }
 /** Which federation a lock client is a wallet of (openPlayerWallet notes it). */
 function noteClientFederation(client, federationHex) { if (client && typeof client === 'object' && federationHex) federationOfClient.set(client, String(federationHex).toLowerCase()); }
+/**
+ * THE GATEWAYS A GUARDIAN SEAT NAMES (GET /gateway-seats): the seated ones first, then every other that stands. A seat says them from signed claims,
+ * so a new tunnel's address reaches the page from there; the site's own list is only what it was when the site was last deployed.
+ */
+function gatewayUrlsOfView(view) {
+  const g = (view && view.gateways) || {};
+  const seated = ((view && view.seated) || []).map((n) => g[n] && g[n].url).filter(Boolean);
+  return [...new Set([...seated, ...Object.values(g).map((x) => x && x.url).filter(Boolean)])];
+}
+
 /** The seated gateways of `client`'s federation, [] when the page names no lookup or it cannot say. */
 async function seatedGatewaysOf(client) {
   const f = client && typeof client === 'object' ? federationOfClient.get(client) : null;
@@ -25295,7 +25382,8 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
         if (rr.status === 200) rotations = (await rr.json()).rotations || [];
       } catch { rotations = []; }
       return { node: base, bytes, rotations };
-    } catch (e) { return { node: base, why: e.message, late: !!e.late }; }
+    // A READ THAT NEVER GOT AN ANSWER (kanban #803: "Load failed" on a phone) is a node that did not answer, as one past ANSWER_MS is
+    } catch (e) { return { node: base, why: e.message, late: true }; }
   }), nodes.map((node) => String(node).replace(/\/+$/, '')))).filter((a) => a.bytes || !a.late);
   const missing = answers.filter((a) => !a.bytes);
   if (missing.length)
@@ -27863,6 +27951,65 @@ async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher = (u, 
   if (!best) return { ok: false, why: `none of the round's ${asked.length} signer nodes names a reserve key for federation ${fed.slice(0, 8)}` };
   if (best[1] < needed) return { ok: false, why: `only ${best[1]} of the round's signer nodes name reserve key ${best[0].slice(0, 16)}, and ${needed} must` };
   return { ok: true, key: fromHex(best[0]), agreeing: best[1], asked: asked.length };
+}
+
+/**
+ * THE FEDERATIONS NO ENTRY CAN PAY INTO (the owner 2026-10-30, the second time at a table of federation 337ae01a: "Order not placed: this round pays
+ * the protocol reserves, and none of the round's 14 signer nodes names a reserve key"): a federation at least `minAnswers` nodes list on
+ * GET /reserves and none names a key for. Too few answers, or a page that could not ask, holds nothing back. Answers a Set of federation hex.
+ */
+function keylessFederations(answers, { minAnswers = 3 } = {}) {
+  const seen = new Map();
+  const read = (answers || []).filter((a) => a && Array.isArray(a.federations));
+  if (read.length < minAnswers) return new Set();
+  for (const a of read) for (const f of a.federations) {
+    if (typeof f.federationId !== 'string') continue;
+    const was = seen.get(f.federationId) || { listed: 0, keyed: false };
+    was.listed++;
+    if (/^0[23][0-9a-f]{64}$/.test(String(f.key || f.reserveKey || ''))) was.keyed = true;   // `key` only on a member of the federation; `reserveKey` on every seat that knows it
+    seen.set(f.federationId, was);
+  }
+  return new Set([...seen].filter(([, v]) => !v.keyed && v.listed >= minAnswers).map(([f]) => f));
+}
+
+/**
+ * THE FEDERATIONS THE PAGE DOES NOT PAY INTO (the owner 2026-10-30: "Wenn die Federation nicht aktiv ist, soll er in der UI auch nicht versuchen mit der zu
+ * bezahlen"): `statuses`, the Map of ARENA_FED_LOADS, federation -> { status, allows }. One whose record this page could not verify, or that takes no
+ * entries. A federation not read yet is not named, and when no federation at all stands OPEN the read failed, not the network: none is named.
+ */
+function inactiveFederations(statuses) {
+  const list = statuses && typeof statuses.entries === 'function' ? [...statuses.entries()] : [];
+  if (!list.some(([, st]) => st && st.status === 'OPEN')) return new Set();
+  return new Set(list.filter(([, st]) => st && (st.status === 'unverified' || (st.allows && st.allows.join === false))).map(([f]) => String(f).toLowerCase()));
+}
+
+/**
+ * WHY THIS WALLET CANNOT PLAY WITH ITS BALANCE (the owner 2026-10-30: "If it's unavailable to play because the funds are locked it should say so in a
+ * message"): the part of the wallet held in federations no entry can pay into. `parts`: the wallet's [{ federation, sats }]. Null when none is.
+ */
+function keylessFundsLine({ parts, keyless, expected = {}, tip = 0, blockMinutes = 10 } = {}) {
+  // A PART MAY NAME ITS FEDERATION BY THE FIRST 16 HEX (money of another kept phrase, not merged yet: index.html's balance read) - measured
+  // 2026-10-30: "Er sagt 5 Sats aber es sind 310", 5 under the whole id and 305 under the short one
+  const fullOf = (f) => [...(keyless || [])].find((k) => k.startsWith(String(f).toLowerCase())) || null;
+  const stuck = (parts || []).filter((p) => p && fullOf(p.federation) && Number(p.sats) > 0);
+  if (!stuck.length) return null;
+  const sats = stuck.reduce((n, p) => n + Number(p.sats), 0);
+  const where = [...new Set(stuck.map((p) => String(p.federation).slice(0, 8)))].join(', ');
+  // WHEN IT CAN BE PLAYED (the owner 2026-10-30: "Sage, ab wann es funktionieren wird in der Meldung"): the block the site names for the federation
+  const at = Math.max(0, ...stuck.map((p) => Number(expected[fullOf(p.federation)]) || 0));
+  const left = at && tip ? at - tip : 0;
+  const hours = left > 0 ? Math.max(1, Math.round((left * blockMinutes) / 60)) : 0;
+  const when = at ? ` Expected to work from block ${at.toLocaleString('en-US')}${hours ? `, in about ${hours} hour${hours === 1 ? '' : 's'}` : ''}.` : '';
+  return { sats, text: `${sats.toLocaleString('en-US')} sat of your balance can't be played right now. It stays in your wallet, in federation ${where}. Paid rounds there are paused.${when} To play now, deposit into another federation.` };
+}
+
+/** GET /reserves of up to `limit` nodes, read as keylessFederations reads them. Never throws. */
+async function fetchKeylessFederations({ nodes, limit = 6, fetcher = (u, o) => fetch(u, o), timeoutMs = 5000, minAnswers = 3 } = {}) {
+  const asked = [...new Set((nodes || []).map((n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')))].slice(0, limit);
+  const answers = await Promise.all(asked.map(async (base) => {
+    try { const r = await fetcher(`${base}/reserves`, { signal: AbortSignal.timeout(timeoutMs) }); return r.ok ? await r.json() : null; } catch { return null; }
+  }));
+  return keylessFederations(answers, { minAnswers });
 }
 
 /** What a version-11 entry gives beside its stake: { bps, donationMsat, reserveMsat, mandatory } - the developers' 4 % and the reserves' 2 %. */
@@ -32410,6 +32557,22 @@ function approvalWords(f, tooOld = []) {
     ? ` · a selected operator is playing: ${f.operatorsPlaying.map((o) => o.slice(0, 8)).join(', ')}` : ' · no selected operator is playing') + old;
 }
 
+/**
+ * THE SETTLEMENT FACTS IN WORDS A PLAYER READS (kanban #821, the owner 2026-10-30, of "Settled by 5 of 9 drawn (d5faf2, ...) · 1 operator (2of2) · both
+ * committees 5/5 · no operator playing · left out,...": "Die Meldung ist eher verwirrend"). `facts`: the lobby line from "signer nodes" on. The
+ * whole line stays one tap away; one operator behind every node is said, never hidden.
+ */
+function settledWords(facts) {
+  const t = String(facts || '');
+  if (!t) return '';
+  if (/: pending\b/.test(t)) return 'The nodes that settle this round are not chosen yet';
+  const m = /(\d+) of \d+ drawn/.exec(t) || /nodes: (\d+)/.exec(t);
+  const who = m ? `${m[1]} nodes settle this round` : 'Nodes settle this round';
+  const one = /(^|· )1 operator\b/.test(t) ? ', all run by one operator' : '';
+  const playing = /a selected operator is playing/.test(t) ? ' - one of their operators plays in it' : '';
+  return who + one + playing;
+}
+
 function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null, tooOld = null } = {}) {
   // A MARKET'S ROW (§0A.7a): its name, its outcomes, its entry close - the pick sheet says the rest
   if (row.market || row.marketLike) {
@@ -32455,16 +32618,57 @@ function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null, tooOl
  * (seats older than the committee listing) is offered, as before. Before, such a round was offered for 2 h after its committee time.
  */
 function lobbyRowOffered(r) {
-  if (!r) return false;
-  if (r.free) return true;
+  return !!r && lobbyRowNotOffered(r) === null;
+}
+
+/**
+ * WHY A ROUND IS NOT OFFERED, or null when it is (kanban #761, 2026-10-28 ~10:50Z, the owner on Up/Down: "BTC up or down, 10:45-11:00 UTC?"
+ * with Buy Up 50c active, and every order "Order not placed: this round is no longer listed in the lobby" - no round was seated that
+ * morning, #757). A paid round is offered only when its committee is drawn AND, where the seats seat (§5A.7 reserve seats), seated in both
+ * roles - the lobby's own `joinable` rule (seating 'named'); one drawn but not seated can take no order, so no app offers it.
+ *   'not played'  most seats that say so do not play it in its window (the backup rule)
+ *   'not drawn'   no seat has drawn its committee
+ *   'not seated'  drawn, but no seat names both roles seated (or two certificates void it)
+ */
+function lobbyRowNotOffered(r) {
+  if (!r) return 'not listed';
+  if (r.free) return null;
   // ONE GRID PLAYED PER WINDOW (§5A.5 the backup rule, kanban #702, 2026-10-26: "Yes make it part of the design, in the spec"): a seat names
   // a round it does not play in its window - a backup under a drawn primary, a primary whose backup took entries there - played: false;
   // a round most of the seats that say so do not play is not offered
   const plays = (r.said || []).filter((c) => c && typeof c.played === 'boolean');
-  if (plays.length && plays.filter((c) => !c.played).length * 2 > plays.length) return false;
+  if (plays.length && plays.filter((c) => !c.played).length * 2 > plays.length) return 'not played';
   const said = (r.said || []).map((c) => c && c.committee).filter(Boolean);
   // a seat names a drawn committee by its members ({ drawn: { game: [...], settlement: [...] } }), an undrawn one drawn: false and why
-  return !said.length || said.some((c) => !!c.drawn);
+  if (said.length && !said.some((c) => !!c.drawn)) return 'not drawn';
+  // SEATED (§5A.7): where any seat speaks of seating, one names both roles seated (fetchLobby's `seating`, else the seats' own words)
+  const seating = r.seating !== undefined ? r.seating : (() => {
+    const s = said.filter((x) => x && x.seated);
+    return !s.length ? null : s.some((x) => x.seated.game && x.seated.settlement) ? { state: 'named' } : { state: 'pending' };
+  })();
+  if (seating && seating.state !== 'named') return 'not seated';
+  return null;
+}
+
+/**
+ * WHAT A MARKET OR GAME SAYS WHEN ITS SOONEST WINDOW HAS NO PLAYABLE ROUND (kanban #761): `unoffered` the listed rounds of the game that are
+ * not offered (each { id, entryCloseMs, startTimeMs, why }), `offered` the ones that are. Null when the soonest open window is playable, or
+ * when no unplayable one is listed (the page's "next round" line says that). The text says why, and names the next playable window if any.
+ */
+function unplayableWindowLine({ unoffered = [], offered = [], nowMs = Date.now(), periodMs = 0 } = {}) {
+  const open = (xs) => xs.filter((r) => r && Number(r.entryCloseMs) > nowMs).sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs));
+  const bad = open(unoffered), good = open(offered);
+  if (!bad.length) return null;
+  const first = bad[0];
+  if (good.length && Number(good[0].entryCloseMs) <= Number(first.entryCloseMs)) return null;
+  const hm = (ms) => new Date(Number(ms)).toISOString().slice(11, 16);
+  const span = (r) => { const end = Number(r.entryCloseMs), start = periodMs ? end - periodMs : Number(r.startTimeMs) || 0;
+    return start && start < end ? `${hm(start)}-${hm(end)} UTC` : `closing ${hm(end)} UTC`; };
+  const why = first.why === 'not seated' ? 'its committee is not seated' : first.why === 'not drawn' ? 'its committee is not drawn'
+    : first.why === 'not played' ? 'its window is played on another grid' : first.why === 'no reserve key' ? 'its federation has no reserve key yet' : first.why === 'federation not active' ? 'its federation is not active right now' : 'it is not listed';
+  const next = good[0];
+  return { text: `No playable round for the ${span(first)} window - ${why}. ` + (next ? `Next playable window: ${span(next)}.` : 'No later window is playable yet.'),
+    why: first.why, round: first.id || null, next: next ? next.id || null : null, nextCloseMs: next ? Number(next.entryCloseMs) : null };
 }
 
 // ---- arena-client/src/next-round.js
@@ -36832,7 +37036,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          fetchGames: fetchGames, oneTilePerGame: oneTilePerGame, checkedGameInfoOfTile: checkedGameInfoOfTile, checkedGameInfo: checkedGameInfo, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          censusEndpoints: censusEndpoints, mergeNodes: mergeNodes,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, roundAttestors: roundAttestors, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, withdrawFederation: withdrawFederation, safeFederation: safeFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, evacuatePlayerWallet: evacuatePlayerWallet, movePlayerWallet: movePlayerWallet, moveCanMsat: moveCanMsat, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, rememberedInvite: rememberedInvite, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyRowOffered: lobbyRowOffered, nextRoundLine: nextRoundLine, inHoursMinutes: inHoursMinutes, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, roundAttestors: roundAttestors, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, withdrawFederation: withdrawFederation, safeFederation: safeFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, evacuatePlayerWallet: evacuatePlayerWallet, movePlayerWallet: movePlayerWallet, moveCanMsat: moveCanMsat, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, rememberedInvite: rememberedInvite, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyRowOffered: lobbyRowOffered, lobbyRowNotOffered: lobbyRowNotOffered, unplayableWindowLine: unplayableWindowLine, fetchKeylessFederations: fetchKeylessFederations, keylessFundsLine: keylessFundsLine, gatewayUrlsOfView: gatewayUrlsOfView, settledWords: settledWords, onStorageFull: onStorageFull, inactiveFederations: inactiveFederations, nextRoundLine: nextRoundLine, inHoursMinutes: inHoursMinutes, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          presentNotes: presentNotes, liquidationKeyFor: liquidationKeyFor, collectLiquidationPayouts: collectLiquidationPayouts, roundVerdict: roundVerdict, secureTranscript: secureTranscript,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
