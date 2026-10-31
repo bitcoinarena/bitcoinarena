@@ -1,5 +1,6 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bitcoin Arena · Node Owner</title>
+<script defer src="https://stats.bitcoin-arena.io/script.js" data-website-id="024ff09e-c3a6-4dfd-bede-3163eb8be36a" data-domains="testnet.bitcoin-arena.io"></script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%23f7931a'/%3E%3Ctext x='16' y='23' font-size='21' font-weight='700' font-family='system-ui,sans-serif' text-anchor='middle' fill='%23fff'%3E%E2%82%BF%3C/text%3E%3C/svg%3E">
 <!-- THE OWNER AREA OF A NODE: /Dashboard/owner. The owner is a key made from 24 words this browser keeps;
      every request it sends is signed with it (src/owner.js). Nothing here is a password, and nothing leaves the browser
@@ -424,6 +425,8 @@ async function identity() {
   return null;
 }
 const signed = async (action, args = {}) => (await identity()).sign(action, args);
+// the Arena site's page counts these (kanban #923); a node's own page sends nothing, Umami answers only on its one host
+const counted = (name) => { try { if (window.umami) window.umami.track(name); } catch { /* not counted */ } };
 const post = async (path, body) => {
   body = await body;
   const r = await fetch(at(path), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -447,7 +450,7 @@ addEventListener('popstate', () => { if (card) { held = null; me = null; start()
 // 1. THE WAY IN (kanban #564: drawn by React, OwnerStart): the welcome - new 24 words, restore them, or Login with Nostr - and 2. the
 // claim with the code from the node's log. The page hands over what it keeps and how; React draws the screens
 const startProps = () => ({ client: C, holdSeed, holdNostr, random32: () => globalThis.crypto.getRandomValues(new Uint8Array(32)),
-  claim: async (code) => post('/owner/claim', signed('claim', { code })), onIn: () => { me = null; loadAgain(); start(); },
+  claim: async (code) => { const r = await post('/owner/claim', signed('claim', { code })); counted('owner-claim'); return r; }, onIn: () => { counted('owner-login'); me = null; loadAgain(); start(); },
   onNostr: (o) => { window.OWNER_NOSTR = o; }, onConnectUri: (u) => { window.OWNER_CONNECT_URI = u; } });
 // a node with an owner asks for that owner's words or Nostr key, never offers new words (playtest 2026-10-25) or a new Nostr account (kanban #833)
 function welcome() { loadEnd(); card = false; mount('view', 'mountStart', { ...startProps(), screen: 'welcome', claimed: !!(state && state.claimed) }); }
