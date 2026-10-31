@@ -84,7 +84,7 @@ test('the login: the words shown on a press and forgotten; a Nostr login signs o
   a.m.setState({ words: a.m.props.onShowWords() });
   assert.match(a.html(), /<div id="shown"><div class="words"><span>w1<\/span><span>w2<\/span><\/div><\/div>/);
   const n = area({ how: 'nsec', onForget: () => forgot++ });
-  assert.match(n.html(), /<p>This browser keeps your login and your nsec\. Your key stays with your nsec - keep it written down\.<\/p><button type="button" id="forget">Sign out on this browser<\/button>/);
+  assert.match(n.html(), /<p>This browser keeps your login and your nsec in its local storage on this device, unencrypted, until you sign out\.[^<]*Keep your nsec written down\.<\/p><button type="button" id="forget">Sign out on this browser<\/button>/);
 });
 
 test('Donations only with a developer on this node - a dev client or a game developer\'s key; installing one is in Developer (2026-10-22)', () => {
