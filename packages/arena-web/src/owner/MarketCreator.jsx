@@ -8,7 +8,8 @@ import { parse } from 'acorn';
 import { checkMarketCode } from '../../../arena-protocol/src/market-check.js';
 import { CodeEditor } from './CodeEditor.jsx';
 import { readAll, runCode } from './marketRun.js';
-import { CATEGORIES, EVERY, EXAMPLES, KEPT, OUTCOMES_MAX, READS_MAX, SAMPLES, STEPS, TEMPLATES, fieldsOf, fromTemplate, outcomeOf, outcomeOfCode, problemsOf, readAnswer, urlProblem } from './marketDraft.js';
+import { SOURCES, SOURCE_GROUPS } from './marketSources.js';
+import { CATEGORIES, EVERY, EXAMPLES, KEPT, OUTCOMES_MAX, READS_MAX, STEPS, TEMPLATES, fieldsOf, fromTemplate, outcomeOf, outcomeOfCode, problemsOf, readAnswer, urlProblem } from './marketDraft.js';
 
 const Err = ({ of }) => (of ? <span className="mc-err">{of}</span> : null);
 const Field = ({ label, why, children }) => <label className="mc-f"><span>{label}</span>{children}<Err of={why} /></label>;
@@ -21,7 +22,7 @@ export class MarketCreator extends React.Component {
     super(props);
     let draft = null;
     try { draft = JSON.parse(localStorage.getItem(KEPT) || 'null'); } catch { draft = null; }
-    this.state = { step: draft ? 'question' : 'start', draft: draft || fromTemplate('blank'), sample: '', held: null, test: null, reading: false, shown: false, saved: false };
+    this.state = { step: draft ? 'question' : 'start', draft: draft || fromTemplate('blank'), sample: '', held: null, test: null, reading: false, shown: false, saved: false, srcGroup: SOURCE_GROUPS[0], demoOf: null };
   }
   // WHAT THE ANSWER GIVES UNDER THE DRAFT AS IT STANDS (the owner 2026-10-31: "Auch die Optionen können live getestet werden"): every change of a field,
   // rule, level or outcome is read against the answer already held, with no new read; a new address drops that answer
@@ -57,7 +58,8 @@ export class MarketCreator extends React.Component {
     this.setState({ reading: false, held: got.reads }, () => this.tryCode());
   }
   example(e) { this.setState({ held: null, test: null }); this.set({ source: { ...this.state.draft.source, kind: 'code', code: e.code, reads: e.reads.map((r) => ({ ...r })) } }); }
-  sampleUrl(s) { this.setState({ test: null }); this.set({ source: { ...this.state.draft.source, url: s.url, read: s.read, path: s.path } }, ''); setTimeout(() => this.read(), 0); }
+  // tapped, it shows at once: read live, or a site's recorded answer where a browser may not read it
+  sampleUrl(s) { this.setState({ test: null, demoOf: null }); this.set({ source: { ...this.state.draft.source, url: s.url, read: s.read, path: s.path, ...(s.rule ? { rule: s.rule } : {}) } }, ''); setTimeout(() => this.read(s), 0); }
   read1(i, more) { this.source({ reads: this.state.draft.source.reads.map((r, j) => (j === i ? { ...r, ...more } : r)) }); this.setState({ held: null }); }
   schedule(more) { this.set({ schedule: { ...this.state.draft.schedule, ...more } }); }
   go(step) { this.setState({ step, shown: false }); }
@@ -70,7 +72,7 @@ export class MarketCreator extends React.Component {
   run(text) { this.setState({ test: this.tryOn(this.state.draft, text) }); }
   // THE LIVE TEST, AT THE FIELD (the owner 2026-10-31: "Test Funktion um es live zu testen, ob es z.B. amount gibt"): the source read now, the field found
   // or not, and the fields the answer does hold to pick from. The browser reads it here; a site that forbids that needs the pasted answer
-  async read() {
+  async read(known = null) {
     if (this.state.draft.source.kind === 'code') { await this.readCode(); return; }
     const bad = urlProblem(this.state.draft.source.url);
     if (bad) { this.setState({ test: { why: bad } }); return; }
@@ -86,15 +88,18 @@ export class MarketCreator extends React.Component {
       const text = await r.text();
       if (!r.ok) throw new Error(`answered ${r.status}`);
       this.setState({ sample: text.slice(0, 1000000), reading: false }); this.run(text);
-    } catch (e) { this.setState({ reading: false, test: { why: `This browser could not read it (${e.message}). Paste the answer in the Test step.` } }); }
+    } catch (e) {
+      if (known && known.demo) { this.setState({ sample: known.demo, reading: false, demoOf: known.name }); this.run(known.demo); return; }
+      this.setState({ reading: false, test: { why: `This browser could not read it (${e.message}). Paste the answer in the Test step.` } });
+    }
   }
   tested() {
-    const { test, sample, draft: d } = this.state;
+    const { test, sample, draft: d, demoOf } = this.state;
     if (!test) return null;
     const fields = d.source.kind === 'url' && d.source.read === 'json' ? fieldsOf(sample) : [];
     return (<>
       {test.why ? <div className="mc-result bad">{test.why}</div>
-        : <div className="mc-result ok"><span>Value <b>{test.value === '' ? 'nothing' : test.value}</b></span><span>Outcome <b>{test.outcome}</b></span>{test.note ? <small>{test.note}</small> : null}</div>}
+        : <div className="mc-result ok"><span>Value <b>{test.value === '' ? 'nothing' : test.value}</b></span><span>Outcome <b>{test.outcome}</b></span>{test.note ? <small>{test.note}</small> : null}{demoOf ? <small>A recorded answer from {demoOf}: this site lets nodes read it, not a browser.</small> : null}</div>}
       {fields.length ? <div className="mc-fields" aria-label="Fields in the answer">{fields.map(([path, value]) => <button key={path} type="button" className={path === d.source.path ? 'on' : undefined} title={value}
         onClick={() => this.source({ path })}><code>{path}</code><small>{value}</small></button>)}</div> : null}
     </>);
@@ -111,7 +116,7 @@ export class MarketCreator extends React.Component {
       </div>);
   }
   stepView() {
-    const { step, draft: d, shown, test, sample, reading } = this.state;
+    const { step, draft: d, shown, test, sample, reading, srcGroup } = this.state;
     const check = this.checked(d);
     const bad = shown ? problemsOf(d, step, check) : {};
     if (step === 'start') return (
@@ -127,7 +132,7 @@ export class MarketCreator extends React.Component {
           {d.outcomes.length < OUTCOMES_MAX ? <button type="button" className="mc-add" onClick={() => this.set({ outcomes: [...d.outcomes, ''] })}>Add outcome</button> : null}<Err of={bad.outcomes} /></div>}
     </>);
     if (step === 'result') {
-      const s = d.source;
+      const s = d.source, chosen = SOURCES.find((m) => m.url === s.url);
       const kinds = <Seg value={s.kind} options={[['url', 'A URL'], ['code', 'Code']]} onPick={(kind) => { this.setState({ test: null, held: null }); this.source({ kind }); }} />;
       if (s.kind === 'code') return (<>
         {kinds}
@@ -148,8 +153,12 @@ export class MarketCreator extends React.Component {
       </>);
       return (<>
         {kinds}
-        <div className="mc-chips" aria-label="Known addresses">{SAMPLES.map((m) => <button key={m.name} type="button" className={m.url === s.url ? 'on' : undefined} onClick={() => this.sampleUrl(m)}>{m.name}<small>{m.hint}</small></button>)}</div>
+        <Seg value={srcGroup} options={SOURCE_GROUPS.map((g) => [g, g])} onPick={(g) => this.setState({ srcGroup: g })} />
+        <div className="mc-sources" aria-label="Listed sources">{SOURCES.filter((m) => m.group === srcGroup).map((m) => <div key={m.name} className={m.url === s.url ? 'mc-src on' : 'mc-src'}>
+          <button type="button" onClick={() => this.sampleUrl(m)}><b>{m.name}</b><small>{m.hint}</small></button>
+          <a href={m.docs} target="_blank" rel="noopener noreferrer" aria-label={`${m.name} documentation`}>Docs ↗</a></div>)}</div>
         <Field label="Address the nodes read" why={bad.url}><input inputMode="url" placeholder="https://" value={s.url} onChange={(e) => this.source({ url: e.target.value })} /></Field>
+        {chosen ? <a className="mc-docs" href={chosen.docs} target="_blank" rel="noopener noreferrer">Other values from {chosen.name} ↗</a> : null}
         <Seg value={s.read} options={[['json', 'JSON field'], ['regex', 'Pattern'], ['text', 'Whole answer']]} onPick={(read) => this.source({ read })} />
         {s.read === 'text' ? null : <Field label={s.read === 'json' ? 'Field' : 'Pattern'} why={bad.path}><input className="mono" placeholder={s.read === 'json' ? 'data.amount' : 'Price: ([0-9.]+)'} value={s.path} onChange={(e) => this.source({ path: e.target.value })} /></Field>}
         <button type="button" className="mc-test" disabled={reading} onClick={() => this.read()}>{reading ? 'Reading…' : 'Test it live'}</button>
