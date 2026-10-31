@@ -5,9 +5,10 @@
 // connect), no redirects, no cookies, a small answer, a short time.
 import { lookup as dnsLookup } from 'node:dns';
 import https from 'node:https';
-import { marketHostProblem, marketUrlProblem, privateAddress } from '../../arena-protocol/src/market-check.js';
+import { checkMarketCode, marketHostProblem, marketUrlProblem, privateAddress } from '../../arena-protocol/src/market-check.js';
+import { runMarketCode } from './market-sandbox.js';
 
-export const READ_MAX_BYTES = 1 << 20, READ_MS = 10000, SOCKET_MS = 30000, SOCKET_MESSAGES = 1000, READS_MAX = 3;
+export const READ_MAX_BYTES = 1 << 20, READ_MS = 10000, SOCKET_MS = 30000, SOCKET_MESSAGES = 1000, READS_MAX = 3, INIT_STEPS = 4;
 
 /** A lookup that refuses any answer that is not public: handed to the connection itself. */
 export function publicLookup(host, options, done) {
@@ -39,6 +40,17 @@ export function readPage(url, { lookup = publicLookup, maxBytes = READ_MAX_BYTES
 
 const parsed = (text) => { try { return JSON.parse(text); } catch { return text; } };
 
+/** ONE STEP OF A SOCKET'S INIT CODE (kanban #921): on connecting, and then on each message of its first few, what to send. Checked here each time and run in the market sandbox.
+ *  `init(message, step)` answers a text, a list of them, or null. */
+export async function socketStart(code, message, step, { parse = null, run = runMarketCode } = {}) {
+  const check = checkMarketCode(code, parse || (await import('acorn')).parse, 'init');
+  if (!check.ok) return { ok: false, why: check.problems[0].why };
+  const got = await run({ code: `${code}\nfunction decide(reads) { return init(reads.message, reads.step); }`, reads: { message, step }, market: null });
+  if (!got.ok) return got;
+  const send = got.out === null ? [] : Array.isArray(got.out) ? got.out : [got.out];
+  return send.every((x) => typeof x === 'string') ? { ok: true, send } : { ok: false, why: 'init answers text, a list of them, or null' };
+}
+
 /** A socket read for a moment: its messages. The address is checked first; the runtime's WebSocket takes no lookup of ours. */
 export function readSocket(r, { most = SOCKET_MESSAGES, waitMs = SOCKET_MS, WS = globalThis.WebSocket, lookup = publicLookup } = {}) {
   return new Promise((done, fail) => {
@@ -48,8 +60,15 @@ export function readSocket(r, { most = SOCKET_MESSAGES, waitMs = SOCKET_MS, WS =
       const got = []; const ws = new WS(r.url);
       const end = () => { clearTimeout(t); try { ws.close(); } catch { /* closed */ } done(got); };
       const t = setTimeout(end, waitMs);
-      ws.onopen = () => { if (r.subscribe) ws.send(String(r.subscribe)); };
-      ws.onmessage = (m) => { got.push(parsed(String(m.data))); if (got.length >= most) end(); };
+      let steps = 0;
+      const start = async (message) => {
+        if (!r.init || steps > INIT_STEPS) return;
+        const said = await socketStart(r.init, message, steps++);
+        if (!said.ok) { clearTimeout(t); try { ws.close(); } catch { /* closed */ } fail(new Error(`its init code: ${said.why}`)); return; }
+        for (const x of said.send) ws.send(x);
+      };
+      ws.onopen = () => { if (r.subscribe) ws.send(String(r.subscribe)); start(null); };
+      ws.onmessage = (m) => { const one = parsed(String(m.data)); got.push(one); if (got.length >= most) end(); else start(one); };
       ws.onerror = () => { clearTimeout(t); fail(new Error('the socket refused')); };
     });
   });
@@ -62,7 +81,8 @@ export async function readMarketSources(list, options = {}) {
   for (const r of list) {
     if (!r || !/^[a-z][a-zA-Z0-9]*$/.test(String(r.id))) return { why: 'Name each read in letters' };
     const unlisted = marketHostProblem(r.url, options.hosts); if (unlisted && marketUrlProblem(r.url, r.kind === 'ws') === null) return { why: `${r.id}: ${unlisted}` };
-    try { reads[r.id] = r.kind === 'ws' ? await readSocket(r, options.socket) : parsed(await readPage(r.url, options.page)); } catch (e) { return { why: `${r.id}: ${e.message}` }; }
+    const init = r.kind === 'ws' ? r.init || (options.inits || {})[new URL(r.url).hostname] : null;
+    try { reads[r.id] = r.kind === 'ws' ? await readSocket({ ...r, init }, options.socket) : parsed(await readPage(r.url, options.page)); } catch (e) { return { why: `${r.id}: ${e.message}` }; }
   }
   return { reads };
 }

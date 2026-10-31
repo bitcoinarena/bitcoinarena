@@ -9,7 +9,8 @@ import { encodeConfigProposalBody, proposalBodyId, CLASS, SCHEDULES, configHashO
 import { depositOutputsExpected } from '../../arena-protocol/src/ballot-chain.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
-import { encodeSourceList } from '../../arena-protocol/src/market-check.js';
+import { decodeSourceList, encodeSourceList } from '../../arena-protocol/src/market-check.js';
+import { socketStart } from '../src/market-reader.js';
 import { tryExample } from '../src/market-test.js';
 
 const le = (n, bytes) => Uint8Array.from({ length: bytes }, (_, i) => Number((BigInt(n) >> BigInt(8 * i)) & 0xffn));
@@ -121,4 +122,25 @@ test('an example is read as a market reads: the field, in the sandbox', async ()
   assert.equal((await tryExample({ ...entry, path: 'data.none.more' }, { read })).ok, false);
   assert.match((await tryExample(entry, { read: async () => ({ why: 'page: answered 403' }) })).why, /403/);
   assert.match((await tryExample({ ...entry, read: 'text' }, { read: async () => ({ reads: { page: '  ' } }) })).why, /found nothing/);
+});
+
+test('a socket\'s init code: the check every seat gives the same answer on, the sandbox, what it sends', async () => {
+  const good = 'function init(message, step) {\n  if (step > 0) return null;\n  return JSON.stringify({ subscribe: message });\n}\n';
+  assert.deepEqual(await socketStart(good, 'x', 0), { ok: true, send: ['{"subscribe":"x"}'] });
+  assert.deepEqual(await socketStart(good, 'x', 1), { ok: true, send: [] });
+  assert.match((await socketStart("function init() {\n  return fetch('https://a.example/');\n}\n", null, 0)).why, /not allowed/);
+  assert.match((await socketStart('function init() {\n  return 7;\n}\n', null, 0)).why, /answers text/);
+  assert.match((await socketStart('function other() {\n  return 7;\n}\n', null, 0)).why, /one function init/);
+  const entry = (init) => ({ host: 'b.example.org', url: 'wss://b.example.org/x', read: 'text', path: '', docs: 'https://b.example.org/docs', init });
+  const a = { host: 'a.example.org', url: 'https://a.example.org/x', read: 'text', path: '', docs: 'https://a.example.org/docs' };
+  const before = encodeSourceList([a]);
+  for (const [init, status] of [[good, 201], ["function init() {\n  return eval('1');\n}\n", 422]]) {
+    const config = encodeSourceList([a, entry(init)]);
+    assert.equal(decodeSourceList(config).find((e) => e.host === 'b.example.org').init, init);
+    const want = depositOutputsExpected(1000, SET), raw = tx(want.outputs.map((o) => ({ sats: o.sats, script: o.script })));
+    const p = { networkId: NET, parent: new Uint8Array(32).fill(0x10), configHash: configHashOf(config), config, class: CLASS.SOURCES, activationHeight: 2000, proposer, depositTxid: Uint8Array.from(parseTransaction(raw).txid) };
+    const hex = toHex(Uint8Array.from([...encodeConfigProposalBody(p), ...schnorr.sign(proposalBodyId(p), secret)]));
+    const book = createProposals({ confirmedTx: async () => ({ raw, height: 200 }), recipientsFor: () => SET, lowestBondMinSatsFor: () => 200000n, verify, historyFor: () => [{ config: before }] });
+    assert.equal((await book.add({ proposal: hex, blockHash: 'a'.repeat(64) })).status, status);
+  }
 });

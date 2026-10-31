@@ -151,6 +151,8 @@ import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
 import { DrawnAttestor } from './drawn-attestor.js';
 import { runSourceOnce, tryExample } from './market-test.js';
 import { MARKET_HOSTS, encodeSourceList, hostListProblem } from '../../arena-protocol/src/market-check.js';
+import { sourcePlan, payDeposit, depositBlock, signedProposal } from './source-ballot.js';
+import { bondCliFrom } from './add-bond-wallet.js';
 import { SOURCE_ENTRIES } from '../../arena-protocol/src/market-sources.js';
 import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
@@ -1304,14 +1306,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const counts = !!(ballot && typeof ballot.tipHeight === 'function' && typeof ballot.votesAt === 'function' && typeof ballot.censusAt === 'function');
   const isRegtestNet = (net) => { const k = donationKeysForNetworkId(fromHex(net)); return !!k && k.network === 'regtest'; };
   let ballotTally = null;
+  const ballotRecipients = (net, height) => {
+    const networkId = fromHex(net); const keys = donationKeysForNetworkId(networkId);
+    if (!keys) return null;
+    const forced = donationSetInForce({ networkId, authority: keys.authority, recovery: keys.recovery, sets: donationSets,
+      rotations: donationRotations, height, verify: verifyDonation, approved: approvedSets() });
+    return forced.ok ? vestedShares(forced.recipients, height) : null;
+  };
   const proposals = givenProposals || (ballot ? createProposals({ confirmedTx: ballot.confirmedTx,
-    recipientsFor: (net, height) => {
-      const networkId = fromHex(net); const keys = donationKeysForNetworkId(networkId);
-      if (!keys) return null;
-      const forced = donationSetInForce({ networkId, authority: keys.authority, recovery: keys.recovery, sets: donationSets,
-        rotations: donationRotations, height, verify: verifyDonation, approved: approvedSets() });
-      return forced.ok ? vestedShares(forced.recipients, height) : null;
-    },
+    recipientsFor: ballotRecipients,
     lowestBondMinSatsFor: () => ballot.lowestBondMinSats,
     // regtest votes on its short schedule (1 / 6 / 1); every other network on the genesis one (27A.7.4)
     scheduleFor: (net) => (isRegtestNet(net) ? SCHEDULES.regtest : SCHEDULES.mainnet),
@@ -2350,14 +2353,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A MARKET WITH ITS OWN SOURCE (kanban #920) may end weeks after it opened: its rounds are kept to their end, and read from the store that far back
   const sourceHosted = [...hosted.values()].some((h) => h && h.manifest && h.manifest.source);
   // ITS SOURCES ARE JUDGED BY THE LIST LIVE AT ITS CENSUS HEIGHT (kanban #921): the same answer on every seat, whenever the seat asks
-  const hostsOfRound = (c) => (ballotTally && c.networkId instanceof Uint8Array ? ballotTally.hostsAt(toHex(c.networkId), c.censusHeight) : MARKET_HOSTS);
+  const listedSources = (entries) => ({ hosts: entries.map((e) => e.host), inits: Object.fromEntries(entries.filter((e) => e.init).map((e) => [e.host, e.init])) });
+  const sourcesOfRound = (c) => listedSources(ballotTally && c.networkId instanceof Uint8Array ? ballotTally.entriesAt(toHex(c.networkId), c.censusHeight) : SOURCE_ENTRIES);
   let drawnAfterRowid = 0;             // the rounds row read last (kanban #791)
   const drawnAttestor = drawnHosted ? new DrawnAttestor({
     readPrice: () => prices.readPrice(), selfKey: toHex(round.pubkey), sign: (d) => schnorr.sign(d, round.identity.secret),
     attestorsFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? got.attestors.map((e) => toHex(e.pubkey)) : null; },
     peersFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? peerEndpointsOf(got.attestors, round.pubkey) : []; },
-    runSource: sourceHosted ? (source, market, hosts) => runSourceOnce(source, market, { hosts }) : null,
-    opening: () => { const now = round.now(), out = []; for (const [k, d] of drawnContracts) if (d.source && Number(d.window.startMs) <= now && Number(d.window.endMs) > now) out.push({ roundId: fromHex(k), source: d.source, outcomes: d.outcomes, hosts: hostsOfRound(d.c) }); return out; },
+    runSource: sourceHosted ? (source, market, listed) => runSourceOnce(source, market, listed) : null,
+    opening: () => { const now = round.now(), out = []; for (const [k, d] of drawnContracts) if (d.source && Number(d.window.startMs) <= now && Number(d.window.endMs) > now) out.push({ roundId: fromHex(k), source: d.source, outcomes: d.outcomes, listed: sourcesOfRound(d.c) }); return out; },
     due: () => {
       // THE IDS ONLY, EVERY 10 S (kanban #742: every contract of the last 4 h was read out of the store and its id hexed on each
       // pass): a round seen for the first time has its contract read once (the store's decoded copy while it is open), and what is
@@ -2377,7 +2381,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       for (const [k, d] of drawnContracts) {
         if (d.openedMs <= now - 4 * 3600000 && !(d.source && Number(d.window.endMs) > now - 1800000)) { drawnContracts.delete(k); continue; }
-        if (Number(d.window.endMs) <= now && Number(d.window.endMs) > now - 1800000) out.push({ roundId: fromHex(k), window: d.window, ...(d.source ? { source: d.source, outcomes: d.outcomes, hosts: hostsOfRound(d.c) } : {}) });
+        if (Number(d.window.endMs) <= now && Number(d.window.endMs) > now - 1800000) out.push({ roundId: fromHex(k), window: d.window, ...(d.source ? { source: d.source, outcomes: d.outcomes, listed: sourcesOfRound(d.c) } : {}) });
       }
       return out;
     },
@@ -6598,7 +6602,58 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             const bad = hostListProblem(encodeSourceList([example]));
             return answer(200, bad ? { ok: false, why: bad } : await tryExample(example));
           }
-          return answer(200, await testMarket(body.args || {}, ballotTally && chainNetworkId() ? { hosts: ballotTally.sources(chainNetworkId()).hosts } : {}));
+          return answer(200, await testMarket(body.args || {}, ballotTally && chainNetworkId() ? listedSources(ballotTally.sources(chainNetworkId()).entries) : {}));
+        }
+        // A NEW SOURCE, FROM THE OWNER'S PAGE (kanban #921, source-ballot.js). Without `txid`: the deposit, paid from the bond wallet, or what to pay where this node has
+        // none. With it, confirmed: this node's key signs the proposal and every seat is asked to take it. The example is read again here at each step.
+        if (url.pathname === '/owner/source-proposal') {
+          const a = owner.authorize(body, 'source-proposal');
+          if (!a.ok) return answer(a.status || 401, a);
+          const net = chainNetworkId(), args = body.args || {}, entry = args.entry;
+          if (!ballotTally || !net) return answer(501, { ok: false, why: 'this node reads no ballot' });
+          const live = ballotTally.sources(net);
+          const plan = sourcePlan({ entry, live, recipients: ballotRecipients(net, ballotTally.tip), capSats: ballot.lowestBondMinSats / 100n });
+          if (!plan.ok) return answer(400, plan);
+          const read = await tryExample(entry);
+          if (!read.ok) return answer(422, { ok: false, why: `The example did not answer: ${read.why}` });
+          const w = bondCliFrom();
+          if (!args.txid) {
+            if (!w) return answer(200, { ok: true, paid: false, depositSats: plan.depositSats, outputs: plan.outputs });
+            try { return answer(200, { ok: true, paid: true, txid: payDeposit({ cli: w.cli, plan }), depositSats: plan.depositSats }); }
+            catch (e) { return answer(400, { ok: false, why: `The deposit could not be paid: ${e.message}` }); }
+          }
+          if (!/^[0-9a-f]{64}$/.test(String(args.txid))) return answer(400, { ok: false, why: 'name the deposit by its txid' });
+          const blockHash = args.blockHash || (w && depositBlock({ cli: w.cli, txid: args.txid }));
+          if (!blockHash) return answer(202, { ok: false, waiting: true, why: 'The deposit has not confirmed yet' });
+          const tx = await ballot.confirmedTx(args.txid, blockHash);
+          if (!tx) return answer(422, { ok: false, why: 'That block does not hold the deposit' });
+          const schedule = isRegtestNet(net) ? SCHEDULES.regtest : SCHEDULES.mainnet;
+          const proposal = signedProposal({ plan, net, txid: args.txid, proposer: round.pubkey, height: tx.height, schedule, sign: (m) => schnorr.sign(m, round.identity.secret) });
+          const got = await proposals.add({ proposal, blockHash });
+          if (!got.ok) return answer(got.status, got);
+          const seats = networkSeats();
+          const taken = await Promise.all(seats.map((s) => seasonFetch(`${s}/proposal`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ proposal, blockHash }), signal: AbortSignal.timeout(20000) }).then((r) => r.ok, () => false)));
+          return answer(200, { ok: true, id: got.id, votingFrom: got.votingFrom, votingUntil: got.votingUntil, activationHeight: got.activationHeight, example: got.example, seats: { asked: seats.length, took: taken.filter(Boolean).length } });
+        }
+        // A VOTE FROM THE OWNER'S PAGE (kanban #921): this node's bond key signs it, the bond wallet sends it; a node without one answers the payload for the owner's wallet.
+        // Yes takes a source only while its example answers here, for every host it adds.
+        if (url.pathname === '/owner/source-vote') {
+          const a = owner.authorize(body, 'source-vote');
+          if (!a.ok) return answer(a.status || 401, a);
+          const id = String((body.args || {}).proposalId || '').toLowerCase(), word = String((body.args || {}).choice || '').toUpperCase(), choice = CHOICE[word];
+          const kept = proposals.list().find((p) => p.id === id);
+          if (!kept || !choice) return answer(400, { ok: false, why: 'A vote names a kept proposal and YES, NO or ABSTAIN' });
+          if (word === 'YES') {
+            for (const e of kept.added || []) {
+              const read = await tryExample(e);
+              if (!read.ok) return answer(422, { ok: false, why: `${e.host} did not answer here: ${read.why}` });
+            }
+          }
+          const pid = fromHex(id), opReturn = toHex(encodeVote({ proposalId: pid, choice, signature: schnorr.sign(voteMessage(pid, choice), round.identity.secret) }));
+          const w = bondCliFrom();
+          if (!w) return answer(200, { ok: true, sent: false, opReturn });
+          try { return answer(200, { ok: true, sent: true, txid: JSON.parse(w.cli('-named', 'send', `outputs=${JSON.stringify([{ data: opReturn }])}`, 'fee_rate=2')).txid }); }
+          catch (e) { return answer(400, { ok: false, why: `The vote could not be sent: ${e.message}` }); }
         }
         if (url.pathname === '/owner/dev/setup' || url.pathname === '/owner/dev/withdraw' || url.pathname === '/owner/dev/remove') {
           const action = url.pathname.slice('/owner/'.length);
