@@ -6482,18 +6482,22 @@
         // signed it - the first seat that answers; null if none does. What a client shows as the result is this, not its own.
         result: async (id) => {
           const h = readHidden().find((x) => x.roundIdHex === id);
+          let none = null;
           for (const n of (h ? h.nodes : [])) {
             try {
               const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
               if (!r.ok) continue;
               const j = await r.json();
+              // A SEAT THAT WAS NOT DRAWN ANSWERS 200 WITH NO PLAYERS (the owner 2026-10-30: "beide orders werden abgesendet aber es gibt kein Ergebnis": round
+              // 1b995103 settled, 5 signed, and seven seats ahead of the signers in the list said nothing): the next seat is asked
+              if (!(j.players || []).length) { none = none || { entries: [], match: null }; continue; }
               // AND THE SCORE ACROSS ROUNDS: the seat's signed match record, with whose identity is whose
               return { entries: (j.players || []).map((p) => ({ entry: p.entry, outcome: p.outcome, score: p.score, signedBy: p.signedBy })),
                 match: j.match ? { identities: j.match.identities, names: j.match.names || [], score: j.match.score, played: j.match.played,
                   continued: !!j.match.previousRound, byEntry: j.match.players || {}, seat: j.match.seat, signature: j.match.signature } : null };
             } catch { /* the next seat */ }
           }
-          return null;
+          return none;
         },
         // A MARKET'S CLIENT: place an order (the pick at most this price of the scale) through the same join and
         // lock as a pick; the round's cleared book; this tab's orders; cancel one (signed with its kept session key, posted to
