@@ -13,7 +13,7 @@ import { UP_DOWN_OUTCOMES } from '../../../../arena-protocol/src/up-down.js';
 export { UPDOWN_PERIOD_MS, UPDOWN_TERMS, UPDOWN_ATTESTOR_WORDS, UPDOWN_CLIENT_FILE, UPDOWN_CLIENT_HASH, UPDOWN_CLIENT_V3_FILE, UPDOWN_CLIENT_V3_HASH, UPDOWN_CLIENT_V4_FILE, UPDOWN_CLIENT_V4_HASH, UPDOWN_CLIENT_V5_FILE, UPDOWN_CLIENT_V5_HASH, UPDOWN_CLIENT_V6_FILE, UPDOWN_CLIENT_V6_HASH, UPDOWN_CLIENT_V7_FILE, UPDOWN_CLIENT_V7_HASH, UPDOWN_CLIENT_V8_FILE, UPDOWN_CLIENT_V8_HASH, UPDOWN_CLIENT_V9_FILE, UPDOWN_CLIENT_V9_HASH, UPDOWN_CLIENT_V10_FILE, UPDOWN_CLIENT_V10_HASH, UPDOWN_CLIENT_V11_FILE, UPDOWN_CLIENT_V11_HASH, UPDOWN_CLIENT_V12_FILE, UPDOWN_CLIENT_V12_HASH, UPDOWN_CLIENT_V13_FILE, UPDOWN_CLIENT_V13_HASH, UPDOWN_CLIENT_V14_FILE, UPDOWN_CLIENT_V14_HASH, UPDOWN_CLIENT_V15_FILE, UPDOWN_CLIENT_V15_HASH } from '../../../../btc-updown/plugin/market-terms.js';
 import { UPDOWN_PERIOD_MS, UPDOWN_TERMS, UPDOWN_ATTESTOR_WORDS, UPDOWN_CLIENT_HASH } from '../../../../btc-updown/plugin/market-terms.js';
 // ITS DONATION KEY IS A POINT ON THE CURVE (kanban #237, measured on the regtest stack: the settlement failed with
-// "blwp-stake-lock: Error: malformed public key"): sign.js testDonationSet takes 0x02 || sha256(word), an x that is on the
+// "arena-stake-lock: Error: malformed public key"): sign.js testDonationSet takes 0x02 || sha256(word), an x that is on the
 // curve only half the time; this market's key is the public key of a test secret, so a payout to it can be made
 export const UPDOWN_DONATION_SET = Object.freeze([{ recipientPk: secp256k1.getPublicKey(createHash('sha256').update('test game donation key: btc-updown-15m').digest(), true),
   label: 'btc-updown-15m dev', shareBps: 10000 }]);

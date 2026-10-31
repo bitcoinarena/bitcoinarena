@@ -22,7 +22,8 @@ import { checkAsset } from './release-verify.js';
 import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHealthy, launchdPlist, LAUNCHD_LABEL, windowsLauncher, removeProgram, unitName, waitPortLine } from './service.js';
 import { adhocSign } from './tor.js';
 import { INSTANCE, PORT_OFFSET } from './instance.js';
-import { envToConfValues, formatConf, renameKeys, renameValues } from '../../arena-node/src/arena-conf.js';
+import { envToConfValues, formatConf, renameKeys, renameValues, setInConf } from '../../arena-node/src/arena-conf.js';
+import { stakeLockSetupOf } from './state.js';
 import { ensureApps } from '../../arena-node/src/app-fetch.js';
 import { writeCommand } from './launchers.js';
 import { control } from './node-services.js';
@@ -76,6 +77,12 @@ export function releaseOfUnit(text) {
 }
 
 const run = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { timeout: 120000 }, (e, out, err) => resolve({ ok: !e, out: String(out), err: String(err) })));
+
+/** arena.conf with the release's stake lock tool (kanban #824), for a node installed before the release carried it; a node that names its own keeps it. */
+export function withStakeLocks(text, locks) {
+  if (!locks || /^\s*stake_lock_bin\s*=/m.test(text)) return text;
+  return setInConf(setInConf(text, 'stake_lock_bin', locks.bin), 'federation_client_dir', locks.clientDir);
+}
 
 /** node.env's paths into a release - the games, the custody binaries - moved to the new release, from EVERY older one, not only the
  *  release the seat ran (macOS node A at rc.16 still read its games and fedimintd from the rc.12 folder it was installed from); a path
@@ -506,16 +513,18 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
   const envFile = join(home, 'node.env');
   const confFile = join(home, 'arena.conf');
   const migrating = !existsSync(confFile);
+  const locks = stakeLockSetupOf({ home, release: newRelease, platform });   // kanban #824: an installed node has none of these yet
   trace.debug(migrating ? 'arena.conf is missing: the settings move from node.env into it (once)' : 'arena.conf: its paths into an older release move to the new one, renamed keys take their new names');
   if (migrating) {
     const values = { network: state.network || 'testnet4', ...renameValues(envToConfValues(envForRelease(readFileSync(envFile, 'utf8'), newRelease), { port, database: join(home, 'node.db') })) };
     if (INSTANCE && !values.instance) values.instance = INSTANCE;
     if (PORT_OFFSET && !values.port_offset) values.port_offset = String(PORT_OFFSET);
+    if (locks && !values.stake_lock_bin) { values.stake_lock_bin = locks.bin; values.federation_client_dir = locks.clientDir; }
     writeFileSync(confFile, formatConf(values, { eol: platform === 'win32' ? '\r\n' : '\n', header: 'moved from node.env by an update' }), { mode: 0o600 });
   } else {
     const confText = readFileSync(confFile, 'utf8');
     // and a key that took a new name under it, once (kanban #569: games= is apps=)
-    const confNew = renameKeys(envForRelease(confText, newRelease));
+    const confNew = withStakeLocks(renameKeys(envForRelease(confText, newRelease)), locks);
     if (confNew !== confText) writeFileSync(confFile, confNew, { mode: 0o600 });
   }
   // A CHAIN BRIDGE THE NODE NO LONGER READS (the owner's services card on 2026.1.9.9: "Do I need electrum when I have bitcoin core installed

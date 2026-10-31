@@ -13,7 +13,7 @@
 //     ARENA_BITCOIND_COOKIE   the path of its .cookie file
 //     ARENA_FUNDED_ROUNDS     round ids this operator funds (paying rounds only)
 //     ARENA_FUNDED_ROUNDS_FILE  the same, one id per line, read on every ask
-//     ARENA_STAKE_LOCK_BIN    blwp-stake-lock (tools/stake-lock), for stake-lock rounds
+//     ARENA_STAKE_LOCK_BIN    arena-stake-lock (tools/stake-lock), for stake-lock rounds
 //     ARENA_FEDERATION_CLIENT_DIR  the data dir of a client joined to the round's federation
 //
 // AND WHAT A LAUNCHER USED TO HAND ITS IN-PROCESS NODES, for nodes that run as their own processes (attach, the owner

@@ -23,7 +23,7 @@
 //
 // THE FEDERATION IS A PORT, as Lightning is: `status(outpoint)` answers
 // `{ blockCount, stored: { contractId, blocksLeft } | null }` and
-// `contractId(fields)` the stock hash (blwp-stake-lock, over the Rust client
+// `contractId(fields)` the stock hash (arena-stake-lock, over the Rust client
 // crates). The fee lock is not checked here: its claim hash and the §22A node
 // slots wait on a ruling (PRIORITIES).
 import { decodeEntryContract, decodeRoundContract, entryFederation } from '../../arena-protocol/src/contracts.js';
