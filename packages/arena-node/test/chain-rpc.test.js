@@ -287,7 +287,7 @@ test('a round view that does not link is read once more with the kept hashes dro
   assert.deepEqual([once === good, reads, cache.hashes.size], [true, 1, 1]);
   // and the seat reads its rounds' views through it
   const main = (await import('node:fs')).readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-  assert.match(main, /viewWithFreshHashes\(\{ read: \(\) => blocksOver\(call, Math\.max\(0, contract\.censusHeight - CENSUS_LOOKBACK\), to, \{ cache: blocksKept \}\), cache: blocksKept \}\)/);
+  assert.match(main, /viewWithFreshHashes\(\{ read: \(\) => blocksOver\(call, censusFirstBlock\(contract\.censusHeight, networkOf\(contract\.networkId\)\), to, \{ cache: blocksKept \}\), cache: blocksKept \}\)/);
 });
 
 // THE SERIES WRITER BACKS OFF A REFUSED ASSIGNMENT (kanban #576): a refusal that cost a census waits a minute; a view not read yet,

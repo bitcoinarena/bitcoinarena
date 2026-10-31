@@ -40,9 +40,9 @@ function page({ record, theLook, collect }) {
   // this test's one record is the tab's own
   record.own = true;
   const fns = pageFunction(PAGE, ['window', 'document', 'vault', 'ARENACLIENT', 'lookRound', 'roundAsk', 'newestKept', 'collectSeed', 'collectNote', 'lookSaid',
-    'paintWallet', 'paintHistory', 'paintMoney', 'payoutAsking', 'fetch', 'keptRecords', 'withRecordPhrase', 'collectFailed', 'collectHeld'], [PAYOUT, PENDING], 'return { lookThePayout, lookThePending };')(
+    'paintWallet', 'paintHistory', 'paintMoney', 'payoutAsking', 'fetch', 'keptRecords', 'withRecordPhrase', 'collectFailed', 'collectHeld', 'performance'], [PAYOUT, PENDING], 'return { lookThePayout, lookThePending };')(
     window, document, vault, ARENACLIENT, lookRound, () => ({}), () => record, () => 'seed', () => {}, () => '', () => {}, () => {}, () => {}, false,
-    async () => { throw new Error('no /standing in this test'); }, () => ({ collectable: [record], uncollectable: [] }), (r, fn) => fn(), new Map(), new Set());
+    async () => { throw new Error('no /standing in this test'); }, () => ({ collectable: [record], uncollectable: [] }), (r, fn) => fn(), new Map(), new Set(), { now: () => 60000 });   // past the 30 s the looks leave an order after a load (kanban #803)
   return { ...fns, window, marked };
 }
 
