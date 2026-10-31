@@ -177,3 +177,16 @@ test('no strip of settlement facts and fees over a game client (the owner 2026-1
   assert.match(page, /#arena-client \{ height: calc\(100% - 41px - 30px/);
 });
 
+test('the collect waits 30 s after a load and gives way to an order between records (the owner 2026-10-30, the first 1-2 minutes)', () => {
+  const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  assert.match(page, /async function lookThePayout\(\) \{\n\s*if \(performance\.now\(\) < 30000\) return;/);
+  assert.match(page, /if \(rescanWanted\) break;\n\s*await orderClear\(\);/);
+  assert.match(page, /window\.ARENA_ORDER_AT = Date\.now\(\);/);
+});
+
+test('a federation whose wallet did not open holds no other merge for the rest of the load (the owner 2026-10-30: minutes instead of seconds)', () => {
+  const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  assert.match(page, /mergeNoOpen\.has\(noOpenKey\) \|\| mergeDeadFeds\.has\(fedHex\)/);
+  assert.match(page, /mergeDeadFeds\.add\(fedHex\)/);
+});
+
