@@ -293,7 +293,7 @@ try {
   for (let tries = 1; ; tries++) {
     seed = await worldSeedFor({ entry, round: env.ROUND, nodes, contract: c });
     if (!env.SEARCH) { drive = drivenTape(seed.seedWord, N); break; }
-    drive = searchedTape(A, config, seed.seedWord, N, unlocks.length ? { items: unlocks } : {}, { ms: Number(env.SEARCH_MS || 60000) });
+    drive = searchedTape(A, config, seed.seedWord, N, { ...(unlocks.length ? { items: unlocks } : {}), ...(seed.slot === undefined ? {} : { slot: seed.slot }) }, { ms: Number(env.SEARCH_MS || 60000) });
     log({ step: 'searched', tries, drivesTried: drive.tried, outcome: drive.outcome, score: drive.score, drive: drive.drive });
     if (drive.tape) break;
     if (worldIsShared(c, sharedWorldOf(c.gameId)) || tries >= 3) throw new Error('no delivering drive found for this world');
@@ -303,7 +303,7 @@ try {
   if (env.KEYS_FILE) appendFileSync(env.KEYS_FILE, `${JSON.stringify({ at: new Date().toISOString(), round: toHex(rid), entry: toHex(eid),
     secret: toHex(me.secret), stake: `${toHex(locks.stake.outpoint.txid)}:${locks.stake.outpoint.outIdx}`,
     fee: locks.fee ? `${toHex(locks.fee.outpoint.txid)}:${locks.fee.outpoint.outIdx}` : null })}\n`);
-  const st = A.start(seed.seedWord, config, { runTicks: N, ...(unlocks.length ? { items: unlocks } : {}) });
+  const st = A.start(seed.seedWord, config, { runTicks: N, ...(unlocks.length ? { items: unlocks } : {}), ...(seed.slot === undefined ? {} : { slot: seed.slot }) });
   const ev = A.eventsOf({ loads: bedFrom(0) });
   const stateAt = [];
   const FIRST = 60;

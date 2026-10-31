@@ -233,7 +233,7 @@ try {
     const loads0 = bedFrom(0);
     const drive = drivenTape(seed.seedWord, N);
     const A = core.adapter;
-    const st = A.start(seed.seedWord, config, { runTicks: N });
+    const st = A.start(seed.seedWord, config, { runTicks: N, ...(seed.slot === undefined ? {} : { slot: seed.slot }) });
     const ev = A.eventsOf({ loads: loads0 });
     const stateAt = [];
     for (let t = 0; t < N; t++) { ev.before(st, t); A.step(st, drive.tape[t]); if (t + 1 === FIRST || t + 1 === N) stateAt[t + 1] = A.stateHash(st); }
