@@ -1421,8 +1421,13 @@
   <link rel="stylesheet" href="games/nextblock/unity-page.css">
   <!-- its loading screen's markup is put in while the page is parsed (#boot): fetched from the start, beside the styles -->
   <link rel="preload" href="games/nextblock/loading-page.js" as="script">
-  <script defer src="https://stats.bitcoin-arena.io/script.js" data-website-id="024ff09e-c3a6-4dfd-bede-3163eb8be36a" data-domains="testnet.bitcoin-arena.io"></script>
+  <script defer src="https://stats.bitcoin-arena.io/script.js" data-website-id="024ff09e-c3a6-4dfd-bede-3163eb8be36a" data-domains="testnet.bitcoin-arena.io" data-before-send="arenaTrackUrl"></script>
   <script>
+    // THE ADDRESS UMAMI KEEPS: the game and the campaign, never a round id, a node or a referrer's key
+    window.arenaTrackUrl = (type, payload) => {
+      try { const u = new URL(payload.url, location.origin); for (const k of [...u.searchParams.keys()]) if (k !== 'game' && !k.startsWith('utm_')) u.searchParams.delete(k); payload.url = u.pathname + u.search; } catch { /* sent as it is */ }
+      return payload;
+    };
     // WHAT PLAYERS DO, COUNTED (kanban #923, the owner 2026-10-31: "Events fuer umami anlegen. Wallet login, existing user, new wallet, app geoeffnet, bezahlte Runde etc."):
     // ARENA_TRACK(name, data) hands an event to Umami. Events wait in this tab until Umami has loaded, and across the reload a restored wallet makes. Only words and
     // size classes go out, never a key, an address, a round id or an amount; a refusal's text has its hex taken out first.
