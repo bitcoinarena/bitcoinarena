@@ -17747,7 +17747,9 @@ async function scanLostDeposits({ client, storage, federationId, lost = [], onCl
     next = got.next; done = got.done;
     for (const f of got.found) {
       foundN++;
-      waits.push(client.awaitReceive(f.operation).then((final) => {
+      // BOUNDED, ONE BY ONE (kanban #883, the owner's iPhone: one wait that never ended held the whole scan, so its "done" never came and unpaid invoices stayed in the red line)
+      pendingDrop(storage, federationId, f.operation);
+      waits.push(withinMs(client.awaitReceive(f.operation), 60000, 'the claim did not end').then((final) => {
         if (final !== 'Claimed') return;
         msat += BigInt(f.msat);
         ledgerAppend(storage, federationId, { kind: 'deposit', msat: String(f.msat), invoiceHash: null });
