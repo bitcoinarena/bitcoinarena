@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OWNER PAGE'S WAY IN IN REACT (kanban #564): the welcome's three ways; new words shown once with three typed back (a wrong one stops, a
-// browser that keeps nothing says so); the restore by the words' checksum; Login with Nostr by an nsec and a new account (Continue only once
+// THE OWNER PAGE'S WAY IN IN REACT (kanban #564): the welcome's three ways; new words shown once with three typed back (a wrong one stops);
+// the secret handed to the page to hold, with where it stays said where it is typed (kanban #832); the restore by the words' checksum; Login with Nostr by an nsec and a new account (Continue only once
 // the key is saved); the claim with the file's full path and the code; a one-card message with its buttons.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +15,7 @@ function start(over = {}) {
   const client = { phraseFromSeed: () => ({ words: WORDS }), seedFromPhrase: (p) => (p.trim().split(/\s+/).length === 24 ? { ok: true, seed: 'S' } : { ok: false, why: 'it has the wrong number of words' }),
     signerFromNsec: (n) => { if (!/^nsec1/.test(n)) throw new Error('that is not an nsec'); return { secret: 'k', pubkey: 'p1' }; },
     newAccount: () => ({ nsec: 'nsec1new', signer: { secret: 'n', pubkey: 'p2' } }), toHex: (x) => 'hex:' + x };
-  const props = { client, random32: () => 'R', keepSeed: (s) => (calls.kept.push(s), over.keeps !== false), keepNostr: (o) => (calls.nostr.push(o), true),
+  const props = { client, random32: () => 'R', holdSeed: (s) => { calls.kept.push(s); }, holdNostr: (o) => { calls.nostr.push(o); },
     claim: async (code) => { calls.claimed.push(code); if (code === 'BAD') throw new Error('that is not the claim code'); }, onIn: () => { calls.in++; }, ...over };
   const m = new OwnerStart(props);
   m.setState = (u, cb) => { Object.assign(m.state, typeof u === 'function' ? u(m.state) : u); if (cb) cb(); };
@@ -38,7 +38,7 @@ test('the welcome: three ways in', () => {
   assert.match(h, /<button type="button" class="primary">Create new 24 words<\/button><button type="button">I have my 24 words<\/button><button type="button">Login with Nostr<\/button><\/div>$/);
 });
 
-test('new words: shown once, three typed back - a wrong one stops; kept, then in; a browser that keeps nothing says so', () => {
+test('new words: shown once, three typed back - a wrong one stops; held, then in', () => {
   const s = start();
   s.m.make();
   assert.equal(s.m.state.screen, 'make');
@@ -51,10 +51,33 @@ test('new words: shown once, three typed back - a wrong one stops; kept, then in
   s.m.state.typed[s.m.state.ask[1]] = ' ' + WORDS[s.m.state.ask[1]].toUpperCase() + ' ';
   s.m.wrote();
   assert.deepEqual([s.calls.kept, s.calls.in], [['R'], 1]);
-  const private_ = start({ keeps: false });
-  private_.m.make(); for (const i of private_.m.state.ask) private_.m.state.typed[i] = WORDS[i];
-  private_.m.wrote();
-  assert.equal(private_.m.state.err, 'This browser does not let the page keep them (private mode?).');
+});
+
+// WHERE THE SECRET STAYS (kanban #832): in the tab until the node confirms it, then in local storage, unencrypted - said on every screen that takes one
+test('every screen that takes a secret says where it stays', () => {
+  const where = /in this tab&#x27;s memory until your node confirms (them|it) as its owner\. Then this browser keeps (them|it) in its local storage, unencrypted, until you sign out\./;
+  const s = start();
+  s.m.go('restore'); assert.match(s.html(), where);
+  s.m.go('nostr'); assert.match(s.html(), where);
+  s.m.make(); assert.match(s.html(), where);
+  s.m.go('nostr'); s.m.newAccount(); assert.match(s.html(), where);
+  assert.match(start({ screen: 'claim', mine: 'k' }).html(), /Nothing is kept in this browser until the claim works/);
+});
+
+// A CLAIMED NODE (kanban #833): sign-in only - no new account, and no line promising that a key becomes the owner's
+test('a claimed node: Nostr signs in only, no new account, no promise that a new key becomes the owner key', () => {
+  const s = start({ claimed: true });
+  s.m.go('nostr');
+  const h = s.html();
+  assert.match(h, /Sign in with the Nostr key that owns this node\./);
+  assert.doesNotMatch(h, /Create an account/);
+  assert.doesNotMatch(h, /becomes this node/);
+  s.m.newAccount();
+  assert.equal(s.m.state.screen, 'nostr', 'nothing else reaches the new-account screen');
+  const open = start();
+  open.m.go('nostr');
+  assert.match(open.html(), /Create an account/, 'a node with no owner still offers it');
+  assert.match(open.html(), /Your Nostr key becomes this node/);
 });
 
 test('restore by the words; Login with Nostr by an nsec; a new account goes on only once its key is saved', () => {
