@@ -35,6 +35,7 @@ export function bodyFromJson(json, { devPubkey } = {}) {
   for (const k of BIGINTS) if (m[k] !== undefined) m[k] = big(m[k], k);
   if (Array.isArray(m.cores)) m.cores = m.cores.map((c, i) => ({ hash: b32(c.hash, `cores[${i}].hash`), configs: (c.configs || []).map((x, n) => b32(x, `cores[${i}].configs[${n}]`)) }));
   if (m.marketTerms) { m.marketTerms = { ...m.marketTerms }; for (const k of TERM_BIGINTS) if (m.marketTerms[k] !== undefined) m.marketTerms[k] = big(m.marketTerms[k], `marketTerms.${k}`); }
+  if (m.template) m.template = { ...m.template, resolveWithinMs: big(m.template.resolveWithinMs, 'template.resolveWithinMs') };
   m.resultType = named(m.resultType, RESULT_TYPE, 'result type');
   m.payoutRule = named(m.payoutRule, PAYOUT_RULE, 'payout rule');
   // the lists a manifest keeps sorted

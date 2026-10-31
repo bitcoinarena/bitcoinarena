@@ -153,6 +153,8 @@ export function censusMinimumFor(contract) {
 export function eligibleFor(e, contract, role) {
   if (!(e.roles || []).includes(role)) return false;
   if (poolOfRole(role) !== GAME_VERIFY) return true;
+  // A MARKET WITH A SOURCE (kanban #920): every bonded node hosts it, whatever its advertisement lists. The whitelist of sources is another matter: the ballot's (#921)
+  if (contract && contract.event && contract.event.allBonded === true) return true;
   return hostsGame(e, contract && contract.gameId);
 }
 
