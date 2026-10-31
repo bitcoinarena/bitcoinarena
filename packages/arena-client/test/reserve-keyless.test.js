@@ -42,8 +42,8 @@ test('the line says why such a window is not playable', () => {
 
 test('the lobby holds such tables back before the wallet\'s own federation is chosen', () => {
   const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
-  assert.match(src, /if \(!keyless\.has\(f\) && holdsSatIn\(f\) >= stakeSatOf\(r\)\)/, 'a keyless federation is never the wallet\'s federation');
-  assert.match(src, /if \(keyless\.has\(f\)\) \{[^\n]*why: 'no reserve key' \}\); return false; \}\n\s*const mineFeds/, 'and comes before the wallet rule');
+  assert.match(src, /if \(!keyless\.has\(f\) && !inactive\.has\(f\) && holdsSatIn\(f\) >= stakeSatOf\(r\)\)/, 'a keyless federation is never the wallet\'s federation');
+  assert.match(src, /if \(keyless\.has\(f\) \|\| inactive\.has\(f\)\) \{[^\n]*return false; \}\n\s*const mineFeds/, 'and comes before the wallet rule');
 });
 
 test('the page can call it: the bundle exports it by name', () => {
@@ -78,7 +78,7 @@ test('a balance in such a federation says so; one elsewhere says nothing (the ow
 
 test('the bundle exports the line, and the page shows it', () => {
   assert.match(readFileSync(new URL('../tools/bundle.js', import.meta.url), 'utf8'), /keylessFundsLine: keylessFundsLine/);
-  assert.match(readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8'), /ARENACLIENT\.keylessFundsLine\(\{ parts: bal\.parts, keyless: k\.keyless, expected:/);
+  assert.match(readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8'), /ARENACLIENT\.keylessFundsLine\(\{ parts: bal\.parts, keyless: new Set\(\[\.\.\.k\.keyless/);
 });
 
 test('the message says from when it will work (the owner: "Sage, ab wann es funktionieren wird")', async () => {
@@ -95,7 +95,7 @@ test('the whole stuck balance is counted: a part under the federation\'s first 1
   const l = keylessFundsLine({ parts: [{ federation: A, sats: 5 }, { federation: A.slice(0, 16), sats: 305, merging: 305 }, { federation: B, sats: 40 }], keyless: new Set([A]), expected: { [A]: 158325 } });
   assert.equal(l.sats, 310);
   assert.match(l.text, /^310 sat of your balance/);
-  assert.match(l.text, /in federation aaaaaaaa\. That federation has/);
+  assert.match(l.text, /in federation aaaaaaaa\. Paid rounds there are paused/);
   assert.match(l.text, /block 158,325/);
 });
 
@@ -116,4 +116,14 @@ test('a lock held by notes still arriving says so (the owner 2026-10-30: "kommt 
   const at = src.indexOf('is being issued (\\d+) msat more');
   assert.ok(at > 0 && at < src.indexOf("return 'locking your stake in the federation'"), 'read before the general line');
   assert.match("the player wallet holds 89000 msat and is being issued 11000 msat more (a restore, a deposit or a payment's change): waiting for those notes", /is being issued (\d+) msat more/);
+});
+
+test('a federation not active is not paid into; a failed read holds nothing back (the owner: "soll er in der UI auch nicht versuchen mit der zu bezahlen")', async () => {
+  const { inactiveFederations } = await import('../src/reserves-page.js');
+  const open = { status: 'OPEN', allows: { join: true } }, unverified = { status: 'unverified', allows: { join: true } }, critical = { status: 'CRITICAL', allows: { join: false } }, draining = { status: 'DRAINING', allows: { join: true } };
+  assert.deepEqual([...inactiveFederations(new Map([[A, unverified], [B, open]]))], [A]);
+  assert.deepEqual([...inactiveFederations(new Map([[A, critical], [B, open]]))], [A]);
+  assert.equal(inactiveFederations(new Map([[A, draining], [B, open]])).size, 0, 'a draining federation still takes entries');
+  assert.equal(inactiveFederations(new Map([[A, unverified], [B, unverified]])).size, 0, 'nothing verified at all: the read failed');
+  assert.equal(inactiveFederations(undefined).size, 0);
 });
