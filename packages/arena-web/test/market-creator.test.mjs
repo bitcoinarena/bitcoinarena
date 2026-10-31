@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import { SOURCE_ENTRIES } from '../../arena-protocol/src/market-sources.js';
 import { decodeHostList, hostListProblem } from '../../arena-protocol/src/market-check.js';
-import { entryProblem, proposedList, SourceProposal } from '../dist/test/source-proposal.mjs';
+import { INIT_DEFAULT, entryProblem, proposedList, SourceProposal } from '../dist/test/source-proposal.mjs';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -109,4 +109,10 @@ test('every listed socket that needs starting has code that passes the check', (
   const started = SOURCES.filter((s) => s.init);
   assert.ok(started.length >= 1);
   for (const s of started) assert.equal(checkMarketCode(s.init, parse, 'init').ok, true, s.name);
+});
+
+test('the default init code passes the check and sends nothing, so it runs on any socket', async () => {
+  assert.equal(checkMarketCode(INIT_DEFAULT, parse, 'init').ok, true);
+  assert.equal(new Function(`${INIT_DEFAULT}; return init(null, 0);`)(), null);
+  assert.equal(new Function(`${INIT_DEFAULT}; return init({}, 1);`)(), null);
 });
