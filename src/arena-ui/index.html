@@ -1590,7 +1590,7 @@
     // one-paid-run heartbeat (and a read of the kept phrases, only to cut them out of a copy). A tab's player and money are
     // vault()'s and the seed keeper's, nowhere else.
     const browserStore = window.ARENA_BROWSER_STORE;
-    const KEY = 'arena.clientlog', MOST = 800, LONGEST = 400;
+    const KEY = 'arena.clientlog', MOST = 400, LONGEST = 300;
     let lines = [];
     try { lines = JSON.parse(browserStore().getItem(KEY) || '[]'); if (!Array.isArray(lines)) lines = []; } catch { lines = []; }
     let dirty = false;
@@ -7016,7 +7016,8 @@
       // A SLOW ORDER'S LOG, KEPT IN THIS BROWSER (2026-10-24: "Store the client log for delayed orders locally with a button copy log and a
       // label slow tx"): an order placed after more than SLOW_TX_MS keeps the page's log (ARENA_CLIENT_LOGS, secrets taken out) under its
       // transaction id - the last SLOW_TX_MOST, each cut to SLOW_TX_BYTES; the history marks its row "slow tx" with a Copy log button
-      const SLOW_TX_KEY = 'arena.slowtx', SLOW_TX_MS = 2000, SLOW_TX_MOST = 3, SLOW_TX_BYTES = 150000;
+      const SLOW_TX_KEY = 'arena.slowtx', SLOW_TX_MS = 2000, SLOW_TX_MOST = 2, SLOW_TX_BYTES = 8000;   // kanban #883: 300 KB of a phone's 5 MB for a debug trace
+      try { const s = window.ARENA_BROWSER_STORE() || localStorage, old = s.getItem(SLOW_TX_KEY); if (old && old.length > 2 * SLOW_TX_BYTES) s.removeItem(SLOW_TX_KEY); } catch { /* none */ }
       const slowTxs = () => { try { return JSON.parse((window.ARENA_BROWSER_STORE() || localStorage).getItem(SLOW_TX_KEY) || '[]'); } catch { return []; } };
       window.ARENA_SLOW_TX_MS = SLOW_TX_MS;
       window.ARENA_KEEP_SLOW_TX = (idHex, ms) => {
@@ -7051,7 +7052,9 @@
       window.ARENA_TIDY_STORAGE = (pressureChars = 1500000) => {
         try {
           if (!ARENACLIENT.tidyStorage) return null;
-          const L = vault(); const cur = ((window.sessionStorage && sessionStorage.getItem('arena.player.seed')) || '').toLowerCase();
+          const L = vault();
+          // packed first: it frees the most and removes nothing (kanban #883)
+          if (ARENACLIENT.packWallets) { const freed = ARENACLIENT.packWallets(L); if (freed) console.log('[arena] storage: wallets packed, ' + freed + ' characters free again'); } const cur = ((window.sessionStorage && sessionStorage.getItem('arena.player.seed')) || '').toLowerCase();
           if (!/^[0-9a-f]{64}$/.test(cur)) return null;
           let kept = []; try { kept = JSON.parse(L.getItem('arena.seeds') || '[]').map((x) => (typeof x === 'string' ? x : x && x.hex)).filter(Boolean); } catch { kept = []; }
           const tab = sessionStorage.getItem('arena.tab.id');
