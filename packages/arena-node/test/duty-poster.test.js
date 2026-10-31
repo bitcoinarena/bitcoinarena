@@ -418,3 +418,10 @@ test('one chain view, two day duties: both see the posted marker; a block append
   }
   assert.equal(b.did.published.length + c.did.published.length, 0, 'and neither posts again');
 });
+
+test('dayTemplate: named relays replace a held template\'s and the built-in one (kanban #808)', () => {
+  const r = dayTemplate({ held: [], family: new Set(), networkId: new Uint8Array(32), game: 'rps', ownRelay: 'http://own', relays: ['https://a/1', 'https://a/2'] });
+  assert.deepEqual([r.from, r.contract.publicationRelays], ['built-in', ['https://a/1', 'https://a/2']]);
+  assert.deepEqual(dayTemplate({ held: [], family: new Set(), networkId: new Uint8Array(32), game: 'rps', ownRelay: 'http://own', relays: [] }).contract.publicationRelays, ['http://own']);
+});
+
