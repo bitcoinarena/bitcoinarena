@@ -83,7 +83,7 @@ export class UptimePanel extends React.Component {
         <div className="up-tiles">{uptimeRows(U).map((r) => {
           const day = r.key === '24h';
           return (
-            <div key={r.key} className={'up-tile' + (day ? (below ? ' bad' : ' ok') : '')}>
+            <div key={r.key} className={'up-tile' + (day && below ? ' bad' : day && (r.share ?? 0) >= 0.5 ? ' ok' : '')}>
               <span className="up-win">{day ? 'Last 24 hours' : r.label}</span>
               <b className="up-pct">{r.value}</b>
               <span className="up-bar" aria-hidden="true"><i style={{ width: `${Math.round((r.share ?? 0) * 100)}%` }} /></span>
