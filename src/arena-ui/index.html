@@ -1094,6 +1094,8 @@
     /* CleanHud.cs (Shift+H): a clean screen for the trailer - the page's overlays go with the Unity HUD. */
     body.arena-clean #arena-money, body.arena-clean #arena-players, body.arena-clean #arena-wallet,
     body.arena-clean #arena-deposit, body.arena-clean #arena-refund { display: none !important; }
+    /* THE REFUND KEY'S LINE IS NOT OVER A GAME (kanban #827, the owner's playtest on UI 449: it ran across the Arena's bar): the seed's backup and restore are in Settings */
+    #arena-refund { display: none !important; }
     #arena-backup-warn { display:flex; align-items:center; gap:10px; flex: 1 1 auto; max-width: 560px; padding:6px 10px;
       background:rgba(58,32,0,0.94); border:2px solid #ff9d2e; border-radius:6px; color:#ffcf8a;
       font-size:13px; font-weight:600; line-height:1.25; }
