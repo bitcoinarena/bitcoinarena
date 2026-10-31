@@ -3308,7 +3308,7 @@
           lap(coversHere ? 'succession (beside the order)' : 'succession');
           // MONEY STILL MERGING IS MERGED FIRST (2026-10-22: "If it's not spendable it should say so in the window instead of a deposit
           // request. But it's been like this for minutes"): this phrase's wallets in the round's federation and in the ones a swap may draw on take
-          // in what this browser's other wallets hold, before the swap and the funding read them - a minute at most
+          // in what this browser's other wallets hold, before the swap and the funding read them - 12 s at most (the owner 2026-10-30)
           try {
             const here = Array.from(named.round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
             const needMsat = BigInt(named.round.stakeMsat) + BigInt(donation.donationMsat || 0n);
@@ -3318,7 +3318,7 @@
               onStep(`merging ${m.toLocaleString('en-US')} sat in from your other wallets in this browser first`);
               // (kanban #625, 2026-10-24 275bf1e2: 52 s between the stake shares and the lock - this wait, unnamed): said in the order's steps
               txStep('-> merge ' + m + ' sat first');
-              await window.ARENA_MERGE_NOW(plan.mergeFirst, 60000, { seed, LockClient: wasm.LockClient, extra: { [here]: named.federation } });
+              await window.ARENA_MERGE_NOW(plan.mergeFirst, 12000, { seed, LockClient: wasm.LockClient, extra: { [here]: named.federation } });
               txStep('<- merge ' + m + ' sat first');
             }
           } catch (e) { console.warn('[arena] merge before the join: ' + e.message); }
@@ -7067,17 +7067,23 @@
       const mergeSaid = (fedHex, state, why = '') => { window.ARENA_MERGE_STATE[String(fedHex).slice(0, 16)] = { state, why, atMs: Date.now() };
         if (state === 'stuck') console.log('[arena] merge in federation ' + String(fedHex).slice(0, 8) + ' stuck: ' + why); };
       // A WALLET THAT DID NOT OPEN IS NOT OPENED AGAIN THIS LOAD (kanban #803: its open goes on behind the 30 s, so each new try added its sockets to the last)
-      const mergeNoOpen = new Set();
-      // AND A FEDERATION WHOSE WALLET DID NOT OPEN IS LEFT FOR THIS LOAD (kanban #803, the owner 2026-10-30: "warum das merging minuten dauert anstatt sekunden"): each
+      const mergeNoOpen = new Map();   // wallet -> asked again from
+      // AND A FEDERATION WHERE TWO WALLETS DID NOT OPEN IS LEFT FOR FIVE MINUTES (kanban #803, the owner 2026-10-30: "warum das merging minuten dauert anstatt sekunden"): each
       // open holds its phrase, so 30 s on a dead federation (b18947f0) made the merge of the same phrase in the live federation wait, phrase after phrase
-      const mergeDeadFeds = new Set();
+      const mergeDeadFeds = new Map();   // federation -> { misses, until }
+      // NOTHING SLOW HOLDS THE REST (the owner 2026-10-30: "Es darf nicht ewig hängen und es darf auch nicht auf eine eigene langsame Node gewartet werden"): four wallets at
+      // a time, and every wait short; what missed its turn is taken at the next merge
+      const MERGE_AT_ONCE = 4, MERGE_OPEN_MS = 10000, MERGE_LOCK_MS = 8000, MERGE_RECEIVE_MS = 20000;
       function combineIn(main, fedHex, invite, { legacy }) {
         fedHex = String(fedHex).toLowerCase();
         if (combiningBy.has(fedHex)) return combiningBy.get(fedHex);
         mergeSaid(fedHex, 'merging');
         const run = (async () => {
           const L = vault(); const cur = sessionStorage.getItem('arena.player.seed') || '';
-          const receiveKept = async () => {
+          // one pass at a time: several wallets of this merge finish together, and each kept copy is received once
+          let receiving = Promise.resolve();
+          const receiveKept = () => { receiving = receiving.catch(() => {}).then(receiveKeptPass); return receiving; };
+          const receiveKeptPass = async () => {
             for (const k of Object.keys(L).filter((x) => x.startsWith('arena.ecash.pending.'))) {
               let rec; try { rec = JSON.parse(L.getItem(k)); } catch { rec = null; }
               if (!rec || !rec.ecash) { L.removeItem(k); continue; }
@@ -7091,16 +7097,16 @@
               const step = (x) => { try { if (window.ARENA_TX_STEP) window.ARENA_TX_STEP(x); } catch { /* not kept */ } };
               const recvAt = performance.now();
               step('-> merge receive ' + Math.round(Number(rec.msat) / 1000) + ' sat');
-              try { said = JSON.parse(await Promise.race([main.receiveEcash(rec.ecash), new Promise((_, no) => setTimeout(() => no(new Error('the federation did not answer the receive in 45 s')), 45000))])); }
+              try { said = JSON.parse(await Promise.race([main.receiveEcash(rec.ecash), new Promise((_, no) => setTimeout(() => no(new Error('the federation did not answer the receive in ' + MERGE_RECEIVE_MS / 1000 + ' s')), MERGE_RECEIVE_MS))])); }
               catch (e) { step('<- merge receive ' + Math.round(Number(rec.msat) / 1000) + ' sat (' + (e && e.message ? e.message : e) + ')'); mergeSaid(fedHex, 'stuck', 'receiving ' + rec.msat + ' msat from wallet ' + rec.from + ': ' + (e && e.message ? e.message : e)); continue; }
               step('<- merge receive ' + Math.round(Number(rec.msat) / 1000) + ' sat (' + said.state + ', ' + Math.round(performance.now() - recvAt) + ' ms)');
               if (!['Success', 'AlreadyReceived', 'Rejected'].includes(said.state)) mergeSaid(fedHex, 'stuck', 'receiving ' + rec.msat + ' msat from wallet ' + rec.from + ': the federation said ' + said.state);
               console.log('[arena] combined ' + rec.msat + ' msat from wallet ' + rec.from + ' in federation ' + fedHex.slice(0, 8) + ': ' + said.state);
               // THE KEPT COPY STAYS COUNTED UNTIL THE BALANCE SHOWS IT (measured on UI 268, 19:29:09Z: one sum read 0 sat between "combined ... Success"
-              // and the reissued notes landing ~3 s later): after a Success, dropped once this wallet's balance rose, or after 30 s at the latest
+              // and the reissued notes landing ~3 s later): after a Success, dropped once this wallet's balance rose, or after 5 s at the latest
               if (said.state === 'Success' && before !== null) {
                 step('-> merge balance shows it');
-                for (let w = 0; w < 60; w++) { let now = before; try { now = BigInt(await main.balanceMsat()); } catch { now = before; } if (now > before) break; await new Promise((r) => setTimeout(r, 500)); }
+                for (let w = 0; w < 10; w++) { let now = before; try { now = BigInt(await main.balanceMsat()); } catch { now = before; } if (now > before) break; await new Promise((r) => setTimeout(r, 500)); }
                 step('<- merge balance shows it');
               }
               if (said.state === 'Success' || said.state === 'AlreadyReceived' || said.state === 'Rejected') L.removeItem(k);
@@ -7133,15 +7139,15 @@
           if (!others.length) { if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES(); return; }
           const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
           const mergeAt = performance.now();
-          for (const x of others) {
+          const mergeOne = async (x) => {
             const from = x.hex.slice(0, 8) + (x.ancestor ? ' (BLWP)' : '');
             const noOpenKey = fedHex + '.' + x.hex + (x.ancestor ? '.blwp' : '');
-            if (mergeNoOpen.has(noOpenKey) || mergeDeadFeds.has(fedHex)) continue;
+            if ((mergeNoOpen.get(noOpenKey) || 0) > Date.now() || ((mergeDeadFeds.get(fedHex) || {}).until || 0) > Date.now()) return;
             const walletAt = performance.now();
             const take = async () => {
               mergeSaid(fedHex, 'merging', 'opening wallet ' + from);
               const other = await Promise.race([ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fedHex), invite, seed: ARENACLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L, ancestor: x.ancestor }),
-                new Promise((_, no) => setTimeout(() => no(new Error('the wallet did not open in 30 s')), 30000))]);
+                new Promise((_, no) => setTimeout(() => no(new Error('the wallet did not open in ' + MERGE_OPEN_MS / 1000 + ' s')), MERGE_OPEN_MS))]);
               if (typeof other.sendAllEcash !== 'function') return;
               // WHAT IT HOLDS, REMEMBERED UNTIL IT IS EMPTIED (2026-10-20 19:3xZ: "The total balance should always show the full balance even if
               // it's not merged yet. The merge is a kind of slow process"): the sum counts it from the next read on, a next page from its first
@@ -7173,15 +7179,15 @@
                 const hold = async () => { const k = x.hex.slice(0, 16); PHRASES_TAKEN.add(k); try { await take(); } finally { PHRASES_TAKEN.delete(k); } };
                 if (ownHold) {
                   mergeSaid(fedHex, 'merging', 'waiting for this tab to finish with wallet ' + from);
-                  await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { signal: AbortSignal.timeout(60000) }, hold)
-                    .catch((e) => { if (e && e.name === 'TimeoutError') mergeSaid(fedHex, 'stuck', 'wallet ' + from + ' was busy in this tab for a minute - tried again at the next merge'); else throw e; });
+                  await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { signal: AbortSignal.timeout(MERGE_LOCK_MS) }, hold)
+                    .catch((e) => { if (e && e.name === 'TimeoutError') mergeSaid(fedHex, 'stuck', 'wallet ' + from + ' was busy in this tab - tried again at the next merge'); else throw e; });
                 } else await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { ifAvailable: true }, async (lock) => { if (lock) await hold(); else held = true; });
                 // taken by this tab between the look and the ask: waited for as above, never named as another tab
                 if (held && PHRASES_TAKEN.has(x.hex.slice(0, 16))) {
                   held = false;
                   mergeSaid(fedHex, 'merging', 'waiting for this tab to finish with wallet ' + from);
-                  await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { signal: AbortSignal.timeout(60000) }, hold)
-                    .catch((e) => { if (e && e.name === 'TimeoutError') mergeSaid(fedHex, 'stuck', 'wallet ' + from + ' was busy in this tab for a minute - tried again at the next merge'); else throw e; });
+                  await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { signal: AbortSignal.timeout(MERGE_LOCK_MS) }, hold)
+                    .catch((e) => { if (e && e.name === 'TimeoutError') mergeSaid(fedHex, 'stuck', 'wallet ' + from + ' was busy in this tab - tried again at the next merge'); else throw e; });
                 }
                 // ANOTHER TAB OF THIS BROWSER PLAYS WITH THAT PHRASE (kanban #615, 2026-10-24 playtest: "Ich kann immernoch keine Bets
                 // placen" - 3,285 sat "still merging" for good, his own phrase's wallets empty): the merge skipped the locked phrase without a
@@ -7206,16 +7212,22 @@
                   else mergeSaid(fedHex, 'stuck', 'wallet ' + from + ' is open in another tab of this browser (' + r.why + ') - close that tab and its money merges here');
                 } else if (held) mergeSaid(fedHex, 'stuck', 'wallet ' + from + ' is open in another tab of this browser - close that tab and its money merges here');
               } else await take();
-            } catch (e) { if (/did not open in 30 s/.test(String(e && e.message))) { mergeNoOpen.add(noOpenKey); mergeDeadFeds.add(fedHex); }
+            } catch (e) {
+              if (/did not open in \d+ s/.test(String(e && e.message))) {
+                mergeNoOpen.set(noOpenKey, Date.now() + 120000);
+                const dead = mergeDeadFeds.get(fedHex) || { misses: 0, until: 0 }; dead.misses++; if (dead.misses >= 2) dead.until = Date.now() + 300000; mergeDeadFeds.set(fedHex, dead);
+              }
               console.log('[arena] wallet ' + from + ' not combined in federation ' + fedHex.slice(0, 8) + ': ' + (e && e.message ? e.message : e));
               mergeSaid(fedHex, 'stuck', 'wallet ' + from + ': ' + (e && e.message ? e.message : e)); }
-          }
+          };
+          const mergeQueue = [...others];
+          await Promise.all(Array.from({ length: Math.min(MERGE_AT_ONCE, mergeQueue.length) }, async () => { while (mergeQueue.length) await mergeOne(mergeQueue.shift()); }));
           console.log('[arena] merge ' + fedHex.slice(0, 8) + ': ' + others.length + ' wallet(s) in ' + Math.round(performance.now() - mergeAt) + ' ms');
           if (window.ARENA_READ_BALANCE) { await window.ARENA_READ_BALANCE(); if (typeof paintMoney === 'function') paintMoney(); }
         })().then(() => { const m = window.ARENA_MERGE_STATE[fedHex.slice(0, 16)]; if (!m || m.state === 'merging') mergeSaid(fedHex, 'merged'); },
           (e) => { mergeSaid(fedHex, 'stuck', e && e.message ? e.message : String(e)); throw e; });
         // A RUN THAT HANGS NO LONGER HOLDS THE FEDERATION FOR GOOD: after two minutes the next ask starts a new one
-        const guard = setTimeout(() => { if (combiningBy.get(fedHex) === run) { combiningBy.delete(fedHex); mergeSaid(fedHex, 'stuck', 'the merge did not finish in 2 minutes'); } }, 120000);
+        const guard = setTimeout(() => { if (combiningBy.get(fedHex) === run) { combiningBy.delete(fedHex); mergeSaid(fedHex, 'stuck', 'the merge did not finish in a minute'); } }, 60000);
         run.finally(() => { clearTimeout(guard); if (combiningBy.get(fedHex) === run) combiningBy.delete(fedHex); }).catch(() => {});
         combiningBy.set(fedHex, run);
         return run;

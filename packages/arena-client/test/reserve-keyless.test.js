@@ -186,7 +186,15 @@ test('the collect waits 30 s after a load and gives way to an order between reco
 
 test('a federation whose wallet did not open holds no other merge for the rest of the load (the owner 2026-10-30: minutes instead of seconds)', () => {
   const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
-  assert.match(page, /mergeNoOpen\.has\(noOpenKey\) \|\| mergeDeadFeds\.has\(fedHex\)/);
-  assert.match(page, /mergeDeadFeds\.add\(fedHex\)/);
+  assert.match(page, /mergeDeadFeds\.get\(fedHex\)/);
+  assert.match(page, /dead\.misses >= 2/);
+});
+
+test('the merge runs four wallets at a time with short waits, and an order waits for it 12 s at most (the owner 2026-10-30: "Es darf nicht ewig hängen")', () => {
+  const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  assert.match(page, /MERGE_AT_ONCE = 4, MERGE_OPEN_MS = 10000, MERGE_LOCK_MS = 8000, MERGE_RECEIVE_MS = 20000/);
+  assert.match(page, /Array\.from\(\{ length: Math\.min\(MERGE_AT_ONCE, mergeQueue\.length\) \}/);
+  assert.match(page, /ARENA_MERGE_NOW\(plan\.mergeFirst, 12000,/);
+  assert.doesNotMatch(page, /did not open in 30 s/);
 });
 
