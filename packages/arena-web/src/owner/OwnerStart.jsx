@@ -11,6 +11,9 @@ import React from 'react';
 const KEEP_FAILED = 'This browser does not let the page keep them (private mode?).';
 const field = { autoComplete: 'off', autoCapitalize: 'none', spellCheck: false };
 
+// the deep link only where a tap can open it, and the key copied with a refused write said (kanban #853)
+const onTouch = () => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+
 /** One card: a title, its lines, an error, its buttons. */
 export class OwnerMessage extends React.Component {
   render() {
@@ -22,6 +25,7 @@ export class OwnerMessage extends React.Component {
 }
 
 export class OwnerStart extends React.Component {
+  async copyKey() { try { await navigator.clipboard.writeText(this.state.account.nsec); this.setState({ copied: true }); } catch { this.setState({ copied: false }); } }
   constructor(props) {
     super(props);
     this.state = { screen: props.screen || 'welcome', err: '', words: null, seed: null, ask: [], typed: {}, phrase: '', code: '',
@@ -107,7 +111,7 @@ export class OwnerStart extends React.Component {
         <button type="button" className="primary" onClick={() => this.extension()}>Browser extension (Alby, nos2x…)</button>
         <button type="button" onClick={() => this.scan()}>Phone signer (Amber…): show a code</button>
         <div>{s.qr ? <><div style={{ background: '#fff', padding: '8px', borderRadius: '10px', maxWidth: '240px' }} dangerouslySetInnerHTML={{ __html: s.qr }} />
-          <p className="sub">Scan it with your signer, or <a href={s.uri}>open it on this phone</a>. Waiting for your signer…</p></> : null}</div>
+          <p className="sub">Scan it with your signer{onTouch() ? <>, or <a href={s.uri}>open it on this phone</a></> : null}. Waiting for your signer…</p></> : null}</div>
         <label>Or a bunker link</label><input {...field} placeholder="bunker://… or you@your-bunker" value={s.bunker} onChange={(e) => this.setState({ bunker: e.target.value })} />
         <button type="button" onClick={() => this.bunkerLink()}>Connect the bunker</button>
         <label>Or your nsec (only on a device you trust - it is kept in this browser)</label>
@@ -118,6 +122,7 @@ export class OwnerStart extends React.Component {
       <div className="card"><h3>Your new Nostr account</h3>
         <div className="warn"><b>Save this key now</b> - in a password manager or on paper. It is your Nostr account and this node's owner key. Nobody can recover it for you.</div>
         <div className="words" style={{ display: 'block', font: '14px ui-monospace,monospace', wordBreak: 'break-all', padding: '10px' }}>{s.account.nsec}</div>
+        <button type="button" onClick={() => this.copyKey()}>{s.copied === true ? 'Copied ✓' : s.copied === false ? 'Copy refused: select the key by hand' : 'Copy the key'}</button>
         <label><input type="checkbox" style={{ width: 'auto' }} checked={s.saved} onChange={(e) => this.setState({ saved: e.target.checked })} /> I saved my key</label>
         {err}<button type="button" className="primary" disabled={!s.saved}
           onClick={() => this.signedIn({ how: 'nsec', secret: this.props.client.toHex(s.account.signer.secret) }, s.account.signer)}>Continue</button>{back('nostr')}</div>);
