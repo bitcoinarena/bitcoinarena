@@ -5634,8 +5634,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     try {
       // prepared on the first ask: seat_certs is the seating agent's table, made when it starts
       markSql = markSql || round.db.prepare(`SELECT (SELECT MAX(rowid) FROM rounds) AS r, (SELECT MAX(rowid) FROM entries) AS e,
-        (SELECT COUNT(*) FROM rounds WHERE closed_ms IS NOT NULL) AS c, (SELECT COUNT(*) FROM seat_certs) AS s`);
-      const m = markSql.get(); mark = `${m.r}:${m.e}:${m.c}:${m.s}`;
+        (SELECT COUNT(*) FROM rounds WHERE closed_ms IS NOT NULL) AS c, (SELECT COUNT(*) FROM seat_certs) AS s,
+        (SELECT MAX(rowid) FROM signer_nodes) AS n`);
+      // AND THE SIGNER NODES WRITTEN (kanban #826): a round posted ahead is assigned at its beacon and no row of it is new - the listing said "not assigned here" for up to 45 s
+      const m = markSql.get(); mark = `${m.r}:${m.e}:${m.c}:${m.s}:${m.n}`;
     } catch { mark = String(now); }
     markKept = { at: now, mark };
     return mark;
