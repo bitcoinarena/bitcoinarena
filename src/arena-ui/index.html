@@ -3482,6 +3482,9 @@
         if (use.use === 'staked') {
           console.log('[arena] join: ' + use.why);
           if (window.ARENA_JOIN) Object.assign(window.ARENA_JOIN, { state: 'refused', why: '', stage: '', held: false, cancelled: true });
+          // and the round leaves the address, or the next PLAY joins this one again
+          window.ARENA_ROUND = undefined; window.ARENA_ENTRY = undefined;
+          history.replaceState(null, '', location.pathname + (typeof window.ARENA_LOBBY_BACK === 'string' ? window.ARENA_LOBBY_BACK : ''));
           return;
         }
         const reuse = use.use === 'reuse' ? use.kept : null;
