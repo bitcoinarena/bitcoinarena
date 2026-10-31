@@ -4,7 +4,11 @@
 // verstehen, keine wall of Text"): one step on screen, the card as players will see it beside it. A draft stays in this browser. Signing comes
 // with the protocol field the market needs (docs/MARKET-CREATOR.md), so the last step says so and keeps the draft.
 import React from 'react';
-import { EVERY, KEPT, OUTCOMES_MAX, STEPS, TEMPLATES, fieldsOf, fromTemplate, outcomeOf, problemsOf, readAnswer, urlProblem } from './marketDraft.js';
+import { parse } from 'acorn';
+import { checkMarketCode } from '../../../arena-protocol/src/market-check.js';
+import { CodeEditor } from './CodeEditor.jsx';
+import { readAll, runCode } from './marketRun.js';
+import { CATEGORIES, EVERY, EXAMPLES, KEPT, OUTCOMES_MAX, READS_MAX, SAMPLES, STEPS, TEMPLATES, fieldsOf, fromTemplate, outcomeOf, outcomeOfCode, problemsOf, readAnswer, urlProblem } from './marketDraft.js';
 
 const Err = ({ of }) => (of ? <span className="mc-err">{of}</span> : null);
 const Field = ({ label, why, children }) => <label className="mc-f"><span>{label}</span>{children}<Err of={why} /></label>;
@@ -17,7 +21,7 @@ export class MarketCreator extends React.Component {
     super(props);
     let draft = null;
     try { draft = JSON.parse(localStorage.getItem(KEPT) || 'null'); } catch { draft = null; }
-    this.state = { step: draft ? 'question' : 'start', draft: draft || fromTemplate('blank'), sample: '', test: null, reading: false, shown: false, saved: false };
+    this.state = { step: draft ? 'question' : 'start', draft: draft || fromTemplate('blank'), sample: '', held: null, test: null, reading: false, shown: false, saved: false };
   }
   // WHAT THE ANSWER GIVES UNDER THE DRAFT AS IT STANDS (the owner 2026-10-31: "Auch die Optionen können live getestet werden"): every change of a field,
   // rule, level or outcome is read against the answer already held, with no new read; a new address drops that answer
@@ -26,17 +30,39 @@ export class MarketCreator extends React.Component {
     const got = readAnswer(draft.source, text);
     return got.why ? { why: got.why } : { value: got.value, ...outcomeOf(draft, got.value) };
   }
+  // the check of the code, as it stands
+  checked(d = this.state.draft) { return d.source.kind === 'code' && d.source.code.trim() ? checkMarketCode(d.source.code, parse) : null; }
   set(more, sample = this.state.sample) {
     const draft = { ...this.state.draft, ...more };
-    this.setState({ draft, saved: false, sample, test: this.tryOn(draft, sample) });
+    this.setState({ draft, saved: false, sample, test: draft.source.kind === 'code' ? this.state.test : this.tryOn(draft, sample) });
+    if (draft.source.kind === 'code' && this.state.held) { clearTimeout(this.again); this.again = setTimeout(() => this.tryCode(), 350); }
     try { localStorage.setItem(KEPT, JSON.stringify(draft)); } catch { /* this draft lasts until the page goes */ }
   }
   source(more) { this.set({ source: { ...this.state.draft.source, ...more } }, 'url' in more ? '' : this.state.sample); }
+  // CODE LIVE: what was read stays held, so each edit is run on it at once; only "Test it live" reads again
+  async tryCode() {
+    const { draft: d, held } = this.state; const check = this.checked(d);
+    if (!check || !check.ok || !held) { if (check && !check.ok) this.setState({ test: { why: 'Fix what the check names' } }); return; }
+    const got = await runCode({ code: d.source.code, reads: held, market: { outcomes: d.outcomes, low: Number(d.low), high: Number(d.high) } });
+    if (!got.ok) { this.setState({ test: { why: got.why } }); return; }
+    const o = outcomeOfCode(d, got.out);
+    this.setState({ test: { value: JSON.stringify(got.out), ...o } });
+  }
+  async readCode() {
+    const { draft: d } = this.state;
+    this.setState({ reading: true, test: null });
+    const got = await readAll(d.source.reads);
+    if (got.why) { this.setState({ reading: false, held: null, test: { why: `Could not read ${got.why}` } }); return; }
+    this.setState({ reading: false, held: got.reads }, () => this.tryCode());
+  }
+  example(e) { this.setState({ held: null, test: null }); this.set({ source: { ...this.state.draft.source, kind: 'code', code: e.code, reads: e.reads.map((r) => ({ ...r })) } }); }
+  sampleUrl(s) { this.setState({ test: null }); this.set({ source: { ...this.state.draft.source, url: s.url, read: s.read, path: s.path } }, ''); setTimeout(() => this.read(), 0); }
+  read1(i, more) { this.source({ reads: this.state.draft.source.reads.map((r, j) => (j === i ? { ...r, ...more } : r)) }); this.setState({ held: null }); }
   schedule(more) { this.set({ schedule: { ...this.state.draft.schedule, ...more } }); }
   go(step) { this.setState({ step, shown: false }); }
   next() {
     const { step, draft } = this.state; const at = STEPS.findIndex(([k]) => k === step);
-    if (Object.keys(problemsOf(draft, step)).length) { this.setState({ shown: true }); return; }
+    if (Object.keys(problemsOf(draft, step, this.checked(draft))).length) { this.setState({ shown: true }); return; }
     this.go(STEPS[at + 1][0]);
   }
   pick(id) { this.setState({ draft: fromTemplate(id), step: 'question', shown: false, test: null, sample: '' }); }
@@ -44,6 +70,7 @@ export class MarketCreator extends React.Component {
   // THE LIVE TEST, AT THE FIELD (the owner 2026-10-31: "Test Funktion um es live zu testen, ob es z.B. amount gibt"): the source read now, the field found
   // or not, and the fields the answer does hold to pick from. The browser reads it here; a site that forbids that needs the pasted answer
   async read() {
+    if (this.state.draft.source.kind === 'code') { await this.readCode(); return; }
     const bad = urlProblem(this.state.draft.source.url);
     if (bad) { this.setState({ test: { why: bad } }); return; }
     this.setState({ reading: true, test: null });
@@ -57,7 +84,7 @@ export class MarketCreator extends React.Component {
   tested() {
     const { test, sample, draft: d } = this.state;
     if (!test) return null;
-    const fields = d.source.read === 'json' ? fieldsOf(sample) : [];
+    const fields = d.source.kind === 'url' && d.source.read === 'json' ? fieldsOf(sample) : [];
     return (<>
       {test.why ? <div className="mc-result bad">{test.why}</div>
         : <div className="mc-result ok"><span>Value <b>{test.value === '' ? 'nothing' : test.value}</b></span><span>Outcome <b>{test.outcome}</b></span>{test.note ? <small>{test.note}</small> : null}</div>}
@@ -78,12 +105,13 @@ export class MarketCreator extends React.Component {
   }
   stepView() {
     const { step, draft: d, shown, test, sample, reading } = this.state;
-    const bad = shown ? problemsOf(d, step) : {};
+    const check = this.checked(d);
+    const bad = shown ? problemsOf(d, step, check) : {};
     if (step === 'start') return (
       <div className="mc-tiles">{TEMPLATES.map((t) => <button key={t.id} type="button" className="mc-tile" onClick={() => this.pick(t.id)}><i aria-hidden="true">{t.icon}</i><b>{t.name}</b><small>{t.hint}</small></button>)}</div>);
     if (step === 'question') return (<>
       <Field label="Question" why={bad.title}><input maxLength={120} value={d.title} onChange={(e) => this.set({ title: e.target.value })} /></Field>
-      <Field label="Category" why={bad.category}><input maxLength={32} value={d.category} onChange={(e) => this.set({ category: e.target.value })} /></Field>
+      <div className="mc-f"><span>Category</span><div className="mc-chips" role="radiogroup" aria-label="Category">{CATEGORIES.map((c) => <button key={c} type="button" role="radio" aria-checked={c === d.category} className={c === d.category ? 'on' : undefined} onClick={() => this.set({ category: c })}>{c}</button>)}</div><Err of={bad.category} /></div>
       <Seg value={d.kind} options={[['choice', 'Outcomes'], ['number', 'A number']]} onPick={(kind) => this.set({ kind, outcomes: kind === 'choice' && !d.outcomes.length ? ['Yes', 'No'] : d.outcomes })} />
       {d.kind === 'number' ? <div className="mc-two"><Field label="Low"><input inputMode="decimal" value={d.low} onChange={(e) => this.set({ low: e.target.value })} /></Field>
         <Field label="High" why={bad.bounds}><input inputMode="decimal" value={d.high} onChange={(e) => this.set({ high: e.target.value })} /></Field></div>
@@ -93,8 +121,26 @@ export class MarketCreator extends React.Component {
     </>);
     if (step === 'result') {
       const s = d.source;
+      const kinds = <Seg value={s.kind} options={[['url', 'A URL'], ['code', 'Code']]} onPick={(kind) => { this.setState({ test: null, held: null }); this.source({ kind }); }} />;
+      if (s.kind === 'code') return (<>
+        {kinds}
+        <div className="mc-chips" aria-label="Examples">{EXAMPLES.map((e) => <button key={e.id} type="button" onClick={() => this.example(e)}>{e.name}</button>)}</div>
+        <div className="mc-list" aria-label="Reads">{s.reads.map((r, i) => <div key={i} className="mc-read">
+          <input aria-label="Name" className="mono" value={r.id} onChange={(e) => this.read1(i, { id: e.target.value })} />
+          <Seg value={r.kind} options={[['http', 'Page'], ['ws', 'Socket']]} onPick={(kind) => this.read1(i, { kind })} />
+          <input aria-label="Address" inputMode="url" placeholder={r.kind === 'ws' ? 'wss://' : 'https://'} value={r.url} onChange={(e) => this.read1(i, { url: e.target.value })} />
+          {r.kind === 'ws' ? <input aria-label="Message to send" className="mono" placeholder="Message to send after connecting" value={r.subscribe} onChange={(e) => this.read1(i, { subscribe: e.target.value })} /> : null}
+          <button type="button" aria-label={`Remove ${r.id}`} onClick={() => this.source({ reads: s.reads.filter((x, j) => j !== i) })}>×</button></div>)}
+          {s.reads.length < READS_MAX ? <button type="button" className="mc-add" onClick={() => this.source({ reads: [...s.reads, { id: `read${s.reads.length + 1}`, kind: 'http', url: '', subscribe: '' }] })}>Add a read</button> : null}<Err of={bad.reads} /></div>
+        <CodeEditor value={s.code} onChange={(code) => this.source({ code })} marked={check ? check.problems.map((p) => p.line) : []} />
+        {check ? (check.ok ? <div className="mc-check ok">Readable code · check {check.version}</div> : <ul className="mc-check bad">{check.problems.map((p, i) => <li key={i}><b>Line {p.line}</b> {p.why}</li>)}</ul>) : null}
+        <Err of={bad.code} />
+        <button type="button" className="mc-test" disabled={reading} onClick={() => this.read()}>{reading ? 'Reading…' : 'Test it live'}</button>
+        {this.tested()}
+      </>);
       return (<>
-        <Seg value="url" options={[['url', 'A URL'], ['code', 'Code · soon']]} onPick={() => {}} />
+        {kinds}
+        <div className="mc-chips" aria-label="Known addresses">{SAMPLES.map((m) => <button key={m.name} type="button" className={m.url === s.url ? 'on' : undefined} onClick={() => this.sampleUrl(m)}>{m.name}<small>{m.hint}</small></button>)}</div>
         <Field label="Address the nodes read" why={bad.url}><input inputMode="url" placeholder="https://" value={s.url} onChange={(e) => this.source({ url: e.target.value })} /></Field>
         <Seg value={s.read} options={[['json', 'JSON field'], ['regex', 'Pattern'], ['text', 'Whole answer']]} onPick={(read) => this.source({ read })} />
         {s.read === 'text' ? null : <Field label={s.read === 'json' ? 'Field' : 'Pattern'} why={bad.path}><input className="mono" placeholder={s.read === 'json' ? 'data.amount' : 'Price: ([0-9.]+)'} value={s.path} onChange={(e) => this.source({ path: e.target.value })} /></Field>}
@@ -107,7 +153,7 @@ export class MarketCreator extends React.Component {
     }
     if (step === 'test') return (<>
       <button type="button" className="primary" disabled={reading} onClick={() => this.read()}>{reading ? 'Reading…' : 'Read it now'}</button>
-      <Field label="Or paste an answer"><textarea className="mono" rows={5} spellCheck={false} value={sample} onChange={(e) => { this.setState({ sample: e.target.value }); this.run(e.target.value); }} /></Field>
+      {d.source.kind === 'code' ? null : <Field label="Or paste an answer"><textarea className="mono" rows={5} spellCheck={false} value={sample} onChange={(e) => { this.setState({ sample: e.target.value }); this.run(e.target.value); }} /></Field>}
       {this.tested()}
     </>);
     if (step === 'schedule') {
@@ -121,7 +167,7 @@ export class MarketCreator extends React.Component {
         <Field label="Smallest stake, sat" why={bad.minStakeSat}><input inputMode="numeric" value={s.minStakeSat} onChange={(e) => this.schedule({ minStakeSat: e.target.value })} /></Field>
       </>);
     }
-    const rows = [['Question', d.title], ['Category', d.category], ['Source', d.source.url], ['When', scheduleLine(d.schedule)]];
+    const rows = [['Question', d.title], ['Category', d.category], ['Source', d.source.kind === 'code' ? `Code, ${d.source.reads.length} read${d.source.reads.length === 1 ? '' : 's'}` : d.source.url], ['When', scheduleLine(d.schedule)]];
     return (<>
       <dl className="mc-sum">{rows.map(([k, v]) => <React.Fragment key={k}><dt>{k}</dt><dd>{v}</dd></React.Fragment>)}</dl>
       <button type="button" className="primary" disabled>Sign and publish</button>
