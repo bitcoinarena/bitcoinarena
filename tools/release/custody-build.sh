@@ -10,7 +10,7 @@
 # compared and, when they agree, its AlephBFT units deleted before fedimintd starts.
 # arena-stake-lock: packages/arena-node/tools/stake-lock copied into $F as a workspace member (kanban #824).
 set -uo pipefail
-B=/Users/arena/blwp-offload/fedwin; F=$B/src; OUT=$B/out; mkdir -p $OUT
+B=${FEDWIN:-$HOME/blwp-offload/fedwin}; F=$B/src; OUT=$B/out; mkdir -p $OUT   # FEDWIN: the build folder (kanban #808: the second machine's is ~/m808/blwp-offload/fedwin)
 export PATH=$HOME/.cargo/bin:$B/zig-aarch64-macos-0.16.0:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
 export AWS_LC_SYS_PREBUILT_NASM=1 CARGO_NET_RETRY=10 CARGO_PROFILE_RELEASE_DEBUG=false CARGO_PROFILE_RELEASE_STRIP=symbols
 export CFLAGS_x86_64_pc_windows_gnu="-Wno-unused-command-line-argument" CXXFLAGS_x86_64_pc_windows_gnu="-Wno-unused-command-line-argument"
