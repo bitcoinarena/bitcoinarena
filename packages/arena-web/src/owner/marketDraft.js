@@ -4,6 +4,7 @@
 // reading of a source's answer. Plain functions, so the form, the tests and later the node's own check read one rule.
 import { CHECK_VERSION, marketHostProblem, marketUrlProblem } from '../../../arena-protocol/src/market-check.js';
 import { MARKET_READ, MARKET_RULE, MARKET_SOURCE_KIND } from '../../../arena-protocol/src/manifest.js';
+import { SOURCE_HOSTS_VERSION } from '../../../arena-protocol/src/constants.js';
 
 export const OUTCOMES_MIN = 2, OUTCOMES_MAX = 8, TITLE_MAX = 120, READS_MAX = 3;
 // FIXED, AS POLYMARKET'S TOP BAR IS (the owner 2026-10-31: "Tu die Kategorie hart verdrahten kein textfeld"): a filter needs the same word on every market
@@ -156,8 +157,10 @@ export function manifestSource(s) {
 /** THE MANIFEST BODY OF A FINISHED DRAFT, as `signManifest` takes it. A market's nodes are drawn per round, and a number between bounds is not drawn yet, so it cannot be signed. */
 export function manifestOfDraft(d, { donationSetId }) {
   if (d.kind === 'number') throw new Error('A market on a number cannot be published yet');
-  const s = d.schedule;
-  return { gameName: d.title.trim().slice(0, 64), version: 1, resultType: 'ATTESTED', cores: [], runTicksMax: 0, roundPeriodMs: String(s.mode === 'repeat' ? EVERY.find(([k]) => k === s.every)[2] : 86400000),
-    payoutRule: 'PARI_MUTUEL', rankNumerator: 0, rankDenominator: 0, minScore: 0, clients: [], gameDonationSetId: donationSetId, outcomes: d.outcomes.map((o) => o.trim()),
-    attestors: [], attestThreshold: 0, attestDraw: { count: 7, threshold: 5 }, requiredProtocolVersion: 2, source: manifestSource(d.source) };
+  const question = d.title.trim().slice(0, 64), outcomes = d.outcomes.map((o) => o.trim());
+  return { gameName: question, version: 1, resultType: 'ATTESTED', cores: [], runTicksMax: 0, roundPeriodMs: '0',
+    payoutRule: 'PARI_MUTUEL', rankNumerator: 0, rankDenominator: 0, minScore: 0, clients: [], gameDonationSetId: donationSetId, outcomes,
+    marketTerms: { nodeFeeBps: 40, donationBps: 60, reserveBps: 20, question, resolveAfterCloseMs: '0', deadlineAfterResolveMs: '3600000', sourceRule: 'The source in this market' },
+    template: { category: d.category, maxOutcomes: outcomes.length, resolveWithinMs: '2592000000' },
+    attestors: [], attestThreshold: 0, attestDraw: { count: 7, threshold: 5 }, requiredProtocolVersion: SOURCE_HOSTS_VERSION, source: manifestSource(d.source) };
 }

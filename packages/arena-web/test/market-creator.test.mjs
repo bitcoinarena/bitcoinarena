@@ -124,7 +124,7 @@ test('a finished draft signs into a manifest a node accepts, for a URL and for c
   const url = { ...draftOf('price'), title: 'BTC over 100k?', category: 'Crypto', source: { ...draftOf('price').source, url: 'https://api.coinbase.com/v2/prices/BTC-USD/spot', read: 'json', path: 'data.amount', rule: 'above', value: '100000' }, schedule: { mode: 'repeat', every: '1h', rounds: 7, minStakeSat: 100 } };
   const a = signManifestWithSeed(bodyFromJson(JSON.stringify(manifestOfDraft(url, { donationSetId: 'd0'.repeat(32) })), { devPubkey }), seed);
   assert.equal(a.manifest.source.path, 'data.amount');
-  assert.equal(a.manifest.roundPeriodMs, 3600000n);
+  assert.equal(a.manifest.template.category, 'Crypto');
   const code = { ...url, source: { kind: 'code', reads: [{ id: 'feed', kind: 'ws', url: 'wss://ws-feed.exchange.coinbase.com', subscribe: '' }], code: 'function decide() {\n  return 0;\n}\n' } };
   assert.equal(signManifestWithSeed(bodyFromJson(JSON.stringify(manifestOfDraft(code, { donationSetId: 'd0'.repeat(32) })), { devPubkey }), seed).manifest.source.reads[0].socket, true);
   assert.throws(() => manifestOfDraft({ ...url, kind: 'number' }, { donationSetId: 'd0'.repeat(32) }), /cannot be published/);

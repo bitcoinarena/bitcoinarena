@@ -130,6 +130,8 @@ Extension and bunker logins hold no such key. They see a clear message for now.
 Publishing is a new owner door. The node keeps the signed market and offers it to other seats.
 Each seat fetches it, runs the check and hosts it. An owner can turn this off.
 
+Every bonded node hosts a market with a source (the owner 2026-10-31). Its rounds say so in their question (`event.allBonded`, protocol 23), so no advertisement has to name a new market. The whitelist of sources is a separate vote (#921).
+
 A node must be bonded to publish. A seat refuses a market on an unlisted host, code that fails the check, or a sixth market from one developer. A market on a number cannot be signed yet: its nodes are not drawn. The category has no field in the manifest yet.
 
 ## Changes needed
