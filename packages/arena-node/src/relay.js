@@ -8,6 +8,35 @@ import { WebSocket } from 'ws';
 
 const base = (relay) => String(relay).replace(/\/+$/, '');
 
+/**
+ * WHERE A ROUND'S RELAYS ARE NOW (kanban #808, the owner 2026-10-31: "immer die richtige IP, auch wenn sich der Tunnel geändert hat"). The contract's
+ * publication_relays[] is signed for the day, so an address in it outlives the machine or tunnel it named (5e7fe7e0 VOID at 07:19Z: all seven on the
+ * test host whose forwards had stopped, 0 of 5 postings). `announced` is the committee at the addresses it announces now (Verifier.peersOf, the
+ * address book of kanban #757): every seat is a relay door, so these are relays too. The listed ones first, each address once.
+ */
+export const relayTargets = (listed, announced) => [...new Map([...(listed || []), ...(announced || [])].map((r) => [base(r), r])).values()];
+
+/**
+ * PUT a transcript at each listed relay and read it back; only when none kept it, at the committee's announced addresses. A posting needs one
+ * relay that holds the bytes. Answers { held: [relay], refused: [why] }.
+ */
+export async function postTranscript({ listed, announced, path, bytes, fetcher = fetch, sameBytes }) {
+  const held = [], refused = [];
+  const post = async (relay) => {
+    const at = `${base(relay)}${path}`;
+    try {
+      const put = await fetcher(at, { method: 'PUT', body: bytes });
+      if (!put.ok) { refused.push(`${relay}: kept nothing (${put.status})`); return; }
+      const back = new Uint8Array(await (await fetcher(at)).arrayBuffer());
+      if (!sameBytes(back, bytes)) { refused.push(`${relay}: gave back other bytes`); return; }
+      held.push(relay);
+    } catch (e) { refused.push(`${relay}: ${e.message}`); }
+  };
+  for (const relay of listed || []) await post(relay);
+  if (!held.length) for (const relay of relayTargets([], announced).filter((r) => !relayTargets(listed).includes(base(r)))) await post(relay);
+  return { held, refused };
+}
+
 /** POST `body` to `path` at every relay. Answers { sent, failed: [why] } once every relay answered or timed out. */
 export async function relayPost(relays, path, body, { fetcher = fetch, timeoutMs = 8000 } = {}) {
   const failed = []; let sent = 0;
