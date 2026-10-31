@@ -19,12 +19,19 @@ export class MarketCreator extends React.Component {
     try { draft = JSON.parse(localStorage.getItem(KEPT) || 'null'); } catch { draft = null; }
     this.state = { step: draft ? 'question' : 'start', draft: draft || fromTemplate('blank'), sample: '', test: null, reading: false, shown: false, saved: false };
   }
-  set(more) {
+  // WHAT THE ANSWER GIVES UNDER THE DRAFT AS IT STANDS (the owner 2026-10-31: "Auch die Optionen können live getestet werden"): every change of a field,
+  // rule, level or outcome is read against the answer already held, with no new read; a new address drops that answer
+  tryOn(draft, text) {
+    if (!text) return null;
+    const got = readAnswer(draft.source, text);
+    return got.why ? { why: got.why } : { value: got.value, ...outcomeOf(draft, got.value) };
+  }
+  set(more, sample = this.state.sample) {
     const draft = { ...this.state.draft, ...more };
-    this.setState({ draft, saved: false, test: null });
+    this.setState({ draft, saved: false, sample, test: this.tryOn(draft, sample) });
     try { localStorage.setItem(KEPT, JSON.stringify(draft)); } catch { /* this draft lasts until the page goes */ }
   }
-  source(more) { this.set({ source: { ...this.state.draft.source, ...more } }); }
+  source(more) { this.set({ source: { ...this.state.draft.source, ...more } }, 'url' in more ? '' : this.state.sample); }
   schedule(more) { this.set({ schedule: { ...this.state.draft.schedule, ...more } }); }
   go(step) { this.setState({ step, shown: false }); }
   next() {
@@ -33,10 +40,7 @@ export class MarketCreator extends React.Component {
     this.go(STEPS[at + 1][0]);
   }
   pick(id) { this.setState({ draft: fromTemplate(id), step: 'question', shown: false, test: null, sample: '' }); }
-  run(text) {
-    const { draft } = this.state; const got = readAnswer(draft.source, text);
-    this.setState({ test: got.why ? { why: got.why } : { value: got.value, ...outcomeOf(draft, got.value) } });
-  }
+  run(text) { this.setState({ test: this.tryOn(this.state.draft, text) }); }
   // THE LIVE TEST, AT THE FIELD (the owner 2026-10-31: "Test Funktion um es live zu testen, ob es z.B. amount gibt"): the source read now, the field found
   // or not, and the fields the answer does hold to pick from. The browser reads it here; a site that forbids that needs the pasted answer
   async read() {
@@ -58,17 +62,17 @@ export class MarketCreator extends React.Component {
       {test.why ? <div className="mc-result bad">{test.why}</div>
         : <div className="mc-result ok"><span>Value <b>{test.value === '' ? 'nothing' : test.value}</b></span><span>Outcome <b>{test.outcome}</b></span>{test.note ? <small>{test.note}</small> : null}</div>}
       {fields.length ? <div className="mc-fields" aria-label="Fields in the answer">{fields.map(([path, value]) => <button key={path} type="button" className={path === d.source.path ? 'on' : undefined} title={value}
-        onClick={() => { const source = { ...d.source, path }; this.setState({ draft: { ...d, source } }, () => this.run(sample)); }}><code>{path}</code><small>{value}</small></button>)}</div> : null}
+        onClick={() => this.source({ path })}><code>{path}</code><small>{value}</small></button>)}</div> : null}
     </>);
   }
   card() {
-    const { draft: d } = this.state;
+    const { draft: d, test } = this.state; const won = test && !test.why ? test.outcome : null;
     return (
       <div className="mc-card" aria-label="Preview">
         <small>{d.category || 'Category'}</small>
         <b>{d.title || 'Your question'}</b>
-        {d.kind === 'number' ? <div className="mc-range"><span>{d.low || '–'}</span><i /><span>{d.high || '–'}</span></div>
-          : <div className="mc-odds">{d.outcomes.map((o, i) => <span key={i}>{o || '…'}</span>)}</div>}
+        {d.kind === 'number' ? <div className="mc-range"><span>{d.low || '–'}</span><i /><span>{d.high || '–'}</span>{won !== null ? <b>{won}</b> : null}</div>
+          : <div className="mc-odds">{d.outcomes.map((o, i) => <span key={i} className={won !== null && o === won ? 'on' : undefined}>{o || '…'}</span>)}</div>}
         <small>{scheduleLine(d.schedule)}</small>
       </div>);
   }
