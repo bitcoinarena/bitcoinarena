@@ -18707,12 +18707,18 @@ const PAYOUT_GRACE_MS = 600000;
 // A SEAT THAT NEVER ANSWERS IS A SEAT THAT SAID NOTHING (measured 2026-10-27: a market bot's collect waited 13 min on one
 // seat that took the connection and never answered): the reads collect makes of every seat give up after 15 s
 const SEAT_READ_MS = 15000;
-function pendingWindowLine({ closeMs, provisional = false, nowMs = Date.now(), expiration = null }) {
+// BLOCKS AS TIME (kanban #827, the owner 2026-10-31: "Sag wann das ist, in Xh 3m ETA"): nobody reads a block height as a moment
+const blocksAsTime = (blocks, secondsPerBlock = 600) => {
+  const m = Math.max(1, Math.ceil((Number(blocks) * Number(secondsPerBlock)) / 60));
+  return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
+};
+function pendingWindowLine({ closeMs, provisional = false, nowMs = Date.now(), expiration = null, tipHeight = null, secondsPerBlock = 600 }) {
   if (!closeMs) return '';
   const t = new Date(Number(closeMs)).toISOString().slice(11, 19);
   if (nowMs < closeMs) return `window closes ${t} UTC${provisional ? ' \u00b7 provisional' : ''}`;
   if (nowMs < Number(closeMs) + PAYOUT_GRACE_MS) return `window closed ${t} UTC \u00b7 paying out`;
-  return `window closed ${t} UTC \u00b7 not paid yet \u2013 the lock returns to your key ${Number.isInteger(expiration) ? `from block ${expiration}` : 'when it expires'}`;
+  return `window closed ${t} UTC \u00b7 not paid yet \u2013 the lock returns to your key ${!Number.isInteger(expiration) ? 'when it expires'
+    : !Number.isInteger(tipHeight) ? `from block ${expiration}` : expiration > tipHeight ? `in about ${blocksAsTime(expiration - tipHeight, secondsPerBlock)}` : 'now'}`;
 }
 
 /**
