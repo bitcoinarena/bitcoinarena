@@ -74,6 +74,19 @@ Why this shape: it keeps §0A.6's sandbox, and the same inputs give the same ans
 Seven are drawn and five must sign the same outcome, as today. Without five, the round refunds.
 A market reading a fast number should round it in its code. The test step warns when two reads differ.
 
+## Who controls the source
+
+Consensus does not protect a market from its own source: seven honest nodes reading a page its creator runs sign the creator's answer.
+So a market reads listed hosts only, enforced in the manifest rule, on every node. The list is `MARKET_HOSTS`; a host joins by a release, later by a vote.
+
+| Attack | Answer |
+|---|---|
+| Creator's own page | refused: not listed |
+| Creator's page behind code | refused: code declares its reads, and each is held to the list |
+| Page that answers nodes differently | same: not listed. On a listed host, under 5 of 7 refunds the round |
+| Thin pair on a listed exchange, moved by a trade | open: needs a list of pairs or a median of exchanges |
+| Listed host with text anyone can post | keep such hosts off the list |
+
 ## What every node checks
 
 The check runs before a node hosts a market and again in the editor. It is one versioned function, so all nodes agree.
@@ -94,7 +107,7 @@ Network reads:
 
 | Rule | Value |
 |---|---|
-| Hosts | public addresses only, checked after DNS, never private or local ranges |
+| Hosts | listed hosts only; public addresses, checked after DNS, never private or local ranges |
 | Reads per market | 3 |
 | Answer | 1 MB, 10 s, no redirects, no cookies, no keys |
 | Socket | 30 s, 1,000 messages |
