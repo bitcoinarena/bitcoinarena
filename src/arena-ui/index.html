@@ -176,7 +176,7 @@
     body.arena-clean #arena-join-status { display: none !important; }
     /* ONE LINE AT THE FOOT (2026-10-17: "This can be better in the same line, Donate on right and build numbers before in one line
        so the vertical space is less"): the build line and Donate share one 30 px row; the settlement facts above it only when there are any */
-    body.arena-own-client #arena-donate-go { display: block; position: fixed; right: 6px; bottom: calc(env(safe-area-inset-bottom, 0px) + 3px); z-index: 9992; height: 24px; padding: 0 10px;
+    body.arena-own-client #arena-donate-go { display: block; position: fixed; right: 6px; bottom: calc(min(env(safe-area-inset-bottom, 0px), 4px) + 3px); z-index: 9992; height: 24px; padding: 0 10px;
       border: 1px solid #f7931a; border-radius: 8px; background: #1b1408; color: #f7931a; font: 600 12px system-ui, sans-serif; cursor: pointer; }
     body.arena-clean #arena-donate-go { display: none !important; }
 
@@ -220,15 +220,15 @@
     /* WHO SETTLES, BEFORE THE PLAYER PAYS, OVER A GAME'S OWN CLIENT (spec §22A "Shown before approval: the selected
        node identities, committee overlap, whether a selected operator is playing"): the lobby's line says it, and a game with
        its own client - Rock Paper Scissors, a market - never showed that line. Measured 2026-10-12 17:3xZ on the live page. */
-    html body.arena-own-client #arena-build { left: 0; right: 0; bottom: 0; top: auto; height: calc(13px + env(safe-area-inset-bottom, 0px)); border-radius: 0;
+    html body.arena-own-client #arena-build { left: 0; right: 0; bottom: 0; top: auto; height: calc(13px + min(env(safe-area-inset-bottom, 0px), 4px)); border-radius: 0;
       padding: 0 8px; background: #0d1014; font-size: 9px; line-height: 13px; text-align: right; }
     /* a game with its own client (Rock Paper Scissors) shows no frame rate (2026-10-09: "FPS ausgabe beim RPS client deaktivieren") */
     body.arena-own-client #arena-fps { display: none; }
     /* THE FOOT IN ONE ROW (2026-10-17): the UI line, the links and Donate, 30 px. The strip of settlement facts and fees above it is gone
        (the owner 2026-10-30, iPhone: it covered the Rock / Paper / Scissors options); the fees stay in the docs.
        The line ends 16 px left of the links (#753: the links' left edge is 100 + 4 x 24 + 3 x 6 = 214 px from the right) */
-    html body.arena-own-client #arena-build { height: calc(30px + env(safe-area-inset-bottom, 0px)); line-height: 30px; padding-right: 230px; font-size: 10px; }
-    html body.arena-own-client #arena-client { height: calc(100% - 41px - 30px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
+    html body.arena-own-client #arena-build { height: calc(30px + min(env(safe-area-inset-bottom, 0px), 4px)); line-height: 30px; padding-right: 230px; font-size: 10px; }
+    html body.arena-own-client #arena-client { height: calc(100% - 41px - 30px - env(safe-area-inset-top, 0px) - min(env(safe-area-inset-bottom, 0px), 4px)); }
     /* THE BAR MOVES ON THE COMPOSITOR TOO (2026-10-16: "after a few seconds, it gets also filled from around
        where the 90% progress would be ... the 100% progress is now reached at around half of the progress bar"). Measured by
        screencast at 10x CPU on live UI 167: the bar's WIDTH transition runs on the main thread and froze at 75 % (then 87 %)
@@ -851,9 +851,9 @@
     html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-hdr-bal, html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-hdr-deposit, html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-hdr-withdraw { display: inline-flex; align-items: center; flex: none; }
     html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-game-home { display: inline-flex; align-items: center; gap: 8px; width: auto; height: 32px; margin-right: auto; background: none; border-radius: 0;
       color: #e8eaed; font: 700 16px/1 system-ui, sans-serif; letter-spacing: -0.01em; white-space: nowrap; text-shadow: 0 1px 3px rgba(0,0,0,.8); text-decoration: none; }
-    html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-donate-go { display: block; position: fixed; right: 6px; bottom: calc(env(safe-area-inset-bottom, 0px) + 3px); z-index: 9992; height: 24px;
+    html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-donate-go { display: block; position: fixed; right: 6px; bottom: calc(min(env(safe-area-inset-bottom, 0px), 4px) + 3px); z-index: 9992; height: 24px;
       padding: 0 10px; border: 1px solid #f7931a; border-radius: 8px; background: #1b1408; color: #f7931a; font: 600 12px system-ui, sans-serif; cursor: pointer; }
-    html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-build { display: block; left: auto; top: auto; right: 0; bottom: 0; height: calc(30px + env(safe-area-inset-bottom, 0px)); line-height: 30px;
+    html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-build { display: block; left: auto; top: auto; right: 0; bottom: 0; height: calc(30px + min(env(safe-area-inset-bottom, 0px), 4px)); line-height: 30px;
       padding: 0 230px 0 8px; background: none; border-radius: 0; font-size: 10px; text-align: right; }
     html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #boot-build { display: none; }
     body.arena-clean #arena-donate-go, body.arena-clean #arena-build { display: none !important; }
@@ -868,7 +868,7 @@
     body:has(#arena-season.show) #arena-social,
     body:has(#arena-shop.show) #arena-social,
     html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-social {
-      display: flex; align-items: center; gap: 6px; position: fixed; right: 100px; bottom: calc(env(safe-area-inset-bottom, 0px) + 3px); z-index: 9992; height: 24px; }
+      display: flex; align-items: center; gap: 6px; position: fixed; right: 100px; bottom: calc(min(env(safe-area-inset-bottom, 0px), 4px) + 3px); z-index: 9992; height: 24px; }
     body.arena-clean #arena-social { display: none !important; }
     .arena-social a { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; color: #8b949e; text-decoration: none; }
     .arena-social a:hover, .arena-social a:focus-visible { color: #f7931a; }
