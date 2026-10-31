@@ -132,6 +132,7 @@ export class MarketCreator extends React.Component {
       if (s.kind === 'code') return (<>
         {kinds}
         <div className="mc-chips" aria-label="Examples">{EXAMPLES.map((e) => <button key={e.id} type="button" onClick={() => this.example(e)}>{e.name}</button>)}</div>
+        {s.reads.some((r) => r.kind === 'ws') ? <div className="mc-check bad">A socket cannot decide a market: two connections see different trades. Use it to look, then read a page.</div> : null}
         <div className="mc-list" aria-label="Reads">{s.reads.map((r, i) => <div key={i} className="mc-read">
           <input aria-label="Name" className="mono" value={r.id} onChange={(e) => this.read1(i, { id: e.target.value })} />
           <Seg value={r.kind} options={[['http', 'Page'], ['ws', 'Socket']]} onPick={(kind) => this.read1(i, { kind })} />
