@@ -171,3 +171,9 @@ test('only a lost write says the wallet stopped; idle sockets make room below th
   assert.match(page, /openSockets\.delete\(w\); w\.close\(\)/);
 });
 
+test('no strip of settlement facts and fees over a game client (the owner 2026-10-30: it covered the options on the iPhone)', () => {
+  const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  assert.doesNotMatch(page, /arena-approval/);
+  assert.match(page, /#arena-client \{ height: calc\(100% - 41px - 30px/);
+});
+
