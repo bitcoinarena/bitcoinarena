@@ -291,7 +291,7 @@ test('the bonded nodes change the source list: it goes live at its height, and o
   assert.equal(toHex(t.spans(net)[t.spans(net).length - 1].configHash), toHex(BALLOT_GENESIS.configHash));
 });
 
-test('a list needs over half of the voting bonds, and 20 % of all bonds voting', async () => {
+test('a list needs over half of the voting bonds, and yes from 25 % of all bonds', async () => {
   const hosts = [...MARKET_HOSTS, 'attacker.example.org'];
   const config = encodeHostList(hosts);
   const { idBytes, record } = kept({ parent: SOURCES_GENESIS.configHash, configHash: configHashOf(config), config, cls: CLASS.SOURCES });
@@ -302,8 +302,13 @@ test('a list needs over half of the voting bonds, and 20 % of all bonds voting',
   assert.equal(t.list()[0].phase, 'failed');
   assert.ok(!t.sources(toHex(H(0x4e))).hosts.includes('attacker.example.org'));
   const few = kept({ parent: SOURCES_GENESIS.configHash, configHash: configHashOf(config), config, cls: CLASS.SOURCES, publishedAt: 200 });
-  const c2 = chain(new Map([[201, [vote(C, few.idBytes, CHOICE.YES, 201, 'c1')]]]));
+  const c2 = chain(new Map([[201, [vote(C, few.idBytes, CHOICE.YES, 201, 'c1')]]]));   // 20 M of 100 M: the turnout is met, the 25 % is not
   const t2 = createBallotTally({ proposals: store([few.record]), tipHeight: c2.tipHeight, votesAt: c2.votesAt, censusAt: c2.censusAt, verify, decideDepthFor: () => 1 });
   c2.tip = 212; await t2.pass(); await t2.pass();
-  assert.equal(t2.list()[0].phase, 'activated');   // 20 M of 100 M voted: exactly the quorum
+  assert.equal(t2.list()[0].phase, 'failed');
+  const enough = kept({ parent: SOURCES_GENESIS.configHash, configHash: configHashOf(config), config, cls: CLASS.SOURCES, publishedAt: 300 });
+  const c3 = chain(new Map([[301, [vote(B, enough.idBytes, CHOICE.YES, 301, 'b1')]]]));   // 30 M of 100 M
+  const t3 = createBallotTally({ proposals: store([enough.record]), tipHeight: c3.tipHeight, votesAt: c3.votesAt, censusAt: c3.censusAt, verify, decideDepthFor: () => 1 });
+  c3.tip = 312; await t3.pass(); await t3.pass();
+  assert.equal(t3.list()[0].phase, 'activated');
 });
