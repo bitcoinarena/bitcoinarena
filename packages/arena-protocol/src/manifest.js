@@ -721,6 +721,8 @@ export function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
     if (isTemplate(m)) {
       const fits = eventFitsTemplate(contract, m);
       if (!fits.ok) return fits;
+      // every bonded node hosts a market with a source, and only such a market
+      if (!!m.source !== (contract.event.allBonded === true)) return { ok: false, why: m.source ? `${name} has a source: its rounds open to every bonded node` : `${name} has no source: its rounds are hosted by the nodes that name it` };
       return { ok: true, attested: true, template: true };
     }
     // A MARKET ON A GAME'S ROUND NAMES ITS SOURCE ROUND (feature 6), and is no round of a series. Whether that source

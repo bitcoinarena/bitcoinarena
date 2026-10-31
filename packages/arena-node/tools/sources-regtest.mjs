@@ -7,7 +7,7 @@
 //   4  at activation every seat lists the host with its example, and an owner's market test reads it
 // BITCOIN_BIN=<bin dir> WORK=<dir> node tools/sources-regtest.mjs
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdirSync, appendFileSync, readFileSync } from 'node:fs';
+import { mkdirSync, appendFileSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { regtest } from './regtest-bond.mjs';
@@ -15,7 +15,15 @@ import { openStore, nodeIdentity } from '../src/store.js';
 import { ownerSecretFromSeed, signOwnerRequest } from '../src/owner.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { signManifestWithSeed, bodyFromJson, devPubkeyOf } from '../src/owner-dev.js';
-import { MARKET_SOURCE_KIND, MARKET_READ, MARKET_RULE } from '../../arena-protocol/src/manifest.js';
+import { decodeManifest } from '../../arena-protocol/src/manifest.js';
+import { manifestOfDraft } from '../../arena-web/src/owner/marketDraft.js';
+import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
+import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
+import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
+import { encodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
+import { deriveCensus, eligibleFor } from '../../arena-protocol/src/census.js';
+import { parseTransaction } from '../../arena-protocol/src/tx.js';
+import { bondSetFor } from '../src/curve.js';
 
 const env = process.env;
 const B = env.BITCOIN_BIN, WORK = env.WORK;
@@ -73,7 +81,7 @@ const proposalOf = async (i, id) => (await (await http(i, '/proposals')).json())
 
 try {
   for (let i = 0; i < 3; i++) say({ step: 'claim', seat: i + 1, ...(await door(i, '/owner/claim', 'claim', { code: readFileSync(`${stores[i]}.owner-claim`, 'utf8').trim() })) });
-  ids.forEach((id, i) => { const p = rt.postBond(id.secret, { endpoint: `ws://127.0.0.1:${PORTS[i]}`, hostedGames: [NEXTBLOCK.gameId], bondSats: BONDS[i] }); rt.include([p.hex]); });
+  ids.forEach((id, i) => { const p = rt.postBond(id.secret, { endpoint: `ws://127.0.0.1:${PORTS[i]}`, hostedGames: [NEXTBLOCK.gameId], protocolVersions: [1, 23], bondSats: BONDS[i] }); rt.include([p.hex]); });
   rt.mine(7);
   await settle();
   say({ step: 'bonds', sats: BONDS, height: tip(), hosts: (await sources()).map((s) => s.hosts.length) });
@@ -114,17 +122,47 @@ try {
   say({ step: '4 live', tip: tip(), since: after.map((s) => s.since), listed: after.map((s) => s.hosts.includes(HOST)), hash: after.map((s) => String(s.configHash).slice(0, 12)), init: after.map((s) => !!(s.entries.find((e) => e.host === HOST) || {}).init) });
   const read = await door(1, '/owner/market-test', 'market-test', { reads: [{ id: 'page', kind: 'ws', url: ENTRY.url }] });
   say({ step: '4 read, the voted init started it', ok: read.ok, why: read.why, messages: read.reads && read.reads.page.length, last: read.reads && JSON.stringify(read.reads.page[read.reads.page.length - 1]).slice(0, 120) });
-  // 5  a signed market, published from seat 2's owner door: the other seats take it, each with its own check, and a market on an unlisted host stands nowhere
-  const seed = new Uint8Array(32).fill(9), devPubkey = devPubkeyOf(seed);
-  const sign = (name, url) => signManifestWithSeed(bodyFromJson(JSON.stringify({ gameName: name, version: 1, resultType: 'ATTESTED', cores: [], runTicksMax: 0, roundPeriodMs: '3600000', payoutRule: 'PARI_MUTUEL', rankNumerator: 0, rankDenominator: 0, minScore: 0, clients: [],
-    gameDonationSetId: after[1].donationSetId, outcomes: ['Yes', 'No'], attestors: [], attestThreshold: 0, attestDraw: { count: 7, threshold: 5 }, requiredProtocolVersion: 2,
-    source: { kind: MARKET_SOURCE_KIND.URL, reads: [{ id: 'page', socket: false, url, subscribe: '' }], read: MARKET_READ.JSON, path: 'data.amount', rule: MARKET_RULE.ABOVE, level: '100000' } }), { devPubkey }), seed);
-  const good = sign('btc-100k', 'https://api.coinbase.com/v2/prices/BTC-USD/spot');
+  // 5  the owner's form on seat 2's own page (FORM_WAIT, driven by a browser), or the same manifest signed here. A market on an unlisted host stands nowhere, and the others take a good one
+  const seed = new Uint8Array(32).fill(2), devPubkey = devPubkeyOf(seed);
+  const sign = (name, url) => signManifestWithSeed(bodyFromJson(JSON.stringify(manifestOfDraft({ title: name, category: 'Crypto', kind: 'choice', outcomes: ['Yes', 'No'], schedule: { mode: 'once' },
+    source: { kind: 'url', url, read: 'json', path: 'data.amount', rule: 'above', value: '100000' } }, { donationSetId: after[1].donationSetId })), { devPubkey }), seed);
   say({ step: '5 unlisted host', ...(await door(1, '/owner/market-publish', 'market-publish', { manifest: sign('evil', 'https://attacker.example.org/x').hex })) });
-  say({ step: '5 published', ...(await door(1, '/owner/market-publish', 'market-publish', { manifest: good.hex })) });
+  let gameId;
+  if (env.FORM_WAIT) {
+    writeFileSync(join(WORK, 'form-ready'), JSON.stringify({ url: `http://127.0.0.1:${PORTS[1]}/dashboard/owner`, seed: toHex(seed) }));
+    for (let n = 0; n < 180 && !existsSync(join(WORK, 'form-done')); n++) await wait(1000);
+    const seen = (await (await http(1, '/games')).json()).games.filter((g) => decodeManifest(fromHex(g.manifest)).source);
+    gameId = seen.length ? seen[0].id : null;
+    say({ step: '5 form', published: !!gameId, game: gameId });
+  } else {
+    const good = sign('btc-100k', 'https://api.coinbase.com/v2/prices/BTC-USD/spot');
+    say({ step: '5 published', ...(await door(1, '/owner/market-publish', 'market-publish', { manifest: good.hex })) });
+    gameId = good.gameId;
+  }
   await wait(9000);
-  const games = await Promise.all([0, 1, 2].map(async (i) => (await (await http(i, '/games')).json()).games.some((g) => g.id === good.gameId)));
-  say({ step: '5 hosted', seats: games });
+  const hostedAt = await Promise.all([0, 1, 2].map(async (i) => (await (await http(i, '/games')).json()).games.some((g) => g.id === gameId)));
+  say({ step: '5 hosted', seats: hostedAt });
+  // 6  no node's advertisement names this market, and a round of it is drawn from every bonded node
+  const census = await (await http(0, `/market-sources`)).json();
+  const view = rt.blocksFrom(0, tip());
+  const byTxid = new Map();
+  for (const block of view.blocks) for (const raw of block.transactions || []) { try { byTxid.set(toHex(parseTransaction(raw).txid), raw); } catch { /* not one */ } }
+  const now = BigInt(Date.now()), nodesAll = [...ids.map((id) => id.pubkey)].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+  const c = { networkId: NETWORK_ID_REGTEST, protocolVersion: 23, censusConfirmations: 1, censusHeight: tip(), gameVerifySlots: 3, settlementSlots: 3, gameId: fromHex(gameId), simCoreHash: new Uint8Array(32), configHash: new Uint8Array(32),
+    randomnessRule: 'bitcoin-block-hash', objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, donationSetId: fromHex(after[1].donationSetId),
+    censusRoot: new Uint8Array(32), stakeMsat: 0n, bondMinSats: 50000n, blockTicks: 0, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 0, rankNumerator: 0, rankDenominator: 0, nodes: nodesAll,
+    committeeTimeMs: now + 20000n, startTimeMs: now + 320000n, entryCloseMs: now + 320000n, publicationRelays: ['wss://r.example/920'], event: { question: 'BTC over 100k?', outcomes: ['Yes', 'No'], resolveAtMs: now + 3600000n, allBonded: true } };
+  const cen = deriveCensus(view, { contract: c, bond: bondSetFor('regtest'), verifyUpdate: (s, m, k) => schnorr.verify(s, m, k), resolve: (e) => { const raw = byTxid.get(toHex(e.txid)); return raw ? { transaction: raw } : null; } });
+  say({ step: '6 census', ok: cen.ok, why: cen.why, bonded: (cen.entries || []).length, naming: (cen.entries || []).filter((e) => e.hostedGames.some((g) => toHex(g) === gameId)).length, eligible: (cen.entries || []).filter((e) => eligibleFor(e, c, 'game')).length, eligibleWithoutRule: (cen.entries || []).filter((e) => eligibleFor(e, { ...c, event: undefined }, 'game')).length });
+  c.censusRoot = cen.root;
+  const rid = toHex(roundId(c));
+  const posted = await Promise.all([0, 1, 2].map(async (i) => { const r = await http(i, '/round', { method: 'POST', body: encodeRoundContract(c) }); return { status: r.status, said: (await r.text()).slice(0, 200) }; }));
+  say({ step: '6 round', round: rid.slice(0, 16), posted });
+  writeFileSync(join(WORK, 'round-id'), rid);
+  rt.mine(8);
+  await settle();
+  const seated = await Promise.all([0, 1, 2].map(async (i) => { const r = await http(i, `/committee?round=${rid}`); return r.ok ? { eligible: r.headers.get('x-eligible'), seated: r.headers.get('x-signer-nodes') } : { why: (await r.text()).slice(0, 200) }; }));
+  say({ step: '6 committee', seats: seated });
 } finally {
   await stopAll();
   say({ step: 'stopped', work: WORK });
