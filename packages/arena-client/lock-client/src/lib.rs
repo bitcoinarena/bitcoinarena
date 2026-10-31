@@ -851,6 +851,15 @@ impl LockClient {
         })).collect()).to_string())
     }
 
+    /// STUCK MONEY BACK (kanban #910): ends the output machines stuck on a transaction and re-issues what this seed was issued and neither
+    /// holds nor has spent. Answers {"ended", "reissuingMsat"}.
+    #[wasm_bindgen(js_name = recoverStuck)]
+    pub async fn recover_stuck(&self) -> Result<String, JsError> {
+        let mint = self.client.get_first_module::<fedimint_mintv2_client::MintClientModule>().map_err(js)?;
+        let (ended, amount) = mint.blwp_recover_stuck().await.map_err(js)?;
+        Ok(serde_json::json!({ "ended": ended, "reissuingMsat": amount.msats }).to_string())
+    }
+
     /// E-CASH IN: reissued into this wallet; answers once the federation has reissued it - {"state": "Success" |
     /// "Rejected" (already spent) | "AlreadyReceived"}.
     #[wasm_bindgen(js_name = receiveEcash)]
