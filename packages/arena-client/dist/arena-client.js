@@ -10996,6 +10996,7 @@ function committeeSeedFrom({
 
 
 
+
 function playerSubSeed({ roundRandomness, playerPubkey, worldSecret, joinTick }) {
   if (!(roundRandomness instanceof Uint8Array) || roundRandomness.length !== 32)
     throw new Error('round_randomness is 32 bytes');
@@ -11071,6 +11072,24 @@ function worldSeedWord({ entry, roundRandomness, contract, roundId, sharedWorld 
   if (!(id instanceof Uint8Array) || id.length !== 32) throw new Error('a shared world needs the round id');
   if (!(roundRandomness instanceof Uint8Array) || roundRandomness.length !== 32) throw new Error('round_randomness is 32 bytes');
   return seedWordFromSubSeed(roundWorldSeed({ contract, roundId: id, roundRandomness }));
+}
+
+/**
+ * HOW MANY PLACES A SHARED WORLD STARTS ITS PLAYERS AT (kanban #828, the owner 2026-10-31: "Die müssen an unterschiedlichen Slots
+ * starten, nah beinander dass man sich sieht"). One seed word means one of everything that word decides, the starting door too.
+ */
+const WORLD_SLOTS = 12;
+
+/** The place an entry id starts at, 0 to WORLD_SLOTS - 1: its first four bytes, big-endian, as a seed word is read. */
+const slotOfEntryId = (id) => seedWordFromSubSeed(id) % WORLD_SLOTS;
+
+/**
+ * THE PLAYER'S PLACE IN A SHARED WORLD, BESIDE THE ONE FUNCTION ABOVE: the page's join, the signer nodes' replay, the ghosts and
+ * the replay page all take it from here, once per entry, off the entry's own id. Undefined under a per-player config, whose
+ * world already differs. The world itself does not move: only where this run starts in it, and a core older than the slot ignores it.
+ */
+function worldSlot({ entry, contract, sharedWorld }) {
+  return worldIsShared(contract, sharedWorld) ? slotOfEntryId(entryId(entry)) : undefined;
 }
 
 /** On a shared-world round the entry's secret field must be zeros (it is kept so stored entry ids hold). */
@@ -14563,10 +14582,52 @@ async function worldSeedFor({ entry, round, nodes, contract, fetcher = fetch } =
   return {
     // THE ONE FUNCTION (seed.js worldSeedWord): the round's contract chooses the rule - one world per round, or per player
     seedWord: worldSeedWord({ entry, roundRandomness: beacon.randomness, contract, roundId: fromHex(id), sharedWorld: sharedWorldOf(contract.gameId) }),
+    // AND WHERE IN IT THIS PLAYER STARTS (kanban #828): a shared world's place, the one the signer nodes' replay takes
+    slot: worldSlot({ entry, contract, sharedWorld: sharedWorldOf(contract.gameId) }),
     randomness: beacon.randomness,
     height: beacon.height,
     agreed: beacon.agreed,
   };
+}
+
+/**
+ * THE PLACES OF A SHARED WORLD ALREADY TAKEN (kanban #828), off the entries the round's seats hold (GET /api/round-result, public,
+ * and open before a round ends). Asked of every node at once and never for longer than `waitMs`: a seat that says nothing, or
+ * says it late, only costs a place that may be shared. Join in seconds (ruling 2026-10-02): this is not a thing to wait for.
+ */
+async function slotsTaken({ round, nodes, fetcher = fetch, waitMs = 700 } = {}) {
+  const id = typeof round === 'string' ? round : toHex(round);
+  const taken = new Set();
+  const reads = (nodes || []).map(async (node) => {
+    try {
+      const r = await fetcher(node.replace(/\/+$/, '') + '/api/round-result?round=' + id);
+      if (!r.ok) return;
+      for (const p of (await r.json()).players || []) taken.add(slotOfEntryId(fromHex(p.entry)));
+    } catch { /* that seat says nothing */ }
+  });
+  let timer;
+  await Promise.race([Promise.all(reads), new Promise((go) => { timer = setTimeout(go, waitMs); })]);
+  clearTimeout(timer);
+  return taken;
+}
+
+/**
+ * A SESSION KEY WHOSE ENTRY STARTS AT A PLACE NOBODY HOLDS (kanban #828). A hash gives two players the same place 1 time in
+ * WORLD_SLOTS, and the session key is the one part of an entry nothing else depends on: it signs the run's marks and no lock
+ * names it. So a shared-world entry draws its key again while the id it makes lands on a place listed as taken. `makeKey`
+ * answers { raw, ... }; on a per-player round, with all places taken or with nothing listed: the first key, as before.
+ * Two players joining in the same instant cannot see each other, and can still share a place then.
+ */
+async function keyOnFreeSlot({ makeKey, entry, contract, nodes, fetcher = fetch, waitMs, tries = 64 } = {}) {
+  let sharedWorld = null;
+  try { sharedWorld = contract && entry && Array.isArray(nodes) && nodes.length ? sharedWorldOf(contract.gameId) : null; } catch { sharedWorld = null; }
+  if (!sharedWorld || !worldIsShared(contract, sharedWorld)) return makeKey();
+  const rid = roundId(contract);
+  const taken = await slotsTaken({ round: rid, nodes, fetcher, ...(waitMs === undefined ? {} : { waitMs }) });
+  const slotOf = (k) => worldSlot({ entry: { ...entry, roundId: rid, sessionPubkey: k.raw }, contract, sharedWorld });
+  let key = await makeKey();
+  for (let i = 1; i < tries && taken.size < WORLD_SLOTS && taken.has(slotOf(key)); i++) key = await makeKey();
+  return key;
 }
 
 /**
@@ -35588,6 +35649,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          fetchRound: fetchRound, bondProvider: bondProvider,
          fetchRandomness: fetchRandomness, worldSeedFor: worldSeedFor,
          seedWordForEntry: seedWordForEntry, worldSeedWord: worldSeedWord, worldIsShared: worldIsShared, sharedWorldOf: sharedWorldOf,
+         worldSlot: worldSlot, keyOnFreeSlot: keyOnFreeSlot,
          tabSeed: tabSeed, importSeed: importSeed, restoreSeed: restoreSeed, seedOrigin: seedOrigin,
          playerFor: playerFor, entryFor: entryFor,
          chooseDonation: chooseDonation, donationChoice: donationChoice, DONATION_CONFIRM_BPS: DONATION_CONFIRM_BPS,
