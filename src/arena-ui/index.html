@@ -157,6 +157,7 @@
     #arena-money-alert { display: none; position: fixed; left: 8px; right: 8px; top: calc(46px + env(safe-area-inset-top, 0px)); z-index: 2147483000; padding: 10px 12px; border-radius: 10px;
       background: #7f1d1d; border: 1px solid #fca5a5; color: #fff; font: 600 14px/1.35 system-ui, sans-serif; text-align: center; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
     #arena-money-alert.show { display: block; }
+    #arena-money-alert button { margin-left: 6px; padding: 6px 12px; border: 0; border-radius: 8px; background: #fff; color: #7f1d1d; font: 700 14px/1 system-ui, sans-serif; cursor: pointer; }
     body.arena-own-client #arena-join-status.on { display: flex; align-items: center; gap: 8px; position: fixed; left: 8px; right: 8px; z-index: 39;
       bottom: calc(30px + env(safe-area-inset-bottom, 0px) + 8px); padding: 10px 12px; border-radius: 10px; background: #11161d; border: 1px solid #2a3442;
       color: #e6edf3; font: 600 13px/1.35 system-ui, sans-serif; box-shadow: 0 6px 24px rgba(0,0,0,.45); }
@@ -1606,6 +1607,19 @@
         const money = msat > 0n ? 'Up to ' + sats + ' sat you deposited could not be collected into your wallet. ' : '';
         el.textContent = money + (full ? (msat > 0n ? 'This browser\u2019s storage is full.' : 'This browser\u2019s storage is full: a deposit cannot be collected now.') : '');
         el.classList.toggle('show', !!el.textContent);
+        // FIX IT (the owner 2026-10-31): room made on the spot and the page read again, which collects what can still be collected. Nothing with money in it goes.
+        if (full) { const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Fix it'; b.onclick = fix; el.appendChild(document.createTextNode(' ')); el.appendChild(b); }
+      };
+      const fix = () => {
+        const el = document.getElementById('arena-money-alert');
+        try {
+          const S = (window.ARENA_BROWSER_STORE && window.ARENA_BROWSER_STORE()) || localStorage;
+          S.removeItem('arena.slowtx'); S.removeItem('arena.clientlog');
+          const freed = ARENACLIENT.packWallets(S);
+          if (window.ARENA_TIDY_STORAGE) window.ARENA_TIDY_STORAGE(800000);
+          console.log('[arena] fix it: wallets packed, ' + freed + ' characters free again');
+          el.textContent = 'Room made, reading your wallet again \u2026'; location.reload();
+        } catch (e) { el.textContent = 'This could not be fixed here: ' + (e && e.message ? e.message : e); console.error('[arena] fix it: ' + (e && e.message ? e.message : e)); }
       };
       return { lost: (fed, p) => { lost.set(String(p.operation), String(p.msat)); console.error('[arena] deposit not collected: ' + p.msat + ' msat, federation ' + String(fed).slice(0, 8) + ', operation ' + String(p.operation).slice(0, 12)); paint(); },
         full: () => { if (!full) console.error('[arena] the browser\u2019s storage refused a wallet write: deposits cannot be collected'); full = true;
