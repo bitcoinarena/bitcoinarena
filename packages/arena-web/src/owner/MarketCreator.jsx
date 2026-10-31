@@ -38,6 +38,10 @@ export class MarketCreator extends React.Component {
     try { this.setState({ signed: this.props.signManifest(JSON.stringify(manifestOfDraft(this.state.draft, { donationSetId: this.state.donationSetId }))), signWhy: '' }); }
     catch (e) { this.setState({ signed: null, signWhy: e.message }); }
   }
+  async publish() {
+    try { await this.props.publishMarket({ manifest: this.state.signed.hex }); this.setState({ published: true, signWhy: '' }); }
+    catch (e) { this.setState({ signWhy: e.message }); }
+  }
   checked(d = this.state.draft) { return d.source.kind === 'code' && d.source.code.trim() ? checkMarketCode(d.source.code, parse) : null; }
   set(more, sample = this.state.sample) {
     const draft = { ...this.state.draft, ...more };
@@ -122,7 +126,7 @@ export class MarketCreator extends React.Component {
       </div>);
   }
   stepView() {
-    const { step, draft: d, shown, test, sample, reading, srcGroup, signed, signWhy } = this.state;
+    const { step, draft: d, shown, test, sample, reading, srcGroup, signed, signWhy, published } = this.state;
     const check = this.checked(d);
     const bad = shown ? problemsOf(d, step, check) : {};
     if (step === 'start') return (
@@ -196,7 +200,9 @@ export class MarketCreator extends React.Component {
       <button type="button" className="primary" disabled={!this.props.signManifest || !!signed} onClick={() => this.sign()}>Sign</button>
       {signed ? <div className="mc-check ok">Signed. Market id <span className="mono">{signed.gameId.slice(0, 16)}</span></div> : null}
       {signWhy ? <div className="mc-check bad">{signWhy}</div> : null}
-      <p className="mc-note">{this.props.signManifest ? 'Publishing arrives with the next node release. Your draft stays in this browser.' : 'Signing needs your 24 words or your nsec on this page.'}</p>
+      {signed && this.props.publishMarket ? <button type="button" className="primary" disabled={!!published} onClick={() => this.publish()}>Publish</button> : null}
+      {published ? <div className="mc-check ok">Published. Other nodes check it and host it within 5 minutes.</div> : null}
+      {this.props.signManifest ? null : <p className="mc-note">Signing needs your 24 words or your nsec on this page.</p>}
     </>);
   }
   render() {

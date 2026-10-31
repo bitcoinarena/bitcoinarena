@@ -463,6 +463,7 @@ async function area() {
     tryOnNode: (args) => post('/owner/market-test', signed('market-test', args)),
     readListed: () => fetch(at('/market-sources')).then((r) => r.json()),
     readProposals: () => fetch(at('/proposals')).then((r) => r.json()),
+    publishMarket: (args) => post('/owner/market-publish', signed('market-publish', args)),
     proposeSource: (args) => post('/owner/source-proposal', signed('source-proposal', args)),
     voteSource: (args) => post('/owner/source-vote', signed('source-vote', args)),
     signManifest: (text) => { const out = C.signManifestWithSeed(C.bodyFromJson(text, { devPubkey: devPub }), devSeed); window.OWNER_SIGNED = out; return out; } };
