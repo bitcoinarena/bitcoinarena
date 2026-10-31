@@ -8992,6 +8992,9 @@
           sessionStorage.setItem('arena.track.opened', '1');
           const q = new URLSearchParams(location.search);
           window.ARENA_TRACK('app-open', { user: already ? 'existing' : 'new', link: q.get('round') ? 'round' : q.get('game') ? 'game' : 'plain', referred: q.get('ref') ? 'yes' : 'no' });
+          // SOMEONE WHO LOGGED IN WITH NOSTR AND CAME BACK (the owner 2026-10-31: "Nostr wallet recurring join"): this browser kept the login, so the screen above was not needed
+          let nostr = null; try { nostr = JSON.parse(window.ARENA_BROWSER_STORE().getItem('arena.nostr') || 'null'); } catch { nostr = null; }
+          if (already && nostr) window.ARENA_TRACK('nostr-wallet-join', { how: 'returning' });
         }
       } catch { /* no storage, nothing to count once */ }
       // A NOSTR LOGIN SHOWS NO WORDS: the account's seed is kept on Nostr and opens from it again; its 24 words,
@@ -9027,7 +9030,7 @@
         window.ARENA_WALLET_SCREEN.nostr = { how, created: got.created, from: got.from, relays: got.relays, npub: N.npubOf(signer.pubkey) };
         try { await signer.close(); } catch { /* gone */ }
         busy(got.created ? 'Your wallet is made and kept on Nostr - opening it…' : 'Your wallet is back - opening it…');
-        window.ARENA_TRACK('wallet-nostr', { how, account: got.created ? 'new' : 'existing' });
+        window.ARENA_TRACK(got.created ? 'nostr-wallet-create' : 'nostr-wallet-join', { how });
         const r = window.ARENA_RESTORE_SEED ? window.ARENA_RESTORE_SEED(hex) : { ok: false, why: 'the page is still loading' };
         if (!r.ok) throw new Error(r.why);
       }
