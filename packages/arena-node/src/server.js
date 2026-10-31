@@ -7180,7 +7180,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (url.pathname === '/market-sources' && req.method === 'GET') {
         const net = String(url.searchParams.get('network') || chainNetworkId() || '').toLowerCase();
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify(ballotTally && /^[0-9a-f]{64}$/.test(net) ? ballotTally.sources(net) : { hosts: [...MARKET_HOSTS], entries: SOURCE_ENTRIES, since: 0, by: null, history: [] }));
+        const inForce = /^[0-9a-f]{64}$/.test(net) && ballotTally ? ballotRecipients(net, ballotTally.tip) : null;
+        return res.end(JSON.stringify({ ...(ballotTally && /^[0-9a-f]{64}$/.test(net) ? ballotTally.sources(net) : { hosts: [...MARKET_HOSTS], entries: SOURCE_ENTRIES, since: 0, by: null, history: [] }),
+          donationSetId: inForce ? toHex(donationSetId(inForce)) : null }));
       }
       if (url.pathname === '/config' && req.method === 'GET') {
         if (!ballotTally) return text(res, 404, 'this seat counts no ballot: it reads no chain for it');
