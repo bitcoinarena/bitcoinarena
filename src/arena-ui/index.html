@@ -5742,12 +5742,23 @@
       // still shown after 06:43:21 - the signer nodes settle 13-23 s after the close, and the page collects after that)
       // AND NOT "PAYING OUT" FOREVER (MF 18: a payout that never came read "paying out" 54 s on and on): from 10 min past
       // the close "not paid yet", and the federation block from which the round's lock comes back to the player's key
-      const when = total > 0n && closeMs ? ARENACLIENT.pendingWindowLine({ closeMs, provisional,
+      const when = total > 0n && closeMs ? ARENACLIENT.pendingWindowLine({ closeMs, provisional, ...pendingTip(),
         expiration: ARENACLIENT.savedLockExpiration ? ARENACLIENT.savedLockExpiration(vault(), closeRound) : null }) : '';
       const whenEl = document.getElementById('arena-bal-pending-when'); if (whenEl) window.ArenaText.say(whenEl, when);
       const chip = document.getElementById('arena-lobby-pending'); if (chip && chip.parentNode) chip.parentNode.title = when || 'pending';
       paintMoney();
       } finally { st.busy = false; }
+    }
+    // THE CHAIN'S TIP FOR THE LINE ABOVE (kanban #827): "in about 1h 3m" instead of a block height; read at most once a minute, the height when it cannot be read
+    let pendingChain = { tipHeight: null, secondsPerBlock: 600, atMs: 0 };
+    function pendingTip() {
+      if (Date.now() - pendingChain.atMs > 60000) {
+        pendingChain.atMs = Date.now();
+        let said = null; try { said = window.ARENA_BROWSER_STORE().getItem('arena.explorer'); } catch { /* the default */ }
+        const base = ARENACLIENT.explorerBaseFor ? ARENACLIENT.explorerBaseFor('testnet4', said) : null;
+        if (base) fetch(base + '/blocks/tip/height', { signal: AbortSignal.timeout(8000) }).then((r) => r.text()).then((t) => { if (/^\d+$/.test(t.trim())) pendingChain.tipHeight = Number(t); }).catch(() => {});
+      }
+      return { tipHeight: pendingChain.tipHeight, secondsPerBlock: pendingChain.secondsPerBlock };
     }
     setInterval(lookThePending, 2000);
 

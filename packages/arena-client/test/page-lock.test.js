@@ -1561,6 +1561,10 @@ test('the pending line: the window\'s close, then paying out for 10 min, then no
   assert.equal(pendingWindowLine({ closeMs: close, nowMs: close + PAYOUT_GRACE_MS - 1 }), 'window closed 05:43:33 UTC \u00b7 paying out');
   assert.equal(pendingWindowLine({ closeMs: close, nowMs: close + PAYOUT_GRACE_MS, expiration: 156900 }),
     'window closed 05:43:33 UTC \u00b7 not paid yet \u2013 the lock returns to your key from block 156900');
+  assert.equal(pendingWindowLine({ closeMs: close, nowMs: close + PAYOUT_GRACE_MS, expiration: 156900, tipHeight: 156894 }),
+    'window closed 05:43:33 UTC \u00b7 not paid yet \u2013 the lock returns to your key in about 1h 0m', 'kanban #827: a time, not a height');
+  assert.match(pendingWindowLine({ closeMs: close, nowMs: close + PAYOUT_GRACE_MS, expiration: 156900, tipHeight: 156899 }), /in about 10m$/);
+  assert.match(pendingWindowLine({ closeMs: close, nowMs: close + PAYOUT_GRACE_MS, expiration: 156900, tipHeight: 156900 }), /your key now$/);
   assert.equal(pendingWindowLine({ closeMs: close, nowMs: close + PAYOUT_GRACE_MS + 5 }), 'window closed 05:43:33 UTC \u00b7 not paid yet \u2013 the lock returns to your key when it expires');
   assert.equal(pendingWindowLine({ closeMs: null }), '');
   // the block, from the round's saved lock
