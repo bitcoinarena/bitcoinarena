@@ -17,6 +17,11 @@ const run = confToRun(values, { home: dirname(file) });
 for (const [k, v] of Object.entries(run.env)) process.env[k] = v;
 // the node's home: what the owner area's service overview (arena-installer node-services.js, instance.js) reads this node from
 process.env.ARENA_HOME = dirname(file);
+// a node moved to this release by an older updater has no stake_lock_bin (kanban #824)
+{
+  const { stakeLockDefaults } = await import('./stake-lock-port.js');
+  if (stakeLockDefaults(process.env, { release: fileURLToPath(new URL('../../../', import.meta.url)), home: dirname(file) })) console.log(`[arena.conf] stake locks: the release's own tool, ${process.env.ARENA_STAKE_LOCK_BIN}`);
+}
 const other = unknownKeys(values);
 console.log(`[arena.conf] ${file}: ${Object.keys(values).length} settings, seat on port ${run.port}${other.length ? `; not listed by this release (passed on): ${other.join(', ')}` : ''}`);
 // AT log_level verbose OR debug (kanban #693): which variable each setting became - its name only, never its value
