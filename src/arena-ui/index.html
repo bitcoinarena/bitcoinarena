@@ -826,13 +826,13 @@
     body.arena-picking #arena-donate-go, body.arena-game-chosen:not(.arena-own-client):has(#boot:not(.done)) #arena-donate-go,
     body.arena-unity-menu #arena-donate-go,
     body:has(#arena-season.show) #arena-donate-go, body:has(#arena-shop.show) #arena-donate-go {
-      display: block; position: fixed; right: 6px; bottom: calc(env(safe-area-inset-bottom, 0px) + 3px); z-index: 9992; height: 24px; padding: 0 10px;
+      display: block; position: fixed; right: 6px; bottom: calc(min(env(safe-area-inset-bottom, 0px), 4px) + 3px); z-index: 9992; height: 24px; padding: 0 10px;
       border: 1px solid #f7931a; border-radius: 8px; background: #1b1408; color: #f7931a; font: 600 12px system-ui, sans-serif; cursor: pointer; }
     body.arena-picking #arena-build, body.arena-game-chosen:not(.arena-own-client):has(#boot:not(.done)) #arena-build,
     body.arena-unity-menu #arena-build,
     body:has(#arena-season.show) #arena-build, body:has(#arena-shop.show) #arena-build {
-      display: block; left: auto; top: auto; right: 0; bottom: 0; height: calc(30px + env(safe-area-inset-bottom, 0px)); line-height: 30px; padding: 0 230px 0 8px;
-      background: none; border-radius: 0; font-size: 10px; text-align: right; }
+      display: block; left: 0; top: auto; right: 0; bottom: 0; height: calc(30px + min(env(safe-area-inset-bottom, 0px), 4px)); line-height: 30px; padding: 0 230px 0 8px;
+      box-sizing: border-box; background: #0d1117; border-top: 1px solid #2a3442; border-radius: 0; font-size: 10px; text-align: right; }
     /* THE GAME'S MENU BETWEEN THE ARENA'S BAR AND ITS FOOT (kanban #789, the owner 2026-10-29 playtest on a phone: "der Footer schneidet in den
        Rahmen"): the bar (to ~40 px) and the foot (30 px and the safe area) are fixed over the canvas, and Unity centres its panel in the
        canvas with ~6 % of the height below it - on a phone's short window less than the foot, which lay over PLAY and SPECTATE. While the menu
@@ -841,7 +841,7 @@
     /* (the height spelled out and !important: Unity writes the canvas's height into its style, and a canvas's auto height is its pixel
        height - measured on the first try, the canvas moved down 40 px and kept its 664 px, ending 40 px under the window) */
     body.arena-unity-menu:not(.arena-clean) #canvas { top: calc(40px + env(safe-area-inset-top, 0px)); bottom: auto;
-      height: calc(100% - 70px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) !important; }
+      height: calc(100% - 70px - env(safe-area-inset-top, 0px) - min(env(safe-area-inset-bottom, 0px), 4px)) !important; }
     body.arena-picking #arena-games .foot-row, body.arena-game-chosen:has(#boot:not(.done)) #boot-build { display: none; }
     body.arena-picking #arena-games .box { padding-bottom: 36px; }
     /* THE ARENA'S OWN LOADING SCREEN HAS THE HEADER AND THE FOOTER (kanban #535: "the arena loading page, the one which opens when clicking the
@@ -853,8 +853,8 @@
       color: #e8eaed; font: 700 16px/1 system-ui, sans-serif; letter-spacing: -0.01em; white-space: nowrap; text-shadow: 0 1px 3px rgba(0,0,0,.8); text-decoration: none; }
     html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-donate-go { display: block; position: fixed; right: 6px; bottom: calc(min(env(safe-area-inset-bottom, 0px), 4px) + 3px); z-index: 9992; height: 24px;
       padding: 0 10px; border: 1px solid #f7931a; border-radius: 8px; background: #1b1408; color: #f7931a; font: 600 12px system-ui, sans-serif; cursor: pointer; }
-    html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-build { display: block; left: auto; top: auto; right: 0; bottom: 0; height: calc(30px + min(env(safe-area-inset-bottom, 0px), 4px)); line-height: 30px;
-      padding: 0 230px 0 8px; background: none; border-radius: 0; font-size: 10px; text-align: right; }
+    html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-build { display: block; left: 0; top: auto; right: 0; bottom: 0; height: calc(30px + min(env(safe-area-inset-bottom, 0px), 4px)); line-height: 30px;
+      padding: 0 230px 0 8px; box-sizing: border-box; background: #0d1117; border-top: 1px solid #2a3442; border-radius: 0; font-size: 10px; text-align: right; }
     html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #boot-build { display: none; }
     body.arena-clean #arena-donate-go, body.arena-clean #arena-build { display: none !important; }
     /* BITCOIN ARENA ON X, DISCORD AND TELEGRAM, LEFT OF DONATE (kanban #749: "add social media icons to the footer of every page"): wherever
