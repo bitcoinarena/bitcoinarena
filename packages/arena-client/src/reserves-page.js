@@ -28,6 +28,34 @@ export async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher
   return { ok: true, key: fromHex(best[0]), agreeing: best[1], asked: asked.length };
 }
 
+/**
+ * THE FEDERATIONS NO ENTRY CAN PAY INTO (the owner 2026-10-30, the second time at a table of federation 337ae01a: "Order not placed: this round pays
+ * the protocol reserves, and none of the round's 14 signer nodes names a reserve key"): a federation at least `minAnswers` nodes list on
+ * GET /reserves and none names a key for. Too few answers, or a page that could not ask, holds nothing back. Answers a Set of federation hex.
+ */
+export function keylessFederations(answers, { minAnswers = 3 } = {}) {
+  const seen = new Map();
+  const read = (answers || []).filter((a) => a && Array.isArray(a.federations));
+  if (read.length < minAnswers) return new Set();
+  for (const a of read) for (const f of a.federations) {
+    if (typeof f.federationId !== 'string') continue;
+    const was = seen.get(f.federationId) || { listed: 0, keyed: false };
+    was.listed++;
+    if (/^0[23][0-9a-f]{64}$/.test(String(f.key || f.reserveKey || ''))) was.keyed = true;   // `key` only on a member of the federation; `reserveKey` on every seat that knows it
+    seen.set(f.federationId, was);
+  }
+  return new Set([...seen].filter(([, v]) => !v.keyed && v.listed >= minAnswers).map(([f]) => f));
+}
+
+/** GET /reserves of up to `limit` nodes, read as keylessFederations reads them. Never throws. */
+export async function fetchKeylessFederations({ nodes, limit = 6, fetcher = (u, o) => fetch(u, o), timeoutMs = 5000, minAnswers = 3 } = {}) {
+  const asked = [...new Set((nodes || []).map((n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')))].slice(0, limit);
+  const answers = await Promise.all(asked.map(async (base) => {
+    try { const r = await fetcher(`${base}/reserves`, { signal: AbortSignal.timeout(timeoutMs) }); return r.ok ? await r.json() : null; } catch { return null; }
+  }));
+  return keylessFederations(answers, { minAnswers });
+}
+
 /** What a version-11 entry gives beside its stake: { bps, donationMsat, reserveMsat, mandatory } - the developers' 4 % and the reserves' 2 %. */
 // `split`: the round's split in force at its census height (fee-proposal.js roundSplitBps); unset, today's
 export function reservesDonation(stakeMsat, split = ROUND_SPLIT_BPS) {
