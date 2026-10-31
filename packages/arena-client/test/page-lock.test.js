@@ -2216,3 +2216,30 @@ test('a seat\'s gateways: seated first, then the others that stand, each once (a
   assert.deepEqual(gatewayUrlsOfView({}), []);
   assert.deepEqual(gatewayUrlsOfView(null), []);
 });
+
+test('a wallet is packed in place: nothing is lost, it takes under a third of the room, and a full browser gets its room back (#883)', async () => {
+  const { packHex, unpackHex, packWallets, walletStoreFor } = await import('../src/page-lock.js');
+  for (const h of ['', '00', 'ff', 'a1b2', '0123456789abcdef', 'ab'.repeat(5), 'cd'.repeat(9000)]) assert.equal(unpackHex(packHex(h)), h);
+  for (let n = 2; n < 64; n += 2) { const h = Array.from({ length: n }, (_, i) => ((i * 7 + 3) % 16).toString(16)).join(''); assert.equal(unpackHex(packHex(h)), h); }
+  assert.equal(packHex('not hex'), 'not hex');
+  const map = new Map();
+  const L = { get length() { return map.size; }, key: (i) => [...map.keys()][i], getItem: (k) => (map.has(k) ? map.get(k) : null), setItem: (k, v) => { map.set(k, String(v)); }, removeItem: (k) => { map.delete(k); } };
+  const fed = new Uint8Array(32).fill(7), secret = new Uint8Array(32).fill(9);
+  const s = walletStoreFor(L, fed, secret);
+  const prefix = [...(s.put('aa', 'bb'), map.keys())][0].slice(0, -1 * [...map.keys()][0].slice(49).length);
+  s.remove('aa');
+  map.set(prefix + 'ab'.repeat(90), 'cd'.repeat(800)); map.set(prefix + 'ef', '');        // written by an older page
+  const before = [...map].reduce((n, [k, v]) => n + k.length + v.length, 0);
+  assert.ok(packWallets(L) > 0);
+  const after = [...map].reduce((n, [k, v]) => n + k.length + v.length, 0);
+  assert.ok(after < before / 2, `${after} of ${before}`);
+  assert.deepEqual(JSON.parse(s.entries()).sort(), [['ab'.repeat(90), 'cd'.repeat(800)], ['ef', '']].sort());
+  assert.equal(packWallets(L), 0, 'a second pass finds nothing to do');
+  const twin = walletStoreFor(L, new Uint8Array(32).fill(8), secret), same = 'ef'.repeat(4000);
+  s.put('11', same); twin.put('22', same);
+  assert.equal([...map.keys()].filter((k) => k.startsWith('arena.walletblob.')).length, 1, 'the same long value is kept once');
+  assert.equal(JSON.parse(twin.entries())[0][1], same);
+  twin.remove('22'); s.remove('11'); packWallets(L);
+  assert.equal([...map.keys()].filter((k) => k.startsWith('arena.walletblob.')).length, 0, 'a value no wallet names goes');
+  s.remove('ab'.repeat(90)); assert.equal(JSON.parse(s.entries()).length, 1);
+});
