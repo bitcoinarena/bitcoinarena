@@ -598,6 +598,16 @@ const federationOfClient = new WeakMap();
 export function useSeatedGateways(lookup) { seatedLookup = typeof lookup === 'function' ? lookup : null; }
 /** Which federation a lock client is a wallet of (openPlayerWallet notes it). */
 export function noteClientFederation(client, federationHex) { if (client && typeof client === 'object' && federationHex) federationOfClient.set(client, String(federationHex).toLowerCase()); }
+/**
+ * THE GATEWAYS A GUARDIAN SEAT NAMES (GET /gateway-seats): the seated ones first, then every other that stands. A seat says them from signed claims,
+ * so a new tunnel's address reaches the page from there; the site's own list is only what it was when the site was last deployed.
+ */
+export function gatewayUrlsOfView(view) {
+  const g = (view && view.gateways) || {};
+  const seated = ((view && view.seated) || []).map((n) => g[n] && g[n].url).filter(Boolean);
+  return [...new Set([...seated, ...Object.values(g).map((x) => x && x.url).filter(Boolean)])];
+}
+
 /** The seated gateways of `client`'s federation, [] when the page names no lookup or it cannot say. */
 export async function seatedGatewaysOf(client) {
   const f = client && typeof client === 'object' ? federationOfClient.get(client) : null;

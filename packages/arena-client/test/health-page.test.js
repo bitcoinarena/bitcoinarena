@@ -128,3 +128,16 @@ test('Waiting for a founding: one list from one seat, and every number counted f
   assert.equal(drawn.find((d) => d[0] === '#founding-facts')[2].items[0][1], 'no seat answered its list yet');
   assert.deepEqual(drawn.find((d) => d[0] === 'founding')[2].rows, []);
 });
+
+test('a federation no seat names a reserve key for is temporarily unavailable, with the block and the time it returns (kanban #819)', async () => {
+  const { unavailableFederations, unavailableLine } = await import('../../../src/arena-ui/health/network.js');
+  const A = 'aa'.repeat(32), B = 'bb'.repeat(32), nowMs = Date.UTC(2026, 9, 30, 13, 0);
+  const reserves = { federations: [{ federationId: A, key: null, reserveKey: null, why: 'no reserve key for 0 guardian seats' }, { federationId: B, key: null, reserveKey: `02${'cd'.repeat(32)}` }] };
+  const m = unavailableFederations(reserves, { expected: { [A]: 158325 }, tip: 158235, nowMs });
+  assert.deepEqual([...m.keys()], [A], 'a seat that is no member names the key as reserveKey: B stands');
+  assert.equal(m.get(A).block, 158325);
+  assert.equal(unavailableLine(4, A, m.get(A), nowMs), 'Federation 4 (aaaaaaaa) is temporarily unavailable: no reserve key yet, so paid rounds there are paused. Expected back from block 158,325, around 2026-10-31 04:00 UTC (in about 15 hours).');
+  const none = unavailableFederations(reserves, { nowMs }).get(A);
+  assert.match(unavailableLine(4, A, none, nowMs), /No return block is known yet\.$/);
+  assert.equal(unavailableFederations(null).size, 0, 'no answer: nothing is called unavailable');
+});
