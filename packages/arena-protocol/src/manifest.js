@@ -291,8 +291,7 @@ export function marketSourceFits(s, m) {
     if (!r || !/^[a-z][a-zA-Z0-9]{0,31}$/.test(String(r.id))) return { ok: false, why: 'each read has a name in letters' };
     // whether its host is listed is the ballot's and changes with the chain, so it is read per round (market-reader.js), never here
     const bad = marketUrlProblem(r.url, !!r.socket); if (bad) return { ok: false, why: `read ${r.id}: ${bad}` };
-    if (r.socket) return { ok: false, why: `read ${r.id}: a socket decides nothing: two connections see different trades (docs/MARKET-SOURCES.md), so seven nodes would not agree` };
-    if (r.subscribe !== '') return { ok: false, why: `read ${r.id}: only a socket sends a message` };
+    if (typeof r.subscribe !== 'string' || r.subscribe.length > 1024 || (r.subscribe && !r.socket)) return { ok: false, why: `read ${r.id}: only a socket sends a message, of at most 1 KB` };
   }
   if (new Set(s.reads.map((r) => r.id)).size !== s.reads.length) return { ok: false, why: 'each read has a name of its own' };
   if (s.kind === MARKET_SOURCE_KIND.URL) {

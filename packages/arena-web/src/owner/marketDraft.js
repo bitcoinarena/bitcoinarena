@@ -42,7 +42,7 @@ function decide(reads, market) {
   return price >= 100000 ? market.outcomes[0] : market.outcomes[1];
 }
 ` },
-  { id: 'socket', name: 'Read a socket', note: 'For a look only: a socket cannot decide a market, two connections see different trades.', reads: [{ id: 'feed', kind: 'ws', url: 'wss://ws-feed.exchange.coinbase.com', subscribe: '{"type":"subscribe","product_ids":["BTC-USD"],"channels":["ticker"]}' }],
+  { id: 'socket', name: 'Read a socket', reads: [{ id: 'feed', kind: 'ws', url: 'wss://ws-feed.exchange.coinbase.com', subscribe: '{"type":"subscribe","product_ids":["BTC-USD"],"channels":["ticker"]}' }],
     code: `// reads.feed is the list of messages the node took from the socket
 function decide(reads, market) {
   const ticks = reads.feed.filter((m) => m.type === 'ticker');
@@ -90,7 +90,6 @@ export function problemsOf(d, step, check = null) {
   if (step === 'result' && d.source.kind === 'code') {
     const s = d.source;
     if (s.reads.length > READS_MAX) p.reads = `At most ${READS_MAX} reads`;
-    if (s.reads.some((r) => r.kind === 'ws')) p.reads = 'A socket cannot decide a market';
     for (const r of s.reads) { const bad = urlProblem(r.url, r.kind === 'ws'); if (bad) p.reads = `${r.id}: ${bad}`; if (!/^[a-z][a-zA-Z0-9]*$/.test(r.id)) p.reads = 'Name each read in letters'; }
     if (!s.code.trim()) p.code = 'Write the code'; else if (check && !check.ok) p.code = 'Fix what the check names';
   } else if (step === 'result') {

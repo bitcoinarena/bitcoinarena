@@ -110,7 +110,7 @@ Network reads:
 | Hosts | listed hosts only (`MARKET_HOSTS`, from docs/MARKET-SOURCES.md); public addresses, checked after DNS, never private or local ranges |
 | Reads per market | 3 |
 | Answer | 1 MB, 10 s, no redirects, no cookies, no keys |
-| Socket | for a look in the test only: a socket cannot decide a market, two connections see different trades |
+| Socket | 30 s, 1,000 messages. Nodes see different trades, so values differ; they sign the outcome, and a close call without 5 of 7 refunds |
 
 ## Schedule
 
