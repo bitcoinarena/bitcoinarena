@@ -58,7 +58,9 @@ export const THRESHOLDS = Object.freeze({
   [CLASS.DESIGN]: { turnoutPct: 30n, approvalPct: 50n, strict: true },     // > 50 %
   [CLASS.MONEY]: { turnoutPct: 40n, approvalPct: 66n, strict: false },     // >= 66 %
   [CLASS.UPGRADE]: { turnoutPct: 51n, approvalPct: 66n, strict: false },   // >= 66 %
-  [CLASS.SOURCES]: { turnoutPct: 20n, approvalPct: 50n, strict: true },    // > 50 % (the owner 2026-10-31: "kürzer, 66% ist Zuviel. Quorum auch")
+  // > 50 %, and yes from at least 25 % of ALL bonded capital (the owner 2026-10-31: "kürzer, 66% ist Zuviel. Quorum auch", "Mindestens 25% des Bond Kapitals"): 20 % turnout alone
+  // would let some 10 % of the capital add a host of its own
+  [CLASS.SOURCES]: { turnoutPct: 20n, approvalPct: 50n, strict: true, minYesPct: 25n },
 });
 export const VOTE_MARKER = Uint8Array.from([0x41, 0x52, 0x4e, 0x56]);     // "ARN" 'V'
 export const VOTE_BYTES = 4 + 8 + 1 + 64;                                  // 77, inside the 80-byte OP_RETURN limit
@@ -178,7 +180,7 @@ export function tally({ proposal, standing, census, votes, verify }) {
   const turnout = yes + no + abstain;
   const quorum = total > 0n && turnout * 100n >= t.turnoutPct * total;
   const decided = yes + no;
-  const approved = decided > 0n && (t.strict ? yes * 100n > t.approvalPct * decided : yes * 100n >= t.approvalPct * decided);
+  const approved = decided > 0n && (t.strict ? yes * 100n > t.approvalPct * decided : yes * 100n >= t.approvalPct * decided) && (!t.minYesPct || yes * 100n >= t.minYesPct * total);
   return { totalSats: total, yesSats: yes, noSats: no, abstainSats: abstain, bondsVoted: latest.size, quorum, approved, passed: quorum && approved,
     turnoutPct: total > 0n ? Number((turnout * 10000n) / total) / 100 : 0, approvalPct: decided > 0n ? Number((yes * 10000n) / decided) / 100 : 0 };
 }
