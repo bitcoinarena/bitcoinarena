@@ -150,7 +150,7 @@ import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
 import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
 import { DrawnAttestor } from './drawn-attestor.js';
 import { runSourceOnce, tryExample } from './market-test.js';
-import { MARKET_HOSTS, encodeSourceList, hostListProblem } from '../../arena-protocol/src/market-check.js';
+import { MARKET_HOSTS, checkMarketCode, encodeSourceList, hostListProblem, marketHostProblem } from '../../arena-protocol/src/market-check.js';
 import { sourcePlan, payDeposit, depositBlock, signedProposal } from './source-ballot.js';
 import { bondCliFrom } from './add-bond-wallet.js';
 import { SOURCE_ENTRIES } from '../../arena-protocol/src/market-sources.js';
@@ -222,7 +222,7 @@ import { hostedPlugins, pluginForRound, advertisedAppsCheck } from './plugins.js
 import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf, attestedTable, VALUE_HELD_OUTCOME } from './game-market.js';
 import { isHeadToHead, marketOfRound, isGameMarket, isScalar, isDrawnAttest, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
 import { decodeValueAttestation, valueAttestationStands, valueAttestationBodyId, isValueAttestationBytes } from '../../arena-protocol/src/scalar.js';
-import { encodeManifest, decodeManifest, gameIdOf, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
+import { encodeManifest, decodeManifest, gameIdOf, MARKET_SOURCE_KIND, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { gameTypeOf, gameInfoStands } from '../../arena-protocol/src/game-info.js';
 import { genesisFor, committeesStand } from '../../arena-protocol/src/genesis.js';
 import { nonceGen as musigNonceGen, bondSigningContext as musigBondContext, bondPartialSign as musigBondPartial } from './musig2.js';
@@ -976,6 +976,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const hostedParent = (id) => { const g = hosted.get(toHex(id)); return g ? g.manifest : null; };
   const installedInfo = (id) => { const g = hosted.get(id); return g ? { gameId: id, devKey: toHex(g.manifest.gameDevPubkey), version: g.manifest.version, parent: toHex(g.manifest.parentManifestId) } : null; };
+  const MARKETS_PER_DEV = 5;
+  async function marketRefused(m) {
+    if (!m.source) return null;
+    const net = chainNetworkId();
+    const hosts = ballotTally && net ? ballotTally.sources(net).hosts : MARKET_HOSTS;
+    for (const r of m.source.reads) { const bad = marketHostProblem(r.url, hosts); if (bad) return `${r.id}: ${bad}`; }
+    if (m.source.kind === MARKET_SOURCE_KIND.CODE) {
+      const check = checkMarketCode(m.source.code, (await import('acorn')).parse);
+      if (!check.ok) return `its code fails its check, line ${check.problems[0].line}: ${check.problems[0].why}`;
+    }
+    const dev = toHex(m.gameDevPubkey);
+    const held = [...hosted.values()].filter((g) => g.manifest.source && toHex(g.manifest.gameDevPubkey) === dev).length;
+    return held >= MARKETS_PER_DEV ? `this developer already has ${MARKETS_PER_DEV} markets` : null;
+  }
   async function takeGame({ game, from, replaces = null }) {
     if (!pluginsDir) return { ok: false, status: 409, why: 'this seat keeps no installed games (no plugins directory)' };
     from = String(from || '').replace(/\/+$/, '');
@@ -992,6 +1006,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   async function adoptPackage(pkg, { game, from, replaces = null }) {
     const v = verifyPackage(pkg, { verify: verifyEd25519, want: game, parentOf: hostedParent });
     if (!v.ok) { console.log(`[plugins] refused ${game.slice(0, 16)} from ${from}: ${v.why}`); return { ...v, status: 422 }; }
+    // A MARKET FROM THE OWNER'S FORM (kanban #920): this seat's own check of its code and hosts, whoever handed it over, and at most MARKETS_PER_DEV from one developer
+    const market = await marketRefused(decodeManifest(fromHex(String(pkg.manifest))));
+    if (market) { console.log(`[plugins] refused market ${game.slice(0, 16)} from ${from}: ${market}`); return { ok: false, status: 422, why: market }; }
     // the package kept with its whole chain, so it stands at the next start even once its old version is removed
     if (replaces !== null) { const chain = [...chainOf(hosted.get(replaces)), hosted.get(replaces).manifest]; pkg = { ...pkg, ancestors: chain.map((m) => toHex(encodeManifest(m))) }; }
     if (replaces !== null) {
@@ -1147,7 +1164,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (id !== String(g.id).toLowerCase()) continue;              // a listing whose manifest is another game is not read
         const info = g.info ? gameInfoStands(g.info, { gameId: gameIdOf(m), manifest: m, verify: verifyEd25519 }) : null;
         const row = byId.get(id) || { id, name: m.gameName, title: String(g.title || m.gameName).slice(0, 80), type: gameTypeOf(m), version: m.version,
-          devKey: toHex(m.gameDevPubkey), parent: toHex(m.parentManifestId), description: null, website: null, lightning: null, infoSigned: false, seats: [] };
+          devKey: toHex(m.gameDevPubkey), parent: toHex(m.parentManifestId), sourced: !!m.source, description: null, website: null, lightning: null, infoSigned: false, seats: [] };
         if (info && info.ok && !row.infoSigned) Object.assign(row, { description: info.description, website: info.website, lightning: info.lightning || null, infoSigned: true });
         row.seats.push(from);
         byId.set(id, row);
@@ -1255,7 +1272,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     seasonNetKept.set(q, { ...(had || {}), reading });
     return reading;
   };
-  const networkAppsTimer = setInterval(() => { networkAppsNow().catch((e) => console.error(`[plugins] network games: ${e.message}`)); }, NETWORK_APPS_MS);
+  // A MARKET ANOTHER SEAT PUBLISHED (kanban #920) is taken at each read, unless the owner turned that off (owner settings `takeMarkets: false`)
+  const takeMarkets = async (ng) => {
+    if (owner && owner.storeSettings().takeMarkets === false) return;
+    for (const g of ng.games.filter((x) => x.sourced && !hosted.has(x.id)).slice(0, 5)) {
+      const r = await takeGame({ game: g.id, from: g.seats[0] }).catch((e) => ({ why: e.message }));
+      console.log(`[plugins] market ${g.id.slice(0, 16)} from ${g.seats[0]}: ${r.ok ? 'hosted' : r.why}`);
+    }
+  };
+  const networkAppsTimer = setInterval(() => { networkAppsNow().then(takeMarkets).catch((e) => console.error(`[plugins] network games: ${e.message}`)); }, NETWORK_APPS_MS);
   if (networkAppsTimer.unref) networkAppsTimer.unref();
   const autoUpdateTimer = setInterval(() => { autoUpdate().catch((e) => console.error(`[plugins] automatic update: ${e.message}`)); }, Number(process.env.ARENA_AUTO_UPDATE_MS || 600000));
   if (autoUpdateTimer.unref) autoUpdateTimer.unref();
@@ -6152,6 +6177,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         // INSTALL, UPDATE, REMOVE (2026-10-10: like an App Store, from the browser, no restart): each
         // signed by the owner; a game is fetched from another seat, checked (plugin-check.js + the trial run) and activated at once
+        // A SIGNED MARKET, PUBLISHED (kanban #920): kept and hosted here as any installed app. Other seats find it in their network read and take it, each with its own check
+        if (url.pathname === '/owner/market-publish') {
+          const a = owner.authorize(body, 'market-publish');
+          if (!a.ok) return answer(a.status || 401, a);
+          if (!pluginsDir) return answer(409, { ok: false, why: 'this node keeps no installed apps' });
+          const net = chainNetworkId(), hex = String((body.args || {}).manifest || '');
+          const census = net && ballot ? await ballot.censusAt(net, ballotTally.tip - 1) : null;
+          if (!census || !census.some((e) => toHex(e.pubkey) === toHex(round.pubkey))) return answer(403, { ok: false, why: 'Only a bonded node publishes a market' });
+          let m; try { m = decodeManifest(fromHex(hex)); } catch (e) { return answer(400, { ok: false, why: `that is no manifest: ${e.message}` }); }
+          if (!m.source) return answer(400, { ok: false, why: 'that manifest names no source' });
+          const set = net && ballotTally ? ballotRecipients(net, ballotTally.tip) : null;
+          if (!set) return answer(409, { ok: false, why: 'this node knows no donation set in force' });
+          const game = toHex(gameIdOf(m));
+          if (hosted.has(game)) return answer(200, { ok: true, game, already: true });
+          const r = await adoptPackage({ format: 'arena-plugin/v1', name: m.gameName, title: m.gameName, manifest: hex, ancestors: [], cores: [], clients: [], donationSet: set.map((x) => ({ recipientPk: toHex(x.recipientPk), shareBps: x.shareBps, label: x.label || '' })) }, { game, from: 'this owner' });
+          return answer(r.status || (r.ok ? 200 : 422), { ok: r.ok, game, why: r.why });
+        }
         if (url.pathname === '/owner/plugins/install' || url.pathname === '/owner/plugins/update') {
           const action = url.pathname.endsWith('install') ? 'install' : 'update';
           const a = owner.authorize(body, action);

@@ -14,6 +14,8 @@ import { regtest } from './regtest-bond.mjs';
 import { openStore, nodeIdentity } from '../src/store.js';
 import { ownerSecretFromSeed, signOwnerRequest } from '../src/owner.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
+import { signManifestWithSeed, bodyFromJson, devPubkeyOf } from '../src/owner-dev.js';
+import { MARKET_SOURCE_KIND, MARKET_READ, MARKET_RULE } from '../../arena-protocol/src/manifest.js';
 
 const env = process.env;
 const B = env.BITCOIN_BIN, WORK = env.WORK;
@@ -49,7 +51,7 @@ const ids = stores.map((p) => { const db = openStore(p); const id = nodeIdentity
 const routes = PORTS.map((p) => `http://127.0.0.1:${p}`).join(',');
 const procs = PORTS.map((port, i) => {
   const e = { ...env, ARENA_BITCOIND_URL: `http://127.0.0.1:${RPC}`, ARENA_BITCOIND_COOKIE: `${WORK}/btc/regtest/.cookie`, ARENA_DONATION_NETWORK: 'regtest', ARENA_FUND_FREE_ROUNDS: '1', ARENA_GAMES: new URL('../../nextblock/plugin/nextblock.js', import.meta.url).pathname,
-    ARENA_REGTEST_DONATION_SET: 'keys', ARENA_LOWEST_BOND_MIN_SATS: env.LOWEST_BOND || '100000', ARENA_BALLOT_EVERY_MS: '500', ARENA_PEERS: routes,
+    ARENA_REGTEST_DONATION_SET: 'keys', ARENA_LOWEST_BOND_MIN_SATS: env.LOWEST_BOND || '100000', ARENA_BALLOT_EVERY_MS: '500', ARENA_NETWORK_APPS_MS: '3000', ARENA_PEERS: routes,
     ARENA_BOND_CLI: [`${B}/bitcoin-cli`, ...base, '-rpcwallet=gov'].join(',') };
   delete e.ARENA_SERIES_FILE;
   const p = spawn(process.execPath, ['src/main.js', String(port), stores[i]], { cwd: new URL('..', import.meta.url).pathname, env: e, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -112,6 +114,17 @@ try {
   say({ step: '4 live', tip: tip(), since: after.map((s) => s.since), listed: after.map((s) => s.hosts.includes(HOST)), hash: after.map((s) => String(s.configHash).slice(0, 12)), init: after.map((s) => !!(s.entries.find((e) => e.host === HOST) || {}).init) });
   const read = await door(1, '/owner/market-test', 'market-test', { reads: [{ id: 'page', kind: 'ws', url: ENTRY.url }] });
   say({ step: '4 read, the voted init started it', ok: read.ok, why: read.why, messages: read.reads && read.reads.page.length, last: read.reads && JSON.stringify(read.reads.page[read.reads.page.length - 1]).slice(0, 120) });
+  // 5  a signed market, published from seat 2's owner door: the other seats take it, each with its own check, and a market on an unlisted host stands nowhere
+  const seed = new Uint8Array(32).fill(9), devPubkey = devPubkeyOf(seed);
+  const sign = (name, url) => signManifestWithSeed(bodyFromJson(JSON.stringify({ gameName: name, version: 1, resultType: 'ATTESTED', cores: [], runTicksMax: 0, roundPeriodMs: '3600000', payoutRule: 'PARI_MUTUEL', rankNumerator: 0, rankDenominator: 0, minScore: 0, clients: [],
+    gameDonationSetId: after[1].donationSetId, outcomes: ['Yes', 'No'], attestors: [], attestThreshold: 0, attestDraw: { count: 7, threshold: 5 }, requiredProtocolVersion: 2,
+    source: { kind: MARKET_SOURCE_KIND.URL, reads: [{ id: 'page', socket: false, url, subscribe: '' }], read: MARKET_READ.JSON, path: 'data.amount', rule: MARKET_RULE.ABOVE, level: '100000' } }), { devPubkey }), seed);
+  const good = sign('btc-100k', 'https://api.coinbase.com/v2/prices/BTC-USD/spot');
+  say({ step: '5 unlisted host', ...(await door(1, '/owner/market-publish', 'market-publish', { manifest: sign('evil', 'https://attacker.example.org/x').hex })) });
+  say({ step: '5 published', ...(await door(1, '/owner/market-publish', 'market-publish', { manifest: good.hex })) });
+  await wait(9000);
+  const games = await Promise.all([0, 1, 2].map(async (i) => (await (await http(i, '/games')).json()).games.some((g) => g.id === good.gameId)));
+  say({ step: '5 hosted', seats: games });
 } finally {
   await stopAll();
   say({ step: 'stopped', work: WORK });

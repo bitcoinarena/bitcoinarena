@@ -152,7 +152,7 @@ export function createOwner({ store, verify, node, nowMs = () => Date.now(), log
       if (!a.ok) return a;
       const args = req.args || {};
       const sources = Array.isArray(args.sources) ? args.sources.map(String).map((u) => u.trim().replace(/\/+$/, '')).filter((u) => /^https?:\/\/[^\s]+$/.test(u)).slice(0, 20) : [];
-      owner = { ...owner, settings: { autoUpdate: !!args.autoUpdate, sources } };
+      owner = { ...owner, settings: { autoUpdate: !!args.autoUpdate, sources, ...(args.takeMarkets === false ? { takeMarkets: false } : {}) } };
       store.write(owner);
       log(`[owner] store settings: automatic updates ${owner.settings.autoUpdate ? 'on' : 'off'}, ${sources.length} source seat(s)`);
       return { ok: true, settings: owner.settings };
