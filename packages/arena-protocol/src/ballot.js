@@ -24,7 +24,7 @@ export const CHOICE = Object.freeze({ YES: 1, NO: 2, ABSTAIN: 3 });
 /** The schedule in blocks (§27A.7.4, §27A.8.2) - genesis parameters; regtest runs 1 / 6 / 1. */
 export const SCHEDULES = Object.freeze({
   mainnet: Object.freeze({ [CLASS.DESIGN]: { review: 1008, voting: 1440, cooldown: 2016 }, [CLASS.MONEY]: { review: 1008, voting: 1440, cooldown: 2016 },
-    [CLASS.UPGRADE]: { review: 2016, voting: 2016, cooldown: 4320 }, [CLASS.SOURCES]: { review: 432, voting: 1008, cooldown: 144 } }),
+    [CLASS.UPGRADE]: { review: 2016, voting: 2016, cooldown: 4320 }, [CLASS.SOURCES]: { review: 144, voting: 288, cooldown: 36 } }),
   regtest: Object.freeze({ [CLASS.DESIGN]: { review: 1, voting: 6, cooldown: 1 }, [CLASS.MONEY]: { review: 1, voting: 6, cooldown: 1 },
     [CLASS.UPGRADE]: { review: 1, voting: 6, cooldown: 1 }, [CLASS.SOURCES]: { review: 1, voting: 6, cooldown: 1 } }),
   // TESTNET4: a day of review and a day of voting for every class (kanban #785, a tester 2026-10-28: "for Testnet you can set the
@@ -46,7 +46,8 @@ export function isRepeal(p, history = []) {
   const mine = toHex(p.config);
   return history.slice(0, -1).some((h) => h.config && toHex(h.config) === mine);
 }
-/** A host dropped from the list goes on the repeal's short schedule: a source gone bad must not stay listed for weeks. Adding one takes the full schedule. */
+/** A host dropped from the list goes faster than one added, a day of voting at most: a source gone bad must not stay listed. */
+export const HOST_REMOVAL_VOTING = 144;
 export function isHostRemoval(p, history = []) {
   if (p.class !== CLASS.SOURCES || !history.length) return false;
   const now = new Set(decodeHostList(history[history.length - 1].config)), next = decodeHostList(p.config);
@@ -57,7 +58,7 @@ export const THRESHOLDS = Object.freeze({
   [CLASS.DESIGN]: { turnoutPct: 30n, approvalPct: 50n, strict: true },     // > 50 %
   [CLASS.MONEY]: { turnoutPct: 40n, approvalPct: 66n, strict: false },     // >= 66 %
   [CLASS.UPGRADE]: { turnoutPct: 51n, approvalPct: 66n, strict: false },   // >= 66 %
-  [CLASS.SOURCES]: { turnoutPct: 30n, approvalPct: 66n, strict: false },   // >= 66 %: a source decides money
+  [CLASS.SOURCES]: { turnoutPct: 20n, approvalPct: 50n, strict: true },    // > 50 % (the owner 2026-10-31: "kürzer, 66% ist Zuviel. Quorum auch")
 });
 export const VOTE_MARKER = Uint8Array.from([0x41, 0x52, 0x4e, 0x56]);     // "ARN" 'V'
 export const VOTE_BYTES = 4 + 8 + 1 + 64;                                  // 77, inside the 80-byte OP_RETURN limit
@@ -119,8 +120,9 @@ export function proposalStands(p, { publishedAt, depositSats, lowestBondMinSats,
   if (typeof verify !== 'function' || !verify(p.signature, proposalBodyId(p), p.proposer)) return { ok: false, why: 'the proposal is not signed by the node it names as proposer' };
   // a config the network already ran - before the current one - is a repeal, on the short schedule (§27A.7.6)
   if (p.class === CLASS.SOURCES) { const bad = hostListProblem(p.config); if (bad) return { ok: false, why: bad }; }
-  const repeal = !!history && (isRepeal(p, history) || isHostRemoval(p, history));
-  const s = repeal ? repealSchedule : schedule[p.class];
+  const removal = !!history && isHostRemoval(p, history);
+  const repeal = removal || (!!history && isRepeal(p, history));
+  const s = removal ? { review: 0, voting: Math.min(HOST_REMOVAL_VOTING, repealSchedule.voting), cooldown: 0 } : repeal ? repealSchedule : schedule[p.class];
   const earliest = publishedAt + s.review + s.voting + s.cooldown;
   if (p.activationHeight < earliest) return { ok: false, why: `activation_height ${p.activationHeight} is before the end of cooldown (${earliest}): invalid on its face` };
   const cap = BigInt(lowestBondMinSats) / 100n;
