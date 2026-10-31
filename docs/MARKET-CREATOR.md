@@ -27,7 +27,7 @@ So this needs a protocol change and one node release. After that, a new market n
 Six steps, one screen each, a live preview of the market card beside them.
 
 1. **Start**: pick a template or blank.
-2. **Question**: title, category, image, outcomes (2 to 8, or a number between two bounds).
+2. **Question**: title, category from a fixed list, image, outcomes (2 to 8, or a number between two bounds).
 3. **Result**: a URL, or code.
 4. **Test**: run it now, see the outcome, the time taken and each check.
 5. **Schedule**: one-off or recurring, length, entry close, stake, federations.
@@ -45,6 +45,9 @@ Text stays to labels and one short hint per field. Errors appear at the field.
 | Address | `https`, public host only |
 | Read | JSON path, or a CSS selector, or a regular expression |
 | Rule | compare to a value, or map the value to an outcome |
+
+Known addresses are one tap: Coinbase, Binance, Kraken, Bitstamp, mempool.space, blockchain.info.
+Testing reads the address, shows the value, the fields it holds to pick from, and the outcome; every option is tried at once on that answer.
 
 ### Code
 
