@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MarketCreator } from '../dist/test/market-creator.mjs';
-import { TEMPLATES, fromTemplate, problemsOf, urlProblem, readAnswer, outcomeOf } from '../dist/test/market-draft.mjs';
+import { TEMPLATES, fieldsOf, fromTemplate, problemsOf, urlProblem, readAnswer, outcomeOf } from '../dist/test/market-draft.mjs';
 
 test('every template starts a draft of its own, and they share no list', () => {
   for (const t of TEMPLATES) assert.equal(fromTemplate(t.id).template, t.id);
@@ -45,6 +45,11 @@ test('an answer read and turned into an outcome', () => {
   assert.equal(outcomeOf(n, '50').outcome, '10');
   const f = fromTemplate('page');
   assert.equal(outcomeOf(f, '').outcome, 'No'); assert.equal(outcomeOf(f, 'x').outcome, 'Yes');
+});
+
+test('the answer names its fields to pick from', () => {
+  assert.deepEqual(fieldsOf('{"data":{"amount":"120.5","base":"BTC"},"n":[1]}'), [['data.amount', '120.5'], ['data.base', 'BTC'], ['n.0', '1']]);
+  assert.deepEqual(fieldsOf('<html>'), []);
 });
 
 test('the form opens on the templates', () => {
