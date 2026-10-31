@@ -14621,6 +14621,10 @@ const SCHEDULES = Object.freeze({
     [CLASS.UPGRADE]: { review: 2016, voting: 2016, cooldown: 4320 } }),
   regtest: Object.freeze({ [CLASS.DESIGN]: { review: 1, voting: 6, cooldown: 1 }, [CLASS.MONEY]: { review: 1, voting: 6, cooldown: 1 },
     [CLASS.UPGRADE]: { review: 1, voting: 6, cooldown: 1 } }),
+  // TESTNET4: a day of review and a day of voting for every class (kanban #785, a tester 2026-10-28: "for Testnet you can set the
+  // signal and voting periods to 1 day for all types of proposals"); the cooldowns as mainnet's
+  testnet4: Object.freeze({ [CLASS.DESIGN]: { review: 144, voting: 144, cooldown: 2016 }, [CLASS.MONEY]: { review: 144, voting: 144, cooldown: 2016 },
+    [CLASS.UPGRADE]: { review: 144, voting: 144, cooldown: 4320 } }),
 });
 /**
  * A REPEAL (§27A.7.6): "review 0, voting 720, cooldown 0 - but only if its config is byte-identical to an ancestor that was live
@@ -14629,6 +14633,7 @@ const SCHEDULES = Object.freeze({
 const REPEAL_SCHEDULES = Object.freeze({
   mainnet: Object.freeze({ review: 0, voting: 720, cooldown: 0 }),
   regtest: Object.freeze({ review: 0, voting: 6, cooldown: 0 }),
+  testnet4: Object.freeze({ review: 0, voting: 144, cooldown: 0 }),   // a day (kanban #785)
 });
 /** Is `p` a repeal: its config byte-identical to one in `history` - the configs that were live before, [{ config }] - other than the current. */
 function isRepeal(p, history = []) {
@@ -15011,6 +15016,7 @@ const leaderboardHex = (p) => toHex(leaderboardPayoutId(p));
 
 
 
+
 /** The blocks of a signal, and the window that makes a node active (§27A.9.3). The short schedule is a live proof's only. */
 // THE HIJACK DEFENCES, FIVE RULES (§27A.9.52026-10-17: "It needs to be more simple so people understand it" -
 // "Make it 3 months" - "older nodes ... can get a factor that increases their weight"; comment 2820, Go), in blocks:
@@ -15026,7 +15032,14 @@ const FUNDING_SCHEDULES = Object.freeze({
     season: 12960, lockAfterVote: 12960, year: 52560, delay: 2016, trancheEvery: 4320, capWindow: 12960, week: 1008 }),
   short: Object.freeze({ signal: 1, activeWindow: 432, vote: 6, decideDepth: 6,
     season: 24, lockAfterVote: 48, year: 72, delay: 6, trancheEvery: 6, capWindow: 144, week: 108 }),
+  // TESTNET4: A DAY TO SIGNAL AND A DAY TO VOTE (kanban #785, a tester 2026-10-28: "for Testnet you can set the signal and voting
+  // periods to 1 day for all types of proposals"): 144 blocks each; everything else as the spec
+  // and a bond a day old counts for a funding signal (a tester 2026-10-28 ~21:25Z: "bei 785 für funding 1 Tag Bond bei Testnet")
+  testnet4: Object.freeze({ signal: 144, activeWindow: 432, vote: 144, decideDepth: 6,
+    season: 144, lockAfterVote: 12960, year: 52560, delay: 2016, trancheEvery: 4320, capWindow: 12960, week: 1008 }),
 });
+/** The funding schedule a network runs (kanban #785): testnet4's day-long signal and vote, the spec's everywhere else. */
+const fundingScheduleFor = (networkId) => (networkId && toHex(networkId) === toHex(NETWORK_ID_TESTNET4) ? FUNDING_SCHEDULES.testnet4 : FUNDING_SCHEDULES.spec);
 const FUNDING_ABSOLUTE_PCT = 20n;        // rule 3: YES of everyone who could vote
 const FUNDING_CAP_PCT = 10n;             // rule 4: one proposal of the paying federation's reserves
 const FUNDING_CAP_WINDOW_PCT = 25n;      // rule 4: all payments of a window of the reserves at its start
@@ -28629,12 +28642,16 @@ const DUTY_DAY_MS = 86400000;
 const DUTY_FALLBACK_MS = 3600000;
 const daySlotOf = (ms) => Math.floor(Number(ms) / DUTY_DAY_MS);
 const dayStartMs = (slot) => slot * DUTY_DAY_MS;
+/** NO REGULAR POSTING AFTER 12:00 UTC OF THE POSTING DAY (kanban #742, the owner 2026-10-29 ~23:20Z: "neue Runden wirklich um 12 gepostet werden,
+ *  nicht später außer emergency"): a day's primary and backup are posted between 00:00 and 12:00 UTC of the day before it, never after - a
+ *  rank-11 node that did not see the day's posting re-posted the 10-30 primaries at 20:51Z; after 12:00 only an emergency grid is posted. */
+const DUTY_POST_BY_MS = 12 * 3600000;
 /** The day whose rounds day `slot` posts: [start, end) ms - the next day. */
 const targetDay = (slot) => ({ startMs: (slot + 1) * DUTY_DAY_MS, endMs: (slot + 2) * DUTY_DAY_MS });
 /** Is the day's post due from the node at `rank` (0 = first in duty order) now? Not once the day's marker is seen (`posted`). */
 function dayPostDue({ nowMs, slot, rank, posted }) {
   if (posted || !Number.isInteger(rank) || rank < 0) return false;
-  return Number(nowMs) >= dayStartMs(slot) + rank * DUTY_FALLBACK_MS && Number(nowMs) < dayStartMs(slot + 1);
+  return Number(nowMs) >= dayStartMs(slot) + rank * DUTY_FALLBACK_MS && Number(nowMs) < dayStartMs(slot) + DUTY_POST_BY_MS;   // not after 12:00Z (#742)
 }
 
 // THE BACKUP GRID (2026-10-26, the owner: "Yes make it part of the design, in the spec" - a second grid for every day from another node, so
@@ -28673,7 +28690,7 @@ const isBackupPublication = (raw) => dayMarkersOf(raw).some((m) => m.kind === 'B
  */
 function backupPostDue({ nowMs, slot, rank, posted, postedPrimary = false, cap = DUTY_BACKUP_RANK_CAP }) {
   if (posted || postedPrimary || !Number.isInteger(rank) || rank < 1) return false;
-  return Number(nowMs) >= dayStartMs(slot) + DUTY_BACKUP_AFTER_MS + (Math.min(rank, cap) - 1) * DUTY_FALLBACK_MS && Number(nowMs) < dayStartMs(slot + 1);
+  return Number(nowMs) >= dayStartMs(slot) + DUTY_BACKUP_AFTER_MS + (Math.min(rank, cap) - 1) * DUTY_FALLBACK_MS && Number(nowMs) < dayStartMs(slot) + DUTY_POST_BY_MS;
 }
 /**
  * WHICH ROUNDS OF ONE WINDOW ARE PLAYED (the rule above), from what a seat sees of the rounds of one game, federation and start: `rows`
@@ -29963,6 +29980,7 @@ async function roundAttestors(roundIdHex, nodes, { curve, fetcher = fetch } = {}
 
 
 
+
 const feesBaseOf = (n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
 const feesCurveOf = (curve) => { const c = curve || globalThis.ARENA_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
 
@@ -30011,7 +30029,8 @@ function signedFeeProposal({ secretKey, networkId, publishedHeight, activationHe
   const c = feesCurveOf(curve);
   if (!changes || !changes.length) return { ok: false, why: 'change at least one fee' };
   const p = { networkId: fromHex(networkId), author: c.pointX(secretKey), publishedHeight, activationHeight, changes, purpose: String(purpose) };
-  const st = feeProposalStands(p, schedule ? { current, schedule } : { current });
+  // the network's own schedule unless one is given: testnet4 signals and votes a day each (kanban #785)
+  const st = feeProposalStands(p, { current, schedule: schedule || fundingScheduleFor(p.networkId) });
   if (!st.ok) return { ok: false, why: st.why };
   const id = feeProposalId(p);
   return { ok: true, id: toHex(id), hex: toHex(Uint8Array.from([...encodeFeeProposal(p), ...c.signSchnorr(id, secretKey)])), donations: st.donations };
@@ -30165,13 +30184,13 @@ const heightAtDate = ({ tip, nowMs, dateMs }) => tip + Math.max(1, Math.ceil((Nu
  * or { ok: false, why }.
  */
 function signedLeaderboardPayout({ secretKey, networkId, publishedHeight, scope, gameName = '', top, amountSats, federationId, splitBps = [], periodDays,
-  paymentHeight, purpose = '', schedule = FUNDING_SCHEDULES.spec, curve }) {
+  paymentHeight, purpose = '', schedule = fundingScheduleFor(fromHex(networkId)), curve }) {   // the network's own (kanban #785)
   const c = lbCurveOf(curve);
   const p = { networkId: fromHex(networkId), author: c.pointX(secretKey), publishedHeight, scope, gameName: scope === LB_SCOPE.ALL ? '' : String(gameName),
     top: Number(top), amountSats: BigInt(amountSats), federationId: fromHex(federationId), splitBps, periodDays: Number(periodDays), paymentHeight, purpose: String(purpose) };
   try { encodeLeaderboardPayout(p); } catch (e) { return { ok: false, why: e.message }; }
   const vp = leaderboardVotePeriod({ proposal: p, schedule });
-  if (paymentHeight < vp.decidableAt) return { ok: false, why: `the payment comes before its 2-week vote is decided (block ${vp.decidableAt})` };
+  if (paymentHeight < vp.decidableAt) return { ok: false, why: `the payment comes before its vote is decided (block ${vp.decidableAt})` };
   const id = leaderboardPayoutId(p);
   return { ok: true, id: toHex(id), hex: toHex(Uint8Array.from([...encodeLeaderboardPayout(p), ...c.signSchnorr(id, secretKey)])), decidableAt: vp.decidableAt };
 }
