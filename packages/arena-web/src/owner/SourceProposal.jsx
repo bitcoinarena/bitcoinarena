@@ -10,11 +10,15 @@ import { CodeEditor } from './CodeEditor.jsx';
 import { SOURCE_ENTRIES } from '../../../arena-protocol/src/market-sources.js';
 import { tryExample } from './marketRun.js';
 
-const INIT_START = `// Called on connecting, then on each of the first messages.
+// THE DEFAULT, READY TO CHANGE (the owner 2026-10-31: "einen default für den init Code ..., den der User ändern kann"): as it stands it sends nothing, so it runs on any socket
+// and need not go into the list.
+export const INIT_DEFAULT = `// Runs on connecting (step 0), then on each of the first messages.
 // Answer what to send: text, a list of them, or null.
 function init(message, step) {
   if (step > 0) return null;
-  return JSON.stringify({ subscribe: 'name' });
+  // To ask for data, answer the socket's message, for example:
+  // return JSON.stringify({ type: 'subscribe', channel: 'ticker' });
+  return null;
 }
 `;
 const hostOf = (url) => { try { return new URL(url).hostname; } catch { return ''; } };
@@ -67,9 +71,9 @@ export class SourceVotes extends React.Component {
 }
 
 export class SourceProposal extends React.Component {
-  constructor(props) { super(props); this.state = { url: '', read: 'json', path: '', docs: '', init: '', test: null, reading: false, shown: false }; }
+  constructor(props) { super(props); this.state = { url: '', read: 'json', path: '', docs: '', init: INIT_DEFAULT, test: null, reading: false, shown: false }; }
   componentDidMount() { if (this.props.readListed) this.props.readListed().then((r) => this.setState({ listed: r.entries || null })).catch(() => {}); }
-  entry() { const s = this.state; return { host: hostOf(s.url.trim()), url: s.url.trim(), read: s.read, path: s.read === 'text' ? '' : s.path.trim(), docs: s.docs.trim(), init: s.url.trim().startsWith('wss:') ? s.init.trim() : '' }; }
+  entry() { const s = this.state; return { host: hostOf(s.url.trim()), url: s.url.trim(), read: s.read, path: s.read === 'text' ? '' : s.path.trim(), docs: s.docs.trim(), init: s.url.trim().startsWith('wss:') && s.init !== INIT_DEFAULT ? s.init.trim() : '' }; }
   set(x) { this.setState({ ...x, shown: false }); }
   /** The deposit first; the proposal once it has confirmed. Either answer can be asked for again, so a closed page loses nothing but the wait. */
   async publish() {
@@ -126,10 +130,10 @@ export class SourceProposal extends React.Component {
         {stop ? <div className="mc-err">{stop}</div> : null}
         <div className="mc-seg" role="radiogroup" aria-label="How to read it">{[['json', 'JSON field'], ['regex', 'Pattern'], ['text', 'Whole answer']].map(([k, l]) => <button key={k} type="button" role="radio" aria-checked={s.read === k} className={s.read === k ? 'on' : undefined} onClick={() => this.set({ read: k })}>{l}</button>)}</div>
         {s.url.startsWith('wss:') ? <>
-          <div className="mc-chips"><button type="button" onClick={() => this.set({ init: s.init || INIT_START })}>Socket needs starting</button></div>
-          {s.init ? <><CodeEditor value={s.init} onChange={(init) => this.set({ init })} marked={check && !check.ok ? check.problems.map((p) => p.line) : []} />
-            {check && check.ok ? <div className="mc-check ok">Readable code · check {check.version}</div> : null}
-            {check && !check.ok ? <ul className="mc-check bad">{check.problems.map((p, i) => <li key={i}><b>Line {p.line}</b> {p.why}</li>)}</ul> : null}</> : null}
+          <div className="mc-f"><span>Init code</span></div>
+          <CodeEditor value={s.init} onChange={(init) => this.set({ init })} marked={check && !check.ok ? check.problems.map((p) => p.line) : []} />
+          {check && check.ok ? <div className="mc-check ok">Readable code · check {check.version}</div> : null}
+          {check && !check.ok ? <ul className="mc-check bad">{check.problems.map((p, i) => <li key={i}><b>Line {p.line}</b> {p.why}</li>)}</ul> : null}
         </> : null}
         {s.read === 'text' ? null : <label className="mc-f"><span>{s.read === 'json' ? 'Field' : 'Pattern'}</span><input className="mono" value={s.path} onChange={(e) => this.set({ path: e.target.value })} /></label>}
         <label className="mc-f"><span>Documentation link</span><input inputMode="url" placeholder="https://" value={s.docs} onChange={(e) => this.set({ docs: e.target.value })} /></label>
