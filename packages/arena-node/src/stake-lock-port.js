@@ -343,6 +343,18 @@ export function federationPorts({ home, bin, baseDir, inviteOf = () => null, mak
     close() { home.close(); for (const p of ports.values()) p.close(); } });
 }
 
+/**
+ * THE RELEASE'S TOOL WHEN THE SETTINGS NAME NONE (kanban #824, measured 2026-10-31 10:39Z: mactest19911b updated 2026.1.9.20 -> 2026.1.9.21 by the
+ * updater of 1.9.20, which does not know these settings, and its arena.conf stayed without them): the node takes the tool beside it. Own settings win.
+ */
+export function stakeLockDefaults(env, { release, home, platform = process.platform, exists = existsSync }) {
+  if (env.ARENA_STAKE_LOCK_BIN || env.ARENA_FEDERATION_CLIENT_DIR) return false;
+  const bin = join(release, 'runtime', 'custody', `arena-stake-lock${platform === 'win32' ? '.exe' : ''}`);
+  if (!exists(bin)) return false;
+  env.ARENA_STAKE_LOCK_BIN = bin; env.ARENA_FEDERATION_CLIENT_DIR = join(home, 'federation-client');
+  return true;
+}
+
 export function stakeLocksFromEnv(env) {
   const got = STAKE_LOCK_SETTINGS.filter((k) => env[k]);
   if (!got.length) return { ok: true, given: false };

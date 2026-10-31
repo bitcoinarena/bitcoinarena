@@ -10,7 +10,7 @@ import { mkdtempSync, writeFileSync, readFileSync, chmodSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { stakeLockPort, stakeLocksFromEnv, contractArgs } from '../src/stake-lock-port.js';
+import { stakeLockPort, stakeLocksFromEnv, contractArgs, stakeLockDefaults } from '../src/stake-lock-port.js';
 
 const b = (n, len = 32) => new Uint8Array(len).fill(n);
 
@@ -117,3 +117,13 @@ test('status, guardians, gateways and fees read their own client directory; send
     assert.equal(t.argv().at(-1)[t.argv().at(-1).indexOf('--data-dir') + 1], '/seat-3');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a node with no stake settings takes the release\'s tool; its own settings win; no tool, nothing (kanban #824)', () => {
+  const at = { release: '/r', home: '/h', platform: 'linux', exists: () => true };
+  const env = {}; assert.equal(stakeLockDefaults(env, at), true);
+  assert.deepEqual(env, { ARENA_STAKE_LOCK_BIN: '/r/runtime/custody/arena-stake-lock', ARENA_FEDERATION_CLIENT_DIR: '/h/federation-client' });
+  assert.equal(stakeLockDefaults({ ARENA_STAKE_LOCK_BIN: '/own' }, at), false);
+  assert.equal(stakeLockDefaults({}, { ...at, exists: () => false }), false);
+  const win = {}; stakeLockDefaults(win, { ...at, platform: 'win32' }); assert.match(win.ARENA_STAKE_LOCK_BIN, /arena-stake-lock\.exe$/);
+});
+
