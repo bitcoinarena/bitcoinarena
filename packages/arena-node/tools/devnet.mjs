@@ -5,7 +5,7 @@
 // federation and seven nodes, with a game template and a replay simulator. The first hour decides whether a developer
 // stays"). Regtest only: no testnet4, no mainnet, no bond or stake anywhere but the devnet's own chain.
 //
-//   BITCOIN_BIN=<dir with bitcoind, bitcoin-cli> FEDIMINT_BIN=<dir with fedimintd, fedimint-cli, blwp-stake-lock> \
+//   BITCOIN_BIN=<dir with bitcoind, bitcoin-cli> FEDIMINT_BIN=<dir with fedimintd, fedimint-cli, arena-stake-lock> \
 //     node packages/arena-node/tools/devnet.mjs up | status | play [--game name] | replay [round entry] | down
 //   node packages/arena-node/tools/devnet.mjs new-game <dir> [name]      (the game template, made a game of your own)
 //
@@ -31,7 +31,7 @@
 // PORTS FROM ONE BASE (DEVNET_BASE_PORT, default 24000; tools/devnet-plan.mjs): all private, all below 32768, none of the
 // live stacks'. `up` refuses to start when any of them is already taken by something that is not this devnet.
 //
-// OTHER SETTINGS: LOCK_BIN (default $FEDIMINT_BIN/blwp-stake-lock), LND_BIN (lnd and lncli for the two gateways a paid round
+// OTHER SETTINGS: LOCK_BIN (default $FEDIMINT_BIN/arena-stake-lock), LND_BIN (lnd and lncli for the two gateways a paid round
 // needs; none: free rounds only), DEVNET_APPS (more ARENA_APPS registration modules for the
 // seven nodes - a game of your own, tools/devnet-template), DEVNET_PAID_STAKE_MSAT (default 10 000 000), DEVNET_BLOCK_SECONDS
 // (a block every N s once the rounds are up; default 30, 0 for none), DEVNET_PAGE (the page the printed links open, default
@@ -60,7 +60,7 @@ const storeOf = (k) => path('nodes', `node-${k + 1}.db`);
 const dirOnPath = (bin) => (env.PATH || '').split(delimiter).find((d) => d && existsSync(join(d, bin))) || null;
 const BTC = env.BITCOIN_BIN || dirOnPath('bitcoind');
 const FED = env.FEDIMINT_BIN || dirOnPath('fedimintd');
-const LOCK = env.LOCK_BIN || (FED ? join(FED, 'blwp-stake-lock') : null);
+const LOCK = env.LOCK_BIN || (FED ? join(FED, 'arena-stake-lock') : null);
 const PAGE_DIR = env.DEVNET_PAGE_DIR || '';
 const PAGE = PAGE_DIR ? `http://127.0.0.1:${PLAN.page}` : (env.DEVNET_PAGE || 'https://testnet.bitcoin-arena.io').replace(/\/+$/, '');
 // THE GAMES BEYOND NEXTBLOCK (DEVNET_APPS, registration modules exporting GAME): named once at `up` and kept in the devnet's
@@ -143,7 +143,7 @@ const getJson = async (url, ms = 10000) => { const r = await fetch(url, { signal
 function needBins() {
   const want = [[BTC, 'bitcoind', 'BITCOIN_BIN'], [BTC, 'bitcoin-cli', 'BITCOIN_BIN'], [FED, 'fedimintd', 'FEDIMINT_BIN'], [FED, 'fedimint-cli', 'FEDIMINT_BIN']];
   const missing = want.filter(([dir, bin]) => !dir || !existsSync(join(dir, bin))).map(([, bin, v]) => `${bin} (${v})`);
-  if (!LOCK || !existsSync(LOCK)) missing.push('blwp-stake-lock (LOCK_BIN)');
+  if (!LOCK || !existsSync(LOCK)) missing.push('arena-stake-lock (LOCK_BIN)');
   if (missing.length) throw new Error(`not found: ${missing.join(', ')} - name the directories, or put them on PATH`);
 }
 

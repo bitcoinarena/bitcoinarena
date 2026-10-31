@@ -3,7 +3,7 @@
 // A SIGNER NODE VERIFIES A REAL STAKE LOCK ON A REAL FEDERATION (v4.6.2 §23.1 step 5).
 // Driven by signer-node-lock-regtest.sh, which stands up stock fedimintd 0.12.0 (4
 // guardians, 3 of 4) on regtest, deposits through a gateway, and makes the
-// locks with blwp-stake-lock.
+// locks with arena-stake-lock.
 //
 //   node signer-node-lock-regtest.mjs prepare <dir>          three stakes: P, its point, an even-y player, a fee preimage F
 //   node signer-node-lock-regtest.mjs signer node <dir> <keys.json>  a signer node, the real port, the handovers

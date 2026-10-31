@@ -13,7 +13,7 @@
 #                the player's client ends with ecash
 #   2. KEYS      the committee's 2-of-2 key from this repo's own ceremony, the
 #                player's refund key, the stake's H(P) (tools/stake-lock-keys.mjs)
-#   3. LOCK      tools/stake-lock (blwp-stake-lock): one stock OutgoingContract
+#   3. LOCK      tools/stake-lock (arena-stake-lock): one stock OutgoingContract
 #                funded from that ecash, claim_pk = the committee key,
 #                refund_pk = the player, expiration = the guardians' block
 #                count + EXPIRY_DELTA
@@ -22,11 +22,11 @@
 #
 # Everything is stopped at the end: every process group and bitcoind.
 #
-#   FEDIMINT_BIN=<released v0.12.0 builds> LOCK_BIN=<blwp-stake-lock> \
+#   FEDIMINT_BIN=<released v0.12.0 builds> LOCK_BIN=<arena-stake-lock> \
 #     bash tools/stake-lock-step1.sh [deposit-msat=2000000] [lock-msat=980000] [expiry-delta=144]
 set -uo pipefail
 : "${FEDIMINT_BIN:?FEDIMINT_BIN must name the directory holding the released Fedimint v0.12.0 builds}"
-: "${LOCK_BIN:?LOCK_BIN must name the built blwp-stake-lock}"
+: "${LOCK_BIN:?LOCK_BIN must name the built arena-stake-lock}"
 F=$FEDIMINT_BIN
 FH=${FEDIMINT_HOME:-$F/home}
 P=${PROBE_DIR:-$(mktemp -d /tmp/stake-lock-step1-XXXXXX)}

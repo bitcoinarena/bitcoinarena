@@ -110,7 +110,7 @@ fi
 ( cd "$STAGE/packages/arena-node" && npm install --omit=dev --no-audit --no-fund --no-package-lock --ignore-scripts \
     @noble/curves@2.4.0 @noble/hashes@2.4.0 ws@8.21.3 bcryptjs@3.0.3 >/dev/null )   # bcryptjs: the gateway's admin password hash (gateway.js)
 
-# 3b. THE CUSTODY BINARIES: gatewayd, fedimintd and fedimint-cli of the patched fork (5fa01c5d7e6: v0.12.2 + BLWP), built on the test host by
+# 3b. THE CUSTODY BINARIES: gatewayd, fedimintd, fedimint-cli and arena-stake-lock (kanban #824: every node reads the locks of a round it signs) of the patched fork (5fa01c5d7e6: v0.12.2 + BLWP), built on the test host by
 # tools/release/custody-build.sh (stripped; Linux against glibc 2.31), pinned here by SHA-256 and fetched from this repo's release
 # custody-76012ad9 (ARENA_CUSTODY_DIR: a local copy instead). A system without a pinned binary gets a release without custody - the
 # wizard says so (gateway.js findGatewayd).
@@ -132,10 +132,15 @@ declare -A CUSTODY_SHA=(
   [fedimint-cli:darwin-x64]=9d590a30e3e62a75c8289cef33b800ed6372fac65b23391b8017f2cc200a8bc1
   [fedimint-cli:linux-arm64]=bd6a3f3c1ec1ea2d730726c03f36ebfc75b3767d5f780ebcdf03ad1c62a7488e
   [fedimint-cli:linux-x64]=1eb63589f6753fc2da3c1e2c6c5ead2b6aeb88b5b319784ad81a0a80e1bf8a75
+  [arena-stake-lock:windows-x64]=3e48d66650f22071a7f8a278292dd192822e392cb88b47aa22d8ccff2116b930
+  [arena-stake-lock:darwin-arm64]=5c2098f857017a305aa91fed2ffa009b9e39011641b799527062ebcf56d9b434
+  [arena-stake-lock:darwin-x64]=ed3d2aa607d8a4641b097f9efc1564d218812e90f40e645ed21341de983500bd
+  [arena-stake-lock:linux-arm64]=1333150d73297a1551736d3be20b6e6254737305e44e793e06821bfc6a91fc69
+  [arena-stake-lock:linux-x64]=580cff5c09b9077e43e87357da144913dbd4307957166f142ed18f91850fee16
 )
 EXE=""; if [ "$OS" = windows ]; then EXE=.exe; fi   # (an assignment from a failing $(...) ends a set -e script: CI run 39128370301)
 # fedimint-dbtool (kanban #718): taken once pinned here (custody-build.sh builds it); a release without it starts a restored RAM guardian unchecked
-for BIN in gatewayd fedimintd fedimint-cli fedimint-dbtool; do
+for BIN in gatewayd fedimintd fedimint-cli fedimint-dbtool arena-stake-lock; do
   PIN="${CUSTODY_SHA[$BIN:$KEY]:-}"
   [ -n "$PIN" ] || continue
   F="$BIN-$KEY$EXE"

@@ -5,11 +5,11 @@
 # and one open lock; one guardian abandons (attested); a successor of 4 is founded with the three seated first; every wallet's
 # notes move on their own through a gateway that serves both, with no press; the lock settles in the old federation and its
 # payout moves; the old record goes CLOSED; nothing lost anywhere, and the amounts written down".
-# tools/succession-regtest.sh (measured) with: a third wallet; p3's stake lock (blwp-stake-lock, the committee's claim key)
+# tools/succession-regtest.sh (measured) with: a third wallet; p3's stake lock (arena-stake-lock, the committee's claim key)
 # open across the departure, settled in the old federation by the committee's one signature to p1, the winner, who collects the
 # payout (Refund of the pre-expired contract) and moves it with the rest; the records signed and verified (tools/rehearsal-13.mjs).
 # Heavy (8 fedimintd, 2 lnd, a gatewayd, bitcoind): the test host load rule applies. Nothing here reaches testnet4.
-#   FEDIMINT_BIN=<fork bin dir> LOCK_BIN=<blwp-stake-lock> bash tools/rehearsal-13-regtest.sh
+#   FEDIMINT_BIN=<fork bin dir> LOCK_BIN=<arena-stake-lock> bash tools/rehearsal-13-regtest.sh
 set -uo pipefail
 TIMEOUT_S=${TIMEOUT_S:-1800}
 if [ -z "${R13_WRAPPED:-}" ]; then export R13_WRAPPED=1; exec timeout -k 30 "${TIMEOUT_S}s" bash "$0" "$@"; fi

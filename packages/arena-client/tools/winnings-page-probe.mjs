@@ -4,7 +4,7 @@
 /**
  * THE PAGE ASKS A WINNER WHERE TO SEND THE WINNINGS, ON A REAL FEDERATION (ruled 2026-09-23).
  *
- *   PROBE=<fed dir> LOCK_BIN=<blwp-stake-lock> WASM_PKG=<dir> INVITE=<invite> ALICE_RPC=.. BOB_RPC=.. CAROL_RPC=..
+ *   PROBE=<fed dir> LOCK_BIN=<arena-stake-lock> WASM_PKG=<dir> INVITE=<invite> ALICE_RPC=.. BOB_RPC=.. CAROL_RPC=..
  *   LND_BIN=<dir> BUNDLE=<arena-client.js built from this tree> CASE=A|B|C [PORT_A=31240: seven ports from it]
  *   [BTC_RPCPORT=31101]   (the federation's regtest chain: the seven bonds are posted to it)
  *     node packages/arena-client/tools/winnings-page-probe.mjs

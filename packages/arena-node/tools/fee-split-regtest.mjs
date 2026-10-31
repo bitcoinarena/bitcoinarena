@@ -9,7 +9,7 @@
 // seats from the fee locks; the donation outputs are held by the federation for their keys. Then `arena-donor once` asks the
 // signer nodes' /donations?key= for the tally dev's key, records, redeems into its wallet, and withdraws to alice's lnd.
 // The round is the test fixture's (lock-round-fixture: the bonded chain view, the round's open, close and settlement); its
-// stake-lock port is the real one (blwp-stake-lock over a joined client), one call at a time.
+// stake-lock port is the real one (arena-stake-lock over a joined client), one call at a time.
 // Driven by fee-split-regtest.sh (the federation, two gateways, the deposit's lnd).
 import { execFile } from 'node:child_process';
 import { readFileSync, writeFileSync, copyFileSync, mkdirSync } from 'node:fs';

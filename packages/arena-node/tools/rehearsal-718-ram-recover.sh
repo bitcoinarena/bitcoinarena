@@ -20,7 +20,7 @@
 #      EXPECT here:                PASS C: guardian 3 at session <s>, the others at <s'> (|s - s'| <= 1)
 #
 # RUN (a quiet machine with the regtest stack; nothing live is touched - its own DEVNET_DIR, base port, RAM dir):
-#   BITCOIN_BIN=<dir with bitcoind, bitcoin-cli> FEDIMINT_BIN=<dir with fedimintd, fedimint-cli, fedimint-dbtool, blwp-stake-lock> \
+#   BITCOIN_BIN=<dir with bitcoind, bitcoin-cli> FEDIMINT_BIN=<dir with fedimintd, fedimint-cli, fedimint-dbtool, arena-stake-lock> \
 #     bash packages/arena-node/tools/rehearsal-718-ram-recover.sh
 # fedimint-dbtool: built from the same fork as fedimintd (tools/release/custody-build.sh BINS=fedimint-dbtool, or
 #   cargo build --release -p fedimint-dbtool in the fork's tree). Phase B needs it; without it B reports UNCHECKED.

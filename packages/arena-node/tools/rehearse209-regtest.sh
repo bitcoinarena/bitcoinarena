@@ -31,7 +31,7 @@ UP=$(PROBE_DIR=$P SETUP_ONLY=1 SECOND_GATEWAY=1 FEDIMINT_BIN=$F FEDIMINT_HOME=$F
 echo "$UP" | grep -q FEDERATION_READY || { echo "$UP" | tail -25; echo "THE FEDERATION DID NOT COME UP"; exit 1; }
 INVITE=$(echo "$UP" | grep -oE 'invite=[^ ]+' | tail -1 | cut -d= -f2-)
 echo "federation up in $(( $(date +%s) - t )) s, invite ${INVITE:0:24}..."
-COMMON="PROBE=$P INVITE=$INVITE GATEWAY=http://127.0.0.1:30170 LND_BIN=$L LOCK_BIN=$F/blwp-stake-lock WASM_WEB=$WASM_WEB BITCOIN_BIN=$B FEDIMINT_BIN=$F FEDIMINT_HOME=$FH"
+COMMON="PROBE=$P INVITE=$INVITE GATEWAY=http://127.0.0.1:30170 LND_BIN=$L LOCK_BIN=$F/arena-stake-lock WASM_WEB=$WASM_WEB BITCOIN_BIN=$B FEDIMINT_BIN=$F FEDIMINT_HOME=$FH"
 env $COMMON PHASE0_TREE=$PHASE0_TREE node $HERE/rehearse209.mjs 2>&1 | grep --line-buffered -vE '^\s*$' | sed -u 's/^/REHEARSE /'
 R1=${PIPESTATUS[0]}
 echo "rehearse209.mjs exit $R1"

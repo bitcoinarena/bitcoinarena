@@ -11,7 +11,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, symlinkSy
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { updateNode, releaseOfUnit, inSeatingWindow, backupNode, envForRelease, restoreNode, staleLnd, seatLogTail } from '../src/update.js';
+import { updateNode, releaseOfUnit, inSeatingWindow, backupNode, envForRelease, withStakeLocks, restoreNode, staleLnd, seatLogTail } from '../src/update.js';
 import { LND_FILES } from '../src/lnd.js';
 import { unitDir, UNIT, waitHealthy } from '../src/service.js';
 
@@ -576,4 +576,15 @@ test('a rollback says why: the new release\'s last log lines, from the unit\'s j
   assert.deepEqual(asked[0], ['journalctl', '--user', '-u', 'arena-node--2.service', '-n', '12', '--no-pager', '-o', 'cat'], 'the node\'s own unit');
   writeFileSync(join(home, 'node.log'), Array.from({ length: 20 }, (_, i) => `l${i}`).join('\n') + '\n');
   assert.deepEqual(await seatLogTail({ home, platform: 'darwin', n: 3 }), ['l17', 'l18', 'l19']);
+});
+
+test('an installed node gets the stake lock tool with the update; a node that names its own keeps it; Windows keeps CRLF (kanban #824)', () => {
+  const locks = { bin: '/h/releases/bitcoin-arena-node-2026.1.9.21-linux-x64/runtime/custody/arena-stake-lock', clientDir: '/h/federation-client' };
+  const text = withStakeLocks('# settings\nport=8470\n', locks).split('\n');
+  assert.ok(text.includes(`stake_lock_bin=${locks.bin}`) && text.includes('federation_client_dir=/h/federation-client'));
+  assert.equal(withStakeLocks(withStakeLocks('port=8470\n', locks), locks), withStakeLocks('port=8470\n', locks), 'a second update adds nothing');
+  assert.equal(withStakeLocks('stake_lock_bin=/own/tool\nport=1\n', locks), 'stake_lock_bin=/own/tool\nport=1\n');
+  assert.equal(withStakeLocks('port=1\n', null), 'port=1\n', 'a release without the tool');
+  assert.doesNotMatch(withStakeLocks('port=1\r\n', locks), /[^\r]\n/, 'CRLF on every line');
+  assert.equal(envForRelease(`stake_lock_bin=/h/releases/bitcoin-arena-node-2026.1.9.20-linux-x64/runtime/custody/arena-stake-lock\n`, '/h/releases/bitcoin-arena-node-2026.1.9.21-linux-x64', () => true), `stake_lock_bin=${locks.bin}\n`, 'the next update moves the path');
 });

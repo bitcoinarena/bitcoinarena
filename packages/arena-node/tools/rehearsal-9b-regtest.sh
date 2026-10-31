@@ -5,7 +5,7 @@
 # from it, every Lightning payment after the deposit counted (rehearsal-9b.mjs). Rehearsal step 1's setup: stock fedimintd 0.12.0, 4 guardians,
 # 3 of 4, two gateways (SECOND_GATEWAY=1: B on carol's lnd), regtest.
 #
-#   FEDIMINT_BIN=<released v0.12.0> LOCK_BIN=<blwp-stake-lock, the signer nodes' port>
+#   FEDIMINT_BIN=<released v0.12.0> LOCK_BIN=<arena-stake-lock, the signer nodes' port>
 #     bash tools/rehearsal-9b-regtest.sh
 set -uo pipefail
 : "${FEDIMINT_BIN:?}" ; : "${LOCK_BIN:?}"

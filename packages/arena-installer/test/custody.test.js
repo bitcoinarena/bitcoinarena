@@ -8,7 +8,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, delimiter } from 'node:path';
-import { seatEnv, guardianSetupOf, guardianUrlOf } from '../src/state.js';
+import { seatEnv, guardianSetupOf, guardianUrlOf, stakeLockSetupOf } from '../src/state.js';
+import { stakeLocksFromEnv } from '../../arena-node/src/stake-lock-port.js';
 import { buildBond } from '../src/bond.js';
 import { walletOf, payoutKeyOf } from '../src/wallet.js';
 import { advertInTransaction } from '../../arena-protocol/src/census.js';
@@ -54,4 +55,17 @@ test('the node finds fedimintd.exe on Windows', () => {
   writeFileSync(join(dir, 'fedimintd.exe'), '', { mode: 0o755 });
   assert.equal(findFedimintd(`/nope${delimiter}${dir}`, 'win32'), join(dir, 'fedimintd.exe'));
   assert.equal(findFedimintd(dir, 'linux'), null);
+});
+
+test('stake locks: every role, the release\'s tool and the node\'s own client folder - no tool in the release, no settings (kanban #824)', () => {
+  const release = mkdtempSync(join(tmpdir(), 'rel-'));
+  const s = { roles: ['verify', 'settlement'], chain: { kind: 'electrum' }, bridgePort: 1, reach: { mode: 'permanent', url: 'https://node.example.com' }, port: 8470 };
+  assert.ok(!seatEnv(s, { home: '/h', release }).includes('ARENA_STAKE_LOCK_BIN'), 'a release without the tool');
+  mkdirSync(join(release, 'runtime', 'custody'), { recursive: true });
+  writeFileSync(join(release, 'runtime', 'custody', 'arena-stake-lock'), ''); writeFileSync(join(release, 'runtime', 'custody', 'arena-stake-lock.exe'), '');
+  const env = seatEnv(s, { home: '/h', release }).split('\n');
+  assert.ok(env.includes(`ARENA_STAKE_LOCK_BIN=${join(release, 'runtime', 'custody', 'arena-stake-lock')}`));
+  assert.ok(env.includes(`ARENA_FEDERATION_CLIENT_DIR=${join('/h', 'federation-client')}`));
+  assert.equal(stakeLockSetupOf({ home: '/h', release, platform: 'win32' }).bin, join(release, 'runtime', 'custody', 'arena-stake-lock.exe'));
+  assert.equal(stakeLocksFromEnv(Object.fromEntries(env.filter((l) => /^ARENA_(STAKE_LOCK_BIN|FEDERATION_CLIENT_DIR)=/.test(l)).map((l) => l.split('=')))).given, true, 'the seat reads both, so it takes entries');
 });

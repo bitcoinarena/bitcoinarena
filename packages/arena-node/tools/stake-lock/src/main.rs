@@ -42,18 +42,18 @@
 //! (fedimint-core transaction.rs, `validate_signatures`): every lock names the
 //! committee, so the one signature is listed once per input.
 //!
-//!   blwp-stake-lock --data-dir D --amount-msat N --hash HEX --claim-pk HEX \
+//!   arena-stake-lock --data-dir D --amount-msat N --hash HEX --claim-pk HEX \
 //!     --refund-pk HEX --expiry-delta BLOCKS
-//!   blwp-stake-lock --mode redeem --data-dir D --outpoint TXID:IDX \
+//!   arena-stake-lock --mode redeem --data-dir D --outpoint TXID:IDX \
 //!     --amount-msat N --hash HEX --claim-pk HEX --refund-pk HEX \
 //!     --expiration BLOCK [--witness cancel --forfeit-sig HEX | --witness refund] \
 //!     --signer-secret HEX
-//!   blwp-stake-lock --mode status --data-dir D --outpoint TXID:IDX
-//!   blwp-stake-lock --mode settle --data-dir D --claim-pk HEX \
+//!   arena-stake-lock --mode status --data-dir D --outpoint TXID:IDX
+//!   arena-stake-lock --mode settle --data-dir D --claim-pk HEX \
 //!     --locks TXID:IDX:PREIMAGE:MSAT[,...] --nonce HEX16 \
 //!     (--payouts PK:MSAT[,...] | --qualifier-pk HEX) [--signature HEX]
-//!   blwp-stake-lock --mode fees --data-dir D
-//!   blwp-stake-lock --mode guardians --data-dir D
+//!   arena-stake-lock --mode fees --data-dir D
+//!   arena-stake-lock --mode guardians --data-dir D
 //!
 //! W4 (2026-09-14): a loser loses the stake - the seats' settlement names
 //! every payout exactly with --payouts (their rule, arena-node settlement.js),
@@ -472,7 +472,7 @@ async fn lock(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &Dyn
     .into_dyn(lnv2);
     let operation = OperationId::new_random();
     let change = client
-        .finalize_and_submit_transaction(operation, "blwp-stake-lock", |_| (), TransactionBuilder::new().with_outputs(bundle))
+        .finalize_and_submit_transaction(operation, "arena-stake-lock", |_| (), TransactionBuilder::new().with_outputs(bundle))
         .await?;
     let txid = change.txid();
     client

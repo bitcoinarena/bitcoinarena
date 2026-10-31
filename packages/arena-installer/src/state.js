@@ -90,6 +90,17 @@ export function guardianSetupOf(s, { release, platform = process.platform }) {
 }
 
 /**
+ * THE NODE'S STAKE LOCKS (kanban #824, measured 2026-10-31 06:47-07:06Z: installer nodes drawn as signers answered 402 to every paid entry,
+ * so a table of 4 seats and 2 of them, 5 needed, took no stake): the release's arena-stake-lock and a client folder of the node's own, on every
+ * role - any drawn node reads the locks. No client is joined here: the node joins each round's federation when a round first asks
+ * (stake-lock-port.js federationPorts, <home>/federations/<id>). null: this release has no tool for this system.
+ */
+export function stakeLockSetupOf({ home, release, platform = process.platform }) {
+  const bin = join(release, 'runtime', 'custody', `arena-stake-lock${platform === 'win32' ? '.exe' : ''}`);
+  return existsSync(bin) ? { bin, clientDir: join(home, 'federation-client') } : null;
+}
+
+/**
  * The steps done. A state from before the apps step (kanban #569) that is past it - its seed confirmed - counts the apps as done: its node
  * hosts what it was given (seatEnv: every app), and the wizard does not go back to ask. The same for New / Restore (kanban #652).
  */
@@ -150,6 +161,8 @@ export function seatEnv(s, { home, release }) {
   // the guardian reads the node's own Core even while the node reads the interim Electrum chain (kanban #635)
   if (custody && s.chain && s.chain.kind === 'electrum') { const own = ownCoreOf(s); lines.push(`ARENA_GUARDIAN_BITCOIND_URL=${own.url}`, `ARENA_GUARDIAN_BITCOIND_COOKIE=${own.cookiePath}`); }
   if (custody) lines.push('ARENA_FOUNDING=1', `ARENA_FEDIMINTD=${custody.fedimintd}`, `ARENA_FEDIMINT_CLI=${custody.cli}`, `ARENA_GUARDIAN_ENDPOINT_${s.port}=${custody.endpoint}`);
+  const locks = stakeLockSetupOf({ home, release });
+  if (locks) lines.push(`ARENA_STAKE_LOCK_BIN=${locks.bin}`, `ARENA_FEDERATION_CLIENT_DIR=${locks.clientDir}`);
   // Fedimint on a RAM disk (kanban #596): chosen for more than 5 nodes on this machine (guardian-ram.js)
   if (custody && s.instances && s.instances.ram) lines.push('ARENA_FEDIMINT_RAM=1');
   // the machine's own name, shown in the health page's machines (kanban #621)

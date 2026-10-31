@@ -32,6 +32,8 @@ export const CONF_KEYS = Object.freeze([
   ['founding', 'custody: 1 = the guardian starts in setup mode, ready to found a federation'],
   ['fedimintd', 'custody: the guardian program'],
   ['fedimint_cli', 'custody: the guardian\'s command-line client'],
+  ['stake_lock_bin', 'the stake lock tool: what the node reads a round\'s locks with (kanban #824)'],
+  ['federation_client_dir', 'the node\'s own federation client; other federations are joined beside it'],
   ['fedimint_ram', 'custody: 1 = the guardian\'s database in RAM (Linux /dev/shm), a snapshot on disk every minute (more than 5 nodes on a machine)'],
   ['guardian_endpoint', 'custody: the guardian\'s public websocket (<public_url>/guardian)'],
   ['liquidity_claim_file', 'liquidity: the provider\'s claim'],
