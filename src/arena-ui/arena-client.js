@@ -16738,6 +16738,71 @@ function lockSecretFor(seed, roundId) {
  * A WRITE THE BROWSER REFUSES FOR ROOM (the owner 2026-10-30, order at "locking your stake": a wallet's write that throws QuotaExceededError ends in the lock
  * client's panic, and every wallet call of that page then hangs until a reload): `onStorageFull` frees what it can, and the write is tried once more.
  */
+// A WALLET'S KEYS AND VALUES, PACKED (kanban #883, the owner 2026-10-31, iPhone log: 4,992,831 characters in 3,759 keys, a deposit paid and never claimed): the client hands
+// hex, two characters a byte, and iOS Safari gives 5 million characters. 15 bits to a character is under a third of that, and nothing has to be deleted for it.
+const PACKED = '~';
+function packHex(hex) {
+  const s = String(hex);
+  if (!s || s[0] === PACKED || s.length % 2 || !/^[0-9a-f]+$/.test(s)) return s;
+  const out = []; let acc = 0, bits = 0;
+  for (let i = 0; i < s.length; i++) {
+    acc = (acc << 4) | parseInt(s[i], 16); bits += 4;
+    if (bits >= 15) { bits -= 15; out.push(0x100 + ((acc >> bits) & 0x7fff)); acc &= (1 << bits) - 1; }
+  }
+  const pad = bits ? 15 - bits : 0;
+  if (bits) out.push(0x100 + (acc << pad));
+  let r = PACKED + String.fromCharCode(0x100 + pad);
+  for (let i = 0; i < out.length; i += 4096) r += String.fromCharCode(...out.slice(i, i + 4096));
+  return r;
+}
+function unpackHex(s) {
+  if (!s || s[0] !== PACKED) return s;
+  const pad = s.charCodeAt(1) - 0x100;
+  const nibbles = ((s.length - 2) * 15 - pad) / 4;
+  const out = new Array(nibbles); let acc = 0, bits = 0, n = 0;
+  for (let i = 2; i < s.length; i++) {
+    acc = (acc << 15) | (s.charCodeAt(i) - 0x100); bits += 15;
+    while (bits >= 4 && n < nibbles) { bits -= 4; out[n++] = ((acc >> bits) & 15).toString(16); }
+    acc &= (1 << bits) - 1;
+  }
+  return out.join('');
+}
+// AND A LONG VALUE ONCE (measured: a federation's config, 68,888 hex, the same bytes in every wallet of it - 55 % of all values; e-cash itself does not compress, zlib saves 3 %)
+const BLOB_PREFIX = 'arena.walletblob.', BLOB_MIN = 2048, BLOB_MARK = '^';
+function keptValue(storage, hex) {
+  const s = String(hex);
+  if (s.length < BLOB_MIN || s.length % 2 || !/^[0-9a-f]+$/.test(s)) return packHex(s);
+  const id = toHex(sha256(fromHex(s))).slice(0, 32);
+  if (storage.getItem(BLOB_PREFIX + id) === null) putRoomy(storage, BLOB_PREFIX + id, packHex(s));
+  return BLOB_MARK + id;
+}
+function valueOf(storage, s) {
+  if (!s || s[0] !== BLOB_MARK) return unpackHex(s);
+  const blob = storage.getItem(BLOB_PREFIX + s.slice(1));
+  if (blob === null) throw new Error(`the wallet's long value ${s.slice(1, 9)} is gone from this browser`);
+  return unpackHex(blob);
+}
+const WALLET_KEY = /^(arena\.(?:walletdb|lockdb)\.[0-9a-f]{16}\.[0-9a-f]{16}\.)(.*)$/s;
+/** EVERY WALLET THIS BROWSER KEEPS, PACKED IN PLACE: nothing is lost, an entry already packed is left. Answers the characters freed. */
+function packWallets(storage) {
+  if (!storage) return 0;
+  let freed = 0;
+  for (const k of storageKeys(storage)) {
+    const m = WALLET_KEY.exec(k); if (!m) continue;
+    const v = storage.getItem(k); if (v === null) continue;
+    const key = m[1] + packHex(m[2]);
+    const val = v[0] === BLOB_MARK || (v[0] === PACKED && unpackHex(v).length < BLOB_MIN) ? v : keptValue(storage, unpackHex(v));
+    if (key === k && val === v) continue;
+    // the old one first: on a full browser the shorter copy fits only then, and it goes straight back if the browser refuses
+    storage.removeItem(k);
+    try { storage.setItem(key, val); freed += k.length + v.length - key.length - val.length; } catch (e) { storage.setItem(k, v); throw e; }
+  }
+  // a long value no wallet names any more
+  const named = new Set();
+  for (const k of storageKeys(storage)) if (WALLET_KEY.test(k)) { const v = storage.getItem(k); if (v && v[0] === BLOB_MARK) named.add(v.slice(1)); }
+  for (const k of storageKeys(storage)) if (k.startsWith(BLOB_PREFIX) && !named.has(k.slice(BLOB_PREFIX.length))) { freed += k.length + String(storage.getItem(k) || '').length; storage.removeItem(k); }
+  return freed;
+}
 let storageFull = null;
 function onStorageFull(fn) { storageFull = typeof fn === 'function' ? fn : null; }
 function putRoomy(storage, key, value) {
@@ -16777,22 +16842,23 @@ function lockStoreFor(storage, roundId, secret) {
     const out = [];
     for (let i = 0; i < storage.length; i++) {
       const k = storage.key(i);
-      if (k && k.startsWith(prefix)) out.push([k.slice(prefix.length), storage.getItem(k)]);
+      if (k && k.startsWith(prefix)) out.push([unpackHex(k.slice(prefix.length)), valueOf(storage, storage.getItem(k))]);
     }
     return out;
   };
+  const drop = (k) => { storage.removeItem(prefix + packHex(k)); storage.removeItem(prefix + k); };
   let inMemory = null;   // the whole database or none of it: a part of one left in storage would not open again
-  const toMemory = () => { const all = kept(); inMemory = new Map(all); for (const [k] of all) storage.removeItem(prefix + k); };
+  const toMemory = () => { const all = kept(); inMemory = new Map(all); for (const [k] of all) drop(k); };
   return {
     entries() { return JSON.stringify(inMemory ? [...inMemory] : kept()); },
     put(k, v) {
       if (!inMemory && storageChars(storage) >= LOCK_ROOM_CHARS) toMemory();
       if (!inMemory) {
-        try { putRoomy(storage, prefix + k, v); return; } catch (e) { if (!/quota/i.test(`${e && e.name} ${e && e.message}`)) throw e; toMemory(); }
+        try { putRoomy(storage, prefix + packHex(k), keptValue(storage, v)); return; } catch (e) { if (!/quota/i.test(`${e && e.name} ${e && e.message}`)) throw e; toMemory(); }
       }
       inMemory.set(k, v);
     },
-    remove(k) { if (inMemory) inMemory.delete(k); else storage.removeItem(prefix + k); },
+    remove(k) { if (inMemory) inMemory.delete(k); else drop(k); },
   };
 }
 
@@ -17059,7 +17125,7 @@ function tidyStorage(storage, { seeds = [], current = null, federations = [], he
         let known = 0n; try { known = BigInt(storage.getItem(`arena.wallet.known.${o.fed.slice(0, 16)}.${o.hex.slice(0, 16)}`) || 0); } catch { known = 1n; }
         if (known > 0n) continue;
         const ks = storageKeys(storage).filter((k) => k.startsWith(prefix));
-        if (!ks.length || ks.some((k) => waitingOps.some((op) => k.toLowerCase().includes(op)))) continue;
+        if (!ks.length || ks.some((k) => { const tail = unpackHex(k.slice(prefix.length)).toLowerCase(); return waitingOps.some((op) => tail.includes(op)); })) continue;
         take(ks); markSeedRecover(storage, o.hex);
       }
     }
@@ -17075,12 +17141,12 @@ function walletStoreFor(storage, federationId, secret) {
       const out = [];
       for (let i = 0; i < storage.length; i++) {
         const k = storage.key(i);
-        if (k && k.startsWith(prefix)) out.push([k.slice(prefix.length), storage.getItem(k)]);
+        if (k && k.startsWith(prefix)) out.push([unpackHex(k.slice(prefix.length)), valueOf(storage, storage.getItem(k))]);
       }
       return JSON.stringify(out);
     },
-    put(k, v) { putRoomy(storage, prefix + k, v); },
-    remove(k) { storage.removeItem(prefix + k); },
+    put(k, v) { putRoomy(storage, prefix + packHex(k), keptValue(storage, v)); },
+    remove(k) { storage.removeItem(prefix + packHex(k)); storage.removeItem(prefix + k); },
   };
 }
 
