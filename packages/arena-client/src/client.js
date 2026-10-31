@@ -123,6 +123,8 @@ export async function federationStakeFor(round, { nodes, fetcher = fetch, donati
  * mark count, so an operator cannot spend a short committee as a win.
  */
 export const RECEIPTS_FOR_LIVE = 5;
+/** How long a mark waits for the whole committee before enough of it will do (#quorumHoldsThrough): well inside the 900-tick first-mark window. */
+export const MARK_QUORUM_WAIT_MS = 3000;
 
 /** 2-of-2 on this build's test nets; 5-of-7 on a seven-signer node contract. */
 export function receiptsForLive(contract) {
@@ -878,6 +880,20 @@ export class Client {
     return true;
   }
 
+  /**
+   * ENOUGH OF THE COMMITTEE HOLDS THEM (kanban #827, measured 2026-10-31 12:48Z, round d1d3701c: five of six signers held both players' inputs, the sixth's
+   * stake-lock read stalled two minutes, every first mark waited for it and both runs were FORFEIT at the 900-tick window). A mark needs RECEIPTS_FOR_LIVE
+   * receipts to count, so that many holders can carry it: after MARK_QUORUM_WAIT_MS it goes without the rest, who stay on the feed and take the later marks.
+   */
+  #quorumHoldsThrough(tick) {
+    const size = this.peers.length + 1;
+    const need = size <= 2 ? size : Math.min(RECEIPTS_FOR_LIVE, size);
+    if (size === need || this.nextTick < tick) return false;
+    let held = 1;
+    for (const base of this.peers) if (this.peerFeed(base).ticks >= tick) held++;
+    return held >= need;
+  }
+
   /** Which committee nodes do not yet hold the inputs before `tick`, and how far they got. */
   #behind(tick) {
     const out = [];
@@ -929,7 +945,7 @@ export class Client {
     if (!this.inputWaiters.length) return;
     const still = [];
     for (const w of this.inputWaiters) {
-      if (w.final ? this.nextTick >= w.tick : this.#holdsThrough(w.tick)) { clearTimeout(w.timer); w.resolve(true); } else still.push(w);
+      if (w.final ? this.nextTick >= w.tick : this.#holdsThrough(w.tick)) { clearTimeout(w.timer); clearInterval(w.quorum); w.resolve(true); } else still.push(w);
     }
     this.inputWaiters = still;
   }
@@ -1814,7 +1830,7 @@ export class Client {
     this.peerDowns = 0;
     this.marksUnreached = 0;
     this.marksUnreachedWhy = null;
-    for (const w of this.inputWaiters) clearTimeout(w.timer);
+    for (const w of this.inputWaiters) { clearTimeout(w.timer); clearInterval(w.quorum); }
     this.inputWaiters = [];
     this.marksWaited = 0;
     this.markWaiting = null;
@@ -2311,10 +2327,20 @@ export class Client {
     const ready = holds() ? true : new Promise((resolve) => {
       const w = { tick, final, resolve };
       w.timer = setTimeout(() => {
+        clearInterval(w.quorum);
         this.inputWaiters = this.inputWaiters.filter((x) => x !== w);
         resolve(false);
       }, this.markWaitMs);
       if (w.timer && w.timer.unref) w.timer.unref();
+      const since = Date.now();
+      w.quorum = setInterval(() => {
+        if (Date.now() - since < MARK_QUORUM_WAIT_MS || !this.#quorumHoldsThrough(tick)) return;
+        clearInterval(w.quorum); clearTimeout(w.timer);
+        this.inputWaiters = this.inputWaiters.filter((x) => x !== w);
+        this.marksWithoutEvery = (this.marksWithoutEvery || 0) + 1;
+        resolve(true);
+      }, 250);
+      if (w.quorum && w.quorum.unref) w.quorum.unref();
       this.inputWaiters.push(w);
     });
     if (ready !== true) {
