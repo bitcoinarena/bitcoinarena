@@ -14,8 +14,12 @@
 // A proposal's outcome is written into its record once (`decide`), and tallied again only when the chain it was counted on
 // changed below it (`undecide`, ballot-tally.js: a reorg). A proposal whose publication block left this seat's chain is
 // forgotten (`forget`): it was never published on the chain the seat now follows, and is taken again when posted again.
-import { decodeConfigProposalBody, proposalId, proposalStands, SCHEDULES, REPEAL_SCHEDULES } from '../../arena-protocol/src/ballot.js';
+// A PROPOSED SOURCE'S EXAMPLE (kanban #921): the list without one does not stand on any seat (hostListProblem). Each seat also reads the example of every host the
+// proposal adds and keeps what it saw (`example`), for the voters to see. It does not refuse on that read: a seat keeps what stands on its face, or a page that
+// answers one seat and not another would give the seats different lists.
+import { CLASS, addedHosts, decodeConfigProposalBody, proposalId, proposalStands, SCHEDULES, REPEAL_SCHEDULES } from '../../arena-protocol/src/ballot.js';
 import { depositOf } from '../../arena-protocol/src/ballot-chain.js';
+import { decodeSourceList } from '../../arena-protocol/src/market-check.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 /**
@@ -24,10 +28,10 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
  * height)` -> the network's donation set in force at that height (its recipients), or null; `lowestBondMinSatsFor(networkIdHex)` -> BigInt; `verify(sig, msg, pubkey)`; `store`:
  * { read() -> [], write(list) }. `scheduleFor(net)` / `repealScheduleFor(net)`: the network's schedules (regtest's short ones);
  * `historyFor(net, height)` -> the live history at that height ([{ config }], liveConfig's), or null while it cannot be known yet;
- * none given: no proposal is read as a repeal (the first slice's behaviour).
+ * none given: no proposal is read as a repeal (the first slice's behaviour). `exampleCheck(entry)` -> { ok, value, why }: the read of a new source's example.
  */
 export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsFor, verify, store, schedule = SCHEDULES.mainnet, scheduleFor = null,
-  repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null }) {
+  repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null, exampleCheck = null }) {
   const held = new Map((store && store.read ? store.read() || [] : []).map((x) => [x.id, x]));
   const save = () => { if (store && store.write) store.write([...held.values()]); };
   return {
@@ -60,6 +64,13 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
         votingUntil: stands.votingUntil, activationHeight: stands.activationHeight, repeal: stands.repeal,
         // THE BLOCK IT WAS PUBLISHED IN: a reorg that takes it out unpublishes the proposal (ballot-tally.js)
         blockHash: String(blockHash).toLowerCase() };
+      if (exampleCheck && history && p.class === CLASS.SOURCES) {
+        kept.example = [];
+        for (const host of addedHosts(p, history)) {
+          const entry = decodeSourceList(p.config).find((e) => e.host === host);
+          kept.example.push({ host, ...await exampleCheck(entry).catch((e) => ({ ok: false, why: e.message })) });
+        }
+      }
       held.set(id, kept); save();
       return { ok: true, status: 201, ...kept };
     },

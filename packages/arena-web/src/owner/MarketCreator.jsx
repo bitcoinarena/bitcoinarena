@@ -8,7 +8,7 @@ import { parse } from 'acorn';
 import { checkMarketCode } from '../../../arena-protocol/src/market-check.js';
 import { CodeEditor } from './CodeEditor.jsx';
 import { readAll, runCode } from './marketRun.js';
-import { SOURCES, SOURCE_GROUPS } from './marketSources.js';
+import { SOURCES, SOURCE_GROUPS } from '../../../arena-protocol/src/market-sources.js';
 import { CATEGORIES, EVERY, EXAMPLES, KEPT, OUTCOMES_MAX, READS_MAX, STEPS, TEMPLATES, fieldsOf, fromTemplate, outcomeOf, outcomeOfCode, problemsOf, readAnswer, urlProblem } from './marketDraft.js';
 
 const Err = ({ of }) => (of ? <span className="mc-err">{of}</span> : null);
@@ -154,7 +154,7 @@ export class MarketCreator extends React.Component {
       return (<>
         {kinds}
         <Seg value={srcGroup} options={SOURCE_GROUPS.map((g) => [g, g])} onPick={(g) => this.setState({ srcGroup: g })} />
-        <div className="mc-sources" aria-label="Listed sources">{SOURCES.filter((m) => m.group === srcGroup).map((m) => <div key={m.name} className={m.url === s.url ? 'mc-src on' : 'mc-src'}>
+        <div className="mc-sources" aria-label="Listed sources">{SOURCES.filter((m) => m.group === srcGroup && !m.socket).map((m) => <div key={m.name} className={m.url === s.url ? 'mc-src on' : 'mc-src'}>
           <button type="button" onClick={() => this.sampleUrl(m)}><b>{m.name}</b><small>{m.hint}</small></button>
           <a href={m.docs} target="_blank" rel="noopener noreferrer" aria-label={`${m.name} documentation`}>Docs ↗</a></div>)}</div>
         <Field label="Address the nodes read" why={bad.url}><input inputMode="url" placeholder="https://" value={s.url} onChange={(e) => this.source({ url: e.target.value })} /></Field>
