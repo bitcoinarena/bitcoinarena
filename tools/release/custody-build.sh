@@ -5,9 +5,10 @@
 # as much") from the patched fork 5fa01c5d7e6 (upstream v0.12.2, kanban #584: the LNv2 gateway fixes; the BLWP commits of 7e8caa9fd3a; crunchy 0.2.4; gatewayd without jemalloc on Windows and Linux): stripped, no
 # debug info. Linux against glibc 2.31 (zig), so older systems run it; macOS natively for both architectures; Windows through zig.
 # ONLY: os-arch keys to build (default all).
-# Writes out/<bin>-<os>-<arch>[.exe] and out/SHA256SUMS.custody. BINS: which (default: gatewayd fedimintd fedimint-cli fedimint-dbtool; jemalloc off for all).
+# Writes out/<bin>-<os>-<arch>[.exe] and out/SHA256SUMS.custody. BINS: which (default: gatewayd fedimintd fedimint-cli arena-stake-lock fedimint-dbtool; jemalloc off for all).
 # fedimint-dbtool (kanban #718): stock, read by a RAM-disk guardian restored after an unclean stop (guardian-recover.js) - its accepted items
 # compared and, when they agree, its AlephBFT units deleted before fedimintd starts.
+# arena-stake-lock: packages/arena-node/tools/stake-lock copied into $F as a workspace member (kanban #824).
 set -uo pipefail
 B=/Users/arena/blwp-offload/fedwin; F=$B/src; OUT=$B/out; mkdir -p $OUT
 export PATH=$HOME/.cargo/bin:$B/zig-aarch64-macos-0.16.0:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
@@ -24,8 +25,8 @@ for row in "x86_64-pc-windows-gnu zig windows-x64 .exe" "x86_64-unknown-linux-gn
            "aarch64-apple-darwin cargo darwin-arm64 -" "x86_64-apple-darwin cargo darwin-x64 -"; do
   set -- $row; tgt=$1; how=$2; key=$3; ext=${4/-/}; dir=${tgt%.2.31}
   [ -n "${ONLY:-}" ] && [[ " $ONLY " != *" $key "* ]] && continue
-  for bin in ${BINS:-gatewayd fedimintd fedimint-cli fedimint-dbtool}; do
-    case $bin in gatewayd) spec="-p fedimint-gateway-server --bin gatewayd";; fedimintd) spec="-p fedimintd --no-default-features";; fedimint-cli) spec="-p fedimint-cli --no-default-features";; fedimint-dbtool) spec="-p fedimint-dbtool";; esac
+  for bin in ${BINS:-gatewayd fedimintd fedimint-cli fedimint-dbtool arena-stake-lock}; do
+    case $bin in arena-stake-lock) spec="-p arena-stake-lock";; gatewayd) spec="-p fedimint-gateway-server --bin gatewayd";; fedimintd) spec="-p fedimintd --no-default-features";; fedimint-cli) spec="-p fedimint-cli --no-default-features";; fedimint-dbtool) spec="-p fedimint-dbtool";; esac
     t0=$(date +%s); say "$bin for $key ($tgt)"
     if [ $how = zig ]; then cargo zigbuild --release --target $tgt $spec > $B/custody-$bin-$key.log 2>&1
     else cargo build --release --target $tgt $spec > $B/custody-$bin-$key.log 2>&1; fi
@@ -34,5 +35,5 @@ for row in "x86_64-pc-windows-gnu zig windows-x64 .exe" "x86_64-unknown-linux-gn
     else grep -E "^error" -A6 $B/custody-$bin-$key.log | head -14; fi
   done
 done
-cd $OUT && shasum -a 256 gatewayd-* fedimintd-* fedimint-cli-* fedimint-dbtool-* > SHA256SUMS.custody && cat SHA256SUMS.custody
+cd $OUT && shasum -a 256 gatewayd-* fedimintd-* fedimint-cli-* fedimint-dbtool-* arena-stake-lock-* > SHA256SUMS.custody && cat SHA256SUMS.custody
 say done

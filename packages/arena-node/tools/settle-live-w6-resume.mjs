@@ -6,7 +6,7 @@
 // their lock clients' data - and measures what each signer node's row held before and after, and what the
 // federation holds: the claimed locks, the payout contracts at (txid, i).
 //
-//   PROBE=<probe dir> LOCK_BIN=<blwp-stake-lock> node tools/settle-live-w6-resume.mjs
+//   PROBE=<probe dir> LOCK_BIN=<arena-stake-lock> node tools/settle-live-w6-resume.mjs
 import { readFileSync } from 'node:fs';
 
 import { openStore } from '../src/store.js';

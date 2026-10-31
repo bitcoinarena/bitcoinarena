@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE STAKE-LOCK PORT'S GUARDIANS, SEND AND SETTLE: what the node hands the fork's blwp-stake-lock and how it reads it back
+// THE STAKE-LOCK PORT'S GUARDIANS, SEND AND SETTLE: what the node hands the fork's arena-stake-lock and how it reads it back
 // (plan comment 249, Go 2026-10-05). A stand-in tool logs its argv and prints, per mode, what the real
 // one prints (tools/stake-lock/src/main.rs: one JSON line on stdout, exit 0; a hard error on stderr, exit 1, no JSON).
 import { test } from 'node:test';
@@ -17,7 +17,7 @@ const b = (n, len = 32) => new Uint8Array(len).fill(n);
 function fakeTool({ answer = {}, exit = {}, stderr = {}, raw = {}, hang = {} } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'stake-lock-modes-'));
   const log = join(dir, 'argv.jsonl');
-  const bin = join(dir, 'blwp-stake-lock');
+  const bin = join(dir, 'arena-stake-lock');
   writeFileSync(bin, `#!${process.execPath}
 const a = process.argv.slice(2); require('fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify(a) + '\\n');
 const mode = a[a.indexOf('--mode') + 1];
@@ -114,12 +114,12 @@ test('settle builds --locks, --payouts, --refunds and --signature - refunds and 
 
 test('a tool that fails before it answers, or prints no JSON, is an error - never an answer', async () => {
   const hard = fakeTool({ stderr: { guardians: 'Error: no mode wrong' }, exit: { guardians: 1 } });
-  await assert.rejects(stakeLockPort({ serve: false, bin: hard.bin, dataDir: '/d' }).guardiansRead(), /^Error: blwp-stake-lock: Error: no mode wrong$/);
+  await assert.rejects(stakeLockPort({ serve: false, bin: hard.bin, dataDir: '/d' }).guardiansRead(), /^Error: arena-stake-lock: Error: no mode wrong$/);
   const silent = fakeTool({ raw: { fees: 'not json at all' } });
-  await assert.rejects(stakeLockPort({ serve: false, bin: silent.bin, dataDir: '/d' }).feesRead(), /blwp-stake-lock answered no JSON/);
+  await assert.rejects(stakeLockPort({ serve: false, bin: silent.bin, dataDir: '/d' }).feesRead(), /arena-stake-lock answered no JSON/);
   const broken = fakeTool({ raw: { fees: '{"fee_ppm": 0, ' } });
-  await assert.rejects(stakeLockPort({ serve: false, bin: broken.bin, dataDir: '/d' }).feesRead(), /blwp-stake-lock answered no JSON/);
-  await assert.rejects(stakeLockPort({ serve: false, bin: join(tmpdir(), 'no-such-blwp-stake-lock'), dataDir: '/d' }).feesRead(), /blwp-stake-lock: /);
+  await assert.rejects(stakeLockPort({ serve: false, bin: broken.bin, dataDir: '/d' }).feesRead(), /arena-stake-lock answered no JSON/);
+  await assert.rejects(stakeLockPort({ serve: false, bin: join(tmpdir(), 'no-such-arena-stake-lock'), dataDir: '/d' }).feesRead(), /arena-stake-lock: /);
 });
 
 // THE SPLIT (2026-10-05, decision (b) on comment 251): the live tool prints one JSON line and exits clean, or fails
@@ -135,7 +135,7 @@ test('killed after it printed: its JSON is the answer (a settle killed after "ac
   assert.deepEqual([s.accepted, s.txid, s.error], [true, 'f0'.repeat(32), null], 'accepted, as printed before the kill');
   const before = fakeTool({ answer: { settle: settled }, hang: { settle: 'before' } });
   await assert.rejects(stakeLockPort({ serve: false, bin: before.bin, dataDir: '/d', timeoutMs: 1500, settleTimeoutMs: 1500 }).settle({ claimPk: b(1, 33), claims: [], payouts: [], nonce: b(2) }),
-    /^Error: blwp-stake-lock settle timed out after 1500 ms/, 'killed before any JSON: an error that says it timed out, never read as accepted');
+    /^Error: arena-stake-lock settle timed out after 1500 ms/, 'killed before any JSON: an error that says it timed out, never read as accepted');
 });
 
 // THE GATEWAYS ANSWER (2026-10-05 on comment 266; stake-lock-port.js:98): the mapping of each gateway the

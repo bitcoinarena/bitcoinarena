@@ -4,7 +4,7 @@
 /**
  * DOES A PAYING FEDERATION ROUND OPEN WHEN THREE BONDED OPERATORS COVER THE FEDERATION?
  *
- *   PROBE=<federation-hold-probe dir> LOCK_BIN=<blwp-stake-lock> RPCPORT=30101 \
+ *   PROBE=<federation-hold-probe dir> LOCK_BIN=<arena-stake-lock> RPCPORT=30101 \
  *     node packages/arena-node/tools/federation-round-3.mjs
  *
  * §23.6 wants a paying FEDERATION round's federation covered by AT LEAST ITS
@@ -35,7 +35,7 @@ const env = process.env;
 const P = env.PROBE;
 const say = (o) => console.log(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
 if (!P || !env.LOCK_BIN) {
-  console.error('PROBE (a federation-hold-probe dir) and LOCK_BIN (blwp-stake-lock) are needed');
+  console.error('PROBE (a federation-hold-probe dir) and LOCK_BIN (arena-stake-lock) are needed');
   process.exit(2);
 }
 const rpcport = env.RPCPORT || '30101';
