@@ -9,6 +9,10 @@
             if self.recover_contract_keys(self.keypair.secret_key(), contract).is_none() {
                 continue;
             }
+            // what this client already has an operation for is not lost: a claimed deposit came in long ago, and answering it again would credit it twice on the page
+            if self.client_ctx.get_operation(OperationId::from_encodable(&contract.clone())).await.is_ok() {
+                continue;
+            }
             let meta = LightningOperationMeta::LnurlReceive(LnurlReceiveOperationMeta {
                 contract: contract.clone(),
                 custom_meta: Value::Null,
