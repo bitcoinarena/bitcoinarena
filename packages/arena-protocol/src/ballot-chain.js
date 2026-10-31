@@ -17,8 +17,7 @@
 // What is live is a pure function of the passed proposals and a height; which proposals passed is the tally's.
 import { splitBlock } from './block.js';
 import { parseTransaction, commitmentsOf } from './tx.js';
-import { configHashOf, decodeVote } from './ballot.js';
-import { MARKET_HOSTS, decodeHostList, encodeHostList } from './market-check.js';
+import { decodeVote } from './ballot.js';
 import { toHex, fromHex } from './hash.js';
 import { splitDonation, donationSetPaysKeys } from './donation.js';
 
@@ -92,11 +91,6 @@ const spansOf = (history) => (history || []).map((h, i) => ({ ...h, until: i + 1
  * `history`: liveConfig's, computed over every passed proposal (with no height cut), so a config that is not live YET is
  * refused for the rounds created before its activation too.
  */
-/** WHERE THE LIST OF MARKET SOURCES STARTS (kanban #921): a chain of its own, so a list never becomes a game's config. */
-export const SOURCES_GENESIS = Object.freeze((() => { const config = encodeHostList(MARKET_HOSTS); return { configHash: configHashOf(config), config }; })());
-/** The hosts a round may read: the list live at its census height. */
-export const hostsLiveAt = ({ passed = [], height }) => { const l = liveConfig({ genesis: SOURCES_GENESIS, passed, height }); return decodeHostList(l.history[l.history.length - 1].config); };
-
 export function configServesRound({ configHash, height, history }) {
   if (!(configHash instanceof Uint8Array) || configHash.length !== 32) return { ok: false, governed: false, why: 'that round names no 32-byte config' };
   const want = toHex(configHash);
