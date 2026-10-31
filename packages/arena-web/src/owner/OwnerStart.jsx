@@ -4,11 +4,13 @@
 // owner area - the welcome (make 24 words, restore them, or log in with Nostr), the new words shown once with three typed back, the restore
 // from the words, Login with Nostr (an extension, a phone signer's code, a bunker link, an nsec, or a new account with its key shown once),
 // the claim with the code from the node's log, and the one-card messages (no answer, not the owner). The page keeps every rule and hands
-// them over: `client` (the owner client's words, Nostr and QR helpers), `keepSeed(seed)` and `keepNostr(login)` (false when the browser
-// keeps nothing), `random32()`, `claim(code)`, and `onIn()` (the page starts again with what this browser now keeps).
+// them over: `client` (the owner client's words, Nostr and QR helpers), `holdSeed(seed)` and `holdNostr(login)` (the page holds them in
+// memory and writes nothing to the browser until the node has taken a login signed with them, kanban #832), `random32()`, `claim(code)`,
+// and `onIn()` (the page starts again with what it now holds).
 import React from 'react';
 
-const KEEP_FAILED = 'This browser does not let the page keep them (private mode?).';
+// WHERE THE SECRET STAYS, SAID WHERE IT IS TYPED (kanban #832): `it` the words ("They") or the nsec ("It")
+const stays = (it) => `${it} ${it === 'They' ? 'stay' : 'stays'} in this tab's memory until your node confirms ${it === 'They' ? 'them' : 'it'} as its owner. Then this browser keeps ${it === 'They' ? 'them' : 'it'} in its local storage, unencrypted, until you sign out. Use a device you trust.`;
 const field = { autoComplete: 'off', autoCapitalize: 'none', spellCheck: false };
 
 // the deep link only where a tap can open it, and the key copied with a refused write said (kanban #853)
@@ -45,19 +47,19 @@ export class OwnerStart extends React.Component {
   wrote() {
     const { words, ask, typed, seed } = this.state;
     if (!ask.every((i) => String(typed[i] || '').trim().toLowerCase() === words[i])) return this.setState({ err: 'One of the three words is not right. Check what you wrote.' });
-    if (!this.props.keepSeed(seed)) return this.setState({ err: KEEP_FAILED });
+    this.props.holdSeed(seed);
     this.props.onIn();
   }
   // 1b. RESTORE: the 24 words, checked by their checksum word
   restore() {
     const got = this.props.client.seedFromPhrase(this.state.phrase);
     if (!got.ok) return this.setState({ err: 'These are not your 24 words: ' + got.why });
-    if (!this.props.keepSeed(got.seed)) return this.setState({ err: KEEP_FAILED });
+    this.props.holdSeed(got.seed);
     this.props.onIn();
   }
-  // 1c. LOGIN WITH NOSTR: kept as the page keeps it, then the page starts again
+  // 1c. LOGIN WITH NOSTR: held as the page holds it, then the page starts again
   signedIn(login, signer) {
-    if (!this.props.keepNostr(login)) return this.fail('This browser does not let the page keep it (private mode?)');
+    this.props.holdNostr(login);
     if (this.props.onNostr) this.props.onNostr({ how: login.how, pubkey: signer.pubkey });
     this.props.onIn();
   }
@@ -80,9 +82,10 @@ export class OwnerStart extends React.Component {
     } catch (e) { this.fail(e); }
   }
   nsec() { try { const x = this.props.client.signerFromNsec(this.state.nsec); this.signedIn({ how: 'nsec', secret: this.props.client.toHex(x.secret) }, x); } catch (e) { this.fail(e); } }
+  // ONLY WHERE IT CAN BECOME THE OWNER (kanban #833): a new key on a node with an owner was called "this node's owner key" and then refused
   newAccount() {
+    if (this.props.claimed) return;
     const a = this.props.client.newAccount();
-    if (this.props.onNewNsec) this.props.onNewNsec(a.nsec);
     this.go('account', { account: a, saved: false });
   }
   // 2. THE NODE HAS NO OWNER: claimed with the code from its log (kanban #550: the file's full path, not a cryptic name)
@@ -97,7 +100,7 @@ export class OwnerStart extends React.Component {
     const back = (to) => <button type="button" onClick={() => this.go(to)}>Back</button>;
     if (s.screen === 'make') return (
       <div className="card"><h3>Write these 24 words down</h3>
-        <div className="warn">Write them on paper, in order. They're the only way back into this owner area from another browser. Nobody can recover them for you.</div>
+        <div className="warn">Write them on paper, in order. They're the only way back into this owner area from another browser. Nobody can recover them for you. {stays('They')}</div>
         <div className="words">{s.words.map((w, i) => <span key={i}>{w}</span>)}</div>
         <p>Then type three of them back:</p>
         {s.ask.map((i) => <React.Fragment key={i}><label>{`Word ${i + 1}`}</label><input {...field} value={s.typed[i] || ''} onChange={(e) => this.setState({ typed: { ...s.typed, [i]: e.target.value } })} /></React.Fragment>)}
@@ -105,23 +108,26 @@ export class OwnerStart extends React.Component {
     if (s.screen === 'restore') return (
       <div className="card"><h3>Restore from your 24 words</h3><label>The 24 words, in order</label>
         <textarea {...field} value={s.phrase} onChange={(e) => this.setState({ phrase: e.target.value })} />
+        <p className="sub">{stays('They')}</p>
         {err}<button type="button" className="primary" onClick={() => this.restore()}>Restore</button>{back('welcome')}</div>);
     if (s.screen === 'nostr') return (
       <div className="card"><h3>Login with Nostr</h3>
-        <p>Your Nostr key becomes this node's owner key - no 24 words to make. Requests are signed by your extension or signer each time.</p>
+        {this.props.claimed ? <p>Sign in with the Nostr key that owns this node. A node owned by 24 words needs those words instead. Requests are signed by your extension or signer each time.</p>
+          : <p>Your Nostr key becomes this node's owner key - no 24 words to make. Requests are signed by your extension or signer each time.</p>}
         <button type="button" className="primary" onClick={() => this.extension()}>Browser extension (Alby, nos2x…)</button>
         <button type="button" onClick={() => this.scan()}>Phone signer (Amber…): show a code</button>
         <div>{s.qr ? <><div style={{ background: '#fff', padding: '8px', borderRadius: '10px', maxWidth: '240px' }} dangerouslySetInnerHTML={{ __html: s.qr }} />
           <p className="sub">Scan it with your signer{onTouch() ? <>, or <a href={s.uri}>open it on this phone</a></> : null}. Waiting for your signer…</p></> : null}</div>
         <label>Or a bunker link</label><input {...field} placeholder="bunker://… or you@your-bunker" value={s.bunker} onChange={(e) => this.setState({ bunker: e.target.value })} />
         <button type="button" onClick={() => this.bunkerLink()}>Connect the bunker</button>
-        <label>Or your nsec (only on a device you trust - it is kept in this browser)</label>
+        <label>Or your nsec</label>
         <input {...field} type="password" placeholder="nsec1…" value={s.nsec} onChange={(e) => this.setState({ nsec: e.target.value })} />
-        <button type="button" onClick={() => this.nsec()}>Log in with the nsec</button> <button type="button" onClick={() => this.newAccount()}>New to Nostr? Create an account</button>
+        <p className="sub">{stays('It')}</p>
+        <button type="button" onClick={() => this.nsec()}>Log in with the nsec</button>{this.props.claimed ? null : <> <button type="button" onClick={() => this.newAccount()}>New to Nostr? Create an account</button></>}
         {err}{back('welcome')}</div>);
     if (s.screen === 'account') return (
       <div className="card"><h3>Your new Nostr account</h3>
-        <div className="warn"><b>Save this key now</b> - in a password manager or on paper. It is your Nostr account and this node's owner key. Nobody can recover it for you.</div>
+        <div className="warn"><b>Save this key now</b> - in a password manager or on paper. It is your Nostr account and this node's owner key. Nobody can recover it for you. {stays('It')}</div>
         <div className="words" style={{ display: 'block', font: '14px ui-monospace,monospace', wordBreak: 'break-all', padding: '10px' }}>{s.account.nsec}</div>
         <button type="button" onClick={() => this.copyKey()}>{s.copied === true ? 'Copied ✓' : s.copied === false ? 'Copy refused: select the key by hand' : 'Copy the key'}</button>
         <label><input type="checkbox" style={{ width: 'auto' }} checked={s.saved} onChange={(e) => this.setState({ saved: e.target.checked })} /> I saved my key</label>
@@ -137,7 +143,8 @@ export class OwnerStart extends React.Component {
               : <p><code>{'<database>.owner-claim'}</code>, beside the node's database</p>}
             <label>Claim code</label><input autoComplete="off" autoCapitalize="characters" placeholder="XXXX-XXXX-XXXX" value={s.code} onChange={(e) => this.setState({ code: e.target.value })} />
             {err}<button type="button" className="primary" disabled={s.busy} onClick={() => this.claim()}>Become the owner</button></div>
-          <div className="card"><div className="row"><span>Your owner key</span><b>{mine}</b></div></div>
+          <div className="card"><div className="row"><span>Your owner key</span><b>{mine}</b></div>
+            <p className="sub">Nothing is kept in this browser until the claim works. If you reload this page before that, you start again.</p></div>
         </>);
     }
     return (
@@ -150,7 +157,7 @@ export class OwnerStart extends React.Component {
         <button type="button" className="primary" id="owner-words" onClick={() => this.go('restore')}>Sign in with my 24 words</button>
         <button type="button" onClick={() => this.go('nostr')}>Login with Nostr</button></div> :
       <div className="card"><h3>Your owner key</h3>
-        <p>The owner of this node is a key made from <b>24 words</b>. This browser keeps them; anyone with them is the owner.</p>
+        <p>The owner of this node is a key made from <b>24 words</b>. Once your node confirms them, this browser keeps them in its local storage, unencrypted; anyone with them is the owner.</p>
         <button type="button" className="primary" onClick={() => this.make()}>Create new 24 words</button>
         <button type="button" onClick={() => this.go('restore')}>I have my 24 words</button>
         <button type="button" onClick={() => this.go('nostr')}>Login with Nostr</button></div>);
