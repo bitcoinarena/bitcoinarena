@@ -46,7 +46,7 @@ Text stays to labels and one short hint per field. Errors appear at the field.
 | Read | JSON path, or a CSS selector, or a regular expression |
 | Rule | compare to a value, or map the value to an outcome |
 
-Known addresses are one tap: Coinbase, Binance, Kraken, Bitstamp, mempool.space, blockchain.info.
+Known addresses are one tap: Coinbase, Binance, Bitstamp, mempool.space, blockchain.info, ECB, Polymarket.
 Testing reads the address, shows the value, the fields it holds to pick from, and the outcome; every option is tried at once on that answer.
 
 ### Code
@@ -107,10 +107,10 @@ Network reads:
 
 | Rule | Value |
 |---|---|
-| Hosts | listed hosts only; public addresses, checked after DNS, never private or local ranges |
+| Hosts | listed hosts only (`MARKET_HOSTS`, from docs/MARKET-SOURCES.md); public addresses, checked after DNS, never private or local ranges |
 | Reads per market | 3 |
 | Answer | 1 MB, 10 s, no redirects, no cookies, no keys |
-| Socket | 30 s, 1,000 messages |
+| Socket | for a look in the test only: a socket cannot decide a market, two connections see different trades |
 
 ## Schedule
 

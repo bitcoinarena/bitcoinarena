@@ -63,11 +63,11 @@ test('samples and examples are real drafts: public addresses, code that passes t
 });
 
 test('code in a draft: its check holds the step back; what it returns must be an outcome', () => {
-  const d = fromTemplate('blank'); d.source = { ...d.source, kind: 'code', code: 'function decide(){ return eval("1"); }', reads: [{ id: 'a', kind: 'http', url: 'https://api.kraken.com/0/public/Time', subscribe: '' }] };
+  const d = fromTemplate('blank'); d.source = { ...d.source, kind: 'code', code: 'function decide(){ return eval("1"); }', reads: [{ id: 'a', kind: 'http', url: 'https://api.binance.com/api/v3/time', subscribe: '' }] };
   assert.ok(problemsOf(d, 'result', checkMarketCode(d.source.code, parse)).code);
   d.source.code = 'function decide(reads, market) {\n  return market.outcomes[0];\n}';
   assert.deepEqual(problemsOf(d, 'result', checkMarketCode(d.source.code, parse)), {});
-  d.source.reads = [{ id: 'a', kind: 'ws', url: 'https://api.kraken.com/', subscribe: '' }];
+  d.source.reads = [{ id: 'a', kind: 'ws', url: 'https://api.binance.com/', subscribe: '' }];
   assert.ok(problemsOf(d, 'result', null).reads);
   assert.equal(outcomeOfCode(d, 'Yes').outcome, 'Yes'); assert.equal(outcomeOfCode(d, 1).outcome, 'No'); assert.ok(outcomeOfCode(d, 'Maybe').why);
 });
