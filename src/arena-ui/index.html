@@ -7064,12 +7064,15 @@
           lines.push(Number(p.arriving).toLocaleString('en-US') + ' sat arriving: ' + (r.truth ? r.truth + ' Waiting since ' + ago(r.sinceMs) + '.' : r.why + ' · ' + when));
         }
         if (changed) arrivingPut(all);
+        if (arrivingGone) lines.push(arrivingGone);
         return lines.join('; ');
       };
       // AND WHAT IT WAITS FOR, ASKED WHEN THE WALLET OPENS (kanban #908: "Es sind immernoch 95 arriving, wenn ich draufklicke muss da stehen wann es
       // arrived oder woran es liegt"): each output still in issuance, and whether its federation has accepted the transaction behind it. A
       // transaction refused or unknown ten minutes on is said so; the machine holding it would wait for ever and show "arriving" just the same.
-      let arrivingChecking = false;
+      // AND WHAT THEY HELD COMES BACK (kanban #910, 96 sat on an iPhone behind three lost transactions): once per load and federation, the
+      // stuck machines are ended and what the federation still holds for this seed is issued again; it lands as a credit like any other
+      let arrivingChecking = false, arrivingGone = ''; const arrivingRecovered = new Set();
       window.ARENA_ARRIVING_CHECK = async () => {
         const bal = window.ARENA_WALLET_BALANCE;
         if (arrivingChecking || !bal || !(bal.arriving > 0) || !window.ARENA_WALLETS) return;
@@ -7090,6 +7093,15 @@
               ? 'the federation ' + f.slice(0, 8) + ' does not know transaction ' + unknown[0].txid.slice(0, 8) + (unknown.length > 1 ? ' and ' + (unknown.length - 1) + ' more' : '') + ', so ' + sum(unknown) + ' sat will not arrive and are not in your balance. Storage that was full when it was sent is the likely cause.'
               : rows.every((x) => x.accepted) ? 'the federation accepted the transaction, the wallet is waiting for the guardians\' signatures and keeps asking.'
               : rows.every((x) => !x.txid) ? 'a restore is fetching these notes from the guardians.' : '';
+            if (unknown.length && old && typeof c[1].recoverStuck === 'function' && !arrivingRecovered.has(f)) {
+              arrivingRecovered.add(f);
+              r.truth = 'the federation ' + f.slice(0, 8) + ' does not know ' + (unknown.length > 1 ? unknown.length + ' transactions' : 'this transaction') + '. The wallet is fetching back what the federation holds for it.';
+              arrivingPut(all); if (window.ARENA_SUM_BALANCES) await window.ARENA_SUM_BALANCES();
+              const got = JSON.parse(await c[1].recoverStuck());
+              console.log('[arena] #910 stuck outputs in ' + f.slice(0, 8) + ': ' + JSON.stringify(got));
+              if (!(Number(got.reissuingMsat) > 0)) arrivingGone = sum(unknown) + ' sat in federation ' + f.slice(0, 8) + ' were lost with those transactions: the federation holds nothing more for this wallet.';
+              changed = true; continue;
+            }
             if (truth !== (r.truth || '')) { r.truth = truth; arrivingPut(all); changed = true; }
           }
         } catch (e) { console.log('[arena] #908 the arriving check failed: ' + (e && e.message ? e.message : e)); }
