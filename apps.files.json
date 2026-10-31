@@ -2,10 +2,10 @@
   "about": "What a node downloads of each app at its pinned commit (kanban #575): every file with its SHA-256. Written by tools/pin-apps.mjs from the apps' checkouts; never by hand.",
   "apps": {
     "arena-app-next-block": {
-      "commit": "6f6a0e59de1e05913705dde7b13323aeee108d66",
+      "commit": "fa8abb2552df62046fc79a35532caf2e6dcaf962",
       "files": {
         "README.md": "7fc7113426fb4d9d22e36b8000a3693e669f40de4e020c5fb1bf89014dafc482",
-        "app.json": "85e362fde9f4177c55237f0eeabbcbc4af5b7b46391277a9556ef757242a314d",
+        "app.json": "d00b5867765dbf6d73aa5e17fd93a400d33af4847ab100b5a7bbe3886e11bbdb",
         "brand/README.md": "78902bad98a184aca191062c5476e867baa96dd735d9f6c93808ef91c4e7f293",
         "brand/apple-touch-icon.png": "7fc49db0d64f86ca70395934dc2882444792525ccd73902027cb7874604950a5",
         "brand/favicon.ico": "704eb7107d8f3150da6bb5d6a650651112223a611954e2430bfd43198b16946b",
@@ -248,6 +248,7 @@
         "plugin/info.js": "3cd9b7dc6b9819f7a1c0076d409baf3fe1b8cd818cc5d47c25a9a7ff1d467420",
         "plugin/known-v3.js": "94974ff89209755fae9aadc57df3e6e83ea9ea712752d8b8f7c8030c59beb92d",
         "plugin/known-v4.js": "6d774cbd488e72a27027cddaafc5d6ab8c06921f27f0d1e429596e995db01f7f",
+        "plugin/known-v7.js": "3467731a13689cdd0a5fa76e0a8bf888022bc19ae1ab42b825d99e500e56975b",
         "plugin/known.js": "b04bacea77a3c85d3c7d9296eca3d9f8815df64b006cf63ef9a158870216f691",
         "plugin/nextblock-manifest.js": "71244d6c0807ef9fcbcdadd6410e1f6d8a7791a90621483991289e226887fa9b",
         "plugin/nextblock-replay.html": "42bfe9b62e509638998b15a721ccd0f32473f8a46d1918c60e5e984a1796ef0c",
@@ -256,6 +257,7 @@
         "plugin/nextblock-v4.js": "469596b80f8f311d47df51bff61e92886901c4aac5d7c7a9bb159d76c4633e4b",
         "plugin/nextblock-v5.js": "d996cd3b2a77f346031433aa52b1edb09161b2da3c508f8a1d9c8d7511193ceb",
         "plugin/nextblock-v6.js": "1e80910eb5adbbe504b32a14ac9c0edce7180777cbe4df84842ed463eb1403c8",
+        "plugin/nextblock-v7.js": "4daf18b819e0f41bc453c1ceb07db4bffc7cc8666422c6ee6aac0c43acb8fe46",
         "plugin/nextblock.js": "c05e7c97510ae09e5709edd386602cf29aff5cf97f8f046204ecf66f21827c39",
         "plugin/truck-cores.js": "18abdf13035023c4520bf52365c7ef55fab2ac375c2eff0bdbc11c95de0fb454",
         "src/adapter.js": "670200f2aec9e46ec0e1fd194fb0731821b85b3d49a5b23cfe6e922b53cb4ff0",
