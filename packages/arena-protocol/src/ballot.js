@@ -30,7 +30,7 @@ export const SCHEDULES = Object.freeze({
   // TESTNET4: a day of review and a day of voting for every class (kanban #785, a tester 2026-10-28: "for Testnet you can set the
   // signal and voting periods to 1 day for all types of proposals"); the cooldowns as mainnet's
   testnet4: Object.freeze({ [CLASS.DESIGN]: { review: 144, voting: 144, cooldown: 2016 }, [CLASS.MONEY]: { review: 144, voting: 144, cooldown: 2016 },
-    [CLASS.UPGRADE]: { review: 144, voting: 144, cooldown: 4320 }, [CLASS.SOURCES]: { review: 144, voting: 144, cooldown: 144 } }),
+    [CLASS.UPGRADE]: { review: 144, voting: 144, cooldown: 4320 }, [CLASS.SOURCES]: { review: 144, voting: 144, cooldown: 36 } }),
 });
 /**
  * A REPEAL (§27A.7.6): "review 0, voting 720, cooldown 0 - but only if its config is byte-identical to an ancestor that was live
