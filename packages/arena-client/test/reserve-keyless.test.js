@@ -146,3 +146,20 @@ test('a round\'s result is read from a seat that holds its players, not the firs
   for (const j of answers) { if (!(j.players || []).length) { none = none || { entries: [] }; continue; } got = j; break; }
   assert.equal(got.players.length, 2);
 });
+
+test('a paid round whose donation set could not be read locks nothing and says so (kanban #803: "are 6000 msat, not 0")', () => {
+  const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  const read = page.indexOf("let ds = await joinStep('fetchDonationSet'");
+  const again = page.indexOf("ds = await joinStep('fetchDonationSet', askDonationSet)", read);
+  const held = page.indexOf('ARENACLIENT.roundPaysReserves(named.round)) {\n          console.error(\'[arena] no donation set', again);
+  const going = page.indexOf("console.error('[arena] no donation: ' + ds.why)", again);
+  assert.ok(read > 0 && again > read && held > again && going > held, 'read, asked again, held back before the no-donation path');
+  assert.match(page.slice(held, going), /Nothing was locked[^\n]*\n[^\n]*\n\s*return;/);
+});
+
+test('the funds note is said once per page load, whatever the amount does after (the owner 2026-10-30: "nur einmal ... nach einem Load")', () => {
+  const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  assert.match(page, /window\.ARENA_WALLET_STOPPED \? window\.ARENA_FUNDS_NOTE_CLOSED === line\.text : window\.ARENA_FUNDS_NOTE_SAID/);
+  assert.match(page, /x\.onclick = \(\) => \{ if \(window\.ARENA_WALLET_STOPPED\)[^\n]*else window\.ARENA_FUNDS_NOTE_SAID = true/);
+});
+
