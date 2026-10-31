@@ -84,3 +84,23 @@ export function checkMarketCode(code, parse) {
   if (names >= 20 && short / names > 0.6) say('minified', 1, 'Mostly one-letter names');
   return { ok: problems.length === 0, version: CHECK_VERSION, problems };
 }
+
+/** THE ADDRESS A NODE MAY READ FOR A MARKET: https (wss for a socket), a public host, no login in it. Answers why not, or null. */
+export function marketUrlProblem(text, socket = false) {
+  let u; try { u = new URL(String(text).trim()); } catch { return 'Not a full address'; }
+  if (u.protocol !== (socket ? 'wss:' : 'https:')) return socket ? 'Only wss' : 'Only https';
+  if (u.username || u.password) return 'No login in the address';
+  const h = u.hostname.toLowerCase();
+  if (h === 'localhost' || h.endsWith('.local') || h.endsWith('.internal') || h.endsWith('.ts.net') || !h.includes('.') || h.startsWith('[') || privateAddress(h)) return 'Only a public host';
+  return null;
+}
+
+/** Is this resolved address a machine of ours rather than the public internet: loopback, private, link-local, carrier-grade NAT, metadata? */
+export function privateAddress(ip) {
+  const a = String(ip).toLowerCase().replace(/^::ffff:/, '');
+  if (a === '::' || a === '::1' || /^f[cd]/.test(a) || /^fe[89ab]/.test(a)) return true;
+  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(a);
+  if (!m) return false;
+  const [x, y] = [Number(m[1]), Number(m[2])];
+  return x === 0 || x === 10 || x === 127 || x >= 224 || (x === 100 && y >= 64 && y < 128) || (x === 169 && y === 254) || (x === 172 && y >= 16 && y < 32) || (x === 192 && y === 168);
+}
