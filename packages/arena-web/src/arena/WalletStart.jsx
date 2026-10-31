@@ -94,7 +94,7 @@ export class WalletStart extends React.Component {
             {qr ? (
               <div>
                 <div className="ws-qr" dangerouslySetInnerHTML={{ __html: qr.svg }} />
-                <p className="ws-note">Scan with your signer, or <a href={qr.uri} style={{ color: '#c9a8ff' }}>open it on this phone</a>. Waiting for it to answer…</p>
+                <p className="ws-note">Scan with your signer{typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? <>, or <a href={qr.uri} style={{ color: '#c9a8ff' }}>open it on this phone</a></> : null}. Waiting for it to answer…</p>
               </div>) : null}
             <input autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="bunker://… or you@your-bunker" value={this.state.bunker} onChange={(e) => this.setState({ bunker: e.target.value })} />
             <button type="button" disabled={off} onClick={() => this.attempt('bunker', () => this.props.nostr.bunker(this.state.bunker))}>Connect a bunker<small>nsec.app, nsecBunker, Amber's bunker link</small></button>
