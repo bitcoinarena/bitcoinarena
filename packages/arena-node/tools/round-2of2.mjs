@@ -807,7 +807,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // WHERE THE SIGNER NODES POST EACH RUN'S TRANSCRIPT (v4.6.2 §13A, P2): the two
     // daemons' own relay doors. A result is final only once both have posted
     // it, and a round naming no relay could never settle a stake.
-    publicationRelays: members.map((m) => `http://${host}:${m.port}`),
+    // ARENA_PUBLICATION_RELAYS (kanban #808): the seats' public addresses when `host` is only where this tool reaches them. A contract is
+    // signed for the day, so a machine's address in it outlives that machine (10-31 07:19Z: 5e7fe7e0 VOID, its relays on the retired test host).
+    publicationRelays: process.env.ARENA_PUBLICATION_RELAYS ? process.env.ARENA_PUBLICATION_RELAYS.split(',') : members.map((m) => `http://${host}:${m.port}`),
     donationSetId: (donationSetAt && donationSetAt(censusHeight, NETWORK_ID)) || idOfDonationSet(DONATION_SET.recipients), censusHeight,
     censusRoot: new Uint8Array(32), stakeMsat, bondMinSats: 50000n, blockTicks: runTicksAt(committeeTimeMs + MIN_ENTRY_WINDOW_MS),
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
