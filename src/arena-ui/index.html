@@ -8878,6 +8878,26 @@
         for (const [k, o] of Object.entries(OVERLAYS)) if (k !== name) { try { if (o.open()) o.close(); } catch { /* not on this page */ } }
       }, true);
       window.ARENA_OVERLAYS = OVERLAYS;
+      // THE BROWSER'S BACK STAYS ON THE TESTNET PAGE (kanban #918, the owner 2026-10-31: "es soll aber zurück auf die letzte Testnet Seite gehen. Z.B. von
+      // settings zurück auf die Main Seite"): screens here are overlays and a game on the one page, so nothing was in the history and back left
+      // the site. One entry for a chosen game and one for an open overlay, in step with what is open; back closes the top one. A round
+      // being played takes no entry: leaving it is the game's own button.
+      const overlayOpen = () => Object.values(OVERLAYS).some((o) => { try { return o.open(); } catch { return false; } });
+      const gameOpen = () => document.body.classList.contains('arena-game-chosen') && !window.ARENA_ROUND;
+      let depth = 0, skip = 0;
+      const keepStep = () => {
+        const want = (gameOpen() ? 1 : 0) + (overlayOpen() ? 1 : 0);
+        if (want > depth) { for (; depth < want; depth++) history.pushState({ arena: depth + 1 }, '', location.href); } else if (want < depth) { skip++; history.go(want - depth); depth = want; }
+      };
+      // right after the press: an entry made without one is skipped by a browser's back
+      document.addEventListener('click', () => setTimeout(keepStep, 30));
+      setInterval(() => { if (!overlayOpen() || depth) keepStep(); }, 1000);
+      window.addEventListener('popstate', () => {
+        if (skip > 0) { skip--; return; }
+        depth = Math.max(0, depth - 1);
+        if (overlayOpen()) { for (const o of Object.values(OVERLAYS)) { try { if (o.open()) o.close(); } catch { /* gone already */ } } return; }
+        if (gameOpen()) { const b = document.getElementById('arena-wb-back') || document.getElementById('arena-games-back'); if (b) b.click(); }
+      });
     }
     showTheLobbyIfOneWasNamed()
       .catch((e) => { console.error('[arena] that lobby cannot be read: ' + e.message); return false; })
