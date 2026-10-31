@@ -47,6 +47,27 @@ export function keylessFederations(answers, { minAnswers = 3 } = {}) {
   return new Set([...seen].filter(([, v]) => !v.keyed && v.listed >= minAnswers).map(([f]) => f));
 }
 
+/**
+ * WHY THIS WALLET CANNOT PLAY WITH ITS BALANCE (the owner 2026-10-30: "If it's unavailable to play because the funds are locked it should say so in a
+ * message"): the part of the wallet held in federations no entry can pay into. `parts`: the wallet's [{ federation, sats }]. Null when none is.
+ */
+export function keylessFundsLine({ parts, keyless, expected = {}, tip = 0, blockMinutes = 10 } = {}) {
+  // A PART MAY NAME ITS FEDERATION BY THE FIRST 16 HEX (money of another kept phrase, not merged yet: index.html's balance read) - measured
+  // 2026-10-30: "Er sagt 5 Sats aber es sind 310", 5 under the whole id and 305 under the short one
+  const fullOf = (f) => [...(keyless || [])].find((k) => k.startsWith(String(f).toLowerCase())) || null;
+  const stuck = (parts || []).filter((p) => p && fullOf(p.federation) && Number(p.sats) > 0);
+  if (!stuck.length) return null;
+  const sats = stuck.reduce((n, p) => n + Number(p.sats), 0);
+  const where = [...new Set(stuck.map((p) => String(p.federation).slice(0, 8)))].join(', ');
+  const these = new Set(stuck.map((p) => String(p.federation).slice(0, 8))).size > 1 ? 'Those federations have' : 'That federation has';
+  // WHEN IT CAN BE PLAYED (the owner 2026-10-30: "Sage, ab wann es funktionieren wird in der Meldung"): the block the site names for the federation
+  const at = Math.max(0, ...stuck.map((p) => Number(expected[fullOf(p.federation)]) || 0));
+  const left = at && tip ? at - tip : 0;
+  const hours = left > 0 ? Math.max(1, Math.round((left * blockMinutes) / 60)) : 0;
+  const when = at ? ` Expected to work from block ${at.toLocaleString('en-US')}${hours ? `, in about ${hours} hour${hours === 1 ? '' : 's'}` : ''}.` : '';
+  return { sats, text: `${sats.toLocaleString('en-US')} sat of your balance can't be played right now. It stays in your wallet, in federation ${where}. ${these} no reserve key yet, so paid rounds there are paused.${when} To play now, deposit into another federation.` };
+}
+
 /** GET /reserves of up to `limit` nodes, read as keylessFederations reads them. Never throws. */
 export async function fetchKeylessFederations({ nodes, limit = 6, fetcher = (u, o) => fetch(u, o), timeoutMs = 5000, minAnswers = 3 } = {}) {
   const asked = [...new Set((nodes || []).map((n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')))].slice(0, limit);

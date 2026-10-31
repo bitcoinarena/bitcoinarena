@@ -2233,3 +2233,10 @@ test('the join-funding deposit asks the federation\'s seated gateways before the
     assert.equal(asked.includes('https://lobby') || asked.includes('https://fed-1'), false, 'the lobby\'s and the list are not reached while a seat answers');
   } finally { useSeatedGateways(null); }
 });
+
+test('a seat\'s gateways: seated first, then the others that stand, each once (a tunnel\'s new name comes from here, not from the site)', async () => {
+  const { gatewayUrlsOfView } = await import('../src/page-lock.js');
+  assert.deepEqual(gatewayUrlsOfView({ seated: ['b'], gateways: { a: { url: 'https://a/' }, b: { url: 'https://b/' }, c: { url: 'https://a/' }, d: {} } }), ['https://b/', 'https://a/']);
+  assert.deepEqual(gatewayUrlsOfView({}), []);
+  assert.deepEqual(gatewayUrlsOfView(null), []);
+});

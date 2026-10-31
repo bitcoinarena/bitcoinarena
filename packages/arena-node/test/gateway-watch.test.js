@@ -242,3 +242,28 @@ test('a guardian whose quick tunnel took a new name is read at its announced add
   assert.deepEqual(Object.keys(v.gateways).sort(), [keys[0].hex, keys[1].hex].sort(), 'both claims read at the announced addresses');
   assert.equal(v.seated.length, 2);
 });
+
+test('a gateway whose tunnel took a new name is said at its new address, though the ranking is still the last whole epoch\'s (the owner 2026-10-30)', async () => {
+  const urls = { 0: 'https://before-reboot.example/', 1: 'https://other.example/' };
+  let height = 144 * 10 + 5;
+  const live = new Set(['https://before-reboot.example/', 'https://other.example/']);
+  const entries = keys.map((k, i) => ({ pubkey: Uint8Array.from(Buffer.from(k.hex, 'hex')), bondSats: 50000n, advert: { endpoint: `https://seat${i}.example`, operatorId: `op${i}` } }));
+  const fetcher = async (url) => {
+    const seat = /^https:\/\/seat(\d)\.example\/gateway-claim\?federation=[0-9a-f]{64}$/.exec(url);
+    if (seat) return urls[seat[1]] ? { status: 200, json: async () => claimOf(Number(seat[1]), { gatewayUrl: urls[seat[1]] }) } : { status: 404 };
+    const base = url.replace(/routing_info$/, '');
+    if (live.has(base)) return { status: 200, text: async () => '{"lightning_public_key":"02.."}' };
+    throw new TypeError('fetch failed: the tunnel is gone');
+  };
+  const w = createGatewayWatch({ federationId: async () => fid, seated: async () => keys.slice(0, 2).map((k) => k.hex), entries: async () => entries,
+    tip: async () => height, beaconAt: async () => new Uint8Array(32).fill(7), verify, fetcher });
+  for (let i = 0; i < 3; i++) await w.probe();
+  height = 144 * 11 + 5;                                                     // the next epoch: the last whole one is ranked now
+  urls[0] = 'https://after-reboot.example/'; live.delete('https://before-reboot.example/'); live.add('https://after-reboot.example/');
+  await w.probe();
+  const v = await w.view();
+  assert.equal(v.ok, true, v.why);
+  assert.equal(v.measuredEpoch, 'whole');
+  assert.equal(v.gateways[keys[0].hex].url, 'https://after-reboot.example/');
+  assert.equal(v.gateways[keys[1].hex].url, 'https://other.example/');
+});

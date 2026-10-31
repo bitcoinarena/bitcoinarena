@@ -139,6 +139,11 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     if (!all.length) return { ok: false, federationId: fid, why: 'this seat has not read its census yet (just restarted): ask again in a few minutes' };
     const seatedNow = new Set((await seated(fid)) || []);
     let seats = GATEWAY_SEATS; try { const n = Number(await seatsFor(fid)); if (Number.isInteger(n) && n >= 1) seats = n; } catch { /* two */ }
+    // WHERE A GATEWAY ANSWERS NOW, not where it answered in the epoch being ranked (the owner 2026-10-30, after a test host reboot: "no gateway made a
+    // deposit invoice: https://viewers-propose-businesses-..." - the seats ranked the last whole epoch and said the address of its last probe, a
+    // quick tunnel gone with the reboot, while the running epoch's probes already held the gateway's signed new claim). The ranking is the
+    // measured epoch's; the address is the newest signed one
+    const newestUrlOf = (node, url) => { const r = (epochs.get(epoch) || new Map()).get(node); return (r && r.claim && r.claim.gatewayUrl) || url; };
     // ONE EPOCH RANKED: its probes' candidates, by gateway-seats.js, the epoch before's holders (`inc`) stepping back
     const rank = async (e, inc) => {
       const rows = epochs.get(e) || new Map();
@@ -167,7 +172,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
         if (p) pegInStarSats = p.targetPegInSats;
       } catch { pegInStarSats = null; }
       const s = seatGateways({ candidates, beacon, epoch: e, incumbents: inc, network, bondMinGuardian, seats, pegInStarSats });
-      return { ok: true, s: { ...s, ...(pegInStarSats !== null ? { pegInPressure: { targetPegInSats: String(pegInStarSats) } } : {}) }, gateways: Object.fromEntries(candidates.map((c) => [toHex(c.node), { url: c.gatewayUrl, availabilityPct: Math.round(c.availabilityPct), probes: rows.get(toHex(c.node)).probes, volumeSats: String(c.volumeSats),
+      return { ok: true, s: { ...s, ...(pegInStarSats !== null ? { pegInPressure: { targetPegInSats: String(pegInStarSats) } } : {}) }, gateways: Object.fromEntries(candidates.map((c) => [toHex(c.node), { url: newestUrlOf(toHex(c.node), c.gatewayUrl), availabilityPct: Math.round(c.availabilityPct), probes: rows.get(toHex(c.node)).probes, volumeSats: String(c.volumeSats),
         inboundSats: String(c.inboundSats), outboundSats: String(c.outboundSats), outsideInboundSats: String(c.outsideInboundSats), pegInSats: String(rows.get(toHex(c.node)).claim.pegInSats || 0), lightningPubkey: rows.get(toHex(c.node)).claim.lightningPubkey, lightningAddr: rows.get(toHex(c.node)).claim.lightningAddr || '',
         // what the operator states is still on its way (peg-ins confirming, kanban #552): beside the signed claim, shown as stated
         pending: rows.get(toHex(c.node)).claim.pending || null,
