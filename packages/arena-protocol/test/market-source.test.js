@@ -33,6 +33,8 @@ test('what does not fit is refused by name', () => {
     [body({ ...URL_SOURCE, reads: [{ ...read, url: 'http://a.example/' }] }), /Only https/],
     [body({ ...URL_SOURCE, reads: [{ ...read, url: 'https://127.0.0.1/' }] }), /public host/],
     [body({ ...URL_SOURCE, reads: [read, { ...read, id: 'b' }] }), /one address/],
+    [body({ ...URL_SOURCE, reads: [{ ...read, url: 'https://attacker.example/price' }] }), /not a listed source/],
+    [body({ ...CODE_SOURCE, reads: [{ ...read, id: 'btc', url: 'https://attacker.example/price' }] }), /not a listed source/],
     [body({ ...CODE_SOURCE, reads: [read, read] }), /of its own/],
     [body({ ...CODE_SOURCE, reads: [1, 2, 3, 4].map((n) => ({ ...read, id: `a${n}` })) }), /at most 3/],
     [body({ ...CODE_SOURCE, code: 'x'.repeat(40000) }), /KB/],
