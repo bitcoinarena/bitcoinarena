@@ -9,7 +9,7 @@ import { checkMarketCode } from '../../../arena-protocol/src/market-check.js';
 import { CodeEditor } from './CodeEditor.jsx';
 import { readAll, runCode } from './marketRun.js';
 import { SOURCES, SOURCE_GROUPS } from '../../../arena-protocol/src/market-sources.js';
-import { CATEGORIES, EVERY, EXAMPLES, KEPT, OUTCOMES_MAX, READS_MAX, STEPS, TEMPLATES, fieldsOf, fromTemplate, outcomeOf, outcomeOfCode, problemsOf, readAnswer, urlProblem } from './marketDraft.js';
+import { CATEGORIES, EVERY, EXAMPLES, KEPT, OUTCOMES_MAX, READS_MAX, STEPS, TEMPLATES, fieldsOf, fromTemplate, manifestOfDraft, outcomeOf, outcomeOfCode, problemsOf, readAnswer, urlProblem } from './marketDraft.js';
 
 const Err = ({ of }) => (of ? <span className="mc-err">{of}</span> : null);
 const Field = ({ label, why, children }) => <label className="mc-f"><span>{label}</span>{children}<Err of={why} /></label>;
@@ -32,6 +32,12 @@ export class MarketCreator extends React.Component {
     return got.why ? { why: got.why } : { value: got.value, ...outcomeOf(draft, got.value) };
   }
   // the check of the code, as it stands
+  componentDidMount() { if (this.props.readListed) this.props.readListed().then((r) => this.setState({ donationSetId: r.donationSetId })).catch(() => {}); }
+  /** Signed here with the owner's developer key: the key never leaves this page. */
+  sign() {
+    try { this.setState({ signed: this.props.signManifest(JSON.stringify(manifestOfDraft(this.state.draft, { donationSetId: this.state.donationSetId }))), signWhy: '' }); }
+    catch (e) { this.setState({ signed: null, signWhy: e.message }); }
+  }
   checked(d = this.state.draft) { return d.source.kind === 'code' && d.source.code.trim() ? checkMarketCode(d.source.code, parse) : null; }
   set(more, sample = this.state.sample) {
     const draft = { ...this.state.draft, ...more };
@@ -116,7 +122,7 @@ export class MarketCreator extends React.Component {
       </div>);
   }
   stepView() {
-    const { step, draft: d, shown, test, sample, reading, srcGroup } = this.state;
+    const { step, draft: d, shown, test, sample, reading, srcGroup, signed, signWhy } = this.state;
     const check = this.checked(d);
     const bad = shown ? problemsOf(d, step, check) : {};
     if (step === 'start') return (
@@ -187,8 +193,10 @@ export class MarketCreator extends React.Component {
     const rows = [['Question', d.title], ['Category', d.category], ['Source', d.source.kind === 'code' ? `Code, ${d.source.reads.length} read${d.source.reads.length === 1 ? '' : 's'}` : d.source.url], ['When', scheduleLine(d.schedule)]];
     return (<>
       <dl className="mc-sum">{rows.map(([k, v]) => <React.Fragment key={k}><dt>{k}</dt><dd>{v}</dd></React.Fragment>)}</dl>
-      <button type="button" className="primary" disabled>Sign and publish</button>
-      <p className="mc-note">Signing arrives with the next node release. Your draft stays in this browser.</p>
+      <button type="button" className="primary" disabled={!this.props.signManifest || !!signed} onClick={() => this.sign()}>Sign</button>
+      {signed ? <div className="mc-check ok">Signed. Market id <span className="mono">{signed.gameId.slice(0, 16)}</span></div> : null}
+      {signWhy ? <div className="mc-check bad">{signWhy}</div> : null}
+      <p className="mc-note">{this.props.signManifest ? 'Publishing arrives with the next node release. Your draft stays in this browser.' : 'Signing needs your 24 words or your nsec on this page.'}</p>
     </>);
   }
   render() {

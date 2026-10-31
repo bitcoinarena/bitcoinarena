@@ -9,6 +9,8 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MarketCreator } from '../dist/test/market-creator.mjs';
+import { manifestOfDraft, fromTemplate as draftOf } from '../src/owner/marketDraft.js';
+import { signManifestWithSeed, bodyFromJson, devPubkeyOf } from '../../arena-node/src/owner-dev.js';
 import { parse } from 'acorn';
 import { SOURCES } from '../dist/test/market-sources.mjs';
 import { MARKET_HOSTS } from '../../arena-protocol/src/market-check.js';
@@ -115,4 +117,15 @@ test('the default init code passes the check and sends nothing, so it runs on an
   assert.equal(checkMarketCode(INIT_DEFAULT, parse, 'init').ok, true);
   assert.equal(new Function(`${INIT_DEFAULT}; return init(null, 0);`)(), null);
   assert.equal(new Function(`${INIT_DEFAULT}; return init({}, 1);`)(), null);
+});
+
+test('a finished draft signs into a manifest a node accepts, for a URL and for code', () => {
+  const seed = new Uint8Array(32).fill(7), devPubkey = devPubkeyOf(seed);
+  const url = { ...draftOf('price'), title: 'BTC over 100k?', category: 'Crypto', source: { ...draftOf('price').source, url: 'https://api.coinbase.com/v2/prices/BTC-USD/spot', read: 'json', path: 'data.amount', rule: 'above', value: '100000' }, schedule: { mode: 'repeat', every: '1h', rounds: 7, minStakeSat: 100 } };
+  const a = signManifestWithSeed(bodyFromJson(JSON.stringify(manifestOfDraft(url, { donationSetId: 'd0'.repeat(32) })), { devPubkey }), seed);
+  assert.equal(a.manifest.source.path, 'data.amount');
+  assert.equal(a.manifest.roundPeriodMs, 3600000n);
+  const code = { ...url, source: { kind: 'code', reads: [{ id: 'feed', kind: 'ws', url: 'wss://ws-feed.exchange.coinbase.com', subscribe: '' }], code: 'function decide() {\n  return 0;\n}\n' } };
+  assert.equal(signManifestWithSeed(bodyFromJson(JSON.stringify(manifestOfDraft(code, { donationSetId: 'd0'.repeat(32) })), { devPubkey }), seed).manifest.source.reads[0].socket, true);
+  assert.throws(() => manifestOfDraft({ ...url, kind: 'number' }, { donationSetId: 'd0'.repeat(32) }), /cannot be published/);
 });
