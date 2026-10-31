@@ -198,3 +198,8 @@ test('the merge runs four wallets at a time with short waits, and an order waits
   assert.doesNotMatch(page, /did not open in 30 s/);
 });
 
+test('the securing line stays clear of the next round box (the owner 2026-10-30: it lay on "exit game")', () => {
+  const css = readFileSync(new URL('../../nextblock/page/unity-page.css', import.meta.url), 'utf8');
+  assert.match(css, /#arena-securing \{ top: calc\(49px[^}]*bottom: auto !important; \}/);
+});
+
