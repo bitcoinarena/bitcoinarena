@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE FEDERATION PORT A SIGNER NODE ASKS (23.1 step 5): the arguments it hands
-// blwp-stake-lock and how it reads the answers. A stand-in tool records its
+// arena-stake-lock and how it reads the answers. A stand-in tool records its
 // argv and prints what the real one prints; the real tool is measured against
 // a real federation by tools/signer-node-lock-regtest.
 import { test } from 'node:test';
@@ -55,7 +55,7 @@ test('no lock at the outpoint reads as none, and a tool that fails is an error, 
     const port = stakeLockPort({ serve: false, bin: t.bin, dataDir: '/d' });
     assert.deepEqual(await port.status({ txid: b(1), outIdx: 0n }), { blockCount: 5, stored: null });
     await assert.rejects(port.contractId({ paymentImage: { kind: 'point', bytes: b(2, 33) }, amountMsat: 1n, claimPk: b(3, 33), refundPk: b(2, 33), expiration: 1 }),
-      /blwp-stake-lock: Error: no mode id/);
+      /arena-stake-lock: Error: no mode id/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

@@ -74,7 +74,7 @@ test('a tool killed at its timeout says so, by mode and time ("Command failed: <
   chmodSync(bin, 0o755);
   const port = stakeLockPort({ bin, dataDir: '/shared', timeoutMs: 300, settleTimeoutMs: 300, serve: false });
   try {
-    await assert.rejects(port.settle({ claimPk: b(2, 33), claims: [], payouts: [], nonce: b(3) }), /blwp-stake-lock settle timed out after 300 ms/);
+    await assert.rejects(port.settle({ claimPk: b(2, 33), claims: [], payouts: [], nonce: b(3) }), /arena-stake-lock settle timed out after 300 ms/);
   } finally { port.close(); }
 });
 

@@ -8,7 +8,7 @@
 # own claim key (nothing injected). Rehearsal step 1's setup: stock fedimintd
 # 0.12.0, 4 guardians, 3 of 4, one gateway, regtest; then w5b.mjs.
 #
-#   FEDIMINT_BIN=<released v0.12.0> LOCK_BIN=<blwp-stake-lock, the signer nodes' port>
+#   FEDIMINT_BIN=<released v0.12.0> LOCK_BIN=<arena-stake-lock, the signer nodes' port>
 #     bash tools/w5b-regtest.sh
 set -uo pipefail
 : "${FEDIMINT_BIN:?}" ; : "${LOCK_BIN:?}"

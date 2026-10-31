@@ -7,7 +7,7 @@
 // The signer node door assigns a round from the chain's census (assignSignerNodes). Before this it assigned a
 // paying FEDERATION round on any federation: federationIsBonded had no caller. Now, where the signer node
 // has a chain view, the round's federation is asked for its guardians (the signer node's stake-lock port:
-// blwp-stake-lock --mode guardians, the stock client's config) and counted against the census the
+// arena-stake-lock --mode guardians, the stock client's config) and counted against the census the
 // signer node derived: at least the federation's own threshold of its guardian keys advertised under
 // guardian_of[] by distinct census nodes bonded at or above the round's bond_min. Otherwise 409,
 // and the round is stored with no signer nodes - no receipts, no claim key, so no lock can name it.

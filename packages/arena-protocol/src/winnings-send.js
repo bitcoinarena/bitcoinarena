@@ -41,7 +41,7 @@ export function sendableInvoiceMsat(payoutMsat, fee) {
 
 /**
  * THE GATEWAY A WINNINGS CONTRACT NAMES: the lowest Lightning node key among the federation's distinct live
- * gateways (RULED 2026-09-23), as `blwp-stake-lock --mode gateways` reports them. Two names on one key are one
+ * gateways (RULED 2026-09-23), as `arena-stake-lock --mode gateways` reports them. Two names on one key are one
  * gateway, a name that does not answer is none - the door's own count. Null when there is none.
  */
 export function lowestLiveGateway(listed) {

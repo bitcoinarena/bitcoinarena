@@ -18,7 +18,7 @@
 //
 // THE GUARDIANS' FEES, AND WHO BEARS THEM. Every input and every output pays
 // `base + amount * ppm / 1e6` (lnv2-common config.rs), read from the federation
-// (`blwp-stake-lock --mode fees`). They come out of the pool pro rata to what
+// (`arena-stake-lock --mode fees`). They come out of the pool pro rata to what
 // each qualifier is owed: target = floor(owed * spendable / pool), then the
 // largest payout with payout + fee(payout) <= target. What the floors leave is no
 // output and stays with the guardians as fee; a share too small to pay its own

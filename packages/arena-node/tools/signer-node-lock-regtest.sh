@@ -5,12 +5,12 @@
 # 0.12.0: 4 guardians, 3 of 4, one gateway, regtest - rehearsal step 1's setup.
 #   deposit 3000000 msat; lock A at +144 and B at +150 blocks, each a POINT
 #   image (the stake point) under the committee's DKG claim key; then one signer node,
-#   its federation port the real blwp-stake-lock, is handed the locks.
+#   its federation port the real arena-stake-lock, is handed the locks.
 #
-#   FEDIMINT_BIN=<released v0.12.0 builds> LOCK_BIN=<blwp-stake-lock> bash tools/signer-node-lock-regtest.sh
+#   FEDIMINT_BIN=<released v0.12.0 builds> LOCK_BIN=<arena-stake-lock> bash tools/signer-node-lock-regtest.sh
 set -uo pipefail
 : "${FEDIMINT_BIN:?FEDIMINT_BIN must name the directory holding the released Fedimint v0.12.0 builds}"
-: "${LOCK_BIN:?LOCK_BIN must name the built blwp-stake-lock}"
+: "${LOCK_BIN:?LOCK_BIN must name the built arena-stake-lock}"
 # (no quote marks inside ${...:?} - one there opened a quote and bash read on to line 38, "INVOICE: unbound variable")
 : "${WASM_PKG:?WASM_PKG must name the nodejs build of blwp-lock-client - the round names its federation by the invite of this setup}"
 F=$FEDIMINT_BIN

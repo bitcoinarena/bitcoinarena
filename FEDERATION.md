@@ -350,7 +350,7 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
     2026-10-14 01:44-01:50Z (`tools/rehearsal-13-regtest.sh`
     + `tools/rehearsal-13.mjs`, private regtest on the test host, EXIT 0 in
     319 s):** p1-p3 paid in 249,999,872 msat each; p3 locks 100,000,000
-    under the committee's claim key (blwp-stake-lock, ids match, expiry
+    under the committee's claim key (arena-stake-lock, ids match, expiry
     472). Guardian 3 stops; on 3 of 4 the committee settles the lock to p1
     with one signature (accepted, payout 100,000,000, fees 0) and p1
     collects it by Refund (accepted). Successor fb7acaf4 (3 seated first +

@@ -107,7 +107,7 @@ function newestAncestorUpdateOf(bond, nodePubkey) {
 // THE FEDERATION'S GUARDIANS, when its client directory is named: what every update's guardian_of[] is checked against
 let federation = null;
 if (env.ARENA_FEDERATION_READ_DIR) {
-  const j = JSON.parse(execFileSync(env.ARENA_STAKE_LOCK_BIN || `${home}/patched/bin/blwp-stake-lock`,
+  const j = JSON.parse(execFileSync(env.ARENA_STAKE_LOCK_BIN || `${home}/patched/bin/arena-stake-lock`,
     ['--mode', 'guardians', '--data-dir', env.ARENA_FEDERATION_READ_DIR], { encoding: 'utf8', timeout: 120000 }).trim().split('\n').pop());
   federation = { id: String(j.federation_id), threshold: Number(j.threshold), keys: new Set((j.keys || []).map((k) => String(k.key))) };
   say({ federation: federation.id.slice(0, 16), guardians: federation.keys.size, threshold: federation.threshold });

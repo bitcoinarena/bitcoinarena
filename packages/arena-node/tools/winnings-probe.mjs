@@ -4,7 +4,7 @@
 /**
  * WINNINGS ALWAYS SENT, ON A REAL FEDERATION (2026-09-21; ruled for FEDERATION 2026-09-23).
  *
- *   PROBE=<federation-hold-probe dir, SECOND_GATEWAY=1> LOCK_BIN=<blwp-stake-lock with gateways/send> WASM_PKG=<dir>
+ *   PROBE=<federation-hold-probe dir, SECOND_GATEWAY=1> LOCK_BIN=<arena-stake-lock with gateways/send> WASM_PKG=<dir>
  *   INVITE=<invite> ALICE_RPC=<host:port> BOB_RPC=<host:port> CAROL_RPC=<host:port> LND_BIN=<dir> [PHASE=pass|fail|expiry|poolA|poolB|poolC]
  *   [PLAYERS_FILE=<find-players.mjs lines: 5 delivered, distinct scores, then 1 wrecked>]   (poolA/poolC; else searched here)
  *   [BTC_RPCPORT=<the probe chain's rpc port> BTC_WALLET=<its wallet>]   (expiry only: blocks are mined past the contract)

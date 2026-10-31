@@ -32,7 +32,7 @@ echo "$UP" | grep -q FEDERATION_READY || { echo "$UP" | tail -25; echo "THE FEDE
 INVITE=$(echo "$UP" | grep -oE 'invite=[^ ]+' | tail -1 | cut -d= -f2-)
 echo "$UP" | grep -iE "gateway|guardian" | tail -4
 echo "federation up in $(( $(date +%s) - t )) s, invite ${INVITE:0:24}..."
-PROBE=$P INVITE=$INVITE GATEWAY=http://127.0.0.1:30170 LND_BIN=$L LOCK_BIN=$F/blwp-stake-lock WASM_WEB=$WASM_WEB BITCOIN_BIN=$B \
+PROBE=$P INVITE=$INVITE GATEWAY=http://127.0.0.1:30170 LND_BIN=$L LOCK_BIN=$F/arena-stake-lock WASM_WEB=$WASM_WEB BITCOIN_BIN=$B \
   FEDIMINT_BIN=$F FEDIMINT_HOME=$FH \
   node $HERE/fee-split-regtest.mjs 2>&1 | grep --line-buffered -vE '^\s*$' | sed -u 's/^/LIVE /'
 RC=${PIPESTATUS[0]}
