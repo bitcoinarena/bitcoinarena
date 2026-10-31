@@ -88,7 +88,12 @@ export function checkMarketCode(code, parse) {
 // ONLY LISTED SOURCES (the owner 2026-10-31: "Ein attacker kann eine beliebige Seite angeben die ein manipuliertes Ergebnis bereitstellt"): 5 of 7 is no defence when all seven read
 // one page its author controls, so a market may read only hosts that no market creator runs. This is the list's start; the bonded nodes change it by ballot
 // (class SOURCES, ballot.js), each change a full new list, and a round is judged by the list live at its census height, so every seat judges it alike.
-export const MARKET_HOSTS = Object.freeze(['api.coinbase.com', 'ws-feed.exchange.coinbase.com', 'api.binance.com', 'api.kraken.com', 'www.bitstamp.net', 'mempool.space', 'api.blockchain.info']);
+// From docs/MARKET-SOURCES.md, with the owner's ruling of 2026-10-31: "Tu Coinbase und und bit stamp ein. Das Projekt ist nicht kommerziell also Binance rein. Polymarket auch rein"
+export const MARKET_HOSTS = Object.freeze([
+  'api.coinbase.com', 'api.exchange.coinbase.com', 'ws-feed.exchange.coinbase.com', 'www.bitstamp.net', 'api.binance.com', 'data-api.binance.vision', 'gamma-api.polymarket.com',
+  'mempool.space', 'blockstream.info', 'api.blockchain.info',
+  'data-api.ecb.europa.eu', 'markets.newyorkfed.org', 'api.fiscaldata.treasury.gov', 'ec.europa.eu', 'api.beta.ons.gov.uk', 'www.ons.gov.uk', 'api.bls.gov',
+  'api.weather.gov', 'aviationweather.gov', 'data.geo.admin.ch', 'www.bundeswahlleiterin.de']);
 export function marketHostProblem(text, hosts = MARKET_HOSTS) {
   let h; try { h = new URL(String(text).trim()).hostname.toLowerCase(); } catch { return 'Not a full address'; }
   return hosts.includes(h) ? null : `${h} is not a listed source`;

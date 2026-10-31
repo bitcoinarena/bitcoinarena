@@ -36,7 +36,7 @@ test('private and local addresses are refused, before and after DNS', () => {
   for (const ip of ['127.0.0.1', '10.0.0.8', '192.0.2.18', '172.20.1.1', '100.64.1.1', '169.254.169.254', '::1', 'fd00::1', 'fe80::1', '::ffff:127.0.0.1', '0.0.0.0', '224.0.0.1']) assert.equal(privateAddress(ip), true, ip);
   for (const ip of ['1.1.1.1', '104.21.53.120', '2606:4700::1111', '172.32.0.1', '100.63.0.1']) assert.equal(privateAddress(ip), false, ip);
   for (const u of ['http://a.example/', 'https://localhost/', 'https://127.0.0.1/', 'https://seat.example.com/', 'https://a:b@c.example/', 'https://[::1]/']) assert.ok(marketUrlProblem(u), u);
-  assert.equal(marketUrlProblem('https://api.kraken.com/0/public/Ticker?pair=XBTUSD'), null);
+  assert.equal(marketUrlProblem('https://api.binance.com/api/v3/time'), null);
   assert.equal(marketUrlProblem('wss://ws-feed.exchange.coinbase.com', true), null);
 });
 
