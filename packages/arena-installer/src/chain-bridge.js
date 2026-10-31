@@ -189,6 +189,8 @@ export function createBridge({ electrum, fallbacks = [], home, esplora = ESPLORA
   const METHODS = {
     getblockchaininfo: async () => { const h = await tipNow(); return { chain: 'testnet4', blocks: h, headers: h, bestblockhash: headers.get(h).hash, initialblockdownload: false, pruned: false, bridge: `electrum ${electrum.host}:${electrum.port}` }; },
     getblockcount: async () => tipNow(),
+    // what every chain view asks first (arena-node chain-rpc.js bestOf): without it a node in Electrum mode read no view and listed no round (kanban #808)
+    getbestblockhash: async () => { const h = await tipNow(); return headers.get(h).hash; },
     getblockhash: async ([height]) => {
       if (tip === null) await tipNow();
       if (!Number.isInteger(height) || height < 0 || height > tip) throw Object.assign(new Error('Block height out of range'), { code: -8 });
