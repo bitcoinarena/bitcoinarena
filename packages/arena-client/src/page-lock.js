@@ -121,11 +121,15 @@ export function packWallets(storage) {
 }
 let storageFull = null;
 export function onStorageFull(fn) { storageFull = typeof fn === 'function' ? fn : null; }
+// A WRITE STILL REFUSED IS SAID (kanban #883, the owner 2026-10-31: "Du musst den Fehler abfangen damit es nicht silent failed"): the client panics in its own task and nothing reached the player
+let storageRefused = null;
+export function onStorageRefused(fn) { storageRefused = typeof fn === 'function' ? fn : null; }
 export function putRoomy(storage, key, value) {
   try { storage.setItem(key, value); } catch (e) {
-    if (!storageFull || !/quota/i.test(`${e && e.name} ${e && e.message}`)) throw e;
+    const quota = /quota/i.test(`${e && e.name} ${e && e.message}`);
+    if (!storageFull || !quota) { if (quota && storageRefused) storageRefused(e); throw e; }
     storageFull();
-    storage.setItem(key, value);
+    try { storage.setItem(key, value); } catch (e2) { if (storageRefused) storageRefused(e2); throw e2; }
   }
 }
 
@@ -1019,7 +1023,7 @@ function depositRowOnce(storage, federationId, d) {
  * made just before it must still be in the history): the reopened wallet waits on each kept operation; a claimed one
  * gets its row, and every ended one leaves the list. `onClaimed(d)` for each new row. Spends nothing.
  */
-export function resumeDeposits({ client, storage, federationId, onClaimed = () => {}, others = async () => [] } = {}) {
+export function resumeDeposits({ client, storage, federationId, onClaimed = () => {}, others = async () => [], onLost = () => {} } = {}) {
   const d0 = (p) => ({ invoice: p.invoice, amountMsat: BigInt(p.msat) });
   const ended = (p, final, from = null) => {
     if (final === 'Claimed' && depositRowOnce(storage, federationId, d0(p))) onClaimed({ ...d0(p), ...(from ? { from } : {}) });
@@ -1039,6 +1043,7 @@ export function resumeDeposits({ client, storage, federationId, onClaimed = () =
         }
       }
       // THE REASON A RESUME COULD NOT BE READ, said (17:4xZ: it printed only "unknown"); the entry stays, so the next page tries again
+      onLost(p, why);
       return `unknown (operation ${String(p.operation).slice(0, 12)}: ${why.slice(0, 160)})`;
     })));
 }
