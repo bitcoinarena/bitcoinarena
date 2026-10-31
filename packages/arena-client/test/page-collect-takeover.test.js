@@ -19,9 +19,9 @@ function page(records, lookRound) {
   const ARENACLIENT = { savedCollects: () => records, roundLocks: () => true, owedToLine: () => 'line', toHex: () => 'ab'.repeat(32), markCollectDone: () => {}, collectIntoPlayerWallet: async () => ({ collected: false }) };
   const vault = () => ({ length: 0, key: () => null, getItem: () => null, setItem: () => {}, removeItem: () => {} });
   const fns = pageFunction(PAGE, ['window', 'document', 'vault', 'ARENACLIENT', 'lookRound', 'roundAsk', 'newestKept', 'collectSeed', 'collectNote', 'lookSaid',
-    'paintWallet', 'paintHistory', 'paintMoney', 'payoutAsking', 'fetch', 'keptRecords', 'withRecordPhrase', 'collectFailed', 'collectHeld'], [PAYOUT], 'return { lookThePayout };')(
+    'paintWallet', 'paintHistory', 'paintMoney', 'payoutAsking', 'fetch', 'keptRecords', 'withRecordPhrase', 'collectFailed', 'collectHeld', 'performance'], [PAYOUT], 'return { lookThePayout };')(
     window, { getElementById: () => null }, vault, ARENACLIENT, lookRound, () => ({}), () => records[records.length - 1], () => 'seed', () => {}, () => '', () => {}, () => {}, () => {}, false,
-    async () => { throw new Error('no fetch'); }, () => ({ collectable: records, uncollectable: [] }), (r, fn) => fn(), collectFailed, collectHeld);
+    async () => { throw new Error('no fetch'); }, () => ({ collectable: records, uncollectable: [] }), (r, fn) => fn(), collectFailed, collectHeld, { now: () => 60000 });   // past the 30 s the looks leave an order after a load (kanban #803)
   return { ...fns, collectFailed, collectHeld };
 }
 
