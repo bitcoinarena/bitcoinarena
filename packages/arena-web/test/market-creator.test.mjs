@@ -6,10 +6,12 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MarketCreator } from '../dist/test/market-creator.mjs';
-import { TEMPLATES, fieldsOf, fromTemplate, problemsOf, urlProblem, readAnswer, outcomeOf } from '../dist/test/market-draft.mjs';
+import { parse } from 'acorn';
+import { CATEGORIES, EXAMPLES, SAMPLES, TEMPLATES, fieldsOf, fromTemplate, problemsOf, urlProblem, readAnswer, outcomeOf, outcomeOfCode } from '../dist/test/market-draft.mjs';
+import { checkMarketCode } from '../../arena-protocol/src/market-check.js';
 
 test('every template starts a draft of its own, and they share no list', () => {
-  for (const t of TEMPLATES) assert.equal(fromTemplate(t.id).template, t.id);
+  for (const t of TEMPLATES) { const d = fromTemplate(t.id); assert.equal(d.template, t.id); assert.ok(t.id === 'blank' || CATEGORIES.includes(d.category), t.id); }
   const a = fromTemplate('blank'), b = fromTemplate('blank');
   a.outcomes.push('x'); a.source.url = 'y';
   assert.deepEqual(b.outcomes, ['Yes', 'No']); assert.equal(b.source.url, '');
@@ -50,6 +52,24 @@ test('an answer read and turned into an outcome', () => {
 test('the answer names its fields to pick from', () => {
   assert.deepEqual(fieldsOf('{"data":{"amount":"120.5","base":"BTC"},"n":[1]}'), [['data.amount', '120.5'], ['data.base', 'BTC'], ['n.0', '1']]);
   assert.deepEqual(fieldsOf('<html>'), []);
+});
+
+test('samples and examples are real drafts: public addresses, code that passes the check', () => {
+  for (const s of SAMPLES) assert.equal(urlProblem(s.url), null, s.name);
+  for (const e of EXAMPLES) {
+    assert.ok(checkMarketCode(e.code, parse).ok, JSON.stringify(checkMarketCode(e.code, parse).problems));
+    for (const r of e.reads) assert.equal(urlProblem(r.url, r.kind === 'ws'), null, r.url);
+  }
+});
+
+test('code in a draft: its check holds the step back; what it returns must be an outcome', () => {
+  const d = fromTemplate('blank'); d.source = { ...d.source, kind: 'code', code: 'function decide(){ return eval("1"); }', reads: [{ id: 'a', kind: 'http', url: 'https://example.com/', subscribe: '' }] };
+  assert.ok(problemsOf(d, 'result', checkMarketCode(d.source.code, parse)).code);
+  d.source.code = 'function decide(reads, market) {\n  return market.outcomes[0];\n}';
+  assert.deepEqual(problemsOf(d, 'result', checkMarketCode(d.source.code, parse)), {});
+  d.source.reads = [{ id: 'a', kind: 'ws', url: 'https://example.com/', subscribe: '' }];
+  assert.ok(problemsOf(d, 'result', null).reads);
+  assert.equal(outcomeOfCode(d, 'Yes').outcome, 'Yes'); assert.equal(outcomeOfCode(d, 1).outcome, 'No'); assert.ok(outcomeOfCode(d, 'Maybe').why);
 });
 
 test('the form opens on the templates', () => {
