@@ -61,3 +61,15 @@ test('the whole try: read, check, run; each stage names its failure', async () =
   assert.equal((await testMarket({ code: 'function decide() {\n  throw new Error("x");\n}' }, { read, parse })).stage, 'run');
   assert.equal((await testMarket({}, { read: async () => ({ why: 'no' }) })).stage, 'read');
 });
+
+test('a URL rule runs in the sandbox as code does, and a hanging pattern is stopped', async () => {
+  const { codeOfSource } = await import('../../arena-protocol/src/market-rule.js');
+  const { MARKET_SOURCE_KIND, MARKET_READ, MARKET_RULE } = await import('../../arena-protocol/src/manifest.js');
+  const source = { kind: MARKET_SOURCE_KIND.URL, reads: [{ id: 'page' }], read: MARKET_READ.JSON, path: 'data.amount', rule: MARKET_RULE.ABOVE, level: '100' };
+  const run = (s, reads) => runMarketCode({ code: codeOfSource(s), reads, market: { outcomes: ['Yes', 'No'] } }, { limitMs: 500 });
+  assert.equal((await run(source, { page: { data: { amount: '120.5' } } })).out, 'Yes');
+  assert.equal((await run({ ...source, level: '200' }, { page: { data: { amount: '120.5' } } })).out, 'No');
+  assert.match((await run({ ...source, path: 'data.none.x' }, { page: { data: {} } })).why, /no field/);
+  const hang = await run({ ...source, read: MARKET_READ.PATTERN, path: '(a+)+$', rule: MARKET_RULE.FOUND }, { page: `${'a'.repeat(40)}!` });
+  assert.equal(hang.ok, false); assert.match(hang.why, /Stopped/);
+});
