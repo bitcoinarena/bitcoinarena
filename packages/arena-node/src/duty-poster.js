@@ -110,16 +110,18 @@ const RPS_TICKS = { blockTicks: 600, startDeadlineTicks: 300 };
  * THE DAY'S TEMPLATE FOR AN APP: the newest grid template this node holds whose game is a version of it (`family`, a Set of game ids hex),
  * its network's - else DUTY_TEMPLATE on `networkId`, its relays this node's own address. -> { contract, from: 'held' | 'built-in' }
  */
-export function dayTemplate({ held, family, networkId, game, ownRelay = null }) {
+export function dayTemplate({ held, family, networkId, game, ownRelay = null, relays = String(process.env.ARENA_PUBLICATION_RELAYS || '').split(',').filter(Boolean) }) {
   const nid = toHex(networkId);
   const mine = (held || []).filter((t) => t && isGridSeries(t) && t.networkId && toHex(t.networkId) === nid && t.gameId && family.has(toHex(t.gameId)))
     .sort((a, b) => Number(BigInt(b.startTimeMs) - BigInt(a.startTimeMs)));
   if (mine.length) {
     const c = {};
     for (const k of CARRIED) if (mine[0][k] !== undefined) c[k] = mine[0][k];
+    // ARENA_PUBLICATION_RELAYS (kanban #808): a held template carries the relays of the day it was posted for, and a machine's address outlives the machine
+    if (relays.length) c.publicationRelays = relays;
     return { contract: c, from: 'held' };
   }
-  return { contract: { ...DUTY_TEMPLATE, ...(game === 'rps' ? RPS_TICKS : {}), networkId, publicationRelays: ownRelay ? [ownRelay] : [] }, from: 'built-in' };
+  return { contract: { ...DUTY_TEMPLATE, ...(game === 'rps' ? RPS_TICKS : {}), networkId, publicationRelays: relays.length ? relays : ownRelay ? [ownRelay] : [] }, from: 'built-in' };
 }
 
 /**
