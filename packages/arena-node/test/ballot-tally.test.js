@@ -271,7 +271,7 @@ test('on a seat: a proposal passes and activates, rounds are served under the co
   } finally { await d.close(); }
 });
 
-// THE LIST OF MARKET SOURCES, BY VOTE OF THE BONDED NODES (kanban #921): a list passes on a chain of its own at 30 % turnout and 66 % approval, a round is judged by the list at its census height, and a game's config never moves
+// THE LIST OF MARKET SOURCES, BY VOTE OF THE BONDED NODES (kanban #921): a list passes on a chain of its own at 20 % turnout and over 50 % approval, a round is judged by the list at its census height, and a game's config never moves
 test('the bonded nodes change the source list: it goes live at its height, and only for rounds from there on', async () => {
   const hosts = [...MARKET_HOSTS, 'api.ecb.example.org'];
   const config = encodeHostList(hosts);
@@ -291,7 +291,7 @@ test('the bonded nodes change the source list: it goes live at its height, and o
   assert.equal(toHex(t.spans(net)[t.spans(net).length - 1].configHash), toHex(BALLOT_GENESIS.configHash));
 });
 
-test('without 66 % of the voting bonds a list does not pass', async () => {
+test('a list needs over half of the voting bonds, and 20 % of all bonds voting', async () => {
   const hosts = [...MARKET_HOSTS, 'attacker.example.org'];
   const config = encodeHostList(hosts);
   const { idBytes, record } = kept({ parent: SOURCES_GENESIS.configHash, configHash: configHashOf(config), config, cls: CLASS.SOURCES });
@@ -301,4 +301,9 @@ test('without 66 % of the voting bonds a list does not pass', async () => {
   ch.tip = 112; await t.pass(); await t.pass();
   assert.equal(t.list()[0].phase, 'failed');
   assert.ok(!t.sources(toHex(H(0x4e))).hosts.includes('attacker.example.org'));
+  const few = kept({ parent: SOURCES_GENESIS.configHash, configHash: configHashOf(config), config, cls: CLASS.SOURCES, publishedAt: 200 });
+  const c2 = chain(new Map([[201, [vote(C, few.idBytes, CHOICE.YES, 201, 'c1')]]]));
+  const t2 = createBallotTally({ proposals: store([few.record]), tipHeight: c2.tipHeight, votesAt: c2.votesAt, censusAt: c2.censusAt, verify, decideDepthFor: () => 1 });
+  c2.tip = 212; await t2.pass(); await t2.pass();
+  assert.equal(t2.list()[0].phase, 'activated');   // 20 M of 100 M voted: exactly the quorum
 });
