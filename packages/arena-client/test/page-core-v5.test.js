@@ -58,3 +58,16 @@ test('the page loads each only by name, checked and kept apart; 0847c99f plays t
   assert.equal(no.ok, false);
   assert.match(no.why, /hashes to .*, not the pinned 85a94c656db4bdb7/);
 });
+
+// VERSION 7'S CORE (kanban #828): as version 5's, loaded only when a round names it. It reaches a round once version 7 is signed.
+test('core-8cbc74b2.js is the bundle pinned for version 7, the app\'s own bytes, and the page loads it by its hash', async () => {
+  const name = 'core-8cbc74b2.js', file = fileOf(name), hex = '8cbc74b27bee78727fa395fcc5e5181beb4072f837adbee0e9ea278ff427d387';
+  assert.deepEqual(LIST.games.nextblock.pinnedV7[name], [sha(file)]);
+  assert.equal(sha(file), sha(readFileSync(new URL(`../../nextblock/dist/${name}`, import.meta.url))), 'the app\'s dist bundle');
+  assert.doesNotMatch(file.toString('utf8'), /blwp|kanban|owner/i);
+  const window = loader((f) => fileOf(f));
+  const loaded = await window.ARENA_LOAD_CORE(hex);
+  assert.equal(loaded.ok, true, loaded.why);
+  const at = (slot) => window.ARENA_CORES[hex].hash(window.ARENA_CORES[hex].init(0x4242, { slot }));
+  assert.notEqual(at(5), at(6), 'the slot reaches the loaded core');
+});

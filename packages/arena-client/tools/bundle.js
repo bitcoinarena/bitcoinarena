@@ -198,6 +198,7 @@ out += '         fetchRound: fetchRound, bondProvider: bondProvider,\n';
 // exactly what it could not do before letter 36.
 out += '         fetchRandomness: fetchRandomness, worldSeedFor: worldSeedFor,\n';
 out += '         seedWordForEntry: seedWordForEntry, worldSeedWord: worldSeedWord, worldIsShared: worldIsShared, sharedWorldOf: sharedWorldOf,\n';
+out += '         worldSlot: worldSlot, keyOnFreeSlot: keyOnFreeSlot,\n';
 out += '         tabSeed: tabSeed, importSeed: importSeed, restoreSeed: restoreSeed, seedOrigin: seedOrigin,\n'; out += '         playerFor: playerFor, entryFor: entryFor,\n';
 out += '         chooseDonation: chooseDonation, donationChoice: donationChoice, DONATION_CONFIRM_BPS: DONATION_CONFIRM_BPS,\n';
 out += '         DONATION_DEFAULT_BPS: DONATION_DEFAULT_BPS, DONATION_CHOICES_BPS: DONATION_CHOICES_BPS,\n';

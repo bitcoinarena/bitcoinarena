@@ -7,6 +7,7 @@ import { taggedHash } from './hash.js';
 import { TAG } from './constants.js';
 import { toHex } from './hash.js';
 import { committeeSeedFrom } from './committee-seed.js';
+import { entryId } from './contracts.js';
 
 export function playerSubSeed({ roundRandomness, playerPubkey, worldSecret, joinTick }) {
   if (!(roundRandomness instanceof Uint8Array) || roundRandomness.length !== 32)
@@ -83,6 +84,24 @@ export function worldSeedWord({ entry, roundRandomness, contract, roundId, share
   if (!(id instanceof Uint8Array) || id.length !== 32) throw new Error('a shared world needs the round id');
   if (!(roundRandomness instanceof Uint8Array) || roundRandomness.length !== 32) throw new Error('round_randomness is 32 bytes');
   return seedWordFromSubSeed(roundWorldSeed({ contract, roundId: id, roundRandomness }));
+}
+
+/**
+ * HOW MANY PLACES A SHARED WORLD STARTS ITS PLAYERS AT (kanban #828, the owner 2026-10-31: "Die müssen an unterschiedlichen Slots
+ * starten, nah beinander dass man sich sieht"). One seed word means one of everything that word decides, the starting door too.
+ */
+export const WORLD_SLOTS = 12;
+
+/** The place an entry id starts at, 0 to WORLD_SLOTS - 1: its first four bytes, big-endian, as a seed word is read. */
+export const slotOfEntryId = (id) => seedWordFromSubSeed(id) % WORLD_SLOTS;
+
+/**
+ * THE PLAYER'S PLACE IN A SHARED WORLD, BESIDE THE ONE FUNCTION ABOVE: the page's join, the signer nodes' replay, the ghosts and
+ * the replay page all take it from here, once per entry, off the entry's own id. Undefined under a per-player config, whose
+ * world already differs. The world itself does not move: only where this run starts in it, and a core older than the slot ignores it.
+ */
+export function worldSlot({ entry, contract, sharedWorld }) {
+  return worldIsShared(contract, sharedWorld) ? slotOfEntryId(entryId(entry)) : undefined;
 }
 
 /** On a shared-world round the entry's secret field must be zeros (it is kept so stored entry ids hold). */

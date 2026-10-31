@@ -7,7 +7,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { worldSeedWord, worldIsShared, worldSecretFits, seedWordForEntry, roundWorldSeed } from '../src/seed.js';
+import { worldSeedWord, worldIsShared, worldSecretFits, seedWordForEntry, roundWorldSeed, worldSlot, slotOfEntryId, WORLD_SLOTS } from '../src/seed.js';
+import { entryId } from '../src/contracts.js';
 import { computeCurrentConfigHash, computeConfigV3Hash } from '../../nextblock/config/game-config.js';
 import { toHex } from '../src/hash.js';
 
@@ -75,4 +76,26 @@ test('THE GRINDING PROBE: 10 000 keys and secrets give 1 world on a v4 round and
 test('the engine guesses no world rule: a caller that brings no shared-world list from the round\'s game is refused', () => {
   assert.throws(() => worldIsShared(v4), /the round's game's to say/);
   assert.throws(() => worldSeedWord({ entry: entry(b32(1), b32(0)), roundRandomness: RANDOMNESS, contract: v4, roundId: ROUND }), /the round's game's to say/);
+});
+
+// A PLACE PER ENTRY IN ONE WORLD (kanban #828): one seed word gave every player of a round one door. The place is the entry id's, for
+// shared-world rounds only, and the world's seed word does not move with it.
+const fullEntry = (session) => ({ roundId: ROUND, playerPubkey: b32(5), sessionPubkey: session, stakeCommitment: b32(7), stakeMsat: 0n, feeMsat: 0n,
+  donationMsat: 0n, joinTick: 0, worldSecret: b32(0), vssSharesRef: b32(0), stakePoint: new Uint8Array(33), feePreimage: b32(0),
+  stakeLockOutpoint: { txid: b32(0), outIdx: 0n }, feeLockOutpoint: { txid: b32(0), outIdx: 0n }, claimKeyAttestationRef: b32(0) });
+
+test('a shared world gives each entry a place of 0 to 11, off its id; a per-player world gives none', () => {
+  const e = fullEntry(b32(1));
+  assert.equal(worldSlot({ entry: e, contract: v4, sharedWorld: SHARED }), slotOfEntryId(entryId(e)));
+  assert.equal(worldSlot({ entry: e, contract: v3, sharedWorld: SHARED }), undefined);
+  assert.throws(() => worldSlot({ entry: e, contract: v4 }), /the round's game's to say/);
+  assert.equal(WORLD_SLOTS, 12);
+});
+
+test('over 12 000 session keys the twelve places come up evenly, and the key alone moves the place', () => {
+  const seen = new Array(12).fill(0);
+  for (let i = 0; i < 12000; i++) seen[worldSlot({ entry: fullEntry(r32()), contract: v4, sharedWorld: SHARED })]++;
+  console.log('  #828 places over 12 000 keys: ' + seen.join(' '));
+  for (const n of seen) assert.ok(n > 850 && n < 1150, `a place came up ${n} times of an expected 1000`);
+  assert.equal(word(v4, fullEntry(b32(1))), word(v4, fullEntry(b32(2))), 'a session key moved the world');
 });

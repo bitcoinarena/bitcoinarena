@@ -31,7 +31,7 @@ export { headerSources, HEADER_SOURCES_ASKED };
 import { seedHexFromInput } from './bip39.js';
 import { NO_SHARES, dealHandout, encodeHandout } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
-import { worldSeedWord, worldIsShared } from '../../arena-protocol/src/seed.js';
+import { worldSeedWord, worldIsShared, worldSlot, slotOfEntryId, WORLD_SLOTS } from '../../arena-protocol/src/seed.js';
 import { playerSecretFor, refundFingerprint } from '../../arena-protocol/src/player-key.js';
 import { gameIsKnownGood, sharedWorldOf } from '../../arena-protocol/src/known-game.js';
 import { entryFeeMsat, feeMatchesEntry, NODE_FEE_BPS } from '../../arena-protocol/src/fee.js';
@@ -676,10 +676,52 @@ export async function worldSeedFor({ entry, round, nodes, contract, fetcher = fe
   return {
     // THE ONE FUNCTION (seed.js worldSeedWord): the round's contract chooses the rule - one world per round, or per player
     seedWord: worldSeedWord({ entry, roundRandomness: beacon.randomness, contract, roundId: fromHex(id), sharedWorld: sharedWorldOf(contract.gameId) }),
+    // AND WHERE IN IT THIS PLAYER STARTS (kanban #828): a shared world's place, the one the signer nodes' replay takes
+    slot: worldSlot({ entry, contract, sharedWorld: sharedWorldOf(contract.gameId) }),
     randomness: beacon.randomness,
     height: beacon.height,
     agreed: beacon.agreed,
   };
+}
+
+/**
+ * THE PLACES OF A SHARED WORLD ALREADY TAKEN (kanban #828), off the entries the round's seats hold (GET /api/round-result, public,
+ * and open before a round ends). Asked of every node at once and never for longer than `waitMs`: a seat that says nothing, or
+ * says it late, only costs a place that may be shared. Join in seconds (ruling 2026-10-02): this is not a thing to wait for.
+ */
+export async function slotsTaken({ round, nodes, fetcher = fetch, waitMs = 700 } = {}) {
+  const id = typeof round === 'string' ? round : toHex(round);
+  const taken = new Set();
+  const reads = (nodes || []).map(async (node) => {
+    try {
+      const r = await fetcher(node.replace(/\/+$/, '') + '/api/round-result?round=' + id);
+      if (!r.ok) return;
+      for (const p of (await r.json()).players || []) taken.add(slotOfEntryId(fromHex(p.entry)));
+    } catch { /* that seat says nothing */ }
+  });
+  let timer;
+  await Promise.race([Promise.all(reads), new Promise((go) => { timer = setTimeout(go, waitMs); })]);
+  clearTimeout(timer);
+  return taken;
+}
+
+/**
+ * A SESSION KEY WHOSE ENTRY STARTS AT A PLACE NOBODY HOLDS (kanban #828). A hash gives two players the same place 1 time in
+ * WORLD_SLOTS, and the session key is the one part of an entry nothing else depends on: it signs the run's marks and no lock
+ * names it. So a shared-world entry draws its key again while the id it makes lands on a place listed as taken. `makeKey`
+ * answers { raw, ... }; on a per-player round, with all places taken or with nothing listed: the first key, as before.
+ * Two players joining in the same instant cannot see each other, and can still share a place then.
+ */
+export async function keyOnFreeSlot({ makeKey, entry, contract, nodes, fetcher = fetch, waitMs, tries = 64 } = {}) {
+  let sharedWorld = null;
+  try { sharedWorld = contract && entry && Array.isArray(nodes) && nodes.length ? sharedWorldOf(contract.gameId) : null; } catch { sharedWorld = null; }
+  if (!sharedWorld || !worldIsShared(contract, sharedWorld)) return makeKey();
+  const rid = roundId(contract);
+  const taken = await slotsTaken({ round: rid, nodes, fetcher, ...(waitMs === undefined ? {} : { waitMs }) });
+  const slotOf = (k) => worldSlot({ entry: { ...entry, roundId: rid, sessionPubkey: k.raw }, contract, sharedWorld });
+  let key = await makeKey();
+  for (let i = 1; i < tries && taken.size < WORLD_SLOTS && taken.has(slotOf(key)); i++) key = await makeKey();
+  return key;
 }
 
 /**
