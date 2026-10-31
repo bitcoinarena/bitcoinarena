@@ -8590,7 +8590,8 @@
         // issued hold the lock until the entry closes
         { const m = /is being issued (\d+) msat more/.exec(st);
           if (m) return `waiting for ${Math.ceil(Number(m[1]) / 1000)} sat still arriving in your wallet before your stake can be locked`; }
-        if (/^stake lock/.test(st)) return 'locking your stake in the federation';
+        // THE STEP ITSELF (the owner 2026-10-30: the same line on one device for minutes, on another the order went through): it says where it waits
+        if (/^stake lock/.test(st)) return 'locking your stake: ' + st.replace(/^stake lock:\s*/, '').slice(0, 140);
         const starts = /round starts in ([0-9:]+)/.exec(st); if (starts) return 'locked - the window starts in ' + starts[1];
         return st;
       };
