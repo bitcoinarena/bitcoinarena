@@ -510,6 +510,10 @@ test('a signer node missing, a signer node serving another set, a forged set, or
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: honest }, [], strayGame) })).why,
     /not the set the game's manifest names/);
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest }) })).why, /not every signer node/);
+  // A READ THE CONNECTION DROPPED (kanban #803, "Load failed" on a phone) is a node that did not answer, not a refusal - and half must still serve
+  const dropping = (ports, f) => async (url) => { if (ports.includes(new URL(url).port)) throw new TypeError('Load failed'); return f(url); };
+  assert.equal((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: dropping(['2'], serving({ 1: honest })) })).ok, true);
+  assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: dropping(['1', '2'], serving({})) })).why, /only 0 of 2 nodes served/);
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: forged }) })).why, /serve different donation sets/);
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: forged, 2: forged }) })).why, /not signed by the network's donation authority/);
 
