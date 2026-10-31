@@ -3058,8 +3058,9 @@
       const txStep = (step) => { try { window.ARENA_TX_STEPS.push({ step, ms: Math.round(performance.now() - pressAt) }); } catch { /* not kept */ } };
       window.ARENA_TX_STEP = txStep;   // the merge's own steps (combineIn) go into this order's timing too
       const joinStep = async (name, f) => {
+        window.ARENA_ORDER_AT = Date.now();   // the collect gives way to an order (kanban #803)
         console.log('[arena] join step -> ' + name); txStep('-> ' + name);
-        try { const r = await f(); console.log('[arena] join step <- ' + name); txStep('<- ' + name); return r; }
+        try { const r = await f(); window.ARENA_ORDER_AT = Date.now(); console.log('[arena] join step <- ' + name); txStep('<- ' + name); return r; }
         catch (e) { console.error('[arena] join step !! ' + name + ': ' + (e && e.message ? e.message : e)); throw e; }
       };
       console.log('[arena] join: pays=' + !!pays + ' locks=' + !!ARENACLIENT.roundLocks(named.round)
@@ -4175,7 +4176,12 @@
       }
     }
     window.ARENA_CLAIM_LIQUIDATIONS = claimLiquidations;
+    // AN ORDER GOES FIRST (kanban #803, the owner 2026-10-30: "die ersten 1-2 minuten gar nicht ... solange ist der order place langsam und macht nichts"): each kept
+    // round's look opens a wallet client, and each client's keys take the page's one thread 0.3-1 s, so 50 records hold it for a minute after a load. The looks
+    // start 30 s after the load, and between two records they wait while an order is being placed.
+    const orderClear = async () => { while (Date.now() - (window.ARENA_ORDER_AT || 0) < 10000) await new Promise((r) => setTimeout(r, 1000)); };
     async function lookThePayout() {
+      if (performance.now() < 30000) return;
       if (payoutAsking) {
         if (payoutAskingSince && Date.now() - payoutAskingSince > 60000)
           collectNote('loop', 'still on its last look, started ' + new Date(payoutAskingSince).toISOString().slice(11, 19) + 'Z - a step has not returned');
@@ -4213,6 +4219,7 @@
       for (const older of keptRecords().collectable
         .filter((r) => ARENACLIENT.roundLocks(r.round) && !r.done && backKey(r) !== backKey(newest) && !((pauseOf.get(backKey(r)) || {}).until > Date.now()))) {
         if (rescanWanted) break;
+        await orderClear();
         try {
           // ANOTHER KEPT PHRASE'S RECORD: looked at and collected only while this tab holds that phrase (withRecordPhrase)
           const res = await withRecordPhrase(older, async () => {
@@ -7061,6 +7068,9 @@
         if (state === 'stuck') console.log('[arena] merge in federation ' + String(fedHex).slice(0, 8) + ' stuck: ' + why); };
       // A WALLET THAT DID NOT OPEN IS NOT OPENED AGAIN THIS LOAD (kanban #803: its open goes on behind the 30 s, so each new try added its sockets to the last)
       const mergeNoOpen = new Set();
+      // AND A FEDERATION WHOSE WALLET DID NOT OPEN IS LEFT FOR THIS LOAD (kanban #803, the owner 2026-10-30: "warum das merging minuten dauert anstatt sekunden"): each
+      // open holds its phrase, so 30 s on a dead federation (b18947f0) made the merge of the same phrase in the live federation wait, phrase after phrase
+      const mergeDeadFeds = new Set();
       function combineIn(main, fedHex, invite, { legacy }) {
         fedHex = String(fedHex).toLowerCase();
         if (combiningBy.has(fedHex)) return combiningBy.get(fedHex);
@@ -7122,10 +7132,12 @@
           }
           if (!others.length) { if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES(); return; }
           const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
+          const mergeAt = performance.now();
           for (const x of others) {
             const from = x.hex.slice(0, 8) + (x.ancestor ? ' (BLWP)' : '');
             const noOpenKey = fedHex + '.' + x.hex + (x.ancestor ? '.blwp' : '');
-            if (mergeNoOpen.has(noOpenKey)) continue;
+            if (mergeNoOpen.has(noOpenKey) || mergeDeadFeds.has(fedHex)) continue;
+            const walletAt = performance.now();
             const take = async () => {
               mergeSaid(fedHex, 'merging', 'opening wallet ' + from);
               const other = await Promise.race([ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fedHex), invite, seed: ARENACLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L, ancestor: x.ancestor }),
@@ -7137,6 +7149,7 @@
               const noteEmpty = () => { L.setItem(emptyKey(x.hex, x.ancestor), String(entriesOf(x.hex, x.ancestor))); L.removeItem(knownKey); };
               mergeSaid(fedHex, 'merging', 'reading wallet ' + from);
               const holds = BigInt(await other.balanceMsat());
+              console.log('[arena] merge ' + fedHex.slice(0, 8) + ' wallet ' + from + ': open ' + Math.round(performance.now() - walletAt) + ' ms, holds ' + holds + ' msat');
               if (holds === 0n) { noteEmpty(); return; }
               mergeSaid(fedHex, 'merging', 'sending the notes of wallet ' + from);
               L.setItem(knownKey, String(holds)); if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES();
@@ -7193,10 +7206,11 @@
                   else mergeSaid(fedHex, 'stuck', 'wallet ' + from + ' is open in another tab of this browser (' + r.why + ') - close that tab and its money merges here');
                 } else if (held) mergeSaid(fedHex, 'stuck', 'wallet ' + from + ' is open in another tab of this browser - close that tab and its money merges here');
               } else await take();
-            } catch (e) { if (/did not open in 30 s/.test(String(e && e.message))) mergeNoOpen.add(noOpenKey);
+            } catch (e) { if (/did not open in 30 s/.test(String(e && e.message))) { mergeNoOpen.add(noOpenKey); mergeDeadFeds.add(fedHex); }
               console.log('[arena] wallet ' + from + ' not combined in federation ' + fedHex.slice(0, 8) + ': ' + (e && e.message ? e.message : e));
               mergeSaid(fedHex, 'stuck', 'wallet ' + from + ': ' + (e && e.message ? e.message : e)); }
           }
+          console.log('[arena] merge ' + fedHex.slice(0, 8) + ': ' + others.length + ' wallet(s) in ' + Math.round(performance.now() - mergeAt) + ' ms');
           if (window.ARENA_READ_BALANCE) { await window.ARENA_READ_BALANCE(); if (typeof paintMoney === 'function') paintMoney(); }
         })().then(() => { const m = window.ARENA_MERGE_STATE[fedHex.slice(0, 16)]; if (!m || m.state === 'merging') mergeSaid(fedHex, 'merged'); },
           (e) => { mergeSaid(fedHex, 'stuck', e && e.message ? e.message : String(e)); throw e; });
