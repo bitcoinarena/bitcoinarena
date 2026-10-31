@@ -29,8 +29,7 @@
 // `maxBlocksPerPass` blocks over all proposals, each proposal keeps how far it has read, nothing already read or decided is
 // asked again, and the vote cache drops every height below the lowest phase still open.
 import { tally, CLASS } from '../../arena-protocol/src/ballot.js';
-import { liveConfig, BALLOT_GENESIS, SOURCES_GENESIS, hostsLiveAt } from '../../arena-protocol/src/ballot-chain.js';
-import { decodeHostList } from '../../arena-protocol/src/market-check.js';
+import { liveConfig, BALLOT_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
 import { decodeConfigProposalBody } from '../../arena-protocol/src/ballot.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
@@ -67,11 +66,8 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     }
     return b;
   };
-  // A LIST OF SOURCES IS NOT A GAME'S CONFIG (kanban #921): each class keeps to its own chain
-  const passedAll = (net) => proposals.list().filter((p) => p.networkId === net && p.decided && p.decided.passed)
-    .map((p) => { const b = bodyOf(p); return { id: fromHex(p.id), class: b.class, parent: b.parent, configHash: b.configHash, config: b.config, activationHeight: p.activationHeight }; });
-  const passedOf = (net) => passedAll(net).filter((p) => p.class !== CLASS.SOURCES);
-  const passedSources = (net) => passedAll(net).filter((p) => p.class === CLASS.SOURCES);
+  const passedOf = (net) => proposals.list().filter((p) => p.networkId === net && p.decided && p.decided.passed)
+    .map((p) => { const b = bodyOf(p); return { id: fromHex(p.id), parent: b.parent, configHash: b.configHash, config: b.config, activationHeight: p.activationHeight }; });
   const networks = () => new Set(proposals.list().map((p) => p.networkId));
   /** Recomputed when something was decided or the tip moved: a few proposals, so a few comparisons. */
   const refreshLive = () => {
@@ -185,7 +181,6 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     if (!p.decided.passed) return 'failed';
     if (tip === null || tip < p.activationHeight) return 'cooldown';
     const l = lives.get(p.networkId);
-    if (bodyOf(p).class === CLASS.SOURCES) return liveConfig({ genesis: SOURCES_GENESIS, passed: passedSources(p.networkId), height: tip }).void.some((v) => toHex(v.id) === p.id) ? 'void' : 'activated';
     return l && l.void.some((v) => toHex(v.id) === p.id) ? 'void' : 'activated';
   };
   const historyJson = (h) => h.map((x) => ({ configHash: toHex(x.configHash), config: x.config ? toHex(x.config) : null, since: x.since, by: x.by ? toHex(x.by) : null }));
@@ -208,26 +203,16 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       return { network: net, tip, configHash: toHex(l.configHash), since: now.since, by: now.by ? toHex(now.by) : null,
         history: historyJson(l.history), void: l.void.map((v) => ({ id: toHex(v.id), why: v.why })) };
     },
-    /** GET /market-sources: the hosts live at the tip, since when and by which proposal, and what came before. */
-    sources(net) {
-      const l = liveConfig({ genesis: SOURCES_GENESIS, passed: passedSources(net), height: tip === null ? 0 : tip });
-      const now = l.history[l.history.length - 1];
-      return { network: net, tip, hosts: decodeHostList(now.config), since: now.since, by: now.by ? toHex(now.by) : null,
-        history: l.history.map((x) => ({ hosts: decodeHostList(x.config), since: x.since, by: x.by ? toHex(x.by) : null })) };
-    },
-    /** The hosts a round of census height `height` may read. */
-    hostsAt: (net, height) => hostsLiveAt({ passed: passedSources(net), height }),
     /** The history over every passed proposal, for the serving rule (ballot-chain.js configServesRound). */
     spans: (net) => (spansAll.get(net) || liveConfig({ genesis: genesisFor(net), passed: [], height: 0 })).history,
     /**
      * The history live at `height`, for reading a repeal (proposals.js historyFor) - or null while a proposal that would
      * activate by then is still undecided here (its outcome is not known yet, so neither is the history).
      */
-    historyAt(net, height, cls = null) {
-      const sources = cls === CLASS.SOURCES;
-      const pending = proposals.list().some((p) => p.networkId === net && !p.decided && p.activationHeight <= height && (bodyOf(p).class === CLASS.SOURCES) === sources);
+    historyAt(net, height) {
+      const pending = proposals.list().some((p) => p.networkId === net && !p.decided && p.activationHeight <= height);
       if (pending) return null;
-      return sources ? liveConfig({ genesis: SOURCES_GENESIS, passed: passedSources(net), height }).history : liveConfig({ genesis: genesisFor(net), passed: passedOf(net), height }).history;
+      return liveConfig({ genesis: genesisFor(net), passed: passedOf(net), height }).history;
     },
   };
 }

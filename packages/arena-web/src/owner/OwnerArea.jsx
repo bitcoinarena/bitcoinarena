@@ -10,10 +10,9 @@
 import React from 'react';
 import { NeedsPanel, ordered } from './NeedsPanel.jsx';
 import { CopyButton } from '../design/components.jsx';
-import { MarketCreator } from './MarketCreator.jsx';
 
 export const SECTIONS = [['overview', 'Overview'], ['roles', 'Roles'], ['rounds', 'Rounds'], ['bond', 'Bond'], ['services', 'Services'], ['apps', 'Apps'], ['release', 'Updates'],
-  ['money', 'Donations'], ['referrer', 'Referrer'], ['emergency', 'Emergency code'], ['leave', 'Leave'], ['markets', 'Create a market'], ['developer', 'Developer'], ['login', 'Your login']];
+  ['money', 'Donations'], ['referrer', 'Referrer'], ['emergency', 'Emergency code'], ['leave', 'Leave'], ['developer', 'Developer'], ['login', 'Your login']];
 const HOW = { words: 'your 24 words', nsec: 'Nostr (nsec)', extension: 'Nostr (extension)', bunker: 'Nostr (remote signer)' };
 /** a place a panel is drawn into: React draws it empty and never touches what the page puts in it */
 const Place = ({ id, className = 'card' }) => <div className={className || undefined} id={id} />;
@@ -111,8 +110,6 @@ export class OwnerArea extends React.Component {
           {/* REFERRAL PROGRAMS (kanban #675): drawn by ReferrerPanel from GET /owner/dev, its clients of kind 'referrer' */}
           {sec('referrer', <><h2>Referrer</h2><Place id="referrer" className={null} /></>)}
           {sec('leave', <><h2>Leave</h2><Place id="leave" /></>)}
-          {/* A NEW MARKET, ONE FORM (kanban #920) */}
-          {sec('markets', on === 'markets' ? <><h2>Create a market</h2><MarketCreator tryOnNode={p.tryOnNode} /></> : null)}
           {sec('developer', <><h2>Developer</h2>
             {/* A DEVELOPER ON THIS NODE (kanban #582): a dev client (a protocol or app recipient) or a game developer's key - then Donations shows */}
             <Place id="dev-add" className={null} /><Place id="gamedev-add" className={null} />
