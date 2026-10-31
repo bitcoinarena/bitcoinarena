@@ -85,6 +85,14 @@ export function checkMarketCode(code, parse) {
   return { ok: problems.length === 0, version: CHECK_VERSION, problems };
 }
 
+// ONLY LISTED SOURCES (the owner 2026-10-31: "Ein attacker kann eine beliebige Seite angeben die ein manipuliertes Ergebnis bereitstellt"): 5 of 7 is no defence when all seven read
+// one page its author controls, so a market may read only hosts that no market creator runs. A host joins by a release, and later by a vote.
+export const MARKET_HOSTS = Object.freeze(['api.coinbase.com', 'ws-feed.exchange.coinbase.com', 'api.binance.com', 'api.kraken.com', 'www.bitstamp.net', 'mempool.space', 'api.blockchain.info']);
+export function marketHostProblem(text) {
+  let h; try { h = new URL(String(text).trim()).hostname.toLowerCase(); } catch { return 'Not a full address'; }
+  return MARKET_HOSTS.includes(h) ? null : `${h} is not a listed source`;
+}
+
 /** THE ADDRESS A NODE MAY READ FOR A MARKET: https (wss for a socket), a public host, no login in it. Answers why not, or null. */
 export function marketUrlProblem(text, socket = false) {
   let u; try { u = new URL(String(text).trim()); } catch { return 'Not a full address'; }

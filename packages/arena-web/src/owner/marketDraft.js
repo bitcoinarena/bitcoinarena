@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A MARKET IN THE MAKING (kanban #920, docs/MARKET-CREATOR.md): the templates the form starts from, what each step still lacks, and the
 // reading of a source's answer. Plain functions, so the form, the tests and later the node's own check read one rule.
-import { marketUrlProblem } from '../../../arena-protocol/src/market-check.js';
+import { marketHostProblem, marketUrlProblem } from '../../../arena-protocol/src/market-check.js';
 
 export const OUTCOMES_MIN = 2, OUTCOMES_MAX = 8, TITLE_MAX = 120, READS_MAX = 3;
 // FIXED, AS POLYMARKET'S TOP BAR IS (the owner 2026-10-31: "Tu die Kategorie hart verdrahten kein textfeld"): a filter needs the same word on every market
@@ -67,7 +67,7 @@ export function fromTemplate(id) {
 }
 
 // the node's own rule for an address, so the form says what a node will say
-export const urlProblem = marketUrlProblem;
+export const urlProblem = (text, socket = false) => marketUrlProblem(text, socket) || marketHostProblem(text);
 
 const number = (x) => (String(x).trim() !== '' && Number.isFinite(Number(x)));
 

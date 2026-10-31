@@ -21,7 +21,7 @@ test('a node reads public https only', () => {
   for (const bad of ['http://a.example/x', 'https://localhost/x', 'https://127.0.0.1/x', 'https://10.1.2.3/', 'https://192.0.2.1/', 'https://172.16.0.1/', 'https://169.254.169.254/latest', 'https://[::1]/', 'https://u:p@a.example/', 'https://printer.local/', 'nonsense'])
     assert.ok(urlProblem(bad), bad);
   assert.equal(urlProblem('https://api.coinbase.com/v2/prices/BTC-USD/spot'), null);
-  assert.equal(urlProblem('https://172.32.0.1/'), null);
+  assert.match(urlProblem('https://my-own-site.example/price'), /not a listed source/);
 });
 
 test('each step names what it lacks', () => {
@@ -63,11 +63,11 @@ test('samples and examples are real drafts: public addresses, code that passes t
 });
 
 test('code in a draft: its check holds the step back; what it returns must be an outcome', () => {
-  const d = fromTemplate('blank'); d.source = { ...d.source, kind: 'code', code: 'function decide(){ return eval("1"); }', reads: [{ id: 'a', kind: 'http', url: 'https://example.com/', subscribe: '' }] };
+  const d = fromTemplate('blank'); d.source = { ...d.source, kind: 'code', code: 'function decide(){ return eval("1"); }', reads: [{ id: 'a', kind: 'http', url: 'https://api.kraken.com/0/public/Time', subscribe: '' }] };
   assert.ok(problemsOf(d, 'result', checkMarketCode(d.source.code, parse)).code);
   d.source.code = 'function decide(reads, market) {\n  return market.outcomes[0];\n}';
   assert.deepEqual(problemsOf(d, 'result', checkMarketCode(d.source.code, parse)), {});
-  d.source.reads = [{ id: 'a', kind: 'ws', url: 'https://example.com/', subscribe: '' }];
+  d.source.reads = [{ id: 'a', kind: 'ws', url: 'https://api.kraken.com/', subscribe: '' }];
   assert.ok(problemsOf(d, 'result', null).reads);
   assert.equal(outcomeOfCode(d, 'Yes').outcome, 'Yes'); assert.equal(outcomeOfCode(d, 1).outcome, 'No'); assert.ok(outcomeOfCode(d, 'Maybe').why);
 });

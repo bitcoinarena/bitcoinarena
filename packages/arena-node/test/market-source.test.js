@@ -49,6 +49,7 @@ test('reads are limited and named', async () => {
   assert.match((await readMarketSources([{}, {}, {}, {}])).why, /At most 3/);
   assert.match((await readMarketSources([{ id: '1a', url: 'https://a.example/' }])).why, /letters/);
   assert.match((await readMarketSources([{ id: 'a', url: 'http://a.example/' }])).why, /Only https/);
+  assert.match((await readMarketSources([{ id: 'a', url: 'https://attacker.example/price' }])).why, /not a listed source/);
 });
 
 test('the whole try: read, check, run; each stage names its failure', async () => {
