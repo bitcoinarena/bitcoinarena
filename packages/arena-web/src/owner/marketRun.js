@@ -33,16 +33,27 @@ function readSocket(r, most = 5, waitMs = 5000) {
     const got = []; const ws = new WebSocket(r.url);
     const end = () => { clearTimeout(t); try { ws.close(); } catch { /* closed */ } done(got); };
     const t = setTimeout(end, waitMs);
-    ws.onopen = () => { if (r.subscribe) ws.send(r.subscribe); };
-    ws.onmessage = (e) => { got.push(parsed(e.data)); if (got.length >= most) end(); };
+    let steps = 0;
+    const start = async (message) => {
+      if (!r.init || steps > 4) return;
+      const step = steps++;
+      const out = await runCode({ code: `${r.init}\nfunction decide(reads) { return init(reads.message, reads.step); }`, reads: { message, step }, market: null });
+      if (!out.ok) { clearTimeout(t); try { ws.close(); } catch { /* closed */ } fail(new Error(`its init code: ${out.why}`)); return; }
+      for (const x of out.out === null || out.out === undefined ? [] : [].concat(out.out)) ws.send(x);
+    };
+    ws.onopen = () => { if (r.subscribe) ws.send(r.subscribe); start(null); };
+    ws.onmessage = (e) => { const one = parsed(e.data); got.push(one); if (got.length >= most) end(); else start(one); };
     ws.onerror = () => { clearTimeout(t); fail(new Error('the socket refused')); };
   });
 }
 
 /** A proposed source's example, read in this browser where the page has no node to ask. */
 export async function tryExample(e) {
-  const got = await readAll([{ id: 'page', kind: String(e.url).startsWith('wss:') ? 'ws' : 'http', url: e.url }]);
+  const socket = String(e.url).startsWith('wss:');
+  const got = await readAll([{ id: 'page', kind: socket ? 'ws' : 'http', url: e.url, init: e.init }]);
   if (got.why) return { ok: false, why: got.why };
+  if (socket && !(got.reads.page || []).length) return { ok: false, why: 'The socket sent nothing' };
+  if (socket && e.read === 'text') return { ok: true, value: JSON.stringify(got.reads.page).slice(0, 120) };
   const out = await runCode({ code: codeOfSource({ kind: MARKET_SOURCE_KIND.URL, reads: [{ id: 'page' }], read: { json: MARKET_READ.JSON, regex: MARKET_READ.PATTERN, text: MARKET_READ.TEXT }[e.read], path: e.path, rule: MARKET_RULE.EQUALS, level: '' }), reads: got.reads, market: { outcomes: [] } });
   if (!out.ok) return { ok: false, why: out.why };
   return out.out === '' ? { ok: false, why: 'The example found nothing' } : { ok: true, value: String(out.out).slice(0, 120) };

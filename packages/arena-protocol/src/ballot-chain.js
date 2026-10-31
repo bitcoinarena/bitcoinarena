@@ -18,7 +18,7 @@
 import { splitBlock } from './block.js';
 import { parseTransaction, commitmentsOf } from './tx.js';
 import { configHashOf, decodeVote } from './ballot.js';
-import { decodeHostList, encodeSourceList } from './market-check.js';
+import { decodeHostList, decodeSourceList, encodeSourceList } from './market-check.js';
 import { SOURCE_ENTRIES } from './market-sources.js';
 import { toHex, fromHex } from './hash.js';
 import { splitDonation, donationSetPaysKeys } from './donation.js';
@@ -96,7 +96,9 @@ const spansOf = (history) => (history || []).map((h, i) => ({ ...h, until: i + 1
 /** WHERE THE LIST OF MARKET SOURCES STARTS (kanban #921): a chain of its own, so a list never becomes a game's config. */
 export const SOURCES_GENESIS = Object.freeze((() => { const config = encodeSourceList(SOURCE_ENTRIES); return { configHash: configHashOf(config), config }; })());
 /** The hosts a round may read: the list live at its census height. */
-export const hostsLiveAt = ({ passed = [], height }) => { const l = liveConfig({ genesis: SOURCES_GENESIS, passed, height }); return decodeHostList(l.history[l.history.length - 1].config); };
+const sourcesLiveAt = ({ passed = [], height }) => { const l = liveConfig({ genesis: SOURCES_GENESIS, passed, height }); return l.history[l.history.length - 1].config; };
+export const hostsLiveAt = (o) => decodeHostList(sourcesLiveAt(o));
+export const entriesLiveAt = (o) => decodeSourceList(sourcesLiveAt(o));
 
 export function configServesRound({ configHash, height, history }) {
   if (!(configHash instanceof Uint8Array) || configHash.length !== 32) return { ok: false, governed: false, why: 'that round names no 32-byte config' };

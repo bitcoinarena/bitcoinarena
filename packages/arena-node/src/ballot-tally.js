@@ -29,7 +29,7 @@
 // `maxBlocksPerPass` blocks over all proposals, each proposal keeps how far it has read, nothing already read or decided is
 // asked again, and the vote cache drops every height below the lowest phase still open.
 import { tally, CLASS } from '../../arena-protocol/src/ballot.js';
-import { liveConfig, BALLOT_GENESIS, SOURCES_GENESIS, hostsLiveAt } from '../../arena-protocol/src/ballot-chain.js';
+import { liveConfig, BALLOT_GENESIS, SOURCES_GENESIS, hostsLiveAt, entriesLiveAt } from '../../arena-protocol/src/ballot-chain.js';
 import { decodeHostList, decodeSourceList } from '../../arena-protocol/src/market-check.js';
 import { decodeConfigProposalBody } from '../../arena-protocol/src/ballot.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
@@ -217,6 +217,8 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     },
     /** The hosts a round of census height `height` may read. */
     hostsAt: (net, height) => hostsLiveAt({ passed: passedSources(net), height }),
+    /** And each one's example and init code. */
+    entriesAt: (net, height) => entriesLiveAt({ passed: passedSources(net), height }),
     /** The history over every passed proposal, for the serving rule (ballot-chain.js configServesRound). */
     spans: (net) => (spansAll.get(net) || liveConfig({ genesis: genesisFor(net), passed: [], height: 0 })).history,
     /**

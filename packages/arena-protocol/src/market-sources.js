@@ -3,10 +3,16 @@
 // A WORKING EXAMPLE FOR EVERY LISTED SOURCE, AND ITS DOCUMENTATION (kanban #921, the owner 2026-10-31: "für jede einzelne Quelle examples in die ui einbauen dass man es sofort sieht und auch
 // einen externen Link zur Dokumentation für andere Werte"). Each `url` and `path` was read and checked by arena-web/test/market-sources-live.mjs. The hosts here are MARKET_HOSTS.
 // `demo` where a site lets a node read it but no browser: a recorded answer, shown as one, so the example still shows at once
+const COINBASE_INIT = `// Coinbase sends nothing until it is asked
+function init(message, step) {
+  if (step > 0) return null;
+  return JSON.stringify({ type: 'subscribe', product_ids: ['BTC-USD'], channels: ['ticker'] });
+}
+`;
 export const SOURCES = Object.freeze([
   { group: 'Crypto', name: 'Coinbase', hint: 'BTC/USD spot', url: 'https://api.coinbase.com/v2/prices/BTC-USD/spot', read: 'json', path: 'data.amount', docs: 'https://docs.cdp.coinbase.com/coinbase-business/track-apis/prices' },
   { group: 'Crypto', name: 'Coinbase Exchange', hint: 'Last closed candle', url: 'https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=60', read: 'json', path: '1.4', docs: 'https://docs.cdp.coinbase.com/api-reference/exchange-api/rest-api/products/get-product-candles' },
-  { group: 'Crypto', name: 'Coinbase socket', hint: 'Live trades', url: 'wss://ws-feed.exchange.coinbase.com', read: 'text', path: '', socket: true, docs: 'https://docs.cdp.coinbase.com/exchange/websocket-feed/overview' },
+  { group: 'Crypto', name: 'Coinbase socket', hint: 'Live trades', url: 'wss://ws-feed.exchange.coinbase.com', read: 'text', path: '', socket: true, init: COINBASE_INIT, docs: 'https://docs.cdp.coinbase.com/exchange/websocket-feed/overview' },
   { group: 'Crypto', name: 'Bitstamp', hint: 'BTC/USD last', url: 'https://www.bitstamp.net/api/v2/ticker/btcusd/', read: 'json', path: 'last', demo: '{"last":"77398.27"}', docs: 'https://www.bitstamp.net/api/' },
   { group: 'Crypto', name: 'Binance', hint: 'BTC/USDT', url: 'https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT', read: 'json', path: 'price', docs: 'https://developers.binance.com/docs/binance-spot-api-docs/rest-api/market-data-endpoints' },
   { group: 'Crypto', name: 'Binance Data', hint: 'BTC/USDT, every region', url: 'https://data-api.binance.vision/api/v3/ticker/price?symbol=BTCUSDT', read: 'json', path: 'price', docs: 'https://developers.binance.com/docs/binance-spot-api-docs/rest-api/general-api-information' },
@@ -28,4 +34,4 @@ export const SOURCES = Object.freeze([
 ]);
 export const SOURCE_GROUPS = Object.freeze([...new Set(SOURCES.map((s) => s.group))]);
 /** The list the ballot's chain starts from: each host once, with its first example. */
-export const SOURCE_ENTRIES = Object.freeze([...new Map(SOURCES.map((s) => [new URL(s.url).hostname, { host: new URL(s.url).hostname, url: s.url, read: s.read, path: s.path, docs: s.docs }])).values()]);
+export const SOURCE_ENTRIES = Object.freeze([...new Map(SOURCES.map((s) => [new URL(s.url).hostname, { host: new URL(s.url).hostname, url: s.url, read: s.read, path: s.path, docs: s.docs, init: s.init || '' }])).values()]);

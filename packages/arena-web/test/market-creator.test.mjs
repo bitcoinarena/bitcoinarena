@@ -104,3 +104,9 @@ test('Make the proposal stays closed until the example has answered', () => {
   assert.match(page, /<button[^>]*disabled=""[^>]*>Make the proposal/);
   assert.match(page, /opens once this example answers/);
 });
+
+test('every listed socket that needs starting has code that passes the check', () => {
+  const started = SOURCES.filter((s) => s.init);
+  assert.ok(started.length >= 1);
+  for (const s of started) assert.equal(checkMarketCode(s.init, parse, 'init').ok, true, s.name);
+});
