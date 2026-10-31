@@ -2,6 +2,9 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // CREATE A MARKET (kanban #920): the templates, what each step lacks, the address rule, reading an answer and the outcome it gives; the form opens on the templates
 import { test } from 'node:test';
+import { SOURCE_ENTRIES } from '../../arena-protocol/src/market-sources.js';
+import { decodeHostList, hostListProblem } from '../../arena-protocol/src/market-check.js';
+import { entryProblem, proposedList, SourceProposal } from '../dist/test/source-proposal.mjs';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -58,12 +61,12 @@ test('the answer names its fields to pick from', () => {
 
 test('samples and examples are real drafts: public addresses, code that passes the check', () => {
   for (const s of SOURCES) {
-    assert.equal(urlProblem(s.url), null, s.name);
+    assert.equal(urlProblem(s.url, !!s.socket), null, s.name);
     assert.match(s.docs, /^https:\/\//, s.name);
     if (s.demo) assert.ok(readAnswer(s, s.demo).value, s.name);
   }
-  // every listed host has its example, but the socket, which the code examples show
-  for (const h of MARKET_HOSTS) assert.ok(h.startsWith('ws-') || SOURCES.some((s) => new URL(s.url).hostname === h), h);
+  // every listed host has its example, and no example names a host off the list
+  assert.deepEqual([...new Set(SOURCES.map((s) => new URL(s.url).hostname))].sort(), [...MARKET_HOSTS].sort());
   for (const e of EXAMPLES) {
     assert.ok(checkMarketCode(e.code, parse).ok, JSON.stringify(checkMarketCode(e.code, parse).problems));
     for (const r of e.reads) assert.equal(urlProblem(r.url, r.kind === 'ws'), null, r.url);
@@ -84,4 +87,20 @@ test('the form opens on the templates', () => {
   const html = renderToStaticMarkup(React.createElement(MarketCreator));
   for (const t of TEMPLATES) assert.ok(html.includes(t.name), t.name);
   assert.match(html, /aria-current="step"/);
+});
+
+test('a proposed source needs an example that answers, and its docs', () => {
+  const hosts = SOURCE_ENTRIES.map((e) => e.host), e = { host: 'api.ecb.example.org', url: 'https://api.ecb.example.org/rate', read: 'json', path: 'rate', docs: 'https://api.ecb.example.org/docs' };
+  assert.equal(entryProblem(e, hosts), null);
+  assert.match(entryProblem({ ...e, host: 'api.coinbase.com', url: 'https://api.coinbase.com/x' }, hosts), /already listed/);
+  assert.ok(entryProblem({ ...e, url: 'http://10.0.0.1/x' }, hosts));
+  assert.equal(hostListProblem(proposedList(SOURCE_ENTRIES, e)), null);
+  assert.deepEqual(decodeHostList(proposedList(SOURCE_ENTRIES, e)).length, hosts.length + 1);
+  assert.match(hostListProblem(proposedList([], { ...e, docs: '' })), /documentation/);
+});
+
+test('Make the proposal stays closed until the example has answered', () => {
+  const page = renderToStaticMarkup(React.createElement(SourceProposal, {}));
+  assert.match(page, /<button[^>]*disabled=""[^>]*>Make the proposal/);
+  assert.match(page, /opens once this example answers/);
 });

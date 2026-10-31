@@ -8,7 +8,8 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { createBallotTally } from '../src/ballot-tally.js';
 import { encodeConfigProposalBody, proposalBodyId, proposalId, encodeVote, voteMessage, CLASS, CHOICE, configHashOf } from '../../arena-protocol/src/ballot.js';
 import { depositOutputsExpected, BALLOT_GENESIS, SOURCES_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
-import { MARKET_HOSTS, encodeHostList } from '../../arena-protocol/src/market-check.js';
+import { MARKET_HOSTS, encodeSourceList } from '../../arena-protocol/src/market-check.js';
+import { SOURCE_ENTRIES } from '../../arena-protocol/src/market-sources.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { encodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
@@ -271,10 +272,10 @@ test('on a seat: a proposal passes and activates, rounds are served under the co
   } finally { await d.close(); }
 });
 
+const added = (host) => ({ host, url: `https://${host}/x`, read: 'text', path: '', docs: `https://${host}/docs` });
 // THE LIST OF MARKET SOURCES, BY VOTE OF THE BONDED NODES (kanban #921): a list passes on a chain of its own at 20 % turnout and over 50 % approval, a round is judged by the list at its census height, and a game's config never moves
 test('the bonded nodes change the source list: it goes live at its height, and only for rounds from there on', async () => {
-  const hosts = [...MARKET_HOSTS, 'api.ecb.example.org'];
-  const config = encodeHostList(hosts);
+  const config = encodeSourceList([...SOURCE_ENTRIES, added('api.ecb.example.org')]);
   const { idBytes, record } = kept({ parent: SOURCES_GENESIS.configHash, configHash: configHashOf(config), config, cls: CLASS.SOURCES });
   const votes = new Map([[101, [vote(A, idBytes, CHOICE.YES, 101, 'a1')]], [102, [vote(B, idBytes, CHOICE.YES, 102, 'b1')]]]);
   const ch = chain(votes);
@@ -292,8 +293,7 @@ test('the bonded nodes change the source list: it goes live at its height, and o
 });
 
 test('a list needs over half of the voting bonds, and yes from 25 % of all bonds', async () => {
-  const hosts = [...MARKET_HOSTS, 'attacker.example.org'];
-  const config = encodeHostList(hosts);
+  const config = encodeSourceList([...SOURCE_ENTRIES, added('attacker.example.org')]);
   const { idBytes, record } = kept({ parent: SOURCES_GENESIS.configHash, configHash: configHashOf(config), config, cls: CLASS.SOURCES });
   const votes = new Map([[101, [vote(A, idBytes, CHOICE.YES, 101, 'a1'), vote(B, idBytes, CHOICE.NO, 101, 'b1'), vote(C, idBytes, CHOICE.NO, 101, 'c1')]]]);
   const ch = chain(votes);
