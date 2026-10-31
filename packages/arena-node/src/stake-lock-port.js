@@ -41,7 +41,10 @@ const outpointArg = (o) => `${toHex(o.txid)}:${o.outIdx}`;
 // 60-80 % CPU each, the machine at load 50 and a paid tap past 1.5 s at p95). `arena-stake-lock --mode serve` keeps its client
 // open and answers one JSON line per question. A binary without that mode (an older build), a tool that exits, or a question
 // it does not answer in time: the question is asked the old way, one run, and the next start of the server waits a minute.
-export function stakeLockServer({ bin, dataDir, timeoutMs = 60000, spawnFn = spawn, now = () => Date.now(), log = (m) => console.log(m) }) {
+// A STUCK SERVER IS LEFT AT ONCE (kanban #827, measured 2026-10-31 12:48Z on seat 2: one question held the server 60 s with 20 behind it, the seat took the
+// locks after 2 min and no inputs before that, both players' first marks waited for it and both runs were FORFEIT): 10 s, then the server is ended, its
+// waiting questions go the old way, one run each, and the next start of the server waits a minute.
+export function stakeLockServer({ bin, dataDir, timeoutMs = 10000, spawnFn = spawn, now = () => Date.now(), log = (m) => console.log(m) }) {
   let child = null, ready = null, buf = '', n = 0, downUntil = 0;
   const waiting = new Map();
   // WHAT THE ONE SERVER IS ASKED, AND HOW LONG EACH WAITS (kanban #605, measured 2026-10-24: POST /lock up to 107 s on the test host seats,
@@ -93,7 +96,7 @@ export function stakeLockServer({ bin, dataDir, timeoutMs = 60000, spawnFn = spa
       const id = ++n;
       const t0 = now(), ahead = waiting.size;
       return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { waiting.delete(id); counted(mode, now() - t0, ahead); reject(new Error(`the stake-lock server did not answer ${mode} in ${timeoutMs} ms`)); }, timeoutMs);
+        const timer = setTimeout(() => { waiting.delete(id); counted(mode, now() - t0, ahead); log(`[stake-lock] ${mode} unanswered after ${timeoutMs} ms: the server is ended`); try { c.kill(); } catch { /* gone */ } reject(new Error(`the stake-lock server did not answer ${mode} in ${timeoutMs} ms`)); }, timeoutMs);
         timer.unref?.();
         waiting.set(id, { resolve: (v) => { counted(mode, now() - t0, ahead); resolve(v); }, reject: (e) => { counted(mode, now() - t0, ahead); reject(e); }, timer });
         c.stdin.write(JSON.stringify({ id, mode, args }) + '\n');
@@ -148,7 +151,7 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
   // port named no read directory, so its server held the one client database every seat settles through - each settle
   // waited on its flock until it was killed, and no book round ever settled). A port with no directory of its own to read
   // asks every question the old way, one run each.
-  const server = serve && readDataDir !== dataDir ? stakeLockServer({ bin, dataDir: readDataDir, timeoutMs, spawnFn, now }) : null;
+  const server = serve && readDataDir !== dataDir ? stakeLockServer({ bin, dataDir: readDataDir, timeoutMs: Math.min(timeoutMs, 10000), spawnFn, now }) : null;
   const read = async (flags) => {
     if (server) { try { return await server.ask(flags[1], argsOf(flags.slice(2).filter((x, i, a) => !(x === '--data-dir' || a[i - 1] === '--data-dir')))); } catch { /* the old way below */ } }
     return run(bin, flags, timeoutMs);
