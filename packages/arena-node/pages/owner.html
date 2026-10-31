@@ -194,7 +194,7 @@ select:focus{outline:2px solid var(--st);outline-offset:1px}
 <div class="loadbar" id="loadbar" hidden><span class="boot-bar"><i id="loadbar-i"></i></span><span id="loadbar-t"></span></div>
 <h2 class="vh">Your node</h2>
 <div id="view"></div>
-<p class="sub" id="public-line"><a id="public" href="#">← Public dashboard</a></p>
+<p class="sub" id="public-line" hidden><a id="public"></a></p>
 </main>
 <script type="module">
 // The node's address: this page is <base>/Dashboard/owner, its doors are <base>/owner...
@@ -205,6 +205,10 @@ select:focus{outline:2px solid var(--st);outline-offset:1px}
 // (GET /address-announcements, #562) name its current address. The node that answers there must be that key (checked in start()).
 const ON_SITE = !/\/[Dd]ashboard\/owner\/?$/.test(location.pathname);
 const OWNER_SITE = 'https://testnet.bitcoin-arena.io/owner/';   // the Arena site's owner page (installer FinishSteps OWNER_SITE, bitcoinarena open)
+// NEVER A DEAD LINK (kanban #835: href="#" did nothing on the screens with no node, where it was the only link): the line under the page stays
+// hidden until it has somewhere to go - on the site that is the site, at once; the node's dashboard once the node has answered as itself
+function publicLink(href, text) { const a = document.getElementById('public'); a.href = href; a.textContent = text; document.getElementById('public-line').hidden = false; }
+if (ON_SITE) publicLink('/', '← Bitcoin Arena');
 // A RELOAD KEEPS THE NODE (kanban #764, the owner: "Refresh on the logged-in owner page loses the login"): the area's menu and its links
 // are plain #section anchors (OwnerArea, RolesPanel goTo), and each one replaced the whole # - node=, local=, url= went with it, and a
 // reload found no node key. Every # the page moves to keeps the node's own part beside the section (section=, which OwnerArea reads), and
@@ -350,10 +354,13 @@ function drawLoad() {
       drawLoad();
     });
   };
-  const tick = setInterval(() => { if (LOAD.over) clearInterval(tick); else drawLoad(); }, 1000);
+  setInterval(() => { if (!LOAD.over) drawLoad(); }, 1000);
   setTimeout(() => { LOAD.over = true; drawLoad(); }, 120000);   // never longer than two minutes
 }
-document.getElementById('public').href = at('/Dashboard');
+// THE LOAD ENDS WITH ANY SCREEN BUT THE AREA (kanban #834: LOAD.over waited for the area, so the bar stayed at "2 of 2 answers, 96 s" on the
+// sign-in, claim, message and error screens): nothing more is coming there. A sign-in counts again, for the area it opens
+const loadEnd = () => { LOAD.over = true; drawLoad(); };
+const loadAgain = () => { Object.assign(LOAD, { started: 0, done: 0, over: false, area: false, t0: Date.now() }); };
 // THE RELEASE THIS NODE RUNS, BESIDE THE TITLE (kanban #674: "include version in node dashboard and owner dashboard") - asked of the
 // node, so the page on the Arena site shows it too; and in the footer, the release alone (kanban #753)
 fetch(at('/owner/version'), { cache: 'no-store' }).then((r) => r.json()).then((v) => {
@@ -361,10 +368,12 @@ fetch(at('/owner/version'), { cache: 'no-store' }).then((r) => r.json()).then((v
   document.getElementById('ver').textContent = v.version || String(v.commit).slice(0, 8);
   if (v.version) document.getElementById('build').textContent = 'Bitcoin Arena ' + v.version;
 }).catch(() => {});
-const C = await import(at('/owner/client.js'));
+// a node that stops answering here is said, not waited for under a bar that counts on (kanban #834)
+const loaded = (p) => import(at(p)).catch((e) => { document.getElementById('who').textContent = 'This node did not answer: ' + e.message; loadEnd(); throw e; });
+const C = await loaded('/owner/client.js');
 // THE REACT SCREENS (kanban #564, 2026-10-21: "Delete the old html code of those components you have ported, no fall backs"): the
 // bundle is loaded once, here, and every ported panel is drawn by it alone
-await import(at('/owner/react.js'));
+await loaded('/owner/react.js');
 const O = window.ArenaOwner;
 boot(70, 'Asking your node');
 const STORE = ON_SITE ? 'arena-owner-seed:node:' + NODE_KEY : 'arena-owner-seed:' + BASE;   // per node address (on the site: per node key), in this browser only
@@ -432,14 +441,14 @@ const mount = (id, how, props) => { const el = $(id); if (el._react) el._react.u
 // 1. THE WAY IN (kanban #564: drawn by React, OwnerStart): the welcome - new 24 words, restore them, or Login with Nostr - and 2. the
 // claim with the code from the node's log. The page hands over what it keeps and how; React draws the screens
 const startProps = () => ({ client: C, holdSeed, holdNostr, random32: () => globalThis.crypto.getRandomValues(new Uint8Array(32)),
-  claim: async (code) => post('/owner/claim', signed('claim', { code })), onIn: () => { me = null; start(); },
+  claim: async (code) => post('/owner/claim', signed('claim', { code })), onIn: () => { me = null; loadAgain(); start(); },
   onNostr: (o) => { window.OWNER_NOSTR = o; }, onConnectUri: (u) => { window.OWNER_CONNECT_URI = u; } });
 // a node with an owner asks for that owner's words or Nostr key, never offers new words (playtest 2026-10-25) or a new Nostr account (kanban #833)
-function welcome() { mount('view', 'mountStart', { ...startProps(), screen: 'welcome', claimed: !!(state && state.claimed) }); }
+function welcome() { loadEnd(); mount('view', 'mountStart', { ...startProps(), screen: 'welcome', claimed: !!(state && state.claimed) }); }
 // (kanban #550, 2026-10-20: "show the complete path to the file instead of showing it cryptic"): the node names the file's full path
-function claim(mine, file) { mount('view', 'mountStart', { ...startProps(), screen: 'claim', mine, claimFile: file }); }
+function claim(mine, file) { loadEnd(); mount('view', 'mountStart', { ...startProps(), screen: 'claim', mine, claimFile: file }); }
 // A ONE-CARD MESSAGE (no answer, not the owner), drawn by React (OwnerMessage)
-const message = (props) => mount('view', 'mountMessage', props);
+const message = (props) => { loadEnd(); return mount('view', 'mountMessage', props); };
 // WHAT NEEDS THE OWNER (kanban #553): each section that finds something to do says it here, in one line, with a link to it; the Overview
 // lists them, the sidebar marks the section - both React's (kanban #564, OwnerArea), drawn again with the list on each change
 const needs = new Map();   // key -> { level: 'bad' | 'warn', text, section }
@@ -701,9 +710,9 @@ function showNode(key) {
 }
 async function start() {
   areaProps = null; needs.clear();   // a new start draws no old area again
-  $('public-line').hidden = false;
+  $('public-line').hidden = !$('public').hasAttribute('href');
   try { state = await (await fetch(at('/owner'), { cache: 'no-store' })).json(); }
-  catch (e) { $('who').textContent = 'This node did not answer: ' + e.message; return; }
+  catch (e) { $('who').textContent = 'This node did not answer: ' + e.message; loadEnd(); return; }
   boot(90, 'Signing in');
   showNode(state.node);
   // THE OWNER'S LOGIN IS ON THE ARENA SITE (kanban #687, the owner's playtest 2026-10-26 on 1.9.7: "the owner page still points to
@@ -714,7 +723,8 @@ async function start() {
     location.replace(OWNER_SITE + '#node=' + state.node + '&local=' + encodeURIComponent(location.origin));
     return;
   }
-  if (ON_SITE && NODE_KEY && state.node !== NODE_KEY) { $('who').textContent = 'The address announced for ' + NODE_KEY.slice(0, 16) + '… answers as another node (' + String(state.node).slice(0, 16) + '…). Try again in a minute.'; return; }
+  if (ON_SITE && NODE_KEY && state.node !== NODE_KEY) { $('who').textContent = 'The address announced for ' + NODE_KEY.slice(0, 16) + '… answers as another node (' + String(state.node).slice(0, 16) + '…). Try again in a minute.'; loadEnd(); return; }
+  publicLink(at('/Dashboard'), '← Node dashboard');
   let id = null;
   try { id = await identity(); }
   catch (e) { message({ title: 'Your Nostr login did not answer', err: e.message, buttons: [{ label: 'Try again', onClick: () => { me = null; start(); } }, { label: 'Sign out on this browser', onClick: forget }] }); return; }
