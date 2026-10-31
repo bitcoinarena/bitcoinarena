@@ -3,7 +3,7 @@
   "apps": {
     "arena-app-next-block": {
       "repo": "bitcoin-arena/arena-app-next-block",
-      "commit": "2c2c4498bbd59ae16b8ee21508a39a8b8926aa80",
+      "commit": "6f6a0e59de1e05913705dde7b13323aeee108d66",
       "paths": [
         "/*",
         "!/unity/",
