@@ -1437,7 +1437,9 @@
         return true;
       };
       let tries = 0; const wait = setInterval(() => { if (send() || ++tries > 60) clearInterval(wait); }, 1000);
-      return (name, data) => { held.push([name, data || null]); if (held.length > MOST) held.shift(); keep(); send(); };
+      // EVERY EVENT SAYS WHO PLAYED (the owner 2026-10-31: "Bei jedem event Nostr / normalen Usern")
+      const kind = () => { try { return window.localStorage.getItem('arena.nostr') ? 'nostr' : 'normal'; } catch { return 'normal'; } };
+      return (name, data) => { held.push([name, { ...(data || {}), user: kind() }]); if (held.length > MOST) held.shift(); keep(); send(); };
     })();
     window.ARENA_TRACK_SIZE = (sat) => { const n = Number(sat); return n < 1000 ? 'under 1k' : n < 10000 ? '1k-10k' : n < 100000 ? '10k-100k' : 'over 100k'; };
     // THE PAGE'S BUTTONS THAT LEAD SOMEWHERE
@@ -8303,7 +8305,7 @@
           window.ARENA_LOBBY_BACK = back;         // where the address goes back to once the run is over
           history.replaceState(null, '', location.pathname + withGame(r.join + '&play=1'));
           window.ARENA_JOIN_REFUSED = null;
-          const join = window.ARENA_JOIN = { state: 'joining', why: '', stage: '', round: id, kindKnown: true, free: !!r.free,
+          const join = window.ARENA_JOIN = { state: 'joining', why: '', stage: '', round: id, kindKnown: true, free: !!r.free, endMs: Date.parse(r.endTime) || 0,
             stakeSats: Number(r.stakeSats) || 0, next: !!next };
           const refuse = (why) => {
             // THE COUNTDOWN GOES WITH THE JOIN (V2, measured 0.0.2481: a lock refused after the round was shown loaded left
@@ -8798,17 +8800,32 @@
     // and refusal are read twice a second and said in a strip over the client - placing (with the step), locked and waiting for the
     // window's start, placed, or not placed and why. A finished line stays 8 s (a refusal until closed or 20 s).
     (() => {
-      // EACH ROUND'S ORDER, ONCE PER STEP (kanban #923): asked for, in, or refused, whichever way it was placed
+      // EACH ROUND, ONCE PER STEP (kanban #923, the owner 2026-10-31: "bezahlte Runde joined und bezahlte Runde bis zum Ende dabei gewesen"): asked for, refused, joined,
+      // then stayed to its end or left before it. A joined round is kept in the tab, so a reload does not lose it. One whose tab was closed gets neither end.
       const counted = new Set();
+      let inRounds = {}; try { inRounds = JSON.parse(sessionStorage.getItem('arena.track.rounds') || '{}'); } catch { inRounds = {}; }
+      const keepRounds = () => { try { sessionStorage.setItem('arena.track.rounds', JSON.stringify(inRounds)); } catch { /* this page only */ } };
       setInterval(() => {
-        const j = window.ARENA_JOIN; if (!j || !j.round || !j.kindKnown) return;
-        const step = j.state === 'joining' ? 'round-order' : j.state === 'refused' ? 'round-refused' : ['joined', 'entered', 'playing', 'picked'].includes(j.state) ? 'round-entered' : null;
+        const j = window.ARENA_JOIN;
+        // a next round may be joined just before this one ends: leaving counts only with more than 30 s still to go
+        for (const [id, r] of Object.entries(inRounds)) {
+          // exit game puts the lobby's address back: a round seen in the address and gone from it was left
+          const inAddress = new URLSearchParams(location.search).get('round') === id;
+          if (inAddress && !r.addr) { r.addr = true; keepRounds(); }
+          const here = !!j && j.round === id && !j.cancelled && (inAddress || !r.addr);
+          if (Date.now() < r.endMs && (here || Date.now() > r.endMs - 30000)) continue;
+          window.ARENA_TRACK((r.paid ? 'paid' : 'free') + (Date.now() >= r.endMs ? '-round-finished' : '-round-left'), { game: r.game });
+          delete inRounds[id]; keepRounds();
+        }
+        if (!j || !j.round || !j.kindKnown) return;
+        const step = j.state === 'joining' ? 'round-order' : j.state === 'refused' ? 'round-refused' : ['joined', 'entered', 'playing', 'picked'].includes(j.state) ? 'joined' : null;
         if (!step || counted.has(j.round + step)) return;
         counted.add(j.round + step);
         const data = { game: window.ARENA_GAME_NAME || 'none', paid: j.free ? 'no' : 'yes' };
         if (step === 'round-refused') data.why = String(j.why || 'none').replace(/[0-9a-f]{8,}/gi, '#').slice(0, 80);
-        window.ARENA_TRACK(step, data);
-        if (step === 'round-entered' && !j.free) window.ARENA_TRACK('paid-round', { game: data.game, stake: window.ARENA_TRACK_SIZE(j.stakeSats) });
+        if (step !== 'joined') return window.ARENA_TRACK(step, data);
+        window.ARENA_TRACK(j.free ? 'free-round-joined' : 'paid-round-joined', j.free ? { game: data.game } : { game: data.game, stake: window.ARENA_TRACK_SIZE(j.stakeSats) });
+        if (j.endMs && !inRounds[j.round]) { inRounds[j.round] = { endMs: j.endMs, paid: !j.free, game: data.game }; keepRounds(); }
       }, 1000);
       const box = document.getElementById('arena-join-status'); if (!box) return;
       const txt = box.querySelector('.txt'); let shownKey = '', doneAt = 0, closedKey = '';
@@ -8991,7 +9008,7 @@
         if (!sessionStorage.getItem('arena.track.opened')) {
           sessionStorage.setItem('arena.track.opened', '1');
           const q = new URLSearchParams(location.search);
-          window.ARENA_TRACK('app-open', { user: already ? 'existing' : 'new', link: q.get('round') ? 'round' : q.get('game') ? 'game' : 'plain', referred: q.get('ref') ? 'yes' : 'no' });
+          window.ARENA_TRACK('app-open', { visitor: already ? 'existing' : 'new', link: q.get('round') ? 'round' : q.get('game') ? 'game' : 'plain', referred: q.get('ref') ? 'yes' : 'no' });
           // SOMEONE WHO LOGGED IN WITH NOSTR AND CAME BACK (the owner 2026-10-31: "Nostr wallet recurring join"): this browser kept the login, so the screen above was not needed
           let nostr = null; try { nostr = JSON.parse(window.ARENA_BROWSER_STORE().getItem('arena.nostr') || 'null'); } catch { nostr = null; }
           if (already && nostr) window.ARENA_TRACK('nostr-wallet-join', { how: 'returning' });
