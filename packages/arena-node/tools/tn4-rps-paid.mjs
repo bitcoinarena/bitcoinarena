@@ -245,7 +245,9 @@ try {
   // THE SIGNER NODES OUTSIDE NODES (kanban #804, signer-addresses.mjs): asked for the claim key and handed the entries at their own addresses
   { const st = (seated.derived && seated.derived.seating) || {};
     const out = await addressBook([...nodes]).outside([...c.nodes, ...(st.game && st.game.seated) || [], ...(st.settlement && st.settlement.seated) || []]);
-    if (out.length) { nodes.push(...out); log({ step: 'signer nodes outside NODES', addresses: out }); } }
+    // a seated node that has since stopped (kanban #808: mactest19911b) answers nothing: the round plays on without it
+    const live = (await Promise.all(out.map((u) => fetch(`${u}/identity`, { signal: AbortSignal.timeout(8000) }).then((r) => (r.ok ? u : null), () => null)))).filter(Boolean);
+    if (out.length) { nodes.push(...live); log({ step: 'signer nodes outside NODES', addresses: out, answering: live.length }); } }
   // NOTHING PAID FOR A ROUND TOO FEW SEATS TOOK
   if (seated.signerNodes.length < receiptsNeeded(c.settlementSlots ?? c.gameVerifySlots)) throw new Error(`seated ${seated.signerNodes.length}, fewer than the round needs: nothing paid`);
   if (env.DRY) { log({ step: 'dry run: nothing paid' }); process.exit(0); }
