@@ -34675,7 +34675,10 @@ function oneTilePerGame(games) {
     const shown = versions[0];
     // `older`: the other versions, each with its own info - a description its developer signed for that version's id, which
     // the tile shows while the shown version carries none that stands (checkedGameInfoOfTile)
-    out.push(Object.assign({}, shown, { versions: versions.map((g) => g.id), older: versions.filter((g) => g !== shown) }));
+    // WHAT THE LOBBY LISTS, THE TILE COUNTS (the owner 2026-10-31: "keine Runden fuer next block", while the seats held v6's rounds and hosted v7
+    // with none): Next Block's lobby shows every version's rounds (ARENA_GAME_IDS), so its tile adds them up
+    const live = shown.name === 'nextblock' && shown.live ? { live: versions.reduce((n, g) => ({ rounds: n.rounds + (Number(g.live && g.live.rounds) || 0), players: n.players + (Number(g.live && g.live.players) || 0) }), { rounds: 0, players: 0 }) } : {};
+    out.push(Object.assign({}, shown, live, { versions: versions.map((g) => g.id), older: versions.filter((g) => g !== shown) }));
   }
   return out;
 }
