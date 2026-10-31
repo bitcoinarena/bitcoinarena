@@ -6666,6 +6666,10 @@
             offered: (window.ARENA_LOBBY_ROWS || []).filter((r) => r && Number(r.entryCloseMs) > now).map((r) => ({ id: r.id, entryCloseMs: Number(r.entryCloseMs) })),
             nowMs: now, periodMs: windowMs }) : null;
           window.ARENA_UNPLAYABLE = unplayable;
+          // AND THE ORDER FORM OFF while no window is playable: the sides and the sheet dimmed and not pressable (the client's own Buy is off already)
+          if (!d.getElementById('arena-unplayable-style')) { const st = d.createElement('style'); st.id = 'arena-unplayable-style';
+            st.textContent = 'body[data-arena-unplayable] .sides,body[data-arena-unplayable] .sheet{opacity:.45;pointer-events:none}'; d.head.appendChild(st); }
+          d.body.toggleAttribute('data-arena-unplayable', !!(empty && unplayable));
           if (!empty && !unplayable) { if (el) el.remove(); return; }
           if (!el) { el = d.createElement('div'); el.id = 'arena-expected'; el.style.cssText = 'margin-top:6px;font-size:14px;opacity:.85;line-height:1.4'; q.after(el); }
           el.dataset.why = unplayable ? unplayable.why : '';
