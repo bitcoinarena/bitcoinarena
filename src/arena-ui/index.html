@@ -1404,6 +1404,7 @@
   <link rel="stylesheet" href="games/nextblock/unity-page.css">
   <!-- its loading screen's markup is put in while the page is parsed (#boot): fetched from the start, beside the styles -->
   <link rel="preload" href="games/nextblock/loading-page.js" as="script">
+  <script defer src="https://seat.example.com:8443/script.js" data-website-id="024ff09e-c3a6-4dfd-bede-3163eb8be36a" data-domains="testnet.bitcoin-arena.io"></script>
 </head>
 <body>
   <!-- §24B: the wallet's own line, in the LOBBY and never over the drive. `arena-money` is hidden while a
@@ -7086,6 +7087,8 @@
             const f = String(p.federation).slice(0, 16);
             const c = [...window.ARENA_WALLETS].find(([fid]) => String(fid).startsWith(f));
             if (!c || typeof c[1].issuingDetail !== 'function') continue;
+            // said at once: the answer takes up to 12 s per transaction and the last answer would stand there meanwhile
+            if (!arrivingRecovered.has(f)) { const was = arrivingAll(); if (was[f] && was[f].truth) { was[f].truth = 'the wallet is asking the federation about this now.'; arrivingPut(was); if (window.ARENA_SUM_BALANCES) await window.ARENA_SUM_BALANCES(); } }
             const rows = JSON.parse(await c[1].issuingDetail());
             console.log('[arena] #908 arriving in ' + f.slice(0, 8) + ': ' + JSON.stringify(rows));
             const all = arrivingAll(); const r = all[f]; if (!r || !rows.length) continue;
@@ -7107,7 +7110,7 @@
             }
             if (truth !== (r.truth || '')) { r.truth = truth; arrivingPut(all); changed = true; }
           }
-        } catch (e) { console.log('[arena] #908 the arriving check failed: ' + (e && e.message ? e.message : e)); }
+        } catch (e) { console.log('[arena] #908 the arriving check failed: ' + (e && e.message ? e.message : e)); arrivingGone = 'The check of this money failed: ' + (e && e.message ? e.message : e); changed = true; }
         finally { arrivingChecking = false; }
         if (changed && window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES();
       };
