@@ -171,12 +171,14 @@ export class SetupStatus extends React.Component {
   constructor(props) { super(props); this.state = { hidden: hiddenFor(this.nodeOf(props)) }; }
   nodeOf(props = this.props) { return props.node || (props.status && props.status.node) || null; }
   hide() { try { localStorage.setItem(`${SETUP_HIDDEN}:${this.nodeOf()}`, '1'); } catch { /* storage blocked: hidden until the page reloads */ } this.setState({ hidden: true }); }
+  // AND BACK (kanban #849: the choice could not be undone)
+  show() { try { localStorage.removeItem(`${SETUP_HIDDEN}:${this.nodeOf()}`); } catch { /* storage blocked: shown until the page reloads */ } this.setState({ hidden: false }); }
   render() {
     const s = this.props.status;
     const rows = setupRowsOf(s);
     if (!rows.length) return null;
     const all = rows.every(([, , l]) => l.done);
-    if (all && (this.state.hidden || hiddenFor(this.nodeOf()))) return null;
+    if (all && (this.state.hidden || hiddenFor(this.nodeOf()))) return <p className="setup-tip"><button type="button" className="setup-hide" onClick={() => this.show()}>Show setup</button></p>;
     const problems = rows.filter(([, , l]) => l.problem).length;
     const done = rows.filter(([, , l]) => l.done).length;
     // ONLY WHAT WAS LEFT FOR LATER IS OPEN (kanban #711): said so, not "Complete" and not "n of m done"
