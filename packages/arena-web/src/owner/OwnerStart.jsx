@@ -31,7 +31,8 @@ export class OwnerStart extends React.Component {
     this.state = { screen: props.screen || 'welcome', err: '', words: null, seed: null, ask: [], typed: {}, phrase: '', code: '',
       bunker: '', nsec: '', qr: null, uri: '', account: null, saved: false, busy: false, copied: false };
   }
-  go(screen, more = {}) { this.setState({ screen, err: '', ...more }); }
+  // what was typed does not outlive its screen: a phrase or an nsec left by Back stayed in the field and the state (kanban #844)
+  go(screen, more = {}) { this.setState({ screen, err: '', phrase: '', nsec: '', bunker: '', ...more }); }
   fail(e) { this.setState({ err: e && e.message ? e.message : String(e), busy: false }); }
 
   // 1a. NEW WORDS: shown once, written down, three of them typed back (a different three each time)
