@@ -841,6 +841,16 @@ impl LockClient {
         })).collect()).to_string())
     }
 
+    /// WHAT THE ARRIVING MONEY WAITS FOR (kanban #908): each output still being issued, its transaction, and whether the federation
+    /// has accepted that transaction, asked now. Answers [{"txid", "msat", "accepted"}]; a restore's re-issue has no txid.
+    #[wasm_bindgen(js_name = issuingDetail)]
+    pub async fn issuing_detail(&self) -> Result<String, JsError> {
+        let mint = self.client.get_first_module::<fedimint_mintv2_client::MintClientModule>().map_err(js)?;
+        Ok(serde_json::Value::Array(mint.blwp_issuing_detail().await.into_iter().map(|(txid, msat, accepted)| serde_json::json!({
+            "txid": txid, "msat": msat.msats, "accepted": accepted,
+        })).collect()).to_string())
+    }
+
     /// E-CASH IN: reissued into this wallet; answers once the federation has reissued it - {"state": "Success" |
     /// "Rejected" (already spent) | "AlreadyReceived"}.
     #[wasm_bindgen(js_name = receiveEcash)]
