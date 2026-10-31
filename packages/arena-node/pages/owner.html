@@ -369,17 +369,28 @@ const O = window.ArenaOwner;
 boot(70, 'Asking your node');
 const STORE = ON_SITE ? 'arena-owner-seed:node:' + NODE_KEY : 'arena-owner-seed:' + BASE;   // per node address (on the site: per node key), in this browser only
 const $ = (id) => document.getElementById(id);
-const readSeed = () => { try { const h = localStorage.getItem(STORE); return h && /^[0-9a-f]{64}$/.test(h) ? C.fromHex(h) : null; } catch { return null; } };
-const keepSeed = (seed) => { try { localStorage.setItem(STORE, C.toHex(seed)); return true; } catch { return false; } };
+// NOTHING IS WRITTEN BEFORE THE NODE TAKES THE KEY (kanban #832: words typed on a node with another owner stayed in localStorage in the clear
+// next to "This key is not this node's owner"): what the way in hands over is held here, in this page's memory, and goes to localStorage
+// only once the node has taken a login signed with it (keepHeld, in area()); a key the node refuses is dropped in start(). The installer's
+// hand-over above is not held: it comes from the owner's own installer, before the node can be asked, and writes the keys of every node of
+// the machine (kanban #713)
+let held = null;   // { seed } | { nostr }
+const readSeed = () => { if (held) return held.seed || null; try { const h = localStorage.getItem(STORE); return h && /^[0-9a-f]{64}$/.test(h) ? C.fromHex(h) : null; } catch { return null; } };
+const holdSeed = (seed) => { held = { seed }; };
 // LOGIN WITH NOSTR (2026-10-10: "a login with Nostr feature for node claiming instead of generating your
 // own seed"): the owner key is the Nostr key itself. An nsec signs owner requests as the words' key does; an extension
 // (NIP-07) or a remote signer (NIP-46: bunker://, or a code a phone signer scans) signs each request as a Nostr event.
 // Kept per node address in this browser: { how: 'nsec', secret } | { how: 'extension', pubkey } | { how: 'bunker', bunker, client }
 const NSTORE = ON_SITE ? 'arena-owner-nostr:node:' + NODE_KEY : 'arena-owner-nostr:' + BASE;
 
-const readNostr = () => { try { const j = JSON.parse(localStorage.getItem(NSTORE) || 'null'); return j && j.how ? j : null; } catch { return null; } };
-const keepNostr = (o) => { try { localStorage.setItem(NSTORE, JSON.stringify(o)); return true; } catch { return false; } };
-const forget = () => { try { localStorage.removeItem(STORE); localStorage.removeItem(NSTORE); } catch {} me = null; start(); };
+const readNostr = () => { if (held) return held.nostr || null; try { const j = JSON.parse(localStorage.getItem(NSTORE) || 'null'); return j && j.how ? j : null; } catch { return null; } };
+const holdNostr = (o) => { held = { nostr: o }; };
+// false when the browser keeps nothing (private mode): the login then lasts as long as this tab, and the Overview says so
+const keepHeld = () => {
+  if (!held) return true;
+  try { if (held.seed) localStorage.setItem(STORE, C.toHex(held.seed)); else localStorage.setItem(NSTORE, JSON.stringify(held.nostr)); held = null; return true; } catch { return false; }
+};
+const forget = () => { held = null; try { localStorage.removeItem(STORE); localStorage.removeItem(NSTORE); } catch {} me = null; start(); };
 let state = null, me = null;     // me: { how, pubkey, sign(action, args) -> request, devSeed, words }
 async function identity() {
   if (me) return me;
@@ -420,10 +431,10 @@ const mount = (id, how, props) => { const el = $(id); if (el._react) el._react.u
 
 // 1. THE WAY IN (kanban #564: drawn by React, OwnerStart): the welcome - new 24 words, restore them, or Login with Nostr - and 2. the
 // claim with the code from the node's log. The page hands over what it keeps and how; React draws the screens
-const startProps = () => ({ client: C, keepSeed, keepNostr, random32: () => globalThis.crypto.getRandomValues(new Uint8Array(32)),
+const startProps = () => ({ client: C, holdSeed, holdNostr, random32: () => globalThis.crypto.getRandomValues(new Uint8Array(32)),
   claim: async (code) => post('/owner/claim', signed('claim', { code })), onIn: () => { me = null; start(); },
-  onNostr: (o) => { window.OWNER_NOSTR = o; }, onConnectUri: (u) => { window.OWNER_CONNECT_URI = u; }, onNewNsec: (n) => { window.OWNER_NEW_NSEC = n; } });
-// a node with an owner asks for that owner's words or Nostr key, never offers new words (playtest 2026-10-25)
+  onNostr: (o) => { window.OWNER_NOSTR = o; }, onConnectUri: (u) => { window.OWNER_CONNECT_URI = u; } });
+// a node with an owner asks for that owner's words or Nostr key, never offers new words (playtest 2026-10-25) or a new Nostr account (kanban #833)
 function welcome() { mount('view', 'mountStart', { ...startProps(), screen: 'welcome', claimed: !!(state && state.claimed) }); }
 // (kanban #550, 2026-10-20: "show the complete path to the file instead of showing it cryptic"): the node names the file's full path
 function claim(mine, file) { mount('view', 'mountStart', { ...startProps(), screen: 'claim', mine, claimFile: file }); }
@@ -453,6 +464,7 @@ async function area() {
   let me;     // the node's answer to the login, as before (the identity is the outer \`me\` behind signed())
   try { me = await post('/owner/login', signed('login')); }
   catch (e) { message({ title: 'Could not sign in', err: e.message, buttons: [{ label: 'Try again', onClick: start }] }); return; }
+  const kept = keepHeld();   // the node took it: this is the owner's key (kanban #832)
   // ONE LINE PER APP (kanban #553, 2026-10-20: "why does btc-updown-15m come dozens of times"): a seat hosts every version it
   // still has rounds for; the owner sees each app once, at its newest version
   const games = newestApps(me.games || []);
@@ -474,6 +486,7 @@ async function area() {
   drawArea();
   // the public dashboard is the menu's last entry now (kanban #733): the line under the page is for the screens before the login
   $('public-line').hidden = true;
+  if (!kept) need('kept', 'warn', 'This browser does not keep your login (private mode?): you sign in again after a reload.', 'login');
   setupPanel();
   rolesPanel();
   if (who.how === 'words') keySwitchPanel();   // a node of 24 words may move to their key (kanban #650); a Nostr login has no words here
@@ -709,8 +722,11 @@ async function start() {
   const mine = id.pubkey;
   if (!state.claimed) return claim(mine, state.claimFile);
   if (state.owner !== mine) {
-    message({ title: 'This key is not this node\'s owner', text: 'This node belongs to another key. Sign in with the right 24 words or Nostr key, or forget this one.',
-      buttons: [{ label: 'Sign out on this browser', onClick: forget }] }); return;
+    const typed = !!held;
+    if (typed) { held = null; me = null; }   // never kept, and gone from memory too (kanban #832)
+    message({ title: 'This key is not this node\'s owner', text: typed ? 'This node belongs to another key. Nothing was kept in this browser. Try the right 24 words or Nostr key.'
+      : 'This node belongs to another key. Sign in with the right 24 words or Nostr key, or forget this one.',
+      buttons: [{ label: typed ? 'Try another key' : 'Sign out on this browser', onClick: forget }] }); return;
   }
   return area();
 }
