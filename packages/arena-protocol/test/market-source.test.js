@@ -14,7 +14,7 @@ const BODY = { gameName: 'btc-100k', gameDevPubkey: b32(1), version: 1, parentMa
   attestDraw: { count: 7, threshold: 5 }, requiredProtocolVersion: 2 };
 const read = { id: 'page', socket: false, url: 'https://api.coinbase.com/v2/prices/BTC-USD/spot', subscribe: '' };
 const URL_SOURCE = { kind: MARKET_SOURCE_KIND.URL, reads: [read], read: MARKET_READ.JSON, path: 'data.amount', rule: MARKET_RULE.ABOVE, level: '100000' };
-const CODE_SOURCE = { kind: MARKET_SOURCE_KIND.CODE, reads: [{ ...read, id: 'btc' }, { ...read, id: 'binance', url: 'https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT' }], code: 'function decide() {\n  return 0;\n}', checkVersion: 1 };
+const CODE_SOURCE = { kind: MARKET_SOURCE_KIND.CODE, reads: [{ ...read, id: 'btc' }, { id: 'feed', socket: true, url: 'wss://ws-feed.exchange.coinbase.com', subscribe: '{"type":"subscribe"}' }], code: 'function decide() {\n  return 0;\n}', checkVersion: 1 };
 
 test('each source comes back as written, and only after its marker', () => {
   for (const source of [URL_SOURCE, CODE_SOURCE]) {
@@ -35,7 +35,6 @@ test('what does not fit is refused by name', () => {
     [body({ ...URL_SOURCE, reads: [{ ...read, url: 'http://a.example/' }] }), /Only https/],
     [body({ ...URL_SOURCE, reads: [{ ...read, url: 'https://127.0.0.1/' }] }), /public host/],
     [body({ ...URL_SOURCE, reads: [read, { ...read, id: 'b' }] }), /one address/],
-    [body({ ...CODE_SOURCE, reads: [{ ...read, id: 'feed', socket: true, url: 'wss://ws-feed.exchange.coinbase.com' }] }), /socket decides nothing/],
     [body({ ...CODE_SOURCE, reads: [read, read] }), /of its own/],
     [body({ ...CODE_SOURCE, reads: [1, 2, 3, 4].map((n) => ({ ...read, id: `a${n}` })) }), /at most 3/],
     [body({ ...CODE_SOURCE, code: 'x'.repeat(40000) }), /KB/],
