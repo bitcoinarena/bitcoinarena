@@ -22,17 +22,6 @@ export const TEMPLATES = Object.freeze([
   { id: 'blank', name: 'Blank', hint: 'Start empty', icon: '+', draft: {} },
 ]);
 
-// KNOWN ADDRESSES THAT ANSWER (the owner 2026-10-31: "samples ... vom Bekannten funktionieren URLs z.B. Coinbase Binance Kraken"): each measured from a browser on the site
-export const SAMPLES = Object.freeze([
-  { name: 'Coinbase', hint: 'BTC/USD', url: 'https://api.coinbase.com/v2/prices/BTC-USD/spot', read: 'json', path: 'data.amount' },
-  { name: 'Binance', hint: 'BTC/USDT', url: 'https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT', read: 'json', path: 'price' },
-  { name: 'Bitstamp', hint: 'BTC/USD', url: 'https://www.bitstamp.net/api/v2/ticker/btcusd/', read: 'json', path: 'last' },
-  { name: 'mempool.space', hint: 'Block height', url: 'https://mempool.space/api/blocks/tip/height', read: 'text', path: '' },
-  { name: 'blockchain.info', hint: 'Market price', url: 'https://api.blockchain.info/stats', read: 'json', path: 'market_price_usd' },
-  { name: 'ECB', hint: 'EUR/USD rate', url: 'https://data-api.ecb.europa.eu/service/data/EXR/D.USD.EUR.SP00.A?lastNObservations=1&format=jsondata', read: 'text', path: '' },
-  { name: 'Polymarket', hint: 'A settled market', url: 'https://gamma-api.polymarket.com/markets?id=5946254', read: 'json', path: '0.outcomePrices' },
-]);
-
 // WHAT CODE CAN DO, AS EXAMPLES (the owner 2026-10-31): the node does the reading, the code decides
 export const EXAMPLES = Object.freeze([
   { id: 'page', name: 'Read a page', reads: [{ id: 'btc', kind: 'http', url: 'https://api.coinbase.com/v2/prices/BTC-USD/spot', subscribe: '' }],
