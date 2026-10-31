@@ -148,3 +148,20 @@ test('reach on a tailnet (kanban #734): not reached directly, Funnel is the defa
   assert.match(html, /<input type="radio" name="rm" checked="" value="tailscale"\/>/, 'Funnel is chosen');
   assert.doesNotMatch(html, /Reachable from the internet/);
 });
+
+// kanban #814, the owner: "bitcoin core is synced and running. the message in the screenshot is confusing"
+test('chain: at 100 % the step says synced, and neither "syncing" nor the wait of hours', () => {
+  const c = driven(ChainStep, { st: { electrum }, post: async () => ({ ok: true }), get: async () => ({ ok: true }), reload: () => {} });
+  const rows = (synced) => ({ ok: true, networks: { testnet4: { ok: true, blocks: 158220, headers: 158220, progress: synced ? 1 : 0.4, synced, etaMs: 0 } } });
+  c.setState({ sync: rows(false) });
+  const during = renderToStaticMarkup(c.installForm());
+  assert.match(during, /installed and syncing/);
+  assert.match(during, /takes hours on testnet4/);
+  c.setState({ sync: rows(true) });
+  const done = renderToStaticMarkup(c.installForm());
+  assert.match(done, /installed and synced\./);
+  assert.match(done, /connecting to it and goes on by itself/);
+  assert.doesNotMatch(done, /syncing|takes hours|Bookmark this page|every few seconds/);
+  c.setState({ sync: { ...rows(true), chainSaved: false, chainWhy: 'no wallet' } });
+  assert.match(renderToStaticMarkup(c.installForm()), /could not use it yet: no wallet/);
+});

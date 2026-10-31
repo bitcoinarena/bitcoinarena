@@ -107,12 +107,15 @@ export class ChainStep extends React.Component {
   }
   installForm() {
     const { plan, dir, prune, mainnet, installing, sync } = this.state;
+    // SYNCED SAYS SYNCED (kanban #814, the owner: "bitcoin core is synced and running. the message in the screenshot is confusing"): at 100 %
+    // neither "syncing" nor the wait of hours is true any more
+    const t4Synced = !!(sync && sync.networks && sync.networks.testnet4 && sync.networks.testnet4.synced);
     if (sync) return (
       <div id="sync">
-        <p className="sub">Bitcoin Core is installed and syncing.</p>
+        <p className="sub">{t4Synced ? 'Bitcoin Core is installed and synced.' : 'Bitcoin Core is installed and syncing.'}</p>
         {/* THE INTERIM CHAIN SAID AS IT IS (kanban #635, the owner's playtest 2026-10-25: the step, opened again, said no Electrum server had
             answered while one had) */}
-        {this.props.st.coreSync && this.props.st.coreSync.interim
+        {t4Synced ? null : this.props.st.coreSync && this.props.st.coreSync.interim
           ? <p className="sub">Until the sync is done, your node reads the chain from a public Electrum server ({this.props.st.chain ? `${this.props.st.chain.host}:${this.props.st.chain.port}` : 'chosen by setup'}) and switches to this Bitcoin Core by itself. Setup does not wait for it.</p>
           : <p className="warn">No public Electrum server answered, so setup has to wait for the sync this time. That takes hours on testnet4. <b>Bookmark this page</b> and keep the installer running. Setup goes on here by itself once testnet4 is synced.</p>}
         {this.syncRows()}
@@ -120,7 +123,7 @@ export class ChainStep extends React.Component {
         {sync.networks && sync.networks.testnet4 && sync.networks.testnet4.synced && sync.chainSaved === false
           ? <div className="msg bad" id="sync-why">Bitcoin Core is synced, but setup could not use it yet: {sync.chainWhy || 'no answer'}.
             <button type="button" className="ghost" id="sync-retry" onClick={() => { clearTimeout(this.timer); this.watch(); }}>Try again</button></div>
-          : <p className="sub">Setup checks again by itself every few seconds.</p>}
+          : <p className="sub">{t4Synced ? 'Setup is connecting to it and goes on by itself.' : 'Setup checks again by itself every few seconds.'}</p>}
       </div>);
     if (!plan) return <p className="sub">Checking this computer…</p>;
     if (plan.installed) return <p className="sub">Bitcoin Core is already installed here (<code>{plan.installed}</code>). Choose <b>My Bitcoin Core</b> and connect it.</p>;

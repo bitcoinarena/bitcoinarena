@@ -252,10 +252,11 @@ export class BondStep extends React.Component {
   custody() { return (this.props.st.roles || []).includes('custody'); }
   body() { return this.custody() ? { pegInSats: Number(this.state.pegIn) } : {}; }
   async check({ quiet = false } = {}) {
-    if (!quiet) this.setState({ busy: true });
+    // THE CHECK SHOWS WHILE IT RUNS (kanban #813, the owner: "some indication that the balance check is being performed"), the automatic one too
+    this.setState({ checking: true, ...(quiet ? {} : { busy: true }) });
     const r = await this.props.post('/api/bond/check', this.body());
     if (this.gone) return;
-    this.setState({ busy: false });
+    this.setState({ checking: false, checkedAt: Date.now(), ...(quiet ? {} : { busy: false }) });
     // an automatic ask that finds nothing yet says nothing: the step's own text already says what to send
     if (quiet && (!r.ok || !(r.found || r.sats || r.enough))) return;
     if (!r.ok) return this.setState({ msg: said(r), found: null });
@@ -317,7 +318,7 @@ export class BondStep extends React.Component {
   }
   render() {
     const st = this.props.st; const w = st.wallet || {}; const later = !!st.custodyLater;
-    const { pegIn, need, found, busy, msg } = this.state;
+    const { pegIn, need, found, busy, msg, checking, checkedAt } = this.state;
     return (
       <div className="aw">
         <h2>13. The bond</h2>
@@ -329,7 +330,9 @@ export class BondStep extends React.Component {
         {this.custody() ? <div>
           {later ? null : this.covers()}
           <label htmlFor="b-pegin">Peg-in for the gateway (sat)</label><input id="b-pegin" value={pegIn} onChange={(e) => this.setState({ pegIn: e.target.value })} /></div> : null}
-        <button type="button" className="ghost" id="b-check" disabled={busy} onClick={() => this.check()}>Check for my deposit</button>
+        <button type="button" className="ghost" id="b-check" disabled={busy || checking} onClick={() => this.check()}>{checking ? 'Checking…' : 'Check for my deposit'}</button>
+        <p className="sub" id="b-checking">{checking ? 'Checking your node\'s wallet for the deposit…'
+          : found && found.enough ? ' ' : checkedAt ? `Last checked ${new Date(checkedAt).toLocaleTimeString()}. Setup checks again by itself.` : ' '}</p>
         <Msg r={msg} />
         {found && found.lock ? <p className="sub">{lockText(found.lock)}</p> : null}
         <button type="button" id="b-post" disabled={busy || !(found && found.enough)} onClick={this.postBond}>{later ? 'Update my bond for custody' : 'Post the bond'}</button>
