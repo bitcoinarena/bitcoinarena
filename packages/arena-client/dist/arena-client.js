@@ -614,7 +614,9 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23]);
+/** EVERY BONDED NODE HOSTS A MARKET WITH A SOURCE (kanban #920): its rounds say so in their question (`event.allBonded`), so no node's advertisement has to name each new market. */
+const SOURCE_HOSTS_VERSION = 23;
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
@@ -2111,6 +2113,11 @@ function encodeRoundContract(c) {
       if (!(version >= SCALAR_TEMPLATE_VERSION)) throw new Error(`a round names its own scalar bounds from protocol version ${SCALAR_TEMPLATE_VERSION} on`);
       w.i64(c.event.scalar.low); w.i64(c.event.scalar.high);
     }
+    // A MARKET WITH A SOURCE IS HOSTED BY EVERY BONDED NODE (kanban #920): one byte after the rest, inside the tail, so a question without it keeps its bytes
+    if (c.event.allBonded === true) {
+      if (!(version >= SOURCE_HOSTS_VERSION)) throw new Error(`a round opens to every bonded node from protocol version ${SOURCE_HOSTS_VERSION} on`);
+      w.u8(1);
+    }
     w.u16(w.len - start + 3);
     w.u8(EVENT_MARKER);
     return w.finish();
@@ -2189,7 +2196,8 @@ function contractEventTail(bytes, left) {
     const r = new Reader(bytes.subarray(end - size + 1, end - 3));
     const ev = { question: r.str(), outcomes: r.vec((rr) => rr.str()), resolveAtMs: r.u64() };
     // a scalar template's round (2026.0.8): its bounds, two i64, are what is left - the decoder holds the version to them
-    if (r.b.length - r.at === 16) ev.scalar = { low: r.i64(), high: r.i64() };
+    if (r.b.length - r.at >= 16) ev.scalar = { low: r.i64(), high: r.i64() };
+    if (r.b.length - r.at === 1) { if (r.u8() !== 1) return null; ev.allBonded = true; }
     r.end();
     if (!contractEventFits(ev).ok) return null;
     return { event: ev, size };
@@ -2339,6 +2347,7 @@ function decodeRoundContract(bytes) {
     r.bytes(asked.size);                                      // read whole by contractEventTail
     c.event = asked.event;
     if (!(c.protocolVersion >= EVENT_VERSION)) throw new Error(`a round asks its own question from protocol version ${EVENT_VERSION} on`);
+    if (c.event.allBonded && !(c.protocolVersion >= SOURCE_HOSTS_VERSION)) throw new Error(`a round opens to every bonded node from protocol version ${SOURCE_HOSTS_VERSION} on`);
     if (c.event.scalar && !(c.protocolVersion >= SCALAR_TEMPLATE_VERSION)) throw new Error(`a round names its own scalar bounds from protocol version ${SCALAR_TEMPLATE_VERSION} on`);
     if (c.seriesId !== undefined) throw new Error('a round that asks its own question is no round of a series');
   }
@@ -10592,6 +10601,8 @@ function censusMinimumFor(contract) {
 function eligibleFor(e, contract, role) {
   if (!(e.roles || []).includes(role)) return false;
   if (poolOfRole(role) !== GAME_VERIFY) return true;
+  // A MARKET WITH A SOURCE (kanban #920): every bonded node hosts it, whatever its advertisement lists. The whitelist of sources is another matter: the ballot's (#921)
+  if (contract && contract.event && contract.event.allBonded === true) return true;
   return hostsGame(e, contract && contract.gameId);
 }
 
@@ -14612,6 +14623,158 @@ function mergeServedRounds(held) {
     conflicts: [...conflicts] };
 }
 
+// ---- arena-protocol/src/market-check.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// A MARKET'S CODE MUST BE READABLE (kanban #920, the owner 2026-10-31: "alles was verschleiert wird oder was Code verbirgt oder komprimiert etc. ist
+// verboten"; docs/MARKET-CREATOR.md). One rule for the editor and every node, so all of them answer alike. It reads the parsed tree, never the text
+// alone. It does not prove code safe: the sandbox does that. It keeps code a person can read, and one failed rule refuses the market.
+// `parse` is acorn's, handed in: this file stays free of imports and runs in the page and on a node.
+
+const CHECK_VERSION = 1;
+const CODE_MAX_BYTES = 32768, LINE_MAX = 200, STRING_MAX = 200;
+
+const FORBIDDEN = new Set(['eval', 'Function', 'AsyncFunction', 'GeneratorFunction', 'globalThis', 'window', 'self', 'global', 'process', 'require', 'module', 'exports',
+  'WebAssembly', 'Proxy', 'Reflect', 'fetch', 'XMLHttpRequest', 'WebSocket', 'Worker', 'importScripts', 'constructor', 'prototype', '__proto__', '__defineGetter__', '__defineSetter__',
+  'setTimeout', 'setInterval', 'queueMicrotask', 'atob', 'btoa', 'fromCharCode', 'fromCodePoint', 'unescape', 'decodeURIComponent', 'decodeURI', 'Buffer', 'TextDecoder', 'Date', 'performance', 'crypto']);
+const HIDDEN_CHARS = /[​-‏‪-‮⁠-⁤⁦-⁩﻿]/;
+
+/** Shannon entropy of a text, in bits per character. */
+function entropy(text) {
+  const n = new Map(); for (const c of text) n.set(c, (n.get(c) || 0) + 1);
+  let h = 0; for (const v of n.values()) { const p = v / text.length; h -= p * Math.log2(p); }
+  return h;
+}
+
+function packedText(s) {
+  if (s.length > STRING_MAX) return `a string over ${STRING_MAX} characters`;
+  if (s.length >= 40 && /^[A-Za-z0-9+/_=-]+$/.test(s)) return 'packed text (Base64 or hex)';
+  if (s.length >= 40 && !/\s/.test(s) && !/^https?:/.test(s) && entropy(s) > 4.6) return 'text that looks packed';
+  return null;
+}
+
+function walk(node, visit, parent = null) {
+  if (!node || typeof node.type !== 'string') return;
+  visit(node, parent);
+  for (const k of Object.keys(node)) {
+    const v = node[k];
+    if (Array.isArray(v)) { for (const x of v) if (x && typeof x.type === 'string') walk(x, visit, node); } else if (v && typeof v.type === 'string') walk(v, visit, node);
+  }
+}
+
+/** The market's code against every rule: { ok, version, problems: [{ rule, line, why }] }. */
+function checkMarketCode(code, parse, entry = 'decide') {
+  const problems = []; const say = (rule, line, why) => { if (problems.length < 30) problems.push({ rule, line, why }); };
+  const text = String(code);
+  if (new TextEncoder().encode(text).length > CODE_MAX_BYTES) say('size', 1, `Over ${CODE_MAX_BYTES / 1024} KB`);
+  text.split('\n').forEach((l, i) => {
+    if (l.length > LINE_MAX) say('minified', i + 1, `Line over ${LINE_MAX} characters`);
+    if (HIDDEN_CHARS.test(l)) say('hidden', i + 1, 'Invisible characters');
+  });
+  let tree;
+  try { tree = parse(text, { ecmaVersion: 2022, sourceType: 'script', locations: true }); } catch (e) { say('parse', (e.loc && e.loc.line) || 1, 'Does not parse: ' + String(e.message).replace(/ \(\d+:\d+\)$/, '')); return { ok: false, version: CHECK_VERSION, problems }; }
+  const top = tree.body.filter((n) => n.type === 'FunctionDeclaration' && n.id.name === entry);
+  if (top.length !== 1) say('decide', 1, entry === 'decide' ? 'Needs one function decide(reads, market)' : `Needs one function ${entry}`);
+  for (const n of tree.body) if (!['FunctionDeclaration', 'VariableDeclaration'].includes(n.type)) say('top', n.loc.start.line, 'Only functions and constants at the top');
+  let names = 0, short = 0;
+  walk(tree, (n, parent) => {
+    const line = n.loc.start.line;
+    if (n.type === 'Identifier' || n.type === 'PrivateIdentifier') {
+      const propertyName = parent && parent.type === 'MemberExpression' && parent.property === n && !parent.computed;
+      const keyName = parent && parent.type === 'Property' && parent.key === n && !parent.computed;
+      if (FORBIDDEN.has(n.name)) { if (!keyName || n.name === '__proto__') say('forbidden', line, `${n.name} is not allowed`); }
+      if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(n.name)) say('hidden', line, 'Names in plain letters only');
+      if (text.slice(n.start, n.end) !== n.name) say('hidden', line, 'Escapes in a name');
+      if (!propertyName && !keyName) { names++; if (n.name.length === 1) short++; }
+    }
+    if (n.type === 'Literal' && typeof n.value === 'string') {
+      if (/\\[xu0-7]/.test(n.raw)) say('hidden', line, 'Escapes in a string');
+      if (FORBIDDEN.has(n.value)) say('forbidden', line, `${n.value} is not allowed`);
+      const p = packedText(n.value); if (p) say('packed', line, p);
+    }
+    if (n.type === 'TemplateElement') { if (/\\[xu0-7]/.test(n.value.raw)) say('hidden', line, 'Escapes in a string'); const p = packedText(n.value.cooked || ''); if (p) say('packed', line, p); }
+    if (n.type === 'Literal' && n.regex && n.regex.pattern.length > 100) say('packed', line, 'A very long pattern');
+    if (n.type === 'ImportExpression' || n.type === 'MetaProperty') say('forbidden', line, 'Loading code is not allowed');
+    if (n.type === 'WithStatement' || n.type === 'DebuggerStatement') say('forbidden', line, `${n.type === 'WithStatement' ? 'with' : 'debugger'} is not allowed`);
+    if (n.type === 'TaggedTemplateExpression') say('forbidden', line, 'Tagged templates are not allowed');
+    if (n.type === 'ThisExpression') say('forbidden', line, 'this is not allowed');
+    if (n.type === 'AwaitExpression' || n.type === 'YieldExpression' || ((n.type === 'FunctionDeclaration' || n.type === 'FunctionExpression' || n.type === 'ArrowFunctionExpression') && (n.async || n.generator))) say('forbidden', line, 'Async code is not allowed');
+    // list[list.length - 1] is arithmetic; only text put together to name a property hides anything
+    if (n.type === 'MemberExpression' && n.computed && n.property.type !== 'Literal') {
+      let text2 = false;
+      walk(n.property, (x) => { if (x.type === 'TemplateLiteral' || (x.type === 'Literal' && typeof x.value === 'string')) text2 = true; });
+      if (text2) say('hidden', line, 'A property named by a computed text');
+    }
+    if (n.type === 'MemberExpression' && !n.computed && n.object.type === 'Identifier' && n.object.name === 'Math' && n.property.name === 'random') say('forbidden', line, 'Math.random gives each node another answer');
+  });
+  if (names >= 20 && short / names > 0.6) say('minified', 1, 'Mostly one-letter names');
+  return { ok: problems.length === 0, version: CHECK_VERSION, problems };
+}
+
+// ONLY LISTED SOURCES (the owner 2026-10-31: "Ein attacker kann eine beliebige Seite angeben die ein manipuliertes Ergebnis bereitstellt"): 5 of 7 is no defence when all seven read
+// one page its author controls, so a market may read only hosts that no market creator runs. This is the list's start; the bonded nodes change it by ballot
+// (class SOURCES, ballot.js), each change a full new list, and a round is judged by the list live at its census height, so every seat judges it alike.
+// From docs/MARKET-SOURCES.md, with the owner's ruling of 2026-10-31: "Tu Coinbase und und bit stamp ein. Das Projekt ist nicht kommerziell also Binance rein. Polymarket auch rein"
+const MARKET_HOSTS = Object.freeze([
+  'api.coinbase.com', 'api.exchange.coinbase.com', 'ws-feed.exchange.coinbase.com', 'www.bitstamp.net', 'api.binance.com', 'data-api.binance.vision', 'gamma-api.polymarket.com',
+  'mempool.space', 'blockstream.info', 'api.blockchain.info',
+  'data-api.ecb.europa.eu', 'markets.newyorkfed.org', 'api.fiscaldata.treasury.gov', 'ec.europa.eu', 'api.beta.ons.gov.uk', 'www.ons.gov.uk', 'api.bls.gov',
+  'api.weather.gov', 'aviationweather.gov', 'data.geo.admin.ch', 'www.bundeswahlleiterin.de']);
+function marketHostProblem(text, hosts = MARKET_HOSTS) {
+  let h; try { h = new URL(String(text).trim()).hostname.toLowerCase(); } catch { return 'Not a full address'; }
+  return hosts.includes(h) ? null : `${h} is not a listed source`;
+}
+
+// NO HOST WITHOUT AN EXAMPLE (the owner 2026-10-31: "Die Votings für neue Quellen müssen auch ein example beinhalten und das wird live in der ui validiert und getestet, ohne gehts nicht raus"):
+// the list a proposal carries names, per host, a working read and its documentation, so a voter can try what is voted on and a node can refuse what does not answer.
+// A SOCKET THAT NEEDS STARTING (the owner 2026-10-31: "braucht es eine code section im Voting dass es korrekt initialisiert wird. Hier wieder die sandbox und Blockierung von
+// malicious code"): `init`, one line of JSON text in the list, is code under the same check and in the same sandbox as a market's. Voted with the host, it starts every socket read of that host.
+const FIELDS = ['host', 'url', 'read', 'path', 'docs', 'init'];
+const fieldOut = (e, k) => (k === 'init' ? (e.init ? JSON.stringify(String(e.init)) : '') : String(e[k] ?? '').replace(/[\t\r\n]+/g, ' '));
+const fieldIn = (x, k) => (k === 'init' ? (x ? JSON.parse(x) : '') : x);
+/** The list as a proposal carries it: sorted by host, each host once, its fields tab-separated, so one list has one hash. */
+const encodeSourceList = (entries) => new TextEncoder().encode([...new Map(entries.map((e) => [e.host, e])).values()].sort((a, b) => (a.host < b.host ? -1 : 1))
+  .map((e) => FIELDS.map((k) => fieldOut(e, k)).join('\t')).join('\n'));
+const decodeSourceList = (bytes) => new TextDecoder().decode(bytes).split('\n').filter(Boolean).map((l) => Object.fromEntries(l.split('\t').map((x, i) => [FIELDS[i], fieldIn(x, FIELDS[i])])));
+const decodeHostList = (bytes) => decodeSourceList(bytes).map((e) => e.host);
+/** Why these bytes are no list of hosts a market may read, or null. */
+function hostListProblem(bytes) {
+  let list; try { list = decodeSourceList(bytes); } catch { return 'A list is sorted, each host once'; }
+  if (!list.length) return 'A list names at least one host';
+  if (list.length > 256) return 'A list names at most 256 hosts';
+  const canonical = encodeSourceList(list);
+  if (canonical.length !== bytes.length || canonical.some((x, i) => x !== bytes[i])) return 'A list is sorted, each host once';
+  for (const e of list) {
+    if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(e.host) || marketUrlProblem(`https://${e.host}/`)) return `${e.host} is not a public host name`;
+    const socket = String(e.url).startsWith('wss:');
+    if (marketUrlProblem(e.url, socket) || new URL(e.url).hostname !== e.host) return `${e.host} needs an example address on that host`;
+    if (!['json', 'regex', 'text'].includes(e.read) || (e.read !== 'text' && !e.path)) return `${e.host} needs an example that names what it reads`;
+    if (!/^https:\/\/\S+$/.test(String(e.docs))) return `${e.host} needs a link to its documentation`;
+    if (e.init && !socket) return `${e.host} starts no socket, so it takes no init code`;
+  }
+  return null;
+}
+
+/** THE ADDRESS A NODE MAY READ FOR A MARKET: https (wss for a socket), a public host, no login in it. Answers why not, or null. */
+function marketUrlProblem(text, socket = false) {
+  let u; try { u = new URL(String(text).trim()); } catch { return 'Not a full address'; }
+  if (u.protocol !== (socket ? 'wss:' : 'https:')) return socket ? 'Only wss' : 'Only https';
+  if (u.username || u.password) return 'No login in the address';
+  const h = u.hostname.toLowerCase();
+  if (h === 'localhost' || h.endsWith('.local') || h.endsWith('.internal') || h.endsWith('.ts.net') || !h.includes('.') || h.startsWith('[') || privateAddress(h)) return 'Only a public host';
+  return null;
+}
+
+/** Is this resolved address a machine of ours rather than the public internet: loopback, private, link-local, carrier-grade NAT, metadata? */
+function privateAddress(ip) {
+  const a = String(ip).toLowerCase().replace(/^::ffff:/, '');
+  if (a === '::' || a === '::1' || /^f[cd]/.test(a) || /^fe[89ab]/.test(a)) return true;
+  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(a);
+  if (!m) return false;
+  const [x, y] = [Number(m[1]), Number(m[2])];
+  return x === 0 || x === 10 || x === 127 || x >= 224 || (x === 100 && y >= 64 && y < 128) || (x === 169 && y === 254) || (x === 172 && y >= 16 && y < 32) || (x === 192 && y === 168);
+}
+
 // ---- arena-protocol/src/ballot.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -14630,18 +14793,21 @@ function mergeServedRounds(held) {
 
 
 
-const CLASS = Object.freeze({ DESIGN: 1, MONEY: 2, UPGRADE: 3 });
+
+// SOURCES (kanban #921, the owner 2026-10-31: "Mach einen Prozess mit votings von bonded nodes die eine whitelist führen"): the hosts a market may read. Its "config" is the
+// whole list (market-check.js encodeHostList), on a chain of its own from SOURCES_GENESIS: the same deposit, phases and bond-weighted tally, never a game's config
+const CLASS = Object.freeze({ DESIGN: 1, MONEY: 2, UPGRADE: 3, SOURCES: 4 });
 const CHOICE = Object.freeze({ YES: 1, NO: 2, ABSTAIN: 3 });
 /** The schedule in blocks (§27A.7.4, §27A.8.2) - genesis parameters; regtest runs 1 / 6 / 1. */
 const SCHEDULES = Object.freeze({
   mainnet: Object.freeze({ [CLASS.DESIGN]: { review: 1008, voting: 1440, cooldown: 2016 }, [CLASS.MONEY]: { review: 1008, voting: 1440, cooldown: 2016 },
-    [CLASS.UPGRADE]: { review: 2016, voting: 2016, cooldown: 4320 } }),
+    [CLASS.UPGRADE]: { review: 2016, voting: 2016, cooldown: 4320 }, [CLASS.SOURCES]: { review: 144, voting: 288, cooldown: 36 } }),
   regtest: Object.freeze({ [CLASS.DESIGN]: { review: 1, voting: 6, cooldown: 1 }, [CLASS.MONEY]: { review: 1, voting: 6, cooldown: 1 },
-    [CLASS.UPGRADE]: { review: 1, voting: 6, cooldown: 1 } }),
+    [CLASS.UPGRADE]: { review: 1, voting: 6, cooldown: 1 }, [CLASS.SOURCES]: { review: 1, voting: 6, cooldown: 1 } }),
   // TESTNET4: a day of review and a day of voting for every class (kanban #785, a tester 2026-10-28: "for Testnet you can set the
   // signal and voting periods to 1 day for all types of proposals"); the cooldowns as mainnet's
   testnet4: Object.freeze({ [CLASS.DESIGN]: { review: 144, voting: 144, cooldown: 2016 }, [CLASS.MONEY]: { review: 144, voting: 144, cooldown: 2016 },
-    [CLASS.UPGRADE]: { review: 144, voting: 144, cooldown: 4320 } }),
+    [CLASS.UPGRADE]: { review: 144, voting: 144, cooldown: 4320 }, [CLASS.SOURCES]: { review: 144, voting: 144, cooldown: 36 } }),
 });
 /**
  * A REPEAL (§27A.7.6): "review 0, voting 720, cooldown 0 - but only if its config is byte-identical to an ancestor that was live
@@ -14657,11 +14823,27 @@ function isRepeal(p, history = []) {
   const mine = toHex(p.config);
   return history.slice(0, -1).some((h) => h.config && toHex(h.config) === mine);
 }
+/** A host dropped from the list goes faster than one added, a day of voting at most: a source gone bad must not stay listed. */
+const HOST_REMOVAL_VOTING = 144;
+/** The hosts a list adds to the one live before it. A vote reads each one's example, so one proposal adds few. */
+const SOURCES_ADDED_MAX = 8;
+function addedHosts(p, history = []) {
+  const last = history.length ? history[history.length - 1] : null, before = new Set(last ? decodeHostList(last.config) : []);
+  return decodeHostList(p.config).filter((h) => !before.has(h));
+}
+function isHostRemoval(p, history = []) {
+  if (p.class !== CLASS.SOURCES || !history.length) return false;
+  const now = new Set(decodeHostList(history[history.length - 1].config)), next = decodeHostList(p.config);
+  return next.length < now.size && next.every((h) => now.has(h));
+}
 /** Thresholds of the bonded capital in the snapshot (§27A.7.4, §27A.8.2): turnout percent, approval of non-abstaining weight. */
 const THRESHOLDS = Object.freeze({
   [CLASS.DESIGN]: { turnoutPct: 30n, approvalPct: 50n, strict: true },     // > 50 %
   [CLASS.MONEY]: { turnoutPct: 40n, approvalPct: 66n, strict: false },     // >= 66 %
   [CLASS.UPGRADE]: { turnoutPct: 51n, approvalPct: 66n, strict: false },   // >= 66 %
+  // > 50 %, and yes from at least 25 % of ALL bonded capital (the owner 2026-10-31: "kürzer, 66% ist Zuviel. Quorum auch", "Mindestens 25% des Bond Kapitals"): 20 % turnout alone
+  // would let some 10 % of the capital add a host of its own
+  [CLASS.SOURCES]: { turnoutPct: 20n, approvalPct: 50n, strict: true, minYesPct: 25n },
 });
 const VOTE_MARKER = Uint8Array.from([0x41, 0x52, 0x4e, 0x56]);     // "ARN" 'V'
 const VOTE_BYTES = 4 + 8 + 1 + 64;                                  // 77, inside the 80-byte OP_RETURN limit
@@ -14683,7 +14865,7 @@ function encodeConfigProposalBody(p) {
   if (!isVoteBytes32(p.networkId) || !isVoteBytes32(p.parent) || !isVoteBytes32(p.configHash) || !isVoteBytes32(p.proposer) || !isVoteBytes32(p.depositTxid))
     throw new Error('a proposal names its network, parent config, config hash, proposer and deposit txid in 32 bytes each');
   if (!(p.config instanceof Uint8Array) || !p.config.length) throw new Error('a proposal carries the FULL config, never a diff (27A.7.2)');
-  if (!className(p.class)) throw new Error(`a proposal's class is DESIGN, MONEY or UPGRADE, not ${p.class}`);
+  if (!className(p.class)) throw new Error(`a proposal's class is DESIGN, MONEY, UPGRADE or SOURCES, not ${p.class}`);
   if (!Number.isInteger(p.activationHeight) || p.activationHeight < 1 || p.activationHeight > 0xffffffff) throw new Error('activation_height is a block height');
   const w = new Writer();
   w.u8(TYPE_CONFIG_PROPOSAL); w.u16(PROTOCOL_VERSION);
@@ -14722,8 +14904,13 @@ function proposalStands(p, { publishedAt, depositSats, lowestBondMinSats, schedu
   if (named !== carried) return { ok: false, why: `config_hash ${named} is not the hash of the config the proposal carries (${carried}): config_hash = H(canonical(game_config)), 27A.7.1` };
   if (typeof verify !== 'function' || !verify(p.signature, proposalBodyId(p), p.proposer)) return { ok: false, why: 'the proposal is not signed by the node it names as proposer' };
   // a config the network already ran - before the current one - is a repeal, on the short schedule (§27A.7.6)
-  const repeal = !!history && isRepeal(p, history);
-  const s = repeal ? repealSchedule : schedule[p.class];
+  if (p.class === CLASS.SOURCES) {
+    const bad = hostListProblem(p.config); if (bad) return { ok: false, why: bad };
+    if (history && addedHosts(p, history).length > SOURCES_ADDED_MAX) return { ok: false, why: `One proposal adds at most ${SOURCES_ADDED_MAX} hosts` };
+  }
+  const removal = !!history && isHostRemoval(p, history);
+  const repeal = removal || (!!history && isRepeal(p, history));
+  const s = removal ? { review: 0, voting: Math.min(HOST_REMOVAL_VOTING, repealSchedule.voting), cooldown: 0 } : repeal ? repealSchedule : schedule[p.class];
   const earliest = publishedAt + s.review + s.voting + s.cooldown;
   if (p.activationHeight < earliest) return { ok: false, why: `activation_height ${p.activationHeight} is before the end of cooldown (${earliest}): invalid on its face` };
   const cap = BigInt(lowestBondMinSats) / 100n;
@@ -14779,7 +14966,7 @@ function tally({ proposal, standing, census, votes, verify }) {
   const turnout = yes + no + abstain;
   const quorum = total > 0n && turnout * 100n >= t.turnoutPct * total;
   const decided = yes + no;
-  const approved = decided > 0n && (t.strict ? yes * 100n > t.approvalPct * decided : yes * 100n >= t.approvalPct * decided);
+  const approved = decided > 0n && (t.strict ? yes * 100n > t.approvalPct * decided : yes * 100n >= t.approvalPct * decided) && (!t.minYesPct || yes * 100n >= t.minYesPct * total);
   return { totalSats: total, yesSats: yes, noSats: no, abstainSats: abstain, bondsVoted: latest.size, quorum, approved, passed: quorum && approved,
     turnoutPct: total > 0n ? Number((turnout * 10000n) / total) / 100 : 0, approvalPct: decided > 0n ? Number((yes * 10000n) / decided) / 100 : 0 };
 }
@@ -33138,6 +33325,7 @@ const itemsHex = (items) => (items || []).map((it) => ({ ...it, priceSat: String
 //           game - each ROUND names the source round whose signed result decides it, contracts.js `sourceRoundId`; no attestors),
 //         [optional, marker 0x06] scalar: low, high (i64 each), unit (feature 8: a numeric outcome paid linearly
 //           between the bounds to the sides LONG and SHORT - its attestors sign a value, scalar.js),
+//         [optional, marker 0x0A] market source: the reads, then the rule or the code its drawn nodes run (kanban #920),
 //       [HEAD_TO_HEAD only] players, move_count, reveal_window,
 //       [REPLAY with payout_rule TOP_SPLIT only, marker 0x03] payout_shares[] (feature 3),
 //       [optional, marker 0x07] items[]: id, name, price_sat, unlock (a game's in-game items; protocol 10 - items.js),
@@ -33148,8 +33336,8 @@ const itemsHex = (items) => (items || []).map((it) => ({ ...it, priceSat: String
 // THE TRAILING FIELDS, IN THIS ORDER AND EACH AFTER ITS OWN MARKER: what only one result type writes (an attested game's
 // terms, template and game source, a head-to-head game's table, a top split's shares - never two result types' fields in one
 // manifest), then the required version, which any manifest may name, last. Each is optional or bound to its rule, so a
-// manifest that names none keeps its bytes and its game id; a reader takes each only where its marker stands, and its seven
-// markers 0x01-0x07 are distinct, so no field can be read as another. A node too old to know one cannot read the manifest
+// manifest that names none keeps its bytes and its game id; a reader takes each only where its marker stands, and its
+// markers are distinct, so no field can be read as another. A node too old to know one cannot read the manifest
 // (trailing bytes).
 //     game_id = H(GameManifest)
 //
@@ -33165,6 +33353,7 @@ const itemsHex = (items) => (items || []).map((it) => ({ ...it, priceSat: String
 //
 // NO CURVE, as everywhere in this package: `verify(signature, digest, key)` is injected (Ed25519, the scheme the
 // donation authority signs with), and a manifest with no verifier to check it is not a game.
+
 
 
 
@@ -33390,6 +33579,49 @@ function attestDrawFits(d, m) {
 
 
 /**
+ * WHERE A MARKET'S RESULT COMES FROM (kanban #920, docs/MARKET-CREATOR.md): `source` on a market whose attestors are drawn, after its own marker. The drawn nodes
+ * make its reads, then apply its rule (kind URL) or run its code in the market sandbox (kind CODE), and sign what they get, 5 of 7 as for any drawn market. No round
+ * protocol gate, as for the draw: a node too old to know the marker cannot read the manifest, so it hosts none of its rounds and is never drawn for them.
+ * A manifest naming code changes §0A.6 for this one case, by the owner's ruling of 2026-10-31: the code runs only after the node's own check, only in that sandbox.
+ */
+const MARKET_SOURCE_MARKER = 0x0a;
+const MARKET_SOURCE_KIND = Object.freeze({ URL: 1, CODE: 2 });
+const MARKET_READ = Object.freeze({ JSON: 1, PATTERN: 2, TEXT: 3 });
+const MARKET_RULE = Object.freeze({ VALUE: 0, ABOVE: 1, BELOW: 2, RISES: 3, EQUALS: 4, FOUND: 5 });
+const MARKET_READS_MAX = 3;
+function marketSourceFits(s, m) {
+  if (!isDrawnAttest(m)) return { ok: false, why: 'a market with a source is decided by nodes drawn per round' };
+  if (s.kind !== MARKET_SOURCE_KIND.URL && s.kind !== MARKET_SOURCE_KIND.CODE) return { ok: false, why: 'a source is a URL or code' };
+  if (!Array.isArray(s.reads) || s.reads.length > MARKET_READS_MAX) return { ok: false, why: `a source makes at most ${MARKET_READS_MAX} reads` };
+  for (const r of s.reads) {
+    if (!r || !/^[a-z][a-zA-Z0-9]{0,31}$/.test(String(r.id))) return { ok: false, why: 'each read has a name in letters' };
+    // whether its host is listed is the ballot's and changes with the chain, so it is read per round (market-reader.js), never here
+    const bad = marketUrlProblem(r.url, !!r.socket); if (bad) return { ok: false, why: `read ${r.id}: ${bad}` };
+    if (typeof r.subscribe !== 'string' || r.subscribe.length > 1024 || (r.subscribe && !r.socket)) return { ok: false, why: `read ${r.id}: only a socket sends a message, of at most 1 KB` };
+  }
+  if (new Set(s.reads.map((r) => r.id)).size !== s.reads.length) return { ok: false, why: 'each read has a name of its own' };
+  if (s.kind === MARKET_SOURCE_KIND.URL) {
+    if (s.reads.length !== 1 || s.reads[0].socket) return { ok: false, why: 'a URL source reads one address' };
+    if (!Object.values(MARKET_READ).includes(s.read) || !Object.values(MARKET_RULE).includes(s.rule)) return { ok: false, why: 'a URL source names how it reads and its rule' };
+    if (typeof s.path !== 'string' || s.path.length > 256 || typeof s.level !== 'string' || s.level.length > 64) return { ok: false, why: 'a URL source\'s field and level are short texts' };
+  } else {
+    if (typeof s.code !== 'string' || !s.code.trim() || new TextEncoder().encode(s.code).length > CODE_MAX_BYTES) return { ok: false, why: `a source's code is at most ${CODE_MAX_BYTES / 1024} KB` };
+    if (!Number.isInteger(s.checkVersion) || s.checkVersion < 1 || s.checkVersion > CHECK_VERSION) return { ok: false, why: 'a source\'s code names a check this node knows' };
+  }
+  return { ok: true };
+}
+function writeMarketSource(w, s) {
+  w.u8(MARKET_SOURCE_MARKER); w.u8(s.kind);
+  w.vec(s.reads, (r, ww) => { ww.str(r.id); ww.u8(r.socket ? 1 : 0); ww.str(r.url); ww.str(r.subscribe); });
+  if (s.kind === MARKET_SOURCE_KIND.URL) { w.u8(s.read); w.str(s.path); w.u8(s.rule); w.str(s.level); } else { w.str(s.code); w.u16(s.checkVersion); }
+}
+function readMarketSource(r) {
+  const kind = r.u8();
+  const reads = r.vec((rr) => ({ id: rr.str(), socket: rr.u8() === 1, url: rr.str(), subscribe: rr.str() }));
+  return kind === MARKET_SOURCE_KIND.URL ? { kind, reads, read: r.u8(), path: r.str(), rule: r.u8(), level: r.str() } : { kind, reads, code: r.str(), checkVersion: r.u16() };
+}
+
+/**
  * A TOP SPLIT'S SHARES (feature 3): written only by a manifest whose payout_rule is TOP_SPLIT, after its own
  * marker, right after the game's donation set and before the required version - so every manifest that pays by the curve
  * or pari-mutuel keeps its bytes and its game id. Then a u16 count and each share as a u16 of basis points, places in
@@ -33495,6 +33727,7 @@ function encodeManifestBody(m) {
       if (!Number.isInteger(m.attestThreshold) || m.attestThreshold < 1 || m.attestThreshold > m.attestors.length)
         throw new Error(`an attested game's threshold is 1 to its ${m.attestors.length} attestor(s)`);
     }
+    if (m.source !== undefined && m.source !== null) { const f = marketSourceFits(m.source, m); if (!f.ok) throw new Error(f.why); }
     if (m.marketTerms !== undefined && m.marketTerms !== null) { const f = marketTermsFit(m.marketTerms); if (!f.ok) throw new Error(f.why); }
     if (m.template !== undefined && m.template !== null) { const f = marketTemplateFits(m.template, m); if (!f.ok) throw new Error(f.why); }
     if (onGame) { const f = gameSourceFits(m.gameSource, m); if (!f.ok) throw new Error(f.why); }
@@ -33602,6 +33835,8 @@ function encodeManifestBody(m) {
     if (m.marketTerms && m.marketTerms.reserveBps) { w.u8(MARKET_RESERVE_MARKER); w.u16(m.marketTerms.reserveBps); }
     // ITS ATTESTOR DRAW (#630), after its own marker and only when it names one: every attested manifest before keeps its bytes
     if (m.attestDraw) { w.u8(ATTEST_DRAW_MARKER); w.u8(m.attestDraw.count); w.u8(m.attestDraw.threshold); }
+    // ITS SOURCE (#920), after its own marker and only when it names one: every manifest before keeps its bytes
+    if (m.source) writeMarketSource(w, m.source);
   }
   // A HEAD-TO-HEAD GAME'S OWN TERMS, likewise after everything else: no other manifest's bytes move
   if (isHeadToHead(m)) {
@@ -33667,6 +33902,10 @@ function readBody(r) {
     if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === ATTEST_DRAW_MARKER) {
       r.u8();
       body.attestDraw = { count: r.u8(), threshold: r.u8() };
+    }
+    if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === MARKET_SOURCE_MARKER) {
+      r.u8();
+      body.source = readMarketSource(r);
     }
   }
   if (body.resultType === RESULT_TYPE.HEAD_TO_HEAD) {
@@ -33788,6 +34027,8 @@ function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
     if (isTemplate(m)) {
       const fits = eventFitsTemplate(contract, m);
       if (!fits.ok) return fits;
+      // every bonded node hosts a market with a source, and only such a market
+      if (!!m.source !== (contract.event.allBonded === true)) return { ok: false, why: m.source ? `${name} has a source: its rounds open to every bonded node` : `${name} has no source: its rounds are hosted by the nodes that name it` };
       return { ok: true, attested: true, template: true };
     }
     // A MARKET ON A GAME'S ROUND NAMES ITS SOURCE ROUND (feature 6), and is no round of a series. Whether that source
