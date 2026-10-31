@@ -3243,7 +3243,10 @@
           const back = (k, v) => (v && typeof v === 'object' && typeof v.u8 === 'string' ? ARENACLIENT.fromHex(v.u8)
             : v && typeof v === 'object' && typeof v.big === 'string' ? BigInt(v.big) : v);
           const e = JSON.parse(window.sessionStorage.getItem('arena.entry.' + roundIdHex) || 'null', back);
-          const key = JSON.parse(window.sessionStorage.getItem('blwp.session.key.' + roundIdHex) || 'null');
+          // UNDER ITS NEW NAME TOO (kanban #882, the owner 2026-10-31: "wenn ich eine runde gejoined habe, und neulade dann komm ich nicht mehr rein"): the bridge keeps it as
+          // arena.session.key.<round> since #524, this read never found it, so a reload after the seats took the entry lost the round
+          const keyOf = (name) => window.sessionStorage.getItem(name + '.session.key.' + roundIdHex);
+          const key = JSON.parse(keyOf('arena') || keyOf('blwp') || 'null');
           return e && key && key.raw ? Object.assign({}, e, { roundId: ARENACLIENT.fromHex(roundIdHex), sessionPubkey: ARENACLIENT.fromHex(key.raw) }) : null;
         } catch { return null; }
       };
