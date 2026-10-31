@@ -112,7 +112,7 @@ export class OwnerArea extends React.Component {
           {sec('referrer', <><h2>Referrer</h2><Place id="referrer" className={null} /></>)}
           {sec('leave', <><h2>Leave</h2><Place id="leave" /></>)}
           {/* A NEW MARKET, ONE FORM (kanban #920) */}
-          {sec('markets', on === 'markets' ? <><h2>Create a market</h2><MarketCreator /></> : null)}
+          {sec('markets', on === 'markets' ? <><h2>Create a market</h2><MarketCreator tryOnNode={p.tryOnNode} /></> : null)}
           {sec('developer', <><h2>Developer</h2>
             {/* A DEVELOPER ON THIS NODE (kanban #582): a dev client (a protocol or app recipient) or a game developer's key - then Donations shows */}
             <Place id="dev-add" className={null} /><Place id="gamedev-add" className={null} />
