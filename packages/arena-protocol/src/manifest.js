@@ -18,6 +18,7 @@
 //           game - each ROUND names the source round whose signed result decides it, contracts.js `sourceRoundId`; no attestors),
 //         [optional, marker 0x06] scalar: low, high (i64 each), unit (feature 8: a numeric outcome paid linearly
 //           between the bounds to the sides LONG and SHORT - its attestors sign a value, scalar.js),
+//         [optional, marker 0x0A] market source: the reads, then the rule or the code its drawn nodes run (kanban #920),
 //       [HEAD_TO_HEAD only] players, move_count, reveal_window,
 //       [REPLAY with payout_rule TOP_SPLIT only, marker 0x03] payout_shares[] (feature 3),
 //       [optional, marker 0x07] items[]: id, name, price_sat, unlock (a game's in-game items; protocol 10 - items.js),
@@ -28,8 +29,8 @@
 // THE TRAILING FIELDS, IN THIS ORDER AND EACH AFTER ITS OWN MARKER: what only one result type writes (an attested game's
 // terms, template and game source, a head-to-head game's table, a top split's shares - never two result types' fields in one
 // manifest), then the required version, which any manifest may name, last. Each is optional or bound to its rule, so a
-// manifest that names none keeps its bytes and its game id; a reader takes each only where its marker stands, and its seven
-// markers 0x01-0x07 are distinct, so no field can be read as another. A node too old to know one cannot read the manifest
+// manifest that names none keeps its bytes and its game id; a reader takes each only where its marker stands, and its
+// markers are distinct, so no field can be read as another. A node too old to know one cannot read the manifest
 // (trailing bytes).
 //     game_id = H(GameManifest)
 //
@@ -52,6 +53,7 @@ import { protocolVersionName } from './protocol-version.js';
 import { itemsFit, writeItems, readItems, ITEMS_MARKER } from './items.js';
 import { EVENT_VERSION } from './contracts.js';
 import { payoutSharesFit } from './payout.js';
+import { CHECK_VERSION, CODE_MAX_BYTES, marketUrlProblem } from './market-check.js';
 
 /**
  * What a game's result is (§0A.7, §0A.7a): a replayed run, or an outcome its attestors sign (a price, an
@@ -271,6 +273,48 @@ export function attestDrawFits(d, m) {
 
 
 /**
+ * WHERE A MARKET'S RESULT COMES FROM (kanban #920, docs/MARKET-CREATOR.md): `source` on a market whose attestors are drawn, after its own marker. The drawn nodes
+ * make its reads, then apply its rule (kind URL) or run its code in the market sandbox (kind CODE), and sign what they get, 5 of 7 as for any drawn market. No round
+ * protocol gate, as for the draw: a node too old to know the marker cannot read the manifest, so it hosts none of its rounds and is never drawn for them.
+ * A manifest naming code changes §0A.6 for this one case, by the owner's ruling of 2026-10-31: the code runs only after the node's own check, only in that sandbox.
+ */
+export const MARKET_SOURCE_MARKER = 0x0a;
+export const MARKET_SOURCE_KIND = Object.freeze({ URL: 1, CODE: 2 });
+export const MARKET_READ = Object.freeze({ JSON: 1, PATTERN: 2, TEXT: 3 });
+export const MARKET_RULE = Object.freeze({ VALUE: 0, ABOVE: 1, BELOW: 2, RISES: 3, EQUALS: 4, FOUND: 5 });
+export const MARKET_READS_MAX = 3;
+export function marketSourceFits(s, m) {
+  if (!isDrawnAttest(m)) return { ok: false, why: 'a market with a source is decided by nodes drawn per round' };
+  if (s.kind !== MARKET_SOURCE_KIND.URL && s.kind !== MARKET_SOURCE_KIND.CODE) return { ok: false, why: 'a source is a URL or code' };
+  if (!Array.isArray(s.reads) || s.reads.length > MARKET_READS_MAX) return { ok: false, why: `a source makes at most ${MARKET_READS_MAX} reads` };
+  for (const r of s.reads) {
+    if (!r || !/^[a-z][a-zA-Z0-9]{0,31}$/.test(String(r.id))) return { ok: false, why: 'each read has a name in letters' };
+    const bad = marketUrlProblem(r.url, !!r.socket); if (bad) return { ok: false, why: `read ${r.id}: ${bad}` };
+    if (typeof r.subscribe !== 'string' || r.subscribe.length > 1024 || (r.subscribe && !r.socket)) return { ok: false, why: `read ${r.id}: only a socket sends a message, of at most 1 KB` };
+  }
+  if (new Set(s.reads.map((r) => r.id)).size !== s.reads.length) return { ok: false, why: 'each read has a name of its own' };
+  if (s.kind === MARKET_SOURCE_KIND.URL) {
+    if (s.reads.length !== 1 || s.reads[0].socket) return { ok: false, why: 'a URL source reads one address' };
+    if (!Object.values(MARKET_READ).includes(s.read) || !Object.values(MARKET_RULE).includes(s.rule)) return { ok: false, why: 'a URL source names how it reads and its rule' };
+    if (typeof s.path !== 'string' || s.path.length > 256 || typeof s.level !== 'string' || s.level.length > 64) return { ok: false, why: 'a URL source\'s field and level are short texts' };
+  } else {
+    if (typeof s.code !== 'string' || !s.code.trim() || new TextEncoder().encode(s.code).length > CODE_MAX_BYTES) return { ok: false, why: `a source's code is at most ${CODE_MAX_BYTES / 1024} KB` };
+    if (!Number.isInteger(s.checkVersion) || s.checkVersion < 1 || s.checkVersion > CHECK_VERSION) return { ok: false, why: 'a source\'s code names a check this node knows' };
+  }
+  return { ok: true };
+}
+function writeMarketSource(w, s) {
+  w.u8(MARKET_SOURCE_MARKER); w.u8(s.kind);
+  w.vec(s.reads, (r, ww) => { ww.str(r.id); ww.u8(r.socket ? 1 : 0); ww.str(r.url); ww.str(r.subscribe); });
+  if (s.kind === MARKET_SOURCE_KIND.URL) { w.u8(s.read); w.str(s.path); w.u8(s.rule); w.str(s.level); } else { w.str(s.code); w.u16(s.checkVersion); }
+}
+function readMarketSource(r) {
+  const kind = r.u8();
+  const reads = r.vec((rr) => ({ id: rr.str(), socket: rr.u8() === 1, url: rr.str(), subscribe: rr.str() }));
+  return kind === MARKET_SOURCE_KIND.URL ? { kind, reads, read: r.u8(), path: r.str(), rule: r.u8(), level: r.str() } : { kind, reads, code: r.str(), checkVersion: r.u16() };
+}
+
+/**
  * A TOP SPLIT'S SHARES (feature 3): written only by a manifest whose payout_rule is TOP_SPLIT, after its own
  * marker, right after the game's donation set and before the required version - so every manifest that pays by the curve
  * or pari-mutuel keeps its bytes and its game id. Then a u16 count and each share as a u16 of basis points, places in
@@ -376,6 +420,7 @@ export function encodeManifestBody(m) {
       if (!Number.isInteger(m.attestThreshold) || m.attestThreshold < 1 || m.attestThreshold > m.attestors.length)
         throw new Error(`an attested game's threshold is 1 to its ${m.attestors.length} attestor(s)`);
     }
+    if (m.source !== undefined && m.source !== null) { const f = marketSourceFits(m.source, m); if (!f.ok) throw new Error(f.why); }
     if (m.marketTerms !== undefined && m.marketTerms !== null) { const f = marketTermsFit(m.marketTerms); if (!f.ok) throw new Error(f.why); }
     if (m.template !== undefined && m.template !== null) { const f = marketTemplateFits(m.template, m); if (!f.ok) throw new Error(f.why); }
     if (onGame) { const f = gameSourceFits(m.gameSource, m); if (!f.ok) throw new Error(f.why); }
@@ -483,6 +528,8 @@ export function encodeManifestBody(m) {
     if (m.marketTerms && m.marketTerms.reserveBps) { w.u8(MARKET_RESERVE_MARKER); w.u16(m.marketTerms.reserveBps); }
     // ITS ATTESTOR DRAW (#630), after its own marker and only when it names one: every attested manifest before keeps its bytes
     if (m.attestDraw) { w.u8(ATTEST_DRAW_MARKER); w.u8(m.attestDraw.count); w.u8(m.attestDraw.threshold); }
+    // ITS SOURCE (#920), after its own marker and only when it names one: every manifest before keeps its bytes
+    if (m.source) writeMarketSource(w, m.source);
   }
   // A HEAD-TO-HEAD GAME'S OWN TERMS, likewise after everything else: no other manifest's bytes move
   if (isHeadToHead(m)) {
@@ -548,6 +595,10 @@ function readBody(r) {
     if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === ATTEST_DRAW_MARKER) {
       r.u8();
       body.attestDraw = { count: r.u8(), threshold: r.u8() };
+    }
+    if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === MARKET_SOURCE_MARKER) {
+      r.u8();
+      body.source = readMarketSource(r);
     }
   }
   if (body.resultType === RESULT_TYPE.HEAD_TO_HEAD) {
