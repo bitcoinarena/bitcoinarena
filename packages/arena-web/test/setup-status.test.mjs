@@ -45,7 +45,7 @@ test('a complete setup: a Don\'t show again link, hidden per node once clicked; 
     const c = new SetupStatus({ status: done }); c.setState = (u) => Object.assign(c.state, u);
     c.hide();
     assert.equal(store.get(`arena-setup-hidden:${'ab'.repeat(32)}`), '1');
-    assert.equal(renderToStaticMarkup(React.createElement(SetupStatus, { status: done })), '', 'hidden for that node');
+    assert.match(renderToStaticMarkup(React.createElement(SetupStatus, { status: done })), /Show setup/, 'hidden for that node, and it can come back');
     assert.notEqual(renderToStaticMarkup(React.createElement(SetupStatus, { status: { ...done, node: 'cd'.repeat(32) } })), '', 'another node: shown');
     const open = { ...done, address: { ok: false, url: 'https://n.example', why: 'ENOTFOUND' } };
     assert.match(renderToStaticMarkup(React.createElement(SetupStatus, { status: open })), /1 problem/, 'not complete: shown though hidden');

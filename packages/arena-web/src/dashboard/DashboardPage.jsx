@@ -212,7 +212,7 @@ export class DashboardPage extends React.Component {
             <div className="dash-facts">
               <span className="fact" title={String(D.node)}><span className="fact-k">Node</span><code>{String(D.node).slice(0, 8)}…{String(D.node).slice(-6)}</code>
                 <CopyButton text={D.node} label="Copy the node key" /></span>
-              <span className="fact"><span className="fact-k">Active since</span>{D.sinceMs ? short(D.sinceMs, now) : <span className="dim">no round checked yet</span>}</span>
+              <span className="fact"><span className="fact-k">Active since</span>{D.sinceMs ? `${short(D.sinceMs, now)} UTC` : <span className="dim">no round checked yet</span>}</span>
               <span className="fact"><span className="fact-k">Rounds checked</span>{Number(D.roundsChecked || 0).toLocaleString('en-US')}</span>
             </div></div>
           <a className="btn" href={ownerHref(D.node, typeof location === 'undefined' ? null : location)}>Owner area →</a>
