@@ -63,6 +63,7 @@ import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
 const ATTESTED_NO_RUN = 'that round\'s game is attested: its result is its attestors\' outcome (GET /outcome), not a run - nothing of it is replayed';
 import { committeeSeedFromBeacon, beaconFromChain, beaconIsTheChains } from '../../arena-protocol/src/beacon.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
+import { postTranscript, relayTargets } from './relay.js';
 
 /**
  * WHAT A BEACON IS WORTH TO THIS NODE, worked out once per round.
@@ -1358,18 +1359,11 @@ export class Verifier {
     }
     if (joined && !said && relays.length && !holdLate) {
       const bytes = await this.#transcriptNamed(roundIdBytes, entryIdBytes, transcriptHash, report);
-      let readBack = 0;
-      for (const relay of bytes ? relays : []) {
-        const at = `${String(relay).replace(/\/+$/, '')}${relayPath(transcriptHash)}`;
-        try {
-          const put = await fetch(at, { method: 'PUT', body: bytes });
-          if (!put.ok) { report.refused.push(`${relay}: kept nothing (${put.status})`); continue; }
-          const back = new Uint8Array(await (await fetch(at)).arrayBuffer());
-          if (hex(back) !== hex(bytes)) { report.refused.push(`${relay}: gave back other bytes`); continue; }
-          readBack++;
-          report.relays.push(relay);
-        } catch (e) { report.refused.push(`${relay}: ${e.message}`); }
-      }
+      const posted = bytes ? await postTranscript({ listed: relays, announced: this.peersOf(roundIdBytes), path: relayPath(transcriptHash), bytes, sameBytes: (x, y) => hex(x) === hex(y) })
+        : { held: [], refused: [] };
+      const readBack = posted.held.length;
+      report.relays.push(...posted.held);
+      report.refused.push(...posted.refused);
       // THE POSTING NAMES THE BLOCK IT SITS IN (§13A, RULED 2026-09-24): this node's chain tip when it posts.
       const tip = chainIndex(this.round, roundIdBytes, contract);
       if (readBack && !tip.ok) report.refused.push(`this signer node names no block for its posting: ${tip.why}`);
@@ -1745,7 +1739,7 @@ export class Verifier {
       const record = joinSlashEvidence(encodeSlashProof(proof), r.bytes);
       this.round.putSlashProof(roundIdBytes, entryIdBytes, body.nodePubkey, id, record);
       report.filed.push(who);
-      for (const relay of contract.publicationRelays || []) {
+      for (const relay of relayTargets(contract.publicationRelays, this.peersOf(roundIdBytes))) {
         try {
           const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: record });
           if (put.ok) report.published += 1;
@@ -1810,7 +1804,7 @@ export class Verifier {
       const record = joinRerunSlashEvidence(encodeSlashProof(proof), r.bytes);
       if (!this.round.putRerunSlashProof(roundIdBytes, entryIdBytes, x.result.nodePubkey, id, record)) continue;
       report.filed.push(who);
-      for (const relay of contract.publicationRelays || []) {
+      for (const relay of relayTargets(contract.publicationRelays, this.peersOf(roundIdBytes))) {
         try {
           const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: record });
           if (put.ok) report.published += 1;
