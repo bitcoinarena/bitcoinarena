@@ -156,7 +156,9 @@ done
 
 if [ "$OS" = windows ]; then rm "$STAGE/packages/arena-installer/node_modules"; cp -R "$STAGE/packages/arena-node/node_modules" "$STAGE/packages/arena-installer/node_modules"; fi
 # (and the apps' arena-sdk, a link the .zip would lose too: a copy of the folder - kanban #569)
-if [ "$OS" = windows ]; then rm "$STAGE/packages/node_modules/arena-sdk"; cp -R "$STAGE/packages/arena-sdk" "$STAGE/packages/node_modules/arena-sdk"; fi
+# one folder deeper than the link it replaces, so its ../../arena-node and ../../arena-protocol go one more up (kanban #808, measured 2026-10-31 in the Windows VM: "Cannot find module packages/node_modules/arena-node/src/core-hash.js", the seat never started)
+if [ "$OS" = windows ]; then rm "$STAGE/packages/node_modules/arena-sdk"; cp -R "$STAGE/packages/arena-sdk" "$STAGE/packages/node_modules/arena-sdk"
+  find "$STAGE/packages/node_modules/arena-sdk" -name '*.js' -print0 | xargs -0 perl -pi -e "s#(['\"])\.\./\.\./arena-([a-z]+)/#\$1../../../arena-\$2/#g"; fi
 
 # 4. the launcher: the installer on the release's own runtime, cloudflared beside it - named bitcoinarena-install (kanban #721, 2026-10-27:
 # "the install script is still named arena-install, should be bitcoinarena-install"); arena-install stays beside it, the same launcher under
