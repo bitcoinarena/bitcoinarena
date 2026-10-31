@@ -29,7 +29,7 @@ test('a proposal: the full config, signed by its proposer, activation not before
   assert.match(proposalStands(p, { ...facts, depositSats: 501 }).why, /over the cap of 500/);
   assert.match(proposalStands({ ...p, signature: schnorr.sign(proposalBodyId(p), key(2).secret) }, facts).why, /not signed by the node it names/);
   assert.throws(() => encodeConfigProposalBody(draft({ config: new Uint8Array(0) })), /FULL config, never a diff/);
-  assert.throws(() => encodeConfigProposalBody(draft({ class: 9 })), /DESIGN, MONEY or UPGRADE/);
+  assert.throws(() => encodeConfigProposalBody(draft({ class: 9 })), /DESIGN, MONEY, UPGRADE or SOURCES/);
   assert.notEqual(Buffer.from(proposalId(p)).toString('hex'), Buffer.from(proposalId(signed(draft({ configHash: b32(0x21) })))).toString('hex'));
 });
 
