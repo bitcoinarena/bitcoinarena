@@ -87,16 +87,17 @@ export class Chart extends React.Component {
       <div className="chart">
         <div className="chart-head"><span className="legend">{ROLES.slice(0, 3).map(([k, n, c]) => <span key={k}><i style={{ background: c }} />{n}</span>)}</span>
           <span className="sub">{hov ? `${hov.day}: ${sat(sum(hov))}` : `last ${days.length} days · tap a day`}</span></div>
-        <svg viewBox={`0 0 ${W} ${H + 20}`} role="img" aria-label="fees earned per day" onPointerLeave={() => this.setState({ at: null })}>
+        <svg viewBox={`0 0 ${W} ${H}`} role="group" aria-label="fees earned per day" onPointerLeave={() => this.setState({ at: null })}>
           {days.map((d, i) => {
             let y = H; const x = P + i * bw + 2, w = Math.max(1, bw - 4);
             const parts = [['gameVerifyMsat', 'var(--gv)'], ['settlementMsat', 'var(--st)'], ['guardianMsat', 'var(--gd)']].map(([k, c]) => { const h = (H - 6) * Number(d[k]) / max; y -= h; return <rect key={k} x={x} y={y} width={w} height={h} fill={c} rx="2" />; });
             return (
-              <g key={d.day} onPointerEnter={() => this.setState({ at: i })} onPointerDown={() => this.setState({ at: i })}>
-                <rect x={x - 2} y="0" width={bw} height={H} fill={this.state.at === i ? 'rgba(127,127,127,.12)' : 'transparent'} />{parts}
-                {i % 5 === 0 ? <text x={x} y={H + 16} fill="var(--dim)" fontSize="13">{d.day.slice(5)}</text> : null}</g>);
+              <g key={d.day} tabIndex={0} aria-label={`${d.day}: ${sat(sum(d))}`} style={{ cursor: 'pointer' }} onFocus={() => this.setState({ at: i })} onBlur={() => this.setState({ at: null })} onPointerEnter={() => this.setState({ at: i })} onPointerDown={() => this.setState({ at: i })}>
+                <rect x={x - 2} y="0" width={bw} height={H} fill={this.state.at === i ? 'rgba(127,127,127,.12)' : 'transparent'} />{parts}</g>);
           })}
         </svg>
+        {/* in page pixels, not the drawing's: 13 units of 1000 were 6 px on a laptop and 4 on a phone (kanban #846) */}
+        <div className="chart-days" aria-hidden="true">{days.filter((d, i) => i % 5 === 0).map((d) => <span key={d.day}>{d.day.slice(5)}</span>)}</div>
       </div>);
   }
 }

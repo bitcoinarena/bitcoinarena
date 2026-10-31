@@ -233,7 +233,7 @@ th{color:var(--dim);font-weight:600}.ok{color:var(--ok)}.bad{color:var(--bad)}.w
 .kv .row span{color:var(--dim);min-width:0}.kv .row b{white-space:normal;text-align:right;overflow-wrap:anywhere}
 .tbl{width:100%;border-collapse:collapse;font-size:13px}.tbl th{color:var(--dim);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em}
 .tbl th,.tbl td{padding:7px 8px;border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent)}.tbl .n{text-align:right;font-variant-numeric:tabular-nums}.nowrap{white-space:nowrap}
-.chart-head{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:0 0 6px}.chart .sub{margin:0}
+.chart-head{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:0 0 6px}.chart-days{display:flex;justify-content:space-between;margin-top:4px;font-size:11px;color:var(--dim)}.chart .sub{margin:0}
 .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}.two h2{margin-top:26px}
 @media (max-width:560px){.stat.wide{grid-column:auto}.cards{grid-template-columns:1fr}}
 /* the setup's progress (kanban #635), as tiles (playtest 2026-10-25: "make this more pretty") */.founding-wait{padding:18px 20px;margin-top:12px}.founding-wait p{margin:10px 0 0;line-height:1.5}.founding-wait .dim{color:var(--dim,#8b949e)}.setup-status{padding:18px 20px}
