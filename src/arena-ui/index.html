@@ -6653,18 +6653,26 @@
           const q = d.getElementById('q');
           let el = d.getElementById('arena-expected');
           const empty = q && /^No window is open/.test(q.textContent || '');
-          if (!empty) { if (el) el.remove(); return; }
-          if (!el) { el = d.createElement('div'); el.id = 'arena-expected'; el.style.cssText = 'margin-top:6px;font-size:14px;opacity:.85;line-height:1.4'; q.after(el); }
           const now = Date.now();
-          // the listed rounds of this game still to come (the lobby keeps only ones whose committee can be drawn); a grid's window is the
-          // gap between two closes, 15 min when one is listed
+          // the listed rounds of this game still to come (the lobby keeps only ones whose committee is drawn and seated); a grid's window is
+          // the gap between two closes, 15 min when one is listed
           const mineRows = (window.ARENA_LOBBY_ROWS || []).filter((r) => { try { return r && r.contract && ARENACLIENT.toHex(r.contract.gameId) === String(game.id).toLowerCase() && Number(r.entryCloseMs) > now; } catch (e) { return false; } })
             .sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs));
           const gaps = mineRows.slice(1).map((r, i) => Number(r.entryCloseMs) - Number(mineRows[i].entryCloseMs)).filter((g) => g > 0);
           const windowMs = gaps.length ? Math.min(...gaps) : 15 * 60000;
+          // A WINDOW LISTED BUT NOT PLAYABLE (kanban #761): its round not seated (or not drawn) - the client is handed no such round, so it shows
+          // "No window is open" with Buy and Sell off, or the next playable window; this line says why, and which window is next playable
+          const unplayable = ARENACLIENT.unplayableWindowLine ? ARENACLIENT.unplayableWindowLine({ unoffered: window.ARENA_LOBBY_UNOFFERED || [],
+            offered: (window.ARENA_LOBBY_ROWS || []).filter((r) => r && Number(r.entryCloseMs) > now).map((r) => ({ id: r.id, entryCloseMs: Number(r.entryCloseMs) })),
+            nowMs: now, periodMs: windowMs }) : null;
+          window.ARENA_UNPLAYABLE = unplayable;
+          if (!empty && !unplayable) { if (el) el.remove(); return; }
+          if (!el) { el = d.createElement('div'); el.id = 'arena-expected'; el.style.cssText = 'margin-top:6px;font-size:14px;opacity:.85;line-height:1.4'; q.after(el); }
+          el.dataset.why = unplayable ? unplayable.why : '';
           const listed = mineRows[0];
           let text = '';
-          if (listed) { const opens = Number(listed.entryCloseMs) - windowMs; text = opens > now ? `Next round: entry opens ${hhmm(opens)} (${inMin(opens)}).` : `Next round: entry open until ${hhmm(listed.entryCloseMs)}.`; }
+          if (unplayable) text = unplayable.text;
+          else if (listed) { const opens = Number(listed.entryCloseMs) - windowMs; text = opens > now ? `Next round: entry opens ${hhmm(opens)} (${inMin(opens)}).` : `Next round: entry open until ${hhmm(listed.entryCloseMs)}.`; }
           else {
             const x = window.ARENA_EXPECTED ? await window.ARENA_EXPECTED() : null;
             const e = x && (x.expected || []).filter((v) => v.game === game.name).sort((a, b) => Number(a.firstWindowMs) - Number(b.firstWindowMs))[0];
@@ -6680,7 +6688,7 @@
           }
           if (el.textContent !== text) el.textContent = text;
         };
-        paint(); const t = setInterval(() => { if (!fr.isConnected) { clearInterval(t); return; } paint().catch(() => {}); }, 15000);
+        paint(); const t = setInterval(() => { if (!fr.isConnected) { clearInterval(t); return; } paint().catch(() => {}); }, 5000);
       }
       document.body.classList.add('arena-own-client');
       document.body.appendChild(frame);
@@ -7851,6 +7859,19 @@
       if (!window.ARENA_UNITY_MENU_TIMER) window.ARENA_UNITY_MENU_TIMER = setInterval(() => {
         document.body.classList.toggle('arena-unity-menu', Date.now() - (window.ARENA_UNITY_MENU_AT || 0) < 2500);
       }, 1000);
+      // WHY A ROUND CANNOT BE JOINED, by name (kanban #761: an unseated round answered "this round is no longer listed in the lobby", or
+      // "its entry has closed" with ten minutes of entry left)
+      const notJoinableWhy = (id) => {
+        const held = (window.ARENA_LOBBY_UNOFFERED || []).find((x) => x.id === id);
+        if (held) return held.why === 'not seated' ? 'no playable round for this window - its committee is not seated'
+          : held.why === 'not drawn' ? 'no playable round for this window - its committee is not drawn' : 'no playable round for this window - it is played on another grid';
+        const row = (window.ARENA_LOBBY_ROWS || []).find((x) => x.id === id);
+        if (!row) return 'this round is not listed in the lobby';
+        if (Number(row.entryCloseMs) <= Date.now()) return 'this round takes no more orders - its entry has closed';
+        if (row.seating && row.seating.state !== 'named') return 'no playable round for this window - its committee is not seated';
+        if (row.phase === 'pending') return 'this round takes no orders yet - its committee is not drawn';
+        return 'this round takes no orders yet - ' + (row.signerNodesAgree || 0) + ' of the ' + (row.needed || '?') + ' signer nodes needed list it open';
+      };
       window.ARENA_LOBBY_ACT = {
         // PLAY: the round's own link, so the round is joined by exactly the path a
         // shared round link takes - IN THIS PAGE (2026-09-13 07:11: "after
@@ -7891,16 +7912,14 @@
                 if (window.ARENA_JOIN !== finding) return;
                 if ((window.ARENA_LOBBY_ROWS || []).some((x) => x.id === id && x.joinable)) { window.ARENA_LOBBY_ACT.join(id, { holdUntilMs, next, link }); return; }
                 if (Date.now() - t0 < 3000) { setTimeout(look, 250); return; }
-                finding.state = 'refused'; finding.why = 'this round is no longer listed in the lobby'; finding.stage = '';
+                finding.state = 'refused'; finding.why = notJoinableWhy(id); finding.stage = '';
                 answer(false, 'no-row', Object.assign({}, more, { waitedMs: Date.now() - t0 }));
               })();
               return answer(true, 'no-row-waiting', more);
             }
             // REFUSED OUT LOUD (measured on UI 347, kanban #601: an order pressed in its window's last minutes found no joinable row and
             // answered false only - window.ARENA_JOIN was left as it was, and the market's client showed the order as going for good)
-            { const listed = (window.ARENA_LOBBY_ROWS || []).some((x) => x.id === id);
-              window.ARENA_JOIN = { state: 'refused', stage: '', round: id, kindKnown: false,
-                why: listed ? 'this round takes no more orders - its entry has closed' : 'this round is no longer listed' }; }
+            window.ARENA_JOIN = { state: 'refused', stage: '', round: id, kindKnown: false, why: notJoinableWhy(id) };
             return answer(false, 'no-row', more);
           }
           // ANOTHER TAB OF THIS BROWSER IS IN A PAID RUN: this paid join is refused by name (see ARENA_PAID_RUN_ELSEWHERE)
