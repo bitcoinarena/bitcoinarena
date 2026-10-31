@@ -8,15 +8,22 @@ impl MintClientModule {
         use fedimint_core::encoding::Encodable as _;
         use futures::StreamExt as _;
         let api = self.client_ctx.module_api();
-        let mut items = None;
-        let mut said = Vec::new();
-        for peer in self.client_ctx.global_api().all_peers().iter().copied() {
-            match api.fetch_recovery_slice(peer, Duration::from_secs(20), 0, u64::MAX >> 1).await {
-                Ok(v) => { items = Some(v); break; }
-                Err(e) => said.push(format!("{peer}: {e}")),
+        // IN PAGES (kanban #910): the whole list in one answer is refused, "Response is too big", on federations A and B
+        const PAGE: u64 = 5000;
+        let mut items = Vec::new();
+        loop {
+            let (start, mut page, mut said) = (items.len() as u64, None, Vec::new());
+            for peer in self.client_ctx.global_api().all_peers().iter().copied() {
+                match api.fetch_recovery_slice(peer, Duration::from_secs(20), start, start + PAGE).await {
+                    Ok(v) => { page = Some(v); break; }
+                    Err(e) => said.push(format!("{peer}: {e}")),
+                }
             }
+            let page = page.ok_or_else(|| anyhow!("no guardian served its recovery items: {}", said.join("; ")))?;
+            let last = (page.len() as u64) < PAGE;
+            items.extend(page);
+            if last { break; }
         }
-        let items = items.ok_or_else(|| anyhow!("no guardian served its recovery items: {}", said.join("; ")))?;
         let filter = issuance::tweak_filter(&self.root_secret);
         let mut requests: BTreeMap<bitcoin_hashes::hash160::Hash, NoteIssuanceRequest> = BTreeMap::new();
         for item in items {

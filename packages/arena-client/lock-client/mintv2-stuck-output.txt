@@ -1,0 +1,16 @@
+// BLWP (kanban #910): await_tx_accepted reads the client's own transaction state, so a machine whose state was lost (a store that refused
+            // a write) waited for ever. A transaction blwp_recover_stuck names is asked at the federation instead.
+            let accepted = global_context.await_tx_accepted(range.txid);
+            let asked = async {
+                use fedimint_api_client::api::IGlobalFederationApi as _;
+                loop {
+                    fedimint_core::runtime::sleep(std::time::Duration::from_secs(5)).await;
+                    if !crate::BLWP_GIVEN_UP.lock().unwrap().contains(&range.txid) { continue; }
+                    return match fedimint_core::runtime::timeout(std::time::Duration::from_secs(20), global_context.api().await_transaction(range.txid)).await {
+                        Ok(_) => Ok(()),
+                        Err(_) => Err("the federation does not know this transaction".to_string()),
+                    };
+                }
+            };
+            futures::pin_mut!(accepted, asked);
+            futures::future::select(accepted, asked).await.factor_first().0?;
