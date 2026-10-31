@@ -339,8 +339,8 @@ export function tidyStorage(storage, { seeds = [], current = null, federations =
       for (const k of storageKeys(storage)) { const m = /^(arena\.lockdb\.([0-9a-f]{16})\.[0-9a-f]{16}\.)/.exec(k); if (m && done.has(m[2])) { if (!byDb.has(m[1])) byDb.set(m[1], []); byDb.get(m[1]).push(k); } }
       for (const [, ks] of byDb) { if (now_ <= pressureChars) break; take(ks); }
     }
-    // AND A LOCK WALLET OF A ROUND STILL OPEN, an hour after it was kept and with no client of this page on it: handed to `archive` (the page's IndexedDB,
-    // which removes the keys once they are written there), so nothing of it is lost, and joined anew from the seed when needed (LOCK_ROOM_CHARS)
+    // AND A LOCK WALLET OF A ROUND STILL OPEN, an hour after it was kept and with no client of this page on it: copied to `archive` (the page's IndexedDB) and
+    // removed here at once, because a refused write is tried again right after this returns (kanban #803); joined anew from the seed when needed (LOCK_ROOM_CHARS)
     if (now_ > pressureChars && archive) {
       const recent = new Set();
       for (const k of storageKeys(storage)) {
@@ -351,16 +351,17 @@ export function tidyStorage(storage, { seeds = [], current = null, federations =
       for (const k of storageKeys(storage)) { const m = /^(arena\.lockdb\.([0-9a-f]{16})\.[0-9a-f]{16}\.)/.exec(k); if (m && !recent.has(m[2]) && !liveLockDbs.has(m[1])) { if (!byDb.has(m[1])) byDb.set(m[1], []); byDb.get(m[1]).push(k); } }
       for (const [, ks] of byDb) {
         if (now_ <= pressureChars) break;
-        const rows = ks.map((k) => [k, storage.getItem(k)]);
-        for (const [k, v] of rows) { const c = k.length + String(v || '').length; bytes += c * 2; now_ -= c; removed++; }
-        wallets++;
-        archive(rows);
+        archive(ks.map((k) => [k, storage.getItem(k)]));
+        take(ks);
       }
     }
     if (now_ > pressureChars) {
       const travelling = new Set();
       for (const k of storageKeys(storage)) if (k.startsWith('arena.ecash.pending.')) { try { travelling.add(String(JSON.parse(storage.getItem(k)).fed || '').slice(0, 16)); } catch { /* unreadable: its federation stays */ } }
-      for (const k of storageKeys(storage)) if (k.startsWith(PENDING_PREFIX)) travelling.add(k.slice(PENDING_PREFIX.length, PENDING_PREFIX.length + 16));
+      // A DEPOSIT WAITING HOLDS ONLY THE WALLET THAT MADE IT (kanban #803: one unclaimed invoice in a federation held all 22 kept phrases' wallets there, so the
+      // storage stayed full and the claim could not be written): that wallet's keys name its operation
+      const waitingOps = [];
+      for (const k of storageKeys(storage)) if (k.startsWith(PENDING_PREFIX)) { try { for (const p of JSON.parse(storage.getItem(k))) waitingOps.push(String(p.operation).toLowerCase()); } catch { travelling.add(k.slice(PENDING_PREFIX.length, PENDING_PREFIX.length + 16)); } }
       for (const [prefix] of groups) {
         if (now_ <= pressureChars) break;
         const o = owned.get(prefix);
@@ -368,7 +369,7 @@ export function tidyStorage(storage, { seeds = [], current = null, federations =
         let known = 0n; try { known = BigInt(storage.getItem(`arena.wallet.known.${o.fed.slice(0, 16)}.${o.hex.slice(0, 16)}`) || 0); } catch { known = 1n; }
         if (known > 0n) continue;
         const ks = storageKeys(storage).filter((k) => k.startsWith(prefix));
-        if (!ks.length) continue;
+        if (!ks.length || ks.some((k) => waitingOps.some((op) => k.toLowerCase().includes(op)))) continue;
         take(ks); markSeedRecover(storage, o.hex);
       }
     }
