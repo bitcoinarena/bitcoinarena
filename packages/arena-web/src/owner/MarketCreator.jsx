@@ -4,7 +4,7 @@
 // verstehen, keine wall of Text"): one step on screen, the card as players will see it beside it. A draft stays in this browser. Signing comes
 // with the protocol field the market needs (docs/MARKET-CREATOR.md), so the last step says so and keeps the draft.
 import React from 'react';
-import { EVERY, KEPT, OUTCOMES_MAX, STEPS, TEMPLATES, fromTemplate, outcomeOf, problemsOf, readAnswer } from './marketDraft.js';
+import { EVERY, KEPT, OUTCOMES_MAX, STEPS, TEMPLATES, fieldsOf, fromTemplate, outcomeOf, problemsOf, readAnswer, urlProblem } from './marketDraft.js';
 
 const Err = ({ of }) => (of ? <span className="mc-err">{of}</span> : null);
 const Field = ({ label, why, children }) => <label className="mc-f"><span>{label}</span>{children}<Err of={why} /></label>;
@@ -37,14 +37,29 @@ export class MarketCreator extends React.Component {
     const { draft } = this.state; const got = readAnswer(draft.source, text);
     this.setState({ test: got.why ? { why: got.why } : { value: got.value, ...outcomeOf(draft, got.value) } });
   }
+  // THE LIVE TEST, AT THE FIELD (the owner 2026-10-31: "Test Funktion um es live zu testen, ob es z.B. amount gibt"): the source read now, the field found
+  // or not, and the fields the answer does hold to pick from. The browser reads it here; a site that forbids that needs the pasted answer
   async read() {
+    const bad = urlProblem(this.state.draft.source.url);
+    if (bad) { this.setState({ test: { why: bad } }); return; }
     this.setState({ reading: true, test: null });
     try {
       const r = await fetch(this.state.draft.source.url, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(10000) });
       const text = await r.text();
       if (!r.ok) throw new Error(`answered ${r.status}`);
       this.setState({ sample: text.slice(0, 1000000), reading: false }); this.run(text);
-    } catch (e) { this.setState({ reading: false, test: { why: `This browser could not read it (${e.message}). Paste the answer below.` } }); }
+    } catch (e) { this.setState({ reading: false, test: { why: `This browser could not read it (${e.message}). Paste the answer in the Test step.` } }); }
+  }
+  tested() {
+    const { test, sample, draft: d } = this.state;
+    if (!test) return null;
+    const fields = d.source.read === 'json' ? fieldsOf(sample) : [];
+    return (<>
+      {test.why ? <div className="mc-result bad">{test.why}</div>
+        : <div className="mc-result ok"><span>Value <b>{test.value === '' ? 'nothing' : test.value}</b></span><span>Outcome <b>{test.outcome}</b></span>{test.note ? <small>{test.note}</small> : null}</div>}
+      {fields.length ? <div className="mc-fields" aria-label="Fields in the answer">{fields.map(([path, value]) => <button key={path} type="button" className={path === d.source.path ? 'on' : undefined} title={value}
+        onClick={() => { const source = { ...d.source, path }; this.setState({ draft: { ...d, source } }, () => this.run(sample)); }}><code>{path}</code><small>{value}</small></button>)}</div> : null}
+    </>);
   }
   card() {
     const { draft: d } = this.state;
@@ -79,6 +94,8 @@ export class MarketCreator extends React.Component {
         <Field label="Address the nodes read" why={bad.url}><input inputMode="url" placeholder="https://" value={s.url} onChange={(e) => this.source({ url: e.target.value })} /></Field>
         <Seg value={s.read} options={[['json', 'JSON field'], ['regex', 'Pattern'], ['text', 'Whole answer']]} onPick={(read) => this.source({ read })} />
         {s.read === 'text' ? null : <Field label={s.read === 'json' ? 'Field' : 'Pattern'} why={bad.path}><input className="mono" placeholder={s.read === 'json' ? 'data.amount' : 'Price: ([0-9.]+)'} value={s.path} onChange={(e) => this.source({ path: e.target.value })} /></Field>}
+        <button type="button" className="mc-test" disabled={reading} onClick={() => this.read()}>{reading ? 'Reading…' : 'Test it live'}</button>
+        {this.tested()}
         {d.kind === 'number' ? null : <>
           <Seg value={s.rule} options={[['above', 'At or above'], ['below', 'Below'], ['rises', 'Rises'], ['equals', 'Names outcome'], ['found', 'Is found']]} onPick={(rule) => this.source({ rule })} />
           {s.rule === 'above' || s.rule === 'below' ? <Field label="Level" why={bad.value}><input inputMode="decimal" value={s.value} onChange={(e) => this.source({ value: e.target.value })} /></Field> : null}</>}
@@ -87,8 +104,7 @@ export class MarketCreator extends React.Component {
     if (step === 'test') return (<>
       <button type="button" className="primary" disabled={reading} onClick={() => this.read()}>{reading ? 'Reading…' : 'Read it now'}</button>
       <Field label="Or paste an answer"><textarea className="mono" rows={5} spellCheck={false} value={sample} onChange={(e) => { this.setState({ sample: e.target.value }); this.run(e.target.value); }} /></Field>
-      {test ? (test.why ? <div className="mc-result bad">{test.why}</div>
-        : <div className="mc-result ok"><span>Value <b>{test.value === '' ? 'nothing' : test.value}</b></span><span>Outcome <b>{test.outcome}</b></span>{test.note ? <small>{test.note}</small> : null}</div>) : null}
+      {this.tested()}
     </>);
     if (step === 'schedule') {
       const s = d.schedule;
