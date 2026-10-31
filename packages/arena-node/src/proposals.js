@@ -49,7 +49,7 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       const dep = depositOf({ raw: tx.raw, height: tx.height, proposal: p, recipients });
       if (!dep.ok) return { ok: false, status: 422, why: dep.why };
       // THE HISTORY A REPEAL IS READ AGAINST: the configs live before, at the height it was published at (27A.7.6)
-      const history = historyFor ? historyFor(net, dep.publishedAt, p.class) : null;
+      const history = historyFor ? historyFor(net, dep.publishedAt) : null;
       if (historyFor && !history)
         return { ok: false, status: 503, why: `this seat has not yet decided every proposal that activates by height ${dep.publishedAt}, so it cannot yet say whether this one is a repeal: ask again shortly` };
       const stands = proposalStands(p, { publishedAt: dep.publishedAt, depositSats: dep.depositSats, lowestBondMinSats: lowestBondMinSatsFor(net),
