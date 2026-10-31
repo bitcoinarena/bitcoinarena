@@ -24,6 +24,8 @@ const FED = 'fe'.repeat(32);
 // a browser: storage, kept phrases, one fake wallet per phrase (e-cash notes it can send once), and the current tab's main
 function browser({ balances, receive = () => 'Success', heldLocks = [], pending = [], blwp = {}, handover = null } = {}) {
   const store = new Map();
+  // a tab that holds a phrase writes its heartbeat; a lock without one is taken over (kanban #803)
+  for (const h of heldLocks) store.set('arena.seed.held.' + h.slice(0, 16), JSON.stringify({ at: Date.now() }));
   const L = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
   const proxy = new Proxy(L, { ownKeys: () => [...store.keys()], getOwnPropertyDescriptor: (t, k) => (store.has(k) ? { enumerable: true, configurable: true, value: store.get(k) } : undefined) });
   L.setItem('arena.seeds', JSON.stringify(Object.values(SEEDS).map((h) => ({ hex: h }))));

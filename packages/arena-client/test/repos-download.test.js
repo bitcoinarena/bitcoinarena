@@ -76,7 +76,7 @@ test('no page names a release number of its own; every release link is releases/
   // the docs: the repository is open now, the latest release linked with its number
   const docs = read('src/website/docs/docs-template.html');
   assert.ok(!docs.includes('invite-only'), 'the repository is public');
-  assert.match(docs, /<a href="https:\/\/github\.com\/bitcoin-arena\/bitcoin-arena\/releases\/latest">download the latest release<span class="relv" data-arena-release-version><\/span><\/a>/);
+  assert.match(docs, /<a href="https:\/\/github\.com\/bitcoin-arena\/bitcoin-arena\/releases\/latest">The latest release<span class="relv" data-arena-release-version><\/span><\/a>/);
 });
 
 test('docs.bitcoin-arena.io/repos/ links the five public repositories, each with its GitHub icon, and the docs lead to it', () => {
