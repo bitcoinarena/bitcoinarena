@@ -15,19 +15,22 @@
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { TAG, PROTOCOL_VERSION, TYPE_CONFIG_PROPOSAL } from './constants.js';
+import { decodeHostList, hostListProblem } from './market-check.js';
 
-export const CLASS = Object.freeze({ DESIGN: 1, MONEY: 2, UPGRADE: 3 });
+// SOURCES (kanban #921, the owner 2026-10-31: "Mach einen Prozess mit votings von bonded nodes die eine whitelist führen"): the hosts a market may read. Its "config" is the
+// whole list (market-check.js encodeHostList), on a chain of its own from SOURCES_GENESIS: the same deposit, phases and bond-weighted tally, never a game's config
+export const CLASS = Object.freeze({ DESIGN: 1, MONEY: 2, UPGRADE: 3, SOURCES: 4 });
 export const CHOICE = Object.freeze({ YES: 1, NO: 2, ABSTAIN: 3 });
 /** The schedule in blocks (§27A.7.4, §27A.8.2) - genesis parameters; regtest runs 1 / 6 / 1. */
 export const SCHEDULES = Object.freeze({
   mainnet: Object.freeze({ [CLASS.DESIGN]: { review: 1008, voting: 1440, cooldown: 2016 }, [CLASS.MONEY]: { review: 1008, voting: 1440, cooldown: 2016 },
-    [CLASS.UPGRADE]: { review: 2016, voting: 2016, cooldown: 4320 } }),
+    [CLASS.UPGRADE]: { review: 2016, voting: 2016, cooldown: 4320 }, [CLASS.SOURCES]: { review: 432, voting: 1008, cooldown: 144 } }),
   regtest: Object.freeze({ [CLASS.DESIGN]: { review: 1, voting: 6, cooldown: 1 }, [CLASS.MONEY]: { review: 1, voting: 6, cooldown: 1 },
-    [CLASS.UPGRADE]: { review: 1, voting: 6, cooldown: 1 } }),
+    [CLASS.UPGRADE]: { review: 1, voting: 6, cooldown: 1 }, [CLASS.SOURCES]: { review: 1, voting: 6, cooldown: 1 } }),
   // TESTNET4: a day of review and a day of voting for every class (kanban #785, a tester 2026-10-28: "for Testnet you can set the
   // signal and voting periods to 1 day for all types of proposals"); the cooldowns as mainnet's
   testnet4: Object.freeze({ [CLASS.DESIGN]: { review: 144, voting: 144, cooldown: 2016 }, [CLASS.MONEY]: { review: 144, voting: 144, cooldown: 2016 },
-    [CLASS.UPGRADE]: { review: 144, voting: 144, cooldown: 4320 } }),
+    [CLASS.UPGRADE]: { review: 144, voting: 144, cooldown: 4320 }, [CLASS.SOURCES]: { review: 144, voting: 144, cooldown: 144 } }),
 });
 /**
  * A REPEAL (§27A.7.6): "review 0, voting 720, cooldown 0 - but only if its config is byte-identical to an ancestor that was live
@@ -43,11 +46,18 @@ export function isRepeal(p, history = []) {
   const mine = toHex(p.config);
   return history.slice(0, -1).some((h) => h.config && toHex(h.config) === mine);
 }
+/** A host dropped from the list goes on the repeal's short schedule: a source gone bad must not stay listed for weeks. Adding one takes the full schedule. */
+export function isHostRemoval(p, history = []) {
+  if (p.class !== CLASS.SOURCES || !history.length) return false;
+  const now = new Set(decodeHostList(history[history.length - 1].config)), next = decodeHostList(p.config);
+  return next.length < now.size && next.every((h) => now.has(h));
+}
 /** Thresholds of the bonded capital in the snapshot (§27A.7.4, §27A.8.2): turnout percent, approval of non-abstaining weight. */
 export const THRESHOLDS = Object.freeze({
   [CLASS.DESIGN]: { turnoutPct: 30n, approvalPct: 50n, strict: true },     // > 50 %
   [CLASS.MONEY]: { turnoutPct: 40n, approvalPct: 66n, strict: false },     // >= 66 %
   [CLASS.UPGRADE]: { turnoutPct: 51n, approvalPct: 66n, strict: false },   // >= 66 %
+  [CLASS.SOURCES]: { turnoutPct: 30n, approvalPct: 66n, strict: false },   // >= 66 %: a source decides money
 });
 export const VOTE_MARKER = Uint8Array.from([0x41, 0x52, 0x4e, 0x56]);     // "ARN" 'V'
 export const VOTE_BYTES = 4 + 8 + 1 + 64;                                  // 77, inside the 80-byte OP_RETURN limit
@@ -69,7 +79,7 @@ export function encodeConfigProposalBody(p) {
   if (!isVoteBytes32(p.networkId) || !isVoteBytes32(p.parent) || !isVoteBytes32(p.configHash) || !isVoteBytes32(p.proposer) || !isVoteBytes32(p.depositTxid))
     throw new Error('a proposal names its network, parent config, config hash, proposer and deposit txid in 32 bytes each');
   if (!(p.config instanceof Uint8Array) || !p.config.length) throw new Error('a proposal carries the FULL config, never a diff (27A.7.2)');
-  if (!className(p.class)) throw new Error(`a proposal's class is DESIGN, MONEY or UPGRADE, not ${p.class}`);
+  if (!className(p.class)) throw new Error(`a proposal's class is DESIGN, MONEY, UPGRADE or SOURCES, not ${p.class}`);
   if (!Number.isInteger(p.activationHeight) || p.activationHeight < 1 || p.activationHeight > 0xffffffff) throw new Error('activation_height is a block height');
   const w = new Writer();
   w.u8(TYPE_CONFIG_PROPOSAL); w.u16(PROTOCOL_VERSION);
@@ -108,7 +118,8 @@ export function proposalStands(p, { publishedAt, depositSats, lowestBondMinSats,
   if (named !== carried) return { ok: false, why: `config_hash ${named} is not the hash of the config the proposal carries (${carried}): config_hash = H(canonical(game_config)), 27A.7.1` };
   if (typeof verify !== 'function' || !verify(p.signature, proposalBodyId(p), p.proposer)) return { ok: false, why: 'the proposal is not signed by the node it names as proposer' };
   // a config the network already ran - before the current one - is a repeal, on the short schedule (§27A.7.6)
-  const repeal = !!history && isRepeal(p, history);
+  if (p.class === CLASS.SOURCES) { const bad = hostListProblem(p.config); if (bad) return { ok: false, why: bad }; }
+  const repeal = !!history && (isRepeal(p, history) || isHostRemoval(p, history));
   const s = repeal ? repealSchedule : schedule[p.class];
   const earliest = publishedAt + s.review + s.voting + s.cooldown;
   if (p.activationHeight < earliest) return { ok: false, why: `activation_height ${p.activationHeight} is before the end of cooldown (${earliest}): invalid on its face` };

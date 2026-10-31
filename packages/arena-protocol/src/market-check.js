@@ -86,11 +86,26 @@ export function checkMarketCode(code, parse) {
 }
 
 // ONLY LISTED SOURCES (the owner 2026-10-31: "Ein attacker kann eine beliebige Seite angeben die ein manipuliertes Ergebnis bereitstellt"): 5 of 7 is no defence when all seven read
-// one page its author controls, so a market may read only hosts that no market creator runs. A host joins by a release, and later by a vote.
+// one page its author controls, so a market may read only hosts that no market creator runs. This is the list's start; the bonded nodes change it by ballot
+// (class SOURCES, ballot.js), each change a full new list, and a round is judged by the list live at its census height, so every seat judges it alike.
 export const MARKET_HOSTS = Object.freeze(['api.coinbase.com', 'ws-feed.exchange.coinbase.com', 'api.binance.com', 'api.kraken.com', 'www.bitstamp.net', 'mempool.space', 'api.blockchain.info']);
-export function marketHostProblem(text) {
+export function marketHostProblem(text, hosts = MARKET_HOSTS) {
   let h; try { h = new URL(String(text).trim()).hostname.toLowerCase(); } catch { return 'Not a full address'; }
-  return MARKET_HOSTS.includes(h) ? null : `${h} is not a listed source`;
+  return hosts.includes(h) ? null : `${h} is not a listed source`;
+}
+
+/** The list as a proposal carries it: sorted hosts, one a line, so one list has one hash. */
+export const encodeHostList = (hosts) => new TextEncoder().encode([...new Set(hosts)].sort().join('\n'));
+export const decodeHostList = (bytes) => new TextDecoder().decode(bytes).split('\n').filter(Boolean);
+/** Why these bytes are no list of hosts a market may read, or null. */
+export function hostListProblem(bytes) {
+  const hosts = decodeHostList(bytes);
+  if (!hosts.length) return 'A list names at least one host';
+  if (hosts.length > 256) return 'A list names at most 256 hosts';
+  const canonical = encodeHostList(hosts);
+  if (canonical.length !== bytes.length || canonical.some((x, i) => x !== bytes[i])) return 'A list is sorted, each host once';
+  for (const h of hosts) if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(h) || marketUrlProblem(`https://${h}/`)) return `${h} is not a public host name`;
+  return null;
 }
 
 /** THE ADDRESS A NODE MAY READ FOR A MARKET: https (wss for a socket), a public host, no login in it. Answers why not, or null. */

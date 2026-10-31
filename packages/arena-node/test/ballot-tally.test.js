@@ -7,7 +7,8 @@ import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { createBallotTally } from '../src/ballot-tally.js';
 import { encodeConfigProposalBody, proposalBodyId, proposalId, encodeVote, voteMessage, CLASS, CHOICE, configHashOf } from '../../arena-protocol/src/ballot.js';
-import { depositOutputsExpected, BALLOT_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
+import { depositOutputsExpected, BALLOT_GENESIS, SOURCES_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
+import { MARKET_HOSTS, encodeHostList } from '../../arena-protocol/src/market-check.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { encodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
@@ -268,4 +269,36 @@ test('on a seat: a proposal passes and activates, rounds are served under the co
     assert.match((await post(NEW.hash, 316)).text, BOUND);
     assert.doesNotMatch((await post(NEW.hash, 312)).text, BOUND, 'a round created while NEW was live keeps NEW');
   } finally { await d.close(); }
+});
+
+// THE LIST OF MARKET SOURCES, BY VOTE OF THE BONDED NODES (kanban #921): a list passes on a chain of its own at 30 % turnout and 66 % approval, a round is judged by the list at its census height, and a game's config never moves
+test('the bonded nodes change the source list: it goes live at its height, and only for rounds from there on', async () => {
+  const hosts = [...MARKET_HOSTS, 'api.ecb.example.org'];
+  const config = encodeHostList(hosts);
+  const { idBytes, record } = kept({ parent: SOURCES_GENESIS.configHash, configHash: configHashOf(config), config, cls: CLASS.SOURCES });
+  const votes = new Map([[101, [vote(A, idBytes, CHOICE.YES, 101, 'a1')]], [102, [vote(B, idBytes, CHOICE.YES, 102, 'b1')]]]);
+  const ch = chain(votes);
+  const t = createBallotTally({ proposals: store([record]), tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, verify, decideDepthFor: () => 1 });
+  const net = toHex(H(0x4e));
+  ch.tip = 100; await t.pass();
+  assert.deepEqual(t.sources(net).hosts, [...MARKET_HOSTS].sort());
+  ch.tip = 112; await t.pass(); await t.pass();
+  assert.ok(t.sources(net).hosts.includes('api.ecb.example.org'));
+  assert.equal(t.sources(net).since, record.activationHeight);
+  assert.equal(t.list()[0].phase, 'activated');
+  assert.ok(!t.hostsAt(net, record.activationHeight - 1).includes('api.ecb.example.org'));
+  assert.ok(t.hostsAt(net, record.activationHeight).includes('api.ecb.example.org'));
+  assert.equal(toHex(t.spans(net)[t.spans(net).length - 1].configHash), toHex(BALLOT_GENESIS.configHash));
+});
+
+test('without 66 % of the voting bonds a list does not pass', async () => {
+  const hosts = [...MARKET_HOSTS, 'attacker.example.org'];
+  const config = encodeHostList(hosts);
+  const { idBytes, record } = kept({ parent: SOURCES_GENESIS.configHash, configHash: configHashOf(config), config, cls: CLASS.SOURCES });
+  const votes = new Map([[101, [vote(A, idBytes, CHOICE.YES, 101, 'a1'), vote(B, idBytes, CHOICE.NO, 101, 'b1'), vote(C, idBytes, CHOICE.NO, 101, 'c1')]]]);
+  const ch = chain(votes);
+  const t = createBallotTally({ proposals: store([record]), tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, verify, decideDepthFor: () => 1 });
+  ch.tip = 112; await t.pass(); await t.pass();
+  assert.equal(t.list()[0].phase, 'failed');
+  assert.ok(!t.sources(toHex(H(0x4e))).hosts.includes('attacker.example.org'));
 });
