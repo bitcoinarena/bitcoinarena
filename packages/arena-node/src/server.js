@@ -158,6 +158,7 @@ import { runId as runIdOf } from './verdict.js';
 import { auditEligible, vrfSecretFor, decodeAudit, auditId, auditResultsHash } from '../../arena-protocol/src/auditor.js';
 import { makeVrf, SUITE_SECP256K1_TAI } from '../../arena-protocol/src/vrf.js';
 import { entryId as entryIdOfContract } from '../../arena-protocol/src/contracts.js';
+import { runSourceOnce } from './market-test.js';
 import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
@@ -2471,11 +2472,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // drawn seats' words, and - once 5 signed one body - the attestation held here and handed to the round's settlement committee
   const drawnHosted = [...hosted.values()].some((h) => h && h.manifest && isDrawnAttest(h.manifest));
   const drawnContracts = new Map();   // round hex -> { c, window, openedMs }: the drawn-attestation rounds of the last 4 h only
+  // A MARKET WITH ITS OWN SOURCE (kanban #920) may end weeks after it opened: its rounds are kept to their end, and read from the store that far back
+  const sourceHosted = [...hosted.values()].some((h) => h && h.manifest && h.manifest.source);
   let drawnAfterRowid = 0;             // the rounds row read last (kanban #791)
   const drawnAttestor = drawnHosted ? new DrawnAttestor({
     readPrice: () => prices.readPrice(), selfKey: toHex(round.pubkey), sign: (d) => schnorr.sign(d, round.identity.secret),
     attestorsFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? got.attestors.map((e) => toHex(e.pubkey)) : null; },
     peersFor: (rid) => { const got = roster.attestorsFor(rid); return got.ok ? peerEndpointsOf(got.attestors, round.pubkey) : []; },
+    runSource: sourceHosted ? (source, market) => runSourceOnce(source, market) : null,
+    opening: () => { const now = round.now(), out = []; for (const [k, d] of drawnContracts) if (d.source && Number(d.window.startMs) <= now && Number(d.window.endMs) > now) out.push({ roundId: fromHex(k), source: d.source, outcomes: d.outcomes }); return out; },
     due: () => {
       // THE IDS ONLY, EVERY 10 S (kanban #742: every contract of the last 4 h was read out of the store and its id hexed on each
       // pass): a round seen for the first time has its contract read once (the store's decoded copy while it is open), and what is
@@ -2484,16 +2489,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // here - 22,022 rounds opened in the last 4 h, mostly RPS grid rounds, each id hexed and looked up again every 10 s): the rows
       // after the last rowid read are read, and only the drawn-attestation rounds among them are kept, with when they were opened
       const now = round.now(), out = [];
-      for (const r of round.db.prepare('SELECT rowid AS n, lower(hex(round_id)) AS h, opened_ms AS at FROM rounds WHERE rowid > ? AND opened_ms > ?').all(drawnAfterRowid, now - 4 * 3600000)) {
+      for (const r of round.db.prepare('SELECT rowid AS n, lower(hex(round_id)) AS h, opened_ms AS at FROM rounds WHERE rowid > ? AND opened_ms > ?').all(drawnAfterRowid, now - (sourceHosted ? 40 * 86400000 : 4 * 3600000))) {
         if (r.n > drawnAfterRowid) drawnAfterRowid = r.n;
         try {
           const c = round.contractOf(fromHex(r.h)), plugin = c ? attestedOf(c) : null;
-          if (plugin && isDrawnAttest(plugin.manifest)) { const w = marketWindowOf(c, plugin.manifest); if (w.ok && w.window) drawnContracts.set(r.h, { c, window: w.window, openedMs: Number(r.at) }); }
+          // a one-off market runs on no grid: its window is entry close to the moment its round names
+          if (plugin && plugin.manifest.source && plugin.manifest.roundPeriodMs === 0n && c.event) drawnContracts.set(r.h, { c, window: { startMs: c.entryCloseMs, endMs: c.event.resolveAtMs }, source: plugin.manifest.source, outcomes: c.event.outcomes, openedMs: Number(r.at) });
+          else if (plugin && isDrawnAttest(plugin.manifest)) { const w = marketWindowOf(c, plugin.manifest); if (w.ok && w.window) drawnContracts.set(r.h, { c, window: w.window, ...(plugin.manifest.source ? { source: plugin.manifest.source, outcomes: plugin.manifest.outcomes } : {}), openedMs: Number(r.at) }); }
         } catch { /* not a drawn round */ }
       }
       for (const [k, d] of drawnContracts) {
-        if (d.openedMs <= now - 4 * 3600000) { drawnContracts.delete(k); continue; }
-        if (Number(d.window.endMs) <= now && Number(d.window.endMs) > now - 1800000) out.push({ roundId: fromHex(k), window: d.window });
+        if (d.openedMs <= now - 4 * 3600000 && !(d.source && Number(d.window.endMs) > now - 1800000)) { drawnContracts.delete(k); continue; }
+        if (Number(d.window.endMs) <= now && Number(d.window.endMs) > now - 1800000) out.push({ roundId: fromHex(k), window: d.window, ...(d.source ? { source: d.source, outcomes: d.outcomes } : {}) });
       }
       return out;
     },
