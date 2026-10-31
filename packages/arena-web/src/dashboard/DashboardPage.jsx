@@ -249,7 +249,7 @@ export class DashboardPage extends React.Component {
         {D.liquidity ? <Liquidity claim={D.liquidity} /> : null}
         <section><h2>Rounds checked</h2>
           <div className="card scroll"><table className="tbl"><thead><tr><th>Round</th><th>Started</th><th>Game</th><th className="n">Entries</th><th className="n">Earned</th><th>Settled</th></tr></thead>
-            <tbody>{(D.rounds || []).slice(0, 50).map((r) => {
+            <tbody>{(D.rounds || []).length ? null : <tr><td colSpan={6} className="sub">No rounds yet. Your node is drawn once it has a bond.</td></tr>}{(D.rounds || []).slice(0, 50).map((r) => {
               const earned = big(r.gameVerifyMsat) + big(r.settlementMsat) + big(r.guardianMsat); const st = r.settlement && r.settlement.state; const isOpen = !!(this.state.open || {})[r.id];
               return (<React.Fragment key={r.id}>
                 <tr className="rr" aria-expanded={isOpen ? 'true' : 'false'} onClick={() => this.toggle(r.id)}><td><code>{isOpen ? '▾ ' : '▸ '}{r.id.slice(0, 8)}</code></td><td className="nowrap">{short(r.startMs, now)}</td>
@@ -263,7 +263,7 @@ export class DashboardPage extends React.Component {
             <p className="sub">{states.length ? states.map(([k, v]) => `${v} ${k.toLowerCase()}`).join(' · ') : 'none yet'}</p>
             <table className="tbl"><tbody>{(D.settlements || []).slice(0, 20).map((s, i) => <tr key={i} title={s.why || undefined}><td><code>{s.round.slice(0, 8)}</code></td><td className="nowrap">{short(s.madeMs, now)}</td><td className={s.state === 'ACCEPTED' ? 'ok' : s.state === 'REFUSED' ? 'bad' : ''}>{String(s.state).toLowerCase()}</td></tr>)}</tbody></table></div></div>
           <div><h2>Federations</h2><div className="card scroll"><table className="tbl"><thead><tr><th>Federation</th><th className="n">Paid rounds</th><th className="n">Last</th></tr></thead>
-            <tbody>{(D.federations || []).map((f) => <tr key={f.federation}><td><code>{f.federation.slice(0, 12)}</code></td><td className="n">{f.rounds}</td><td className="n nowrap">{short(f.lastMs, now)}</td></tr>)}</tbody></table></div></div>
+            <tbody>{(D.federations || []).length ? null : <tr><td colSpan={3} className="sub">No paid rounds in a federation yet.</td></tr>}{(D.federations || []).map((f) => <tr key={f.federation}><td><code>{f.federation.slice(0, 12)}</code></td><td className="n">{f.rounds}</td><td className="n nowrap">{short(f.lastMs, now)}</td></tr>)}</tbody></table></div></div>
         </section>
       </div>);
   }
