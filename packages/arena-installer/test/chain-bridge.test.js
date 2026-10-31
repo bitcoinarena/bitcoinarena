@@ -39,6 +39,7 @@ test('the seat\'s calls through the bridge: tip, hash, header (verbose and raw),
   const b = createBridge({ electrum: { host: 'e', port: 1, tls: false }, home, session, fetcher });
   t.after(() => { b.close(); rmSync(home, { recursive: true, force: true }); });
   assert.equal(await b.call('getblockcount'), 0);
+  assert.equal(await b.call('getbestblockhash'), TESTNET4_GENESIS, 'what a chain view asks first');
   assert.equal(await b.call('getblockhash', [0]), TESTNET4_GENESIS);
   await assert.rejects(b.call('getblockhash', [1]), /out of range/);
   const v = await b.call('getblockheader', [TESTNET4_GENESIS]);
