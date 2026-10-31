@@ -2022,7 +2022,10 @@
       'a5c5766a7902b6703ebe9382cea9154adc777af3e5cafa766265e971efa52c5a':
       { file: 'core-a5c5766a.js', sha256: '85a94c656db4bdb78a325704df4e2047bfa4d9c28816d48d104f1af4f57ae31c' },
       '0847c99f60e694e106fce0a79ac252b3e6170a343db52a95e3b5052a7e00a5f1':
-      { file: 'core-0847c99f.js', sha256: '41535dc6159d18464c7911e66984f2dc04ac5f5a593d1f759711f6ea07b1124d' } };
+      { file: 'core-0847c99f.js', sha256: '41535dc6159d18464c7911e66984f2dc04ac5f5a593d1f759711f6ea07b1124d' },
+      // AND MANIFEST VERSION 7'S (kanban #828): 0847c99f with a door per player in a shared world
+      '8cbc74b27bee78727fa395fcc5e5181beb4072f837adbee0e9ea278ff427d387':
+      { file: 'core-8cbc74b2.js', sha256: '35889f637daf8f829118d751f65e626bfe58464d8a3903e6780e62833b8d9aec' } };
     window.ARENA_LOAD_CORE = function (hash) {
       var hex = String(hash || '').toLowerCase();
       if (window.ARENA_CORES[hex]) return Promise.resolve({ ok: true, hex: hex });

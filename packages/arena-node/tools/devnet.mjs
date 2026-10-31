@@ -571,7 +571,7 @@ async function play() {
   const loadsAt0 = truck ? bedFrom(0) : [];
   const drive = truck ? drivenTape(seed.seedWord, N) : { tape: Array.from({ length: N }, (_, t) => [(t * 7 + 3) % 10, 0, 0, 0, 0]) };
   const A = truck ? core.adapter : (await import(core.url)).CORE;
-  const st = A.start(seed.seedWord, config, { runTicks: N });
+  const st = A.start(seed.seedWord, config, { runTicks: N, ...(seed.slot === undefined ? {} : { slot: seed.slot }) });
   const ev = A.eventsOf({ loads: loadsAt0 });
   const stateAt = [];
   for (let t = 0; t < N; t++) { ev.before(st, t); A.step(st, drive.tape[t]); if (t + 1 === FIRST || t + 1 === N) stateAt[t + 1] = A.stateHash(st); }

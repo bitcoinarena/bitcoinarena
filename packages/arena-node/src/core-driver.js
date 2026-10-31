@@ -34,17 +34,18 @@ function meta() {
   };
 }
 
-/** A RUN'S START OPTIONS: its length, and the unlocks of the items its entry plays with only when it names some - so a
- * core that sells nothing is started exactly as before. */
-const startOptions = (runTicks, items) => (Array.isArray(items) && items.length ? { runTicks, items } : { runTicks });
+/** A RUN'S START OPTIONS: its length, the unlocks of the items its entry plays with only when it names some, and its place in a
+ * shared world only when it has one (kanban #828) - so a core that sells nothing is started exactly as before, and a core older
+ * than the slot never reads it. */
+const startOptions = (runTicks, items, slot) => ({ runTicks, ...(Array.isArray(items) && items.length ? { items } : {}), ...(Number.isInteger(slot) ? { slot } : {}) });
 
 /** REPLAY ONE RUN: the loop replay.js describes, here and nowhere else. The node checked the transcript before. */
-function replay({ seedWord, config, runTicks, items, start, words, events: ev, marks, pictures }) {
+function replay({ seedWord, config, runTicks, items, slot, start, words, events: ev, marks, pictures }) {
   const want = new Map(marks);
   const wanted = new Set(pictures);
   const taken = [];
   const events = A.eventsOf(ev);
-  const st = A.start(seedWord, config, startOptions(runTicks, items));
+  const st = A.start(seedWord, config, startOptions(runTicks, items, slot));
   let checked = 0;
   let divergedAt = null;
   const atStart = want.get(start);
@@ -65,9 +66,9 @@ function replay({ seedWord, config, runTicks, items, start, words, events: ev, m
 }
 
 /** THE WARM GHOST: a run kept here and stepped forward a slice at a time; the node holds only its number. */
-function open({ seedWord, config, runTicks, items }) {
+function open({ seedWord, config, runTicks, items, slot }) {
   const id = nextId++;
-  states.set(id, A.start(seedWord, config, startOptions(runTicks, items)));
+  states.set(id, A.start(seedWord, config, startOptions(runTicks, items, slot)));
   return id;
 }
 function pose(id) {
