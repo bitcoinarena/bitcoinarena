@@ -16,10 +16,10 @@
 // forgotten (`forget`): it was never published on the chain the seat now follows, and is taken again when posted again.
 // A PROPOSED SOURCE'S EXAMPLE (kanban #921): the list without one does not stand on any seat (hostListProblem). Each seat also reads the example of every host the
 // proposal adds and keeps what it saw (`example`), for the voters to see. It does not refuse on that read: a seat keeps what stands on its face, or a page that
-// answers one seat and not another would give the seats different lists.
+// answers one seat and not another would give the seats different lists. A new socket's init code is another matter: its check gives every seat the same answer, so code that fails stands nowhere.
 import { CLASS, addedHosts, decodeConfigProposalBody, proposalId, proposalStands, SCHEDULES, REPEAL_SCHEDULES } from '../../arena-protocol/src/ballot.js';
 import { depositOf } from '../../arena-protocol/src/ballot-chain.js';
-import { decodeSourceList } from '../../arena-protocol/src/market-check.js';
+import { checkMarketCode, decodeSourceList } from '../../arena-protocol/src/market-check.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 /**
@@ -64,12 +64,14 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
         votingUntil: stands.votingUntil, activationHeight: stands.activationHeight, repeal: stands.repeal,
         // THE BLOCK IT WAS PUBLISHED IN: a reorg that takes it out unpublishes the proposal (ballot-tally.js)
         blockHash: String(blockHash).toLowerCase() };
-      if (exampleCheck && history && p.class === CLASS.SOURCES) {
-        kept.example = [];
-        for (const host of addedHosts(p, history)) {
-          const entry = decodeSourceList(p.config).find((e) => e.host === host);
-          kept.example.push({ host, ...await exampleCheck(entry).catch((e) => ({ ok: false, why: e.message })) });
+      if (history && p.class === CLASS.SOURCES) {
+        const adds = addedHosts(p, history);
+        kept.added = decodeSourceList(p.config).filter((e) => adds.includes(e.host));
+        for (const e of kept.added) if (e.init) {
+          const check = checkMarketCode(e.init, (await import('acorn')).parse, 'init');
+          if (!check.ok) return { ok: false, status: 422, why: `${e.host}: its init code fails its check, line ${check.problems[0].line}: ${check.problems[0].why}` };
         }
+        if (exampleCheck) kept.example = await Promise.all(kept.added.map(async (e) => ({ host: e.host, ...await exampleCheck(e).catch((x) => ({ ok: false, why: x.message })) })));
       }
       held.set(id, kept); save();
       return { ok: true, status: 201, ...kept };
