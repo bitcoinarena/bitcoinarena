@@ -53,9 +53,16 @@ export class Earnings extends React.Component {
     const owedSum = big(owed.gameVerifyMsat) + big(owed.settlementMsat) + big(owed.guardianMsat);
     return (
       <div>
-        <div className="seg" role="tablist">{Object.entries(PERIOD).map(([p, name]) => (
-          <button key={p} type="button" role="tab" aria-selected={p === period} className={p === period ? 'on' : undefined} onClick={() => onPeriod(p)}>{name}</button>))}</div>
-        <div className="stats">
+        <div className="seg" role="tablist" onKeyDown={(ev) => {
+          // arrow keys move between the periods, and only the chosen one is in the tab order (kanban #847)
+          const keys = Object.keys(PERIOD), step = { ArrowRight: 1, ArrowLeft: -1 }[ev.key];
+          if (!step) return;
+          ev.preventDefault();
+          const next = (keys.indexOf(period) + step + keys.length) % keys.length;
+          onPeriod(keys[next]); ev.currentTarget.children[next].focus();
+        }}>{Object.entries(PERIOD).map(([p, name]) => (
+          <button key={p} type="button" role="tab" id={`earn-tab-${p}`} aria-controls="earn-panel" aria-selected={p === period} tabIndex={p === period ? 0 : -1} className={p === period ? 'on' : undefined} onClick={() => onPeriod(p)}>{name}</button>))}</div>
+        <div className="stats" role="tabpanel" id="earn-panel" aria-labelledby={`earn-tab-${period}`}>
           <div className="stat wide"><span>Earned · {PERIOD[period].toLowerCase()}</span><b>{sat(e.earned)}</b>
             {e.parts.length ? <>
               <div className="split" aria-hidden="true">{e.parts.map((p) => <i key={p.k} style={{ flex: `${Number(p.msat)} 0 0`, background: p.color }} />)}</div>
