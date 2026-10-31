@@ -62,11 +62,15 @@
     .hero .bg img { object-position: 68% 50%; } .hero::after { background: linear-gradient(180deg, transparent 0, transparent 200px, var(--bg) 364px); } .hero .copy { margin-top: -40px; } }
   @media (max-width: 480px) { .btn { padding: 15px 18px; font-size: 16px; } .ctas .btn { flex: 1 1 auto; justify-content: center; } }
 
+  .ver-tag { margin-left: 10px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; font: 600 12px/1.4 "Space Grotesk", system-ui, sans-serif; color: var(--dim); }
+  .ver-tag:empty { display: none; }
+  .under-ctas { margin: 12px 0 0; font-size: 15px; }
+  .under-ctas a { color: var(--gold); }
   /* STRIP */
   .strip { border-block: 1px solid var(--line); background: linear-gradient(90deg, rgba(247,147,26,.10), rgba(226,103,42,.04) 50%, rgba(185,140,255,.08)); }
-  .strip .wrap { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+  .strip .wrap { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
   .strip div { padding: 24px 8px; text-align: center; }
-  .strip strong { display: block; font: 700 clamp(19px, 2.2vw, 26px)/1.15 "Space Grotesk"; color: var(--text); }
+  .strip strong { display: block; font: 700 clamp(17px, 1.55vw, 22px)/1.15 "Space Grotesk"; color: var(--text); }
   .strip strong i { font-style: normal; color: var(--btc); margin-right: 6px; }
   .strip .nostr strong i { color: var(--nostr); }
   .strip .ln strong i { color: #ffd23f; }
@@ -222,7 +226,7 @@
   .reveal.on { opacity: 1; transform: none; }
   @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; } html { scroll-behavior: auto; } }
 </style>
-  <script defer src="https://seat.example.com:8443/script.js" data-website-id="4f00ff2b-032e-4683-890c-63458e0b178e" data-domains="bitcoin-arena.io,www.bitcoin-arena.io"></script>
+  <script defer src="https://stats.bitcoin-arena.io/script.js" data-website-id="4f00ff2b-032e-4683-890c-63458e0b178e" data-domains="bitcoin-arena.io,www.bitcoin-arena.io"></script>
 </head>
 <body>
 <nav><div class="wrap">
@@ -239,8 +243,9 @@
     <p class="eco">Play. Build. Run a node. Earn fees.</p>
     <div class="ctas">
       <a class="btn primary" href="https://testnet.bitcoin-arena.io/"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>Play on testnet</a>
-      <a class="btn ghost" href="https://docs.bitcoin-arena.io/">Read the docs</a>
+      <a class="btn ghost" href="https://github.com/bitcoin-arena/bitcoin-arena/releases/latest">Run a node<span class="ver-tag" data-arena-release-version></span></a>
     </div>
+    <p class="under-ctas"><a href="https://docs.bitcoin-arena.io/">Read the docs</a></p>
     <div class="testnet">On Bitcoin testnet4. Play with test sats · <a href="https://testnet.bitcoin-arena.io/">testnet.bitcoin-arena.io</a></div>
   </div></div>
 </header>
@@ -249,6 +254,7 @@
   <div><strong><i>◆</i>Decentralized</strong><span>No central server or company.</span></div>
   <div><strong><i>◆</i>Non-custodial</strong><span>Your sats stay in your control.</span></div>
   <div><strong><i>◆</i>Verified by nodes</strong><span>Independent nodes verify every result.</span></div>
+  <div><strong><i>◆</i>Open source</strong><span>Read the code. Run your own node.</span></div>
   <div class="ln"><strong><i>⚡</i>Lightning</strong><span>Deposit and withdraw in seconds.</span></div>
   <div class="nostr"><strong><i>◆</i>Nostr native</strong><span>Your Nostr key is your login.</span></div>
 </div></div>
