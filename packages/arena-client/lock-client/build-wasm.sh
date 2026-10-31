@@ -34,6 +34,9 @@ patch -p1 < $HERE/fedimint-lnv2-send-expiry.patch
 # 1 SAT = 1 SAT: the client issues and spends notes from 1 msat (the federation signs 0..41 already)
 patch -p1 < $HERE/fedimint-mintv2-whole-msat.patch
 patch -p1 < $HERE/fedimint-lnv2-testnet4-invoices.patch
+# LOST DEPOSITS (kanban #883): the receive scan the client already runs for LNURL, for this client's own key
+awk -v f=$HERE/lnv2-scan-receive.rs '/Receive an incoming contract locked to a public key derived from our/ && !d { while ((getline l < f) > 0) print l; d = 1 } { print }' modules/fedimint-lnv2-client/src/lib.rs > /tmp/lnv2-lib.rs && cp /tmp/lnv2-lib.rs modules/fedimint-lnv2-client/src/lib.rs
+grep -q "fn scan_receives" modules/fedimint-lnv2-client/src/lib.rs
 # RECOVERY IN THE BROWSER (2026-10-04: "patch Fedimint's recovery so it runs in the browser"): mintv2's
 # recovery-slice fetch timed out on tokio's clock, whose std::time::Instant panics on wasm32
 patch -p1 < $HERE/fedimint-mintv2-recovery-wasm-clock.patch
