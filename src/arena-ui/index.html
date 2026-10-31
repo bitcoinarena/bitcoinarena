@@ -3682,7 +3682,10 @@
           + (done.why ? ' - ' + done.why : '')); }, (e) => console.error('[arena] hidden move ' + named.roundIdHex.slice(0, 16) + ': the locks were not handed: ' + e.message));
         console.log('[arena] hidden move in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status)));
         window.ARENA_ORDER_BUSY_UNTIL = 0;
-        if (!sent.entries.some((x) => x.status === 201)) { window.ARENA_JOIN_REFUSED = 'the signer nodes refused the entry: ' + sent.why; return; }
+        if (!sent.entries.some((x) => x.status === 201)) {
+          // WHY, as the seats said it (the owner 2026-10-30: "the signer nodes refused the entry: undefined"): what onEntries hands has no `why` of its own
+          const saidWhy = sent.why || [...new Set(sent.entries.map((x) => String(x.why || '').trim()).filter(Boolean))].sort((a, b) => (/not accepted/.test(a) ? 1 : 0) - (/not accepted/.test(b) ? 1 : 0)).slice(0, 2).join(' | ') || 'no seat said why';
+          window.ARENA_JOIN_REFUSED = 'the signer nodes refused the entry: ' + saidWhy; console.error('[arena] hidden move refused, each seat: ' + JSON.stringify(sent.entries.map((x) => [x.status, String(x.why || '').slice(0, 140)]))); return; }
         // THE SAME TRANSACTION RECORD AS AN ORDER'S (2026-10-24: "Make sure that the other apps also get all these timing fixes"): the tx
         // id in the log, the page's signed timing to the seats (explorer), a slow one's log kept in this browser
         { const tookMs = performance.now() - (typeof pressAt === 'number' ? pressAt : (window.ARENA_ORDER_PRESSED_AT || performance.now()));

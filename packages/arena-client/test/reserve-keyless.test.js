@@ -127,3 +127,9 @@ test('a federation not active is not paid into; a failed read holds nothing back
   assert.equal(inactiveFederations(new Map([[A, unverified], [B, unverified]])).size, 0, 'nothing verified at all: the read failed');
   assert.equal(inactiveFederations(undefined).size, 0);
 });
+
+test('a refused head-to-head entry says why the seats refused it (the owner 2026-10-30: "refused the entry: undefined")', () => {
+  const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /'the signer nodes refused the entry: ' \+ sent\.why;/);
+  assert.match(src, /const saidWhy = sent\.why \|\| \[\.\.\.new Set\(sent\.entries\.map/);
+});
