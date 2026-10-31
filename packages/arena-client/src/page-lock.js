@@ -51,6 +51,20 @@ export function lockSecretFor(seed, roundId) {
 }
 
 /**
+ * A WRITE THE BROWSER REFUSES FOR ROOM (the owner 2026-10-30, order at "locking your stake": a wallet's write that throws QuotaExceededError ends in the lock
+ * client's panic, and every wallet call of that page then hangs until a reload): `onStorageFull` frees what it can, and the write is tried once more.
+ */
+let storageFull = null;
+export function onStorageFull(fn) { storageFull = typeof fn === 'function' ? fn : null; }
+export function putRoomy(storage, key, value) {
+  try { storage.setItem(key, value); } catch (e) {
+    if (!storageFull || !/quota/i.test(`${e && e.name} ${e && e.message}`)) throw e;
+    storageFull();
+    storage.setItem(key, value);
+  }
+}
+
+/**
  * WHERE THE LOCK CLIENT'S WALLET IS KEPT: the tab's storage, one key per
  * database key, under this round and this seed's secret (its hash, never the
  * secret). The shape `lock-client/src/store.rs` reads: `entries()` as JSON.
@@ -66,7 +80,7 @@ export function lockStoreFor(storage, roundId, secret) {
       }
       return JSON.stringify(out);
     },
-    put(k, v) { storage.setItem(prefix + k, v); },
+    put(k, v) { putRoomy(storage, prefix + k, v); },
     remove(k) { storage.removeItem(prefix + k); },
   };
 }
@@ -329,7 +343,7 @@ export function walletStoreFor(storage, federationId, secret) {
       }
       return JSON.stringify(out);
     },
-    put(k, v) { storage.setItem(prefix + k, v); },
+    put(k, v) { putRoomy(storage, prefix + k, v); },
     remove(k) { storage.removeItem(prefix + k); },
   };
 }
