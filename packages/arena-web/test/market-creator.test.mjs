@@ -7,7 +7,9 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MarketCreator } from '../dist/test/market-creator.mjs';
 import { parse } from 'acorn';
-import { CATEGORIES, EXAMPLES, SAMPLES, TEMPLATES, fieldsOf, fromTemplate, problemsOf, urlProblem, readAnswer, outcomeOf, outcomeOfCode } from '../dist/test/market-draft.mjs';
+import { SOURCES } from '../dist/test/market-sources.mjs';
+import { MARKET_HOSTS } from '../../arena-protocol/src/market-check.js';
+import { CATEGORIES, EXAMPLES, TEMPLATES, fieldsOf, fromTemplate, problemsOf, urlProblem, readAnswer, outcomeOf, outcomeOfCode } from '../dist/test/market-draft.mjs';
 import { checkMarketCode } from '../../arena-protocol/src/market-check.js';
 
 test('every template starts a draft of its own, and they share no list', () => {
@@ -55,7 +57,13 @@ test('the answer names its fields to pick from', () => {
 });
 
 test('samples and examples are real drafts: public addresses, code that passes the check', () => {
-  for (const s of SAMPLES) assert.equal(urlProblem(s.url), null, s.name);
+  for (const s of SOURCES) {
+    assert.equal(urlProblem(s.url), null, s.name);
+    assert.match(s.docs, /^https:\/\//, s.name);
+    if (s.demo) assert.ok(readAnswer(s, s.demo).value, s.name);
+  }
+  // every listed host has its example, but the socket, which the code examples show
+  for (const h of MARKET_HOSTS) assert.ok(h.startsWith('ws-') || SOURCES.some((s) => new URL(s.url).hostname === h), h);
   for (const e of EXAMPLES) {
     assert.ok(checkMarketCode(e.code, parse).ok, JSON.stringify(checkMarketCode(e.code, parse).problems));
     for (const r of e.reads) assert.equal(urlProblem(r.url, r.kind === 'ws'), null, r.url);
