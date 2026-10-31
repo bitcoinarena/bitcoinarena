@@ -737,6 +737,16 @@ impl LockClient {
         .to_owned())
     }
 
+    /// A BATCH OF THE SCAN FOR LOST DEPOSITS (kanban #883), from `start`: JSON { next, done, found: [{ operation, msat }] }. The caller waits on each
+    /// found operation with awaitReceive; the federation answers at once while there is more, and holds a read at its end, so the page bounds the call.
+    #[wasm_bindgen(js_name = scanDeposits)]
+    pub async fn scan_deposits(&self, start: String) -> Result<String, JsError> {
+        let ln = self.client.get_first_module::<LightningClientModule>().map_err(js)?;
+        let (next, done, found) = ln.scan_receives(start.parse().map_err(js)?, 128).await;
+        let found: Vec<_> = found.iter().map(|(op, a)| serde_json::json!({ "operation": op.fmt_full().to_string(), "msat": a.msats.to_string() })).collect();
+        Ok(serde_json::json!({ "next": next.to_string(), "done": done, "found": found }).to_string())
+    }
+
     /// THE FEDERATION'S OWN LNv2 FEE RULE, off its config - `base + amount *
     /// ppm / 1e6` on every input and every output (lnv2-common config.rs) - as
     /// JSON { fee_ppm, fee_base_msat }. The page's fee-lock gate reads it here,
