@@ -10,9 +10,9 @@ import { codeOfSource } from '../../arena-protocol/src/market-rule.js';
 
 const SOCKET_TRY = { most: 5, waitMs: 5000 };
 
-export async function testMarket({ reads = [], code = '', market = {} }, { parse = null, read = readMarketSources, run = runMarketCode } = {}) {
+export async function testMarket({ reads = [], code = '', market = {} }, { parse = null, read = readMarketSources, run = runMarketCode, hosts = undefined } = {}) {
   const started = Date.now();
-  const got = await read(reads, { socket: SOCKET_TRY });
+  const got = await read(reads, { socket: SOCKET_TRY, hosts });
   if (got.why) return { ok: false, stage: 'read', why: got.why };
   if (!code) return { ok: true, reads: got.reads, ms: Date.now() - started };
   const acorn = parse || (await import('acorn')).parse;
@@ -23,12 +23,12 @@ export async function testMarket({ reads = [], code = '', market = {} }, { parse
 }
 
 /** A MARKET'S RESULT ON THIS NODE (kanban #920): its reads, its code checked here again, its run in the sandbox. Answers { ok, out } or { ok: false, why }. */
-export async function runSourceOnce(source, market, { parse = null, read = readMarketSources, run = runMarketCode } = {}) {
+export async function runSourceOnce(source, market, { parse = null, read = readMarketSources, run = runMarketCode, hosts = undefined } = {}) {
   if (source.kind === MARKET_SOURCE_KIND.CODE) {
     const check = checkMarketCode(source.code, parse || (await import('acorn')).parse);
     if (!check.ok) return { ok: false, why: `the code fails its check: ${check.problems[0].why}` };
   }
-  const got = await read(source.reads.map((r) => ({ id: r.id, kind: r.socket ? 'ws' : 'http', url: r.url, subscribe: r.subscribe })));
+  const got = await read(source.reads.map((r) => ({ id: r.id, kind: r.socket ? 'ws' : 'http', url: r.url, subscribe: r.subscribe })), { hosts });
   if (got.why) return { ok: false, why: got.why };
   return run({ code: codeOfSource(source), reads: got.reads, market });
 }
