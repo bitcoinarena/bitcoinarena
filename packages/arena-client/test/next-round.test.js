@@ -82,3 +82,11 @@ test('after the run: "joining next round in N seconds" beside "exit game" at onc
   // exit game: the lobby, not the next round - at once as well
   assert.deepEqual(nextRoundView({ runOverMs: arrived, nextStartMs: next, nowMs: arrived + 1000, exited: true }), { show: 'lobby' });
 });
+
+test('a round already running is left to the lobby: the page does not pull a player off the goal into it (#827)', () => {
+  const played = { startTimeMs: 1000, stakeMsat: 0, free: true };
+  const row = (start) => ({ id: String(start), free: true, stakeMsat: 0, joinable: true, startTimeMs: start, entryCloseMs: start + 45000 });
+  const rows = [row(91000), row(181000)];
+  assert.equal(nextRoundAfter(played, rows, 90000).startTimeMs, 91000, 'not started: entered');
+  assert.equal(nextRoundAfter(played, rows, 100000).startTimeMs, 181000, 'started, its late join still open: the one after it');
+});
