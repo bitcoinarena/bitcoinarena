@@ -9,6 +9,8 @@ import { encodeConfigProposalBody, proposalBodyId, CLASS, SCHEDULES, configHashO
 import { depositOutputsExpected } from '../../arena-protocol/src/ballot-chain.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { encodeSourceList } from '../../arena-protocol/src/market-check.js';
+import { tryExample } from '../src/market-test.js';
 
 const le = (n, bytes) => Uint8Array.from({ length: bytes }, (_, i) => Number((BigInt(n) >> BigInt(8 * i)) & 0xffn));
 const tx = (outs) => Uint8Array.from([...le(2, 4), 1, ...new Uint8Array(32).fill(7), ...le(0, 4), 0, ...le(0xffffffff, 4),
@@ -81,4 +83,42 @@ test('on a running seat: POST /proposal reads the deposit through `ballot`, chec
     const wrong = await fetch(`${base}/proposal`, { method: 'POST', body: JSON.stringify({ proposal: hex, blockHash: 'dd'.repeat(32) }) });
     assert.equal(wrong.status, 200, 'kept already: the same proposal answers the one kept');
   } finally { await d.close(); }
+});
+
+test('a proposed source: each seat reads each new host\'s example and keeps what it saw, and keeps the proposal either way', async () => {
+  const added = (host) => ({ host, url: `https://${host}/x`, read: 'text', path: '', docs: `https://${host}/docs` });
+  const before = encodeSourceList([added('a.example.org')]), config = encodeSourceList([added('a.example.org'), added('b.example.org'), added('c.example.org')]);
+  const want = depositOutputsExpected(1000, SET), raw = tx(want.outputs.map((o) => ({ sats: o.sats, script: o.script })));
+  const p = { networkId: NET, parent: new Uint8Array(32).fill(0x10), configHash: configHashOf(config), config, class: CLASS.SOURCES, activationHeight: 2000,
+    proposer, depositTxid: Uint8Array.from(parseTransaction(raw).txid) };
+  const hex = toHex(Uint8Array.from([...encodeConfigProposalBody(p), ...schnorr.sign(proposalBodyId(p), secret)]));
+  const asked = [];
+  const book = createProposals({ confirmedTx: async () => ({ raw, height: 200 }), recipientsFor: () => SET, lowestBondMinSatsFor: () => 200000n, verify, historyFor: () => [{ config: before }],
+    exampleCheck: async (e) => { asked.push(e.host); return e.host === 'b.example.org' ? { ok: true, value: '42' } : { ok: false, why: 'answered 403' }; } });
+  const got = await book.add({ proposal: hex, blockHash: 'a'.repeat(64) });
+  assert.equal(got.status, 201, got.why);
+  assert.deepEqual(asked, ['b.example.org', 'c.example.org']);
+  assert.deepEqual(got.example, [{ host: 'b.example.org', ok: true, value: '42' }, { host: 'c.example.org', ok: false, why: 'answered 403' }]);
+});
+
+test('a list adds at most 8 hosts at once', async () => {
+  const added = (host) => ({ host, url: `https://${host}/x`, read: 'text', path: '', docs: `https://${host}/docs` });
+  const config = encodeSourceList(Array.from({ length: 9 }, (_, i) => added(`h${i}.example.org`)));
+  const want = depositOutputsExpected(1000, SET), raw = tx(want.outputs.map((o) => ({ sats: o.sats, script: o.script })));
+  const p = { networkId: NET, parent: new Uint8Array(32).fill(0x10), configHash: configHashOf(config), config, class: CLASS.SOURCES, activationHeight: 2000,
+    proposer, depositTxid: Uint8Array.from(parseTransaction(raw).txid) };
+  const hex = toHex(Uint8Array.from([...encodeConfigProposalBody(p), ...schnorr.sign(proposalBodyId(p), secret)]));
+  const book = createProposals({ confirmedTx: async () => ({ raw, height: 200 }), recipientsFor: () => SET, lowestBondMinSatsFor: () => 200000n, verify, historyFor: () => [{ config: encodeSourceList([added('a.example.org')]) }] });
+  const got = await book.add({ proposal: hex, blockHash: 'a'.repeat(64) });
+  assert.equal(got.status, 422);
+  assert.match(got.why, /at most 8 hosts/);
+});
+
+test('an example is read as a market reads: the field, in the sandbox', async () => {
+  const entry = { host: 'a.example.org', url: 'https://a.example.org/x', read: 'json', path: 'data.rate', docs: 'https://a.example.org/docs' };
+  const read = async () => ({ reads: { page: { data: { rate: 1.25 } } } });
+  assert.deepEqual(await tryExample(entry, { read }), { ok: true, value: '1.25' });
+  assert.equal((await tryExample({ ...entry, path: 'data.none.more' }, { read })).ok, false);
+  assert.match((await tryExample(entry, { read: async () => ({ why: 'page: answered 403' }) })).why, /403/);
+  assert.match((await tryExample({ ...entry, read: 'text' }, { read: async () => ({ reads: { page: '  ' } }) })).why, /found nothing/);
 });

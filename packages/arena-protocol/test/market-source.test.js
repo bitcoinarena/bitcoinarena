@@ -5,7 +5,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { encodeManifestBody, manifestBodyId, MARKET_SOURCE_MARKER, RESULT_TYPE, PAYOUT_RULE, NO_PARENT, MARKET_SOURCE_KIND, MARKET_READ, MARKET_RULE, decodeManifest, encodeManifest } from '../src/manifest.js';
 import { codeOfSource, outcomeIndex } from '../src/market-rule.js';
-import { decodeHostList, encodeHostList, hostListProblem, marketHostProblem } from '../src/market-check.js';
+import { MARKET_HOSTS, decodeHostList, encodeSourceList, hostListProblem, marketHostProblem } from '../src/market-check.js';
+import { SOURCES_GENESIS } from '../src/ballot-chain.js';
 import { CLASS, isHostRemoval } from '../src/ballot.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -50,15 +51,22 @@ test('a URL source is code like any other: a fixed function, the market only its
   assert.equal(outcomeIndex('No', ['Yes', 'No']), 1); assert.equal(outcomeIndex(0, ['Yes', 'No']), 0); assert.equal(outcomeIndex('Maybe', ['Yes', 'No']), null); assert.equal(outcomeIndex(5, ['Yes', 'No']), null);
 });
 
-test('a list of hosts is one canonical thing, public names only; dropping a host is fast, adding one is not', () => {
-  const list = encodeHostList(['b.example.org', 'a.example.org', 'a.example.org']);
+const entry = (host, more = {}) => ({ host, url: `https://${host}/x`, read: 'text', path: '', docs: `https://${host}/docs`, ...more });
+test('a list is one canonical thing, public names only, each host with an example and its docs; dropping a host is fast, adding one is not', () => {
+  const list = encodeSourceList([entry('b.example.org'), entry('a.example.org'), entry('a.example.org')]);
   assert.deepEqual(decodeHostList(list), ['a.example.org', 'b.example.org']);
   assert.equal(hostListProblem(list), null);
-  for (const bad of ['b.example.org\na.example.org', 'localhost', '127.0.0.1', 'a.ts.net', 'not a host', '']) assert.ok(hostListProblem(new TextEncoder().encode(bad)), bad);
-  const history = [{ config: encodeHostList(['a.example.org', 'b.example.org']) }];
-  assert.equal(isHostRemoval({ class: CLASS.SOURCES, config: encodeHostList(['a.example.org']) }, history), true);
-  assert.equal(isHostRemoval({ class: CLASS.SOURCES, config: encodeHostList(['a.example.org', 'c.example.org']) }, history), false);
-  assert.equal(isHostRemoval({ class: CLASS.SOURCES, config: encodeHostList(['a.example.org', 'b.example.org', 'c.example.org']) }, history), false);
+  assert.equal(hostListProblem(SOURCES_GENESIS.config), null);
+  assert.deepEqual([...decodeHostList(SOURCES_GENESIS.config)].sort(), [...MARKET_HOSTS].sort());
+  const bytes = (s) => new TextEncoder().encode(s);
+  for (const bad of ['', 'localhost\thttps://localhost/\ttext\t\thttps://d.example/', 'a.ts.net\thttps://a.ts.net/\ttext\t\thttps://d.example/']) assert.ok(hostListProblem(bytes(bad)), bad);
+  assert.match(hostListProblem(encodeSourceList([entry('a.example.org', { url: 'https://b.example.org/x' })])), /example address on that host/);
+  assert.match(hostListProblem(encodeSourceList([entry('a.example.org', { url: '' })])), /example address/);
+  assert.match(hostListProblem(encodeSourceList([entry('a.example.org', { read: 'json' })])), /what it reads/);
+  assert.match(hostListProblem(encodeSourceList([entry('a.example.org', { docs: '' })])), /documentation/);
+  const history = [{ config: encodeSourceList([entry('a.example.org'), entry('b.example.org')]) }];
+  assert.equal(isHostRemoval({ class: CLASS.SOURCES, config: encodeSourceList([entry('a.example.org')]) }, history), true);
+  assert.equal(isHostRemoval({ class: CLASS.SOURCES, config: encodeSourceList([entry('a.example.org'), entry('c.example.org')]) }, history), false);
   assert.equal(marketHostProblem('https://b.example.org/x', ['b.example.org']), null);
   assert.match(marketHostProblem('https://attacker.example/x'), /not a listed source/);
 });
