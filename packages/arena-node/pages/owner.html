@@ -315,7 +315,14 @@ const handoff = HASH.has('owner-handoff') && window.opener ? new Promise((done) 
 if (handoff) await handoff;
 const BASE = ON_SITE ? await siteBase() : location.pathname.replace(/\/[Dd]ashboard\/owner\/?$/, '');
 if (ON_SITE && !BASE) {
-  document.getElementById('who').textContent = NODE_KEY ? 'No node announces this key right now (' + NODE_KEY.slice(0, 16) + '…). Is it running?' : 'Open this page from your node\'s dashboard or the installer: it needs your node\'s key.';
+  // NOT A DEAD END (kanban #845): a key that is no key says so, a key to paste, and Try again when the node has not announced itself yet
+  const who = document.getElementById('who'), good = /^[0-9a-f]{64}$/.test(NODE_KEY || '');
+  who.textContent = ''; who.className = 'sub';
+  const say = document.createElement('p'); say.textContent = !NODE_KEY ? 'Paste your node key, or open this page from your node\'s dashboard or the installer.' : !good ? 'That is not a valid node key: it has 64 hex characters.' : 'No node announces this key right now (' + NODE_KEY.slice(0, 16) + '…). Is it running?';
+  const key = document.createElement('input'); key.placeholder = 'node key (64 hex characters)'; key.setAttribute('aria-label', 'Node key'); key.autocomplete = 'off'; key.spellcheck = false; key.value = NODE_KEY || '';
+  const open = document.createElement('button'); open.type = 'button'; open.className = 'primary'; open.textContent = good ? 'Try again' : 'Open';
+  open.onclick = () => { const v = key.value.trim().toLowerCase(); if (!/^[0-9a-f]{64}$/.test(v)) { say.textContent = 'That is not a valid node key: it has 64 hex characters.'; return; } location.hash = 'node=' + v; location.reload(); };
+  who.append(say, key, open);
   throw new Error('no node address');
 }
 const at = (p) => BASE + p;
