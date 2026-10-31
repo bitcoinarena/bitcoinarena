@@ -61,3 +61,32 @@ test('two drawn seats down: it still stands; three down: no attestation', async 
   console.log('  DOWN 2 -> held at', two.held.size, '| DOWN 3 -> held at', three.held.size);
   assert.equal(three.held.size, 0, 'four signatures made an attestation');
 });
+
+// A MARKET WITH ITS OWN SOURCE (kanban #920): the word comes from its source at the end of the round, a failed read is tried again, a "rises" market reads at its start
+test('a source market is signed from its source, once, and a failed read waits for the next pass', async () => {
+  const roundId = new Uint8Array(32).fill(7), self = 'ab'.repeat(32); let answer = { ok: false, why: 'no' }, runs = 0; const seen = [];
+  const a = new DrawnAttestor({ readPrice: async () => null, selfKey: self, sign: () => new Uint8Array(64).fill(1), attestorsFor: () => [self], peersFor: () => [], due: () => [], hold: async () => true, threshold: 1, now: () => 10000000,
+    runSource: async (source, market) => { runs++; seen.push(market); return answer; } });
+  const r = { roundId, window: { startMs: 0n, endMs: 1000n }, source: { kind: 1, rule: 1 }, outcomes: ['Yes', 'No'] };
+  assert.equal(await a.wordForSource(r), null);
+  answer = { ok: true, out: 'Maybe' };
+  assert.equal(await a.wordForSource(r), null);
+  answer = { ok: true, out: 'No' };
+  const w = await a.wordForSource(r);
+  assert.equal(w.body.outcome, 1); assert.equal(w.body.observedAtMs, 1000n);
+  assert.equal(await a.wordForSource(r), w);
+  assert.equal(runs, 3);
+  const early = new DrawnAttestor({ selfKey: self, attestorsFor: () => [self], sign: () => new Uint8Array(64), now: () => 500, runSource: async () => { throw new Error('too early'); } });
+  assert.equal(await early.wordForSource(r), null);
+});
+
+test('a rising market reads when its window opens and is compared to that', async () => {
+  const roundId = new Uint8Array(32).fill(8), self = 'ab'.repeat(32); const asked = [];
+  const r = { roundId, window: { startMs: 0n, endMs: 1000n }, source: { kind: 1, rule: 3 }, outcomes: ['Up', 'Down'] };
+  const a = new DrawnAttestor({ readPrice: async () => null, selfKey: self, sign: () => new Uint8Array(64), attestorsFor: () => [self], now: () => 10000000, opening: () => [r],
+    runSource: async (s, m) => { asked.push([s.rule, m.start]); return s.rule === 0 ? { ok: true, out: 100 } : { ok: true, out: 'Up' }; } });
+  await a.read(); await a.read();
+  assert.equal(asked.length, 1);
+  assert.equal((await a.wordForSource(r)).body.outcome, 0);
+  assert.deepEqual(asked[1], [3, 100]);
+});
