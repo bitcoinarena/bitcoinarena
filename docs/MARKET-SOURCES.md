@@ -6,6 +6,30 @@ Measured 2026-10-31, 21:10-21:35 UTC, a Saturday night, from the test host (Swis
 
 **Terms.** I treat paid markets as commercial use. That is my reading, not legal advice. Before listing a host, someone should read its terms for real.
 
+## Adding a host by vote
+
+A proposal names, for each host, an example address, what the example reads, a documentation link, and for a socket that needs starting its init code. A list without these stands on no node.
+
+- The owner's form tests the example on the node. **Make the proposal** opens only for the exact values that answered.
+- The owner's door reads the example again before paying the deposit and again before signing. The example must answer both times.
+- Every node reads the example when it takes the proposal and keeps what it saw for the voters. A failed read does not refuse the proposal. A page that answers one node and not another would otherwise leave the nodes with different lists.
+- Yes needs the example to answer on that node at that moment.
+
+### Init code
+
+`function init(message, step)` runs on connecting (`message` null, `step` 0), then on each of the first four messages. It answers what to send: text, a list of them, or null. It takes the same check as a market's code, in the same sandbox, stopped after 2 s.
+
+Init code that fails the check is refused by every node. Each node runs the check again before each run. Once voted, the code starts every socket read of that host.
+
+Measured 2026-10-31 from the test host, five messages or 5 s:
+
+| Socket | Without init | With init |
+| --- | --- | --- |
+| ws.kraken.com/v2 | 1 message, status only | ticker, 1.6 s |
+| ws-feed.exchange.coinbase.com | nothing | ticker, 1.4 s |
+
+An endless loop in init was stopped after 2 s and refused the read.
+
 ## Recommended first list
 
 Primary publisher, no key, stable value, and the terms I read allow it or ask only for credit.
