@@ -16,7 +16,7 @@
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 import { execFile } from 'node:child_process';
-import { faucetDecide, playerGrantDecide, playerGrantTotals, opponentWant, opponentWants, FAUCET_MAX_SATS, FAUCET_DAY_CAP_SATS, DAY_MS } from '../src/faucet.js';
+import { feedbackDecide, faucetDecide, playerGrantDecide, playerGrantTotals, opponentWant, opponentWants, FAUCET_MAX_SATS, FAUCET_DAY_CAP_SATS, DAY_MS } from '../src/faucet.js';
 
 const env = process.env;
 const port = Number(env.FAUCET_PORT || 18866);
@@ -29,6 +29,7 @@ const rpc = async (method, params = []) => {
   if (j.error) throw new Error(j.error.message);
   return j.result;
 };
+const REPORTS = [];   // this day's reports: their count and address, in memory
 const readBook = () => { try { return JSON.parse(readFileSync(env.FAUCET_BOOK, 'utf8')); } catch { return { paid: [] }; } };
 const saveBook = (b) => { writeFileSync(`${env.FAUCET_BOOK}.new`, JSON.stringify(b, null, 1)); renameSync(`${env.FAUCET_BOOK}.new`, env.FAUCET_BOOK); };
 const balanceSats = async () => Math.round(Number((await rpc('getbalances')).mine.trusted) * 1e8);
@@ -100,6 +101,26 @@ createServer((req, res) => {
     req.setEncoding('utf8');
     req.on('data', (c) => { raw += c; if (raw.length > 512) req.destroy(); });
     req.on('end', () => { try { const b = JSON.parse(raw || '{}'); send(200, opponentWant(WANTS, b.round, Date.now(), b.tapped === true)); } catch { send(400, { ok: false, why: 'not JSON' }); } });
+    return undefined;
+  }
+  if (path === '/feedback') {
+    if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '86400' }); return res.end(); }
+    if (req.method !== 'POST') return send(405, { ok: false, why: 'POST' });
+    if (!env.FAUCET_BOARD_URL) return send(503, { ok: false, why: 'reports are off' });
+    let raw = '';
+    req.setEncoding('utf8');
+    req.on('data', (c) => { raw += c; if (raw.length > 8192) req.destroy(); });
+    req.on('end', async () => {
+      try {
+        const b = JSON.parse(raw || '{}'), ip = req.headers['x-arena-ip'] || null, d = feedbackDecide({ ...b, ip }, REPORTS);
+        if (!d.ok) return send(200, d);
+        const key = readFileSync(env.FAUCET_BOARD_KEY_FILE, 'utf8').trim();
+        const r = await fetch(`${env.FAUCET_BOARD_URL}/tasks`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': key, authorization: `Bearer ${key}` }, body: JSON.stringify({ title: d.title, status: 'backlog', description: d.description }), signal: AbortSignal.timeout(10000) });
+        if (!r.ok) return send(502, { ok: false, why: 'the report could not be kept just now' });
+        REPORTS.push({ ip, atMs: Date.now() });
+        send(200, { ok: true });
+      } catch { send(400, { ok: false, why: 'not JSON' }); }
+    });
     return undefined;
   }
   if (path === '/player' || path === '/faucet/player') {

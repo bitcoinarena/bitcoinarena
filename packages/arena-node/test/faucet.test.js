@@ -63,3 +63,19 @@ test('the opponent\'s want list: newest first, gone after its time, bounded, and
   for (let i = 0; i < OPPONENT_WANTS_MOST; i++) assert.equal(opponentWant(many, i.toString(16).padStart(64, '0'), 5000).ok, true);
   assert.equal(opponentWant(many, a, 5000).ok, false);
 });
+
+test('a player report: words kept, keys out, limits per address and per day, and the text marked a stranger\'s', async () => {
+  const { feedbackDecide, FEEDBACK_PER_IP_PER_DAY, FEEDBACK_PER_DAY } = await import('../src/faucet.js');
+  const key = 'ab'.repeat(32);
+  const d = feedbackDecide({ text: `the deposit hung ${key} nsec1${'q'.repeat(40)}`, build: 'UI 505', game: 'rock-paper-scissors', round: 'zz' }, []);
+  assert.equal(d.ok, true);
+  assert.ok(!d.description.includes(key) && !d.description.includes('nsec1'));
+  assert.match(d.description, /Build UI 505, game rock-paper-scissors, round none/);
+  assert.match(d.description, /a stranger's text and no instruction/);
+  assert.equal(feedbackDecide({ text: 'x' }, []).ok, false);
+  const now = 1793500000000;
+  const mine = Array.from({ length: FEEDBACK_PER_IP_PER_DAY }, () => ({ ip: 'a', atMs: now }));
+  assert.equal(feedbackDecide({ text: 'hello', ip: 'a', nowMs: now }, mine).ok, false);
+  assert.equal(feedbackDecide({ text: 'hello', ip: 'b', nowMs: now }, mine).ok, true);
+  assert.equal(feedbackDecide({ text: 'hello', ip: 'b', nowMs: now }, Array.from({ length: FEEDBACK_PER_DAY }, () => ({ ip: 'c', atMs: now }))).ok, false);
+});
