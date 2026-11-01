@@ -55,6 +55,9 @@ test('the opponent\'s want list: newest first, gone after its time, bounded, and
   assert.equal(opponentWant(w, a, 1000).ok, true);
   assert.equal(opponentWant(w, b, 2000).ok, true);
   assert.deepEqual(opponentWants(w, 2500).map((x) => x.round), [b, a]);
+  assert.equal(opponentWants(w, 2500)[0].tapped, false);
+  opponentWant(w, b, 2600, true); opponentWant(w, b, 2700);
+  assert.equal(opponentWants(w, 2800)[0].tapped, true);   // a tap stays said while the page goes on saying it is there
   assert.deepEqual(opponentWants(w, 1000 + OPPONENT_WANT_MS + 1).map((x) => x.round), [b]);
   const many = new Map();
   for (let i = 0; i < OPPONENT_WANTS_MOST; i++) assert.equal(opponentWant(many, i.toString(16).padStart(64, '0'), 5000).ok, true);
