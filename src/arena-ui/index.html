@@ -6445,7 +6445,9 @@
         const timeout = (ms) => (AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined);
         // WHAT WAS KEPT, AT ONCE (kanban #941, measured 2026-11-01: a seat takes 5-13 s and they were asked one after another, 60 s and more); the nodes' own answer replaces it
         if (live && window.ARENA_SEASON_SNAPSHOT_URL) ARENACLIENT.fetchSeasonSnapshot({ url: window.ARENA_SEASON_SNAPSHOT_URL, game: g.name, days: s.days, title: g.title || g.name, viewer: viewer(), fetch: (u, o) => fetch(u, o), timeout })
-          .then((v) => { if (v.ok && !answered && s.open && ask === s.ask) { draw(v); window.ArenaText.say(state, 'Updating from the nodes \u2026'); } }, () => {});
+          .then((v) => { if (v.ok && !answered && s.open && ask === s.ask) { draw(v); window.ArenaText.say(state, 'Updating from the nodes \u2026');
+            // the kept board stands: the bar does not run on for slow seats, their answer still replaces it when it comes
+            setTimeout(() => { if (!answered && ask === s.ask) { barDone(); window.ArenaText.say(state, ''); } }, 15000); } }, () => {});
         const v = await ARENACLIENT.fetchSeason({ nodes: Array.isArray(g.nodes) ? g.nodes : [], game: g.name, days: s.days, title: g.title || g.name,
           viewer: viewer(), fetch: (u, o) => fetch(u, o), via, timeout, race: 4 });
         answered = true;
