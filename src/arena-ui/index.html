@@ -163,6 +163,9 @@
     #arena-money-ok { display: none; padding: 10px 12px; border-radius: 10px;
       background: #14532d; border: 1px solid #86efac; color: #fff; font: 600 14px/1.35 system-ui, sans-serif; text-align: center; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
     #arena-money-ok.show { display: block; }
+    /* AN X AT ITS END, AND A CLICK ANYWHERE ON IT CLOSES IT (kanban #930, the owner 2026-11-01: "Jede gruene Nachricht braucht ein X am Ende und muss verschwinden wenn man drauf klickt") */
+    #arena-money-ok { position: relative; padding-left: 40px; padding-right: 40px; cursor: pointer; }
+    #arena-money-ok .x { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; background: none; border: 0; color: #fff; font: 700 22px/1 system-ui, sans-serif; cursor: pointer; }
     #arena-money-alert button { margin-left: 6px; padding: 6px 12px; border: 0; border-radius: 8px; background: #fff; color: #7f1d1d; font: 700 14px/1 system-ui, sans-serif; cursor: pointer; }
     body.arena-own-client #arena-join-status.on { display: flex; align-items: center; gap: 8px; position: fixed; left: 8px; right: 8px; z-index: 39;
       bottom: calc(30px + env(safe-area-inset-bottom, 0px) + 8px); padding: 10px 12px; border-radius: 10px; background: #11161d; border: 1px solid #2a3442;
@@ -1705,7 +1708,10 @@
           if (!plain) wasStuck = true;
           const el = document.getElementById('arena-money-ok'); if (!el) return;
           el.textContent = nextWords || ((creditedMsat / 1000n).toLocaleString('en-US') + (wasStuck ? ' sat that were stuck have' : ' sat have') + ' been credited to your wallet.'); nextWords = null;
-          el.classList.add('show'); clearTimeout(okTimer); okTimer = setTimeout(() => { el.classList.remove('show'); creditedMsat = 0n; wasStuck = false; }, 30000); },
+          const x = document.createElement('button'); x.type = 'button'; x.className = 'x'; x.setAttribute('aria-label', 'Close'); x.textContent = '\u00d7'; el.appendChild(x);
+          const close = () => { clearTimeout(okTimer); el.classList.remove('show'); creditedMsat = 0n; wasStuck = false; };
+          el.onclick = close;
+          el.classList.add('show'); clearTimeout(okTimer); okTimer = setTimeout(close, 30000); },
         // ROOM BEFORE A DEPOSIT (the owner 2026-10-31: "Vor einem Deposit prüfst du ob der Fehler auftreten kann ... dass erst der Storage komprimiert werden muss bevor der Deposit erlaubt wird"): a claim writes up to some 100 KB, Safari gives 5 million characters
         room: () => { try { const S = store(); let used = 0; for (let i = 0; i < S.length; i++) { const k = S.key(i); if (k) used += k.length + String(S.getItem(k) || '').length; }
           if (used > 3500000) return false; S.setItem('arena.room.probe', 'x'.repeat(300000)); S.removeItem('arena.room.probe'); return true; } catch { try { store().removeItem('arena.room.probe'); } catch { /* none */ } return false; } },
@@ -8876,6 +8882,8 @@
       const box = document.getElementById('arena-join-status'); if (!box) return;
       const txt = box.querySelector('.txt'); let shownKey = '', doneAt = 0, closedKey = '';
       box.querySelector('.x').addEventListener('click', () => { closedKey = shownKey; box.classList.remove('on'); });
+      // A GREEN LINE GOES WHEN IT IS CLICKED (kanban #930); one still under way or refused stays until its X
+      box.addEventListener('click', () => { if (box.classList.contains('ok')) { closedKey = shownKey; box.classList.remove('on'); } });
       const plain = (stage) => {
         const st = String(stage || '');
         // WHAT IT REALLY WAITS FOR (the owner 2026-10-30: "kommt mit der order nicht weiter" at "locking your stake", 11 sat arriving): notes still being
