@@ -203,11 +203,11 @@ const contractOf = async (round) => {
   }
   return k;
 };
-const sayHere = (round, k) => {
-  if (k.told) return;
+const sayHere = (round, k, again = false) => {
+  if (k.told && !again) return;
   k.told = true;
-  k.claim = claimKeyOf(k.c, k.rid).catch((e) => ({ ok: false, why: e.message }));
-  const body = JSON.stringify({ key: toHex(identityKey), sig: toHex(schnorr.sign(presenceId({ roundId: k.rid, identityKey }), identity)) });
+  k.claim = k.claim || claimKeyOf(k.c, k.rid).catch((e) => ({ ok: false, why: e.message }));
+  const body = k.hereBody = k.hereBody || JSON.stringify({ key: toHex(identityKey), sig: toHex(schnorr.sign(presenceId({ roundId: k.rid, identityKey }), identity)) });
   for (const n of nodes) fetch(`${n}/here?round=${round}`, { method: 'POST', body, signal: AbortSignal.timeout(3000) }).catch(() => {});
 };
 const go = (w, k, step) => {
@@ -226,10 +226,11 @@ const sayAtTables = () => {
   const now = Date.now();
   for (const [round, k] of seen) {
     const until = tables.get(tableOf(k.c));
-    if (until && until > now && Number(k.c.entryCloseMs) > now && Number(k.c.entryCloseMs) - now < 16000) sayHere(round, k);
+    // AGAIN EVERY 2 S, AS A PAGE DOES: a seat forgets who is at a table in seconds, and a word said before the round began was gone by its first seconds ("You are alone" from 0:10 to 0:07)
+    if (until && until > now && Number(k.c.entryCloseMs) > now && Number(k.c.entryCloseMs) - now < 20000) sayHere(round, k, true);
   }
 };
-setInterval(sayAtTables, 1000);
+setInterval(sayAtTables, 2000);
 const pass = async () => {
   const wants = (await (await fetch(env.WANTS, { signal: AbortSignal.timeout(3000) })).json()).wants || [];
   for (const w of wants.slice(0, 4)) {
