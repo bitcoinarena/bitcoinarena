@@ -79,7 +79,7 @@ export async function bunkerSigner(input, { pool, onauth, clientSecret = generat
  * NIP-46 THE OTHER WAY (nostrconnect://, what Amber and most mobile signers scan): the page shows `uri` as a QR code and a
  * link; `signer` resolves once the player's signer answered on those relays.
  */
-export function nostrConnect({ relays = SIGNER_RELAYS, name = 'Bitcoin Arena', url = 'https://bitcoin-arena.io', pool, onauth, maxWait = 300000, clientSecret = generateSecretKey() } = {}) {
+export function nostrConnect({ relays = SIGNER_RELAYS, name = 'Bitcoin Arena', url = 'https://bitcoinarena.io', pool, onauth, maxWait = 300000, clientSecret = generateSecretKey() } = {}) {
   const secret = hex(generateSecretKey()).slice(0, 16);
   const uri = createNostrConnectURI({ clientPubkey: getPublicKey(clientSecret), relays: [...relays], secret, name, url,
     perms: [`sign_event:${SEED_KIND}`, 'sign_event:0', 'nip44_encrypt', 'nip44_decrypt'] });

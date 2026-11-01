@@ -20,7 +20,7 @@ try {
   await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
   // a phone on a fast 4G line: 150 ms round trip, 9 Mbit/s down, 1.5 up
   await send('Network.emulateNetworkConditions', { offline: false, latency: 150, downloadThroughput: 9e6 / 8, uploadThroughput: 1.5e6 / 8 });
-  await send('Page.navigate', { url: 'https://testnet.bitcoin-arena.io/' }); await sleep(8000);
+  await send('Page.navigate', { url: 'https://testnet.bitcoinarena.io/' }); await sleep(8000);
   const out = await ev(`(async () => {
     const eps = [...[1,2,3,4,5,6,7].map(i => ['A', i, 'wss://tn4.bitcoin-arena.io/guardian-' + i + '/guardian']), ...[1,2,3,4,5,6,7].map(i => ['B', i, 'wss://tn4.bitcoin-arena.io/fed2-' + i + '/guardian'])];
     const one = ([fed, i, u]) => new Promise((res) => { const t0 = performance.now(); let open = null; const w = new WebSocket(u);

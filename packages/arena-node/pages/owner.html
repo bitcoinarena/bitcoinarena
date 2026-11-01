@@ -1,6 +1,6 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bitcoin Arena · Node Owner</title>
-<script defer src="https://stats.bitcoin-arena.io/script.js" data-website-id="024ff09e-c3a6-4dfd-bede-3163eb8be36a" data-domains="testnet.bitcoin-arena.io"></script>
+<script defer src="https://stats.bitcoinarena.io/script.js" data-website-id="024ff09e-c3a6-4dfd-bede-3163eb8be36a" data-domains="testnet.bitcoinarena.io"></script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%23f7931a'/%3E%3Ctext x='16' y='23' font-size='21' font-weight='700' font-family='system-ui,sans-serif' text-anchor='middle' fill='%23fff'%3E%E2%82%BF%3C/text%3E%3C/svg%3E">
 <!-- THE OWNER AREA OF A NODE: /Dashboard/owner. The owner is a key made from 24 words this browser keeps;
      every request it sends is signed with it (src/owner.js). Nothing here is a password, and nothing leaves the browser
@@ -207,7 +207,7 @@ select:focus{outline:2px solid var(--st);outline-offset:1px}
 // address stays the site's, the login is kept per node key, and the node is found where it is now: the seats' signed address announcements
 // (GET /address-announcements, #562) name its current address. The node that answers there must be that key (checked in start()).
 const ON_SITE = !/\/[Dd]ashboard\/owner\/?$/.test(location.pathname);
-const OWNER_SITE = 'https://testnet.bitcoin-arena.io/owner/';   // the Arena site's owner page (installer FinishSteps OWNER_SITE, bitcoinarena open)
+const OWNER_SITE = 'https://testnet.bitcoinarena.io/owner/';   // the Arena site's owner page (installer FinishSteps OWNER_SITE, bitcoinarena open)
 // NEVER A DEAD LINK (kanban #835: href="#" did nothing on the screens with no node, where it was the only link): the line under the page stays
 // hidden until it has somewhere to go - on the site that is the site, at once; the node's dashboard once the node has answered as itself
 function publicLink(href, text) { const a = document.getElementById('public'); a.href = href; a.textContent = text; document.getElementById('public-line').hidden = false; }
@@ -683,7 +683,7 @@ async function devClients() {
   // REFERRAL PROGRAMS (kanban #675) are the clients of kind 'referrer': drawn in Referrer, kept out of Donations
   const programs = r && Array.isArray(r.clients) ? r.clients.filter((c) => c.kind === 'referrer') : [];
   if (r && Array.isArray(r.clients)) r = { ...r, clients: r.clients.filter((c) => c.kind !== 'referrer') };
-  if ($('referrer')) O.drawInto($('referrer'), 'ReferrerPanel', { programs, why: r ? null : why, site: 'https://testnet.bitcoin-arena.io', reread: devClients,
+  if ($('referrer')) O.drawInto($('referrer'), 'ReferrerPanel', { programs, why: r ? null : why, site: 'https://testnet.bitcoinarena.io', reread: devClients,
     create: (name) => post('/owner/referrer/setup', signed('referrer/setup', { name })),
     withdraw: (args) => post('/owner/dev/withdraw', signed('dev/withdraw', args)),
     follow: (slug) => { let n = 0; const poll = () => { devClients(); if (++n < 20) setTimeout(poll, 3000); }; setTimeout(poll, 3000); } });

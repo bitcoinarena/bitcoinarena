@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 
 const read = (p) => readFileSync(new URL('../../../' + p, import.meta.url), 'utf8');
 const LINKS = [['https://x.com/bitcoinarena_io', 'X'], ['https://discord.gg/9zZbASZyue', 'Discord'], ['https://t.me/+KihHE8JhcVM3NDVi', 'Telegram'],
-  ['https://docs.bitcoin-arena.io/repos/', 'GitHub']];
+  ['https://docs.bitcoinarena.io/repos/', 'GitHub']];
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
 
 // every footer that ships, by its source (the page folders are build output)
@@ -22,7 +22,7 @@ const SOURCES = {
   'src/arena-ui/site-chrome.js': 1,
   // the Arena page: the foot at the window's bottom right over every screen, and the games screen's foot row
   'src/arena-ui/index.html': 2,
-  // bitcoin-arena.io: the landing page and the live games
+  // bitcoinarena.io: the landing page and the live games
   'src/website/www/index.html': 1,
   'src/website/www/games/index.html': 1,
   // the node's own pages: the owner page (also on the Arena site at /owner/), its dashboard, and the installer's wizard
@@ -54,7 +54,7 @@ test('the pages whose footer is site-chrome.js\'s still load it: the menu pages,
   for (const p of ['src/arena-ui/proposals/index.html', 'src/arena-ui/health/index.html', 'src/arena-ui/referral/index.html', 'src/arena-ui/referral-demo/index.html',
     'src/website/explorer/www/index.html', 'src/website/docs/docs-template.html', 'src/website/docs/api-template.html', 'src/website/docs/www/index.html',
     'src/website/docs/www/api/index.html', 'src/website/www/docs/index.html', 'src/website/docs/repos-template.html', 'src/website/docs/www/repos/index.html'])
-    assert.match(read(p), /<script src="(?:https:\/\/testnet\.bitcoin-arena\.io)?\/site-chrome\.js"/, p);
+    assert.match(read(p), /<script src="(?:https:\/\/testnet\.bitcoin-?arena\.io)?\/site-chrome\.js"/, p);
 });
 
 test('every footer says the UI number or the release, never the static build (#753, 2026-10-28: "just not build 0.0.10 which was static")', () => {

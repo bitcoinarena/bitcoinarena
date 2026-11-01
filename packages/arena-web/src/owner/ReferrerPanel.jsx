@@ -37,7 +37,7 @@ export class ReferrerPanel extends React.Component {
     try { navigator.clipboard.writeText(text); this.setState({ copied: id }); setTimeout(() => this.setState({ copied: null }), 1500); } catch { /* select it by hand */ }
   }
   program(P) {
-    const s = this.state, site = (this.props.site || 'https://testnet.bitcoin-arena.io').replace(/\/+$/, '');
+    const s = this.state, site = (this.props.site || 'https://testnet.bitcoinarena.io').replace(/\/+$/, '');
     const link = `${site}/?ref=${P.recipientPk}`, demo = `${site}/referral-demo/?ref=${P.recipientPk}`;
     // THE EMBED KIT, NOT A FRAME (kanban #678, 2026-10-26: "It shouldn't be just an iframe that is basically stealing a game"): the game runs
     // in the owner's own page (src/arena-ui/arena-embed.js)

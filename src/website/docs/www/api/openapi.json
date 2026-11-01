@@ -2,8 +2,8 @@
  "openapi": "3.0.3",
  "info": {
   "title": "Bitcoin Arena node API",
-  "version": "2026-10-30",
-  "description": "Every request a Bitcoin Arena node (`arena-node`) answers, generated from `packages/arena-node/src/server.js` by `src/website/docs/gen-docs.py`. Concepts and guides: https://docs.bitcoin-arena.io/"
+  "version": "2026-11-01",
+  "description": "Every request a Bitcoin Arena node (`arena-node`) answers, generated from `packages/arena-node/src/server.js` by `src/website/docs/gen-docs.py`. Concepts and guides: https://docs.bitcoinarena.io/"
  },
  "servers": [
   {
@@ -11667,7 +11667,7 @@
      "Players"
     ],
     "summary": "Newest transactions",
-    "description": "The ids of the transactions stored here since `since` (ms), oldest first, at most 500 - what explorer.bitcoin-arena.io polls (kanban #624).\n\nAccess: none\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 7971.",
+    "description": "The ids of the transactions stored here since `since` (ms), oldest first, at most 500 - what explorer.bitcoinarena.io polls (kanban #624).\n\nAccess: none\n\nReturns: 200 application/json\n\nSource: `packages/arena-node/src/server.js` line 7971.",
     "operationId": "get_txs",
     "responses": {
      "200": {

@@ -30,7 +30,7 @@ test('the page script parses, and the read limits itself: six at once, 10 s each
   assert.match(script, /signal: AbortSignal\.timeout\(ASK_MS\)/);
   assert.match(page, /STALE_MS = 5 \* 60000, EVERY_MS = 60000/);
   assert.match(page, /setInterval\(\(\) => run\(tick\), EVERY_MS\)/);
-  assert.match(page, /COPY_URL = 'https:\/\/explorer\.bitcoin-arena\.io\/api\/health'/);
+  assert.match(page, /COPY_URL = 'https:\/\/explorer\.bitcoin-?arena\.io\/api\/health'/);
 });
 
 test('each federation\'s gateway row is its own guardians\' answer, not the first seat\'s', async () => {

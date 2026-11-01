@@ -53,14 +53,14 @@ test('release versions 2026.xx.yy and a fix 2026.xx.yy.zz (2026-10-19) compare p
   }
 });
 
-// THE TEST UPDATE CHANNEL (kanban #546): ARENA_LATEST_URL or arena.conf latest_url, only a latest.json on https://testnet.bitcoin-arena.io/
+// THE TEST UPDATE CHANNEL (kanban #546): ARENA_LATEST_URL or arena.conf latest_url, only a latest.json on https://testnet.bitcoinarena.io/
 test('the update source: production by default; a test channel only on the Arena testnet site; anything else refused; empty turns checks off', async () => {
   const { latestUrlFrom } = await import('../src/release-latest.js');
-  assert.deepEqual(latestUrlFrom({}), { url: 'https://testnet.bitcoin-arena.io/release/latest.json', why: null });
-  assert.equal(latestUrlFrom({ ARENA_LATEST_URL: 'https://testnet.bitcoin-arena.io/release-test/latest.json' }).url, 'https://testnet.bitcoin-arena.io/release-test/latest.json');
-  assert.equal(latestUrlFrom({}, { latest_url: 'https://testnet.bitcoin-arena.io/release-test/latest.json' }).url, 'https://testnet.bitcoin-arena.io/release-test/latest.json', 'from arena.conf');
-  for (const bad of ['https://evil.example/latest.json', 'http://testnet.bitcoin-arena.io/release-test/latest.json', 'https://testnet.bitcoin-arena.io.evil.example/latest.json', 'https://testnet.bitcoin-arena.io/release-test/other.json'])
-    { const r = latestUrlFrom({ ARENA_LATEST_URL: bad }); assert.equal(r.url, 'https://testnet.bitcoin-arena.io/release/latest.json', bad); assert.match(r.why, /refused, the production release read/); }
+  assert.deepEqual(latestUrlFrom({}), { url: 'https://testnet.bitcoinarena.io/release/latest.json', why: null });
+  assert.equal(latestUrlFrom({ ARENA_LATEST_URL: 'https://testnet.bitcoinarena.io/release-test/latest.json' }).url, 'https://testnet.bitcoinarena.io/release-test/latest.json');
+  assert.equal(latestUrlFrom({}, { latest_url: 'https://testnet.bitcoinarena.io/release-test/latest.json' }).url, 'https://testnet.bitcoinarena.io/release-test/latest.json', 'from arena.conf');
+  for (const bad of ['https://evil.example/latest.json', 'http://testnet.bitcoinarena.io/release-test/latest.json', 'https://testnet.bitcoinarena.io.evil.example/latest.json', 'https://testnet.bitcoinarena.io/release-test/other.json'])
+    { const r = latestUrlFrom({ ARENA_LATEST_URL: bad }); assert.equal(r.url, 'https://testnet.bitcoinarena.io/release/latest.json', bad); assert.match(r.why, /refused, the production release read/); }
   assert.equal(latestUrlFrom({ ARENA_RELEASE_LATEST_URL: '' }).url, '');
 });
 
@@ -71,7 +71,7 @@ test('kanban #765: the updater service sees a release published after its last c
   let version = '2026.1.9.11', t = 0;
   const bodyOf = () => Buffer.from(JSON.stringify({ network: 'testnet4', version, tag: `v${version}`, commit: 'cd'.repeat(20) }));
   const fetcher = async (u) => { const b = bodyOf(); return { status: 200, arrayBuffer: async () => (u.endsWith('.sig') ? Buffer.from(sign(null, b, privateKey).toString('base64')) : b) }; };
-  const reader = latestReleaseReader({ url: 'https://testnet.bitcoin-arena.io/release/latest.json', fetcher, verify: (b, s) => sumsSigned(b, s, keyHex), now: () => t, ttlMs: SERVICE_TTL_MS });
+  const reader = latestReleaseReader({ url: 'https://testnet.bitcoinarena.io/release/latest.json', fetcher, verify: (b, s) => sumsSigned(b, s, keyHex), now: () => t, ttlMs: SERVICE_TTL_MS });
   assert.equal((await reader.read('2026.1.9.11')).newer, false, 'nothing newer at the first check');
   version = '2026.1.9.12';   // published 16 min later
   t += 30 * 60_000;          // the next check, 30 min after the first

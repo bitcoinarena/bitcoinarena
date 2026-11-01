@@ -13,6 +13,9 @@ async function chainNodes(env, ctx) {
   return new Response(body, { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=30', 'Access-Control-Allow-Origin': '*' } });
 }
 
+// THE OLD DOMAIN (kanban #937): every (sub)domain of it sends to the same place on the new one, path and query kept
+const OLD_DOMAIN = /(^|\.)bitcoin-arena\.io$/;
+const moved = (url) => { if (!OLD_DOMAIN.test(url.hostname)) return null; const to = new URL(url); to.hostname = url.hostname.replace(/bitcoin-arena\.io$/, 'bitcoinarena.io'); return Response.redirect(to.toString(), 308); };
 export default {
 async scheduled(event, env, ctx) {
   const before = await env.CHAIN.get(CHAIN_KEY, 'json');
@@ -24,6 +27,7 @@ async scheduled(event, env, ctx) {
 async fetch(request, env, ctx) {
 
   const url = new URL(request.url);
+  if (!url.pathname.startsWith('/api/')) { const went = moved(url); if (went) return went; }   // a page already open still calls /api/ here
   // THE PLAYERS' FAUCET AND THE TABLE WANTS (kanban #926): passed on to the faucet service, whose address is a secret of this Worker (FAUCET_ORIGIN), with the caller's address for its limits
   if (url.pathname === '/api/faucet/player' || url.pathname === '/api/faucet/opponent') {
     if (!env.FAUCET_ORIGIN) return new Response('{"ok":false,"why":"the faucet is off"}', { status: 503, headers: { 'content-type': 'application/json' } });
@@ -45,7 +49,7 @@ async fetch(request, env, ctx) {
   }
   if (url.pathname === '/robots.txt') return new Response('User-agent: *\nAllow: /\n', { headers: { 'Content-Type': 'text/plain' } });
   // chatgpt.bitcoin-arena.io (2026-10-08 23:17: so ChatGPT can read the page): the same files, kept out of search indexes
-  if (url.hostname === 'chatgpt.bitcoin-arena.io') {
+  if (url.hostname === 'chatgpt.bitcoin-arena.io' || url.hostname === 'chatgpt.bitcoinarena.io') {
     if (url.pathname === '/api/chain-nodes') return chainNodes(env, ctx);
     const open = await env.ASSETS.fetch(request);
     const res = new Response(open.body, open);

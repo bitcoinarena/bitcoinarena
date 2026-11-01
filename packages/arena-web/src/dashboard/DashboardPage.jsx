@@ -148,7 +148,7 @@ export function noteRows(D) {
 // THE OWNER AREA ON THE ARENA SITE (2026-10-26, the owner on 2026.1.9.9: "It works via owner page but not Open Dashboard"): the link opened
 // this node's own page at 127.0.0.1, another origin than the site's, which keeps the owner key the installer and the update hand over -
 // so it asked for the 24 words. Now the site's page for this node's key, with this page's address when it is the node's own (127.0.0.1)
-export const OWNER_SITE = 'https://testnet.bitcoin-arena.io/owner/';
+export const OWNER_SITE = 'https://testnet.bitcoinarena.io/owner/';
 export function ownerHref(node, loc) {
   if (!/^[0-9a-f]{64}$/.test(String(node || ''))) return 'Dashboard/owner';
   const local = loc && /^(127\.0\.0\.1|localhost)$/.test(loc.hostname) ? `&local=${encodeURIComponent(loc.origin)}` : '';
@@ -194,7 +194,7 @@ export class Liquidity extends React.Component {
 
 // WHAT THE PLAYERS' FAUCET GAVE (kanban #926, 2026-11-01: new and returning accounts apart, in the nodes' dashboard): its public totals, no account and no address in
 // them. Testnet only; no answer, no card.
-export const FAUCET_TOTALS = 'https://bitcoin-arena.io/api/faucet/player';
+export const FAUCET_TOTALS = 'https://bitcoinarena.io/api/faucet/player';
 export class FaucetGrants extends React.Component {
   constructor(props) { super(props); this.state = { t: null }; }
   componentDidMount() {

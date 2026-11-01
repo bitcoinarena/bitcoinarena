@@ -2,7 +2,7 @@
 
 > **⬇ Run a node: [download the latest release](https://github.com/bitcoin-arena/bitcoin-arena/releases/latest)** (testnet4):
 > Windows `bitcoin-arena-node-setup-*.exe` · macOS `bitcoin-arena-node-*.dmg` · Linux `bitcoin-arena-node_*.deb` · or the plain archives.
-> All releases: [Releases](https://github.com/bitcoin-arena/bitcoin-arena/releases). Guide: [docs.bitcoin-arena.io](https://docs.bitcoin-arena.io/#run).
+> All releases: [Releases](https://github.com/bitcoin-arena/bitcoin-arena/releases). Guide: [docs.bitcoinarena.io](https://docs.bitcoinarena.io/#run).
 
 Bitcoin Arena is a set of games and prediction markets played for bitcoin, with **no central server**. The nodes *are* the arena:
 
@@ -23,7 +23,7 @@ It runs on **testnet4** today.
 | **Rock Paper Scissors** | head to head | Commit a hidden move, reveal it, and the winner takes the pot. Rounds every 8 seconds. |
 | **Bitcoin Up or Down** | prediction market | Will BTC be higher at the end of the 15-minute window? Three independent attestors sign the price, and the winning side shares the pot. 96 markets a day. |
 
-The game page is at [testnet.bitcoin-arena.io](https://testnet.bitcoin-arena.io). Your wallet is your 24 words or your Nostr key; your stake is locked in a federation until the round settles.
+The game page is at [testnet.bitcoinarena.io](https://testnet.bitcoinarena.io). Your wallet is your 24 words or your Nostr key; your stake is locked in a federation until the round settles.
 
 ## Run a node
 
@@ -54,7 +54,7 @@ The game page is at [testnet.bitcoin-arena.io](https://testnet.bitcoin-arena.io)
 
 Each paid entry pays **4 % to the nodes** (four pools: game/verify, settlement, custody, liquidity), **4 % to the developers** and **2 % to the protocol reserves**, a treasury the bonded nodes vote to spend. Prediction markets pay 0.4 % / 0.4 % / 0.2 %.
 
-The full guide, the node API and how to build your own game are at **[docs.bitcoin-arena.io](https://docs.bitcoin-arena.io)**.
+The full guide, the node API and how to build your own game are at **[docs.bitcoinarena.io](https://docs.bitcoinarena.io)**.
 
 ## How it works, in one paragraph
 
@@ -100,6 +100,6 @@ Each package's tests run with Node.js 24:
 cd packages/arena-node && node --test --test-timeout=120000 test/<file>.test.js
 ```
 
-The release workflow (`.github/workflows/release.yml`) runs the installer tests, builds every asset for Linux, macOS and Windows, installs each one fresh on its own system, and builds and installs the packages. Every release's `SHA256SUMS` is signed with the Arena release key (published at [testnet.bitcoin-arena.io/release-key.txt](https://testnet.bitcoin-arena.io/release-key.txt)).
+The release workflow (`.github/workflows/release.yml`) runs the installer tests, builds every asset for Linux, macOS and Windows, installs each one fresh on its own system, and builds and installs the packages. Every release's `SHA256SUMS` is signed with the Arena release key (published at [testnet.bitcoinarena.io/release-key.txt](https://testnet.bitcoinarena.io/release-key.txt)).
 
 The repository and its releases are private for now: invited users only.

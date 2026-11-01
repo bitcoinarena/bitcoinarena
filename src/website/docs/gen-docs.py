@@ -70,7 +70,7 @@ def openapi():
         'openapi': '3.0.3',
         'info': {'title': 'Bitcoin Arena node API', 'version': date.today().isoformat(),
                  'description': 'Every request a Bitcoin Arena node (`arena-node`) answers, generated from `packages/arena-node/src/server.js` '
-                                'by `src/website/docs/gen-docs.py`. Concepts and guides: https://docs.bitcoin-arena.io/'},
+                                'by `src/website/docs/gen-docs.py`. Concepts and guides: https://docs.bitcoinarena.io/'},
         'servers': SERVERS,
         'tags': [{'name': t, 'description': d} for _, t, d in TAGS],
         'components': {'securitySchemes': {'operatorToken': {'type': 'http', 'scheme': 'bearer', 'description': 'An operator token minted in the owner area (POST /owner/operator/mint).'}}},

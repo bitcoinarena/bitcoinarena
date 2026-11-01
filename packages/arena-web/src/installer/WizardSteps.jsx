@@ -297,7 +297,7 @@ export class EmergencyStep extends React.Component {
         <div className="em-cards">
           <div className="em-card"><b>🆘 When you need it</b>
             <p>Your computer breaks, or your node will be offline for more than a day or two.</p>
-            <p>Type the code at <b>testnet.bitcoin-arena.io/offline</b>. Your node leaves cleanly and you keep your bond.</p></div>
+            <p>Type the code at <b>testnet.bitcoinarena.io/offline</b>. Your node leaves cleanly and you keep your bond.</p></div>
           <div className="em-card"><b>🔒 Safe to type anywhere</b>
             <p>It cannot move money or change anything else.</p>
             <p>Your {secret} {nostr ? 'is' : 'are'} different: type {nostr ? 'it' : 'them'} only on your own node.</p></div>

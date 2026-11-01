@@ -18,12 +18,12 @@
   <meta property="og:title" content="Bitcoin Arena">
   <meta property="og:description" content="Play for sats. Settle on Bitcoin. Tick Tock, Rock Paper Scissors, Up or Down - run by independent nodes.">
   <meta property="og:type" content="website">
-  <meta property="og:image" content="https://testnet.bitcoin-arena.io/arena-og.png">
+  <meta property="og:image" content="https://testnet.bitcoinarena.io/arena-og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Bitcoin Arena">
-  <meta name="twitter:image" content="https://testnet.bitcoin-arena.io/arena-og.png">
+  <meta name="twitter:image" content="https://testnet.bitcoinarena.io/arena-og.png">
   <script id="arena-storage-move">
     // THE ONE-TIME MOVE OF THE BROWSER'S KEYS FROM blwp.* TO arena.*, before any other script reads
     // them: the seed, the kept phrases, the vault and the wallet stores were all kept under blwp.*, and every reader
@@ -211,7 +211,7 @@
        the backup warning, Leaderboard, Shop and Settings - the meter lay over the warning; it sits just under the row there */
     body.arena-game-chosen:not(.arena-own-client) #arena-fps { top: calc(env(safe-area-inset-top, 0px) + 46px); }
     /* THE BUILD AND THE UI NUMBER, ALWAYS ON SCREEN (2026-10-12 18:13: "Also always include build number in
-       testnet.bitcoin-arena.io including ui number that is separate"): Unity's build and this page's own number, bottom left,
+       testnet.bitcoinarena.io including ui number that is separate"): Unity's build and this page's own number, bottom left,
        over every layer (a game's own client too), never in the way of a tap */
     /* TOP LEFT, where no screen puts anything (2026-10-12: at the bottom it lay over "Build your own game or market, or run
        a node" on the games screen); over a game's own client it is the footer strip's last line (below) */
@@ -669,7 +669,7 @@
     /* THE WALLET BAR OVER A GAME'S OWN CLIENT: one balance, Deposit, Withdraw and the gear for every game; the
        client's frame starts under it, so the bar never covers the client */
     #arena-wallet-bar { display: none; }
-    /* THE GAMES SCREEN TOO (2026-10-12: "add a balance display on testnet.bitcoin-arena.io and setting screen along with all
+    /* THE GAMES SCREEN TOO (2026-10-12: "add a balance display on testnet.bitcoinarena.io and setting screen along with all
        features"; "disable fps display for the games screen"): the wallet bar - balance, Deposit, Withdraw, the gear - over the
        choice of games, the games below it, and no frame rate there */
     body.arena-picking #arena-fps { display: none !important; }
@@ -690,7 +690,7 @@
     #arena-wb-back { display: none; }
     body.arena-own-client #arena-wb-back { display: inline-flex; flex: none; align-items: center; gap: 4px; }
     body.arena-clean #arena-wb-back { display: none !important; }
-    /* NO "← bitcoin-arena.io" ON THE GAMES SCREEN (2026-10-19: "the button is superfluous and redundant. the bitcoin
+    /* NO "← bitcoinarena.io" ON THE GAMES SCREEN (2026-10-19: "the button is superfluous and redundant. the bitcoin
        Arena logo already links back to the homepage") */
     @media (max-width: 720px) { #arena-wb-back .word { display: none; } }
     @media (max-width: 420px) { #arena-wallet-bar { gap: 5px !important; } #arena-wallet-bar button:not(#arena-wb-gear) { padding: 6px 7px !important; font-size: 12.5px !important; } }
@@ -1431,7 +1431,7 @@
   <link rel="stylesheet" href="games/nextblock/unity-page.css">
   <!-- its loading screen's markup is put in while the page is parsed (#boot): fetched from the start, beside the styles -->
   <link rel="preload" href="games/nextblock/loading-page.js" as="script">
-  <script defer src="https://stats.bitcoin-arena.io/script.js" data-website-id="024ff09e-c3a6-4dfd-bede-3163eb8be36a" data-domains="testnet.bitcoin-arena.io" data-before-send="arenaTrackUrl"></script>
+  <script defer src="https://stats.bitcoinarena.io/script.js" data-website-id="024ff09e-c3a6-4dfd-bede-3163eb8be36a" data-domains="testnet.bitcoinarena.io" data-before-send="arenaTrackUrl"></script>
   <script>
     // THE ADDRESS UMAMI KEEPS: the game and the campaign, never a round id, a node or a referrer's key
     window.arenaTrackUrl = (type, payload) => {
@@ -1480,12 +1480,12 @@
   <div id="arena-money-stack"><div id="arena-money-alert" role="alert"></div><div id="arena-money-ok" role="status"></div></div>
   <div id="arena-join-status" role="status" aria-live="polite"><span class="spin" aria-hidden="true"></span><span class="txt"></span><button type="button" class="x" aria-label="Close">&times;</button></div>
   <button id="arena-donate-go" type="button" onclick="window.ARENA_DONATE_OPEN && window.ARENA_DONATE_OPEN(window.ARENA_GAME_NAME || null)">&hearts; Donate</button>
-  <a id="arena-foot-docs" href="https://docs.bitcoin-arena.io/">Docs</a>
+  <a id="arena-foot-docs" href="https://docs.bitcoinarena.io/">Docs</a>
   <div id="arena-social" class="arena-social"><a href="https://x.com/bitcoinarena_io" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on X" title="X"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"/></svg></a><a href="https://discord.gg/9zZbASZyue" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on Discord" title="Discord"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.211.375-.445.865-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.74 19.74 0 0 0 3.677 4.37a.07.07 0 0 0-.032.028C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.873-1.295 1.226-1.994a.076.076 0 0 0-.042-.106 13.1 13.1 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .078-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.099.246.198.373.292a.077.077 0 0 1-.007.127 12.3 12.3 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.363 1.225 1.993a.076.076 0 0 0 .084.028 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03ZM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.956 2.418-2.157 2.418Zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.946 2.418-2.157 2.418Z"/></svg></a><a href="https://t.me/+KihHE8JhcVM3NDVi" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on Telegram" title="Telegram"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0Zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635Z"/></svg></a><a href="https://github.com/bitcoin-arena" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on GitHub" title="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a></div>
   <div id="arena-build" aria-hidden="true">UI {{{ UI_VERSION }}}</div>
   <div id="arena-fps" role="button" title="tap: frame-rate test"><span id="arena-fps-now">– fps</span><span id="arena-fps-bench"></span></div>
   <div id="arena-money">
-    <a id="arena-game-home" href="https://bitcoin-arena.io/" title="bitcoin-arena.io" aria-label="Bitcoin Arena - bitcoin-arena.io"><i aria-hidden="true">&#8383;</i><span>Bitcoin Arena</span></a>
+    <a id="arena-game-home" href="https://bitcoinarena.io/" title="bitcoinarena.io" aria-label="Bitcoin Arena - bitcoinarena.io"><i aria-hidden="true">&#8383;</i><span>Bitcoin Arena</span></a>
     <button id="arena-games-back" type="button" title="Back to Bitcoin Arena" aria-label="Back to Bitcoin Arena"><span aria-hidden="true">&larr;</span><span class="word">Arena</span></button>
     <!-- BUILD ON BITCOIN ARENA, RUN A NODE (2026-10-08 11:38): the platform page, beside the gear -->
     <!-- THE WALLET IN EVERY HEADER (2026-10-19: "the header is missing balance, deposit and withdrawls"):
@@ -1503,7 +1503,7 @@
     <button id="arena-shop-go" type="button" title="Shop: this game's items, bought once and kept" aria-label="Shop"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5.5h11l-1 8h-9z"/><path d="M5.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"/></svg><span class="word">Shop</span></button>
     <button id="arena-settings-go" type="button" title="Settings">&#9881;</button>
     <div id="arena-nav" class="arena-nav"><button id="arena-nav-go" class="arena-nav-go" type="button" aria-label="Menu" aria-expanded="false" aria-controls="arena-nav-menu">&#9776;</button>
-      <nav id="arena-nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoin-arena.io/">Explorer</a><a href="/health/">Health</a><a href="/referral/">Referral Program</a></nav></div>
+      <nav id="arena-nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoinarena.io/">Explorer</a><a href="/health/">Health</a><a href="/referral/">Referral Program</a></nav></div>
     <div id="arena-hdr-why" role="status"></div>
   </div>
   <!-- SETTINGS, ITS OWN SCREEN (2026-09-25 21:16: "The wallet page belongs in the settings screen. Deposit,
@@ -1511,7 +1511,7 @@
        Verify. -->
   <!-- THE WALLET BAR OVER A GAME'S OWN CLIENT: shown only while a game's client runs in the frame -->
   <div id="arena-wallet-bar" role="toolbar" aria-label="wallet">
-    <a id="arena-wb-home" href="https://bitcoin-arena.io/" title="bitcoin-arena.io" aria-label="Bitcoin Arena - bitcoin-arena.io"><i aria-hidden="true">&#8383;</i><span>Bitcoin Arena</span></a>
+    <a id="arena-wb-home" href="https://bitcoinarena.io/" title="bitcoinarena.io" aria-label="Bitcoin Arena - bitcoinarena.io"><i aria-hidden="true">&#8383;</i><span>Bitcoin Arena</span></a>
     <button id="arena-wb-back" type="button" title="Back to Bitcoin Arena" aria-label="Back to Bitcoin Arena"><span aria-hidden="true">&larr;</span><span class="word">Arena</span></button>
     <button class="wb-bal" type="button" title="Your balance by federation"><b id="arena-wb-sats">&ndash; sat</b><span id="arena-wb-pending"></span></button>
     <button id="arena-wb-deposit" type="button" title="Deposit" aria-label="Deposit"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v7.5M4.8 6.5 8 9.7l3.2-3.2M2.5 11.5v2h11v-2"/></svg><span class="word">Deposit</span></button>
@@ -1519,7 +1519,7 @@
     <button id="arena-wb-season" type="button" title="Leaderboard" aria-label="Leaderboard"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg><span class="word">Leaderboard</span></button>
     <button id="arena-wb-gear" type="button" title="Settings">&#9881;</button>
     <div id="arena-wb-nav" class="arena-nav"><button id="arena-wb-nav-go" class="arena-nav-go" type="button" aria-label="Menu" aria-expanded="false" aria-controls="arena-wb-nav-menu">&#9776;</button>
-      <nav id="arena-wb-nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoin-arena.io/">Explorer</a><a href="/health/">Health</a><a href="/referral/">Referral Program</a></nav></div>
+      <nav id="arena-wb-nav-menu" class="arena-nav-menu" aria-label="Bitcoin Arena"><a href="/proposals/">Proposals</a><a href="https://explorer.bitcoinarena.io/">Explorer</a><a href="/health/">Health</a><a href="/referral/">Referral Program</a></nav></div>
     <div id="arena-wb-why" role="status"></div>
   </div>
   <div id="arena-withdraw" role="dialog" aria-modal="true" aria-labelledby="arena-withdraw-title"><div class="wd-head"><h3 id="arena-withdraw-title">Withdraw</h3><button type="button" class="wd-close" aria-label="Close">&times;</button></div><div class="wd-body"></div></div>
@@ -1670,7 +1670,7 @@
     // MONEY THAT DID NOT ARRIVE (kanban #883, 2026-10-31: "Fehlermeldung dass das Geld nicht abgeholt werden kann, Summe für alle"): the sum over every
     // federation of the deposits this browser could not collect, and whether its storage refused a wallet write. A kept deposit may never have been paid, hence "up to".
     // THE PLAYERS' FAUCET (kanban #926): testnet's page only, so a mainnet build never has it
-    window.ARENA_FAUCET_URL = /(^|\.)testnet\.bitcoin-arena\.io$|\.bitcoin-arena-site\.pages\.dev$/.test(location.hostname) ? 'https://bitcoin-arena.io/api/faucet/player' : '';
+    window.ARENA_FAUCET_URL = /(^|\.)testnet\.bitcoin-?arena\.io$|\.bitcoin-arena-site\.pages\.dev$/.test(location.hostname) ? 'https://bitcoinarena.io/api/faucet/player' : '';
     window.ARENA_OPPONENT_URL = window.ARENA_FAUCET_URL ? window.ARENA_FAUCET_URL.replace(/\/player$/, '/opponent') : '';
     // LET BOTS JOIN THE GAMES (kanban #926): on unless a player turned it off, kept in this browser; off, the page names no table to the test opponent
     window.ARENA_BOTS_ON = () => { try { return localStorage.getItem('arena.bots') !== 'off'; } catch { return true; } };
@@ -1938,8 +1938,8 @@
     // without a Tailscale route: every game icon failed on the Funnel host and the games screen showed "T" and "R")
     window.ARENA_ROUTED_URL = (u) => routed(u).url;
     // AND EVERY HTTP REQUEST TO A SEAT, THE SAME WAY (2026-10-12 21:40 local, a phone without Tailscale: "Looking for the
-    // game's nodes … (try 3 of 8)", and no other address than testnet.bitcoin-arena.io opens there): the sockets took the
-    // bitcoin-arena.io route, but GET /games, /rounds and the rest still went to the Funnel host alone. Now a seat's request
+    // game's nodes … (try 3 of 8)", and no other address than testnet.bitcoinarena.io opens there): the sockets took the
+    // bitcoinarena.io route, but GET /games, /rounds and the rest still went to the Funnel host alone. Now a seat's request
     // goes over its route first (tn4.bitcoin-arena.io answered /guardian-N/games in 0.1-0.2 s), and to the Funnel host if that
     // fails; the order flips per path as the sockets' does.
     const RealFetch = window.fetch.bind(window);
@@ -5502,7 +5502,7 @@
     // drawn by React (kanban #564, window.ArenaSettings): the field keeps what is typed, and shows the current name otherwise
     const drawName = () => window.ArenaSettings.name(document.getElementById('arena-set-name'), { current: currentName(),
       onUpdate: (t) => { const said = window.ARENA_LOBBY_ACT && window.ARENA_LOBBY_ACT.setName ? window.ARENA_LOBBY_ACT.setName(t) : 'the lobby is not up yet'; setTimeout(paintSettings, 0); return said; } });
-    // YOUR REFERRAL LINK (kanban #681, 2026-10-26: "A user may also use a referrer code and link to testnet.bitcoin-arena.io. He gets 10%
+    // YOUR REFERRAL LINK (kanban #681, 2026-10-26: "A user may also use a referrer code and link to testnet.bitcoinarena.io. He gets 10%
     // of the node's income"): this wallet's own program, keyed by its identity key (ARENACLIENT.referralOf) - never a seed minted for it.
     // What it earned is what the zap collector last read on the seats (window.ARENA_REFERRAL_EARNED); Copy also names the program on the
     // seats with the player's name, once per name (arena.referral.named), so the explorer and Health show a name, not a key.

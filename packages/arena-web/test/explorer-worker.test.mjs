@@ -20,7 +20,7 @@ function store() {
     EXPLORER: { get: async (k) => (kv.has(k) ? kv.get(k) : null), put: async (k, v) => { kv.set(k, v); } } }, kv };
 }
 const hex = (n) => n.toString(16).padStart(64, '0');
-const ask = async (env, path) => (await worker.fetch(new Request('https://explorer.bitcoin-arena.io' + path), env, { waitUntil: () => {} })).json();
+const ask = async (env, path) => (await worker.fetch(new Request('https://explorer.bitcoinarena.io' + path), env, { waitUntil: () => {} })).json();
 
 test('a page of 200 newest first, older and newer pages by a row\'s cursor; every app in the filters, not only the newest 1000\'s', async () => {
   const { db, env } = store();
