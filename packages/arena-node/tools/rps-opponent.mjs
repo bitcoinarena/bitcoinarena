@@ -209,7 +209,7 @@ const go = (w, k, step) => {
   if (hour.length >= MOST_PER_HOUR) { log({ step: 'hourly limit' }); return; }
   k.entered = true; hour.push(now); busy = true;
   log({ step, round: w.round.slice(0, 8), leftMs: Number(k.c.entryCloseMs) - now });
-  enter(k.c, k.rid, k.claim).catch((e) => log({ step: 'entry failed', round: w.round.slice(0, 8), why: String(e.message).slice(0, 200) })).finally(() => { busy = false; if (env.ONCE) setTimeout(() => process.exit(0), 40000); });
+  enter(k.c, k.rid, k.claim).then((r) => { if (!r.ok) log({ step: 'entry not made', round: w.round.slice(0, 8), why: String(r.why || 'too few seats took it').slice(0, 200) }); }, (e) => log({ step: 'entry failed', round: w.round.slice(0, 8), why: String(e.message).slice(0, 200) })).finally(() => { busy = false; if (env.ONCE) setTimeout(() => process.exit(0), 40000); });
 };
 const pass = async () => {
   const wants = (await (await fetch(env.WANTS, { signal: AbortSignal.timeout(3000) })).json()).wants || [];
