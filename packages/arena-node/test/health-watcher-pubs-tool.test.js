@@ -74,7 +74,7 @@ function makeWorld({ at = NOW } = {}) {
   };
   return w;
 }
-const CFG = (env = {}) => config({ HW_STATE: '/x/hw.json', HW_MAC_SEATS: ' ', HW_BEELINK_SEATS: 'http://127.0.0.1:31221', ...env }, []);
+const CFG = (env = {}) => config({ HW_STATE: '/x/hw.json', HW_MAC_SEATS: ' ', HW_HOST_SEATS: 'http://127.0.0.1:31221', ...env }, []);
 const go = async (w, st, cfg = CFG(), k = 1) => { let r; for (let i = 0; i < k; i++) { r = await pass(w.io, cfg, st); st = r.state; w.now += 180000; } return { r, st }; };
 const pubAlerts = (w) => w.posts.filter((t) => /round publication not confirmed/.test(t));
 
