@@ -900,6 +900,7 @@
     html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-social {
       display: flex; align-items: center; gap: 6px; position: fixed; right: 100px; bottom: calc(min(env(safe-area-inset-bottom, 0px), 4px) + 3px); z-index: 9992; height: 24px; }
     body.arena-clean #arena-social { display: none !important; }
+    body.arena-clean #arena-foot-docs, body.arena-clean #arena-foot-feedback { display: none !important; }
     /* THE DOCS AT THE FOOT'S LEFT (kanban #916, the owner 2026-10-31), on every screen that has the foot */
     #arena-foot-docs { display: none; position: fixed; left: 10px; bottom: calc(min(env(safe-area-inset-bottom, 0px), 4px) + 3px); z-index: 9992; height: 24px; line-height: 24px;
       color: #8b949e; font: 600 12px/24px system-ui, sans-serif; text-decoration: none; }
