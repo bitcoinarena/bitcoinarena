@@ -95,8 +95,12 @@ const big = (_, v) => (typeof v === 'bigint' ? { $n: String(v) } : v instanceof 
 const un = (_, v) => (v && typeof v === 'object' && v.$n !== undefined ? BigInt(v.$n) : v && typeof v === 'object' && v.$b !== undefined ? fromHex(v.$b) : v);
 try { for (const [k, x] of JSON.parse(readFileSync(splitFile, 'utf8'), un)) splits.set(k, x); } catch { /* none kept yet */ }
 const splitKey = (c) => [toHex(c.federationId), c.stakeMsat, toHex(c.donationSetId), toHex(c.gameId)].join(':');
-const readSplit = async (c, roundHex) => { const v = await entrySplit({ c, roundHex, nodes }); splits.set(splitKey(c), { v, at: Date.now() }); try { writeFileSync(splitFile, JSON.stringify([...splits], big)); } catch { /* kept in memory */ } return v; };
+// A SEAT THAT ANSWERS FIRST: the donation sets of a round come from whichever of a few seats holds them soonest
+const firstSeat = async (u, o) => { const path = String(u).replace(/^https?:\/\/[^/]+/, ''); return Promise.any(nodes.slice(0, 5).map(async (n) => { const r = await fetch(`${n}${path}`, { ...o, signal: AbortSignal.timeout(3000) }); if (!r.ok) throw new Error(String(r.status)); return r; })); };
+const keys = new Map();   // federation hex -> its reserve key, read once
+const readSplit = async (c, roundHex) => { const fed = toHex(c.federationId); const v = await entrySplit({ c, roundHex, nodes, fetcher: keys.has(fed) ? firstSeat : fetch, reserveKeyHex: keys.get(fed) || null }); if (v.reserveKey) keys.set(fed, toHex(v.reserveKey)); splits.set(splitKey(c), { v, at: Date.now() }); try { writeFileSync(splitFile, JSON.stringify([...splits], big)); } catch { /* kept in memory */ } return v; };
 const splitFor = async (c, roundHex) => {
+  for (const [key, x] of splits) if (x.v && x.v.reserveKey && !keys.has(key.split(':')[0])) keys.set(key.split(':')[0], toHex(x.v.reserveKey));
   const k = splits.get(splitKey(c));
   if (!k) return readSplit(c, roundHex);
   if (Date.now() - k.at > SPLIT_KEEP_MS) readSplit(c, roundHex).catch(() => {});
@@ -108,12 +112,12 @@ async function enter(c, rid) {
   if (!w) return { ok: false, why: `no wallet in federation ${toHex(c.federationId).slice(0, 8)}` };
   log({ step: 'entering', round: roundHex.slice(0, 8), leftMs: Number(c.entryCloseMs) - Date.now() });
   const att = await attestedClaimKey({ round: { ...c, id: rid }, signerNodes: c.nodes, nodes, curve: pageCurve, timeoutMs: 6000 });
-  log({ step: 'claim key', ok: att.ok, ms: ms(t0), why: att.ok ? undefined : String(att.why).slice(0, 200) });
-  if (!att.ok) return { ok: false, why: `claim key: ${att.why}` };
+    if (!att.ok) return { ok: false, why: `claim key: ${att.why}` };
   steps.claimKey = ms(t0);
   const gate = feeLockPays({ contract: c, fees: { ppm: BigInt(w.rule.fee_ppm), baseMsat: BigInt(w.rule.fee_base_msat) } });
   const split = await splitFor(c, roundHex);
   steps.split = ms(t0);
+  if (Number(c.entryCloseMs) - Date.now() < 400) return { ok: false, why: 'too late to enter' };
   const me = evenPlayer();
   const s = { p: scalar(), player: me.pubkey };
   s.point = feldmanGroup.pointFromScalar(scalarFrom32(s.p) % FIELD);
