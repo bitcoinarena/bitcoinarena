@@ -5193,6 +5193,8 @@
         window.ARENA_TRACK('faucet-welcome');
       } catch (e) { window.ARENA_MONEY_ALERT.nextWords(null); console.log('[faucet] no welcome sats: ' + (e && e.message ? e.message : e)); }
     }
+    // AT THE START (a Nostr login reloads the page with its seed), and at once when the wallet is made in this page
+    window.ARENA_WELCOME = welcomeSats;
     setTimeout(welcomeSats, 1500);
     function depositPick(lobbyInvite) {
       const statuses = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.size ? [...window.ARENA_FED_LOADS.values()] : [];
@@ -9071,6 +9073,7 @@
         window.ARENA_WALLET_SCREEN.made = 'new';
         window.ARENA_TRACK('wallet-new');
         try { sessionStorage.setItem('arena.welcome.pending', '1'); } catch { /* no storage, no welcome */ }
+        setTimeout(() => { if (window.ARENA_WELCOME) window.ARENA_WELCOME(); }, 300);
         done();
         return { ok: true };
       };
