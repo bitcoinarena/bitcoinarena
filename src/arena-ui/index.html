@@ -5056,6 +5056,7 @@
       const start = document.getElementById('arena-wallet-start');
       const noWallet = !!start && getComputedStyle(start).display !== 'none' && start.getBoundingClientRect().height > 0;
       window.ArenaText.say(document.getElementById('arena-wb-sats'), bal ? Number(bal.sats || 0).toLocaleString('en-US') + ' sat'
+        : window.ARENA_NEW_WALLET ? '0 sat'   // kanban #926: a wallet made a moment ago holds nothing yet, there is nothing to load
         : !noWallet && window.ARENA_STILL_LOADING && window.ARENA_STILL_LOADING('ARENA_BALANCE_TRIED') ? 'Loading \u2026' : '– sat');
       { const parts = [bal && bal.arriving ? Number(bal.arriving).toLocaleString('en-US') + ' arriving' + (bal.merging ? ' \u21c4' : '') : (bal && bal.merging ? '\u21c4' : ''),
           bal && bal.pending ? Number(bal.pending).toLocaleString('en-US') + ' pending' : ''].filter(Boolean);
@@ -6002,7 +6003,7 @@
     function withGame(search) { const g = gameOnly(); return !g || /(^|[?&])game=/.test(search) ? search : search + (search ? '&' : '?') + g.slice(1); }
     async function dailySearch() {
       // a parameter only a game's client reads (?rps-demo=all) leaves the root bare: it names no lobby
-      const named = new URLSearchParams(location.search); for (const k of VIEW_ONLY_PARAMS) named.delete(k);
+      const named = new URLSearchParams(location.search); for (const k of [...named.keys()]) if (VIEW_ONLY_PARAMS.includes(k) || /^utm_|clid$/.test(k)) named.delete(k);   // kanban #926: a campaign link names no lobby either
       if (named.toString() !== '' || !ARENACLIENT.dailyLobbySearch) return null;
       try {
         const r = await fetch('daily.json', { cache: 'no-store' });
@@ -9113,7 +9114,7 @@
         if (window.ARENA_SEED_KEEPER) window.ARENA_SEED_KEEPER.beat();
         window.ARENA_WALLET_SCREEN.made = 'new';
         window.ARENA_TRACK('wallet-new');
-        try { sessionStorage.setItem('arena.welcome.pending', '1'); } catch { /* no storage, no welcome */ }
+        window.ARENA_NEW_WALLET = true; window.ARENA_BALANCE_TRIED = true; try { sessionStorage.setItem('arena.welcome.pending', '1'); } catch { /* no storage, no welcome */ }
         setTimeout(() => { if (window.ARENA_WELCOME) window.ARENA_WELCOME(); }, 300);
         done();
         return { ok: true };
@@ -9134,7 +9135,7 @@
         try { await signer.close(); } catch { /* gone */ }
         busy(got.created ? 'Your wallet is made and kept on Nostr - opening it…' : 'Your wallet is back - opening it…');
         window.ARENA_TRACK(got.created ? 'nostr-wallet-create' : 'nostr-wallet-join', { how });
-        if (got.created) try { sessionStorage.setItem('arena.welcome.pending', '1'); } catch { /* no storage, no welcome */ }
+        if (got.created) { window.ARENA_NEW_WALLET = true; window.ARENA_BALANCE_TRIED = true; try { sessionStorage.setItem('arena.welcome.pending', '1'); } catch { /* no storage, no welcome */ } }
         const r = window.ARENA_RESTORE_SEED ? window.ARENA_RESTORE_SEED(hex) : { ok: false, why: 'the page is still loading' };
         if (!r.ok) throw new Error(r.why);
       }
