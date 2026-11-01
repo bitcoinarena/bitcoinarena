@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const read = (p) => readFileSync(new URL('../../../' + p, import.meta.url), 'utf8');
-const LINKS = [['https://x.com/bitcoinarena_io', 'X'], ['https://discord.gg/tH8SPzyKq', 'Discord'], ['https://t.me/+KihHE8JhcVM3NDVi', 'Telegram'],
+const LINKS = [['https://x.com/bitcoinarena_io', 'X'], ['https://discord.gg/9zZbASZyue', 'Discord'], ['https://t.me/+KihHE8JhcVM3NDVi', 'Telegram'],
   ['https://docs.bitcoin-arena.io/repos/', 'GitHub']];
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
 
