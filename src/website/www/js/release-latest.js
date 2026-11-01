@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LATEST RELEASE, FROM ONE PLACE (kanban #753, a tester 2026-10-28: "Link always latest release and mention the latest build
-// number"). No page carries a release number. Every link to a release is https://github.com/bitcoin-arena/bitcoin-arena/releases/latest in
+// number"). No page carries a release number. Every link to a release is https://github.com/bitcoinarena/bitcoin-arena/releases/latest in
 // the HTML; this script reads the number from the update channel the release scripts publish with every release
 // (https://testnet.bitcoinarena.io/release/latest.json, written by tools/release/latest.mjs, CORS *) and writes it where a page asks:
 //
@@ -13,7 +13,7 @@
 // pointing at the latest release on GitHub. Loaded by bitcoinarena.io (js/release-latest.js) and the docs (from bitcoinarena.io).
 (function () {
   var CHANNEL = 'https://testnet.bitcoinarena.io/release/latest.json';
-  var REPO = 'https://github.com/bitcoin-arena/bitcoin-arena';
+  var REPO = 'https://github.com/bitcoinarena/bitcoin-arena';
 
   /** The version of a latest.json, or null when it is not one: four or three dot-separated numbers, the tag v + version. */
   function versionOf(latest) {
