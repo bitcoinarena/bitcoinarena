@@ -1467,7 +1467,9 @@
       const keep = () => { try { sessionStorage.setItem(KEY, JSON.stringify(held)); } catch { /* kept in memory */ } };
       const send = () => {
         if (!window.umami || typeof window.umami.track !== 'function') return false;
-        for (const [name, data] of held.splice(0)) { try { window.umami.track(name, data || undefined); } catch { /* counted or not, the page goes on */ } }
+        for (const [name, data] of held.splice(0)) { try { window.umami.track(name, data || undefined);
+          // WHICH APP (kanban #945): a property does not show in the event list, so an event with a game counts under its own name too: game-open-rock-paper-scissors
+          if (data && /^[a-z0-9-]{1,30}$/.test(String(data.game || ''))) window.umami.track(`${name}-${data.game}`.slice(0, 50), data); } catch { /* counted or not, the page goes on */ } }
         keep();
         return true;
       };
