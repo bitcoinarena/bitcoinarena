@@ -2915,6 +2915,19 @@ export class Round {
       .map((r) => new Uint8Array(r.round_id));
   }
 
+  /**
+   * THE CLOSED ROUNDS WITH A STAKE LOCK AND NO ACCEPTED SETTLEMENT HERE, closed between two times (kanban #803): what a settlement's
+   * retry reads. A round that takes any federation counts until every row it holds is ACCEPTED.
+   */
+  closedLockRoundsUnsettled(fromMs, toMs) {
+    return this.db.prepare(`SELECT DISTINCT r.round_id FROM stake_locks s JOIN rounds r ON r.round_id = s.round_id
+      WHERE r.state = ? AND r.closed_ms >= ? AND r.closed_ms < ?
+        AND NOT EXISTS (SELECT 1 FROM lock_settlements l WHERE l.round_id = r.round_id AND l.state = 'ACCEPTED')
+        AND NOT (EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id)
+          AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id AND f.state <> 'ACCEPTED'))`)
+      .all(CLOSED, fromMs, toMs).map((r) => new Uint8Array(r.round_id));
+  }
+
   /** What the signed settlement moves (W6): its claimed outpoints ("txid:idx") and its payout count. */
   putLockSettlementMoves({ roundId, txid, claims, payouts }) {
     this.db.prepare('INSERT OR REPLACE INTO lock_settlement_moves (round_id, txid, claims, payouts) VALUES (?, ?, ?, ?)')
