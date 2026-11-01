@@ -27,7 +27,7 @@ async fetch(request, env, ctx) {
   // THE PLAYERS' FAUCET AND THE TABLE WANTS (kanban #926): passed on to the faucet service, whose address is a secret of this Worker (FAUCET_ORIGIN), with the caller's address for its limits
   if (url.pathname === '/api/faucet/player' || url.pathname === '/api/faucet/opponent') {
     if (!env.FAUCET_ORIGIN) return new Response('{"ok":false,"why":"the faucet is off"}', { status: 503, headers: { 'content-type': 'application/json' } });
-    const headers = new Headers({ 'content-type': 'application/json', 'x-forwarded-for': request.headers.get('cf-connecting-ip') || '' });
+    const headers = new Headers({ 'content-type': 'application/json', 'x-arena-ip': request.headers.get('cf-connecting-ip') || '' });
     const origin = request.headers.get('origin'); if (origin) headers.set('origin', origin);
     return fetch(`${env.FAUCET_ORIGIN}${url.pathname.slice('/api/faucet'.length)}`, { method: request.method, headers, body: request.method === 'POST' ? await request.text() : undefined });
   }
