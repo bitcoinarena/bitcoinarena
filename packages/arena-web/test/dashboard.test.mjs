@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { DashboardPage, Players, Liquidity, sat, short, earningsOf, signedSat, score, keep, ownerHref, bondHref } from '../dist/test/dashboard.mjs';
+import { FaucetGrants, DashboardPage, Players, Liquidity, sat, short, earningsOf, signedSat, score, keep, ownerHref, bondHref } from '../dist/test/dashboard.mjs';
 
 const NOW = Date.UTC(2026, 9, 21, 11, 0);
 const zero = { gameVerifyMsat: '0', settlementMsat: '0', guardianMsat: '0', otherMsat: '0', lightningCostMsat: '0', gatewayCostMsat: '0', profitMsat: '0' };
@@ -153,4 +153,18 @@ test('no bond: the red card first, linking to the Bond section; no founding show
   const bonded = renderToStaticMarkup(React.createElement(DashboardPage, { data: { ...D, setup: { ...setup, bond: { txid: 'b0'.repeat(32), sats: '50000', seen: true, confirmations: 9, needed: 6 } } } }));
   assert.doesNotMatch(bonded, /id="no-bond"/);
   assert.match(bonded, /<span class="founding-n">3\/10<\/span>/, 'with a bond the founding shows as before');
+});
+
+test('the faucet\'s card: new and returning accounts apart, with what they got in all and today; no answer, no card (kanban #926)', async () => {
+  const part = (accounts, grants, sats, today) => ({ accounts, grants, sats, today: { accounts: 1, grants: 1, sats: today } });
+  const t = { ok: true, newAccounts: part(3, 3, 1500, 500), returning: part(2, 4, 1000, 250), totalSats: 2500 };
+  const c = new FaucetGrants({});
+  assert.equal(c.render(), null);
+  c.state = { t };
+  const h = renderToStaticMarkup(c.render());
+  assert.match(h, /New accounts/);
+  assert.match(h, /Returning/);
+  assert.match(h, /1,500 sat/);
+  assert.match(h, /2,500 sat in all/);
+  assert.equal(new FaucetGrants({}).state.t, null);
 });
