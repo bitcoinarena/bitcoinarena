@@ -3428,6 +3428,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   if (attestedBoot.unref) attestedBoot.unref();
   const settleRecoverTimer = setInterval(() => {
     if (!shuttingDown && round.lockSettlementsIn(SUBMITTING).length) recoverSettlements();
+    // AND A CLOSED LOCK ROUND NOBODY SETTLED (kanban #803): no other path reaches one after its close
+    if (!shuttingDown) settlements.retryUnsettled()
+      .then((done) => { for (const d of done) console.log(`[settle] ${d.round.slice(0, 16)} unsettled, asked again: ${d.state || (d.ok ? 'ok' : 'refused')} - ${d.why.slice(0, 200)}`); })
+      .catch((e) => console.error(`[settle] ${e.message}`));
   }, finality.maxEveryMs ?? 60000);
   // A BACKGROUND CHECK DOES NOT HOLD THE PROCESS UP: a running daemon's server does. Measured:
   // without this, a test that left a signer node open never let node --test exit.

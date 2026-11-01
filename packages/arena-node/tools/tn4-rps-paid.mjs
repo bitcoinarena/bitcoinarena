@@ -190,12 +190,13 @@ async function paidEntry(c, rid, roundHex, move, who) {
         lock: l.status, lockSaid: (await l.text()).trim().slice(0, 160) };
     }));
     log({ step: 'handed over', entry: toHex(eid).slice(0, 16), signerNodes });
+    // KEYS_FILE: the player's key and locks, one line each, so a collect that failed can be done again by hand (testnet only). Kept BEFORE
+    // the seats' count is judged (kanban #803: a run stopped by that throw left a 94,000 msat lock whose key was gone with the process).
+    if (env.KEYS_FILE) appendFileSync(env.KEYS_FILE, `${JSON.stringify({ at: new Date().toISOString(), round: toHex(rid), entry: toHex(eid), player: who,
+      secret: toHex(me.secret), stake: `${toHex(locks.stake.outpoint.txid)}:${locks.stake.outpoint.outIdx}`,
+      fee: locks.fee ? `${toHex(locks.fee.outpoint.txid)}:${locks.fee.outpoint.outIdx}` : null })}\n`);
     if (signerNodes.filter((x) => x.lock >= 200 && x.lock < 300).length < needed) throw new Error('fewer seats than needed took the lock');
 
-  // KEYS_FILE: the player's key and locks, one line each, so a collect that failed can be done again by hand (testnet only)
-  if (env.KEYS_FILE) appendFileSync(env.KEYS_FILE, `${JSON.stringify({ at: new Date().toISOString(), round: toHex(rid), entry: toHex(eid), player: who,
-    secret: toHex(me.secret), stake: `${toHex(locks.stake.outpoint.txid)}:${locks.stake.outpoint.outIdx}`,
-    fee: locks.fee ? `${toHex(locks.fee.outpoint.txid)}:${locks.fee.outpoint.outIdx}` : null })}\n`);
   return { eid, hidden, signerNodes, lc, playerSecret: me.secret, playerPubkey: s.player, stake: locks.stake, fee: locks.fee };
   }
 }
