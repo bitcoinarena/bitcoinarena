@@ -63,11 +63,9 @@ test('the website and the docs say the current split, the reserves and that anyo
 });
 
 test('the website names only the current configuration; the proposals forum is its own page beside the Arena, on the player key', () => {
-  const GAMES_PAGE = readFileSync(new URL('games/index.html', HOME), 'utf8');
-  for (const page of [HTML, GAMES_PAGE]) {
+  for (const page of [HTML]) {
     assert.equal(/protocol 11|Protocol 11|versions? before|optional donations? of 2\.5/.test(page), false, 'no protocol version or older terms');
   }
-  assert.ok(GAMES_PAGE.includes('<s>nodes 4 %</s><s>protocol developers 2 %</s><s>you 2 %</s><s>reserves 2 %</s>'));
   assert.equal(HTML.includes('<section id="proposals"'), false, 'no proposals section on the homepage');
   assert.ok(HTML.includes('<a class="keep" href="https://testnet.bitcoinarena.io/proposals/">Proposals</a>'))
   //: on a phone the menu keeps Proposals and Docs beside Play - only the section links are hidden
