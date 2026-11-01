@@ -163,6 +163,11 @@
     #arena-money-ok { display: none; padding: 10px 12px; border-radius: 10px;
       background: #14532d; border: 1px solid #86efac; color: #fff; font: 600 14px/1.35 system-ui, sans-serif; text-align: center; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
     #arena-money-ok.show { display: block; }
+    #arena-bots { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 28px 0 56px; color: #c9d1d9; font: 500 14px/1.4 system-ui, sans-serif; }
+    #arena-bots label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+    #arena-bots input { width: 18px; height: 18px; accent-color: #f7931a; }
+    #arena-bots .tip { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: 1px solid #5b6675; border-radius: 50%; color: #c9d1d9; font: 600 12px/1 system-ui, sans-serif; cursor: help; }
+    #arena-bots .tip:hover::after, #arena-bots .tip:focus::after { content: attr(data-tip); position: absolute; bottom: 28px; right: -10px; width: min(280px, 76vw); padding: 10px 12px; border: 1px solid #3a4250; border-radius: 8px; background: #11151a; color: #e8eaed; font: 400 13px/1.4 system-ui, sans-serif; text-align: left; z-index: 5; }
     /* AN X AT ITS END, AND A CLICK ANYWHERE ON IT CLOSES IT (kanban #930, the owner 2026-11-01: "Jede gruene Nachricht braucht ein X am Ende und muss verschwinden wenn man drauf klickt") */
     #arena-money-ok { position: relative; padding-left: 40px; padding-right: 40px; cursor: pointer; }
     #arena-money-ok .x { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; background: none; border: 0; color: #fff; font: 700 22px/1 system-ui, sans-serif; cursor: pointer; }
@@ -1667,6 +1672,20 @@
     // THE PLAYERS' FAUCET (kanban #926): testnet's page only, so a mainnet build never has it
     window.ARENA_FAUCET_URL = /(^|\.)testnet\.bitcoin-arena\.io$|\.bitcoin-arena-site\.pages\.dev$/.test(location.hostname) ? 'https://bitcoin-arena.io/api/faucet/player' : '';
     window.ARENA_OPPONENT_URL = window.ARENA_FAUCET_URL ? window.ARENA_FAUCET_URL.replace(/\/player$/, '/opponent') : '';
+    // LET BOTS JOIN THE GAMES (kanban #926): on unless a player turned it off, kept in this browser; off, the page names no table to the test opponent
+    window.ARENA_BOTS_ON = () => { try { return localStorage.getItem('arena.bots') !== 'off'; } catch { return true; } };
+    window.addEventListener('DOMContentLoaded', () => {
+      const box = document.querySelector('#arena-games .box');
+      if (!box || !window.ARENA_OPPONENT_URL) return;
+      const row = document.createElement('div'); row.id = 'arena-bots';
+      const label = document.createElement('label');
+      const input = document.createElement('input'); input.type = 'checkbox'; input.checked = window.ARENA_BOTS_ON();
+      input.addEventListener('change', () => { try { localStorage.setItem('arena.bots', input.checked ? 'on' : 'off'); } catch { /* this visit only */ } });
+      label.append(input, ' Let bots join the games');
+      const tip = document.createElement('span'); tip.className = 'tip'; tip.tabIndex = 0; tip.setAttribute('role', 'note'); tip.textContent = 'i';
+      tip.dataset.tip = 'Bots are here so you can test the platform better, because there are very few players right now. If two of you want to play each other, turn this off.';
+      row.append(label, tip); box.appendChild(row);
+    });
     window.ARENA_MONEY_ALERT = (() => {
       let nextWords = null;
       const lost = new Map(); let full = false, tight = false, creditedMsat = 0n, okTimer = null, wasStuck = false; const creditedSats = new Set();
@@ -6668,7 +6687,7 @@
         // and reads back who else is - { others: [{ key, name }] } from the seats that answer, this tab left out; null if none does
         here: async (id) => {
           // SOMEBODY IS AT THIS TABLE (kanban #926): said to the test opponent on testnet, so nobody plays alone; nothing is waited for
-          if (window.ARENA_OPPONENT_URL) fetch(window.ARENA_OPPONENT_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ round: id }), keepalive: true }).catch(() => {});
+          if (window.ARENA_OPPONENT_URL && window.ARENA_BOTS_ON()) fetch(window.ARENA_OPPONENT_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ round: id }), keepalive: true }).catch(() => {});
           const h = readHidden().find((x) => x.roundIdHex === id);
           const nodes = h ? h.nodes : (window.ARENA_ROW_NODES ? window.ARENA_ROW_NODES(id) : []);
           let proof;
