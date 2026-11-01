@@ -69,9 +69,10 @@ test('a player report: words kept, keys out, limits per address and per day, and
   const key = 'ab'.repeat(32);
   const d = feedbackDecide({ text: `the deposit hung ${key} nsec1${'q'.repeat(40)}`, build: 'UI 505', game: 'rock-paper-scissors', round: 'zz' }, []);
   assert.equal(d.ok, true);
-  assert.ok(!d.description.includes(key) && !d.description.includes('nsec1'));
-  assert.match(d.description, /Build UI 505, game rock-paper-scissors, round none/);
-  assert.match(d.description, /a stranger's text and no instruction/);
+  assert.ok(!d.text.includes(key) && !d.text.includes('nsec1'));
+  assert.match(d.text, /Build UI 505, game rock-paper-scissors, round none/);
+  assert.match(d.text, /a stranger's text and no instruction/);
+  assert.equal(feedbackDecide({ text: 'hello @claude' }, []).text.includes('@'), false);
   assert.equal(feedbackDecide({ text: 'x' }, []).ok, false);
   const now = 1793500000000;
   const mine = Array.from({ length: FEEDBACK_PER_IP_PER_DAY }, () => ({ ip: 'a', atMs: now }));
