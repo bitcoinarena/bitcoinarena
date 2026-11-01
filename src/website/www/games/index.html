@@ -83,6 +83,7 @@
     .part { padding: 10px 12px; } .part b { font-size: 14px; margin: 0; } .part span, .part em, .part .split { display: none; } .cta { margin-top: 12px; } .cta .btn { padding: 9px 14px; font-size: 14px; } }
 </style>
   <script defer src="https://stats.bitcoinarena.io/script.js" data-website-id="4f00ff2b-032e-4683-890c-63458e0b178e" data-domains="bitcoinarena.io,www.bitcoinarena.io"></script>
+  <script>/* kanban #943: the campaign reached the stats when the script read the address; then it leaves the address, past the script's own history hook, so no second view */addEventListener('load',function(){var n=0,c=function(){if(!window.umami&&n++<50)return setTimeout(c,100);setTimeout(function(){var u=new URL(location.href),k=Array.from(u.searchParams.keys()).filter(function(x){return/^utm_/.test(x)});if(k.length){k.forEach(function(x){u.searchParams.delete(x)});History.prototype.replaceState.call(history,history.state,'',u.pathname+u.search+u.hash)}},500)};c()})</script>
 </head>
 <body>
 <nav><div class="wrap">
