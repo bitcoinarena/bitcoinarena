@@ -99,7 +99,7 @@ createServer((req, res) => {
     let raw = '';
     req.setEncoding('utf8');
     req.on('data', (c) => { raw += c; if (raw.length > 512) req.destroy(); });
-    req.on('end', () => { try { send(200, opponentWant(WANTS, JSON.parse(raw || '{}').round)); } catch { send(400, { ok: false, why: 'not JSON' }); } });
+    req.on('end', () => { try { const b = JSON.parse(raw || '{}'); send(200, opponentWant(WANTS, b.round, Date.now(), b.tapped === true)); } catch { send(400, { ok: false, why: 'not JSON' }); } });
     return undefined;
   }
   if (path === '/player' || path === '/faucet/player') {

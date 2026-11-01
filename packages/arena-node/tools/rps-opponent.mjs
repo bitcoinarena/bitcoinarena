@@ -98,6 +98,8 @@ const splitKey = (c) => [toHex(c.federationId), c.stakeMsat, toHex(c.donationSet
 // A SEAT THAT ANSWERS FIRST: the donation sets of a round come from whichever of a few seats holds them soonest
 const firstSeat = async (u, o) => { const path = String(u).replace(/^https?:\/\/[^/]+/, ''); return Promise.any(nodes.slice(0, 5).map(async (n) => { const r = await fetch(`${n}${path}`, { ...o, signal: AbortSignal.timeout(3000) }); if (!r.ok) throw new Error(String(r.status)); return r; })); };
 const keys = new Map();   // federation hex -> its reserve key, read once
+const POST_MS = 6000;
+const claimKeyOf = (c, rid) => attestedClaimKey({ round: { ...c, id: rid }, signerNodes: c.nodes, nodes, curve: pageCurve, timeoutMs: 6000 });
 const readSplit = async (c, roundHex) => { const fed = toHex(c.federationId); const v = await entrySplit({ c, roundHex, nodes, fetcher: keys.has(fed) ? firstSeat : fetch, reserveKeyHex: keys.get(fed) || null }); if (v.reserveKey) keys.set(fed, toHex(v.reserveKey)); splits.set(splitKey(c), { v, at: Date.now() }); try { writeFileSync(splitFile, JSON.stringify([...splits], big)); } catch { /* kept in memory */ } return v; };
 const splitFor = async (c, roundHex) => {
   for (const [key, x] of splits) if (x.v && x.v.reserveKey && !keys.has(key.split(':')[0])) keys.set(key.split(':')[0], toHex(x.v.reserveKey));
@@ -106,12 +108,12 @@ const splitFor = async (c, roundHex) => {
   if (Date.now() - k.at > SPLIT_KEEP_MS) readSplit(c, roundHex).catch(() => {});
   return k.v;
 };
-async function enter(c, rid) {
+async function enter(c, rid, ready) {
   const roundHex = toHex(rid), t0 = Date.now(), steps = {};
   const w = wallets.get(toHex(c.federationId));
   if (!w) return { ok: false, why: `no wallet in federation ${toHex(c.federationId).slice(0, 8)}` };
   log({ step: 'entering', round: roundHex.slice(0, 8), leftMs: Number(c.entryCloseMs) - Date.now() });
-  const att = await attestedClaimKey({ round: { ...c, id: rid }, signerNodes: c.nodes, nodes, curve: pageCurve, timeoutMs: 6000 });
+  const att = await (ready || claimKeyOf(c, rid));
     if (!att.ok) return { ok: false, why: `claim key: ${att.why}` };
   steps.claimKey = ms(t0);
   const gate = feeLockPays({ contract: c, fees: { ppm: BigInt(w.rule.fee_ppm), baseMsat: BigInt(w.rule.fee_base_msat) } });
@@ -139,18 +141,23 @@ async function enter(c, rid) {
   appendFileSync(join(DIR, 'keys.jsonl'), `${JSON.stringify({ at: new Date().toISOString(), round: roundHex, entry: toHex(eid), player: 'bot', secret: toHex(me.secret),
     stake: `${toHex(locks.stake.outpoint.txid)}:${locks.stake.outpoint.outIdx}`, fee: locks.fee ? `${toHex(locks.fee.outpoint.txid)}:${locks.fee.outpoint.outIdx}` : null })}\n`);
   const hand = locks.fee ? locks.fee.fields : null;
-  const said = await Promise.all(nodes.map(async (n) => {
-    const h = await fetch(`${n}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) }).catch(() => ({ status: 0 }));
-    const en = await fetch(`${n}/entry`, { method: 'POST', body: encodeEntryContract(entry) }).catch(() => ({ status: 0, text: async () => 'no answer' }));
-    return { node: n, handout: h.status, entry: en.status, why: en.text ? (await en.text()).trim().slice(0, 120) : '' };
-  }));
+  // ENOUGH SEATS, NOT ALL OF THEM: a seat that is restarting never answered and held the bot for minutes (measured 2026-11-01). The rest go on behind
+  const posts = nodes.map(async (n) => {
+    const o = () => ({ method: 'POST', signal: AbortSignal.timeout(POST_MS) });
+    const h = await fetch(`${n}/handout`, { ...o(), body: encodeHandout(dealt.handout) }).catch(() => ({ status: 0 }));
+    const en = await fetch(`${n}/entry`, { ...o(), body: encodeEntryContract(entry) }).catch(() => ({ status: 0, text: async () => 'no answer' }));
+    return { node: n, handout: h.status, entry: en.status, why: en.text ? (await en.text().catch(() => '')).trim().slice(0, 120) : '' };
+  });
+  const said = [];
+  const tookOf = () => said.filter((x) => x.entry >= 200 && x.entry < 300).length;
+  await new Promise((done) => { for (const p of posts) p.then((x) => { said.push(x); if (tookOf() >= needed || said.length === nodes.length) done(); }); });
   steps.entry = ms(t0);
   // AND ITS LOCKS, once the federation holds them
   const handed = accepted.then(() => Promise.all(nodes.map(async (n) => {
     let l;
     for (const until = Date.now() + 45000; ;) {
-      if (hand) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(hand)) }).catch(() => null);
-      l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(locks.stake.fields)) }).catch(() => ({ status: 0, clone: () => ({ text: async () => '' }) }));
+      if (hand) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', signal: AbortSignal.timeout(POST_MS), body: JSON.stringify(lockFieldsToJson(hand)) }).catch(() => null);
+      l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', signal: AbortSignal.timeout(POST_MS), body: JSON.stringify(lockFieldsToJson(locks.stake.fields)) }).catch(() => ({ status: 0, clone: () => ({ text: async () => '' }) }));
       if (l.status !== 409 || Date.now() >= until) break;
       if (!/holds no lock/.test(await l.clone().text())) break;
       await new Promise((ok) => setTimeout(ok, 700));
@@ -158,11 +165,11 @@ async function enter(c, rid) {
     return l.status;
   })));
   handed.then((st) => log({ step: 'locks handed', round: roundHex.slice(0, 8), took: st.filter((x) => x >= 200 && x < 300).length, of: st.length, ms: { accepted: steps.accepted, all: ms(t0) } }), (e) => log({ step: 'locks not accepted', round: roundHex.slice(0, 8), why: String(e.message || e).slice(0, 200) }));
-  const took = said.filter((x) => x.entry >= 200 && x.entry < 300).length;
+  const took = tookOf();
   // ITS NAME, signed with the round key as a page's is
   const rec = { roundId: rid, playerPubkey: s.player, identityPubkey: identityKey, name: NAME, atMs: BigInt(Date.now()) };
   const nameBody = JSON.stringify({ record: toHex(encodeLobbyName(rec)), sig: toHex(schnorr.sign(lobbyNameId(rec), me.secret)) });
-  await Promise.all(nodes.map((n) => fetch(`${n}/name`, { method: 'POST', body: nameBody }).catch(() => null)));
+  for (const n of nodes) fetch(`${n}/name`, { method: 'POST', signal: AbortSignal.timeout(POST_MS), body: nameBody }).catch(() => null);
   log({ step: 'entered', round: roundHex.slice(0, 8), entry: toHex(eid).slice(0, 8), took, of: said.length, needed, ms: steps, leftAtEndMs: Number(c.entryCloseMs) - Date.now(),
     ...(took < needed ? { refused: [...new Set(said.map((x) => x.why).filter(Boolean))].slice(0, 2) } : {}) });
   // THE REVEAL AFTER THE ENTRY CLOSE, as a page's
@@ -174,8 +181,8 @@ async function enter(c, rid) {
   return { ok: took >= needed };
 }
 
-// A TABLE IS WATCHED WHILE THE PAGE SAYS SOMEBODY IS AT IT: the bot says it is there (free), and enters only once a player has paid into the round. Measured 2026-11-01: entering
-// every 8 s round while somebody looked would lock 100 sat a round for a day; an entry takes under 1.5 s, so it can follow the player's own.
+// A TABLE IS WATCHED WHILE THE PAGE SAYS SOMEBODY IS AT IT: the bot says it is there (free) and reads the claim key ahead, and enters when the player taps. Measured 2026-11-01: entering
+// every 8 s round while somebody looked would lock 100 sat a round for a day, and an entry lands about 4 s after its tap, so one that waited to see the player's entry had no time left.
 const seen = new Map();      // round hex -> { c, rid, told, entered }
 const hour = [];
 let busy = false;
@@ -192,8 +199,17 @@ const contractOf = async (round) => {
 const sayHere = (round, k) => {
   if (k.told) return;
   k.told = true;
+  k.claim = claimKeyOf(k.c, k.rid).catch((e) => ({ ok: false, why: e.message }));
   const body = JSON.stringify({ key: toHex(identityKey), sig: toHex(schnorr.sign(presenceId({ roundId: k.rid, identityKey }), identity)) });
   for (const n of nodes) fetch(`${n}/here?round=${round}`, { method: 'POST', body, signal: AbortSignal.timeout(3000) }).catch(() => {});
+};
+const go = (w, k, step) => {
+  const now = Date.now();
+  while (hour.length && now - hour[0] > 3600000) hour.shift();
+  if (hour.length >= MOST_PER_HOUR) { log({ step: 'hourly limit' }); return; }
+  k.entered = true; hour.push(now); busy = true;
+  log({ step, round: w.round.slice(0, 8), leftMs: Number(k.c.entryCloseMs) - now });
+  enter(k.c, k.rid, k.claim).catch((e) => log({ step: 'entry failed', round: w.round.slice(0, 8), why: String(e.message).slice(0, 200) })).finally(() => { busy = false; if (env.ONCE) setTimeout(() => process.exit(0), 40000); });
 };
 const pass = async () => {
   const wants = (await (await fetch(env.WANTS, { signal: AbortSignal.timeout(3000) })).json()).wants || [];
@@ -203,16 +219,12 @@ const pass = async () => {
     if (left <= 0 || k.entered) continue;
     sayHere(w.round, k);
     if (busy || left < MIN_LEFT_MS) continue;
-    // ANY SEAT THAT HOLDS THE PLAYER'S ENTRY IS ENOUGH: the first such answer goes, the slower seats are not waited for
-    const players = await Promise.any(nodes.slice(0, 5).map(async (n) => { const r = await fetch(`${n}/api/round-result?round=${w.round}`, { signal: AbortSignal.timeout(2500) }); const j = await r.json(); const m = ((j && j.players) || []).length; if (!m) throw new Error('none'); return m; })).catch(() => 0);
-    if (players !== 1) continue;
-    const now = Date.now();
-    while (hour.length && now - hour[0] > 3600000) hour.shift();
-    if (hour.length >= MOST_PER_HOUR) { log({ step: 'hourly limit' }); return; }
-    k.entered = true; hour.push(now); busy = true;
-    log({ step: 'a player paid', round: w.round.slice(0, 8), leftMs: Number(k.c.entryCloseMs) - Date.now() });
-    enter(k.c, k.rid).catch((e) => log({ step: 'entry failed', round: w.round.slice(0, 8), why: String(e.message).slice(0, 200) })).finally(() => { busy = false; });
-    if (env.ONCE) { await new Promise((r) => setTimeout(r, 40000)); process.exit(0); }
+    if (w.tapped) { go(w, k, 'a player tapped'); continue; }
+    // A PAGE THAT SAID NO TAP, OR A TAP THE DOOR LOST: the entry itself, read beside the loop so it never holds up a tap at another table. The first seat that holds it is enough
+    if (k.asking) continue;
+    k.asking = true;
+    Promise.any(nodes.slice(0, 5).map(async (n) => { const r = await fetch(`${n}/api/round-result?round=${w.round}`, { signal: AbortSignal.timeout(2500) }); const j = await r.json(); const m = ((j && j.players) || []).length; if (!m) throw new Error('none'); return m; }))
+      .then((m) => { if (m === 1 && !k.entered && !busy) go(w, k, 'a player paid'); }, () => {}).finally(() => { k.asking = false; });
   }
   if (seen.size > 2048) seen.clear();
 };
@@ -224,4 +236,4 @@ const pass = async () => {
     if (known && Date.now() - known.at < SPLIT_KEEP_MS) continue;
     const t = Date.now(); await readSplit(c, r.id).catch((e) => log({ step: 'split not read', why: e.message })); log({ step: 'split read', federation: fed.slice(0, 8), ms: ms(t) }); } }
 log({ step: 'watching', wants: env.WANTS, seats: nodes.length });
-for (;;) { await pass().catch((e) => log({ step: 'pass failed', why: String(e.message).slice(0, 120) })); await new Promise((r) => setTimeout(r, 400)); }
+for (;;) { await pass().catch((e) => log({ step: 'pass failed', why: String(e.message).slice(0, 120) })); await new Promise((r) => setTimeout(r, 200)); }

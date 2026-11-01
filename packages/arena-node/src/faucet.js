@@ -69,11 +69,11 @@ export function playerGrantTotals(book, nowMs = Date.now()) {
 
 // WHO SITS ALONE AT A TABLE (kanban #926): the page says which head-to-head round it is looking at; the test opponent reads this. In memory, a few seconds' worth, one row per round.
 export const OPPONENT_WANT_MS = 12000, OPPONENT_WANTS_MOST = 64;
-export function opponentWant(wants, round, nowMs = Date.now()) {
+export function opponentWant(wants, round, nowMs = Date.now(), tapped = false) {
   if (!/^[0-9a-f]{64}$/.test(String(round || ''))) return { ok: false, why: 'a round is 32 bytes of hex' };
-  for (const [k, at] of wants) if (nowMs - at > OPPONENT_WANT_MS) wants.delete(k);
+  for (const [k, x] of wants) if (nowMs - x.at > OPPONENT_WANT_MS) wants.delete(k);
   if (!wants.has(round) && wants.size >= OPPONENT_WANTS_MOST) return { ok: false, why: 'too many tables just now' };
-  wants.set(round, nowMs);
+  wants.set(round, { at: nowMs, tapped: tapped === true || wants.get(round)?.tapped === true });
   return { ok: true };
 }
-export const opponentWants = (wants, nowMs = Date.now()) => [...wants].filter(([, at]) => nowMs - at <= OPPONENT_WANT_MS).sort((a, b) => b[1] - a[1]).map(([round, at]) => ({ round, agoMs: nowMs - at }));
+export const opponentWants = (wants, nowMs = Date.now()) => [...wants].filter(([, x]) => nowMs - x.at <= OPPONENT_WANT_MS).sort((a, b) => b[1].at - a[1].at).map(([round, x]) => ({ round, agoMs: nowMs - x.at, tapped: x.tapped }));
