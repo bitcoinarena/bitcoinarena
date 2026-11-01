@@ -1896,6 +1896,12 @@
         if (d && /^0[23][0-9a-f]{64}$/.test(String(d.frontend || '')) && !window.ARENA_REFERRAL) window.ARENA_FRONTEND_PK = d.frontend; })
       .catch(() => { /* the lobby reads it again */ });
     const viaAlt = new Map();
+    // NOTHING ON THE PLAYER'S OWN NETWORK, EVER (kanban #926, 2026-11-01: Chrome asked for access to devices on the local network, "Das tut sofort misstrauen erzeugen"): a page on the
+    // public site never touches a private address, loopback or a tailnet name, which is a private address on a machine in that tailnet. A seat goes over its public route or not at all.
+    const privateHost = (h) => /(^|\.)(ts\.net|local|localhost|internal|lan)$/i.test(h) || /^(\[|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(h);
+    const pageIsPrivate = privateHost(location.hostname);
+    const refused = (url) => { try { return !pageIsPrivate && privateHost(new URL(String(url), location.href).hostname); } catch { return false; } };
+    window.ARENA_ADDRESS_REFUSED = refused;
     function routed(url) {
       try {
         const u = new URL(String(url));
@@ -1905,7 +1911,7 @@
         const alt = routes[key] || routes[u.host];
         if (!alt) return { url, key: null };
         if (!viaAlt.has(key)) viaAlt.set(key, true);
-        if (viaAlt.get(key)) u.host = alt;
+        if (viaAlt.get(key) || refused(u.href)) u.host = alt;
         return { url: u.toString(), key };
       } catch { return { url, key: null }; }
     }
@@ -1923,6 +1929,7 @@
       constructor(url, protocols) {
         makeSocketRoom();
         const r = routed(url);
+        if (refused(r.url)) throw new DOMException('not opened: a private address', 'SecurityError');
         // a NUL in a socket address is the lock client's memory mixed up (see ARENA_LOCK_WASM): said, so it shows in the logs
         if (/\u0000|%00/.test(String(url))) console.error('[arena] a socket address with NUL bytes - the lock client\'s memory is mixed up; reload the page: ' + String(url).replace(/\u0000/g, '\\0'));
         if (protocols === undefined) super(r.url); else super(r.url, protocols);
@@ -1968,9 +1975,10 @@
     // AN http:// NODE FROM AN https:// PAGE IS NEVER ASKED (kanban #594, the owner's console 2026-10-23: ~150 "Mixed Content ...
     // requested an insecure resource" a load - test nodes advertising http://198.51.100.7:65xx): the browser blocks it anyway and
     // says so in the console each time; here it fails at once, silently, as a closed route does. Loopback stays allowed.
-    const insecure = (u) => { try { const x = new URL(String(u), location.href); return location.protocol === 'https:' && x.protocol === 'http:' && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(x.hostname); } catch { return false; } };
+    const insecure = (u) => { try { const x = new URL(String(u), location.href); return location.protocol === 'https:' && x.protocol === 'http:'; } catch { return false; } };
     async function guardedFetch(url, input, init) {
       if (insecure(url)) throw new TypeError('not asked: an http:// node from an https:// page');
+      if (refused(url)) throw new TypeError('not asked: a private address');
       const k = closeKey(url);
       if (k && (closedUntil.get(k) || 0) > Date.now()) throw new TypeError('not asked: ' + k + ' did not answer a moment ago');
       try {
