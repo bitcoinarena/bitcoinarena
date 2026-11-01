@@ -6668,7 +6668,10 @@
         // A HEAD-TO-HEAD GAME: enter a round hiding `move`; reveal it once entries are closed; read what the seats
         // hold. Which moves there are and what beats what is the game client's own; these only carry a move, never judge one.
         headToHead: game.manifest.resultType === 3 ? { players: game.manifest.players, moveCount: game.manifest.moveCount } : null,
-        hide: (id, move) => { window.ARENA_HIDDEN_CHOSEN = { round: id, move }; return window.ARENA_LOBBY_ACT ? window.ARENA_LOBBY_ACT.join(id) : false; },
+        hide: (id, move) => { window.ARENA_HIDDEN_CHOSEN = { round: id, move };
+          // THE TAP, TOLD AT ONCE (kanban #926, measured 2026-11-01): an entry lands about 4 s after it, so an opponent that waited to see it had no time left in an 8 s round
+          if (window.ARENA_OPPONENT_URL && window.ARENA_BOTS_ON()) fetch(window.ARENA_OPPONENT_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ round: id, tapped: true }), keepalive: true }).catch(() => {});
+          return window.ARENA_LOBBY_ACT ? window.ARENA_LOBBY_ACT.join(id) : false; },
         hidden: (id) => readHidden().find((x) => x.roundIdHex === id) || null,
         // every move this tab hid in this game's rounds, newest last - a round leaves the lobby's rows at its entry close, and
         // its reveal and verdict come after that
