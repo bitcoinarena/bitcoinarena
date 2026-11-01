@@ -67,6 +67,16 @@ export function playerGrantTotals(book, nowMs = Date.now()) {
   return { newAccounts: part('welcome'), returning: part('topup'), totalSats: paid.reduce((n, p) => n + p.sats, 0), dayCapSats: PLAYER_DAY_CAP_SATS };
 }
 
+// THE TEST OPPONENT'S TOP-UP (kanban #947, the owner 2026-11-01: "der bot muss aufgefüllt werden wenn die balance leer ist"): a stake waits in a lock until its round settles, so its wallets run dry
+export const REFILL_MOST_SATS = 5000, REFILL_DAY_CAP_SATS = 40000;
+export function refillDecide({ invoiceSats, nowMs = Date.now() }, book) {
+  const sats = Number(invoiceSats);
+  if (!(sats > 0) || sats > REFILL_MOST_SATS) return { ok: false, why: `a top-up is 1 to ${REFILL_MOST_SATS} sat` };
+  const day = Math.floor(nowMs / DAY_MS), today = ((book && book.refills) || []).filter((r) => Math.floor(r.atMs / DAY_MS) === day).reduce((n, r) => n + r.sats, 0);
+  if (today + sats > REFILL_DAY_CAP_SATS) return { ok: false, why: 'the top-ups of today are used up' };
+  return { ok: true, sats };
+}
+
 // A PLAYER'S REPORT (kanban #926 item 9): one box in the page, a line on the board. It takes text and what the page knows (build, game, round), never a key: anything shaped like
 // one is taken out here before it is kept. The text is a stranger's and is marked so.
 export const FEEDBACK_MOST = 4000, FEEDBACK_PER_IP_PER_DAY = 5, FEEDBACK_PER_DAY = 100;

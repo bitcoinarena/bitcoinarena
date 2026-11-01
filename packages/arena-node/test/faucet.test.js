@@ -79,3 +79,12 @@ test('a player report: words kept, keys out, limits per address and per day, and
   assert.equal(feedbackDecide({ text: 'hello', ip: 'b', nowMs: now }, mine).ok, true);
   assert.equal(feedbackDecide({ text: 'hello', ip: 'b', nowMs: now }, Array.from({ length: FEEDBACK_PER_DAY }, () => ({ ip: 'c', atMs: now }))).ok, false);
 });
+
+test('the test opponent\'s top-up: bounded by the ask and by the day', async () => {
+  const { refillDecide, REFILL_MOST_SATS, REFILL_DAY_CAP_SATS } = await import('../src/faucet.js');
+  const now = 1793500000000;
+  assert.equal(refillDecide({ invoiceSats: 3000, nowMs: now }, {}).ok, true);
+  assert.equal(refillDecide({ invoiceSats: REFILL_MOST_SATS + 1, nowMs: now }, {}).ok, false);
+  assert.equal(refillDecide({ invoiceSats: 3000, nowMs: now }, { refills: [{ sats: REFILL_DAY_CAP_SATS, atMs: now }] }).ok, false);
+  assert.equal(refillDecide({ invoiceSats: 3000, nowMs: now }, { refills: [{ sats: REFILL_DAY_CAP_SATS, atMs: now - 2 * 86400000 }] }).ok, true);
+});

@@ -248,6 +248,27 @@ const ahead = async () => {
   for (const r of rows.filter((x) => /rock/.test((x.game && x.game.name) || '') && wallets.has(String(x.federation || '').toLowerCase()) && !seen.has(x.id)).slice(0, 8)) await contractOf(r.id).catch(() => {});
 };
 setInterval(() => { ahead().catch(() => {}); }, 15000);
+// ITS OWN TOP-UP (kanban #947): a stake waits in a lock until its round settles, so a wallet under REFILL_BELOW sat asks the faucet for REFILL_SATS, one wallet and one ask at a time
+const REFILL_BELOW = Number(env.REFILL_BELOW || 500), REFILL_SATS = Number(env.REFILL_SATS || 3000), refilling = new Set();
+const refill = async () => {
+  if (!env.REFILL_URL || !env.REFILL_TOKEN_FILE) return;
+  const token = readFileSync(env.REFILL_TOKEN_FILE, 'utf8').trim();
+  for (const [fed, w] of wallets) {
+    if (refilling.has(fed)) continue;
+    const have = BigInt(await w.lc.balanceMsat());
+    if (have >= BigInt(REFILL_BELOW) * 1000n) continue;
+    refilling.add(fed);
+    try {
+      const rcv = JSON.parse(await w.lc.receive(String(BigInt(REFILL_SATS) * 1000n), env.GATEWAY || ''));
+      const r = await (await fetch(env.REFILL_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ invoice: rcv.invoice, token }), signal: AbortSignal.timeout(90000) })).json();
+      log({ step: 'top-up asked', federation: fed.slice(0, 8), haveMsat: String(have), ok: r.ok, why: r.why });
+      if (r.ok) log({ step: 'topped up', federation: fed.slice(0, 8), final: await w.lc.awaitReceive(rcv.operation), balanceMsat: String(await w.lc.balanceMsat()) });
+    } catch (e) { log({ step: 'top-up failed', federation: fed.slice(0, 8), why: String(e.message).slice(0, 160) }); }
+    refilling.delete(fed);
+  }
+};
+setInterval(() => { refill().catch(() => {}); }, 30000);
+refill().catch(() => {});
 ahead().catch(() => {});
 log({ step: 'watching', wants: env.WANTS, seats: nodes.length });
 for (;;) { await pass().catch((e) => log({ step: 'pass failed', why: String(e.message).slice(0, 120) })); await new Promise((r) => setTimeout(r, 200)); }
