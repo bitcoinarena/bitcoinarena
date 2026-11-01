@@ -184,7 +184,7 @@ async function enter(c, rid, ready) {
   setTimeout(async () => {
     const r = await revealMove({ entryIdHex: toHex(eid), move: hidden.move, salt: hidden.salt, nodes, identity: proof }).catch((x) => [{ status: 0, why: x.message }]);
     log({ step: 'revealed', round: roundHex.slice(0, 8), move: hidden.move, ok: r.filter((x) => x.status === 200 || x.status === 201).length, of: r.length });
-  }, Math.max(0, Number(c.entryCloseMs) - Date.now() + 600));
+  }, Math.max(0, Number(c.entryCloseMs) - Date.now() + 150));
   return { ok: took >= needed };
 }
 
