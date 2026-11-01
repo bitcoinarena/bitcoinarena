@@ -218,12 +218,25 @@ const go = (w, k, step) => {
   log({ step, round: w.round.slice(0, 8), leftMs: Number(k.c.entryCloseMs) - now });
   enter(k.c, k.rid, k.claim).then((r) => { if (!r.ok) log({ step: 'entry not made', round: w.round.slice(0, 8), why: String(r.why || 'too few seats took it').slice(0, 200) }); }, (e) => log({ step: 'entry failed', round: w.round.slice(0, 8), why: String(e.message).slice(0, 200) })).finally(() => { busy = false; if (env.ONCE) setTimeout(() => process.exit(0), 40000); });
 };
+// AT THE TABLE BEFORE THE ROUND BEGINS (kanban #947, 2026-11-01: "Es dauert erstmal 1-2 runden bis der Bot überhaupt kommt"): while a table is in use the next rounds of its kind are
+// said at once, so nobody waits for a want to come round first
+const tables = new Map();     // fed:game:stake -> until
+const tableOf = (c) => `${toHex(c.federationId)}:${toHex(c.gameId)}:${c.stakeMsat}`;
+const sayAtTables = () => {
+  const now = Date.now();
+  for (const [round, k] of seen) {
+    const until = tables.get(tableOf(k.c));
+    if (until && until > now && Number(k.c.entryCloseMs) > now && Number(k.c.entryCloseMs) - now < 16000) sayHere(round, k);
+  }
+};
+setInterval(sayAtTables, 1000);
 const pass = async () => {
   const wants = (await (await fetch(env.WANTS, { signal: AbortSignal.timeout(3000) })).json()).wants || [];
   for (const w of wants.slice(0, 4)) {
     const k = await contractOf(w.round);
     const left = Number(k.c.entryCloseMs) - Date.now();
     if (left <= 0 || k.entered) continue;
+    tables.set(tableOf(k.c), Date.now() + 40000);
     sayHere(w.round, k);
     if (busy || left < MIN_LEFT_MS) continue;
     if (w.tapped) { go(w, k, 'a player tapped'); continue; }
