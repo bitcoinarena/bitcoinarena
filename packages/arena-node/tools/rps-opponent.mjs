@@ -88,10 +88,14 @@ const identityKey = schnorr.getPublicKey(identity);
 const ms = (t) => Date.now() - t;
 // THE ENTRY'S SPLIT, KEPT (measured: 11.5 s, GET /reserves at 14 seats under load, in an 8 s round): it changes with the federation's reserve key, the stake and the sets the
 // contract names, and those are the same for a day's rounds. Asked again after SPLIT_KEEP_MS, behind the entries.
-const SPLIT_KEEP_MS = 3600000;
+const SPLIT_KEEP_MS = 6 * 3600000;
 const splits = new Map();
+const splitFile = join(DIR, 'splits.json');
+const big = (_, v) => (typeof v === 'bigint' ? { $n: String(v) } : v instanceof Uint8Array ? { $b: toHex(v) } : v);
+const un = (_, v) => (v && typeof v === 'object' && v.$n !== undefined ? BigInt(v.$n) : v && typeof v === 'object' && v.$b !== undefined ? fromHex(v.$b) : v);
+try { for (const [k, x] of JSON.parse(readFileSync(splitFile, 'utf8'), un)) splits.set(k, x); } catch { /* none kept yet */ }
 const splitKey = (c) => [toHex(c.federationId), c.stakeMsat, toHex(c.donationSetId), toHex(c.gameId)].join(':');
-const readSplit = async (c, roundHex) => { const v = await entrySplit({ c, roundHex, nodes }); splits.set(splitKey(c), { v, at: Date.now() }); return v; };
+const readSplit = async (c, roundHex) => { const v = await entrySplit({ c, roundHex, nodes }); splits.set(splitKey(c), { v, at: Date.now() }); try { writeFileSync(splitFile, JSON.stringify([...splits], big)); } catch { /* kept in memory */ } return v; };
 const splitFor = async (c, roundHex) => {
   const k = splits.get(splitKey(c));
   if (!k) return readSplit(c, roundHex);
@@ -212,6 +216,8 @@ const pass = async () => {
 { const rows = ((await (await fetch(`${nodes[0]}/rounds?next=60`, { signal: AbortSignal.timeout(60000) })).json()).rounds || []).filter((r) => /rock/.test((r.game && r.game.name) || ''));
   for (const fed of wallets.keys()) { const r = rows.find((x) => String(x.federation || '').toLowerCase() === fed); if (!r) continue;
     const c = decodeRoundContract(new Uint8Array(await (await fetch(`${nodes[0]}/round?id=${r.id}`)).arrayBuffer()));
+    const known = splits.get(splitKey(c));
+    if (known && Date.now() - known.at < SPLIT_KEEP_MS) continue;
     const t = Date.now(); await readSplit(c, r.id).catch((e) => log({ step: 'split not read', why: e.message })); log({ step: 'split read', federation: fed.slice(0, 8), ms: ms(t) }); } }
 log({ step: 'watching', wants: env.WANTS, seats: nodes.length });
 for (;;) { await pass().catch((e) => log({ step: 'pass failed', why: String(e.message).slice(0, 120) })); await new Promise((r) => setTimeout(r, 400)); }
