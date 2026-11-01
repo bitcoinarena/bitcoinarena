@@ -32,7 +32,7 @@ export const tunnelMode = (mode) => mode === 'permanent' || mode === 'quick' || 
 /** The seats asked to connect back: the testnet4 seats the Arena site lists (daily.json testnet.node), these when it cannot be read. */
 export const REACH_SEATS = Object.freeze(['https://tn4.bitcoin-arena.io/guardian-1', 'https://tn4.bitcoin-arena.io/guardian-2',
   'https://tn4.bitcoin-arena.io/fed2-1', 'https://tn4.bitcoin-arena.io/guardian-3']);
-export async function reachSeats({ fetcher = fetch, url = 'https://testnet.bitcoin-arena.io/daily.json' } = {}) {
+export async function reachSeats({ fetcher = fetch, url = 'https://testnet.bitcoinarena.io/daily.json' } = {}) {
   try {
     const d = await (await fetcher(url, { signal: AbortSignal.timeout(8000) })).json();
     const list = d && d.testnet && Array.isArray(d.testnet.node) ? d.testnet.node.filter((u) => /^https:\/\//.test(u)) : [];

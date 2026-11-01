@@ -39,7 +39,7 @@ export const CONF_KEYS = Object.freeze([
   ['liquidity_claim_file', 'liquidity: the provider\'s claim'],
   ['liquidity_provider_url', 'liquidity: the provider service\'s local address'],
   ['auto_update', '1 (default): the node updates itself to a newer signed release; 0: only by hand (bitcoinarena update)'],
-  ['latest_url', 'a test update channel: a signed latest.json on https://testnet.bitcoin-arena.io/ (empty: the production release)'],
+  ['latest_url', 'a test update channel: a signed latest.json on https://testnet.bitcoinarena.io/ (empty: the production release)'],
   // kanban #693, 2026-10-26: "add a --debug and --verbose flag that shows more info on what its doing, what is going wrong etc"
   ['log_level', 'how much the node\'s services log: info (default), verbose (each step), debug (and the insides); from their next start'],
   // kanban #702, 2026-10-26: "The round runners must be an integrated part of the node"

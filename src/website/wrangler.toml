@@ -6,8 +6,11 @@ compatibility_date = "2025-09-01"
 workers_dev = false
 routes = [
   { pattern = "bitcoin-arena.io", custom_domain = true },
+  { pattern = "bitcoinarena.io", custom_domain = true },
   { pattern = "www.bitcoin-arena.io", custom_domain = true },
+  { pattern = "www.bitcoinarena.io", custom_domain = true },
   { pattern = "chatgpt.bitcoin-arena.io", custom_domain = true },
+  { pattern = "chatgpt.bitcoinarena.io", custom_domain = true },
 ]
 
 [assets]

@@ -51,7 +51,7 @@
 
   <h2>As a player: your own link</h2>
   <ol class="steps">
-    <li><b>Open Settings on <a href="/">Bitcoin Arena</a>.</b> The Referral link card shows your link: <code>https://testnet.bitcoin-arena.io/?ref=&lt;your key&gt;</code>. Press Copy.</li>
+    <li><b>Open Settings on <a href="/">Bitcoin Arena</a>.</b> The Referral link card shows your link: <code>https://testnet.bitcoinarena.io/?ref=&lt;your key&gt;</code>. Press Copy.</li>
     <li><b>Share it.</b> With friends, in a chat, on social media. Whoever comes through it plays under your link for 30 days.</li>
     <li><b>Your share lands in your wallet.</b> It is paid in the game's federation after each round settles, and your page collects it into your wallet the same way it collects zaps. Each payout is a "Referral" line in your wallet history, and the card shows what you earned so far. Withdraw it like the rest of your balance.</li>
   </ol>
@@ -59,21 +59,21 @@
 
   <h2>With a node: programs for your site</h2>
   <ol class="steps">
-    <li><b>Run a node.</b> Your program lives on your own node: it holds the program's key and collects what it earns. <a href="https://docs.bitcoin-arena.io/">How to install a node</a>.</li>
+    <li><b>Run a node.</b> Your program lives on your own node: it holds the program's key and collects what it earns. <a href="https://docs.bitcoinarena.io/">How to install a node</a>.</li>
     <li><b>Open your node's owner area and go to Referrer.</b> Give your program a name, for example the name of your site. You can have as many programs as you like, one per site or campaign. Each earns on its own.</li>
-    <li><b>Put your link on your site.</b> The Referrer section shows it: <code>https://testnet.bitcoin-arena.io/?ref=&lt;your program's key&gt;</code>. A visitor who comes through it plays under your program for 30 days.</li>
+    <li><b>Put your link on your site.</b> The Referrer section shows it: <code>https://testnet.bitcoinarena.io/?ref=&lt;your program's key&gt;</code>. A visitor who comes through it plays under your program for 30 days.</li>
     <!-- THE EMBED KIT, NOT A FRAME (kanban #678, 2026-10-26: "It shouldn't be just an iframe that is basically stealing a game"): /arena-embed.js -->
     <li><b>Or host a game on your site.</b> Copy the embed from the same section. The game runs in your page itself, not in a frame: lobby, wallet, deposit, withdraw and play, sized to the box you give it.
       <pre>&lt;div id="arena-game" style="height:720px"&gt;&lt;/div&gt;
-&lt;script src="https://testnet.bitcoin-arena.io/arena-embed.js" data-game="rock-paper-scissors"
+&lt;script src="https://testnet.bitcoinarena.io/arena-embed.js" data-game="rock-paper-scissors"
         data-ref="&lt;your key&gt;" data-target="#arena-game"&gt;&lt;/script&gt;</pre>
-      The player's wallet is kept in your site's browser storage, not on testnet.bitcoin-arena.io. A player who already has a wallet on Bitcoin Arena restores it on your page with the 24 words, and the other way round. Your page's styles do not reach the game, and the game's do not reach your page. A site that sends a Content Security Policy has to allow scripts from testnet.bitcoin-arena.io with 'unsafe-eval', and the game's connections to its nodes.
+      The player's wallet is kept in your site's browser storage, not on testnet.bitcoinarena.io. A player who already has a wallet on Bitcoin Arena restores it on your page with the 24 words, and the other way round. Your page's styles do not reach the game, and the game's do not reach your page. A site that sends a Content Security Policy has to allow scripts from testnet.bitcoinarena.io with 'unsafe-eval', and the game's connections to its nodes.
       See it working on the <a href="/referral-demo/">demo page</a>.</li>
     <li><b>Withdraw over Lightning.</b> What your program earns is paid to its key in the game's federation, after each round settles. Your node collects it. In Referrer, press Withdraw and paste a Lightning invoice or a Lightning address.</li>
   </ol>
 
   <h2>Where you see it</h2>
-  <p>As a player: the Referral link card in Settings, and your wallet history. With a node: your node's Referrer section shows what each program earned and what it holds. The network's <a href="https://explorer.bitcoin-arena.io/metrics">Metrics</a> page and <a href="/health/">Health</a> list every program by its name and what it earned.</p>
+  <p>As a player: the Referral link card in Settings, and your wallet history. With a node: your node's Referrer section shows what each program earned and what it holds. The network's <a href="https://explorer.bitcoinarena.io/metrics">Metrics</a> page and <a href="/health/">Health</a> list every program by its name and what it earned.</p>
 
   <h2>Good to know</h2>
   <p>A program's name is signed with the program's own key, so nobody else can rename it. The 10% share is a network fee like the others: a passed fee proposal can change it for rounds after it takes effect.</p>

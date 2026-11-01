@@ -96,7 +96,7 @@ export class OwnerArea extends React.Component {
             <Place id="gamedevs" className={null} /></>)}
           {sec('emergency', <><h2>Emergency code</h2><div className="card" id="emergency">
             <p>Going offline for more than two days (12 blocks on testnet4)? Take your node out first with this code and you keep your bond.
-              Type it at <a href="https://testnet.bitcoin-arena.io/offline/" target="_blank" rel="noopener"><b>testnet.bitcoin-arena.io/offline</b></a> on any device.</p>
+              Type it at <a href="https://testnet.bitcoinarena.io/offline/" target="_blank" rel="noopener"><b>testnet.bitcoinarena.io/offline</b></a> on any device.</p>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px', margin: '6px 0 10px' }}><tbody>
               <tr><th style={{ textAlign: 'left' }}>Your node</th><th style={{ textAlign: 'left' }}>What happens</th><th style={{ textAlign: 'left' }}>Your bond</th></tr>
               <tr><td>no custody</td><td>it is out of every draw at once</td><td>kept</td></tr>

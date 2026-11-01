@@ -1026,7 +1026,7 @@ const serviceRun = async (b) => {
       const reachNow = state.read().reach || {};
       // the owner page where the installer hands the key over (kanban #687): the Arena site's, by this node's key
       const idNow = (state.read().service || {}).identity;
-      return { ok: true, owner: /^[0-9a-f]{64}$/.test(String(idNow || '')) ? `https://testnet.bitcoin-arena.io/owner/#node=${idNow}&local=${encodeURIComponent(`http://127.0.0.1:${portOf()}`)}`
+      return { ok: true, owner: /^[0-9a-f]{64}$/.test(String(idNow || '')) ? `https://testnet.bitcoinarena.io/owner/#node=${idNow}&local=${encodeURIComponent(`http://127.0.0.1:${portOf()}`)}`
         : `http://127.0.0.1:${portOf()}/dashboard/owner`, url: reachNow.url || null, mode: reachNow.mode || null };
     },
   };

@@ -6,7 +6,7 @@
 // --claim-file (a seat serves that file as GET /liquidity-claim, ARENA_LIQUIDITY_CLAIM_FILE).
 //
 //     liquidity-provider --rest https://127.0.0.1:8182 --lnddir <lnd dir> --key <node key hex file> --state <file> [--listen 8477]
-//                        [--claim-file <file>] [--peers https://a,https://b] [--seeds https://testnet.bitcoin-arena.io/daily.json]
+//                        [--claim-file <file>] [--peers https://a,https://b] [--seeds https://testnet.bitcoinarena.io/daily.json]
 //
 // HOW A NEW NODE IS FOUND (2026-10-18: "How do new nodes communicate with the lnd liquidity providers?"): it does not call a
 // provider. It is bonded (so in the census, with its endpoint in its advertisement) and its seat serves its signed gateway claim (its
@@ -33,7 +33,7 @@ const node = Buffer.from(schnorr.getPublicKey(secret)).toString('hex');
 const stateFile = opt('--state'); const claimFile = opt('--claim-file');
 const state = existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, 'utf8')) : {};
 const peers = String(opt('--peers', '')).split(',').filter(Boolean);
-const seedsUrl = opt('--seeds', 'https://testnet.bitcoin-arena.io/daily.json');
+const seedsUrl = opt('--seeds', 'https://testnet.bitcoinarena.io/daily.json');
 const toHttp = (u) => String(u || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
 let seats = [], seatsAt = 0, current = null;
 // one node's census: the endpoints of every census node (GET /roles), or null when it does not answer

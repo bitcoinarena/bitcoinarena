@@ -31,5 +31,5 @@ for (const name of sums) {
   closeSync(fd);
 }
 for (const f of ['SHA256SUMS', 'SHA256SUMS.sig']) copyFileSync(join(dir, f), join(to, f));
-writeFileSync(outFile, JSON.stringify({ base: `https://testnet.bitcoin-arena.io/${rel}/`, sums: 'SHA256SUMS', sig: 'SHA256SUMS.sig', parts }, null, 2) + '\n');
+writeFileSync(outFile, JSON.stringify({ base: `https://testnet.bitcoinarena.io/${rel}/`, sums: 'SHA256SUMS', sig: 'SHA256SUMS.sig', parts }, null, 2) + '\n');
 console.log(`${rel}: ${Object.keys(parts).length} assets in ${Object.values(parts).reduce((a, p) => a + p.length, 0)} pieces`);

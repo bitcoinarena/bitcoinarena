@@ -117,7 +117,7 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   const gwKit = { configureGateway };
   // THE NETWORK'S BOND TARGET, fixed at the floor: the live seats' GET /capacity said 250,000 sat on 2026-10-21 (band CALM), which turned
   // this test red on every machine that reached them; the rest of the wizard's fetches go out as they are
-  const fetcher = (url, o) => (/bitcoin-arena\.io/.test(String(url)) ? Promise.resolve(new Response(JSON.stringify(/daily\.json$/.test(String(url))
+  const fetcher = (url, o) => (/bitcoin-?arena\.io/.test(String(url)) ? Promise.resolve(new Response(JSON.stringify(/daily\.json$/.test(String(url))
     ? { testnet: { node: ['https://a.example', 'https://b.example'] } } : { network: { installMinimumBondSats: 50000, band: 'CALM' } }), { status: 200 }))
     : /\.example\/capacity$/.test(String(url)) ? Promise.resolve(new Response(JSON.stringify({ network: { installMinimumBondSats: 50000, band: 'CALM' } }), { status: 200 })) : fetch(url, o));
   // THE PROGRESS WHILE IT RUNS (kanban #651): read through the page's own door once the services are in and the seat is awaited
@@ -341,7 +341,7 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   const fin = (await c.post('/api/finish')).json;
   // the Arena site's owner page for this node's key, where the installer hands the key over (kanban #687), the local address beside it
   assert.deepEqual([fin.ok, fin.mode], [true, 'direct'], 'the user is told how to reach the node');
-  assert.match(fin.owner, new RegExp(`^https://testnet\\.bitcoin-arena\\.io/owner/#node=[0-9a-f]{64}&local=${encodeURIComponent(`http://127.0.0.1:${seatPort}`)}$`));
+  assert.match(fin.owner, new RegExp(`^https://testnet\\.bitcoin-?arena\\.io/owner/#node=[0-9a-f]{64}&local=${encodeURIComponent(`http://127.0.0.1:${seatPort}`)}$`));
   assert.equal((await c.get('/api/state')).status, 401, 'after finish the wizard answers nothing');
 });
 
@@ -507,7 +507,7 @@ test('a node set up with an nsec runs on it: the seat signs as the Nostr key, it
   const gwKit = { configureGateway };
   // THE NETWORK'S BOND TARGET, fixed at the floor: the live seats' GET /capacity said 250,000 sat on 2026-10-21 (band CALM), which turned
   // this test red on every machine that reached them; the rest of the wizard's fetches go out as they are
-  const fetcher = (url, o) => (/bitcoin-arena\.io/.test(String(url)) ? Promise.resolve(new Response(JSON.stringify(/daily\.json$/.test(String(url))
+  const fetcher = (url, o) => (/bitcoin-?arena\.io/.test(String(url)) ? Promise.resolve(new Response(JSON.stringify(/daily\.json$/.test(String(url))
     ? { testnet: { node: ['https://a.example', 'https://b.example'] } } : { network: { installMinimumBondSats: 50000, band: 'CALM' } }), { status: 200 }))
     : /\.example\/capacity$/.test(String(url)) ? Promise.resolve(new Response(JSON.stringify({ network: { installMinimumBondSats: 50000, band: 'CALM' } }), { status: 200 })) : fetch(url, o));
   // THE PROGRESS WHILE IT RUNS (kanban #651): read through the page's own door once the services are in and the seat is awaited
