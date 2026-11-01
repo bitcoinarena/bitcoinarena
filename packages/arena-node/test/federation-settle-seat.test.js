@@ -61,7 +61,7 @@ test('two signer nodes settle a round that takes any federation: one signed, sub
   const log = [];
   const ports = { [A]: fedPort(A, log), [B]: fedPort(B, log) };
   const router = { forFederation: async (f) => ports[f] || null, settle: async () => { throw new Error('a round that takes any federation never settles on the home port'); } };
-  const contract = { stakeMsat: STAKE, protocolVersion: 3, federationId: new Uint8Array(32), nodes: [pk(0xa1), pk(0xa2)], minScore: 1 };
+  const contract = { stakeMsat: STAKE, protocolVersion: 3, federationId: new Uint8Array(32), nodes: [pk(0xa1), pk(0xa2)], settlementSlots: 2, minScore: 1 };
   const nodes = [];
   for (const id of [1, 2]) {
     const round = new Round(openStore(':memory:'));
