@@ -35,7 +35,7 @@
 // needs; none: free rounds only), DEVNET_APPS (more ARENA_APPS registration modules for the
 // seven nodes - a game of your own, tools/devnet-template), DEVNET_PAID_STAKE_MSAT (default 10 000 000), DEVNET_BLOCK_SECONDS
 // (a block every N s once the rounds are up; default 30, 0 for none), DEVNET_PAGE (the page the printed links open, default
-// https://testnet.bitcoin-arena.io) or DEVNET_PAGE_DIR (a built page served on base + 3, which the links then open).
+// https://testnet.bitcoinarena.io) or DEVNET_PAGE_DIR (a built page served on base + 3, which the links then open).
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, readdirSync, rmSync } from 'node:fs';
 import { createServer as netServer, connect } from 'node:net';
@@ -62,7 +62,7 @@ const BTC = env.BITCOIN_BIN || dirOnPath('bitcoind');
 const FED = env.FEDIMINT_BIN || dirOnPath('fedimintd');
 const LOCK = env.LOCK_BIN || (FED ? join(FED, 'arena-stake-lock') : null);
 const PAGE_DIR = env.DEVNET_PAGE_DIR || '';
-const PAGE = PAGE_DIR ? `http://127.0.0.1:${PLAN.page}` : (env.DEVNET_PAGE || 'https://testnet.bitcoin-arena.io').replace(/\/+$/, '');
+const PAGE = PAGE_DIR ? `http://127.0.0.1:${PLAN.page}` : (env.DEVNET_PAGE || 'https://testnet.bitcoinarena.io').replace(/\/+$/, '');
 // THE GAMES BEYOND NEXTBLOCK (DEVNET_APPS, registration modules exporting GAME): named once at `up` and kept in the devnet's
 // own directory, so every later command - and the runner, started elsewhere - hosts, opens and replays the same games
 const APP_FILES = env.DEVNET_APPS !== undefined

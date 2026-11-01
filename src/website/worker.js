@@ -13,6 +13,9 @@ async function chainNodes(env, ctx) {
   return new Response(body, { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=30', 'Access-Control-Allow-Origin': '*' } });
 }
 
+// THE OLD DOMAIN (kanban #937): every (sub)domain of it sends to the same place on the new one, path and query kept
+const OLD_DOMAIN = /(^|\.)bitcoin-arena\.io$/;
+const moved = (url) => { if (!OLD_DOMAIN.test(url.hostname)) return null; const to = new URL(url); to.hostname = url.hostname.replace(/bitcoin-arena\.io$/, 'bitcoinarena.io'); return Response.redirect(to.toString(), 308); };
 export default {
 async scheduled(event, env, ctx) {
   const before = await env.CHAIN.get(CHAIN_KEY, 'json');
@@ -24,6 +27,7 @@ async scheduled(event, env, ctx) {
 async fetch(request, env, ctx) {
 
   const url = new URL(request.url);
+  if (!url.pathname.startsWith('/api/')) { const went = moved(url); if (went) return went; }   // a page already open still calls /api/ here
   // A PHONE'S BENCHMARK LINES (the page's ?bench=1): logged for wrangler tail, nothing stored, nothing served back
   if (url.pathname === '/__bench' && request.method === 'POST') {
     const body = (await request.text()).slice(0, 20000);

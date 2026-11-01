@@ -4,7 +4,7 @@
 // and take it as its own, embedding the code. Not an iframe."). A website puts a game of Bitcoin Arena into its own page:
 //
 //     <div id="arena-game"></div>
-//     <script src="https://testnet.bitcoin-arena.io/arena-embed.js" data-game="rock-paper-scissors" data-ref="<program key>"
+//     <script src="https://testnet.bitcoinarena.io/arena-embed.js" data-game="rock-paper-scissors" data-ref="<program key>"
 //             data-target="#arena-game"></script>
 //
 // This file brings the Arena's engine - the page at this script's own address, its lobby, wallet (create, restore, deposit, withdraw)
@@ -22,7 +22,7 @@
 // of its own, its `window.parent` the engine (window.ARENA_EMBED.clientElement, the one place the engine knows of the kit).
 //
 // WHAT THE HOST TAKES ON: the wallet is kept in the host site's own browser storage (localStorage and sessionStorage are per site), not
-// in testnet.bitcoin-arena.io's - a player's seed made here is this site's, and the 24 words restore it anywhere. The engine's globals
+// in testnet.bitcoinarena.io's - a player's seed made here is this site's, and the 24 words restore it anywhere. The engine's globals
 // (window.ARENA_*, ARENACLIENT, BLWP) are the host page's globals; one engine per page. A host page with a Content Security Policy must
 // allow scripts from the Arena site with 'unsafe-eval' (the engine's own scripts are evaluated here), and the connections to the nodes.
 (function () {
@@ -42,7 +42,7 @@
     me.after(again);
     return;
   }
-  const BASE = new URL('.', me.src).href;                      // the Arena site this file came from, e.g. https://testnet.bitcoin-arena.io/
+  const BASE = new URL('.', me.src).href;                      // the Arena site this file came from, e.g. https://testnet.bitcoinarena.io/
   const SITE = new URL(BASE).origin;
   const GAME = (me.dataset.game || 'rock-paper-scissors').trim();
   const REF = /^0[23][0-9a-f]{64}$/i.test(me.dataset.ref || '') ? me.dataset.ref.toLowerCase() : null;

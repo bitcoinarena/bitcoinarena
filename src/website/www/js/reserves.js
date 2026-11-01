@@ -3,7 +3,7 @@
 // and the total is shown only when at least NEEDED of them answer the same one - as the Arena page took it - so no single node
 // can set the number. Until then the panel says it is reading the nodes; if they never agree it says so.
 (function () {
-  var DAILY = 'https://testnet.bitcoin-arena.io/daily.json';
+  var DAILY = 'https://testnet.bitcoinarena.io/daily.json';
   var NEEDED = 5;
 
   /** The total most nodes agree on: { ok, totalMsat, entries, agreeing, asked } or { ok: false, why }. */

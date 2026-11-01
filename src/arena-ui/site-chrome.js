@@ -5,14 +5,14 @@
 // missing the footer"; #700 "docs missing footer"; #701 "the button to play should be renamed to Arena and styled, and positioned like on the
 // arena and games header pages"; #695 "the home btn is redundant in functionality to the logo. remove it"; #697 "referral pages is missing a
 // option to return to the games"; #696 "the explorer link opens in a new window. it should open in the same tab"). One file draws them for
-// Proposals, Health, the Referral Program and its demo (this site), the docs (docs.bitcoin-arena.io, bitcoin-arena.io/docs) and the
-// explorer (explorer.bitcoin-arena.io), each page with one line right after <body>:
+// Proposals, Health, the Referral Program and its demo (this site), the docs (docs.bitcoinarena.io, bitcoinarena.io/docs) and the
+// explorer (explorer.bitcoinarena.io), each page with one line right after <body>:
 //
-//     <script src="https://testnet.bitcoin-arena.io/site-chrome.js"></script>          (on this site: src="/site-chrome.js")
+//     <script src="https://testnet.bitcoinarena.io/site-chrome.js"></script>          (on this site: src="/site-chrome.js")
 //
 // The pages on other domains load it from this site, not a copy: the menu, the look and the build line stay one, and a page of this site
 // that changes them changes them everywhere at its next deploy. The header is the games screen's bar (index.html, #arena-wallet-bar): the
-// logo to bitcoin-arena.io at the left, "← Arena" beside it back to the games, ☰ at the right end with the same links as the Arena page's
+// logo to bitcoinarena.io at the left, "← Arena" beside it back to the games, ☰ at the right end with the same links as the Arena page's
 // menu, all in the same tab; at 560 px and below the logo keeps its mark and ← its arrow, as on the games. The footer is the games
 // screen's: Donate at the window's bottom right (Donate opens the Arena page's donation box, /#donate - it needs the wallet), and left of
 // it, well clear of it, Bitcoin Arena on X, Discord, Telegram and GitHub (kanban #749, #753; GitHub is the docs' Repositories page), the
@@ -24,10 +24,10 @@
   'use strict';
   var me = document.currentScript;
   if (!me || document.getElementById('asc-bar')) return;
-  // THIS SITE: where the script came from (testnet.bitcoin-arena.io live; a test server's own address in a test)
+  // THIS SITE: where the script came from (testnet.bitcoinarena.io live; a test server's own address in a test)
   var site = new URL('/', me.src).href;
   var STAMP = 'UI {{{ UI_VERSION }}}';
-  var LINKS = [['Proposals', site + 'proposals/'], ['Explorer', 'https://explorer.bitcoin-arena.io/'], ['Health', site + 'health/'], ['Referral Program', site + 'referral/']];
+  var LINKS = [['Proposals', site + 'proposals/'], ['Explorer', 'https://explorer.bitcoinarena.io/'], ['Health', site + 'health/'], ['Referral Program', site + 'referral/']];
   var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
   // the page this is, marked in the menu: same host and the path starts with the link's (any page of the explorer is the Explorer)
   var here = function (href) { var u = new URL(href); return u.host === location.host && location.pathname.indexOf(u.pathname) === 0; };
@@ -88,7 +88,7 @@
   // THE HEADER, where this script stands (first thing in <body>), so it is drawn before the page below it
   var bar = document.createElement('header');
   bar.id = 'asc-bar';
-  bar.innerHTML = '<a class="asc-home" href="https://bitcoin-arena.io/" title="bitcoin-arena.io" aria-label="Bitcoin Arena - bitcoin-arena.io"><i aria-hidden="true">&#8383;</i><span>Bitcoin Arena</span></a>'
+  bar.innerHTML = '<a class="asc-home" href="https://bitcoinarena.io/" title="bitcoinarena.io" aria-label="Bitcoin Arena - bitcoinarena.io"><i aria-hidden="true">&#8383;</i><span>Bitcoin Arena</span></a>'
     + '<a class="asc-back" href="' + esc(site) + '" title="Back to Bitcoin Arena" aria-label="Back to Bitcoin Arena"><span aria-hidden="true">&larr;</span><span class="word">Arena</span></a>'
     + '<div class="asc-nav"><button class="asc-nav-go" type="button" aria-label="Menu" aria-expanded="false" aria-controls="asc-nav-menu">&#9776;</button>'
     + '<div id="asc-nav-menu" class="asc-nav-menu" role="navigation" aria-label="Bitcoin Arena">'

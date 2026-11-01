@@ -3,7 +3,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NEWEST RELEASE, FOR THE OWNER PAGE ("a new release is available"). Writes <out>/latest.json from a release's
 // SHA256SUMS: its version, tag, commit, release page and assets; tools/release/sign.sh <out> <key> latest.json signs it with the
-// release key, and both are published at https://testnet.bitcoin-arena.io/release/. A seat reads them (/owner/version) and offers
+// release key, and both are published at https://testnet.bitcoinarena.io/release/. A seat reads them (/owner/version) and offers
 // the update only when the signature verifies.
 //
 //     node tools/release/latest.mjs <version> <commit> <dir holding SHA256SUMS> <out dir>

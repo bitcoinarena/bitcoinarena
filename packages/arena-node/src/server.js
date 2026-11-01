@@ -7986,7 +7986,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // cannot check it, which is most of what "portable" was supposed to buy.
       // A TRANSACTION, AS THIS SEAT KNOWS IT (kanban #624): its id is the entry id. The entry (round, app, side, price, stake, keys), when it
       // was stored here, its locks with their federation transaction ids, its place in the book, the round's settlement, every door it passed
-      // here with each step's time (its handout's too), and the page's own signed timing - what explorer.bitcoin-arena.io shows
+      // here with each step's time (its handout's too), and the page's own signed timing - what explorer.bitcoinarena.io shows
       // ONE TRANSACTION AS THIS SEAT KNOWS IT, for GET /tx and for GET /txs?full=1 (the explorer's store, 2026-10-24: "It should all be
       // cached not be fetched from a node"): { code, body }
       const txView = (idHex) => {
@@ -8073,7 +8073,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const v = txView(idHex);
         return sendJson(v.code, v.body);
       }
-      // THE NEWEST TRANSACTIONS HERE (kanban #624): what explorer.bitcoin-arena.io polls - ids stored since `since` (ms), oldest first, at most 500
+      // THE NEWEST TRANSACTIONS HERE (kanban #624): what explorer.bitcoinarena.io polls - ids stored since `since` (ms), oldest first, at most 500
       if (req.method === 'GET' && url.pathname === '/txs') {
         const since = Math.max(0, Number(url.searchParams.get('since') || 0) || 0), limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit') || 200) || 200));
         const rows = round.db.prepare('SELECT entry_id, round_id, contract, joined_ms FROM entries WHERE joined_ms > ? ORDER BY joined_ms LIMIT ?').all(since, limit);
@@ -8099,7 +8099,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             ...(full ? { detail: txView(id).body } : {}) }; }) }, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v)));
       }
       // THE GIFTS, ZAPS AND ITEMS BOUGHT HERE (kanban #683, 2026-10-26: "I don't see item purchases in the explorer"; #682: a gift "doesn't show
-      // in the explorer"): what explorer.bitcoin-arena.io polls beside /txs - each kept after `since` (ms), oldest first, at most `limit` of each
+      // in the explorer"): what explorer.bitcoinarena.io polls beside /txs - each kept after `since` (ms), oldest first, at most `limit` of each
       if (req.method === 'GET' && url.pathname === '/payments') {
         const since = Math.max(0, Number(url.searchParams.get('since') || 0) || 0), limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit') || 200) || 200));
         return sendJson(200, { seat: toHex(round.pubkey), gifts: giftsSince(round.db, { since, limit }), items: purchasesSince(round.db, { since, limit }) });

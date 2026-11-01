@@ -72,7 +72,7 @@ if (cmd === 'init') {
     recipientPkHex: k.recipientPkHex,
     seats: (flag('seats', 'http://127.0.0.1:31221,http://127.0.0.1:31231,http://127.0.0.1:31241,http://127.0.0.1:31251,http://127.0.0.1:31261,http://127.0.0.1:31271,http://127.0.0.1:31281')).split(','),
     invites: {},
-    invitesFrom: ['https://testnet.bitcoin-arena.io/daily.json'],
+    invitesFrom: ['https://testnet.bitcoinarena.io/daily.json'],
     wasmPkg: flag('wasm', '/mnt/bitcoin/blwp-2of2-s/page-hold'),
     lnd: { lncli: '/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta/lncli', lnddir: flag('lnddir', '/mnt/bitcoin/lnd-testnet4-c'),
       rpcserver: flag('rpcserver', '127.0.0.1:11011'), network: 'testnet4' },

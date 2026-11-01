@@ -29,7 +29,7 @@ function served(bytes, { tamper = false, legacy = false } = {}) {
   const files = new Map(pieces.map((p, i) => [`${name}.part0${i}`, tamper && i === 1 ? Buffer.from('x'.repeat(p.length)) : p]));
   files.set('SHA256SUMS', Buffer.from(`${createHash('sha256').update(bytes).digest('hex')}  ${name}\n`));
   files.set('SHA256SUMS.sig', Buffer.from('sig'));
-  const base = 'https://testnet.bitcoin-arena.io/release/u/folder123/v0.1.1/';
+  const base = 'https://testnet.bitcoinarena.io/release/u/folder123/v0.1.1/';
   const asked = [];
   const fetcher = async (url) => { asked.push(url); const f = files.get(url.slice(base.length)); return f ? { status: 200, arrayBuffer: async () => f } : { status: 404, arrayBuffer: async () => Buffer.alloc(0) }; };
   const latest = async (own) => ({ latest: { version: '0.1.1', assets: { [name]: createHash('sha256').update(bytes).digest('hex') },

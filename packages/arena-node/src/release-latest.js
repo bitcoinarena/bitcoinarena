@@ -3,7 +3,7 @@
 // A NEW RELEASE IS AVAILABLE: the newest release as the Arena site names it (release/latest.json, written by
 // tools/release/latest.mjs and signed with the release key), read when the owner page asks (/owner/version) and kept for six hours.
 // Offered only when the signature verifies with the release key and its version is newer than this node's; anything else says why.
-const LATEST_URL = 'https://testnet.bitcoin-arena.io/release/latest.json';
+const LATEST_URL = 'https://testnet.bitcoinarena.io/release/latest.json';
 const TTL_MS = 6 * 3600_000;
 // THE UPDATER SERVICE KEEPS A READ ONE MINUTE (kanban #765, measured 2026-10-29: 2026.1.9.12 live on the channel from ~12:14Z, and the
 // inst577 nodes' checks at 12:30, 12:34 and 12:35Z all said "up to date (2026.1.9.11)" - `bitcoinarena auto-update` holds one reader for its
@@ -12,18 +12,18 @@ export const SERVICE_TTL_MS = 60_000;
 
 /**
  * WHERE THE NEWEST RELEASE IS READ (kanban #546, 2026-10-20: "a signed, unlisted latest.json, read only when ARENA_LATEST_URL is set,
- * and only when that URL is limited to testnet.bitcoin-arena.io"): the production latest.json unless ARENA_LATEST_URL (or the node's
+ * and only when that URL is limited to testnet.bitcoinarena.io"): the production latest.json unless ARENA_LATEST_URL (or the node's
  * arena.conf `latest_url`, which an update keeps where a launcher's env would be rewritten) names an https latest.json on the Arena
  * testnet site - a test channel, still believed only under the release key's signature. Anything else is refused and the production
  * URL read. ARENA_RELEASE_LATEST_URL='' (empty) still turns the checks off. Answers { url, why }.
  */
-export const TEST_CHANNEL_RE = /^https:\/\/testnet\.bitcoin-arena\.io\/[A-Za-z0-9._\/-]*latest\.json$/;
+export const TEST_CHANNEL_RE = /^https:\/\/testnet\.bitcoin-?arena\.io\/[A-Za-z0-9._\/-]*latest\.json$/;
 export function latestUrlFrom(env = process.env, conf = {}) {
   if (env.ARENA_RELEASE_LATEST_URL === '') return { url: '', why: 'release checks are off (ARENA_RELEASE_LATEST_URL is empty)' };
   const given = env.ARENA_LATEST_URL || conf.latest_url || '';
   if (!given) return { url: LATEST_URL, why: null };
   if (TEST_CHANNEL_RE.test(given)) return { url: given, why: `the test channel ${given}` };
-  return { url: LATEST_URL, why: `${given} is not a latest.json on https://testnet.bitcoin-arena.io/: refused, the production release read` };
+  return { url: LATEST_URL, why: `${given} is not a latest.json on https://testnet.bitcoinarena.io/: refused, the production release read` };
 }
 
 /** Is version `a` newer than `b`? Releases are 2026.xx.yy and a fix 2026.xx.yy.zz (2026-10-19), compared part by part (a missing

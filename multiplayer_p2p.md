@@ -216,7 +216,7 @@ work.
 |---|---|---|
 | the engine and its protocol | **Bitcoin Arena**, protocol v1 | `arena` (packages `arena-protocol`, `arena-node`, `arena-client`, `arena-donor`) |
 | the first game | **Tick Tock, Next Block** - short "nextblock" (2026-10-06) | `nextblock` (its core, its Unity project and its page assets in one package) |
-| the site | `bitcoin-arena.io` (not registered yet; the current pages stay until it is) | |
+| the site | `bitcoinarena.io` (not registered yet; the current pages stay until it is) | |
 | the repository | `github.com/bitcoin-arena/bitcoin-arena`, with the whole history of this one kept | |
 
 RULED HERE, so nothing of a player's is lost in the rename:
@@ -7420,7 +7420,7 @@ a 100 sat entry pays nodes 4,000, protocol devs 2,000, game devs 2,000, reserves
 - Each round's dashboard shows what the round paid in.
 - Every node serves `GET /reserves`: the total held, by federation, the last rounds' payments in,
   and every payout with the proposal that decided it - all from its own store, as `/donations` is.
-- testnet.bitcoin-arena.io shows the total and the latest payments in and out.
+- testnet.bitcoinarena.io shows the total and the latest payments in and out.
 - **As built** **:
   - `GET /reserves` answers `totalMsat` and `entries` over all federations, the newest 50 payments in (`paidIn`), and per
     federation its `reserveKey`, `heldMsat`, `entries` and `paidIn`. With `?all=1` it lists every payment in.
@@ -7431,7 +7431,7 @@ a 100 sat entry pays nodes 4,000, protocol devs 2,000, game devs 2,000, reserves
     in `arena-node/src/reserve-book.js`.
   - So every seat that reaches the federation comes to the same total.
   - The node dashboard's round list has a Reserves column: what each round paid in.
-  - bitcoin-arena.io shows the reserves' live total under the fees (Economics), with its payments in and how many nodes agree,
+  - bitcoinarena.io shows the reserves' live total under the fees (Economics), with its payments in and how many nodes agree,
     once five nodes name the same total *(2026-10-17: "Find a prominent place on the website ... Under the fees")*. The
     Arena games screen no longer carries a reserves box (2026-10-17: "no need to show the details").
 
@@ -7592,7 +7592,7 @@ capital for all of the reserves.
   - No vote can pass in a network's first 3 months.
   - Mainnet needs a bond index before rule 1 can be met after restarts.
 
-**On bitcoin-arena.io** *(2026-10-17: "Add a Project Proposals section to the website where people can comment and
+**On bitcoinarena.io** *(2026-10-17: "Add a Project Proposals section to the website where people can comment and
 review")*:
 - A **Project proposals** section lists every proposal five of the testnet's nodes hold, with its stage and every comment, threaded.
 - A visitor comments, replies or proposes with their own key: an nsec, or a key that browser keeps. The page builds and signs the
@@ -7601,7 +7601,7 @@ review")*:
 
 **Project improvement proposals (PIPs)** *(2026-10-17: "Project improvement proposals, PIP. Each item set to vote are prefixed
 with PIP. Users can sign in with their ingame key and their custom name or their generated name")*:
-- The forum is its own page beside the Arena: testnet.bitcoin-arena.io/proposals.
+- The forum is its own page beside the Arena: testnet.bitcoinarena.io/proposals.
 - Every proposal five nodes hold is a **PIP-N**, numbered by publication: published block, then id. The earliest is PIP-1.
 - A player signs in with their **in-game key**: the identity key of their wallet seed, the key the lobby and the board use. An
   nsec or a new key also works.
