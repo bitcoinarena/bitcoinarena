@@ -4923,7 +4923,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const seatedHex = (fedRecords.seatedGuardians(fid) || []).map((k) => toHex(k));
         if (!rec || !rec.record || !seatedHex.length) { liquiditySaid(fid, epoch, `not gathered: ${!rec || !rec.record ? 'no held record' : 'no seated guardians'}`); continue; }
         if (!seatedHex.includes(me)) liquiditySaid(fid, epoch, `not signed here: this node is not one of the ${seatedHex.length} seated guardians`);
-        if (seatedHex.includes(me) && !ownLiquiditySeatings.has(`${fid}:${epoch}`)) {
+        // A LIST OF NOBODY IS NO LIST (kanban #926, measured 2026-11-01: seats restarted under load read 0 of 2 claims, signed an empty seating and kept it, so no list reached the threshold and rounds of that
+        // epoch did not settle): one that names no provider is read again each pass, and nothing is signed until one does
+        if (seatedHex.includes(me) && !(ownLiquiditySeatings.get(`${fid}:${epoch}`)?.providers?.length)) {
           const lnKeys = [], claims = [];
           for (const node of seatedHex) { const ep = endpointOf(node); const g = ep && await getJson(`${ep}/gateway-claim`); if (g && g.node === node && checkGatewayClaim(g, schnorrVerify).ok) lnKeys.push(g.lightningPubkey); }
           for (const e of entries) { const ep = endpointOf(toHex(e.pubkey)); const c = ep && await getJson(`${ep}/liquidity-claim`); if (c && c.node === toHex(e.pubkey) && checkLiquidityClaim(c, schnorrVerify).ok) claims.push(c); }
@@ -4931,14 +4933,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const proven = typeof chainTxOut === 'function' ? new Map() : null;
           if (proven) for (const c of claims) proven.set(c.node, await provenFreeSats({ claim: c, curve: messageCurve, txOut: chainTxOut }));
           const providers = liquiditySeatingFrom({ claims, federationLnKeys: lnKeys, proven });
-          ownLiquiditySeatings.set(`${fid}:${epoch}`, signLiquiditySeating({ federationId: fid, epoch, providers }, me, (h) => schnorr.sign(h, round.identity.secret)));
+          if (!providers.length) { ownLiquiditySeatings.delete(`${fid}:${epoch}`); liquiditySaid(fid, epoch, `not signed: no provider read, ${claims.length} claim(s), ${lnKeys.length} gateway key(s)`); }
+          else { ownLiquiditySeatings.set(`${fid}:${epoch}`, signLiquiditySeating({ federationId: fid, epoch, providers }, me, (h) => schnorr.sign(h, round.identity.secret)));
           keepSeating('liquidity-own', fid, epoch, ownLiquiditySeatings.get(`${fid}:${epoch}`));
-          liquiditySaid(fid, epoch, `signed: ${providers.length} provider(s) [${providers.map((p) => `${p.node.slice(0, 8)}:${p.weight}`).join(', ')}] of ${claims.length} claim(s), ${lnKeys.length} gateway key(s)`);
+          liquiditySaid(fid, epoch, `signed: ${providers.length} provider(s) [${providers.map((p) => `${p.node.slice(0, 8)}:${p.weight}`).join(', ')}] of ${claims.length} claim(s), ${lnKeys.length} gateway key(s)`); }
         }
         // THE EPOCHS A ROUND STILL NAMES, NOT ONLY THIS ONE (kanban #803, measured 2026-11-01: a seat restarted after an epoch's boundary held no seating of the epoch before,
         // so it left the providers out of a round's fee table, built other settlement bytes than the seats that held it, and paid rounds in that federation never settled)
         for (let ep = epoch; ep >= epoch - 3; ep--) {
-          if (liquiditySeatings.has(`${fid}:${ep}`)) continue;
+          if (liquiditySeatings.get(`${fid}:${ep}`)?.providers?.length) continue;   // an empty one is read again: it may be the seats that did not answer
           const signed = ownLiquiditySeatings.has(`${fid}:${ep}`) ? [ownLiquiditySeatings.get(`${fid}:${ep}`)] : [];
           for (const node of seatedHex) {
             if (node === me) continue;
@@ -4946,7 +4949,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (s) signed.push(s);
           }
           const st = standingLiquiditySeating({ signed, federationId: fid, epoch: ep, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
-          if (st.ok) { liquiditySeatings.set(`${fid}:${ep}`, st.seating); keepSeating('liquidity', fid, ep, st.seating); liquiditySaid(fid, ep, `stands: ${st.signers} of ${seatedHex.length} seated guardians signed`, 'stands'); }
+          if (st.ok && st.seating.providers.length) { liquiditySeatings.set(`${fid}:${ep}`, st.seating); keepSeating('liquidity', fid, ep, st.seating); liquiditySaid(fid, ep, `stands: ${st.signers} of ${seatedHex.length} seated guardians signed`, 'stands'); }
         }
         for (const k of [...liquiditySeatings.keys()]) if (Number(k.split(':')[1]) < epoch - 6) liquiditySeatings.delete(k);
         for (const k of [...ownLiquiditySeatings.keys()]) if (Number(k.split(':')[1]) < epoch - 6) ownLiquiditySeatings.delete(k);
