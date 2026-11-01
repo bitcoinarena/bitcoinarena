@@ -1559,6 +1559,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const h = id && hosted instanceof Map ? hosted.get(id) : null; return h ? h.name : id ? id.slice(0, 8) : null; } catch { return null; }
   };
   // (a reserve output a payout spent is no longer held:)
+  const RESERVES_KEEP_MS = Number(process.env.ARENA_RESERVES_KEEP_MS || 60000);
+  const reservesKept = new Map();   // 'last' | 'all' -> { mark, at, body } of GET /reserves
   const reserveFiguresOf = (fedHex, key, last) => { const spent = reserveSpent();
     return reserveFigures(key ? round.donationsFor(toHex(key)).filter((r) => !spent.has(r.outpoint)) : [], { federationId: fedHex, last, gameOf: gameOfRound }); };
   // THE ROWS OTHER SEATS KEPT, CHECKED HERE: a reserve output is kept only by the signer nodes its lock was
@@ -9337,6 +9339,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // THE PROTOCOL RESERVES (§27A.9.2): per federation this node knows guardians of, its reserve key - the
       // guardian seats, the threshold, the group key once made, and every seat's public share (from public commitments)
       if (req.method === 'GET' && url.pathname === '/reserves') {
+        // ANSWERED FROM A KEPT BODY WHILE NOTHING NEW CAME IN (kanban #927, measured 2026-11-01: over 20 s under load on a seat with a full store, 8 s and more on others,
+        // and every page's first paid entry waits on it): built again on a new payment in or a new key, and after RESERVES_KEEP_MS at the latest
+        const keptKey = url.searchParams.get('all') === '1' ? 'all' : 'last';
+        let reservesMark = '';
+        try { reservesMark = `${round.db.prepare('SELECT MAX(rowid) AS m FROM donation_outputs').get().m}:${reserveKeys.size}:${reservePayouts ? reservePayouts.list().length : 0}`; } catch { reservesMark = String(Date.now()); }
+        const keptBody = reservesKept.get(keptKey);
+        if (keptBody && keptBody.mark === reservesMark && Date.now() - keptBody.at < RESERVES_KEEP_MS) {
+          res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+          return res.end(keptBody.body);
+        }
         const g = reserveGuardians();
         const feds = [...new Set([...Object.keys(g), ...reserveDkgs.keys()])].sort();
         // WHAT IS HELD AND WHAT CAME IN: per federation from this seat's own rows under its reserve key -
@@ -9375,7 +9387,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         const payouts = reservePayouts ? reservePayouts.list().map((x) => ({ proposal: x.proposal, state: x.state, federation: x.federation, amountSats: x.plan ? x.plan.amountSats : null,
           lnurl: x.plan ? x.plan.lnurl : null, txid: x.txid, paymentHash: x.plan ? x.plan.paymentHash : null, preimage: x.preimage, refundTxid: x.refundTxid, why: x.why })) : [];
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), totalMsat, entries: federations.reduce((t, f) => t + f.entries, 0), federations, paidIn, payouts }));
+        const reservesBody = JSON.stringify({ node: toHex(round.pubkey), totalMsat, entries: federations.reduce((t, f) => t + f.entries, 0), federations, paidIn, payouts });
+        reservesKept.set(keptKey, { mark: reservesMark, at: Date.now(), body: reservesBody });
+        return res.end(reservesBody);
       }
       // WHAT EACH WEBSITE EARNED (kanban #676, the explorer's metrics: "total referrer fees accumulated"): the 'website' payouts of the
       // settlements this seat indexed, per website payout key - their sum and count, and the total
