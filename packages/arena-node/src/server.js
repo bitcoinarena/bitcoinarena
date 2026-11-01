@@ -5304,7 +5304,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return out;
   };
   const drawOf = (rid, game, settlement, equivocated) => {
-    const keys = (x) => x.committee.map((e) => toHex(e.pubkey));
+    // A NODE'S KEY, ONE STRING (kanban #927: 45,578 kept draws held 1.1 M copies of the keys of about twenty nodes)
+    const keyOf = (e) => round.interner.shareText(toHex(e.pubkey));
+    const keys = (x) => x.committee.map(keyOf);
     // WHAT IT WAS DRAWN FROM: the census's bond entries and its distinct node keys - a key sits once (sortition.js).
     // THE OVERLAP, PUBLISHED (§5A.9 overlap_countRULED 2026-10-14 ~13:20Z: one set of nodes, the overlap
     // published): how many seats sit in both the game/verify and the settlement committee - all of them under a v2 round's one draw
@@ -5312,7 +5314,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return { drawn: true, game: keys(game), settlement: keys(settlement), overlapCount, eligibleEntries: game.eligible,
       // RESERVE SEATS (§5A.7): whether each role's committee is a seating certificate's, and the drawn beyond the seats
       ...(seating ? { seated: { game: game.seated, settlement: settlement.seated }, drawnCount: { game: game.drawn.length, settlement: settlement.drawn.length },
-        drawn: { game: game.drawn.map((e) => toHex(e.pubkey)), settlement: settlement.drawn.map((e) => toHex(e.pubkey)) },
+        drawn: { game: game.drawn.map(keyOf), settlement: settlement.drawn.map(keyOf) },
         equivocated } : {}),
       eligibleKeys: new Set((roster.censusFor(rid).entries || []).map((e) => toHex(e.pubkey))).size };
   };
