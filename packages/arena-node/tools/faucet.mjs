@@ -6,12 +6,16 @@
 //
 //   POST /faucet { address, sats }  -> { ok, txid, sats } or { ok: false, why }
 //   GET  /faucet                    -> { ok, balanceSats, maxSats, leftTodaySats }
+//   POST /player { kind: welcome | topup, account, invoice } -> { ok, sats } or { ok: false, why } (kanban #926: a player's test sats over Lightning)
+//   GET  /player                    -> what was given, new accounts and returning apart (no account, no address)
+//                                   FAUCET_LNCLI, FAUCET_PAYERS=<lnddir>|<rpc host:port>,... : the second pays when an invoice's gateway is on the first
 //
 // Each payment's txid is appended to FAUCET_PENDING, which the the test host's miner-C feeder (ops/pending-to-minerc.sh) lists for mining.
 //   FAUCET_PORT  FAUCET_RPC_URL (with /wallet/<name>)  FAUCET_COOKIE  FAUCET_BOOK  FAUCET_PENDING  [FAUCET_FEE_RATE sat/vB, 2]
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
-import { faucetDecide, FAUCET_MAX_SATS, FAUCET_DAY_CAP_SATS, DAY_MS } from '../src/faucet.js';
+import { execFile } from 'node:child_process';
+import { faucetDecide, playerGrantDecide, playerGrantTotals, FAUCET_MAX_SATS, FAUCET_DAY_CAP_SATS, DAY_MS } from '../src/faucet.js';
 
 const env = process.env;
 const port = Number(env.FAUCET_PORT || 18866);
@@ -44,9 +48,63 @@ async function pay(ask) {
   return { ok: true, txid, sats: d.sats };
 }
 
+const PAYERS = String(env.FAUCET_PAYERS || '').split(',').filter(Boolean).map((p) => { const [dir, rpcserver] = p.split('|'); return { dir, rpcserver }; });
+const lncli = (payer, args, timeoutMs = 20000) => new Promise((res) => execFile(env.FAUCET_LNCLI, [`--lnddir=${payer.dir}`, '--network=testnet4', `--rpcserver=${payer.rpcserver}`, ...args],
+  { timeout: timeoutMs }, (e, out, err) => res({ ok: !e, timedOut: !!(e && e.killed), out: String(out), err: String(err) })));
+
+/** A player's grant: read the invoice, decide, keep it in the book BEFORE paying (a crash pays nobody twice), and take it out again if no payer could pay. */
+async function grant(ask) {
+  if (!/^lntb[0-9a-z]{20,1500}$/.test(String(ask.invoice || ''))) return { ok: false, why: 'that is not a testnet invoice' };
+  const read = await lncli(PAYERS[0], ['decodepayreq', ask.invoice]);
+  if (!read.ok) return { ok: false, why: 'that invoice cannot be read' };
+  const inv = JSON.parse(read.out);
+  const book = readBook();
+  book.players = book.players || [];
+  const d = playerGrantDecide({ kind: ask.kind, account: ask.account, ip: ask.ip, invoiceSats: Number(inv.num_satoshis) }, book);
+  if (!d.ok) return d;
+  const row = { account: ask.account, kind: ask.kind, ip: ask.ip, sats: d.grant.invoiceSats, atMs: Date.now(), hash: inv.payment_hash };
+  book.players.push(row);
+  saveBook(book);
+  const tried = [];
+  for (const payer of PAYERS) {
+    // A TIMEOUT IS NOT A REFUSAL: the federation's incoming contract holds the payment open until the client claims it (seen: "IN_FLIGHT", then Claimed)
+    const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', ask.invoice], 15000);
+    if (paid.timedOut || /Payment status: (SUCCEEDED|IN_FLIGHT)/.test(paid.out)) {
+      console.log(`${new Date().toISOString()} player ${ask.kind} ${d.grant.invoiceSats} sat (${ask.ip || 'no ip'}): ${inv.payment_hash.slice(0, 16)}`);
+      return { ok: true, sats: d.grant.sats };
+    }
+    tried.push((paid.err || paid.out).trim().slice(-160));
+  }
+  const after = readBook();
+  after.players = (after.players || []).filter((p) => p.hash !== row.hash);
+  saveBook(after);
+  console.log(`${new Date().toISOString()} player ${ask.kind} not paid: ${tried.join(' | ')}`);
+  return { ok: false, why: 'the faucet could not pay just now: try again in a minute' };
+}
+
+const ORIGIN_OK = /^https:\/\/([a-z0-9-]+\.)?(testnet\.bitcoin-arena\.io|bitcoin-arena-site\.pages\.dev)$/;
 createServer((req, res) => {
-  const send = (status, body) => { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
+  const origin = String(req.headers.origin || '');
+  const cors = ORIGIN_OK.test(origin) ? { 'access-control-allow-origin': origin, vary: 'Origin' } : {};
+  const send = (status, body) => { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...cors }); res.end(JSON.stringify(body)); };
   const path = new URL(req.url, 'http://x').pathname.replace(/\/+$/, '');
+  if (path === '/player' || path === '/faucet/player') {
+    if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'GET, POST', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '86400' }); return res.end(); }
+    // THE TOTALS ARE PUBLIC (no account, no address): any node's dashboard reads them, from its own address
+    if (req.method === 'GET') { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(JSON.stringify({ ok: true, ...playerGrantTotals(readBook()) })); }
+    if (req.method !== 'POST') return send(405, { ok: false, why: 'POST' });
+    if (!PAYERS.length) return send(503, { ok: false, why: 'the players\' faucet is off' });
+    let raw = '';
+    req.setEncoding('utf8');
+    req.on('data', (c) => { raw += c; if (raw.length > 4096) req.destroy(); });
+    req.on('end', () => {
+      let ask;
+      try { ask = JSON.parse(raw || '{}'); } catch { return send(400, { ok: false, why: 'not JSON' }); }
+      one(() => grant({ kind: ask.kind, account: ask.account, invoice: ask.invoice, ip: ipOf(req) }))
+        .then((r) => send(200, r), (e) => { console.log(`${new Date().toISOString()} player failed: ${e.message}`); send(500, { ok: false, why: 'the faucet could not pay just now' }); });
+    });
+    return undefined;
+  }
   if (path !== '' && path !== '/faucet') return send(404, { ok: false, why: 'no such door' });
   if (req.method === 'GET') {
     return one(async () => {
