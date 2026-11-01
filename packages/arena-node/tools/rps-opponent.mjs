@@ -154,12 +154,16 @@ async function enter(c, rid, ready) {
   steps.entry = ms(t0);
   // AND ITS LOCKS, once the federation holds them
   const handed = accepted.then(() => Promise.all(nodes.map(async (n) => {
-    let l;
+    let l, fee = !hand;
+    // BOTH LOCKS AT EVERY SEAT THAT TAKES THEM (kanban #926, measured 2026-11-01 13:20Z): a fee lock that reached a seat before the entry had a 404, was not sent again, and that seat
+    // built another settlement than the rest, so the round did not settle
     for (const until = Date.now() + 45000; ;) {
-      if (hand) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', signal: AbortSignal.timeout(POST_MS), body: JSON.stringify(lockFieldsToJson(hand)) }).catch(() => null);
+      if (hand && !fee) { const f = await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', signal: AbortSignal.timeout(POST_MS), body: JSON.stringify(lockFieldsToJson(hand)) }).catch(() => null); fee = !!f && f.status >= 200 && f.status < 300; }
       l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', signal: AbortSignal.timeout(POST_MS), body: JSON.stringify(lockFieldsToJson(locks.stake.fields)) }).catch(() => ({ status: 0, clone: () => ({ text: async () => '' }) }));
-      if (l.status !== 409 || Date.now() >= until) break;
-      if (!/holds no lock/.test(await l.clone().text())) break;
+      const stakeIn = l.status >= 200 && l.status < 300;
+      if ((stakeIn && fee) || Date.now() >= until) break;
+      if (l.status === 409 && !/holds no lock/.test(await l.clone().text())) break;
+      if (!stakeIn && l.status !== 409 && l.status !== 404 && l.status !== 0) break;
       await new Promise((ok) => setTimeout(ok, 700));
     }
     return l.status;
