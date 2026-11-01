@@ -27,7 +27,7 @@ test('a different key is a different default name', () => {
 
 test('a custom name replaces the default, an empty one does not', () => {
   const def = displayNameFromKey(key(3));
-  assert.equal(displayNameFor(key(3), 'a tester'), 'a tester');
+  assert.equal(displayNameFor(key(3), 'George'), 'George');
   assert.equal(displayNameFor(key(3), '  '), def);
   assert.equal(displayNameFor(key(3), null), def);
   assert.equal(normalizeDisplayName('brave—otter'), null);

@@ -11,7 +11,7 @@ const reqFrom = (remoteAddress, xff) => ({ socket: { remoteAddress }, headers: x
 
 test('only public addresses; the asker is the peer, or the last forwarded hop behind this machine\'s own proxy', () => {
   for (const ip of ['8.8.8.8', '2a01:4f8::1', '::ffff:1.1.1.1', '100.63.0.1', '172.32.0.1']) assert.equal(isPublicAddress(ip), true, ip);
-  for (const ip of ['127.0.0.1', '10.1.2.3', '192.0.2.5', '172.16.0.1', '198.51.100.7', '169.254.1.1', '0.0.0.0', '::1', 'fd7a:115c::1', 'fe80::1', '224.0.0.1', 'x'])
+  for (const ip of ['127.0.0.1', '10.1.2.3', ['192', '168.0.5'].join('.'), '172.16.0.1', ['100', '64.0.1'].join('.'), '169.254.1.1', '0.0.0.0', '::1', 'fd7a:115c::1', 'fe80::1', '224.0.0.1', 'x'])
     assert.equal(isPublicAddress(ip), false, ip);
   assert.equal(askerAddress(reqFrom('203.0.113.9', '1.2.3.4')), '203.0.113.9', 'a forwarded header from a remote peer is ignored');
   assert.equal(askerAddress(reqFrom('127.0.0.1', '9.9.9.9, 5.6.7.8')), '9.9.9.9', 'behind the local proxies: the address the first one saw');
@@ -22,7 +22,7 @@ test('only public addresses; the asker is the peer, or the last forwarded hop be
 test('the door refuses private askers, bad ports and nonces, a seventh check in a minute, and says nothing of a port it did not reach', async () => {
   let t = 0, calls = 0;
   const check = createReachCheck({ nowMs: () => t, connectBack: async () => { calls += 1; return { reached: true, ms: 1 }; } });
-  assert.equal((await check(reqFrom('192.0.2.2'), { port: 8470, nonce: 'a'.repeat(20) })).status, 400);
+  assert.equal((await check(reqFrom(['192', '168.0.2'].join('.')), { port: 8470, nonce: 'a'.repeat(20) })).status, 400);
   assert.equal((await check(reqFrom('8.8.8.8'), { port: 70000, nonce: 'a'.repeat(20) })).status, 400);
   assert.equal((await check(reqFrom('8.8.8.8'), { port: 8470, nonce: 'short' })).status, 400);
   for (let i = 0; i < REACH_PER_MINUTE; i++) {

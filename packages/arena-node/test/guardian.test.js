@@ -22,7 +22,7 @@ const TS = {
     AllowFunnel: { 'seat.example.com:443': true },
     Web: { 'seat.example.com:443': { Handlers: {
       '/': { Proxy: 'http://localhost:3001' },
-      '/blwp-a': { Proxy: 'http://198.51.100.7:18080' },
+      '/blwp-a': { Proxy: 'http://198.51.100.98:18080' },
       '/guardian-1': { Proxy: 'http://127.0.0.1:31221' },
       '/guardian-2': { Proxy: 'http://127.0.0.1:31231' } } } },
   },

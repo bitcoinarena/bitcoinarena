@@ -115,7 +115,7 @@ export const DUTY_DAY_MS = 86400000;
 export const DUTY_FALLBACK_MS = 3600000;
 export const daySlotOf = (ms) => Math.floor(Number(ms) / DUTY_DAY_MS);
 export const dayStartMs = (slot) => slot * DUTY_DAY_MS;
-/** NO REGULAR POSTING AFTER 12:00 UTC OF THE POSTING DAY (kanban #742, the owner 2026-10-29 ~23:20Z: "neue Runden wirklich um 12 gepostet werden,
+/** NO REGULAR POSTING AFTER 12:00 UTC OF THE POSTING DAY (kanban #742, 2026-10-29 ~23:20Z: "neue Runden wirklich um 12 gepostet werden,
  *  nicht später außer emergency"): a day's primary and backup are posted between 00:00 and 12:00 UTC of the day before it, never after - a
  *  rank-11 node that did not see the day's posting re-posted the 10-30 primaries at 20:51Z; after 12:00 only an emergency grid is posted. */
 export const DUTY_POST_BY_MS = 12 * 3600000;

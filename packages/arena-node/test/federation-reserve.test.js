@@ -58,10 +58,10 @@ test('a walletv2 federation\'s reserve is its federation_wallet value, named by 
 });
 
 test('a guardian endpoint no override names is routed by the seat\'s ARENA_ROUTE_MAP, its scheme carried over (kanban #549: a successor\'s guardian-next)', () => {
-  const routes = parseRoutes('https://seat.example.com/fed2-1=http://198.51.100.7:6221,https://tn4.bitcoin-arena.io/guardian-2=https://tn4.example/g2');
+  const routes = parseRoutes('https://seat.example.com/fed2-1=http://198.51.100.106:6221,https://tn4.bitcoin-arena.io/guardian-2=https://tn4.example/g2');
   const overrides = new Map([['wss://seat.example.com/fed2-1/guardian', 'ws://127.0.0.1:7221']]);
   assert.equal(routedEndpoint('wss://seat.example.com/fed2-1/guardian', { overrides, routes }), 'ws://127.0.0.1:7221', 'an override still wins');
-  assert.equal(routedEndpoint('wss://seat.example.com/fed2-1/guardian-next', { overrides, routes }), 'ws://198.51.100.7:6221/guardian-next');
+  assert.equal(routedEndpoint('wss://seat.example.com/fed2-1/guardian-next', { overrides, routes }), 'ws://198.51.100.106:6221/guardian-next');
   assert.equal(routedEndpoint('wss://tn4.bitcoin-arena.io/guardian-2/', { overrides, routes }), 'wss://tn4.example/g2');
   assert.equal(routedEndpoint('wss://seat.example.com/fed2-10/guardian', { overrides, routes }), 'wss://seat.example.com/fed2-10/guardian', 'a path boundary: fed2-10 is not fed2-1');
   assert.equal(routedEndpoint('wss://elsewhere.example/g', { overrides, routes }), 'wss://elsewhere.example/g');

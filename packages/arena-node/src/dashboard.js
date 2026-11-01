@@ -269,7 +269,7 @@ try{if(d.kind==='seed'&&/^[0-9a-f]{64}$/.test(d.seed))localStorage.setItem('aren
 else if(d.kind==='nsec'&&/^[0-9a-f]{64}$/.test(d.secret))localStorage.setItem('arena-owner-nostr:'+base,JSON.stringify({how:'nsec',secret:d.secret}))}catch{}
 history.replaceState(null,'',location.pathname+location.search)});
 window.opener.postMessage({type:'arena-owner-ready'},'*')}
-// THE RELEASE IN THE FOOTER (kanban #662), the release alone, no build commit (#753, the owner 2026-10-28: "I want UI xxx still there"):
+// THE RELEASE IN THE FOOTER (kanban #662), the release alone, no build commit (#753, 2026-10-28: "I want UI xxx still there"):
 // from the node's public owner/version; beside Bitcoin Arena on X, Discord, Telegram and GitHub (#749)
 fetch(location.pathname.replace(/\\/[Dd]ashboard\\/?$/,'')+'/owner/version',{cache:'no-store'}).then((r)=>r.json()).then((v)=>{if(v&&v.version)document.getElementById('build').textContent='Bitcoin Arena '+v.version}).catch(()=>{});
 </script><style>footer.build{max-width:1100px;margin:28px auto 18px;padding:0 16px;color:var(--dim);font-size:12px;text-align:center}footer.build .social{display:inline-flex;gap:8px;vertical-align:middle}footer.build #build:not(:empty){margin-right:16px}footer.build .social a{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:6px;color:var(--dim)}footer.build .social a:hover,footer.build .social a:focus-visible{color:#f7931a}footer.build .social svg{display:block;width:15px;height:15px;fill:currentColor}</style></body></html>`;

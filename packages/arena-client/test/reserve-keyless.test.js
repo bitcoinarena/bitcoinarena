@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A FEDERATION NO ENTRY CAN PAY INTO IS NOT OFFERED (the owner 2026-10-30, a table of federation A at UI 423: "Order not placed: this round pays the
+// A FEDERATION NO ENTRY CAN PAY INTO IS NOT OFFERED (2026-10-30, a table of federation A at UI 423: "Order not placed: this round pays the
 // protocol reserves, and none of the round's 14 signer nodes names a reserve key"). GET /reserves as seat 1 answered it that minute.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -52,8 +52,8 @@ test('the page can call it: the bundle exports it by name', () => {
 });
 
 test('a seat that is no member names the key as reserveKey: that federation is playable (measured 12:50Z: UI 424 held back federation B too)', () => {
-  const test-host = { federations: [{ federationId: A, key: null, reserveKey: null, why: 'no reserve key for 0 guardian seats' }, { federationId: B, key: null, reserveKey: key }] };
-  assert.deepEqual([...keylessFederations([test-host, test-host, test-host])], [A]);
+  const testHost = { federations: [{ federationId: A, key: null, reserveKey: null, why: 'no reserve key for 0 guardian seats' }, { federationId: B, key: null, reserveKey: key }] };
+  assert.deepEqual([...keylessFederations([testHost, testHost, testHost])], [A]);
 });
 
 test('draw reads the keyless set from the page, not from a helper of paint: out of its scope no table is offered at all (measured 12:53Z, UI 424)', () => {
@@ -64,7 +64,7 @@ test('draw reads the keyless set from the page, not from a helper of paint: out 
   assert.match(draw, /window\.ARENA_RESERVES_READ && window\.ARENA_RESERVES_READ\.keyless/);
 });
 
-test('a balance in such a federation says so; one elsewhere says nothing (the owner: "it should say so in a message")', async () => {
+test('a balance in such a federation says so; one elsewhere says nothing (Alice: "it should say so in a message")', async () => {
   const { keylessFundsLine } = await import('../src/reserves-page.js');
   const keyless = new Set([A]);
   const l = keylessFundsLine({ parts: [{ federation: A, sats: 279 }, { federation: B, sats: 500 }], keyless });
@@ -81,7 +81,7 @@ test('the bundle exports the line, and the page shows it', () => {
   assert.match(readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8'), /ARENACLIENT\.keylessFundsLine\(\{ parts: bal\.parts, keyless: new Set\(\[\.\.\.k\.keyless/);
 });
 
-test('the message says from when it will work (the owner: "Sage, ab wann es funktionieren wird")', async () => {
+test('the message says from when it will work (Alice: "Sage, ab wann es funktionieren wird")', async () => {
   const { keylessFundsLine } = await import('../src/reserves-page.js');
   const keyless = new Set([A]);
   const l = keylessFundsLine({ parts: [{ federation: A, sats: 279 }], keyless, expected: { [A]: 158325 }, tip: 158234 });
@@ -99,26 +99,26 @@ test('the whole stuck balance is counted: a part under the federation\'s first 1
   assert.match(l.text, /block 158,325/);
 });
 
-test('a head-to-head move the seats took ends the join, not in a refusal (the owner 2026-10-30: "this page did not join that round")', () => {
+test('a head-to-head move the seats took ends the join, not in a refusal (2026-10-30: "this page did not join that round")', () => {
   const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   const hidden = src.indexOf("if (window.ARENA_HIDDEN && window.ARENA_HIDDEN.round === id) {"), refusal = src.indexOf("refuse(window.ARENA_JOIN_REFUSED || 'this page did not join that round')");
   assert.ok(hidden > 0 && hidden < refusal, 'read before the refusal');
   assert.match(src.slice(hidden, hidden + 400), /join\.state = 'picked'/);
 });
 
-test('a reload in the middle of a join puts no refusal over the page (the owner 2026-10-30: "carries no such core")', () => {
+test('a reload in the middle of a join puts no refusal over the page (2026-10-30: "carries no such core")', () => {
   const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   assert.match(src, /window\.ARENA_JOIN = coreOnly \? null : window\.ARENA_REFUSED_JOIN/);
 });
 
-test('a lock held by notes still arriving says so (the owner 2026-10-30: "kommt mit der order nicht weiter")', () => {
+test('a lock held by notes still arriving says so (2026-10-30: "kommt mit der order nicht weiter")', () => {
   const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   const at = src.indexOf('is being issued (\\d+) msat more');
   assert.ok(at > 0 && at < src.indexOf("return 'locking your stake: '"), 'read before the general line');
   assert.match("the player wallet holds 89000 msat and is being issued 11000 msat more (a restore, a deposit or a payment's change): waiting for those notes", /is being issued (\d+) msat more/);
 });
 
-test('a federation not active is not paid into; a failed read holds nothing back (the owner: "soll er in der UI auch nicht versuchen mit der zu bezahlen")', async () => {
+test('a federation not active is not paid into; a failed read holds nothing back (Alice: "soll er in der UI auch nicht versuchen mit der zu bezahlen")', async () => {
   const { inactiveFederations } = await import('../src/reserves-page.js');
   const open = { status: 'OPEN', allows: { join: true } }, unverified = { status: 'unverified', allows: { join: true } }, critical = { status: 'CRITICAL', allows: { join: false } }, draining = { status: 'DRAINING', allows: { join: true } };
   assert.deepEqual([...inactiveFederations(new Map([[A, unverified], [B, open]]))], [A]);
@@ -128,13 +128,13 @@ test('a federation not active is not paid into; a failed read holds nothing back
   assert.equal(inactiveFederations(undefined).size, 0);
 });
 
-test('a refused head-to-head entry says why the seats refused it (the owner 2026-10-30: "refused the entry: undefined")', () => {
+test('a refused head-to-head entry says why the seats refused it (2026-10-30: "refused the entry: undefined")', () => {
   const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   assert.doesNotMatch(src, /'the signer nodes refused the entry: ' \+ sent\.why;/);
   assert.match(src, /const saidWhy = sent\.why \|\| \[\.\.\.new Set\(sent\.entries\.map/);
 });
 
-test('a round\'s result is read from a seat that holds its players, not the first that answers (the owner 2026-10-30: "es gibt kein Ergebnis")', () => {
+test('a round\'s result is read from a seat that holds its players, not the first that answers (2026-10-30: "es gibt kein Ergebnis")', () => {
   const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   const at = src.indexOf('result: async (id) => {');
   const body = src.slice(at, src.indexOf('// A MARKET\'S CLIENT: place an order', at));
@@ -157,7 +157,7 @@ test('a paid round whose donation set could not be read locks nothing and says s
   assert.match(page.slice(held, going), /Nothing was locked[^\n]*\n[^\n]*\n\s*return;/);
 });
 
-test('the funds note is said once per page load, whatever the amount does after (the owner 2026-10-30: "nur einmal ... nach einem Load")', () => {
+test('the funds note is said once per page load, whatever the amount does after (2026-10-30: "nur einmal ... nach einem Load")', () => {
   const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   assert.match(page, /window\.ARENA_WALLET_STOPPED \? window\.ARENA_FUNDS_NOTE_CLOSED === line\.text : window\.ARENA_FUNDS_NOTE_SAID/);
   assert.match(page, /x\.onclick = \(\) => \{ if \(window\.ARENA_WALLET_STOPPED\)[^\n]*else window\.ARENA_FUNDS_NOTE_SAID = true/);
@@ -171,26 +171,26 @@ test('only a lost write says the wallet stopped; idle sockets make room below th
   assert.match(page, /openSockets\.delete\(w\); w\.close\(\)/);
 });
 
-test('no strip of settlement facts and fees over a game client (the owner 2026-10-30: it covered the options on the iPhone)', () => {
+test('no strip of settlement facts and fees over a game client (2026-10-30: it covered the options on the iPhone)', () => {
   const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   assert.doesNotMatch(page, /arena-approval/);
   assert.match(page, /#arena-client \{ height: calc\(100% - 41px - 30px/);
 });
 
-test('the collect waits 30 s after a load and gives way to an order between records (the owner 2026-10-30, the first 1-2 minutes)', () => {
+test('the collect waits 30 s after a load and gives way to an order between records (2026-10-30, the first 1-2 minutes)', () => {
   const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   assert.match(page, /async function lookThePayout\(\) \{\n\s*if \(performance\.now\(\) < 30000\) return;/);
   assert.match(page, /if \(rescanWanted\) break;\n\s*await orderClear\(\);/);
   assert.match(page, /window\.ARENA_ORDER_AT = Date\.now\(\);/);
 });
 
-test('a federation whose wallet did not open holds no other merge for the rest of the load (the owner 2026-10-30: minutes instead of seconds)', () => {
+test('a federation whose wallet did not open holds no other merge for the rest of the load (2026-10-30: minutes instead of seconds)', () => {
   const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   assert.match(page, /mergeDeadFeds\.get\(fedHex\)/);
   assert.match(page, /dead\.misses >= 2/);
 });
 
-test('the merge runs four wallets at a time with short waits, and an order waits for it 12 s at most (the owner 2026-10-30: "Es darf nicht ewig hängen")', () => {
+test('the merge runs four wallets at a time with short waits, and an order waits for it 12 s at most (2026-10-30: "Es darf nicht ewig hängen")', () => {
   const page = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   assert.match(page, /MERGE_AT_ONCE = 4, MERGE_OPEN_MS = 10000, MERGE_LOCK_MS = 8000, MERGE_RECEIVE_MS = 20000/);
   assert.match(page, /Array\.from\(\{ length: Math\.min\(MERGE_AT_ONCE, mergeQueue\.length\) \}/);
@@ -198,7 +198,7 @@ test('the merge runs four wallets at a time with short waits, and an order waits
   assert.doesNotMatch(page, /did not open in 30 s/);
 });
 
-test('the securing line stays clear of the next round box (the owner 2026-10-30: it lay on "exit game")', () => {
+test('the securing line stays clear of the next round box (2026-10-30: it lay on "exit game")', () => {
   const css = readFileSync(new URL('../../nextblock/page/unity-page.css', import.meta.url), 'utf8');
   assert.match(css, /#arena-securing \{ top: calc\(49px[^}]*bottom: auto !important; \}/);
 });

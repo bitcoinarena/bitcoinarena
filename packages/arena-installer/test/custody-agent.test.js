@@ -219,7 +219,7 @@ test('a custody node that became a provider sends no deposit before its peg-in, 
   assert.deepEqual([r.did, sent.length], ['liquidity-fund', 1], 'the peg-in sent: the deposit goes');
 });
 
-test('a gateway\'s new address is claimed at once, not at the next hour (the owner 2026-10-30)', () => {
+test('a gateway\'s new address is claimed at once, not at the next hour (2026-10-30)', () => {
   const src = readFileSync(new URL('../src/custody-agent.js', import.meta.url), 'utf8');
   assert.match(src, /nowMs\(\) - last >= 3600000 \|\| \(claimedUrl && claimedUrl !== s\.gateway\.publicUrl\)/);
 });

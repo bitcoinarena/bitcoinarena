@@ -42,7 +42,7 @@ import { toHex } from '../../arena-protocol/src/hash.js';
 
 const env = process.env;
 const dir = env.ARENA_2OF2_DIR || '/mnt/bitcoin/blwp-2of2';
-const host = env.ARENA_BIND || '198.51.100.7';
+const host = env.ARENA_BIND || '198.51.100.98';
 const portA = Number(env.ARENA_PORT_A || 18080);
 const portB = Number(env.ARENA_PORT_B || 18081);
 const page = env.ARENA_PAGE || 'https://testnet.bitcoin-arena.io';

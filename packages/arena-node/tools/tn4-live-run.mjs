@@ -76,7 +76,7 @@ const rand = (n) => new Uint8Array(randomBytes(n));
   globalThis.fetch = async (u, o) => { for (let i = 0; ; i++) { try { return await once(u, o); }
     catch (e) { if (i >= 2 || !/fetch failed/.test(String(e && e.message))) throw e; await new Promise((ok) => setTimeout(ok, 1000)); } } }; }
 // A SEAT'S /play AT ITS OWN ADDRESS (the fixture's say() opens ws://127.0.0.1:<port>/play, so with NODES naming the
-// test host's seats every batch and mark went to a local port nothing listens on, and those signers never held the run)
+// macOS's seats every batch and mark went to a local port nothing listens on, and those signers never held the run)
 const sayAt = (node, message) => new Promise((resolve, reject) => {
   const ws = new WebSocket(`${String(node).replace(/^http/, 'ws').replace(/\/+$/, '')}/play`);
   const t = setTimeout(() => { try { ws.close(); } catch { /* closed */ } reject(new Error('no answer in 20 s')); }, 20000);

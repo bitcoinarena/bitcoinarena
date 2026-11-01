@@ -375,7 +375,7 @@ export async function seatLogTail({ home, platform = process.platform, sh = run,
  * or { failed, step, why }: the step it failed at, and why.
  */
 /**
- * ONE UPDATE OF A NODE AT A TIME (kanban #809, the owner 2026-10-30: "Node doesn't start", exit 78 after 2026.1.9.19): the desktop app's update
+ * ONE UPDATE OF A NODE AT A TIME (kanban #809, 2026-10-30: "Node doesn't start", exit 78 after 2026.1.9.19): the desktop app's update
  * and the auto-updater moved the same node to 2026.1.9.19 at once - two backups 2 s apart - and the one that finished second removed, as an
  * older release, the folder the other had already moved the services to; launchd could not even enter it. `<home>/update.lock` names the
  * update that holds the node ({ pid, atMs }); another waits for it (up to `waitLockMs`), and one whose holder has ended or is older than

@@ -506,7 +506,7 @@ export function approvalWords(f, tooOld = []) {
 }
 
 /**
- * THE SETTLEMENT FACTS IN WORDS A PLAYER READS (kanban #821, the owner 2026-10-30, of "Settled by 5 of 9 drawn (d5faf2, ...) · 1 operator (2of2) · both
+ * THE SETTLEMENT FACTS IN WORDS A PLAYER READS (kanban #821, 2026-10-30, of "Settled by 5 of 9 drawn (d5faf2, ...) · 1 operator (2of2) · both
  * committees 5/5 · no operator playing · left out,...": "Die Meldung ist eher verwirrend"). `facts`: the lobby line from "signer nodes" on. The
  * whole line stays one tap away; one operator behind every node is said, never hidden.
  */

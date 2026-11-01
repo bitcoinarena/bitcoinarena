@@ -139,7 +139,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     if (!all.length) return { ok: false, federationId: fid, why: 'this seat has not read its census yet (just restarted): ask again in a few minutes' };
     const seatedNow = new Set((await seated(fid)) || []);
     let seats = GATEWAY_SEATS; try { const n = Number(await seatsFor(fid)); if (Number.isInteger(n) && n >= 1) seats = n; } catch { /* two */ }
-    // WHERE A GATEWAY ANSWERS NOW, not where it answered in the epoch being ranked (the owner 2026-10-30, after a test host reboot: "no gateway made a
+    // WHERE A GATEWAY ANSWERS NOW, not where it answered in the epoch being ranked (2026-10-30, after a test host reboot: "no gateway made a
     // deposit invoice: https://viewers-propose-businesses-..." - the seats ranked the last whole epoch and said the address of its last probe, a
     // quick tunnel gone with the reboot, while the running epoch's probes already held the gateway's signed new claim). The ranking is the
     // measured epoch's; the address is the newest signed one

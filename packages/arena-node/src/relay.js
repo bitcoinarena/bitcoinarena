@@ -9,9 +9,9 @@ import { WebSocket } from 'ws';
 const base = (relay) => String(relay).replace(/\/+$/, '');
 
 /**
- * WHERE A ROUND'S RELAYS ARE NOW (kanban #808, the owner 2026-10-31: "immer die richtige IP, auch wenn sich der Tunnel geändert hat"). The contract's
+ * WHERE A ROUND'S RELAYS ARE NOW (kanban #808, 2026-10-31: "immer die richtige IP, auch wenn sich der Tunnel geändert hat"). The contract's
  * publication_relays[] is signed for the day, so an address in it outlives the machine or tunnel it named (5e7fe7e0 VOID at 07:19Z: all seven on the
- * test host whose forwards had stopped, 0 of 5 postings). `announced` is the committee at the addresses it announces now (Verifier.peersOf, the
+ * macOS whose forwards had stopped, 0 of 5 postings). `announced` is the committee at the addresses it announces now (Verifier.peersOf, the
  * address book of kanban #757): every seat is a relay door, so these are relays too. The listed ones first, each address once.
  */
 export const relayTargets = (listed, announced) => [...new Map([...(listed || []), ...(announced || [])].map((r) => [base(r), r])).values()];

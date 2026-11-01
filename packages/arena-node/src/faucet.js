@@ -34,7 +34,7 @@ export function faucetDecide(ask, book, { nowMs = Date.now(), maxSats = FAUCET_M
   return { ok: true, sats };
 }
 
-// THE PLAYERS' FAUCET (kanban #926, the owner 2026-11-01: "jeder neue Account ... bekommt 500 satoshis", "Use faucet to get 250 Sats"): test sats into a
+// THE PLAYERS' FAUCET (kanban #926, 2026-11-01: "jeder neue Account ... bekommt 500 satoshis", "Use faucet to get 250 Sats"): test sats into a
 // player's wallet over Lightning, on testnet only. The app makes an invoice for its own wallet and this pays it (measured 2026-11-01: 501,000 msat
 // through gateway B credited 501,000 msat, 251,000 through gateway A 251,000: the invoice is the amount the player is told).
 export const PLAYER_GRANTS = Object.freeze({ welcome: Object.freeze({ sats: 500, invoiceSats: 500 }), topup: Object.freeze({ sats: 250, invoiceSats: 250 }) });
@@ -66,3 +66,14 @@ export function playerGrantTotals(book, nowMs = Date.now()) {
   const part = (kind) => { const rows = paid.filter((p) => p.kind === kind); return { ...sum(rows), today: sum(rows.filter((p) => Math.floor(p.atMs / DAY_MS) === day)) }; };
   return { newAccounts: part('welcome'), returning: part('topup'), totalSats: paid.reduce((n, p) => n + p.sats, 0), dayCapSats: PLAYER_DAY_CAP_SATS };
 }
+
+// WHO SITS ALONE AT A TABLE (kanban #926): the page says which head-to-head round it is looking at; the test opponent reads this. In memory, a few seconds' worth, one row per round.
+export const OPPONENT_WANT_MS = 12000, OPPONENT_WANTS_MOST = 64;
+export function opponentWant(wants, round, nowMs = Date.now()) {
+  if (!/^[0-9a-f]{64}$/.test(String(round || ''))) return { ok: false, why: 'a round is 32 bytes of hex' };
+  for (const [k, at] of wants) if (nowMs - at > OPPONENT_WANT_MS) wants.delete(k);
+  if (!wants.has(round) && wants.size >= OPPONENT_WANTS_MOST) return { ok: false, why: 'too many tables just now' };
+  wants.set(round, nowMs);
+  return { ok: true };
+}
+export const opponentWants = (wants, nowMs = Date.now()) => [...wants].filter(([, at]) => nowMs - at <= OPPONENT_WANT_MS).sort((a, b) => b[1] - a[1]).map(([round, at]) => ({ round, agoMs: nowMs - at }));

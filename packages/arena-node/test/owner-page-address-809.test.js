@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OWNER PAGE FINDS THE NODE AT ITS NEWEST ADDRESS THAT ANSWERS, AND SAYS WHAT IT WAITS FOR (kanban #809, the owner 2026-10-30 after
+// THE OWNER PAGE FINDS THE NODE AT ITS NEWEST ADDRESS THAT ANSWERS, AND SAYS WHAT IT WAITS FOR (kanban #809, 2026-10-30 after
 // 2026.1.9.20: "After startup of .20 it shows loading for a really really long time. There should be a progress bar" - it loaded after
 // 2-3 minutes). test host seats 1 and 2, outside the census the node announces to, still named its quick tunnel of 10:14Z, gone since a
 // restart; they answered first, the page took the first answer and asked that dead address until the browser gave up.
@@ -60,7 +60,7 @@ test('the page shows a bar with its step and seconds, not one word, until the no
   assert.match(HTML, /\.boot-bar\{/, 'its own styles');
 });
 
-test('a bar counts the answers from the node while the page first loads, then goes (the owner: "Needs a progress bar while it\'s loading from the node")', async () => {
+test('a bar counts the answers from the node while the page first loads, then goes (Alice: "Needs a progress bar while it\'s loading from the node")', async () => {
   const start = HTML.indexOf('const LOAD = {'), end = HTML.indexOf('// never longer than two minutes');
   assert.ok(start > 0 && end > start);
   const code = HTML.slice(start, HTML.indexOf('\n}', end) + 2);

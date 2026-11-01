@@ -123,7 +123,7 @@ export function contractArgs(f) {
 // the federation's fee rule, guardians and gateways are its config, and the paid entry door waited on a fresh read of the
 // fee rule whenever the minute had run out - POST /entry 0.29-0.90 s at seat 1, 0 ms of it on the loop. Only the first
 // read ever waits; a failed re-read keeps the answer held.
-// AND THE LAST GOOD ANSWER OUTLIVES A RESTART (kanban #830, the owner 2026-10-31: "Das musst du auch lösen dass das nicht wieder passiert"): a
+// AND THE LAST GOOD ANSWER OUTLIVES A RESTART (kanban #830, 2026-10-31: "Das musst du auch lösen dass das nicht wieder passiert"): a
 // join was refused because a restarted seat had nothing held and its first gateway read timed out after 60 s. `held` gives what the last run kept on disk;
 // only a node with nothing there waits for its first read.
 const READ_TIMEOUT_MS = 20000;            // a read asked the old way, past the server's 10 s: a join waits on it
@@ -319,7 +319,7 @@ export function federationPorts({ home, bin, baseDir, inviteOf = () => null, mak
   copyDir = (from, to) => cpSync(from, to, { recursive: true, filter: (src) => !/client\.db\.lock$/.test(src) }) }) {
   // A READ COPY OF ITS OWN FOR EVERY OTHER FEDERATION (kanban #586, measured 2026-10-23 15:53Z under 20 market bots: the test host seats'
   // locks in federation 4dc88be7 were checked one run per question - `arena-stake-lock --mode status` at 30-85 % CPU each, the
-  // test host at load 128): the joined directory is copied once beside it, `<dir>.read`, and its read-only questions (status,
+  // macOS at load 128): the joined directory is copied once beside it, `<dir>.read`, and its read-only questions (status,
   // guardians, gateways, fees) go through one long-lived server there, as the home federation's do; send and settle stay on the
   // joined directory. No copy (a full disk, a test): every question the old way, as before.
   const readCopyOf = (dir) => {

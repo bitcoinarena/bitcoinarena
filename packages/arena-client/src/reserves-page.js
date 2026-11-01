@@ -29,7 +29,7 @@ export async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher
 }
 
 /**
- * THE FEDERATIONS NO ENTRY CAN PAY INTO (the owner 2026-10-30, the second time at a table of federation 337ae01a: "Order not placed: this round pays
+ * THE FEDERATIONS NO ENTRY CAN PAY INTO (2026-10-30, the second time at a table of federation 337ae01a: "Order not placed: this round pays
  * the protocol reserves, and none of the round's 14 signer nodes names a reserve key"): a federation at least `minAnswers` nodes list on
  * GET /reserves and none names a key for. Too few answers, or a page that could not ask, holds nothing back. Answers a Set of federation hex.
  */
@@ -48,7 +48,7 @@ export function keylessFederations(answers, { minAnswers = 3 } = {}) {
 }
 
 /**
- * THE FEDERATIONS THE PAGE DOES NOT PAY INTO (the owner 2026-10-30: "Wenn die Federation nicht aktiv ist, soll er in der UI auch nicht versuchen mit der zu
+ * THE FEDERATIONS THE PAGE DOES NOT PAY INTO (2026-10-30: "Wenn die Federation nicht aktiv ist, soll er in der UI auch nicht versuchen mit der zu
  * bezahlen"): `statuses`, the Map of ARENA_FED_LOADS, federation -> { status, allows }. One whose record this page could not verify, or that takes no
  * entries. A federation not read yet is not named, and when no federation at all stands OPEN the read failed, not the network: none is named.
  */
@@ -59,7 +59,7 @@ export function inactiveFederations(statuses) {
 }
 
 /**
- * WHY THIS WALLET CANNOT PLAY WITH ITS BALANCE (the owner 2026-10-30: "If it's unavailable to play because the funds are locked it should say so in a
+ * WHY THIS WALLET CANNOT PLAY WITH ITS BALANCE (2026-10-30: "If it's unavailable to play because the funds are locked it should say so in a
  * message"): the part of the wallet held in federations no entry can pay into. `parts`: the wallet's [{ federation, sats }]. Null when none is.
  */
 export function keylessFundsLine({ parts, keyless, expected = {}, tip = 0, blockMinutes = 10 } = {}) {
@@ -70,7 +70,7 @@ export function keylessFundsLine({ parts, keyless, expected = {}, tip = 0, block
   if (!stuck.length) return null;
   const sats = stuck.reduce((n, p) => n + Number(p.sats), 0);
   const where = [...new Set(stuck.map((p) => String(p.federation).slice(0, 8)))].join(', ');
-  // WHEN IT CAN BE PLAYED (the owner 2026-10-30: "Sage, ab wann es funktionieren wird in der Meldung"): the block the site names for the federation
+  // WHEN IT CAN BE PLAYED (2026-10-30: "Sage, ab wann es funktionieren wird in der Meldung"): the block the site names for the federation
   const at = Math.max(0, ...stuck.map((p) => Number(expected[fullOf(p.federation)]) || 0));
   const left = at && tip ? at - tip : 0;
   const hours = left > 0 ? Math.max(1, Math.round((left * blockMinutes) / 60)) : 0;

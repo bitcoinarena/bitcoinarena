@@ -10,7 +10,7 @@
 export const ASK_MS = 10000, AT_ONCE = 6;
 
 /**
- * A FEDERATION TEMPORARILY UNAVAILABLE (kanban #819, the owner 2026-10-30: "muss die stuck federation auch richtig anzeigen dass sie temporär nicht
+ * A FEDERATION TEMPORARILY UNAVAILABLE (kanban #819 2026-10-30: "muss die stuck federation auch richtig anzeigen dass sie temporär nicht
  * verfügbar ist, und sagen wann sie wieder funktioniert (block und zeit)"): OPEN on its record, but no seat names a reserve key for it, so no paid
  * entry can pay in. `reserves`: GET /reserves; `expected`: daily.json's testnet.reserveExpected, { federation: block }. A Map of federation ->
  * { block, atMs } (either null when the site names no block, or the tip is unknown). 10 minutes a block is an estimate.

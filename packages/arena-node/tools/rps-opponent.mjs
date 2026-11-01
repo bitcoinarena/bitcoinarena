@@ -1,0 +1,217 @@
+#!/usr/bin/env node
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+/*
+ * A TEST OPPONENT FOR ROCK PAPER SCISSORS (kanban #926): measured 2026-11-01, a stranger alone at a table paid and saw no result. This is one more player: it asks the page's
+ * want list which table has somebody at it, says it is there, and once a player has paid into that round it enters as any player does - the same stake, fee, lock, entry and reveal, under the round's own rules. Its move is
+ * drawn evenly. It decides nothing, and its name says what it is ("Test bot").
+ *
+ *   NODES=<seat url,...> WANTS=<faucet url>/opponent INVITES=<invite file,...> WASM_PKG=<dir> DIR=<its wallets and keys> node tools/rps-opponent.mjs
+ *   [MOST_PER_HOUR=120] [MIN_LEFT_MS=900] [ONCE=1]
+ *   FUND=<sat> instead: prints one invoice per federation (the wallets' top-up, paid from outside), waits for them, and exits.
+ *
+ * WALLETS: DIR/wallet-<federation>.json, kept across runs. DIR/keys.jsonl: each entry's player key and locks, as tn4-rps-paid's KEYS_FILE, for tn4-collect.mjs.
+ */
+import { readFileSync, writeFileSync, appendFileSync, copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomBytes, randomInt } from 'node:crypto';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { routeGuardianSockets } from './guardian-ws-local.mjs';
+import { feldmanGroup } from '../src/curve.js';
+import { lockFieldsToJson } from '../src/stake-lock-signer-node.js';
+import { attestedClaimKey } from '../../arena-client/src/join.js';
+import { pageCurve } from '../../arena-client/src/page-curve.js';
+import { hiddenMove, moveCommitment, revealMove } from '../../arena-client/src/head-to-head.js';
+import { decodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
+import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
+import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
+import { entrySplit, lockEntry } from './entry-locks.mjs';
+import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
+import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
+import { worldIsShared } from '../../arena-protocol/src/seed.js';
+import { sharedWorldOf } from '../../arena-protocol/src/known-game.js';
+import { matchProofId, presenceId } from '../../arena-protocol/src/match.js';
+import { encodeLobbyName, lobbyNameId } from '../../arena-protocol/src/lobby-name.js';
+import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+
+const env = process.env;
+const nodes = String(env.NODES || '').split(',').map((u) => u.trim().replace(/\/+$/, '')).filter(Boolean);
+const DIR = env.DIR, NAME = 'Test bot';
+const MOST_PER_HOUR = Number(env.MOST_PER_HOUR || 120), MIN_LEFT_MS = Number(env.MIN_LEFT_MS || 900);
+const log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
+const rand = (n) => new Uint8Array(randomBytes(n));
+const scalar = () => { for (;;) { const s = rand(32); const v = scalarFrom32(s); if (v > 0n && v < FIELD) return s; } };
+const evenPlayer = () => { let k; do { k = secp256k1.utils.randomSecretKey(); } while (secp256k1.getPublicKey(k, true)[0] !== 0x02); return { secret: k, pubkey: schnorr.getPublicKey(k) }; };
+mkdirSync(DIR, { recursive: true });
+
+if (typeof globalThis.window === 'undefined') globalThis.window = globalThis;
+routeGuardianSockets();
+const esm = join(tmpdir(), `blwp-lock-client-${process.pid}.mjs`);
+copyFileSync(`${env.WASM_PKG}/blwp_lock_client.js`, esm);
+const wasm = await import(esm);
+await wasm.default({ module_or_path: readFileSync(`${env.WASM_PKG}/blwp_lock_client_bg.wasm`) });
+const { LockClient } = wasm;
+
+// ONE WALLET PER FEDERATION, its secret and notes on disk: a restart keeps the money
+const wallets = new Map();
+for (const file of String(env.INVITES || '').split(',').filter(Boolean)) {
+  const invite = readFileSync(file, 'utf8').replace(/["\s]/g, '');
+  const fed = String(LockClient.federationIdOf(invite)).toLowerCase();
+  const path = join(DIR, `wallet-${fed.slice(0, 16)}.json`);
+  const kept = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : { secret: toHex(rand(32)), notes: [] };
+  const held = new Map(kept.notes);
+  const flush = () => writeFileSync(path, JSON.stringify({ secret: kept.secret, notes: [...held] }), { mode: 0o600 });
+  const store = { entries: () => JSON.stringify([...held]), put: (k, v) => { held.set(k, v); flush(); }, remove: (k) => { held.delete(k); flush(); } };
+  const lc = await LockClient.join(invite, LockClient.federationIdOf(invite), kept.secret, store);
+  flush();
+  wallets.set(fed, { lc, rule: JSON.parse(await lc.feeRule()) });
+  log({ step: 'wallet', federation: fed.slice(0, 8), balanceMsat: String(await lc.balanceMsat()) });
+}
+
+if (env.FUND) {
+  await Promise.all([...wallets].map(async ([fed, w]) => {
+    const rcv = JSON.parse(await w.lc.receive(String(BigInt(env.FUND) * 1000n), env.GATEWAY || ''));
+    log({ step: 'pay this', federation: fed.slice(0, 8), invoice: rcv.invoice });
+    const final = await w.lc.awaitReceive(rcv.operation);
+    log({ step: 'funded', federation: fed.slice(0, 8), final, balanceMsat: String(await w.lc.balanceMsat()) });
+  }));
+  process.exit(0);
+}
+
+// ITS IDENTITY, kept: one name and one score across rounds
+const idPath = join(DIR, 'identity.json');
+const identity = existsSync(idPath) ? fromHex(JSON.parse(readFileSync(idPath, 'utf8')).secret) : (() => { const k = evenPlayer().secret; writeFileSync(idPath, JSON.stringify({ secret: toHex(k) }), { mode: 0o600 }); return k; })();
+const identityKey = schnorr.getPublicKey(identity);
+
+const ms = (t) => Date.now() - t;
+// THE ENTRY'S SPLIT, KEPT (measured: 11.5 s, GET /reserves at 14 seats under load, in an 8 s round): it changes with the federation's reserve key, the stake and the sets the
+// contract names, and those are the same for a day's rounds. Asked again after SPLIT_KEEP_MS, behind the entries.
+const SPLIT_KEEP_MS = 3600000;
+const splits = new Map();
+const splitKey = (c) => [toHex(c.federationId), c.stakeMsat, toHex(c.donationSetId), toHex(c.gameId)].join(':');
+const readSplit = async (c, roundHex) => { const v = await entrySplit({ c, roundHex, nodes }); splits.set(splitKey(c), { v, at: Date.now() }); return v; };
+const splitFor = async (c, roundHex) => {
+  const k = splits.get(splitKey(c));
+  if (!k) return readSplit(c, roundHex);
+  if (Date.now() - k.at > SPLIT_KEEP_MS) readSplit(c, roundHex).catch(() => {});
+  return k.v;
+};
+async function enter(c, rid) {
+  const roundHex = toHex(rid), t0 = Date.now(), steps = {};
+  const w = wallets.get(toHex(c.federationId));
+  if (!w) return { ok: false, why: `no wallet in federation ${toHex(c.federationId).slice(0, 8)}` };
+  log({ step: 'entering', round: roundHex.slice(0, 8), leftMs: Number(c.entryCloseMs) - Date.now() });
+  const att = await attestedClaimKey({ round: { ...c, id: rid }, signerNodes: c.nodes, nodes, curve: pageCurve, timeoutMs: 6000 });
+  log({ step: 'claim key', ok: att.ok, ms: ms(t0), why: att.ok ? undefined : String(att.why).slice(0, 200) });
+  if (!att.ok) return { ok: false, why: `claim key: ${att.why}` };
+  steps.claimKey = ms(t0);
+  const gate = feeLockPays({ contract: c, fees: { ppm: BigInt(w.rule.fee_ppm), baseMsat: BigInt(w.rule.fee_base_msat) } });
+  const split = await splitFor(c, roundHex);
+  steps.split = ms(t0);
+  const me = evenPlayer();
+  const s = { p: scalar(), player: me.pubkey };
+  s.point = feldmanGroup.pointFromScalar(scalarFrom32(s.p) % FIELD);
+  // SUBMITTED, NOT WAITED FOR (as market-bot.mjs, kanban #601): the guardians' agreement took over 30 s from the test host, in an 8 s round. The entry goes in at once, its locks after it
+  const locks = await lockEntry({ lc: w.lc, c, split, stakePoint: s.point, player: s.player, claimPk: att.claimPk, gate, rand, expiry: Number(c.stakeExpiryBlocks), submitOnly: true });
+  const accepted = (locks.accepted || Promise.resolve()).then(() => { steps.accepted = ms(t0); });
+  steps.locked = ms(t0);
+  const needed = receiptsNeeded(c.settlementSlots ?? c.gameVerifySlots);
+  const e = rand(32);
+  const dealt = await dealHandout({ preimage: s.p, signerNodes: c.nodes, roundId: rid, playerPubkey: s.player, ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
+    coefficients: Array.from({ length: needed - 1 }, () => scalarFrom32(rand(32)) % FIELD), needed, curve: feldmanGroup });
+  const session = ed25519.utils.randomSecretKey();
+  const entry = { roundId: rid, playerPubkey: s.player, sessionPubkey: ed25519.getPublicKey(session), stakeCommitment: sha256(s.p), stakeMsat: BigInt(c.stakeMsat), feeMsat: split.feeMsat,
+    donationMsat: split.donationMsat, joinTick: 0, worldSecret: worldIsShared(c, sharedWorldOf(c.gameId)) ? new Uint8Array(32) : rand(32), vssSharesRef: handoutId(dealt.handout),
+    stakePoint: dealt.handout.commitments[0], ...locks.entryFields, claimKeyAttestationRef: att.ref };
+  const hidden = hiddenMove(randomInt(3), rand);      // evenly: rock, paper, scissors
+  entry.commit = moveCommitment({ roundId: rid, sessionPubkey: entry.sessionPubkey, move: hidden.move, salt: hidden.salt });
+  const eid = entryId(entry);
+  appendFileSync(join(DIR, 'keys.jsonl'), `${JSON.stringify({ at: new Date().toISOString(), round: roundHex, entry: toHex(eid), player: 'bot', secret: toHex(me.secret),
+    stake: `${toHex(locks.stake.outpoint.txid)}:${locks.stake.outpoint.outIdx}`, fee: locks.fee ? `${toHex(locks.fee.outpoint.txid)}:${locks.fee.outpoint.outIdx}` : null })}\n`);
+  const hand = locks.fee ? locks.fee.fields : null;
+  const said = await Promise.all(nodes.map(async (n) => {
+    const h = await fetch(`${n}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) }).catch(() => ({ status: 0 }));
+    const en = await fetch(`${n}/entry`, { method: 'POST', body: encodeEntryContract(entry) }).catch(() => ({ status: 0, text: async () => 'no answer' }));
+    return { node: n, handout: h.status, entry: en.status, why: en.text ? (await en.text()).trim().slice(0, 120) : '' };
+  }));
+  steps.entry = ms(t0);
+  // AND ITS LOCKS, once the federation holds them
+  const handed = accepted.then(() => Promise.all(nodes.map(async (n) => {
+    let l;
+    for (const until = Date.now() + 45000; ;) {
+      if (hand) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(hand)) }).catch(() => null);
+      l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(locks.stake.fields)) }).catch(() => ({ status: 0, clone: () => ({ text: async () => '' }) }));
+      if (l.status !== 409 || Date.now() >= until) break;
+      if (!/holds no lock/.test(await l.clone().text())) break;
+      await new Promise((ok) => setTimeout(ok, 700));
+    }
+    return l.status;
+  })));
+  handed.then((st) => log({ step: 'locks handed', round: roundHex.slice(0, 8), took: st.filter((x) => x >= 200 && x < 300).length, of: st.length, ms: { accepted: steps.accepted, all: ms(t0) } }), (e) => log({ step: 'locks not accepted', round: roundHex.slice(0, 8), why: String(e.message || e).slice(0, 200) }));
+  const took = said.filter((x) => x.entry >= 200 && x.entry < 300).length;
+  // ITS NAME, signed with the round key as a page's is
+  const rec = { roundId: rid, playerPubkey: s.player, identityPubkey: identityKey, name: NAME, atMs: BigInt(Date.now()) };
+  const nameBody = JSON.stringify({ record: toHex(encodeLobbyName(rec)), sig: toHex(schnorr.sign(lobbyNameId(rec), me.secret)) });
+  await Promise.all(nodes.map((n) => fetch(`${n}/name`, { method: 'POST', body: nameBody }).catch(() => null)));
+  log({ step: 'entered', round: roundHex.slice(0, 8), entry: toHex(eid).slice(0, 8), took, of: said.length, needed, ms: steps, leftAtEndMs: Number(c.entryCloseMs) - Date.now(),
+    ...(took < needed ? { refused: [...new Set(said.map((x) => x.why).filter(Boolean))].slice(0, 2) } : {}) });
+  // THE REVEAL AFTER THE ENTRY CLOSE, as a page's
+  const proof = { key: toHex(identityKey), sig: toHex(schnorr.sign(matchProofId({ roundId: rid, entryId: eid, identityKey }), identity)) };
+  setTimeout(async () => {
+    const r = await revealMove({ entryIdHex: toHex(eid), move: hidden.move, salt: hidden.salt, nodes, identity: proof }).catch((x) => [{ status: 0, why: x.message }]);
+    log({ step: 'revealed', round: roundHex.slice(0, 8), move: hidden.move, ok: r.filter((x) => x.status === 200 || x.status === 201).length, of: r.length });
+  }, Math.max(0, Number(c.entryCloseMs) - Date.now() + 600));
+  return { ok: took >= needed };
+}
+
+// A TABLE IS WATCHED WHILE THE PAGE SAYS SOMEBODY IS AT IT: the bot says it is there (free), and enters only once a player has paid into the round. Measured 2026-11-01: entering
+// every 8 s round while somebody looked would lock 100 sat a round for a day; an entry takes under 1.5 s, so it can follow the player's own.
+const seen = new Map();      // round hex -> { c, rid, told, entered }
+const hour = [];
+let busy = false;
+const contractOf = async (round) => {
+  let k = seen.get(round);
+  if (!k) {
+    // WHICHEVER SEAT ANSWERS FIRST (measured under a loaded test host: one seat took over 3 s, another 6 s, and an 8 s round was gone)
+    const bytes = await Promise.any(nodes.slice(0, 5).map(async (n) => { const r = await fetch(`${n}/round?id=${round}`, { signal: AbortSignal.timeout(6000) }); if (!r.ok) throw new Error(String(r.status)); return new Uint8Array(await r.arrayBuffer()); }));
+    const c = decodeRoundContract(bytes);
+    k = { c, rid: roundId(c), told: false, entered: false }; seen.set(round, k);
+  }
+  return k;
+};
+const sayHere = (round, k) => {
+  if (k.told) return;
+  k.told = true;
+  const body = JSON.stringify({ key: toHex(identityKey), sig: toHex(schnorr.sign(presenceId({ roundId: k.rid, identityKey }), identity)) });
+  for (const n of nodes) fetch(`${n}/here?round=${round}`, { method: 'POST', body, signal: AbortSignal.timeout(3000) }).catch(() => {});
+};
+const pass = async () => {
+  const wants = (await (await fetch(env.WANTS, { signal: AbortSignal.timeout(3000) })).json()).wants || [];
+  for (const w of wants.slice(0, 4)) {
+    const k = await contractOf(w.round);
+    const left = Number(k.c.entryCloseMs) - Date.now();
+    if (left <= 0 || k.entered) continue;
+    sayHere(w.round, k);
+    if (busy || left < MIN_LEFT_MS) continue;
+    // ANY SEAT THAT HOLDS THE PLAYER'S ENTRY IS ENOUGH: the first such answer goes, the slower seats are not waited for
+    const players = await Promise.any(nodes.slice(0, 5).map(async (n) => { const r = await fetch(`${n}/api/round-result?round=${w.round}`, { signal: AbortSignal.timeout(2500) }); const j = await r.json(); const m = ((j && j.players) || []).length; if (!m) throw new Error('none'); return m; })).catch(() => 0);
+    if (players !== 1) continue;
+    const now = Date.now();
+    while (hour.length && now - hour[0] > 3600000) hour.shift();
+    if (hour.length >= MOST_PER_HOUR) { log({ step: 'hourly limit' }); return; }
+    k.entered = true; hour.push(now); busy = true;
+    log({ step: 'a player paid', round: w.round.slice(0, 8), leftMs: Number(k.c.entryCloseMs) - Date.now() });
+    enter(k.c, k.rid).catch((e) => log({ step: 'entry failed', round: w.round.slice(0, 8), why: String(e.message).slice(0, 200) })).finally(() => { busy = false; });
+    if (env.ONCE) { await new Promise((r) => setTimeout(r, 40000)); process.exit(0); }
+  }
+  if (seen.size > 2048) seen.clear();
+};
+// READ BEFORE THE FIRST PLAYER COMES, one round of each federation it pays in
+{ const rows = ((await (await fetch(`${nodes[0]}/rounds?next=60`, { signal: AbortSignal.timeout(60000) })).json()).rounds || []).filter((r) => /rock/.test((r.game && r.game.name) || ''));
+  for (const fed of wallets.keys()) { const r = rows.find((x) => String(x.federation || '').toLowerCase() === fed); if (!r) continue;
+    const c = decodeRoundContract(new Uint8Array(await (await fetch(`${nodes[0]}/round?id=${r.id}`)).arrayBuffer()));
+    const t = Date.now(); await readSplit(c, r.id).catch((e) => log({ step: 'split not read', why: e.message })); log({ step: 'split read', federation: fed.slice(0, 8), ms: ms(t) }); } }
+log({ step: 'watching', wants: env.WANTS, seats: nodes.length });
+for (;;) { await pass().catch((e) => log({ step: 'pass failed', why: String(e.message).slice(0, 120) })); await new Promise((r) => setTimeout(r, 400)); }

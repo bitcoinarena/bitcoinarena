@@ -278,7 +278,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
       self.timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: false) { _ in self.status() }
     }
   }
-  // MARK: every node on this macOS (kanban #713, 2026-10-26: "The App shows the status of ALL OF OUR nodes in a grid with links to all owners
+  // MARK: every node on this computer (kanban #713, 2026-10-26: "The App shows the status of ALL OF OUR nodes in a grid with links to all owners
   // dashboards. I must be logged into all of them with my seed so it's important that works")
   struct Node { let home: String; let instance: String; let version: String; let port: Int; let running: Bool }
   var nodes: [Node] = []
@@ -307,11 +307,11 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
   @objc func showNodes() {
     timer?.invalidate()
-    phase("Your nodes", "Reading every node on this macOS…", busy: true, color: .systemGray)
+    phase("Your nodes", "Reading every node on this computer…", busy: true, color: .systemGray)
     Helper.run(["nodes"]) { out, _ in
       self.nodes = Controller.parseNodes(out)
       let up = self.nodes.filter { $0.running }.count
-      self.phase("Your nodes", "\(self.nodes.count) node\(self.nodes.count == 1 ? "" : "s") on this macOS, \(up) running.", busy: false, color: up == self.nodes.count ? .systemGreen : .systemOrange)
+      self.phase("Your nodes", "\(self.nodes.count) node\(self.nodes.count == 1 ? "" : "s") on this computer, \(up) running.", busy: false, color: up == self.nodes.count ? .systemGreen : .systemOrange)
       self.buttons.arrangedSubviews.forEach { $0.removeFromSuperview() }
       var i = 0
       while i < self.nodes.count {
@@ -337,10 +337,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
       self.fit()
     }
   }
-  /// More nodes on this macOS (kanban #713, testnet4): how many, and Fedimint on a RAM disk; the installer then sets each one up in turn
+  /// More nodes on this computer (kanban #713, testnet4): how many, and Fedimint on a RAM disk; the installer then sets each one up in turn
   @objc func addNodes() {
     let a = NSAlert()
-    a.messageText = "Add nodes on this macOS"
+    a.messageText = "Add nodes on this computer"
     a.informativeText = "Testnet4 only. Each new node gets its own seed, owner key and bond, paid from your first node's wallet. Their setup pages open in your browser one after another."
     let label = NSTextField(labelWithString: "How many:"); label.frame = NSRect(x: 0, y: 34, width: 80, height: 22)
     let count = NSTextField(string: "1"); count.frame = NSRect(x: 84, y: 32, width: 60, height: 24)
@@ -358,7 +358,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSWindowDelegate {
       self.installing = true
       self.timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
         Helper.run(["adding"]) { st, _ in
-          if st.hasPrefix("running ") { self.detail.stringValue = "Each new node's setup page opens in your browser, one after another. \(st.dropFirst(8)) nodes on this macOS now." }
+          if st.hasPrefix("running ") { self.detail.stringValue = "Each new node's setup page opens in your browser, one after another. \(st.dropFirst(8)) nodes on this computer now." }
           else if st.hasPrefix("done") { self.timer?.invalidate(); self.installing = false; self.showNodes(); self.signInAll() }
           else { self.timer?.invalidate(); self.installing = false; self.failed("Adding nodes ended: " + String(st.dropFirst(6))) }
         }

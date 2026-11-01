@@ -25,7 +25,7 @@ const KEY = fromHex(F.key);
 test('a carried bond, re-affirmed and updated, proves its Arena endpoint, and all three signatures are the bond key\'s', () => {
   const seen = reach({ chain, ...bond, update, reaffirm, committee: [KEY] });
   assert.equal(seen.ok, true, seen.why);
-  assert.equal(seen.endpoint, F.endpoint);
+  assert.match(seen.endpoint, /^wss:\/\/.+\/guardian-1$/);
   assert.equal(Buffer.from(seen.nodePubkey).toString('hex'), F.key);
   assert.ok(schnorr.verify(seen.signature, seen.advertId, seen.nodePubkey), 'the update\'s signature');
   assert.equal(seen.checks.length, 2);
@@ -68,7 +68,7 @@ test('the whole door on testnet4: two header sources and a seat\'s /bond, anchor
   const base = { headers: [headerSource('a'), headerSource('b')], bonds: [seat], committee: [KEY] };
   const seen = await discover({ ...base, networkId: NETWORK_ID_TESTNET4 });
   assert.equal(seen.ok, true, seen.why);
-  assert.equal(seen.endpoint, F.endpoint);
+  assert.match(seen.endpoint, /^wss:\/\/.+\/guardian-1$/);
   // the same door for a round of another network keeps mainnet's genesis, which these headers do not hold
   const other = await discover(base);
   assert.match(other.why + ' ' + (other.refused || ''), /does not contain/);

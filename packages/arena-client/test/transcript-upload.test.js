@@ -42,7 +42,7 @@ test('safe once two nodes hold the same whole transcript; one, a short one or a 
   console.log('  ' + two.why + '\n  ' + one.why);
 });
 
-test('a round needs as many holders as settle it, and says the number (the owner 2026-10-30: "0 of 2 macht gar keinen sinn")', async () => {
+test('a round needs as many holders as settle it, and says the number (2026-10-30: "0 of 2 macht gar keinen sinn")', async () => {
   const fetcher = async () => new Response(new Uint8Array(1), { status: 200, headers: { 'x-ticks': '100', 'x-transcript-hash': 'ab'.repeat(32) } });
   const four = await secureTranscript({ roundId: RID, entryId: EID, nodes: ['http://a', 'http://b', 'http://c', 'http://d'], finalTick: 100, fetcher });
   assert.equal(four.safe, false); assert.equal(four.need, 5); assert.equal(four.holders.length, 4);

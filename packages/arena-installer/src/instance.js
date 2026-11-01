@@ -25,7 +25,7 @@ export function confAt(home) {
 }
 /**
  * THE DEFAULT SERVICE NAME TAKEN BY ANOTHER NODE (kanban #635, 2026-10-25: the owner's new install in ~/.arena-node wrote the agent
- * io.bitcoin-arena.node over the one of mactest12, another node on that test host, and removing his install took mactest12's seat down).
+ * io.bitcoin-arena.node over the one of mactest12, another node on that macOS, and removing his install took mactest12's seat down).
  * A new node - no arena.conf yet, no instance or port offset given - looks at the service file of each name in turn: the default, then
  * --2, --3, ... The first that does not exist, or names this node's own folder, is its name; its ports are 100 up per number. Windows
  * keeps the default (its tasks are not files). Answers { instance, offset }.

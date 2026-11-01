@@ -16735,10 +16735,10 @@ function lockSecretFor(seed, roundId) {
 }
 
 /**
- * A WRITE THE BROWSER REFUSES FOR ROOM (the owner 2026-10-30, order at "locking your stake": a wallet's write that throws QuotaExceededError ends in the lock
+ * A WRITE THE BROWSER REFUSES FOR ROOM (2026-10-30, order at "locking your stake": a wallet's write that throws QuotaExceededError ends in the lock
  * client's panic, and every wallet call of that page then hangs until a reload): `onStorageFull` frees what it can, and the write is tried once more.
  */
-// A WALLET'S KEYS AND VALUES, PACKED (kanban #883, the owner 2026-10-31, iPhone log: 4,992,831 characters in 3,759 keys, a deposit paid and never claimed): the client hands
+// A WALLET'S KEYS AND VALUES, PACKED (kanban #883, 2026-10-31, iPhone log: 4,992,831 characters in 3,759 keys, a deposit paid and never claimed): the client hands
 // hex, two characters a byte, and iOS Safari gives 5 million characters. 15 bits to a character is under a third of that, and nothing has to be deleted for it.
 const PACKED = '~';
 function packHex(hex) {
@@ -16805,7 +16805,7 @@ function packWallets(storage) {
 }
 let storageFull = null;
 function onStorageFull(fn) { storageFull = typeof fn === 'function' ? fn : null; }
-// A WRITE STILL REFUSED IS SAID (kanban #883, the owner 2026-10-31: "Du musst den Fehler abfangen damit es nicht silent failed"): the client panics in its own task and nothing reached the player
+// A WRITE STILL REFUSED IS SAID (kanban #883, 2026-10-31: "Du musst den Fehler abfangen damit es nicht silent failed"): the client panics in its own task and nothing reached the player
 let storageRefused = null;
 function onStorageRefused(fn) { storageRefused = typeof fn === 'function' ? fn : null; }
 function putRoomy(storage, key, value) {
@@ -16818,7 +16818,7 @@ function putRoomy(storage, key, value) {
 }
 
 /**
- * THE PLAYER'S WALLET KEEPS ITS ROOM (the owner 2026-10-30: "Your browser's storage is full", and 1000 sat paid but not claimed: each kept round's lock wallet
+ * THE PLAYER'S WALLET KEEPS ITS ROOM (2026-10-30: "Your browser's storage is full", and 1000 sat paid but not claimed: each kept round's lock wallet
  * takes ~150 KB, 50 kept rounds fill the 5 million characters a browser gives, and the next write of the player's wallet then ends its task). Past
  * LOCK_ROOM_CHARS a round's lock wallet goes on in memory: it is the seed's and the round's, and joined anew when needed. Safari gives half of Chrome's room.
  */
@@ -16895,7 +16895,7 @@ const PAYOUT_GRACE_MS = 600000;
 // A SEAT THAT NEVER ANSWERS IS A SEAT THAT SAID NOTHING (measured 2026-10-27: a market bot's collect waited 13 min on one
 // seat that took the connection and never answered): the reads collect makes of every seat give up after 15 s
 const SEAT_READ_MS = 15000;
-// BLOCKS AS TIME (kanban #827, the owner 2026-10-31: "Sag wann das ist, in Xh 3m ETA"): nobody reads a block height as a moment
+// BLOCKS AS TIME (kanban #827, 2026-10-31: "Sag wann das ist, in Xh 3m ETA"): nobody reads a block height as a moment
 const blocksAsTime = (blocks, secondsPerBlock = 600) => {
   const m = Math.max(1, Math.ceil((Number(blocks) * Number(secondsPerBlock)) / 60));
   return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
@@ -17080,7 +17080,7 @@ function tidyStorage(storage, { seeds = [], current = null, federations = [], he
     for (const k of ks) { bytes += (k.length + String(storage.getItem(k) || '').length) * 2; storage.removeItem(k); removed++; }
     wallets++;
   }
-  // A BROWSER STILL FULL (the owner 2026-10-30: "exceeded the quota" on the wallet of federation 4dc88be7 itself, 19 kept phrases: the wallet would not
+  // A BROWSER STILL FULL (2026-10-30: "exceeded the quota" on the wallet of federation 4dc88be7 itself, 19 kept phrases: the wallet would not
   // open, a paid deposit could not be claimed, the order hung): above `pressureChars` what can be had again from the seed goes too. A done round's
   // lock wallet at any age, then the database of a kept phrase that no tab plays with, that holds no known balance, has no e-cash on its way and no
   // deposit waiting in its federation; the phrase stays kept and is marked to recover, so its next open reads it back from the federation. The
@@ -26217,7 +26217,7 @@ async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher = (u, 
 }
 
 /**
- * THE FEDERATIONS NO ENTRY CAN PAY INTO (the owner 2026-10-30, the second time at a table of federation 337ae01a: "Order not placed: this round pays
+ * THE FEDERATIONS NO ENTRY CAN PAY INTO (2026-10-30, the second time at a table of federation 337ae01a: "Order not placed: this round pays
  * the protocol reserves, and none of the round's 14 signer nodes names a reserve key"): a federation at least `minAnswers` nodes list on
  * GET /reserves and none names a key for. Too few answers, or a page that could not ask, holds nothing back. Answers a Set of federation hex.
  */
@@ -26236,7 +26236,7 @@ function keylessFederations(answers, { minAnswers = 3 } = {}) {
 }
 
 /**
- * THE FEDERATIONS THE PAGE DOES NOT PAY INTO (the owner 2026-10-30: "Wenn die Federation nicht aktiv ist, soll er in der UI auch nicht versuchen mit der zu
+ * THE FEDERATIONS THE PAGE DOES NOT PAY INTO (2026-10-30: "Wenn die Federation nicht aktiv ist, soll er in der UI auch nicht versuchen mit der zu
  * bezahlen"): `statuses`, the Map of ARENA_FED_LOADS, federation -> { status, allows }. One whose record this page could not verify, or that takes no
  * entries. A federation not read yet is not named, and when no federation at all stands OPEN the read failed, not the network: none is named.
  */
@@ -26247,7 +26247,7 @@ function inactiveFederations(statuses) {
 }
 
 /**
- * WHY THIS WALLET CANNOT PLAY WITH ITS BALANCE (the owner 2026-10-30: "If it's unavailable to play because the funds are locked it should say so in a
+ * WHY THIS WALLET CANNOT PLAY WITH ITS BALANCE (2026-10-30: "If it's unavailable to play because the funds are locked it should say so in a
  * message"): the part of the wallet held in federations no entry can pay into. `parts`: the wallet's [{ federation, sats }]. Null when none is.
  */
 function keylessFundsLine({ parts, keyless, expected = {}, tip = 0, blockMinutes = 10 } = {}) {
@@ -26258,7 +26258,7 @@ function keylessFundsLine({ parts, keyless, expected = {}, tip = 0, blockMinutes
   if (!stuck.length) return null;
   const sats = stuck.reduce((n, p) => n + Number(p.sats), 0);
   const where = [...new Set(stuck.map((p) => String(p.federation).slice(0, 8)))].join(', ');
-  // WHEN IT CAN BE PLAYED (the owner 2026-10-30: "Sage, ab wann es funktionieren wird in der Meldung"): the block the site names for the federation
+  // WHEN IT CAN BE PLAYED (2026-10-30: "Sage, ab wann es funktionieren wird in der Meldung"): the block the site names for the federation
   const at = Math.max(0, ...stuck.map((p) => Number(expected[fullOf(p.federation)]) || 0));
   const left = at && tip ? at - tip : 0;
   const hours = left > 0 ? Math.max(1, Math.round((left * blockMinutes) / 60)) : 0;
@@ -29513,7 +29513,7 @@ async function roundVerdict({ roundId, nodes, committee, verify, threshold = nul
 
 
 
-// AS MANY AS SETTLE THE ROUND (the owner 2026-10-30: "0 of 2 macht gar keinen sinn"): the two was the two-node test network's; a run fewer than five signer nodes hold cannot settle
+// AS MANY AS SETTLE THE ROUND (2026-10-30: "0 of 2 macht gar keinen sinn"): the two was the two-node test network's; a run fewer than five signer nodes hold cannot settle
 const NODES_HOLDING = SETTLEMENT_THRESHOLD;
 
 /**
@@ -30652,7 +30652,7 @@ function approvalWords(f, tooOld = []) {
 }
 
 /**
- * THE SETTLEMENT FACTS IN WORDS A PLAYER READS (kanban #821, the owner 2026-10-30, of "Settled by 5 of 9 drawn (d5faf2, ...) · 1 operator (2of2) · both
+ * THE SETTLEMENT FACTS IN WORDS A PLAYER READS (kanban #821, 2026-10-30, of "Settled by 5 of 9 drawn (d5faf2, ...) · 1 operator (2of2) · both
  * committees 5/5 · no operator playing · left out,...": "Die Meldung ist eher verwirrend"). `facts`: the lobby line from "signer nodes" on. The
  * whole line stays one tap away; one operator behind every node is said, never hidden.
  */
@@ -30806,7 +30806,7 @@ function nextRoundAfter(played, rows, nowMs = Date.now()) {
   const start = Number(played.startTimeMs);
   const candidates = (rows || []).filter((r) => r && r.joinable
     && !!r.free === (stake === 0n) && (r.free || big(r.stakeMsat) === stake)
-    // A ROUND ALREADY RUNNING IS NOT ENTERED BY ITSELF (kanban #827, the owner 2026-10-31: "wenn man zum Ziel kommt werde ich zum Anfang zurück katapultiert"):
+    // A ROUND ALREADY RUNNING IS NOT ENTERED BY ITSELF (kanban #827, 2026-10-31: "wenn man zum Ziel kommt werde ich zum Anfang zurück katapultiert"):
     // a late join starts the core the moment it opens, so the truck left the goal for the next round's bay under the result card. Late join stays what PLAY in the lobby does.
     && Number(r.startTimeMs) > start && Number(r.startTimeMs) > nowMs && Number(r.entryCloseMs) > nowMs + NEXT_ROUND_MARGIN_MS);
   candidates.sort((a, b) => Number(a.startTimeMs) - Number(b.startTimeMs));
@@ -34687,7 +34687,7 @@ function oneTilePerGame(games) {
     const shown = versions[0];
     // `older`: the other versions, each with its own info - a description its developer signed for that version's id, which
     // the tile shows while the shown version carries none that stands (checkedGameInfoOfTile)
-    // WHAT THE LOBBY LISTS, THE TILE COUNTS (the owner 2026-10-31: "keine Runden fuer next block", while the seats held v6's rounds and hosted v7
+    // WHAT THE LOBBY LISTS, THE TILE COUNTS (2026-10-31: "keine Runden fuer next block", while the seats held v6's rounds and hosted v7
     // with none): Next Block's lobby shows every version's rounds (ARENA_GAME_IDS), so its tile adds them up
     const live = shown.name === 'nextblock' && shown.live ? { live: versions.reduce((n, g) => ({ rounds: n.rounds + (Number(g.live && g.live.rounds) || 0), players: n.players + (Number(g.live && g.live.players) || 0) }), { rounds: 0, players: 0 }) } : {};
     out.push(Object.assign({}, shown, live, { versions: versions.map((g) => g.id), older: versions.filter((g) => g !== shown) }));

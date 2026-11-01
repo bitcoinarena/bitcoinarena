@@ -165,7 +165,7 @@ test('the used setup link in a browser that holds its session goes to the setup 
   assert.equal((await stranger.get(`/?t=${token}`)).status, 403, 'another browser with the used link: refused');
 });
 
-// A PORT ANOTHER PROGRAM HOLDS (kanban #635, the owner's playtest 2026-10-25: his test host's own testnet4 Core held 48342, the installer's Core
+// A PORT ANOTHER PROGRAM HOLDS (kanban #635, the owner's playtest 2026-10-25: his macOS's own testnet4 Core held 48342, the installer's Core
 // exited 26 times - "Binding RPC on address 127.0.0.1 port 48342 failed" - and the page said "bitcoind is starting (no cookie yet)")
 test('free ports are chosen, a Core whose port is taken says so, and the status moves it to free ports and starts it again', async (t) => {
   const { freeCorePorts, coreFailure } = await import('../src/bitcoind.js');

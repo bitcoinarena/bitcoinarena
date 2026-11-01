@@ -47,3 +47,16 @@ test('the players\' faucet: a welcome once, three top-ups a day, an IP and a day
   assert.deepEqual([t.newAccounts.grants, t.newAccounts.sats, t.newAccounts.today.grants, t.returning.grants, t.returning.accounts, t.totalSats], [2, 2 * W, 1, 2, 1, 2 * W + 2 * T]);
   assert.equal(JSON.stringify(t).includes(a), false, 'no account in the totals');
 });
+
+test('the opponent\'s want list: newest first, gone after its time, bounded, and only a round id', async () => {
+  const { opponentWant, opponentWants, OPPONENT_WANT_MS, OPPONENT_WANTS_MOST } = await import('../src/faucet.js');
+  const w = new Map(), a = 'a'.repeat(64), b = 'b'.repeat(64);
+  assert.equal(opponentWant(w, 'nope', 1000).ok, false);
+  assert.equal(opponentWant(w, a, 1000).ok, true);
+  assert.equal(opponentWant(w, b, 2000).ok, true);
+  assert.deepEqual(opponentWants(w, 2500).map((x) => x.round), [b, a]);
+  assert.deepEqual(opponentWants(w, 1000 + OPPONENT_WANT_MS + 1).map((x) => x.round), [b]);
+  const many = new Map();
+  for (let i = 0; i < OPPONENT_WANTS_MOST; i++) assert.equal(opponentWant(many, i.toString(16).padStart(64, '0'), 5000).ok, true);
+  assert.equal(opponentWant(many, a, 5000).ok, false);
+});

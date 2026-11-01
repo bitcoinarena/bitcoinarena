@@ -74,7 +74,7 @@ export class DepositModal extends React.Component {
   }
   takeRest(o) { this.active = o; this.bind(o); this.set({ rest: o, why: '', tab: null }); this.show(restPay(o)); }
 
-  // THE FAUCET (kanban #926, the owner 2026-11-01: "Use faucet to get 250 Sats als button"): this offer's invoice, paid by the faucet; the offer's own watch says when it landed
+  // THE FAUCET (kanban #926, 2026-11-01: "Use faucet to get 250 Sats als button"): this offer's invoice, paid by the faucet; the offer's own watch says when it landed
   async useFaucet() {
     const f = this.props.faucet, mine = ++this.token;
     this.fromFaucet = true;

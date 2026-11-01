@@ -7,6 +7,7 @@
 //   POST /faucet { address, sats }  -> { ok, txid, sats } or { ok: false, why }
 //   GET  /faucet                    -> { ok, balanceSats, maxSats, leftTodaySats }
 //   POST /player { kind: welcome | topup, account, invoice } -> { ok, sats } or { ok: false, why } (kanban #926: a player's test sats over Lightning)
+//   POST /opponent { round }  GET /opponent : a table with somebody at it (kanban #926), said by the page, read by tools/rps-opponent.mjs
 //   GET  /player                    -> what was given, new accounts and returning apart (no account, no address)
 //                                   FAUCET_LNCLI, FAUCET_PAYERS=<lnddir>|<rpc host:port>,... : the second pays when an invoice's gateway is on the first
 //
@@ -15,7 +16,7 @@
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 import { execFile } from 'node:child_process';
-import { faucetDecide, playerGrantDecide, playerGrantTotals, FAUCET_MAX_SATS, FAUCET_DAY_CAP_SATS, DAY_MS } from '../src/faucet.js';
+import { faucetDecide, playerGrantDecide, playerGrantTotals, opponentWant, opponentWants, FAUCET_MAX_SATS, FAUCET_DAY_CAP_SATS, DAY_MS } from '../src/faucet.js';
 
 const env = process.env;
 const port = Number(env.FAUCET_PORT || 18866);
@@ -82,12 +83,24 @@ async function grant(ask) {
   return { ok: false, why: 'the faucet could not pay just now: try again in a minute' };
 }
 
+const WANTS = new Map();
 const ORIGIN_OK = /^https:\/\/([a-z0-9-]+\.)?(testnet\.bitcoin-arena\.io|bitcoin-arena-site\.pages\.dev)$/;
 createServer((req, res) => {
   const origin = String(req.headers.origin || '');
   const cors = ORIGIN_OK.test(origin) ? { 'access-control-allow-origin': origin, vary: 'Origin' } : {};
   const send = (status, body) => { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...cors }); res.end(JSON.stringify(body)); };
   const path = new URL(req.url, 'http://x').pathname.replace(/\/+$/, '');
+  // A TABLE WITH SOMEBODY AT IT (kanban #926): said by the page, read by the test opponent
+  if (path === '/opponent' || path === '/faucet/opponent') {
+    if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '86400' }); return res.end(); }
+    if (req.method === 'GET') return send(200, { ok: true, wants: opponentWants(WANTS) });
+    if (req.method !== 'POST') return send(405, { ok: false, why: 'GET or POST' });
+    let raw = '';
+    req.setEncoding('utf8');
+    req.on('data', (c) => { raw += c; if (raw.length > 512) req.destroy(); });
+    req.on('end', () => { try { send(200, opponentWant(WANTS, JSON.parse(raw || '{}').round)); } catch { send(400, { ok: false, why: 'not JSON' }); } });
+    return undefined;
+  }
   if (path === '/player' || path === '/faucet/player') {
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'GET, POST', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '86400' }); return res.end(); }
     // THE TOTALS ARE PUBLIC (no account, no address): any node's dashboard reads them, from its own address

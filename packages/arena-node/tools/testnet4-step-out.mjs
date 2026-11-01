@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// STOPPED NODES STEP OUT OF THE CENSUS, THEIR BONDS UNTOUCHED (§5A.3; kanban #727, the owner 2026-10-27). A stopped test node whose bond
+// STOPPED NODES STEP OUT OF THE CENSUS, THEIR BONDS UNTOUCHED (§5A.3; kanban #727, 2026-10-27). A stopped test node whose bond
 // is still locked stays in every census and is drawn: on 2026-10-27 every Up/Down v23 round drew 0-2 live nodes of 9 and none was
 // seated. Each named store's node writes its newest advertisement again with serving = false (nothing else changes), as
 // testnet4-advert-update.mjs does with ARENA_ADVERT_SERVING=false for the seats - here for stores kept anywhere, one funding input
