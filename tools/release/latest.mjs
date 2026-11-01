@@ -14,7 +14,7 @@ if (!version || !/^[0-9a-f]{40}$/.test(commit || '') || !dir || !out) { console.
 const assets = Object.fromEntries(readFileSync(`${dir}/SHA256SUMS`, 'utf8').trim().split('\n').map((l) => l.trim().split(/\s+\*?/)).filter((p) => p.length === 2).map(([h, n]) => [n, h]));
 const tag = `v${version}`;
 const download = downloadFile ? JSON.parse(readFileSync(downloadFile, 'utf8')) : undefined;
-const latest = { network: 'testnet4', version, tag, commit, publishedMs: Date.now(), release: `https://github.com/bitcoinarena/bitcoin-arena/releases/tag/${tag}`, assets, ...(download ? { download } : {}) };
+const latest = { network: 'testnet4', version, tag, commit, publishedMs: Date.now(), release: `https://github.com/bitcoinarena/bitcoinarena/releases/tag/${tag}`, assets, ...(download ? { download } : {}) };
 mkdirSync(out, { recursive: true });
 writeFileSync(`${out}/latest.json`, JSON.stringify(latest, null, 2) + '\n');
 console.log(`${out}/latest.json: ${tag}, ${Object.keys(assets).length} assets`);
