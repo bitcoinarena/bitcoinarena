@@ -14,9 +14,10 @@
 // Each payment's txid is appended to FAUCET_PENDING, which the the test host's miner-C feeder (ops/pending-to-minerc.sh) lists for mining.
 //   FAUCET_PORT  FAUCET_RPC_URL (with /wallet/<name>)  FAUCET_COOKIE  FAUCET_BOOK  FAUCET_PENDING  [FAUCET_FEE_RATE sat/vB, 2]
 import { createServer } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs';
 import { execFile } from 'node:child_process';
-import { feedbackDecide, faucetDecide, playerGrantDecide, playerGrantTotals, opponentWant, opponentWants, FAUCET_MAX_SATS, FAUCET_DAY_CAP_SATS, DAY_MS } from '../src/faucet.js';
+import { refillDecide, feedbackDecide, faucetDecide, playerGrantDecide, playerGrantTotals, opponentWant, opponentWants, FAUCET_MAX_SATS, FAUCET_DAY_CAP_SATS, DAY_MS } from '../src/faucet.js';
 
 const env = process.env;
 const port = Number(env.FAUCET_PORT || 18866);
@@ -101,6 +102,31 @@ createServer((req, res) => {
     req.setEncoding('utf8');
     req.on('data', (c) => { raw += c; if (raw.length > 512) req.destroy(); });
     req.on('end', () => { try { const b = JSON.parse(raw || '{}'); send(200, opponentWant(WANTS, b.round, Date.now(), b.tapped === true)); } catch { send(400, { ok: false, why: 'not JSON' }); } });
+    return undefined;
+  }
+  if (path === '/refill') {
+    if (req.method !== 'POST') return send(405, { ok: false, why: 'POST' });
+    let raw = '';
+    req.setEncoding('utf8');
+    req.on('data', (c) => { raw += c; if (raw.length > 4096) req.destroy(); });
+    req.on('end', async () => {
+      try {
+        const b = JSON.parse(raw || '{}'), want = readFileSync(env.FAUCET_REFILL_TOKEN_FILE, 'utf8').trim(), got = Buffer.from(String(b.token || ''));
+        if (got.length !== want.length || !timingSafeEqual(got, Buffer.from(want))) return send(403, { ok: false, why: 'no' });
+        if (!/^lntb[0-9a-z]{20,1500}$/.test(String(b.invoice || ''))) return send(200, { ok: false, why: 'that is not a testnet invoice' });
+        const read = await lncli(PAYERS[0], ['decodepayreq', b.invoice]);
+        if (!read.ok) return send(200, { ok: false, why: 'that invoice cannot be read' });
+        const inv = JSON.parse(read.out), book = readBook(), d = refillDecide({ invoiceSats: Number(inv.num_satoshis) }, book);
+        if (!d.ok) return send(200, d);
+        book.refills = book.refills || []; book.refills.push({ sats: d.sats, atMs: Date.now(), hash: inv.payment_hash }); saveBook(book);
+        for (const payer of PAYERS) {
+          const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', b.invoice], 15000);
+          if (paid.timedOut || /Payment status: (SUCCEEDED|IN_FLIGHT)/.test(paid.out)) { console.log(`${new Date().toISOString()} refill ${d.sats} sat: ${inv.payment_hash.slice(0, 16)}`); return send(200, { ok: true, sats: d.sats }); }
+        }
+        const after = readBook(); after.refills = (after.refills || []).filter((r) => r.hash !== inv.payment_hash); saveBook(after);
+        send(200, { ok: false, why: 'could not pay just now' });
+      } catch { send(400, { ok: false, why: 'not JSON' }); }
+    });
     return undefined;
   }
   if (path === '/feedback') {
