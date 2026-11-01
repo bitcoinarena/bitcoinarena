@@ -1193,6 +1193,40 @@ export class LockSettlement {
   }
 
   /**
+   * A CLOSED LOCK ROUND NOBODY SETTLED IS ASKED AGAIN (kanban #803, measured 2026-11-01 on testnet4): at the close two seats built
+   * other bytes than the asker, the asker's one settle ended there, and no other path reaches a round with every run FINAL, no send
+   * plan row and no settlement row. Minutes later all six seats built the same bytes; the round sat at NONE until its locks
+   * would have run out. Every closed lock round of the last day, once a quarter of an hour has passed, is asked every 5 minutes.
+   * PAST THE TAKEOVER HEIGHT EVERY SEAT IS ON TURN, and two seats combining at once split the peers' one list for good ("keeps no second
+   * pair"), so each takes its own slot of the clock: place k of n asks only in the k-th of n windows of `everyMs`.
+   */
+  async retryUnsettled({ ageMs = 900000, windowMs = 86400000, everyMs = 300000 } = {}) {
+    if (this.#retrying) return [];
+    this.#retrying = true;
+    const out = [];
+    try {
+      const now = Number(this.now());
+      for (const k of this.#retriedAt.keys()) if (now - this.#retriedAt.get(k).at > windowMs) this.#retriedAt.delete(k);
+      for (const rid of this.round.closedLockRoundsUnsettled(now - windowMs, now - ageMs)) {
+        const k = toHex(rid);
+        const was = this.#retriedAt.get(k);
+        if (was && now - was.at < everyMs) continue;
+        const seats = this.round.signerNodes(rid);
+        if (!seats.some((s) => toHex(s) === toHex(this.round.pubkey))) continue;
+        const t = await this.turn(rid);
+        if (!t.mine || Math.floor(now / everyMs) % seats.length !== t.place % seats.length) continue;
+        const got = await this.settle(rid).catch((e) => ({ ok: false, why: e.message }));
+        const why = String(got.why || '');
+        this.#retriedAt.set(k, { at: now, why });
+        if (got.ok || !was || was.why !== why) out.push({ round: k, ok: !!got.ok, state: got.state || null, why });
+      }
+    } finally { this.#retrying = false; }
+    return out;
+  }
+  #retrying = false;
+  #retriedAt = new Map();   // round id hex -> { at, why } of its last ask (retryUnsettled)
+
+  /**
    * THE SETTLEMENT, made now with the other signer nodes if this signer node holds none: the
    * combined signature checked under the claim key, the intent written, the
    * transaction submitted, and the guardians' answer kept.
