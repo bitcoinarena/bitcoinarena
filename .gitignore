@@ -13,3 +13,4 @@ devnet-data/
 .env
 .env.*
 !.env.example
+.wrangler/
