@@ -6735,6 +6735,11 @@
       if (!file.ok) throw new Error(file.why);
       // WHAT THE CLIENT IS HANDED: the engine's (this page's lobby, pick sheet, wallet and seed), never a second copy of them
       const hereProofs = new Map();
+      const resultsSeen = new Map();   // round -> its two entries as a seat last said them
+      // BOTH MOVES ARE OPEN, SO THE ROUND IS DECIDED (kanban #947): the seats' signatures take seconds more; until they are in, the two uncovered moves say who won, by the same rule, and the signed result then stands in its place
+      const provisional = (held, moves) => { const [a, b] = held.entries, ma = moves[a.entry], mb = moves[b.entry]; if (!Number.isInteger(ma) || !Number.isInteger(mb)) return held;
+        const w = (ma - mb + 3) % 3, of = (e, won) => ({ ...e, provisional: true, signedBy: 1, outcome: won === false ? 'FAILED' : 'DELIVERED', score: won === true ? 2 : won === false ? 0 : 1 });
+        return { ...held, entries: [of(a, w === 0 ? null : w === 1), of(b, w === 0 ? null : w === 2)] }; };
       const revealsSeen = new Map();   // round -> the moves uncovered so far (kanban #947)   // this tab's signed presence, one per round's table (ARENA_GAME.here)
       window.ARENA_GAME = {
         game: { id: game.id, name: game.name, title: game.title, known: game.known, devKey: game.devKey, attested: game.attested,
@@ -6765,7 +6770,9 @@
         hide: (id, move) => { window.ARENA_HIDDEN_CHOSEN = { round: id, move };
           // UNCOVERED AS THE COUNTDOWN ENDS (kanban #947, the owner 2026-11-01: "Das Ergebnis sollte angezeigt werden wenn der countdown auf 0:00 geht"): not at the client's next once-a-second look
           { const row = (window.ARENA_LOBBY_ROWS || []).find((r) => r && r.id === id), left = row ? Number(row.entryCloseMs) - Date.now() : -1;
-            if (left > 0) setTimeout(() => { const g = window.ARENA_GAME; if (g && g.reveal) g.reveal(id).catch(() => {}); }, left + 120); }
+            // AND THE MOVES READ AT ONCE, so the client's next look finds them here and asks nobody
+            if (left > 0) setTimeout(async () => { const g = window.ARENA_GAME; if (!g || !g.reveal) return; g.reveal(id).catch(() => {});
+              for (let i = 0; i < 16; i++) { await new Promise((ok) => setTimeout(ok, 200)); const got = await g.reveals(id).catch(() => ({})); if (Object.keys(got).length >= 2) break; } }, left + 120); }
           // THE TAP, TOLD AT ONCE (kanban #926, measured 2026-11-01): an entry lands about 4 s after it, so an opponent that waited to see it had no time left in an 8 s round
           if (window.ARENA_OPPONENT_URL && window.ARENA_BOTS_ON()) fetch(window.ARENA_OPPONENT_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ round: id, tapped: true }), keepalive: true }).catch(() => {});
           return window.ARENA_LOBBY_ACT ? window.ARENA_LOBBY_ACT.join(id) : false; },
@@ -6808,11 +6815,13 @@
           for (const x of said) for (const p of (x || [])) if (p.key !== proof.key) others.set(p.key, { key: p.key, name: String(p.key).toLowerCase() === 'a8863eb8ea789678fc2348f5e402eff0870864f8646a10dcc6160f5f7fb293db' ? 'Test bot' : p.name });
           return { others: [...others.values()] };
         },
-        reveals: async (id) => { const h = readHidden().find((x) => x.roundIdHex === id); if (!h) return {}; const got = await ARENACLIENT.revealsOfRound({ roundIdHex: id, nodes: h.nodes }); revealsSeen.set(id, got); if (revealsSeen.size > 32) revealsSeen.delete(revealsSeen.keys().next().value); return got; },
+        reveals: async (id) => { const h = readHidden().find((x) => x.roundIdHex === id); if (!h) return {}; { const kept = revealsSeen.get(id); if (kept && Object.keys(kept).length >= 2) return kept; } const got = await ARENACLIENT.revealsOfRound({ roundIdHex: id, nodes: h.nodes }); revealsSeen.set(id, got); if (revealsSeen.size > 32) revealsSeen.delete(revealsSeen.keys().next().value); return got; },
         // THE ROUND AS ITS SEATS HOLD IT: its entries and each one's signed outcome, score and how many seats
         // signed it - the first seat that answers; null if none does. What a client shows as the result is this, not its own.
         result: async (id) => {
           const h = readHidden().find((x) => x.roundIdHex === id);
+          // THE FIRST SECONDS AFTER THE CLOSE, FROM WHAT IS HELD (kanban #947): both entries seen and both moves open, no seat need answer for the verdict; the seats are read again after them
+          { const kept = resultsSeen.get(id), moves = revealsSeen.get(id); if (kept && moves && Object.keys(moves).length >= 2 && h && Date.now() < Number(h.entryCloseMs) + 6000) return provisional(kept, moves); }
           let none = null, best = null;
           const needs = (game.manifest && game.manifest.resultType === 3) ? 2 : 1;
           for (const n of (h ? h.nodes : [])) {
@@ -6832,14 +6841,8 @@
               if (best.entries.length >= needs) break;
             } catch { /* the next seat */ }
           }
-          // BOTH MOVES ARE OPEN, SO THE ROUND IS DECIDED (kanban #947): the seats' signatures take seconds more; until they are in, the two uncovered moves say who won, by the same rule, and the signed result then stands in its place
-          if (best && needs === 2 && best.entries.length === 2 && !best.entries.some((e) => e.outcome && e.signedBy > 0)) {
-            const moves = revealsSeen.get(id) || {}, [a, b] = best.entries, ma = moves[a.entry], mb = moves[b.entry];
-            if (Number.isInteger(ma) && Number.isInteger(mb)) {
-              const w = (ma - mb + 3) % 3, of = (e, won) => ({ ...e, provisional: true, signedBy: 1, outcome: won === false ? 'FAILED' : 'DELIVERED', score: won === true ? 2 : won === false ? 0 : 1 });
-              best = { ...best, entries: [of(a, w === 0 ? null : w === 1), of(b, w === 0 ? null : w === 2)] };
-            }
-          }
+          if (best && needs === 2 && best.entries.length === 2) { resultsSeen.set(id, best); if (resultsSeen.size > 32) resultsSeen.delete(resultsSeen.keys().next().value); }
+          if (best && needs === 2 && best.entries.length === 2 && !best.entries.some((e) => e.outcome && e.signedBy > 0)) return provisional(best, revealsSeen.get(id) || {});
           return best || none;
         },
         // A MARKET'S CLIENT: place an order (the pick at most this price of the scale) through the same join and
