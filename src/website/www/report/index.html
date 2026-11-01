@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Testnet Report · Bitcoin Arena</title>
+<meta name="description" content="Who played Bitcoin Arena on testnet in the last 7 days, counted from the nodes' own signed results.">
+<script>/* kanban #943: a visit from X arrives through t.co with no campaign in its link: named here, before the stats script reads the address */if(/^https?:\/\/t\.co(\/|$)/.test(document.referrer)&&!/[?&]utm_/.test(location.search))history.replaceState(history.state,'',location.pathname+(location.search?location.search+'&':'?')+'utm_source=x&utm_medium=social&utm_content=profile'+location.hash)</script>
+  <script defer src="https://stats.bitcoinarena.io/script.js" data-website-id="4f00ff2b-032e-4683-890c-63458e0b178e" data-domains="bitcoinarena.io,www.bitcoinarena.io"></script>
+  <script>/* kanban #943: the campaign reached the stats when the script read the address; then it leaves the address, past the script's own history hook, so no second view */addEventListener('load',function(){var n=0,c=function(){if(!window.umami&&n++<50)return setTimeout(c,100);setTimeout(function(){var u=new URL(location.href),k=Array.from(u.searchParams.keys()).filter(function(x){return/^utm_/.test(x)});if(k.length){k.forEach(function(x){u.searchParams.delete(x)});History.prototype.replaceState.call(history,history.state,'',u.pathname+u.search+u.hash)}},500)};c()})</script>
+<style>
+  :root { --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --dim: #8b949e; --btc: #f7931a; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, sans-serif; padding: 32px 16px 56px; }
+  main { max-width: 640px; margin: 0 auto; }
+  a { color: var(--btc); } h1 { font-size: 30px; margin: 0 0 6px; } p { color: var(--dim); margin: 0 0 18px; }
+  .big { font: 700 56px/1 system-ui, sans-serif; color: var(--btc); } table { width: 100%; border-collapse: collapse; margin-top: 18px; background: var(--panel); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; } th { color: var(--dim); font-size: 13px; font-weight: 600; } tr:last-child td { border-bottom: 0; }
+</style>
+</head>
+<body>
+<main>
+  <p><a href="/">Bitcoin Arena</a></p>
+  <h1>Testnet report</h1>
+  <p>The last 7 days, counted from the nodes' own signed results. Team keys and the test opponent are left out. Testnet sats have no value.</p>
+  <div class="big" id="n">…</div>
+  <p>players finished a round</p>
+  <table><thead><tr><th>App</th><th>Players</th><th>Their rounds</th></tr></thead><tbody id="rows"></tbody></table>
+  <p id="when" style="margin-top:14px"></p>
+</main>
+<script>
+const TITLES = { nextblock: 'Tick Tock, Next Block', 'rock-paper-scissors': 'Rock Paper Scissors', 'btc-updown-15m': 'Bitcoin Up or Down' };
+fetch('/api/testers').then((r) => r.json()).then((d) => {
+  document.getElementById('n').textContent = d.testers.toLocaleString('en-US');
+  for (const g of d.games) { const tr = document.createElement('tr'); for (const v of [TITLES[g.game] || g.game, g.testers, g.rounds]) { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); } document.getElementById('rows').appendChild(tr); }
+  if (d.at) document.getElementById('when').textContent = 'Read ' + new Date(d.at).toISOString().slice(0, 16).replace('T', ' ') + ' UTC.';
+}).catch(() => { document.getElementById('n').textContent = '–'; });
+</script>
+</body>
+</html>
