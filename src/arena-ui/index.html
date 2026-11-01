@@ -6798,7 +6798,8 @@
           }));
           if (said.every((x) => x === null)) return null;
           const others = new Map();
-          for (const x of said) for (const p of (x || [])) if (p.key !== proof.key) others.set(p.key, { key: p.key, name: p.name });
+          // THE TEST OPPONENT BY ITS NAME FROM THE START (kanban #947): a table's presence names a key by its generated name, the bot's own name comes with its entry, seconds later
+          for (const x of said) for (const p of (x || [])) if (p.key !== proof.key) others.set(p.key, { key: p.key, name: String(p.key).toLowerCase() === 'a8863eb8ea789678fc2348f5e402eff0870864f8646a10dcc6160f5f7fb293db' ? 'Test bot' : p.name });
           return { others: [...others.values()] };
         },
         reveals: (id) => { const h = readHidden().find((x) => x.roundIdHex === id); return h ? ARENACLIENT.revealsOfRound({ roundIdHex: id, nodes: h.nodes }) : Promise.resolve({}); },
@@ -6806,22 +6807,26 @@
         // signed it - the first seat that answers; null if none does. What a client shows as the result is this, not its own.
         result: async (id) => {
           const h = readHidden().find((x) => x.roundIdHex === id);
-          let none = null;
+          let none = null, best = null;
+          const needs = (game.manifest && game.manifest.resultType === 3) ? 2 : 1;
           for (const n of (h ? h.nodes : [])) {
             try {
-              const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+              const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(best ? 2000 : 5000) });
               if (!r.ok) continue;
               const j = await r.json();
               // A SEAT THAT WAS NOT DRAWN ANSWERS 200 WITH NO PLAYERS (the owner 2026-10-30: "beide orders werden abgesendet aber es gibt kein Ergebnis": round
               // 1b995103 settled, 5 signed, and seven seats ahead of the signers in the list said nothing): the next seat is asked
               if (!(j.players || []).length) { none = none || { entries: [], match: null }; continue; }
               // AND THE SCORE ACROSS ROUNDS: the seat's signed match record, with whose identity is whose
-              return { entries: (j.players || []).map((p) => ({ entry: p.entry, outcome: p.outcome, score: p.score, signedBy: p.signedBy })),
+              const got = { entries: (j.players || []).map((p) => ({ entry: p.entry, outcome: p.outcome, score: p.score, signedBy: p.signedBy })),
                 match: j.match ? { identities: j.match.identities, names: j.match.names || [], score: j.match.score, played: j.match.played,
                   continued: !!j.match.previousRound, byEntry: j.match.players || {}, seat: j.match.seat, signature: j.match.signature } : null };
+              // A SEAT THAT HOLDS ONLY ONE OF TWO IS NOT THE ROUND (kanban #947, 2026-11-01: "das Ergebnis nicht konsistent"): an entry reaches the seats one by one, so the fullest answer counts
+              if (!best || got.entries.length > best.entries.length) best = got;
+              if (best.entries.length >= needs) return best;
             } catch { /* the next seat */ }
           }
-          return none;
+          return best || none;
         },
         // A MARKET'S CLIENT: place an order (the pick at most this price of the scale) through the same join and
         // lock as a pick; the round's cleared book; this tab's orders; cancel one (signed with its kept session key, posted to
