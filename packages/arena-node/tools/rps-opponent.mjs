@@ -39,7 +39,7 @@ import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 const env = process.env;
 const nodes = String(env.NODES || '').split(',').map((u) => u.trim().replace(/\/+$/, '')).filter(Boolean);
 const DIR = env.DIR, NAME = 'Test bot';
-const MOST_PER_HOUR = Number(env.MOST_PER_HOUR || 120), MIN_LEFT_MS = Number(env.MIN_LEFT_MS || 900);
+const MOST_PER_HOUR = Number(env.MOST_PER_HOUR || 400), MIN_LEFT_MS = Number(env.MIN_LEFT_MS || 900);
 const log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
 const rand = (n) => new Uint8Array(randomBytes(n));
 const scalar = () => { for (;;) { const s = rand(32); const v = scalarFrom32(s); if (v > 0n && v < FIELD) return s; } };
@@ -153,18 +153,21 @@ async function enter(c, rid, ready) {
   await new Promise((done) => { for (const p of posts) p.then((x) => { said.push(x); if (tookOf() >= needed || said.length === nodes.length) done(); }); });
   steps.entry = ms(t0);
   // AND ITS LOCKS, once the federation holds them
-  const handed = accepted.then(() => Promise.all(nodes.map(async (n) => {
+  const handed = accepted.then(() => Promise.all(nodes.map(async (n, i) => {
+    // ONLY THE SEATS THAT TOOK THE ENTRY, NOT THE OTHERS FOR 45 S (kanban #947, measured 2026-11-01: 14 seats, two asks each, every 0.7 s, after every round)
+    const inn = await posts[i];
+    if (!(inn.entry >= 200 && inn.entry < 300)) return 0;
     let l, fee = !hand;
     // BOTH LOCKS AT EVERY SEAT THAT TAKES THEM (kanban #926, measured 2026-11-01 13:20Z): a fee lock that reached a seat before the entry had a 404, was not sent again, and that seat
     // built another settlement than the rest, so the round did not settle
-    for (const until = Date.now() + 45000; ;) {
+    for (const until = Date.now() + 30000; ;) {
       if (hand && !fee) { const f = await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', signal: AbortSignal.timeout(POST_MS), body: JSON.stringify(lockFieldsToJson(hand)) }).catch(() => null); fee = !!f && f.status >= 200 && f.status < 300; }
       l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', signal: AbortSignal.timeout(POST_MS), body: JSON.stringify(lockFieldsToJson(locks.stake.fields)) }).catch(() => ({ status: 0, clone: () => ({ text: async () => '' }) }));
       const stakeIn = l.status >= 200 && l.status < 300;
       if ((stakeIn && fee) || Date.now() >= until) break;
       if (l.status === 409 && !/holds no lock/.test(await l.clone().text())) break;
       if (!stakeIn && l.status !== 409 && l.status !== 404 && l.status !== 0) break;
-      await new Promise((ok) => setTimeout(ok, 700));
+      await new Promise((ok) => setTimeout(ok, 2000));
     }
     return l.status;
   })));
@@ -239,5 +242,12 @@ const pass = async () => {
     const known = splits.get(splitKey(c));
     if (known && Date.now() - known.at < SPLIT_KEEP_MS) continue;
     const t = Date.now(); await readSplit(c, r.id).catch((e) => log({ step: 'split not read', why: e.message })); log({ step: 'split read', federation: fed.slice(0, 8), ms: ms(t) }); } }
+// THE NEXT ROUNDS' CONTRACTS, READ AHEAD (kanban #947, measured 2026-11-01: reading a round's contract when a player arrives took seconds under load, in an 8 s round the bot came a round late)
+const ahead = async () => {
+  const rows = await Promise.any(nodes.slice(0, 5).map(async (n) => { const r = await fetch(`${n}/rounds?next=16`, { signal: AbortSignal.timeout(6000) }); if (!r.ok) throw new Error(String(r.status)); return (await r.json()).rounds || []; }));
+  for (const r of rows.filter((x) => /rock/.test((x.game && x.game.name) || '') && wallets.has(String(x.federation || '').toLowerCase()) && !seen.has(x.id)).slice(0, 8)) await contractOf(r.id).catch(() => {});
+};
+setInterval(() => { ahead().catch(() => {}); }, 15000);
+ahead().catch(() => {});
 log({ step: 'watching', wants: env.WANTS, seats: nodes.length });
 for (;;) { await pass().catch((e) => log({ step: 'pass failed', why: String(e.message).slice(0, 120) })); await new Promise((r) => setTimeout(r, 200)); }

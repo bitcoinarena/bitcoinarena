@@ -4925,7 +4925,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!seatedHex.includes(me)) liquiditySaid(fid, epoch, `not signed here: this node is not one of the ${seatedHex.length} seated guardians`);
         // A LIST OF NOBODY IS NO LIST (kanban #926, measured 2026-11-01: seats restarted under load read 0 of 2 claims, signed an empty seating and kept it, so no list reached the threshold and rounds of that
         // epoch did not settle): one that names no provider is read again each pass, and nothing is signed until one does
-        if (seatedHex.includes(me) && !(ownLiquiditySeatings.get(`${fid}:${epoch}`)?.providers?.length)) {
+        if (seatedHex.includes(me) && !(liquiditySeatings.get(`${fid}:${epoch}`)?.providers?.length)) {   // until one stands: a list read under load may name fewer, and the guardians must agree
           const lnKeys = [], claims = [];
           for (const node of seatedHex) { const ep = endpointOf(node); const g = ep && await getJson(`${ep}/gateway-claim`); if (g && g.node === node && checkGatewayClaim(g, schnorrVerify).ok) lnKeys.push(g.lightningPubkey); }
           for (const e of entries) { const ep = endpointOf(toHex(e.pubkey)); const c = ep && await getJson(`${ep}/liquidity-claim`); if (c && c.node === toHex(e.pubkey) && checkLiquidityClaim(c, schnorrVerify).ok) claims.push(c); }
