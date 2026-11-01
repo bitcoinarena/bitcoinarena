@@ -60,7 +60,7 @@ function served({ heads = true } = {}) {
   const name = assetNameFor('0.1.1', 'linux', 'x64');
   const files = new Map([[`${name}.part00`, bytes.subarray(0, 1_200_000)], [`${name}.part01`, bytes.subarray(1_200_000, 2_400_000)], [`${name}.part02`, bytes.subarray(2_400_000)],
     ['SHA256SUMS', Buffer.from(`${createHash('sha256').update(bytes).digest('hex')}  ${name}\n`)], ['SHA256SUMS.sig', Buffer.from('sig')]]);
-  const base = 'https://testnet.bitcoin-arena.io/release/u/f/v0.1.1/';
+  const base = 'https://testnet.bitcoinarena.io/release/u/f/v0.1.1/';
   const fetcher = async (url, o = {}) => {
     const f = files.get(url.slice(base.length));
     if (!f) return new Response('', { status: 404 });

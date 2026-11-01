@@ -14,8 +14,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # /tmp - the copy of the last deployed page kept on persistent disk (ARENA_BUILD_DIR).
 BUILD="${ARENA_BUILD_DIR:-$ROOT/unity-proto/build/webgl}"
 PROJECT="${1:-bitcoin-arena-site}"
-# the old project is never deployed to again, in no form (2026-10-25): testnet.bitcoin-arena.io serves bitcoin-arena-site
-case "$PROJECT" in *btc-logistics-core*) echo "refused: $PROJECT is retired - testnet.bitcoin-arena.io serves bitcoin-arena-site" >&2; exit 1 ;; esac
+# the old project is never deployed to again, in no form (2026-10-25): testnet.bitcoinarena.io serves bitcoin-arena-site
+case "$PROJECT" in *btc-logistics-core*) echo "refused: $PROJECT is retired - testnet.bitcoinarena.io serves bitcoin-arena-site" >&2; exit 1 ;; esac
 
 if [ "$PROJECT" = "btc-logistics-war" ]; then
   echo "refusing: btc-logistics-war holds the last single-player version." >&2

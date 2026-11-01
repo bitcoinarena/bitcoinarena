@@ -85,7 +85,7 @@ async function grant(ask) {
 }
 
 const WANTS = new Map();
-const ORIGIN_OK = /^https:\/\/([a-z0-9-]+\.)?(testnet\.bitcoin-arena\.io|bitcoin-arena-site\.pages\.dev)$/;
+const ORIGIN_OK = /^https:\/\/([a-z0-9-]+\.)?(testnet\.bitcoin-?arena\.io|bitcoin-arena-site\.pages\.dev)$/;
 createServer((req, res) => {
   const origin = String(req.headers.origin || '');
   const cors = ORIGIN_OK.test(origin) ? { 'access-control-allow-origin': origin, vary: 'Origin' } : {};

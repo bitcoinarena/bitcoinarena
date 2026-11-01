@@ -11336,7 +11336,7 @@
   "params": "query since",
   "auth": "none",
   "returns": "200 application/json",
-  "purpose": "The ids of the transactions stored here since `since` (ms), oldest first, at most 500 - what explorer.bitcoin-arena.io polls (kanban #624).",
+  "purpose": "The ids of the transactions stored here since `since` (ms), oldest first, at most 500 - what explorer.bitcoinarena.io polls (kanban #624).",
   "audience": "player/page",
   "line": 7971,
   "summary": "Newest transactions",

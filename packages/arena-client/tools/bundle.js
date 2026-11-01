@@ -41,7 +41,7 @@ walk(SRC + 'client.js');
 // packages/nextblock/page/ghost-page.js, loaded by the page after this bundle, puts them on ARENACLIENT. §0A.2, kanban #525)
 // THE PROTOCOL RESERVES: the reserve key a version-11 entry pays and its mandatory split - the page asks before a lock
 walk(SRC + 'reserves-page.js');
-// AND PROJECT PROPOSALS: bitcoin-arena.io reads, signs and posts proposals and comments with this bundle
+// AND PROJECT PROPOSALS: bitcoinarena.io reads, signs and posts proposals and comments with this bundle
 walk(SRC + 'funding-page.js');
 walk(SRC + 'donation-gift-page.js');
 // WHEN THE NEXT ROUND STARTS (kanban #690): the market page's line under "No window is open"

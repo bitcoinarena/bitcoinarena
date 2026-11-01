@@ -134,7 +134,7 @@ export class CommunityCard extends React.Component {
   }
 }
 
-// YOUR REFERRAL LINK (kanban #681, 2026-10-26: "A user may also use a referrer code and link to testnet.bitcoin-arena.io. He gets 10% of
+// YOUR REFERRAL LINK (kanban #681, 2026-10-26: "A user may also use a referrer code and link to testnet.bitcoinarena.io. He gets 10% of
 // the node's income"): this wallet's own link - its key is the player's identity key, nothing to set up - Copy, and what it earned so
 // far as the page read it from the seats. Copy is the page's (it also names the program on the seats); the card says its answer.
 export class ReferralCard extends React.Component {

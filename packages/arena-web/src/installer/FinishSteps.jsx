@@ -363,7 +363,7 @@ const ends = (x, k = 10) => (x ? `${String(x).slice(0, k)}…${String(x).slice(-
 const REACH_NOTE = { direct: 'Directly, through your open port.', permanent: 'Your Cloudflare tunnel: a permanent name.', workers: 'Your Worker on workers.dev: a permanent name.',
   tailscale: 'Tailscale Funnel: a permanent name.', quick: 'A temporary tunnel: the name changes when it restarts. Set up a permanent one later on your owner page.' };
 
-export const OWNER_SITE = 'https://testnet.bitcoin-arena.io/owner/';
+export const OWNER_SITE = 'https://testnet.bitcoinarena.io/owner/';
 export class DoneStep extends React.Component {
   constructor(props) { super(props); this.state = { msg: null, finished: false }; this.finish = this.finish.bind(this); }
   async finish() {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // EVERY ORDER'S TRANSACTION, KEPT AT THE SEAT (kanban #624, 2026-10-24: "each order that was executed gets a transaction id in upordown
-// and in the account history. They point to explorer.bitcoin-arena.io which records all transactions ... Also records the timing info we
+// and in the account history. They point to explorer.bitcoinarena.io which records all transactions ... Also records the timing info we
 // already display there and all relevant data"; "In the logs we need the txid too so tracing delays is 100% possible"). A transaction's id is
 // its entry id - the hash of the entry contract, the same at every seat. Kept per id:
 //

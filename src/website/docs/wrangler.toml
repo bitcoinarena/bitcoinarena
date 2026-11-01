@@ -8,7 +8,9 @@ workers_dev = false
 # answers 301 to the same path there (worker.js)
 routes = [
   { pattern = "docs.bitcoin-arena.io", custom_domain = true },
+  { pattern = "docs.bitcoinarena.io", custom_domain = true },
   { pattern = "doc.bitcoin-arena.io", custom_domain = true },
+  { pattern = "doc.bitcoinarena.io", custom_domain = true },
 ]
 
 [assets]

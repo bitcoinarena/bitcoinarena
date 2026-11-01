@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PLAYER'S OWN REFERRAL LINK (kanban #681, 2026-10-26: "Add user support for referrer program, not just websites. A user may also use a
-// referrer code and link to testnet.bitcoin-arena.io. He gets 10% of the node's income"): the program's key is the player's identity refund
+// referrer code and link to testnet.bitcoinarena.io. He gets 10% of the node's income"): the program's key is the player's identity refund
 // key (02 and the identity key); an entry names it as its website key, the settlement's website share is paid to it as to a node's program,
 // a seat keeps its name signed by the identity key, and the player's page collects the payout into its wallet with the identity secret - and
 // writes a history row for it.
@@ -25,9 +25,9 @@ const storage = () => { const s = mem(); s.setItem('arena.player.seed', SEED); r
 const noSeed = () => { throw new Error('no wallet'); };
 
 test('the link: the identity refund key, made again from the same 24 words, no seed minted for it', () => {
-  const me = referralOf({ storage: storage(), random: noSeed, curve, origin: 'https://testnet.bitcoin-arena.io/' });
+  const me = referralOf({ storage: storage(), random: noSeed, curve, origin: 'https://testnet.bitcoinarena.io/' });
   assert.equal(me.key, '02' + tabIdentity({ storage: storage(), curve }).pubkeyHex);
-  assert.equal(me.link, `https://testnet.bitcoin-arena.io/?ref=${me.key}`);
+  assert.equal(me.link, `https://testnet.bitcoinarena.io/?ref=${me.key}`);
   assert.match(me.link.split('?ref=')[1], /^0[23][0-9a-f]{64}$/, 'the page\'s ?ref= rule takes it');
   assert.deepEqual(referralOf({ storage: storage(), random: noSeed, curve }), { key: me.key, link: `/?ref=${me.key}` });
   assert.throws(() => referralOf({ storage: mem(), random: noSeed, curve }), /no wallet/);

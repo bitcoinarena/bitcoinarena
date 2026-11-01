@@ -26,7 +26,7 @@ test('roles: liquidity takes the Lightning step, skips federation and bond rules
   const chainKit = { coinsOf: async () => ({ tip: 157000, coins: [{ txid: '5a'.repeat(32), vout: 1, sats: 600000, height: 156999 }] }),
     broadcast: async (_c, hex) => { sent.push(hex); return toHex(Uint8Array.from(parseTransaction(fromHex(hex)).txid).reverse()); } };
   // the network's bond target fixed at the floor: the live seats' GET /capacity said 300,000 sat on 2026-10-21 and turned this red
-  const fetcher = (url, o) => (/bitcoin-arena\.io|\.example\/capacity$/.test(String(url)) ? Promise.resolve(new Response(JSON.stringify(/daily\.json$/.test(String(url))
+  const fetcher = (url, o) => (/bitcoin-?arena\.io|\.example\/capacity$/.test(String(url)) ? Promise.resolve(new Response(JSON.stringify(/daily\.json$/.test(String(url))
     ? { testnet: { node: ['https://a.example', 'https://b.example'] } } : { network: { installMinimumBondSats: 50000, band: 'CALM' } }), { status: 200 })) : fetch(url, o));
   const w = createWizard({ state, release: home, seatPort: 1, chainKit, fetcher, launch: () => ({ files: [] }) });
   const server = http.createServer((q, s) => w.handle(q, s));

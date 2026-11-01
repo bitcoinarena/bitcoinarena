@@ -216,11 +216,11 @@ export function presenceProofFor({ roundIdHex, storage, random, curve } = {}) {
 
 /**
  * A PLAYER'S OWN REFERRAL PROGRAM (kanban #681, 2026-10-26: "Add user support for referrer program, not just websites. A user may also
- * use a referrer code and link to testnet.bitcoin-arena.io. He gets 10% of the node's income"): the program's key IS this tab's identity
+ * use a referrer code and link to testnet.bitcoinarena.io. He gets 10% of the node's income"): the program's key IS this tab's identity
  * refund key - 02 and the identity key, the key a zap to this player is paid to - so nothing new is kept or backed up: the 24 words make
  * it again. An entry names it as its website key (frontend_pk), the settlement pays it 10 % of the nodes' fee on that entry as it pays a
  * node's program, the seats list the payout under it ('website'), and collectZaps spends it into this wallet with the identity secret.
- * `origin` is the page's own (https://testnet.bitcoin-arena.io). Answers { key, link }.
+ * `origin` is the page's own (https://testnet.bitcoinarena.io). Answers { key, link }.
  */
 export function referralOf({ storage, random, curve, origin = '' } = {}) {
   if (!curve || typeof curve.pointX !== 'function') throw new Error('a referral key is the identity key, and no curve was injected');
