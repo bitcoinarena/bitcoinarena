@@ -187,7 +187,7 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
     if (s.gateway && s.gateway.publicUrl && /^https?:\/\/\S+\/$/.test(s.gateway.publicUrl) && c.pegIn && s.lightning && s.lightning.pubkey) {
       const claimFile = state.path('gateway-claim.json');
       const last = (state.read().custody || {}).claimAtMs || 0;
-      // AT ONCE WHEN ITS ADDRESS MOVED (the owner 2026-10-30, a quick tunnel's new name: "das darf nicht auftreten"): a claim naming the old host points
+      // AT ONCE WHEN ITS ADDRESS MOVED (2026-10-30, a quick tunnel's new name: "das darf nicht auftreten"): a claim naming the old host points
       // every player at a gateway that is gone, for up to the hour otherwise
       let claimedUrl = null; try { claimedUrl = JSON.parse(readFileSync(claimFile, 'utf8')).gatewayUrl; } catch { claimedUrl = null; }
       if (nowMs() - last >= 3600000 || (claimedUrl && claimedUrl !== s.gateway.publicUrl)) {

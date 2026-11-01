@@ -17,7 +17,7 @@ const TS = {
     AllowFunnel: { 'seat.example.com:443': true },
     Web: { 'seat.example.com:443': { Handlers: {
       '/': { Proxy: 'http://localhost:3001' },
-      '/blwp-a': { Proxy: 'http://198.51.100.7:18080' },
+      '/blwp-a': { Proxy: 'http://198.51.100.98:18080' },
       '/guardian-1': { Proxy: 'http://127.0.0.1:31221' },
       '/guardian-2': { Proxy: 'http://127.0.0.1:31231' } } } },
   },
@@ -156,7 +156,7 @@ test('a running guardian whose federation config names peers is started again on
   await run(first, () => {}, true);                                              // no federation yet: no overrides
   assert.equal(first.calls.started[0].env.FM_WS_API_CONNECT_OVERRIDES, undefined);
   writeFileSync(join(store + '.guardian', 'client.json'), JSON.stringify({ global: { api_endpoints: {
-    0: { url: 'wss://gone.trycloudflare.com/guardian', name: 'aaaaaaaaaaaaaaaa' }, 1: { url: 'ws://198.51.100.7:6571/guardian', name: 'cccccccccccccccc' } } } }));
+    0: { url: 'wss://gone.trycloudflare.com/guardian', name: 'aaaaaaaaaaaaaaaa' }, 1: { url: 'ws://198.51.100.106:6571/guardian', name: 'cccccccccccccccc' } } } }));
   const lines = [];
   const again = fakePids(5161);
   const g1 = await run(again, (l) => lines.push(l));             // the DKG wrote its config: started again, with them
@@ -167,7 +167,7 @@ test('a running guardian whose federation config names peers is started again on
   assert.equal(again.calls.stopped, 1); assert.equal(again.calls.started.length, 1);
   const ov = again.calls.started[0].env.FM_WS_API_CONNECT_OVERRIDES;
   assert.match(ov, /wss:\/\/gone\.trycloudflare\.com\/guardian=ws:\/\/127\.0\.0\.1:6551\/guardian-api\/aaaaaaaaaaaaaaaa/);
-  assert.match(ov, /ws:\/\/100\.85\.86\.106:6571\/guardian=ws:\/\/127\.0\.0\.1:7551\//, 'its own: its local API port');
+  assert.match(ov, /ws:\/\/198\.51\.100\.106:6571\/guardian=ws:\/\/127\.0\.0\.1:7551\//, 'its own: its local API port');
   assert.ok(lines.some((l) => /old peer addresses/.test(l)));
   const then = fakePids(5161);
   const g = await run(then);                                     // the same overrides: adopted

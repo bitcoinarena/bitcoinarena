@@ -12,7 +12,7 @@ import { decodeTranscript, transcriptHash } from '../../arena-protocol/src/trans
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { SETTLEMENT_THRESHOLD } from '../../arena-protocol/src/payout.js';
 
-// AS MANY AS SETTLE THE ROUND (the owner 2026-10-30: "0 of 2 macht gar keinen sinn"): the two was the two-node test network's; a run fewer than five signer nodes hold cannot settle
+// AS MANY AS SETTLE THE ROUND (2026-10-30: "0 of 2 macht gar keinen sinn"): the two was the two-node test network's; a run fewer than five signer nodes hold cannot settle
 export const NODES_HOLDING = SETTLEMENT_THRESHOLD;
 
 /**

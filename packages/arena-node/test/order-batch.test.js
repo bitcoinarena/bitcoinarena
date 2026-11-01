@@ -4,7 +4,7 @@
 // Seven seats of one Up/Down market round; every order an entry whose stake and fee locks the seats verified; each batch led
 // by the round's seat k mod 7 at its cutoff - the proposals, the set signed by every seat, and its certificate handed to every
 // seat - with every seat-to-seat request delayed by a round trip MEASURED to a live seat through its Cloudflare tunnel
-// (test host -> rps-a.bitcoin-arena.io, 40 warm requests on one connection, 2026-10-09: p50 56, p95 67, max 106 ms).
+// (macOS -> rps-a.bitcoin-arena.io, 40 warm requests on one connection, 2026-10-09: p50 56, p95 67, max 106 ms).
 // A batch must be certified at every seat before the next cutoff: the time from a cutoff until then decides the interval.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

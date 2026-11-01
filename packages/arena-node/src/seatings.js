@@ -6,7 +6,7 @@
 //
 // A seating is missed when this node was drawn for a round, did not say PRESENT, and the round's certified seating seats somebody else
 // in its place. Counted over the rounds this seat holds whose seating stands, newest first, until the first it sat or was present for.
-// A RESERVE THAT WAS PRESENT HAS MISSED NOTHING (measured on testnet4 2026-10-14 14:0xZ: test host node 5 signed PRESENT for every
+// A RESERVE THAT WAS PRESENT HAS MISSED NOTHING (measured on testnet4 2026-10-14 14:0xZ: macOS node 5 signed PRESENT for every
 // round - "9 present of 9 drawn" - and sat as one of the two reserves of its grid's draw; counted as missed, it was told 28 times in
 // a row to step out of the census).
 
@@ -21,7 +21,7 @@ export function missedInARow(rows) {
 }
 
 /**
- * ONE ROW PER SEATING (kanban #809, the owner 2026-10-30 after 2026.1.9.19: his owner page said "Your node missed 42 draws in a row" with every
+ * ONE ROW PER SEATING (kanban #809, 2026-10-30 after 2026.1.9.19: his owner page said "Your node missed 42 draws in a row" with every
  * service running and its PRESENTs reaching the seats): a table is seated once, by its first round, and its later rounds - one every 8 s on
  * an RPS grid, most of the newest 60 rounds a node holds - take that seating. Each was counted as a seating of its own, so one table this
  * node was drawn for and not seated in counted dozens of times. `rows` carry `seating` (the table's first round, else the round itself);

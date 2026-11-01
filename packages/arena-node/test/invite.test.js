@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { inviteForGuardians, readInvite } from '../src/invite.js';
 
 // the testnet federation's own invite, written by `fedimint-cli invite-code 0`
-const STOCK = 'fed11qgqr2vmhwden5te0vfjk2mrfde4juarpd9krzdejxdjnytn5wvhxuet59anh2ctjv35kzm3dxyhkwatpwfjxjctwqqqjqvm6uqddr6dmxk6k9ra26dzhuckkn5pkal52xj70cgxtxx6zhd67p36ded';
+const STOCK = 'fed11qgqzc2nhwden5te0wdjkzapwv4uxzmtsd3jjucm0d5hkwatpwfjxjctw95cj7em4v9exg6tpdcqqzgpn0tsp450fhv6m2c504tf52lnz66wsxmh73g6telpqevcmg2ahtcr2fwl5';
 const FED = Buffer.from('337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e', 'hex');
 const url = (k) => `wss://seat.example.com/guardian-${k}/guardian`;
 

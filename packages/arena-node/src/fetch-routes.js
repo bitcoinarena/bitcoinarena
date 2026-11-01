@@ -31,7 +31,7 @@ export function routed(url, routes) {
 export function cappedFetch(inner, { routes = [], maxPerOrigin = 8, timeoutMs = 30000 } = {}) {
   const lanes = new Map();   // lane -> { busy, waiting: [{ go, abort }] }
   // ONE LANE PER SEAT, NOT PER HOST (measured 2026-10-13 ~20:45Z: the 7 test host seats answer behind one host,
-  // tn4.bitcoin-arena.io/guardian-N, so a test host seat had 8 requests in flight to all seven together; over the ship's link the queue
+  // tn4.bitcoin-arena.io/guardian-N, so a second-host seat had 8 requests in flight to all seven together; over the ship's link the queue
   // grew and its seating agent stopped signing PRESENTs - 4 present of 9 drawn, no certificate): the host and the first path segment
   // - read off the address as CALLED (before routing), and only for a public https host, where seats sit behind one host by path
   // prefix (/guardian-N, /fed2-N); a seat's direct address (http://ip:port) is one lane, as before

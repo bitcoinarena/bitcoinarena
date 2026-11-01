@@ -16,7 +16,7 @@
 // menu, all in the same tab; at 560 px and below the logo keeps its mark and ← its arrow, as on the games. The footer is the games
 // screen's: Donate at the window's bottom right (Donate opens the Arena page's donation box, /#donate - it needs the wallet), and left of
 // it, well clear of it, Bitcoin Arena on X, Discord, Telegram and GitHub (kanban #749, #753; GitHub is the docs' Repositories page), the
-// only links here that open a new tab. At the left the Arena page's UI number, never the static build number (kanban #753, the owner
+// only links here that open a new tab. At the left the Arena page's UI number, never the static build number (kanban #753
 // 2026-10-28: "I want 'UI xxx' still there"), filled by tools/build-arena-page.mjs.
 //
 // A page can hand the bar one control of its own for the left end (the docs' Contents button): data-lead="<id of the element>".

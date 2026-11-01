@@ -51,10 +51,10 @@ export function lockSecretFor(seed, roundId) {
 }
 
 /**
- * A WRITE THE BROWSER REFUSES FOR ROOM (the owner 2026-10-30, order at "locking your stake": a wallet's write that throws QuotaExceededError ends in the lock
+ * A WRITE THE BROWSER REFUSES FOR ROOM (2026-10-30, order at "locking your stake": a wallet's write that throws QuotaExceededError ends in the lock
  * client's panic, and every wallet call of that page then hangs until a reload): `onStorageFull` frees what it can, and the write is tried once more.
  */
-// A WALLET'S KEYS AND VALUES, PACKED (kanban #883, the owner 2026-10-31, iPhone log: 4,992,831 characters in 3,759 keys, a deposit paid and never claimed): the client hands
+// A WALLET'S KEYS AND VALUES, PACKED (kanban #883, 2026-10-31, iPhone log: 4,992,831 characters in 3,759 keys, a deposit paid and never claimed): the client hands
 // hex, two characters a byte, and iOS Safari gives 5 million characters. 15 bits to a character is under a third of that, and nothing has to be deleted for it.
 const PACKED = '~';
 export function packHex(hex) {
@@ -121,7 +121,7 @@ export function packWallets(storage) {
 }
 let storageFull = null;
 export function onStorageFull(fn) { storageFull = typeof fn === 'function' ? fn : null; }
-// A WRITE STILL REFUSED IS SAID (kanban #883, the owner 2026-10-31: "Du musst den Fehler abfangen damit es nicht silent failed"): the client panics in its own task and nothing reached the player
+// A WRITE STILL REFUSED IS SAID (kanban #883, 2026-10-31: "Du musst den Fehler abfangen damit es nicht silent failed"): the client panics in its own task and nothing reached the player
 let storageRefused = null;
 export function onStorageRefused(fn) { storageRefused = typeof fn === 'function' ? fn : null; }
 export function putRoomy(storage, key, value) {
@@ -134,7 +134,7 @@ export function putRoomy(storage, key, value) {
 }
 
 /**
- * THE PLAYER'S WALLET KEEPS ITS ROOM (the owner 2026-10-30: "Your browser's storage is full", and 1000 sat paid but not claimed: each kept round's lock wallet
+ * THE PLAYER'S WALLET KEEPS ITS ROOM (2026-10-30: "Your browser's storage is full", and 1000 sat paid but not claimed: each kept round's lock wallet
  * takes ~150 KB, 50 kept rounds fill the 5 million characters a browser gives, and the next write of the player's wallet then ends its task). Past
  * LOCK_ROOM_CHARS a round's lock wallet goes on in memory: it is the seed's and the round's, and joined anew when needed. Safari gives half of Chrome's room.
  */
@@ -211,7 +211,7 @@ export const PAYOUT_GRACE_MS = 600000;
 // A SEAT THAT NEVER ANSWERS IS A SEAT THAT SAID NOTHING (measured 2026-10-27: a market bot's collect waited 13 min on one
 // seat that took the connection and never answered): the reads collect makes of every seat give up after 15 s
 const SEAT_READ_MS = 15000;
-// BLOCKS AS TIME (kanban #827, the owner 2026-10-31: "Sag wann das ist, in Xh 3m ETA"): nobody reads a block height as a moment
+// BLOCKS AS TIME (kanban #827, 2026-10-31: "Sag wann das ist, in Xh 3m ETA"): nobody reads a block height as a moment
 export const blocksAsTime = (blocks, secondsPerBlock = 600) => {
   const m = Math.max(1, Math.ceil((Number(blocks) * Number(secondsPerBlock)) / 60));
   return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
@@ -396,7 +396,7 @@ export function tidyStorage(storage, { seeds = [], current = null, federations =
     for (const k of ks) { bytes += (k.length + String(storage.getItem(k) || '').length) * 2; storage.removeItem(k); removed++; }
     wallets++;
   }
-  // A BROWSER STILL FULL (the owner 2026-10-30: "exceeded the quota" on the wallet of federation 4dc88be7 itself, 19 kept phrases: the wallet would not
+  // A BROWSER STILL FULL (2026-10-30: "exceeded the quota" on the wallet of federation 4dc88be7 itself, 19 kept phrases: the wallet would not
   // open, a paid deposit could not be claimed, the order hung): above `pressureChars` what can be had again from the seed goes too. A done round's
   // lock wallet at any age, then the database of a kept phrase that no tab plays with, that holds no known balance, has no e-cash on its way and no
   // deposit waiting in its federation; the phrase stays kept and is marked to recover, so its next open reads it back from the federation. The

@@ -1,4 +1,4 @@
-# THE .unityweb FILES ARE BROTLI, AND SAID TO BE (measured 2026-10-08 on the same build, test host Chrome as an
+# THE .unityweb FILES ARE BROTLI, AND SAID TO BE (measured 2026-10-08 on the same build, macOS Chrome as an
 # Android phone at 10x CPU): without Content-Encoding the loader decompressed the wasm and data in JavaScript after the last
 # byte and only then compiled - 962 ms from the download's end to running wasm; with it the browser decompresses natively and
 # compiles while it downloads - 106 ms, and 90 -> 100 % fell from 3,026 to 2,056 ms. Cloudflare passes the header through and

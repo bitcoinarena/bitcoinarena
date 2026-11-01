@@ -96,7 +96,7 @@ const [daily, testnet] = process.argv.slice(2).map((f) => JSON.parse(fs.readFile
     const u = new URL(`${n}/rounds?next=1`);   // not the whole list: a bare /rounds held seat 1's loop 7-17 s
     try {
       const code = execFileSync('curl', ['-s', '-o', '/dev/null', '-w', '%{http_code}', '-m', '60',
-        '--resolve', `${u.hostname}:443:${process.env.ARENA_TAILNET_IP || '198.51.100.7'}`, u.toString()]).toString();
+        '--resolve', `${u.hostname}:443:${process.env.ARENA_TAILNET_IP || '198.51.100.98'}`, u.toString()]).toString();
       if (code === '200') { ok++; break; }
     } catch {}
   }

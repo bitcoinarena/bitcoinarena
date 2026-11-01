@@ -6,7 +6,7 @@
 // GITHUB BESIDE THEM, NO BUILD LINE, CLEAR OF DONATE (kanban #753, a tester 2026-10-28: "donate button is too close to donate button",
 // "Remove the static build display", "create a page on docs to link them all and add a GitHub icon"): a fourth link, GitHub, to the docs'
 // Repositories page; the links stand well clear of Donate. The footers keep "UI n" (the node pages their release) but never the static
-// build (the owner 2026-10-28: "I want 'UI xxx' still there, just not 'build 0.0.10' which was static").
+// build (2026-10-28: "I want 'UI xxx' still there, just not 'build 0.0.10' which was static").
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -57,7 +57,7 @@ test('the pages whose footer is site-chrome.js\'s still load it: the menu pages,
     assert.match(read(p), /<script src="(?:https:\/\/testnet\.bitcoin-arena\.io)?\/site-chrome\.js"/, p);
 });
 
-test('every footer says the UI number or the release, never the static build (#753, the owner 2026-10-28: "just not build 0.0.10 which was static")', () => {
+test('every footer says the UI number or the release, never the static build (#753, 2026-10-28: "just not build 0.0.10 which was static")', () => {
   // the node's pages: the release alone in its own span before the links, no build commit
   for (const p of ['packages/arena-node/pages/owner.html', 'packages/arena-installer/www/index.html', 'packages/arena-node/src/dashboard.js']) {
     const src = read(p);

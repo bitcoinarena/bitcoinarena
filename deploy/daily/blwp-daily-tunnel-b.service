@@ -1,7 +1,7 @@
 [Unit]
-Description=BLWP Daily: quick tunnel b to signer node b (198.51.100.7:18081); its public name changes on every start
+Description=BLWP Daily: quick tunnel b to signer node b (198.51.100.98:18081); its public name changes on every start
 [Service]
-ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate --url http://198.51.100.7:18081
+ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate --url http://198.51.100.98:18081
 Restart=always
 RestartSec=10
 [Install]

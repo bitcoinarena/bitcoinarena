@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE OWNER AREA'S ROUNDS (kanban #715, the owner 2026-10-26: "a Rounds section which shows which rounds this node is scheduled for
+// THE OWNER AREA'S ROUNDS (kanban #715, 2026-10-26: "a Rounds section which shows which rounds this node is scheduled for
 // Verify/Settlement. If there are no rounds, explain in plain words why that is not the case. In Roles, Verify is 'Play and check rounds',
 // and 'Settlement' is 'Pay out winners'"). GET /owner/rounds answers what roundsForOwner makes of the rounds this seat holds and the node's
 // own census row: each round it is drawn for, with what it does there, and - when there is none - the first reason that holds:

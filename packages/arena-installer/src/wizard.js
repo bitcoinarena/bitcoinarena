@@ -86,7 +86,7 @@ export function beginAddCustody(state) {
 const laterCustody = (s) => Boolean(s.custodyLater && s.bond && s.bond.txid && (s.roles || []).includes('custody') && !s.bond.custodyAdvert);
 /**
  * WHAT THE NODE'S WALLET MUST RECEIVE, BY PART, for the roles chosen (the bond step shows the total from the start - measured on the
- * test host, rc.12: a custody node was told "at least 52,000 sat", the bond alone, while it needs the peg-in and both channels too).
+ * macOS, rc.12: a custody node was told "at least 52,000 sat", the bond alone, while it needs the peg-in and both channels too).
  * Custody added to a node with a bond: no second bond - this update of its advertisement, and later the one naming its federation,
  * the ring channel to the next node of its federation and the outside channel (custody-agent.js). A liquidity provider: its deposit
  * (§23A.10: 5 x L on testnet4), sent to LND's wallet by the node's agent.
@@ -121,7 +121,7 @@ export function withOtherNodes(s, parts, { further = false } = {}) {
 export const seatNeedsRestart = (before, after) => String(before || '') !== String(after || '');
 
 /**
- * A CORE WHOSE PORT ANOTHER PROGRAM HOLDS (kanban #635, the owner's playtest 2026-10-25: his test host's own testnet4 Core held 48342, and
+ * A CORE WHOSE PORT ANOTHER PROGRAM HOLDS (kanban #635, the owner's playtest 2026-10-25: his macOS's own testnet4 Core held 48342, and
  * the installer's Core exited at every start): free ports chosen, its bitcoin.conf written again, its service started again, the new
  * address kept in the state. Used by the Bitcoin step's status and by the chain-switch keeper.
  */
