@@ -20,7 +20,7 @@ import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
  * at least `needed` seats name for the round's federation (GET /reserves), and the developers' part is split over the round's network
  * and game donation sets (GET /donation-set, /game-donation-set).
  */
-export async function entrySplit({ c, roundHex, nodes, needed = 5, fetcher = fetch }) {
+export async function entrySplit({ c, roundHex, nodes, needed = 5, fetcher = fetch, reserveKeyHex = null }) {
   const stake = BigInt(c.stakeMsat);
   if (!paysReserves(c)) {
     const feeMsat = entryFeeMsat(stake);
@@ -29,7 +29,9 @@ export async function entrySplit({ c, roundHex, nodes, needed = 5, fetcher = fet
   const split = roundSplit(stake);
   const fed = toHex(c.federationId);
   const said = new Map();
-  await Promise.all(nodes.map(async (n) => {
+  // A KEY READ BEFORE (the caller's own, kept per federation) saves asking every seat for it again
+  if (reserveKeyHex) said.set(reserveKeyHex, needed);
+  else await Promise.all(nodes.map(async (n) => {
     try {
       const f = ((await (await fetcher(`${n}/reserves`)).json()).federations || []).find((x) => x.federationId === fed && (x.key || x.reserveKey));
       if (f) said.set(f.key || f.reserveKey, (said.get(f.key || f.reserveKey) || 0) + 1);
