@@ -2012,6 +2012,8 @@
     const closedUntil = new Map(), closedTimes = new Map();
     const closeKey = (u) => {
       try { const x = new URL(String(u), location.href); if (x.origin === location.origin) return null;
+        // THE SITE'S OWN SERVICES ARE NEVER CLOSED (kanban #926, the owner 2026-11-01: "not asked: https://bitcoinarena.io/api did not answer a moment ago"): a hiccup of the faucet must not cost a player the faucet for 30 min
+        if (/(^|\.)bitcoinarena\.io$/.test(x.hostname)) return null;
         const seg = x.pathname.split('/').filter(Boolean); return x.origin + (seg.length > 1 ? '/' + seg[0] : ''); } catch { return null; }
     };
     const closeIt = (k) => { const n = (closedTimes.get(k) || 0) + 1; closedTimes.set(k, n); closedUntil.set(k, Date.now() + (n > 1 ? 1800000 : 300000)); };
