@@ -12,12 +12,12 @@ body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,san
 // THE WALLET'S ONE STABLE ADDRESS (btc-phase0, 2026-10-03): /wallet runs on the test host behind two routes - Tailscale Funnel
 // and a Cloudflare quick tunnel whose name changes when it restarts. The keeper publishes the tunnel's current name in
 // daily.json (testnet.alt); this page goes there, and to the Funnel address when no tunnel is named.
-const FUNNEL = 'https://seat.example.com/wallet/';
+const FUNNEL = 'https://tn4.bitcoinarena.io/wallet/';
 (async () => {
   let to = FUNNEL;
   try {
     const d = await (await fetch('../daily.json', { cache: 'no-store' })).json();
-    const host = d && d.testnet && d.testnet.alt && d.testnet.alt['seat.example.com/wallet'];
+    const host = d && d.testnet && d.testnet.alt && d.testnet.alt['tn4.bitcoinarena.io/wallet'];
     if (host && /^[a-z0-9-]+\.trycloudflare\.com$/.test(host)) to = 'https://' + host + '/wallet/';
   } catch (e) { /* the Funnel address */ }
   window.ArenaSite.wayOut(document.getElementById('how'), { to });   // drawn by React (kanban #564)
