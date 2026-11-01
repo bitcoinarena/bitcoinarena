@@ -15,7 +15,7 @@
 // (-1,999 msat is "-1 sat", not "-2 sat"); the exact msat stays on the row beside it.
 //
 // DETERMINISTIC AND WITHOUT A DOM: the same answer, title and viewer give the same rows, so a test and the page agree.
-// The one function that talks to the network, fetchSeason, is handed its fetch.
+// The one function that talks to the network, fetchSeason, fetchSeasonSnapshot, is handed its fetch.
 
 /** The windows the page offers (protocol season.js takes 1 to 90 whole days; the seat keeps each one 30 s). */
 export const SEASON_DAYS_CHOICES = [7, 30, 90];
