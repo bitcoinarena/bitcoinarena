@@ -2,7 +2,7 @@
   "about": "The apps' own repositories at the commits the Arena takes them from (kanban #569, #575): bitcoin-arena tracks no app. tools/fetch-apps.mjs checks the listed paths out into .apps/<name> and places each app at `copy` (not tracked; Next Block without its Unity project, which only its own repository holds); arena-client's apps-pinned test checks every placed app against its checkout, and apps.files.json (tools/pin-apps.mjs) names the files a node downloads of each.",
   "apps": {
     "arena-app-next-block": {
-      "repo": "bitcoin-arena/arena-app-next-block",
+      "repo": "bitcoinarena/arena-app-next-block",
       "commit": "332d5395e2408526a9924296f686d544ed203511",
       "paths": [
         "/*",
@@ -25,7 +25,7 @@
       ]
     },
     "arena-app-rock-paper-scissors": {
-      "repo": "bitcoin-arena/arena-app-rock-paper-scissors",
+      "repo": "bitcoinarena/arena-app-rock-paper-scissors",
       "commit": "9b1f72a983fe2aec821d09efa1f89316fcd7ccb9",
       "copy": "packages/rock-paper-scissors",
       "paths": [
@@ -33,7 +33,7 @@
       ]
     },
     "arena-app-up-or-down": {
-      "repo": "bitcoin-arena/arena-app-up-or-down",
+      "repo": "bitcoinarena/arena-app-up-or-down",
       "commit": "1f14b89f6861763146fb55690ab93d89f5ebcd1f",
       "copy": "packages/btc-updown",
       "paths": [

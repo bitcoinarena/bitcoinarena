@@ -88,7 +88,7 @@ test('a folder the release carries itself is left alone; a pin that moved is fet
   assert.equal(readFileSync(join(r, 'packages/nextblock/own.txt'), 'utf8'), 'bundled');
   // the release's pin for Up or Down moves: its folder, placed for the old pin, is replaced
   const marker = join(r, 'packages/btc-updown/.arena-app.json');
-  writeFileSync(marker, JSON.stringify({ repo: 'bitcoin-arena/arena-app-up-or-down', commit: '0'.repeat(40), files: 1 }));
+  writeFileSync(marker, JSON.stringify({ repo: 'bitcoinarena/arena-app-up-or-down', commit: '0'.repeat(40), files: 1 }));
   writeFileSync(join(r, 'packages/btc-updown/stale.js'), 'old');
   assert.deepEqual((await ensureApps({ release: r, home: h, fetcher: g.fetcher })).fetched, ['arena-app-up-or-down']);
   assert.ok(!existsSync(join(r, 'packages/btc-updown/stale.js')), 'the old pin\'s files are gone');

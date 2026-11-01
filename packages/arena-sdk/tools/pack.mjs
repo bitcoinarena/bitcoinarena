@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SDK AS ITS OWN REPOSITORY (kanban #568, 2026-10-21: "The external apps ... reference arena through an import in package.json with
-// the github url"): npm installs a whole repository, never a folder of this one, so bitcoin-arena/arena-sdk holds the SDK standalone - each
+// the github url"): npm installs a whole repository, never a folder of this one, so bitcoinarena/arena-sdk holds the SDK standalone - each
 // subpath's Arena module and every module it imports, copied with their paths kept under arena/ (packages/arena-protocol/src/hash.js ->
 // arena/arena-protocol/src/hash.js), the subpath files pointing there, and the npm packages they use pinned.
 //
@@ -56,9 +56,9 @@ for (const [sub, file] of Object.entries(pkg.exports)) {
   void sub;
 }
 const standalone = { ...pkg, version, private: undefined,
-  description: pkg.description + ' Packed from bitcoin-arena/bitcoin-arena by packages/arena-sdk/tools/pack.mjs: do not edit here.',
+  description: pkg.description + ' Packed from bitcoinarena/bitcoinarena by packages/arena-sdk/tools/pack.mjs: do not edit here.',
   dependencies: Object.fromEntries([...npm].sort().map((n) => [n, PINNED[n]])) };
 writeFileSync(join(out, 'package.json'), JSON.stringify(standalone, null, 2) + '\n');
 copyFileSync(join(repo, 'LICENSE'), join(out, 'LICENSE'));
-writeFileSync(join(out, 'README.md'), `# arena-sdk ${version}\n\nWhat an external app imports from the Bitcoin Arena: ${Object.keys(pkg.exports).map((s) => '`arena-sdk/' + s.slice(2) + '`').join(', ')}.\n\nIn the app's package.json:\n\n    "dependencies": { "arena-sdk": "github:bitcoin-arena/arena-sdk#v${version}" }\n\nPacked from bitcoin-arena/bitcoin-arena (packages/arena-sdk, tools/pack.mjs). Change it there, not here.\n`);
+writeFileSync(join(out, 'README.md'), `# arena-sdk ${version}\n\nWhat an external app imports from the Bitcoin Arena: ${Object.keys(pkg.exports).map((s) => '`arena-sdk/' + s.slice(2) + '`').join(', ')}.\n\nIn the app's package.json:\n\n    "dependencies": { "arena-sdk": "github:bitcoinarena/arena-sdk#v${version}" }\n\nPacked from bitcoinarena/bitcoinarena (packages/arena-sdk, tools/pack.mjs). Change it there, not here.\n`);
 console.log(`packed ${seen.size} Arena modules, ${Object.keys(pkg.exports).length} subpaths, npm: ${[...npm].join(', ') || 'none'} -> ${out}`);
