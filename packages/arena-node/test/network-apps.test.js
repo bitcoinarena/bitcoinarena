@@ -60,7 +60,7 @@ test('a seat finds the network\'s games itself, lists name/type/version/info, an
   try {
     const B = `http://127.0.0.1:${b.port}`;
     const own = (await (await fetch(`${A}/games`)).json()).games.find((g) => g.id === HELLO);
-    assert.deepEqual([own.type, own.version, own.info.website], ['market', 1, 'https://bitcoin-arena.io/'], '/games carries type, version and the signed info');
+    assert.deepEqual([own.type, own.version, own.info.website], ['market', 1, 'https://bitcoinarena.io/'], '/games carries type, version and the signed info');
     const ng = await (await fetch(`${B}/network-games?fresh=1`)).json();
     assert.deepEqual(ng.seats.map((s) => s.answered), [true, true], 'both seats it was given were asked');
     const hello = ng.games.find((g) => g.id === HELLO);
@@ -83,7 +83,7 @@ test('a seat finds the network\'s games itself, lists name/type/version/info, an
     assert.ok(j.checks.some((c) => /description and website are signed/.test(c.check) && c.ok));
     const mine = await (await fetch(`${B}/owner/plugins`)).json();
     const h = mine.hosted.find((g) => g.id === HELLO);
-    assert.deepEqual([h.type, h.info && h.info.website], ['market', 'https://bitcoin-arena.io/'], 'installed, with its signed info');
+    assert.deepEqual([h.type, h.info && h.info.website], ['market', 'https://bitcoinarena.io/'], 'installed, with its signed info');
     const again = await (await fetch(`${B}/network-games?fresh=1`)).json();
     assert.equal(again.games.find((g) => g.id === HELLO).hostedHere, true, 'now hosted here');
   } finally { await a.close(); await b.close(); liar.close(); }

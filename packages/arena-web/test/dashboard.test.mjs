@@ -135,8 +135,8 @@ test('the dev client card: its last recovery', () => {
 // this node's own page on 127.0.0.1, which never holds the key the site's page keeps
 test('the Owner area link: the site\'s owner page for this node, with the local address when the dashboard is the node\'s own', () => {
   const key = 'ab'.repeat(32);
-  assert.equal(ownerHref(key, { hostname: '127.0.0.1', origin: 'http://127.0.0.1:8770' }), `https://testnet.bitcoin-arena.io/owner/#node=${key}&local=http%3A%2F%2F127.0.0.1%3A8770`);
-  assert.equal(ownerHref(key, { hostname: 'x.trycloudflare.com', origin: 'https://x.trycloudflare.com' }), `https://testnet.bitcoin-arena.io/owner/#node=${key}`);
+  assert.equal(ownerHref(key, { hostname: '127.0.0.1', origin: 'http://127.0.0.1:8770' }), `https://testnet.bitcoinarena.io/owner/#node=${key}&local=http%3A%2F%2F127.0.0.1%3A8770`);
+  assert.equal(ownerHref(key, { hostname: 'x.trycloudflare.com', origin: 'https://x.trycloudflare.com' }), `https://testnet.bitcoinarena.io/owner/#node=${key}`);
   assert.equal(ownerHref('not a key', null), 'Dashboard/owner');
 });
 
@@ -144,11 +144,11 @@ test('the Owner area link: the site\'s owner page for this node, with the local 
 // the top with "Set up the bond" to the owner area's Bond section; no Federation card, no "3/10"
 test('no bond: the red card first, linking to the Bond section; no founding shown', () => {
   const key = 'ab'.repeat(32);
-  assert.equal(bondHref(key, { hostname: '127.0.0.1', origin: 'http://127.0.0.1:8770' }), `https://testnet.bitcoin-arena.io/owner/#node=${key}&local=http%3A%2F%2F127.0.0.1%3A8770&section=bond`);
+  assert.equal(bondHref(key, { hostname: '127.0.0.1', origin: 'http://127.0.0.1:8770' }), `https://testnet.bitcoinarena.io/owner/#node=${key}&local=http%3A%2F%2F127.0.0.1%3A8770&section=bond`);
   assert.equal(bondHref('not a key', null), 'Dashboard/owner#bond');
   const setup = { ok: true, bond: null, gateway: { ok: true, federations: 0 }, founding: { waiting: true, ready: 3, needed: 10 } };
   const html = renderToStaticMarkup(React.createElement(DashboardPage, { data: { ...D, setup } }));
-  assert.match(html, /<header class="dash-head">[\s\S]*?<\/header><section><div class="card no-bond" id="no-bond"[\s\S]*?<h3>No bond<\/h3>[\s\S]*?href="https:\/\/testnet\.bitcoin-arena\.io\/owner\/#node=4003758bc189[0-9a-f]*&amp;section=bond">Set up the bond<\/a>/);
+  assert.match(html, /<header class="dash-head">[\s\S]*?<\/header><section><div class="card no-bond" id="no-bond"[\s\S]*?<h3>No bond<\/h3>[\s\S]*?href="https:\/\/testnet\.bitcoin-?arena\.io\/owner\/#node=4003758bc189[0-9a-f]*&amp;section=bond">Set up the bond<\/a>/);
   assert.doesNotMatch(html, /founding-wait|nodes ready for the next federation|3\/10/);
   const bonded = renderToStaticMarkup(React.createElement(DashboardPage, { data: { ...D, setup: { ...setup, bond: { txid: 'b0'.repeat(32), sats: '50000', seen: true, confirmations: 9, needed: 6 } } } }));
   assert.doesNotMatch(bonded, /id="no-bond"/);

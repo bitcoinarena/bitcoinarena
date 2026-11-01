@@ -103,7 +103,7 @@ export function reservesDonation(stakeMsat, split = ROUND_SPLIT_BPS) {
 export const reservesDonationForRound = (round) => reservesDonation(stakeOf(round), round && round.feeSet ? roundSplitBps(round.feeSet) : ROUND_SPLIT_BPS);
 
 /**
- * THE RESERVES' TOTAL ON THE PAGE (§27A.9.2,: "testnet.bitcoin-arena.io shows the total and the latest
+ * THE RESERVES' TOTAL ON THE PAGE (§27A.9.2,: "testnet.bitcoinarena.io shows the total and the latest
  * payments in"): GET /reserves on the network's nodes; a total is shown only when at least `needed` of them answer the same one,
  * and its payments in are those nodes' own list, newest first. Answers { ok, totalMsat, entries, paidIn, agreeing, asked } or why not.
  */

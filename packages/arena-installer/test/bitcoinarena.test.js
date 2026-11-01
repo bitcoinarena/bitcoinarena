@@ -165,7 +165,7 @@ test('sign-in-once and the dashboard: the one-time sign-in page opened while the
     };
     const [c1, t1] = await run(['sign-in-once']);
     assert.equal(c1, 0); assert.match(t1, /Signing you in on your owner page once: http:\/\/127\.0\.0\.1:41000\/tok/);
-    assert.deepEqual(handoffs, [`https://testnet.bitcoin-arena.io/owner/#node=${'ab'.repeat(32)}&local=http%3A%2F%2F127.0.0.1%3A8773&owner-handoff`]);
+    assert.deepEqual(handoffs, [`https://testnet.bitcoinarena.io/owner/#node=${'ab'.repeat(32)}&local=http%3A%2F%2F127.0.0.1%3A8773&owner-handoff`]);
     const [c2, t2] = await run(['dashboard']);
     assert.equal(c2, 0); assert.match(t2, /Signing you in[\s\S]*\nhttp:\/\/127\.0\.0\.1:8773\/dashboard$/, 'the dashboard: signed in first, then opened');
     assert.deepEqual(opened, ['http://127.0.0.1:41000/tok', 'http://127.0.0.1:41000/tok', 'http://127.0.0.1:8773/dashboard']);
@@ -563,11 +563,11 @@ test('bitcoinarena open: the site\'s owner page for the node\'s key, from state.
     assert.deepEqual(await run(['open'], down), [0, 'http://127.0.0.1:8770/dashboard/owner'], 'no key known: the local page');
     const asked = [];
     const ident = async (u) => { asked.push(String(u)); return new Response(Buffer.from(key, 'hex')); };
-    assert.deepEqual(await run(['open'], ident), [0, `https://testnet.bitcoin-arena.io/owner/#node=${key}&local=http%3A%2F%2F127.0.0.1%3A8770`]);
+    assert.deepEqual(await run(['open'], ident), [0, `https://testnet.bitcoinarena.io/owner/#node=${key}&local=http%3A%2F%2F127.0.0.1%3A8770`]);
     assert.deepEqual(asked, ['http://127.0.0.1:8770/identity']);
     const st = join(n.home, 'state.json');
     let j = {}; try { j = JSON.parse(readFileSync(st, 'utf8')); } catch { j = {}; }
     writeFileSync(st, JSON.stringify({ ...j, service: { ...(j.service || {}), identity: 'cd'.repeat(32) } }));
-    assert.deepEqual(await run(['open'], down), [0, `https://testnet.bitcoin-arena.io/owner/#node=${'cd'.repeat(32)}&local=http%3A%2F%2F127.0.0.1%3A8770`], 'the key the installer kept');
+    assert.deepEqual(await run(['open'], down), [0, `https://testnet.bitcoinarena.io/owner/#node=${'cd'.repeat(32)}&local=http%3A%2F%2F127.0.0.1%3A8770`], 'the key the installer kept');
   } finally { rmSync(n.root, { recursive: true, force: true }); }
 });

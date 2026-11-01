@@ -1,7 +1,7 @@
 // THE PROPOSALS FORUM (kanban #397, 2026-10-17: "Proposals are on a separate page and look like a forum"). Three views, by the
 // address's hash: the thread list (#), one thread (#p=<proposal id>) and a new proposal (#new). What is shown is what five of the
 // testnet's nodes hold (GET /funding); a thread or a reply is signed and handed to every node (POST /funding). It lives beside the
-// Arena page (testnet.bitcoin-arena.io/proposals/) so it signs with THE PLAYER'S IN-GAME KEY (2026-10-17: "Users can sign in with
+// Arena page (testnet.bitcoinarena.io/proposals/) so it signs with THE PLAYER'S IN-GAME KEY (2026-10-17: "Users can sign in with
 // their ingame key and their custom name or their generated name"): the identity key of the wallet phrase this browser keeps - the key
 // the lobby and the board name a player by - and nothing else (2026-10-17: "no other options"). Everyone is shown by name: the one the player set (a
 // signed name record the nodes keep, player-name.js), else the one made from the key. Each proposal is a PIP, numbered by

@@ -13,16 +13,16 @@ const P = { slug: 'demo-rps', label: 'Demo RPS', kind: 'referrer', recipientPk: 
   balances: [{ federation: 'f1', msat: '1200000' }], withdrawnMsat: '300000' };
 
 test('each program: its name, what it earned and holds, its link and its embed, the demo, Withdraw; a new one by name', async () => {
-  const h = renderToStaticMarkup(React.createElement(ReferrerPanel, { programs: [P], site: 'https://testnet.bitcoin-arena.io' }));
+  const h = renderToStaticMarkup(React.createElement(ReferrerPanel, { programs: [P], site: 'https://testnet.bitcoinarena.io' }));
   assert.match(h, /pays your program 10% of the nodes.{1,8}fee\. Players pay nothing extra\./);
   assert.match(h, /<h3>Demo RPS<\/h3><span class="ok">running<\/span>/);
   assert.match(h, /<span>Earned<\/span><b>1,500 sat<\/b><small>3 payouts<\/small>/);
   assert.match(h, /<span>Ready to withdraw<\/span><b>1,200 sat<\/b><small>withdrawn 300 sat<\/small>/);
-  assert.match(h, new RegExp(`<code>https://testnet.bitcoin-arena.io/\\?ref=${KEY}</code>`));
+  assert.match(h, new RegExp(`<code>https://testnet.bitcoinarena.io/\\?ref=${KEY}</code>`));
   // the embed kit, not a frame (kanban #678)
-  assert.match(h, new RegExp(`&lt;script src=&quot;https://testnet.bitcoin-arena.io/arena-embed.js&quot; data-game=&quot;rock-paper-scissors&quot; data-ref=&quot;${KEY}&quot; data-target=&quot;#arena-game&quot;&gt;&lt;/script&gt;`));
+  assert.match(h, new RegExp(`&lt;script src=&quot;https://testnet.bitcoinarena.io/arena-embed.js&quot; data-game=&quot;rock-paper-scissors&quot; data-ref=&quot;${KEY}&quot; data-target=&quot;#arena-game&quot;&gt;&lt;/script&gt;`));
   assert.doesNotMatch(h, /iframe/);
-  assert.match(h, new RegExp(`<a href="https://testnet.bitcoin-arena.io/referral-demo/\\?ref=${KEY}" target="_blank"`));
+  assert.match(h, new RegExp(`<a href="https://testnet.bitcoinarena.io/referral-demo/\\?ref=${KEY}" target="_blank"`));
   assert.match(h, /<button type="button" class="primary">Withdraw<\/button>/);
   assert.match(h, /<h3>Another program<\/h3>/);
   // creating one: the name goes to create(), and what it says comes back

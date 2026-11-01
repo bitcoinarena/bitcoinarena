@@ -115,14 +115,14 @@
 // last card, a seat that did not answer /roles holding every node row for 10 s). The read is ./network.js; this page draws a kept copy first
 // and asks the nodes only when no copy is fresh:
 //   1. this browser's copy of its last read (localStorage), drawn before anything is asked
-//   2. the explorer's copy (explorer.bitcoin-arena.io/api/health, read from the nodes every minute), drawn when it is newer
+//   2. the explorer's copy (explorer.bitcoinarena.io/api/health, read from the nodes every minute), drawn when it is newer
 //   3. older than 5 minutes (or "Read again"): the nodes asked live, behind the copy on screen - the cards change once, when every
 //      answer is in; with no copy at all they fill as the nodes answer, as before
 // The line above the cards says how old what it shows is, and "refreshing …" while a read runs.
 (() => {
   const $ = (id) => document.getElementById(id);
   const KEEP = 'arena-health-copy', STALE_MS = 5 * 60000, EVERY_MS = 60000;
-  const COPY_URL = 'https://explorer.bitcoin-arena.io/api/health';
+  const COPY_URL = 'https://explorer.bitcoinarena.io/api/health';
   let H = null, N = null, health = null, shown = null, held = null, refreshing = false, failed = '';
   const keepRead = () => { try { return JSON.parse(localStorage.getItem(KEEP) || 'null'); } catch { return null; } };
   const keepWrite = (snap) => { try { localStorage.setItem(KEEP, JSON.stringify(snap)); } catch { /* full or blocked: the next visit reads the explorer's */ } };
