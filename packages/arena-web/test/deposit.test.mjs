@@ -104,3 +104,19 @@ test('the wait before the offer: its close, its title, the place of the backup w
   w.render().props.children[0].props.onClick();
   assert.equal(closed, 1);
 });
+
+test('the faucet\'s button: this offer\'s invoice goes to the faucet, a refusal is said, and a round\'s rest has no button (kanban #926)', async () => {
+  const asked = [], invoices = [];
+  const offer = { choices: [{ key: 'a', msat: 1000n }], claimed: new Promise(() => {}), close() {}, restMsat: null, invoice: async (m) => { invoices.push(m); return { invoice: 'lntb1', amountMsat: m, gateway: '' }; } };
+  const mk = (ask) => { const m = new DepositModal({ offer, qrSvg: () => '', faucet: { sats: 250, invoiceMsat: 250000n, ask }, onDone() {} }); m.setState = (u) => { m.state = { ...m.state, ...(typeof u === 'function' ? u(m.state) : u) }; }; return m; };
+  const ok = mk(async (i) => { asked.push(i); });
+  await ok.useFaucet();
+  assert.deepEqual(invoices, [250000n]);
+  assert.deepEqual(asked, ['lntb1']);
+  assert.match(ok.state.status.words, /250 sats arrive/);
+  const no = mk(async () => { throw new Error('the faucet gives an account 3 top-ups a day'); });
+  await no.useFaucet();
+  assert.equal(no.state.status.kind, 'fail');
+  assert.match(no.state.status.words, /3 top-ups/);
+  assert.equal(no.state.faucetBusy, false);
+});
