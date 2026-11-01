@@ -1665,7 +1665,8 @@
     // MONEY THAT DID NOT ARRIVE (kanban #883, the owner 2026-10-31: "Fehlermeldung dass das Geld nicht abgeholt werden kann, Summe für alle"): the sum over every
     // federation of the deposits this browser could not collect, and whether its storage refused a wallet write. A kept deposit may never have been paid, hence "up to".
     // THE PLAYERS' FAUCET (kanban #926): testnet's page only, so a mainnet build never has it
-    window.ARENA_FAUCET_URL = /(^|\.)testnet\.bitcoin-arena\.io$|\.bitcoin-arena-site\.pages\.dev$/.test(location.hostname) ? 'https://seat.example.com/faucet/player' : '';
+    window.ARENA_FAUCET_URL = /(^|\.)testnet\.bitcoin-arena\.io$|\.bitcoin-arena-site\.pages\.dev$/.test(location.hostname) ? 'https://bitcoin-arena.io/api/faucet/player' : '';
+    window.ARENA_OPPONENT_URL = window.ARENA_FAUCET_URL ? window.ARENA_FAUCET_URL.replace(/\/player$/, '/opponent') : '';
     window.ARENA_MONEY_ALERT = (() => {
       let nextWords = null;
       const lost = new Map(); let full = false, tight = false, creditedMsat = 0n, okTimer = null, wasStuck = false; const creditedSats = new Set();
@@ -6666,6 +6667,8 @@
         // the table counted moves, not players): this tab says it is here to the round's seats, signed with its identity key,
         // and reads back who else is - { others: [{ key, name }] } from the seats that answer, this tab left out; null if none does
         here: async (id) => {
+          // SOMEBODY IS AT THIS TABLE (kanban #926): said to the test opponent on testnet, so nobody plays alone; nothing is waited for
+          if (window.ARENA_OPPONENT_URL) fetch(window.ARENA_OPPONENT_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ round: id }), keepalive: true }).catch(() => {});
           const h = readHidden().find((x) => x.roundIdHex === id);
           const nodes = h ? h.nodes : (window.ARENA_ROW_NODES ? window.ARENA_ROW_NODES(id) : []);
           let proof;

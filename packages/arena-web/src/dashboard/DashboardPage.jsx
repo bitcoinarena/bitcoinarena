@@ -194,7 +194,7 @@ export class Liquidity extends React.Component {
 
 // WHAT THE PLAYERS' FAUCET GAVE (kanban #926, the owner 2026-11-01: new and returning accounts apart, in the nodes' dashboard): its public totals, no account and no address in
 // them. Testnet only; no answer, no card.
-export const FAUCET_TOTALS = 'https://seat.example.com/faucet/player';
+export const FAUCET_TOTALS = 'https://bitcoin-arena.io/api/faucet/player';
 export class FaucetGrants extends React.Component {
   constructor(props) { super(props); this.state = { t: null }; }
   componentDidMount() {
