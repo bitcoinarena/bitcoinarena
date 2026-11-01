@@ -32,7 +32,8 @@ const rpc = async (method, params = []) => {
 const readBook = () => { try { return JSON.parse(readFileSync(env.FAUCET_BOOK, 'utf8')); } catch { return { paid: [] }; } };
 const saveBook = (b) => { writeFileSync(`${env.FAUCET_BOOK}.new`, JSON.stringify(b, null, 1)); renameSync(`${env.FAUCET_BOOK}.new`, env.FAUCET_BOOK); };
 const balanceSats = async () => Math.round(Number((await rpc('getbalances')).mine.trusted) * 1e8);
-const ipOf = (req) => String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || null;   // behind Funnel: no header = no IP limit
+// THE CALLER'S ADDRESS: the site's Worker names it (behind it x-forwarded-for is Cloudflare's), else the tunnel's header; no header, no limit by address
+const ipOf = (req) => String(req.headers['x-arena-ip'] || req.headers['x-forwarded-for'] || '').split(',')[0].trim() || null;
 
 let queue = Promise.resolve();
 const one = (fn) => { const run = queue.then(fn, fn); queue = run.catch(() => {}); return run; };
