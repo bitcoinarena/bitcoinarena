@@ -46,6 +46,20 @@ const CHANNEL_LINKS = {
   '/reddit': 'utm_source=reddit&utm_medium=community&utm_content=post',
   '/community': 'utm_source=community&utm_medium=community&utm_content=post',
 };
+// THE PUBLIC TESTNET REPORT'S NUMBERS (kanban #926 item 11): the kept 7-day boards, each player once, as tools/weekly-testers.mjs counts them; team keys and the test opponent left out
+async function testers(env) {
+  const team = new Set(JSON.parse(await env.CHAIN.get('team-keys') || '[]'));
+  const everyone = new Set(); const games = []; let at = 0;
+  for (const game of SEASON_GAMES) {
+    const kept = JSON.parse(await env.CHAIN.get(seasonKey(game, 7)) || 'null');
+    if (!kept) continue;
+    at = Math.max(at, kept.at);
+    const rows = (kept.season.rows || []).filter((r) => Number(r.rounds) > 0 && !team.has(String(r.player).toLowerCase()) && r.name !== 'Test bot');
+    for (const r of rows) everyone.add(String(r.player).toLowerCase());
+    games.push({ game, testers: rows.length, rounds: rows.reduce((n, r) => n + Number(r.rounds), 0), allRounds: Number(kept.season.rounds) || 0 });
+  }
+  return new Response(JSON.stringify({ at, testers: everyone.size, games }), { headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=300' } });
+}
 // THE OLD DOMAIN (kanban #937): every (sub)domain of it sends to the same place on the new one, path and query kept
 const OLD_DOMAIN = /(^|\.)bitcoin-arena\.io$/;
 const moved = (url) => { if (!OLD_DOMAIN.test(url.hostname)) return null; const to = new URL(url); to.hostname = url.hostname.replace(/bitcoin-arena\.io$/, 'bitcoinarena.io'); return Response.redirect(to.toString(), 308); };
@@ -63,6 +77,7 @@ async fetch(request, env, ctx) {
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) { const went = moved(url); if (went) return went; }   // a page already open still calls /api/ here
   if (url.pathname === '/api/season') return seasonSnapshot(url, env, ctx);
+  if (url.pathname === '/api/testers') return testers(env);
   // A SHORT LINK PER CHANNEL (kanban #943): a profile shows bitcoinarena.io/x, the visit still arrives with its campaign, and the referrer stays
   { const utm = CHANNEL_LINKS[url.pathname.replace(/\/$/, '')]; if (utm) return Response.redirect(`${url.origin}/?${utm}`, 302); }
   // THE PLAYERS' FAUCET AND THE TABLE WANTS (kanban #926): passed on to the faucet service, whose address is a secret of this Worker (FAUCET_ORIGIN), with the caller's address for its limits
