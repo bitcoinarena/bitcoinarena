@@ -157,6 +157,9 @@
     /* STACKED (the owner 2026-10-31: "Lass sie stacken die Nachrichten"): the two can stand at once */
     #arena-money-stack { position: fixed; left: 8px; right: 8px; top: calc(46px + env(safe-area-inset-top, 0px)); z-index: 2147483000; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
     #arena-money-stack > * { pointer-events: auto; }
+    /* NOTHING COVERED (kanban #926, 2026-11-01: "die notice verdeckt den Content"): on a wide screen in the empty middle of the top bar, on a narrow one at the foot of the screen */
+    @media (min-width: 1100px) { #arena-money-stack { left: 240px; right: 460px; top: calc(6px + env(safe-area-inset-top, 0px)); } #arena-money-stack #arena-money-ok { padding-top: 6px; padding-bottom: 6px; font-size: 13px; } }
+    @media (max-width: 1099px) { #arena-money-stack { top: auto; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); } }
     #arena-money-alert { display: none; padding: 10px 12px; border-radius: 10px;
       background: #7f1d1d; border: 1px solid #fca5a5; color: #fff; font: 600 14px/1.35 system-ui, sans-serif; text-align: center; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
     #arena-money-alert.show { display: block; }
@@ -541,6 +544,8 @@
       font: 600 14px/1 system-ui, sans-serif; }
     #arena-season .days button[aria-pressed="true"] { background: #1f2630; color: #f7931a; }
     #arena-season .state { color: #8b949e; font-size: 13px; min-height: 1.4em; margin: 0 0 6px; }
+    #arena-season .progress { height: 4px; border-radius: 2px; background: rgba(139, 148, 158, .25); overflow: hidden; margin: 0 0 8px; }
+    #arena-season .progress i { display: block; height: 100%; width: 0; background: #f7931a; }
     #arena-season .state.bad { color: #f0b72f; }
     #arena-season .board { list-style: none; margin: 0; padding: 0; }
     #arena-season .row { display: grid; grid-template-columns: 2em minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 12px; margin: 0 0 6px;
@@ -1671,6 +1676,7 @@
     // federation of the deposits this browser could not collect, and whether its storage refused a wallet write. A kept deposit may never have been paid, hence "up to".
     // THE PLAYERS' FAUCET (kanban #926): testnet's page only, so a mainnet build never has it
     window.ARENA_FAUCET_URL = /(^|\.)testnet\.bitcoin-?arena\.io$|\.bitcoin-arena-site\.pages\.dev$/.test(location.hostname) ? 'https://bitcoinarena.io/api/faucet/player' : '';
+    window.ARENA_SEASON_SNAPSHOT_URL = 'https://bitcoinarena.io/api/season';
     window.ARENA_OPPONENT_URL = window.ARENA_FAUCET_URL ? window.ARENA_FAUCET_URL.replace(/\/player$/, '/opponent') : '';
     // LET BOTS JOIN THE GAMES (kanban #926): on unless a player turned it off, kept in this browser; off, the page names no table to the test opponent
     window.ARENA_BOTS_ON = () => { try { return localStorage.getItem('arena.bots') !== 'off'; } catch { return true; } };
@@ -2092,7 +2098,7 @@
   })();
   </script>
 
-  <div id="arena-season" role="dialog" aria-modal="true" aria-labelledby="arena-season-title"><div class="box"><button type="button" class="back">&larr; Back</button><button type="button" class="sheet-close">&#10005; Close</button><div class="brand">Leaderboard</div><h2 id="arena-season-title">Leaderboard</h2><div class="head"></div><div class="mybadges"></div><div class="days" role="group" aria-label="days"><button type="button" data-days="7" aria-pressed="true">7 days</button><button type="button" data-days="30" aria-pressed="false">30 days</button><button type="button" data-days="90" aria-pressed="false">90 days</button></div><div class="state" role="status"></div><ol class="board"></ol><div class="foot"></div></div></div>
+  <div id="arena-season" role="dialog" aria-modal="true" aria-labelledby="arena-season-title"><div class="box"><button type="button" class="back">&larr; Back</button><button type="button" class="sheet-close">&#10005; Close</button><div class="brand">Leaderboard</div><h2 id="arena-season-title">Leaderboard</h2><div class="head"></div><div class="mybadges"></div><div class="progress" id="arena-season-progress" hidden><i></i></div><div class="days" role="group" aria-label="days"><button type="button" data-days="7" aria-pressed="true">7 days</button><button type="button" data-days="30" aria-pressed="false">30 days</button><button type="button" data-days="90" aria-pressed="false">90 days</button></div><div class="state" role="status"></div><ol class="board"></ol><div class="foot"></div></div></div>
   <!-- THE GAME'S SHOP: its items, each bought once with this wallet and kept for good -->
   <div id="arena-shop" role="dialog" aria-modal="true" aria-labelledby="arena-shop-title"><div class="box"><button type="button" class="back">&larr; Back</button><button type="button" class="sheet-close">&#10005; Close</button><div class="brand">Shop</div><h2 id="arena-shop-title">Shop</h2><div class="head">Bought once with your wallet, yours for good in every round of this game.</div><div class="items"></div><div class="state" role="status" aria-live="polite"></div></div></div>
   <div id="arena-zap" role="dialog" aria-modal="true" aria-label="Zap"></div>
@@ -6419,14 +6425,28 @@
         askBadges(Array.from(board.querySelectorAll('li[data-player]')));
       };
       const schedule = () => { clearTimeout(s.timer); s.timer = s.open ? setTimeout(load, POLL_MS) : null; };
+      // THE BAR (kanban #941): runs towards 90 % over the time a seat takes, fills when the answer is in
+      const progress = document.getElementById('arena-season-progress'), fill = progress && progress.firstElementChild;
+      const barStart = () => { if (!fill) return; progress.hidden = false; fill.style.transition = 'none'; fill.style.width = '4%'; void fill.offsetWidth; fill.style.transition = 'width 14s cubic-bezier(.1,.7,.3,1)'; fill.style.width = '90%'; };
+      const barDone = () => { if (!fill) return; fill.style.transition = 'width .2s'; fill.style.width = '100%'; setTimeout(() => { if (fill.style.width === '100%') progress.hidden = true; }, 300); };
       async function load() {
         if (!s.open || !s.game) return;
         const ask = ++s.ask;
         clearTimeout(s.timer); s.timer = null;
         const g = s.game;
+        const live = !s.polled;
+        if (live) barStart();
+        let answered = false;
+        const timeout = (ms) => (AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined);
+        // WHAT WAS KEPT, AT ONCE (kanban #941, measured 2026-11-01: a seat takes 5-13 s and they were asked one after another, 60 s and more); the nodes' own answer replaces it
+        if (live && window.ARENA_SEASON_SNAPSHOT_URL) ARENACLIENT.fetchSeasonSnapshot({ url: window.ARENA_SEASON_SNAPSHOT_URL, game: g.name, days: s.days, title: g.title || g.name, viewer: viewer(), fetch: (u, o) => fetch(u, o), timeout })
+          .then((v) => { if (v.ok && !answered && s.open && ask === s.ask) { draw(v); window.ArenaText.say(state, 'Updating from the nodes \u2026'); } }, () => {});
         const v = await ARENACLIENT.fetchSeason({ nodes: Array.isArray(g.nodes) ? g.nodes : [], game: g.name, days: s.days, title: g.title || g.name,
-          viewer: viewer(), fetch: (u, o) => fetch(u, o), via, timeout: (ms) => (AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined) });
+          viewer: viewer(), fetch: (u, o) => fetch(u, o), via, timeout, race: 4 });
+        answered = true;
         if (!s.open || ask !== s.ask) return;     // closed meanwhile, or a newer ask (a day switch) is under way
+        barDone();
+        s.polled = v.ok;
         draw(v);
         schedule();
       }
@@ -6438,7 +6458,7 @@
       const open = (g, days) => {
         if (!g || !g.name) return;
         const same = s.game && s.game.name === g.name;
-        s.game = g; s.open = true;
+        s.game = g; s.open = true; s.polled = false;
         if (days) s.days = Number(days);
         pressDays();
         if (!same) { reactRows = []; drawReact(); window.ArenaText.say(foot, ''); window.ArenaText.say(head, ''); dropBook(); }
@@ -6450,7 +6470,7 @@
       for (const b of dayButtons) b.addEventListener('click', () => {
         const d = Number(b.dataset.days);
         if (d === s.days) return;
-        s.days = d; pressDays();
+        s.days = d; pressDays(); s.polled = false;
         state.className = 'state'; window.ArenaText.say(state, 'Asking the nodes \u2026');
         load();
       });
@@ -6878,6 +6898,8 @@
           const st = d.createElement('style');
           st.textContent = 'html{height:100%}body{overflow-y:auto!important;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain}'
             + (game.name === 'btc-updown-15m' ? '.list{flex:1 0 auto!important;overflow:visible!important}'
+              // NO LINK OUT OF THE MARKET (kanban #942): the client's bytes stay as signed, the link and the dot before it are not drawn
+              + '#poly{display:none!important}.sub{font-size:0!important}.sub>#left{font-size:13px}'
               // A PAST ORDER'S STATUS ON ITS OWN LINE (2026-10-17 on the phone card: "pending final breaks the
               // layout" - "pending · final in 6:57" ran past the card's edge at 390): it wraps under the round, right-aligned
               + '.pastc .ph{flex-wrap:wrap;row-gap:3px}.pastc .ph .rd{flex:1 1 auto;min-width:0}.pastc .ph .fin{flex:1 0 100%;order:3;text-align:right}'
