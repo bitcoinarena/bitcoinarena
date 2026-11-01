@@ -13,7 +13,7 @@ import vm from 'node:vm';
 const ROOT = new URL('../../../', import.meta.url);
 const read = (p) => readFileSync(new URL(p, ROOT), 'utf8');
 const LATEST = 'https://github.com/bitcoinarena/bitcoinarena/releases/latest';
-const REPOS = ['bitcoin-arena', 'arena-app-next-block', 'arena-app-up-or-down', 'arena-app-rock-paper-scissors', 'arena-sdk'];
+const REPOS = ['bitcoinarena', 'arena-app-next-block', 'arena-app-up-or-down', 'arena-app-rock-paper-scissors', 'arena-sdk'];
 const SCRIPT = read('src/website/www/js/release-latest.js');
 
 /** release-latest.js run against a page of the given elements and a channel answering `answer` (or throwing). */
@@ -82,8 +82,8 @@ test('no page names a release number of its own; every release link is releases/
 test('docs.bitcoinarena.io/repos/ links the five public repositories, each with its GitHub icon, and the docs lead to it', () => {
   const page = read('src/website/docs/www/repos/index.html');
   for (const r of REPOS) {
-    assert.match(page, new RegExp(`<div class="repo" id="${r}"><a class="gh" href="https://github\\.com/bitcoin-arena/${r}" aria-label="${r} on GitHub"><svg viewBox="0 0 24 24"`), r);
-    assert.match(page, new RegExp(`<h3><a href="https://github\\.com/bitcoin-arena/${r}">bitcoin-arena/${r}</a></h3>\\s*<p>[^<]{40,}`), r);
+    assert.match(page, new RegExp(`<div class="repo" id="${r}"><a class="gh" href="https://github\\.com/bitcoinarena/${r}" aria-label="${r} on GitHub"><svg viewBox="0 0 24 24"`), r);
+    assert.match(page, new RegExp(`<h3><a href="https://github\\.com/bitcoinarena/${r}">bitcoin-arena/${r}</a></h3>\\s*<p>[^<]{40,}`), r);
   }
   assert.equal((page.match(/class="repo"/g) || []).length, REPOS.length);
   assert.match(page, /<a class="rel" href="https:\/\/github\.com\/bitcoinarena\/bitcoinarena\/releases\/latest">Latest release<span class="v" data-arena-release-version><\/span><\/a>/);
