@@ -20,11 +20,11 @@
 **Version:** Bitcoin Arena protocol v1, draft. Earlier drafts (BLWP) remain in git history.
 **Date:** 2026-10-06
 
-> **A false slash does not pay (2026-11-02, kanban #971).** Bond template 3:
-> arbitrators can only move a bond to one fixed hold output, by a signature
-> the node made in advance; leaving it takes a second set too, and the clocks
-> are 6 and 144 blocks. Existing bonds do not move. §5A.2, §5A.3, §5A.3B,
-> §23A.5, §27A.6.
+> **A false slash does not pay (2026-11-02, kanban #971, #974).** Bond template
+> 3: every round draws two panels of 7 by formula, a bond moves only to a hold
+> output its node signed for that round, and leaving it takes both panels, after
+> 6 blocks. Nothing goes on chain per round. Existing bonds do not move. §5A.2,
+> §5A.3, §5A.3B, §23A.5, §27A.6.
 
 > **Late join and background stake (2026-10-02 / 2026-10-03, written
 > 2026-10-03; the run's end and the door RULED again 2026-10-04 14:30).**
@@ -1670,8 +1670,8 @@ census objective. It is paid **once**.
   height at which the bond stops counting: an unspent bond past maturity
   is still the bond. A bond stops being the bond in exactly two ways: it is
   **spent** (by the node, by a cooperative close, or by a slash), or it is
-  knocked out by a proof that it was spent (§5A.3B). A slash start of a
-  template-3 bond is neither: its hold output stays the bond (§5A.3B).
+  knocked out by a proof that it was spent (§5A.3B). A spend through path B
+  of a template-3 bond is neither: its hold output stays the bond (§5A.3B).
 - **The funding spend is the bond's birth.** The transaction that spends a
   funding output into the bond output **creates** the bond. That the funding
   output is spent is not an objection, not a spend of the bond, and never
@@ -2138,7 +2138,7 @@ a transaction is §5A.3B.
 | Settlement action without the required 5-of-7 result and payout signatures | The settlement record |
 | Claiming a fee share without meeting the availability rule (§22A) | Receipt record |
 | Withholding a settlement signature: a seat that acknowledged the round's settlement transaction and did not sign it before the locks expired | The signed acknowledgement + the transaction + the expiry — a stall refunds losers and unpays winners, so it is an offence and not only a delay |
-| Signing a slash start with no valid proof (template 3, §5A.3B, kanban #971) | The start, whose witness names the signers + the bytes that hash to its `OP_RETURN` and do not check; or, if none retrieve by `slash_return_blocks`, k of the other set's signed refusal |
+| Signing a release with no valid proof (template 3, §5A.3B, kanban #971) | The release, whose witness names the signers + the bytes that hash to its `OP_RETURN` and do not check |
 | Signing a release or an escrow payout that pays other than its `payout_table` (template 3, §5A.3B) | The release or the payout + the table |
 | Signing an `AUDIT` (§13A.1) over a result a valid objection contradicts (kanban #724, #725) | The `AUDIT` + its signature + the rows it vouched for + transcript + receipts + replay of the objection that held |
 
@@ -2176,7 +2176,7 @@ minus the round's own seats (the witnesses) and 25% to the donation set of
   | A fee share claimed without the availability rule | every financially activated entry - they paid the fee |
   | A withheld settlement signature | every financially activated entry - a stall refunds losers and unpays winners alike |
   | A contradicted `AUDIT` (§13A.1) | the `playerPubkey` of the entry whose contradicted run the proof names |
-  | A slash start with no valid proof | the node it was started against, in place of players |
+  | A release with no valid proof | the node it was taken from, in place of players |
   | A release or escrow payout against its table | the entries of that table |
 
   §13A's "the affected player, another player in the round" is the same
@@ -2313,151 +2313,178 @@ permanently auditable**: anyone can fetch the proof later and re-verify it.
 A slash whose committed proof does not retrieve, or does not check, is
 itself public evidence against the arbitration set.
 
-### A false slash does not pay: template 3 *(RULED 2026-11-02, kanban #971; for new bonds and mainnet)*
+### A false slash does not pay: template 3 *(RULED 2026-11-02, kanban #971, #974; for new bonds and mainnet)*
 
 Under templates 1 and 2 path B is k-of-m with no timelock, and no script says
 where the money goes. k colluding members can take any bond, and only public
-evidence stands against it. Template 3 keeps a member from moving a bond on
-its own, so a false slash brings the signers nothing and costs them their own
-bonds. **Arbitrators decide that a slash starts; they never move the money.**
+evidence stands against it. Template 3 names no standing group of people:
+**each round has its own two panels, drawn by a formula anyone can run, and no
+one can move a bond without them or without most of the bonded capital.**
 
 There is no covenant here. A signature the node made in advance does the same
-job for the one step that needs it.
+job for the one step that needs it. **None of this adds a transaction to a
+round.** It adds one signature per seat per round, kept off chain. Only a slash
+that really happens goes on chain.
+
+**Who is responsible for a round.** Two panels of 7, threshold 5, for every
+round, fixed when its committees are:
+
+```text
+panel_seed(r)  = tagged_hash("ARENA/v1/SlashPanel", committee_seed(r))
+order          the §5A.6 selection over the round's census, on panel_seed(r),
+               less every node drawn for any role of the round (all 9 per role,
+               §5A.7), its attestors, and the nodes of its players
+panel A        the first 7 of that order
+panel B        the next 7
+```
+
+The lobby and the explorer list both panels beside the committee. Anyone can
+recompute them, nobody applies for them, and no node can move itself in or out.
+Being drawn takes no work unless a slash comes, and pays nothing.
+
+**The census key: who gates the first step.** A key in a bond is fixed when it
+is bonded, and a round is drawn later, so the first step needs a key that exists
+already. `census_key(e)` is a FROST key (RFC 9591, BIP-340) of the census of
+epoch `e`, one share per weight (§5A.6), threshold 2/3 of the shares. No one is
+chosen: every bonded node holds shares by its bond. An epoch is `bond_maturity`
+long. A bond names the key of the epoch it is bonded in, and each epoch's new
+census takes over the shares of the older keys by a reshare that keeps the
+public key. A holder signs a slash start only after replaying the proof itself.
 
 **The bond (`bond_script_template_version` 3).** The key path and path A stay.
-Path B needs the node's advance signature as well:
+Path B needs both the node's advance signature and the census key:
 
 ```text
 script path B (slash start)
               <node_key> CHECKSIGVERIFY
-              <k-of-m arbitration keys, BIP-342 counting form>
+              <census_key(e)> CHECKSIG
 ```
 
-**The advance signature (`slash_presig`).** The node signs one transaction,
-the **slash start**, with hash type `SIGHASH_SINGLE|ANYONECANPAY` (0x83):
+**The advance signature, per round (`slash_presig`).** With its SEATING
+signature (§5A.7), each seated node signs one **slash start** for that round,
+hash type `SIGHASH_SINGLE|ANYONECANPAY` (0x83):
 
 ```text
 version 2, nLockTime 0
 input 0       the bond, sequence 0xfffffffd
-output 0      the whole bond amount, to the node's hold output
+output 0      the whole bond amount, to hold(bond, round)
 ```
 
-The hash type leaves everything else open, so the arbitration set adds a fee
-input, the change and the proof's `OP_RETURN`, and can change nothing the
-signature covers. `slash_presig` depends on the bond's txid and the bond's
-transaction commits to the first advertisement, so it travels in an
-**advertisement update**: a template-3 bond counts only once an update
-carrying a valid `slash_presig` is `census_confirmations` deep.
+It is 65 bytes, stays with the round's seats and is checked with the seating; a
+seat refuses a seating whose member's `slash_presig` does not verify. The signed
+transaction is normally never published. The hash type leaves everything else
+open: whoever files the slash adds a fee input and the proof's `OP_RETURN`, and
+the release pays their fee back. A slash uses the `slash_presig` of the round
+the offence is in; an offence with no round uses the node's newest. A node
+also posts one in an advertisement update when it bonds (the bond's txid does
+not exist before), naming panels drawn on `H(bond outpoint ‖ that block's
+hash)`, and a template-3 bond counts only with it `census_confirmations` deep.
 
-**The hold output.** A P2TR output with an unspendable internal key and two
-leaves, rebuilt by anyone from the bond and the two sets:
+**The hold output.** A P2TR output with an unspendable internal key, rebuilt by
+anyone from the bond and the round:
 
 ```text
 release       <slash_hold_blocks> CHECKSEQUENCEVERIFY DROP
-              <k-of-m arbitration keys>
-              <k-of-m confirm keys>
+              <5-of-7 panel A>  <5-of-7 panel B>
               -> the distribution of §5A.3, in one transaction
 
 return        <slash_return_blocks> CHECKSEQUENCEVERIFY DROP
               <bond_maturity> CHECKLOCKTIMEVERIFY DROP
               <node_key> CHECKSIG
               -> the node alone
-```
 
-**The confirm set.** A second k-of-m set (`confirm_set`), named beside
-`arbitration_set`. Before it signs a release, each member fetches the proof
-behind the slash start's hash and checks it itself. A proof that does not
-check gets no signature, so the money stays where it is.
+fallback      <slash_fallback_blocks> CHECKSEQUENCEVERIFY DROP
+              <census_key(e)> CHECKSIG
+              -> the census key, if the panels do not sign
+```
 
 **The flow, replacing steps 3-5 above for a template-3 bond:**
 
 ```text
-3. k-of-m arbitration keys add their signatures to slash_presig and post the
-   slash start, with OP_RETURN = H(fraud_proof) ‖ slash_height ‖ hint.
-   slash_height keeps its meaning but is not the nLockTime: slash_presig
-   fixes that at 0.
-4. slash_hold_blocks later, k-of-m of both sets sign the release, with
+3. The census key signs the slash start after replaying the proof, with
+   OP_RETURN = H(fraud_proof) ‖ slash_height ‖ hint. slash_height keeps its
+   meaning but is not the nLockTime: slash_presig fixes that at 0.
+4. slash_hold_blocks later, 5 of 7 of both panels, each having replayed the
+   proof, sign the release, with
    OP_RETURN = H(fraud_proof) ‖ slash_height ‖ H(payout_table). The table
    names every affected entry and its share.
-5. The release pays the distribution of §5A.3. The players' escrow is under
-   both sets, not the arbitration keys alone.
+5. The release pays the distribution of §5A.3. Panel A's members bring the
+   players' share into the federation and pay the table, in score order, none
+   holding more than its own bond.
 ```
 
 **The clocks are hours, not days.** The money a player is waiting for here is
-the slash share. Their own stake and winnings never wait for it: a false
-result is corrected inside the 30 minutes of §13A.
+the slash share. Their own stake and winnings never wait for it: a false result
+is corrected inside the 30 minutes of §13A.
 
 | | mainnet | testnet4 | regtest |
 |---|---|---|---|
 | `slash_hold_blocks` | 6 (~1 h) | 1 | 1 |
 | `slash_return_blocks` | 144 (~1 day) | 36 | 12 |
+| `slash_fallback_blocks` | 288 (~2 days) | 72 | 24 |
 
-`slash_hold_blocks` is the depth a chain event needs anyway, and long enough
-for the confirm set to replay a proof. `slash_return_blocks` equals
-`stake_expiry_blocks`. A player's line shows as pending, with its amount, from
-the moment the release confirms (§24). The players' share then still has to
-enter the federation, which takes the federation's own peg-in depth (on
-testnet4 100 blocks, its setting). An arbitration client holding enough e-cash
-may pay at the release and refill itself from the peg-in; it is not required
-to, and nothing depends on it.
+`slash_hold_blocks` is the depth a chain event needs anyway, and long enough to
+replay a proof. A player's line shows as pending, with its amount, from the
+moment the release confirms (§24). The players' share then still has to enter
+the federation, which takes the federation's own peg-in depth (on testnet4 100
+blocks, its setting). A panel member holding enough e-cash may pay at the
+release and refill itself from the peg-in; nothing depends on it.
 
 **What each attack gets.**
 
 | Attempt | Result |
 |---|---|
-| k arbitrators send a bond anywhere but its hold output | refused by Bitcoin: `slash_presig` no longer verifies |
-| k arbitrators start a slash with no valid proof | the confirm set does not sign; no money moves, the signers are named in the start's witness and are slashed themselves (below) |
-| the same, to push a rival out of the draw | nothing: the hold output stays the bond, with its weight (below) |
-| a node buys a slash start to get its bond out before maturity | nothing: the return leaf waits for `bond_maturity` too |
-| the confirm set alone | it cannot start, and it cannot release |
-| both sets together, k of each | can still take a bond. This is the remaining trust |
+| the census key sends a bond anywhere but a hold output its node signed | refused by Bitcoin: `slash_presig` no longer verifies |
+| the census key starts a slash with no valid proof | no money moves: the panels do not sign, and the hold output stays the bond (below) |
+| a round's panels, both captured | they cannot start without the census key, and a panel reaches only that round's seats, not every bond |
+| one panel blocks a true slash (3 of 7 refuse) | the census key releases at `slash_fallback_blocks` if the bond is immature; a mature node can already leave, as under path A |
+| a node buys a slash start to get out before maturity | nothing: the return leaf waits for `bond_maturity` too |
+| 2/3 of the bonded capital | can still take a bond that has not matured. At that size it holds the committees anyway |
 
-**The hold output is still the bond (§5A.2).** A slash start is the one spend
-of a bond that does not end it: the census reads the hold output, recognised
-by its exact script, as the same bond with the same weight, until it is spent
-by a release or a return. It is not an abandonment by a guardian (§23A.5). So
-a start with no valid proof takes nothing from the node: it stays drawn,
-earns as before, and need do nothing. Its money simply sits under a leaf with
-the same maturity. Only a confirmed release takes a node out. A guilty node
-therefore keeps serving until the release; the census lead means a slash never
-reached rounds already drawn in any case.
+A mature node leaves at `slash_return_blocks`, before the fallback opens, so the
+census key can never take a mature bond by itself. So a key whose epoch is over
+reaches nothing: bonds that named it have matured.
 
-**The members.** Every member of either set is a bonded node. No operator has
-more than one member, and none sits in both sets. A member takes nothing
-from a slash: the 75 % to active census nodes leaves out both sets. There is
-no arbitration fee: what a member stands to lose is its bond and its node's
-fees. A member's own bond is template 3 with the **other** set in both leaves,
-alone, because a set does not release against itself. So one set alone can
-take the other's bonds, and no one else's.
+**The hold output is still the bond (§5A.2).** A spend through path B is the one
+spend of a bond that does not end it: the census reads its output 0 as the same
+bond with the same weight, until it is spent by a release, a return or the
+fallback. It is not an abandonment by a guardian (§23A.5). So a start with no
+valid proof takes nothing from the node: it stays drawn and earns as before.
+Only a release takes a node out.
+
+**Panel members** take nothing from a slash: the 75 % to active census nodes
+leaves out both panels. Signing a release with no valid proof slashes the
+signer: the release's witness names them.
 
 **Existing bonds.** Templates 1 and 2 are read as before on the networks that
 read them, and nothing moves: a bond stays valid, and no bond is asked to
 re-bond. Mainnet reads template 3 only.
 
-**Who holds the two sets on mainnet is the owner's to name before genesis.**
-
-**AS MEASURED (2026-11-02, private regtest, Bitcoin Core 31.1, 5 of 7 in both
-sets, mainnet clocks).** A throwaway script against bitcoind, 19 of 19 as
-expected, each refused for the reason named:
+**AS MEASURED (2026-11-02, private regtest, Bitcoin Core 31.1, mainnet clocks).**
+A throwaway script against bitcoind, 23 of 23 as expected. One plain key stood
+in for the census key: Bitcoin sees one BIP-340 signature either way.
 
 | Attempt | Bitcoin's answer |
 |---|---|
-| 5 of 7 + `slash_presig`, money to another address | refused: invalid Schnorr signature |
-| the same, hold output 1,000 sat short | refused: invalid Schnorr signature |
-| 5 of 7, no node signature | refused |
-| another bond's `slash_presig` | refused: invalid Schnorr signature |
-| `slash_presig` + 4 of 7 | refused |
-| `nLockTime` = slash height, the old rule | refused: invalid Schnorr signature |
-| the right output + fee input + `OP_RETURN`, 5 of 7 | **accepted**, 450 vB |
+| census key + presig, money to another address | refused: invalid Schnorr signature |
+| presig without the census key; census key without a presig | refused |
+| round 1's presig on round 2's hold output | refused: invalid Schnorr signature |
+| round 1's and round 2's presig, each to its own hold output | each **accepted**, 332 vB |
+| round 2's presig after round 1's start | refused: the bond is gone |
 | release at 1 and at 5 confirmations | refused: non-BIP68-final |
-| release at 6, arbitration set alone, confirm set alone, 5 + 4 | refused |
-| release at 6, 5 + 5 | **accepted** and mined, 493 vB |
-| return at 143, at 144 before maturity, at maturity with another key | refused |
-| return at 144 + maturity, the node | **accepted**, 139 vB |
+| release at 6 by round 2's panels on round 1's hold | refused: invalid Schnorr signature |
+| release at 6: panel A alone, panel B alone, 5 + 4 | refused |
+| release at 6: 5 + 5 | **accepted** and mined, 501 vB |
+| census key before 288, another key on its leaf | refused |
+| return at 143, by another key, or before maturity | refused |
+| return at 144, mature node | **accepted**, 147 vB |
+| fallback at 288, census key, immature bond | **accepted**, 138 vB |
 
-This is the Bitcoin half. Nothing of it is built in the node yet: template 3,
-the census rule, the arbiter's two steps and the confirm set are their own
-ticket.
+**On chain:** nothing per round. A slash costs 332 + 501 = 833 vB, once.
+
+**Not measured:** FROST with one share per weight among a whole census, and the
+reshare. The seats run FROST at 5 of 7 today. This is the Bitcoin half; template
+3, the census rule, the panels and the census key are their own ticket.
 
 ### The residual, named
 
@@ -3674,8 +3701,7 @@ RoundContract {
   slashing_rules_hash
   arbitration_set                  // k-of-m keys; bonds only, never stakes
   arbitration_k, arbitration_m
-  confirm_set                      // template 3: the second k-of-m set (§5A.3B)
-  confirm_k, confirm_m
+  census_key_epoch                 // template 3: the census key a bond names (§5A.3B)
   bond_maturity                    // absolute locktime for unilateral recovery
 
   objection_window_W               // exactly 600000 ms (WINDOW-10-SPEC, 2026-10-01); any other value is an invalid contract
@@ -6034,8 +6060,8 @@ cannot lose; the rest 75% to the nodes, 25% to the developers).** The
 slashing transaction (§5A.3B) does not pay anyone yet. It pays the whole
 bond into a **liquidation escrow** of that federation: an output under the
 arbitration set's k-of-m keys (§5A.3B), one per federation, or from template
-3 under both sets' with the bond going through its hold output first, that is
-spent only in one of two ways:
+3 under the census key with the bond going through its hold output first, that
+is spent only in one of two ways:
 
 ```text
 federation CLOSED (§23A.6)      nothing was lost, so nothing is owed:
@@ -7540,6 +7566,7 @@ genesis_parameters {
   bond_maturity          absolute locktime offset
   slash_hold_blocks      template 3: start to earliest release (§5A.3B)
   slash_return_blocks    template 3: start to the node's return (§5A.3B)
+  slash_fallback_blocks  template 3: start to the census key's release (§5A.3B)
   notice_period          for a rise in bond_min (§27A.3)
   bracket_table          the §5A.10 stake ceiling table
   bond_marker            the §25.1 discovery address
@@ -7589,7 +7616,7 @@ a state whose origin nobody can check.
 | census lead = `series_start - census cutoff` (TN24-POST-1409) | **72 h** | **36 h** (testnet4; 12 h publication window) | regtest's own blocks |
 | writer horizon (rounds generated ahead, TN24-1405) | 72 h | **72 h** | 72 h |
 | `bond_maturity` | ~30 days | ~1 day | **100 blocks** |
-| `slash_hold_blocks` / `slash_return_blocks` | 6 / 144 | 1 / 36 | **1 / 12** |
+| `slash_hold_blocks` / `slash_return_blocks` / `slash_fallback_blocks` | 6 / 144 / 288 | 1 / 36 / 72 | **1 / 12 / 24** |
 | `notice_period` | ~30 days | ~1 day | **10 blocks** |
 | stake ceiling | §5A.10 table | testnet sats | play money only |
 | beacon | Bitcoin block after `committee_time` | Bitcoin block | **mock, seeded** |
@@ -8512,7 +8539,7 @@ with PIP. Users can sign in with their ingame key and their custom name or their
 | Census roots in a contract do not match the chain | Contract invalid; no node issues receipts; no entry possible |
 | Client's chain view is wrong (bad header source) | If the forged view is also the contract's, the player locks to the forger's committee and loses the stake — the corrected statement of §5A.4. Prevented only by verifying headers from ≥2 independent sources (§25.1); a mismatch between an honest view and the contract fails the entry safely |
 | Arbitration set inactive | No slashing; deterrence lost. Rounds settle and refund normally; bonds recoverable by the node after `bond_maturity` |
-| Arbitration set slashes without a valid proof | Templates 1 and 2: bond stolen from that node. Template 3: no money moves unless the confirm set signs too, and the signers are slashed. Publicly provable from the committed proof hash; player funds untouched (arbitration cannot reach stakes) |
+| Arbitration set slashes without a valid proof | Templates 1 and 2: bond stolen from that node. Template 3: no money moves without the round's two panels, and their signers are slashed. Publicly provable from the committed proof hash; player funds untouched (arbitration cannot reach stakes) |
 | Lightning payout route fails | Retry within the claim window |
 | Website compromised | Wallet approval still required; hashes/mirrors; donation cap limits the damage |
 | 5 game/verify nodes collude **and** the victim's transcript is unavailable | Residual result-integrity failure; five bonds slashable afterwards |
@@ -8711,7 +8738,7 @@ committee nor outcome).
 | **Bond splitting to buy selection** | Split capital across identities | An earlier draft's √ weighting **doubled** an attacker's weight when splitting | Linear weighting: same capital, same total weight; control cost is capital share (§5A.6) |
 | **Identity mining for a low ticket** | Grind `node_pubkey` | Favourable sort/ticket position | Tickets and ordering derive from the bond **outpoint**, which cannot be chosen after funding (§5A.4, §5A.6) |
 | **Entry before the committee exists** | — | Shares encrypted to an unknown set; stake at risk under a committee the player never saw | Structurally impossible: entry opens at `committee_time`, and the Entry Contract cannot be built earlier (§9, §23.1) |
-| **Arbitration slashes without cause** | k-of-m arbitration keys (template 3: k-of-m of both sets) | Bond theft from an honest node | Template 3: a fixed hold output and the confirm set (§5A.3B). Slash must commit to a retrievable proof; unilateral recovery at `bond_maturity`; arbitration is disjoint from committees and cannot reach stakes (§5A.3B) |
+| **Arbitration slashes without cause** | k-of-m arbitration keys (template 3: 2/3 of bonded capital) | Bond theft from an honest node | Template 3: a fixed hold output and two drawn panels per round (§5A.3B). Slash must commit to a retrievable proof; unilateral recovery at `bond_maturity`; arbitration is disjoint from committees and cannot reach stakes (§5A.3B) |
 | **Operator playing his own round** | Anonymous operator | Self-signed win | The 5-of-7 capital requirement (§5A.6) and the replay objection (§13A) stop it; a player declares no operator (§5A.13) |
 | DDoS after a loss is final | Network attack | Already handled | Unchanged: `FINAL` results survive (§14) |
 | **Round grinding by mass publication** — publish many contracts, promote the one whose committee is yours | Any creator with census share | Free: timestamp receipts cost nothing and any five nodes could backdate them | `publication_txid`: the contract's hash in a block before the beacon block; every candidate costs a transaction, ordering is objective (§5A.5, P1) |
