@@ -36,6 +36,10 @@ async fetch(request, env, ctx) {
     }
     return new Response('ok', { headers: { 'Access-Control-Allow-Origin': '*' } });
   }
+  // NIP-05: who our Nostr names are (kanban #958). Answered on every host, because the spec forbids a redirect here.
+  if (url.pathname === '/.well-known/nostr.json') {
+    return new Response(JSON.stringify({ names: { 'george-prime': '97b7b1282ed2308f088c43b24b6e51ba9b5582c4d92aeae8691cfacf0f7c5e05', 'mateo-vives': 'cdbb9e44a92663610ffdfbedc003f9e5077dbc6470ca54ce973e06f683546e16' } }), { headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=3600' } });
+  }
   if (url.pathname === '/robots.txt') return new Response('User-agent: *\nAllow: /\n', { headers: { 'Content-Type': 'text/plain' } });
   // chatgpt.bitcoin-arena.io (2026-10-08 23:17: so ChatGPT can read the page): the same files, kept out of search indexes
   if (url.hostname === 'chatgpt.bitcoin-arena.io') {
