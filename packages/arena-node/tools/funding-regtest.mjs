@@ -65,6 +65,7 @@ const env = process.env;
 const B = env.BITCOIN_BIN, WORK = env.WORK;
 if (!B || !WORK) throw new Error('BITCOIN_BIN=<bin dir> WORK=<dir>');
 const SCHEDULE_NAME = env.FUNDING === 'spec' ? 'spec' : 'short';
+const SIGNALS = Number(env.SIGNALS || 3);   // how many seats signal: the 15 % threshold read with fewer than all
 const S = FUNDING_SCHEDULES[SCHEDULE_NAME];
 const W = S.week;
 const RPC = Number(env.RPCPORT || 29511), P2P = RPC + 1;
@@ -111,7 +112,8 @@ const procs = PORTS.map((port, i) => {
   return p;
 });
 const URLS = PORTS.map((p) => `http://127.0.0.1:${p}`);
-const http = (i, path, init) => fetch(`${URLS[i]}${path}`, init);
+// ONCE MORE ON A CONNECTION ERROR (run 5, 10-31: a keep-alive socket the seat had closed answered "fetch failed" right after the third round)
+const http = async (i, path, init) => { try { return await fetch(`${URLS[i]}${path}`, init); } catch { await wait(1000); return fetch(`${URLS[i]}${path}`, init); } };
 for (let i = 0; i < 3; i++) { for (let n = 0; n < 120; n++) { try { if ((await http(i, '/identity')).ok) break; } catch { /* not yet */ } await wait(500); } }
 const keys = ids.map((id) => toHex(id.pubkey));
 say({ step: 'seats', ports: PORTS, pids: procs.map((p) => p.pid), keys: keys.map(short) });
@@ -302,7 +304,7 @@ try {
     proposalId = toHex(pid);
     say({ step: 'proposal', id: proposalId, publishedHeight: P, tip: tip(), amountSats: p.amountSats, status: a.map((x) => x.status), why: a.find((x) => x.status >= 300)?.body?.why });
     const sigs = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < SIGNALS; i++) {
       const s = { proposalId: pid, node: ids[i].pubkey, atHeight: P };
       const shex = toHex(Uint8Array.from([...encodeFundingSignal(s), ...schnorr.sign(fundingSignalId(s), ids[i].secret)]));
       const got = await postFunding('signal', shex);
@@ -339,6 +341,27 @@ try {
       signalsHeld: v.p && v.p.signals.length });
   }
   say({ step: 'decided', seconds: Math.round((Date.now() - t1) / 1000), sameAtEverySeat: views.every((v) => JSON.stringify(v.p && v.p.signal) === JSON.stringify(views[0].p && views[0].p.signal)) });
+  // ---- the bond-weighted vote: seats 1 and 2 YES, seat 3 NO, each from its operator door and this wallet, then the count once it is deep enough
+  const open = views[0].p && views[0].p.vote;
+  if (open && open.from !== null && open.from !== undefined) {
+    const tokens = stores.map((s) => readFileSync(`${s}.operator-pairing`, 'utf8').trim().split('#')[1]);
+    mineTo(open.from);
+    for (const [i, choice] of [[0, 'YES'], [1, 'YES'], [2, 'NO']]) {
+      const r = await (await http(i, '/operator/vote', { method: 'POST', headers: { authorization: `Bearer ${tokens[i]}` }, body: JSON.stringify({ proposalId, choice }) })).json();
+      if (!r.ok) { say({ step: 'vote', seat: i + 1, why: r.why }); continue; }
+      const txid = JSON.parse(wcli('-named', 'send', `outputs=${JSON.stringify([{ data: r.opReturn }])}`, 'fee_rate=2')).txid;
+      say({ step: 'vote', seat: i + 1, choice, txid: short(txid) });
+    }
+    mineTo(tip() + 1);
+    mineTo(open.until + 7);
+    let seen = [];
+    for (let n = 0; n < 40; n++) {
+      seen = await Promise.all([0, 1, 2].map(async (i) => ((await fundingAt(i)).proposals || []).find((x) => x.id === proposalId)));
+      if (seen.every((p) => p && p.vote && p.vote.decided)) break;
+      await wait(10000);
+    }
+    for (let i = 0; i < 3; i++) say({ step: 'vote counted', seat: i + 1, tip: tip(), vote: seen[i] && seen[i].vote, payout: seen[i] && seen[i].payout });
+  }
   for (let i = 0; i < 3; i++) say({ step: `seat ${i + 1} log`, funding: (readFileSync(join(WORK, `node-${i + 1}.log`), 'utf8').match(/\[funding\][^\n]*/g) || []).slice(-4) });
   say({ step: 'mined', blocks: tip(), note: 'every block of this chain, from its genesis' });
 } catch (e) {
