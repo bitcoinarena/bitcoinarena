@@ -5273,15 +5273,17 @@
     // wallet bar's deposit with no game picked (that one took the lobby's federation, so B at load 0 got nothing)
     // THE WELCOME (kanban #926, 2026-11-01: "jeder neue Account ... bekommt 500 satoshis, mit einer gruener Nachricht"): a wallet made in this tab, once the lobby
     // names a federation: an invoice for it, paid by the faucet, and the green line when it lands. It asks nothing of the player; a refusal leaves only the deposit window.
+    // THE GRANT SURVIVES A RELOAD (kanban #963): the pending mark goes only once the faucet paid, or said this account has its grant
+    let welcomeRunning = false;
     async function welcomeSats() {
       let pending = null; try { pending = sessionStorage.getItem('arena.welcome.pending'); } catch { return; }
-      if (!pending || !window.ARENA_FAUCET_URL) return;
+      if (!pending || !window.ARENA_FAUCET_URL || welcomeRunning) return;
+      welcomeRunning = true;
       window.ARENA_MONEY_ALERT.coming(ARENACLIENT.FAUCET_GRANTS.welcome.sats + ' test sats are on their way to your wallet \u2026');
       for (let i = 0; i < 90 && !(window.ARENA_LEDGER_LOBBY && window.ARENA_LEDGER_LOBBY.federation && typeof walletSeed === 'function' && walletSeed()); i++) await new Promise((r) => setTimeout(r, 1000));
       const lob = window.ARENA_LEDGER_LOBBY, seed = typeof walletSeed === 'function' ? walletSeed() : null;
-      if (!lob || !lob.federation || !seed) { window.ARENA_MONEY_ALERT.notComing(); return; }
+      if (!lob || !lob.federation || !seed) { welcomeRunning = false; window.ARENA_MONEY_ALERT.notComing(); return; }
       try {
-        sessionStorage.removeItem('arena.welcome.pending');
         const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
         const into = depositPick(lob.federation).invite || lob.federation;
         const federationId = ARENACLIENT.fromHex(String(wasm.LockClient.federationIdOf(into)));
@@ -5292,8 +5294,9 @@
         const d = await offer.invoice(grant.invoiceMsat);
         window.ARENA_MONEY_ALERT.nextWords(grant.sats + ' sats have been credited to your wallet for testing.');
         await ARENACLIENT.askFaucet({ url: window.ARENA_FAUCET_URL, kind: 'welcome', invoice: d.invoice, seed });
+        try { sessionStorage.removeItem('arena.welcome.pending'); } catch { /* no storage */ }
         window.ARENA_TRACK('faucet-welcome');
-      } catch (e) { window.ARENA_MONEY_ALERT.nextWords(null); window.ARENA_MONEY_ALERT.notComing(); console.log('[faucet] no welcome sats: ' + (e && e.message ? e.message : e)); }
+      } catch (e) { welcomeRunning = false; if (/already has/.test(String(e && e.message))) { try { sessionStorage.removeItem('arena.welcome.pending'); } catch { /* no storage */ } } window.ARENA_MONEY_ALERT.nextWords(null); window.ARENA_MONEY_ALERT.notComing(); console.log('[faucet] no welcome sats: ' + (e && e.message ? e.message : e)); }
     }
     // AT THE START (a Nostr login reloads the page with its seed), and at once when the wallet is made in this page
     window.ARENA_WELCOME = welcomeSats;
