@@ -14,14 +14,19 @@ export async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher
   const fed = toHex(federationId);
   const said = new Map();
   const asked = [...new Set((nodes || []).map((n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')))];
-  await Promise.all(asked.map(async (base) => {
-    try {
-      const r = await fetcher(`${base}/reserves`, { signal: AbortSignal.timeout(timeoutMs) });
-      if (!r.ok) return;
-      const f = ((await r.json()).federations || []).find((x) => x.federationId === fed && /^0[23][0-9a-f]{64}$/.test(String(x.key || '')));
-      if (f) said.set(f.key, (said.get(f.key) || 0) + 1);
-    } catch { /* a node that does not answer names nothing */ }
-  }));
+  // DONE AS SOON AS ENOUGH AGREE (kanban #926, measured 2026-11-01: an 8 s round was gone while the page waited out the slowest of the round's nodes): the slower ones are not waited for
+  await new Promise((done) => {
+    let left = asked.length;
+    if (!left) done();
+    for (const base of asked) (async () => {
+      try {
+        const r = await fetcher(`${base}/reserves`, { signal: AbortSignal.timeout(timeoutMs) });
+        if (!r.ok) return;
+        const f = ((await r.json()).federations || []).find((x) => x.federationId === fed && /^0[23][0-9a-f]{64}$/.test(String(x.key || '')));
+        if (f) { said.set(f.key, (said.get(f.key) || 0) + 1); if (said.get(f.key) >= needed) done(); }
+      } catch { /* a node that does not answer names nothing */ }
+    })().finally(() => { left -= 1; if (!left) done(); });
+  });
   const best = [...said.entries()].sort((a, b) => b[1] - a[1])[0];
   if (!best) return { ok: false, why: `none of the round's ${asked.length} signer nodes names a reserve key for federation ${fed.slice(0, 8)}` };
   if (best[1] < needed) return { ok: false, why: `only ${best[1]} of the round's signer nodes name reserve key ${best[0].slice(0, 16)}, and ${needed} must` };
