@@ -109,7 +109,7 @@ export function depositParts(s, pegInSats) {
 export const SPLIT_FEE_SATS = 500;
 
 /** The Arena faucet (kanban #635): testnet4 coins for a new node, from our own coins - ARENA_FAUCET_URL to point elsewhere. */
-export const FAUCET_URL = process.env.ARENA_FAUCET_URL || 'https://seat.example.com/faucet';
+export const FAUCET_URL = process.env.ARENA_FAUCET_URL || 'https://tn4.bitcoinarena.io/faucet';
 export function withOtherNodes(s, parts, { further = false } = {}) {
   const n = s && s.instances ? Number(s.instances.count) || 1 : 1;
   if (n <= 1 || further) return parts;

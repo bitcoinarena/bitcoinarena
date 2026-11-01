@@ -18,7 +18,7 @@ export const TESTNET4_GENESIS = '00000000da84f2bafbbc53dee25a72ae507ff4914b867c5
 // OURS FIRST (kanban #656, 2026-10-25: "also do our own API for the testnet installer"; measured that day: mempool.space answered
 // for hours on neither its Electrum port nor its Esplora API): Fulcrum on the Arena's public-chain testnet4 node, over a websocket.
 // The public servers stay as fallbacks.
-export const ARENA_ELECTRUM = Object.freeze({ host: 'seat.example.com', port: 443, tls: true, ws: true, path: '/electrum', note: 'Bitcoin Arena' });
+export const ARENA_ELECTRUM = Object.freeze({ host: 'tn4.bitcoinarena.io', port: 443, tls: true, ws: true, path: '/electrum', note: 'Bitcoin Arena' });
 export const TESTNET4_ELECTRUM = Object.freeze([
   ARENA_ELECTRUM,
   { host: 'mempool.space', port: 40002, tls: true, note: 'mempool.space' },
