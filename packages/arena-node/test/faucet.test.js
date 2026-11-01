@@ -26,3 +26,24 @@ test('an address is paid once, an IP three times a day, and never past the daily
   assert.match(faucetDecide({ address: B, sats: 50000, ip: '6.6.6.6' }, book, { nowMs: now, dayCapSats: 100000 }).why, /today's coins/);
   assert.match(faucetDecide({ address: B, sats: 50000, ip: '6.6.6.6' }, { paid: [] }, { nowMs: now, balanceSats: 40000 }).why, /out of coins/);
 });
+
+test('the players\' faucet: a welcome once, three top-ups a day, an IP and a day capped, and only its own invoice amount', async () => {
+  const { playerGrantDecide: d, playerGrantTotals, PLAYER_GRANTS, PLAYER_PER_IP_PER_DAY, PLAYER_DAY_CAP_SATS } = await import('../src/faucet.js');
+  const a = 'a'.repeat(64), b = 'b'.repeat(64), now = 86400000 * 20758 + 1000, W = PLAYER_GRANTS.welcome.invoiceSats, T = PLAYER_GRANTS.topup.invoiceSats;
+  const ask = (kind, account, extra = {}) => ({ kind, account, ip: '1.1.1.1', invoiceSats: kind === 'welcome' ? W : T, nowMs: now, ...extra });
+  const row = (kind, account, extra = {}) => ({ kind, account, ip: '2.2.2.2', sats: kind === 'welcome' ? W : T, atMs: now, ...extra });
+  assert.equal(d(ask('welcome', a), { players: [] }).ok, true);
+  assert.equal(d(ask('welcome', a), { players: [row('welcome', a, { atMs: now - 86400000 * 9 })] }).ok, false, 'a welcome twice');
+  assert.equal(d(ask('welcome', a, { invoiceSats: 100000 }), { players: [] }).ok, false, 'another amount');
+  assert.equal(d(ask('free', a), { players: [] }).ok, false);
+  assert.equal(d(ask('__proto__', a), { players: [] }).ok, false);
+  assert.equal(d(ask('topup', 'nope'), { players: [] }).ok, false);
+  assert.equal(d(ask('topup', a), { players: [row('topup', a), row('topup', a)] }).ok, true);
+  assert.equal(d(ask('topup', a), { players: [row('topup', a), row('topup', a), row('topup', a)] }).ok, false, 'a fourth top-up');
+  assert.equal(d(ask('topup', a, { nowMs: now + 86400000 }), { players: [row('topup', a), row('topup', a), row('topup', a)] }).ok, true, 'the next day');
+  assert.equal(d(ask('topup', a), { players: Array.from({ length: PLAYER_PER_IP_PER_DAY }, () => row('topup', b, { ip: '1.1.1.1' })) }).ok, false, 'one address');
+  assert.equal(d(ask('topup', a, { ip: null }), { players: [row('topup', b, { sats: PLAYER_DAY_CAP_SATS })] }).ok, false, 'the day cap');
+  const t = playerGrantTotals({ players: [row('welcome', a), row('welcome', b, { atMs: now - 86400000 }), row('topup', a), row('topup', a)] }, now);
+  assert.deepEqual([t.newAccounts.grants, t.newAccounts.sats, t.newAccounts.today.grants, t.returning.grants, t.returning.accounts, t.totalSats], [2, 2 * W, 1, 2, 1, 2 * W + 2 * T]);
+  assert.equal(JSON.stringify(t).includes(a), false, 'no account in the totals');
+});

@@ -6735,7 +6735,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (req.method === 'GET' && url.pathname === '/dashboard.json') {
         const nowMs = Date.now();
-        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify({ ...dashboardData(round, { nowMs, poolsFor: dashboardPools, marketRows: marketEarnings.rows(), hosts: hosts ? hosts.snapshot() : null, devClient: devClientSnapshot(devClientDir), devClients: devClients ? devClients.list({ attribute: devAttribute }) : null, apps: hosted, matchFor: (rid) => matchOf(round, hosted, rid), reserveKeys: [...reserveKeys.values()].map(toHex) }), release: releaseHere() }) };
+        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify({ network: (() => { try { const nid = chainNetworkId(); return nid ? networkOf(typeof nid === 'string' ? fromHex(nid) : nid) : null; } catch { return null; } })(), ...dashboardData(round, { nowMs, poolsFor: dashboardPools, marketRows: marketEarnings.rows(), hosts: hosts ? hosts.snapshot() : null, devClient: devClientSnapshot(devClientDir), devClients: devClients ? devClients.list({ attribute: devAttribute }) : null, apps: hosted, matchFor: (rid) => matchOf(round, hosted, rid), reserveKeys: [...reserveKeys.values()].map(toHex) }), release: releaseHere() }) };
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(dashboardKept.body);
       }
