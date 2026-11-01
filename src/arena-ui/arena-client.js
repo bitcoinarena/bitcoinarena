@@ -17787,6 +17787,18 @@ async function walletDepositOffer({ federationId, invite, seed, LockClient, stor
   offer.client = client;   // the page keeps it with its other wallets: summed, and its pending deposits waited on (2026-10-20)
   return offer;
 }
+/**
+ * TEST SATS FROM THE FAUCET (kanban #926): the invoice `offer` makes for this wallet, paid by the faucet; `offer.claimed` says when it landed. `account` is a
+ * hash of the seed, so the faucet can pay a welcome once and learns no key. Throws naming why it gave nothing.
+ */
+const FAUCET_GRANTS = Object.freeze({ welcome: { sats: 500, invoiceMsat: 500000n }, topup: { sats: 250, invoiceMsat: 250000n } });
+const faucetAccountOf = (seed) => toHex(taggedHash('arena/faucet/account/v1', seed instanceof Uint8Array ? seed : fromHex(String(seed))));
+async function askFaucet({ url, kind, invoice, seed, fetcher = fetch } = {}) {
+  const r = await fetcher(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind, account: faucetAccountOf(seed), invoice }), signal: AbortSignal.timeout(45000) });
+  const j = await r.json().catch(() => ({ ok: false, why: `the faucet answered ${r.status}` }));
+  if (!j.ok) throw new Error(j.why || 'the faucet gave nothing');
+  return j;
+}
 const DEPOSIT_MARGIN_PPM = 6000n;
 const DEPOSIT_MARGIN_MSAT = 10000n;
 /**

@@ -192,6 +192,30 @@ export class Liquidity extends React.Component {
   }
 }
 
+// WHAT THE PLAYERS' FAUCET GAVE (kanban #926, the owner 2026-11-01: new and returning accounts apart, in the nodes' dashboard): its public totals, no account and no address in
+// them. Testnet only; no answer, no card.
+export const FAUCET_TOTALS = 'https://seat.example.com/faucet/player';
+export class FaucetGrants extends React.Component {
+  constructor(props) { super(props); this.state = { t: null }; }
+  componentDidMount() {
+    const read = this.props.read || (() => fetch(FAUCET_TOTALS, { cache: 'no-store' }).then((r) => r.json()));
+    Promise.resolve().then(read).then((t) => { if (t && t.ok && !this.gone) this.setState({ t }); }, () => {});
+  }
+  componentWillUnmount() { this.gone = true; }
+  render() {
+    const { t } = this.state;
+    if (!t) return null;
+    const row = (name, p) => <tr key={name}><td>{name}</td><td className="n">{p.accounts.toLocaleString('en-US')}</td><td className="n">{p.grants.toLocaleString('en-US')}</td><td className="n">{p.sats.toLocaleString('en-US')} sat</td><td className="n">{p.today.sats.toLocaleString('en-US')} sat</td></tr>;
+    return (
+      <section><h2>Test sats given by the faucet</h2><div className="card scroll">
+        <table className="tbl"><thead><tr><th>Who</th><th className="n">Accounts</th><th className="n">Grants</th><th className="n">In all</th><th className="n">Today</th></tr></thead>
+          <tbody>{row('New accounts', t.newAccounts)}{row('Returning', t.returning)}</tbody></table>
+        <p className="sub">{t.totalSats.toLocaleString('en-US')} sat in all. Test sats only, on testnet4.</p>
+      </div></section>
+    );
+  }
+}
+
 export class DashboardPage extends React.Component {
   constructor(props) { super(props); this.state = { period: 'day', open: {}, players: {} }; }
   async toggle(id) {
@@ -235,6 +259,7 @@ export class DashboardPage extends React.Component {
         {D.uptime && Array.isArray(D.uptime.windows) ? <section><h2>Uptime</h2><UptimeStats uptime={D.uptime} /></section> : null}
         <section><h2>Earnings</h2><Earnings totals={D.totals} period={period} onPeriod={(p) => this.setState({ period: p })} /></section>
         <section><div className="card"><Chart days={D.days || []} /></div></section>
+        {D.network === undefined || D.network === null || /test/i.test(String(D.network)) ? <FaucetGrants /> : null}
         {devs.length || L || G || (D.byGame || []).length || notes.length ? (
           <section><h2>Money</h2>
             <div className="cards">
