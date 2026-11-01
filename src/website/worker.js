@@ -75,6 +75,10 @@ async scheduled(event, env, ctx) {
 async fetch(request, env, ctx) {
 
   const url = new URL(request.url);
+  // NIP-05: who our Nostr names are (kanban #958). Answered on every host, because the spec forbids a redirect here.
+  if (url.pathname === '/.well-known/nostr.json') {
+    return new Response(JSON.stringify({ names: { 'george-prime': '97b7b1282ed2308f088c43b24b6e51ba9b5582c4d92aeae8691cfacf0f7c5e05', 'mateo-vives': 'cdbb9e44a92663610ffdfbedc003f9e5077dbc6470ca54ce973e06f683546e16' } }), { headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=3600' } });
+  }
   if (!url.pathname.startsWith('/api/')) { const went = moved(url); if (went) return went; }   // a page already open still calls /api/ here
   if (url.pathname === '/games' || url.pathname === '/games/') return Response.redirect(`${url.origin}/#games`, 301);   // kanban #948: the page is gone, a link to it lands on the home page's games
   if (url.pathname === '/api/season') return seasonSnapshot(url, env, ctx);
