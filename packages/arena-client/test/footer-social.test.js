@@ -24,7 +24,6 @@ const SOURCES = {
   'src/arena-ui/index.html': 2,
   // bitcoinarena.io: the landing page and the live games
   'src/website/www/index.html': 1,
-  'src/website/www/games/index.html': 1,
   // the node's own pages: the owner page (also on the Arena site at /owner/), its dashboard, and the installer's wizard
   'packages/arena-node/pages/owner.html': 1,
   'packages/arena-node/src/dashboard.js': 1,
