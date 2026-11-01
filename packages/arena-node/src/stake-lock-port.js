@@ -70,6 +70,8 @@ export function stakeLockServer({ bin, dataDir, timeoutMs = 10000, spawnFn = spa
       const c = spawnFn(bin, ['--mode', 'serve', '--data-dir', dataDir], { stdio: ['pipe', 'pipe', 'ignore'] });
       child = c;
       c.on('error', (e) => { if (!up) reject(e); fail(e.message); });
+      // A SERVER ENDED WHILE AN ASK WAS BEING WRITTEN (11-01 23:16Z, fed2 seat 1): the pipe's EPIPE had no listener and took the whole seat down.
+      c.stdin.on('error', (e) => { if (child === c) fail(`the stake-lock server's pipe: ${e.message}`); });
       c.on('exit', (code) => { if (!up) reject(new Error(`the stake-lock server exited (${code}) - an older binary has no serve mode`)); fail(`the stake-lock server exited (${code})`); });
       c.stdout.setEncoding('utf8');
       c.stdout.on('data', (d) => {
