@@ -157,6 +157,8 @@
     /* STACKED (the owner 2026-10-31: "Lass sie stacken die Nachrichten"): the two can stand at once */
     #arena-money-stack { position: fixed; left: 8px; right: 8px; top: calc(46px + env(safe-area-inset-top, 0px)); z-index: 2147483000; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
     #arena-money-stack > * { pointer-events: auto; }
+    html.arena-boot-steps #bar { width: 100%; animation: none; transition: transform .35s ease-out; transform-origin: left; transform: scaleX(var(--boot, .08)); }
+    html.arena-boot-steps #creep { display: none; }
     #arena-feedback { position: fixed; inset: 0; z-index: 2147483001; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0,0,0,.6); }
     #arena-feedback .card { width: min(440px, 100%); padding: 18px; border-radius: 12px; background: #161b22; border: 1px solid #30363d; color: #e6edf3; font: 400 14px/1.4 system-ui, sans-serif; }
     #arena-feedback h3 { margin: 0 0 6px; font-size: 17px; } #arena-feedback p { margin: 0 0 10px; color: #8b949e; }
@@ -2805,7 +2807,11 @@
     // screen says; when a loading line has not changed for LOAD_STALL_S, fail() says so. A line that is not a loading
     // line (a stake lock, a claim key, an invoice) is the page waiting on the player or a named step, not stuck.
     const LOAD_STALL_S = 90;
-    const LOADING_LINES = new Set(['Connecting …', ...STAGES.map((s) => s[1])]);
+    const LOADING_LINES = new Set(['Connecting …', 'Finding the nodes …', 'Reading the rounds …', 'Opening your wallet …', 'Starting the game …', ...STAGES.map((s) => s[1])]);
+    // WHAT IT IS DOING, AND HOW FAR (kanban #946, 2026-11-01: "zeige auch an was er macht und mach eine Progress Bar"): the steps before a game's own loading, one way only, so a late one never moves the bar back
+    let bootPct = 0;
+    window.ARENA_BOOT_STEP = (at, words) => { if (at <= bootPct || window.unityInstance) return; const line = document.getElementById('stage'), bar = document.getElementById('bar'); if (!line || !LOADING_LINES.has(line.textContent)) return; bootPct = at; line.textContent = words; document.documentElement.classList.add('arena-boot-steps'); if (bar) bar.style.setProperty('--boot', at / 100); };
+    window.ARENA_BOOT_STEP(8, 'Finding the nodes …');
     let loadSeen = '', loadChangedAt = Date.now();
     const loadWatch = setInterval(() => {
       if (window.unityInstance || !document.getElementById('boot') || err.classList.contains('show')) { clearInterval(loadWatch); return; }
@@ -6662,13 +6668,17 @@
       // transaction, the first about an hour later. window.ARENA_H2H_WANT keeps the last ask for a probe.
       if (game.manifest && game.manifest.resultType === 3 && !window.ARENA_H2H_WANT_TIMER) {
         const ask = async () => {
-          const open = await Promise.any(nodes.map(async (n) => {
+          // WHAT THE LOBBY HOLDS FIRST (kanban #946, measured 2026-11-01: this asked all 14 seats at once for 5.2 MB each, every 30 s for every open page, and the 13 slower answers ran on)
+          if ((window.ARENA_LOBBY_ROWS || []).some((r) => { try { return ARENACLIENT.toHex(r.contract.gameId) === String(game.id).toLowerCase() && Number(r.entryCloseMs) > Date.now(); } catch { return false; } })) { window.ARENA_H2H_WANT = { at: Date.now(), open: true }; return; }
+          const stop = new AbortController();
+          const open = await Promise.any(nodes.slice(0, 2).map(async (n) => {
             // the next 15 min only: the whole listing is 3.7 MB on testnet4 and took 1.7-6.6 s a seat (measured 17:44Z)
-            const r = await fetch(String(n).replace(/\/+$/, '') + '/rounds?ahead=900000', { cache: 'no-store', signal: AbortSignal.timeout(8000) });
+            const r = await fetch(String(n).replace(/\/+$/, '') + '/rounds?ahead=900000', { cache: 'no-store', signal: AbortSignal.any([stop.signal, AbortSignal.timeout(8000)]) });
             if (!r.ok) throw new Error(String(r.status));
             const j = await r.json();
             return (j.rounds || []).some((x) => x.game && x.game.id === game.id && Number(x.entryCloseMs || Date.parse(x.entryClose || 0) || 0) > Date.now());
           })).catch(() => null);
+          stop.abort();
           // a round open: nothing to ask. No seat answered: ask anyway - the keeper publishes no grid while one runs ahead
           if (open === true) { window.ARENA_H2H_WANT = { at: Date.now(), open }; return; }
           const said = await Promise.all(nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/h2h-want?game=' + game.id, { method: 'POST', signal: AbortSignal.timeout(5000) })
@@ -6676,10 +6686,11 @@
           window.ARENA_H2H_WANT = { at: Date.now(), open: false, said };
           console.log('[arena] no ' + game.name + ' round is open: asked the signer nodes for one (' + said.filter((x) => x === 200).length + ' of ' + nodes.length + ')');
         };
-        ask(); window.ARENA_H2H_WANT_TIMER = setInterval(ask, 30000);
+        setTimeout(ask, 15000); window.ARENA_H2H_WANT_TIMER = setInterval(ask, 30000);
       }
       window.ARENA_GAME_NAME = game.name;
       window.ARENA_TRACK('game-open', { game: game.name });
+      if (window.ARENA_BOOT_STEP) window.ARENA_BOOT_STEP(30, 'Reading the rounds …');
       console.log('[arena] game ' + game.name + ' (' + game.id.slice(0, 16) + ')');
       return game;
     }
@@ -6927,6 +6938,7 @@
       // A SITE THAT EMBEDS THE GAME (kanban #678, 2026-10-26: "The demo site should take rps and take it as its own, embedding the code.
       // Not an iframe."): under arena-embed.js the client is mounted in the host page's own DOM, in an element that takes the same
       // checked bytes (src), says 'load' and hands its document as a frame's would
+      if (window.ARENA_BOOT_STEP) window.ARENA_BOOT_STEP(90, 'Starting the game …');
       const frame = window.ARENA_EMBED ? window.ARENA_EMBED.clientElement() : document.createElement('iframe');
       frame.id = 'arena-client';
       frame.title = game.title;
@@ -8232,6 +8244,7 @@
         for (const r of mine) rowSearch.set(r.id, search);
         for (const r of theirs) rowSearch.set(r.id, testnet.search);
         window.ARENA_LOBBY_ROWS = [...mine, ...theirs];    // every round listed, for the next one after a run (below)
+        if (window.ARENA_BOOT_STEP && window.ARENA_LOBBY_ROWS.length) window.ARENA_BOOT_STEP(65, 'Opening your wallet …');
         // THE ROUNDS JUST CLOSED THAT THE SEATS STILL LIST: a player's orders in them are read back after a reload
         { const closedOf = (g, srch) => ((g && g.closed) || []).filter((c) => !c.contract || paysHere(c)).map((c) => { rowSearch.set(c.id, srch); return c; });
           window.ARENA_LOBBY_CLOSED = [...closedOf(got, search), ...(got2 && testnet ? closedOf(got2, testnet.search) : [])]; }
