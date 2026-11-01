@@ -32,7 +32,20 @@ async function seasonSnapshot(url, env, ctx) {
   if (kept) { if (Date.now() - Number(/^\{"at":(\d+)/.exec(kept)?.[1] || 0) > SEASON_FRESH_MS) ctx.waitUntil(readSeason(env, game, days).catch(() => {})); return new Response(kept, { headers }); }
   try { return new Response(await readSeason(env, game, days), { headers }); } catch { return new Response('{"ok":false,"why":"no seat answered"}', { status: 503, headers }); }
 }
-const CHANNEL_LINKS = { '/x': 'utm_source=x&utm_medium=social&utm_content=profile', '/nostr': 'utm_source=nostr&utm_medium=social&utm_content=profile', '/tg': 'utm_source=telegram&utm_medium=social&utm_content=profile', '/discord': 'utm_source=discord&utm_medium=social&utm_content=profile' };
+const CHANNEL_LINKS = {
+  '/x': 'utm_source=x&utm_medium=social&utm_content=profile',
+  '/nostr': 'utm_source=nostr&utm_medium=social&utm_content=profile',
+  '/tg': 'utm_source=telegram&utm_medium=social&utm_content=profile',
+  '/discord': 'utm_source=discord&utm_medium=social&utm_content=profile',
+  '/dm': 'utm_source=dm&utm_medium=direct&utm_content=invite',
+  '/compat': 'utm_source=compat&utm_medium=community&utm_content=wallets',
+  '/night': 'utm_source=night&utm_medium=community&utm_content=testnet-night',
+  '/sn': 'utm_source=stacker-news&utm_medium=community&utm_content=post',
+  '/live': 'utm_source=live&utm_medium=community&utm_content=stream',
+  '/invite': 'utm_source=invite&utm_medium=referral&utm_content=tester',
+  '/reddit': 'utm_source=reddit&utm_medium=community&utm_content=post',
+  '/community': 'utm_source=community&utm_medium=community&utm_content=post',
+};
 // THE OLD DOMAIN (kanban #937): every (sub)domain of it sends to the same place on the new one, path and query kept
 const OLD_DOMAIN = /(^|\.)bitcoin-arena\.io$/;
 const moved = (url) => { if (!OLD_DOMAIN.test(url.hostname)) return null; const to = new URL(url); to.hostname = url.hostname.replace(/bitcoin-arena\.io$/, 'bitcoinarena.io'); return Response.redirect(to.toString(), 308); };
