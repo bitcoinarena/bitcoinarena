@@ -10,3 +10,6 @@ devnet-data/
 /packages/hello-world/
 /packages/*.placing/
 /packages/*.fetching/
+.env
+.env.*
+!.env.example
