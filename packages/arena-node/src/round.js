@@ -10,6 +10,7 @@
 // It does not step the core. There is no `step` in this package and no import
 // of one; a round is a list of inputs until something verifies it, and that
 // something is the checkpoints in step 3.
+import { createInterner } from './intern.js';
 import {
   encodeRoundContract, roundId, encodeEntryContract, entryId, decodeEntryContract,
   decodeRoundContract, roundWindowsAreValid, lastTickOfRun, sittingSeatsFitTheSlots } from '../../arena-protocol/src/contracts.js';
@@ -124,6 +125,7 @@ export class Round {
     // contract (null: it does not parse), kept only while the store holds the round OPEN: dropped at its close, when its contract is
     // rewritten, when it is deleted, and whenever the open list is read again. Callers share the object and never change it.
     this.contracts = new Map();
+    this.interner = createInterner();      // a kept contract's equal values, one object (kanban #927)
     // THE OPEN IDS, read again only once a round opened, closed or was deleted (their count or newest row moved): the same id objects
     // are handed out again, so a caller keeps what it derived from them; `hexOf` is each one's hex
     this.openList = { key: null, ids: [] };
@@ -452,7 +454,7 @@ export class Round {
     const r = row === undefined ? this.db.prepare('SELECT contract, state FROM rounds WHERE round_id = ?').get(id) : row;
     if (!r) return null;
     let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { c = null; }
-    if (k !== null && r.state === OPEN) this.contracts.set(k, c);
+    if (k !== null && r.state === OPEN) this.contracts.set(k, c && this.interner.share(c));
     return c;
   }
 
