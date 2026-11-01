@@ -44,8 +44,8 @@ test('what listens: ss and lsof lines both read, the peer column never taken for
   assert.deepEqual([...parseListening(ss)].sort(), [24001, 24101, 8080].sort());
   const lsof = [
     'COMMAND     PID   USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME',
-    'node      74291 owner   20u  IPv4 0x1234567890      0t0  TCP 127.0.0.1:24221 (LISTEN)',
-    'bitcoind   1234 owner   11u  IPv6 0x1234567891      0t0  TCP *:48343 (LISTEN)',
+    'node      74291 alice   20u  IPv4 0x1234567890      0t0  TCP 127.0.0.1:24221 (LISTEN)',
+    'bitcoind   1234 alice   11u  IPv6 0x1234567891      0t0  TCP *:48343 (LISTEN)',
   ].join('\n');
   assert.deepEqual([...parseListening(lsof)].sort(), [24221, 48343].sort());
   assert.equal(parseListening('').size, 0);

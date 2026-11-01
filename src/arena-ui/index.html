@@ -154,7 +154,7 @@
     /* AN ORDER'S PROGRESS OVER A GAME'S OWN CLIENT (2026-10-17: "When I press buy up nothing happens no order no error.
        There needs to be feedback and some sort of progress indicator while we wait for the result"): the page's join, said as it goes */
     #arena-join-status { display: none; }
-    /* STACKED (the owner 2026-10-31: "Lass sie stacken die Nachrichten"): the two can stand at once */
+    /* STACKED (2026-10-31: "Lass sie stacken die Nachrichten"): the two can stand at once */
     #arena-money-stack { position: fixed; left: 8px; right: 8px; top: calc(46px + env(safe-area-inset-top, 0px)); z-index: 2147483000; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
     #arena-money-stack > * { pointer-events: auto; }
     #arena-money-alert { display: none; padding: 10px 12px; border-radius: 10px;
@@ -163,7 +163,7 @@
     #arena-money-ok { display: none; padding: 10px 12px; border-radius: 10px;
       background: #14532d; border: 1px solid #86efac; color: #fff; font: 600 14px/1.35 system-ui, sans-serif; text-align: center; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
     #arena-money-ok.show { display: block; }
-    /* AN X AT ITS END, AND A CLICK ANYWHERE ON IT CLOSES IT (kanban #930, the owner 2026-11-01: "Jede gruene Nachricht braucht ein X am Ende und muss verschwinden wenn man drauf klickt") */
+    /* AN X AT ITS END, AND A CLICK ANYWHERE ON IT CLOSES IT (kanban #930, 2026-11-01: "Jede gruene Nachricht braucht ein X am Ende und muss verschwinden wenn man drauf klickt") */
     #arena-money-ok { position: relative; padding-left: 40px; padding-right: 40px; cursor: pointer; }
     #arena-money-ok .x { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; background: none; border: 0; color: #fff; font: 700 22px/1 system-ui, sans-serif; cursor: pointer; }
     #arena-money-alert button { margin-left: 6px; padding: 6px 12px; border: 0; border-radius: 8px; background: #fff; color: #7f1d1d; font: 700 14px/1 system-ui, sans-serif; cursor: pointer; }
@@ -213,7 +213,7 @@
     /* THE LAST LINE, IN THE PAGE'S FLOW (2026-10-12: "Now it blocks the header. Just display it as last line at the end"):
        the games screen and the loading screen end with it; the fixed label is only the footer strip's line over a game's client */
     .build-line { margin-top: 18px; text-align: center; color: #6e7681; font: 600 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
-    /* THE UI NUMBER ONLY (kanban #753, the owner 2026-10-28: "I want 'UI xxx' still there, just not the static build number"): the
+    /* THE UI NUMBER ONLY (kanban #753, 2026-10-28: "I want 'UI xxx' still there, just not the static build number"): the
        fixed line, the games screen's foot row, the loading screen's last line and site-chrome.js say "UI n", never the static build */
     #arena-build { display: none; }
     body.arena-own-client #arena-build { display: block; }
@@ -228,7 +228,7 @@
     /* a game with its own client (Rock Paper Scissors) shows no frame rate (2026-10-09: "FPS ausgabe beim RPS client deaktivieren") */
     body.arena-own-client #arena-fps { display: none; }
     /* THE FOOT IN ONE ROW (2026-10-17): the UI line, the links and Donate, 30 px. The strip of settlement facts and fees above it is gone
-       (the owner 2026-10-30, iPhone: it covered the Rock / Paper / Scissors options); the fees stay in the docs.
+       (2026-10-30, iPhone: it covered the Rock / Paper / Scissors options); the fees stay in the docs.
        The line ends 16 px left of the links (#753: the links' left edge is 100 + 4 x 24 + 3 x 6 = 214 px from the right) */
     html body.arena-own-client #arena-build { height: calc(30px + min(env(safe-area-inset-bottom, 0px), 4px)); line-height: 30px; padding-right: 230px; font-size: 10px; }
     html body.arena-own-client #arena-client { height: calc(100% - 41px - 30px - env(safe-area-inset-top, 0px) - min(env(safe-area-inset-bottom, 0px), 4px)); }
@@ -471,7 +471,7 @@
     #arena-games.compact .stats { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); width: 100%; gap: 4px; margin-top: auto; }
     #arena-games.compact .chip { justify-content: center; min-width: 0; padding: 3px 2px; gap: 3px; font-size: 12.5px; letter-spacing: -.02em; }
     #arena-games.compact .chip .ico { width: 13px; height: 13px; }
-    /* ON A SHORT PHONE THE LIST FITS ONE SCREEN (kanban #919, the owner 2026-10-31, iPhone outer display): two rows of tiles, the images give up what the window lacks */
+    /* ON A SHORT PHONE THE LIST FITS ONE SCREEN (kanban #919, 2026-10-31, iPhone outer display): two rows of tiles, the images give up what the window lacks */
     @media (max-width: 559px) and (max-height: 800px) {
       #arena-games.compact button.tile { padding: 8px 8px 8px; gap: 6px; }
       #arena-games.compact .head { gap: 6px; }
@@ -711,7 +711,7 @@
     body.arena-game-chosen:not(.arena-own-client) #arena-game-home, body:has(#arena-season.show) #arena-game-home, body:has(#arena-shop.show) #arena-game-home, body:not(.arena-clean):has(#arena-settings:not([style*="none"])) #arena-game-home { display: inline-grid; flex: none; place-items: center; width: 29px; height: 29px; border-radius: 7px;
       text-decoration: none; font: 800 16px/1 system-ui, sans-serif; color: #1a0f00; background: conic-gradient(from 210deg, #f7931a, #ffd166, #f7931a); }
     #arena-game-home i { font-style: normal; }
-    /* THE LOGO STAYS ON THE SCREEN (kanban #827, the owner 2026-10-31: "Auf dem iphone duo ist die header navigation kaputt, das Logo ist abgeschnitten"): the row ends at the right edge, so
+    /* THE LOGO STAYS ON THE SCREEN (kanban #827, 2026-10-31: "Auf dem iphone duo ist die header navigation kaputt, das Logo ist abgeschnitten"): the row ends at the right edge, so
        what did not fit ran off the left, the logo first (measured: left -115 at 600 px, -9 at 390 px). The name gives way first, then the row tightens */
     body #arena-money #arena-game-home { flex: 0 1 auto; min-width: 26px; overflow: hidden; margin-right: auto; }
     #arena-game-home i { flex: none; }
@@ -804,7 +804,7 @@
     #boot #arena-backup-warn { flex: none; width: min(560px, 90vw); box-sizing: border-box; margin: 0; z-index: 3; position: relative; }
     @media (max-width: 480px) { #boot #arena-backup-warn { padding: 6px 10px; border: 2px solid #ff9d2e; background: rgba(58,32,0,0.94); }
       #boot #arena-backup-notice { display: inline; } #boot #arena-backup-cta::before { content: none; } }
-    /* INSIDE THE GAME'S FRAME (kanban #789, the owner 2026-10-29 playtest on a phone: "Der backup notice geht über den rahmen raus"): in Tick
+    /* INSIDE THE GAME'S FRAME (kanban #789, 2026-10-29 playtest on a phone: "Der backup notice geht über den rahmen raus"): in Tick
        Tock's framed loading screen the warning was min(560px, 90vw) wide - 351 px on a 390 px phone - while the frame's inside is
        --iw (86 % of the width less its 7 % pads, ~281 px); it takes exactly that width now */
     html:not(.other-game) #boot.paneled > #arena-backup-warn { width: var(--iw); max-width: var(--iw); }
@@ -845,7 +845,7 @@
     body:has(#arena-season.show) #arena-build, body:has(#arena-shop.show) #arena-build {
       display: block; left: 0; top: auto; right: 0; bottom: 0; height: calc(30px + min(env(safe-area-inset-bottom, 0px), 4px)); line-height: 30px; padding: 0 230px 0 8px;
       box-sizing: border-box; background: #0d1117; border-top: 1px solid #2a3442; border-radius: 0; font-size: 10px; text-align: right; }
-    /* THE GAME'S MENU BETWEEN THE ARENA'S BAR AND ITS FOOT (kanban #789, the owner 2026-10-29 playtest on a phone: "der Footer schneidet in den
+    /* THE GAME'S MENU BETWEEN THE ARENA'S BAR AND ITS FOOT (kanban #789, 2026-10-29 playtest on a phone: "der Footer schneidet in den
        Rahmen"): the bar (to ~40 px) and the foot (30 px and the safe area) are fixed over the canvas, and Unity centres its panel in the
        canvas with ~6 % of the height below it - on a phone's short window less than the foot, which lay over PLAY and SPECTATE. While the menu
        shows, the canvas ends under the bar and over the foot, so Unity lays its panel out in the room between them (the loading screen
@@ -882,7 +882,7 @@
     html.arena-root body:not(.arena-picking):not(.arena-game-chosen):has(#boot:not(.done)) #arena-social {
       display: flex; align-items: center; gap: 6px; position: fixed; right: 100px; bottom: calc(min(env(safe-area-inset-bottom, 0px), 4px) + 3px); z-index: 9992; height: 24px; }
     body.arena-clean #arena-social { display: none !important; }
-    /* THE DOCS AT THE FOOT'S LEFT (kanban #916, the owner 2026-10-31), on every screen that has the foot */
+    /* THE DOCS AT THE FOOT'S LEFT (kanban #916, 2026-10-31), on every screen that has the foot */
     #arena-foot-docs { display: none; position: fixed; left: 10px; bottom: calc(min(env(safe-area-inset-bottom, 0px), 4px) + 3px); z-index: 9992; height: 24px; line-height: 24px;
       color: #8b949e; font: 600 12px/24px system-ui, sans-serif; text-decoration: none; }
     #arena-foot-docs:hover, #arena-foot-docs:focus-visible { color: #f7931a; }
@@ -1433,7 +1433,7 @@
       try { const u = new URL(payload.url, location.origin); for (const k of [...u.searchParams.keys()]) if (k !== 'game' && !k.startsWith('utm_')) u.searchParams.delete(k); payload.url = u.pathname + u.search; } catch { /* sent as it is */ }
       return payload;
     };
-    // WHAT PLAYERS DO, COUNTED (kanban #923, the owner 2026-10-31: "Events fuer umami anlegen. Wallet login, existing user, new wallet, app geoeffnet, bezahlte Runde etc."):
+    // WHAT PLAYERS DO, COUNTED (kanban #923, 2026-10-31: "Events fuer umami anlegen. Wallet login, existing user, new wallet, app geoeffnet, bezahlte Runde etc."):
     // ARENA_TRACK(name, data) hands an event to Umami. Events wait in this tab until Umami has loaded, and across the reload a restored wallet makes. Only words and
     // size classes go out, never a key, an address, a round id or an amount; a refusal's text has its hex taken out first.
     window.ARENA_TRACK = (function () {
@@ -1447,7 +1447,7 @@
         return true;
       };
       let tries = 0; const wait = setInterval(() => { if (send() || ++tries > 60) clearInterval(wait); }, 1000);
-      // EVERY EVENT SAYS WHO PLAYED (the owner 2026-10-31: "Bei jedem event Nostr / normalen Usern")
+      // EVERY EVENT SAYS WHO PLAYED (2026-10-31: "Bei jedem event Nostr / normalen Usern")
       const kind = () => { try { return window.localStorage.getItem('arena.nostr') ? 'nostr' : 'normal'; } catch { return 'normal'; } };
       return (name, data) => { held.push([name, { ...(data || {}), user: kind() }]); if (held.length > MOST) held.shift(); keep(); send(); };
     })();
@@ -1662,24 +1662,25 @@
     // one-paid-run heartbeat (and a read of the kept phrases, only to cut them out of a copy). A tab's player and money are
     // vault()'s and the seed keeper's, nowhere else.
     const browserStore = window.ARENA_BROWSER_STORE;
-    // MONEY THAT DID NOT ARRIVE (kanban #883, the owner 2026-10-31: "Fehlermeldung dass das Geld nicht abgeholt werden kann, Summe für alle"): the sum over every
+    // MONEY THAT DID NOT ARRIVE (kanban #883, 2026-10-31: "Fehlermeldung dass das Geld nicht abgeholt werden kann, Summe für alle"): the sum over every
     // federation of the deposits this browser could not collect, and whether its storage refused a wallet write. A kept deposit may never have been paid, hence "up to".
     // THE PLAYERS' FAUCET (kanban #926): testnet's page only, so a mainnet build never has it
-    window.ARENA_FAUCET_URL = /(^|\.)testnet\.bitcoin-arena\.io$|\.bitcoin-arena-site\.pages\.dev$/.test(location.hostname) ? 'https://seat.example.com/faucet/player' : '';
+    window.ARENA_FAUCET_URL = /(^|\.)testnet\.bitcoin-arena\.io$|\.bitcoin-arena-site\.pages\.dev$/.test(location.hostname) ? 'https://bitcoin-arena.io/api/faucet/player' : '';
+    window.ARENA_OPPONENT_URL = window.ARENA_FAUCET_URL ? window.ARENA_FAUCET_URL.replace(/\/player$/, '/opponent') : '';
     window.ARENA_MONEY_ALERT = (() => {
       let nextWords = null;
       const lost = new Map(); let full = false, tight = false, creditedMsat = 0n, okTimer = null, wasStuck = false; const creditedSats = new Set();
       const store = () => (window.ARENA_BROWSER_STORE && window.ARENA_BROWSER_STORE()) || localStorage;
       const paint = () => {
         const el = document.getElementById('arena-money-alert'); if (!el) return;
-        // ONE DEPOSIT, ONE AMOUNT (the owner 2026-10-31: 14,400 shown for 7,200): a deposit keeps an invoice per gateway, all made within seconds, so what was waiting at once counts once
+        // ONE DEPOSIT, ONE AMOUNT (2026-10-31: 14,400 shown for 7,200): a deposit keeps an invoice per gateway, all made within seconds, so what was waiting at once counts once
         let msat = 0n; const once = new Set();
         for (const v of lost.values()) { const key = v.msat + '|' + Math.round(Number(v.atMs || 0) / 60000); if (once.has(key)) continue; once.add(key); try { msat += BigInt(v.msat); } catch { /* unreadable: not summed */ } }
         const sats = (msat / 1000n).toLocaleString('en-US');
         const money = msat > 0n ? 'Up to ' + sats + ' sat you deposited could not be collected into your wallet. ' : '';
         el.textContent = money + (full ? (msat > 0n ? 'This browser\u2019s storage is full.' : 'This browser\u2019s storage is full: a deposit cannot be collected now.') : '');
         el.classList.toggle('show', !!el.textContent);
-        // FIX IT (the owner 2026-10-31): room made on the spot and the page read again, which collects what can still be collected. Nothing with money in it goes.
+        // FIX IT (2026-10-31): room made on the spot and the page read again, which collects what can still be collected. Nothing with money in it goes.
         if (tight && !full) { el.textContent = 'This browser\u2019s storage is nearly full. It has to be compressed before a deposit, or the deposit could not be collected.'; el.classList.add('show'); }
         if (full || tight) { const b = document.createElement('button'); b.type = 'button'; b.textContent = tight && !full ? 'Compress' : 'Fix it'; b.onclick = fix; el.appendChild(document.createTextNode(' ')); el.appendChild(b); }
       };
@@ -1699,8 +1700,8 @@
           // every deposit still waiting, in every federation: with a full store the wallet may not open at all, so none of them reports itself
           try { const S = localStorage; for (let i = 0; i < S.length; i++) { const k = S.key(i); if (k && k.startsWith('arena.deposit.pending.')) for (const d of JSON.parse(S.getItem(k) || '[]')) lost.set(String(d.operation), { msat: String(d.msat), atMs: d.atMs }); } } catch { /* unreadable: not summed */ }
           paint(); },
-        // WHAT WAS STUCK AND CAME IN AFTER ALL (the owner 2026-10-31: "eine Meldung nach dem reload das XXX Satoshi credited worden sind die stuck waren"), summed over the deposits of this load
-        // AND EVERY OTHER CREDIT (kanban #909, the owner 2026-10-31: 600 sat came in on the desktop with no message): a deposit claimed in a window this
+        // WHAT WAS STUCK AND CAME IN AFTER ALL (2026-10-31: "eine Meldung nach dem reload das XXX Satoshi credited worden sind die stuck waren"), summed over the deposits of this load
+        // AND EVERY OTHER CREDIT (kanban #909, 2026-10-31: 600 sat came in on the desktop with no message): a deposit claimed in a window this
         // page opened is `plain`, and money that landed after waiting says so here too; creditedHas keeps one amount from being said twice
         // THE WORDS OF THE NEXT CREDIT (kanban #926): the faucet says what the player was promised, not the invoice's sat over it
         nextWords: (w) => { nextWords = w; },
@@ -1712,7 +1713,7 @@
           const close = () => { clearTimeout(okTimer); el.classList.remove('show'); creditedMsat = 0n; wasStuck = false; };
           el.onclick = close;
           el.classList.add('show'); clearTimeout(okTimer); okTimer = setTimeout(close, 30000); },
-        // ROOM BEFORE A DEPOSIT (the owner 2026-10-31: "Vor einem Deposit prüfst du ob der Fehler auftreten kann ... dass erst der Storage komprimiert werden muss bevor der Deposit erlaubt wird"): a claim writes up to some 100 KB, Safari gives 5 million characters
+        // ROOM BEFORE A DEPOSIT (2026-10-31: "Vor einem Deposit prüfst du ob der Fehler auftreten kann ... dass erst der Storage komprimiert werden muss bevor der Deposit erlaubt wird"): a claim writes up to some 100 KB, Safari gives 5 million characters
         room: () => { try { const S = store(); let used = 0; for (let i = 0; i < S.length; i++) { const k = S.key(i); if (k) used += k.length + String(S.getItem(k) || '').length; }
           if (used > 3500000) return false; S.setItem('arena.room.probe', 'x'.repeat(300000)); S.removeItem('arena.room.probe'); return true; } catch { try { store().removeItem('arena.room.probe'); } catch { /* none */ } return false; } },
         needRoom: () => { tight = true; paint(); },
@@ -1831,7 +1832,7 @@
   // 15 s, so that guardian was out of reach for the tab (and with three such, a 5 of 7 consensus call fails - the
   // "2,3,5 => Transport error: WebSocket connection failed" of the 2026-10-02 playtest). Every caller now takes this one
   // promise of the initialised module; a failed load is not kept.
-  // NOT WHILE UNITY STARTS (measured 2026-10-08 in a named profile, test host Chrome as an Android phone at 4x):
+  // NOT WHILE UNITY STARTS (measured 2026-10-08 in a named profile, macOS Chrome as an Android phone at 4x):
   // the wallet's work - the lock client's sha256, ChaCha and __multi3, the curve's mul/add - ran on the main thread inside
   // Unity's start and the block after it. The module is loaded once Unity has been up for 3 s, at once when a join is going
   // or the link names a round (its lock is needed now), and after 60 s whatever Unity does.
@@ -1937,7 +1938,7 @@
     const closeIt = (k) => { const n = (closedTimes.get(k) || 0) + 1; closedTimes.set(k, n); closedUntil.set(k, Date.now() + (n > 1 ? 1800000 : 300000)); };
     window.ARENA_CLOSED_ROUTES = () => [...closedUntil].filter(([, t]) => t > Date.now()).map(([k, t]) => k + ' until ' + new Date(t).toISOString().slice(11, 19));
     // AN http:// NODE FROM AN https:// PAGE IS NEVER ASKED (kanban #594, the owner's console 2026-10-23: ~150 "Mixed Content ...
-    // requested an insecure resource" a load - test nodes advertising http://198.51.100.7:65xx): the browser blocks it anyway and
+    // requested an insecure resource" a load - test nodes advertising http://198.51.100.106:65xx): the browser blocks it anyway and
     // says so in the console each time; here it fails at once, silently, as a closed route does. Loopback stays allowed.
     const insecure = (u) => { try { const x = new URL(String(u), location.href); return location.protocol === 'https:' && x.protocol === 'http:' && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(x.hostname); } catch { return false; } };
     async function guardedFetch(url, input, init) {
@@ -3370,7 +3371,7 @@
           const back = (k, v) => (v && typeof v === 'object' && typeof v.u8 === 'string' ? ARENACLIENT.fromHex(v.u8)
             : v && typeof v === 'object' && typeof v.big === 'string' ? BigInt(v.big) : v);
           const e = JSON.parse(window.sessionStorage.getItem('arena.entry.' + roundIdHex) || 'null', back);
-          // UNDER ITS NEW NAME TOO (kanban #882, the owner 2026-10-31: "wenn ich eine runde gejoined habe, und neulade dann komm ich nicht mehr rein"): the bridge keeps it as
+          // UNDER ITS NEW NAME TOO (kanban #882, 2026-10-31: "wenn ich eine runde gejoined habe, und neulade dann komm ich nicht mehr rein"): the bridge keeps it as
           // arena.session.key.<round> since #524, this read never found it, so a reload after the seats took the entry lost the round
           const keyOf = (name) => window.sessionStorage.getItem(name + '.session.key.' + roundIdHex);
           const key = JSON.parse(keyOf('arena') || keyOf('blwp') || 'null');
@@ -3450,7 +3451,7 @@
           lap(coversHere ? 'succession (beside the order)' : 'succession');
           // MONEY STILL MERGING IS MERGED FIRST (2026-10-22: "If it's not spendable it should say so in the window instead of a deposit
           // request. But it's been like this for minutes"): this phrase's wallets in the round's federation and in the ones a swap may draw on take
-          // in what this browser's other wallets hold, before the swap and the funding read them - 12 s at most (the owner 2026-10-30)
+          // in what this browser's other wallets hold, before the swap and the funding read them - 12 s at most (2026-10-30)
           try {
             const here = Array.from(named.round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
             const needMsat = BigInt(named.round.stakeMsat) + BigInt(donation.donationMsat || 0n);
@@ -3604,7 +3605,7 @@
           console.log('[arena] the round started before this reload: its run is resumed from the signer nodes, entry '
             + String(use.kept.committedTo).slice(0, 16) + ', no second deposit');
         }
-        // NO ERROR FOR A ROUND ALREADY PLAYED (kanban #830, the owner 2026-10-31: "das für eine gespielte runde keine fehlermeldung kommen kann"): the stake is in, the
+        // NO ERROR FOR A ROUND ALREADY PLAYED (kanban #830, 2026-10-31: "das für eine gespielte runde keine fehlermeldung kommen kann"): the stake is in, the
         // run is the seats' and the collect runs from the kept record. Nothing went wrong, so nothing red is said: the plain lobby, as a dropped join.
         if (use.use === 'staked') {
           console.log('[arena] join: ' + use.why);
@@ -3848,7 +3849,7 @@
         console.log('[arena] hidden move in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status)));
         window.ARENA_ORDER_BUSY_UNTIL = 0;
         if (!sent.entries.some((x) => x.status === 201)) {
-          // WHY, as the seats said it (the owner 2026-10-30: "the signer nodes refused the entry: undefined"): what onEntries hands has no `why` of its own
+          // WHY, as the seats said it (2026-10-30: "the signer nodes refused the entry: undefined"): what onEntries hands has no `why` of its own
           const saidWhy = sent.why || [...new Set(sent.entries.map((x) => String(x.why || '').trim()).filter(Boolean))].sort((a, b) => (/not accepted/.test(a) ? 1 : 0) - (/not accepted/.test(b) ? 1 : 0)).slice(0, 2).join(' | ') || 'no seat said why';
           window.ARENA_JOIN_REFUSED = 'the signer nodes refused the entry: ' + saidWhy; console.error('[arena] hidden move refused, each seat: ' + JSON.stringify(sent.entries.map((x) => [x.status, String(x.why || '').slice(0, 140)]))); return; }
         // THE SAME TRANSACTION RECORD AS AN ORDER'S (2026-10-24: "Make sure that the other apps also get all these timing fixes"): the tx
@@ -4327,7 +4328,7 @@
       }
     }
     window.ARENA_CLAIM_LIQUIDATIONS = claimLiquidations;
-    // AN ORDER GOES FIRST (kanban #803, the owner 2026-10-30: "die ersten 1-2 minuten gar nicht ... solange ist der order place langsam und macht nichts"): each kept
+    // AN ORDER GOES FIRST (kanban #803, 2026-10-30: "die ersten 1-2 minuten gar nicht ... solange ist der order place langsam und macht nichts"): each kept
     // round's look opens a wallet client, and each client's keys take the page's one thread 0.3-1 s, so 50 records hold it for a minute after a load. The looks
     // start 30 s after the load, and between two records they wait while an order is being placed.
     const orderClear = async () => { while (Date.now() - (window.ARENA_ORDER_AT || 0) < 10000) await new Promise((r) => setTimeout(r, 1000)); };
@@ -5176,7 +5177,7 @@
     // WHERE A DEPOSIT GOES (RULED 2026-10-13 ~11:50Z: "always take the federation with less funds"): the lowest-load OPEN,
     // known federation of the statuses this page verified, else the lobby's - one pick for a round's deposit and for the
     // wallet bar's deposit with no game picked (that one took the lobby's federation, so B at load 0 got nothing)
-    // THE WELCOME (kanban #926, the owner 2026-11-01: "jeder neue Account ... bekommt 500 satoshis, mit einer gruener Nachricht"): a wallet made in this tab, once the lobby
+    // THE WELCOME (kanban #926, 2026-11-01: "jeder neue Account ... bekommt 500 satoshis, mit einer gruener Nachricht"): a wallet made in this tab, once the lobby
     // names a federation: an invoice for it, paid by the faucet, and the green line when it lands. It asks nothing of the player; a refusal leaves only the deposit window.
     async function welcomeSats() {
       let pending = null; try { pending = sessionStorage.getItem('arena.welcome.pending'); } catch { return; }
@@ -6663,6 +6664,8 @@
         // the table counted moves, not players): this tab says it is here to the round's seats, signed with its identity key,
         // and reads back who else is - { others: [{ key, name }] } from the seats that answer, this tab left out; null if none does
         here: async (id) => {
+          // SOMEBODY IS AT THIS TABLE (kanban #926): said to the test opponent on testnet, so nobody plays alone; nothing is waited for
+          if (window.ARENA_OPPONENT_URL) fetch(window.ARENA_OPPONENT_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ round: id }), keepalive: true }).catch(() => {});
           const h = readHidden().find((x) => x.roundIdHex === id);
           const nodes = h ? h.nodes : (window.ARENA_ROW_NODES ? window.ARENA_ROW_NODES(id) : []);
           let proof;
@@ -6692,7 +6695,7 @@
               const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
               if (!r.ok) continue;
               const j = await r.json();
-              // A SEAT THAT WAS NOT DRAWN ANSWERS 200 WITH NO PLAYERS (the owner 2026-10-30: "beide orders werden abgesendet aber es gibt kein Ergebnis": round
+              // A SEAT THAT WAS NOT DRAWN ANSWERS 200 WITH NO PLAYERS (2026-10-30: "beide orders werden abgesendet aber es gibt kein Ergebnis": round
               // 1b995103 settled, 5 signed, and seven seats ahead of the signers in the list said nothing): the next seat is asked
               if (!(j.players || []).length) { none = none || { entries: [], match: null }; continue; }
               // AND THE SCORE ACROSS ROUNDS: the seat's signed match record, with whose identity is whose
@@ -7324,10 +7327,10 @@
         if (state === 'stuck') console.log('[arena] merge in federation ' + String(fedHex).slice(0, 8) + ' stuck: ' + why); };
       // A WALLET THAT DID NOT OPEN IS NOT OPENED AGAIN THIS LOAD (kanban #803: its open goes on behind the 30 s, so each new try added its sockets to the last)
       const mergeNoOpen = new Map();   // wallet -> asked again from
-      // AND A FEDERATION WHERE TWO WALLETS DID NOT OPEN IS LEFT FOR FIVE MINUTES (kanban #803, the owner 2026-10-30: "warum das merging minuten dauert anstatt sekunden"): each
+      // AND A FEDERATION WHERE TWO WALLETS DID NOT OPEN IS LEFT FOR FIVE MINUTES (kanban #803, 2026-10-30: "warum das merging minuten dauert anstatt sekunden"): each
       // open holds its phrase, so 30 s on a dead federation (b18947f0) made the merge of the same phrase in the live federation wait, phrase after phrase
       const mergeDeadFeds = new Map();   // federation -> { misses, until }
-      // NOTHING SLOW HOLDS THE REST (the owner 2026-10-30: "Es darf nicht ewig hängen und es darf auch nicht auf eine eigene langsame Node gewartet werden"): four wallets at
+      // NOTHING SLOW HOLDS THE REST (2026-10-30: "Es darf nicht ewig hängen und es darf auch nicht auf eine eigene langsame Node gewartet werden"): four wallets at
       // a time, and every wait short; what missed its turn is taken at the next merge
       const MERGE_AT_ONCE = 4, MERGE_OPEN_MS = 10000, MERGE_LOCK_MS = 8000, MERGE_RECEIVE_MS = 20000;
       function combineIn(main, fedHex, invite, { legacy }) {
@@ -7449,7 +7452,7 @@
                 // placen" - 3,285 sat "still merging" for good, his own phrase's wallets empty): the merge skipped the locked phrase without a
                 // word, every time. That tab is asked to hand its notes in this federation over (ARENA_ASK_HANDOVER); a tab that does not
                 // answer is named, so the player knows which tab to close
-                // A LOCK NO LIVING TAB STANDS BEHIND (the owner 2026-10-30: "Es ist kein weiteres Browser Fenster offen, aber es besteht ein lock", 131 sat "merging"
+                // A LOCK NO LIVING TAB STANDS BEHIND (2026-10-30: "Es ist kein weiteres Browser Fenster offen, aber es besteht ein lock", 131 sat "merging"
                 // for good): a tab that plays with a phrase writes its heartbeat every 4 s, a tab in the background at least once a minute. No heartbeat for
                 // two minutes means nobody plays with it: the lock is taken over (`steal`), and that tab is not asked, for it will never answer
                 if (held) {
@@ -8077,7 +8080,7 @@
         const drawable = (r) => { const why = ARENACLIENT.lobbyRowNotOffered ? ARENACLIENT.lobbyRowNotOffered(r) : (ARENACLIENT.lobbyRowOffered(r) ? null : 'not drawn');
           if (why && r && r.id) unoffered.set(r.id, { id: r.id, game: r.game, entryCloseMs: Number(r.entryCloseMs), startTimeMs: Number(r.startTimeMs), why });
           return !why; };
-        // A PAID ROUND THIS WALLET CAN ENTER (the owner 2026-10-30, "Order not placed: this round pays the protocol reserves, and none of the
+        // A PAID ROUND THIS WALLET CAN ENTER (2026-10-30, "Order not placed: this round pays the protocol reserves, and none of the
         // round's 14 signer nodes names a reserve key for federation 337ae01a" - "But why can't I play then"): both federations' tables are
         // listed together, the rows name no federation, and the page took federation A's - which takes no deposits (load 1338) and where
         // the wallet holds nothing - while its 2,952 sat sat in B. A paid round is offered only when its federation takes deposits or the
@@ -8090,7 +8093,7 @@
         const holdsSatIn = (f) => { const bal = window.ARENA_WALLET_BALANCE, p = bal && Array.isArray(bal.parts) ? bal.parts.find((x) => String(x.federation).toLowerCase() === f) : null; return p ? Number(p.sats) || 0 : 0; };
         const gameOf = (r) => (r && r.game && (r.game.id || r.game.name)) || '?';
         const allPaid = [...(got.rows || []), ...((got2 && got2.rows) || [])].filter((r) => r && !r.free && fedOf(r));
-        // A FEDERATION NO ENTRY CAN PAY INTO (the owner 2026-10-30 ~12:44Z, UI 423, "Nope": the wallet's stake was in federation A, so A was the
+        // A FEDERATION NO ENTRY CAN PAY INTO (2026-10-30 ~12:44Z, UI 423, "Nope": the wallet's stake was in federation A, so A was the
         // wallet's federation and its table was offered, and the order failed on the reserve key): its paid tables are not offered, for any
         // game, whatever the wallet holds; the seats' /reserves are read in the background each minute, so they come back by themselves
         // once its key stands. Not read yet, or too few answers: nothing is held back.
@@ -8229,9 +8232,9 @@
         if (row.phase === 'pending') return 'this round takes no orders yet - its committee is not drawn';
         return 'this round takes no orders yet - ' + (row.signerNodesAgree || 0) + ' of the ' + (row.needed || '?') + ' signer nodes needed list it open';
       };
-      // A BALANCE THAT CANNOT BE PLAYED SAYS SO (the owner 2026-10-30: "If it's unavailable to play because the funds are locked it should say so in a
+      // A BALANCE THAT CANNOT BE PLAYED SAYS SO (2026-10-30: "If it's unavailable to play because the funds are locked it should say so in a
       // message"): the tables of such a federation are not offered, so nothing else would tell the player why. Every game, lobby and table alike;
-      // said once per page load (the owner 2026-10-30: "die sollte nur einmal kommen nach einem Load"; closing used to hold only for the exact amount, so a
+      // said once per page load (2026-10-30: "die sollte nur einmal kommen nach einem Load"; closing used to hold only for the exact amount, so a
       // balance that moved brought it back), and gone by itself once the federation's key stands.
       if (!window.ARENA_PANIC_WATCH) { window.ARENA_PANIC_WATCH = true; const said = console.error.bind(console);
         // ONLY A WRITE THAT WAS LOST STOPS IT (kanban #803, the owner's console 2026-10-30 15:47Z: "RefCell already borrowed" ten times at load, then 90000 msat
@@ -8432,7 +8435,7 @@
                 return;
               }
               // A HEAD-TO-HEAD MOVE TAKEN BY THE SEATS: no run and no ARENA_ENTRY either, so it fell through to the refusal below
-              // (the owner 2026-10-30, RPS in A: "Order not placed: this page did not join that round" while the seats held his entry)
+              // (2026-10-30, RPS in A: "Order not placed: this page did not join that round" while the seats held his entry)
               if (window.ARENA_HIDDEN && window.ARENA_HIDDEN.round === id) {
                 join.held = false; join.loaded = false; join.state = 'picked'; join.stage = 'move hidden';
                 window.ARENA_ROUND = undefined; window.ARENA_HIDDEN_CHOSEN = null;
@@ -8631,7 +8634,7 @@
         const why = e && e.message ? e.message : String(e);
         window.ARENA_ROUND = undefined; window.ARENA_ENTRY = undefined; window.ARENA_CHAIN = undefined; window.ARENA_ADVERT = undefined;
         // A RELOAD IN THE MIDDLE OF A JOIN of a game with its own client (RPS, Up/Down) leaves round= in the address, and this load has no game chosen yet:
-        // the round was weighed against Tick Tock's cores and "Order not placed: ... carries no such core" stood over the page (the owner 2026-10-30). The
+        // the round was weighed against Tick Tock's cores and "Order not placed: ... carries no such core" stood over the page (2026-10-30). The
         // player placed nothing here: back to the lobby without a word
         const coreOnly = /this page carries no such core/.test(why);
         window.ARENA_JOIN = coreOnly ? null : window.ARENA_REFUSED_JOIN(why, new URLSearchParams(location.search.replace(/^\?/, '')).get('round'));
@@ -8849,7 +8852,7 @@
     // and refusal are read twice a second and said in a strip over the client - placing (with the step), locked and waiting for the
     // window's start, placed, or not placed and why. A finished line stays 8 s (a refusal until closed or 20 s).
     (() => {
-      // EACH ROUND, ONCE PER STEP (kanban #923, the owner 2026-10-31: "bezahlte Runde joined und bezahlte Runde bis zum Ende dabei gewesen"): asked for, refused, joined,
+      // EACH ROUND, ONCE PER STEP (kanban #923, 2026-10-31: "bezahlte Runde joined und bezahlte Runde bis zum Ende dabei gewesen"): asked for, refused, joined,
       // then stayed to its end or left before it. A joined round is kept in the tab, so a reload does not lose it. One whose tab was closed gets neither end.
       const counted = new Set();
       let inRounds = {}; try { inRounds = JSON.parse(sessionStorage.getItem('arena.track.rounds') || '{}'); } catch { inRounds = {}; }
@@ -8883,11 +8886,11 @@
       box.addEventListener('click', () => { if (box.classList.contains('ok')) { closedKey = shownKey; box.classList.remove('on'); } });
       const plain = (stage) => {
         const st = String(stage || '');
-        // WHAT IT REALLY WAITS FOR (the owner 2026-10-30: "kommt mit der order nicht weiter" at "locking your stake", 11 sat arriving): notes still being
+        // WHAT IT REALLY WAITS FOR (2026-10-30: "kommt mit der order nicht weiter" at "locking your stake", 11 sat arriving): notes still being
         // issued hold the lock until the entry closes
         { const m = /is being issued (\d+) msat more/.exec(st);
           if (m) return `waiting for ${Math.ceil(Number(m[1]) / 1000)} sat still arriving in your wallet before your stake can be locked`; }
-        // THE STEP ITSELF (the owner 2026-10-30: the same line on one device for minutes, on another the order went through): it says where it waits
+        // THE STEP ITSELF (2026-10-30: the same line on one device for minutes, on another the order went through): it says where it waits
         if (/^stake lock/.test(st)) return 'locking your stake: ' + st.replace(/^stake lock:\s*/, '').slice(0, 140);
         const starts = /round starts in ([0-9:]+)/.exec(st); if (starts) return 'locked - the window starts in ' + starts[1];
         return st;
@@ -8999,7 +9002,7 @@
         for (const [k, o] of Object.entries(OVERLAYS)) if (k !== name) { try { if (o.open()) o.close(); } catch { /* not on this page */ } }
       }, true);
       window.ARENA_OVERLAYS = OVERLAYS;
-      // THE BROWSER'S BACK STAYS ON THE TESTNET PAGE (kanban #918, the owner 2026-10-31: "es soll aber zurück auf die letzte Testnet Seite gehen. Z.B. von
+      // THE BROWSER'S BACK STAYS ON THE TESTNET PAGE (kanban #918, 2026-10-31: "es soll aber zurück auf die letzte Testnet Seite gehen. Z.B. von
       // settings zurück auf die Main Seite"): screens here are overlays and a game on the one page, so nothing was in the history and back left
       // the site. One entry for a chosen game and one for an open overlay, in step with what is open; back closes the top one. A round
       // being played takes no entry: leaving it is the game's own button.
@@ -9060,7 +9063,7 @@
           sessionStorage.setItem('arena.track.opened', '1');
           const q = new URLSearchParams(location.search);
           window.ARENA_TRACK('app-open', { visitor: already ? 'existing' : 'new', link: q.get('round') ? 'round' : q.get('game') ? 'game' : 'plain', referred: q.get('ref') ? 'yes' : 'no' });
-          // SOMEONE WHO LOGGED IN WITH NOSTR AND CAME BACK (the owner 2026-10-31: "Nostr wallet recurring join"): this browser kept the login, so the screen above was not needed
+          // SOMEONE WHO LOGGED IN WITH NOSTR AND CAME BACK (2026-10-31: "Nostr wallet recurring join"): this browser kept the login, so the screen above was not needed
           let nostr = null; try { nostr = JSON.parse(window.ARENA_BROWSER_STORE().getItem('arena.nostr') || 'null'); } catch { nostr = null; }
           if (already && nostr) window.ARENA_TRACK('nostr-wallet-join', { how: 'returning' });
         }

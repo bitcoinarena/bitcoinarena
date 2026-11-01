@@ -3898,7 +3898,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const id = toHex(roundIdOf(contract));
     return refuseFile.ids.has(id) ? `this signer node's operator refuses round ${id.slice(0, 16)} (refuse-rounds file)` : null;
   };
-  // A MARKET WHOSE FEDERATION HAS NO RESERVE KEY TAKES NO ORDER (kanban #803, the owner 2026-10-30 ~09:3xZ: "Pause A's paid market until it
+  // A MARKET WHOSE FEDERATION HAS NO RESERVE KEY TAKES NO ORDER (kanban #803, 2026-10-30 ~09:3xZ: "Pause A's paid market until it
   // works"; measured 09:2xZ: of 274 paid rounds in 24 h, 197 Up/Down rounds of federation A took orders and locks that could not settle -
   // "no lock is claimed: this market pays the protocol reserve, and no reserve key is known for its federation" - the stakes held in their
   // locks): a market that pays the protocol reserve is refused here - handout, entry, lock - while this seat has found no reserve key for
@@ -5488,7 +5488,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // its committees asked - and the page's lobby, which waits ~10 s a node, showed no paying row). Rounds of no series are
     // all listed; unnamed, nothing is left out. Only the rows kept are signed and have their committees asked.
     const nextRaw = url.searchParams.get('next');
-    // A BARE GET /rounds LISTS THE NEXT 8 OF EACH SERIES (kanban #742, the owner 2026-10-29 ~20:40Z "Fix rounds endpoint": at grid density -
+    // A BARE GET /rounds LISTS THE NEXT 8 OF EACH SERIES (kanban #742, 2026-10-29 ~20:40Z "Fix rounds endpoint": at grid density -
     // the RPS grids' 10,800 rounds a day, 72 h of them held - a listing with neither `next` nor `ahead` signed every row and did not answer
     // in 90 s on any test host seat, while `next=1&ahead=50h` answered in 3-6 s). `all=1` asks for everything, as before.
     const bare = nextRaw === null && aheadRaw === null && url.searchParams.get('all') !== '1';
@@ -7281,7 +7281,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         // GZIPPED TO A PAGE THAT TAKES IT (2026-10-17: the lobby said "Signer nodes tn4.bitcoin-arena.io/fed2-1 ...
         // fed2-7 did not answer in 10 s"): a listing is ~360 KB of JSON and federation B's seats answer through the tunnel to the
-        // test host - measured 6.7-22.9 s there, 0.1 s for the the test host's. Gzip makes it 6.7 % (367,315 -> 24,584 bytes) in ~3 ms,
+        // macOS - measured 6.7-22.9 s there, 0.1 s for the the test host's. Gzip makes it 6.7 % (367,315 -> 24,584 bytes) in ~3 ms,
         // kept with the listing so it is made once per listing.
         if (body.json.length > 8192 && /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''))) {
           if (!body.gz) body.gz = gzipSync(body.json);
@@ -9518,7 +9518,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           }
           // AND A ROUND WHOSE KEY RUN THIS NODE LOST (measured 2026-10-14 02:21Z): a seat restarted after the round
           // was seated never ran it again - seating, assignment and POST /round start it, none of them comes twice - and three
-          // test host signer nodes answered "no claim key yet" until the round was gone, 4 of the 5 attestations a page needs.
+          // macOS signer nodes answered "no claim key yet" until the round was gone, 4 of the 5 attestations a page needs.
           // Asked for it, the node makes it (makeClaimKey runs once per committee and makes nothing it holds).
           makeClaimKey(new Uint8Array(rid));
           return text(res, 409, 'this signer node holds no claim key for that round yet: it is making it now, ask again in a few seconds');

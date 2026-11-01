@@ -441,7 +441,7 @@
 
   </div></details>
   <details class="sec" open><summary><h2 id="node">What a node does</h2></summary><div class="sec-body">
-  <!-- WHAT A NODE DOES IN PICTURES (kanban #812, the owner 2026-10-30: "What a node does is also a wall of text. Replace it with self explaining
+  <!-- WHAT A NODE DOES IN PICTURES (kanban #812, 2026-10-30: "What a node does is also a wall of text. Replace it with self explaining
        images"): each part a picture and a line; the text it replaced kept, folded under Details -->
   <div class="npic nflow" role="img" aria-label="A player's stake goes into a round; a committee of 7 nodes checks it, 5 must agree; the winners are paid">
     <div class="npc"><span class="npi">🎮</span><b>A player plays</b><small>stake locked</small></div><span class="npa">→</span>
@@ -548,7 +548,7 @@
   </details>
   </div></details>
   <details class="sec" open><summary><h2 id="run">Run a node</h2></summary><div class="sec-body">
-  <!-- RUN A NODE IN PICTURES (kanban #812, the owner 2026-10-30: "Run a Node in docs is way too much text. Make it easier, more pictures and less
+  <!-- RUN A NODE IN PICTURES (kanban #812, 2026-10-30: "Run a Node in docs is way too much text. Make it easier, more pictures and less
        wall of text"): four steps with a picture each; every detail of before kept, folded -->
   <p class="lead">Your computer checks the games, pays out the winners and earns <b>4 % of every paid round</b>. Setting it up takes about 15 minutes.</p>
   <div class="run4" id="installer">
@@ -631,7 +631,7 @@ node packages/nextblock/bin/node.mjs 31221 node.db</pre>
 
   </div></details>
   <details class="sec" open><summary><h2 id="bitcoinarena">Manage your node: the owner page</h2></summary><div class="sec-body">
-  <!-- THE OWNER PAGE, NOT THE COMMAND LINE (the owner 2026-10-30: "Manage your node explains how to use it with the CLI, instead just mention the
+  <!-- THE OWNER PAGE, NOT THE COMMAND LINE (2026-10-30: "Manage your node explains how to use it with the CLI, instead just mention the
        ownerpage and how to access it") -->
   <p class="lead">Everything about your node is on its <b>owner page</b>: whether it runs, what it earns, its roles, its bond, its uptime, its services and its updates.</p>
   <div class="run4">
@@ -653,11 +653,11 @@ node packages/nextblock/bin/node.mjs 31221 node.db</pre>
     <div><b>Updates</b><span>the release it runs and when a new one is out</span></div>
   </div>
 
-  <!-- THE DASHBOARD, FOLDED (the owner 2026-10-30: "Dashboard is also very technical, hide it by default") -->
+  <!-- THE DASHBOARD, FOLDED (2026-10-30: "Dashboard is also very technical, hide it by default") -->
   <details class="more" id="dashboard"><summary>The public dashboard (technical): what /dashboard shows</summary>
   <p>Open <code>/dashboard</code> on any node (<code>/dashboard.json</code> is the same as data). It shows what the node earned today, this month and this year (counted as earned once a settlement is accepted, otherwise as owed), a 30-day chart of its fees by role, the rounds it checked with each player's outcome and a replay link, its settlements and federations, the Lightning hosts and gateways it runs, and a dev-client card. Everything comes from the node's own store. The testnet page links the dashboards of its nodes.</p>
   </details>
-  <!-- THE OWNER AREA'S WALL OF TEXT, FOLDED (the owner 2026-10-30: "Create a new section Manage your node: the owner page and hide the The Owner area
+  <!-- THE OWNER AREA'S WALL OF TEXT, FOLDED (2026-10-30: "Create a new section Manage your node: the owner page and hide the The Owner area
        wall of text") -->
   <details class="more" id="owner"><summary>The owner area in detail: signing in, each section, how requests are signed</summary>
   <p>Open <code>/dashboard/owner</code> on your node (the dashboard links it as “Owner area”). There are no passwords and no cookies: every request you make is signed with your owner key, valid for 2 minutes and only once.</p>
@@ -741,7 +741,7 @@ node packages/arena-node/tools/devnet.mjs replay    # that run replayed here, ch
 node packages/arena-node/tools/devnet.mjs down      # stop everything it started</pre>
   <ol class="steps">
     <li><b>up</b>
-      <p>Starts the chain and mines it to maturity, founds the federation (each node's guardian takes part in the key ceremony), starts the seven nodes, joins a federation client for each, starts two lnds with a gateway each and registers both at every guardian, then bonds the seven nodes on the chain and publishes a free round and a paid round. It prints the node addresses, the federation invite, both round ids and a lobby link. Measured on a test host: 75 s from an empty directory, 32 s after a <code>down</code> (the federation and the bonds are kept), 6 s when everything already runs.</p></li>
+      <p>Starts the chain and mines it to maturity, founds the federation (each node's guardian takes part in the key ceremony), starts the seven nodes, joins a federation client for each, starts two lnds with a gateway each and registers both at every guardian, then bonds the seven nodes on the chain and publishes a free round and a paid round. It prints the node addresses, the federation invite, both round ids and a lobby link. Measured on a macOS: 75 s from an empty directory, 32 s after a <code>down</code> (the federation and the bonds are kept), 6 s when everything already runs.</p></li>
     <li><b>status</b>
       <p>Each process and whether it still runs, each node and its guardian, the chain's height, every port that answers, and the rounds node 1 lists.</p></li>
     <li><b>play</b>

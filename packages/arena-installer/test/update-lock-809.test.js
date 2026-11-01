@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// ONE UPDATE OF A NODE AT A TIME (kanban #809, the owner 2026-10-30: the desktop app's update and the auto-updater moved his node to 2026.1.9.19
+// ONE UPDATE OF A NODE AT A TIME (kanban #809, 2026-10-30: the desktop app's update and the auto-updater moved his node to 2026.1.9.19
 // at once; the second removed the folder the first had moved the services to, and the node stopped with exit 78).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

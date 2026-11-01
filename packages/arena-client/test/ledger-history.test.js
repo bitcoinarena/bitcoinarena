@@ -12,7 +12,7 @@ import { ledgerHistory } from '../src/page-lock.js';
 
 const R1 = '848a0677' + 'a'.repeat(56), R2 = '79b298fb' + 'b'.repeat(56);
 // exactly the rows of the owner's screenshot, as saveLock and the deposit wrote them
-const THE OWNER = [
+const PLAYER = [
   { atMs: 1791160000000, kind: 'deposit', msat: '250000', invoiceHash: 'ab' },
   { atMs: 1791166020000, kind: 'stake', round: R2, player: 'p1', entry: 'e2', msat: '98000' },
   { atMs: 1791166020001, kind: 'donation', round: R2, msat: '2000' },
@@ -21,19 +21,19 @@ const THE OWNER = [
 ];
 
 test('a stake and its donation are one history line: the owner\'s two rounds read -100 sat each, no Donation line', () => {
-  const h = ledgerHistory(THE OWNER);
+  const h = ledgerHistory(PLAYER);
   assert.deepEqual(h.filter((r) => r.kind !== 'deposit').map((r) => [r.kind, r.round.slice(0, 8), r.msat]), [['stake', '79b298fb', '100000'], ['stake', '848a0677', '100000']]);
   assert.equal(h.filter((r) => r.kind === 'donation').length, 0, 'a Donation line is still drawn');
   // the stake line keeps its own time, round, entry (the replay click) and player
   const one = h.find((r) => r.round === R1);
   assert.deepEqual({ atMs: one.atMs, entry: one.entry, player: one.player }, { atMs: 1791166120000, entry: 'e1', player: 'p1' });
   // the stored rows are not touched
-  assert.deepEqual(THE OWNER.map((r) => r.msat), ['250000', '98000', '2000', '98000', '2000']);
-  assert.equal(THE OWNER.length, 5);
+  assert.deepEqual(PLAYER.map((r) => r.msat), ['250000', '98000', '2000', '98000', '2000']);
+  assert.equal(PLAYER.length, 5);
 });
 
 test('deposits, withdrawals and winnings are untouched; a donation with no stake row of its round stays its own line', () => {
-  const rows = [...THE OWNER,
+  const rows = [...PLAYER,
     { atMs: 1, kind: 'withdrawal', msat: '50000', state: 'Success' },
     { atMs: 2, kind: 'winnings', round: R1, msat: '180000' },
     { atMs: 3, kind: 'refund', round: R2, msat: '96000' },

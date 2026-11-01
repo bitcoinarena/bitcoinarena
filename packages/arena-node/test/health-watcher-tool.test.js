@@ -12,9 +12,9 @@ const NOW = Date.UTC(2026, 9, 28, 10, 5, 50);
 const K = (i) => String(i).padStart(2, '0').repeat(32);
 const RPS = 'aa'.repeat(32), NB = 'bb'.repeat(32), UD = 'cc'.repeat(32);
 const GAMES = [{ id: RPS, name: 'rock-paper-scissors' }, { id: NB, name: 'nextblock' }, { id: UD, name: 'btc-updown-15m' }];
-const TEST HOST = [31221, 31231, 31241, 31251, 31261, 31271, 31281].map((p) => `http://127.0.0.1:${p}`);
+const TEST_HOST = [31221, 31231, 31241, 31251, 31261, 31271, 31281].map((p) => `http://127.0.0.1:${p}`);
 const MAC = [6221, 6231, 6241, 6251, 6261, 6271, 6281].map((p) => `http://192.0.2.226:${p}`);
-const SEATKEY = new Map([...TEST HOST, ...MAC].map((b, i) => [b, K(i + 10)]));
+const SEATKEY = new Map([...TEST_HOST, ...MAC].map((b, i) => [b, K(i + 10)]));
 // the drawn game committee of every #757 round: 2 of our seats, 7 stopped test nodes
 const DRAWN = [K(10), K(17), ...Array.from({ length: 7 }, (_, i) => K(60 + i))];
 let n = 0;
@@ -69,9 +69,9 @@ test('#757: rounds listed, none seated, 2 of 9 drawn live - a seating alert on t
   w.now += 180000;
   const second = await pass(w.io, CFG, first.state);
   assert.equal(w.posts.length, 1);
-  // short and scannable (the owner 2026-10-28: "weniger wall of text"): six lines, one per app, no runbook prose, no commands, no paths
+  // short and scannable (2026-10-28: "weniger wall of text"): six lines, one per app, no runbook prose, no commands, no paths
   assert.equal(w.posts[0], [
-    '[health-watcher] #757 @owner @a tester PROBLEM: no joinable rounds (next hour)',
+    '[health-watcher] #757 @owner PROBLEM: no joinable rounds (next hour)',
     '• RPS: 120 listed, 0 seated (2/9 drawn live)',
     '• Next Block: 36 listed, 0 seated (2/9 drawn live)',
     '• Up/Down: 16 listed, 0 seated (2/9 drawn live)',
@@ -83,7 +83,7 @@ test('#757: rounds listed, none seated, 2 of 9 drawn live - a seating alert on t
 });
 
 test('a test host seat down: restarted after two passes, one seat at a time; held at load >= 12 (alerted) and in the seating minutes', async () => {
-  const down = TEST HOST[2];
+  const down = TEST_HOST[2];
   // load 3, at :05 of the quarter: pass 1 sees it, pass 2 restarts blwp-tn4-node@3
   let w = world({ rounds: HEALTHY, down: [down, MAC[1]] });
   let r = await pass(w.io, CFG, {}); assert.equal(w.restarts.length, 0);
@@ -109,7 +109,7 @@ test('a test host seat down: restarted after two passes, one seat at a time; hel
   assert.equal(held.allowed, false);
   assert.match(held.blocked.join(), /1-min load 12 >= 12/);
   assert.equal(w.posts.length, 1);
-  assert.equal(w.posts[0], ['[health-watcher] #759 @owner @a tester PROBLEM: seat 3 not answering', '• down 1 min (ECONNREFUSED), unit active, 0 restarts',
+  assert.equal(w.posts[0], ['[health-watcher] #759 @owner PROBLEM: seat 3 not answering', '• down 1 min (ECONNREFUSED), unit active, 0 restarts',
     'Tried: restart held (load 12 >= 12)', 'Needs: manual restart when safe, see #759'].join('\n'));
 
   // in the seating minutes (:13): held, no alert before 20 min
@@ -123,7 +123,7 @@ test('a test host seat down: restarted after two passes, one seat at a time; hel
   assert.equal(inRestartMinutes(Date.UTC(2026, 9, 28, 10, 59, 0)), false);
 
   // two seats down at once: only one restarts this pass
-  w = world({ rounds: HEALTHY, down: [TEST HOST[0], TEST HOST[1]] });
+  w = world({ rounds: HEALTHY, down: [TEST_HOST[0], TEST_HOST[1]] });
   r = await pass(w.io, CFG, {}); w.now += 60000; r = await pass(w.io, CFG, r.state);
   assert.equal(w.restarts.length, 1);
   assert.match(r.fixes[1].blocked.join(), /another seat restarts this pass/);
@@ -138,7 +138,7 @@ test('dedupe: the same problem again only after an hour; resolved once it is gon
   ({ st } = await passes(w, 2, st));    // past the hour
   const again = w.posts.filter((t) => /no joinable rounds/.test(t));
   assert.equal(again.length, 2);
-  assert.match(again[1], /^\[health-watcher\] #757 @owner @a tester STILL \(since 10:0\d UTC\): no joinable rounds \(next hour\)$/, 'one line');
+  assert.match(again[1], /^\[health-watcher\] #757 @owner STILL \(since 10:0\d UTC\): no joinable rounds \(next hour\)$/, 'one line');
   // the seats seat the rounds: one pass gone - not resolved yet; the second - resolved, once
   w.rounds = HEALTHY;
   ({ st } = await passes(w, 1, st));
@@ -146,12 +146,12 @@ test('dedupe: the same problem again only after an hour; resolved once it is gon
   ({ st } = await passes(w, 3, st));
   const res = w.posts.filter((t) => /RESOLVED/.test(t));
   assert.equal(res.length, 1);
-  assert.match(res[0], /^\[health-watcher\] #757 @owner @a tester RESOLVED: no joinable rounds \(next hour\) \(since 10:0\d UTC, \d+ min\)$/);
+  assert.match(res[0], /^\[health-watcher\] #757 @owner RESOLVED: no joinable rounds \(next hour\) \(since 10:0\d UTC, \d+ min\)$/);
   assert.deepEqual(st.alerts, {});
 });
 
 test('a post that fails is tried again on the next pass; --dry posts and fixes nothing', async () => {
-  const w = world({ down: [TEST HOST[4]] });
+  const w = world({ down: [TEST_HOST[4]] });
   let fail = true; const post = w.io.post; w.io.post = async (t) => { if (fail) throw new Error('chat HTTP 502'); return post(t); };
   let { r, st } = await passes(w, 2);
   assert.ok(r.alerts.every((a) => a.ok === false));
@@ -160,7 +160,7 @@ test('a post that fails is tried again on the next pass; --dry posts and fixes n
   assert.ok(w.posts.some((t) => /no joinable rounds/.test(t)));
   const dry = config({ HW_STATE: '/x/hw.json', HW_DRY: '1' }, []);
   assert.equal(dry.statePath, '/x/hw.dry.json');
-  const w2 = world({ down: [TEST HOST[4]] });
+  const w2 = world({ down: [TEST_HOST[4]] });
   ({ r } = await passes(w2, 2, {}, dry));
   assert.deepEqual([w2.posts.length, w2.restarts.length], [0, 0]);
   assert.ok(r.did.some((x) => x.kind === 'restart-seat' && x.dry));

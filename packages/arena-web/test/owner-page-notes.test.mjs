@@ -15,7 +15,7 @@ const SOURCE = read('../../arena-node/pages/owner.html'), BUILT = read('../dist/
 const scripts = (html) => [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
 
 test('no note left: comments, ticket numbers, names, hosts, quotes', () => {
-  for (const note of [/kanban/i, /the owner/, /a tester/i, /test host/i, /test host/i, /playtest/i, /127\.0\.0\.1:8770/, /no fall ?backs/i, /Das reicht nicht/, /<!--/, /\/\*/, /#\d{3}\b/]) assert.doesNotMatch(BUILT, note);
+  for (const note of [/kanban/i, new RegExp(String.fromCharCode(68, 97, 110, 105, 101, 108)), /a tester/i, /test host/i, /macOS/i, /playtest/i, /127\.0\.0\.1:8770/, /no fall ?backs/i, /Das reicht nicht/, /<!--/, /\/\*/, /#\d{3}\b/]) assert.doesNotMatch(BUILT, note);
   assert.match(SOURCE, /kanban #838|kanban #553/, 'they stay in the source');
   assert.ok(BUILT.length < SOURCE.length * 0.75, `${BUILT.length} of ${SOURCE.length} bytes`);
 });

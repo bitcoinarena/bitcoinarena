@@ -31,7 +31,7 @@ export function pubsConfig(env = process.env, H = process.env.HOME || '/home/are
   const n = (k, d) => (env[k] != null && env[k] !== '' ? Number(env[k]) : d);
   return {
     oursCli: (env.HW_OURS_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli -datadir=/mnt/bitcoin/tn4').split(' '),
-    publicHost: env.HW_PUBLIC_HOST || 'arena@198.51.100.7',
+    publicHost: env.HW_PUBLIC_HOST || 'arena@198.51.100.106',
     publicCli: env.HW_PUBLIC_CLI || '$HOME/.arena-node/bitcoin-core/bitcoin-31.1/bin/bitcoin-cli -testnet4 -datadir=$HOME/.arena-node/bitcoin-testnet4',
     wallet: env.HW_POSTING_WALLET || 'blwp-tn4-bonds',
     opsDir: env.HW_OPS_LOG_DIR || `${H}/blwp-testnet4`,

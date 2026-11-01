@@ -21,7 +21,7 @@
  *           - old pending txids missing from miner C's list: appended, the miner stopped so its loop restarts it with them (ops/minerc-727.sh)
  *           - a next hour no one can join, or a day without posting: NOT fixed - an emergency grid posted by a machine crashed every seat on
  *             10-25. The alert carries the runbook command; emergencyGrid() is the hook to automate it later.
- *   ALERT   Arena Chat #code, a plain channel message as bot claude, "[health-watcher] #<ticket> @owner @a tester ...": what is wrong,
+ *   ALERT   Arena Chat #code, a plain channel message as bot claude, "[health-watcher] #<ticket> @owner ...": what is wrong,
  *           the numbers, what was tried, what is needed. The same problem again at most once an hour while it lasts, and once "resolved".
  *
  *   node tools/health-watcher.mjs [--dry] [--once]       (env HW_DRY=1, HW_ONCE=1; the rest below in CONFIG)
@@ -41,20 +41,20 @@ const list = (s) => String(s || '').split(/[\s,]+/).filter(Boolean);
 // CONFIG: every number the watcher acts on, from the environment
 export function config(env = process.env, argv = []) {
   const n = (k, d) => (env[k] != null && env[k] !== '' ? Number(env[k]) : d);
-  const test-host = env.HW_BEELINK_SEATS ? list(env.HW_BEELINK_SEATS) : range('127.0.0.1', 31221, 31281);
+  const testHost = env.HW_HOST_SEATS ? list(env.HW_HOST_SEATS) : range('127.0.0.1', 31221, 31281);
   const mac = env.HW_MAC_SEATS ? list(env.HW_MAC_SEATS) : range('192.0.2.226', 6221, 6281);
   const dry = argv.includes('--dry') || env.HW_DRY === '1';
   const state = env.HW_STATE || `${H}/blwp-testnet4/ops/health-watcher-state.json`;
   return {
     dry, once: argv.includes('--once') || env.HW_ONCE === '1',
     intervalMs: n('HW_INTERVAL_S', 180) * 1000,
-    test-host, mac,
+    testHost, mac,
     // the seats whose GET /rounds?next=8 is read (0.7 MB each, measured 10-28): two per machine, one after the other
-    listSeats: env.HW_LIST_SEATS ? list(env.HW_LIST_SEATS) : [test-host[0], test-host[3], mac[0], mac[3]].filter(Boolean),
-    dutySeats: env.HW_DUTY_SEATS ? list(env.HW_DUTY_SEATS) : [test-host[0], mac[0]].filter(Boolean),
-    pendingSeats: env.HW_PENDING_SEATS ? list(env.HW_PENDING_SEATS) : [test-host[0], test-host[2]].filter(Boolean),
+    listSeats: env.HW_LIST_SEATS ? list(env.HW_LIST_SEATS) : [testHost[0], testHost[3], mac[0], mac[3]].filter(Boolean),
+    dutySeats: env.HW_DUTY_SEATS ? list(env.HW_DUTY_SEATS) : [testHost[0], mac[0]].filter(Boolean),
+    pendingSeats: env.HW_PENDING_SEATS ? list(env.HW_PENDING_SEATS) : [testHost[0], testHost[2]].filter(Boolean),
     // a test host seat's unit: node N listens on 31211 + 10 N (blwp-tn4-node@.service)
-    unitOf: (base) => { const m = /:(\d+)$/.exec(base); const p = m ? Number(m[1]) : 0; return test-host.includes(base) && p > 31211 && (p - 31211) % 10 === 0 ? `blwp-tn4-node@${(p - 31211) / 10}.service` : null; },
+    unitOf: (base) => { const m = /:(\d+)$/.exec(base); const p = m ? Number(m[1]) : 0; return testHost.includes(base) && p > 31211 && (p - 31211) % 10 === 0 ? `blwp-tn4-node@${(p - 31211) / 10}.service` : null; },
     statePath: dry ? state.replace(/\.json$/, '') + '.dry.json' : state,
     loadMax: n('HW_LOAD_MAX', 12),
     confirm: n('HW_CONFIRM_PASSES', 2),                 // a problem counts once it is seen on this many passes in a row
@@ -71,7 +71,7 @@ export function config(env = process.env, argv = []) {
     tomorrowByHour: n('HW_TOMORROW_BY_HOUR', 18),       // tomorrow unposted after this UTC hour is a problem (rounds need ~4.5 h)
     minerc: { host: env.HW_MINERC_HOST || 'arena@192.0.2.68', dir: env.HW_MINERC_DIR || 'arena-minerC' },
     chat: { url: env.HW_CHAT_URL || 'https://seat.example.com/arenachat/api/channels/1/messages', tokenFile: env.HW_CHAT_TOKEN_FILE || `${H}/.config/blwp/arenachat-token`,
-      mention: env.HW_MENTION || '@owner @a tester' },
+      mention: env.HW_MENTION || '@owner' },
     probeCensus: env.HW_PROBE_CENSUS !== '0',
     pubs: pubsConfig(env, H),                           // f. the round publications on both chains (./health-watcher-pubs.mjs)
   };
@@ -87,7 +87,7 @@ export const inRestartMinutes = (nowMs) => { const s = Math.floor(Number(nowMs) 
 export async function gather(io, cfg, state, nowMs) {
   const f = { nowMs, load: await io.loadavg(), seats: [], units: {}, lists: [], games: [], duty: [], pending: [], answering: null, minerc: null };
   // b. every seat's /identity, four at once
-  const all = [...cfg.test-host.map((b) => ({ base: b, machine: 'test-host' })), ...cfg.mac.map((b) => ({ base: b, machine: 'mac' }))];
+  const all = [...cfg.testHost.map((b) => ({ base: b, machine: 'testHost' })), ...cfg.mac.map((b) => ({ base: b, machine: 'mac' }))];
   for (let i = 0; i < all.length; i += 4) {
     await Promise.all(all.slice(i, i + 4).map(async (s) => { const a = await io.identity(s.base); f.seats.push({ ...s, unit: cfg.unitOf(s.base), ok: !!a.ok, key: a.key || null, why: a.why || null }); }));
   }
@@ -108,7 +108,7 @@ export async function gather(io, cfg, state, nowMs) {
     const kept = state.census && nowMs - state.census.atMs < 15 * 60000 ? state.census : null;
     if (kept) f.answering.push(...kept.answering);
     else {
-      const roles = await io.get(cfg.listSeats[0] || cfg.test-host[0], '/roles', 10000);
+      const roles = await io.get(cfg.listSeats[0] || cfg.testHost[0], '/roles', 10000);
       const others = roles.ok ? (roles.body.nodes || []).filter((x) => !ours.includes(x.node) && (x.roles || []).includes('game')).slice(0, 40) : [];
       const up = [];
       for (let i = 0; i < others.length; i += 4) {
@@ -121,7 +121,7 @@ export async function gather(io, cfg, state, nowMs) {
   // d. miner C's list, only for the pending txids that are old
   // f. every round publication of ours, on our branch and on the public chain
   if (io.chainLook) {
-    const ex = await io.get(cfg.pendingSeats[0] || cfg.test-host[0], '/expected', 20000); f.expected = ex.ok ? [ex.body] : [];
+    const ex = await io.get(cfg.pendingSeats[0] || cfg.testHost[0], '/expected', 20000); f.expected = ex.ok ? [ex.body] : [];
     await gatherPubs(io, cfg.pubs, state, f);
   }
   const memPubs = pubMemTxs(f, state.pubs).map((t) => t.txid);

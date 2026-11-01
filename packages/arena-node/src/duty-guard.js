@@ -40,7 +40,7 @@ export const DUTY_CONFIRMED_BY_MS = 8 * HOUR;
 /** A posting whose publication is in a block and that is not dead: the day has confirmed rounds (kanban #775). */
 export const confirmedPosting = (v) => !!v && v.state !== 'dead' && ['published', 'beacon', 'seats', 'drawn'].includes(v.stage);
 /**
- * ANOTHER NODE'S POSTING OF THE DAY IN A BLOCK COUNTS AS CONFIRMED (kanban #775, the owner 2026-10-29 ~21:10Z: "Dann müssten die nodes um
+ * ANOTHER NODE'S POSTING OF THE DAY IN A BLOCK COUNTS AS CONFIRMED (kanban #775, 2026-10-29 ~21:10Z: "Dann müssten die nodes um
  * 3:01Z akzeptieren und nichts neues mehr posten"). Measured that evening: the 10-30 days were posted at 03:01Z (157984), but at 16:00Z no
  * seat listed their rounds - the seats write them 3 h before the day - so every node that had not posted the day itself took it for
  * unconfirmed and posted an emergency grid (158082, 18:42Z). Its rounds are still watched: a posting the chain leaves is dead, and a day

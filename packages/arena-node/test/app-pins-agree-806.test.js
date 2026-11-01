@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE RELEASE'S TWO PIN FILES NAME THE SAME COMMIT OF EVERY APP (kanban #806, the owner 2026-10-30 playtest of the install script: "The apps could
+// THE RELEASE'S TWO PIN FILES NAME THE SAME COMMIT OF EVERY APP (kanban #806, 2026-10-30 playtest of the install script: "The apps could
 // not be downloaded: the release's app pins do not read: arena-app-next-block: apps.files.json is for 5c19be53e780, apps.lock.json pins
 // 2d75dadb233d"). 7eb39c1b / deb1872c moved Next Block in apps.lock.json and apps.files.json was not made again (tools/pin-apps.mjs), so
 // v2026.1.9.18 refused every fresh install at the apps. app-fetch.test checks the files against the apps' own checkouts, which a release
