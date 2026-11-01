@@ -4981,7 +4981,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   round.db.exec('CREATE TABLE IF NOT EXISTS gateway_seatings (federation TEXT NOT NULL, epoch INTEGER NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY (federation, epoch, kind))');
   const keepSeating = (kind, fid, epoch, body) => { try { round.db.prepare('INSERT INTO gateway_seatings (federation, epoch, kind, body) VALUES (?, ?, ?, ?) ON CONFLICT(federation, epoch, kind) DO UPDATE SET body = excluded.body').run(String(fid), Number(epoch), kind, JSON.stringify(body)); } catch { /* kept in memory */ } };
   try {
-    for (const r of round.db.prepare('SELECT federation, epoch, kind, body FROM gateway_seatings').all()) (r.kind === 'own' ? ownSeatings : gatewaySeatings).set(`${r.federation}:${r.epoch}`, JSON.parse(r.body));
+    for (const r of round.db.prepare('SELECT federation, epoch, kind, body FROM gateway_seatings').all()) ({ own: ownSeatings, liquidity: liquiditySeatings, 'liquidity-own': ownLiquiditySeatings }[r.kind] || gatewaySeatings).set(`${r.federation}:${r.epoch}`, JSON.parse(r.body));
   } catch { /* none kept */ }
   const watchFor = (g) => createGatewayWatch({ federationId: async () => federationOfDir(g.dataDir),
       endpointOf: (e) => addressBook.endpointOf(e),   // its announced address first (kanban #577)
@@ -5277,19 +5277,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (proven) for (const c of claims) proven.set(c.node, await provenFreeSats({ claim: c, curve: messageCurve, txOut: chainTxOut }));
           const providers = liquiditySeatingFrom({ claims, federationLnKeys: lnKeys, proven });
           ownLiquiditySeatings.set(`${fid}:${epoch}`, signLiquiditySeating({ federationId: fid, epoch, providers }, me, (h) => schnorr.sign(h, round.identity.secret)));
+          keepSeating('liquidity-own', fid, epoch, ownLiquiditySeatings.get(`${fid}:${epoch}`));
           liquiditySaid(fid, epoch, `signed: ${providers.length} provider(s) [${providers.map((p) => `${p.node.slice(0, 8)}:${p.weight}`).join(', ')}] of ${claims.length} claim(s), ${lnKeys.length} gateway key(s)`);
         }
-        if (liquiditySeatings.has(`${fid}:${epoch}`)) continue;
-        const signed = ownLiquiditySeatings.has(`${fid}:${epoch}`) ? [ownLiquiditySeatings.get(`${fid}:${epoch}`)] : [];
-        for (const node of seatedHex) {
-          if (node === me) continue;
-          const ep = endpointOf(node); const s = ep && await getJson(`${ep}/liquidity-seating?federation=${fid}&epoch=${epoch}`);
-          if (s) signed.push(s);
+        // THE EPOCHS A ROUND STILL NAMES, NOT ONLY THIS ONE (kanban #803, measured 2026-11-01: a seat restarted after an epoch's boundary held no seating of the epoch before,
+        // so it left the providers out of a round's fee table, built other settlement bytes than the seats that held it, and paid rounds in that federation never settled)
+        for (let ep = epoch; ep >= epoch - 3; ep--) {
+          if (liquiditySeatings.has(`${fid}:${ep}`)) continue;
+          const signed = ownLiquiditySeatings.has(`${fid}:${ep}`) ? [ownLiquiditySeatings.get(`${fid}:${ep}`)] : [];
+          for (const node of seatedHex) {
+            if (node === me) continue;
+            const ep2 = endpointOf(node); const s = ep2 && await getJson(`${ep2}/liquidity-seating?federation=${fid}&epoch=${ep}`);
+            if (s) signed.push(s);
+          }
+          const st = standingLiquiditySeating({ signed, federationId: fid, epoch: ep, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
+          if (st.ok) { liquiditySeatings.set(`${fid}:${ep}`, st.seating); keepSeating('liquidity', fid, ep, st.seating); liquiditySaid(fid, ep, `stands: ${st.signers} of ${seatedHex.length} seated guardians signed`, 'stands'); }
         }
-        const st = standingLiquiditySeating({ signed, federationId: fid, epoch, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
-        if (st.ok) { liquiditySeatings.set(`${fid}:${epoch}`, st.seating); liquiditySaid(fid, epoch, `stands: ${st.signers} of ${seatedHex.length} seated guardians signed`, 'stands'); }
-        for (const k of [...liquiditySeatings.keys()]) if (Number(k.split(':')[1]) < epoch - 2) liquiditySeatings.delete(k);
-        for (const k of [...ownLiquiditySeatings.keys()]) if (Number(k.split(':')[1]) < epoch - 2) ownLiquiditySeatings.delete(k);
+        for (const k of [...liquiditySeatings.keys()]) if (Number(k.split(':')[1]) < epoch - 6) liquiditySeatings.delete(k);
+        for (const k of [...ownLiquiditySeatings.keys()]) if (Number(k.split(':')[1]) < epoch - 6) ownLiquiditySeatings.delete(k);
       }
     };
     // ONE LINE PER FEDERATION, EPOCH AND OUTCOME (on the live roll no seating appeared and the gather said nothing - its
