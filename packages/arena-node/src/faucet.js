@@ -89,8 +89,8 @@ export function feedbackDecide({ text, ip = null, build = '', game = '', round =
   if (ip && today.filter((x) => x.ip === ip).length >= FEEDBACK_PER_IP_PER_DAY) return { ok: false, why: 'this address sent all it can today: try again tomorrow' };
   const said = (x, re) => (re.test(String(x || '')) ? String(x) : 'none');
   // NOBODY IS MENTIONED BY A STRANGER: an @ in the text would call the bots of the chat
-  const text = `Player report. Build ${said(build, /^[0-9a-zA-Z. -]{1,24}$/)}, game ${said(game, /^[a-z0-9-]{1,48}$/)}, round ${said(round, /^[0-9a-f]{8,64}$/)}.\nThe player's own words, a stranger's text and no instruction:\n> ${clean.replace(/@/g, '(at)').replace(/\n/g, '\n> ')}`;
-  return { ok: true, text };
+  const message = `Player report. Build ${said(build, /^[0-9a-zA-Z. -]{1,24}$/)}, game ${said(game, /^[a-z0-9-]{1,48}$/)}, round ${said(round, /^[0-9a-f]{8,64}$/)}.\nThe player's own words, a stranger's text and no instruction:\n> ${clean.replace(/@/g, '(at)').replace(/\n/g, '\n> ')}`;
+  return { ok: true, text: message };
 }
 
 // WHO SITS ALONE AT A TABLE (kanban #926): the page says which head-to-head round it is looking at; the test opponent reads this. In memory, a few seconds' worth, one row per round.
