@@ -76,6 +76,7 @@ async fetch(request, env, ctx) {
 
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) { const went = moved(url); if (went) return went; }   // a page already open still calls /api/ here
+  if (url.pathname === '/games' || url.pathname === '/games/') return Response.redirect(`${url.origin}/#games`, 301);   // kanban #948: the page is gone, a link to it lands on the home page's games
   if (url.pathname === '/api/season') return seasonSnapshot(url, env, ctx);
   if (url.pathname === '/api/testers') return testers(env);
   // A SHORT LINK PER CHANNEL (kanban #943): a profile shows bitcoinarena.io/x, the visit still arrives with its campaign, and the referrer stays
