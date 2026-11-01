@@ -35001,30 +35001,42 @@ function seasonView(answer, { title = null, viewer = [], limit = SEASON_ROWS_SHO
     empty: rows.length ? null : behind ? `Nobody is ahead at ${name} in the ${last}.` : `Nobody has a counted round of ${name} in the ${last}.` };
 }
 
+/** THE LAST BOARD THE SITE KEPT (kanban #941): shown at once, never instead of the nodes' own answer. { ok: false } when there is none yet. */
+async function fetchSeasonSnapshot({ url, game, days, title = null, viewer = [], fetch, timeout, answerMs = 3000 } = {}) {
+  try {
+    const r = await fetch(`${url}?game=${encodeURIComponent(String(game || ''))}&days=${Number(days)}`, { signal: timeout ? timeout(answerMs) : undefined });
+    if (!r || !r.ok) return { ok: false, why: `answered ${r ? r.status : 'nothing'}` };
+    const j = await r.json();
+    return { ...seasonView(j.season, { title, viewer }), keptAt: Number(j.at) || null };
+  } catch (e) { return { ok: false, why: e && e.message ? e.message : String(e) }; }
+}
 /**
  * ONE SEASON FROM THE FIRST SEAT THAT ANSWERS IT, in the order given: a seat that does not answer within `answerMs`, answers
  * anything but 200, sends no JSON or sends one seasonView refuses falls through to the next. Answers the view with the
  * seat it came from, or `{ ok: false, why, tried }` when none answered. `via` maps a seat's URL to the route the page
  * reaches it by (ARENA_ROUTED_URL).
  */
-async function fetchSeason({ nodes, game, days, title = null, viewer = [], fetch, via = (u) => u, answerMs = SEASON_ANSWER_MS, timeout } = {}) {
+async function fetchSeason({ nodes, game, days, title = null, viewer = [], fetch, via = (u) => u, answerMs = SEASON_ANSWER_MS, timeout, race = 1 } = {}) {
   if (!Number.isInteger(days) || days < 1 || days > 90)
     return { ok: false, why: 'a season is 1 to 90 whole days', tried: [] };
   if (!game) return { ok: false, why: 'a season is asked for by a game', tried: [] };
   const tried = [];
-  for (const n of nodes || []) {
-    const seat = String(n || '').replace(/\/+$/, '');
-    if (!/^https?:\/\//.test(seat)) continue;
-    try {
-      const signal = timeout ? timeout(answerMs) : undefined;
-      const r = await fetch(via(seat + seasonPath(game, days)), { cache: 'no-store', signal });
-      if (!r || !r.ok) { tried.push({ seat, why: `answered ${r ? r.status : 'nothing'}` }); continue; }
-      const view = seasonView(await r.json(), { title, viewer });
-      if (!view.ok) { tried.push({ seat, why: view.why }); continue; }
-      return { ...view, seat };
-    } catch (e) {
-      tried.push({ seat, why: e && e.message ? e.message : String(e) });
-    }
+  const seats = (nodes || []).map((n) => String(n || '').replace(/\/+$/, '')).filter((x) => /^https?:\/\//.test(x));
+  const ask = async (seat) => {
+    const signal = timeout ? timeout(answerMs) : undefined;
+    const r = await fetch(via(seat + seasonPath(game, days)), { cache: 'no-store', signal });
+    if (!r || !r.ok) throw new Error(`answered ${r ? r.status : 'nothing'}`);
+    const view = seasonView(await r.json(), { title, viewer });
+    if (!view.ok) throw new Error(view.why);
+    return { ...view, seat };
+  };
+  // A FEW AT ONCE (kanban #941): the first that answers, so one slow seat costs nothing; the rest one by one as before
+  const front = seats.slice(0, race > 1 ? race : 0);
+  if (front.length) {
+    try { return await Promise.any(front.map((seat) => ask(seat).catch((e) => { tried.push({ seat, why: e && e.message ? e.message : String(e) }); throw e; }))); } catch { /* the rest */ }
+  }
+  for (const seat of seats.slice(front.length)) {
+    try { return await ask(seat); } catch (e) { tried.push({ seat, why: e && e.message ? e.message : String(e) }); }
   }
   return { ok: false, why: tried.length ? 'no node answered the season just now' : 'no node to ask', tried };
 }
