@@ -132,7 +132,7 @@ createServer((req, res) => {
   if (path === '/feedback') {
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '86400' }); return res.end(); }
     if (req.method !== 'POST') return send(405, { ok: false, why: 'POST' });
-    if (!env.FAUCET_BOARD_URL) return send(503, { ok: false, why: 'reports are off' });
+    if (!env.FAUCET_CHAT_URL) return send(503, { ok: false, why: 'reports are off' });
     let raw = '';
     req.setEncoding('utf8');
     req.on('data', (c) => { raw += c; if (raw.length > 8192) req.destroy(); });
@@ -140,8 +140,8 @@ createServer((req, res) => {
       try {
         const b = JSON.parse(raw || '{}'), ip = req.headers['x-arena-ip'] || null, d = feedbackDecide({ ...b, ip }, REPORTS);
         if (!d.ok) return send(200, d);
-        const key = readFileSync(env.FAUCET_BOARD_KEY_FILE, 'utf8').trim();
-        const r = await fetch(`${env.FAUCET_BOARD_URL}/tasks`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': key, authorization: `Bearer ${key}` }, body: JSON.stringify({ title: d.title, status: 'backlog', description: d.description }), signal: AbortSignal.timeout(10000) });
+        const key = readFileSync(env.FAUCET_CHAT_TOKEN_FILE, 'utf8').trim();
+        const r = await fetch(`${env.FAUCET_CHAT_URL}/api/channels/${env.FAUCET_CHAT_CHANNEL}/messages`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` }, body: JSON.stringify({ text: d.text }), signal: AbortSignal.timeout(10000) });
         if (!r.ok) return send(502, { ok: false, why: 'the report could not be kept just now' });
         REPORTS.push({ ip, atMs: Date.now() });
         send(200, { ok: true });
