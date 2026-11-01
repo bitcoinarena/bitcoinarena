@@ -217,7 +217,7 @@ work.
 | the engine and its protocol | **Bitcoin Arena**, protocol v1 | `arena` (packages `arena-protocol`, `arena-node`, `arena-client`, `arena-donor`) |
 | the first game | **Tick Tock, Next Block** - short "nextblock" (2026-10-06) | `nextblock` (its core, its Unity project and its page assets in one package) |
 | the site | `bitcoinarena.io` (not registered yet; the current pages stay until it is) | |
-| the repository | `github.com/bitcoinarena/bitcoin-arena`, with the whole history of this one kept | |
+| the repository | `github.com/bitcoinarena/bitcoinarena`, with the whole history of this one kept | |
 
 RULED HERE, so nothing of a player's is lost in the rename:
 

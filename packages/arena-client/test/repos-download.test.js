@@ -12,7 +12,7 @@ import vm from 'node:vm';
 
 const ROOT = new URL('../../../', import.meta.url);
 const read = (p) => readFileSync(new URL(p, ROOT), 'utf8');
-const LATEST = 'https://github.com/bitcoinarena/bitcoin-arena/releases/latest';
+const LATEST = 'https://github.com/bitcoinarena/bitcoinarena/releases/latest';
 const REPOS = ['bitcoin-arena', 'arena-app-next-block', 'arena-app-up-or-down', 'arena-app-rock-paper-scissors', 'arena-sdk'];
 const SCRIPT = read('src/website/www/js/release-latest.js');
 
@@ -40,8 +40,8 @@ test('the version comes from the update channel only: release/latest.json on tes
   assert.equal(v, '2026.1.9.11');
   assert.deepEqual(asked.map((x) => x[0]), ['https://testnet.bitcoinarena.io/release/latest.json']);
   assert.equal(s.textContent, '2026.1.9.11');
-  assert.equal(a.href, 'https://github.com/bitcoinarena/bitcoin-arena/releases/download/v2026.1.9.11/bitcoin-arena-node-setup-2026.1.9.11-windows-x64.exe');
-  assert.equal(d.href, 'https://github.com/bitcoinarena/bitcoin-arena/releases/download/v2026.1.9.11/bitcoin-arena-node_2026.1.9.11_amd64.deb');
+  assert.equal(a.href, 'https://github.com/bitcoinarena/bitcoinarena/releases/download/v2026.1.9.11/bitcoin-arena-node-setup-2026.1.9.11-windows-x64.exe');
+  assert.equal(d.href, 'https://github.com/bitcoinarena/bitcoinarena/releases/download/v2026.1.9.11/bitcoin-arena-node_2026.1.9.11_amd64.deb');
   // the next release is the next answer: nothing in a page changes
   const n = span();
   assert.equal((await run({ version: '2026.1.9.12', tag: 'v2026.1.9.12' }, [n])).v, '2026.1.9.12');
@@ -66,7 +66,7 @@ test('no page names a release number of its own; every release link is releases/
     // the one past release the docs name on purpose: "Until release 2026.1.9.8 the command was called arenanode"
     const nums = (src.match(/\b20\d\d\.\d+\.\d+(?:\.\d+)?\b/g) || []).filter((x) => x !== '2026.1.9.8');
     assert.deepEqual(nums, [], `${p}: no release number`);
-    for (const m of src.matchAll(/github\.com\/bitcoinarena\/bitcoin-arena\/releases(\/[^"' )]*)?/g))
+    for (const m of src.matchAll(/github\.com\/bitcoinarena\/bitcoinarena\/releases(\/[^"' )]*)?/g))
       assert.ok(!m[1] || m[1] === '/latest', `${p}: ${m[0]}`);
   }
   // the pages that show the number load the one script
@@ -76,7 +76,7 @@ test('no page names a release number of its own; every release link is releases/
   // the docs: the repository is open now, the latest release linked with its number
   const docs = read('src/website/docs/docs-template.html');
   assert.ok(!docs.includes('invite-only'), 'the repository is public');
-  assert.match(docs, /<a href="https:\/\/github\.com\/bitcoinarena\/bitcoin-arena\/releases\/latest">The latest release<span class="relv" data-arena-release-version><\/span><\/a>/);
+  assert.match(docs, /<a href="https:\/\/github\.com\/bitcoinarena\/bitcoinarena\/releases\/latest">The latest release<span class="relv" data-arena-release-version><\/span><\/a>/);
 });
 
 test('docs.bitcoinarena.io/repos/ links the five public repositories, each with its GitHub icon, and the docs lead to it', () => {
@@ -86,13 +86,13 @@ test('docs.bitcoinarena.io/repos/ links the five public repositories, each with 
     assert.match(page, new RegExp(`<h3><a href="https://github\\.com/bitcoin-arena/${r}">bitcoin-arena/${r}</a></h3>\\s*<p>[^<]{40,}`), r);
   }
   assert.equal((page.match(/class="repo"/g) || []).length, REPOS.length);
-  assert.match(page, /<a class="rel" href="https:\/\/github\.com\/bitcoinarena\/bitcoin-arena\/releases\/latest">Latest release<span class="v" data-arena-release-version><\/span><\/a>/);
+  assert.match(page, /<a class="rel" href="https:\/\/github\.com\/bitcoinarena\/bitcoinarena\/releases\/latest">Latest release<span class="v" data-arena-release-version><\/span><\/a>/);
   assert.match(page, /<body>\n<script src="https:\/\/testnet\.bitcoin-?arena\.io\/site-chrome\.js"><\/script>\n/);
   assert.ok(!page.includes('{{'), 'no token left');
   // the docs' contents and its first boxes lead to it, the GitHub icon in every footer too (footer-social.test.js)
   for (const p of ['src/website/docs/www/index.html', 'src/website/www/docs/index.html']) {
     const d = read(p);
-    assert.match(d, /<b>Source<\/b>\n  <a href="https:\/\/docs\.bitcoin-?arena\.io\/repos\/">Repositories ↗<\/a>\n  <a href="https:\/\/github\.com\/bitcoinarena\/bitcoin-arena\/releases\/latest">Latest release<span class="relv" data-arena-release-version><\/span> ↗<\/a>\n<\/aside>/, p);
+    assert.match(d, /<b>Source<\/b>\n  <a href="https:\/\/docs\.bitcoin-?arena\.io\/repos\/">Repositories ↗<\/a>\n  <a href="https:\/\/github\.com\/bitcoinarena\/bitcoinarena\/releases\/latest">Latest release<span class="relv" data-arena-release-version><\/span> ↗<\/a>\n<\/aside>/, p);
     assert.match(d, /<a class="box link" href="https:\/\/docs\.bitcoin-?arena\.io\/repos\/"><h4>Repositories<\/h4>/, p);
   }
 });
@@ -110,9 +110,9 @@ test('bitcoinarena.io has a download section: the latest release, every system t
   assert.ok(i > 0 && j > i, 'the section is there');
   const sec = html.slice(i, j);
   assert.match(html, /<a href="#build">Build &amp; run<\/a><a href="#download">Download<\/a>/, 'the bar leads to it');
-  assert.match(sec, /<a class="btn primary" href="https:\/\/github\.com\/bitcoinarena\/bitcoin-arena\/releases\/latest">.*Latest release<\/a><span class="v" data-arena-release-version><\/span>/);
+  assert.match(sec, /<a class="btn primary" href="https:\/\/github\.com\/bitcoinarena\/bitcoinarena\/releases\/latest">.*Latest release<\/a><span class="v" data-arena-release-version><\/span>/);
   // the twelve files v2026.1.9.11 ships, less the two checksum files: every one a link, its version filled from the channel
-  const assets = [...sec.matchAll(/<a href="https:\/\/github\.com\/bitcoinarena\/bitcoin-arena\/releases\/latest" data-arena-release-asset="([^"]+)">/g)].map((m) => m[1]);
+  const assets = [...sec.matchAll(/<a href="https:\/\/github\.com\/bitcoinarena\/bitcoinarena\/releases\/latest" data-arena-release-asset="([^"]+)">/g)].map((m) => m[1]);
   assert.deepEqual(assets.sort(), [
     'bitcoin-arena-node-setup-{v}-windows-x64.exe', 'bitcoin-arena-node-{v}-darwin-arm64.dmg', 'bitcoin-arena-node-{v}-darwin-arm64.tar.gz',
     'bitcoin-arena-node-{v}-darwin-x64.dmg', 'bitcoin-arena-node-{v}-darwin-x64.tar.gz', 'bitcoin-arena-node-{v}-linux-arm64.tar.gz',
