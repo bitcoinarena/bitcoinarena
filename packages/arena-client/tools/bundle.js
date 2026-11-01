@@ -308,7 +308,7 @@ out += '         checkMarketOutcome: checkMarketOutcome, scalarValueLine: scalar
 // A HEAD-TO-HEAD ROUND: the hidden move, its commitment, its reveal, and the reveals the seats hold
 out += '         hiddenMove: hiddenMove, moveCommitment: moveCommitment, revealMove: revealMove, revealsOfRound: revealsOfRound,\n';
 // THE SEASON BOARD: its lines from a /season answer, and the ask of the game's seats in turn
-out += '         seasonView: seasonView, fetchSeason: fetchSeason, seasonPath: seasonPath, seasonSats: seasonSats, seasonScore: seasonScore,\n';
+out += '         seasonView: seasonView, fetchSeason: fetchSeason, fetchSeasonSnapshot, seasonPath: seasonPath, seasonSats: seasonSats, seasonScore: seasonScore,\n';
 out += '         SEASON_DAYS_CHOICES: SEASON_DAYS_CHOICES, SEASON_POLL_MS: SEASON_POLL_MS,\n';
 // A PLAYER'S BADGES ON THE BOARD: the merge of the badge seats' awards, their words, and the board's book
 out += '         badgeBook: badgeBook, mergeBadgeAwards: mergeBadgeAwards, readBadgeDefinition: readBadgeDefinition, badgeTitle: badgeTitle,\n';

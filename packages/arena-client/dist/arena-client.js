@@ -34806,7 +34806,7 @@ function mergeNodes(known, found) {
 // (-1,999 msat is "-1 sat", not "-2 sat"); the exact msat stays on the row beside it.
 //
 // DETERMINISTIC AND WITHOUT A DOM: the same answer, title and viewer give the same rows, so a test and the page agree.
-// The one function that talks to the network, fetchSeason, is handed its fetch.
+// The one function that talks to the network, fetchSeason, fetchSeasonSnapshot, is handed its fetch.
 
 /** The windows the page offers (protocol season.js takes 1 to 90 whole days; the seat keeps each one 30 s). */
 const SEASON_DAYS_CHOICES = [7, 30, 90];
@@ -35610,7 +35610,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          marketLines: marketLines, quietOrders: quietOrders, webCryptoEd25519: webCryptoEd25519, pickRecord: pickRecord,
          checkMarketOutcome: checkMarketOutcome, scalarValueLine: scalarValueLine, fetchSeriesTemplate: fetchSeriesTemplate, seriesRoundCheck: seriesRoundCheck, roundOfPick: roundOfPick,
          hiddenMove: hiddenMove, moveCommitment: moveCommitment, revealMove: revealMove, revealsOfRound: revealsOfRound,
-         seasonView: seasonView, fetchSeason: fetchSeason, seasonPath: seasonPath, seasonSats: seasonSats, seasonScore: seasonScore,
+         seasonView: seasonView, fetchSeason: fetchSeason, fetchSeasonSnapshot, seasonPath: seasonPath, seasonSats: seasonSats, seasonScore: seasonScore,
          SEASON_DAYS_CHOICES: SEASON_DAYS_CHOICES, SEASON_POLL_MS: SEASON_POLL_MS,
          badgeBook: badgeBook, mergeBadgeAwards: mergeBadgeAwards, readBadgeDefinition: readBadgeDefinition, badgeTitle: badgeTitle,
          yourBadgesLine: yourBadgesLine, badgeGlyph: badgeGlyph, badgeImagePath: badgeImagePath, badgesPath: badgesPath,
