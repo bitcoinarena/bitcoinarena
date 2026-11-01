@@ -30313,6 +30313,7 @@ const UNREADABLE_MS = 30000;
 /** How long after its entry closes a round the seats still list is named among the lobby's `closed`. */
 const CLOSED_KEPT_MS = 2n * 3600n * 1000n;
 
+const LOBBY_CONTRACTS_PER_READ = 64;
 async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, verifyMany = null, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('a lobby asks the nodes it was named, and it was named none');
   if (typeof verify !== 'function') throw new Error('a lobby checks each signer node\'s signed listing, and no verify was injected');
@@ -30320,6 +30321,7 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
   const unanswered = [];                                    // signer nodes that did not answer within answerMs
   const failed = [];                                        // signer nodes whose read failed outright: none answered = none reached
   const said = new Map();                                   // id -> [{ node, key, ... }]
+  const soonest = new Map();                                // id -> its entry close, as a seat lists it
   const ask = answerWithin(fetcher, answerMs);
   // EVERY NODE AT ONCE, each within its limit: asked one after another, one silent node held the next one's answer back
   // and a lobby of two cost two limits. Answers are read in the order the nodes were named.
@@ -30348,6 +30350,7 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
         const id = String(x && x.id).toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(id)) { refused.push(`${node}: listed something that is not a round id`); continue; }
         if (!said.has(id)) said.set(id, []);
+        if (Number(x.entryCloseMs) > 0) soonest.set(id, Number(x.entryCloseMs));
         // THE SIGNATURE CHECKED WHEN IT IS FIRST ASKED, ONCE (kanban #573, playtest 2026-10-21: "the Rps game is lagging a bit on an iPhone
         // 16" - measured with its client open: 12,761 BIP-340 checks in 10 s, 3.7 s of the main thread on an M1 Max, one for every seat's
         // listing of every round on each paint, while only a round's own signer nodes count): `signed` is read only for a listing that
@@ -30373,7 +30376,9 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
   const answeredFirst = [...unique.filter((n) => !unanswered.includes(String(n))), ...unique.filter((n) => unanswered.includes(String(n)))];
   // KEPT BY ID, FETCHED 16 AT A TIME (2026-09-30, testnet4 series 3cfbe516: ~450 rounds listed, each contract
   // fetched one after another on every paint). A round's id is its contract's hash, so a kept contract cannot go stale.
-  const wanted = [...said.keys()].filter((id) => !CONTRACTS.has(id) && !(nowMs - (UNREADABLE.get(id) ?? -Infinity) < UNREADABLE_MS));
+  // THE SOONEST FIRST, A FEW AT A READ (kanban #946, measured 2026-11-01: 304 contracts before the first paint, 3.6 of 7.7 s): a lobby shows the next round of each kind; the far ones come with the next reads
+  const wanted = [...said.keys()].filter((id) => !CONTRACTS.has(id) && !(nowMs - (UNREADABLE.get(id) ?? -Infinity) < UNREADABLE_MS))
+    .sort((a, b) => (soonest.get(a) ?? Infinity) - (soonest.get(b) ?? Infinity)).slice(0, LOBBY_CONTRACTS_PER_READ);
   for (let i = 0; i < wanted.length; i += 16)
     await Promise.all(wanted.slice(i, i + 16).map((id) => fetchRound(id, answeredFirst, { fetcher: ask })
       .then(({ contract }) => { CONTRACTS.set(id, contract); UNREADABLE.delete(id); }, (e) => { UNREADABLE.set(id, nowMs); refused.push(`${id.slice(0, 16)}: ${e.message}`); })));
