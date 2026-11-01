@@ -32,6 +32,7 @@ async function seasonSnapshot(url, env, ctx) {
   if (kept) { if (Date.now() - Number(/^\{"at":(\d+)/.exec(kept)?.[1] || 0) > SEASON_FRESH_MS) ctx.waitUntil(readSeason(env, game, days).catch(() => {})); return new Response(kept, { headers }); }
   try { return new Response(await readSeason(env, game, days), { headers }); } catch { return new Response('{"ok":false,"why":"no seat answered"}', { status: 503, headers }); }
 }
+const CHANNEL_LINKS = { '/x': 'utm_source=x&utm_medium=social&utm_content=profile', '/nostr': 'utm_source=nostr&utm_medium=social&utm_content=profile', '/tg': 'utm_source=telegram&utm_medium=social&utm_content=profile', '/discord': 'utm_source=discord&utm_medium=social&utm_content=profile' };
 // THE OLD DOMAIN (kanban #937): every (sub)domain of it sends to the same place on the new one, path and query kept
 const OLD_DOMAIN = /(^|\.)bitcoin-arena\.io$/;
 const moved = (url) => { if (!OLD_DOMAIN.test(url.hostname)) return null; const to = new URL(url); to.hostname = url.hostname.replace(/bitcoin-arena\.io$/, 'bitcoinarena.io'); return Response.redirect(to.toString(), 308); };
@@ -49,6 +50,8 @@ async fetch(request, env, ctx) {
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) { const went = moved(url); if (went) return went; }   // a page already open still calls /api/ here
   if (url.pathname === '/api/season') return seasonSnapshot(url, env, ctx);
+  // A SHORT LINK PER CHANNEL (kanban #943): a profile shows bitcoinarena.io/x, the visit still arrives with its campaign, and the referrer stays
+  { const utm = CHANNEL_LINKS[url.pathname.replace(/\/$/, '')]; if (utm) return Response.redirect(`${url.origin}/?${utm}`, 302); }
   // THE PLAYERS' FAUCET AND THE TABLE WANTS (kanban #926): passed on to the faucet service, whose address is a secret of this Worker (FAUCET_ORIGIN), with the caller's address for its limits
   if (url.pathname === '/api/faucet/player' || url.pathname === '/api/faucet/opponent') {
     if (!env.FAUCET_ORIGIN) return new Response('{"ok":false,"why":"the faucet is off"}', { status: 503, headers: { 'content-type': 'application/json' } });
