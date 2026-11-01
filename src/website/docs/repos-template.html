@@ -38,6 +38,7 @@
   .note { margin: 28px 0 70px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; color: var(--dim); font-size: 14.5px; }
   @media (max-width: 560px) { .repo { grid-template-columns: 1fr; padding: 16px; } .repo .gh { grid-row: auto; } }
 </style>
+  <script>/* kanban #943: a visit from X arrives through t.co with no campaign in its link: named here, before the stats script reads the address */if(/^https?:\/\/t\.co(\/|$)/.test(document.referrer)&&!/[?&]utm_/.test(location.search))history.replaceState(history.state,'',location.pathname+(location.search?location.search+'&':'?')+'utm_source=x&utm_medium=social&utm_content=profile'+location.hash)</script>
   <script defer src="https://stats.bitcoinarena.io/script.js" data-website-id="e67a52be-966d-44a1-9a37-ee1872d65ec5" data-domains="docs.bitcoinarena.io"></script>
   <script>/* kanban #943: the campaign reached the stats when the script read the address; then it leaves the address, past the script's own history hook, so no second view */addEventListener('load',function(){var n=0,c=function(){if(!window.umami&&n++<50)return setTimeout(c,100);setTimeout(function(){var u=new URL(location.href),k=Array.from(u.searchParams.keys()).filter(function(x){return/^utm_/.test(x)});if(k.length){k.forEach(function(x){u.searchParams.delete(x)});History.prototype.replaceState.call(history,history.state,'',u.pathname+u.search+u.hash)}},500)};c()})</script>
 </head>
