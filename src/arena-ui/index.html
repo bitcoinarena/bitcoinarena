@@ -1724,6 +1724,9 @@
         // page opened is `plain`, and money that landed after waiting says so here too; creditedHas keeps one amount from being said twice
         // THE WORDS OF THE NEXT CREDIT (kanban #926): the faucet says what the player was promised, not the invoice's sat over it
         nextWords: (w) => { nextWords = w; },
+        // ON THE WAY (kanban #926, 2026-11-01: "Das sollte ziemlich instant sein"; measured 13 s, 7 of them the federation taking the payment): said the moment the wallet exists, the credit replaces it
+        coming: (w) => { const el = document.getElementById('arena-money-ok'); if (!el) return; el.textContent = w; el.onclick = null; el.classList.add('show'); clearTimeout(okTimer); okTimer = setTimeout(() => el.classList.remove('show'), 60000); },
+        notComing: () => { const el = document.getElementById('arena-money-ok'); if (el) el.classList.remove('show'); clearTimeout(okTimer); },
         credited: (msat, plain = false) => { try { window.ARENA_TRACK('deposit-credited', { size: window.ARENA_TRACK_SIZE(Number(BigInt(msat) / 1000n)) }); creditedMsat += BigInt(msat); creditedSats.add(String(BigInt(msat) / 1000n)); } catch { return; }
           if (!plain) wasStuck = true;
           const el = document.getElementById('arena-money-ok'); if (!el) return;
@@ -5204,9 +5207,10 @@
     async function welcomeSats() {
       let pending = null; try { pending = sessionStorage.getItem('arena.welcome.pending'); } catch { return; }
       if (!pending || !window.ARENA_FAUCET_URL) return;
+      window.ARENA_MONEY_ALERT.coming(ARENACLIENT.FAUCET_GRANTS.welcome.sats + ' test sats are on their way to your wallet \u2026');
       for (let i = 0; i < 90 && !(window.ARENA_LEDGER_LOBBY && window.ARENA_LEDGER_LOBBY.federation && typeof walletSeed === 'function' && walletSeed()); i++) await new Promise((r) => setTimeout(r, 1000));
       const lob = window.ARENA_LEDGER_LOBBY, seed = typeof walletSeed === 'function' ? walletSeed() : null;
-      if (!lob || !lob.federation || !seed) return;
+      if (!lob || !lob.federation || !seed) { window.ARENA_MONEY_ALERT.notComing(); return; }
       try {
         sessionStorage.removeItem('arena.welcome.pending');
         const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
@@ -5220,7 +5224,7 @@
         window.ARENA_MONEY_ALERT.nextWords(grant.sats + ' sats have been credited to your wallet for testing.');
         await ARENACLIENT.askFaucet({ url: window.ARENA_FAUCET_URL, kind: 'welcome', invoice: d.invoice, seed });
         window.ARENA_TRACK('faucet-welcome');
-      } catch (e) { window.ARENA_MONEY_ALERT.nextWords(null); console.log('[faucet] no welcome sats: ' + (e && e.message ? e.message : e)); }
+      } catch (e) { window.ARENA_MONEY_ALERT.nextWords(null); window.ARENA_MONEY_ALERT.notComing(); console.log('[faucet] no welcome sats: ' + (e && e.message ? e.message : e)); }
     }
     // AT THE START (a Nostr login reloads the page with its seed), and at once when the wallet is made in this page
     window.ARENA_WELCOME = welcomeSats;
