@@ -22,7 +22,7 @@ test('the page is src/arena-ui and the apps\' page parts; Next Block\'s Unity pr
   assert.equal(existsSync(new URL('unity-proto', ROOT)), false, 'no unity-proto');
   assert.equal(existsSync(new URL('packages/nextblock/unity', ROOT)), false, 'no copy of it in packages/nextblock');
   const lock = JSON.parse(readFileSync(new URL('apps.lock.json', ROOT), 'utf8'));
-  assert.equal(lock.apps['arena-app-next-block'].repo, 'bitcoin-arena/arena-app-next-block', 'the Arena reads it from the app at a pinned commit');
+  assert.equal(lock.apps['arena-app-next-block'].repo, 'bitcoinarena/arena-app-next-block', 'the Arena reads it from the app at a pinned commit');
   assert.match(lock.apps['arena-app-next-block'].commit, /^[0-9a-f]{40}$/);
 });
 

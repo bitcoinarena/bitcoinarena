@@ -1,7 +1,7 @@
 {
  "app": "nextblock",
  "title": "Tick Tock, Next Block",
- "repo": "bitcoin-arena/arena-app-next-block",
+ "repo": "bitcoinarena/arena-app-next-block",
  "release": "webgl-nextblock-0.0.30",
  "build": "nextblock-0.0.30",
  "productVersion": "0.0.30",
