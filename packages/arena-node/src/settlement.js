@@ -225,6 +225,9 @@ export class LockSettlement {
       if (nq && nq.outcome === FORFEIT) { entries.push({ ...base, outcome: FORFEIT, score: 0, ...(proven() ? { atTheDoor: true } : {}) }); continue; }
       if (nq && nq.outcome === VOID) { entries.push({ ...base, outcome: VOID, score: 0 }); continue; }
       const standing = this.finalityOf(this.round, roundIdBytes, entryId);
+      // AN ENTRY WITH NO QUORUM HOLDS THE ROUND (§13A, RULED 2026-11-02, kanban #1047): F depends on every result, so left out, a rescued winner is paid nothing. Bounded: the
+      // re-run window's end, or the end of a quorum's one objection window, and past it the entry is left out as below. An entry suspended by an objection does not hold it.
+      if (standing.holdsRound) return refuse(`no lock is claimed while an entry with no quorum is being decided: ${toHex(entryId).slice(0, 16)} (${standing.why})`);
       if (standing.state === VOID) { entries.push({ ...base, outcome: VOID, score: 0 }); continue; }
       // A RE-RUN WINDOW THAT CLOSED ON PROVEN EQUIVOCATION (§13A, §13C, RULED 2026-09-24): FORFEIT on the finality
       // itself, as VOID is above - no stored no-quorum record needed. A stored one was already taken, once, above.

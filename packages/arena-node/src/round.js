@@ -3108,10 +3108,11 @@ export class Round {
   /**
    * THE LATE LOSERS TO ASK ABOUT (slice C3b-1): every objected entry of a round whose own settlement is ACCEPTED and
    * which holds no ACCEPTED second settlement. An entry is left out of the round's settlement only while an objection
-   * holds it in its re-run window, so nothing else can be one.
+   * holds it in its re-run window - or, past its bound, a no-quorum entry whose FINAL signatures came late (kanban #1038): those have
+   * re-runs and no objection - so nothing else can be one.
    */
   lateSettlementCandidates() {
-    return this.db.prepare(`SELECT o.round_id, o.entry_id FROM objections o
+    return this.db.prepare(`SELECT o.round_id, o.entry_id FROM (SELECT round_id, entry_id FROM objections UNION SELECT round_id, entry_id FROM reruns) o
       JOIN lock_settlements s ON s.round_id = o.round_id AND s.state = 'ACCEPTED'
       LEFT JOIN late_lock_settlements l ON l.round_id = o.round_id AND l.entry_id = o.entry_id
       WHERE l.state IS NULL OR l.state <> 'ACCEPTED'`).all()

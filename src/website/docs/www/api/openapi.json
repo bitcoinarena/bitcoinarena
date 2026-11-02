@@ -13918,7 +13918,7 @@
      "Players"
     ],
     "summary": "Pending-line standing of an entry",
-    "description": "Pending-line figure: entry state and payout row so far.\n\nAccess: none\n\nReturns: 200 JSON {entry, round, nowMs, ...standing (state, payout row, window open/close)}; 404\n\nSource: `packages/arena-node/src/server.js` line 5626.",
+    "description": "Pending-line figure: entry state and payout row so far.\n\nAccess: none\n\nReturns: 200 JSON {entry, round, nowMs, ...standing (state, payout row, window open/close; heldByNoQuorum and the later close when the round waits on a no-quorum entry)}; 404\n\nSource: `packages/arena-node/src/server.js` line 5626.",
     "operationId": "get_standing",
     "parameters": [
      {

@@ -6490,7 +6490,7 @@
   "path": "/standing",
   "params": "query entry (hex 32)",
   "auth": "none",
-  "returns": "200 JSON {entry, round, nowMs, ...standing (state, payout row, window open/close)}; 404",
+  "returns": "200 JSON {entry, round, nowMs, ...standing (state, payout row, window open/close; heldByNoQuorum and the later close when the round waits on a no-quorum entry)}; 404",
   "purpose": "Pending-line figure: entry state and payout row so far.",
   "audience": "player/page",
   "line": 5626,

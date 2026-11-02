@@ -14,6 +14,7 @@
 // does, and this file only decides which runs are handed to it.
 import { sandboxFor } from './core-sandbox.js';
 import { windowsOf } from '../../arena-protocol/src/window.js';
+import { noQuorumGoesToRerun } from '../../arena-protocol/src/constants.js';
 import { dissentsOn, dissentsFirstOn, postsLateOn, LATE_POSTING_AFTER_MS } from './test-dissent.js';
 import { ReplayPool } from './pool.js';
 import { checkObjectionBundle } from './objection-check.js';
@@ -773,9 +774,16 @@ export class Verifier {
     if (had) return { entryId, stored: false, decided: had.outcome, why: had.why };
     const line = this.round.startLine(roundIdBytes, entryId);
     if (!line) return null;
-    const signers = new Set(this.round.results(roundIdBytes, entryId).map((r) => hex(r.nodePubkey))).size;
     // THE PROOF THIS SEAT HOLDS WHEN IT DECIDES, after asking the peers for theirs.
     const proven = await this.#equivocationProven(roundIdBytes, entryId, null, rw.window);
+    // FROM PROTOCOL 22 THIS DOOR HOLDS TO THE RE-RUN WINDOW'S END, FORFEIT FIRST, WHILE A SIGNED RESULT IS HELD HERE (RULED 2026-11-02, kanban #1047 point 3): another seat has the
+    // transcript, and this seat may yet retrieve it and help complete the five. A seat just back asks the peers what they signed first. With no signed result held
+    // there is nothing to wait for, and it decides now, as before.
+    if (noQuorumGoesToRerun(contract) && !proven) {
+      if (!this.round.results(roundIdBytes, entryId).length) { try { await this.gather(roundIdBytes, entryId); } catch { /* a peer that cannot answer shows nothing */ } }
+      if (this.round.results(roundIdBytes, entryId).length && BigInt(this.round.now()) < windowsOf(contract).rerunDeadlineMs) return null;
+    }
+    const signers = new Set(this.round.results(roundIdBytes, entryId).map((r) => hex(r.nodePubkey))).size;
     const d = noQuorumRule({ signatures: signers, needed: line.needed,
       equivocationProven: proven,
       state: finalityOf(this.round, roundIdBytes, entryId).state });
@@ -1320,9 +1328,12 @@ export class Verifier {
     // WHICH TRANSCRIPT: the one the agreed run names, and no other.
     const held = this.round.results(roundIdBytes, entryIdBytes);
     const seen = verifiedFinal(held.map((r) => r.bytes), { contract, signerNodes });
-    if (!seen.ok || !seen.final) return { ok: false, why: seen.why || 'no run of that entry is agreed yet' };
-    let transcriptHash = null;
-    for (const r of held) {
+    // A NO-QUORUM ENTRY'S AGREED RE-RUN NAMES THE TRANSCRIPT (kanban #1038): it is the run that can become FINAL, whatever the late results say
+    const standing = noQuorumGoesToRerun(contract) ? finalityOf(this.round, roundIdBytes, entryIdBytes) : null;
+    const rerunRun = standing && standing.noQuorumRerun && standing.rerunResult ? standing.rerunResult : null;
+    if (!rerunRun && (!seen.ok || !seen.final)) return { ok: false, why: seen.why || 'no run of that entry is agreed yet' };
+    let transcriptHash = rerunRun ? rerunRun.transcriptHash : null;
+    for (const r of rerunRun ? [] : held) {
       try {
         const res = decodePlayerResult(splitSignedResult(r.bytes).body);
         if (hex(runId(res)) === seen.runId) { transcriptHash = res.transcriptHash; break; }
@@ -1481,7 +1492,12 @@ export class Verifier {
 
     const joined = signerNodes.some((s) => hex(s) === hex(this.round.pubkey));
     const done = this.round.reruns(roundIdBytes, entryIdBytes).some((r) => hex(r.signerNodePubkey) === hex(this.round.pubkey));
-    if (joined && !done) {
+    // A NO-QUORUM ENTRY (kanban #1038) MAY HAVE NO CANONICAL TRANSCRIPT YET: no replay for it until it has, since this is asked again every few seconds on seats already short of time
+    let ready = true;
+    if (joined && !done && contradictedRunId.every((b) => b === 0)) {
+      try { this.round.canonicalTranscript(roundIdBytes, entryIdBytes); } catch (e) { ready = false; report.refused.push(e.message); }
+    }
+    if (joined && !done && ready) {
       const beacon = beaconFor(this.randomnessFor, contract, roundIdBytes, found.entry, entryIdBytes, this.chainFor);
       if (!beacon.ok) report.refused.push(beacon.why);
       else {

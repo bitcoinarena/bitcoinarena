@@ -180,7 +180,7 @@ import { TYPE_SETTLEMENT_ACK, TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN,
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
-import { TYPE_CHECKPOINT_RECEIPT, PRESENCE_VERSION } from '../../arena-protocol/src/constants.js';
+import { TYPE_CHECKPOINT_RECEIPT, PRESENCE_VERSION, noQuorumGoesToRerun } from '../../arena-protocol/src/constants.js';
 import { bearsAuthority } from '../../arena-protocol/src/frames.js';
 import {
   decodeHandout, encodeHandout, handoutId, acceptHandout, openMyShare,
@@ -235,7 +235,7 @@ import { authorityAt, donationSetSignedBy, donationSetInForce, encodeDonationSet
 import { donationSetId, donationOutputsExpected, encodeDonationSet, vestedShares } from '../../arena-protocol/src/donation.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { timed, watchLoop } from './slow.js';
-import { resultFinality, finalSignatureNow, finalRerunResult } from './finality.js';
+import { resultFinality, finalSignatureNow, finalRerunResult, NO_RUN } from './finality.js';
 import { standingOf, marketStandingOf, settledOutcomeOf } from './standing.js';
 import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
 import { outageOutcome } from '../../arena-protocol/src/entry-void.js';
@@ -373,9 +373,10 @@ export const NOTHING_IS_FUNDED = () => false;
  */
 /**
  * WHAT THE ROUND'S ONE SETTLEMENT STILL WAITS ON (slice C3a): a run PROVISIONALLY_FINAL inside its first objection
- * window. Not a SUSPENDED entry and not one PROVISIONALLY_FINAL on a re-run - those are left out and settle on their own.
+ * window. Not a SUSPENDED entry and not one PROVISIONALLY_FINAL on a re-run - those are left out and settle on their own -
+ * except one with no quorum, which holds the round until it is decided (§13A, RULED 2026-11-02, kanban #1047).
  */
-export const settleWaitsOn = (standing) => standing.filter((x) => x.state === PROVISIONALLY_FINAL && !x.rerun);
+export const settleWaitsOn = (standing) => standing.filter((x) => (x.state === PROVISIONALLY_FINAL && !x.rerun) || x.holdsRound);
 
 export function objectionIntake(round, rid, eid, blockHash = null, bundle = null, arrivedMs = null) {
   try {
@@ -383,6 +384,13 @@ export function objectionIntake(round, rid, eid, blockHash = null, bundle = null
     // before this seat's window close + 5 s it suspends the run here; after, it suspends nothing and is kept as evidence.
     // A block it names is kept and decides nothing.
     if (blockHash !== null && (!(blockHash instanceof Uint8Array) || blockHash.length !== 32)) return { status: 400, text: 'a block an objection names is a 32-byte hash' };
+    // A NO-QUORUM ENTRY'S AGREED RE-RUN HAS ITS ONE OBJECTION WINDOW (§13A, RULED 2026-11-02, kanban #1047), and no first objection was ever filed: this one goes on the re-run
+    const nq = resultFinality(round, rid, eid);
+    if (nq.noQuorumRerun && nq.rerun && nq.rerun.runId) {
+      if (round.rerunObjectedAt(rid, eid) !== null) return { status: 200, text: 'already objected' };
+      if (nq.state !== PROVISIONALLY_FINAL || BigInt(arrivedMs ?? round.now()) >= BigInt(nq.finalAfterMs)) return { status: 409, text: 'the re-run\'s objection window has closed' };
+      return round.objectRerun(rid, eid, blockHash, bundle, arrivedMs) ? { status: 201, text: 'objected' } : { status: 200, text: 'already objected' };
+    }
     if (round.object(rid, eid, blockHash, bundle, arrivedMs)) return { status: 201, text: 'objected' };
     if (round.rerunObjectedAt(rid, eid) !== null) return { status: 200, text: 'already objected' };
     const f = resultFinality(round, rid, eid);
@@ -3098,6 +3106,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    */
   async function rerunAndFile(rid, eid) {
     const s = resultFinality(round, rid, eid);
+    // A ROUND OF PROTOCOL 22 WITH NO OBJECTION ON THE ENTRY (kanban #1038): nobody was proved wrong, so nothing is filed against anyone
+    if (s.noQuorumRerun || (!round.objected(rid, eid) && noQuorumGoesToRerun(decodeRoundContract(new Uint8Array(round.get(rid).contract))))) return noQuorumStep(rid, eid, s);
     if (s.state === SUSPENDED && s.runId) {
       const r = await verifier.rerun(rid, eid, Buffer.from(s.runId, 'hex'));
       console.log(`[rerun] ${toHex(eid).slice(0, 16)} ${r.ok ? `agreed ${r.agreed} of ${r.needed}` : r.why}`);
@@ -3127,6 +3137,35 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     await contradictAudits(rid, eid, `the agreed re-run ${String(now.runId).slice(0, 16)} contradicts run ${String(now.contradictedRunId).slice(0, 16)}`);
     for (const why of f.refused) console.log(`[slash] ${toHex(eid).slice(0, 16)} ${why}`);
     return true;
+  }
+
+  /**
+   * ONE PASS OVER A NO-QUORUM ENTRY IN THE RE-RUN WINDOW (§13A, §13C, RULED 2026-11-02, kanban #1038): the receipts carried first, this seat's own re-run once a transcript is
+   * canonical here, the other seats' gathered, and the agreed re-run's transcript posted. At the window's end the peers are asked for their evidence, and §13C's outcome is
+   * written once. No audit is contradicted and no slash proof filed: no objection proved anybody wrong. Returns whether the entry is decided.
+   */
+  async function noQuorumStep(rid, eid, s) {
+    if (round.entryVoid(eid)) return true;
+    if (s.state === SUSPENDED && s.noQuorumRerun) {
+      if (!round.reruns(rid, eid).some((r) => toHex(r.signerNodePubkey) === toHex(round.pubkey))) await verifier.carryReceipts(rid, eid);
+      const r = await verifier.rerun(rid, eid, NO_RUN);
+      console.log(`[rerun] ${toHex(eid).slice(0, 16)} no quorum: ${r.ok ? `agreed ${r.agreed} of ${r.needed}` : r.why}${r.refused && r.refused.length ? `; ${r.refused[0]}` : ''}`);
+    }
+    let now = resultFinality(round, rid, eid);
+    if (now.noQuorumRerun && (now.unpublished || now.rerunResult) && now.state !== 'VOID' && now.state !== 'FORFEIT') {
+      const p = await verifier.publish(rid, eid);
+      for (const r of p.refused || []) console.log(`[publish] ${toHex(eid).slice(0, 16)} ${r}`);
+      now = resultFinality(round, rid, eid);
+    }
+    if (now.noQuorum && now.holdsRound) {
+      try { await verifier.pullEvidence(rid, eid); } catch { /* a peer that cannot answer shows nothing */ }
+      now = resultFinality(round, rid, eid);
+      if (now.noQuorum && (now.state === 'VOID' || now.state === 'FORFEIT') && !round.noQuorum(eid)) {
+        round.putNoQuorum({ entryId: eid, roundId: rid, outcome: now.state, why: now.why });
+        console.log(`[close] ${toHex(eid).slice(0, 16)} ${now.state}: ${now.why}`);
+      }
+    }
+    return now.state === FINAL || now.state === 'VOID' || now.state === 'FORFEIT';
   }
 
   /**
@@ -3369,13 +3408,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   async function gatherFinal(rid, eid) {
     let f = resultFinality(round, rid, eid);
     if (f.state === FINAL) { gatherWait.delete(toHex(rid) + toHex(eid)); return true; }
-    if (!f.signable) return false;
+    if (!f.signable && !f.askFinalOn) return false;
     const gk = toHex(rid) + toHex(eid);
     const g = gatherWait.get(gk);
     if (g && Date.now() < g.nextMs) return false;
     const heldBefore = (f.finalSigs && f.finalSigs.signed) || 0;
     const ownHex = toHex(round.pubkey);
-    const signedHere = round.finalSigs(rid, eid, f.signable.runId).some((r) => toHex(r.signerPubkey) === ownHex);
+    const signedHere = round.finalSigs(rid, eid, f.signable ? f.signable.runId : f.askFinalOn).some((r) => toHex(r.signerPubkey) === ownHex);
     const mine = signedHere ? null : finalSignatureNow(round, rid, eid, signHere);
     if (mine) takeFinalSig(rid, eid, mine, f);
     // THE PEERS: the round's game committee off the census, or - a node whose chain view no longer reaches the round's
@@ -3442,11 +3481,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     for (const who of g.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} late objection: filed REPLAY_CONTRADICTS against ${who.slice(0, 16)}`);
     await contradictAudits(rid, eid, 'a valid late objection');
   }
-  function watchRerun(rid, eid) {
+  function watchRerun(rid, eid, { everyMs: every = null } = {}) {
     const row = round.get(rid);
     if (!row) return;
     const contract = decodeRoundContract(new Uint8Array(row.contract));
-    const everyMs = finality.everyMs ?? 2000;
+    const everyMs = every ?? finality.everyMs ?? 2000;
     // THE WATCH RUNS TO THE RE-RUN'S OWN FINAL AND A MINUTE (§13A, WINDOW-10-SPEC, RULED 2026-10-01): §13C decides at
     // the round's end + 1205 s, and an agreed re-run is signed FINAL from + 1805 s - both on the round's clock, carried
     // to this watch's.
@@ -3481,6 +3520,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const ballotTimer = ballotTally ? setInterval(() => { if (!shuttingDown) ballotTally.pass().catch((e) => console.error(`[ballot] the pass did not run: ${e.message}`)); },
     Number(ballot.everyMs) > 0 ? Number(ballot.everyMs) : 10000) : null;
   if (ballotTimer && ballotTimer.unref) ballotTimer.unref();
+  // THE RE-RUN WATCH OF EVERY NO-QUORUM ENTRY OF A ROUND (kanban #1038), started once per entry, on a slower clock than an objection's: these are overloaded seats
+  const noQuorumWatched = new Set();
+  function watchNoQuorum(rid) {
+    const row = round.get(rid);
+    if (!row) return;
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    if (!noQuorumGoesToRerun(contract) || BigInt(round.now()) < windowsOf(contract).finalAfterMs) return;
+    for (const { entryId } of round.entriesOf(rid)) {
+      const key = toHex(entryId);
+      if (noQuorumWatched.has(key) || round.noQuorum(entryId) || round.entryVoid(entryId)) continue;
+      const f = resultFinality(round, rid, entryId);
+      if (!f.noQuorumRerun) continue;
+      noQuorumWatched.add(key);
+      if (noQuorumWatched.size > 4096) noQuorumWatched.delete(noQuorumWatched.values().next().value);
+      console.log(`[close] ${key.slice(0, 16)} ${f.state}: ${String(f.why).slice(0, 200)}`);
+      watchRerun(rid, entryId, { everyMs: finality.everyMs ?? 10000 });
+    }
+  }
   function watchFinality(roundIdBytes, closed, money) {
     const row = round.get(roundIdBytes);
     if (!row) return;
@@ -3578,6 +3635,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       finalityTimers.delete(timer);
       if (shuttingDown) return;
       stretch();
+      watchNoQuorum(roundIdBytes);
       for (const u of [...unsigned]) {
         await breathe();
         let r;
@@ -10950,6 +11008,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rerunAgreed = !!(standing && standing.rerun && standing.rerun.runId);
         if ((round.objected(rid, eid) && !rerunAgreed) || round.rerunObjectedAt(rid, eid) !== null)
           return text(res, 200, 'already objected');
+        if (standing && standing.noQuorumRerun && !rerunAgreed) return text(res, 409, 'that entry has no quorum: there is no agreed run to object to yet');
         const against = standing && standing.rerun && standing.rerun.runId ? standing.rerun.runId : standing && standing.runId;
         const checked = await verifier.checkObjection(new Uint8Array(rid), new Uint8Array(eid), bundle,
           typeof against === 'string' ? new Uint8Array(Buffer.from(against, 'hex')) : against instanceof Uint8Array ? against : null);
@@ -10984,10 +11043,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const f = await verifier.fileRerunSlashProofs(new Uint8Array(rid), new Uint8Array(eid));
           for (const who of f.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} filed REPLAY_CONTRADICTS against re-run signer ${who.slice(0, 16)}`);
           for (const why of f.refused) console.log(`[slash] ${toHex(eid).slice(0, 16)} ${why}`);
-          // AND THE FIRST RESULT'S SIGNERS, AS WELL (ruling C step 2): the objection that proved them wrong already exists.
-          const g = await verifier.fileFirstResultSlashProofs(new Uint8Array(rid), new Uint8Array(eid));
-          for (const who of g.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} filed REPLAY_CONTRADICTS against first-result signer ${who.slice(0, 16)}`);
-          await contradictAudits(rid, eid, 'VOID by a second valid objection');
+          // AND THE FIRST RESULT'S SIGNERS, AS WELL (ruling C step 2): the objection that proved them wrong already exists. A no-quorum entry has no first result in question (kanban #1038).
+          if (!after.noQuorumRerun) {
+            const g = await verifier.fileFirstResultSlashProofs(new Uint8Array(rid), new Uint8Array(eid));
+            for (const who of g.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} filed REPLAY_CONTRADICTS against first-result signer ${who.slice(0, 16)}`);
+            await contradictAudits(rid, eid, 'VOID by a second valid objection');
+          }
         }
         return text(res, taken.status, taken.text);
       }

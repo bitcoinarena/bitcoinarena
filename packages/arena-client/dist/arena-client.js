@@ -665,6 +665,16 @@ const acksSettlement = (c) => !!c && Number.isInteger(c.protocolVersion) && c.pr
 const RERUN_SETTLES_VERSION = 22;
 const settlesOnRerun = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= RERUN_SETTLES_VERSION;
 /**
+ * NO QUORUM GOES TO THE RE-RUN WINDOW BEFORE VOID, AND THE ROUND WAITS FOR IT (§13A, §13C, RULED 2026-11-02, kanban #1038, #1045, #1047). A signed result held at final_after and
+ * no in-time quorum, or an in-time quorum short of its postings, is decided inside the re-run window, at most end + 1205 s, and a quorum there gets its one objection
+ * window, to end + 1805 s. The round's settlement waits for it, because F depends on every result: left out, a rescued winner is paid nothing. Folded into 22 as the
+ * acks are: no series of 22 is posted on any network. A round of an older version decides at final_after, as it always did.
+ */
+const NO_QUORUM_RERUN_VERSION = 22;
+const noQuorumGoesToRerun = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= NO_QUORUM_RERUN_VERSION;
+/** How long past end + 1805 s the FINAL signatures on a no-quorum entry's agreed re-run may still come in with the round waiting: then it is left out, as §13A says. */
+const NO_QUORUM_FINAL_GRACE_MS = 60000n;
+/**
  * A node that seating certificates prove drawn and not present at 3 seatings of the 24 h before the census, and present at none,
  * leaves the census (§5A.3, presence.js, kanban #727); from the same version the certificate names who was present (seating.js SEEN).
  * Folded into 22 with the auditors: 2.0 is unreleased and no series of 22 is posted on any network, so one number keeps 2.0's rules one set.
