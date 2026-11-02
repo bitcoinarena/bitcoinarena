@@ -235,7 +235,9 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       if (c.startTimeMs + (anchor && anchor.first ? TABLE_LATE_MS : 600000n) < BigInt(nowMs())) continue;
       if (anchor && !anchor.first) {
         const known = tables.get(toHex(anchor.anchorId));
-        if (!known || known.start < c.startTimeMs) tables.set(toHex(anchor.anchorId), { rid: new Uint8Array(r.round_id), start: c.startTimeMs, askedMs: known ? known.askedMs : -Infinity });
+        // first asked a minute from now; `from`: the table's earliest round held, so a table of a later day is not asked
+        if (!known || known.start < c.startTimeMs) tables.set(toHex(anchor.anchorId), { rid: new Uint8Array(r.round_id), start: c.startTimeMs, from: known ? known.from : c.startTimeMs, askedMs: known ? known.askedMs : nowMs() - TABLE_RESEAT_ASK_MS + 60000 });
+        else if (c.startTimeMs < known.from) known.from = c.startTimeMs;
         if (checkInOf(c, anchor)) starts.set(toHex(new Uint8Array(r.round_id)), { rid: new Uint8Array(r.round_id), start: c.startTimeMs, close: seatingCloseMs(c, windowOf(c)), contract: c,
           tableFirst: false, checkIn: { anchorHex: toHex(anchor.anchorId), index: c.roundIndex }, askedMs: -Infinity });
       }
@@ -531,16 +533,20 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const t = nowMs();
     // A SEATING OF A TABLE THIS SEAT MISSED (kanban #1020): it was down at the check-in, or the hand-out left it out. The newest is asked of the table's drawn seats.
     for (const [a, table] of tables) {
-      if (unwritten.has(a) || t - table.askedMs < TABLE_RESEAT_ASK_MS) continue;
+      // a table whose first certificate is still lacking is asked below; one this seat holds it for may still have no row of round 0, and is asked here
+      if (table.from > BigInt(t) || SEATING_ROLES.some((role) => !certs.get(`${a}:${role}`)) || t - table.askedMs < TABLE_RESEAT_ASK_MS) continue;
       table.askedMs = t;
       await Promise.all(SEATING_ROLES.map(async (role) => {
         const c = roster.committeeFor(table.rid, role);
         if (!c.ok) return;
-        await Promise.all(endpointsOf(c.drawn, round.pubkey, endpointOf).filter((b) => !rests(b)).map(async (b) => {
+        // three of the drawn seats, others on the next pass
+        const seats = endpointsOf(c.drawn, round.pubkey, endpointOf).filter((b) => !rests(b));
+        const turn = Math.floor(t / TABLE_RESEAT_ASK_MS);
+        await Promise.all(seats.filter((_, i) => (i + turn) % Math.max(1, Math.ceil(seats.length / 3)) === 0).map(async (b) => {
           const j = await getJson(b, `/seating?round=${a}&role=${role}&at=${toHex(table.rid)}`);
           if (!j || !j.cert) return;
           // a check-in this seat never wrote is built from the series it holds, by the index the door names
-          try { const d = decodeSeatingCertificate(fromHex(j.cert)); if (toHex(d.roundId) !== a && d.role === role) keepCert(d.roundId, role, fromHex(j.cert), { index: j.index }); } catch { /* says nothing */ }
+          try { const d = decodeSeatingCertificate(fromHex(j.cert)); if (toHex(d.roundId) !== a && d.role === role) { const k = keepCert(d.roundId, role, fromHex(j.cert), { index: j.index }); if (!k.ok) log(`[seating] table ${a.slice(0, 16)} ${role}: its seating at round ${j.index} refused here: ${k.why}`); } } catch { /* says nothing */ }
         }));
       }));
     }
