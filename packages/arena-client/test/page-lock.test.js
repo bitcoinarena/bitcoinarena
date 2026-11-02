@@ -1007,7 +1007,8 @@ test('the page withdraws nothing on a timer: its interval functions look, the pa
   // (onGo: () => send(), kanban #564) - one call, inside it
   const zapPayAt = page.indexOf('async function pay(invoice) {');
   const zapGoAt = page.indexOf('async function send() {', zapPayAt);
-  assert.equal(page.split('send()').length - 1, 1 + 1, 'send() is called from the card\'s Zap press alone (its definition and onGo)');
+  // from the zap box on: the tracker near the top of the page has a send() of its own that pays nothing
+  assert.equal(page.slice(page.lastIndexOf('function ', zapPayAt - 12000)).split('send()').length - 1, 1 + 1, 'send() is called from the card\'s Zap press alone (its definition and onGo)');
   const zapPays = [...page.matchAll(/return pay\(invoice\);/g)].map((m) => m.index);
   assert.equal(zapPays.length, 1);
   assert.ok(inside(zapPays[0], zapGoAt, '\n      }\n'), 'a zap is paid outside its Zap press');
