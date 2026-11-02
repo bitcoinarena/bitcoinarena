@@ -26,8 +26,11 @@ export class RoundsPanel extends React.Component {
     if (!loaded) return <p className="sub">reading this node's rounds…</p>;
     if (error || !data) return <p className="warn">Couldn't read the rounds{error ? `: ${error}` : ''}. The node may be restarting.</p>;
     const rounds = data.rounds || [];
+    const audit = data.audit;
+    const sats = (msat) => Math.floor(Number(msat || 0) / 1000).toLocaleString('en-US');
     return (
       <div>
+        {audit ? <p className="sub" id="rounds-audit">As an auditor: {audit.audited} round{audit.audited === 1 ? '' : 's'} audited, {audit.objections} objection{audit.objections === 1 ? '' : 's'} filed, {sats(audit.earnedMsat)} sats earned{audit.unread ? ` so far (${audit.unread} still being read)` : ''}.</p> : null}
         {data.why ? <div className="note-strip" id="rounds-why"><b>No rounds for this node right now.</b> {data.why.says}</div> : null}
         {rounds.length ? <>
           <p className="sub">{data.upcoming ? `${data.upcoming} coming or running. ` : ''}Drawn rounds of the last day and the coming ones.</p>

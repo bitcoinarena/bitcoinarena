@@ -41,6 +41,8 @@ export function createAuditDesk({ db, now = () => Date.now(), contextFor, vrf, v
     round_id BLOB NOT NULL, node BLOB NOT NULL, bytes BLOB NOT NULL, signature BLOB NOT NULL, at_ms INTEGER NOT NULL, arrived_ms INTEGER NOT NULL,
     forwarded INTEGER NOT NULL DEFAULT 0, contradicted TEXT,
     PRIMARY KEY (round_id, node))`);
+  // THE OBJECTIONS THIS NODE FILED AS AN AUDITOR (kanban #1002): the owner area counts them; the entry's objection itself stands in `objections` with no filer
+  db.exec(`CREATE TABLE IF NOT EXISTS audit_objections (round_id BLOB NOT NULL, entry_id BLOB NOT NULL, taken INTEGER NOT NULL, at_ms INTEGER NOT NULL, PRIMARY KEY (round_id, entry_id))`);
   const insert = db.prepare('INSERT OR IGNORE INTO audits (round_id, node, bytes, signature, at_ms, arrived_ms, forwarded) VALUES (?, ?, ?, ?, ?, ?, ?)');
   const rows = db.prepare('SELECT node, bytes, signature, at_ms, arrived_ms, forwarded, contradicted FROM audits WHERE round_id = ? ORDER BY node');
   const mark = db.prepare('UPDATE audits SET contradicted = ? WHERE round_id = ? AND contradicted IS NULL');
@@ -80,5 +82,13 @@ export function createAuditDesk({ db, now = () => Date.now(), contextFor, vrf, v
   /** The contradicted AUDITs of a round, their bytes and signatures: what the slash proofs against them carry (kanban #724, #725). */
   const contradicted = (roundId) => rows.all(roundId).filter((r) => r.contradicted !== null)
     .map((r) => ({ node: toHex(new Uint8Array(r.node)), bytes: new Uint8Array(r.bytes), signature: new Uint8Array(r.signature) }));
-  return { take, held, list, contradict, contradicted };
+  /** This node's own work as an auditor, for the owner area: the rounds it audited, newest first, and the objections it filed. */
+  const ownWork = (nodeBytes, { limit = 200 } = {}) => ({
+    rounds: db.prepare('SELECT round_id, at_ms, contradicted FROM audits WHERE node = ? ORDER BY at_ms DESC LIMIT ?').all(nodeBytes, limit)
+      .map((r) => ({ round: new Uint8Array(r.round_id), atMs: Number(r.at_ms), contradicted: r.contradicted !== null })),
+    audited: Number(db.prepare('SELECT COUNT(*) n FROM audits WHERE node = ?').get(nodeBytes).n),
+    objections: Number(db.prepare('SELECT COUNT(*) n FROM audit_objections').get().n),
+  });
+  const noteObjection = (roundId, entryId, taken) => db.prepare('INSERT OR IGNORE INTO audit_objections (round_id, entry_id, taken, at_ms) VALUES (?, ?, ?, ?)').run(roundId, entryId, taken ? 1 : 0, now());
+  return { take, held, list, contradict, contradicted, ownWork, noteObjection };
 }

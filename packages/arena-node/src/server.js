@@ -2888,14 +2888,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return out;
   };
-  const roundAuditor = new RoundAuditor({
-    selfKey: round.pubkey, prove: (alpha) => auditVrf.prove(vrfSecretFor(round.identity.secret, secp256k1.Point), alpha),
-    outputOf: (pi) => auditVrf.proofToHash(pi), sign: (d) => schnorr.sign(d, round.identity.secret), due: auditDue, eligibleFor: auditSetFor,
-    ...auditorNet({ seatsFor: auditSeats, committeeFor: committeeOfRound, contractOf: contractOfRound, secret: round.identity.secret,
+  const auditEarned = new Map();      // round hex -> msat this node was paid as its auditor, read once (kanban #1002)
+  const auditNet = auditorNet({ seatsFor: auditSeats, committeeFor: committeeOfRound, contractOf: contractOfRound, secret: round.identity.secret,
       check: (rid, eid, bundle, signed, given) => verifier.checkObjection(rid, eid, bundle, signed, given),
       buildBundle: buildObjectionBundle, decodeEntry: decodeEntryContract, entryIdOf: entryIdOfContract, agreedRunsOf,
       decodeResult: (b) => { const r = decodePlayerResult(splitSignedResult(b).body); return { result: r, runId: runIdOf(r) }; },
-      now: () => round.now(), log: (m) => console.log(m) }),
+      now: () => round.now(), log: (m) => console.log(m) });
+  const roundAuditor = new RoundAuditor({
+    selfKey: round.pubkey, prove: (alpha) => auditVrf.prove(vrfSecretFor(round.identity.secret, secp256k1.Point), alpha),
+    outputOf: (pi) => auditVrf.proofToHash(pi), sign: (d) => schnorr.sign(d, round.identity.secret), due: auditDue, eligibleFor: auditSetFor,
+    ...auditNet,
+    // counted for the owner area (kanban #1002), taken or not
+    object: async (rid, eid) => { const took = await auditNet.object(rid, eid); try { auditDesk.noteObjection(rid, eid, took); } catch { /* the count is not worth an audit */ } return took; },
     now: () => round.now(), log: (m) => console.log(m),
   });
   let auditPassing = false;
@@ -6334,7 +6338,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           }
           rows.sort((a, b) => b.startMs - a.startMs);
           const { roundsForOwner } = await import('./owner-rounds.js');
-          return answer(200, roundsForOwner({ rows, own, share, nowMs: now }));
+          // AND ITS WORK AS AN AUDITOR (kanban #1002): earned off each audited round's settlement plan, a few rounds a read, kept
+          const { auditForOwner } = await import('./owner-rounds.js');
+          const work = auditDesk.ownWork(round.pubkey);
+          let read = 0;
+          for (const r of work.rounds) {
+            const hex = toHex(r.round);
+            if (auditEarned.has(hex) || read >= 8) continue;
+            read++;
+            let s = null; try { s = await settlements.summaryOf(r.round); } catch { s = null; }
+            if (s && Array.isArray(s.payouts)) { const pk = toHex(refundKeyOf(round.pubkey)); auditEarned.set(hex, s.payouts.filter((p) => p.kind === 'auditor' && String(p.pk).toLowerCase() === pk).reduce((t, p) => t + BigInt(p.msat), 0n)); }
+          }
+          return answer(200, { ...roundsForOwner({ rows, own, share, nowMs: now }), audit: auditForOwner({ work, earned: auditEarned }) });
         }
         // THIS NODE'S STANDING (§5A.10B): own weight, brackets served, headroom - from the censuses of the newest rounds
         // held, and the warnings an operator needs before the floor passes the bond

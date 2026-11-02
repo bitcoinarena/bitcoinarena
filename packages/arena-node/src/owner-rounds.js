@@ -17,6 +17,17 @@
 
 const DAY_MS = 24 * 3600 * 1000;
 
+/**
+ * WHAT THIS NODE DID AS AN AUDITOR (kanban #1002, §13A.1: "the rounds this node audited, the objections it filed and what it earned"). `work` the audit desk's ownWork,
+ * `earned` round hex -> msat, of the rounds read so far: a round still unread counts as not yet known, and `unread` says how many.
+ */
+export function auditForOwner({ work, earned = new Map() }) {
+  if (!work) return null;
+  const rounds = work.rounds.map((r) => { const hex = Buffer.from(r.round).toString('hex'); return { round: hex, atMs: r.atMs, contradicted: r.contradicted, msat: earned.has(hex) ? String(earned.get(hex)) : null }; });
+  const total = rounds.reduce((t, r) => t + BigInt(r.msat || 0), 0n);
+  return { audited: work.audited, objections: work.objections, contradicted: rounds.filter((r) => r.contradicted).length, earnedMsat: String(total), unread: rounds.filter((r) => r.msat === null).length, rounds: rounds.slice(0, 20) };
+}
+
 /** What the node does in a round, in the owner area's words (RolesPanel): "Play and check rounds", "Pay out winners", or a reserve. */
 export function dutyOf(r) {
   const does = [];

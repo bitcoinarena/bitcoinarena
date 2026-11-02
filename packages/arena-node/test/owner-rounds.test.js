@@ -2,7 +2,7 @@
 // reason that holds, in plain words.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { roundsForOwner, dutyOf } from '../src/owner-rounds.js';
+import { roundsForOwner, dutyOf, auditForOwner } from '../src/owner-rounds.js';
 
 const NOW = 1_800_000_000_000;
 const row = (o) => ({ round: 'aa', game: { name: 'btc-updown-15m', title: 'Bitcoin Up or Down', version: 24 }, startMs: NOW - 3600000, endMs: NOW - 3000000,
@@ -43,4 +43,16 @@ test('a node holding no round at all says so, not that its bond does not count (
   // a drawn reserve of a round it holds is listed as one
   const d = roundsForOwner({ rows: [row({ drawn: true, startMs: NOW + 600000, endMs: NOW + 900000, phase: 'upcoming' })], own: null, nowMs: NOW });
   assert.deepEqual([d.why, d.upcoming, d.rounds[0].does], [null, 1, ['Reserve (drawn, not seated)']]);
+});
+
+test('the auditor\'s line: rounds, objections and what is earned so far, an unread round not guessed (kanban #1002)', () => {
+  const a = new Uint8Array(32).fill(1), b = new Uint8Array(32).fill(2);
+  const hex = (u) => Buffer.from(u).toString('hex');
+  const got = auditForOwner({ work: { audited: 2, objections: 1, rounds: [{ round: a, atMs: 2, contradicted: false }, { round: b, atMs: 1, contradicted: true }] }, earned: new Map([[hex(a), 5000n]]) });
+  assert.equal(got.audited, 2);
+  assert.equal(got.objections, 1);
+  assert.equal(got.earnedMsat, '5000');
+  assert.equal(got.unread, 1);
+  assert.equal(got.contradicted, 1);
+  assert.equal(auditForOwner({ work: null }), null);
 });

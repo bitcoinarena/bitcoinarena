@@ -30,3 +30,8 @@ test('none: the reason, said plainly, and no empty table', () => {
   assert.match(html, /Bitcoin Up or Down v24/);
   assert.doesNotMatch(html, /<table/);
 });
+
+test('the auditor\'s line shows rounds, objections and sats, and says when some are still being read (kanban #1002)', () => {
+  const h = renderToStaticMarkup(React.createElement(RoundsPanel, { initial: { loaded: true, data: { rounds: [], why: null, audit: { audited: 3, objections: 1, earnedMsat: '12000', unread: 2 } } } }));
+  assert.match(h, /As an auditor: 3 rounds audited, 1 objection filed, 12 sats earned so far \(2 still being read\)\./);
+});
