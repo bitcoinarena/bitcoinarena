@@ -7,7 +7,10 @@
 //   RECORDS    not "the newest I hold": each federation's records at or below that height, from this seat and every seat it can reach,
 //              each verified at threshold against the census at the record's own height. The highest verified one is used. A record
 //              cannot be forged, so a seat that hides one changes nothing when another seat has it
-//   NONE THERE a federation the census names with no record at that height throws, and the seat starts no founding yet
+//   ONLY A RECORD COUNTS  a federation with no verified record at that height is left out and holds nothing back (kanban #1025): a made-up
+//              id in an advert never has one, and a federation younger than 12 blocks held no reserve then. No record of any is no pressure
+//   NOT YET    only this seat's own unread chain: a record it was given and cannot check, for want of the census at the record's height,
+//              throws, and the seat starts no founding yet. It is not left out
 //   THE BAND   foundingPressureBond, on those records alone; never capacityBand's `was` or network.band
 //
 // What is left: a record that reaches some seats late gives them another B*_net. The founding's id covers it, so they name another founding
@@ -44,8 +47,8 @@ export function highestVerified(rows) {
 /**
  * `point` this network's FOUNDING_PRESSURE_HEIGHT; `held(fidHex, height)` this seat's record in force there, hex or null; `seats()` the seats'
  * base URLs; `censusAt(height)` the census entries there or null; `inviteFederationId`, `networkId`, `verify` as verifyFederationRecord takes
- * them. Answers an async ({ height, entries }) -> B*_net or null, for createFoundingSeat's pressureBondAt. An answer is kept per trigger
- * height: a seat that started a founding again in the same trigger must not name another one.
+ * them. Answers an async ({ height, entries }) -> B*_net or null, for createFoundingSeat's pressureBondAt; it throws only while this seat's
+ * chain is unread. An answer is kept per trigger height: a seat that started a founding again in the same trigger must not name another one.
  */
 export function foundingPressureReader({ point, bondMinGuardian, held = () => null, seats = () => [], censusAt, inviteFederationId, networkId = null, fetcher = fetch,
   verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } } }) {
@@ -81,15 +84,15 @@ export function foundingPressureReader({ point, bondMinGuardian, held = () => nu
         const r = decodes(hex);
         if (!r || toHex(r.federationId) !== fid || r.height > at) continue;   // only what the height allows, whoever sent it
         const entriesThere = await censusOf(r.height);
-        if (!entriesThere) continue;
+        if (!entriesThere) throw new Error(`the census at ${r.height} is not read yet, so a record of federation ${fid.slice(0, 16)} cannot be checked: no draw yet`);
         const v = verifyFederationRecord(fromHex(hex), { census: entriesThere, verify, inviteFederationId, networkId });
         if (v.ok) good.push(v);
       }
       const best = highestVerified(good);
-      if (!best) throw new Error(`federation ${fid.slice(0, 16)}, named in the census at ${height}, has no record at or below ${at}: no draw yet`);
+      if (!best) continue;
       federations.push({ federation: fid, status: best.status, nominal: best.record.nominal, reserveSats: best.record.reserveSats, exposureCapSats: best.record.exposureCapSats });
     }
-    const bond = foundingPressureBond({ federations, bondMinSats: bondMinGuardian });
+    const bond = federations.length ? foundingPressureBond({ federations, bondMinSats: bondMinGuardian }) : null;
     answers.set(height, bond);
     return bond;
   };

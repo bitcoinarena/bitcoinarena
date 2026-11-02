@@ -35,6 +35,20 @@ export const foundingRecordHeight = (height, point) => (reached(height, point) &
 export const foundingCandidateVersion = (height, point) => (reached(height, point) ? FOUNDING_PRESSURE_VERSION : null);
 
 /**
+ * A GUARDIAN'S BOND FLOOR (§23A.2, kanban #1025): a genesis parameter on mainnet; testnet4's and regtest's genesis bytes do not carry it and
+ * cannot without moving their network ids, so it stands here, beside genesis, as BOND_MATURITY_OFFSET does. Never a seat's setting: it
+ * feeds the draw and B*_net, and a seat on another value names another founding. Regtest may keep a test's override. `genesisSats` the
+ * genesis's bondMinGuardianSats, if it names one. Nothing moves it after genesis today, so the value at any height is this one.
+ */
+export const BOND_MIN_GUARDIAN = Object.freeze({ testnet4: 50000n, regtest: 50000n });
+export function bondMinGuardianOf({ network, genesisSats = null, override = null }) {
+  if (typeof genesisSats === 'bigint') return genesisSats;
+  if (network === 'testnet4' || network === 'testnet') return BOND_MIN_GUARDIAN.testnet4;
+  if (network === 'mainnet') throw new Error('mainnet names its guardian bond floor in its genesis');
+  return override ? BigInt(override) : BOND_MIN_GUARDIAN.regtest;
+}
+
+/**
  * The founding's id: H(founding tag, seed || trigger_height), with `pressureBond` set H(tag, seed || trigger_height || pressure_bond) -
  * the tag by the trigger height (kanban #525). Seats that read another B*_net name another founding, so they cannot meet in one ceremony.
  */
@@ -172,19 +186,30 @@ export const triggerKey = (t) => `${t.kind}:${t.federation || ''}:${t.height}`;
  * 2026-10-18 on the test host seats: federation B's departure notice at 156647 went void at 156666 and stayed the trigger, the earliest,
  * so no later event - a cohort of ten new nodes among them - could ever start a founding).
  */
+/**
+ * EVERY KIND REDRAWS AS A COHORT DOES (§23A.2, kanban #1025), from `redrawFrom` (the network's FOUNDING_PRESSURE_HEIGHT; null: not on this
+ * network yet, and everything below is as it was). A succession or load trigger has one height, and a void one had no next trigger, so a
+ * draining federation could never get a successor. While its condition holds, a trigger T draws at T + n x (founding_window + 1), the newest
+ * such height below the tip, each with its own beacon and the rules of its own height; every seat at a tip names the same one. A row whose
+ * `successor` is set has its founding: its condition is over. Answers `base` (T) and `origin` (the trigger, whichever draw this is).
+ *
+ * NOTHING VOID HOLDS ANYTHING BACK: a trigger still on its first draw wins, the earliest of those, and only then the lowest draw height.
+ */
 export function foundingTrigger({ capable = [], records = [], notices = [], loads = [], nominal, abandonBlocks, federationExists = false, cohort = COHORT_NOMINAL, voided = [],
-  tip = null, foundingWindow = null }) {
+  tip = null, foundingWindow = null, redrawFrom = null }) {
   const skip = new Set(voided);
   // A COHORT REDRAWS ON THE CHAIN'S CLOCK when the tip and founding_window are known (kanban #495, measured 2026-10-21 at 157,179:
   // the seven second-host seats, restarted at 157,178, drew 218dd6c7 at 157,178; the three installer nodes, whose first readable census was
   // 157,179, drew at 157,179 - each seat's run began where its memory began, and a void moved it to the next height it had seen).
   // The draws are the run's first height, then one founding_window + 1 later each - every seat names the same one from the chain.
   const scheduled = Number.isInteger(tip) && Number.isInteger(foundingWindow) && foundingWindow > 0;
+  const redraws = scheduled && Number.isInteger(redrawFrom) && tip >= redrawFrom;
+  const over = (r) => redraws && r.successor === true;
   const cohortAfter = scheduled ? -1 : Math.max(-1, ...[...skip].filter((k) => k.startsWith('cohort:')).map((k) => Number(k.split(':').pop())));
   const found = [];
   if (!federationExists && Number.isInteger(nominal)) {
     const g = capable.find((x) => x.operators >= nominal);
-    if (g) found.push({ kind: 'genesis', height: g.height, why: `${g.operators} guardian-capable operators at ${g.height}, at least federation_nominal ${nominal}: the first federation is drawn` });
+    if (g && !(redraws && capable[capable.length - 1].operators < nominal)) found.push({ kind: 'genesis', height: g.height, why: `${g.operators} guardian-capable operators at ${g.height}, at least federation_nominal ${nominal}: the first federation is drawn` });
   }
   if (federationExists && Number.isInteger(cohort) && cohort > 0) {
     let start = null;
@@ -195,7 +220,7 @@ export function foundingTrigger({ capable = [], records = [], notices = [], load
     // multiple of the step below the tip, at or after the run's start - every seat names the same height from the chain alone
     const first = start ? Math.ceil(start.height / step) * step : null;
     const at = start && scheduled ? (tip - 1 >= first ? Math.floor((tip - 1) / step) * step : (tip >= first ? first : null)) : start && start.height;
-    if (start && at !== null) found.push({ kind: 'cohort', height: at, nominal: cohort,
+    if (start && at !== null) found.push({ kind: 'cohort', height: at, nominal: cohort, ...(redraws ? { base: start.height, firstDraw: at === first } : {}),
       why: `${start.free} guardian-capable operators guarding no OPEN federation from ${start.height}, at least ${cohort}: they found a federation of their own`
         + (at !== start.height ? ` (drawn again at ${at}, every founding_window + 1)` : '') });
   }
@@ -203,28 +228,42 @@ export function foundingTrigger({ capable = [], records = [], notices = [], load
     ...(Array.isArray(r.seatedFirst) ? { seatedFirst: r.seatedFirst } : {}),
     ...(Array.isArray(r.departing) ? { departing: r.departing } : {}) });
   for (const r of records) {
-    if (r.status === 'DRAINING' || r.replace === true)
+    if ((r.status === 'DRAINING' || r.replace === true) && !over(r))
       found.push({ kind: 'succession', height: r.height, ...carried(r), why: `federation ${String(r.federation).slice(0, 16)} ${r.replace ? 'decided by threshold signature to be replaced' : 'entered DRAINING'} at ${r.height}: its successor is drawn` });
   }
   for (const n of notices) {
-    if (!Number.isInteger(n.height)) continue;
+    if (!Number.isInteger(n.height) || over(n)) continue;
     found.push({ kind: 'succession', notice: true, height: n.height, ...carried(n),
       why: `a departure notice posted at ${n.height} would make federation ${String(n.federation).slice(0, 16)} ${n.wouldBe || 'DRAINING'}: its successor is drawn now` });
   }
   if (Number.isInteger(abandonBlocks) && abandonBlocks > 0) {
-    let since = null;
+    let since = null, hit = null;
     for (const at of [...loads].sort((a, b) => a.height - b.height)) {
       const open = (at.federations || []).filter((f) => f.status === 'OPEN');
       const full = open.length > 0 && open.every((f) => typeof f.load === 'number' && f.load >= LOAD_TRIGGER);
-      if (!full) { since = null; continue; }
+      if (!full) { since = null; hit = null; continue; }
       if (since === null) since = at.height;
-      if (at.height - since >= abandonBlocks) {
-        found.push({ kind: 'load', height: at.height, why: `every OPEN federation at or above ${LOAD_TRIGGER * 100} % of its cap from ${since} to ${at.height} (abandon_blocks ${abandonBlocks}): a new federation is drawn` });
-        break;
-      }
+      if (hit === null && at.height - since >= abandonBlocks) { hit = at.height; if (!redraws) break; }
     }
+    if (hit !== null) found.push({ kind: 'load', height: hit, why: `every OPEN federation at or above ${LOAD_TRIGGER * 100} % of its cap from ${since} to ${hit} (abandon_blocks ${abandonBlocks}): a new federation is drawn` });
   }
   if (!found.length) return { ok: false, why: federationExists ? 'no federation is draining or replaced, and the OPEN ones are not all at 80 % for abandon_blocks' : `fewer than federation_nominal ${nominal} guardian-capable operators so far: no federation, and no paying round` };
+  if (redraws) {
+    const step = foundingWindow + 1;
+    for (const t of found) {
+      const base = t.base ?? t.height;
+      t.origin = `${t.kind}:${t.federation || ''}:${base}`;
+      if (t.kind === 'cohort') continue;
+      const first = t.height;
+      t.base = first; t.height = tip - 1 >= first ? first + Math.floor((tip - 1 - first) / step) * step : first; t.firstDraw = t.height === first;
+      if (!t.firstDraw) t.why += ` (drawn again at ${t.height}, every founding_window + 1)`;
+    }
+    const order = (a, b) => a.height - b.height || (triggerKey(a) < triggerKey(b) ? -1 : 1);
+    const live = found.filter((t) => !skip.has(triggerKey(t)));
+    if (!live.length) return { ok: false, why: `every trigger so far went void (${found.length}); the next one draws again` };
+    const firsts = live.filter((t) => t.firstDraw);
+    return { ok: true, ...(firsts.length ? firsts : live).sort(order)[0] };
+  }
   found.sort((a, b) => a.height - b.height);
   const live = found.filter((t) => !skip.has(triggerKey(t)));
   if (!live.length) return { ok: false, why: `every trigger so far went void (${found.length}); the next one draws again` };

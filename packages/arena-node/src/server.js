@@ -141,7 +141,7 @@ import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departure
 import { emergencyDepartureStands } from '../../arena-protocol/src/emergency.js';
 import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture } from './absence-producer.js';
 import { createFoundingSeat, cliSetup, execCli } from './founding-seat.js';
-import { FOUNDING_WINDOW, foundingPressurePoint, foundingCandidateVersion } from '../../arena-protocol/src/guardian-founding.js';
+import { FOUNDING_WINDOW, foundingPressurePoint, foundingCandidateVersion, bondMinGuardianOf } from '../../arena-protocol/src/guardian-founding.js';
 import { foundingPressureReader } from './founding-pressure.js';
 import { createEndpointsOf, federationOfDir, configInvite } from './federation-endpoints.js';
 import { execFile as execFileCb } from 'node:child_process';
@@ -610,6 +610,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   let halts = null;                            // halts.js: the seats' halt observations and proof
   // THIS SEAT'S NETWORK'S GENESIS, read once: null where this build names none
   let seatGenesisKept;
+  // A GUARDIAN'S BOND FLOOR, THE NETWORK'S (kanban #1025): a seat's setting would split a founding; only regtest keeps a test's override
+  const guardianFloor = () => { const n = String(chain || '').replace(/^bitcoin-/, ''), g = seatGenesis();
+    return bondMinGuardianOf({ network: n === 'test' ? 'testnet4' : n, genesisSats: g && g.bondMinGuardianSats, override: process.env.ARENA_BOND_MIN_GUARDIAN }); };
   const seatGenesis = () => { if (givenGenesis) return givenGenesis; if (seatGenesisKept === undefined) { const n = String(chain || '').replace(/^bitcoin-/, ''); try { seatGenesisKept = genesisFor(n === 'test' ? 'testnet4' : n); } catch { seatGenesisKept = null; } } return seatGenesisKept; };
   let ownGuardianSeat = () => null;
   const guardianWiring = { founding: false, absences: false, spentSet: false };   // which guardian wirings this seat started
@@ -4964,12 +4967,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     };
     // THE POINT THE PRESSURE RULE STARTS AT ON THIS NETWORK (§23A.3a, kanban #993/#1023): not named, B*_net is never read and every candidate stands
     const pressurePoint = foundingPressurePoint(netName === 'test' ? 'testnet4' : netName);
-    const foundingBondMin = BigInt(process.env.ARENA_BOND_MIN_GUARDIAN || 50000);
+    const foundingBondMin = guardianFloor();
     foundingSeat = createFoundingSeat({
       pressureBondAt: foundingPressureReader({ point: pressurePoint, bondMinGuardian: foundingBondMin, censusAt: foundingEntriesAt, fetcher: fetch, seats: () => everySeat(),
         held: (fid, h) => { const r = fedRecords.recordAt(fid, h); return r ? r.__hex : null; },
         inviteFederationId: (inv) => inviteFedId(inv), networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, verify: schnorrVerify }),
-      candidateVersionAt: (h) => foundingCandidateVersion(h, pressurePoint),
+      candidateVersionAt: (h) => foundingCandidateVersion(h, pressurePoint), redrawFrom: pressurePoint,
       // each held record with its body: a DRAINING one seats its seated guardians first; the notices are read against it
       records: () => (fedRecords.list() || []).map((x) => { const held = fedRecords.recordOf(x.federation);
         return { federation: x.federation, status: x.status, height: x.height, load: typeof x.load === 'number' ? x.load : null, ...(held && held.record ? { record: held.record } : {}) }; }),
@@ -5078,7 +5081,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // the federation's own coins, for the gateways' proved peg-ins (§23A.3a), read at most every 10 min
       federationCoins: g.apiPort ? (() => { const url = `ws://127.0.0.1:${g.apiPort}`; let kept = null;
         return async () => { if (kept && Date.now() - kept.at < 600000) return kept.coins; const coins = await federationCoins({ url }); if (coins) kept = { at: Date.now(), coins }; return coins; }; })() : undefined,
-      bondMinGuardian: BigInt(process.env.ARENA_BOND_MIN_GUARDIAN || 50000) });
+      bondMinGuardian: guardianFloor() });
   if (typeof chainTip === 'function' && fedRecords) for (const g of [guardian, guardianNext]) if (g && g.dataDir) gatewayWatches.push({ dir: g.dataDir, watch: watchFor(g) });
   const gatewayWatch = gatewayWatches.length ? gatewayWatches[0].watch : null;
   const gatewayWatchOf = (fid) => { const w = gatewayWatches.find((x) => federationOfDir(x.dir) === String(fid || '').toLowerCase()); return w ? w.watch : null; };
@@ -10422,7 +10425,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return r.ok ? json(res, 200, r) : text(res, 409, r.why);
       }
       if (req.method === 'GET' && url.pathname === '/capacity') {
-        const bondMin = BigInt(process.env.ARENA_BOND_MIN_GUARDIAN || 50000), pegInMin = BigInt(process.env.ARENA_PEG_IN_MIN || 50000);
+        const bondMin = guardianFloor(), pegInMin = BigInt(process.env.ARENA_PEG_IN_MIN || 50000);
         const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
         const entries = now.ok ? now.entries : [];
         const gws = await Promise.all(gatewayWatches.map((w) => w.watch.view().catch(() => null)));
