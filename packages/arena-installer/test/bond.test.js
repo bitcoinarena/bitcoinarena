@@ -8,7 +8,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { walletOf, payoutKeyOf, taprootAddress, addressScript, scriptHash } from '../src/wallet.js';
-import { buildBond, lockOf, advertRoles, bondKeyAt, BOND_MIN_SATS, BOND_SLACK_BLOCKS, bondCounts } from '../src/bond.js';
+import { buildBond, lockOf, advertRoles, bondKeyAt, BOND_MIN_SATS, BOND_SLACK_BLOCKS, bondCounts, censusKeyOfNode } from '../src/bond.js';
+import { recognizeBond } from '../../arena-protocol/src/chain.js';
+import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
+import { bondPresigStands } from '../../arena-protocol/src/slash-presig.js';
+import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
+import { bondSetFor, tweakPoint } from '../../arena-node/src/curve.js';
 import { advertInTransaction } from '../../arena-protocol/src/census.js';
 import { parseTransaction, commitmentsOf } from '../../arena-protocol/src/tx.js';
 import { advertId } from '../../arena-protocol/src/advert.js';
@@ -68,4 +73,36 @@ test('the advertisement\'s hosted game is the id of the Next Block the Arena pin
   const { NEXTBLOCK_GAME_ID } = await import('../src/bond.js');
   const app = await import('../../nextblock/plugin/nextblock.js');
   assert.equal(toHex(NEXTBLOCK_GAME_ID), toHex(app.NEXTBLOCK_GAME_ID));
+});
+
+test('a template-3 bond (5A.3B, kanban #1053): it names the census key, and its slash_presig goes out as a third transaction the one funding pays for', () => {
+  const seed = new Uint8Array(32).fill(9), w = walletOf(seed), nodeSecret = new Uint8Array(32).fill(3);
+  const censusKey = schnorr.getPublicKey(new Uint8Array(32).fill(8));
+  const built = buildBond({ wallet: w, nodeSecret, coins: [{ txid: '11'.repeat(32), vout: 0, sats: 200000 }], tip: 156900, operatorId: 'op-test', roles: ['verify', 'settlement'], endpoint: 'wss://node.example.com',
+    payoutPubkey: payoutKeyOf(seed), softwareHash: new Uint8Array(32).fill(1), censusKey, network: 'regtest' });
+  const funding = parseTransaction(fromHex(built.funding.hex)), bond = parseTransaction(fromHex(built.bond.hex)), update = parseTransaction(fromHex(built.presigUpdate.hex));
+  const a = advertInTransaction(fromHex(built.bond.hex));
+  assert.equal(a.bondScriptTemplateVersion, 3);
+  assert.equal(toHex(a.censusKey), toHex(censusKey));
+  assert.ok(recognizeBond(bond, 0, a, { network: 'regtest', bond: bondSetFor('regtest') }).ok, 'the census reads it as that node\'s template-3 bond');
+  assert.equal(toHex(bond.inputs[0].previousTxid), toHex(funding.txid));
+  assert.deepEqual([bond.inputs[0].previousVout, update.inputs[0].previousVout], [0, 1], 'both carriers are the one funding\'s');
+  assert.equal(toHex(update.inputs[0].previousTxid), toHex(funding.txid));
+  const read = readAdvertUpdate(fromHex(built.presigUpdate.hex), { network: 'regtest' });
+  assert.ok(read.ok, read.why);
+  assert.equal(toHex(read.bondTxid), toHex(bond.txid));
+  assert.equal(read.bondVout, 0);
+  assert.ok(schnorr.verify(read.signature, read.advertId, read.nodePubkey), 'signed by the node');
+  assert.ok(bondPresigStands({ presig: read.advert.slashPresig, bond: { txid: bond.txid, vout: 0, value: built.bondSats, script: bond.outputs[0].script }, advert: a, networkId: NETWORK_ID_REGTEST, tweakPoint,
+    verify: (s, m, k) => schnorr.verify(s, m, k) }), 'the one signature a reader checks');
+  assert.equal(funding.outputs[1].value, update.outputs[0].value + built.fees.presig - 330n, 'all that carrier held is the marker and its fee');
+  assert.equal(built.censusKey, toHex(censusKey));
+});
+
+test('with no census key a bond stays template 2, and the seat that says so answers none', async () => {
+  assert.equal(await censusKeyOfNode({ reach: { port: 1 } }, async () => ({ ok: false })), null, 'a network with no census key answers 404');
+  assert.equal(await censusKeyOfNode({}), null);
+  assert.equal(await censusKeyOfNode({ reach: { port: 1 } }, async () => { throw new Error('down'); }), null);
+  const k = new Uint8Array(32).fill(5);
+  assert.equal(toHex(await censusKeyOfNode({ reach: { port: 1 } }, async () => ({ ok: true, json: async () => ({ keys: [{ publicKey: '11'.repeat(32) }, { publicKey: toHex(k) }] }) }))), toHex(k), 'the newest');
 });

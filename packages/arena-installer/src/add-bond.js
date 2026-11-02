@@ -8,7 +8,7 @@
 // maturity); with --yes / the confirm it is posted and recorded in the state's `bonds`.
 import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
-import { buildBond, lockOf, MARKER_SATS, EMERGENCY_IN_ADVERT } from './bond.js';
+import { buildBond, lockOf, censusKeyOfNode, MARKER_SATS, EMERGENCY_IN_ADVERT } from './bond.js';
 import { bondsOf } from './state.js';
 import { emergencyOf } from './seed.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
@@ -16,10 +16,10 @@ import { fromHex } from '../../arena-protocol/src/hash.js';
 /**
  * Plan (and with `post`, broadcast) an added bond output of `addSats`. `guardianOf` the node's guardian seats as its newest
  * advertisement names them - from protocol 19 the newest advertisement over all a node's outputs decides, so the added one repeats
- * them. Answers { ok, plan } / { ok, plan, bond, bonds } or { ok: false, why }.
+ * them. Answers { ok, plan } / { ok, plan, bond, bonds } or { ok: false, why }. `censusKey` the key a template-3 bond names (bytes, null for template 2); left out, this node's seat is asked.
  */
 export async function addBond({ state, addSats, post = false, chainKit = { coinsOf, broadcast }, softwareHash, feeRate = 2, guardianEndpoint = null,
-  guardianOf = [], nowMs = Date.now() }) {
+  guardianOf = [], nowMs = Date.now(), censusKey }) {
   const s = state.read();
   const outputs = bondsOf(s);
   if (!outputs.length) return { ok: false, why: 'this node has no bond yet: set up its first bond in the owner area (Bond)' };
@@ -35,23 +35,25 @@ export async function addBond({ state, addSats, post = false, chainKit = { coins
   const db = new DatabaseSync(state.path('node.db'), { readOnly: true });
   let nodeSecret;
   try { nodeSecret = new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
+  const named = censusKey === undefined ? await censusKeyOfNode(s) : censusKey;
   let built;
   try {
     built = buildBond({ hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats: add, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
-      endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate, guardianEndpoint, nowMs, guardianOf,
+      endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate, guardianEndpoint, nowMs, guardianOf, censusKey: named,
       emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
   } catch (e) { return { ok: false, why: e.message }; }
   const now = outputs.reduce((a, b) => a + BigInt(b.sats), 0n);
   const plan = { addSats: String(add), outputs: outputs.map((b) => ({ txid: b.txid, vout: b.vout || 0, sats: String(b.sats), maturity: b.maturity })),
     bondSats: String(now), totalSats: String(now + add), coins: coins.map((c) => ({ txid: c.txid, vout: c.vout, sats: c.sats })),
-    changeSats: String(built.changeSats), fees: { funding: String(built.fees.funding), bond: String(built.fees.bond), total: String(built.fees.funding + built.fees.bond) },
+    changeSats: String(built.changeSats), fees: { funding: String(built.fees.funding), bond: String(built.fees.bond), total: String(built.fees.funding + built.fees.bond + (built.fees.presig || 0n)) },
     maturity: built.maturity, lock: lockOf(tip, { maturity: built.maturity }), tip, countsAfter: 6,
-    funding: { txid: built.funding.txid, hex: built.funding.hex }, bondTx: { txid: built.bond.txid, hex: built.bond.hex } };
+    funding: { txid: built.funding.txid, hex: built.funding.hex }, bondTx: { txid: built.bond.txid, hex: built.bond.hex }, ...(built.presigUpdate ? { presigUpdate: built.presigUpdate } : {}) };
   if (!post) return { ok: true, plan };
   const fundingTxid = await chainKit.broadcast(s.chain, built.funding.hex);
   const bondTxid = await chainKit.broadcast(s.chain, built.bond.hex);
+  const presigTxid = built.presigUpdate ? await chainKit.broadcast(s.chain, built.presigUpdate.hex) : null;
   const bond = { txid: bondTxid, vout: 0, fundingTxid, sats: String(built.bondSats), maturity: built.maturity, advertId: built.advertId, postedAtTip: tip,
-    lock: plan.lock, atMs: Date.now(), added: true };
+    lock: plan.lock, atMs: Date.now(), added: true, ...(presigTxid ? { censusKey: built.censusKey, presigUpdate: presigTxid } : {}) };
   const bonds = [...outputs, bond];
   state.save({ bonds });
   return { ok: true, plan, bond, bonds };
@@ -62,7 +64,7 @@ export async function addBond({ state, addSats, post = false, chainKit = { coins
  * COMMIT, its guardian endpoint and (a custody node's) guardian seat for the added output's advertisement, as the wizard's bond has
  * them. Used by `arena-install --add-bond` and the owner page (POST /owner/add-bond).
  */
-export async function addBondOnNode({ home, release, addSats, post = false, chainKit, state = null }) {
+export async function addBondOnNode({ home, release, addSats, post = false, chainKit, state = null, censusKey }) {
   const { readFileSync } = await import('node:fs');
   const { join } = await import('node:path');
   const { sha256 } = await import('../../arena-protocol/src/hash.js');
@@ -78,7 +80,7 @@ export async function addBondOnNode({ home, release, addSats, post = false, chai
       if (g) guardianOf = [{ federationId: fromHex(g.federationId), guardianKey: fromHex(g.guardianKey) }];
     } catch { /* no guardian seat to repeat */ }
   }
-  return addBond({ state: st, addSats, post, softwareHash, guardianOf, guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
+  return addBond({ state: st, addSats, post, softwareHash, guardianOf, guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null, censusKey,
     ...(chainKit ? { chainKit } : {}) });
 }
 
@@ -93,7 +95,7 @@ export async function addBondOnNode({ home, release, addSats, post = false, chai
  * most every 10 minutes. Answers { ok, plan } / { ok, plan, bond } / { ok, done: true, bond } when a bond is posted already, or { ok: false, why }.
  */
 export async function firstBond({ state, post = false, chainKit = { coinsOf, broadcast }, softwareHash, guardianEndpoint = null, askMinimum = null,
-  startAgent = null, feeRate = 2, nowMs = Date.now() }) {
+  startAgent = null, feeRate = 2, nowMs = Date.now(), censusKey }) {
   let s = state.read();
   if (bondsOf(s).length) return { ok: true, done: true, bond: s.bond || bondsOf(s)[0] };
   if (!(s.done || {}).service) return { ok: false, why: 'this node is not installed yet: its bond is signed with its own key' };
@@ -124,13 +126,14 @@ export async function firstBond({ state, post = false, chainKit = { coinsOf, bro
   let built;
   try {
     built = buildBond({ hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
-      endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate, guardianEndpoint, nowMs,
+      endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate, guardianEndpoint, nowMs, censusKey: censusKey === undefined ? await censusKeyOfNode(s) : censusKey,
       emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
   } catch (e) { return { ok: false, why: e.message, plan }; }
   const fundingTxid = await chainKit.broadcast(s.chain, built.funding.hex);
   const bondTxid = await chainKit.broadcast(s.chain, built.bond.hex);
+  const presigTxid = built.presigUpdate ? await chainKit.broadcast(s.chain, built.presigUpdate.hex) : null;
   const bond = { txid: bondTxid, vout: 0, fundingTxid, sats: String(built.bondSats), maturity: built.maturity, advertId: built.advertId, postedAtTip: tip,
-    lock: lockOf(tip, { maturity: built.maturity }), atMs: nowMs, fromOwnerArea: true };
+    lock: lockOf(tip, { maturity: built.maturity }), atMs: nowMs, fromOwnerArea: true, ...(presigTxid ? { censusKey: built.censusKey, presigUpdate: presigTxid } : {}) };
   const { SUPPORTED_PROTOCOL_VERSIONS } = await import('../../arena-protocol/src/constants.js');
   // the wizard's mark('bond'): the step done, and what its advertisement declares (change-roles refreshHostedGames)
   state.save({ bond, advertProtocols: [...SUPPORTED_PROTOCOL_VERSIONS], done: { ...(state.read().done || {}), bond: nowMs } });
@@ -155,7 +158,7 @@ export async function firstBondOnNode(o) {
   planReads.set(key, p);
   return p;
 }
-async function firstBondOnNodeNow({ home, release, post = false, chainKit, state = null, askMinimum, startAgent }) {
+async function firstBondOnNodeNow({ home, release, post = false, chainKit, state = null, askMinimum, startAgent, censusKey }) {
   const { readFileSync } = await import('node:fs');
   const { join } = await import('node:path');
   const { sha256 } = await import('../../arena-protocol/src/hash.js');
@@ -165,6 +168,6 @@ async function firstBondOnNodeNow({ home, release, post = false, chainKit, state
   const ask = askMinimum !== undefined ? askMinimum : async () => (await import('./install-minimum.js')).installMinimum({});
   const start = startAgent !== undefined ? startAgent : async () => (await import('./service.js')).installProgram({ id: 'custody', description: 'Bitcoin Arena: custody agent',
     home: st.home || home, boot: true, args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'custody-agent.mjs'), '--home', st.home || home] });
-  return firstBond({ state: st, post, softwareHash, guardianEndpoint: (guardianSetupOf(st.read(), { release }) || {}).endpoint || null, askMinimum: ask, startAgent: start,
+  return firstBond({ state: st, post, softwareHash, guardianEndpoint: (guardianSetupOf(st.read(), { release }) || {}).endpoint || null, askMinimum: ask, startAgent: start, censusKey,
     ...(chainKit ? { chainKit } : {}) });
 }

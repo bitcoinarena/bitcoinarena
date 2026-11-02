@@ -2879,6 +2879,11 @@ panels, no draw, no census, and nothing recursive. The earliest update carrying 
 that verifies counts, later updates need not repeat it, and a seat hands that update
 with the bond's evidence.
 
+A node posts the bond and that update together. On a network with a census key a new bond
+is template 3 and names the newest standing key; on any other it stays template 2. One
+funding transaction pays both carriers, since a carrier is fixed by the body's length and
+a presig is 65 bytes whatever it signs (kanban #972).
+
 A slash on this presig pays at `slash_fallback_blocks`, by the census key, and a mature
 node can leave first. It is the slowest path, for a rare case. It covers an offence
 with no round, and a node with no round presig because it was never seated: a
@@ -3025,6 +3030,11 @@ that reacts.
 The reference node takes the return leaf itself, as soon as it opens, when a start
 names a proof that does not check on its own replay. An owner does not have to
 watch.
+
+A start does not show a hold output's leaves, and only the panels rebuild them, so a node
+keeps the panels of every hold it signs a presig to, past the round's prune. Without them
+it could not spend the return leaf. Path A is gone with the bond output, so the owner page
+leaves a started bond by the return, and says when that opens (kanban #972).
 
 The residual: an offline mature node can lose its bond to 2/3 of a key's shares.
 Threshold signers cannot be named, so a false fallback has no offence row; it is

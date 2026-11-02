@@ -19,8 +19,7 @@ import { reaffirmationMessage, reaffirmationPayload } from '../../arena-protocol
 import { execFileSync } from 'node:child_process';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
-import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
-import { bondPresigDigest, signSlashPresig } from '../../arena-protocol/src/slash-presig.js';
+import { signBondPresig } from '../../arena-protocol/src/slash-presig.js';
 import {
   bondOutputKey, bondInternalKey, tapLeafHash, TAPLEAF_VERSION, bondMaturityOf, maturityHeightFor, BOND_TEMPLATE_V2, BOND_TEMPLATE_V3, bond3OutputKey,
   recoveryLeaf, controlBlockFor,
@@ -237,7 +236,7 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
       // (one found by genesis' key is that key by the scan itself; one found by the marker is checked here)
       const maturity = bondMaturityOf(advert, { genesisMaturity: g.bondMaturity });
       if (!maturity.ok) continue;
-      if (u.byMarker ? toHex(keyAt(nodeKey, maturity.maturity).outputKey) !== u.scriptPubKey.slice(4)
+      if (u.byMarker ? toHex(keyOfAdvert(advert, maturity.maturity).outputKey) !== u.scriptPubKey.slice(4)
         : advert.bondScriptTemplateVersion !== 1) continue;
       const newer = newestUpdateOf({ txid: fromHex(u.txid).reverse(), vout: u.vout, height: u.height, nodePubkey: nodeKey });
       out.push({ txid: u.txid, vout: u.vout, height: u.height, sats: Math.round(u.amount * 1e8), maturity: maturity.maturity,
@@ -255,7 +254,14 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
     }, { tweakPoint, combine });
   }
 
-  /** This node key's unspent template-2 bond outputs, as scantxoutset answers them, found by the marker (read fresh). */
+  /** The same off a body: template 3's path B holds the census key that body names (5A.3B). */
+  function keyOfAdvert(advert, bondMaturity) {
+    const nodeKey = advert.nodePubkey;
+    return advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3 ? bond3OutputKey({ nodeKey, censusKey: advert.censusKey, arbitrationKeys: g.arbitrationKeys, bondMaturity,
+      internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey }, { tweakPoint, combine }) : keyAt(nodeKey, bondMaturity);
+  }
+
+  /** This node key's unspent template-2 and template-3 bond outputs, as scantxoutset answers them, found by the marker (read fresh). */
   function v2BondsOf(nodeKey) {
     const scan = scanUtxos([`raw(5120${toHex(bondMarker(network))})`]);
     const found = [];
@@ -275,7 +281,7 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
           if (commitments.some((c) => c.length === 32 && id.every((b, i) => b === c[i]))) { advert = a; break; }
         } catch { /* not a signed body */ }
       }
-      if (!advert || advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V2 || toHex(advert.nodePubkey) !== toHex(nodeKey)) continue;
+      if (!advert || ![BOND_TEMPLATE_V2, BOND_TEMPLATE_V3].includes(advert.bondScriptTemplateVersion) || toHex(advert.nodePubkey) !== toHex(nodeKey)) continue;
       const out = JSON.parse(cli('gettxout', m.txid, String(advert.bondVout), 'false') || 'null');
       if (!out) continue;
       found.push({ txid: m.txid, vout: advert.bondVout, height: m.height, amount: out.value, scriptPubKey: out.scriptPubKey.hex, byMarker: true });
@@ -317,12 +323,11 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
    * body and names the carrier output to fund; `postAdvertUpdate` spends that carrier (from `utxo` when the caller
    * funded it with coins it chose, else funded here) and answers the raw transaction.
    */
-  function prepareAdvertUpdate(nodeSecret, advert) {
+  function prepareAdvertUpdate(nodeSecret, advert, { carrierSecret = schnorr.utils.randomSecretKey() } = {}) {
     const nodeKey = schnorr.getPublicKey(nodeSecret);
     if (toHex(advert.nodePubkey) !== toHex(nodeKey)) throw new Error('an update names the node key that signs it');
     const id = advertId(advert);
     const pieces = chunksOf(joinSignedAdvert(encodeAdvert(advert), schnorr.sign(id, nodeSecret)));
-    const carrierSecret = schnorr.utils.randomSecretKey();
     const carrier = carrierFor(carrierSecret, pieces.length);
     return { id, pieces, carrierSecret, carrier, spk: carrier.spk };
   }
@@ -437,13 +442,20 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
   /**
    * A TEMPLATE-3 BOND'S slash_presig AT BONDING (5A.3B, RULED 2026-11-02, kanban #1053): the update that makes the bond count, posted beside it, since its txid is what the signature names.
    * `posted` is postBond's answer. The hold output has no release leaf: its script is built from the bond, its advertisement and its census key alone. Answers postAdvertUpdate's.
+   * `presigCarrier(advert)` names the carrier before the bond exists, so one funding transaction pays both (a bond wallet could not fund the second until the first is sent): only the
+   * body's length decides the carrier, and a presig is 65 bytes whatever it signs. Hand it back as `options.carrier`.
    */
-  function postBondPresig(nodeSecret, posted, options = {}) {
+  function presigCarrier(advert) {
+    const carrierSecret = schnorr.utils.randomSecretKey();
+    const size = chunksOf(joinSignedAdvert(encodeAdvert({ ...advert, slashPresig: new Uint8Array(65) }), new Uint8Array(64))).length;
+    return { carrierSecret, spk: carrierFor(carrierSecret, size).spk };
+  }
+
+  function postBondPresig(nodeSecret, posted, { carrier = null, ...options } = {}) {
     const bond = { txid: fromHex(posted.txid).reverse(), vout: 0, value: posted.bondSats, script: fromHex('5120' + toHex(posted.built.outputKey)) };
-    const built = bondPresigDigest({ bond, advert: posted.advert, networkId: network === 'testnet4' ? NETWORK_ID_TESTNET4 : NETWORK_ID_REGTEST, tweakPoint });
-    if (!built.ok) throw new Error(built.why);
-    const slashPresig = signSlashPresig(built.digest, (d) => schnorr.sign(d, nodeSecret));
-    return postAdvertUpdate(prepareAdvertUpdate(nodeSecret, { ...posted.advert, slashPresig, timestamp: BigInt(Date.now()) }), { txid: posted.txid, vout: 0 }, options);
+    const slashPresig = signBondPresig({ bond, advert: posted.advert, network, tweakPoint, sign: (d) => schnorr.sign(d, nodeSecret) });
+    const prepared = prepareAdvertUpdate(nodeSecret, { ...posted.advert, slashPresig, timestamp: BigInt(Date.now()) }, carrier ? { carrierSecret: carrier.carrierSecret } : {});
+    return postAdvertUpdate(prepared, { txid: posted.txid, vout: 0 }, options);
   }
 
   // Measured: with none named every bond this posted was refused by the advertisement's own encoder.
@@ -458,8 +470,7 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
     // `template: 3` names `censusKey`, the census key the bond's path B needs beside the node key (5A.3B).
     const dated = template === BOND_TEMPLATE_V2 || template === BOND_TEMPLATE_V3;
     const maturity = dated ? maturityHeightFor(height(), network, { slackBlocks }) : g.bondMaturity;
-    const built = template === BOND_TEMPLATE_V3 ? bond3OutputKey({ nodeKey, censusKey, arbitrationKeys: g.arbitrationKeys, bondMaturity: maturity,
-      internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey }, { tweakPoint, combine }) : keyAt(nodeKey, maturity);
+    const built = template === BOND_TEMPLATE_V3 ? keyOfAdvert({ nodePubkey: nodeKey, bondScriptTemplateVersion: template, censusKey }, maturity) : keyAt(nodeKey, maturity);
 
     // ADD TO BOND (kanban #544): `advert` - a node's own newest advertisement (bondsOf) - posted as this bond's body, with the
     // new bond's template, height and timestamp: a second output beside the node's first, saying what the node says now.
@@ -522,6 +533,6 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
     return { blocks, firstHeight: from };
   }
 
-  return { height, mine, bury, minable, waitForHeight, include, postBond, findBond, bondsOf, keyAt, carrierFor, chunksOf, fund, payTo, prepareAdvertUpdate, postAdvertUpdate, postBondPresig,
+  return { height, mine, bury, minable, waitForHeight, include, postBond, findBond, bondsOf, keyAt, keyOfAdvert, carrierFor, chunksOf, fund, payTo, prepareAdvertUpdate, postAdvertUpdate, presigCarrier, postBondPresig,
     prepareReaffirmation, postReaffirmation, prepareRebond, postRebond, newestUpdateOf, blocksFrom, genesis: g };
 }

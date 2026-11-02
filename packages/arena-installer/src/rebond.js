@@ -7,7 +7,7 @@
 // 402 sat, 302 vB at 768 sat), never broadcast.
 import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
-import { buildBond, lockOf, BOND_MIN_SATS } from './bond.js';
+import { buildBond, lockOf, censusKeyOfNode, BOND_MIN_SATS } from './bond.js';
 import { bondsOf } from './state.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
 
@@ -28,11 +28,12 @@ export async function rebond({ state, bondSats, post = false, chainKit = { coins
   const db = new DatabaseSync(state.path('node.db'), { readOnly: true });
   let nodeSecret;
   try { nodeSecret = new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
+  const censusKey = await censusKeyOfNode(s);
   let built;
   try {
     built = buildBond({ hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats: want, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
-      endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate, guardianEndpoint,
-      oldBond: { txid: old.txid, vout: old.vout || 0, sats: old.sats, maturity: old.maturity } });
+      endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate, guardianEndpoint, censusKey,
+      oldBond: { txid: old.txid, vout: old.vout || 0, sats: old.sats, maturity: old.maturity, ...(old.censusKey ? { censusKey: old.censusKey } : {}) } });
   } catch (e) { return { ok: false, why: e.message }; }
   const plan = { from: { txid: old.txid, sats: String(old.sats), maturity: old.maturity }, coins: coins.map((c) => ({ txid: c.txid, vout: c.vout, sats: c.sats })),
     bondSats: String(built.bondSats), changeSats: String(built.changeSats), fees: { funding: String(built.fees.funding), bond: String(built.fees.bond) },
@@ -40,8 +41,9 @@ export async function rebond({ state, bondSats, post = false, chainKit = { coins
   if (!post) return { ok: true, plan };
   const fundingTxid = await chainKit.broadcast(s.chain, built.funding.hex);
   const bondTxid = await chainKit.broadcast(s.chain, built.bond.hex);
+  const presigTxid = built.presigUpdate ? await chainKit.broadcast(s.chain, built.presigUpdate.hex) : null;
   const bond = { txid: bondTxid, vout: 0, fundingTxid, sats: String(built.bondSats), maturity: built.maturity, advertId: built.advertId, postedAtTip: tip,
-    lock: plan.lock, atMs: Date.now(), replaced: { txid: old.txid, sats: String(old.sats), maturity: old.maturity } };
+    lock: plan.lock, atMs: Date.now(), replaced: { txid: old.txid, sats: String(old.sats), maturity: old.maturity }, ...(presigTxid ? { censusKey: built.censusKey, presigUpdate: presigTxid } : {}) };
   // the first output is the one replaced; outputs added beside it (add-bond.js) stay as they are
   state.save({ bond, bonds: [bond, ...bondsOf(s).slice(1)] });
   return { ok: true, plan, bond };

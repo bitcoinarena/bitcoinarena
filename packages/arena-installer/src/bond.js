@@ -12,13 +12,14 @@
 // The carrier's key comes from the wallet key and the advertisement's id, so coins stuck in a carrier are recovered from the 24 words.
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
-import { bondOutputKey, bondInternalKey, tapLeafHash, TAPLEAF_VERSION, maturityHeightFor, BOND_TEMPLATE_V2, BOND_MATURITY_OFFSET, recoveryLeaf, controlBlockFor } from '../../arena-protocol/src/bond-script.js';
+import { bondOutputKey, bond3OutputKey, bondInternalKey, tapLeafHash, TAPLEAF_VERSION, maturityHeightFor, BOND_TEMPLATE_V2, BOND_TEMPLATE_V3, BOND_MATURITY_OFFSET, recoveryLeaf, controlBlockFor } from '../../arena-protocol/src/bond-script.js';
 import { tapSighash, scriptPathWitness, serializeSpend } from '../../arena-protocol/src/bond-spend.js';
 import { encodeAdvert, advertId, joinSignedAdvert } from '../../arena-protocol/src/advert.js';
 import { advertUpdatePayload } from '../../arena-protocol/src/advert-update.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { bondMarker, SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.js';
 import { toHex, fromHex, taggedHash, sha256 } from '../../arena-protocol/src/hash.js';
+import { signBondPresig } from '../../arena-protocol/src/slash-presig.js';
 import { tweakPoint, combine } from '../../arena-node/src/curve.js';
 
 export const NETWORK = 'testnet4';
@@ -28,6 +29,7 @@ export const MARKER_SATS = 330n;
 export const CARRIER_TAG = 'arena/node-carrier/v1';
 const N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;   // the secp256k1 group order
 const CHUNK = 80;
+const piecesOf = (body) => { const out = []; for (let at = 0; at < body.length; at += CHUNK) out.push(body.subarray(at, Math.min(at + CHUNK, body.length))); return out; };
 /** Testnet4's blocks, for saying when a height is reached: ten minutes each (often faster: the date is an estimate, the height is the rule). */
 export const BLOCK_MS = 600000;
 
@@ -46,7 +48,7 @@ export const NEXTBLOCK_GAME_ID = fromHex('495516ae59539661062cd72fd8716afbb378bd
  * full mempool.
  */
 export const BOND_SLACK_BLOCKS = 144;
-const maturityAfter = (tip) => maturityHeightFor(tip, NETWORK, { slackBlocks: BOND_SLACK_BLOCKS });
+const maturityAfter = (tip, network = NETWORK) => maturityHeightFor(tip, network, { slackBlocks: BOND_SLACK_BLOCKS });
 
 /** A confirmed bond's standing in the census: { counts, short } - short the blocks its maturity misses confirmation + offset by. */
 export function bondCounts({ maturity, confirmedAt, network = NETWORK }) {
@@ -68,9 +70,11 @@ export function lockOf(tip, { nowMs = Date.now(), maturity = maturityAfter(tip) 
 // offered it. Every advertisement names it.
 export const advertRoles = (roles) => [...new Set([...roles.flatMap((r) => (r === 'verify' ? ['game', 'verify'] : [r])), 'relay'])].filter((r) => r !== 'custody' && r !== 'liquidity');
 
-/** The bond output key of a node key at a maturity height (template 2). */
-export function bondKeyAt(nodeKey, maturity) {
-  const g = genesisFor(NETWORK);
+/** The bond output key of a node key at a maturity height: template 2, or template 3 when `censusKey` names the key its path B holds (5A.3B). */
+export function bondKeyAt(nodeKey, maturity, { censusKey = null, network = NETWORK } = {}) {
+  const g = genesisFor(network);
+  if (censusKey) return bond3OutputKey({ nodeKey, censusKey, arbitrationKeys: g.arbitrationKeys, bondMaturity: maturity,
+    internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey }, { tweakPoint, combine });
   return bondOutputKey({ nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: maturity,
     internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey }, { tweakPoint, combine });
 }
@@ -82,6 +86,21 @@ export function bondKeyAt(nodeKey, maturity) {
  */
 export const EMERGENCY_IN_ADVERT = process.env.ARENA_EMERGENCY_ADVERT !== '0';
 
+/**
+ * THE KEY A NEW BOND NAMES (5A.3B): the newest standing census key, as this node's own seat reads it off its chain, as bytes. Null where its network runs no census key (the seat answers 404) or
+ * the seat does not answer: a bond is then template 2, as on testnet4 today. `s` the installer's state.
+ */
+export async function censusKeyOfNode(s, fetcher = fetch) {
+  const port = (s.reach || {}).port;
+  if (!port) return null;
+  try {
+    const r = await fetcher(`http://127.0.0.1:${port}/census-key`, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return null;
+    const { keys = [] } = await r.json();
+    return keys.length ? fromHex(keys[keys.length - 1].publicKey) : null;
+  } catch { return null; }
+}
+
 /** The node's advertisement, unsigned. */
 /** The games an advertisement names: the node's hosted game ids (state.hostedGames, apps.js hostedGameIdsOf), sorted and once each;
  *  none known (a state from before them) Next Block's first version, as every installer node named before. */
@@ -90,12 +109,12 @@ export const hostedGamesOf = (hex) => {
   return ids.length ? ids.map((h) => fromHex(h)) : [NEXTBLOCK_GAME_ID];
 };
 
-export function advertFor({ nodeKey, operatorId, roles, endpoint, payoutPubkey, maturity, softwareHash, guardianEndpoint = null, nowMs = Date.now(), emergencyPubkey = null, guardianOf = [], hostedGames = null }) {
+export function advertFor({ nodeKey, operatorId, roles, endpoint, payoutPubkey, maturity, softwareHash, guardianEndpoint = null, nowMs = Date.now(), emergencyPubkey = null, guardianOf = [], hostedGames = null, censusKey = null }) {
   return {
     nodePubkey: nodeKey, operatorId, protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS], roles: advertRoles(roles), hostedGames: hostedGamesOf(hostedGames),
     endpoint, region: 'unknown', capacityClass: 1, softwareHash,
     settlementCapabilities: 0, lightningCapabilities: 0,
-    bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: BOND_TEMPLATE_V2, bondMaturityHeight: maturity,
+    bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: censusKey ? BOND_TEMPLATE_V3 : BOND_TEMPLATE_V2, bondMaturityHeight: maturity, ...(censusKey ? { censusKey } : {}),
     // a custody node's guardian can be drawn when nodes found a federation (§23A, ruling 3): capable, at its endpoint
     payoutPubkey, guardianOf, guardianCapable: Boolean(guardianEndpoint), guardianEndpoint: guardianEndpoint || '', timestamp: BigInt(nowMs),
     ...(emergencyPubkey ? { emergencyPubkey } : {}),
@@ -133,9 +152,12 @@ const txidOf = (hex) => toHex(Uint8Array.from(parseTransaction(fromHex(hex)).txi
 /**
  * Build the two transactions. `coins`: the wallet's ([{ txid, vout, sats }]). `nodeSecret`: the node's own key (its store). Answers
  * { funding: { hex, txid }, bond: { hex, txid, vout: 0 }, advert, maturity, bondSats, changeSats, fees } or throws why not.
+ * `censusKey` (bytes) the newest standing census key on a network that has one: the bond is then template 3 and names it, and the answer carries `presigUpdate` { hex, txid }, a third transaction
+ * sent after the bond. Such a bond counts only with that slash_presig (5A.3B, kanban #1053), and the signature names the bond's txid, so the update comes after it. The funding pays
+ * both carriers: only the body's length fixes a carrier, so its key is chosen before the bond exists. `oldBond.censusKey` (hex) says an old bond is template 3.
  */
 export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_SATS, operatorId, roles, endpoint, payoutPubkey,
-  softwareHash = new Uint8Array(32), feeRate = 2, nowMs = Date.now(), oldBond = null, guardianEndpoint = null, emergencyPubkey = null, guardianOf = [], hostedGames = null }) {
+  softwareHash = new Uint8Array(32), feeRate = 2, nowMs = Date.now(), oldBond = null, guardianEndpoint = null, emergencyPubkey = null, guardianOf = [], hostedGames = null, censusKey = null, network = NETWORK }) {
   // A LARGER BOND, IN ONE STEP ("increasing the bond size"; a template-2 bond cannot be topped up in place):
   // `oldBond` { txid, vout, sats, maturity } - from its maturity on - is the funding's first input, spent on its recovery leaf by the
   // node's key (the transaction's locktime is that maturity), and the wallet's coins add the rest; the new bond is built as any
@@ -143,16 +165,19 @@ export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_
   if (oldBond && !(tip >= oldBond.maturity)) throw new Error(`the bond is locked until block ${oldBond.maturity}: ${oldBond.maturity - tip} blocks from now`);
   if (!coins.length && !oldBond) throw new Error('the wallet holds no coins yet');
   const nodeKey = schnorr.getPublicKey(nodeSecret);
-  const maturity = maturityAfter(tip);
-  const advert = advertFor({ nodeKey, operatorId, roles, endpoint, payoutPubkey, maturity, softwareHash, guardianEndpoint, nowMs, emergencyPubkey, guardianOf, hostedGames });
+  const maturity = maturityAfter(tip, network);
+  const advert = advertFor({ nodeKey, operatorId, roles, endpoint, payoutPubkey, maturity, softwareHash, guardianEndpoint, nowMs, emergencyPubkey, guardianOf, hostedGames, censusKey });
   const id = advertId(advert);
   const body = joinSignedAdvert(encodeAdvert(advert), schnorr.sign(id, nodeSecret));
-  const pieces = []; for (let at = 0; at < body.length; at += CHUNK) pieces.push(body.subarray(at, Math.min(at + CHUNK, body.length)));
+  const pieces = piecesOf(body);
   const carrierSecret = taggedHash(CARRIER_TAG, new Uint8Array([...wallet.secret, ...id]));
   const carrier = carrierOf(carrierSecret, pieces.length);
   const total = coins.reduce((a, c) => a + BigInt(c.sats), 0n) + (oldBond ? BigInt(oldBond.sats) : 0n);
-  const old = oldBond ? (() => { const built = bondKeyAt(nodeKey, oldBond.maturity); return { built, spk: fromHex('5120' + toHex(built.outputKey)), leaf: recoveryLeaf(nodeKey, oldBond.maturity) }; })() : null;
-  const bondOut = bondKeyAt(nodeKey, maturity);
+  // THE UPDATE WITH THE PRESIG: its carrier by the length of a body that carries one, whatever the signature says
+  const presigSecret = censusKey ? taggedHash(CARRIER_TAG, new Uint8Array([...wallet.secret, ...id, 1])) : null;
+  const presigCarrier = censusKey ? carrierOf(presigSecret, piecesOf(joinSignedAdvert(encodeAdvert({ ...advert, slashPresig: new Uint8Array(65) }), new Uint8Array(64))).length) : null;
+  const old = oldBond ? (() => { const built = bondKeyAt(nodeKey, oldBond.maturity, { censusKey: oldBond.censusKey ? fromHex(oldBond.censusKey) : null, network }); return { built, spk: fromHex('5120' + toHex(built.outputKey)), leaf: recoveryLeaf(nodeKey, oldBond.maturity) }; })() : null;
+  const bondOut = bondKeyAt(nodeKey, maturity, { censusKey, network });
   const kp = keyPathSecret(wallet.secret, wallet.xonly);
 
   // the bond transaction first (its size sets what the carrier must hold), then the funding at its own fee
@@ -160,7 +185,7 @@ export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_
     const change = carrierValue - bondSats - MARKER_SATS - fee;
     const outputs = [
       { value: bondSats, script: fromHex('5120' + toHex(bondOut.outputKey)) },
-      { value: MARKER_SATS, script: fromHex('5120' + toHex(bondMarker(NETWORK))) },
+      { value: MARKER_SATS, script: fromHex('5120' + toHex(bondMarker(network))) },
       { value: 0n, script: Uint8Array.from([0x6a, 0x20, ...id]) },
       ...(change >= 330n ? [{ value: change, script: wallet.spk }] : []),
     ];
@@ -170,11 +195,24 @@ export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_
       witnesses: [scriptPathWitness({ stack: [schnorr.sign(sighash, carrierSecret), ...pieces], script: carrier.script, controlBlock: carrier.control })] }));
     return { hex, change: change >= 330n ? change : 0n };
   };
-  const fundingTx = (carrierValue) => {
+  // THE BOND'S slash_presig, in an update: the carrier spent to the marker and the commitment. All the carrier held is the marker and this fee
+  const presigTx = (presigValue, fundingTxid, bond, fee) => {
+    const slashPresig = signBondPresig({ bond: { txid: fromHex(bond.txid).reverse(), vout: 0, value: bondSats, script: fromHex('5120' + toHex(bondOut.outputKey)) }, advert, network, tweakPoint, sign: (d) => schnorr.sign(d, nodeSecret) });
+    const updated = { ...advert, slashPresig, timestamp: advert.timestamp + 1n };
+    const updateId = advertId(updated);
+    const said = piecesOf(joinSignedAdvert(encodeAdvert(updated), schnorr.sign(updateId, nodeSecret)));
+    const payload = advertUpdatePayload({ bondTxid: fromHex(bond.txid).reverse(), bondVout: 0, advertIdBytes: updateId });
+    const outputs = [{ value: presigValue - fee, script: fromHex('5120' + toHex(bondMarker(network))) }, { value: 0n, script: Uint8Array.from([0x6a, payload.length, ...payload]) }];
+    const inputs = [{ txid: fromHex(fundingTxid).reverse(), vout: 1, sequence: 0xfffffffe }];
+    const sighash = tapSighash({ version: 2, locktime: 0, inputs, outputs, prevouts: [{ value: presigValue, script: presigCarrier.spk }], inputIndex: 0, leafHash: presigCarrier.leaf });
+    return toHex(serializeSpend({ version: 2, locktime: 0, inputs, outputs,
+      witnesses: [scriptPathWitness({ stack: [schnorr.sign(sighash, presigSecret), ...said], script: presigCarrier.script, controlBlock: presigCarrier.control })] }));
+  };
+  const fundingTx = (carrierValue, presigValue = 0n) => {
     const inputs = [...(oldBond ? [{ txid: fromHex(oldBond.txid).reverse(), vout: oldBond.vout, sequence: 0xfffffffe }] : []),
       ...coins.map((c) => ({ txid: fromHex(c.txid).reverse(), vout: c.vout, sequence: 0xfffffffd }))];
     const prevouts = [...(oldBond ? [{ value: BigInt(oldBond.sats), script: old.spk }] : []), ...coins.map((c) => ({ value: BigInt(c.sats), script: wallet.spk }))];
-    const outputs = [{ value: carrierValue, script: carrier.spk }];
+    const outputs = [{ value: carrierValue, script: carrier.spk }, ...(presigCarrier ? [{ value: presigValue, script: presigCarrier.spk }] : [])];
     const locktime = oldBond ? oldBond.maturity : 0;
     const witnesses = inputs.map((_, i) => (oldBond && i === 0
       ? scriptPathWitness({ stack: [schnorr.sign(tapSighash({ version: 2, locktime, inputs, outputs, prevouts, inputIndex: 0, leafHash: tapLeafHash(old.leaf) }), nodeSecret)],
@@ -184,21 +222,26 @@ export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_
   };
   // sizes from a first build, then the fees at feeRate sat/vB (rounded up, 1 sat/vB at least above the relay floor)
   const rate = BigInt(Math.max(1, Math.ceil(feeRate)));
-  let feeBond = 1000n, feeFund = 300n;
+  let feeBond = 1000n, feeFund = 300n, feePresig = presigCarrier ? 400n : 0n;
+  const presigValueOf = () => (presigCarrier ? MARKER_SATS + feePresig : 0n);
   for (let pass = 0; pass < 2; pass++) {
-    const carrierValue = total - feeFund;
-    const f = fundingTx(carrierValue);
+    const carrierValue = total - feeFund - presigValueOf();
+    const f = fundingTx(carrierValue, presigValueOf());
     const b = bondTx(carrierValue, txidOf(f), feeBond);
     feeFund = BigInt(vsizeOf(f)) * rate + 10n;
     feeBond = BigInt(vsizeOf(b.hex)) * rate + 10n;
+    if (presigCarrier) feePresig = BigInt(vsizeOf(presigTx(presigValueOf(), txidOf(f), { txid: txidOf(b.hex) }, feePresig))) * rate + 10n;
   }
-  const carrierValue = total - feeFund;
-  if (carrierValue - feeBond < bondSats + MARKER_SATS) throw new Error(`${oldBond ? 'the old bond and the wallet hold' : 'the wallet holds'} ${total} sat: a bond of ${bondSats} sat needs at least ${bondSats + MARKER_SATS + feeBond + feeFund} sat`);
-  const funding = fundingTx(carrierValue);
+  const carrierValue = total - feeFund - presigValueOf();
+  if (carrierValue - feeBond < bondSats + MARKER_SATS) throw new Error(`${oldBond ? 'the old bond and the wallet hold' : 'the wallet holds'} ${total} sat: a bond of ${bondSats} sat needs at least ${bondSats + MARKER_SATS + feeBond + feeFund + presigValueOf()} sat`);
+  const funding = fundingTx(carrierValue, presigValueOf());
   const fundingTxid = txidOf(funding);
   const b = bondTx(carrierValue, fundingTxid, feeBond);
-  return { funding: { hex: funding, txid: fundingTxid }, bond: { hex: b.hex, txid: txidOf(b.hex), vout: 0 }, advert, advertId: toHex(id),
-    maturity, bondSats, changeSats: b.change, fees: { funding: feeFund, bond: feeBond }, nodeKey: toHex(nodeKey) };
+  const bond = { hex: b.hex, txid: txidOf(b.hex), vout: 0 };
+  const presigHex = presigCarrier ? presigTx(presigValueOf(), fundingTxid, bond, feePresig) : null;
+  return { funding: { hex: funding, txid: fundingTxid }, bond, advert, advertId: toHex(id), maturity, bondSats, changeSats: b.change,
+    fees: { funding: feeFund, bond: feeBond, ...(presigCarrier ? { presig: presigValueOf() } : {}) }, nodeKey: toHex(nodeKey),
+    ...(presigCarrier ? { presigUpdate: { hex: presigHex, txid: txidOf(presigHex) }, censusKey: toHex(censusKey) } : {}) };
 }
 
 /**
@@ -214,7 +257,7 @@ export function buildAdvertUpdate({ wallet, nodeSecret, coins, bond, advert, fee
   if (toHex(advert.nodePubkey) !== toHex(nodeKey)) throw new Error('an update names the node key that signs it');
   const id = advertId(advert);
   const body = joinSignedAdvert(encodeAdvert(advert), schnorr.sign(id, nodeSecret));
-  const pieces = []; for (let at = 0; at < body.length; at += CHUNK) pieces.push(body.subarray(at, Math.min(at + CHUNK, body.length)));
+  const pieces = piecesOf(body);
   const carrierSecret = taggedHash(CARRIER_TAG, new Uint8Array([...wallet.secret, ...id]));
   const carrier = carrierOf(carrierSecret, pieces.length);
   const kp = keyPathSecret(wallet.secret, wallet.xonly);

@@ -79,6 +79,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     CREATE TABLE IF NOT EXISTS seat_presigs (round_id BLOB NOT NULL, node TEXT NOT NULL, txid TEXT NOT NULL, vout INTEGER NOT NULL, signature BLOB NOT NULL, kept_ms INTEGER NOT NULL,
       PRIMARY KEY (round_id, node, txid, vout));
     CREATE INDEX IF NOT EXISTS seat_presigs_bond ON seat_presigs (txid, vout, kept_ms);
+    CREATE TABLE IF NOT EXISTS own_hold_panels (txid TEXT NOT NULL, vout INTEGER NOT NULL, script TEXT NOT NULL, panel_a TEXT NOT NULL, panel_b TEXT NOT NULL, PRIMARY KEY (txid, vout, script));
   `);
   // A SECOND SIGNATURE'S JUSTIFICATION (protocol 22, kanban #738): kept with it, here and at the peers that hold it
   for (const t of ['seat_signed', 'seat_sigs']) {
@@ -388,7 +389,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   const askedOf = (rid, contract, node) => {
     if (!holdsOf) return [];
     let got; try { got = holdsOf(rid, contract); } catch (e) { log(`[seating] ${toHex(rid).slice(0, 16)}: the round's holds cannot be read: ${e.message}`); return null; }
-    return got && got.ok ? got.plan.get(node) || [] : null;
+    return got && got.ok ? (got.plan.get(node) || []).map((b) => ({ ...b, panels: got.panels })) : null;
   };
   /** This node's own, signed once and kept before any door can hand them out. False when this seat cannot say what the round asks: then it signs no seating either. */
   function presignMine(rid, contract) {
@@ -397,6 +398,9 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     for (const b of asked) {
       if (presigRows(rid, me).some((r) => r.txid === b.txid && Number(r.vout) === b.vout)) continue;
       keepPresig(rid, me, b.txid, b.vout, signSlashPresig(b.digest, sign));
+      // THE PANELS THIS NODE SIGNED A HOLD TO (5A.3B): only they rebuild it, and a start does not show them. Kept past the round's prune: this is how a node finds its way out of that hold
+      if (b.panels && b.panels.n) db.prepare('INSERT OR IGNORE INTO own_hold_panels (txid, vout, script, panel_a, panel_b) VALUES (?, ?, ?, ?, ?)').run(b.txid, b.vout, toHex(b.hold.script),
+        JSON.stringify(b.panels.panelA.map((e) => toHex(e.pubkey))), JSON.stringify(b.panels.panelB.map((e) => toHex(e.pubkey))));
     }
     return true;
   }
@@ -1011,6 +1015,9 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
         : db.prepare('SELECT round_id, node, signature, kept_ms FROM seat_presigs WHERE txid = ? AND vout = ? ORDER BY kept_ms DESC LIMIT 1').get(txid, vout);
       return r ? { round: toHex(new Uint8Array(r.round_id)), node: r.node, txid, vout, signature: toHex(new Uint8Array(r.signature)) } : null;
     },
+    /** The panels of every hold this node signed for one bond: [{ a, b }] of key bytes. `txid` as the census' bytes, hex. */
+    ownHoldPanels: ({ txid, vout }) => db.prepare('SELECT panel_a, panel_b FROM own_hold_panels WHERE txid = ? AND vout = ?').all(txid, vout)
+      .map((r) => ({ a: JSON.parse(r.panel_a).map(fromHex), b: JSON.parse(r.panel_b).map(fromHex) })),
     takePresent, presentsOf, mySignature, certOf: (rid, role, at = rid) => certOf(seatRoundOf(at, role), role), keepCert, equivocationOf, takePresents, batchOf,
     /** The round whose certificate seats `rid`: itself, its table's first, or a later check-in (kanban #1020). */
     seatRoundOf: (rid, role = 'settlement') => seatRoundOf(rid, role),

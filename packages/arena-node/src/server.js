@@ -36,7 +36,7 @@ import { stateOf } from './settlement-state.js';
 import { nostrResults, publishRelays } from './nostr-results.js';
 import { createReachCheck } from './reach-check.js';
 import { ownBondOf, ownBondsOf, lockAt, withdrawSpend } from './bond-withdraw.js';
-import { BOND_TEMPLATE_V2 } from '../../arena-protocol/src/bond-script.js';
+import { BOND_TEMPLATE_V2, BOND_TEMPLATE_V3 } from '../../arena-protocol/src/bond-script.js';
 import { latestReleaseReader } from './release-latest.js';
 import { createGatewayWatch } from './gateway-watch.js';
 import { createHeldReads, withHeldLock } from './held-read.js';
@@ -172,6 +172,8 @@ import { runSourceOnce, tryExample } from './market-test.js';
 import { MARKET_HOSTS, checkMarketCode, encodeSourceList, hostListProblem, marketHostProblem } from '../../arena-protocol/src/market-check.js';
 import { sourcePlan, payDeposit, depositBlock, signedProposal } from './source-ballot.js';
 import { bondCliFrom } from './add-bond-wallet.js';
+import { createHoldWatch, holdsOfOwnBond } from './hold-return.js';
+import { holdClocksOf } from '../../arena-protocol/src/slash-presig.js';
 import { SOURCE_ENTRIES } from '../../arena-protocol/src/market-sources.js';
 import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
@@ -4088,11 +4090,46 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return latestRelease.read(own);
   };
+  // THE KEY A NEW BOND NAMES (5A.3B: "A bond names the newest standing key when it is made"): on a network with a census key a new bond is template 3, on any other it stays template 2
+  const newestCensusKey = () => { const keys = censusKey ? censusKey.scan.standing() : []; return keys.length ? keys[keys.length - 1].publicKey : null; };
+  // A STARTED BOND OF THIS NODE (5A.3B): what it reads of its hold output, and its way out
+  const holdWatch = censusKey && censusKey.rawTxAt ? createHoldWatch({ clocks: holdClocksOf(censusKey.networkId), nodeSecret: round.identity.secret, tipHeight: censusKey.tipHeight, rawTxAt: censusKey.rawTxAt,
+    broadcast: (hex) => chainSend(hex), log: (l) => console.log(l), holdsFor: (b) => holdsOfOwnBond({ nodeKey: round.pubkey, censusKey: fromHex(b.censusKey), bondMaturity: b.maturity, clocks: holdClocksOf(censusKey.networkId), tweakPoint,
+      panels: seating ? seating.ownHoldPanels({ txid: toHex(fromHex(b.txid).reverse()), vout: b.vout }) : [] }) }) : null;
+  // THIS NODE'S OWN OUTPUTS, NEAR THE TIP (5A.3B): a census six or twelve blocks old, or none on a seat with no round, is no way to learn that a bond was started, when the clocks are hours. On a
+  // network with a census key: read every 6 blocks, and at once when one of its outputs is spent, which costs one gettxout per output per block.
+  let ownCensus = null, ownPassing = false;
+    const ownMoved = async (tip) => {
+    if (!ownCensus || tip - ownCensus.height >= 6) return true;
+    if (tip === ownCensus.height || typeof chainTxOut !== 'function') return false;
+    for (const e of ownCensus.entries) {
+      const at = e.hold ? { txid: toHex(fromHex(e.hold.txid).reverse()), vout: e.hold.vout } : { txid: toHex(Uint8Array.from(e.txid).reverse()), vout: Number(e.vout) };
+      if (!(await chainTxOut(at.txid, at.vout))) return true;
+    }
+    return false;
+  };
+  const ownPass = async () => {
+    if (ownPassing || !holdWatch) return;
+    ownPassing = true;
+    try {
+      const tip = await censusKey.tipHeight();
+      if (await ownMoved(tip)) { const entries = await censusKey.censusEntriesAt(tip); if (entries) ownCensus = { height: tip, entries: entries.filter((e) => e && e.pubkey && toHex(e.pubkey) === toHex(round.pubkey)) }; }
+    } finally { ownPassing = false; }
+  };
+  const ownTimer = holdWatch ? setInterval(() => { if (!shuttingDown) ownPass().catch((e) => console.error(`[hold] the pass did not run: ${e.message}`)); }, Number(censusKey.everyMs) > 0 ? Number(censusKey.everyMs) : 10000) : null;
+  if (ownTimer && ownTimer.unref) ownTimer.unref();
+  /** Each started output of this node with what it reads of it, none where nothing was started. */
+  const ownHoldsNow = async (found) => {
+    const started = (found && found.all ? found.all.outputs : found ? [found.bond] : []).filter((o) => o.hold);
+    if (!started.length || !holdWatch) return [];
+    return Promise.all(started.map(async (o) => ({ txid: o.txid, vout: o.vout, sats: o.sats, ...(await holdWatch.read(o).catch((e) => ({ startTxid: o.hold.txid, startHeight: o.hold.height, known: false, why: e.message }))) })));
+  };
   const ownBondNow = () => {
     const me = toHex(round.pubkey);
     // THE CHAIN'S CENSUS FIRST (2026-10-20, the owner page after a roll: "This is very wrong since the last update" - "No bond yet"):
     // the newest rounds' censuses are read over minutes after a restart, the chain's in seconds (kept across a restart since 5777ec70)
-    const cn = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null;
+    const chained = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null;
+    const cn = ownCensus && ownCensus.entries.length && (!chained || ownCensus.height >= chained.height) ? ownCensus : chained;
     if (cn && cn.entries.length) {
       const bond = ownBondOf(cn.entries, me);
       if (bond) { let network = 'testnet4'; try { const id = chainNetworkId(); if (id) network = networkOf(fromHex(String(id))); } catch { /* testnet4 */ }
@@ -6539,14 +6576,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const keys = new Map();
           try { for (const r of db.prepare('SELECT secret, pubkey FROM identity_old').all()) keys.set(toHex(new Uint8Array(r.pubkey)), new Uint8Array(r.secret)); } catch { /* no switch on this node */ }
           return { network: (st && st.network) || 'testnet4', keys, list: ((st && st.oldBonds) || []).map((o) => ({ txid: o.txid, vout: Number(o.vout || 0), sats: String(o.sats), maturity: Number(o.maturity),
-            key: o.key || null, held: keys.has(o.key), lock: tip === null ? null : lockAt({ maturity: Number(o.maturity) }, tip) })) };
+            key: o.key || null, held: keys.has(o.key), ...(o.censusKey ? { censusKey: o.censusKey } : {}), lock: tip === null ? null : lockAt({ maturity: Number(o.maturity) }, tip) })) };
         };
         if (req.method === 'GET' && url.pathname === '/owner/bond') {
           const found = ownBondNow();
           let tip = null; try { if (typeof chainTip === 'function') tip = Number(await chainTip()); } catch { tip = null; }
           const olds = oldBondsHere(tip).list;
           if (!found) return answer(200, { node: toHex(round.pubkey), bond: null, tip, oldBonds: olds, says: 'no census this seat holds names a bond of this node' });
-          return answer(200, { node: toHex(round.pubkey), bond: found.bond, network: found.network, tip, lock: tip === null ? null : lockAt(found.bond, tip), oldBonds: olds,
+          const started = await ownHoldsNow(found);
+          return answer(200, { node: toHex(round.pubkey), bond: found.bond, network: found.network, tip, lock: tip === null ? null : lockAt(found.bond, tip), oldBonds: olds, ...(started.length ? { started } : {}),
             // every output of this node and their sum (kanban #544), each with its own lock
             total: found.all ? found.all.sats : found.bond.sats, outputs: (found.all ? found.all.outputs : [found.bond]).map((o) => ({ ...o, lock: tip === null ? null : lockAt(o, tip) })),
             addBond: !!process.env.ARENA_HOME || !!process.env.ARENA_BOND_CLI,   // kanban #553: a seat set up by hand adds from its bond wallet
@@ -6609,7 +6647,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             warnings: [...standing.warnings, ...(warn ? [{ kind: `bond_min rise (${warn.step})`, urgent: warn.urgent, says: warn.says }] : []),
               ...(() => { if (address.announced && !endpointWarning({ advertised: address.announced, serving: address.serving })) return []; const w = endpointWarning(address); return w ? [w] : []; })(),
               // A CENSUS KEY FAILING EPOCH AFTER EPOCH (5A.3B, kanban #972): it reads the chain, so it says the same at every node
-              ...(() => { const w = censusKey ? censusKeyFailingWarning(censusKey.scan.failing()) : null; return w ? [w] : []; })()], address });
+              ...(() => { const w = censusKey ? censusKeyFailingWarning(censusKey.scan.failing()) : null; return w ? [w] : []; })(),
+              // A SLASH STARTED ON THIS NODE'S BOND (5A.3B): the money is in a hold output, and it still counts until something ends that
+              ...(await ownHoldsNow(ownBondNow())).map((h) => ({ kind: 'slash started', urgent: true, says: h.known ? `A slash was started on your bond of ${h.sats} sat at block ${h.startHeight}. It still counts. The return opens at block ${h.returnOpensAt}, and the census key can take it from block ${h.fallbackOpensAt}.`
+                : `A slash was started on your bond of ${h.sats} sat at block ${h.startHeight}, into a hold output this node did not sign for.` }))], address });
         }
         // THE STORE'S VIEW OF THIS SEAT (step 5): what it hosts and what is installed, waiting for its next start
         // THE GAME DEVELOPERS' OVERVIEW (kanban #582, 2026-10-22: "Dann gibt es eine Übersicht ähnlich des protocol devs mit allen
@@ -7022,7 +7063,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             try {
               const net = chainNetworkId() ? (toHex(fromHex(chainNetworkId())) === toHex(NETWORK_ID_TESTNET4) ? 'testnet4' : 'regtest') : 'testnet4';
               const r = await addBondFromWallet({ ...w, network: net, secret: round.identity.secret, pubkey: round.pubkey, addSats: args.sats, post: args.post === true,
-                blockMs: net === 'testnet4' ? 600000 : 1000 });
+                blockMs: net === 'testnet4' ? 600000 : 1000, censusKey: newestCensusKey() });
               if (!r.ok) return answer(400, r);
               if (r.bond) console.log(`[bond] added ${r.plan.addSats} sat beside the bond from the bond wallet: ${r.bond.txid}:0 (total ${r.plan.totalSats} sat)`);
               return answer(200, { ok: true, plan: r.plan, bond: r.bond || null });
@@ -7031,9 +7072,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try {
             const { addBondOnNode } = await import('../../arena-installer/src/add-bond.js');
             const args = body.args || {};
-            const r = await addBondOnNode({ home, release: fileURLToPath(new URL('../../../', import.meta.url)), addSats: args.sats, post: args.post === true });
+            const r = await addBondOnNode({ home, release: fileURLToPath(new URL('../../../', import.meta.url)), addSats: args.sats, post: args.post === true, censusKey: newestCensusKey() });
             if (!r.ok) return answer(400, r);
-            const { funding, bondTx, ...plan } = r.plan;   // the transactions' bytes stay on the machine
+            const { funding, bondTx, presigUpdate, ...plan } = r.plan;   // the transactions' bytes stay on the machine
             if (r.bond) console.log(`[bond] added ${plan.addSats} sat beside the bond: ${r.bond.txid}:0 (total ${plan.totalSats} sat)`);
             return answer(200, { ok: true, plan, bond: r.bond || null });
           } catch (e) { return answer(500, { ok: false, why: `the bond could not be added: ${e.message}` }); }
@@ -7048,7 +7089,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!home) return answer(501, { ok: false, why: 'this node was not set up by the installer: its bond is posted where it runs' });
           try {
             const { firstBondOnNode } = await import('../../arena-installer/src/add-bond.js');
-            const r = await firstBondOnNode({ home, release: fileURLToPath(new URL('../../../', import.meta.url)), post: (body.args || {}).post === true });
+            const r = await firstBondOnNode({ home, release: fileURLToPath(new URL('../../../', import.meta.url)), post: (body.args || {}).post === true, censusKey: newestCensusKey() });
             if (!r.ok) return answer(400, r);
             if (r.bond && !r.done) { console.log(`[bond] the owner posted this node's first bond: ${r.bond.txid}:0 (${r.bond.sats} sat)`); setupStatusKept = null; dashboardKept = null; }
             return answer(200, r);
@@ -7379,8 +7420,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!a.ok) return answer(a.status, a);
           const found = ownBondNow();
           if (!found) return answer(409, { ok: false, why: 'no census this seat holds names a bond of this node' });
+          // ONE OUTPUT OF SEVERAL (kanban #544): `txid`, `vout` name it, else the first
+          const asked = (body.args || {}).txid ? (found.all ? found.all.outputs : [found.bond]).find((o) => o.txid === String(body.args.txid) && o.vout === Number(body.args.vout || 0)) : found.bond;
+          if (!asked) return answer(404, { ok: false, why: 'this node has no bond output with that txid' });
+          found.bond = asked;
           if (typeof chainTip !== 'function' || typeof chainSend !== 'function') return answer(503, { ok: false, why: 'this seat reads no chain to send to' });
           const tip = Number(await chainTip());
+          // A STARTED BOND LEAVES BY ITS RETURN (5A.3B): path A is gone with the bond output, and the hold output has a clock of its own
+          if (found.bond.hold) {
+            if (!holdWatch) return answer(409, { ok: false, why: 'a slash was started on this bond, and this seat reads no census key to find its hold output with' });
+            const script = addressScript((body.args || {}).address, HRP_OF[found.network] || 'tb');
+            if (!script) return answer(400, { ok: false, why: `that is not a ${found.network} address` });
+            const back = await holdWatch.returnTo(found.bond, script, BigInt(160 * Math.max(1, Math.ceil(Number((body.args || {}).feeRate) || 2)) + 10));
+            if (!back.ok) return answer(409, back);
+            try { const txid = await chainSend(back.hex); console.log(`[bond] the hold output of ${found.bond.txid.slice(0, 16)} returned to ${(body.args || {}).address}: ${txid}`); return answer(200, { ok: true, txid, returned: true }); }
+            catch (e) { return answer(400, { ok: false, why: e.message }); }
+          }
           const lock = lockAt(found.bond, tip);
           if (!lock || !lock.withdrawable) return answer(409, { ok: false, why: `the bond is locked until block ${found.bond.maturity}: ${lock ? lock.blocksLeft : '?'} blocks from now, about ${lock ? new Date(lock.estimatedMs).toISOString() : '?'}`, lock });
           const script = addressScript((body.args || {}).address, HRP_OF[found.network] || 'tb');
@@ -7406,7 +7461,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const script = addressScript(args.address, HRP_OF[here.network] || 'tb');
           if (!script) return answer(400, { ok: false, why: `that is not a ${here.network} address` });
           let spend;
-          try { spend = withdrawSpend({ bond: { txid: o.txid, vout: o.vout, sats: o.sats, maturity: o.maturity, template: BOND_TEMPLATE_V2 }, nodeSecret: here.keys.get(o.key), network: here.network, script, feeRate: Number(args.feeRate) || 2 }); }
+          try { spend = withdrawSpend({ bond: { txid: o.txid, vout: o.vout, sats: o.sats, maturity: o.maturity, template: o.censusKey ? BOND_TEMPLATE_V3 : BOND_TEMPLATE_V2, ...(o.censusKey ? { censusKey: o.censusKey } : {}) }, nodeSecret: here.keys.get(o.key), network: here.network, script, feeRate: Number(args.feeRate) || 2 }); }
           catch (e) { return answer(400, { ok: false, why: e.message }); }
           try { const txid = await chainSend(spend.hex); console.log(`[bond] old bond ${o.txid.slice(0, 16)} taken back to ${args.address}: ${txid} (${spend.value} sat, fee ${spend.fee})`); return answer(200, { ok: true, txid, value: spend.value, fee: spend.fee }); }
           catch (e) { return answer(400, { ok: false, why: e.message }); }
@@ -11815,6 +11870,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (seriesPullFirst) clearTimeout(seriesPullFirst);
         if (ballotTimer) clearInterval(ballotTimer);
         if (censusKeyTimer) clearInterval(censusKeyTimer);
+        if (ownTimer) clearInterval(ownTimer);
         for (const t of finalityTimers) clearTimeout(t);
         finalityTimers.clear();
         for (const t of rerunTimers) clearTimeout(t);

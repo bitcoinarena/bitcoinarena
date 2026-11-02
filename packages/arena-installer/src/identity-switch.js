@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
-import { buildBond, lockOf, EMERGENCY_IN_ADVERT } from './bond.js';
+import { buildBond, lockOf, censusKeyOfNode, EMERGENCY_IN_ADVERT } from './bond.js';
 import { emergencyOf, nodeKeyOf } from './seed.js';
 import { nodeState, bondsOf } from './state.js';
 import { fromHex, toHex, sha256 } from '../../arena-protocol/src/hash.js';
@@ -41,10 +41,11 @@ export async function switchToSeedKey({ home, release, post = false, chainKit = 
     const w = walletOf(seed);
     const { tip, coins } = await chainKit.coinsOf(s.chain, w.spk);
     let softwareHash; try { softwareHash = sha256(readFileSync(join(release, 'COMMIT'))); } catch { softwareHash = new Uint8Array(32); }
+    const censusKey = await censusKeyOfNode(s);
     let built;
     try {
       built = buildBond({ hostedGames: s.hostedGames, wallet: w, nodeSecret: next, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`,
-        roles: s.roles, endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, nowMs,
+        roles: s.roles, endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, nowMs, censusKey,
         emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
     } catch (e) { return { ok: false, why: `${e.message} - the new bond needs ${bondSats} sat plus fees in the node's wallet (${w.address})` }; }
     const plan = { keyNow: nowPub, keyNext: nextPub, bondSats: String(bondSats), maturity: built.maturity, lock: lockOf(tip, { maturity: built.maturity }),
@@ -53,12 +54,13 @@ export async function switchToSeedKey({ home, release, post = false, chainKit = 
     if (!post) return { ok: true, plan };
     const fundingTxid = await chainKit.broadcast(s.chain, built.funding.hex);
     const bondTxid = await chainKit.broadcast(s.chain, built.bond.hex);
+    const presigTxid = built.presigUpdate ? await chainKit.broadcast(s.chain, built.presigUpdate.hex) : null;
     // the old key kept beside the store, so its bond can be taken back at its maturity; then the node signs with the new one
     db.exec('CREATE TABLE IF NOT EXISTS identity_old (secret BLOB NOT NULL, pubkey BLOB NOT NULL, at_ms INTEGER NOT NULL)');
     db.prepare('INSERT INTO identity_old (secret, pubkey, at_ms) VALUES (?, ?, ?)').run(now, fromHex(nowPub), nowMs);
     db.prepare('UPDATE identity SET secret = ?, pubkey = ? WHERE one = 0').run(next, fromHex(nextPub));
     const bond = { txid: bondTxid, vout: 0, fundingTxid, sats: String(built.bondSats), maturity: built.maturity, advertId: built.advertId, postedAtTip: tip,
-      lock: plan.lock, atMs: nowMs };
+      lock: plan.lock, atMs: nowMs, ...(presigTxid ? { censusKey: built.censusKey, presigUpdate: presigTxid } : {}) };
     st.save({ bond, bonds: [bond], oldBonds: [...(s.oldBonds || []), ...outputs.map((b) => ({ ...b, key: nowPub }))], identityFromSeed: true,
       keySwitch: { from: nowPub, to: nextPub, bond: bondTxid, atMs: nowMs } });
     return { ok: true, plan, bond };
