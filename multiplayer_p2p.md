@@ -5750,7 +5750,12 @@ drawn it must also:
   `guardian_endpoint` is a public `wss://` a phone can open (2026-09-27);
 - carry a bond of at least `bond_min_guardian`, the settlement floor of the
   highest bracket the network offers, because a guardian's exposure is the
-  federation's whole reserve, not one round's;
+  federation's whole reserve, not one round's. It is the network's number,
+  never a seat's setting: mainnet's genesis names it; testnet4's and regtest's
+  genesis bytes do not, and cannot without moving their network ids, so
+  theirs stands beside genesis in code (regtest may keep a test's override).
+  A change by §27A.3's notice is read at its height: the value in force at
+  `trigger_height`, so a founding and its redraws cannot disagree *(2026-11-02)*;
 - be a distinct `operator_id` from every other guardian of the same
   federation, one seat per operator (§5A.13), and guard **at most one OPEN
   federation** at a time - a draining one does not count. Independence
@@ -5787,6 +5792,20 @@ that becomes the founding's `trigger_height` (the earliest wins):
    role advertises itself guardian-capable at its public address
    `/guardian` and runs its guardian in setup mode until drawn.
 
+**A trigger that goes void holds nothing back** *(2026-11-02, kanban #1025)*.
+Genesis, succession and load redraw as a cohort does: while its condition still
+holds, a void founding is drawn again at
+`trigger_height + n x (founding_window + 1)`, the newest such height below the
+tip, from the chain alone, so every seat names the same draw. Each redraw has
+its own beacon and the rule of its own height. A trigger with no founding
+started by `trigger_height + founding_window` is void, as a founding is when
+the window passes. The condition ends when the old record names the successor
+(succession), when the federations fall below 80 % (load), or when a federation
+exists or too few operators remain (genesis). "The earliest wins" counts the
+triggers on their first draw; only with none does the lowest redraw height win.
+This applies on a network from its `FOUNDING_PRESSURE_HEIGHT` (§23A.3a), so
+every seat moves together; before that a void trigger stands as it did.
+
 **Who is drawn.** Bond-weighted stateless sortition, §5A.6 unchanged, with
 the beacon block after `trigger_height` and the tag `'BLWP/v1/GUARDIAN'`,
 over the guardian-capable census minus operators already guarding an OPEN
@@ -5802,8 +5821,8 @@ generation, unpatched, `disable_base_fees` on (2026-09-15) - among
 the drawn, within `founding_window` blocks of the beacon. A drawn node that
 has not joined the ceremony within a fifth of the window is replaced by the
 next alternate; it is not slashed, because it held nothing. If the window
-passes without a federation, the founding is void and the next trigger
-draws again. The ceremony's output is the federation configuration;
+passes without a federation, the founding is void and it is drawn again
+as above. The ceremony's output is the federation configuration;
 `federation_id` is its hash, exactly as §23.6 already verifies it.
 
 **Then, in this order:** every guardian re-advertises with `guardian_of[]`
@@ -5973,10 +5992,15 @@ kanban #993.)*
   pressure.
 - **Reading the records.** A seat does not use the newest it holds. Before it draws, it asks the seats it can reach for each
   federation's records at or below that height, verifies them at threshold, and uses the highest verified one from any of them. A
-  record cannot be forged, so a seat that hides one changes nothing. Nothing about this goes on chain: a wrong read costs one redraw and
-  no money.
-- **No record, no draw yet.** A federation named in the census at `trigger_height` with no record at that height holds the seat back
-  from drawing, as a beacon or census it has not read yet does.
+  record cannot be forged, so a seat that hides one changes nothing. Two records can stand at one height, since a record's reserve is
+  read when it is gathered: a CLOSED one first, because a CLOSED federation cannot come back, then the lowest record id. Nothing about
+  this goes on chain: a wrong read costs one redraw and no money.
+- **Only a record counts.** `B*_net`, the band and the lowest load read the federations with a verified record at or below
+  `trigger_height - 12`. A federation named in the census with no such record is left out and holds nothing back: a made-up id in an
+  advert has no record, and keeps only its own operator out of the draw; a federation under 12 blocks old held no reserve at the cut.
+  No record for any federation means no pressure. Only a seat's own unread chain holds it back: if it cannot read the census at a
+  record's height, that is "not yet", as a beacon it has not read, and a record it was given and cannot check for that reason is not
+  left out.
 - **The band.** Each federation's band is the one its record names, else the one its load enters, as above. The network is under
   pressure when, by those records, the OPEN federation with the lowest load is in PRESSURE or worse; `B*_net` is over the OPEN ones among
   them.
