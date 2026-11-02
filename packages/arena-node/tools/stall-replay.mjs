@@ -5,7 +5,8 @@
 // seat, the values change, or it does not ship."). Read-only: every database is opened with mode=ro, nothing is written to a seat and nothing is asked of one. Each seat's notes are
 // made as stall-book.js would make them, from what that seat held, and stall.js stalledFrom reads them at every hour of the span.
 //
-//   RESULT      the seat's no_quorum rows, VOID, with the seats whose results it held when it decided. It wrote no note where it held none of its own.
+//   RESULT      the seat's no_quorum rows, VOID, with the seats whose results it held at the end of the re-run window (final_after + 600 s). It wrote no note where it held none
+//               of its own. A log has no times, so a seat that was down at that moment is read as if it signed, as stall-book.js would not: the replay names more, not fewer.
 //   SETTLEMENT  rounds with stakes whose settlement no seat holds as ACCEPTED by final_after + 2 h, with the last refusal the seat logged for the round: the seats that did not sign
 //               at the step it stopped at. A log has no times, so "last" is the last line. A seat that logged nothing wrote no note, as one that never asked.
 //
@@ -43,6 +44,7 @@ const nameOf = new Map();          // node key -> seat name
 const endpoints = new Map();       // address -> node key
 const census = new Map();          // node key -> weight, newest census read
 const coverage = { dbFrom: [], logRounds: new Map() };
+let censusAt = 0;
 
 function roundOf(hex, contractBytes) {
   if (rounds.has(hex)) return rounds.get(hex);
@@ -56,42 +58,51 @@ function roundOf(hex, contractBytes) {
 }
 const noteOf = (r, signer) => { if (!r.notes.has(signer)) r.notes.set(signer, { signer, silent: new Set(), gone: new Set(), stages: new Set() }); return r.notes.get(signer); };
 
+// A LIVE DATABASE COPIED OVER MINUTES IS TORN: pages of its fast tables differ. Every read here is by key and survives a page it cannot read; what it missed is counted, and the other seats' rows fill it
+const tried = (s, f, fallback) => { try { return f(); } catch { s.torn = (s.torn || 0) + 1; return fallback; } };
+// FIRST WHAT EVERY SEAT KNOWS OF A ROUND: its contract and its seats, so a list reads the whole seat set
 for (const s of seats) {
   if (!existsSync(s.db)) { say(`${s.name}: no database at ${s.db}`); continue; }
-  const db = new DatabaseSync(`file:${s.db}?mode=ro`, { readOnly: true });
-  const me = hexOf(db.prepare('SELECT pubkey FROM identity LIMIT 1').get().pubkey);
-  s.me = me; nameOf.set(me, s.name);
+  const db = s.open = new DatabaseSync(`file:${s.db}?mode=ro`, { readOnly: true });
+  s.me = hexOf(db.prepare('SELECT pubkey FROM identity LIMIT 1').get().pubkey);
+  nameOf.set(s.me, s.name);
   const has = (t) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
-  // rounds with entries: the only ones that can fail
-  const rows = db.prepare(`SELECT r.round_id, r.contract, r.opened_ms, COUNT(*) AS n FROM rounds r JOIN entries e ON e.round_id = r.round_id WHERE r.opened_ms > ? GROUP BY r.round_id`).all(fromMs - 86400000);
-  for (const row of rows) {
-    const hex = hexOf(row.round_id), r = roundOf(hex, row.contract);
-    if (!r) continue;
+  const contractQ = db.prepare('SELECT contract, opened_ms FROM rounds WHERE round_id = ?'), seatsQ = db.prepare('SELECT pubkey FROM signer_nodes WHERE round_id = ?'), resultQ = db.prepare('SELECT DISTINCT node_pubkey FROM results WHERE round_id = ?');
+  const landedQ = ['lock_settlements', ...(has('fed_lock_settlements') ? ['fed_lock_settlements'] : [])].map((t) => db.prepare(`SELECT made_ms FROM ${t} WHERE round_id = ? AND state = 'ACCEPTED'`));
+  let n = 0;
+  for (const row of tried(s, () => db.prepare('SELECT round_id, COUNT(*) AS n FROM entries GROUP BY round_id').all(), [])) {
+    const c = tried(s, () => contractQ.get(row.round_id), null);
+    if (c && c.opened_ms <= fromMs - 86400000) continue;
+    const hex = hexOf(row.round_id), r = c ? roundOf(hex, c.contract) : rounds.get(hex) || null;
+    if (!r) { (s.noContract = s.noContract || []).push(row.round_id); continue; }
+    n++;
     r.entries = Math.max(r.entries, row.n);
-    for (const x of db.prepare('SELECT pubkey FROM signer_nodes WHERE round_id = ?').all(row.round_id)) r.seats.add(hexOf(x.pubkey));
-    for (const table of ['lock_settlements', ...(has('fed_lock_settlements') ? ['fed_lock_settlements'] : [])])
-      for (const x of db.prepare(`SELECT made_ms FROM ${table} WHERE round_id = ? AND state = 'ACCEPTED'`).all(row.round_id)) if (r.landedMs === null || x.made_ms < r.landedMs) r.landedMs = x.made_ms;
+    for (const x of tried(s, () => seatsQ.all(row.round_id), [])) r.seats.add(hexOf(x.pubkey));
+    for (const x of tried(s, () => resultQ.all(row.round_id), [])) r.seats.add(hexOf(x.node_pubkey));
+    for (const q of landedQ) for (const x of tried(s, () => q.all(row.round_id), [])) if (r.landedMs === null || x.made_ms < r.landedMs) r.landedMs = x.made_ms;
   }
-  // RESULT: as stall-book.js resultSilent
-  let notes = 0, selfSilent = 0;
-  const voids = db.prepare(`SELECT n.round_id, n.entry_id, n.decided_ms, n.why, r.contract FROM no_quorum n JOIN rounds r ON r.round_id = n.round_id WHERE n.outcome = 'VOID' AND n.decided_ms > ?`).all(fromMs);
+  coverage.dbFrom.push({ seat: s.name, oldestRoundWithEntries: tried(s, () => db.prepare('SELECT MIN(r.opened_ms) AS m FROM rounds r JOIN entries e ON e.round_id = r.round_id').get().m, null) });
+  say(`${s.name}: ${n} rounds with entries read, ${s.torn || 0} reads lost to torn pages`);
+}
+// THEN EACH SEAT'S RESULT NOTES: as stall-book.js resultSilent
+for (const s of seats) {
+  const db = s.open;
+  if (!db) continue;
+  let notes = 0, selfSilent = 0, unknown = 0;
+  const voids = tried(s, () => db.prepare("SELECT round_id, entry_id FROM no_quorum WHERE outcome = 'VOID' AND decided_ms > ?").all(fromMs), []);
   for (const v of voids) {
-    const hex = hexOf(v.round_id), r = roundOf(hex, v.contract);
-    if (!r) continue;
-    r.voided++;
-    for (const x of db.prepare('SELECT pubkey FROM signer_nodes WHERE round_id = ?').all(v.round_id)) r.seats.add(hexOf(x.pubkey));
-    const held = new Set(db.prepare('SELECT node_pubkey FROM results WHERE round_id = ? AND entry_id = ? AND seen_ms <= ?').all(v.round_id, v.entry_id, v.decided_ms).map((x) => hexOf(x.node_pubkey)));
-    const list = [...r.seats].filter((k) => !held.has(k));
-    if (!r.seats.has(me)) continue;
-    if (!held.has(me)) { selfSilent++; continue; }
-    if (!list.length) continue;
-    const n = noteOf(r, me);
-    for (const k of list) { n.silent.add(k); n.gone.add(k); }
-    n.stages.add(STALL_STAGE.RESULT);
-    notes++;
+    const hex = hexOf(v.round_id);
+    let r = rounds.get(hex);
+    if (!r) { const c = tried(s, () => db.prepare('SELECT contract FROM rounds WHERE round_id = ?').get(v.round_id), null); r = c ? roundOf(hex, c.contract) : null; }
+    if (!r) { unknown++; continue; }
+    r.voided = Math.max(r.voided, 1);
+    for (const x of tried(s, () => db.prepare('SELECT pubkey FROM signer_nodes WHERE round_id = ?').all(v.round_id), [])) r.seats.add(hexOf(x.pubkey));
+    const held = new Set(tried(s, () => db.prepare('SELECT node_pubkey FROM results WHERE round_id = ? AND entry_id = ? AND seen_ms <= ?').all(v.round_id, v.entry_id, Number(r.closeMs + 600000n)), []).map((x) => hexOf(x.node_pubkey)));
+    for (const k of held) r.seats.add(k);
+    (r.pending = r.pending || []).push({ s, held });
   }
   // the newest census this seat holds: weights and addresses
-  const kept = db.prepare("SELECT body FROM census_kept ORDER BY kept_ms DESC LIMIT 1").get();
+  const kept = tried(s, () => db.prepare('SELECT body, kept_ms FROM census_kept ORDER BY kept_ms DESC LIMIT 1').get(), null);
   if (kept) {
     const body = JSON.parse(kept.body);
     const key = (x) => (x && x.u8 ? x.u8 : String(x));
@@ -100,12 +111,20 @@ for (const s of seats) {
       const k = key(e.pubkey); fresh.set(k, (fresh.get(k) || 0n) + BigInt((e.bondSats && e.bondSats.big) || 0));
       const ep = e.advert && e.advert.endpoint; if (ep) endpoints.set(addressOf(ep), k);
     }
-    for (const [k, w] of fresh) census.set(k, w);
+    if (kept.kept_ms > censusAt) { censusAt = kept.kept_ms; census.clear(); for (const [k, w] of fresh) census.set(k, w); }
     for (const ex of body.excluded || []) { const ep = ex.advert && ex.advert.endpoint; if (ep) endpoints.set(addressOf(ep), key(ex.pubkey)); }
   }
-  coverage.dbFrom.push({ seat: s.name, oldestRoundWithEntries: db.prepare('SELECT MIN(r.opened_ms) AS m FROM rounds r JOIN entries e ON e.round_id = r.round_id').get().m });
-  say(`${s.name}: ${rows.length} rounds with entries, ${voids.length} VOID entries, ${notes} listed, ${selfSilent} where it held no result of its own`);
+  say(`${s.name}: ${voids.length} VOID entries${unknown ? `, ${unknown} of rounds no seat could read` : ''}`);
   db.close();
+}
+for (const r of rounds.values()) for (const { s, held } of r.pending || []) {
+  if (!r.seats.has(s.me)) continue;
+  if (!held.has(s.me)) continue;                    // silent itself on this entry: no standing
+  const list = [...r.seats].filter((k) => !held.has(k));
+  if (!list.length) continue;
+  const n = noteOf(r, s.me);
+  for (const k of list) { n.silent.add(k); n.gone.add(k); }
+  n.stages.add(STALL_STAGE.RESULT);
 }
 
 // SETTLEMENT: rounds with stakes not landed by final_after + 2 h, and the last refusal each seat logged
@@ -118,11 +137,12 @@ for (const r of rounds.values()) {
 }
 say(`${late.size} rounds with stakes did not land within 2 h of final_after`);
 const REFUSED = /\b([0-9a-f]{16})\b.*?(\d+) of the (\d+) (?:seats|signer nodes)[^:]*?(signed the send plan|acked it|committed)[^:]*: (.*)$/;
+const allByPrefix = new Map([...rounds.values()].map((r) => [r.hex.slice(0, 16), r]));
 const lineStream = (file) => { const raw = createReadStream(file); return createInterface({ input: file.endsWith('.gz') ? raw.pipe(createGunzip()) : raw, crlfDelay: Infinity }); };
 const logs = [];
 for (const s of seats) {
   const last = new Map();
-  let lines = 0;
+  let lines = 0, oldest = null;
   for (const file of s.logs) {
     if (!existsSync(file)) continue;
     try {
@@ -132,7 +152,7 @@ for (const s of seats) {
         const m = REFUSED.exec(line);
         if (!m) continue;
         const prefix = m[1];
-        coverage.logRounds.set(prefix, true);
+        { const r = allByPrefix.get(prefix); if (r && (oldest === null || r.closeMs < oldest)) oldest = r.closeMs; }
         if (!byPrefix.has(prefix)) continue;
         const refused = [];
         for (const part of m[5].split(/;\s+(?=https?:)/)) {
@@ -143,7 +163,7 @@ for (const s of seats) {
       }
     } catch (e) { say(`${s.name}: ${file}: ${e.message}`); }
   }
-  logs.push({ seat: s.name, lines, rounds: last.size });
+  logs.push({ seat: s.name, lines, rounds: last.size, oldestRound: oldest === null ? null : utc(oldest) });
   for (const [prefix, l] of last) {
     const r = byPrefix.get(prefix);
     if (!r.seats.has(s.me)) continue;
@@ -206,7 +226,7 @@ const named = allNodes.map((node) => {
     days: [...new Set(four.map((x) => utc(x.r.closeMs).slice(5, 10)))].join(' ') };
 }).sort((a, b) => b.namedByFourRounds - a.namedByFourRounds || b.listedInRounds - a.listedInRounds);
 
-const table = { nowUtc: utc(nowMs), fromUtc: utc(fromMs), days, seats: seats.map((s) => s.name), coverage: { db: coverage.dbFrom.map((x) => ({ seat: x.seat, from: x.oldestRoundWithEntries ? utc(x.oldestRoundWithEntries) : null })), logs },
+const table = { nowUtc: utc(nowMs), fromUtc: utc(fromMs), days, seats: seats.map((s) => s.name), coverage: { db: coverage.dbFrom.map((x) => ({ seat: x.seat, from: x.oldestRoundWithEntries ? utc(x.oldestRoundWithEntries) : null })), torn: seats.map((s) => [s.name, s.torn || 0, (s.noContract || []).length]), logs },
   roundsWithEntries: rounds.size, withStakes: [...rounds.values()].filter((r) => r.stakeMsat > 0n).length, roundsVoided: [...rounds.values()].filter((r) => r.voided).length, lateSettlements: late.size,
   failedRoundsWithANote: failed.length, resultFailed: failed.filter((r) => r.stages.has(STALL_STAGE.RESULT)).length, settlementFailed: failed.filter((r) => r.stages.has(STALL_STAGE.SETTLEMENT)).length,
   noteCounts: Object.fromEntries(Object.entries(failed.reduce((a, r) => { a[r.notes.length] = (a[r.notes.length] || 0) + 1; return a; }, {})).sort()),
@@ -217,6 +237,7 @@ const table = { nowUtc: utc(nowMs), fromUtc: utc(fromMs), days, seats: seats.map
     resultOnly: showSpans(replay({ list: failed.filter((r) => r.stages.has(STALL_STAGE.RESULT)) })), settlementOnly: showSpans(replay({ list: failed.filter((r) => r.stages.has(STALL_STAGE.SETTLEMENT)) })) },
   sensitivity: Object.fromEntries([['quorum 5', { quorum: 5 }], ['4 rounds', { proofs: 4 }], ['5 rounds', { proofs: 5 }], ['spacing 2 h', { spacing: 2n * hour }], ['spacing 4 h', { spacing: 4n * hour }], ['window 48 h', { window: 48n * hour }], ['quorum 5, 4 rounds, 2 h', { quorum: 5, proofs: 4, spacing: 2n * hour }]]
     .map(([k, o]) => [k, showSpans(replay({ list: failed, ...o }))])),
+  whysByDay: Object.fromEntries(Object.entries(failed.reduce((a, r) => { const d = utc(r.closeMs).slice(5, 10); for (const w of r.whys) { const k = /holds no such series/.test(w) ? 'no such series' : /no lock is claimed/.test(w) ? 'nothing to claim' : /fetch failed|timed out|timeout/.test(w) ? 'no answer' : /reading the other seats/.test(w) ? 'still reading batches' : /rebuilt settlement/.test(w) ? 'another settlement' : 'other'; a[d] = a[d] || {}; a[d][k] = (a[d][k] || 0) + 1; } return a; }, {})).sort()),
   whys: Object.entries(failed.flatMap((r) => r.whys).reduce((a, w) => { const k = w.replace(/[0-9a-f]{16,}/g, 'H').slice(0, 60); a[k] = (a[k] || 0) + 1; return a; }, {})).sort((a, b) => b[1] - a[1]).slice(0, 12),
   failed: failed.sort((a, b) => (a.closeMs < b.closeMs ? -1 : 1)).map((r) => ({ round: r.roundId.slice(0, 16), at: utc(r.closeMs), stages: [...r.stages], seats: r.seated.map(label), notes: r.notes.map((n) => ({ by: label(n.signer), silent: n.silent.map(label) })) })) };
 const text = JSON.stringify(table, (k, v) => (typeof v === 'bigint' ? String(v) : v), 1);
