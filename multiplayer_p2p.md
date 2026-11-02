@@ -6734,7 +6734,7 @@ Bitcoin cannot check liveness either.
 | **Down** for less than `abandon_blocks` | an outage | nothing; Fedimint absorbs up to `f`; not recorded |
 | **Departure with notice** | a signed `(federation_id, peer, leave_after_height)` with `leave_after >= now + departure_notice`, posted like a record | recorded `DEPARTED` at that height; if the federation would then be DRAINING, succession starts **now** (§23A.6) so the successor is OPEN before he goes; he serves until the earlier of the federation's CLOSED and the successor's OPEN, then his seat is gone with no offence and **his bond is untouched**: he stays a bonded census node, keeps sitting as a seat, and may be drawn as a guardian again (below) |
 | **Emergency departure** (protocol 17) | the node's owner, with the node offline, posts a leave request signed by the node's **emergency key** (§23A.5a) at any seat | a node with no guardian role leaves the seating at once, its bond untouched; a guardian whose request arrives **before** `abandon_blocks` from his last seen height is recorded `DEPARTED` at once, the succession starts at once (§23A.6), and his bond is untouched; a request that arrives later changes nothing: the absence is abandonment |
-| **Abandonment** | absent for `abandon_blocks` (attested, §23A.4); or his bond output spent while seated (the census sees it, §5A.2); or a departure that stops serving before its `leave_after`; or any guardian of a DRAINING federation who stops before CLOSED | recorded `ABANDONED` with the proof; **slashed** through §5A.3B; the federation's reserve counts him gone at once |
+| **Abandonment** | absent for `abandon_blocks` (attested, §23A.4); or his bond output spent while seated (the census sees it, §5A.2; a slash start on a template-3 bond is not such a spend, its hold output stays the bond, §5A.3B); or a departure that stops serving before its `leave_after`; or any guardian of a DRAINING federation who stops before CLOSED | recorded `ABANDONED` with the proof; **slashed** through §5A.3B; the federation's reserve counts him gone at once |
 
 **Leaving is legitimate, and costs nothing (RULED 2026-09-21).**
 Guarding a federation is a term of service, not a life sentence, and leaving
@@ -6903,7 +6903,9 @@ escrow pays a liquidation first.
 his bond until he spends it; path A lets him take it back from maturity on; path B is the arbitration
 slash on a committed proof; path C the cooperative close. He may not spend
 it while seated - that is the census's own definition of leaving without
-notice.
+notice. A slash start is nobody's spend of that kind: the census reads its hold output
+as the same bond, so he stays seated and counted, and what ends the hold output ends
+the bond (§5A.3B).
 
 What the bond is *not*: restitution. A slash does not refill a reserve and
 does not unfreeze a halt (§24A.3's second property, unchanged). It makes
