@@ -17,6 +17,7 @@ import { BOND_TEMPLATE_V3, holdOutputKey, slashStartLeaf, tapLeafHash } from './
 import { tapSighash } from './bond-spend.js';
 import { SLASH_CLOCKS } from './genesis.js';
 import { networkOf } from './constants.js';
+import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from './genesis-ids.js';
 import { toHex } from './hash.js';
 
 export const SLASH_PRESIG_HASH_TYPE = 0x83;
@@ -80,6 +81,18 @@ export function bondPresigDigest({ bond, advert, networkId, tweakPoint }) {
   const hold = holdOutputKey({ nodeKey: advert.nodePubkey, censusKey: advert.censusKey, panelA: [], panelB: [], bondMaturity: advert.bondMaturityHeight, ...holdClocksOf(networkId) }, { tweakPoint });
   if (!hold.ok) return { ok: false, why: `the hold output of a bond cannot be built: ${hold.why}` };
   return { ok: true, hold, digest: slashPresigDigest({ bond, nodeKey: advert.nodePubkey, censusKey: advert.censusKey, holdScript: hold.script }) };
+}
+
+/**
+ * A NODE SIGNS ITS BOND'S OWN PRESIG, once the bond's transaction exists: 65 bytes for the update beside it. `network` regtest or testnet4 (mainnet names no slash clocks yet); `sign(digest)`
+ * the node's key. Throws why not: a bond posted without this does not count, so nothing is sent.
+ */
+export function signBondPresig({ bond, advert, network, tweakPoint, sign }) {
+  const networkId = { regtest: NETWORK_ID_REGTEST, testnet4: NETWORK_ID_TESTNET4 }[network];
+  if (!networkId) throw new Error(`${network} names no slash clocks yet`);
+  const built = bondPresigDigest({ bond, advert, networkId, tweakPoint });
+  if (!built.ok) throw new Error(built.why);
+  return signSlashPresig(built.digest, sign);
 }
 
 /** Does this 65-byte presig stand for the bond? One signature check over the bond, its advertisement and its census key. `verify(signature, digest, key)` is the caller's curve. */

@@ -50,3 +50,21 @@ test('the node\'s bond from a census entry, its lock said plainly, and its recov
   assert.equal(schnorr.verify(spend.witnesses[0][0], sighash, nodeKey), true, 'signed by the node\'s key');
   assert.throws(() => withdrawSpend({ bond: { ...bond, sats: '400' }, nodeSecret, network: 'testnet4', script: to }), /leaves nothing after a fee/);
 });
+
+test('a template-3 bond leaves by the same recovery leaf, under its census key; a started one says so', () => {
+  const secret = new Uint8Array(32).fill(5), nodeKey = schnorr.getPublicKey(secret), censusKey = schnorr.getPublicKey(new Uint8Array(32).fill(6));
+  const entry = { pubkey: nodeKey, txid: new Uint8Array(32).fill(1), vout: 0, bondSats: 50000n, height: 100, advert: { bondMaturityHeight: 300, bondScriptTemplateVersion: 3, censusKey, operatorId: 'op' } };
+  const bond = ownBondOf([entry], toHex(nodeKey));
+  assert.deepEqual([bond.template, bond.censusKey, bond.hold], [3, toHex(censusKey), undefined]);
+  const w = withdrawSpend({ bond, nodeSecret: secret, network: 'regtest', script: fromHex(`5120${'77'.repeat(32)}`) });
+  const spend = parseTransaction(fromHex(w.hex));
+  const built = bondKeyOf(nodeKey, 300, 'regtest', censusKey);
+  assert.notEqual(toHex(built.outputKey), toHex(bondKeyOf(nodeKey, 300, 'regtest').outputKey), 'its own output key');
+  const leaf = recoveryLeaf(nodeKey, 300);
+  const digest = tapSighash({ version: 2, locktime: 300, inputs: [{ txid: spend.inputs[0].previousTxid, vout: 0, sequence: 0xfffffffe }], outputs: spend.outputs, prevouts: [{ value: 50000n, script: fromHex(`5120${toHex(built.outputKey)}`) }], inputIndex: 0, leafHash: tapLeafHash(leaf) });
+  assert.ok(schnorr.verify(spend.witnesses[0][0], digest, nodeKey), 'signed against that output');
+  const started = ownBondOf([{ ...entry, hold: { txid: '0a'.repeat(32), vout: 0, height: 150 } }], toHex(nodeKey));
+  assert.deepEqual(started.hold, { txid: '0a'.repeat(32), vout: 0, height: 150 });
+  assert.throws(() => withdrawSpend({ bond: started, nodeSecret: secret, network: 'regtest', script: fromHex(`5120${'77'.repeat(32)}`) }), /a slash was started on this bond at block 150/);
+  assert.throws(() => withdrawSpend({ bond: { ...bond, censusKey: undefined }, nodeSecret: secret, network: 'regtest', script: fromHex(`5120${'77'.repeat(32)}`) }), /names none/);
+});

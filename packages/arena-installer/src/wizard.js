@@ -31,7 +31,7 @@ import { createHash } from 'node:crypto';
 import * as reachKit from './reach.js';
 import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
-import { buildBond, buildAdvertUpdate, buildSend, advertFor, lockOf, BOND_MIN_SATS, EMERGENCY_IN_ADVERT } from './bond.js';
+import { buildBond, buildAdvertUpdate, buildSend, advertFor, lockOf, censusKeyOfNode, BOND_MIN_SATS, EMERGENCY_IN_ADVERT } from './bond.js';
 import { installMinimum } from './install-minimum.js';
 import { writeLaunchers, installUpdater } from './launchers.js';
 import { setUpOwnLnd, lndReady } from './lnd-setup.js';
@@ -973,6 +973,7 @@ const serviceRun = async (b) => {
       if (laterCustody(s)) {
         const advert = advertFor({ hostedGames: s.hostedGames, nodeKey: schnorr.getPublicKey(nodeSecret), operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles, endpoint: s.reach.url,
           payoutPubkey: payoutKeyOf(seed), maturity: s.bond.maturity, softwareHash: commitOf(), guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
+          ...(s.bond.censusKey ? { censusKey: fromHex(s.bond.censusKey) } : {}),
           emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });   // the census reads the newest advertisement: the key kept
         let u;
         try { u = buildAdvertUpdate({ wallet: w, nodeSecret, coins, bond: { txid: s.bond.txid, vout: s.bond.vout || 0 }, advert }); }
@@ -987,17 +988,19 @@ const serviceRun = async (b) => {
       const minimum = BigInt(bondMinimumOf(s));
       const bondSats = b.bondSats ? BigInt(b.bondSats) : minimum;
       if (bondSats < minimum) return { ok: false, why: minimum > BOND_MIN_SATS ? `a new node bonds at least ${minimum} sat now: the network's bond target (${(s.bondMinimum || {}).why || 'GET /capacity'})` : `a bond is at least ${BOND_MIN_SATS} sat` };
+      const censusKey = await censusKeyOfNode(s);
       let built;
       try {
         built = buildBond({ hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
-          endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash: commitOf(), feeRate: 2,
+          endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash: commitOf(), feeRate: 2, censusKey,
           guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
           emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
       } catch (e) { return { ok: false, why: e.message }; }
       const fundingTxid = await chainKit.broadcast(s.chain, built.funding.hex);
       const bondTxid = await chainKit.broadcast(s.chain, built.bond.hex);
+      const presigTxid = built.presigUpdate ? await chainKit.broadcast(s.chain, built.presigUpdate.hex) : null;
       const bond = { txid: bondTxid, vout: 0, fundingTxid, sats: String(built.bondSats), maturity: built.maturity, advertId: built.advertId, postedAtTip: tip,
-        lock: lockOf(tip, { maturity: built.maturity }), atMs: Date.now() };
+        lock: lockOf(tip, { maturity: built.maturity }), atMs: Date.now(), ...(presigTxid ? { censusKey: built.censusKey, presigUpdate: presigTxid } : {}) };
       mark('bond', { bond, advertProtocols: [...SUPPORTED_PROTOCOL_VERSIONS] });   // what its advertisement declares (change-roles refreshHostedGames)
       // a custody node's agent: guardian_of, the gateway's own federation and the peg-in, once a founding has drawn it (custody-agent.js)
       if ((s.roles || []).includes('custody') || (s.roles || []).includes('liquidity')) await installAgent();

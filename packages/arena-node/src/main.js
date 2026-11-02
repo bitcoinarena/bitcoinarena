@@ -648,6 +648,7 @@ if (url) {
         return got;
       };
       options.censusKey = { scan: censusKeyScan, network: net, networkId, firstHeight: here, foundingWindow, censusConfirmations, tipHeight, blockHashAt, censusEntriesAt, censusEvidenceAt,
+        rawTxAt: async (height, txid) => fromHex(String(await call('getrawtransaction', [txid, 0, await blockHashAt(height)]))),
         post: createCensusKeyPoster({ call, walletCall: wallets, env: process.env }), everyMs: Number(process.env.ARENA_CENSUS_KEY_EVERY_MS || 10000) };
     }
   }

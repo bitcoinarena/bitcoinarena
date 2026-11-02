@@ -15,6 +15,7 @@ import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { advertInTransaction } from '../../arena-protocol/src/census.js';
 import { recognizeBond } from '../../arena-protocol/src/chain.js';
 import { SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.js';
+import { BOND_TEMPLATE_V2, BOND_TEMPLATE_V3 } from '../../arena-protocol/src/bond-script.js';
 import { bondSetFor } from './curve.js';
 
 const CARRIER_FEE = 3000n;
@@ -22,6 +23,8 @@ const CARRIER_FEE = 3000n;
  *  what it keeps for the bond transaction (1,000), and about 500 sat for the funding transaction at 2 sat/vB. */
 export const ADD_OVERHEAD_SATS = 330n + CARRIER_FEE + 1000n + 500n;
 const MIN_ADD = 1000n;
+/** A TEMPLATE-3 BOND'S UPDATE (5A.3B, kanban #1053), funded by the bond's own funding transaction: the marker, its fee and a little change. */
+const PRESIG_CARRIER_SATS = 3000n;
 /** The bond wallet's command line from the environment, or null: { cli(...args) -> stdout, wallet }. */
 export function bondCliFrom(env = process.env) {
   // words apart by spaces or commas (a launcher that passes its settings as one space-split list writes them with commas)
@@ -35,8 +38,10 @@ export function bondCliFrom(env = process.env) {
 /**
  * THE PLAN, AND WITH `post` THE TWO TRANSACTIONS SENT. { ok, plan: { addSats, bondSats, totalSats, fees: { total }, maturity, lock: { estimatedMs },
  * countsAfter }, bond?: { txid } } or { ok: false, why }. `blockMs` the chain's block interval, for the time estimate only.
+ * `censusKey` the newest standing census key on a network that has one: the new output is then template 3 and names it (5A.3B), with its slash_presig in an update sent beside it, since
+ * such a bond counts only with that presig. The funding transaction pays both carriers, so the two are one step.
  */
-export async function addBondFromWallet({ cli, wallet, network = 'testnet4', secret, pubkey, addSats, post = false, blockMs = 600000, now = Date.now() }) {
+export async function addBondFromWallet({ cli, wallet, network = 'testnet4', secret, pubkey, addSats, post = false, blockMs = 600000, now = Date.now(), censusKey = null }) {
   let add; try { add = BigInt(String(addSats)); } catch { return { ok: false, why: 'name the sat to add as a whole number' }; }
   if (add < MIN_ADD) return { ok: false, why: `add at least ${MIN_ADD} sat` };
   const { regtest } = await import('../tools/regtest-bond.mjs');
@@ -46,41 +51,50 @@ export async function addBondFromWallet({ cli, wallet, network = 'testnet4', sec
   const bondSats = bonds.reduce((a, b) => a + BigInt(b.sats), 0n);
   const newest = bonds[0];
   const versions = [...new Set([...(newest.advert.protocolVersions || []), ...SUPPORTED_PROTOCOL_VERSIONS])].sort((a, b) => a - b);
-  let fundingHex = null, fundingFee = 0n, made;
-  try { made = rt.postBond(secret, { advert: { ...newest.advert, protocolVersions: versions }, bondSats: add, utxo: (spk) => {
-    const address = JSON.parse(cli('decodescript', toHex(spk))).address;
+  const bondAdvert = { ...newest.advert, protocolVersions: versions };
+  const template = censusKey ? BOND_TEMPLATE_V3 : BOND_TEMPLATE_V2;
+  // only its length matters here: postBond sets the same template, height and census key
+  const presig = censusKey ? rt.presigCarrier({ ...bondAdvert, bondScriptTemplateVersion: BOND_TEMPLATE_V3, bondMaturityHeight: 1, censusKey }) : null;
+  const addressOf = (spk) => JSON.parse(cli('decodescript', toHex(spk))).address;
+  let fundingHex = null, fundingFee = 0n, made, fundingDecoded = null;
+  try { made = rt.postBond(secret, { advert: bondAdvert, bondSats: add, template, censusKey, utxo: (spk) => {
+    const address = addressOf(spk);
     const value = add + 330n + CARRIER_FEE + 1000n;
+    const outputs = [{ [address]: Number(value) / 1e8 }, ...(presig ? [{ [addressOf(presig.spk)]: Number(PRESIG_CARRIER_SATS) / 1e8 }] : [])];
     let funded;
-    try { funded = JSON.parse(cli('-named', 'walletcreatefundedpsbt', 'inputs=[]', `outputs=${JSON.stringify([{ [address]: Number(value) / 1e8 }])}`,
+    try { funded = JSON.parse(cli('-named', 'walletcreatefundedpsbt', 'inputs=[]', `outputs=${JSON.stringify(outputs)}`,
       `options=${JSON.stringify({ include_unsafe: true, fee_rate: 2 })}`)); }
     catch (e) {
       if (!/Insufficient funds/i.test(String(e.stderr || e.message))) throw e;
       const have = walletOf(cli).spendableSats;
-      throw Object.assign(new Error(`the bond wallet holds ${have} sat that can be spent, and adding ${add} sat needs about ${value + 500n} sat: top it up first`), { plain: true });
+      throw Object.assign(new Error(`the bond wallet holds ${have} sat that can be spent, and adding ${add} sat needs about ${value + 500n + (presig ? PRESIG_CARRIER_SATS : 0n)} sat: top it up first`), { plain: true });
     }
     fundingFee = BigInt(Math.round(Number(funded.fee) * 1e8));
     const final = JSON.parse(cli('finalizepsbt', JSON.parse(cli('walletprocesspsbt', funded.psbt)).psbt));
     if (!final.complete) throw new Error('the bond wallet did not sign the funding transaction');
     fundingHex = final.hex;
     const d = JSON.parse(cli('decoderawtransaction', fundingHex));
+    fundingDecoded = d;
     return { txid: d.txid, vout: d.vout.find((o) => o.scriptPubKey.hex === toHex(spk)).n, value };
   } }); } catch (e) { if (e.plain) return { ok: false, why: e.message }; throw e; }
+  const update = presig ? rt.postBondPresig(secret, made, { carrier: presig,
+    utxo: { txid: fundingDecoded.txid, vout: fundingDecoded.vout.find((o) => o.scriptPubKey.hex === toHex(presig.spk)).n, value: PRESIG_CARRIER_SATS } }) : null;
   const tx = parseTransaction(fromHex(made.hex));
   const advert = advertInTransaction(tx);
   if (!advert || toHex(advert.nodePubkey) !== toHex(pubkey) || advert.operatorId !== newest.advert.operatorId)
     return { ok: false, why: 'the added bond does not read back as this node\'s advertisement; nothing was sent' };
   const seen = recognizeBond(tx, 0, advert, { network, bond: bondSetFor(network) });
   if (!seen.ok) return { ok: false, why: `the added bond would not be recognised (${seen.why}); nothing was sent` };
-  const accept = JSON.parse(cli('testmempoolaccept', JSON.stringify([fundingHex, made.hex])));
+  const sends = [fundingHex, made.hex, ...(update ? [update.hex] : [])];
+  const accept = JSON.parse(cli('testmempoolaccept', JSON.stringify(sends)));
   if (!accept.every((a) => a.allowed)) return { ok: false, why: `the network would refuse it (${accept.map((a) => a['reject-reason']).filter(Boolean).join(', ')}); nothing was sent` };
   const tip = Number(cli('getblockcount'));
   // the added output's own fee is the carrier's, beside the 1,000 sat the carrier output keeps for the bond transaction
-  const plan = { addSats: String(add), bondSats: String(bondSats), totalSats: String(bondSats + add), fees: { total: String(fundingFee + CARRIER_FEE) },
+  const plan = { addSats: String(add), bondSats: String(bondSats), totalSats: String(bondSats + add), fees: { total: String(fundingFee + CARRIER_FEE + (update ? PRESIG_CARRIER_SATS : 0n)) }, template,
     maturity: made.maturity, lock: { estimatedMs: now + Math.max(0, made.maturity - tip) * blockMs }, countsAfter: 6 };
   if (!post) return { ok: true, plan };
-  cli('sendrawtransaction', fundingHex);
-  cli('sendrawtransaction', made.hex);
-  return { ok: true, plan, bond: { txid: made.txid } };
+  for (const hex of sends) cli('sendrawtransaction', hex);
+  return { ok: true, plan, bond: { txid: made.txid, ...(update ? { presigUpdate: update.txid } : {}) } };
 }
 
 /** THE BOND WALLET'S COINS: what it can spend now and what is still confirming, in sat. */
@@ -127,7 +141,8 @@ export async function changeRolesFromWallet({ cli, wallet, network = 'testnet4',
 
 /** AN ADVERTISEMENT UPDATE OF `bond`, ITS CARRIER FUNDED FROM THE BOND WALLET: built, checked with testmempoolaccept, and with `post` sent. */
 function sendUpdateFromWallet({ cli, rt, secret, bond, advert, post }) {
-  const prepared = rt.prepareAdvertUpdate(secret, advert);
+  // the earliest update with a slash_presig counts, and a later one need not repeat it (5A.3B)
+  const prepared = rt.prepareAdvertUpdate(secret, { ...advert, slashPresig: undefined });
   const address = JSON.parse(cli('decodescript', toHex(prepared.spk))).address;
   let funded;
   try { funded = JSON.parse(cli('-named', 'walletcreatefundedpsbt', 'inputs=[]', `outputs=${JSON.stringify([{ [address]: Number(UPDATE_CARRIER_SATS) / 1e8 }])}`,
