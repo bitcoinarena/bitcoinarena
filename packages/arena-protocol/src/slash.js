@@ -39,11 +39,9 @@ import {
   SLASH_REMAINDERS, TAG,
 } from './constants.js';
 import { entryId } from './contracts.js';
-import { feeOwed, feeTableId } from './fee.js';
 import { decodePlayerResult, resultId, splitSignedResult, SIGNED_RESULT_BYTES, signedResultBytesOf } from './result.js';
-import { computePayoutTable, payoutTableId, decodePayoutTable, isRefund, netStakeMsat } from './payout.js';
-import { payoutRuleForRound } from './manifest.js';
-import { lockAction, lockActionByte, lockActionOf, EXPIRE } from './lock-action.js';
+import { computePayoutTable, isRefund, netStakeMsat } from './payout.js';
+import { lockActionByte, lockActionOf } from './lock-action.js';
 import { outcomeByte, outcomeOf } from './result.js';
 import { decodeAudit, auditId, auditStands, auditResultsHash } from './auditor.js';
 
@@ -629,125 +627,13 @@ export function slashHoldsOnAudit({
 }
 
 /**
- * DOES THIS TABLE SLASH THIS BOND? 5A.3 row 3.
- *
- * §20: "PayoutTable = F(RoundContract, Membership, FinalResults).
- * Deterministic. Nodes sign the payout-table hash; 5-of-7 matching signatures
- * make it final. A node signing a table that does not equal F(...) of its
- * published inputs is slashable."
- *
- * NOTHING IS INJECTED HERE, and that is the difference from the replay
- * offence. `F` is `computePayoutTable`, it is in this package, and it is the
- * same function the node, the client and the replayer already share - so this
- * needs no attesting party at all, and 5A.3B's residual about one who "can, in
- * principle, slash without cause" does not reach this row.
- *
- * ITS PUBLISHED INPUTS, not the accuser's. The entries and the score floor are
- * what the accused node published; recomputing from an accuser's own inputs
- * would let them pick a set that disagrees with anything. The caller has to
- * say what those inputs were, and `inputsHash` is how the proof is bound to
- * them - see `payoutInputsId`.
- *
- * AND F ITSELF MAY REFUSE. `computePayoutTable` throws when its own invariant
- * breaks - paid against staked - and a table whose inputs cannot be computed
- * at all is not evidence that the signer was dishonest about them. That is
- * refused as unusable rather than counted as an offence.
- *
- * AND F IS THE GAME'S OWN RULE: §18A's curve, or the top split the round's game's manifest names. The rule is
- * read off `manifest`, which must be the game the contract names (game_id = H(manifest), and the contract is in the round
- * id the proof names) - so an accuser can no more pick the rule than the score floor. A round from TOP_SPLIT_VERSION on,
- * handed no manifest, is refused rather than recomputed at the curve: a split game's honest table is not F of the curve.
+ * NOTHING SLASHES ON BYTES THE ACCUSED NEVER SIGNED (§5A.3, RULED 2026-11-02, kanban #1035, #1040). A row stands only on bytes the
+ * accused signed with its node key, and a FROST signature names nobody. These three answered `slashed: true` on an unsigned table, an
+ * unsigned record and an unsigned claim, so anyone could have written the evidence against any bond. They refuse by name, whatever
+ * they are handed, and no arguments are read.
  */
-export function slashHoldsOnTable({
-  proof, signedTable, advert, committee, entries, contract, manifest = null,
-}) {
-  if (!Array.isArray(committee) || !committee.length)
-    return { slashed: false, why: 'no committee, so nobody was serving this round' };
-
-  // THE SCORE FLOOR COMES OFF THE ROUND CONTRACT, not off the accuser.
-  //
-  // It was an argument here, defaulted to zero, while `minScore` has been a
-  // signed field of the contract all along. Binding it into `payoutInputsId`
-  // stopped an accuser SWAPPING it after the fact and did nothing about the
-  // accuser CHOOSING it: whoever writes the proof picks the floor, and F at
-  // another floor is a different table, so a node whose table was right is
-  // slashed for it. Measured on the same entries: F is f5abb801d78b2153 at a
-  // floor of 0 and f69f32a60d912403 at 999.
-  //
-  // The same fault the fee minimum had, on a different row, and the same fix:
-  // the number every player and node signed up to is the only one that
-  // produces a table here.
-  if (!contract || !Number.isInteger(contract.minScore) || contract.minScore < 0)
-    return { slashed: false, why: 'no round contract to read the score floor from' };
-  const minScore = contract.minScore;
-  const rule = payoutRuleForRound(contract, manifest);
-  if (!rule.ok) return { slashed: false, why: `F's payout rule cannot be read: ${rule.why}` };
-  if (!committee.some((k) => hex(k) === hex(proof.nodePubkey)))
-    return {
-      slashed: false,
-      why: `${hex(proof.nodePubkey)} is not on this round's committee, so it signed nothing it owed`,
-    };
-
-  // THE EVIDENCE IS THE TABLE THE PROOF NAMES. The id the node signed is what
-  // travels in `signedResultId` - the field names the object under accusation,
-  // and for this row that object is a table rather than a result.
-  if (!(signedTable instanceof Uint8Array) || !signedTable.length)
-    return { slashed: false, why: 'no signed table attached to check against F' };
-  let claimed;
-  try { claimed = decodePayoutTable(signedTable); }
-  catch (e) { return { slashed: false, why: `the evidence is not a payout table: ${e.message}` }; }
-
-  if (hex(payoutTableId(claimed)) !== hex(proof.signedResultId))
-    return { slashed: false, why: 'the table attached is not the one this proof names' };
-  if (hex(claimed.roundId) !== hex(proof.roundId))
-    return { slashed: false, why: 'the table attached is for a different round' };
-
-  // THE INPUTS THE PROOF IS BOUND TO. Without this the accuser recomputes from
-  // whatever entries suit them and every honest table is slashable.
-  if (!Array.isArray(entries) || !entries.length)
-    return { slashed: false, why: 'no published inputs to recompute F from' };
-  // ANSWERED, NEVER THROWN. Malformed inputs are a thing an accuser can hand
-  // in, so committing to them has to be a refusal like every other check here
-  // - a decision function that raises on bad evidence hands its caller an
-  // exception where it asked for a verdict, and the caller least able to cope
-  // with that is a node acting on somebody else's accusation.
-  let inputs;
-  try { inputs = payoutInputsId({ roundId: proof.roundId, entries, minScore }); }
-  catch (e) { return { slashed: false, why: `those inputs cannot be committed to: ${e.message}` }; }
-  if (hex(proof.transcriptHash) !== hex(inputs))
-    return {
-      slashed: false,
-      why: 'the proof is bound to different inputs than the ones handed in',
-    };
-
-  let honest;
-  try {
-    honest = computePayoutTable({ roundId: claimed.roundId, entries, minScore, payoutShares: rule.payoutShares });
-  } catch (e) {
-    return { slashed: false, why: `F cannot be computed from those inputs: ${e.message}` };
-  }
-
-  const wanted = payoutTableId({ roundId: claimed.roundId, table: honest.table });
-  if (hex(wanted) === hex(payoutTableId(claimed)))
-    return { slashed: false, why: 'the table signed is exactly F of its published inputs' };
-
-  if (!advert || hex(advert.nodePubkey) !== hex(proof.nodePubkey))
-    return { slashed: false, why: 'no advertisement from the accused node to name its bond' };
-  if (hex(advert.bondTxid) !== hex(proof.bondTxid) || advert.bondVout !== proof.bondVout)
-    return {
-      slashed: false,
-      why: `the proof names bond ${hex(proof.bondTxid)}:${proof.bondVout} and the node `
-        + `advertised ${hex(advert.bondTxid)}:${advert.bondVout}`,
-    };
-
-  return {
-    slashed: true,
-    offence: TABLE_IS_NOT_F,
-    bond: { txid: proof.bondTxid, vout: proof.bondVout },
-    commitment: slashCommitment(proof),
-    expected: wanted,
-    why: 'the table signed is not F of the inputs the node published',
-  };
+export function slashHoldsOnTable() {
+  return { slashed: false, why: 'refused: row 3 stands on a SettlementAck the accused signed, and nodes sign no table (kanban #1035)' };
 }
 
 /**
@@ -853,119 +739,8 @@ export function decodeSettlementRecord(bytes) {
 export const settlementRecordId = (r) =>
   taggedHash(TAG.settlementRecord, encodeSettlementRecord(r));
 
-/**
- * DID THIS NODE ACT WITHOUT THE AUTHORITY IT NEEDED? 5A.3 row 4.
- *
- * "Settlement action without the required 5-of-7 result and payout signatures.
- * Proof: the settlement record."
- *
- * NOTHING IS INJECTED, as in row 3: `lockAction` is 23.2's table and it
- * is in this package, so the check recomputes what the record's own published
- * conditions authorised and compares it with what was done. No attester, and
- * so no attester who could slash without cause.
- *
- * TWO WAYS TO BE WRONG, and they are different offences of the same row:
- *   - the action was not authorised at all - the counts the node itself
- *     published do not meet 23.2's requirements
- *   - the action was not the one those conditions call for - claiming where
- *     23.2 returns, or acting at all on a VOID, which "needs nobody to act"
- *
- * AND ONLY MONEY LEAVING IS AN OFFENCE. A node that did LESS than it was
- * entitled to has taken nothing from anybody: 23.2's whole safety property is
- * that "the default path - nobody acting - is always the refund", so inaction
- * cannot be the thing a bond is taken for. EXPIRE where a return was due
- * leaves the player their money by expiry, and slashing it would invert the
- * one direction the design is built to keep safe.
- */
-export function slashHoldsOnSettlement({ proof, signedRecord, advert, committee }) {
-  if (!Array.isArray(committee) || !committee.length)
-    return { slashed: false, why: 'no committee, so nobody was serving this round' };
-  if (!committee.some((k) => hex(k) === hex(proof.nodePubkey)))
-    return {
-      slashed: false,
-      why: `${hex(proof.nodePubkey)} is not on this round's committee, so it settled nothing it owed`,
-    };
-
-  if (!(signedRecord instanceof Uint8Array) || !signedRecord.length)
-    return { slashed: false, why: 'no settlement record attached to check against 23.2' };
-  let record;
-  try { record = decodeSettlementRecord(signedRecord); }
-  catch (e) { return { slashed: false, why: `the evidence is not a settlement record: ${e.message}` }; }
-
-  if (hex(settlementRecordId(record)) !== hex(proof.signedResultId))
-    return { slashed: false, why: 'the record attached is not the one this proof names' };
-  if (hex(record.roundId) !== hex(proof.roundId))
-    return { slashed: false, why: 'the record attached is for a different round' };
-  if (hex(record.nodePubkey) !== hex(proof.nodePubkey))
-    return { slashed: false, why: 'the record attached was written by a different node' };
-
-  // AND NO FIELD OF THE PROOF IS LEFT FREE ON THIS ROW.
-  //
-  // Rows 2 and 3 pin both of these and this one pinned neither, which is a
-  // hole in a body whose hash goes on chain: an accuser could vary them at
-  // will and produce unboundedly many different valid proofs of one offence,
-  // each with a different commitment. Worse for `playerPubkey` - the record
-  // names an ENTRY and not a player, so a proof could name somebody who had
-  // nothing to do with the settlement and a reader would take them for the
-  // victim.
-  //
-  // `transcriptHash` means "the object this offence is measured against", and
-  // for a settlement that is the entry whose stake lock was acted on. The
-  // player is left to the entry rather than repeated: this row names no player
-  // directly, so the field is required to be empty instead of plausible.
-  if (hex(proof.transcriptHash) !== hex(record.entryId))
-    return {
-      slashed: false,
-      why: 'the proof is measured against a different entry than the record acted on',
-    };
-  if (hex(proof.playerPubkey) !== hex(EMPTY))
-    return {
-      slashed: false,
-      why: 'this row names no player: the entry does, and a proof naming one '
-        + 'would put somebody\'s name on a settlement that is not about them',
-    };
-
-  // 23.2, recomputed from the node's OWN published conditions.
-  const due = lockAction({
-    outcome: record.outcome,
-    qualifies: record.qualifies,
-    state: record.state,
-    shares: record.shares,
-    signatures: record.signatures,
-  });
-
-  if (record.action === EXPIRE)
-    return {
-      slashed: false,
-      why: 'the node did nothing, and nobody acting is 23.2\'s refund path: '
-        + 'a bond is not taken for leaving money where it was',
-    };
-
-  if (due.action === record.action && due.authorised)
-    return { slashed: false, why: `23.2 authorised ${record.action} on those conditions` };
-
-  const why = due.action !== record.action
-    ? `23.2 calls for ${due.action} on those conditions and the node did ${record.action}`
-    : `${record.action} needed ${due.missing.join(', ')}`;
-
-  if (!advert || hex(advert.nodePubkey) !== hex(proof.nodePubkey))
-    return { slashed: false, why: 'no advertisement from the accused node to name its bond' };
-  if (hex(advert.bondTxid) !== hex(proof.bondTxid) || advert.bondVout !== proof.bondVout)
-    return {
-      slashed: false,
-      why: `the proof names bond ${hex(proof.bondTxid)}:${proof.bondVout} and the node `
-        + `advertised ${hex(advert.bondTxid)}:${advert.bondVout}`,
-    };
-
-  return {
-    slashed: true,
-    offence: SETTLED_WITHOUT_AUTHORITY,
-    bond: { txid: proof.bondTxid, vout: proof.bondVout },
-    commitment: slashCommitment(proof),
-    due: due.action,
-    missing: due.missing,
-    why,
-  };
+export function slashHoldsOnSettlement() {
+  return { slashed: false, why: 'refused: row 4 has no bytes the accused signed; a FROST signature names nobody (kanban #1035)' };
 }
 
 /**
@@ -1144,58 +919,6 @@ export function cutDoubleSlashEvidence(body) {
 }
 
 /**
- * WHAT THE ACCUSED SIGNED, WHICHEVER OF THE THREE IT WAS.
- *
- * 5A.13 names all three: "its result signatures, payout-table signatures and
- * settlement participation are invalid". So a conflicted node is slashable for
- * any of them, and the type byte the object already carries says which - no
- * discriminator is invented and no caller has to declare one.
- */
-function signedThing(bytes) {
-  if (!(bytes instanceof Uint8Array) || !bytes.length) return null;
-  try {
-    if (bytes[0] === TYPE_RESULT) {
-      const body = decodePlayerResult(splitSignedResult(bytes).body);
-      return { kind: 'result', roundId: body.roundId, nodePubkey: body.nodePubkey, id: resultId(body) };
-    }
-    if (bytes[0] === TYPE_PAYOUT_TABLE) {
-      const t = decodePayoutTable(bytes);
-      // A table carries no signer: it is the round's table and the signature
-      // sits beside it, so the node it accuses is the proof's, not the object's.
-      return { kind: 'payout table', roundId: t.roundId, nodePubkey: null, id: payoutTableId(t) };
-    }
-    if (bytes[0] === TYPE_SETTLEMENT_RECORD) {
-      const r = decodeSettlementRecord(bytes);
-      return { kind: 'settlement record', roundId: r.roundId, nodePubkey: r.nodePubkey, id: settlementRecordId(r) };
-    }
-  } catch { return null; }
-  return null;
-}
-
-/**
- * THE OPERATOR A DECLARATION NAMES, or nothing at all.
- *
- * 5A.13: `operator_id` is "a pubkey", and it is also "a self-declaration...
- * not a proof of identity". This package carries it as a STRING for exactly
- * that reason - `advert.js` says so where it encodes one - so reading it as a
- * key is done here and only here: sixty-four lowercase hex characters, the way
- * `toHex` writes one, and anything else declares no key.
- *
- * That is not a weakness of the check, it is 5A.13's own scope: "an attacker
- * who runs nodes and plays simply declares nothing, or declares unrelated ids,
- * and the rule does not fire... this rule is defence in depth, not a Sybil
- * control". A declaration that names no key conflicts with nobody, and the
- * spec says so before this file does.
- */
-export function operatorKeyOf(advert) {
-  const said = advert && advert.operatorId;
-  if (typeof said !== 'string' || !/^[0-9a-f]{64}$/.test(said)) return null;
-  const key = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) key[i] = parseInt(said.slice(i * 2, i * 2 + 2), 16);
-  return key;
-}
-
-/**
  * DID THIS NODE SIGN FOR A ROUND ITS OWN OPERATOR PLAYED? 5A.3 row 5.
  *
  * 5A.13: "A selected node may not sign anything for a round in which its
@@ -1219,74 +942,6 @@ export function slashHoldsOnConflict({ proof, entry, signedByNode, advert, commi
   // operator played is no offence; self-dealing is priced by 5 of 7 bonded slots (§5A.6) and overturnable by replay (§13A)
   void proof; void entry; void signedByNode; void advert; void committee;
   return { slashed: false, why: 'withdrawn: a player declares no operator, so signing in a round the operator played is no offence (§5A.13, ruled 2026-10-14)' };
-}
-// The rule as it stood before the ruling, kept for reading old proofs only.
-export function slashHoldsOnConflictBefore20261014({ proof, entry, signedByNode, advert, committee }) {
-  if (!Array.isArray(committee) || !committee.length)
-    return { slashed: false, why: 'no committee, so nobody was serving this round' };
-  if (!committee.some((k) => hex(k) === hex(proof.nodePubkey)))
-    return {
-      slashed: false,
-      why: `${hex(proof.nodePubkey)} is not on this round's committee, so it signed nothing it owed`,
-    };
-
-  if (!advert || hex(advert.nodePubkey) !== hex(proof.nodePubkey))
-    return { slashed: false, why: 'no advertisement from the accused node to read its operator from' };
-
-  const operator = operatorKeyOf(advert);
-  if (!operator)
-    return {
-      slashed: false,
-      why: 'that advertisement declares no operator key, and 5A.13 does not fire '
-        + 'on a declaration that names nobody',
-    };
-
-  if (!entry || !(entry.roundId instanceof Uint8Array))
-    return { slashed: false, why: 'no entry contract to show the operator played' };
-  if (hex(entry.roundId) !== hex(proof.roundId))
-    return { slashed: false, why: 'the entry attached is for a different round' };
-  if (hex(entry.playerPubkey) !== hex(operator))
-    return {
-      slashed: false,
-      why: `the entry was signed by ${hex(entry.playerPubkey)} and the node declared `
-        + `operator ${hex(operator)}: 5A.13 fires on a DECLARED conflict and nothing else`,
-    };
-  if (hex(proof.playerPubkey) !== hex(operator))
-    return { slashed: false, why: 'the proof names a different player than the entry does' };
-  if (hex(proof.transcriptHash) !== hex(entryId(entry)))
-    return { slashed: false, why: 'the proof is measured against a different entry' };
-
-  // AND THE SIGNING, which is the offence itself.
-  const thing = signedThing(signedByNode);
-  if (!thing)
-    return {
-      slashed: false,
-      why: 'nothing the node signed is attached: being conflicted is not the '
-        + 'offence, signing anyway is',
-    };
-  if (hex(thing.id) !== hex(proof.signedResultId))
-    return { slashed: false, why: `the ${thing.kind} attached is not the one this proof names` };
-  if (hex(thing.roundId) !== hex(proof.roundId))
-    return { slashed: false, why: `the ${thing.kind} attached is for a different round` };
-  if (thing.nodePubkey && hex(thing.nodePubkey) !== hex(proof.nodePubkey))
-    return { slashed: false, why: `the ${thing.kind} attached was signed by a different node` };
-
-  if (hex(advert.bondTxid) !== hex(proof.bondTxid) || advert.bondVout !== proof.bondVout)
-    return {
-      slashed: false,
-      why: `the proof names bond ${hex(proof.bondTxid)}:${proof.bondVout} and the node `
-        + `advertised ${hex(advert.bondTxid)}:${advert.bondVout}`,
-    };
-
-  return {
-    slashed: true,
-    offence: OPERATOR_PLAYED,
-    bond: { txid: proof.bondTxid, vout: proof.bondVout },
-    commitment: slashCommitment(proof),
-    signed: thing.kind,
-    operator,
-    why: `the node's declared operator has an entry in this round, and it signed a ${thing.kind} anyway`,
-  };
 }
 
 /**
@@ -1401,148 +1056,8 @@ export function feeInputsId({ roundId, role, minimumServed, recordId, feeTableId
   return taggedHash(TAG.feeInputs, w.finish());
 }
 
-/**
- * DID THIS NODE CLAIM A FEE SHARE 22A DOES NOT ALLOW? 5A.3 row 6.
- *
- * "Claiming a fee share without meeting the availability rule (22A). Proof:
- * the receipt record."
- *
- * Nothing is injected: two objects, a bound threshold, and comparisons.
- *
- * TWO WAYS TO FAIL 22A, and the spec gives both in one paragraph:
- *   - the node did not perform the minimum service for its role
- *   - the node was CONFLICTED, and "a conflicted node (5A.13) never qualifies"
- *     however much service it performed
- *
- * CLAIMING NOTHING IS NOT AN OFFENCE. 22A's remedy for a share nobody earned
- * is redistribution - "unearned shares are redistributed pro rata among the
- * other eligible nodes in the same role pool, keeping the total at 2%" - so a
- * node that took nothing has cost nobody anything, and its bond is not at
- * stake. A node that served and claimed is doing exactly what the fee is for.
- */
-export function slashHoldsOnFeeClaim({
-  proof, signedClaim, serviceRecord, contract, advert, committee,
-  feeTable = null, entry = null,
-}) {
-  // THE MINIMUM COMES OFF THE ROUND CONTRACT, not off the accuser.
-  //
-  // It was an argument until the contract carried it, and a minimum the caller
-  // chooses is a minimum the operator chooses - the same fault the objection
-  // window was moved into the contract to fix, and worse here, because this
-  // number decides whether a bond is taken. The player and every node signed
-  // up to it with the rest of the round, and it is covered by the round id.
-  if (!contract || !Number.isInteger(contract.slashMinimumServed)
-      || contract.slashMinimumServed < 0)
-    return { slashed: false, why: 'no round contract to read the minimum service from' };
-  const minimumServed = contract.slashMinimumServed;
-  if (!Array.isArray(committee) || !committee.length)
-    return { slashed: false, why: 'no committee, so nobody was serving this round' };
-  if (!committee.some((k) => hex(k) === hex(proof.nodePubkey)))
-    return {
-      slashed: false,
-      why: `${hex(proof.nodePubkey)} is not on this round's committee, so it was owed no share`,
-    };
-
-  if (!advert || hex(advert.nodePubkey) !== hex(proof.nodePubkey))
-    return { slashed: false, why: 'no advertisement from the accused node to name its bond' };
-
-  let claim;
-  try { claim = decodeFeeClaim(signedClaim); }
-  catch (e) { return { slashed: false, why: `the evidence is not a fee claim: ${e.message}` }; }
-  if (hex(feeClaimId(claim)) !== hex(proof.signedResultId))
-    return { slashed: false, why: 'the claim attached is not the one this proof names' };
-  if (hex(claim.roundId) !== hex(proof.roundId))
-    return { slashed: false, why: 'the claim attached is for a different round' };
-  if (hex(claim.nodePubkey) !== hex(proof.nodePubkey))
-    return { slashed: false, why: 'the claim attached was made by a different node' };
-
-  // A NODE THAT TOOK NOTHING HAS COST NOBODY ANYTHING. 22A redistributes an
-  // unearned share; it does not take a bond for one that was never claimed.
-  if (claim.amountMsat <= 0n)
-    return {
-      slashed: false,
-      why: 'that claim is for nothing, and 22A redistributes an unearned share '
-        + 'rather than slashing a node that asked for none',
-    };
-
-  let record;
-  try { record = decodeServiceRecord(serviceRecord); }
-  catch (e) { return { slashed: false, why: `the evidence is not a service record: ${e.message}` }; }
-  if (hex(record.roundId) !== hex(proof.roundId))
-    return { slashed: false, why: 'the record attached is for a different round' };
-  if (hex(record.nodePubkey) !== hex(proof.nodePubkey))
-    return { slashed: false, why: 'the record attached is about a different node' };
-  if (record.role !== claim.role)
-    return {
-      slashed: false,
-      why: `the claim is for ${claim.role} and the record is about ${record.role}: `
-        + '22A pays the two pools separately and a share is earned in its own role',
-    };
-
-  // THE TABLE 22A OWES FROM. Required, because the offence below is a
-  // comparison with what it says: without one there is no owed amount and an
-  // over-claim cannot be measured at all.
-  if (!feeTable || typeof feeTable.fee !== 'bigint' || !(feeTable.signerNodes instanceof Map))
-    return { slashed: false, why: 'no fee table to measure the claim against' };
-
-  const bound = feeInputsId({
-    roundId: proof.roundId, role: claim.role, minimumServed,
-    recordId: serviceRecordId(record), feeTableId: feeTableId(feeTable),
-  });
-  if (hex(proof.transcriptHash) !== hex(bound))
-    return {
-      slashed: false,
-      why: 'the proof is bound to a different record, round or minimum than '
-        + 'the contract and the record handed in',
-    };
-
-  // 22A: A CONFLICTED NODE NEVER QUALIFIES, whatever it served.
-  let conflicted = false;
-  const operator = operatorKeyOf(advert);
-  if (operator && entry && entry.playerPubkey
-      && hex(entry.roundId || EMPTY) === hex(proof.roundId)
-      && hex(entry.playerPubkey) === hex(operator))
-    conflicted = true;
-
-  // AND WHAT 22A ACTUALLY OWES IT. Row 6 decided WHETHER a node qualifies;
-  // until the table existed nothing said what the share IS, so a qualifying
-  // node could claim any amount and no predicate contradicted it. Claiming
-  // more than the table owes is the same offence as claiming without service:
-  // both take fee money the round did not earn for it.
-  const owed = feeOwed(feeTable, proof.nodePubkey, claim.role);
-  const overClaimed = claim.amountMsat > owed;
-
-  if (!conflicted && !overClaimed && record.served >= minimumServed)
-    return {
-      slashed: false,
-      why: `it served ${record.served} of the ${minimumServed} its role required `
-        + `and claimed the ${owed} 22A owes it`,
-    };
-
-  if (hex(advert.bondTxid) !== hex(proof.bondTxid) || advert.bondVout !== proof.bondVout)
-    return {
-      slashed: false,
-      why: `the proof names bond ${hex(proof.bondTxid)}:${proof.bondVout} and the node `
-        + `advertised ${hex(advert.bondTxid)}:${advert.bondVout}`,
-    };
-
-  return {
-    slashed: true,
-    offence: FEE_WITHOUT_SERVICE,
-    bond: { txid: proof.bondTxid, vout: proof.bondVout },
-    commitment: slashCommitment(proof),
-    claimedMsat: claim.amountMsat,
-    owedMsat: owed,
-    served: record.served,
-    required: minimumServed,
-    conflicted,
-    overClaimed,
-    why: conflicted
-      ? 'a conflicted node never qualifies for a share, and it claimed one'
-      : overClaimed
-        ? `it claimed ${claim.amountMsat} where 22A owes it ${owed}`
-        : `it claimed a ${claim.role} share having served ${record.served} of ${minimumServed}`,
-  };
+export function slashHoldsOnFeeClaim() {
+  return { slashed: false, why: 'refused: row 5 has no bytes the accused signed; no node claims a fee, shares come from the settlement plan (kanban #1035)' };
 }
 
 /**
