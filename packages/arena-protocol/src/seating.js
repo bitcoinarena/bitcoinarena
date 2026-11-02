@@ -53,6 +53,10 @@
 // group per distinct list. A node is present at the seating if ANY seated node lists it, so to hide an honest node's PRESENT every
 // seated node must lie. A PRESENT that reaches the seated after the close is in no list: for the proof that seating is missed. The
 // SEATING body, its id and the equivocation rule are untouched, and a certificate below 22 carries no SEEN - byte for byte as before.
+//
+// A TEMPLATE-3 BOND'S slash_presig IS CHECKED WITH THE SEATING (5A.3B, kanban #972). A seated node signs one per template-3 bond (slash-presig.js), and the certificate carries them after
+// its justifications, so whoever holds the certificate holds what a slash needs and a seat has one thing to check. A seating with no template-3 bond in it carries none, byte for byte as
+// before. The signature over the seating does not cover them: they sign a transaction, not a seating, and a seating can be signed again without touching them.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { TAG, TYPE_PRESENT, TYPE_SEATING, TYPE_SEATING_SEEN, PROTOCOL_VERSION, PRESENCE_VERSION, speaksVersion } from './constants.js';
@@ -83,6 +87,7 @@ const cmpSeat = (a, b) => { for (let i = 0; i < 32; i++) if (a[i] !== b[i]) retu
 const keyBytes = (k) => (typeof k === 'string' ? Uint8Array.from(k.match(/../g).map((h) => parseInt(h, 16))) : k);
 const sortedKeys = (list) => [...new Map((list || []).map(keyBytes).map((k) => [toHex(k), k])).values()].sort(cmpSeat);
 const strictlySorted = (list) => list.every((k, i) => i === 0 || cmpSeat(list[i - 1], k) < 0);
+const presigOrder = (a, b) => cmpSeat(a.nodePubkey, b.nodePubkey) || cmpSeat(a.txid, b.txid) || a.vout - b.vout;
 
 // ---- PRESENT ----
 function presentBody({ roundId, role, nodePubkey }) {
@@ -274,9 +279,10 @@ function verifyStep(j, { roundId, role, drawn, slots, verify, signer, onto }) {
  * THE CERTIFICATE: the body and every signature over it, sorted by node key - and, for a 22 round, `seen`: [{ present, leftOut,
  * signatures }], the seated nodes' SEEN signatures grouped by the lists they signed (each sorted, the groups in id order); then, only
  * when a seated node's signature is a second one (kanban #738), `justifications`: [{ nodePubkey, justification }] sorted by node key,
- * each its justification as above. A certificate with none ends after its SEEN, byte for byte as before.
+ * each its justification as above. A certificate with none ends after its SEEN, byte for byte as before. Then, only when a seated node holds a template-3 bond (kanban #972), `presigs`:
+ * [{ nodePubkey, txid, vout, signature (65 bytes) }] sorted by node key and outpoint, after a justification list that may be empty.
  */
-export function encodeSeatingCertificate({ roundId, role, seated, signatures, seen = null, justifications = null }) {
+export function encodeSeatingCertificate({ roundId, role, seated, signatures, seen = null, justifications = null, presigs = null }) {
   const w = new Writer();
   const body = seatingBody({ roundId, role, seated });
   w.bytes(body, body.length);
@@ -293,10 +299,12 @@ export function encodeSeatingCertificate({ roundId, role, seated, signatures, se
       ww.vec(g.signatures, (x, w3) => { w3.bytes32(x.nodePubkey); w3.bytes(x.signature, 64); });
     });
   }
-  if (justifications && justifications.length) {
-    if (!seen) throw new Error('a certificate carries justifications only with who was present (protocol 22)');
-    w.vec([...justifications].sort((a, b) => cmpSeat(a.nodePubkey, b.nodePubkey)), (x, ww) => { ww.bytes32(x.nodePubkey); writeJustification(x.justification, ww); });
+  const carriesPresigs = !!(presigs && presigs.length);
+  if ((justifications && justifications.length) || carriesPresigs) {
+    if (!seen) throw new Error('a certificate carries justifications and presigs only with who was present (protocol 22)');
+    w.vec([...(justifications || [])].sort((a, b) => cmpSeat(a.nodePubkey, b.nodePubkey)), (x, ww) => { ww.bytes32(x.nodePubkey); writeJustification(x.justification, ww); });
   }
+  if (carriesPresigs) w.vec([...presigs].sort(presigOrder), (x, ww) => { ww.bytes32(x.nodePubkey); ww.bytes32(x.txid); ww.u32(x.vout); ww.bytes(x.signature, 65); });
   return w.finish();
 }
 export function decodeSeatingCertificate(bytes) {
@@ -312,8 +320,10 @@ export function decodeSeatingCertificate(bytes) {
     signatures: rr.vec((x) => ({ nodePubkey: x.bytes32(), signature: x.bytes(64) })) })) : null;
   // and its seated nodes' justifications for second signatures, when any (kanban #738)
   const justifications = r.at < bytes.length ? r.vec((rr) => ({ nodePubkey: rr.bytes32(), justification: readJustification(rr) })) : null;
+  // and the template-3 bonds' presigs, when any (kanban #972); an empty justification list is written only ahead of them
+  const presigs = r.at < bytes.length ? r.vec((rr) => ({ nodePubkey: rr.bytes32(), txid: rr.bytes32(), vout: rr.u32(), signature: rr.bytes(65) })) : null;
   if (r.at !== bytes.length) throw new Error('trailing bytes after the SEATING');
-  return { roundId, role, seated, signatures, seen, justifications };
+  return { roundId, role, seated, signatures, seen, justifications: presigs && justifications && !justifications.length ? null : justifications, ...(presigs ? { presigs } : {}) };
 }
 
 /**
@@ -393,6 +403,26 @@ export function verifySeating(bytes, { roundId, role, drawn, slots, verify, list
   }
   return { ok: true, seating: c, id, present: [...present].sort(), leftOut: [...(leftOut || [])].sort() };
 }
+
+/**
+ * THE PRESIGS OF A CERTIFICATE AGAINST WHAT THE ROUND ASKS (5A.3B, kanban #972): `plan`, roundPresigPlan's Map, node key hex -> [{ txid hex, vout, digest }]. Every bond of every seated node
+ * has its presig and it verifies, and nothing else is carried. `presigStands(signature, digest, nodeKey)` is the caller's. A client passes no plan: this stays with the seats.
+ * Answers { ok } or { ok: false, why }.
+ */
+export function checkSeatingPresigs(certificate, plan, presigStands) {
+  const given = certificate.presigs || [];
+  if (!strictlyOrdered(given)) return { ok: false, why: 'the presigs of that seating are not sorted by node and outpoint, or name a bond twice' };
+  const asked = certificate.seated.flatMap((k) => (plan.get(toHex(k)) || []).map((b) => ({ ...b, nodePubkey: k })));
+  const by = new Map(given.map((p) => [`${toHex(p.nodePubkey)}:${toHex(p.txid)}:${p.vout}`, p]));
+  for (const b of asked) {
+    const p = by.get(`${toHex(b.nodePubkey)}:${b.txid}:${b.vout}`);
+    if (!p) return { ok: false, why: `seated node ${toHex(b.nodePubkey).slice(0, 16)} gave no slash_presig for its bond ${b.txid.slice(0, 16)}:${b.vout}` };
+    if (!presigStands(p.signature, b.digest, b.nodePubkey)) return { ok: false, why: `seated node ${toHex(b.nodePubkey).slice(0, 16)}'s slash_presig for its bond ${b.txid.slice(0, 16)}:${b.vout} does not verify` };
+  }
+  if (given.length !== asked.length) return { ok: false, why: 'that seating carries a presig the round does not ask for' };
+  return { ok: true };
+}
+function strictlyOrdered(list) { return list.every((x, i) => i === 0 || presigOrder(list[i - 1], x) < 0); }
 
 // ---- THE JUDGE (kanban #744, #746, RULED 2026-10-28) ----
 // A proof over two seatings X before Y of one draw stands against a node only if it signed both and cannot present a valid chain

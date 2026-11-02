@@ -37,7 +37,7 @@ import {
   paysBondMarker, paysMarkerProgram,
 } from './chain.js';
 import { decodeAdvert, splitSignedAdvert, advertId, hostsGame } from './advert.js';
-import { maturityStands, slashStartLeaf } from './bond-script.js';
+import { BOND_TEMPLATE_V3, maturityStands, slashStartLeaf } from './bond-script.js';
 import { bondNamesStandingKey } from './census-key.js';
 import { poolOfRole, GAME_VERIFY } from './fee.js';
 import { genesisFor } from './genesis.js';
@@ -1260,6 +1260,8 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
       hostedGames: read.advert.hostedGames,
       advert: read.advert,
       advertId: read.advertId,
+      // A TEMPLATE-3 BOND'S OUTPUT, as the chain has it: its slash_presig signs over this script (slash-presig.js), and only the census read it. Not in any leaf or root
+      ...(read.advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3 ? { script: read.tx.outputs[e.vout].script } : {}),
     });
   }
 

@@ -28,7 +28,8 @@ import { slotsForRole } from '../../arena-protocol/src/sortition.js';
 import { signPresent, verifyPresent, decodePresent, seatedFrom, signSeating, seatingId, encodeSeatingCertificate, verifySeating,
   seatingEquivocation, seatingCloseMs, decodeSeatingCertificate, SEATING_ROLES, signSeen, seenId, seatingListsPresent, seatingBefore as comesBefore,
   encodeJustification, decodeJustification, verifyJustification, justificationChain, justificationSteps, JUSTIFICATION_DEPTH,
-  signSeatingBound, seatingSignedId, justificationHash } from '../../arena-protocol/src/seating.js';
+  signSeatingBound, seatingSignedId, justificationHash, checkSeatingPresigs } from '../../arena-protocol/src/seating.js';
+import { signSlashPresig, slashPresigVerifies } from '../../arena-protocol/src/slash-presig.js';
 import { endpointsOf } from './roster.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
@@ -55,7 +56,8 @@ const TABLE_RESEAT_ASK_MS = 300000;
 const joinBytes = (list) => { const out = new Uint8Array(list.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of list) { out.set(x, at); at += x.length; } return out; };
 
 export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, nowMs = () => Date.now(), log = () => {}, windowOf = () => null,
-  onSeated = () => {}, leftNode = () => false, contractOf = () => null, leftOutOf = () => [], testHoldPresents = null, endpointOf = null }) {
+  onSeated = () => {}, leftNode = () => false, contractOf = () => null, leftOutOf = () => [], testHoldPresents = null, endpointOf = null, holdsOf = null }) {
+  // `holdsOf(rid, contract)`: what the round asks of its seated nodes' template-3 bonds, { ok, plan } as slash-presig.js roundPresigPlan answers (kanban #972). None given asks nothing
   // `leftOutOf(rid)`: the node keys (hex) the round's census left out as absent (protocol 22, kanban #727) - they may say PRESENT
   // undrawn, and every seated node names them in its SEEN
   // `leftNode(nodeHex)`: the node's owner took it out of every seating with the emergency key (§23A.5a, protocol 17) - its PRESENT is
@@ -74,6 +76,9 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       PRIMARY KEY (round_id, role));
     CREATE TABLE IF NOT EXISTS seat_seen (round_id BLOB NOT NULL, role TEXT NOT NULL, seating TEXT NOT NULL, node TEXT NOT NULL, present TEXT NOT NULL,
       left_out TEXT NOT NULL, signature BLOB NOT NULL, PRIMARY KEY (round_id, role, seating, node));
+    CREATE TABLE IF NOT EXISTS seat_presigs (round_id BLOB NOT NULL, node TEXT NOT NULL, txid TEXT NOT NULL, vout INTEGER NOT NULL, signature BLOB NOT NULL, kept_ms INTEGER NOT NULL,
+      PRIMARY KEY (round_id, node, txid, vout));
+    CREATE INDEX IF NOT EXISTS seat_presigs_bond ON seat_presigs (txid, vout, kept_ms);
   `);
   // A SECOND SIGNATURE'S JUSTIFICATION (protocol 22, kanban #738): kept with it, here and at the peers that hold it
   for (const t of ['seat_signed', 'seat_sigs']) {
@@ -156,7 +161,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const c = roster.committeeFor(rid, role, posted ? { posted } : {});
     if (!c.ok) return { refused: c.why };
     const contract = row ? decodeRoundContract(new Uint8Array(row.contract)) : posted;
-    return { roundId: rid, role, drawn: c.drawn.map((e) => e.pubkey), slots: slotsForRole(contract, role), verify, listsPresent: seatingListsPresent(contract), contract };
+    return { roundId: rid, role, drawn: c.drawn.map((e) => e.pubkey), slots: slotsForRole(contract, role), verify, listsPresent: seatingListsPresent(contract), contract, posted };
   };
   const keepCert = (rid, role, bytes, { index = null } = {}) => {
     // ONE HELD ALREADY, byte for byte, is not checked again (2026-10-12 "figure out why CPU usage so high and
@@ -172,6 +177,14 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (!check || check.refused) return { ok: false, why: `this node cannot draw that round yet${check ? `: ${check.refused}` : ''}` };
     const v = verifySeating(bytes, check);
     if (!v.ok) return v;
+    // A SEAT REFUSES A SEATING WHOSE MEMBER'S slash_presig DOES NOT VERIFY (5A.3B, kanban #972), and from here it holds them for a slash
+    if (holdsOf) {
+      let asked; try { asked = holdsOf(rid, check.contract); } catch (e) { asked = { ok: false, why: e.message }; }
+      if (!asked || !asked.ok) return { ok: false, why: `this node cannot read that round's holds yet${asked ? `: ${asked.why}` : ''}` };
+      const p = checkSeatingPresigs(v.seating, asked.plan, (sig, digest, key) => slashPresigVerifies(sig, digest, key, verify));
+      if (!p.ok) return p;
+      for (const x of v.seating.presigs || []) keepPresig(rid, toHex(x.nodePubkey), toHex(x.txid), x.vout, x.signature);
+    }
     // on a table only the first round and its check-ins hold a seating (kanban #1020)
     try { const a = tableAnchorOf(check.contract);
       if (a && !a.first && !checkInOf(check.contract, a)) return { ok: false, why: 'that round of its table is no check-in' }; } catch { /* the draw above read it */ }
@@ -363,8 +376,47 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     return { node: me, seated, signature: toHex(new Uint8Array(r.signature)),
       ...(seen ? { seen: { present: JSON.parse(seen.present), leftOut: JSON.parse(seen.left_out), signature: toHex(new Uint8Array(seen.signature)) } } : {}),
       // A SECOND SIGNATURE (a 22 round, kanban #738) carries why: an older seat reads past it
-      ...(r.justification ? { justification: toHex(new Uint8Array(r.justification)) } : {}) };
+      ...(r.justification ? { justification: toHex(new Uint8Array(r.justification)) } : {}),
+      // AND THE SLASH_PRESIGS OF ITS TEMPLATE-3 BONDS (5A.3B, kanban #972): one each, for this round whichever role asks
+      ...presigsField(rid) };
   };
+  // ---- THE SLASH_PRESIGS (5A.3B, kanban #972) ----
+  const presigRows = (rid, node) => db.prepare('SELECT txid, vout, signature FROM seat_presigs WHERE round_id = ? AND node = ?').all(rid, node);
+  const presigsField = (rid) => { const rows = presigRows(rid, me); return rows.length ? { presigs: rows.map((r) => ({ txid: r.txid, vout: Number(r.vout), signature: toHex(new Uint8Array(r.signature)) })) } : {}; };
+  const keepPresig = (rid, node, txid, vout, signature) => db.prepare('INSERT OR IGNORE INTO seat_presigs (round_id, node, txid, vout, signature, kept_ms) VALUES (?, ?, ?, ?, ?, ?)').run(rid, node, txid, vout, signature, nowMs());
+  /** What the round asks of `node`, [] for nothing; null when this seat cannot say yet. */
+  const askedOf = (rid, contract, node) => {
+    if (!holdsOf) return [];
+    let got; try { got = holdsOf(rid, contract); } catch (e) { log(`[seating] ${toHex(rid).slice(0, 16)}: the round's holds cannot be read: ${e.message}`); return null; }
+    return got && got.ok ? got.plan.get(node) || [] : null;
+  };
+  /** This node's own, signed once and kept before any door can hand them out. False when this seat cannot say what the round asks: then it signs no seating either. */
+  function presignMine(rid, contract) {
+    const asked = askedOf(rid, contract, me);
+    if (!asked) return false;
+    for (const b of asked) {
+      if (presigRows(rid, me).some((r) => r.txid === b.txid && Number(r.vout) === b.vout)) continue;
+      keepPresig(rid, me, b.txid, b.vout, signSlashPresig(b.digest, sign));
+    }
+    return true;
+  }
+  /** A peer's, off the signature it came with: all of them verify or nothing of it is kept, and the signature with it is not counted. */
+  function takePresigs(rid, contract, node, given) {
+    const asked = askedOf(rid, contract, node);
+    if (!asked) return false;
+    const list = Array.isArray(given) ? given : [];
+    const ok = asked.every((b) => {
+      const p = list.find((x) => x && x.txid === b.txid && Number(x.vout) === b.vout);
+      if (!p || typeof p.signature !== 'string') return false;
+      let sig; try { sig = fromHex(p.signature); } catch { return false; }
+      if (!slashPresigVerifies(sig, b.digest, fromHex(node), verify)) return false;
+      p.bytes = sig;
+      return true;
+    });
+    if (!ok) { log(`[seating] ${toHex(rid).slice(0, 16)}: ${node.slice(0, 8)}'s signature came without a good slash_presig for each of its ${asked.length} template-3 bond(s): not counted`); return false; }
+    for (const b of asked) keepPresig(rid, node, b.txid, b.vout, list.find((x) => x.txid === b.txid && Number(x.vout) === b.vout).bytes);
+    return true;
+  }
   const certOf = (rid, role) => {
     const r = db.prepare('SELECT cert FROM seat_certs WHERE round_id = ? AND role = ?').get(rid, role);
     return r ? toHex(new Uint8Array(r.cert)) : null;
@@ -640,6 +692,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: that seating is signed already - a member signs each seating of a draw once`);
       return false;
     }
+    // WITH ITS SEATING SIGNATURE, ITS slash_presig (5A.3B, kanban #972), or neither
+    if (!presignMine(w.t.rid, w.t.contract)) { log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: not signed: the round's holds cannot be read yet`); return false; }
     const sig = seatingListsPresent(w.t.contract) ? signSeatingBound({ roundId: w.t.rid, role: w.role, seated }, sign, justification) : signSeating({ roundId: w.t.rid, role: w.role, seated }, sign);
     const list = seated.map(toHex);
     db.prepare('INSERT INTO seat_signed (round_id, role, seated, signature, justification) VALUES (?, ?, ?, ?, ?) ON CONFLICT (round_id, role) DO UPDATE SET seated = excluded.seated, signature = excluded.signature, justification = excluded.justification')
@@ -801,6 +855,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     }
     const signedId = listsPresent ? seatingSignedId({ roundId: w.t.rid, role: w.role, seated: list.map(fromHex) }, justificationHash(justification)) : fromHex(id);
     let good = false; try { good = verify(fromHex(got.signature), signedId, fromHex(node)); } catch { good = false; }
+    if (good) good = takePresigs(w.t.rid, w.t.contract, node, got.presigs);
     if (good) db.prepare('INSERT OR IGNORE INTO seat_sigs (round_id, role, seating, node, signature, justification, seated) VALUES (?, ?, ?, ?, ?, ?, ?)').run(w.t.rid, w.role, id, node, fromHex(got.signature), justification, JSON.stringify(list));
   }
   /** The ids of the seatings a justification's chain leaves (kanban #744): its own, then the signer's steps before. */
@@ -844,7 +899,19 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     // AND, A 22 ROUND, THE JUSTIFICATION OF EVERY SECOND SIGNATURE IN IT (kanban #738): what clears its signer of a proof by two seatings
     const justifications = seen ? sigs.filter((x) => x.justification && signed.seated.includes(x.node))
       .map((x) => ({ nodePubkey: fromHex(x.node), justification: decodeJustification(new Uint8Array(x.justification)) })) : null;
-    const cert = encodeSeatingCertificate({ roundId: w.t.rid, role: w.role, seated: list, seen, justifications,
+    // AND THE slash_presig OF EVERY TEMPLATE-3 BOND IT SEATS (kanban #972): the signatures above were counted only with theirs
+    const presigs = [];
+    for (const k of signed.seated) {
+      const asked = askedOf(w.t.rid, w.t.contract, k);
+      if (!asked) return;
+      const rows = asked.length ? presigRows(w.t.rid, k) : [];
+      for (const b of asked) {
+        const r = rows.find((x) => x.txid === b.txid && Number(x.vout) === b.vout);
+        if (!r) return;
+        presigs.push({ nodePubkey: fromHex(k), txid: fromHex(r.txid), vout: Number(r.vout), signature: new Uint8Array(r.signature) });
+      }
+    }
+    const cert = encodeSeatingCertificate({ roundId: w.t.rid, role: w.role, seated: list, seen, justifications, presigs,
       signatures: sigs.filter((x) => signed.seated.includes(x.node)).map((x) => ({ nodePubkey: fromHex(x.node), signature: new Uint8Array(x.signature) })) });
     const k = keepCert(w.t.rid, w.role, cert);
     if (k.ok && k.kept) {
@@ -937,6 +1004,13 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     },
     // WHETHER THIS NODE'S OWN PRESENT IS HELD FOR A ROUND'S SEATING: a reserve that was present has not missed it
     presentHere: (rid, role = 'settlement') => !!db.prepare('SELECT 1 FROM seat_presents WHERE round_id = ? AND role = ? AND node = ?').get(seatOf(rid), role, me),
+    /** A bond's slash_presig (5A.3B, kanban #972): the round's, or with no round its newest held here, for "an offence with no round". */
+    presigOf: ({ rid = null, txid, vout }) => {
+      const r = rid ? db.prepare('SELECT round_id, node, signature, kept_ms FROM seat_presigs WHERE round_id = ? AND txid = ? AND vout = ?').get(seatOf(rid), txid, vout)
+        ?? db.prepare('SELECT round_id, node, signature, kept_ms FROM seat_presigs WHERE round_id = ? AND txid = ? AND vout = ?').get(rid, txid, vout)
+        : db.prepare('SELECT round_id, node, signature, kept_ms FROM seat_presigs WHERE txid = ? AND vout = ? ORDER BY kept_ms DESC LIMIT 1').get(txid, vout);
+      return r ? { round: toHex(new Uint8Array(r.round_id)), node: r.node, txid, vout, signature: toHex(new Uint8Array(r.signature)) } : null;
+    },
     takePresent, presentsOf, mySignature, certOf: (rid, role, at = rid) => certOf(seatRoundOf(at, role), role), keepCert, equivocationOf, takePresents, batchOf,
     /** The table round a door's certificate is on, and its index (kanban #1020): 0 for the table's first. */
     certRoundOf: (at, role) => { const r = toHex(seatRoundOf(at, role)); const e = (reseats.get(`${toHex(seatOf(at))}:${role}`) || []).find((x) => toHex(x.rid) === r); return e ? e.index : 0; },

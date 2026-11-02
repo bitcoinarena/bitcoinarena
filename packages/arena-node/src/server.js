@@ -2416,6 +2416,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     ...(randomnessFor ? { randomnessFor } : {}),
     // THE KEYS THE CENSUS READS FOR A TEMPLATE-3 BOND (5A.3B, kanban #972): this seat's own chain scan (census-key-chain.js)
     ...(censusKey ? { standingKeys: censusKey.scan.standing } : {}),
+    tweakPoint,
   });
   // THE ROUND'S SIGNER NODES' ADDRESSES WHEN THE ROSTER CANNOT SAY (kanban #735, measured 2026-10-27: seat 1 was restarted inside round
   // 2927d830's objection window and for ~15 min read no chain view for the round - bitcoind re-read seven seats' views under load - so
@@ -2618,6 +2619,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   if (emergencyPull.unref) emergencyPull.unref();
   const emergencyFirstPull = setTimeout(() => { pullEmergencies().catch(() => {}); }, 30000);
   if (emergencyFirstPull.unref) emergencyFirstPull.unref();
+  const holdsOfRound = (rid, contract) => {
+    const plugin = attestedOf(contract);
+    return roster.slashHoldsFor(rid, { posted: contract, drawsAttestors: !!(plugin && isDrawnAttest(plugin.manifest)), attestorKeys: (plugin && plugin.manifest.attestors) || [] });
+  };
   const seating = (seatingOn ?? process.env.ARENA_SEATING === '1') ? seatingAgent({ round, roster, endpointOf: addressBook.endpointOf,
     // kanban #738: the forced overloaded seat, regtest rounds only (seating-agent.js)
     testHoldPresents: Number(process.env.ARENA_TEST_SEATING_HOLD) || null,
@@ -2637,6 +2642,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     leftOutOf: (rid) => { const c = roster.censusFor(rid); return c && c.ok && Array.isArray(c.absent) ? c.absent.map((x) => x.node) : []; },
     sign: (digest) => schnorr.sign(digest, round.identity.secret),
     verify: verifySchnorrKept,   // kept per (sig, msg, key): a PRESENT refused once is not checked again (kanban #587)
+    // WHAT THE ROUND ASKS OF ITS TEMPLATE-3 BONDS (5A.3B, kanban #972): the panels leave out its attestors, and those are the game's
+    holdsOf: (rid, contract) => holdsOfRound(rid, contract),
     log: (m) => console.log(m), windowOf: marketWindowFor,
     // A V2 ROUND'S SEATS (2026.0.2): the settlement seating's certified seated set is the round's 7 signer nodes
     onSeated: (rid, role, seated, contract = null) => {
@@ -10550,6 +10557,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!rid || rid.length !== 32) return text(res, 400, 'name a round: ?round=<64 hex>');
         const peers = Object.fromEntries(SEATING_ROLES.map((role) => [role, round.roundPeers(rid, role)]));
         return json(res, 200, { round: toHex(rid), peers, fromRoster: Object.fromEntries(SEATING_ROLES.map((role) => { let c; try { c = roster.committeeFor(rid, role); } catch (e) { c = { ok: false, why: e.message }; } return [role, c.ok]; })) });
+      }
+      // A BOND'S slash_presig (5A.3B, kanban #972): `round` the round the offence is in, none for the newest this seat holds, "an offence with no round"
+      if (seating && req.method === 'GET' && url.pathname === '/slash-presig') {
+        const txid = String(url.searchParams.get('txid') || '').toLowerCase(), vout = Number(url.searchParams.get('vout')), r = url.searchParams.get('round');
+        if (!/^[0-9a-f]{64}$/.test(txid) || !Number.isInteger(vout) || vout < 0 || (r && !/^[0-9a-f]{64}$/.test(r))) return text(res, 400, 'name a bond: ?txid=<64 hex, as the census lists it>&vout=<n>, and a round if the offence has one');
+        const got = seating.presigOf({ rid: r ? fromHex(r) : null, txid, vout });
+        if (!got) return text(res, 404, 'this seat holds no slash_presig for that bond');
+        // AND THE PANELS ITS HOLD OUTPUT NAMES, so whoever files can rebuild that output (none when this seat no longer holds the round)
+        let panels = null;
+        try {
+          const row = round.get(fromHex(got.round));
+          const h = row ? holdsOfRound(fromHex(got.round), decodeRoundContract(new Uint8Array(row.contract))) : null;
+          if (h && h.ok && h.panels) panels = { n: h.panels.n, t: h.panels.t, a: h.panels.panelA.map((e) => toHex(e.pubkey)), b: h.panels.panelB.map((e) => toHex(e.pubkey)) };
+        } catch { panels = null; }
+        return json(res, 200, { ...got, panels });
       }
       if (seating && req.method === 'GET' && url.pathname === '/seating-batch') {
         const ids = String(url.searchParams.get('rounds') || '').toLowerCase().split(',').filter(Boolean);
