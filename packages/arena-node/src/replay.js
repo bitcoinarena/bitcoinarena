@@ -31,7 +31,7 @@ import { isMainThread, parentPort, workerData, Worker } from 'node:worker_thread
 // core's to say.
 import { lastTickOfRun, runTicksForEntry } from '../../arena-protocol/src/contracts.js';
 import { INPUT_WORDS } from '../../arena-protocol/src/batch.js';
-import { seedWordForEntry, worldSeedWord } from '../../arena-protocol/src/seed.js';
+import { seedWordForEntry, worldSeedWord, worldSlot } from '../../arena-protocol/src/seed.js';
 // AND SINCE KANBAN (spec §0A.6) THE CORE RUNS ONLY IN ITS SANDBOX: no network, no file system, no clock. The loop
 // below is core-driver.js, inside it; this file checks what it hands in and reads back what the core said.
 import { sandboxFor } from './core-sandbox.js';
@@ -72,6 +72,12 @@ function seedWordOf(entry, roundRandomness, core) {
   if (core && core.world && core.world.configHash instanceof Uint8Array)
     return worldSeedWord({ entry, roundRandomness, contract: core.world, roundId: core.world.roundId, sharedWorld: core.world.sharedWorld });
   return seedWordForEntry(entry, roundRandomness);
+}
+
+/** THE PLACE THIS RUN STARTS AT (kanban #828, seed.js worldSlot): a shared-world round's, the same number the page's join computes. */
+function slotOf(entry, core) {
+  return core && core.world && core.world.configHash instanceof Uint8Array
+    ? worldSlot({ entry, contract: core.world, sharedWorld: core.world.sharedWorld }) : undefined;
 }
 
 /**
@@ -195,7 +201,7 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
   let ran;
   try {
     ran = s.call('replay', {
-      seedWord, config: core.config, runTicks: runTicksForEntry(start, runTicks), start, ...(unl.unlocks.length ? { items: unl.unlocks } : {}),
+      seedWord, config: core.config, runTicks: runTicksForEntry(start, runTicks), start, ...(unl.unlocks.length ? { items: unl.unlocks } : {}), slot: slotOf(entry, core),
       words: ticks.map((t) => t.words),
       events: { liquidations: transcript.liquidations, loads: transcript.loads, samples: transcript.samples, tapes: transcript.tapes },
       marks: marks.map((m) => [m.tick, hex(m.stateHash)]), pictures,
@@ -366,7 +372,7 @@ export class RunInProgress {
       const unl = unlocksOf(entry, core);
       if (!unl.ok) return Object.assign(this, { ok: false, why: unl.why });
       this.id = this.s.call('open', { seedWord, config: core.config, runTicks: runTicksForEntry(entry.joinTick, this.runTicks),
-        ...(unl.unlocks.length ? { items: unl.unlocks } : {}) });
+        ...(unl.unlocks.length ? { items: unl.unlocks } : {}), slot: slotOf(entry, core) });
     } catch (e) { return Object.assign(this, { ok: false, why: e.message }); }
     DROP.register(this, { s: this.s, id: this.id });
     this.endsAt = lastTickOfRun(entry.joinTick, this.runTicks);

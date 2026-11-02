@@ -5088,6 +5088,35 @@
     }
    }
   },
+  "/market-sources": {
+   "get": {
+    "tags": [
+     "Builders"
+    ],
+    "summary": "The market source list",
+    "description": "The market source list live on this seat's chain, as the bonded nodes voted it, and the donation set id in force. network names the chain; this seat's by default.\n\nAccess: none\n\nReturns: 200 JSON {hosts[], entries[], since, by, history[], donationSetId}\n\nSource: `packages/arena-node/src/server.js` line 7276.",
+    "operationId": "get_market_sources",
+    "parameters": [
+     {
+      "name": "network",
+      "in": "query",
+      "required": false,
+      "description": "Network id, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{hosts[], entries[], since, by, history[], donationSetId}.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
   "/name": {
    "post": {
     "tags": [
@@ -7297,6 +7326,92 @@
     }
    }
   },
+  "/owner/market-publish": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Publish a signed market",
+    "description": "Publishes a signed market from the owner's page: a bonded node takes the manifest, which must name a source, and hosts it. Other seats host it from there.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, game, already?}; 400 no manifest, or one that names no source; 401; 403 not a bonded node; 409 no installed apps or no donation set in force; 422\n\nSource: `packages/arena-node/src/server.js` line 6547.",
+    "operationId": "post_owner_market_publish",
+    "requestBody": {
+     "required": true,
+     "description": "Signed request, action \"market-publish\", args {manifest}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok, game, already?}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not a manifest, or it names no source.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Not the owner.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "403": {
+      "description": "Only a bonded node publishes a market.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "409": {
+      "description": "This node keeps no installed apps, or knows no donation set in force.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/owner/market-test": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Test a market source",
+    "description": "Runs a market's source once, or a proposed source's example, in the node's sandbox and answers what it read, against the listed sources.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 the test's answer, {ok, why?} on a refusal; 401\n\nSource: `packages/arena-node/src/server.js` line 7004.",
+    "operationId": "post_owner_market_test",
+    "requestBody": {
+     "required": true,
+     "description": "Signed request, action \"market-test\", args {example} or a market source.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "The result of the run; {ok: false, why} when it was refused.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Not the owner.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
   "/owner/musig/nonce": {
    "post": {
     "tags": [
@@ -8463,6 +8578,104 @@
      },
      "409": {
       "description": "Node has no owner yet.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/owner/source-proposal": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Propose a market source",
+    "description": "Proposes a new market source from the owner's page. Without txid: the deposit, paid from the bond wallet, or what to pay where the node has none. With a confirmed txid: the node's key signs the proposal and every seat is asked to take it. The example is read again at each step.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, paid, depositSats, outputs?, txid?} without txid, the signed proposal with a confirmed one; 400; 401; 422 the example did not answer; 501 no ballot\n\nSource: `packages/arena-node/src/server.js` line 7017.",
+    "operationId": "post_owner_source_proposal",
+    "requestBody": {
+     "required": true,
+     "description": "Signed request, action \"source-proposal\", args {entry, txid?}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "The deposit or the signed proposal.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "The plan does not stand, or the deposit could not be paid.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Not the owner.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "422": {
+      "description": "The example did not answer.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "501": {
+      "description": "This node reads no ballot.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/owner/source-vote": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Vote on a market source list",
+    "description": "The node's vote on a kept source list proposal: YES, NO or ABSTAIN, as an OP_RETURN signed by its key, sent from the bond wallet or handed back to be sent by hand. Before a YES each added source's example is read here.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner\n\nReturns: 200 {ok, sent, opReturn?, txid?}; 400 no kept proposal or no choice; 401; 422 an added source did not answer\n\nSource: `packages/arena-node/src/server.js` line 7048.",
+    "operationId": "post_owner_source_vote",
+    "requestBody": {
+     "required": true,
+     "description": "Signed request, action \"source-vote\", args {proposalId, choice}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok, sent, opReturn?}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "A vote names a kept proposal and YES, NO or ABSTAIN.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Not the owner.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "422": {
+      "description": "An added source did not answer here.",
       "content": {
        "application/json": {}
       }
