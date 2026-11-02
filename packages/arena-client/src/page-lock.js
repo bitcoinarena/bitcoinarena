@@ -1160,6 +1160,9 @@ export const shortOnlyByFees = (haveMsat, shortMsat, stakeMsat) => haveMsat > 0n
  * is what is being issued; 0 from a client that cannot tell.
  */
 export const ISSUE_POLL_MS = 1000;
+/** How often a wallet waiting on a deposit is looked at, and what the wait ends with when it covers the round. */
+export const LANDED_POLL_MS = 2000;
+const LANDED = Object.freeze({ landed: true });
 export const ISSUE_WAIT_MS = 600000;
 export async function issuingMsat(client) {
   if (!client || typeof client.issuingMsat !== 'function') return 0n;
@@ -1197,7 +1200,7 @@ export async function earlyDepositOffer({ round, invite, seed, LockClient, stora
 }
 
 export async function fundPlayerWallet({ round, invite, seed, LockClient, storage, donationMsat = 0n, donationRecipients = null, gateways = [],
-  estimateDeposit = false, askDeposit = null, onDeposit = () => {}, onStep = () => {}, entryClosesMs = null, early = null } = {}) {
+  estimateDeposit = false, askDeposit = null, onDeposit = () => {}, onStep = () => {}, entryClosesMs = null, early = null, onLanded = () => {} } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
   const locks = await locksFor(round, client, donationMsat, donationRecipients);
   const deposits = [];
@@ -1239,6 +1242,14 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
       // clock at 0:00 behind it, no error): at the round's last entry instant the request is closed with the reason - the join is
       // refused by name. Its invoice is still followed: paid later, it lands in the player wallet, for the next round.
       let closeTimer = null;
+      // SATS THAT COME ANOTHER WAY END THE WAIT (kanban #1042, measured 2026-11-02 on a fresh wallet: a tap at 47 s, the faucet's 500 sat landing at about 60 s, and the join sat
+      // on the invoice until the entry closed): the wallet is looked at while the invoice stands, and once it covers the round the funding goes on
+      let stopLook = () => {};
+      const landed = new Promise((go) => {
+        const look = setInterval(async () => { try { const h = BigInt(await client.balanceMsat()), m = await needFor(client, LockClient, locks); if (m.need !== null && h >= m.need) go(LANDED); } catch { /* the next look */ } }, LANDED_POLL_MS);
+        stopLook = () => clearInterval(look);
+      });
+      let got = null;
       // A DEPOSIT ASKED BECAUSE THE WALLET WAS SHORT IS THE WALLET'S, NOT THE ROUND'S (2026-10-18 playtest, RPS with 0 sat: "No deposit
       // screen comes" - measured on the test host: an RPS round's entry closed 3 s after the press, which closed the offer before it was ever
       // seen): at the round's entry close the join ends by name, and the early offer stays on the screen - its invoice still followed, paid
@@ -1246,14 +1257,15 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
       if (adopt && entryClosesMs !== null && entryClosesMs !== undefined && Number.isFinite(Number(entryClosesMs))) {
         const why = `the round's entry closed at ${new Date(Number(entryClosesMs)).toISOString().slice(11, 19)} UTC before the deposit arrived: nothing was taken for this round; the deposit is still open and goes into your wallet for the next round`;
         const left = Math.max(0, Number(entryClosesMs) - Date.now());
-        await Promise.race([offer.claimed, new Promise((resolve, reject) => { closeTimer = setTimeout(() => reject(new Error(why)), left); })])
-          .finally(() => { if (closeTimer) clearTimeout(closeTimer); });
+        got = await Promise.race([offer.claimed, landed, new Promise((resolve, reject) => { closeTimer = setTimeout(() => reject(new Error(why)), left); })])
+          .finally(() => { if (closeTimer) clearTimeout(closeTimer); stopLook(); });
       } else if (entryClosesMs !== null && entryClosesMs !== undefined && Number.isFinite(Number(entryClosesMs))) {
         const why = `the round's entry closed at ${new Date(Number(entryClosesMs)).toISOString().slice(11, 19)} UTC before the deposit arrived: nothing was taken for this round`;
         const left = Number(entryClosesMs) - Date.now();
         if (left <= 0) offer.close(why); else closeTimer = setTimeout(() => offer.close(why), left);
       }
-      const d = await offer.claimed.finally(() => { if (closeTimer) clearTimeout(closeTimer); });
+      const d = got || await Promise.race([offer.claimed, landed]).finally(() => { if (closeTimer) clearTimeout(closeTimer); stopLook(); });
+      if (d === LANDED) { onStep('the wallet covers this round now: the invoice is left unpaid'); onLanded(offer); continue; }
       deposits.push(d);
       depositRow(storage, round, d);
       prev = offer;
