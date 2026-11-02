@@ -39,6 +39,8 @@ export async function fundAtRate(rpc, outputs, feeRate) {
     if (!s.complete) throw new Error(`the wallet did not sign the transaction: ${JSON.stringify(s.errors || [])}`);
     return { hex: s.hex, vsize: (await rpc('decoderawtransaction', [s.hex])).vsize };
   };
+  // WHAT THE OUTPUTS THEMSELVES PAY comes out of the coins too (kanban #972): every caller so far named zero-value OP_RETURNs, and a funded output came back "value in < value out"
+  const paying = outputs.reduce((n, o) => n + Buffer.from(o).readBigUInt64LE(0), 0n);
   const chosen = [];
   let have = 0n;
   for (const c of coins) {
@@ -46,14 +48,14 @@ export async function fundAtRate(rpc, outputs, feeRate) {
     // THE SIZE WITH A CHANGE OUTPUT, signed once to read it (a witness is not in the unsigned bytes)
     const { vsize } = await sign(serializeUnsigned(chosen, outputs, { value: 0n, script: changeScript }));
     const fee = BigInt(Math.ceil(vsize * feeRate));
-    if (have < fee) continue;
-    const change = have - fee;
+    if (have < fee + paying) continue;
+    const change = have - fee - paying;
     if (change >= DUST) {
       const signed = await sign(serializeUnsigned(chosen, outputs, { value: change, script: changeScript }));
       return { hex: signed.hex, fee, vsize: signed.vsize };
     }
     const signed = await sign(serializeUnsigned(chosen, outputs, null));
-    return { hex: signed.hex, fee: have, vsize: signed.vsize };
+    return { hex: signed.hex, fee: have - paying, vsize: signed.vsize };
   }
   throw new Error(`the wallet's ${coins.length} spendable coins (${have} sat) do not pay ${outputs.length} outputs at ${feeRate} sat/vB`);
 }
