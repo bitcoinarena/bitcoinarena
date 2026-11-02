@@ -39,14 +39,18 @@ export function stallBook({ round, presence, verify, sign, log = () => {}, seatR
   const me = () => toHex(round.pubkey);
   const contractOfStall = (rid) => { const row = round.get(rid); if (!row) return null; try { return decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; } };
 
-  /** A note handed over: kept when it stands and this seat holds its round. */
+  const keep = (rid, stage, signer, c, bytes) => db.prepare('INSERT OR IGNORE INTO stall_notes (round_id, stage, signer, close_ms, bytes) VALUES (?, ?, ?, ?, ?)').run(rid, stage, signer, Number(stallCloseMs(c)), bytes);
+  /** A note handed over: kept when it stands, this seat holds its round, and its round's draw holds its signer. The door is open, and the signer's key is all a stranger needs to bring. */
   function take(bytes) {
     const v = verifyStallNote(bytes, { verify });
     if (!v.ok) return v;
     const rid = fromHex(v.note.roundId), c = contractOfStall(rid);
     if (!c) return { ok: false, why: 'this seat holds no such round' };
     if (!stallsOut(c)) return { ok: false, why: 'that round is not under the stall rule' };
-    db.prepare('INSERT OR IGNORE INTO stall_notes (round_id, stage, signer, close_ms, bytes) VALUES (?, ?, ?, ?, ?)').run(rid, v.note.stage, v.note.signer, Number(stallCloseMs(c)), bytes);
+    const d = presence.drawOf(toHex(seatRoundOf(rid)), 'settlement');
+    if (!d) return { ok: false, why: 'this seat cannot draw that round' };
+    if (!d.drawn.includes(v.note.signer)) return { ok: false, why: `${v.note.signer.slice(0, 16)} was not drawn for that round` };
+    keep(rid, v.note.stage, v.note.signer, c, bytes);
     return { ok: true };
   }
 
@@ -82,7 +86,7 @@ export function stallBook({ round, presence, verify, sign, log = () => {}, seatR
       if (!silent) continue;                                                 // asked again next pass: a seat's turn to ask may still come
       db.prepare('INSERT OR IGNORE INTO stall_noted (round_id, stage) VALUES (?, ?)').run(rid, stage);
       const bytes = signStallNote({ roundId: rid, stage, silent }, round.pubkey, sign);
-      take(bytes);
+      keep(rid, stage, me(), c, bytes);
       out.push(bytes);
       log(`[stall] ${toHex(rid).slice(0, 16)} ${stage === STALL_STAGE.RESULT ? 'RESULT' : 'SETTLEMENT'}: noted ${silent.length} silent seat(s)`);
     }
