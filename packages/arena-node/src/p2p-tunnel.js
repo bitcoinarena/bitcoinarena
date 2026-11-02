@@ -68,6 +68,7 @@ export function carryP2p(ws, port, { host = '127.0.0.1', connect = netConnect, k
 // websocket to that peer's CURRENT census endpoint `<endpoint>/guardian` - the same address the P2P tunnel follows. The
 // overrides never change; only where the seat carries them does.
 export const GUARDIAN_API_RELAY_PATH = '/guardian-api/';
+export const GUARDIAN_NEXT_PATH = '/guardian-next';
 
 /**
  * The overrides a guardian is started with: each peer's API URL in the federation's config (`apiEndpoints`, the client config's
@@ -78,8 +79,11 @@ export function guardianApiOverrides({ apiEndpoints, ownName = null, seatRoot, o
   const out = new Map();
   for (const p of Object.values(apiEndpoints || {})) {
     if (!p || typeof p.url !== 'string' || typeof p.name !== 'string' || !/^[0-9a-f]{8,64}$/i.test(p.name)) continue;
+    // A SEAT HOLDS TWO FEDERATIONS' GUARDIANS (kanban #1032, measured 2026-11-02 15:50Z: federation 4dc88be7 stood from 12:00Z, its guardians asked their peers for a finished
+    // session through this relay and reached each node's first federation, session 9243 against 25533, and waited for ever): a peer named at .../guardian-next is carried there
+    const next = /\/guardian-next\/?$/.test(p.url) ? GUARDIAN_NEXT_PATH : '';
     const to = ownName && p.name.toLowerCase() === String(ownName).toLowerCase() && ownApiPort ? `ws://127.0.0.1:${ownApiPort}/`
-      : `${seatRoot}${GUARDIAN_API_RELAY_PATH}${p.name.toLowerCase()}`;
+      : `${seatRoot}${GUARDIAN_API_RELAY_PATH}${p.name.toLowerCase()}${next}`;
     const url = p.url.replace(/\/+$/, '');
     for (const v of [url, `${url}/`]) out.set(v, to);
   }
@@ -91,8 +95,8 @@ export function guardianApiOverrides({ apiEndpoints, ownName = null, seatRoot, o
 }
 
 /** The relay: a websocket the seat accepted on /guardian-api/<name>, its messages carried both ways to `<root>/guardian`. */
-export function carryApi(ws, root, { openWs = (url) => new WebSocket(url, { maxPayload: 64 * 1024 * 1024 }), keepAliveMs = P2P_KEEPALIVE_MS } = {}) {
-  const up = openWs(`${root}/guardian`);
+export function carryApi(ws, root, { openWs = (url) => new WebSocket(url, { maxPayload: 64 * 1024 * 1024 }), keepAliveMs = P2P_KEEPALIVE_MS, path = '/guardian' } = {}) {
+  const up = openWs(`${root}${path}`);
   const held = [];
   const stopDown = keepAlive(ws, keepAliveMs);
   const done = () => { stopDown(); try { up.close(); } catch { /* gone */ } try { ws.close(); } catch { /* gone */ } };

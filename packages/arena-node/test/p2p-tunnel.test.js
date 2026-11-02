@@ -107,6 +107,19 @@ test('an idle tunnel is pinged from both ends, well inside a proxy\'s 100 s idle
 
 // THE GUARDIANS' API THROUGH THE NODES (kanban #577, measured 2026-10-26 on e2f42eea: the config named each guardian's API at its 10-22 quick
 // tunnel; once those were gone, six guardians that fell one session behind could not fetch it from any peer and the federation halted)
+// A SEAT HOLDS TWO FEDERATIONS' GUARDIANS (kanban #1032): a peer of the second federation is relayed to its /guardian-next, not to the node's first federation
+test('a peer named at /guardian-next is relayed to /guardian-next, and carried there', () => {
+  const v = guardianApiOverrides({ apiEndpoints: { 0: { url: 'wss://h/fed2-4/guardian-next', name: 'aaaaaaaaaaaaaaaa' }, 1: { url: 'wss://h/fed2-8/guardian', name: 'bbbbbbbbbbbbbbbb' } }, seatRoot: 'ws://127.0.0.1:8470' });
+  const m = new Map(v.split(',').map((x) => [x.slice(0, x.indexOf('=')), x.slice(x.indexOf('=') + 1)]));
+  assert.equal(m.get('wss://h/fed2-4/guardian-next'), `ws://127.0.0.1:8470${GUARDIAN_API_RELAY_PATH}aaaaaaaaaaaaaaaa/guardian-next`);
+  assert.equal(m.get('wss://h/fed2-8/guardian'), `ws://127.0.0.1:8470${GUARDIAN_API_RELAY_PATH}bbbbbbbbbbbbbbbb`);
+  const opened = []; const fake = { on() {}, close() {}, readyState: 1, send() {} };
+  const openWs = (u) => { opened.push(u); return fake; };
+  carryApi(fake, 'wss://h/fed2-4', { openWs, keepAliveMs: 0, path: '/guardian-next' }).close();
+  carryApi(fake, 'wss://h/fed2-8', { openWs, keepAliveMs: 0 }).close();
+  assert.deepEqual(opened, ['wss://h/fed2-4/guardian-next', 'wss://h/fed2-8/guardian']);
+});
+
 test('a guardian is started with each peer\'s config address sent to its seat\'s relay, its own to its local API, and other overrides kept', () => {
   const apiEndpoints = { 0: { url: 'wss://old-a.trycloudflare.com/guardian', name: 'aaaaaaaaaaaaaaaa' }, 1: { url: 'wss://old-b.trycloudflare.com/guardian/', name: 'BBBBBBBBBBBBBBBB' },
     2: { url: 'ws://198.51.100.106:6571/guardian', name: 'cccccccccccccccc' } };
