@@ -6,13 +6,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import {
-  slashHoldsOnRelease, slashHoldsOnReleaseTable, slashHoldsOnEscrowSpend, encodeSlashPayoutTable, decodeSlashPayoutTable, slashPayoutTableId, buildSlashPayoutTable, slashDistribution,
+  slashHoldsOnRelease, slashHoldsOnReleaseTable, slashHoldsOnEscrowSpend, escrowTableSpend, encodeSlashEscrowOutputs, decodeSlashEscrowOutputs, slashEscrowOutputsId, encodeSlashPayoutTable, decodeSlashPayoutTable, slashPayoutTableId, buildSlashPayoutTable, slashDistribution,
   encodeSlashProof, decodeSlashProof, affectedEntries, RELEASE_WITHOUT_PROOF, RELEASE_OFF_TABLE,
 } from '../../arena-protocol/src/slash.js';
 import { releaseLeaf, tapLeafHash, slashLeaf } from '../../arena-protocol/src/bond-script.js';
 import { tapSighash, serializeSpend, scriptPathWitness } from '../../arena-protocol/src/bond-spend.js';
 import { arbitrationCommitment, holdSlashSpend } from '../../arena-protocol/src/arbitration-tx.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
+import { carrierEscrowPegInId } from '../../arena-protocol/src/census-key.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { SLASH_REMAINDERS } from '../../arena-protocol/src/constants.js';
 
@@ -229,8 +230,12 @@ test('the fee comes off the reserves, never the players', () => {
 test('what fits no carrier and no federation is the escrow; with no panels, no carrier, the players\' part waits there (kanban #1021)', () => {
   const none = built({ carriers: [] });
   assert.equal(none.ok, true, none.why);
-  assert.ok(none.table.outputs.some((o) => o.pays === 'escrow' && o.value === 10000001n));
+  assert.deepEqual(paysOf(none.table), [['filer', 5000n], ['escrow', 99993500n]], 'no player_carrier output, and all of it waits in escrow');
+  assert.deepEqual(none.table.reserves, []);
   assert.equal(sum(none.table) + 1500n, 100000000n);
+  assert.deepEqual(paysOf(built({ carriers: [{ script: payee, bondSats: 100n }] }).table).map((x) => x[0]), ['filer', 'escrow'], 'a carrier under dust carries nothing');
+  assert.equal(built({ carriers: [], entries: [] }).table.outputs.some((o) => o.pays === 'reserves'), true, 'with no player owed the reserves are paid as ever');
+  assert.match(built({ carriers: [], escrowScript: null }).why, /wait for a carrier/);
   const noRoom = built({ federations: [] });
   assert.equal(noRoom.table.outputs[noRoom.table.outputs.length - 1].pays, 'escrow');
   assert.equal(sum(noRoom.table) + 1500n, 100000000n);
@@ -238,7 +243,7 @@ test('what fits no carrier and no federation is the escrow; with no panels, no c
   assert.match(built({ feeSats: 99999999n }).why, /cannot carry/);
 });
 
-test('a fallback carries the same OP_RETURN and the same table as a release; only its wait differs (kanban #1021)', () => {
+test('a fallback carries the same OP_RETURN fields and a table of this format; only its wait differs (kanban #1021, #1034 answer 1)', () => {
   const { table: t } = built();
   const hold = { txid: b32(0x66), vout: 0, value: 100000000n, script: holdScript };
   const args = { hold, proofId, slashHeight: 900, table: t, tableId: slashPayoutTableId(t), clocks: { holdBlocks: 6, fallbackBlocks: 288 } };
@@ -261,26 +266,55 @@ test('a carrier under dust is raised out of the reserves, and merged into the on
   assert.deepEqual(paysOf(tight.table), [['player_carrier', 6100n]], 'the merge pays the player whole');
 });
 
-test('an escrow spend answers to the release\'s table: its id, payable peg-ins only, nothing past what the release left (kanban #1031)', () => {
-  const escrowScript = fromHex(`5120${'ee'.repeat(32)}`), pegIn = fromHex(`5120${'dd'.repeat(32)}`), thief = fromHex(`5120${'99'.repeat(32)}`);
-  const t = { ...table, outputs: [pays[0], { value: 59990000n, script: escrowScript, pays: 'escrow' }] };
+test('an escrow spend answers to the release\'s table: both ids, peg-ins a carrier signed for this table, amounts by pays (kanban #1031, #1034 answer 2)', () => {
+  const escrowScript = fromHex(`5120${'ee'.repeat(32)}`), pegIn = fromHex(`5120${'dd'.repeat(32)}`), fedIn = fromHex(`5120${'dc'.repeat(32)}`), thief = fromHex(`5120${'99'.repeat(32)}`);
+  const t = { ...table, outputs: [pays[0], { value: 59990000n, script: escrowScript, pays: 'escrow' }],
+    entries: [{ entryId: b32(0xe1), playerPubkey: b32(0xa1), lossMsat: 45000000000n }], reserves: [] };   // 5,000,000 sat of the players' part left in escrow
   const id = slashPayoutTableId(t);
   const release = signedRelease({ outputs: [arbitrationCommitment(proofId, 900, id), ...t.outputs] });
   const set = [...A].sort(compare);
   const leaf = slashLeaf(set.map((p) => p.key), 5);
   const input = { txid: parseTransaction(release).txid, vout: 2, sequence: 0xfffffffd };
-  const out = (bytes) => ({ value: 0n, script: Uint8Array.from([0x6a, 32, ...bytes]) });
-  const pay = (outputs) => signedRelease({ outputs, signers: set.slice(0, 5), leaf, order: set, input });
-  const ask = (spend, over = {}) => slashHoldsOnEscrowSpend({ proof: proofOf(spend, id), spend, release, prevouts, table: encodeSlashPayoutTable(t), payable: (s) => toHex(s) === toHex(pegIn), advert, verify, ...over });
-  assert.match(ask(pay([out(id), { value: 1000n, script: pegIn }, { value: 59980000n, script: escrowScript }])).why, /answers to its table/);
-  assert.match(ask(pay([{ value: 1000n, script: pegIn }])).why, /does not carry payout_table_id/);
-  assert.equal(ask(pay([{ value: 1000n, script: pegIn }])).offence, RELEASE_OFF_TABLE);
-  assert.match(ask(pay([out(b32(1)), { value: 1000n, script: pegIn }])).why, /does not carry payout_table_id/);
-  assert.match(ask(pay([out(id), { value: 1000n, script: thief }])).why, /neither the table/);
-  const first = pay([out(id), { value: 59000000n, script: pegIn }]);
-  const second = pay([out(id), { value: 59000000n, script: pegIn }]);
-  assert.match(ask(second, { earlier: [first] }).why, /where the release left/);
-  const away = signedRelease({ outputs: [out(id), { value: 1n, script: pegIn }], signers: set.slice(0, 5), leaf, order: set, input: { ...input, txid: b32(3) } });
+  const signedBy = (who, tableId, script) => ({ key: who.key, signature: schnorr.sign(carrierEscrowPegInId(tableId, script), who.secret) });
+  const carrier = A[3], stranger = person(40);
+  const pegs = new Map([[toHex(pegIn), signedBy(carrier, id, pegIn)], [toHex(fedIn), signedBy(carrier, id, fedIn)], [toHex(thief), signedBy(stranger, id, thief)]]);
+  const pegInOf = (script) => pegs.get(toHex(script)) || null;
+  const isCarrier = (k) => k === toHex(carrier.key);
+  const opening = (outs, tid = id) => ({ value: 0n, script: Uint8Array.from([0x6a, 64, ...tid, ...slashEscrowOutputsId({ tableId: tid, outputs: outs })]) });
+  const sendOf = (outs) => ({ outputs: encodeSlashEscrowOutputs({ tableId: id, outputs: outs }), spend: signedRelease({ outputs: [opening(outs), ...outs.map((o) => ({ value: o.value, script: o.script }))], signers: set.slice(0, 5), leaf, order: set, input }) });
+  const ask = ({ spend, outputs }, over = {}) => slashHoldsOnEscrowSpend({ proof: proofOf(spend, id), spend, outputs, release, prevouts, table: encodeSlashPayoutTable(t), pegInOf, isCarrier, advert, verify, ...over });
+  const player = (value, script = pegIn) => ({ value, script, pays: 'player_carrier' }), reserve = (value) => ({ value, script: fedIn, pays: 'reserves' }), back = (value) => ({ value, script: escrowScript, pays: 'escrow' });
+
+  const built2 = escrowTableSpend({ escrow: { txid: input.txid, vout: 2, value: 59990000n, script: escrowScript }, tableId: id, payees: [player(1000n)], feeSats: 500n });
+  assert.equal(built2.ok, true, built2.why);
+  assert.equal(toHex(built2.tx.outputs[0].script), toHex(opening(built2.outputs.outputs).script), 'OP_RETURN = payout_table_id || its outputs\' id');
+  assert.deepEqual(built2.outputs.outputs.map((o) => [o.pays, o.value]), [['player_carrier', 1000n], ['escrow', 59988500n]]);
+  assert.deepEqual(decodeSlashEscrowOutputs(encodeSlashEscrowOutputs(built2.outputs)).outputs.map((o) => o.pays), ['player_carrier', 'escrow']);
+
+  assert.match(ask(sendOf([player(1000n), back(59980000n)])).why, /answers to its table/);
+  assert.match(ask(sendOf([player(5000000n), reserve(54000000n)])).why, /answers to its table/, 'the players\' part, then the rest placed by load');
+  const bare = { outputs: encodeSlashEscrowOutputs({ tableId: id, outputs: [player(1000n)] }), spend: signedRelease({ outputs: [{ value: 1000n, script: pegIn }], signers: set.slice(0, 5), leaf, order: set, input }) };
+  assert.match(ask(bare).why, /does not carry payout_table_id/);
+  assert.equal(ask(bare).offence, RELEASE_OFF_TABLE);
+  const noTable = { ...bare, spend: signedRelease({ outputs: [opening([player(1000n)], b32(1)), { value: 1000n, script: pegIn }], signers: set.slice(0, 5), leaf, order: set, input }) };
+  assert.match(ask(noTable).why, /does not carry payout_table_id/);
+  const honest = sendOf([player(1000n)]);
+  assert.match(ask({ ...honest, outputs: encodeSlashEscrowOutputs({ tableId: id, outputs: [player(1000n), back(5000n)] }) }).why, /not the ones that spend committed to/, 'nobody is slashed on another list');
+  const off = [player(1000n)];
+  const moved = { outputs: encodeSlashEscrowOutputs({ tableId: id, outputs: off }), spend: signedRelease({ outputs: [opening(off), { value: 2000n, script: pegIn }], signers: set.slice(0, 5), leaf, order: set, input }) };
+  assert.match(ask(moved).why, /other than its own outputs/);
+  assert.match(ask(sendOf([player(1000n, thief)])).why, /no carrier signed/, 'signed, but not by a carrier');
+  assert.match(ask(sendOf([player(1000n)]), { pegInOf: () => null }).why, /no carrier signed/, 'a script nobody signed');
+  pegs.set(toHex(pegIn), signedBy(carrier, b32(0x31), pegIn));
+  assert.match(ask(sendOf([player(1000n)])).why, /no carrier signed/, 'a peg-in signed for another table');
+  pegs.set(toHex(pegIn), signedBy(carrier, id, pegIn));
+  assert.match(ask(sendOf([{ value: 1000n, script: thief, pays: 'escrow' }])).why, /no carrier signed/, 'escrow change goes back to the escrow');
+  assert.match(ask(sendOf([player(5000001n)])).why, /where the table left 5000000 and 54990000/, 'past the players\' part');
+  assert.match(ask(sendOf([reserve(54990001n)])).why, /where the table left/, 'the players\' part is not the reserves\'');
+  const first = sendOf([player(4000000n)]), second = sendOf([player(2000000n)]);
+  assert.match(ask(second, { earlier: [first] }).why, /where the table left/, 'counted with the spends before it');
+  assert.match(ask(sendOf([player(1000000n)]), { earlier: [first] }).why, /answers to its table/);
+  const away = { ...honest, spend: signedRelease({ outputs: [opening([player(1000n)]), { value: 1000n, script: pegIn }], signers: set.slice(0, 5), leaf, order: set, input: { ...input, txid: b32(3) } }) };
   assert.match(ask(away).why, /does not spend the release/);
 });
 

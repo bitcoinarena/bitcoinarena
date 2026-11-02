@@ -24,9 +24,10 @@ import {
   contributionSetOf, encodeAgreement, agreementId, splitSignedAgreement, agreementHolds,
 } from '../../arena-protocol/src/dkg.js';
 import {
-  dealCensusKey, acceptCensusDeal, openCensusDeal, checkDealsBatched, makeCensusComplaint, censusComplaintHolds, censusSetId, censusStatementId,
-  censusSetAgreed, combineCensusKey, encodeCensusDeal, decodeCensusDeal, checkReshareDeals,
+  dealCensusKey, acceptCensusDeal, openCensusDeal, checkDealsBatched, makeCensusComplaint, censusComplaintHolds, censusSetId, censusRecordOf,
+  censusRecordAgreed, combineCensusKey, encodeCensusDeal, decodeCensusDeal, checkReshareDeals,
 } from '../../arena-protocol/src/census-dkg.js';
+import { censusKeyRecordId } from '../../arena-protocol/src/census-key.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { scalarFrom32, scalarTo32, FIELD, shareOpensTo } from '../../arena-protocol/src/shares.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
@@ -425,12 +426,13 @@ export class Dkg {
 
 /**
  * THE CENSUS KEY, ONE NODE'S SIDE (spec 5A.3B, kanban #972). Beside `Dkg` and sharing nothing of its store: a round's claim key runs as ever. One
- * node, one run: it deals once, takes others' deals, complains of a bad one, signs the set it holds, and keeps its shares when holders of
- * the threshold signed one set.
+ * node, one run: it deals once, takes others' deals, complains of a bad one, signs the CensusKeyRecord of the deals it holds, and keeps its shares
+ * when holders of the threshold signed one record.
  *
- * `run` is { runId, holders, threshold, needed }, and for a reshare also { reshare: { dealers, oldThreshold, xs, oldCommitments, groupPublicKey } }:
+ * `run` is { runId, networkId, epoch, censusHeight, holders, total, threshold, needed }, and for a reshare also { reshare: { dealers, oldThreshold, xs, oldCommitments, groupPublicKey } }:
  * `dealers` the old nodes of censusRunId's list as holders of the old key, all of whom must deal. `part` is this node's own, when it deals.
- * The window a run waits for deals is the caller's, and these messages reach no route of the daemon yet.
+ * The caller keeps censusKeyWindow: deals in the first half, `statement` from the midpoint, on every valid deal held then.
+ * These messages reach no route of the daemon yet.
  */
 export class CensusDkg {
   constructor({ key, secret, run, curve, random, part = null }) {
@@ -510,24 +512,37 @@ export class CensusDkg {
     return proven;
   }
 
-  /** This node's signed word on the deals it holds. It says one set, once: a second is what names an equivocator. */
+  /** The CensusKeyRecord of the deals this node holds, from public data: its transcript hash is the run and that set. Null with no deals. */
+  record() {
+    const { runId, networkId, epoch, censusHeight, total, threshold, reshare } = this.run;
+    const deals = [...this.deals.values()].map((h) => h.deal);
+    if (!deals.length) return null;
+    const key = reshare ? { ok: true, groupPublicKey: reshare.groupPublicKey } : groupKeyOf(deals.map((d) => ({ commitments: [d.commitments[0]] })), this.curve);
+    if (!key.ok) return null;
+    return censusRecordOf({ networkId, epoch, censusHeight, runId, setId: censusSetId(deals), groupPublicKey: key.groupPublicKey, total, threshold });
+  }
+
+  /** This node's signature on that record. It says one record, once: a second is what names an equivocator. */
   statement() {
     if (this.said) return this.said;
-    const s = { runId: this.run.runId, node: this.key, setId: censusSetId([...this.deals.values()].map((h) => h.deal)) };
-    this.said = { ...s, signature: schnorr.sign(censusStatementId(s), this.secret) };
+    const record = this.record();
+    if (!record) return null;
+    const recordId = censusKeyRecordId(record);
+    this.said = { node: this.key, recordId, signature: schnorr.sign(recordId, this.secret) };
     return this.said;
   }
 
-  /** Keep the shares, once `statements` show holders of the threshold on the set this node holds. Absent nodes stop nothing, in a keygen. */
+  /** Keep the shares, once `statements` show holders of the threshold on the record of the deals this node holds. Absent nodes stop nothing, in a keygen. */
   finish(statements) {
-    const { runId, holders, threshold, reshare } = this.run;
-    const agreed = censusSetAgreed({ runId, holders, threshold, statements, verify: (sig, digest, key) => schnorr.verify(sig, digest, key) });
+    const { holders, threshold, reshare } = this.run;
+    const agreed = censusRecordAgreed({ holders, threshold, statements: statements.filter(Boolean), verify: (sig, digest, key) => schnorr.verify(sig, digest, key) });
     if (!agreed.ok) return agreed;
     const held = [...this.deals.values()];
-    if (toHex(censusSetId(held.map((h) => h.deal))) !== toHex(agreed.setId)) return { ok: false, why: 'the agreed set is not the deals this node holds: fetch the rest from any holder' };
+    const record = this.record();
+    if (!record || toHex(censusKeyRecordId(record)) !== toHex(agreed.recordId)) return { ok: false, why: 'the agreed record is not the deals this node holds: fetch the rest from any holder' };
     if (reshare && held.length !== reshare.dealers.length) return { ok: false, why: `${held.length} of the ${reshare.dealers.length} dealers of that reshare dealt: each part is a term over exactly that set, so the run goes again without the absent` };
     const key = combineCensusKey({ opened: held.map((h) => ({ deal: h.deal, shares: h.shares })), holders: this.dealers, threshold: reshare ? reshare.oldThreshold : threshold, curve: this.curve });
     if (!key.ok) return key;
-    return { ...key, setId: agreed.setId, have: agreed.have, equivocated: agreed.equivocated };
+    return { ...key, record, recordId: agreed.recordId, have: agreed.have, equivocated: agreed.equivocated };
   }
 }

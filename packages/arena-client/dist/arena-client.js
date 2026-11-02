@@ -1040,7 +1040,6 @@ const TYPE_HEARTBEAT = 0x39;
 const TYPE_HEARTBEAT_HEARD = 0x3a;
 // MAKING THE CENSUS KEY (5A.3B, census-dkg.js): never read as the claim key's messages, or the other way round.
 const TYPE_CENSUS_DEAL = 0x3b;
-const TYPE_CENSUS_STATEMENT = 0x3c;
 const TYPE_CENSUS_COMPLAINT = 0x3d;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
@@ -1107,13 +1106,15 @@ const TAG = {
   // Template 3: a round's two slash panels are drawn on their own seed, a release commits to its table, and a census key is named (5A.3B).
   slashPanel: 'ARENA/v1/SlashPanel',
   slashPayoutTable: 'ARENA/v1/SlashPayoutTable',
+  slashEscrowOutputs: 'ARENA/v1/SlashEscrowOutputs',
+  carrierEscrowPegIn: 'ARENA/v1/CarrierEscrowPegIn',
   censusKeyRecord: 'ARENA/v1/CensusKeyRecord',
+  censusKeyShare: 'ARENA/v1/CensusKeyShare',
   carrierPegIn: 'ARENA/v1/CarrierPegIn',
   censusRun: 'ARENA/v1/CensusRun',
   censusDealer: 'ARENA/v1/CensusDealer',
   censusDeal: 'ARENA/v1/CensusDeal',
   censusSet: 'ARENA/v1/CensusSet',
-  censusStatement: 'ARENA/v1/CensusStatement',
   censusComplaint: 'ARENA/v1/CensusComplaint',
   checkpoint: 'ARENA/v1/Checkpoint',
   checkpointReceipt: 'ARENA/v1/CheckpointReceipt',
@@ -7304,12 +7305,600 @@ function readProtocolVersionName(name) {
   return { ok: true, version: v, known: !!r };
 }
 
+// ---- arena-protocol/src/federation-slash.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// WHAT A FEDERATION'S BONDS COVER, AND WHERE A SLASHED ONE GOES.
+//
+// §23A.3 and §23A.5, as rules a caller can run rather than paragraphs somebody has to remember. Three
+// numbers live here and each has a way of being got wrong that this file exists to refuse:
+//
+//   the exposure cap      is (f + 1) x the SMALLEST seated bond, not the sum of the bonds. `f + 1` gone
+//                         is the smallest set that halts the federation, and their bonds are what a
+//                         liquidation pays players from - so the reserve may never exceed what the
+//                         cheapest possible set of leavers forfeits. Summing all ten would let a
+//                         federation hold cover it can only produce if EVERY guardian is slashed.
+//   a slashed bond        never goes straight to anybody: it waits in the federation's liquidation
+//                         escrow under the arbitration keys, and spends only when the federation is
+//                         CLOSED (nothing was lost: the whole bond to the protocol reserves) or HALTED.
+//                         On a HALT the ORDER is the whole of it - every unspent note is paid at face
+//                         value FIRST, and only what no player claimed goes to the reserves (§5A.3,
+//                         RULED 2026-11-02, kanban #976).
+//   the abandonment proof needs `2f + 1` attestations normally, and on a halt cannot have them: the
+//                         federation no longer has that many guardians. Then it is whoever is left,
+//                         plus the halt itself, which anyone can see.
+//
+// Amounts are msat as BigInt, like every other money number in this protocol.
+
+/** The smallest number of guardians whose loss halts a federation of `nominal` with threshold `2f + 1`. */
+
+const haltsAt = (f) => f + 1;
+
+/**
+ * §23A.3: `exposure_cap = (f + 1) x the smallest bond among its seated guardians`.
+ *
+ * At ten guardians and 7 of 10, `f = 3`, so four of the smallest bond - NOT the sum of all ten.
+ */
+function exposureCap({ bonds, f }) {
+  if (!Array.isArray(bonds) || !bonds.length) return { ok: false, why: 'a federation has seated guardians' };
+  if (!bonds.every((b) => typeof b === 'bigint' && b > 0n))
+    return { ok: false, why: 'every bond is a positive number of msat' };
+  if (!Number.isInteger(f) || f < 0) return { ok: false, why: 'f is how many faults the threshold tolerates' };
+  const smallest = bonds.reduce((a, b) => (b < a ? b : a));
+  return { ok: true, cap: BigInt(haltsAt(f)) * smallest, smallest, halts: haltsAt(f) };
+}
+
+/** Is a reserve within what the bonds actually cover? */
+function reserveFits({ reserve, bonds, f }) {
+  const capped = exposureCap({ bonds, f });
+  if (!capped.ok) return capped;
+  if (typeof reserve !== 'bigint' || reserve < 0n)
+    return { ok: false, why: 'a reserve is a number of msat' };
+  return { ok: true, fits: reserve <= capped.cap, cap: capped.cap, reserve,
+    over: reserve > capped.cap ? reserve - capped.cap : 0n };
+}
+
+/**
+ * §23A.5: where a slashed guardian bond goes (§5A.3, RULED 2026-11-02, kanban #976).
+ *
+ * `halted` is the whole of the difference. A federation that kept running lost nothing, so the whole bond goes to the protocol reserves;
+ * one that froze pays its note holders at face value FIRST and the remainder goes to the reserves. Nothing is burned on either road -
+ * `burned` stays in the answer at 0n so a burn cannot come back unnoticed.
+ */
+function slashSplit({ amountMsat, halted = false, notesOwedMsat = 0n }) {
+  if (typeof amountMsat !== 'bigint' || amountMsat < 0n)
+    return { ok: false, why: 'a slashed bond is a number of msat' };
+  if (!halted) return { ok: true, halted: false, notes: 0n, reserves: amountMsat, burned: 0n };
+  if (typeof notesOwedMsat !== 'bigint' || notesOwedMsat < 0n)
+    return { ok: false, why: 'the notes owed are a number of msat' };
+  // THE HALT CASE, AND THE ORDER IS THE RULE. Every unspent note is paid at face value first; only the remainder - what no player claimed
+  // inside the window - goes to the reserves. A short escrow pays the notes pro rata and leaves nothing over.
+  const notes = notesOwedMsat < amountMsat ? notesOwedMsat : amountMsat;
+  return { ok: true, halted: true, notes, reserves: amountMsat - notes, burned: 0n, proRata: notesOwedMsat > amountMsat };
+}
+
+/**
+ * §23A.4 / §23A.5: what an abandonment proof needs.
+ *
+ * Normally `2f + 1` guardian attestations. On a halt the federation no longer has that many, so the
+ * proof is whoever is still seated plus the halt itself - no consensus session for `abandon_blocks`,
+ * which anyone can observe at every guardian's endpoint.
+ */
+function abandonmentProofNeeds({ f, halted = false, seated = null }) {
+  if (!Number.isInteger(f) || f < 0) return { ok: false, why: 'f is how many faults the threshold tolerates' };
+  if (!halted) return { ok: true, attestations: 2 * f + 1, needsHaltFact: false };
+  const left = Number.isInteger(seated) && seated >= 0 ? seated : 0;
+  return { ok: true, attestations: left, needsHaltFact: true };
+}
+
+/**
+ * §23A.1's clocks, in blocks, as numbers a caller can run rather than a table somebody has to remember.
+ *
+ * Everything in that chapter that waits, waits in BLOCKS - a wall clock is not a thing a chain agrees on.
+ * The 36 h claim window is the owner's; the others are the spec's, matched to it.
+ *
+ *   abandon_blocks     absence that is abandonment; halt before liquidation; load before a founding
+ *   departure_notice   notice a guardian gives before leaving
+ *   founding_window    time a drawn set has to finish its DKG
+ *   drain_blocks       how long a draining federation serves, AND the late-claim tail (four weeks)
+ *   claim_blocks       the liquidation claim window the arbitration set opens
+ */
+const MAINNET_CLOCKS = Object.freeze({
+  abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216,
+});
+
+/**
+ * TESTNET RUNS THE SAME CLOCKS AT ABOUT A TWENTIETH (2026-09-21: much shorter), so a whole
+ * federation lifetime can be watched in a day instead of a month: 2 h / 3 h / 3 h / 24 h / 1.5 h.
+ * Regtest counts in tens of blocks, because its blocks come when somebody presses a button.
+ */
+const TESTNET_CLOCKS = Object.freeze({
+  abandonBlocks: 12, departureNotice: 18, foundingWindow: 18, drainBlocks: 144, claimBlocks: 9,
+});
+const REGTEST_CLOCKS = Object.freeze({
+  abandonBlocks: 10, departureNotice: 10, foundingWindow: 10, drainBlocks: 100, claimBlocks: 10,
+});
+const CLOCKS = Object.freeze({
+  mainnet: MAINNET_CLOCKS, testnet4: TESTNET_CLOCKS, testnet: TESTNET_CLOCKS, regtest: REGTEST_CLOCKS,
+});
+
+/** The clocks a network runs, refused rather than guessed for a network nobody pinned. */
+function clocksFor(network) {
+  const said = CLOCKS[network];
+  return said ? { ok: true, network, clocks: said }
+    : { ok: false, why: `${network} has no pinned federation clocks` };
+}
+
+/**
+ * HOW LONG A GUARDIAN LEAVING COSTS THE NETWORK, END TO END.
+ *
+ * Abandonment has to be proven before a succession can be drawn, and §23A.5 starts the succession AT the
+ * departure when the federation would otherwise be DRAINING - so the founding runs inside the drain
+ * rather than after it. Both are reported: the serial path for a guardian who simply vanishes, and the
+ * overlapped one for a departure with notice.
+ */
+function lifecycleBlocks(clocks) {
+  const serial = clocks.abandonBlocks + clocks.foundingWindow + clocks.drainBlocks;
+  const overlapped = clocks.abandonBlocks + Math.max(clocks.foundingWindow, clocks.drainBlocks);
+  return { serial, overlapped };
+}
+
+/**
+ * WHEN A HALTED FEDERATION'S REMAINDER MAY BE SPLIT, and not one block sooner.
+ *
+ * The claim window closes at `claim_blocks` and every valid claim filed in it is paid. A note shown LATE
+ * is still paid from what is left until `drain_blocks` after the halt - the player who was offline for a
+ * weekend is not the one the deadline is for. Only the remainder after THAT goes to the reserves, and
+ * nothing a player could still have claimed is ever destroyed.
+ */
+function liquidationSchedule({ haltHeight, clocks = MAINNET_CLOCKS }) {
+  if (!Number.isInteger(haltHeight) || haltHeight < 0)
+    return { ok: false, why: 'a halt happens at a block height' };
+  // THE WINDOW OPENS WHEN THE LIQUIDATION DOES (§23A.5: "A federation that has been HALTED for abandon_blocks ... is liquidated
+  // ... 2. The arbitration set opens a claim window of claim_blocks"), and runs claim_blocks from there. It closed at halt +
+  // claim_blocks before (found by the claim book's test): on mainnet 72 blocks BEFORE it opened at halt + 288, and
+  // a seat listed liquidatesAt 892 beside claimWindowCloses 889.
+  return {
+    ok: true,
+    claimWindowOpens: haltHeight + clocks.abandonBlocks,
+    claimWindowCloses: haltHeight + clocks.abandonBlocks + clocks.claimBlocks,
+    lateClaimsUntil: haltHeight + clocks.drainBlocks,
+    remainderSplitsAt: haltHeight + clocks.drainBlocks,
+  };
+}
+
+/** May the remainder go to the reserves yet? Never before the late-claim tail has run out. */
+function remainderMaySplit({ haltHeight, atHeight, clocks = MAINNET_CLOCKS }) {
+  const when = liquidationSchedule({ haltHeight, clocks });
+  if (!when.ok) return when;
+  if (!Number.isInteger(atHeight)) return { ok: false, why: 'ask at a block height' };
+  return { ok: true, may: atHeight >= when.remainderSplitsAt, notBefore: when.remainderSplitsAt };
+}
+
+/**
+ * THE CLAIMS ON A HALTED FEDERATION'S ESCROW, SETTLED (spec §23A.5 liquidation steps 3-4). `claims`: notes presented
+ * as [{ nonce (hex), amountMsat, height }], each checked by the injected `noteSigned(claim)` (the federation's signature on the
+ * note); `spentNonces`: the published spent-note set (hex), or null when no seated guardian published one. In this order:
+ *   1. refused by name: not the federation's note, already spent, claimed before (the first presentation counts), or presented
+ *      after drain_blocks
+ *   2. the claims inside the window: at face value, or pro rata when the escrow is short (the rate is answered, the client
+ *      shows it)
+ *   3. the late ones, up to drain_blocks after the halt: from what is left, in order of height then nonce, each at face value
+ *      while it lasts
+ *   4. only then the remainder, to the protocol reserves (slashSplit), and only once remainderMaySplit says so at `atHeight`
+ */
+function settleClaims({ escrowMsat, claims = [], spentNonces = null, haltHeight, atHeight, clocks = MAINNET_CLOCKS, noteSigned }) {
+  const when = liquidationSchedule({ haltHeight, clocks });
+  if (!when.ok) return when;
+  if (typeof escrowMsat !== 'bigint' || escrowMsat < 0n) return { ok: false, why: 'the escrow is a number of msat' };
+  const spent = new Set((spentNonces || []).map((n) => String(n).toLowerCase()));
+  const seen = new Set();
+  const refused = []; const inWindow = []; const late = [];
+  const ordered = [...claims].sort((a, b) => (a.height - b.height) || (String(a.nonce) < String(b.nonce) ? -1 : 1));
+  for (const c of ordered) {
+    const nonce = String(c.nonce).toLowerCase();
+    if (typeof noteSigned !== 'function' || !noteSigned(c)) { refused.push({ nonce, why: 'that note does not carry the federation\'s signature' }); continue; }
+    if (spent.has(nonce)) { refused.push({ nonce, why: 'that note\'s nonce is in the published spent set' }); continue; }
+    if (seen.has(nonce)) { refused.push({ nonce, why: 'that note was claimed before' }); continue; }
+    if (c.height > when.lateClaimsUntil) { refused.push({ nonce, why: `presented at ${c.height}, after drain_blocks (until ${when.lateClaimsUntil}): the holder's loss` }); continue; }
+    seen.add(nonce);
+    (c.height <= when.claimWindowCloses ? inWindow : late).push({ nonce, amountMsat: BigInt(c.amountMsat), height: c.height });
+  }
+  const owed = inWindow.reduce((a, c) => a + c.amountMsat, 0n);
+  const short = owed > escrowMsat;
+  const paid = inWindow.map((c) => ({ nonce: c.nonce, msat: short ? (c.amountMsat * escrowMsat) / owed : c.amountMsat, late: false }));
+  let left = escrowMsat - paid.reduce((a, p) => a + p.msat, 0n);
+  for (const c of late) {
+    const msat = c.amountMsat <= left ? c.amountMsat : left;
+    paid.push({ nonce: c.nonce, msat, late: true }); left -= msat;
+  }
+  const may = remainderMaySplit({ haltHeight, atHeight, clocks });
+  const split = may.ok && may.may ? slashSplit({ amountMsat: left }) : null;
+  return { ok: true, paid, refused, proRata: short, rate: short ? Number((escrowMsat * 10000n) / owed) / 10000 : 1,
+    spentSetPublished: spentNonces !== null, remainderMsat: left, split: split ? { reserves: split.reserves } : null,
+    remainderSplitsAt: when.remainderSplitsAt };
+}
+
+const hexKey = (k) => (k instanceof Uint8Array ? Array.from(k, (b) => b.toString(16).padStart(2, '0')).join('') : String(k || '')).toLowerCase();
+
+/**
+ * MAY A GONE GUARDIAN'S BOND BE SLASHED (§23A.5's table, FEDERATION.md rehearsal 14). `proof`: abandonmentProof's answer for the
+ * peer (absence.js); `departure`: departureStands' answer for the same peer's notice, or null. "Leaving is legitimate" (RULED,
+ * 2026-09-21): an absence that begins at or after a standing notice's leave_after is the departure - DEPARTED, the bond
+ * untouched. "A departure that stops serving before its leave_after" is abandonment, and so is an absence with no notice.
+ * Answers { ok, slash, kind: 'ABANDONED' | 'DEPARTED', why }.
+ */
+function guardianSlashStands({ proof, departure = null, emergency = null, abandonBlocks = null }) {
+  if (!proof || !proof.ok) return { ok: false, slash: false, why: `no abandonment proof stands${proof && proof.why ? `: ${proof.why}` : ''}` };
+  // THE OWNER'S EMERGENCY DEPARTURE (§23A.5a, protocol 17): `emergency` emergencyDepartureStands' answer for this guardian's node.
+  // Posted before abandon_blocks from the height he was last seen: DEPARTED, the bond untouched. Later: abandonment, as without it.
+  if (emergency && emergency.ok) {
+    if (!Number.isInteger(abandonBlocks) || abandonBlocks <= 0) throw new Error('an emergency departure is judged against abandon_blocks');
+    if (emergency.postedAt < proof.sinceHeight + abandonBlocks)
+      return { ok: true, slash: false, kind: 'DEPARTED', why: `the owner's emergency departure at ${emergency.postedAt}, before abandon_blocks (${abandonBlocks}) from last seen ${proof.sinceHeight}: departed, the bond untouched (§23A.5a)` };
+  }
+  if (departure && departure.ok) {
+    if (hexKey(departure.peerKey) !== hexKey(proof.peerKey)) return { ok: false, slash: false, why: 'the notice and the proof name different peers' };
+    if (proof.sinceHeight >= departure.leaveAfterHeight)
+      return { ok: true, slash: false, kind: 'DEPARTED', why: `gone since ${proof.sinceHeight}, at or after the notice's leave_after ${departure.leaveAfterHeight}: departed with notice, the bond untouched (§23A.5)` };
+    return { ok: true, slash: true, kind: 'ABANDONED', why: `stopped at ${proof.sinceHeight}, before the notice's leave_after ${departure.leaveAfterHeight}: a departure that stops serving early is abandonment (§23A.5)` };
+  }
+  return { ok: true, slash: true, kind: 'ABANDONED', why: `absent since ${proof.sinceHeight}, attested by ${proof.signers}: abandonment (§23A.4)` };
+}
+
+// ---- arena-protocol/src/threshold.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+/**
+ * THE COMMITTEE THRESHOLD, the one rule the door, the settle, the verdict and
+ * the page all read: 2 slots -> 2-of-2 (this build), 7 slots -> 5-of-7.
+ *
+ * Its own module so the client bundle can carry it without genesis.js, which
+ * reaches into the engine. `genesis.js` re-exports it for the node.
+ */
+function receiptsNeeded(slots) {
+  if (slots === 2) return 2;
+  if (slots === 7) return 5;
+  // A CONTRACT THAT NAMES ITS DRAW (§5A.7 reserve seats): 9 drawn for 7 seats, 3 for 2 - the threshold is the
+  // seats', never more of the drawn than the seats need
+  if (slots === 9) return 5;
+  if (slots === 3) return 2;
+  throw new Error(`no committee threshold for ${slots} slots`);
+}
+
+/**
+ * A FEDERATION'S OWN THRESHOLD over its guardian seats (§23A: "2f + 1 ... 7 of 10, 5 of 7, 3 of 4"; fedimint's own n - floor((n - 1) / 3)):
+ * what its reserve key needs (§27A.9.2, "the 5-of-7 key of its guardian seats"). Not a game committee's threshold (receiptsNeeded) -
+ * that one knows the committee sizes only, and a federation of the founding's ten got no reserve key from it (kanban #397, 2026-10-23).
+ */
+function guardianThreshold(n) {
+  if (!Number.isInteger(n) || n < 1) throw new Error(`no guardian threshold for ${n} seats`);
+  return n - Math.floor((n - 1) / 3);
+}
+
+// ---- arena-protocol/src/genesis.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// Canonical genesis_parameters and the network_id they produce.
+//
+// 27A.6: genesis is a block, not a word. 27A.4: network_id is the tagged hash
+// of that block plus the donation authority and recovery pubkeys. Changing any
+// of it later is a different network.
+
+
+
+
+
+
+// THE GAME CONFIG THE NETWORK WAS FOUNDED ON, NOT THE LIVE CORE'S (2026-10-04): the network id commits to this config's
+// hash, and every contract, bond and donation set is signed under that id - so it is read from the core the network was
+// founded on, kept frozen in core/frozen/2069b4c2, and does not follow a later core. When par moved from 3900 ticks to
+// 1800 (T sinks from 20 s, the owner 09:17) the live core's constants would have moved the network id: a refound. A later
+// core's own rules are named by its core hash, which every round carries beside this config.
+// THE GAME'S CONFIGS ARE THE GAME'S: nextblock's config encoders v1-v4 and their hashes moved to
+// packages/nextblock/config/game-config.js. The genesis parameters name the founding config only by its hash, the fixed
+// GENESIS_CONFIG_HASH (genesis-ids.js); nextblock/test/engine-shared.test.js holds the founding config to it.
+const TAG_GENESIS = 'ARENA/v1/GenesisParameters';
+const TAG_NETWORK_ID = 'ARENA/v1/NetworkId';
+
+/**
+ * Randomness nobody in this protocol can grind: the Bitcoin block hash at a
+ * height after committee_time. Entry closes before that height is known.
+ */
+const RANDOMNESS_SOURCE = 'bitcoin-block-hash';
+
+/**
+ * THE SLASH CLOCKS OF TEMPLATE 3, by network (§27A.6's table, §5A.3B). Hashed into mainnet's network id. On testnet4 and regtest they are
+ * read from genesis and NOT hashed: their ids are fixed and a moved id is a new network, the same reason as BOND_MATURITY_OFFSET
+ * (bond-script.js) and the ruling of 2026-10-14 below. A network founded on these clocks hashes them.
+ */
+const SLASH_CLOCKS = Object.freeze({
+  mainnet: Object.freeze({ slashHoldBlocks: 6, slashReturnBlocks: 144, slashFallbackBlocks: 288 }),
+  testnet4: Object.freeze({ slashHoldBlocks: 1, slashReturnBlocks: 36, slashFallbackBlocks: 72 }),
+  regtest: Object.freeze({ slashHoldBlocks: 1, slashReturnBlocks: 12, slashFallbackBlocks: 24 }),
+});
+
+/** census_key_shares_max (§27A.6, §5A.3B, RULED 2026-11-02, kanban #1021): hashed as the slash clocks are, and for the same reason not on the test networks. */
+const CENSUS_KEY_SHARES_MAX = 1024;
+
+/**
+ * B OF THE CENSUS KEY (§5A.3B, kanban #1034 answer 3): a network number, one per network, beside genesis as BOND_MATURITY_OFFSET is. Testnet4's live
+ * floor, and regtest's. Mainnet's is the lowest bracket's value and stands in its genesis, hashed, as censusKeyBondMinSats. A caller never passes B.
+ */
+const CENSUS_KEY_BOND_MIN = Object.freeze({ testnet4: 50000n, regtest: 50000n });
+
+function censusKeyBondMin(network, genesis = null) {
+  if (network === 'mainnet') {
+    if (!genesis || typeof genesis.censusKeyBondMinSats !== 'bigint') throw new Error('mainnet reads the census key\'s bond floor from its genesis');
+    return genesis.censusKeyBondMinSats;
+  }
+  const B = CENSUS_KEY_BOND_MIN[network];
+  if (typeof B !== 'bigint') throw new Error(`no census key bond floor is set for ${network}`);
+  return B;
+}
+
+function encodeGenesisParameters(p) {
+  const w = new Writer();
+  w.str(p.chain);
+  w.u8(p.gameVerifySlots);
+  w.u8(p.gameVerifyThreshold);
+  w.u8(p.settlementSlots);
+  w.u8(p.settlementThreshold);
+  w.u16(p.censusMinNodes);
+  w.u32(p.censusConfirmations);
+  w.u32(p.bondMaturity);
+  // §27A.6's federation parameters, hashed here since v4.6.5 so the network id commits to them.
+  w.u16(p.federationNominal);
+  w.u32(p.abandonBlocks);
+  w.u32(p.departureNotice);
+  w.u32(p.foundingWindow);
+  w.u32(p.drainBlocks);
+  w.u32(p.claimBlocks);
+
+  // WHO CAN SLASH, AND HOW MANY OF THEM. 5A.3B's script path B is
+  // "<k-of-m arbitration keys> CHECKMULTISIG - the arbitration quorum, any
+  // time before maturity", and the two numbers decide what the bond output
+  // key even is: the leaf hashes them, the tapbranch hashes the leaf, and the
+  // output key is the tweak of that. A round that disagreed about k or m
+  // would compute a different output key for the same node and refuse a bond
+  // that is perfectly good.
+  //
+  // They are genesis and not contract, the same class as `bondMaturity`: a
+  // per-round k is a per-round arbitration set, and the set is what the
+  // residual in 5A.3B is about. Five of seven, matching every other committee
+  // in this protocol.
+  w.u8(p.arbitrationK);
+  w.u8(p.arbitrationM);
+
+  // AND WHICH KEYS THEY ARE. k and m alone say how many signatures a slash
+  // needs; they do not say whose. The slash leaf hashes the keys themselves,
+  // so a bond's output key is a function of this set - and a poster free to
+  // name their own would name themselves and hold a bond nobody could slash.
+  // Sorted, because a set is a set: two nodes listing them differently must
+  // not compute two different networks.
+  if (!Array.isArray(p.arbitrationKeys) || p.arbitrationKeys.length !== p.arbitrationM)
+    throw new Error(`genesis names ${p.arbitrationM} arbitration signer nodes and lists a different number`);
+  w.vec([...p.arbitrationKeys].sort(compareGenesis32), (k, ww) => ww.bytes32(k), { sortedBy: compareGenesis32 });
+  w.u32(p.noticePeriod);
+  w.bytes32(p.bondMarker);
+  w.str(p.randomnessSource);
+  w.bytes32(p.genesisConfigHash);
+  if (!Array.isArray(p.brackets) || p.brackets.length < 1 || p.brackets.length > 255)
+    throw new Error('genesis needs 1..255 stake brackets');
+  w.u8(p.brackets.length);
+  for (const b of p.brackets) {
+    w.u64(b.minSats);
+    w.u64(b.maxSats);
+  }
+  // WHEN SERIES 0 STARTS (ALL-BUT-MIN-1727; multiplayer_p2p.md "The series is a function of the clock":
+  // series_start(k) = genesis_series_start + k * series_max). A genesis parameter, so the network id commits to it
+  // and no series names its own start.
+  if (typeof p.genesisSeriesStartMs !== 'bigint' || p.genesisSeriesStartMs < 0n) throw new Error('genesis names when series 0 starts');
+  w.u64(p.genesisSeriesStartMs);
+  // THE REST OF §27A.6, FROM MAINNET'S GENESIS ON (RULED 2026-10-14 ~13:20Z: "Fix it but no new series
+  // or delays because of it"): federation_min, bond_min_guardian, the governance schedule, and whether the committees bind every
+  // contract. Written only by a genesis that names them - testnet4's and regtest's do not, so their bytes and their network ids
+  // stay as they were and no series moves to a new network.
+  if (p.federationMin !== undefined) {
+    if (!Number.isInteger(p.federationMin) || p.federationMin < 1 || p.federationMin > p.federationNominal)
+      throw new Error('federation_min is 1..federation_nominal');
+    if (typeof p.bondMinGuardianSats !== 'bigint' || p.bondMinGuardianSats <= 0n) throw new Error('genesis names a guardian\'s bond floor in sats');
+    const sched = p.governanceSchedule;
+    if (!sched || !['design', 'money', 'upgrade'].every((k) => sched[k] && ['review', 'voting', 'cooldown'].every((x) => Number.isInteger(sched[k][x]) && sched[k][x] >= 0)))
+      throw new Error('genesis names the governance schedule: review, voting and cooldown blocks for design, money and upgrade');
+    w.u16(p.federationMin);
+    w.u64(p.bondMinGuardianSats);
+    for (const k of ['design', 'money', 'upgrade']) { w.u32(sched[k].review); w.u32(sched[k].voting); w.u32(sched[k].cooldown); }
+    w.u8(p.committeesBind ? 1 : 0);
+    // TEMPLATE 3'S CLOCKS (§27A.6, §5A.3B), in this block for the reason the block exists: the test networks' bytes do not move.
+    if (![p.slashHoldBlocks, p.slashReturnBlocks, p.slashFallbackBlocks].every((n) => Number.isInteger(n) && n >= 1 && n <= 0xffff))
+      throw new Error('genesis names the slash clocks: hold, return and fallback blocks, each one CHECKSEQUENCEVERIFY can wait for');
+    if (!(p.slashHoldBlocks < p.slashReturnBlocks && p.slashReturnBlocks < p.slashFallbackBlocks))
+      throw new Error('the slash clocks run hold, then return, then fallback: a mature node leaves before the fallback opens (§5A.3B)');
+    w.u32(p.slashHoldBlocks);
+    w.u32(p.slashReturnBlocks);
+    w.u32(p.slashFallbackBlocks);
+    if (!Number.isInteger(p.censusKeySharesMax) || p.censusKeySharesMax < 1) throw new Error('genesis names census_key_shares_max');
+    w.u32(p.censusKeySharesMax);
+    if (typeof p.censusKeyBondMinSats !== 'bigint' || p.censusKeyBondMinSats <= 0n) throw new Error('genesis names the census key\'s bond floor');
+    w.u64(p.censusKeyBondMinSats);
+    // THE KEY THE GENESIS FOUNDERS MADE BEFORE ANY BOND (§5A.3B): committed here, so it needs no anchor.
+    w.bytes32(p.censusKey0);
+  }
+  return w.finish();
+}
+
+/**
+ * MAINNET'S GENESIS (§27A.6, the "Three networks" table), built from the parts only a launch can name: the
+ * bond marker (§25.1), the seven arbitration keys, the donation authority and the cold recovery key (§27A.4 - the recovery key
+ * belongs in a safe), and when series 0 starts. Nothing here invents them: without each one it throws, and this build runs no
+ * mainnet. The rest is the table's: committees of 7 slots, threshold 5 for both roles, binding every contract; a census of 10;
+ * 6 confirmations; federations of 10 with federation_min 7; the fast clocks the owner set; ~30 days of bond maturity and notice;
+ * governance 1008 / 1440 / 2016 (upgrades 2016 / 2016 / 4320, ballot.js).
+ */
+function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityPubkey, recoveryPubkey, genesisSeriesStartMs, bondMinGuardianSats, censusKey0, censusKeyBondMinSats } = {}) {
+  const is32 = (x) => x instanceof Uint8Array && x.length === 32;
+  if (!is32(marker)) throw new Error('mainnet genesis needs its bond marker (32 bytes, §25.1): it has not been chosen');
+  if (!Array.isArray(arbitrationKeys) || arbitrationKeys.length !== 7 || !arbitrationKeys.every(is32)) throw new Error('mainnet genesis needs its 7 arbitration keys');
+  if (!is32(authorityPubkey) || !is32(recoveryPubkey)) throw new Error('mainnet genesis needs the donation authority and the cold recovery key (§27A.4)');
+  if (typeof genesisSeriesStartMs !== 'bigint') throw new Error('mainnet genesis names when series 0 starts');
+  if (typeof bondMinGuardianSats !== 'bigint' || bondMinGuardianSats <= 0n) throw new Error('mainnet genesis names a guardian\'s bond floor');
+  if (typeof censusKeyBondMinSats !== 'bigint' || censusKeyBondMinSats <= 0n) throw new Error('mainnet genesis names the lowest bracket\'s bond_min, the census key\'s B (§5A.3B)');
+  if (!is32(censusKey0)) throw new Error('mainnet genesis needs census key 0: the founders run its DKG before any bond exists (§5A.3B)');
+  const genesis = {
+    chain: 'bitcoin-mainnet', genesisSeriesStartMs, censusKey0, censusKeySharesMax: CENSUS_KEY_SHARES_MAX, censusKeyBondMinSats,
+    federationNominal: 10, federationMin: 7, bondMinGuardianSats,
+    abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216,
+    gameVerifySlots: 7, gameVerifyThreshold: 5, settlementSlots: 7, settlementThreshold: 5, committeesBind: true,
+    censusMinNodes: 10, censusConfirmations: 6, bondMaturity: 4320, ...SLASH_CLOCKS.mainnet,
+    arbitrationK: 5, arbitrationM: 7, arbitrationKeys, noticePeriod: 4320,
+    bondMarker: marker, randomnessSource: RANDOMNESS_SOURCE, genesisConfigHash: GENESIS_CONFIG_HASH,
+    brackets: [{ minSats: 1000n, maxSats: 10_000_000n }],
+    governanceSchedule: { design: { review: 1008, voting: 1440, cooldown: 2016 }, money: { review: 1008, voting: 1440, cooldown: 2016 },
+      upgrade: { review: 2016, voting: 2016, cooldown: 4320 } },
+  };
+  return { genesis, networkId: computeNetworkId({ genesis, authorityPubkey, recoveryPubkey }) };
+}
+
+/**
+ * EVERY CONTRACT BOUND TO ITS GENESIS (§5A.7 / §27A.62026-10-16: "the client refuses to join
+ * and names the mismatched parameter"): where the genesis says its committees bind, a Round Contract names exactly its slots per role,
+ * the threshold of those slots (threshold.js) is the genesis's, and its census confirmations are the genesis's. Each mismatch is named
+ * by its parameter. A genesis that does not bind (testnet4, regtest - per the 2026-10-14 ruling, no new series) leaves each contract its
+ * own values. The seat (POST /round) and the client (the join) ask this one function.
+ */
+function committeesStand(contract, genesis) {
+  if (!genesis || !genesis.committeesBind) return { ok: true, bound: false };
+  const off = [];
+  const g = Number(contract && contract.gameVerifySlots), st = Number(contract && contract.settlementSlots);
+  if (g !== genesis.gameVerifySlots) off.push(`game_verify_slots ${g}, the genesis binds ${genesis.gameVerifySlots}`);
+  if (st !== genesis.settlementSlots) off.push(`settlement_slots ${st}, the genesis binds ${genesis.settlementSlots}`);
+  if (g === genesis.gameVerifySlots && receiptsNeeded(g) !== genesis.gameVerifyThreshold)
+    off.push(`game_verify_threshold ${receiptsNeeded(g)}, the genesis binds ${genesis.gameVerifyThreshold}`);
+  if (st === genesis.settlementSlots && receiptsNeeded(st) !== genesis.settlementThreshold)
+    off.push(`settlement_threshold ${receiptsNeeded(st)}, the genesis binds ${genesis.settlementThreshold}`);
+  const conf = contract && contract.censusConfirmations;
+  if (conf !== undefined && conf !== null && Number(conf) !== genesis.censusConfirmations)
+    off.push(`census_confirmations ${Number(conf)}, the genesis binds ${genesis.censusConfirmations}`);
+  if (off.length) return { ok: false, off, why: `this network's genesis binds the contract, and it names ${off.join('; ')}` };
+  return { ok: true, bound: true };
+}
+
+/**
+ * WHEN EACH NETWORK'S SERIES 0 STARTS, midnight UTC (ALL-BUT-MIN-1727). The spec names the parameter and not its value;
+ * these are this build's: regtest 2026-01-01, testnet4 2026-10-01. Series k starts 24 h * k after it.
+ */
+const GENESIS_SERIES_START_MS = Object.freeze({ regtest: 1767225600000n, testnet4: 1790812800000n });
+
+function testnetShape(chain, marker, arbitrationKeys, federation, genesisSeriesStartMs) {
+  return {
+    chain,
+    genesisSeriesStartMs,
+    // THE FEDERATION'S OWN PARAMETERS ARE GENESIS PARAMETERS (§27A.6), so they are hashed into the
+    // network id like every other rule a player is held to. Without them two networks could share an id
+    // while one drains a federation in 24 h and the other in 28 d, and a contract naming that id would
+    // not say how long its holder's money can be frozen or how long he has to claim it.
+    federationNominal: federation.federationNominal,
+    abandonBlocks: federation.abandonBlocks,
+    departureNotice: federation.departureNotice,
+    foundingWindow: federation.foundingWindow,
+    drainBlocks: federation.drainBlocks,
+    claimBlocks: federation.claimBlocks,
+    slashHoldBlocks: federation.slashHoldBlocks,
+    slashReturnBlocks: federation.slashReturnBlocks,
+    slashFallbackBlocks: federation.slashFallbackBlocks,
+    censusKeySharesMax: CENSUS_KEY_SHARES_MAX,
+    gameVerifySlots: 2,
+    gameVerifyThreshold: 2,
+    settlementSlots: 2,
+    settlementThreshold: 2,
+    censusMinNodes: 2,
+    censusConfirmations: 1,
+    bondMaturity: 100,
+    arbitrationK: 5,
+    arbitrationM: 7,
+    arbitrationKeys,
+    noticePeriod: 144,
+    bondMarker: marker,
+    randomnessSource: RANDOMNESS_SOURCE,
+    genesisConfigHash: GENESIS_CONFIG_HASH,
+    brackets: [{ minSats: 1000n, maxSats: 10_000_000n }],
+  };
+}
+
+/** Two 32-byte keys in byte order, so a set is a set and not an arrangement. */
+function compareGenesis32(a, b) {
+  for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i];
+  return 0;
+}
+
+const concat = (...parts) => {
+  const n = parts.reduce((s, p) => s + p.length, 0);
+  const out = new Uint8Array(n);
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+};
+
+const zeros32 = () => new Uint8Array(32);
+
+function computeNetworkId({ genesis, authorityPubkey, recoveryPubkey }) {
+  if (!(authorityPubkey instanceof Uint8Array) || authorityPubkey.length !== 32)
+    throw new Error('donation authority pubkey is 32 bytes');
+  if (!(recoveryPubkey instanceof Uint8Array) || recoveryPubkey.length !== 32)
+    throw new Error('donation recovery pubkey is 32 bytes');
+  const body = encodeGenesisParameters(genesis);
+  return taggedHash(
+    TAG_NETWORK_ID,
+    concat(body, authorityPubkey, recoveryPubkey, zeros32(), zeros32()),
+  );
+}
+
+/** 2 slots → 2-of-2 (this build). 7 slots → 5-of-7. One rule: threshold.js. */
+
+function genesisFor(network) {
+  if (network === 'regtest')
+    return testnetShape('bitcoin-regtest', bondMarker('regtest'), ARBITRATION_KEYS_REGTEST,
+      { federationNominal: 4, ...REGTEST_CLOCKS, ...SLASH_CLOCKS.regtest }, GENESIS_SERIES_START_MS.regtest);
+  if (network === 'testnet4' || network === 'testnet')
+    return testnetShape('bitcoin-testnet4', bondMarker('testnet'), ARBITRATION_KEYS_TESTNET4,
+      { federationNominal: 4, ...TESTNET_CLOCKS, ...SLASH_CLOCKS.testnet4 }, GENESIS_SERIES_START_MS.testnet4);
+  throw new Error('no genesis for ' + network);
+}
+
+/**
+ * THE TWO KEYS 27A.4 PUTS IN THE NETWORK'S NAME, looked up by network.
+ *
+ * They have been generated, written into `genesis-ids.js` and hashed into
+ * `network_id` by `computeNetworkId` since letter 24 - and until `authority.js`
+ * nothing read them. A key that decides where donations go and that no code
+ * consults is not a control; it is a comment.
+ *
+ * The authority is what a published donation set is checked against, and the
+ * recovery key is what a rotation is checked against - never the other way
+ * round. 27A.4's table is exhaustive: the authority signs sets and nothing
+ * else, the recovery key names a new authority and nothing else.
+ *
+ * 2026-09-08: these are test keys on disk for regtest and testnet4.
+ * A mainnet recovery key belongs in a safe, and this build has no mainnet.
+ */
+function donationKeysFor(network) {
+  if (network === 'regtest')
+    return { authority: AUTHORITY_PUBKEY_REGTEST, recovery: RECOVERY_PUBKEY_REGTEST };
+  if (network === 'testnet4' || network === 'testnet')
+    return { authority: AUTHORITY_PUBKEY_TESTNET4, recovery: RECOVERY_PUBKEY_TESTNET4 };
+  throw new Error('no donation authority has been generated for ' + network);
+}
+
+// THE SAME TWO KEYS BY NETWORK ID: donation-keys.js, re-exported (M3.2 6e).
+
 // ---- arena-protocol/src/census-key.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE CENSUS KEY, AS PLAIN RULES (spec 5A.3B, RULED 2026-11-02, kanban #1021): who holds how many shares, which record makes a key stand,
 // which keys stand, and what each epoch has to do about them. No curve and no round of a DKG here: a signature check is injected, as
 // everywhere in this package, and making the key is the seats' work.
+
 
 
 
@@ -7329,35 +7918,81 @@ function censusHeightOfEpoch(epoch, network, censusConfirmations) {
   return height > 0 ? height : null;
 }
 
+/** The height whose block hash a drawn key reads: e x E, the epoch's first, after the census cut, so nobody can bond into a known draw. */
+function censusKeyDrawHeight(epoch, network) {
+  const length = BOND_MATURITY_OFFSET[network];
+  if (!Number.isInteger(length)) throw new Error(`no epoch length is set for ${network}`);
+  return epoch * length;
+}
+
 /**
- * ONE NUMBER PER EPOCH: unit = max(B, ceil(T / S)), shares(node) = floor(sum of its bonds / unit), threshold = floor(2 x total / 3) + 1.
- * `entries` are the census at the epoch's height, { pubkey, bondSats }; `lowestBondMinSats` is B, the lowest bracket's bond_min in force
- * there; `sharesMax` is S. A node under one unit holds no share: a minimum of one would let many small bonds out-count capital.
- * The census is 5A.4's, before any role filter: a key belongs to the network and not to a role (kanban #1031). B is a network number, never a round's.
- * Holders are numbered in ascending key order, so everyone hands out the same x. Answers { unit, totalSats, total, threshold, holders }.
+ * WHEN A KEY'S RUN HAPPENS (kanban #1034 answer 5): founding_window from the epoch's first height, the deals in its first half and the holders' signatures
+ * on the transcript hash in its second. A node's deal set is every valid deal it holds at the midpoint. Nothing converges by force: nodes that differ
+ * sign different hashes, no hash reaches the threshold, the key fails and the newest stands.
  */
-function censusKeyShares({ entries, lowestBondMinSats, sharesMax }) {
-  if (typeof lowestBondMinSats !== 'bigint' || lowestBondMinSats <= 0n) throw new Error('the unit reads a positive bond_min in sats');
-  if (!Number.isInteger(sharesMax) || sharesMax < 1) throw new Error('the unit reads census_key_shares_max');
+function censusKeyWindow(epoch, network, foundingWindow) {
+  if (!Number.isInteger(foundingWindow) || foundingWindow < 2) throw new Error('a census key\'s window reads founding_window, at least 2 blocks');
+  const start = censusKeyDrawHeight(epoch, network);
+  return { start, midpoint: start + Math.floor(foundingWindow / 2), end: start + foundingWindow };
+}
+
+const outpointOf = (e) => {
+  const txid = typeof e.txid === 'string' ? e.txid.toLowerCase() : e.txid instanceof Uint8Array ? toHex(e.txid) : null;
+  return txid === null || !Number.isInteger(e.vout) ? null : { txid, vout: e.vout };
+};
+const outpointBefore = (a, b) => a.txid < b.txid || (a.txid === b.txid && a.vout < b.vout);
+const shareIndexBytes = (i) => Uint8Array.of(i >>> 24, (i >>> 16) & 255, (i >>> 8) & 255, i & 255);
+
+/**
+ * ONE RULE PER EPOCH (kanban #1034, replacing `unit`). `entries` are the census at the epoch's height, { pubkey, bondSats, txid, vout }, a node's bonds one sum.
+ * The census is 5A.4's, before any role filter: a key belongs to the network and not to a role (kanban #1031).
+ *
+ *   exact  when the sum of floor(bond / B) over the census is at most S: shares(node) = floor(bond / B), numbered in ascending key order
+ *   drawn  otherwise S shares, one at a time: x_i = tagged_hash("ARENA/v1/CensusKeyShare", h || i) mod T, share i at x = i + 1 to the node whose stretch
+ *          of T holds x_i, nodes in ascending lowest outpoint, each stretch its summed bond. i is four bytes, big-endian
+ *
+ * `blockHash` is h, the block at censusKeyDrawHeight, in the bytes bitcoind prints; an exact key does not read it. B is the network's (censusKeyBondMin) and no
+ * caller's; S is genesis' census_key_shares_max. No floor, so a drawn key is linear in sats: a small node holds a share less often, and a node may
+ * draw several or none. Holders stand in ascending key order. Answers { drawn, totalSats, total, threshold, holders: [{ key, shares, ids }] },
+ * the threshold floor(2 x total / 3) + 1.
+ */
+function censusKeyShares({ entries, network, genesis = null, blockHash = null, sharesMax = CENSUS_KEY_SHARES_MAX }) {
+  const B = censusKeyBondMin(network, genesis);
+  if (!Number.isInteger(sharesMax) || sharesMax < 1) throw new Error('the shares read census_key_shares_max');
   const bonded = new Map();
   let totalSats = 0n;
   for (const e of entries || []) {
-    const k = toHex(e.pubkey);
-    bonded.set(k, (bonded.get(k) || 0n) + e.bondSats);
+    const key = toHex(e.pubkey);
+    const held = bonded.get(key) || { key, sats: 0n, lowest: null };
+    const at = outpointOf(e);
+    if (at && (!held.lowest || outpointBefore(at, held.lowest))) held.lowest = at;
+    held.sats += e.bondSats;
+    bonded.set(key, held);
     totalSats += e.bondSats;
   }
-  const S = BigInt(sharesMax);
-  const fair = (totalSats + S - 1n) / S;
-  const unit = fair > lowestBondMinSats ? fair : lowestBondMinSats;
-  const holders = [];
-  let total = 0;
-  for (const key of [...bonded.keys()].sort()) {
-    const shares = Number(bonded.get(key) / unit);
-    if (!shares) continue;
-    holders.push({ key, shares, ids: Array.from({ length: shares }, (_, i) => total + i + 1) });
-    total += shares;
+  const byKey = [...bonded.values()].sort((a, b) => (a.key < b.key ? -1 : 1));
+  const whole = byKey.reduce((n, h) => n + h.sats / B, 0n);
+  const drawn = whole > BigInt(sharesMax);
+  const idsOf = new Map(byKey.map((h) => [h.key, []]));
+  if (drawn) {
+    if (!(blockHash instanceof Uint8Array) || blockHash.length !== 32) throw new Error('a drawn key reads the block hash at the epoch\'s first height');
+    if (byKey.some((h) => !h.lowest)) throw new Error('a drawn key orders its nodes by lowest outpoint, and an entry names none');
+    const order = [...byKey].sort((a, b) => (outpointBefore(a.lowest, b.lowest) ? -1 : 1));
+    let end = 0n;
+    const ends = order.map((h) => (end += h.sats));
+    for (let i = 0; i < sharesMax; i++) {
+      const hit = bytesToBigInt(taggedHash(TAG.censusKeyShare, Uint8Array.from([...blockHash, ...shareIndexBytes(i)]))) % totalSats;
+      let lo = 0, hi = ends.length - 1;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (hit < ends[mid]) hi = mid; else lo = mid + 1; }
+      idsOf.get(order[lo].key).push(i + 1);
+    }
+  } else {
+    let x = 0;
+    for (const h of byKey) for (let n = h.sats / B; n > 0n; n--) idsOf.get(h.key).push(++x);
   }
-  return { unit, totalSats, total, threshold: Math.floor((2 * total) / 3) + 1, holders };
+  const holders = byKey.filter((h) => idsOf.get(h.key).length).map((h) => ({ key: h.key, shares: idsOf.get(h.key).length, ids: idsOf.get(h.key) }));
+  const total = holders.reduce((n, h) => n + h.shares, 0);
+  return { drawn, totalSats, total, threshold: Math.floor((2 * total) / 3) + 1, holders };
 }
 
 /** CensusKeyRecord (5A.3B): what a key is, in the bytes its holders sign and its anchor hashes. */
@@ -7464,9 +8099,16 @@ function bondNamesStandingKey(advert, confirmationHeight, standing, censusConfir
 const carrierPegInId = (networkId, script) => taggedHash(TAG.carrierPegIn, Uint8Array.from([...networkId, ...script]));
 
 /**
+ * What a carrier signs to name its peg-in address for an escrow spend of one table (kanban #1034 answer 2). The table exists by then, so this one names it;
+ * a peg-in is per wallet, so no record lists these. The table id commits to the network.
+ */
+const carrierEscrowPegInId = (tableId, script) => taggedHash(TAG.carrierEscrowPegIn, Uint8Array.from([...tableId, ...script]));
+
+/**
  * WHO CARRIES THE PLAYERS' SHARE ON A FALLBACK, AND WHERE THERE ARE NO PANELS (kanban #1031): a fallback means the panels did not sign, so panel A
  * cannot be trusted with it. The census key's holders in descending shares, less `excluded` (hex: the accused, the proof's other slashed
- * nodes, the round's seats), each with a peg-in address signed by its node key. A holder with none is passed over.
+ * nodes, the round's seats), each with a peg-in address signed by its node key. A holder with none is passed over. An empty answer is no refusal:
+ * buildSlashPayoutTable then leaves it all in escrow and the players wait for a carrier (kanban #1034 answer 6).
  *
  *   holders   censusKeyShares' list; `bonds` Map hex -> sats; `pegIns` Map hex -> { script, signature }
  *
@@ -7932,574 +8574,6 @@ function feeMatchesEntry(entry, { feeBps = NODE_FEE_BPS, donationInFee: inFee = 
   catch (e) { return { ok: false, owed, why: e.message }; }
   return { ok: true, owed, net, why: `${owed} is ${pct} of ${entry.stakeMsat}, and ${net} of it is staked` };
 }
-
-// ---- arena-protocol/src/federation-slash.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WHAT A FEDERATION'S BONDS COVER, AND WHERE A SLASHED ONE GOES.
-//
-// §23A.3 and §23A.5, as rules a caller can run rather than paragraphs somebody has to remember. Three
-// numbers live here and each has a way of being got wrong that this file exists to refuse:
-//
-//   the exposure cap      is (f + 1) x the SMALLEST seated bond, not the sum of the bonds. `f + 1` gone
-//                         is the smallest set that halts the federation, and their bonds are what a
-//                         liquidation pays players from - so the reserve may never exceed what the
-//                         cheapest possible set of leavers forfeits. Summing all ten would let a
-//                         federation hold cover it can only produce if EVERY guardian is slashed.
-//   a slashed bond        never goes straight to anybody: it waits in the federation's liquidation
-//                         escrow under the arbitration keys, and spends only when the federation is
-//                         CLOSED (nothing was lost: the whole bond to the protocol reserves) or HALTED.
-//                         On a HALT the ORDER is the whole of it - every unspent note is paid at face
-//                         value FIRST, and only what no player claimed goes to the reserves (§5A.3,
-//                         RULED 2026-11-02, kanban #976).
-//   the abandonment proof needs `2f + 1` attestations normally, and on a halt cannot have them: the
-//                         federation no longer has that many guardians. Then it is whoever is left,
-//                         plus the halt itself, which anyone can see.
-//
-// Amounts are msat as BigInt, like every other money number in this protocol.
-
-/** The smallest number of guardians whose loss halts a federation of `nominal` with threshold `2f + 1`. */
-
-const haltsAt = (f) => f + 1;
-
-/**
- * §23A.3: `exposure_cap = (f + 1) x the smallest bond among its seated guardians`.
- *
- * At ten guardians and 7 of 10, `f = 3`, so four of the smallest bond - NOT the sum of all ten.
- */
-function exposureCap({ bonds, f }) {
-  if (!Array.isArray(bonds) || !bonds.length) return { ok: false, why: 'a federation has seated guardians' };
-  if (!bonds.every((b) => typeof b === 'bigint' && b > 0n))
-    return { ok: false, why: 'every bond is a positive number of msat' };
-  if (!Number.isInteger(f) || f < 0) return { ok: false, why: 'f is how many faults the threshold tolerates' };
-  const smallest = bonds.reduce((a, b) => (b < a ? b : a));
-  return { ok: true, cap: BigInt(haltsAt(f)) * smallest, smallest, halts: haltsAt(f) };
-}
-
-/** Is a reserve within what the bonds actually cover? */
-function reserveFits({ reserve, bonds, f }) {
-  const capped = exposureCap({ bonds, f });
-  if (!capped.ok) return capped;
-  if (typeof reserve !== 'bigint' || reserve < 0n)
-    return { ok: false, why: 'a reserve is a number of msat' };
-  return { ok: true, fits: reserve <= capped.cap, cap: capped.cap, reserve,
-    over: reserve > capped.cap ? reserve - capped.cap : 0n };
-}
-
-/**
- * §23A.5: where a slashed guardian bond goes (§5A.3, RULED 2026-11-02, kanban #976).
- *
- * `halted` is the whole of the difference. A federation that kept running lost nothing, so the whole bond goes to the protocol reserves;
- * one that froze pays its note holders at face value FIRST and the remainder goes to the reserves. Nothing is burned on either road -
- * `burned` stays in the answer at 0n so a burn cannot come back unnoticed.
- */
-function slashSplit({ amountMsat, halted = false, notesOwedMsat = 0n }) {
-  if (typeof amountMsat !== 'bigint' || amountMsat < 0n)
-    return { ok: false, why: 'a slashed bond is a number of msat' };
-  if (!halted) return { ok: true, halted: false, notes: 0n, reserves: amountMsat, burned: 0n };
-  if (typeof notesOwedMsat !== 'bigint' || notesOwedMsat < 0n)
-    return { ok: false, why: 'the notes owed are a number of msat' };
-  // THE HALT CASE, AND THE ORDER IS THE RULE. Every unspent note is paid at face value first; only the remainder - what no player claimed
-  // inside the window - goes to the reserves. A short escrow pays the notes pro rata and leaves nothing over.
-  const notes = notesOwedMsat < amountMsat ? notesOwedMsat : amountMsat;
-  return { ok: true, halted: true, notes, reserves: amountMsat - notes, burned: 0n, proRata: notesOwedMsat > amountMsat };
-}
-
-/**
- * §23A.4 / §23A.5: what an abandonment proof needs.
- *
- * Normally `2f + 1` guardian attestations. On a halt the federation no longer has that many, so the
- * proof is whoever is still seated plus the halt itself - no consensus session for `abandon_blocks`,
- * which anyone can observe at every guardian's endpoint.
- */
-function abandonmentProofNeeds({ f, halted = false, seated = null }) {
-  if (!Number.isInteger(f) || f < 0) return { ok: false, why: 'f is how many faults the threshold tolerates' };
-  if (!halted) return { ok: true, attestations: 2 * f + 1, needsHaltFact: false };
-  const left = Number.isInteger(seated) && seated >= 0 ? seated : 0;
-  return { ok: true, attestations: left, needsHaltFact: true };
-}
-
-/**
- * §23A.1's clocks, in blocks, as numbers a caller can run rather than a table somebody has to remember.
- *
- * Everything in that chapter that waits, waits in BLOCKS - a wall clock is not a thing a chain agrees on.
- * The 36 h claim window is the owner's; the others are the spec's, matched to it.
- *
- *   abandon_blocks     absence that is abandonment; halt before liquidation; load before a founding
- *   departure_notice   notice a guardian gives before leaving
- *   founding_window    time a drawn set has to finish its DKG
- *   drain_blocks       how long a draining federation serves, AND the late-claim tail (four weeks)
- *   claim_blocks       the liquidation claim window the arbitration set opens
- */
-const MAINNET_CLOCKS = Object.freeze({
-  abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216,
-});
-
-/**
- * TESTNET RUNS THE SAME CLOCKS AT ABOUT A TWENTIETH (2026-09-21: much shorter), so a whole
- * federation lifetime can be watched in a day instead of a month: 2 h / 3 h / 3 h / 24 h / 1.5 h.
- * Regtest counts in tens of blocks, because its blocks come when somebody presses a button.
- */
-const TESTNET_CLOCKS = Object.freeze({
-  abandonBlocks: 12, departureNotice: 18, foundingWindow: 18, drainBlocks: 144, claimBlocks: 9,
-});
-const REGTEST_CLOCKS = Object.freeze({
-  abandonBlocks: 10, departureNotice: 10, foundingWindow: 10, drainBlocks: 100, claimBlocks: 10,
-});
-const CLOCKS = Object.freeze({
-  mainnet: MAINNET_CLOCKS, testnet4: TESTNET_CLOCKS, testnet: TESTNET_CLOCKS, regtest: REGTEST_CLOCKS,
-});
-
-/** The clocks a network runs, refused rather than guessed for a network nobody pinned. */
-function clocksFor(network) {
-  const said = CLOCKS[network];
-  return said ? { ok: true, network, clocks: said }
-    : { ok: false, why: `${network} has no pinned federation clocks` };
-}
-
-/**
- * HOW LONG A GUARDIAN LEAVING COSTS THE NETWORK, END TO END.
- *
- * Abandonment has to be proven before a succession can be drawn, and §23A.5 starts the succession AT the
- * departure when the federation would otherwise be DRAINING - so the founding runs inside the drain
- * rather than after it. Both are reported: the serial path for a guardian who simply vanishes, and the
- * overlapped one for a departure with notice.
- */
-function lifecycleBlocks(clocks) {
-  const serial = clocks.abandonBlocks + clocks.foundingWindow + clocks.drainBlocks;
-  const overlapped = clocks.abandonBlocks + Math.max(clocks.foundingWindow, clocks.drainBlocks);
-  return { serial, overlapped };
-}
-
-/**
- * WHEN A HALTED FEDERATION'S REMAINDER MAY BE SPLIT, and not one block sooner.
- *
- * The claim window closes at `claim_blocks` and every valid claim filed in it is paid. A note shown LATE
- * is still paid from what is left until `drain_blocks` after the halt - the player who was offline for a
- * weekend is not the one the deadline is for. Only the remainder after THAT goes to the reserves, and
- * nothing a player could still have claimed is ever destroyed.
- */
-function liquidationSchedule({ haltHeight, clocks = MAINNET_CLOCKS }) {
-  if (!Number.isInteger(haltHeight) || haltHeight < 0)
-    return { ok: false, why: 'a halt happens at a block height' };
-  // THE WINDOW OPENS WHEN THE LIQUIDATION DOES (§23A.5: "A federation that has been HALTED for abandon_blocks ... is liquidated
-  // ... 2. The arbitration set opens a claim window of claim_blocks"), and runs claim_blocks from there. It closed at halt +
-  // claim_blocks before (found by the claim book's test): on mainnet 72 blocks BEFORE it opened at halt + 288, and
-  // a seat listed liquidatesAt 892 beside claimWindowCloses 889.
-  return {
-    ok: true,
-    claimWindowOpens: haltHeight + clocks.abandonBlocks,
-    claimWindowCloses: haltHeight + clocks.abandonBlocks + clocks.claimBlocks,
-    lateClaimsUntil: haltHeight + clocks.drainBlocks,
-    remainderSplitsAt: haltHeight + clocks.drainBlocks,
-  };
-}
-
-/** May the remainder go to the reserves yet? Never before the late-claim tail has run out. */
-function remainderMaySplit({ haltHeight, atHeight, clocks = MAINNET_CLOCKS }) {
-  const when = liquidationSchedule({ haltHeight, clocks });
-  if (!when.ok) return when;
-  if (!Number.isInteger(atHeight)) return { ok: false, why: 'ask at a block height' };
-  return { ok: true, may: atHeight >= when.remainderSplitsAt, notBefore: when.remainderSplitsAt };
-}
-
-/**
- * THE CLAIMS ON A HALTED FEDERATION'S ESCROW, SETTLED (spec §23A.5 liquidation steps 3-4). `claims`: notes presented
- * as [{ nonce (hex), amountMsat, height }], each checked by the injected `noteSigned(claim)` (the federation's signature on the
- * note); `spentNonces`: the published spent-note set (hex), or null when no seated guardian published one. In this order:
- *   1. refused by name: not the federation's note, already spent, claimed before (the first presentation counts), or presented
- *      after drain_blocks
- *   2. the claims inside the window: at face value, or pro rata when the escrow is short (the rate is answered, the client
- *      shows it)
- *   3. the late ones, up to drain_blocks after the halt: from what is left, in order of height then nonce, each at face value
- *      while it lasts
- *   4. only then the remainder, to the protocol reserves (slashSplit), and only once remainderMaySplit says so at `atHeight`
- */
-function settleClaims({ escrowMsat, claims = [], spentNonces = null, haltHeight, atHeight, clocks = MAINNET_CLOCKS, noteSigned }) {
-  const when = liquidationSchedule({ haltHeight, clocks });
-  if (!when.ok) return when;
-  if (typeof escrowMsat !== 'bigint' || escrowMsat < 0n) return { ok: false, why: 'the escrow is a number of msat' };
-  const spent = new Set((spentNonces || []).map((n) => String(n).toLowerCase()));
-  const seen = new Set();
-  const refused = []; const inWindow = []; const late = [];
-  const ordered = [...claims].sort((a, b) => (a.height - b.height) || (String(a.nonce) < String(b.nonce) ? -1 : 1));
-  for (const c of ordered) {
-    const nonce = String(c.nonce).toLowerCase();
-    if (typeof noteSigned !== 'function' || !noteSigned(c)) { refused.push({ nonce, why: 'that note does not carry the federation\'s signature' }); continue; }
-    if (spent.has(nonce)) { refused.push({ nonce, why: 'that note\'s nonce is in the published spent set' }); continue; }
-    if (seen.has(nonce)) { refused.push({ nonce, why: 'that note was claimed before' }); continue; }
-    if (c.height > when.lateClaimsUntil) { refused.push({ nonce, why: `presented at ${c.height}, after drain_blocks (until ${when.lateClaimsUntil}): the holder's loss` }); continue; }
-    seen.add(nonce);
-    (c.height <= when.claimWindowCloses ? inWindow : late).push({ nonce, amountMsat: BigInt(c.amountMsat), height: c.height });
-  }
-  const owed = inWindow.reduce((a, c) => a + c.amountMsat, 0n);
-  const short = owed > escrowMsat;
-  const paid = inWindow.map((c) => ({ nonce: c.nonce, msat: short ? (c.amountMsat * escrowMsat) / owed : c.amountMsat, late: false }));
-  let left = escrowMsat - paid.reduce((a, p) => a + p.msat, 0n);
-  for (const c of late) {
-    const msat = c.amountMsat <= left ? c.amountMsat : left;
-    paid.push({ nonce: c.nonce, msat, late: true }); left -= msat;
-  }
-  const may = remainderMaySplit({ haltHeight, atHeight, clocks });
-  const split = may.ok && may.may ? slashSplit({ amountMsat: left }) : null;
-  return { ok: true, paid, refused, proRata: short, rate: short ? Number((escrowMsat * 10000n) / owed) / 10000 : 1,
-    spentSetPublished: spentNonces !== null, remainderMsat: left, split: split ? { reserves: split.reserves } : null,
-    remainderSplitsAt: when.remainderSplitsAt };
-}
-
-const hexKey = (k) => (k instanceof Uint8Array ? Array.from(k, (b) => b.toString(16).padStart(2, '0')).join('') : String(k || '')).toLowerCase();
-
-/**
- * MAY A GONE GUARDIAN'S BOND BE SLASHED (§23A.5's table, FEDERATION.md rehearsal 14). `proof`: abandonmentProof's answer for the
- * peer (absence.js); `departure`: departureStands' answer for the same peer's notice, or null. "Leaving is legitimate" (RULED,
- * 2026-09-21): an absence that begins at or after a standing notice's leave_after is the departure - DEPARTED, the bond
- * untouched. "A departure that stops serving before its leave_after" is abandonment, and so is an absence with no notice.
- * Answers { ok, slash, kind: 'ABANDONED' | 'DEPARTED', why }.
- */
-function guardianSlashStands({ proof, departure = null, emergency = null, abandonBlocks = null }) {
-  if (!proof || !proof.ok) return { ok: false, slash: false, why: `no abandonment proof stands${proof && proof.why ? `: ${proof.why}` : ''}` };
-  // THE OWNER'S EMERGENCY DEPARTURE (§23A.5a, protocol 17): `emergency` emergencyDepartureStands' answer for this guardian's node.
-  // Posted before abandon_blocks from the height he was last seen: DEPARTED, the bond untouched. Later: abandonment, as without it.
-  if (emergency && emergency.ok) {
-    if (!Number.isInteger(abandonBlocks) || abandonBlocks <= 0) throw new Error('an emergency departure is judged against abandon_blocks');
-    if (emergency.postedAt < proof.sinceHeight + abandonBlocks)
-      return { ok: true, slash: false, kind: 'DEPARTED', why: `the owner's emergency departure at ${emergency.postedAt}, before abandon_blocks (${abandonBlocks}) from last seen ${proof.sinceHeight}: departed, the bond untouched (§23A.5a)` };
-  }
-  if (departure && departure.ok) {
-    if (hexKey(departure.peerKey) !== hexKey(proof.peerKey)) return { ok: false, slash: false, why: 'the notice and the proof name different peers' };
-    if (proof.sinceHeight >= departure.leaveAfterHeight)
-      return { ok: true, slash: false, kind: 'DEPARTED', why: `gone since ${proof.sinceHeight}, at or after the notice's leave_after ${departure.leaveAfterHeight}: departed with notice, the bond untouched (§23A.5)` };
-    return { ok: true, slash: true, kind: 'ABANDONED', why: `stopped at ${proof.sinceHeight}, before the notice's leave_after ${departure.leaveAfterHeight}: a departure that stops serving early is abandonment (§23A.5)` };
-  }
-  return { ok: true, slash: true, kind: 'ABANDONED', why: `absent since ${proof.sinceHeight}, attested by ${proof.signers}: abandonment (§23A.4)` };
-}
-
-// ---- arena-protocol/src/threshold.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-/**
- * THE COMMITTEE THRESHOLD, the one rule the door, the settle, the verdict and
- * the page all read: 2 slots -> 2-of-2 (this build), 7 slots -> 5-of-7.
- *
- * Its own module so the client bundle can carry it without genesis.js, which
- * reaches into the engine. `genesis.js` re-exports it for the node.
- */
-function receiptsNeeded(slots) {
-  if (slots === 2) return 2;
-  if (slots === 7) return 5;
-  // A CONTRACT THAT NAMES ITS DRAW (§5A.7 reserve seats): 9 drawn for 7 seats, 3 for 2 - the threshold is the
-  // seats', never more of the drawn than the seats need
-  if (slots === 9) return 5;
-  if (slots === 3) return 2;
-  throw new Error(`no committee threshold for ${slots} slots`);
-}
-
-/**
- * A FEDERATION'S OWN THRESHOLD over its guardian seats (§23A: "2f + 1 ... 7 of 10, 5 of 7, 3 of 4"; fedimint's own n - floor((n - 1) / 3)):
- * what its reserve key needs (§27A.9.2, "the 5-of-7 key of its guardian seats"). Not a game committee's threshold (receiptsNeeded) -
- * that one knows the committee sizes only, and a federation of the founding's ten got no reserve key from it (kanban #397, 2026-10-23).
- */
-function guardianThreshold(n) {
-  if (!Number.isInteger(n) || n < 1) throw new Error(`no guardian threshold for ${n} seats`);
-  return n - Math.floor((n - 1) / 3);
-}
-
-// ---- arena-protocol/src/genesis.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// Canonical genesis_parameters and the network_id they produce.
-//
-// 27A.6: genesis is a block, not a word. 27A.4: network_id is the tagged hash
-// of that block plus the donation authority and recovery pubkeys. Changing any
-// of it later is a different network.
-
-
-
-
-
-
-// THE GAME CONFIG THE NETWORK WAS FOUNDED ON, NOT THE LIVE CORE'S (2026-10-04): the network id commits to this config's
-// hash, and every contract, bond and donation set is signed under that id - so it is read from the core the network was
-// founded on, kept frozen in core/frozen/2069b4c2, and does not follow a later core. When par moved from 3900 ticks to
-// 1800 (T sinks from 20 s, the owner 09:17) the live core's constants would have moved the network id: a refound. A later
-// core's own rules are named by its core hash, which every round carries beside this config.
-// THE GAME'S CONFIGS ARE THE GAME'S: nextblock's config encoders v1-v4 and their hashes moved to
-// packages/nextblock/config/game-config.js. The genesis parameters name the founding config only by its hash, the fixed
-// GENESIS_CONFIG_HASH (genesis-ids.js); nextblock/test/engine-shared.test.js holds the founding config to it.
-const TAG_GENESIS = 'ARENA/v1/GenesisParameters';
-const TAG_NETWORK_ID = 'ARENA/v1/NetworkId';
-
-/**
- * Randomness nobody in this protocol can grind: the Bitcoin block hash at a
- * height after committee_time. Entry closes before that height is known.
- */
-const RANDOMNESS_SOURCE = 'bitcoin-block-hash';
-
-/**
- * THE SLASH CLOCKS OF TEMPLATE 3, by network (§27A.6's table, §5A.3B). Hashed into mainnet's network id. On testnet4 and regtest they are
- * read from genesis and NOT hashed: their ids are fixed and a moved id is a new network, the same reason as BOND_MATURITY_OFFSET
- * (bond-script.js) and the ruling of 2026-10-14 below. A network founded on these clocks hashes them.
- */
-const SLASH_CLOCKS = Object.freeze({
-  mainnet: Object.freeze({ slashHoldBlocks: 6, slashReturnBlocks: 144, slashFallbackBlocks: 288 }),
-  testnet4: Object.freeze({ slashHoldBlocks: 1, slashReturnBlocks: 36, slashFallbackBlocks: 72 }),
-  regtest: Object.freeze({ slashHoldBlocks: 1, slashReturnBlocks: 12, slashFallbackBlocks: 24 }),
-});
-
-/** census_key_shares_max (§27A.6, §5A.3B, RULED 2026-11-02, kanban #1021): hashed as the slash clocks are, and for the same reason not on the test networks. */
-const CENSUS_KEY_SHARES_MAX = 1024;
-
-function encodeGenesisParameters(p) {
-  const w = new Writer();
-  w.str(p.chain);
-  w.u8(p.gameVerifySlots);
-  w.u8(p.gameVerifyThreshold);
-  w.u8(p.settlementSlots);
-  w.u8(p.settlementThreshold);
-  w.u16(p.censusMinNodes);
-  w.u32(p.censusConfirmations);
-  w.u32(p.bondMaturity);
-  // §27A.6's federation parameters, hashed here since v4.6.5 so the network id commits to them.
-  w.u16(p.federationNominal);
-  w.u32(p.abandonBlocks);
-  w.u32(p.departureNotice);
-  w.u32(p.foundingWindow);
-  w.u32(p.drainBlocks);
-  w.u32(p.claimBlocks);
-
-  // WHO CAN SLASH, AND HOW MANY OF THEM. 5A.3B's script path B is
-  // "<k-of-m arbitration keys> CHECKMULTISIG - the arbitration quorum, any
-  // time before maturity", and the two numbers decide what the bond output
-  // key even is: the leaf hashes them, the tapbranch hashes the leaf, and the
-  // output key is the tweak of that. A round that disagreed about k or m
-  // would compute a different output key for the same node and refuse a bond
-  // that is perfectly good.
-  //
-  // They are genesis and not contract, the same class as `bondMaturity`: a
-  // per-round k is a per-round arbitration set, and the set is what the
-  // residual in 5A.3B is about. Five of seven, matching every other committee
-  // in this protocol.
-  w.u8(p.arbitrationK);
-  w.u8(p.arbitrationM);
-
-  // AND WHICH KEYS THEY ARE. k and m alone say how many signatures a slash
-  // needs; they do not say whose. The slash leaf hashes the keys themselves,
-  // so a bond's output key is a function of this set - and a poster free to
-  // name their own would name themselves and hold a bond nobody could slash.
-  // Sorted, because a set is a set: two nodes listing them differently must
-  // not compute two different networks.
-  if (!Array.isArray(p.arbitrationKeys) || p.arbitrationKeys.length !== p.arbitrationM)
-    throw new Error(`genesis names ${p.arbitrationM} arbitration signer nodes and lists a different number`);
-  w.vec([...p.arbitrationKeys].sort(compareGenesis32), (k, ww) => ww.bytes32(k), { sortedBy: compareGenesis32 });
-  w.u32(p.noticePeriod);
-  w.bytes32(p.bondMarker);
-  w.str(p.randomnessSource);
-  w.bytes32(p.genesisConfigHash);
-  if (!Array.isArray(p.brackets) || p.brackets.length < 1 || p.brackets.length > 255)
-    throw new Error('genesis needs 1..255 stake brackets');
-  w.u8(p.brackets.length);
-  for (const b of p.brackets) {
-    w.u64(b.minSats);
-    w.u64(b.maxSats);
-  }
-  // WHEN SERIES 0 STARTS (ALL-BUT-MIN-1727; multiplayer_p2p.md "The series is a function of the clock":
-  // series_start(k) = genesis_series_start + k * series_max). A genesis parameter, so the network id commits to it
-  // and no series names its own start.
-  if (typeof p.genesisSeriesStartMs !== 'bigint' || p.genesisSeriesStartMs < 0n) throw new Error('genesis names when series 0 starts');
-  w.u64(p.genesisSeriesStartMs);
-  // THE REST OF §27A.6, FROM MAINNET'S GENESIS ON (RULED 2026-10-14 ~13:20Z: "Fix it but no new series
-  // or delays because of it"): federation_min, bond_min_guardian, the governance schedule, and whether the committees bind every
-  // contract. Written only by a genesis that names them - testnet4's and regtest's do not, so their bytes and their network ids
-  // stay as they were and no series moves to a new network.
-  if (p.federationMin !== undefined) {
-    if (!Number.isInteger(p.federationMin) || p.federationMin < 1 || p.federationMin > p.federationNominal)
-      throw new Error('federation_min is 1..federation_nominal');
-    if (typeof p.bondMinGuardianSats !== 'bigint' || p.bondMinGuardianSats <= 0n) throw new Error('genesis names a guardian\'s bond floor in sats');
-    const sched = p.governanceSchedule;
-    if (!sched || !['design', 'money', 'upgrade'].every((k) => sched[k] && ['review', 'voting', 'cooldown'].every((x) => Number.isInteger(sched[k][x]) && sched[k][x] >= 0)))
-      throw new Error('genesis names the governance schedule: review, voting and cooldown blocks for design, money and upgrade');
-    w.u16(p.federationMin);
-    w.u64(p.bondMinGuardianSats);
-    for (const k of ['design', 'money', 'upgrade']) { w.u32(sched[k].review); w.u32(sched[k].voting); w.u32(sched[k].cooldown); }
-    w.u8(p.committeesBind ? 1 : 0);
-    // TEMPLATE 3'S CLOCKS (§27A.6, §5A.3B), in this block for the reason the block exists: the test networks' bytes do not move.
-    if (![p.slashHoldBlocks, p.slashReturnBlocks, p.slashFallbackBlocks].every((n) => Number.isInteger(n) && n >= 1 && n <= 0xffff))
-      throw new Error('genesis names the slash clocks: hold, return and fallback blocks, each one CHECKSEQUENCEVERIFY can wait for');
-    if (!(p.slashHoldBlocks < p.slashReturnBlocks && p.slashReturnBlocks < p.slashFallbackBlocks))
-      throw new Error('the slash clocks run hold, then return, then fallback: a mature node leaves before the fallback opens (§5A.3B)');
-    w.u32(p.slashHoldBlocks);
-    w.u32(p.slashReturnBlocks);
-    w.u32(p.slashFallbackBlocks);
-    if (!Number.isInteger(p.censusKeySharesMax) || p.censusKeySharesMax < 1) throw new Error('genesis names census_key_shares_max');
-    w.u32(p.censusKeySharesMax);
-    // THE KEY THE GENESIS FOUNDERS MADE BEFORE ANY BOND (§5A.3B): committed here, so it needs no anchor.
-    w.bytes32(p.censusKey0);
-  }
-  return w.finish();
-}
-
-/**
- * MAINNET'S GENESIS (§27A.6, the "Three networks" table), built from the parts only a launch can name: the
- * bond marker (§25.1), the seven arbitration keys, the donation authority and the cold recovery key (§27A.4 - the recovery key
- * belongs in a safe), and when series 0 starts. Nothing here invents them: without each one it throws, and this build runs no
- * mainnet. The rest is the table's: committees of 7 slots, threshold 5 for both roles, binding every contract; a census of 10;
- * 6 confirmations; federations of 10 with federation_min 7; the fast clocks the owner set; ~30 days of bond maturity and notice;
- * governance 1008 / 1440 / 2016 (upgrades 2016 / 2016 / 4320, ballot.js).
- */
-function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityPubkey, recoveryPubkey, genesisSeriesStartMs, bondMinGuardianSats, censusKey0 } = {}) {
-  const is32 = (x) => x instanceof Uint8Array && x.length === 32;
-  if (!is32(marker)) throw new Error('mainnet genesis needs its bond marker (32 bytes, §25.1): it has not been chosen');
-  if (!Array.isArray(arbitrationKeys) || arbitrationKeys.length !== 7 || !arbitrationKeys.every(is32)) throw new Error('mainnet genesis needs its 7 arbitration keys');
-  if (!is32(authorityPubkey) || !is32(recoveryPubkey)) throw new Error('mainnet genesis needs the donation authority and the cold recovery key (§27A.4)');
-  if (typeof genesisSeriesStartMs !== 'bigint') throw new Error('mainnet genesis names when series 0 starts');
-  if (typeof bondMinGuardianSats !== 'bigint' || bondMinGuardianSats <= 0n) throw new Error('mainnet genesis names a guardian\'s bond floor');
-  if (!is32(censusKey0)) throw new Error('mainnet genesis needs census key 0: the founders run its DKG before any bond exists (§5A.3B)');
-  const genesis = {
-    chain: 'bitcoin-mainnet', genesisSeriesStartMs, censusKey0, censusKeySharesMax: CENSUS_KEY_SHARES_MAX,
-    federationNominal: 10, federationMin: 7, bondMinGuardianSats,
-    abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216,
-    gameVerifySlots: 7, gameVerifyThreshold: 5, settlementSlots: 7, settlementThreshold: 5, committeesBind: true,
-    censusMinNodes: 10, censusConfirmations: 6, bondMaturity: 4320, ...SLASH_CLOCKS.mainnet,
-    arbitrationK: 5, arbitrationM: 7, arbitrationKeys, noticePeriod: 4320,
-    bondMarker: marker, randomnessSource: RANDOMNESS_SOURCE, genesisConfigHash: GENESIS_CONFIG_HASH,
-    brackets: [{ minSats: 1000n, maxSats: 10_000_000n }],
-    governanceSchedule: { design: { review: 1008, voting: 1440, cooldown: 2016 }, money: { review: 1008, voting: 1440, cooldown: 2016 },
-      upgrade: { review: 2016, voting: 2016, cooldown: 4320 } },
-  };
-  return { genesis, networkId: computeNetworkId({ genesis, authorityPubkey, recoveryPubkey }) };
-}
-
-/**
- * EVERY CONTRACT BOUND TO ITS GENESIS (§5A.7 / §27A.62026-10-16: "the client refuses to join
- * and names the mismatched parameter"): where the genesis says its committees bind, a Round Contract names exactly its slots per role,
- * the threshold of those slots (threshold.js) is the genesis's, and its census confirmations are the genesis's. Each mismatch is named
- * by its parameter. A genesis that does not bind (testnet4, regtest - per the 2026-10-14 ruling, no new series) leaves each contract its
- * own values. The seat (POST /round) and the client (the join) ask this one function.
- */
-function committeesStand(contract, genesis) {
-  if (!genesis || !genesis.committeesBind) return { ok: true, bound: false };
-  const off = [];
-  const g = Number(contract && contract.gameVerifySlots), st = Number(contract && contract.settlementSlots);
-  if (g !== genesis.gameVerifySlots) off.push(`game_verify_slots ${g}, the genesis binds ${genesis.gameVerifySlots}`);
-  if (st !== genesis.settlementSlots) off.push(`settlement_slots ${st}, the genesis binds ${genesis.settlementSlots}`);
-  if (g === genesis.gameVerifySlots && receiptsNeeded(g) !== genesis.gameVerifyThreshold)
-    off.push(`game_verify_threshold ${receiptsNeeded(g)}, the genesis binds ${genesis.gameVerifyThreshold}`);
-  if (st === genesis.settlementSlots && receiptsNeeded(st) !== genesis.settlementThreshold)
-    off.push(`settlement_threshold ${receiptsNeeded(st)}, the genesis binds ${genesis.settlementThreshold}`);
-  const conf = contract && contract.censusConfirmations;
-  if (conf !== undefined && conf !== null && Number(conf) !== genesis.censusConfirmations)
-    off.push(`census_confirmations ${Number(conf)}, the genesis binds ${genesis.censusConfirmations}`);
-  if (off.length) return { ok: false, off, why: `this network's genesis binds the contract, and it names ${off.join('; ')}` };
-  return { ok: true, bound: true };
-}
-
-/**
- * WHEN EACH NETWORK'S SERIES 0 STARTS, midnight UTC (ALL-BUT-MIN-1727). The spec names the parameter and not its value;
- * these are this build's: regtest 2026-01-01, testnet4 2026-10-01. Series k starts 24 h * k after it.
- */
-const GENESIS_SERIES_START_MS = Object.freeze({ regtest: 1767225600000n, testnet4: 1790812800000n });
-
-function testnetShape(chain, marker, arbitrationKeys, federation, genesisSeriesStartMs) {
-  return {
-    chain,
-    genesisSeriesStartMs,
-    // THE FEDERATION'S OWN PARAMETERS ARE GENESIS PARAMETERS (§27A.6), so they are hashed into the
-    // network id like every other rule a player is held to. Without them two networks could share an id
-    // while one drains a federation in 24 h and the other in 28 d, and a contract naming that id would
-    // not say how long its holder's money can be frozen or how long he has to claim it.
-    federationNominal: federation.federationNominal,
-    abandonBlocks: federation.abandonBlocks,
-    departureNotice: federation.departureNotice,
-    foundingWindow: federation.foundingWindow,
-    drainBlocks: federation.drainBlocks,
-    claimBlocks: federation.claimBlocks,
-    slashHoldBlocks: federation.slashHoldBlocks,
-    slashReturnBlocks: federation.slashReturnBlocks,
-    slashFallbackBlocks: federation.slashFallbackBlocks,
-    censusKeySharesMax: CENSUS_KEY_SHARES_MAX,
-    gameVerifySlots: 2,
-    gameVerifyThreshold: 2,
-    settlementSlots: 2,
-    settlementThreshold: 2,
-    censusMinNodes: 2,
-    censusConfirmations: 1,
-    bondMaturity: 100,
-    arbitrationK: 5,
-    arbitrationM: 7,
-    arbitrationKeys,
-    noticePeriod: 144,
-    bondMarker: marker,
-    randomnessSource: RANDOMNESS_SOURCE,
-    genesisConfigHash: GENESIS_CONFIG_HASH,
-    brackets: [{ minSats: 1000n, maxSats: 10_000_000n }],
-  };
-}
-
-/** Two 32-byte keys in byte order, so a set is a set and not an arrangement. */
-function compareGenesis32(a, b) {
-  for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i];
-  return 0;
-}
-
-const concat = (...parts) => {
-  const n = parts.reduce((s, p) => s + p.length, 0);
-  const out = new Uint8Array(n);
-  let o = 0;
-  for (const p of parts) { out.set(p, o); o += p.length; }
-  return out;
-};
-
-const zeros32 = () => new Uint8Array(32);
-
-function computeNetworkId({ genesis, authorityPubkey, recoveryPubkey }) {
-  if (!(authorityPubkey instanceof Uint8Array) || authorityPubkey.length !== 32)
-    throw new Error('donation authority pubkey is 32 bytes');
-  if (!(recoveryPubkey instanceof Uint8Array) || recoveryPubkey.length !== 32)
-    throw new Error('donation recovery pubkey is 32 bytes');
-  const body = encodeGenesisParameters(genesis);
-  return taggedHash(
-    TAG_NETWORK_ID,
-    concat(body, authorityPubkey, recoveryPubkey, zeros32(), zeros32()),
-  );
-}
-
-/** 2 slots → 2-of-2 (this build). 7 slots → 5-of-7. One rule: threshold.js. */
-
-function genesisFor(network) {
-  if (network === 'regtest')
-    return testnetShape('bitcoin-regtest', bondMarker('regtest'), ARBITRATION_KEYS_REGTEST,
-      { federationNominal: 4, ...REGTEST_CLOCKS, ...SLASH_CLOCKS.regtest }, GENESIS_SERIES_START_MS.regtest);
-  if (network === 'testnet4' || network === 'testnet')
-    return testnetShape('bitcoin-testnet4', bondMarker('testnet'), ARBITRATION_KEYS_TESTNET4,
-      { federationNominal: 4, ...TESTNET_CLOCKS, ...SLASH_CLOCKS.testnet4 }, GENESIS_SERIES_START_MS.testnet4);
-  throw new Error('no genesis for ' + network);
-}
-
-/**
- * THE TWO KEYS 27A.4 PUTS IN THE NETWORK'S NAME, looked up by network.
- *
- * They have been generated, written into `genesis-ids.js` and hashed into
- * `network_id` by `computeNetworkId` since letter 24 - and until `authority.js`
- * nothing read them. A key that decides where donations go and that no code
- * consults is not a control; it is a comment.
- *
- * The authority is what a published donation set is checked against, and the
- * recovery key is what a rotation is checked against - never the other way
- * round. 27A.4's table is exhaustive: the authority signs sets and nothing
- * else, the recovery key names a new authority and nothing else.
- *
- * 2026-09-08: these are test keys on disk for regtest and testnet4.
- * A mainnet recovery key belongs in a safe, and this build has no mainnet.
- */
-function donationKeysFor(network) {
-  if (network === 'regtest')
-    return { authority: AUTHORITY_PUBKEY_REGTEST, recovery: RECOVERY_PUBKEY_REGTEST };
-  if (network === 'testnet4' || network === 'testnet')
-    return { authority: AUTHORITY_PUBKEY_TESTNET4, recovery: RECOVERY_PUBKEY_TESTNET4 };
-  throw new Error('no donation authority has been generated for ' + network);
-}
-
-// THE SAME TWO KEYS BY NETWORK ID: donation-keys.js, re-exported (M3.2 6e).
 
 // ---- arena-protocol/src/committee-seed.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
