@@ -8011,9 +8011,9 @@
  {
   "method": "GET",
   "path": "/seating",
-  "params": "query round (hex 32), role (game|settlement)",
+  "params": "query round (hex 32), role (game|settlement), at (hex 32, optional: the table round the seating is wanted for)",
   "auth": "none; only when seating is on (ARENA_SEATING=1)",
-  "returns": "200 JSON {cert}; 400/404",
+  "returns": "200 JSON {cert, index}; 400/404",
   "purpose": "The seating certificate held for a round and role.",
   "audience": "node-to-node",
   "line": 6080,
@@ -8031,6 +8031,12 @@
     "type": "string",
     "description": "\"game\" or \"settlement\".",
     "example": "game"
+   },
+   {
+    "name": "at",
+    "required": false,
+    "type": "string",
+    "description": "A round of the table named by round: answers the seating that seats that round."
    }
   ],
   "body": null,
@@ -8038,7 +8044,7 @@
    {
     "status": "200",
     "contentType": "application/json",
-    "description": "{cert}."
+    "description": "{cert, index}: index is the table round the certificate is on, 0 for its first."
    },
    {
     "status": "400",

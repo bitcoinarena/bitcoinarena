@@ -2625,6 +2625,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // A V2 ROUND'S SEATS (2026.0.2): the settlement seating's certified seated set is the round's 7 signer nodes
     onSeated: (rid, role, seated) => {
       if (role !== 'settlement') return;
+      // A TABLE'S LATER SEATING (kanban #1020): it seats that check-in and the rounds after it
+      let later = null; try { const t = tableAnchorOf(decodeRoundContract(new Uint8Array(round.get(rid).contract))); later = t && !t.first ? t : null; } catch { later = null; }
+      if (later) { reseatTable(later.anchorId, rid); return; }
       // a seating that differs from the draw's first seats deals the claim key again, to the seated (dkg epoch per committee)
       if (round.seatDrawFree(rid, seated)) { console.log(`[seating] ${toHex(rid).slice(0, 16)}: v2 round, its 7 seated written in`); makeClaimKey(rid); }
       seatTable(rid, seated);
@@ -2647,9 +2650,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let n = 0, first = null;
     for (const id of w.startingWithin(round.now(), Number.MAX_SAFE_INTEGER - Number(round.now()))) {
       const rid = fromHex(id);
-      if (round.signerNodes(rid).length && round.seatDrawFree(rid, keys)) { n++; first = first || rid; }
+      // the seating at that round: a later one of the table, kept across a restart, counts (kanban #1020)
+      const at = seating ? seating.seatedFor(rid, 'settlement') : null;
+      if (round.signerNodes(rid).length && round.seatDrawFree(rid, at ? at.map(fromHex) : keys)) { n++; first = first || rid; }
     }
     if (n) { console.log(`[seating] table ${hex.slice(0, 16)}: ${n} round(s) of it seated again, as its certificate says`); makeClaimKey(first); }
+  }
+  /** A check-in seated the table anew (kanban #1020): every round of it not started and without entries is written in again, and the new seats' key is made at once. */
+  function reseatTable(anchorRid, rid) {
+    const hex = toHex(anchorRid);
+    let w; try { w = writers.find((x) => toHex(seriesRoundIdOf(x.id, 0)) === hex); } catch { return; }
+    if (!w) return;
+    const from = decodeRoundContract(new Uint8Array(round.get(rid).contract)).roundIndex;
+    wantedTables.add(hex);
+    let n = 0, first = null;
+    for (const id of w.startingWithin(round.now(), Number.MAX_SAFE_INTEGER - Number(round.now()))) {
+      const r = fromHex(id), row = round.get(r);
+      if (!row || decodeRoundContract(new Uint8Array(row.contract)).roundIndex < from || round.entriesOf(r).length) continue;
+      const at = seating.seatedFor(r, 'settlement');
+      if (at && round.signerNodes(r).length && round.seatDrawFree(r, at.map(fromHex))) { n++; first = first || r; }
+    }
+    console.log(`[seating] table ${hex.slice(0, 16)}: seated anew from round ${from}, ${n} round(s) written in`);
+    if (first) makeClaimKey(first);
   }
   if (seating) roster.seatedFor = seating.seatedFor;
   const seatingTimer = seating ? setInterval(() => { seating.tick(); }, Number(process.env.ARENA_SEATING_TICK_MS || 2000)) : null;
@@ -10364,8 +10386,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (url.pathname === '/seating-equivocation') return json(res, 200, { equivocations: seating.equivocationOf(rid) });
         if (role !== 'game' && role !== 'settlement') return text(res, 400, 'name a role: game or settlement');
         if (url.pathname === '/seating-sig') { const m = seating.mySignature(rid, role); return m ? json(res, 200, m) : text(res, 404, 'this node signed no seating for that round and role'); }
-        const cert = seating.certOf(rid, role);
-        return cert ? json(res, 200, { cert }) : text(res, 404, 'no seating certificate for that round and role here');
+        // `at`: the table round the seating is wanted for (kanban #1020); a table's later seating names its round's index, so a client can check it belongs to the table
+        let at = rid; try { const a = url.searchParams.get('at'); if (a) { at = fromHex(a); if (at.length !== 32) at = rid; } } catch { at = rid; }
+        const cert = seating.certOf(rid, role, at);
+        return cert ? json(res, 200, { cert, index: seating.certRoundOf(at, role) }) : text(res, 404, 'no seating certificate for that round and role here');
       }
       // CAPACITY PRESSURE (spec §23A.3a, kanban #543): every federation this seat holds a record of - its load, band, headroom, the bond B*
       // that would relieve it and the seated guardians below it, the gateways' peg-ins against P* (this seat's own federation: the gateways

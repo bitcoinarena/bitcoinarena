@@ -794,7 +794,7 @@ export class Roster {
     const seeded = contract ? this.seedFor(roundIdBytes, contract) : null;
     // AND TAKE THE TABLE'S SEATING (pick (c)): the certificate of the table's first round seats every round of it
     const anchor = contract ? tableAnchorOf(contract) : null;
-    const seated = this.seatedFor ? this.seatedFor(anchor ? anchor.anchorId : roundIdBytes, role) : null;
+    const seated = this.seatedFor ? this.seatedFor(anchor ? anchor.anchorId : roundIdBytes, role, roundIdBytes) : null;   // the seating at this round (kanban #1020)
     const kept = census && census.ok && seeded && seeded.ok && seeded.seed
       ? `${toHex(roundIdBytes)}:${role}:${toHex(census.root)}:${toHex(seeded.seed)}:${seated ? seated.join(',') : '-'}${asCommitted ? ':committed' : ''}` : null;
     if (kept && this.committees.has(kept)) return this.committees.get(kept);

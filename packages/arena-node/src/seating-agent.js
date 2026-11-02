@@ -48,6 +48,10 @@ export const UNREACHABLE_REST_MS = Number(process.env.ARENA_UNREACHABLE_REST_MS 
 export const UNANSWERED_TRIES = 2;
 /** How long after its start a table's first round without a certificate is still read, and joined late (kanban #803): its table plays all day. */
 export const TABLE_LATE_MS = BigInt(process.env.ARENA_TABLE_LATE_MS || 24 * 3600000);
+/** A table's check-in (kanban #1020): the first round of the table in each of these periods of UTC time exchanges PRESENTs. */
+export const TABLE_CHECK_IN_MS = 900000n;
+/** How often a seat asks the seats of its tables for a newer seating it missed (kanban #1020). */
+const TABLE_RESEAT_ASK_MS = 300000;
 const joinBytes = (list) => { const out = new Uint8Array(list.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of list) { out.set(x, at); at += x.length; } return out; };
 
 export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, nowMs = () => Date.now(), log = () => {}, windowOf = () => null,
@@ -93,6 +97,45 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   // a kept certificate was checked before it was kept (keepCert): read back, it names its seated
   function decodeSeated(cert) { return decodeSeatingCertificate(cert).seated.map(toHex); }
 
+  // A TABLE'S LATER SEATINGS (kanban #1020, the owner 2026-11-02: "Die tote node muss doch 120s vor Runden Beginn einchecken, das kann sie doch nicht"; measured 10:45Z: a node
+  // gone since 04:00Z sat in two RPS tables, because a table was seated once, by its first round). `${anchor hex}:${role}` -> [{ index, rid, seated }], lowest index first: a
+  // certificate on a later round of the table seats that round and the ones after it. Empty for every table that lost nobody.
+  const reseats = new Map();
+  const tableStarts = new Map();   // anchor hex -> round 0's start
+  const noteReseat = (rid, role, seated) => {
+    let c; try { const row = round.get(rid); c = row ? decodeRoundContract(new Uint8Array(row.contract)) : null; } catch { c = null; }
+    const a = c ? tableAnchorOf(c) : null;
+    if (!a || a.first) return;
+    const key = `${toHex(a.anchorId)}:${role}`;
+    const list = reseats.get(key) || reseats.set(key, []).get(key);
+    if (list.some((x) => x.index === c.roundIndex)) return;
+    list.push({ index: c.roundIndex, rid, seated });
+    list.sort((x, y) => x.index - y.index);
+  };
+  for (const r of db.prepare('SELECT round_id, role, cert FROM seat_certs').all()) {
+    try { noteReseat(new Uint8Array(r.round_id), r.role, decodeSeated(new Uint8Array(r.cert))); } catch { /* unread */ }
+  }
+  /** The seating that seats round `index` of the table: the newest certificate at or before it, and the table's first otherwise. Null while none stands. */
+  const tableSeatingAt = (anchorHex, role, index) => {
+    const later = reseats.get(`${anchorHex}:${role}`);
+    if (later) for (let i = later.length - 1; i >= 0; i--) if (later[i].index <= index) return later[i].seated;
+    return certs.get(`${anchorHex}:${role}`) || null;
+  };
+  /** Is this round of a table one of its check-ins? The table's rounds are evenly spaced, so round 0's start gives the spacing. */
+  const checkInOf = (c, anchor) => {
+    if (!anchor || anchor.first || c.roundIndex < 1) return false;
+    const a = toHex(anchor.anchorId);
+    let t0 = tableStarts.get(a);
+    if (t0 === undefined) {
+      const row = round.get(anchor.anchorId);
+      let c0 = null; try { c0 = row ? decodeRoundContract(new Uint8Array(row.contract)) : contractOf(anchor.anchorId); } catch { c0 = null; }
+      if (!c0) return false;
+      t0 = c0.startTimeMs; tableStarts.set(a, t0);
+    }
+    const period = (c.startTimeMs - t0) / BigInt(c.roundIndex);
+    return period > 0n && c.startTimeMs / TABLE_CHECK_IN_MS !== (c.startTimeMs - period) / TABLE_CHECK_IN_MS;
+  };
+
   // THE CHECK OF A CERTIFICATE, against this node's own draw for the round
   const checkFor = (rid, role) => {
     // A TABLE'S FIRST ROUND THIS SEAT NEVER WROTE (kanban #604: the 10-24 series reached the test host seats at 00:12Z, after their
@@ -116,6 +159,9 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (!check || check.refused) return { ok: false, why: `this node cannot draw that round yet${check ? `: ${check.refused}` : ''}` };
     const v = verifySeating(bytes, check);
     if (!v.ok) return v;
+    // on a table only the first round and its check-ins hold a seating (kanban #1020)
+    try { const row = round.get(rid); const c = row ? decodeRoundContract(new Uint8Array(row.contract)) : null; const a = c ? tableAnchorOf(c) : null;
+      if (a && !a.first && !checkInOf(c, a)) return { ok: false, why: 'that round of its table is no check-in' }; } catch { /* the draw above read it */ }
     const key = `${toHex(rid)}:${role}`;
     const had = db.prepare('SELECT cert FROM seat_certs WHERE round_id = ? AND role = ?').get(rid, role);
     if (had) {
@@ -134,6 +180,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     db.prepare('INSERT OR IGNORE INTO seat_certs (round_id, role, cert) VALUES (?, ?, ?)').run(rid, role, bytes);
     if (!certs.has(key) || certs.get(key) !== null) certs.set(key, v.seating.seated.map(toHex));
     keepPeers(rid, role, v.seating.seated);
+    noteReseat(rid, role, v.seating.seated.map(toHex));
     // the seats a v2 round counts are these (2026.0.2): the server writes them into the stored contract
     try { onSeated(rid, role, v.seating.seated); } catch (e) { log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: ${e.message}`); }
     return { ok: true, kept: true };
@@ -168,6 +215,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   const starts = new Map();      // rid hex -> { rid, start: bigint, close: bigint }
   const unwritten = new Map();   // anchor hex -> { rid, askedMs }: tables whose round 0 this seat does not hold (or holds uncertified)
   const heldChecked = new Set(); // anchor hex: a held round 0 already looked at for its certificates
+  const tables = new Map();      // anchor hex -> { rid, start, askedMs }: the table's latest round held (kanban #1020)
   let lastRow = 0;
   const index = () => {
     for (const r of db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid > ? ORDER BY rowid').all(lastRow)) {
@@ -181,6 +229,12 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       // contracts on seat 1, of which 5,950 had not started 10 min ago) - but a table's first round is read all day while no certificate
       // of it stands (kanban #803, below)
       if (c.startTimeMs + (anchor && anchor.first ? TABLE_LATE_MS : 600000n) < BigInt(nowMs())) continue;
+      if (anchor && !anchor.first) {
+        const known = tables.get(toHex(anchor.anchorId));
+        if (!known || known.start < c.startTimeMs) tables.set(toHex(anchor.anchorId), { rid: new Uint8Array(r.round_id), start: c.startTimeMs, askedMs: known ? known.askedMs : -Infinity });
+        if (checkInOf(c, anchor)) starts.set(toHex(new Uint8Array(r.round_id)), { rid: new Uint8Array(r.round_id), start: c.startTimeMs, close: seatingCloseMs(c, windowOf(c)), contract: c,
+          tableFirst: false, checkIn: { anchorHex: toHex(anchor.anchorId), index: c.roundIndex }, askedMs: -Infinity });
+      }
       if (anchor && anchor.first && c.startTimeMs + 600000n < BigInt(nowMs()) && SEATING_ROLES.every((role) => db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(new Uint8Array(r.round_id), role))) continue;
       if (anchor && !anchor.first) {
         // A TABLE WHOSE FIRST ROUND THIS SEAT NEVER WROTE (kanban #604): its certificate is asked of the table's seats
@@ -383,8 +437,11 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
           const c = roster.committeeFor(t.rid, role);
           if (!c.ok) continue;
           const drawnKeys = c.drawn.map((e) => e.pubkey);
-          work.push({ t, ridHex, role, c, drawnKeys, amDrawn: drawnKeys.some((k) => toHex(k) === me), others: endpointsOf(c.drawn, round.pubkey, endpointOf),
-            slots: slotsForRole(t.contract, role), closed: now >= t.close, late, joins });
+          const w = { t, ridHex, role, c, drawnKeys, amDrawn: drawnKeys.some((k) => toHex(k) === me), others: endpointsOf(c.drawn, round.pubkey, endpointOf),
+            slots: slotsForRole(t.contract, role), closed: now >= t.close, late, joins };
+          // A CHECK-IN NOBODY MISSED ends at its close: no seating is signed, so none is waited for (kanban #1020)
+          if (t.checkIn && (late || (w.closed && !mySignature(t.rid, role) && !reseatingOf(w)))) continue;
+          work.push(w);
         }
       }
       if (!work.length) return;
@@ -468,6 +525,20 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   // table's drawn seats once a minute until both stand, each checked by keepCert on round 0 built from the series (`contractOf`)
   async function askUnwritten() {
     const t = nowMs();
+    // A SEATING OF A TABLE THIS SEAT MISSED (kanban #1020): it was down at the check-in, or the hand-out left it out. The newest is asked of the table's drawn seats.
+    for (const [a, table] of tables) {
+      if (unwritten.has(a) || t - table.askedMs < TABLE_RESEAT_ASK_MS) continue;
+      table.askedMs = t;
+      await Promise.all(SEATING_ROLES.map(async (role) => {
+        const c = roster.committeeFor(table.rid, role);
+        if (!c.ok) return;
+        await Promise.all(endpointsOf(c.drawn, round.pubkey, endpointOf).filter((b) => !rests(b)).map(async (b) => {
+          const j = await getJson(b, `/seating?round=${a}&role=${role}&at=${toHex(table.rid)}`);
+          if (!j || !j.cert) return;
+          try { const d = decodeSeatingCertificate(fromHex(j.cert)); if (toHex(d.roundId) !== a && d.role === role) keepCert(d.roundId, role, fromHex(j.cert)); } catch { /* says nothing */ }
+        }));
+      }));
+    }
     for (const [a, u] of unwritten) {
       const lacking = SEATING_ROLES.filter((role) => !db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(u.rid, role));
       // asked for at most 3 h: a table nobody certified is not asked for all day
@@ -504,17 +575,37 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
    * fewer than that left, the PRESENTs held stand as before. The PRESENT stays held, so if a member signs the seating with that node in it, the ordered rule above (#738)
    * brings this seat to it: one seat's bad line can cost a reserve, not a round.
    */
+  const silentOf = (w) => new Set(w.c.drawn.filter((e) => toHex(e.pubkey) !== me && (failing.get(endpointsOf([e], null, endpointOf)[0]) || 0) >= UNANSWERED_TRIES).map((e) => toHex(e.pubkey)));
   function answeringOf(w, held) {
-    const silent = new Set(w.c.drawn.filter((e) => toHex(e.pubkey) !== me && (failing.get(endpointsOf([e], null, endpointOf)[0]) || 0) >= UNANSWERED_TRIES).map((e) => toHex(e.pubkey)));
+    const silent = silentOf(w);
     const left = held.filter((k) => !silent.has(k));
     return left.length >= receiptsNeeded(w.slots) ? left : held;
+  }
+  /**
+   * THE SEATING A CHECK-IN ASKS FOR (kanban #1020), or null when the table stays as it is. A seated node leaves only if this seat holds no PRESENT of it AND failed to reach it
+   * (#979), so a node that lives keeps its seat even on a build that sends no PRESENT for a later round. The rest keep theirs, the next drawn node that checked in and answers
+   * takes the place, and the seats never shrink: with no reserve for a place, nothing changes, so the claim key is made again only for a real replacement.
+   */
+  function reseatingOf(w) {
+    const prior = tableSeatingAt(w.t.checkIn.anchorHex, w.role, w.t.checkIn.index - 1);
+    if (!prior) return null;
+    const held = new Set(db.prepare('SELECT node FROM seat_presents WHERE round_id = ? AND role = ?').all(w.t.rid, w.role).map((r) => r.node));
+    const silent = silentOf(w);
+    const gone = prior.filter((k) => !held.has(k) && silent.has(k));
+    if (!gone.length) return null;
+    const stay = prior.filter((k) => !gone.includes(k));
+    const reserves = w.drawnKeys.map(toHex).filter((k) => !prior.includes(k) && held.has(k) && !silent.has(k)).slice(0, gone.length);
+    if (reserves.length < gone.length) return null;
+    const list = new Set([...stay, ...reserves]);
+    return w.drawnKeys.filter((k) => list.has(toHex(k)));
   }
   /** At seating_close: the seated from the PRESENTs held, and this node's signature over that seating - once, if seated. */
   function signMine(w) {
     if (db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(w.t.rid, w.role)) return;
     if (mySignature(w.t.rid, w.role)) return;
     const held = db.prepare('SELECT node FROM seat_presents WHERE round_id = ? AND role = ?').all(w.t.rid, w.role).map((r) => r.node);
-    const seated = seatedFrom({ drawn: w.drawnKeys, present: answeringOf(w, held), slots: w.slots });
+    const seated = w.t.checkIn ? reseatingOf(w) : seatedFrom({ drawn: w.drawnKeys, present: answeringOf(w, held), slots: w.slots });
+    if (!seated) return;
     if (!seated.some((k) => toHex(k) === me)) return;
     if (!signSeatingOf(w, seated, held)) return;
     log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: signed the seating of ${seated.length} (${held.length} present of ${w.drawnKeys.length} drawn)`);
@@ -584,6 +675,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   }
   /** This node's second seating, when its first can never stand (kanban #738): the rule above. */
   function resign(w) {
+    if (w.t.checkIn) return;      // a check-in that does not meet leaves the table as it is, and the next one tries again (kanban #1020)
     const never = canNeverStand(w);
     if (!never) return;
     const member = never.node;
@@ -774,6 +866,33 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (anchors.size > 20000) anchors.delete(anchors.keys().next().value);
     return to;
   };
+  /** The round of a table's seating that seats `rid`, for the doors: its table's first, or the check-in that seated it last (kanban #1020). */
+  const seatRoundOf = (rid, role) => {
+    const anchor = seatOf(rid);
+    const later = reseats.get(`${toHex(anchor)}:${role}`);
+    if (!later) return anchor;
+    let index = null; try { index = decodeRoundContract(new Uint8Array(round.get(rid).contract)).roundIndex; } catch { index = null; }
+    if (index === null) return anchor;
+    for (let i = later.length - 1; i >= 0; i--) if (later[i].index <= index) return later[i].rid;
+    return anchor;
+  };
+  /** Who seats round `rid`. A round with entries keeps the seats it had when they came (kanban #1020): a later seating does not move money already on the table. */
+  const seatedAt = (rid, role) => {
+    const anchor = seatOf(rid), a = toHex(anchor);
+    if (!reseats.size || !(reseats.has(`${a}:${role}`) || reseats.has(`${a}:settlement`))) return certs.get(`${a}:${role}`) || null;
+    let c; try { c = decodeRoundContract(new Uint8Array(round.get(rid).contract)); } catch { return certs.get(`${a}:${role}`) || null; }
+    let index = c.roundIndex;
+    if (round.entriesOf && round.entriesOf(rid).length && c.nodes && c.nodes.length) {
+      const names = c.nodes.map(toHex).sort().join();
+      const fits = (s) => s && [...s].sort().join() === names;
+      const later = reseats.get(`${a}:settlement`) || [];
+      if (!fits(tableSeatingAt(a, 'settlement', index))) {
+        const kept = [...later].reverse().find((x) => x.index <= index && fits(x.seated));
+        index = kept ? kept.index : (later[0] ? later[0].index - 1 : index);
+      }
+    }
+    return tableSeatingAt(a, role, index);
+  };
   return {
     tick,
     /** WHO THIS SEAT COUNTS AS NOT ANSWERING (kanban #984): each address, its failed requests in a row and since when, so another node can compare and ask it itself. */
@@ -781,19 +900,22 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     /** The certificate pass running beside the tick, if one is (kanban #803): for a caller that needs it finished. */
     settled: () => asking || Promise.resolve(),
     /** For the roster: who the certificate seats (node keys hex), or null while none stands or after equivocation. */
-    seatedFor: (rid, role) => { const s = certs.get(`${toHex(seatOf(rid))}:${role}`); return s || null; },
+    seatedFor: (rid, role, at = rid) => (toHex(seatOf(at)) === toHex(seatOf(rid)) ? seatedAt(at, role) : seatedAt(rid, role)),
     /** A round's seating, for the doors, the lobby and the entry gate. */
     stateOf: (rid) => {
       const out = {};
       for (const role of SEATING_ROLES) {
         const key = `${toHex(seatOf(rid))}:${role}`;
-        out[role] = certs.has(key) && certs.get(key) === null ? { equivocated: true } : certs.get(key) ? { seated: certs.get(key) } : null;
+        const seated = certs.has(key) && certs.get(key) === null ? null : seatedAt(rid, role);
+        out[role] = certs.has(key) && certs.get(key) === null ? { equivocated: true } : seated ? { seated } : null;
       }
       return out;
     },
     // WHETHER THIS NODE'S OWN PRESENT IS HELD FOR A ROUND'S SEATING: a reserve that was present has not missed it
     presentHere: (rid, role = 'settlement') => !!db.prepare('SELECT 1 FROM seat_presents WHERE round_id = ? AND role = ? AND node = ?').get(seatOf(rid), role, me),
-    takePresent, presentsOf, mySignature, certOf: (rid, role) => certOf(seatOf(rid), role), keepCert, equivocationOf, takePresents, batchOf,
+    takePresent, presentsOf, mySignature, certOf: (rid, role, at = rid) => certOf(seatRoundOf(at, role), role), keepCert, equivocationOf, takePresents, batchOf,
+    /** The table round a door's certificate is on, and its index (kanban #1020): 0 for the table's first. */
+    certRoundOf: (at, role) => { const r = seatRoundOf(at, role); let index = 0; try { index = decodeRoundContract(new Uint8Array(round.get(r).contract)).roundIndex || 0; } catch { index = 0; } return index; },
     /** A round deleted from the store (transcript-prune.js, unused and past its windows): its certificates leave memory too. */
     forget: (ridHex) => { for (const role of SEATING_ROLES) certs.delete(`${ridHex}:${role}`); },
   };
