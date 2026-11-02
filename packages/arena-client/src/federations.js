@@ -145,11 +145,13 @@ export function depositFederation({ lobbyInvite, statuses = [], held = [], known
   // it's evened out"): a returning player too - the page sums every federation's wallet (ARENA_SUM_BALANCES), so where the money
   // sits is no longer the player's concern. `always: false` is §23A.3's earlier rule, a returning player staying where it holds.
   if (!always && held && held.length) {
-    const mine = (statuses || []).find((f) => f && f.invite && held.includes(String(f.federation).toLowerCase()));
+    const mine = (statuses || []).find((f) => f && f.invite && takesDeposits(f.federation) && held.includes(String(f.federation).toLowerCase()));
     if (mine && !sameFederation(lobbyInvite, mine.federation)) return { invite: mine.invite, federation: mine.federation, lowest: false, why: 'a returning player stays in the federation it holds' };
     return lobby('a returning player stays in the federation it holds');
   }
-  const pick = pickFederation((statuses || []).filter((f) => f && f.invite), { known });
+  // A FEDERATION THAT TAKES NO NEW DEPOSITS IS NOT PICKED, whatever its load (kanban #807): at load 2 it won every pick from A at load 1338
+  const open = (statuses || []).filter((f) => f && f.invite && takesDeposits(f.federation));
+  const pick = pickFederation(open, { known });
   if (!pick) return lobby('no OPEN, known federation with a signed load');
   if (sameFederation(lobbyInvite, pick.federation)) return { invite: lobbyInvite, federation: pick.federation, lowest: true, why: 'the lobby federation is the lowest-load one' };
   return { invite: pick.invite, federation: pick.federation, lowest: true,
@@ -247,7 +249,7 @@ export function federationSays(status) {
 }
 
 // ---- the known-good list and the player's own confirmation (spec §23.6) ----
-import { federationIsKnown, knownFederation } from '../../arena-protocol/src/known-federations.js';
+import { federationIsKnown, knownFederation, takesDeposits } from '../../arena-protocol/src/known-federations.js';
 export { federationIsKnown, knownFederation };
 
 /** Every guardian of `federationIdHex` in a census this client checked: operator, node key, guardian endpoint, bond. */
