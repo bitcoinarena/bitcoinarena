@@ -30,6 +30,7 @@ import { signPresent, verifyPresent, decodePresent, seatedFrom, signSeating, sea
   encodeJustification, decodeJustification, verifyJustification, justificationChain, justificationSteps, JUSTIFICATION_DEPTH,
   signSeatingBound, seatingSignedId, justificationHash } from '../../arena-protocol/src/seating.js';
 import { endpointsOf } from './roster.js';
+import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 
 /** How far ahead of its start a round is looked at: PRESENT is signed in the last minute before seating_close. */
@@ -43,6 +44,8 @@ export const BATCH_ROUNDS = 64;
 export const NO_SEATING_REST_MS = Number(process.env.ARENA_NO_SEATING_REST_MS || 600000);
 /** A node that did not answer at all rests this long, doubled on each failure after, up to NO_SEATING_REST_MS (kanban #791). */
 export const UNREACHABLE_REST_MS = Number(process.env.ARENA_UNREACHABLE_REST_MS || 30000);
+/** Failed requests in a row after which a drawn node counts as not answering (kanban #979): one lost request says nothing, two with a 30 s rest between them do. */
+export const UNANSWERED_TRIES = 2;
 /** How long after its start a table's first round without a certificate is still read, and joined late (kanban #803): its table plays all day. */
 export const TABLE_LATE_MS = BigInt(process.env.ARENA_TABLE_LATE_MS || 24 * 3600000);
 const joinBytes = (list) => { const out = new Uint8Array(list.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of list) { out.set(x, at); at += x.length; } return out; };
@@ -493,12 +496,24 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     return { cert: { [w.role]: c && c.cert ? c.cert : null }, sig: { [w.role]: s && s.signature ? s : null } };
   }
 
+  /**
+   * WHO ANSWERS, AMONG THE PRESENTS HELD (kanban #979, the owner 2026-11-02: "Wenn er nicht reagiert sollte er nicht als anwesend gezogen"; measured: an outside node sat in
+   * 24 of 60 seated rounds with an advertised address nobody reaches, its PRESENT pushed out from behind it, so no reserve took its seat). A drawn node this seat failed to
+   * reach UNANSWERED_TRIES times in a row, with no answer since, is not seated by this seat's first signature, and the next drawn node is. Never below the threshold: with
+   * fewer than that left, the PRESENTs held stand as before. The PRESENT stays held, so if a member signs the seating with that node in it, the ordered rule above (#738)
+   * brings this seat to it: one seat's bad line can cost a reserve, not a round.
+   */
+  function answeringOf(w, held) {
+    const silent = new Set(w.c.drawn.filter((e) => toHex(e.pubkey) !== me && (failing.get(endpointsOf([e], null, endpointOf)[0]) || 0) >= UNANSWERED_TRIES).map((e) => toHex(e.pubkey)));
+    const left = held.filter((k) => !silent.has(k));
+    return left.length >= receiptsNeeded(w.slots) ? left : held;
+  }
   /** At seating_close: the seated from the PRESENTs held, and this node's signature over that seating - once, if seated. */
   function signMine(w) {
     if (db.prepare('SELECT 1 FROM seat_certs WHERE round_id = ? AND role = ?').get(w.t.rid, w.role)) return;
     if (mySignature(w.t.rid, w.role)) return;
     const held = db.prepare('SELECT node FROM seat_presents WHERE round_id = ? AND role = ?').all(w.t.rid, w.role).map((r) => r.node);
-    const seated = seatedFrom({ drawn: w.drawnKeys, present: held, slots: w.slots });
+    const seated = seatedFrom({ drawn: w.drawnKeys, present: answeringOf(w, held), slots: w.slots });
     if (!seated.some((k) => toHex(k) === me)) return;
     if (!signSeatingOf(w, seated, held)) return;
     log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: signed the seating of ${seated.length} (${held.length} present of ${w.drawnKeys.length} drawn)`);
