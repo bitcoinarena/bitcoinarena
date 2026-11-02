@@ -17,7 +17,7 @@
 //      one escrow output (arbitrationSpend). Each member signs the leaf's sighash on its own (BIP-342 CHECKSIGADD: k plain
 //      BIP-340 signatures, no MuSig on this path).
 //   5. Fewer than k signatures is never posted; k or more is checked by testmempoolaccept and only then broadcast.
-//   An output an ABANDONED row of a federation record left (§23A.5, kanban #1059) comes this way from step 3: judgeAbandoned, buildAbandonedSlash, into the liquidation escrow, and step 6 is not
+//   An output an ABANDONED row of a federation record left (§23A.5, kanban #1059, #1062) comes this way from step 3: judgeAbandoned, buildAbandonedSlash, into the liquidation escrow, and step 6 is not
 //   its: it waits there for the federation's end.
 //   6. THE ESCROW SPENT (payOutSlash): one peg-in per federation, each loss a payout contract to its player, the rest a payout
 //      contract to that federation's reserve key (§27A.9.2); what does not fit stays in the escrow until a federation has room.
@@ -26,8 +26,9 @@ import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { affectedEntries, realLosses, slashHolds, slashProofId, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS, TWO_RESULTS,
   splitAuditSlashEvidence, slashHoldsOnAudit, auditSlashProofId, AUDIT_CONTRADICTED, splitDoubleSlashEvidence, slashHoldsOnDoubleSign, splitTableSlashEvidence, slashHoldsOnTable } from '../../arena-protocol/src/slash.js';
-import { abandonedSlashStands } from '../../arena-protocol/src/abandoned-slash.js';
+import { abandonedSlashStands, abandonedProofId, decodeAbandonedProof } from '../../arena-protocol/src/abandoned-slash.js';
 import { verifyFederationRecord } from '../../arena-protocol/src/federation-record.js';
+import { abandonedSlashPoint, networkOf } from '../../arena-protocol/src/constants.js';
 import { decodeSettlementTable } from '../../arena-protocol/src/settlement-ack.js';
 import { tableBuild } from '../../arena-protocol/src/settlement-rebuild.js';
 import { planEscrowSpend } from '../../arena-protocol/src/slash-reserves.js';
@@ -265,21 +266,23 @@ function pathBSpend({ bond, advert, proofId, slashHeight, hint, set, feeSats }) 
 }
 
 /**
- * THE JUDGEMENT OF AN ABANDONED ROW (§23A.5, RULED 2026-11-02, kanban #1058, #1059). `recordBytes` the signed record a seat handed over, believed for nothing: held to its threshold of bonded
- * guardians against `census`, this set's own entries at the record's height. Then abandonedSlashStands over `bonds`, this set's own census at its tip. Answers { slashed, offence, proofId
- * (the row's proof_ref), federation, node, output, bondSpent, why }; a template-3 output comes back judged, for the census key's holders: path B is not this set's on such a bond.
+ * THE JUDGEMENT OF AN ABANDONMENT'S PROOF (§23A.5, RULED 2026-11-02, kanban #1058, #1059, #1062). `proofBytes` what a seat handed over, believed for nothing: its signed record is held to its
+ * threshold of bonded guardians against `census`, this reader's own entries at the record's height, and the row it holds must name the proof's node and proof_ref. Then abandonedSlashStands over
+ * `bonds`, this reader's own census, with the network's ABANDONED_SLASH_HEIGHT or `from`. Answers { slashed, offence, proofId (the hash a slash commits to), proofRef, federation, node, output,
+ * bondSpent, why }; a template-3 output comes back judged, for the census key's holders: path B is not this set's on such a bond.
  */
-export function judgeAbandoned({ recordBytes, census, bonds, peer, txid, vout, networkId, inviteFederationId }) {
+export function judgeAbandoned({ proofBytes, census, bonds, networkId, inviteFederationId, from = abandonedSlashPoint(networkOf(networkId)) }) {
   const no = (why) => ({ slashed: false, why });
-  const v = verifyFederationRecord(recordBytes, { census, verify: verifySchnorr, inviteFederationId, networkId });
+  let p; try { p = decodeAbandonedProof(proofBytes); } catch (e) { return no(`that is no proof of an abandonment: ${e.message}`); }
+  const v = verifyFederationRecord(p.record, { census, verify: verifySchnorr, inviteFederationId, networkId });
   if (!v.ok) return no(`that record does not stand: ${v.why}`);
-  const stands = abandonedSlashStands({ record: v.record, peerKey: fromHex(peer), bonds, txid, vout });
+  const stands = abandonedSlashStands({ record: v.record, nodePubkey: p.nodePubkey, proofRef: p.proofRef, bonds, txid: toHex(p.txid), vout: p.vout, from });
   if (!stands.ok) return no(stands.why);
-  return { slashed: true, offence: stands.kind, proofId: stands.proofRef, sinceHeight: stands.sinceHeight, federation: toHex(v.record.federationId), node: toHex(stands.nodePubkey), output: stands.output, bondSpent: stands.bondSpent, why: stands.why };
+  return { slashed: true, offence: stands.kind, proofId: abandonedProofId(proofBytes), proofRef: toHex(stands.proofRef), sinceHeight: stands.sinceHeight, federation: toHex(v.record.federationId), node: toHex(stands.nodePubkey), output: stands.output, bondSpent: stands.bondSpent, why: stands.why };
 }
 
 /**
- * THE SLASH OF AN OUTPUT A ROW LEFT, unsigned: path B on the row's proof_ref, the federation in the hint, and the whole output less the fee into the liquidation escrow (§23A.5, as for
+ * THE SLASH OF AN OUTPUT A ROW LEFT, unsigned: path B committing to the proof's hash, the federation in the hint, and the whole output less the fee into the liquidation escrow (§23A.5, as for
  * abandonment by absence). It waits there for the federation's end, so nothing here says who it pays. Answers what buildSlash does, less its distribution, so memberSign and assemble take it.
  */
 export function buildAbandonedSlash({ verdict, bond, slashHeight, tipHeight, recordHeight, set, feeSats = 2000n }) {

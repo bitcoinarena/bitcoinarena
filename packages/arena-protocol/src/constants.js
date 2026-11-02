@@ -243,6 +243,18 @@ export const seatingRulesEpochOf = (network) => {
   const n = network === 'testnet' ? 'testnet4' : String(network || '');
   return Object.prototype.hasOwnProperty.call(SEATING_RULES_EPOCH, n) ? SEATING_RULES_EPOCH[n] : null;
 };
+/**
+ * THE FIRST since_height AN ABANDONED ROW MOVES MONEY FROM (§23A.5, RULED 2026-11-02, kanban #1062). A rule does not reach back: an older row stays in its records and keeps its meaning for the
+ * cap and the seat, and nothing lists it, slashes on it or holds a node's release for it. ONE CONSTANT PER NETWORK, as above; a network not named here: never. Mainnet from genesis.
+ * testnet4 157492: read on every seat store of the three machines, the newest ABANDONED row of any signed record has since_height 157091 (b18947f0), and T2's rehearsals 14 and 17 wrote none,
+ * their guardians' last block being 157491. So nothing of ours is slashed by accident.
+ */
+export const ABANDONED_SLASH_HEIGHT = Object.freeze({ mainnet: 0, testnet4: 157492, regtest: 0, devnet: 0 });
+/** The point of `network` (networkOf's name; 'testnet' is testnet4, as networkAnchor reads it), null on a network that names none. */
+export const abandonedSlashPoint = (network) => {
+  const n = network === 'testnet' ? 'testnet4' : String(network || '');
+  return Object.prototype.hasOwnProperty.call(ABANDONED_SLASH_HEIGHT, n) ? ABANDONED_SLASH_HEIGHT[n] : null;
+};
 /** The owner's emergency key (§23A.5a): the advert names it, a request it signs takes an offline node out without losing its bond. */
 export const EMERGENCY_VERSION = 17;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
@@ -355,6 +367,8 @@ export const TYPE_SETTLEMENT_TABLE = 0x3f;
 /** A seat's signed settlement commit (§5A.3, kanban #1052): settlement-ack.js. A seat's word on who was silent in a failed round: stall.js. */
 export const TYPE_SETTLEMENT_COMMIT = 0x40;
 export const TYPE_STALL_NOTE = 0x41;
+/** The proof an abandonment's slash commits to (§23A.5, kanban #1062): the signed record holding the row, the node, the row's proof_ref and the output. */
+export const TYPE_ABANDONED_PROOF = 0x42;
 
 /** The byte `feeTableId` opens with (fee.js). It named a fee claim once; no node claims anything (kanban #1035), and the byte stays so no table id moves. */
 export const TYPE_FEE_TABLE = 0x0e;

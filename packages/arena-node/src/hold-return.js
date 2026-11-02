@@ -9,6 +9,9 @@ import { holdReturnSpend, arbitrationCommitmentIn } from '../../arena-protocol/s
 import { holdControlBlock } from '../../arena-protocol/src/bond-script.js';
 import { tapSighash, scriptPathWitness, serializeSpend } from '../../arena-protocol/src/bond-spend.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
+import { decodeAbandonedProof, isAbandonedProof } from '../../arena-protocol/src/abandoned-slash.js';
+import { splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
+import { judgeAbandoned } from './arbiter.js';
 import { TAG } from '../../arena-protocol/src/constants.js';
 import { taggedHash, toHex } from '../../arena-protocol/src/hash.js';
 
@@ -48,6 +51,24 @@ export async function decideReturn({ start, startHeight, bondMaturity, returnBlo
   if (verdict === false) return { action: 'return', opensAt, why: 'the proof does not check on this node\'s replay' };
   return { action: 'wait', opensAt, why: 'this node has no replay of that proof yet' };
 }
+
+/**
+ * THE proofChecks OF A START ON AN ABANDONMENT (§23A.5, RULED 2026-11-02, kanban #1062). `decideReturn`'s hash check takes these bytes as any slash proof's: only this check is their own. True when
+ * the proof names this node and the very bond the start spent, and judgeAbandoned stands on it: its record at threshold on this node's own census, its row naming this node and proof_ref, a
+ * spend's proof_ref read on the chain. For an absence the record's signatures are the check. `bond` { txid, vout } what the start spent; `bonds` this node's census read at the block before the
+ * start, since the start's hold output is no output left; `censusAt(height)` the entries there, nothing yet: this waits, as a replay that has not answered does.
+ */
+export async function abandonedProofChecks({ bytes, nodePubkey, bond, bonds, censusAt, networkId, inviteFederationId, from }) {
+  let p; try { p = decodeAbandonedProof(bytes); } catch { return false; }
+  if (!same(p.nodePubkey, nodePubkey) || !same(p.txid, bond.txid) || p.vout !== bond.vout) return false;
+  let height; try { height = splitSignedRecord(p.record).record.height; } catch { return false; }
+  const census = await censusAt(height);
+  if (!census) return undefined;
+  return judgeAbandoned({ proofBytes: bytes, census, bonds, networkId, inviteFederationId, ...(from === undefined ? {} : { from }) }).slashed;
+}
+
+/** One check for a start of any kind: an abandonment's proof by `abandoned(bytes)`, every other by `replay(bytes)`. */
+export const proofChecksOf = ({ replay, abandoned }) => (bytes) => (isAbandonedProof(bytes) ? abandoned(bytes) : replay(bytes));
 
 /** The signed return, as hex: the whole hold less `feeSats` to `toScript`, by the node's key on the return leaf. */
 export function signedReturn({ start, bondMaturity, returnBlocks, toScript, feeSats, nodeSecret }) {

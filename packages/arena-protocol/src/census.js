@@ -1324,7 +1324,14 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
 // ADD TO BOND (spec §5A "Multiple bond outputs", kanban #544, 2026-10-19: "this is also the default way. E.g increase your
 // bond by 32000 sats"): a node raises its bond by posting a second bond output beside the first, each valid on its own; from
 // protocol 19 the census counts them as their sum.
-export const sumsBonds = (contract) => !!contract && Number(contract.protocolVersion) >= BOND_SUM_VERSION;
+export const sumsBonds = (contract) => !!contract && (contract.sumsBonds === true || Number(contract.protocolVersion) >= BOND_SUM_VERSION);
+/**
+ * THE CHAIN'S OWN CENSUS AT A HEIGHT (kanban #1063): what a seat reads when no round names the census: a federation record's basis, the ballot, a founding, the duty order, the arbitration set. It
+ * always sums (`sumsBonds`, ruling #1058 reading 3: the cap follows what is left, `bond_i` is the sum), or a node with 40,000 sat three times reads as not held at all and as abandoned after one
+ * spend. The version stays PROTOCOL_VERSION: reading this at BOND_SUM_VERSION would put out every node whose advertisement does not list 19, and take its signature off the records it signed.
+ * A round's census is its contract's: decodeRoundContract sets no `sumsBonds`, so no round's census moves.
+ */
+export const chainCensusContract = ({ networkId, height, bondMinSats, censusConfirmations = 1 }) => ({ networkId, censusHeight: height, censusConfirmations, bondMinSats, protocolVersion: PROTOCOL_VERSION, sumsBonds: true });
 const bondHexOf = (x) => (typeof x === 'string' ? x.toLowerCase() : x ? toHex(x) : '');
 /** A node is its key AND its operator: two operators never merge, even under one key. */
 const nodeKeyOf = (e) => `${bondHexOf(e.pubkey || (e.advert && e.advert.nodePubkey))}|${String((e.advert && e.advert.operatorId) || e.operatorId || '')}`;

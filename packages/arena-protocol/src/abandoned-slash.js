@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // FROM AN ABANDONED ROW TO A SLASH (spec §23A.5, RULED 2026-11-02, kanban #1058, #1059). The signed federation record is the filing, and a row with nothing left on the chain ends there. A row
-// whose node still holds an output is slashed: the arbitration set, or from template 3 the census key's holders, read the row and act on that output, on the row's proof_ref.
+// whose node still holds an output is slashed: the arbitration set, or from template 3 the census key's holders, read the row and act on that output.
 // Without this a guardian could spend most of a bond, leave a little under the floor, and that remainder would walk free at maturity.
+//
+// ONE SLASH FORMAT (RULED 2026-11-02, kanban #1062): every slash commits to H(fraud_proof), so anyone can fetch the proof and re-check it. A proof_ref names evidence and an absence's names none
+// that can be fetched, so the OP_RETURN carries the hash of an AbandonedProof: the signed record, the node, the proof_ref and the output, tagged as every slash proof is. Only rows with
+// since_height at or above the network's ABANDONED_SLASH_HEIGHT act. Older ones stand as records and move no money.
 //
 // `bonds` is everything one census read of a node's outputs: its entries and its exclusions (`bondsOf`). What a seat lists and what the set judges are the same few lines, so neither has a
 // reading of its own. Pure: the chain, the curve and the record's signatures are the caller's.
@@ -10,7 +14,9 @@ import { GONE } from './federation-record.js';
 import { bondSpentProof } from './absence.js';
 import { guardianSlashStands } from './federation-slash.js';
 import { BOND_TEMPLATE_V3 } from './bond-script.js';
-import { taggedHash, toHex, fromHex } from './hash.js';
+import { taggedHash, toHex } from './hash.js';
+import { Writer, Reader } from './encode.js';
+import { TAG, TYPE_ABANDONED_PROOF, PROTOCOL_VERSION, speaksVersion } from './constants.js';
 
 const same = (a, b) => toHex(a) === toHex(b);
 const hexOf = (x) => (x instanceof Uint8Array ? toHex(x) : String(x || '').toLowerCase());
@@ -18,11 +24,15 @@ const hexOf = (x) => (x instanceof Uint8Array ? toHex(x) : String(x || '').toLow
 /** One census read of what the chain holds of bonds: its entries and its exclusions, the under-the-floor outputs among them. */
 export const bondsOf = (census) => [...((census && census.entries) || []), ...((census && census.excluded) || [])];
 
-/** The ABANDONED rows of a record that can be acted on: [{ peerKey, nodePubkey, sinceHeight, proofRef }]. A zero proof_ref names no proof, and a peer the record does not list names no node. */
-export function abandonedRows(record) {
+/**
+ * The ABANDONED rows of a record that can be acted on: [{ peerKey, nodePubkey, sinceHeight, proofRef }]. A zero proof_ref names no proof, and a peer the record does not list names no node. `from`
+ * the network's ABANDONED_SLASH_HEIGHT: an older row is not acted on, and null (a network that names no point) leaves none.
+ */
+export function abandonedRows(record, from) {
   const out = [];
+  if (!Number.isInteger(from)) return out;
   for (const g of (record && record.gone) || []) {
-    if (g.kind !== GONE.ABANDONED || !g.proofRef || g.proofRef.every((b) => b === 0)) continue;
+    if (g.kind !== GONE.ABANDONED || !g.proofRef || g.proofRef.every((b) => b === 0) || g.sinceHeight < from) continue;
     const seat = (record.guardians || []).find((x) => same(x.peerKey, g.peerKey));
     if (seat) out.push({ peerKey: g.peerKey, nodePubkey: seat.nodePubkey, sinceHeight: g.sinceHeight, proofRef: g.proofRef });
   }
@@ -46,19 +56,16 @@ export function outputsLeft(bonds, nodePubkey, sinceHeight) {
     template: b.advert.bondScriptTemplateVersion, advert: b.advert, ...(b.script ? { script: b.script } : {}) }));
 }
 
-/** The name one row's slash of one output goes by, in a seat's listing and the set's state: a row can leave several outputs, and each is its own transaction. Nothing on the chain carries it. */
-export const abandonedSlashId = ({ proofRef, txid, vout }) => taggedHash('ARENA/v1/AbandonedSlash', Uint8Array.from([...proofRef, ...fromHex(txid), vout & 255, (vout >>> 8) & 255, (vout >>> 16) & 255, vout >>> 24]));
-
 /**
- * MAY THIS OUTPUT BE SLASHED ON THIS ROW. `record` the decoded record, already held to its threshold by the caller (the signed record is the filing); `peerKey` the row's peer; `bonds` this
- * reader's own census; `txid` (hex) and `vout` the output. A row whose proof_ref is a spend this census read is the chain's proof, checked here: that spend, of that node, at that height.
- * Any other proof_ref is a filed absence, and it stands on the record's signatures: 2f + 1 guardians signed the row, each having checked it (§23A.4). A notice was weighed when the row was
- * written, so guardianSlashStands is asked of the proof alone. The holders of a census key ask this before they sign a start, as the set does before path B.
- * Answers { ok, slash, kind, why, proofRef, sinceHeight, nodePubkey, output, bondSpent }.
+ * MAY THIS OUTPUT BE SLASHED ON THIS ROW. `record` the decoded record, already held to its threshold by the caller (the signed record is the filing); `nodePubkey` and `proofRef` what the proof
+ * names, which the row must name too; `bonds` this reader's own census; `txid` (hex) and `vout` the output; `from` the network's ABANDONED_SLASH_HEIGHT. A row whose proof_ref is a spend this
+ * census read is the chain's proof, checked here: that spend, of that node, at that height. Any other proof_ref is a filed absence, and it stands on the record's signatures: 2f + 1 guardians
+ * signed the row, each having checked it (§23A.4). A notice was weighed when the row was written, so guardianSlashStands is asked of the proof alone. The holders of a census key ask this before
+ * they sign a start, as the set does before path B. Answers { ok, slash, kind, why, proofRef, sinceHeight, nodePubkey, output, bondSpent }.
  */
-export function abandonedSlashStands({ record, peerKey, bonds, txid, vout }) {
-  const row = abandonedRows(record).find((r) => same(r.peerKey, peerKey));
-  if (!row) return { ok: false, slash: false, why: 'that record has no ABANDONED row for that peer' };
+export function abandonedSlashStands({ record, nodePubkey, proofRef, bonds, txid, vout, from }) {
+  const row = abandonedRows(record, from).find((r) => same(r.nodePubkey, nodePubkey) && same(r.proofRef, proofRef));
+  if (!row) return { ok: false, slash: false, why: 'that record has no ABANDONED row for that node and proof_ref from this network\'s slash height on' };
   const node = toHex(row.nodePubkey);
   const spend = (bonds || []).find((b) => b.spentBy && hexOf(b.pubkey) === node && b.spentBy.txid === toHex(row.proofRef) && b.spentBy.height === row.sinceHeight);
   const proof = spend ? bondSpentProof({ peerKey: row.peerKey, spent: spend.spentBy }) : { ok: true, peerKey: row.peerKey, sinceHeight: row.sinceHeight, signers: record.threshold, id: row.proofRef };
@@ -68,6 +75,35 @@ export function abandonedSlashStands({ record, peerKey, bonds, txid, vout }) {
   if (!output) return { ok: false, slash: false, why: `${String(txid).slice(0, 16)}:${vout} is no output of that node left from before ${row.sinceHeight}` };
   return { ok: true, slash: true, kind: stands.kind, why: stands.why, proofRef: row.proofRef, sinceHeight: row.sinceHeight, nodePubkey: row.nodePubkey, output, bondSpent: !!spend };
 }
+
+/** THE PROOF AN ABANDONMENT'S SLASH COMMITS TO: `record` the signed record's bytes, `txid` (internal order) and `vout` the output. Its id is the hash of these bytes, as for every slash proof. */
+export function encodeAbandonedProof({ record, nodePubkey, proofRef, txid, vout }) {
+  const w = new Writer();
+  w.u8(TYPE_ABANDONED_PROOF);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(nodePubkey);
+  w.bytes32(proofRef);
+  w.bytes32(txid);
+  w.u32(vout);
+  w.u32(record.length);
+  w.bytes(record);
+  return w.finish();
+}
+
+export function decodeAbandonedProof(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_ABANDONED_PROOF) throw new Error('not a proof of an abandonment');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
+  const p = { nodePubkey: r.bytes32(), proofRef: r.bytes32(), txid: r.bytes32(), vout: r.u32() };
+  p.record = r.bytes(r.u32());
+  r.end();
+  return p;
+}
+
+/** Whether `bytes` is this kind of proof: a reader of proofs of every kind asks this first. */
+export const isAbandonedProof = (bytes) => bytes instanceof Uint8Array && bytes[0] === TYPE_ABANDONED_PROOF;
+/** The 32 bytes a slash's OP_RETURN commits to, of a proof's bytes. */
+export const abandonedProofId = (bytes) => taggedHash(TAG.slashProof, bytes);
 
 /** Who acts on an output: path B for templates 1 and 2, the census key's holders on a presig from template 3. */
 export const startsByCensusKey = (template) => template === BOND_TEMPLATE_V3;
