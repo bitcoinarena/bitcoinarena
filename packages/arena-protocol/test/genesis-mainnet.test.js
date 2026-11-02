@@ -4,7 +4,7 @@
 // new series or delays because of it"): the rest of §27A.6 is hashed from mainnet's genesis on, the test networks keep their ids.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { genesisFor, computeNetworkId, donationKeysFor, encodeGenesisParameters, mainnetGenesis, committeesStand } from '../src/genesis.js';
+import { genesisFor, computeNetworkId, donationKeysFor, encodeGenesisParameters, mainnetGenesis, committeesStand, SLASH_CLOCKS } from '../src/genesis.js';
 import { NETWORK_ID_TESTNET4, NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -36,6 +36,28 @@ test('mainnet genesis: the table\'s values, federation_min, bond_min_guardian an
   // and the cold recovery key is in the name (§27A.4)
   assert.notEqual(hex(computeNetworkId({ genesis, authorityPubkey: b32(9), recoveryPubkey: b32(11) })), base);
   assert.ok(encodeGenesisParameters(genesis).length > encodeGenesisParameters(genesisFor('testnet4')).length);
+});
+
+test('template 3\'s clocks, by the table of §27A.6: 6 / 144 / 288, 1 / 36 / 72, 1 / 12 / 24 (kanban #972)', () => {
+  const clocks = (g) => [g.slashHoldBlocks, g.slashReturnBlocks, g.slashFallbackBlocks];
+  assert.deepEqual(clocks(mainnetGenesis(parts()).genesis), [6, 144, 288]);
+  assert.deepEqual(clocks(genesisFor('testnet4')), [1, 36, 72]);
+  assert.deepEqual(clocks(genesisFor('regtest')), [1, 12, 24]);
+  assert.deepEqual(clocks(SLASH_CLOCKS.mainnet), [6, 144, 288]);
+});
+
+test('the clocks are in mainnet\'s id, are not in the test networks\', and a wrong order is refused (kanban #972)', () => {
+  const { genesis, networkId } = mainnetGenesis(parts());
+  for (const change of [{ slashHoldBlocks: 7 }, { slashReturnBlocks: 145 }, { slashFallbackBlocks: 289 }])
+    assert.notEqual(hex(computeNetworkId({ genesis: { ...genesis, ...change }, authorityPubkey: b32(9), recoveryPubkey: b32(10) })), hex(networkId), JSON.stringify(change));
+  for (const net of ['testnet4', 'regtest']) {
+    const g = genesisFor(net);
+    assert.equal(hex(encodeGenesisParameters({ ...g, slashHoldBlocks: 99, slashReturnBlocks: 98, slashFallbackBlocks: 97 })), hex(encodeGenesisParameters(g)), `${net}: its bytes do not read the clocks`);
+  }
+  assert.throws(() => encodeGenesisParameters({ ...genesis, slashReturnBlocks: 288 }), /hold, then return, then fallback/);
+  assert.throws(() => encodeGenesisParameters({ ...genesis, slashHoldBlocks: 144 }), /hold, then return, then fallback/);
+  assert.throws(() => encodeGenesisParameters({ ...genesis, slashFallbackBlocks: 65536 }), /slash clocks/);
+  assert.throws(() => encodeGenesisParameters({ ...genesis, slashHoldBlocks: undefined }), /slash clocks/);
 });
 
 test('mainnet genesis is built only from what a launch names: no invented marker or keys', () => {
