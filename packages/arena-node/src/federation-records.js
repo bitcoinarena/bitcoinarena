@@ -95,6 +95,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // EVERY RECORD BY ITS HEIGHT TOO (kanban #559/#543, §23A.3a: the pressure weights read "the federation record in force at" the round's
   // census height, which may be older than the newest): each verified record kept per federation and height, in memory and the store
   const history = new Map();                 // fid -> Map(height -> record)
+  const historyRead = new Set();             // federations whose stored history is in memory
   const remember = (fid, rec) => { if (!history.has(fid)) history.set(fid, new Map()); history.get(fid).set(Number(rec.height), rec);
     if (store && store.saveAt) { try { store.saveAt(fid, Number(rec.height), rec.__hex); } catch { /* in memory */ } } };
   function keep(fid, bytes, v) {
@@ -584,7 +585,9 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     // the record in force at `height`: the newest this seat verified at or below it (null when it holds none)
     recordAt(fid, height) {
       const f = String(fid).toLowerCase(); let m = history.get(f);
-      if ((!m || !m.size) && store && store.loadAt) { try { for (const r of store.loadAt(f) || []) { try { const bytes = fromHex(r.record); const rec = decodeFederationRecord(splitSignedRecord(bytes).body); remember(f, Object.assign(Object.create(null), rec, { __hex: r.record })); } catch { /* skip */ } } } catch { /* none */ } m = history.get(f); }
+      // THE STORED HISTORY ONCE PER FEDERATION, NOT ONLY WHEN NONE IS IN MEMORY (kanban #993): after a restart restore() remembers the newest
+      // record alone, and every older height then answered null - a round's census height, or a founding's trigger_height - 12
+      if (!historyRead.has(f) && store && store.loadAt) { historyRead.add(f); try { for (const r of store.loadAt(f) || []) { try { const bytes = fromHex(r.record); const rec = decodeFederationRecord(splitSignedRecord(bytes).body); remember(f, Object.assign(Object.create(null), rec, { __hex: r.record })); } catch { /* skip */ } } } catch { /* none */ } m = history.get(f); }
       if (!m) return null;
       let best = null; for (const [h, rec] of m) if (h <= Number(height) && (!best || h > best.height)) best = rec;
       return best;
