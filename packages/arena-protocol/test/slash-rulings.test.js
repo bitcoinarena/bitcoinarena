@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  slashHeightIsValid, affectedEntries, resultMoved, NAMES_ONE_ENTRY, OFFENCES,
+  slashHeightIsValid, affectedEntries, resultMoved, NAMES_ONE_ENTRY, OFFENCES, RELEASE_WITHOUT_PROOF, RELEASE_OFF_TABLE,
   TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, SETTLED_WITHOUT_AUTHORITY,
   OPERATOR_PLAYED, FEE_WITHOUT_SERVICE, AUDIT_CONTRADICTED,
 } from '../src/slash.js';
@@ -59,6 +59,9 @@ test('three offences name one entry and the other four name the paying field (ka
     [FEE_WITHOUT_SERVICE]: ['a1', 'a2', 'a4'],
     // ... except the operator's own, which §5A.13 voids
     [OPERATOR_PLAYED]: ['a1', 'a2'],
+    // template 3: a release with no valid proof harmed a node, and paying off the table harmed the paying field
+    [RELEASE_WITHOUT_PROOF]: [],
+    [RELEASE_OFF_TABLE]: ['a1', 'a2', 'a4'],
   });
 });
 

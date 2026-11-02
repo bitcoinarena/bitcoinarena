@@ -20,7 +20,7 @@ import {
 } from '../src/result.js';
 import {
   encodeSlashProof, decodeSlashProof, slashProofId, slashCommitment,
-  slashHolds, OFFENCES, TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F,
+  slashHolds, OFFENCES, TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, RELEASE_WITHOUT_PROOF, RELEASE_OFF_TABLE,
   SETTLED_WITHOUT_AUTHORITY, OPERATOR_PLAYED, FEE_WITHOUT_SERVICE, AUDIT_CONTRADICTED,
 } from '../src/slash.js';
 
@@ -67,8 +67,8 @@ const ask = (over = {}) => {
 test('all six of 5A.3\'s rows are implemented, in the table\'s own order, and §13A.1\'s contradicted AUDIT after them (kanban #724, #725)', () => {
   assert.deepEqual(OFFENCES,
     [TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, SETTLED_WITHOUT_AUTHORITY,
-     OPERATOR_PLAYED, FEE_WITHOUT_SERVICE, AUDIT_CONTRADICTED],
-    '5A.3 lists six offences and every one of them now has a predicate; §13A.1 adds the AUDIT');
+     OPERATOR_PLAYED, FEE_WITHOUT_SERVICE, RELEASE_WITHOUT_PROOF, RELEASE_OFF_TABLE, AUDIT_CONTRADICTED],
+    '5A.3 lists six offences and template 3\'s two, every one with a predicate; §13A.1 adds the AUDIT');
 });
 
 /**
