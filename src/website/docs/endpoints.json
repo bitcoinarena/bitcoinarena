@@ -10557,6 +10557,80 @@
  },
  {
   "method": "GET",
+  "path": "/held-proof",
+  "params": "query federation (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {ok, federationId, tip, epoch, proofHeight, window:{from,to}, open, claimPk, minBlocksLeft, threshold, guardians:[{node,url}]}; 400, 404 or 503 JSON {ok:false, why}",
+  "purpose": "The held proof of the running epoch as a gateway needs it: the read window on Bitcoin height, the fixed claim key of a held lock, how many reads count and which seated guardians to ask.",
+  "audience": "node-to-node",
+  "line": 4320,
+  "summary": "The running epoch's held proof",
+  "query": [
+   {
+    "name": "federation",
+    "required": true,
+    "type": "string",
+    "description": "Federation id, 64 hex.",
+    "example": "337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The window, the claim key, the threshold and the guardians."
+   },
+   {
+    "status": "404",
+    "contentType": "application/json",
+    "description": "This seat holds no record of that federation."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/held-read",
+  "params": "body JSON ask {federationId, epoch, node, outpoint, amountMsat, expiration, signature}",
+  "auth": "signed by the gateway node key",
+  "returns": "200 JSON HeldRead {federationId, epoch, gateway, outpoint, contractId, amountMsat, blocksLeft, tipHeight, guardian, signature}; 400, 409, 429 or 503 JSON {ok:false, why}",
+  "purpose": "A seated guardian reads a gateway's held lock once inside the read window. It recomputes the contract id from the fixed fields and signs a HeldRead if the lock holds with at least 6 blocks left in the guardians' count. A claim's held lock carries the threshold of these reads.",
+  "audience": "node-to-node",
+  "line": 4320,
+  "summary": "A guardian's signed read of a held lock",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "description": "The ask, signed by the gateway node key."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The signed read."
+   },
+   {
+    "status": "409",
+    "contentType": "application/json",
+    "description": "Outside the window, not the fixed contract, or too few blocks left."
+   },
+   {
+    "status": "429",
+    "contentType": "application/json",
+    "description": "That gateway has asked often enough in this epoch."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
   "path": "/gateway-seats",
   "params": "none",
   "auth": "none",

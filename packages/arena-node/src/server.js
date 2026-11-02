@@ -39,14 +39,16 @@ import { ownBondOf, ownBondsOf, lockAt, withdrawSpend } from './bond-withdraw.js
 import { BOND_TEMPLATE_V2 } from '../../arena-protocol/src/bond-script.js';
 import { latestReleaseReader } from './release-latest.js';
 import { createGatewayWatch } from './gateway-watch.js';
+import { createHeldReads, withHeldLock } from './held-read.js';
+import { heldProofHeight, heldReadWindow, heldWindowOpen, HELD_CLAIM_PK, HELD_MIN_BLOCKS_LEFT } from '../../arena-protocol/src/held-proof.js';
 import { lnv2ModuleId, federationCoins, incomingSince } from './gateway-volume.js';
-import { signGatewaySeating, standingSeating, seatingEpochAt, paidSeatsOf, provedPegInsOf, seatingRecordFor } from '../../arena-protocol/src/gateway-seating.js';
+import { signGatewaySeating, standingSeating, seatingEpochAt, paidSeatsOf, provedPegInsOf, seatingRecordFor, seatingRulesActive } from '../../arena-protocol/src/gateway-seating.js';
 import { signLiquiditySeating, standingLiquiditySeating, liquiditySeatingFrom } from '../../arena-protocol/src/liquidity-seating.js';
 import { checkLiquidityClaim, provenFreeSats } from '../../arena-protocol/src/liquidity.js';
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
 import { capacityBandPoint } from '../../arena-protocol/src/federation-record.js';
 import { capacityView, capacityPlea, bondIncentive, pressureOf, guardianWeights as capacityGuardianWeights, gatewayWeights as capacityGatewayWeights } from '../../arena-protocol/src/capacity.js';
-import { GATEWAY_MINIMUMS } from '../../arena-protocol/src/gateway-seats.js';
+import { GATEWAY_MINIMUMS, GATEWAY_EPOCH_BLOCKS } from '../../arena-protocol/src/gateway-seats.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
 import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.js';
 import { BADGES } from '../../arena-protocol/src/badges.js';
@@ -171,7 +173,7 @@ import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
-import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, TYPE_AUDIT_SLASH_PROOF, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION } from '../../arena-protocol/src/constants.js';
+import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, TYPE_AUDIT_SLASH_PROOF, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION, seatingRulesEpochOf } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
@@ -5084,6 +5086,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   try {
     for (const r of round.db.prepare('SELECT federation, epoch, kind, body FROM gateway_seatings').all()) ({ own: ownSeatings, liquidity: liquiditySeatings, 'liquidity-own': ownLiquiditySeatings }[r.kind] || gatewaySeatings).set(`${r.federation}:${r.epoch}`, JSON.parse(r.body));
   } catch { /* none kept */ }
+  // WHO JUDGES A HELD LOCK (§23A.3a, kanban #998): the record in force at the epoch's proof height; a seat that holds none that old, the one it holds
+  const heldSetOf = (fid, epoch) => {
+    const r = (fedRecords && fedRecords.recordAt ? fedRecords.recordAt(fid, heldProofHeight(epoch)) : null) || (fedRecords && fedRecords.recordOf ? (fedRecords.recordOf(fid) || {}).record : null);
+    return r ? { seated: seatedOfRecord(r).map((k) => toHex(k)), threshold: r.threshold } : null;
+  };
+  const heldReads = createHeldReads({ me: toHex(round.pubkey), sign: (h) => schnorr.sign(h, round.identity.secret), tip: async () => (typeof chainTip === 'function' ? chainTip() : null),
+    portOf: (fid) => portOfFederation(fromHex(fid)), setFor: async (fid, epoch) => heldSetOf(fid, epoch), verify: schnorrVerify,
+    rulesOn: (epoch) => seatingRulesActive(epoch, chainNetworkId() ? seatingRulesEpochOf(networkOf(fromHex(chainNetworkId()))) : null) });
   const watchFor = (g) => createGatewayWatch({ federationId: async () => federationOfDir(g.dataDir),
       // the peg-in age rule by this seat's own chain, and the one block a claimed height names (§23A.3a, kanban #999/#1026)
       rulesNetwork: chainNetworkId() ? networkOf(fromHex(chainNetworkId())) : null,
@@ -5095,6 +5105,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       seated: async (fid) => { const r = fedRecords.seatedGuardians(fid); return r && r.length ? r.map((k) => toHex(k)) : (fedRecords.censusGuardians ? fedRecords.censusGuardians(fid) : []); },
       entries: async () => { if (fedRecords.censusNewest) { const e = fedRecords.censusNewest(); if (e.length) return e; } const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false }; return now.ok ? now.entries : []; },
       keep: gatewayKeep,
+      heldSetFor: async (fid, e) => heldSetOf(fid, e),
       // the seating its guardians signed for an epoch, where one stands: that epoch's holders step back in the next (the rotation)
       seatingFor: async (fid, e) => { const st = gatewaySeatings.get(`${fid}:${e}`); return st ? st.seats : null; },
       // 1 seat for a federation draining into its successor, 2 for every other (2026-10-20, hard rule)
@@ -6107,14 +6118,35 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/gateway-claim') {
         // ONE CLAIM PER FEDERATION (kanban #552): ARENA_GATEWAY_CLAIM_FILE names one file or several, comma-separated; ?federation= picks
         // that federation's claim (none: 404), and without it the first, as before
+        // each with the held lock kept beside its file (§23A.3a, kanban #998): the hourly renewal of a claim leaves it alone
         const claims = String(process.env.ARENA_GATEWAY_CLAIM_FILE || '').split(',').map((x) => x.trim()).filter(Boolean)
-          .map((f) => { try { return JSON.parse(readFileSync(f, 'utf8')); } catch { return null; } }).filter(Boolean);
+          .map((f) => { try { return withHeldLock(JSON.parse(readFileSync(f, 'utf8')), f, (p) => JSON.parse(readFileSync(p, 'utf8'))); } catch { return null; } }).filter(Boolean);
         const want = String(url.searchParams.get('federation') || '').toLowerCase();
         const c = want ? claims.find((x) => String(x.federationId || '').toLowerCase() === want) : claims[0];
         // NONE, SAID QUIETLY TO ITS OWN PAGE (the 2026.1.9.11 install test: the owner page logged a 404 at every load on a node without a
         // gateway): with ?quiet=1 no claim is a 200 null; other seats ask without it and read the 404 as before
         if (!c && url.searchParams.get('quiet') === '1') return claimJson(200, null);
         return c ? claimJson(200, c) : claimJson(404, { ok: false, why: want ? 'this node stands for no gateway seat of that federation' : 'this node stands for no gateway seat' });
+      }
+      // THE HELD PROOF OF THE RUNNING EPOCH, AS A GATEWAY ASKS IT (§23A.3a, kanban #998): the read window, the fixed claim key, how many reads count and whom to ask
+      if (req.method === 'GET' && url.pathname === '/held-proof') {
+        const fid = String(url.searchParams.get('federation') || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(fid)) return claimJson(400, { ok: false, why: 'federation is a hex id' });
+        let tip = null; try { tip = typeof chainTip === 'function' ? Number(await chainTip()) : null; } catch { tip = null; }
+        if (!Number.isInteger(tip)) return claimJson(503, { ok: false, why: 'this seat cannot read its Bitcoin tip' });
+        const epoch = Math.floor(tip / GATEWAY_EPOCH_BLOCKS), set = heldSetOf(fid, epoch);
+        if (!set) return claimJson(404, { ok: false, why: 'this seat holds no record of that federation' });
+        const census = fedRecords.censusNewest && fedRecords.censusNewest().length ? fedRecords.censusNewest() : ((fedRecords.censusNow ? fedRecords.censusNow() : {}).entries || []);
+        const guardians = set.seated.map((node) => { const e = census.find((x) => toHex(x.pubkey) === node); const ep = e && e.advert ? addressBook.endpointOf(e) || e.advert.endpoint : null;
+          return { node, url: ep ? String(ep).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '') : null }; });
+        return claimJson(200, { ok: true, federationId: fid, tip, epoch, proofHeight: heldProofHeight(epoch), window: heldReadWindow(epoch), open: heldWindowOpen(epoch, tip),
+          claimPk: HELD_CLAIM_PK, minBlocksLeft: HELD_MIN_BLOCKS_LEFT, threshold: set.threshold, guardians });
+      }
+      // A GATEWAY ASKS THIS GUARDIAN TO READ ITS LOCK (§23A.3a, kanban #998): the ask signed by its node key; the answer is a HeldRead signed by this node's key
+      if (req.method === 'POST' && url.pathname === '/held-read') {
+        let ask; try { ask = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return claimJson(400, { ok: false, why: 'an ask is JSON' }); }
+        const got = await heldReads.answer(ask);
+        return claimJson(got.code, got.body);
       }
       // A LIQUIDITY CLAIM (§23A.10): this node is a liquidity provider - the claim its provider service signed (file)
       // ROUNDS ON THEIR WAY (2026-10-20: "Add an estimated message to markets when it's currently no rounds but a new round is

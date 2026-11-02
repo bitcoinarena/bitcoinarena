@@ -9,6 +9,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { createGatewayWatch } from '../src/gateway-watch.js';
 import { signGatewayClaim, checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { signHeldRead } from '../../arena-protocol/src/held-proof.js';
 
 const fid = 'f0'.repeat(32);
 const keys = [1, 2, 3, 4].map((n) => { const secret = new Uint8Array(32).fill(n); return { secret, hex: toHex(schnorr.getPublicKey(secret)) }; });
@@ -270,8 +271,13 @@ test('a gateway whose tunnel took a new name is said at its new address, though 
 
 // THE AGE OF A PEG-IN (§23A.3a, kanban #999/#1026): from the rules epoch an outpoint counts only at a height its block confirms, at most
 // peg_in_max_age old at the epoch's first height. Epoch 40 starts at 5760, so 100 blocks old is height 5660
-function aged({ claim0, claim1 = {}, rulesEpoch = 0, tipAt = 144 * 40 + 5, inBlock = () => true, network = 'regtest', coins }) {
-  const claims = { 0: claimOf(0, claim0), 1: claimOf(1, claim1) };
+// THE HELD LOCK OF #998: a claim carries one (signed reads of three of the four guardians); these tests of age show a lock larger than any peg-in
+const heldLockOf = (i, { epoch = 40, sat = 1_000_000n, outpoint = `${String(i + 1).repeat(64)}:0`, signers = keys.slice(0, 3) } = {}) => {
+  const lock = { outpoint, contractId: '77'.repeat(32), amountMsat: String(sat * 1000n) };
+  return { ...lock, reads: signers.map((g) => signHeldRead({ federationId: fid, epoch, gateway: keys[i].hex, ...lock, blocksLeft: 6, tipHeight: epoch * 144 + 72 }, g.hex, (h) => schnorr.sign(h, g.secret))) };
+};
+function aged({ claim0, claim1 = {}, rulesEpoch = 0, tipAt = 144 * 40 + 5, inBlock = () => true, network = 'regtest', coins, held0 = heldLockOf(0), held1 = heldLockOf(1), heldSet = { seated: keys.map((k) => k.hex), threshold: 3 } }) {
+  const claims = { 0: { ...claimOf(0, claim0), ...(held0 ? { heldLock: held0 } : {}) }, 1: { ...claimOf(1, claim1), ...(held1 ? { heldLock: held1 } : {}) } };
   const entries = keys.map((k, i) => ({ pubkey: Uint8Array.from(Buffer.from(k.hex, 'hex')), bondSats: 50000n, advert: { endpoint: `https://seat${i}.example`, operatorId: `op${i}` } }));
   const fetcher = async (url) => {
     const seat = /^https:\/\/seat(\d)\.example\/gateway-claim\?federation=[0-9a-f]{64}$/.exec(url);
@@ -280,7 +286,7 @@ function aged({ claim0, claim1 = {}, rulesEpoch = 0, tipAt = 144 * 40 + 5, inBlo
   };
   const asked = [], w = { tip: tipAt };
   const watch = createGatewayWatch({ federationId: async () => fid, seated: async () => [keys[0].hex, keys[1].hex], entries: async () => entries, tip: async () => w.tip, beaconAt: async () => new Uint8Array(32).fill(7),
-    verify, fetcher, federationCoins: async () => coins, rulesNetwork: network, ...(rulesEpoch === 'network' ? {} : { rulesEpoch }), outpointAt: async (h, o) => { asked.push([h, o]); return inBlock(h, o); } });
+    verify, fetcher, federationCoins: async () => coins, heldSetFor: async () => heldSet, rulesNetwork: network, ...(rulesEpoch === 'network' ? {} : { rulesEpoch }), outpointAt: async (h, o) => { asked.push([h, o]); return inBlock(h, o); } });
   return { watch, asked, w };
 }
 const pa = 'aa'.repeat(32) + ':1', pb = 'bb'.repeat(32) + ':0', pc = 'cc'.repeat(32) + ':2';
@@ -329,6 +335,47 @@ test('an outpoint two claims name counts for neither, whatever heights they give
   const both = aged({ claim0: { pegInOutpoints: [`${pa}@5700`] }, claim1: { pegInOutpoints: [`${pa}@5701`] }, coins: coinsOf });
   assert.deepEqual([await provedOf(both, 0), await provedOf(both, 1)], ['0', '0']);
   assert.equal(await provedOf(aged({ claim0: { pegInOutpoints: [`${'dd'.repeat(32)}:0@5700`] }, coins: coinsOf })), '0');
+});
+
+// THE HELD PROOF (§23A.3a, kanban #998, rulings #1029/#1030): the count is min(proved, held)
+const heldOf = async (x, node = 0) => { await x.watch.probe(); return (await x.watch.view()).gateways[keys[node].hex]; };
+const fresh = [`${pa}@5700`];
+
+test('from the rules epoch a peg-in counts up to its held lock: min(proved, held), and no proof counts 0', async () => {
+  assert.equal((await heldOf(aged({ claim0: { pegInOutpoints: fresh }, coins: coinsOf }))).provedPegInSats, '60000', 'a lock above the peg-in: the peg-in');
+  const small = await heldOf(aged({ claim0: { pegInOutpoints: fresh }, coins: coinsOf, held0: heldLockOf(0, { sat: 25_000n }) }));
+  assert.equal(small.provedPegInSats, '25000', 'a lock below it: the lock');
+  assert.equal(small.heldLockSats, '25000');
+  assert.equal((await heldOf(aged({ claim0: { pegInOutpoints: fresh }, coins: coinsOf, held0: null }))).provedPegInSats, '0', 'no proof counts 0');
+  assert.equal((await heldOf(aged({ claim0: {}, coins: coinsOf }))).provedPegInSats, '0', 'a lock with no peg-in proves no peg-in');
+});
+
+test('before the rules epoch, and on a network that names none, the held lock is not asked for', async () => {
+  const before = await heldOf(aged({ claim0: { pegInOutpoints: [pa] }, rulesEpoch: 41, coins: coinsOf, held0: null }));
+  assert.equal(before.provedPegInSats, '60000');
+  assert.equal(before.heldLockSats, undefined);
+  assert.equal((await heldOf(aged({ claim0: { pegInOutpoints: [pa] }, rulesEpoch: 'network', network: 'testnet4', coins: coinsOf, held0: null }))).provedPegInSats, '60000', 'testnet4 today');
+});
+
+test('fewer reads than the threshold, a read of the wrong epoch, or no record to judge by counts 0', async () => {
+  assert.equal((await heldOf(aged({ claim0: { pegInOutpoints: fresh }, coins: coinsOf, held0: heldLockOf(0, { signers: keys.slice(0, 2) }) }))).provedPegInSats, '0');
+  assert.equal((await heldOf(aged({ claim0: { pegInOutpoints: fresh }, coins: coinsOf, held0: heldLockOf(0, { epoch: 39 }) }))).provedPegInSats, '0');
+  assert.equal((await heldOf(aged({ claim0: { pegInOutpoints: fresh }, coins: coinsOf, heldSet: null }))).provedPegInSats, '0');
+});
+
+test('a lock two claims name counts for neither', async () => {
+  const same = `${'ee'.repeat(32)}:0`;
+  const x = aged({ claim0: { pegInOutpoints: fresh }, claim1: { pegInOutpoints: [`${pb}@5700`] }, coins: coinsOf, held0: heldLockOf(0, { outpoint: same }), held1: heldLockOf(1, { outpoint: same }) });
+  assert.equal((await heldOf(x, 0)).provedPegInSats, '0');
+  assert.equal((await heldOf(x, 1)).provedPegInSats, '0');
+});
+
+test('a guardian that never read the lock counts the same amount from the signatures alone', async () => {
+  // its coins and claim are all it has: nothing here reads a lock
+  const a = aged({ claim0: { pegInOutpoints: fresh }, coins: coinsOf, held0: heldLockOf(0, { sat: 30_000n, signers: keys.slice(0, 3) }) });
+  const b = aged({ claim0: { pegInOutpoints: fresh }, coins: coinsOf, held0: heldLockOf(0, { sat: 30_000n, signers: keys.slice(1, 4) }) });
+  assert.equal((await heldOf(a)).provedPegInSats, '30000');
+  assert.equal((await heldOf(b)).provedPegInSats, '30000');
 });
 
 test('peg-in pressure reads the band the record names: 65 % kept in PRESSURE ranks peg-in first, as the load alone would not (kanban #997)', async () => {

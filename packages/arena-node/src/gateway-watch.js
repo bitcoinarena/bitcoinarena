@@ -16,6 +16,7 @@ import { seatGateways, GATEWAY_EPOCH_BLOCKS, GATEWAY_SEATS, GATEWAY_MINIMUMS } f
 import { pegInPressure } from '../../arena-protocol/src/capacity.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { nodeBondOf } from '../../arena-protocol/src/census.js';
+import { heldLockCounted } from '../../arena-protocol/src/held-proof.js';
 
 // `endpointOf(entry)`: where that node answers now - its newest signed address announcement before its advert's endpoint (kanban
 // #577, measured 2026-10-22: the three installer guardians of 89ce310e restarted on an update, their quick tunnels took new names,
@@ -33,6 +34,9 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
   // at the epoch's first height, so every guardian signs the same amounts whatever its tip. `rulesNetwork` the seat's own chain: `network`
   // above stays what it has always been, the gateway minimums' table
   rulesNetwork = network, rulesEpoch = seatingRulesEpochOf(rulesNetwork), maxAge = pegInMaxAgeOf(rulesNetwork), outpointAt = null,
+  // WHO JUDGES A HELD LOCK (§23A.3a, kanban #998): async (fid, epoch) -> { seated: [node hex], threshold } | null, the record in force at the
+  // epoch's proof height. From `rulesEpoch` a proved peg-in counts only up to what the claim's held lock shows, and with no record none
+  heldSetFor = async () => null,
   // THE SEATS A FEDERATION NEEDS (2026-10-20, hard rule: "All federations need 2 of 2 gateways, draining gateways at least 1"): async (fid) -> n
   seatsFor = async () => GATEWAY_SEATS,
   // THE FEDERATION'S RESERVE AND CAP from its record (§23A.3a part 2): async (fid) -> { reserveSats, exposureCapSats } | null; with them,
@@ -50,6 +54,14 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
   // in the census and a claim for this federation, and an error
   let lastProbe = null;
   const blockSaid = new Map();       // 'txid:vout@height' -> whether that block holds it, once buried deep enough not to move
+  // A HELD LOCK JUDGED ONCE: a view runs on every /gateway-seats and /pending, and each read is a signature check on the seat's loop
+  const heldSaid = new Map();
+  const heldSatsOf = (fid, e, node, heldLock, set) => {
+    if (!heldLock || !set) return 0n;
+    const k = JSON.stringify([fid, e, node, heldLock, set.threshold, set.seated]);
+    if (!heldSaid.has(k)) { if (heldSaid.size >= 64) heldSaid.clear(); heldSaid.set(k, heldLockCounted({ heldLock, federationId: fid, epoch: e, node, seated: set.seated, threshold: set.threshold, verify, epochBlocks }).sats); }
+    return heldSaid.get(k);
+  };
   const holds = async (o, height, tipNow) => {
     const k = `${o}@${height}`;
     if (blockSaid.has(k)) return blockSaid.get(k);
@@ -175,6 +187,12 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
       const itemsOf = (r) => pegInOutpointsOf(r.claim).map(pegInItem);
       for (const [node, r] of rows) for (const { outpoint } of itemsOf(r)) named.set(outpoint, [...(named.get(outpoint) || []), node]);
       const aged = seatingRulesActive(e, rulesEpoch), epochStart = e * epochBlocks, tipNow = aged ? await tip() : null;
+      // THE HELD LOCK (§23A.3a, rulings #1029/#1030): from the rules epoch the money must still be there, so the count is min(proved, held);
+      // no proof counts 0, and a lock two claims name counts for neither
+      let heldSet = null; if (aged) { try { heldSet = await heldSetFor(fid, e); } catch { heldSet = null; } }
+      const lockNamed = new Map();
+      for (const [, r] of rows) { const o = r.claim.heldLock && String(r.claim.heldLock.outpoint || '').toLowerCase(); if (o) lockNamed.set(o, (lockNamed.get(o) || 0) + 1); }
+      const heldOf = (node, r) => { const h = r.claim.heldLock; return h && lockNamed.get(String(h.outpoint || '').toLowerCase()) === 1 ? heldSatsOf(fid, e, node, h, heldSet) : 0n; };
       const proved = new Map();
       for (const [node, r] of rows) {
         if (!coins) { proved.set(node, null); continue; }
@@ -184,6 +202,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
           if (aged && !(pegInAgeStands({ height, epochStart, maxAge }) && await holds(outpoint, height, tipNow))) continue;
           sum += coins.get(outpoint);
         }
+        if (aged) { const held = heldOf(node, r); if (held < sum) sum = held; }
         proved.set(node, sum);
       }
       const provedOf = (node) => proved.get(node);
@@ -204,7 +223,8 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
         inboundSats: String(c.inboundSats), outboundSats: String(c.outboundSats), outsideInboundSats: String(c.outsideInboundSats), pegInSats: String(rows.get(toHex(c.node)).claim.pegInSats || 0), lightningPubkey: rows.get(toHex(c.node)).claim.lightningPubkey, lightningAddr: rows.get(toHex(c.node)).claim.lightningAddr || '',
         // what the operator states is still on its way (peg-ins confirming, kanban #552): beside the signed claim, shown as stated
         pending: rows.get(toHex(c.node)).claim.pending || null,
-        provedPegInSats: (() => { const v = provedOf(toHex(c.node)); return v === null ? null : String(v); })() }])) };
+        provedPegInSats: (() => { const v = provedOf(toHex(c.node)); return v === null ? null : String(v); })(),
+        ...(aged ? { heldLockSats: String(heldOf(toHex(c.node), rows.get(toHex(c.node)))) } : {}) }])) };
     };
     // THE HOLDERS OF THE EPOCH BEFORE: the seating its guardians signed, else this guardian's own ranking of it
     let held = null; try { held = await seatingFor(fid, at - 1); } catch { held = null; }
