@@ -5593,6 +5593,12 @@ function encodeAdvert(a) {
     if (!(a.emergencyPubkey instanceof Uint8Array) || a.emergencyPubkey.length !== 32) throw new Error('an emergency key is a 32-byte public key');
     w.u8(EMERGENCY_MARKER); w.bytes32(a.emergencyPubkey);
   }
+  // A TEMPLATE-3 BOND'S slash_presig AT BONDING (5A.3B, RULED 2026-11-02, kanban #1053): 65 bytes after their marker, before serving, in an advertisement update of that bond, since the
+  // body a bond commits to is built before its txid exists. None is no bytes, so every advertisement before this keeps its bytes. The signature stands on its own: no body has to repeat it.
+  if (a.slashPresig !== undefined && a.slashPresig !== null) {
+    if (!(a.slashPresig instanceof Uint8Array) || a.slashPresig.length !== SLASH_PRESIG_BYTES) throw new Error(`a slash_presig is ${SLASH_PRESIG_BYTES} bytes`);
+    w.u8(SLASH_PRESIG_MARKER); w.bytes(a.slashPresig, SLASH_PRESIG_BYTES);
+  }
   if (a.serving !== undefined && a.serving !== true && a.serving !== false) throw new Error('serving is true or false');
   if (a.serving === false) w.u8(NOT_SERVING_MARKER);
   return w.finish();
@@ -5602,6 +5608,9 @@ function encodeAdvert(a) {
 const DECLARES_MARKER = 0x5d;
 /** The byte before the owner's emergency key (§23A.5a, protocol 17), after the declared scalars, before serving. */
 const EMERGENCY_MARKER = 0x5e;
+/** The byte before a bond's slash_presig (5A.3B, kanban #1053), after the emergency key, before serving. */
+const SLASH_PRESIG_MARKER = 0x5c;
+const SLASH_PRESIG_BYTES = 65;
 /** The last byte of an advertisement that steps its node out of the census (serving = false, §5A.3). */
 const NOT_SERVING_MARKER = 0x5f;
 
@@ -5657,11 +5666,13 @@ function decodeAdvert(bytes) {
   for (let i = 1; i < a.hostedGames.length; i++)
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   a.timestamp = r.u64();
-  // the declared scalars (17 bytes), the emergency key (33) and serving = false (1), each only when written, in that order
+  // the declared scalars (17 bytes), the emergency key (33), the slash_presig (66) and serving = false (1), each only when written, in that order
   const left = bytes.length - r.at;
-  if ([17, 18, 50, 51].includes(left) && bytes[r.at] === DECLARES_MARKER) { r.u8(); a.declares = { bondMinSats: r.u64(), proposalDepositSats: r.u64() }; }
+  if ([17, 18, 50, 51, 83, 84, 116, 117].includes(left) && bytes[r.at] === DECLARES_MARKER) { r.u8(); a.declares = { bondMinSats: r.u64(), proposalDepositSats: r.u64() }; }
   const left2 = bytes.length - r.at;
-  if ((left2 === 33 || left2 === 34) && bytes[r.at] === EMERGENCY_MARKER) { r.u8(); a.emergencyPubkey = r.bytes32(); }
+  if ([33, 34, 99, 100].includes(left2) && bytes[r.at] === EMERGENCY_MARKER) { r.u8(); a.emergencyPubkey = r.bytes32(); }
+  const left3 = bytes.length - r.at;
+  if ((left3 === 66 || left3 === 67) && bytes[r.at] === SLASH_PRESIG_MARKER) { r.u8(); a.slashPresig = r.bytes(SLASH_PRESIG_BYTES); }
   // serving = false only when it says so; a serving node's advertisement decodes as it always did (no field)
   if (r.at === bytes.length - 1 && bytes[r.at] === NOT_SERVING_MARKER) { r.u8(); a.serving = false; }
   if (r.at !== bytes.length) throw new Error('trailing bytes after the advertisement');
@@ -7139,9 +7150,10 @@ async function checkAgainstBond(read, bond, verify) {
 /**
  * THE NEWEST VALID UPDATE PER BOND, from blocks (a chain view: { blocks: [{ transactions }], firstHeight }), at or
  * below `atHeight`, for the census's entries ({ txid, vout, pubkey }). `verify` is synchronous here, as the census is.
- * Answers Map(outpoint key -> { advert, advertId, txid, height, position }).
+ * Answers Map(outpoint key -> { advert, advertId, txid, height, position }). `seen(entry, read, height)`: told of every valid update in chain order, the newest or not: a bond's presig
+ * stays in the update that posted it, whatever came after (one pass over the view).
  */
-function newestUpdates(view, entries, { atHeight, network = 'regtest', verify } = {}) {
+function newestUpdates(view, entries, { atHeight, network = 'regtest', verify, seen = null } = {}) {
   const found = new Map();
   // NO LIST OF BONDS, NOTHING TO UPDATE: measured before, a missing list threw on entries.map.
   if (typeof verify !== 'function' || !view || !Array.isArray(view.blocks) || !Array.isArray(entries)) return found;
@@ -7161,6 +7173,7 @@ function newestUpdates(view, entries, { atHeight, network = 'regtest', verify } 
       let signed = false;
       try { signed = !!verify(read.signature, read.advertId, read.nodePubkey); } catch { signed = false; }
       if (!signed) return;
+      if (seen) seen(e, read, height);
       const had = found.get(key);
       if (!had || height > had.height || (height === had.height && position > had.position))
         found.set(key, { advert: read.advert, advertId: read.advertId, txid: read.txid, height, position, raw });
@@ -7338,6 +7351,230 @@ function readProtocolVersionName(name) {
   const r = byVersion.get(v);
   if (r && (r.year !== year || r.x !== x)) return { ok: false, why: `${s}: build ${v} is ${r.year}.${r.x}.${v}` };
   return { ok: true, version: v, known: !!r };
+}
+
+// ---- arena-protocol/src/bond-spend.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// SPENDING A BOND, AND THE MESSAGE THE SIGNATURES COVER.
+//
+// 24 proved the two leaves are programs that run and that each carries a
+// control block rebuilding the output key. Neither makes a bond SLASHABLE: a
+// spend has to be assembled, and what it signs is BIP-341's own sighash, which
+// commits to every input's amount and script as well as the outputs. A bond
+// nobody can spend is not collateral, and a slash nobody can broadcast is a
+// threat with nothing behind it.
+//
+// EVERYTHING HERE IS SERIALIZATION AND HASHING, which this package may do. The
+// signatures come from a caller with a curve, as everywhere else.
+//
+// AND THE ORACLE IS A REAL NODE. There are no BIP-341 vectors in this tree, so
+// the first honest measurement of this file is "bitcoind accepted the
+// transaction" - not a match against a published vector. That is a weaker
+// claim about the CODE and a stronger one about the RESULT, and it is written
+// down so nobody later reads a green test here as a vector match.
+
+
+const joinBytes = (...parts) => {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+};
+
+const leU32 = (n) => Uint8Array.from([n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255]);
+const leU64 = (v) => {
+  const out = new Uint8Array(8);
+  let n = BigInt(v);
+  for (let i = 0; i < 8; i++) { out[i] = Number(n & 255n); n >>= 8n; }
+  return out;
+};
+
+/** Bitcoin's compact size, which prefixes every list and every script. */
+function compactSize(n) {
+  if (n < 0xfd) return Uint8Array.from([n]);
+  if (n <= 0xffff) return Uint8Array.from([0xfd, n & 255, (n >>> 8) & 255]);
+  return joinBytes(Uint8Array.from([0xfe]), leU32(n));
+}
+
+const inputOutpoint = (input) => joinBytes(input.txid, leU32(input.vout));
+const scriptWithLength = (script) => joinBytes(compactSize(script.length), script);
+const outputBytes = (o) => joinBytes(leU64(o.value), scriptWithLength(o.script));
+
+/**
+ * THE TAPROOT SIGHASH, BIP-341, for a key-path or script-path spend.
+ *
+ * The message commits to every input's AMOUNT and SCRIPT, not only its
+ * outpoint - that is the change taproot made, and it is why a signer cannot be
+ * lied to about what it is spending. Getting one of those hashes wrong
+ * produces a signature that verifies against nothing, so each is named here
+ * rather than folded into one loop.
+ *
+ * `hashType` is DEFAULT unless named. Template 3's advance signature is
+ * SIGHASH_SINGLE|ANYONECANPAY (0x83, spec 5A.3B), and a slash has to read a
+ * witness whatever type its signer chose: a panel member who signed with an
+ * explicit 0x01 must not walk away because this file only knew 0x00. With
+ * ANYONECANPAY only `prevouts[inputIndex]` is read.
+ */
+function tapSighash({
+  version = 2, locktime = 0, inputs, prevouts, outputs, inputIndex, leafHash = null, hashType = 0x00,
+}) {
+  if (!Array.isArray(inputs) || !inputs.length) throw new Error('a spend has inputs');
+  if (!Array.isArray(prevouts) || prevouts.length !== inputs.length)
+    throw new Error('every input needs the output it spends');
+  if (!Number.isInteger(inputIndex) || inputIndex >= inputs.length)
+    throw new Error('that input index is not in this transaction');
+  if (![0x00, 0x01, 0x02, 0x03, 0x81, 0x82, 0x83].includes(hashType))
+    throw new Error(`${hashType} is not a taproot hash type`);
+
+  const anyoneCanPay = (hashType & 0x80) !== 0;
+  const outputType = hashType === 0x00 ? 0x01 : hashType & 0x03;
+  if (outputType === 0x03 && inputIndex >= outputs.length)
+    throw new Error('SIGHASH_SINGLE needs the output at its own input\'s index');
+
+  // spend_type = ext_flag * 2 + annex_present. This builder writes no annex, so
+  // a script path is 2 and a KEY PATH is 0 - and the key path also drops the
+  // three extension fields entirely. Getting that wrong does not produce an
+  // invalid signature, it produces a valid signature over a different message,
+  // which a node rejects with nothing to say about why.
+  const keyPath = leafHash === null || leafHash === undefined;
+  const spendType = Uint8Array.from([keyPath ? 0 : 2]);
+
+  const own = inputs[inputIndex];
+  const message = joinBytes(
+    Uint8Array.from([hashType]),
+    leU32(version), leU32(locktime),
+    ...(anyoneCanPay ? [] : [
+      sha256bytes(joinBytes(...inputs.map(inputOutpoint))),
+      sha256bytes(joinBytes(...prevouts.map((p) => leU64(p.value)))),
+      sha256bytes(joinBytes(...prevouts.map((p) => scriptWithLength(p.script)))),
+      sha256bytes(joinBytes(...inputs.map((i) => leU32(i.sequence)))),
+    ]),
+    ...(outputType === 0x01 ? [sha256bytes(joinBytes(...outputs.map(outputBytes)))] : []),
+    spendType,
+    ...(anyoneCanPay
+      ? [inputOutpoint(own), leU64(prevouts[inputIndex].value), scriptWithLength(prevouts[inputIndex].script), leU32(own.sequence)]
+      : [leU32(inputIndex)]),
+    ...(outputType === 0x03 ? [sha256bytes(outputBytes(outputs[inputIndex]))] : []),
+    ...(keyPath ? [] : [
+      leafHash,
+      Uint8Array.from([0x00]),               // key_version
+      leU32(0xffffffff),                       // no CODESEPARATOR
+    ]),
+  );
+
+  // The epoch byte is inside the tagged hash and outside the message, which is
+  // the one part of this that reads like a mistake and is not.
+  return taggedHash('TapSighash', joinBytes(Uint8Array.from([0x00]), message));
+}
+
+/**
+ * THE WITNESS FOR A SCRIPT-PATH SPEND: the stack the leaf consumes, then the
+ * leaf, then the proof that the leaf belongs to the output.
+ *
+ * The stack is written bottom-first, which is the order a witness is
+ * serialised in and the reverse of the order a script pops. A five-of-seven
+ * leaf checks its first key first, so that key's signature must end up on top
+ * and therefore last in the list a caller passes.
+ */
+function scriptPathWitness({ stack, script, controlBlock }) {
+  if (!Array.isArray(stack)) throw new Error('a witness has a stack, even an empty one');
+  return [...stack, script, controlBlock];
+}
+
+/**
+ * WHO A SCRIPT-PATH WITNESS NAMES (spec 5A.3: "the release, whose witness names the signers"): the keys of the leaf in the order
+ * it checks them, each with the signature on the stack for it, empty where that key did not sign. A leaf is read only as far as its
+ * 32-byte pushes followed by CHECKSIG, CHECKSIGVERIFY or CHECKSIGADD; whether a signature is good is for the verifier to say.
+ * An annex is refused by name: tapSighash writes none, so no signature beside one could be checked here.
+ */
+function scriptPathSigners(witness) {
+  if (!Array.isArray(witness) || witness.length < 2) return { ok: false, why: 'that is not a script-path witness' };
+  if (witness[witness.length - 1][0] === 0x50) return { ok: false, why: 'that witness carries an annex' };
+  const controlBlock = witness[witness.length - 1];
+  const script = witness[witness.length - 2];
+  const stack = witness.slice(0, -2);
+  const keys = [];
+  for (let at = 0; at < script.length;) {
+    const op = script[at];
+    if (op === 0x20 && [0xac, 0xad, 0xba].includes(script[at + 33])) { keys.push(script.subarray(at + 1, at + 33)); at += 34; continue; }
+    at += op >= 0x01 && op <= 0x4b ? op + 1 : 1;
+  }
+  if (keys.length !== stack.length) return { ok: false, why: `that leaf checks ${keys.length} keys and the witness carries ${stack.length} items` };
+  // bottom-first on the wire, so the first key checked is the last item
+  return { ok: true, script, controlBlock, signers: keys.map((key, i) => ({ key, signature: stack[stack.length - 1 - i] })) };
+}
+
+/** A transaction with its witnesses, as a node takes it. */
+function serializeSpend({ version = 2, locktime = 0, inputs, outputs, witnesses }) {
+  const body = [
+    leU32(version),
+    Uint8Array.from([0x00, 0x01]),           // the segwit marker and flag
+    compactSize(inputs.length),
+    ...inputs.map((i) => joinBytes(inputOutpoint(i), compactSize(0), leU32(i.sequence))),
+    compactSize(outputs.length),
+    ...outputs.map(outputBytes),
+  ];
+  for (const w of witnesses) {
+    body.push(compactSize(w.length));
+    for (const item of w) body.push(scriptWithLength(item));
+  }
+  body.push(leU32(locktime));
+  return joinBytes(...body);
+}
+
+/**
+ * THE OUTPUT A SLASH HAS TO CARRY, 5A.3B step 4.
+ *
+ * "OP_RETURN = H(fraud_proof) || retrieval hint", and `slash.js` fixes the
+ * hash: the same 32 bytes as the proof's id. The hint's shape the spec does
+ * not fix, so a caller may append bytes and this will carry them; inventing a
+ * format for it here would be inventing a second protocol.
+ *
+ * The value is zero because an OP_RETURN is provably unspendable, which is the
+ * point: the commitment costs a fee and nothing else.
+ */
+function commitmentOutput(commitment, hint = new Uint8Array(0)) {
+  if (!(commitment instanceof Uint8Array) || commitment.length !== 32)
+    throw new TypeError('a slash commits to a 32-byte proof id');
+  const payload = joinBytes(commitment, hint);
+  if (payload.length > 80) throw new RangeError('an OP_RETURN carries at most 80 bytes');
+  return { value: 0n, script: joinBytes(Uint8Array.from([0x6a]), compactSize(payload.length), payload) };
+}
+
+/**
+ * AND THE READING OF IT: what proof does this spend commit to?
+ *
+ * CONSENSUS DOES NOT CARE. A five-of-seven spend with no OP_RETURN is a
+ * perfectly valid Bitcoin transaction and a node will accept it - which is
+ * exactly why the protocol has to check. "Because the slashing transaction
+ * commits to the proof, every slash is permanently auditable"; a slash that
+ * commits to nothing is a bond taken with no public record of why, and it is
+ * the arbitration set's own offence.
+ */
+function commitmentIn(outputs) {
+  for (const o of outputs || []) {
+    const script = o.script;
+    if (!script || script.length < 34 || script[0] !== 0x6a) continue;
+    // OP_RETURN, then a direct push of at least the 32-byte id.
+    const len = script[1];
+    if (len < 32 || script.length < 2 + len) continue;
+    return { commitment: script.subarray(2, 34), hint: script.subarray(34, 2 + len) };
+  }
+  return null;
+}
+
+/**
+ * DOES THIS SPEND COMMIT TO THAT PROOF? Refused by name, because "no
+ * commitment at all" and "a commitment to some other proof" are different
+ * failures and only one of them looks like a mistake.
+ */
+function spendCommitsTo(outputs, commitment) {
+  const found = commitmentIn(outputs);
+  if (!found) return { ok: false, why: 'that spend carries no proof commitment, so no slash it makes is auditable' };
+  if (!found.commitment.every((b, i) => b === commitment[i]))
+    return { ok: false, why: 'that spend commits to a different proof than the one offered' };
+  return { ok: true, hint: found.hint };
 }
 
 // ---- arena-protocol/src/federation-slash.js
@@ -7963,6 +8200,99 @@ function donationKeysFor(network) {
 }
 
 // THE SAME TWO KEYS BY NETWORK ID: donation-keys.js, re-exported (M3.2 6e).
+
+// ---- arena-protocol/src/slash-presig.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE ADVANCE SIGNATURE, slash_presig (spec 5A.3B, kanban #972). With its SEATING signature each seated node signs one slash start per template-3 bond it holds, so the census key can
+// send that bond to the round's hold output and nowhere else. Hash type SIGHASH_SINGLE|ANYONECANPAY: whoever files the slash adds a fee input and the proof's OP_RETURN after it.
+//
+//   version 2, nLockTime 0
+//   input 0     the bond, sequence 0xfffffffd
+//   output 0    the whole bond amount, to hold(bond, round)
+//
+// A hold depends on the round only through its panels, so all rounds of a table, which share one draw, share one presig, and so do the two roles of one round. Pure: the census, the seed
+// and the clocks are the caller's.
+//
+// AND ONE AT BONDING (RULED 2026-11-02, kanban #1053): a template-3 bond counts only with a presig census_confirmations deep, posted in an advertisement update (the bond's txid does not
+// exist before), to a hold output with no release leaf. Its script is built from the bond, its advertisement and its census key alone, so a reader, the page included, checks it with one
+// signature check: no panels, no draw, no census, nothing recursive. It is what an offence with no round uses, and a node that was never seated has no other.
+
+
+
+
+
+const SLASH_PRESIG_HASH_TYPE = 0x83;
+const SLASH_START_SEQUENCE = 0xfffffffd;
+
+/** The digest a node signs for one bond: `bond` { txid, vout, value, script }, `holdScript` the P2TR script of its hold output. */
+function slashPresigDigest({ bond, nodeKey, censusKey, holdScript }) {
+  return tapSighash({ version: 2, locktime: 0, inputs: [{ txid: bond.txid, vout: bond.vout, sequence: SLASH_START_SEQUENCE }], outputs: [{ value: bond.value, script: holdScript }],
+    prevouts: [{ value: bond.value, script: bond.script }], inputIndex: 0, leafHash: tapLeafHash(slashStartLeaf(nodeKey, censusKey)), hashType: SLASH_PRESIG_HASH_TYPE });
+}
+
+/** 65 bytes: `sign(digest)`'s 64 and the hash type a witness needs. */
+function signSlashPresig(digest, sign) {
+  const sig = sign(digest);
+  if (!(sig instanceof Uint8Array) || sig.length !== 64) throw new Error('a slash_presig is a 64-byte Schnorr signature and its hash type');
+  return Uint8Array.from([...sig, SLASH_PRESIG_HASH_TYPE]);
+}
+
+/** Does `presig` (65 bytes) verify over `digest` under `nodeKey`? `verify(signature, digest, key)` is the caller's curve. */
+function slashPresigVerifies(presig, digest, nodeKey, verify) {
+  if (!(presig instanceof Uint8Array) || presig.length !== 65 || presig[64] !== SLASH_PRESIG_HASH_TYPE) return false;
+  try { return !!verify(presig.subarray(0, 64), digest, nodeKey); } catch { return false; }
+}
+
+/** A bond a slash_presig is asked for: template 3, its output read off the chain, and not started already: a started bond has no input left to sign for. */
+const presignedBond = (e) => !!e && !e.hold && !!e.advert && e.advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3 && e.script instanceof Uint8Array;
+
+/** The network's clocks, under the names a hold output takes. */
+function holdClocksOf(networkId) {
+  const c = SLASH_CLOCKS[networkOf(networkId)];
+  if (!c) throw new Error('that network names no slash clocks');
+  return { holdBlocks: c.slashHoldBlocks, returnBlocks: c.slashReturnBlocks, fallbackBlocks: c.slashFallbackBlocks };
+}
+
+/**
+ * WHAT A ROUND ASKS OF ITS NODES: { ok, plan } with `plan` a Map of node key hex -> [{ txid (hex), vout, digest, hold }], one per template-3 bond of that node in the round's census.
+ * `panels` is drawPanels' answer for the round. A census with no such bond answers an empty plan, so a round on template 1 and 2 bonds does nothing here. `tweakPoint` is the caller's curve.
+ */
+function roundPresigPlan({ entries, contract, panels, tweakPoint }) {
+  const bonds = (entries || []).filter(presignedBond);
+  const plan = new Map();
+  if (!bonds.length) return { ok: true, plan };
+  if (!panels || !panels.ok) return panels || { ok: false, why: 'no panels were drawn for that round' };
+  const panelA = panels.panelA.map((e) => e.pubkey), panelB = panels.panelB.map((e) => e.pubkey), clocks = holdClocksOf(contract.networkId);
+  for (const e of bonds) {
+    const hold = holdOutputKey({ nodeKey: e.pubkey, censusKey: e.advert.censusKey, panelA, panelB, bondMaturity: e.advert.bondMaturityHeight, ...clocks }, { tweakPoint });
+    if (!hold.ok) return { ok: false, why: `the hold output of a bond cannot be built: ${hold.why}` };
+    const bond = { txid: e.txid, vout: e.vout, value: BigInt(e.bondSats), script: e.script };
+    const node = toHex(e.pubkey);
+    (plan.get(node) || plan.set(node, []).get(node)).push({ txid: toHex(e.txid), vout: e.vout, hold,
+      digest: slashPresigDigest({ bond, nodeKey: e.pubkey, censusKey: e.advert.censusKey, holdScript: hold.script }) });
+  }
+  return { ok: true, plan, panels };
+}
+
+/**
+ * THE DIGEST OF A BOND'S OWN PRESIG, or { ok: false, why }. `bond` { txid, vout, value, script } as the chain has it, `advert` the body the bond committed to: its node key, its census key
+ * and its maturity build the hold output, panels empty, so it has the return and the fallback leaves only. `tweakPoint` is the caller's curve.
+ */
+function bondPresigDigest({ bond, advert, networkId, tweakPoint }) {
+  const hold = holdOutputKey({ nodeKey: advert.nodePubkey, censusKey: advert.censusKey, panelA: [], panelB: [], bondMaturity: advert.bondMaturityHeight, ...holdClocksOf(networkId) }, { tweakPoint });
+  if (!hold.ok) return { ok: false, why: `the hold output of a bond cannot be built: ${hold.why}` };
+  return { ok: true, hold, digest: slashPresigDigest({ bond, nodeKey: advert.nodePubkey, censusKey: advert.censusKey, holdScript: hold.script }) };
+}
+
+/** Does this 65-byte presig stand for the bond? One signature check over the bond, its advertisement and its census key. `verify(signature, digest, key)` is the caller's curve. */
+function bondPresigStands({ presig, bond, advert, networkId, tweakPoint, verify }) {
+  // WHAT A CHAIN CARRIES CANNOT THROW HERE: a census reads every template-3 body anyone posts, and a hold that cannot be built is a presig that does not stand
+  try {
+    const built = bondPresigDigest({ bond, advert, networkId, tweakPoint });
+    return built.ok && slashPresigVerifies(presig, built.digest, advert.nodePubkey, verify);
+  } catch { return false; }
+}
 
 // ---- arena-protocol/src/census-key.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
@@ -10118,14 +10448,10 @@ function panelSeed(committeeSeed) {
 const PANEL_LEAVES_OUT = ['game', 'settlement'];
 
 /**
- * A ROUND'S TWO SLASH PANELS (5A.3B "Who is responsible for a round"): the 5A.6 selection over the round's census on panel_seed(r), less
- * every node drawn for any role of the round (all 9 per role, 5A.7), its attestors and the nodes of its players. What is left is E;
- * n = min(7, floor(|E| / 2)), t = floor(2n / 3) + 1, panel A the first n of the order, panel B the next n. Pure, and worked out here rather
- * than taken in: nobody hands the draw its own exclusions but what only the round knows.
- *
- *   drawsAttestors   the round's game draws its attestors (manifest attestDraw): they are drawn here and left out
- *   attestorKeys     a game's own named attestors, 32-byte keys
- *   playerNodes      the nodes of the round's players, 32-byte keys. A player declares no operator (5A.13), so the caller says who they are
+ * A ROUND'S TWO SLASH PANELS (5A.3B "Who is responsible for a round"): the 5A.6 selection over the round's census on panel_seed(r), less every node drawn for any role of the round
+ * (all 9 per role, 5A.7). What is left is E; n = min(7, floor(|E| / 2)), t = floor(2n / 3) + 1, panel A the first n of the order, panel B the next n. Pure, and nothing is taken in:
+ * a panel is a function of the chain and the round (RULED 2026-11-02, kanban #1053), so neither a manifest a seat may not hold nor a player who enters later moves it. A player's own
+ * node or an attestor can sit on a panel: a panel only checks a proof, and the census key has already started it.
  *
  * Drawn as `drawAttestors` is, on the settlement ticket: 5A.6 draws per role and the spec names none for a panel.
  *
@@ -10133,12 +10459,11 @@ const PANEL_LEAVES_OUT = ['game', 'settlement'];
  * output then has no release leaf and a slash pays at the fallback. Only a round that cannot be drawn at all answers ok: false.
  * Answers { ok: true, n, t, panelA, panelB, order, eligible } of census entries, or { ok: false, why }.
  */
-function drawPanels({ entries, contract, committeeSeed, drawsAttestors = false, attestorKeys = [], playerNodes = [] }) {
+function drawPanels({ entries, contract, committeeSeed }) {
   try {
-    const out = new Set([...attestorKeys, ...playerNodes].map(toHex));
+    const out = new Set();
     for (const role of PANEL_LEAVES_OUT)
       for (const e of drawCommittee({ entries, contract, role, committeeSeed })) out.add(toHex(e.pubkey));
-    if (drawsAttestors) for (const e of drawAttestors({ entries, contract, committeeSeed })) out.add(toHex(e.pubkey));
     return panelsOf({ entries, contract, seed: panelSeed(committeeSeed), out });
   } catch (e) { return { ok: false, why: `the panels cannot be drawn: ${e.message}` }; }
 }
@@ -10148,27 +10473,6 @@ function panelsOf({ entries, contract, seed, out }) {
     exclude: entries.filter((e) => out.has(toHex(e.pubkey))) });
   const n = panelSeats(rest.length);
   return { ok: true, n, t: n ? panelThreshold(n) : 0, eligible: rest.length, panelA: rest.slice(0, n), panelB: rest.slice(n, 2 * n), order: rest.slice(0, 2 * n) };
-}
-
-/**
- * THE PANELS OF A BOND'S OWN slash_presig, for an offence with no round (5A.3B, kanban #1031): seed tagged_hash("ARENA/v1/SlashPanel", bond outpoint ||
- * hash of the block that confirmed the bond), the census at that block's height, less the bonding node and its operator's nodes; n and t as
- * for a round. The update's own block cannot be the seed: the signature inside the update depends on it. A bonder can retry for friendly
- * panels at the cost of a bond each time. Accepted: they guard only an offence with no round, and the census key's fallback stands behind them.
- */
-function bondPanelSeed({ txid, vout }, blockHash) {
-  const w = new Writer();
-  w.bytes32(txid); w.u32(vout); w.bytes32(blockHash);
-  return taggedHash(TAG.slashPanel, w.finish());
-}
-
-function drawBondPanels({ entries, contract, bond, blockHash, nodeKey, operatorId = null }) {
-  try {
-    const me = toHex(nodeKey);
-    const out = new Set([me]);
-    if (operatorId) for (const e of entries) if (e.advert && e.advert.operatorId === operatorId) out.add(toHex(e.pubkey));
-    return panelsOf({ entries, contract, seed: bondPanelSeed(bond, blockHash), out });
-  } catch (e) { return { ok: false, why: `the panels cannot be drawn: ${e.message}` }; }
 }
 
 // ---- arena-protocol/src/known-games.js
@@ -11352,6 +11656,7 @@ function txidHexOf(tx) {
 
 
 
+
 /**
  * One census entry, encoded.
  *
@@ -11989,6 +12294,12 @@ function chainFactsAt(blocks, censusHeight) {
  * Answers { txid, vout, height }, the hold output, while it is unspent at the census height. Null for any other spend, and for a hold output already spent.
  */
 function holdOfStart(facts, key, nodeKey) {
+  const txid = startOf(facts, key, nodeKey);
+  return txid && !facts.spentAt.has(`${txid}:0`) ? { txid, vout: 0, height: facts.spentAt.get(key) } : null;
+}
+
+/** The txid (hex) of the slash start that spent this bond, or null. */
+function startOf(facts, key, nodeKey) {
   const tx = facts.spentIn.get(key);
   if (!tx || !(nodeKey instanceof Uint8Array)) return null;
   const input = tx.inputs[0], stack = tx.witnesses && tx.witnesses[0];
@@ -11998,8 +12309,7 @@ function holdOfStart(facts, key, nodeKey) {
   if (!leaf || leaf.length !== 68 || toHex(slashStartLeaf(nodeKey, leaf.slice(35, 67))) !== toHex(leaf)) return null;
   const hold = tx.outputs[0], bond = facts.outputAt.get(key);
   if (!hold || !bond || hold.value !== bond.value || hold.script.length !== 34 || hold.script[0] !== 0x51 || hold.script[1] !== 0x20) return null;
-  const txid = txidHexOf(tx);
-  return facts.spentAt.has(`${txid}:0`) ? null : { txid, vout: 0, height: facts.spentAt.get(key) };
+  return txidHexOf(tx);
 }
 
 /**
@@ -12795,8 +13105,31 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
 
   let eligible = carried;
   const updatedOut = [];
+  const presigOut = [];
+  // A TEMPLATE-3 BOND COUNTS ONLY WITH ITS slash_presig census_confirmations DEEP (5A.3B, RULED 2026-11-02, kanban #1053). The earliest update that posted one is taken and any later update
+  // leaves it standing: one signature check over the bond, its advertisement and its census key, no panels and no earlier census. Asked before the newest advertisement is read, so an output
+  // that does not count decides nothing for its node's others. A census with no such bond pays nothing here.
+  const presigs = new Map();
+  const outKey = (e) => `${Array.from(e.txid).join(',')}:${e.vout}`;
+  const wantsPresig = (e) => e.advert && e.advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3;
+  const presigDeep = Math.max(1, Number(contract.censusConfirmations ?? 0));
+  const seenPresig = eligible.some(wantsPresig) ? (e, read, height) => {
+    if (!wantsPresig(e) || !read.advert.slashPresig || presigs.has(outKey(e)) || contract.censusHeight - height + 1 < presigDeep) return;
+    if (!bond || typeof bond.tweakPoint !== 'function' || !e.script) return;
+    if (bondPresigStands({ presig: read.advert.slashPresig, bond: { txid: e.txid, vout: e.vout, value: BigInt(e.bondSats), script: e.script }, advert: e.advert, networkId: contract.networkId, tweakPoint: bond.tweakPoint, verify: verifyUpdate }))
+      presigs.set(outKey(e), { txid: read.txid, height });
+  } : null;
   if (typeof verifyUpdate === 'function') {
-    const updates = newestUpdates(chain, eligible, { atHeight: contract.censusHeight, network: network || 'regtest', verify: verifyUpdate });
+    const updates = newestUpdates(chain, eligible, { atHeight: contract.censusHeight, network: network || 'regtest', verify: verifyUpdate, seen: seenPresig });
+    if (seenPresig) {
+      const kept = [];
+      for (const e of eligible) {
+        if (!wantsPresig(e) || presigs.has(outKey(e))) { kept.push(presigs.has(outKey(e)) ? { ...e, presigBy: presigs.get(outKey(e)) } : e); continue; }
+        presigOut.push({ ...e, why: `that template-3 bond has no slash_presig ${presigDeep} block(s) deep` });
+        updates.delete(outKey(e));
+      }
+      eligible = kept;
+    }
     const deciders = sumsBonds(contract) ? newestPerNode(eligible, updates) : null;
     const before = eligible;
     eligible = [];
@@ -12849,6 +13182,10 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
       eligible.push({ ...e, advert: sumsBonds(contract) ? ownMaturity(u.advert, e.advert) : u.advert, advertId: u.advertId, roles, hostedGames: u.advert.hostedGames,
         updatedBy: { txid: u.txid, height: u.height, position: u.position } });
     }
+  } else if (eligible.some(wantsPresig)) {
+    // no signature check, so no update is read, so no presig was: the bond is named, as an ancestor's is above, and not counted
+    presigOut.push(...eligible.filter(wantsPresig).map((e) => ({ ...e, why: 'a template-3 bond, and no signature check was given to read its slash_presig with' })));
+    eligible = eligible.filter((e) => !wantsPresig(e));
   }
 
   // AND THE FLOOR ON THE SUMS AGAIN (protocol 19): an output the re-affirmation or the update left out no longer counts toward its node
@@ -12891,6 +13228,7 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
       ...scanned.excluded.map((e) => ({ ...e, step: 'scan' })),
       ...resolved.excluded.map((e) => ({ ...e, step: 'resolve' })),
       ...reaffirmOut.map((e) => ({ ...e, step: 'reaffirm' })),
+      ...presigOut.map((e) => ({ ...e, step: 'presig' })),
       ...updatedOut.map((e) => ({ ...e, step: 'update' })),
       ...sumOut.map((e) => ({ ...e, step: 'sum' })),
       ...absentOut.map((e) => ({ ...e, step: 'absent' })),
@@ -31215,7 +31553,7 @@ function committedSigned(tx) {
 
 /**
  * ONE CENSUS ENTRY FROM ITS EVIDENCE, as RESOLVE and the update/re-affirmation steps of deriveCensus make it - or why not.
- * `item` is { transaction, branch, position, update?, reaffirm? } (hex or bytes), each proved into `headers`.
+ * `item` is { transaction, branch, position, update?, reaffirm?, presig? } (hex or bytes), each proved into `headers`.
  */
 function entryFromEvidence(item, { contract, headers, firstHeight, bond, verify }) {
   const network = networkOf(contract.networkId);
@@ -31264,6 +31602,22 @@ function entryFromEvidence(item, { contract, headers, firstHeight, bond, verify 
   if (!matures.ok) return { ok: false, why: matures.why };
   const named = bondNamesStandingKey(advert, height, bond && bond.standingKeys, Number(contract.censusConfirmations ?? 0));
   if (!named.ok) return { ok: false, why: named.why };
+  // A TEMPLATE-3 BOND COUNTS ONLY WITH ITS slash_presig census_confirmations DEEP (5A.3B, RULED 2026-11-02, kanban #1053), as a seat's census asks it: one signature check over the bond, its
+  // advertisement and its census key, on the update that posted it, proved into the agreed headers. A seat that hands none has handed a bond the census does not count.
+  if (advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3) {
+    const p = proofOf(item.presig);
+    if (!p || !p.transaction) return { ok: false, why: 'a template-3 bond counts only with its slash_presig, and none was handed' };
+    const read = readAdvertUpdate(p.transaction, { network });
+    if (!read.ok) return { ok: false, why: read.why };
+    const pHeight = provenAt(headers, firstHeight, read.txid, p);
+    if (pHeight === null || pHeight < height || contract.censusHeight - pHeight + 1 < Math.max(1, Number(contract.censusConfirmations ?? 0)))
+      return { ok: false, why: 'its slash_presig is not between the bond and census_confirmations below the census height' };
+    if (!sameCC(read.bondTxid, tx.txid) || read.bondVout !== vout || !sameCC(read.nodePubkey, advert.nodePubkey) || !sig(read.signature, read.advertId, advert.nodePubkey))
+      return { ok: false, why: 'its slash_presig is not in an update of this bond by this bond\'s key' };
+    if (!read.advert.slashPresig || !bond || !bondPresigStands({ presig: read.advert.slashPresig, bond: { txid: tx.txid, vout, value: BigInt(bondSats), script: tx.outputs[vout].script },
+      advert, networkId: contract.networkId, tweakPoint: bond.tweakPoint, verify: sig }))
+      return { ok: false, why: 'its slash_presig does not verify over the bond, its advertisement and its census key' };
+  }
   // RESOLVE's filters, on the body the bond committed to
   // FROM PROTOCOL 19 THE FLOOR IS THE NODE'S SUM (kanban #544), asked over the whole census below - as a seat's census asks it.
   // Asked per output here, a node's 32,000 top-up was refused where every seat counted it, and no paid round could be joined (#543).

@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
-import { drawPanels, panelSeed, drawCommittee, drawAttestors, drawBondPanels, bondPanelSeed } from '../src/sortition.js';
+import { drawPanels, panelSeed, drawCommittee, drawAttestors } from '../src/sortition.js';
 import { panelSeats, panelThreshold } from '../src/bond-script.js';
 import { DRAW_FREE_VERSION } from '../src/constants.js';
 import { taggedHash, toHex } from '../src/hash.js';
@@ -23,22 +23,31 @@ test('panel_seed is the spec\'s tagged hash of the committee seed, and refuses a
   assert.throws(() => panelSeed(new Uint8Array(31)), /seed its beacon/);
 });
 
-test('each round: 7 and 7, no node twice, none drawn for a role (reserves too), no attestor, no player\'s node', () => {
+test('each round: 7 and 7, no node twice, none of the 9 drawn per role, reserves too (RULED 2026-11-02, kanban #1053)', () => {
   const entries = census(60);
   const seen = new Set();
+  let attestorSat = 0;
   for (let s = 0; s < 200; s++) {
     const committeeSeed = seed(s);
-    const player = key(1 + (s % 60));
-    const got = drawPanels({ entries, contract, committeeSeed, drawsAttestors: true, playerNodes: [player] });
+    const got = drawPanels({ entries, contract, committeeSeed });
     assert.equal(got.ok, true, got.why);
     const [a, b] = [keys(got.panelA), keys(got.panelB)];
     assert.deepEqual([a.length, b.length, new Set([...a, ...b]).size], [7, 7, 14]);
-    const out = [...drawCommittee({ entries, contract, role: 'game', committeeSeed }), ...drawCommittee({ entries, contract, role: 'settlement', committeeSeed }),
-      ...drawAttestors({ entries, contract, committeeSeed })].map((e) => toHex(e.pubkey));
-    out.push(toHex(player));
-    for (const k of [...a, ...b]) { assert.ok(!out.includes(k), 'a node left out sits on a panel'); seen.add(k); }
+    const out = [...drawCommittee({ entries, contract, role: 'game', committeeSeed }), ...drawCommittee({ entries, contract, role: 'settlement', committeeSeed })].map((e) => toHex(e.pubkey));
+    for (const k of [...a, ...b]) { assert.ok(!out.includes(k), 'a node drawn for a role sits on a panel'); seen.add(k); }
+    // AN ATTESTOR IS NOT LEFT OUT: a panel is a function of the chain and the round, and which rounds have attestors depends on a manifest a seat may not hold
+    const attestors = keys(drawAttestors({ entries, contract, committeeSeed }));
+    if ([...a, ...b].some((k) => attestors.includes(k) && !out.includes(k))) attestorSat++;
   }
   assert.ok(seen.size > 40, 'the draw moves with the seed');
+  assert.ok(attestorSat > 0, 'an attestor can sit on a panel');
+});
+
+test('a player\'s node and a game\'s attestors move no panel: the draw takes neither', () => {
+  const entries = census(60);
+  const plain = drawPanels({ entries, contract, committeeSeed: seed(3) });
+  const asked = drawPanels({ entries, contract, committeeSeed: seed(3), drawsAttestors: true, attestorKeys: [plain.panelA[0].pubkey], playerNodes: [plain.panelB[0].pubkey] });
+  assert.deepEqual(keys(asked.order), keys(plain.order));
 });
 
 test('anyone gets the same panels: the census order does not matter, and panel A is the head of one order', () => {
@@ -106,18 +115,4 @@ test('a census under the network minimum is a round that cannot be drawn: an ans
   const got = drawPanels({ entries: census(1), contract, committeeSeed: seed(1) });
   assert.equal(got.ok, false);
   assert.match(got.why, /cannot be drawn/);
-});
-
-test('a bond\'s own panels: seeded by its outpoint and confirming block, less the node and its operator\'s nodes (kanban #1031)', () => {
-  const entries = census(30).map((e, i) => ({ ...e, advert: { operatorId: i < 3 ? 'same' : `op${i}` } }));
-  const bond = { txid: key(1), vout: 0 }, blockHash = b32(0x77);
-  const one = drawBondPanels({ entries, contract, bond, blockHash, nodeKey: key(1), operatorId: 'same' });
-  assert.equal(one.ok, true, one.why);
-  assert.deepEqual([one.eligible, one.n, one.t], [27, 7, 5]);
-  for (const k of keys(one.order)) assert.ok(![1, 2, 3].map((n) => toHex(key(n))).includes(k), 'the bonder or a sibling on its own panel');
-  const seed = taggedHash('ARENA/v1/SlashPanel', Uint8Array.from([...bond.txid, 0, 0, 0, 0, ...blockHash]));
-  assert.equal(toHex(bondPanelSeed(bond, blockHash)), toHex(seed));
-  assert.notDeepEqual(keys(drawBondPanels({ entries, contract, bond, blockHash: b32(0x78), nodeKey: key(1) }).order), keys(one.order));
-  const few = drawBondPanels({ entries: entries.slice(0, 6), contract, bond, blockHash, nodeKey: key(1), operatorId: 'same' });
-  assert.deepEqual([few.ok, few.n], [true, 0], 'n and t as for a round');
 });

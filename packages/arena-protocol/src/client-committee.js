@@ -23,6 +23,7 @@ import { blockHashOf, provesTransaction, recognizeBond, merkleRootFromProof } fr
 import { decodeAncestorAdvert } from './ancestor.js';
 import { acceptAncestorEndpoint } from './ancestor-endpoint.js';
 import { readAdvertUpdate } from './advert-update.js';
+import { bondPresigStands } from './slash-presig.js';
 import { maturityStands } from './bond-script.js';
 import { bondNamesStandingKey, censusKeyAnchorIn, censusKeyBodyIn, censusKeyContract, censusKeyDrawHeight, censusKeyRecordDue, censusKeyRecordStands, censusKeyShares } from './census-key.js';
 import { BOND_TEMPLATE_V3 } from './bond-script.js';
@@ -80,7 +81,7 @@ function committedSigned(tx) {
 
 /**
  * ONE CENSUS ENTRY FROM ITS EVIDENCE, as RESOLVE and the update/re-affirmation steps of deriveCensus make it - or why not.
- * `item` is { transaction, branch, position, update?, reaffirm? } (hex or bytes), each proved into `headers`.
+ * `item` is { transaction, branch, position, update?, reaffirm?, presig? } (hex or bytes), each proved into `headers`.
  */
 export function entryFromEvidence(item, { contract, headers, firstHeight, bond, verify }) {
   const network = networkOf(contract.networkId);
@@ -129,6 +130,22 @@ export function entryFromEvidence(item, { contract, headers, firstHeight, bond, 
   if (!matures.ok) return { ok: false, why: matures.why };
   const named = bondNamesStandingKey(advert, height, bond && bond.standingKeys, Number(contract.censusConfirmations ?? 0));
   if (!named.ok) return { ok: false, why: named.why };
+  // A TEMPLATE-3 BOND COUNTS ONLY WITH ITS slash_presig census_confirmations DEEP (5A.3B, RULED 2026-11-02, kanban #1053), as a seat's census asks it: one signature check over the bond, its
+  // advertisement and its census key, on the update that posted it, proved into the agreed headers. A seat that hands none has handed a bond the census does not count.
+  if (advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3) {
+    const p = proofOf(item.presig);
+    if (!p || !p.transaction) return { ok: false, why: 'a template-3 bond counts only with its slash_presig, and none was handed' };
+    const read = readAdvertUpdate(p.transaction, { network });
+    if (!read.ok) return { ok: false, why: read.why };
+    const pHeight = provenAt(headers, firstHeight, read.txid, p);
+    if (pHeight === null || pHeight < height || contract.censusHeight - pHeight + 1 < Math.max(1, Number(contract.censusConfirmations ?? 0)))
+      return { ok: false, why: 'its slash_presig is not between the bond and census_confirmations below the census height' };
+    if (!sameCC(read.bondTxid, tx.txid) || read.bondVout !== vout || !sameCC(read.nodePubkey, advert.nodePubkey) || !sig(read.signature, read.advertId, advert.nodePubkey))
+      return { ok: false, why: 'its slash_presig is not in an update of this bond by this bond\'s key' };
+    if (!read.advert.slashPresig || !bond || !bondPresigStands({ presig: read.advert.slashPresig, bond: { txid: tx.txid, vout, value: BigInt(bondSats), script: tx.outputs[vout].script },
+      advert, networkId: contract.networkId, tweakPoint: bond.tweakPoint, verify: sig }))
+      return { ok: false, why: 'its slash_presig does not verify over the bond, its advertisement and its census key' };
+  }
   // RESOLVE's filters, on the body the bond committed to
   // FROM PROTOCOL 19 THE FLOOR IS THE NODE'S SUM (kanban #544), asked over the whole census below - as a seat's census asks it.
   // Asked per output here, a node's 32,000 top-up was refused where every seat counted it, and no paid round could be joined (#543).

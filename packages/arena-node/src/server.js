@@ -2641,10 +2641,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   if (emergencyPull.unref) emergencyPull.unref();
   const emergencyFirstPull = setTimeout(() => { pullEmergencies().catch(() => {}); }, 30000);
   if (emergencyFirstPull.unref) emergencyFirstPull.unref();
-  const holdsOfRound = (rid, contract) => {
-    const plugin = attestedOf(contract);
-    return roster.slashHoldsFor(rid, { posted: contract, drawsAttestors: !!(plugin && isDrawnAttest(plugin.manifest)), attestorKeys: (plugin && plugin.manifest.attestors) || [] });
-  };
+  const holdsOfRound = (rid, contract) => roster.slashHoldsFor(rid, { posted: contract });
   const seating = (seatingOn ?? process.env.ARENA_SEATING === '1') ? seatingAgent({ round, roster, endpointOf: addressBook.endpointOf,
     // kanban #738: the forced overloaded seat, regtest rounds only (seating-agent.js)
     testHoldPresents: Number(process.env.ARENA_TEST_SEATING_HOLD) || null,

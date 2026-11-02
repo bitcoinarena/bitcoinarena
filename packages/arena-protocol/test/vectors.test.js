@@ -78,7 +78,7 @@ test('a round\'s two slash panels match', () => {
   const contract = { networkId: NETWORK_ID_REGTEST, gameId: b32(0x67), gameVerifySlots: v.slots, settlementSlots: v.slots, bondMinSats: BigInt(v.bondMin) };
   const seed = fromHex(v.committeeSeed);
   assert.equal(toHex(panelSeed(seed)), v.panelSeed);
-  const got = drawPanels({ entries, contract, committeeSeed: seed, drawsAttestors: v.drawsAttestors, playerNodes: v.playerNodes.map(fromHex) });
+  const got = drawPanels({ entries, contract, committeeSeed: seed });
   assert.equal(got.ok, true, got.why);
   assert.deepEqual(got.panelA.map((e) => toHex(e.pubkey)), v.panelA);
   assert.deepEqual(got.panelB.map((e) => toHex(e.pubkey)), v.panelB);

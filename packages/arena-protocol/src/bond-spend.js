@@ -20,15 +20,15 @@
 import { sha256bytes } from './sha256.js';
 import { taggedHash } from './hash.js';
 
-const cat = (...parts) => {
+const joinBytes = (...parts) => {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let at = 0;
   for (const p of parts) { out.set(p, at); at += p.length; }
   return out;
 };
 
-const u32 = (n) => Uint8Array.from([n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255]);
-const u64 = (v) => {
+const leU32 = (n) => Uint8Array.from([n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255]);
+const leU64 = (v) => {
   const out = new Uint8Array(8);
   let n = BigInt(v);
   for (let i = 0; i < 8; i++) { out[i] = Number(n & 255n); n >>= 8n; }
@@ -39,12 +39,12 @@ const u64 = (v) => {
 export function compactSize(n) {
   if (n < 0xfd) return Uint8Array.from([n]);
   if (n <= 0xffff) return Uint8Array.from([0xfd, n & 255, (n >>> 8) & 255]);
-  return cat(Uint8Array.from([0xfe]), u32(n));
+  return joinBytes(Uint8Array.from([0xfe]), leU32(n));
 }
 
-const outpointOf = (input) => cat(input.txid, u32(input.vout));
-const scriptWithLength = (script) => cat(compactSize(script.length), script);
-const outputBytes = (o) => cat(u64(o.value), scriptWithLength(o.script));
+const inputOutpoint = (input) => joinBytes(input.txid, leU32(input.vout));
+const scriptWithLength = (script) => joinBytes(compactSize(script.length), script);
+const outputBytes = (o) => joinBytes(leU64(o.value), scriptWithLength(o.script));
 
 /**
  * THE TAPROOT SIGHASH, BIP-341, for a key-path or script-path spend.
@@ -86,31 +86,31 @@ export function tapSighash({
   const spendType = Uint8Array.from([keyPath ? 0 : 2]);
 
   const own = inputs[inputIndex];
-  const message = cat(
+  const message = joinBytes(
     Uint8Array.from([hashType]),
-    u32(version), u32(locktime),
+    leU32(version), leU32(locktime),
     ...(anyoneCanPay ? [] : [
-      sha256bytes(cat(...inputs.map(outpointOf))),
-      sha256bytes(cat(...prevouts.map((p) => u64(p.value)))),
-      sha256bytes(cat(...prevouts.map((p) => scriptWithLength(p.script)))),
-      sha256bytes(cat(...inputs.map((i) => u32(i.sequence)))),
+      sha256bytes(joinBytes(...inputs.map(inputOutpoint))),
+      sha256bytes(joinBytes(...prevouts.map((p) => leU64(p.value)))),
+      sha256bytes(joinBytes(...prevouts.map((p) => scriptWithLength(p.script)))),
+      sha256bytes(joinBytes(...inputs.map((i) => leU32(i.sequence)))),
     ]),
-    ...(outputType === 0x01 ? [sha256bytes(cat(...outputs.map(outputBytes)))] : []),
+    ...(outputType === 0x01 ? [sha256bytes(joinBytes(...outputs.map(outputBytes)))] : []),
     spendType,
     ...(anyoneCanPay
-      ? [outpointOf(own), u64(prevouts[inputIndex].value), scriptWithLength(prevouts[inputIndex].script), u32(own.sequence)]
-      : [u32(inputIndex)]),
+      ? [inputOutpoint(own), leU64(prevouts[inputIndex].value), scriptWithLength(prevouts[inputIndex].script), leU32(own.sequence)]
+      : [leU32(inputIndex)]),
     ...(outputType === 0x03 ? [sha256bytes(outputBytes(outputs[inputIndex]))] : []),
     ...(keyPath ? [] : [
       leafHash,
       Uint8Array.from([0x00]),               // key_version
-      u32(0xffffffff),                       // no CODESEPARATOR
+      leU32(0xffffffff),                       // no CODESEPARATOR
     ]),
   );
 
   // The epoch byte is inside the tagged hash and outside the message, which is
   // the one part of this that reads like a mistake and is not.
-  return taggedHash('TapSighash', cat(Uint8Array.from([0x00]), message));
+  return taggedHash('TapSighash', joinBytes(Uint8Array.from([0x00]), message));
 }
 
 /**
@@ -153,10 +153,10 @@ export function scriptPathSigners(witness) {
 /** A transaction with its witnesses, as a node takes it. */
 export function serializeSpend({ version = 2, locktime = 0, inputs, outputs, witnesses }) {
   const body = [
-    u32(version),
+    leU32(version),
     Uint8Array.from([0x00, 0x01]),           // the segwit marker and flag
     compactSize(inputs.length),
-    ...inputs.map((i) => cat(outpointOf(i), compactSize(0), u32(i.sequence))),
+    ...inputs.map((i) => joinBytes(inputOutpoint(i), compactSize(0), leU32(i.sequence))),
     compactSize(outputs.length),
     ...outputs.map(outputBytes),
   ];
@@ -164,8 +164,8 @@ export function serializeSpend({ version = 2, locktime = 0, inputs, outputs, wit
     body.push(compactSize(w.length));
     for (const item of w) body.push(scriptWithLength(item));
   }
-  body.push(u32(locktime));
-  return cat(...body);
+  body.push(leU32(locktime));
+  return joinBytes(...body);
 }
 
 /**
@@ -182,9 +182,9 @@ export function serializeSpend({ version = 2, locktime = 0, inputs, outputs, wit
 export function commitmentOutput(commitment, hint = new Uint8Array(0)) {
   if (!(commitment instanceof Uint8Array) || commitment.length !== 32)
     throw new TypeError('a slash commits to a 32-byte proof id');
-  const payload = cat(commitment, hint);
+  const payload = joinBytes(commitment, hint);
   if (payload.length > 80) throw new RangeError('an OP_RETURN carries at most 80 bytes');
-  return { value: 0n, script: cat(Uint8Array.from([0x6a]), compactSize(payload.length), payload) };
+  return { value: 0n, script: joinBytes(Uint8Array.from([0x6a]), compactSize(payload.length), payload) };
 }
 
 /**

@@ -9,9 +9,12 @@
 //
 // A hold depends on the round only through its panels, so all rounds of a table, which share one draw, share one presig, and so do the two roles of one round. Pure: the census, the seed
 // and the clocks are the caller's.
+//
+// AND ONE AT BONDING (RULED 2026-11-02, kanban #1053): a template-3 bond counts only with a presig census_confirmations deep, posted in an advertisement update (the bond's txid does not
+// exist before), to a hold output with no release leaf. Its script is built from the bond, its advertisement and its census key alone, so a reader, the page included, checks it with one
+// signature check: no panels, no draw, no census, nothing recursive. It is what an offence with no round uses, and a node that was never seated has no other.
 import { BOND_TEMPLATE_V3, holdOutputKey, slashStartLeaf, tapLeafHash } from './bond-script.js';
 import { tapSighash } from './bond-spend.js';
-import { drawPanels } from './sortition.js';
 import { SLASH_CLOCKS } from './genesis.js';
 import { networkOf } from './constants.js';
 import { toHex } from './hash.js';
@@ -50,14 +53,13 @@ export function holdClocksOf(networkId) {
 
 /**
  * WHAT A ROUND ASKS OF ITS NODES: { ok, plan } with `plan` a Map of node key hex -> [{ txid (hex), vout, digest, hold }], one per template-3 bond of that node in the round's census.
- * A census with no such bond draws no panels and answers an empty plan, so a round on template 1 and 2 bonds does nothing here. `tweakPoint` is the caller's curve.
+ * `panels` is drawPanels' answer for the round. A census with no such bond answers an empty plan, so a round on template 1 and 2 bonds does nothing here. `tweakPoint` is the caller's curve.
  */
-export function roundPresigPlan({ entries, contract, committeeSeed, drawsAttestors = false, attestorKeys = [], tweakPoint }) {
+export function roundPresigPlan({ entries, contract, panels, tweakPoint }) {
   const bonds = (entries || []).filter(presignedBond);
   const plan = new Map();
   if (!bonds.length) return { ok: true, plan };
-  const panels = drawPanels({ entries, contract, committeeSeed, drawsAttestors, attestorKeys });
-  if (!panels.ok) return panels;
+  if (!panels || !panels.ok) return panels || { ok: false, why: 'no panels were drawn for that round' };
   const panelA = panels.panelA.map((e) => e.pubkey), panelB = panels.panelB.map((e) => e.pubkey), clocks = holdClocksOf(contract.networkId);
   for (const e of bonds) {
     const hold = holdOutputKey({ nodeKey: e.pubkey, censusKey: e.advert.censusKey, panelA, panelB, bondMaturity: e.advert.bondMaturityHeight, ...clocks }, { tweakPoint });
@@ -68,4 +70,23 @@ export function roundPresigPlan({ entries, contract, committeeSeed, drawsAttesto
       digest: slashPresigDigest({ bond, nodeKey: e.pubkey, censusKey: e.advert.censusKey, holdScript: hold.script }) });
   }
   return { ok: true, plan, panels };
+}
+
+/**
+ * THE DIGEST OF A BOND'S OWN PRESIG, or { ok: false, why }. `bond` { txid, vout, value, script } as the chain has it, `advert` the body the bond committed to: its node key, its census key
+ * and its maturity build the hold output, panels empty, so it has the return and the fallback leaves only. `tweakPoint` is the caller's curve.
+ */
+export function bondPresigDigest({ bond, advert, networkId, tweakPoint }) {
+  const hold = holdOutputKey({ nodeKey: advert.nodePubkey, censusKey: advert.censusKey, panelA: [], panelB: [], bondMaturity: advert.bondMaturityHeight, ...holdClocksOf(networkId) }, { tweakPoint });
+  if (!hold.ok) return { ok: false, why: `the hold output of a bond cannot be built: ${hold.why}` };
+  return { ok: true, hold, digest: slashPresigDigest({ bond, nodeKey: advert.nodePubkey, censusKey: advert.censusKey, holdScript: hold.script }) };
+}
+
+/** Does this 65-byte presig stand for the bond? One signature check over the bond, its advertisement and its census key. `verify(signature, digest, key)` is the caller's curve. */
+export function bondPresigStands({ presig, bond, advert, networkId, tweakPoint, verify }) {
+  // WHAT A CHAIN CARRIES CANNOT THROW HERE: a census reads every template-3 body anyone posts, and a hold that cannot be built is a presig that does not stand
+  try {
+    const built = bondPresigDigest({ bond, advert, networkId, tweakPoint });
+    return built.ok && slashPresigVerifies(presig, built.digest, advert.nodePubkey, verify);
+  } catch { return false; }
 }

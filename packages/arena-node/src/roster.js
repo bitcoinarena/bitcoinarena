@@ -22,7 +22,7 @@ import { presignedBond, roundPresigPlan } from '../../arena-protocol/src/slash-p
 import { standingKeysName } from '../../arena-protocol/src/census-key.js';
 import { dropsAbsent, withoutAbsent, presenceWindow, censusTimeMs, ABSENT_WHY } from '../../arena-protocol/src/presence.js';
 import { stallsOut, STALLED_WHY } from '../../arena-protocol/src/stall.js';
-import { selectCommittee, drawCommittee, slotsForRole, drawAttestors } from '../../arena-protocol/src/sortition.js';
+import { selectCommittee, drawCommittee, drawPanels, slotsForRole, drawAttestors } from '../../arena-protocol/src/sortition.js';
 import { drawHeartbeat, hasHeartbeats, heartbeatCloseMs } from '../../arena-protocol/src/heartbeat.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -221,7 +221,8 @@ export function censusEvidenceOf(census, view) {
     if (!bond) return { ok: false, why: `this node's view does not hold bond ${toHex(e.txid).slice(0, 16)}` };
     const update = e.updatedBy ? proof(e.updatedBy.txid) : null;
     const reaffirm = e.reaffirmedBy && e.reaffirmedBy.txid ? proof(e.reaffirmedBy.txid) : null;
-    entries.push({ ...bond, ...(update ? { update } : {}), ...(reaffirm ? { reaffirm } : {}) });
+    const presig = e.presigBy ? proof(e.presigBy.txid) : null;
+    entries.push({ ...bond, ...(update ? { update } : {}), ...(reaffirm ? { reaffirm } : {}), ...(presig ? { presig } : {}) });
   }
   return { ok: true, entries };
 }
@@ -864,9 +865,9 @@ export class Roster {
 
   /**
    * WHAT A ROUND ASKS OF ITS TEMPLATE-3 BONDS (5A.3B, kanban #972): { ok, plan }, roundPresigPlan over the census and seed its committees are drawn on. A census with none costs a look at its
-   * entries and draws nothing. `drawsAttestors` and `attestorKeys` are the game's: a roster reads no manifest. `tweakPoint` was given at construction.
+   * entries and draws nothing. `tweakPoint` was given at construction.
    */
-  slashHoldsFor(roundIdBytes, { posted = null, drawsAttestors = false, attestorKeys = [] } = {}) {
+  slashHoldsFor(roundIdBytes, { posted = null } = {}) {
     const contract = this.#held(roundIdBytes) || posted;
     if (!contract) return { ok: false, why: 'this node holds no such round' };
     const census = this.censusFor(roundIdBytes, null, this.#held(roundIdBytes) ? {} : { posted });
@@ -876,7 +877,7 @@ export class Roster {
     if (!seeded.ok) return { ok: false, why: seeded.why, root: census.root };
     const kept = `${toHex(roundIdBytes)}:holds:${toHex(census.root)}:${toHex(seeded.seed)}`;
     if (this.committees.has(kept)) return this.committees.get(kept);
-    const answer = roundPresigPlan({ entries: census.entries, contract, committeeSeed: seeded.seed, drawsAttestors, attestorKeys, tweakPoint: this.tweakPoint });
+    const answer = roundPresigPlan({ entries: census.entries, contract, panels: drawPanels({ entries: census.entries, contract, committeeSeed: seeded.seed }), tweakPoint: this.tweakPoint });
     if (answer.ok) {
       this.committees.set(kept, answer);
       if (this.committees.size > this.#perRoundKept()) this.committees.delete(this.committees.keys().next().value);
