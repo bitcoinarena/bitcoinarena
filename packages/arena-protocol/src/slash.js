@@ -1009,8 +1009,17 @@ export const orderedResultIds = (idA, idB) =>
  * THE SAME RESULT TWICE IS NOT AN OFFENCE, exactly as it is not one in 13B: a
  * node re-sending what it already sent is the ordinary case, and taking a bond
  * for a retransmission would punish a dropped socket.
+ *
+ * NOR ARE TWO ENTRIES OF ONE PLAYER (kanban #986). Every PLAY is an entry, so one player key holds several in a round (season.js, round.js
+ * playersOf; measured on the Daily: 7 entries from 1 key), each with its own honest result, and a result names no entry. What ties a
+ * result to its run is the transcript hash, whose bytes name the round and the entry. So the pair must name ONE transcript: two
+ * different answers about one run are the offence, and two answers about two transcripts are, from these bytes alone, two runs.
+ * A node that doubles under a second transcript hash is not caught here; that is the price of no honest seat ever being slashed.
+ *
+ * THE SIGNATURES ARE THE PROOF. Two results with no signature of the accused's are two strings anybody can write, so both are checked
+ * under the accused's key; `verify` is injected, no curve lives in this package. No verifier, no slash.
  */
-export function slashHoldsOnDoubleSign({ proof, signedResults, advert, committee }) {
+export function slashHoldsOnDoubleSign({ proof, signedResults, advert, committee, verify }) {
   if (!Array.isArray(committee) || !committee.length)
     return { slashed: false, why: 'no committee, so nobody was serving this round' };
   if (!committee.some((k) => hex(k) === hex(proof.nodePubkey)))
@@ -1024,11 +1033,16 @@ export function slashHoldsOnDoubleSign({ proof, signedResults, advert, committee
       slashed: false,
       why: 'this offence is a PAIR: two signed results, and no other number of them',
     };
+  if (typeof verify !== 'function')
+    return { slashed: false, why: 'checking two signatures needs a verifier, and none was injected' };
 
-  const bodies = [];
+  const bodies = [], signatures = [];
   for (const [at, bytes] of signedResults.entries()) {
-    try { bodies.push(decodePlayerResult(splitSignedResult(bytes).body)); }
-    catch (e) { return { slashed: false, why: `result ${at} is not a signed result: ${e.message}` }; }
+    try {
+      const split = splitSignedResult(bytes);
+      bodies.push(decodePlayerResult(split.body));
+      signatures.push(split.signature);
+    } catch (e) { return { slashed: false, why: `result ${at} is not a signed result: ${e.message}` }; }
   }
   const [x, y] = bodies;
 
@@ -1048,7 +1062,18 @@ export function slashHoldsOnDoubleSign({ proof, signedResults, advert, committee
       return { slashed: false, why: `result ${at} is for a different round` };
     if (hex(b.playerPubkey) !== hex(proof.playerPubkey))
       return { slashed: false, why: `result ${at} is for a different player` };
+    let theirs = false;
+    try { theirs = verify(signatures[at], at === 0 ? idX : idY, proof.nodePubkey) === true; } catch { theirs = false; }
+    if (!theirs) return { slashed: false, why: `the signature on result ${at} is not the accused node's` };
   }
+
+  // ONE TRANSCRIPT, ONE RUN: two transcripts are two entries of one player until these bytes say otherwise.
+  if (hex(x.transcriptHash) !== hex(y.transcriptHash))
+    return {
+      slashed: false,
+      why: 'those results are about two transcripts, so they may be two entries of one player: '
+        + 'a result names no entry, and every PLAY is an entry',
+    };
 
   // AND THE PAIR IS NAMED IN ONE ORDER, so one offence has one commitment.
   const { named, other } = orderedResultIds(idX, idY);
@@ -1074,8 +1099,48 @@ export function slashHoldsOnDoubleSign({ proof, signedResults, advert, committee
     bond: { txid: proof.bondTxid, vout: proof.bondVout },
     commitment: slashCommitment(proof),
     ids: { named, other },
-    why: 'the node signed two different results for one player of one round',
+    why: 'the node signed two different results for one run of one player',
   };
+}
+
+/**
+ * TWO RESULTS, AS PUBLISHED (5A.3 row 1, kanban #986): the same 199-byte proof body - `signedResultId` the lower result id, `transcriptHash`
+ * the higher - and beside it both signed results, the lower id's first, each sized by its own type byte. The pair carries everything
+ * `slashHoldsOnDoubleSign` reads but the committee and the bond, so a stranger needs nothing from the seat that filed it.
+ */
+export const doubleSlashEvidenceBytesOf = (bytes, at = 0) => {
+  const first = signedResultBytesOf(bytes, at + SLASH_PROOF_BYTES);
+  return SLASH_PROOF_BYTES + first + signedResultBytesOf(bytes, at + SLASH_PROOF_BYTES + first);
+};
+
+export function joinDoubleSlashEvidence(proofBytes, signedA, signedB) {
+  if (proofBytes.length !== SLASH_PROOF_BYTES) throw new Error(`a slash proof is ${SLASH_PROOF_BYTES} bytes, got ${proofBytes.length}`);
+  for (const signed of [signedA, signedB]) if (signed.length !== signedResultBytesOf(signed)) throw new Error('that is not one signed result');
+  const out = new Uint8Array(SLASH_PROOF_BYTES + signedA.length + signedB.length);
+  out.set(proofBytes, 0);
+  out.set(signedA, SLASH_PROOF_BYTES);
+  out.set(signedB, SLASH_PROOF_BYTES + signedA.length);
+  return out;
+}
+
+export function splitDoubleSlashEvidence(bytes) {
+  let n = -1; if (bytes instanceof Uint8Array) { try { n = doubleSlashEvidenceBytesOf(bytes); } catch { n = -1; } }
+  if (n < 0 || bytes.length !== n) throw new Error('that is not a published proof of two results');
+  const proofBytes = bytes.subarray(0, SLASH_PROOF_BYTES);
+  const first = signedResultBytesOf(bytes, SLASH_PROOF_BYTES);
+  return { proof: decodeSlashProof(proofBytes), proofBytes,
+    signedResults: [bytes.subarray(SLASH_PROOF_BYTES, SLASH_PROOF_BYTES + first), bytes.subarray(SLASH_PROOF_BYTES + first)] };
+}
+
+/** Cut a stream of published proofs of two results; a record that does not fit ends the stream. */
+export function cutDoubleSlashEvidence(body) {
+  const out = [];
+  for (let at = 0; at < body.length;) {
+    let n; try { n = doubleSlashEvidenceBytesOf(body, at); } catch { break; }
+    if (at + n > body.length) break;
+    out.push(body.subarray(at, at + n)); at += n;
+  }
+  return out;
 }
 
 /**
