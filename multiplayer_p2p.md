@@ -20,6 +20,13 @@
 **Version:** Bitcoin Arena protocol v1, draft. Earlier drafts (BLWP) remain in git history.
 **Date:** 2026-10-06
 
+> **A slash pays the real loss, the rest goes to the reserves (2026-11-02,
+> kanban #976).** Each harmed player gets what they lost, once. The rest of a
+> slashed bond goes to the protocol reserves: nothing to nodes or developers,
+> nothing back to the slashed node, nothing burned. It is a new slashing rule
+> with a new hash; rounds naming the old one keep the old split. §5A.3, §23A.5,
+> §27A.9.2.
+
 > **A slash pays who was harmed (2026-11-02, kanban #975).** A false result
 > that raised the player it names no longer pays that player: the other paying
 > entries are paid, so a committee's friend cannot collect the slash for the lie
@@ -2147,10 +2154,41 @@ a transaction is §5A.3B.
 | Signing a release or an escrow payout that pays other than its `payout_table` (template 3, §5A.3B) | The release or the payout + the table |
 | Signing an `AUDIT` (§13A.1) over a result a valid objection contradicts (kanban #724, #725) | The `AUDIT` + its signature + the rows it vouched for + transcript + receipts + replay of the objection that held |
 
-Slashed bonds are distributed: half to the affected players of that round;
-the other half 75% evenly to the active census nodes at the slashing height
-minus the round's own seats (the witnesses) and 25% to the donation set of
-§22A - the developers. Three words in that sentence are defined here
+**Where a slashed bond goes (RULED 2026-11-02, kanban #976).** Each affected
+player gets their **real loss**, once, and **the rest of the bond goes to the
+protocol reserves** (§27A.9). Nothing goes to the nodes or the developers,
+nothing goes back to the slashed node, and nothing is burned.
+
+- **The real loss** is what the player should have received less what they did
+  receive, floored at zero: `F(contract, membership, true results)` against the
+  settlement that happened. It is an amount, not a share of the bond. A player
+  a false result raised has no loss. After an objection in time nobody has one:
+  the result was corrected before any money moved, and the whole bond goes to
+  the reserves. A doubled result with no replay shows no loss; a player it
+  harmed is paid through the replay's proof.
+- **Once.** Several bonds slashed for one round pay one loss. The proofs of a
+  round are taken in ascending proof id; the first pays each loss, and each
+  later one pays only what is still owed. If a bond cannot cover what it owes,
+  it pays pro rata by loss and the next proof pays the rest.
+- **Why the reserves.** Whatever pays a recipient is what a colluder aims for:
+  a friend's entry, a share of the census, a developer's share. Nobody collects
+  from the reserves by being in the round. They pay only a proposal that passed
+  §27A.9.5's vote: bonds 3 months old, 60 % of votes and 20 % of everyone, at
+  most 10 % of the reserves, after 2 weeks.
+- **Why nothing goes back to the node.** Repaying the damage is not a penalty.
+  A node that pays back only what it took risks nothing by cheating, and keeps
+  it whenever nobody looks.
+- **No reward for the objector.** The auditors of §13A.1 are paid from the
+  nodes' fee to look. Any share of a slash is money a colluder can collect.
+
+**The rule's text and hash.** This is `ARENA rule slashing v2`, with a new
+`slashing_rules_hash`. A round names the rule it settles under, so a round
+naming v1 keeps the split below, and a seat of this version takes both.
+
+Under v1, slashed bonds are distributed: half to the affected players of that
+round; the other half 75% evenly to the active census nodes at the slashing
+height minus the round's own seats (the witnesses) and 25% to the donation set
+of §22A - the developers. Three words in that sentence are defined here
 (RULED 2026-09-22, on the implementer's three questions; the owner's order,
 "spec only"):
 
@@ -2317,10 +2355,12 @@ serve hands its accusers the evidence itself.
    census_height; nLockTime = slash_height.
 4. That transaction MUST carry OP_RETURN = H(fraud_proof) ‖ slash_height ‖
    retrieval hint.
-5. Outputs pay the distribution of §5A.3, computed from the census at
-   slash_height: the players' escrow, the active nodes' share, the
-   developers' share. The height is an input the signers chose, never the
-   height the transaction later confirms at (RULED 2026-09-22).
+5. Outputs pay the distribution of §5A.3. Rule v2: one escrow output, then
+   each loss and the rest to the reserves, both through the federation. Rule
+   v1, computed from the census at slash_height: the players' escrow, the
+   active nodes' share, the developers' share; the height is an input the
+   signers chose, never the height the transaction later confirms at (RULED
+   2026-09-22).
 ```
 
 Because the slashing transaction commits to the proof, **every slash is
@@ -2467,8 +2507,7 @@ fallback. It is not an abandonment by a guardian (§23A.5). So a start with no
 valid proof takes nothing from the node: it stays drawn and earns as before.
 Only a release takes a node out.
 
-**Panel members** take nothing from a slash: the 75 % to active census nodes
-leaves out both panels. Signing a release with no valid proof slashes the
+**Panel members** take nothing from a slash. Signing a release with no valid proof slashes the
 signer: the release's witness names them.
 
 **Existing bonds.** Templates 1 and 2 are read as before on the networks that
@@ -4431,9 +4470,7 @@ verify seat of seven: 11.6 sat, against 12.9 without auditors).
   and put to the round's relays (`PUT /slash/<id>`, kept only with the `AUDIT` it names and the rows it vouched for). The arbiter
   (`arbiter.js judgeAuditProof`, `tools/arbiter.mjs`) judges it as it judges the player-result kind: the objection replayed again under
   the round's core and beacon, then the same check, the eligible set from its own census (less the round's drawn nodes, and the
-  players off `GET /audit-run` out of the set and still in `W`). Path B and its split are §5A.3's for every slash: half to the affected
-  players, here the one entry the proof names; the rest 75 % to the active census nodes at `slash_height` less the round's seats, and
-  25 % to the developers.
+  players off `GET /audit-run` out of the set and still in `W`). Path B and its split are §5A.3's for every slash.
 
   Decided here, where the text above is silent: (1) **one proof per `AUDIT`**, naming the first entry whose contradiction this seat
   files: one `AUDIT` is one signature and pays from one bond, so a second contradicted entry of the same round files nothing more
@@ -6071,7 +6108,8 @@ serving the notice**, because that is the one thing that turns a planned
 succession into an emergency.
 
 **Where a slashed guardian bond goes (RULED 2026-09-21: players
-cannot lose; the rest 75% to the nodes, 25% to the developers).** The
+cannot lose; the rest to the protocol reserves, RULED 2026-11-02, kanban #976,
+in place of 75% to the nodes and 25% to the developers).** The
 slashing transaction (§5A.3B) does not pay anyone yet. It pays the whole
 bond into a **liquidation escrow** of that federation: an output under the
 arbitration set's k-of-m keys (§5A.3B), one per federation, or from template
@@ -6080,28 +6118,20 @@ is spent only in one of two ways:
 
 ```text
 federation CLOSED (§23A.6)      nothing was lost, so nothing is owed:
-                                75%  evenly to every active census node at
-                                     that height - bonded and eligible
-                                     (§5A.3), minus the slashed nodes and
-                                     minus every guardian of the federation
-                                     concerned (RULED HERE, below)
-                                25%  to the donation set of §22A - the
-                                     developers - by share_bps
+                                the whole bond to the protocol reserves
 
 federation HALTED (§23A.1)      liquidation, below: every unspent note of
                                 the federation paid at face value first,
                                 and a note shown late still paid from what
                                 is left until four weeks after the halt;
-                                only the remainder then, 75% / 25% as above
+                                only the remainder then, to the reserves
 ```
 
 The escrow exists because a halt is rarely the first abandonment: a
 guardian who leaves in month one and three more in month three halt it
 together, and by then his bond must still be there. Slashing stays prompt
 (path A returns a bond at maturity if nobody slashes, §5A.3B); paying out
-waits for the federation's end. Recipients are a function of chain state
-at the spending height, remainders in ascending `H(txid ‖ node_pubkey)`
-order, so every observer computes the same list.
+waits for the federation's end.
 
 **Liquidation (RULED 2026-09-21).** A federation that has been
 HALTED for `abandon_blocks` with no recovery is liquidated:
@@ -6129,7 +6159,7 @@ HALTED for `abandon_blocks` with no recovery is liquidated:
    A note presented late is still paid from what is left, until
    `drain_blocks` (four weeks) after the halt - the player who was offline
    for a weekend is not the one this rule is for. Only then is the
-   remainder split, 75% to the nodes and 25% to the developers as above.
+   remainder paid to the protocol reserves.
    Notes never presented by four weeks after the halt are the holder's
    loss, as they are in a CLOSED federation (§23A.6 step 6).
    **The ORDER is the whole of it**: a halted federation is liquidated
@@ -6220,19 +6250,13 @@ These outputs are claimable like notes:
    spent set (newest session wins, a copy that disagrees is named), and an
    output nobody can unblind for is never paid.
 
-**Why the witnesses are excluded (RULED HERE).** The abandonment proof is
-signed by `2f + 1` guardians of the very federation (§23A.4). If they were
-paid from the bond, the people who attest an absence would earn from
-attesting it, and the arbitration set cannot check liveness. With the owner's
-rule alone the gain is already small - a witness is one of every active
-census node, so his cut is `0.75 × bond / N` - and it is dominated by the
-fact that any seven who could frame a colleague could instead take the
-whole reserve. Excluding them makes it exactly zero: a slashed bond is paid
-to nodes that had no hand in proving it and to the developers, who sign
-nothing. Nothing ever goes to the successor's guardians for being the
-successor either, so a slash is not a reason to want a succession. And
-nothing goes to anyone before the players are whole: the escrow pays a
-liquidation first, the nodes and the developers from what is left.
+**Why no witness earns from it.** The abandonment proof is signed by `2f + 1`
+guardians of the very federation (§23A.4), and the arbitration set cannot check
+liveness, so the people who attest an absence must not gain from attesting it.
+The reserves pay nobody for being there. Nothing ever goes to the successor's
+guardians for being the successor either, so a slash is not a reason to want a
+succession. And nothing goes to the reserves before the players are whole: the
+escrow pays a liquidation first.
 
 **A guardian's bond is otherwise a normal census bond** (§5A.3B): it stays
 his bond until he spends it; path A lets him take it back from maturity on; path B is the arbitration
@@ -8354,6 +8378,14 @@ a 100 sat entry pays nodes 4,000, protocol devs 2,000, game devs 2,000, reserves
   - bitcoin-arena.io shows the reserves' live total under the fees (Economics), with its payments in and how many nodes agree,
     once five nodes name the same total *(2026-10-17: "Find a prominent place on the website ... Under the fees")*. The
     Arena games screen no longer carries a reserves box (2026-10-17: "no need to show the details").
+
+- **What a slash pays in (RULED 2026-11-02, kanban #976).** The rest of a slashed bond (§5A.3, §23A.5)
+  enters as a reserve output, shown as `slash` in `GET /reserves`, and is spent only as any reserve is.
+  - It is on-chain money entering a federation, so it counts in that federation's load (§23A.3). It goes to the OPEN
+    federation with a reserve key and the lowest load, and only as far as that load stays under 80 %.
+  - What does not fit stays in its escrow and enters when a federation has room. A slash never closes a federation
+    to deposits.
+  - A network with no reserve key yet keeps it in the escrow until there is one.
 
 ### 27A.9.3 Project funding proposals
 
