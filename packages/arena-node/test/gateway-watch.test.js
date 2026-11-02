@@ -330,3 +330,18 @@ test('an outpoint two claims name counts for neither, whatever heights they give
   assert.deepEqual([await provedOf(both, 0), await provedOf(both, 1)], ['0', '0']);
   assert.equal(await provedOf(aged({ claim0: { pegInOutpoints: [`${'dd'.repeat(32)}:0@5700`] }, coins: coinsOf })), '0');
 });
+
+test('peg-in pressure reads the band the record names: 65 % kept in PRESSURE ranks peg-in first, as the load alone would not (kanban #997)', async () => {
+  const claims = { 0: claimOf(0), 1: claimOf(1) };
+  const entries = keys.map((k, i) => ({ pubkey: Uint8Array.from(Buffer.from(k.hex, 'hex')), bondSats: 50000n, advert: { endpoint: `https://seat${i}.example`, operatorId: `op${i}` } }));
+  const fetcher = async (url) => {
+    const seat = /^https:\/\/seat(\d)\.example\/gateway-claim\?federation=[0-9a-f]{64}$/.exec(url);
+    if (seat) return claims[seat[1]] ? { status: 200, json: async () => claims[seat[1]] } : { status: 404, json: async () => ({}) };
+    return { status: 200, text: async () => '{"module_public_key":"02' + 'cd'.repeat(32) + '"}' };
+  };
+  const view = async (band) => { const w = createGatewayWatch({ federationId: async () => fid, seated: async () => [keys[0].hex, keys[1].hex], entries: async () => entries, tip: async () => 144 * 40 + 5, beaconAt: async () => new Uint8Array(32).fill(7), verify, fetcher,
+    federationCoins: async () => new Map(), seatingFor: async () => [keys[0].hex], pressureFor: async () => ({ reserveSats: 65000n, exposureCapSats: 100000n, ...(band ? { band } : {}) }) });
+    await w.probe(); return w.view(); };
+  assert.equal((await view(null)).pegInPressure, undefined, 'no band named: 65 % enters nothing');
+  assert.notEqual((await view('PRESSURE')).pegInPressure, undefined, 'as the record says');
+});

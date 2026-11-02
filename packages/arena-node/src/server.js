@@ -44,7 +44,7 @@ import { signGatewaySeating, standingSeating, seatingEpochAt, paidSeatsOf, prove
 import { signLiquiditySeating, standingLiquiditySeating, liquiditySeatingFrom } from '../../arena-protocol/src/liquidity-seating.js';
 import { checkLiquidityClaim, provenFreeSats } from '../../arena-protocol/src/liquidity.js';
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
-import { capacityView, capacityPlea, bondIncentive, guardianWeights as capacityGuardianWeights, gatewayWeights as capacityGatewayWeights } from '../../arena-protocol/src/capacity.js';
+import { capacityView, capacityPlea, bondIncentive, capacityBandPoint, guardianWeights as capacityGuardianWeights, gatewayWeights as capacityGatewayWeights } from '../../arena-protocol/src/capacity.js';
 import { GATEWAY_MINIMUMS } from '../../arena-protocol/src/gateway-seats.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
 import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.js';
@@ -2343,7 +2343,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try {
           const rec = fedRecords.recordAt(toHex(contract.federationId), Number(contract.censusHeight));
           if (rec) gatewayWeights = capacityGatewayWeights({ pegIns: gatewaySeating.seats.map((n) => ({ node: n, pegInSats: gatewaySeating.pegIns[n] || 0 })),
-            reserveSats: rec.reserveSats, exposureCapSats: rec.exposureCapSats, pegInMinSats: (GATEWAY_MINIMUMS[networkOf(contract.networkId)] || GATEWAY_MINIMUMS.mainnet).pegInSats });
+            reserveSats: rec.reserveSats, exposureCapSats: rec.exposureCapSats, band: rec.capacityBand || null, pegInMinSats: (GATEWAY_MINIMUMS[networkOf(contract.networkId)] || GATEWAY_MINIMUMS.mainnet).pegInSats });
         } catch { gatewayWeights = null; }
       }
       if (Number(contract.protocolVersion) >= PRESSURE_WEIGHT_VERSION && contract.federationId && guardian.length && fedRecords && fedRecords.recordAt) {
@@ -2351,7 +2351,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const rec = fedRecords.recordAt(toHex(contract.federationId), Number(contract.censusHeight));
           const census = roster.censusFor(rid);
           if (rec && census && census.ok) guardianWeights = capacityGuardianWeights({ bonds: guardian.map((k) => ({ node: toHex(k), bondSats: (nodeBondOf(census.entries, k) || { bondSats: 0n }).bondSats })),
-            reserveSats: rec.reserveSats, exposureCapSats: rec.exposureCapSats, nominal: rec.nominal, bondMinSats: contract.bondMinSats || 50000n });
+            reserveSats: rec.reserveSats, exposureCapSats: rec.exposureCapSats, nominal: rec.nominal, band: rec.capacityBand || null, bondMinSats: contract.bondMinSats || 50000n });
         } catch { guardianWeights = null; }
       }
       return { gameVerify: game.ok ? game.committee.map((e) => e.pubkey) : contract.nodes,
@@ -4844,7 +4844,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // THE OWNERS' CONSENTS TO RETIRE A FEDERATION (kanban #577), kept beside the store
   const retireBook = createRetireBook(db && db.arenaPath ? `${db.arenaPath}.retire.json` : null);
-  fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf, endpointsOf: fedEndpointsOf,
+  fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf,
+    bandFrom: capacityBandPoint(chainNetworkId() ? networkOf(fromHex(chainNetworkId())) : null), endpointsOf: fedEndpointsOf,
     // a mirrored record checked against the census at its own height, read off this seat's chain
     censusAt: ballot && typeof ballot.censusEntriesAt === 'function' ? (h) => (chainNetworkId() ? ballot.censusEntriesAt(chainNetworkId(), h) : null) : null,
     // and its tip: a seat that holds no round builds and checks records from the chain's census
@@ -5063,7 +5064,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       outpointAt: ballot && typeof ballot.outpointAt === 'function' ? (h, o) => ballot.outpointAt(h, o) : null,
       endpointOf: (e) => addressBook.endpointOf(e),   // its announced address first (kanban #577)
       // the federation's reserve and cap from its record: under peg-in pressure the proved peg-in ranks first (§23A.3a part 2)
-      pressureFor: async (fid) => { const r = fedRecords.recordOf(fid); return r && r.record ? { reserveSats: r.record.reserveSats, exposureCapSats: r.record.exposureCapSats } : null; },
+      pressureFor: async (fid) => { const r = fedRecords.recordOf(fid); return r && r.record ? { reserveSats: r.record.reserveSats, exposureCapSats: r.record.exposureCapSats, band: r.record.capacityBand || null } : null; },
       // the record's seated guardians; before this seat holds the record, the census's (kanban #552: a restarted seat read none for minutes)
       seated: async (fid) => { const r = fedRecords.seatedGuardians(fid); return r && r.length ? r.map((k) => toHex(k)) : (fedRecords.censusGuardians ? fedRecords.censusGuardians(fid) : []); },
       entries: async () => { if (fedRecords.censusNewest) { const e = fedRecords.censusNewest(); if (e.length) return e; } const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false }; return now.ok ? now.entries : []; },
@@ -10226,7 +10227,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const absentHex = String(url.searchParams.get('absent') || '').split(',').filter(Boolean);
         const departedHex = String(url.searchParams.get('departed') || '').split(',').filter(Boolean);
         const emergencyHexes = String(url.searchParams.get('emergency') || '').split(',').filter(Boolean);
-        const r = goneHex.length ? await fedRecords.mySignatureWithGone(fid, goneHex, atHeight, rv, absentHex, departedHex, emergencyHexes) : await fedRecords.mySignature(fid, atHeight, rv);
+        // `previous`: the record the gathering seat keeps the band's gap from, signed, in hex (§23A.3a); this seat takes the higher of that and its own
+        const previous = url.searchParams.get('previous');
+        if (previous !== null && !/^[0-9a-f]{2,14000}$/.test(previous)) return text(res, 400, 'a signed record, in hex');
+        const handed = { previous, inviteFederationId: inviteFedId };
+        const r = goneHex.length ? await fedRecords.mySignatureWithGone(fid, goneHex, atHeight, rv, absentHex, departedHex, emergencyHexes, handed) : await fedRecords.mySignature(fid, atHeight, rv, handed);
         res.writeHead(r.ok ? 200 : 404, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(JSON.stringify(r));
       }
@@ -10435,7 +10440,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const feds = (fedRecords ? fedRecords.list() : []).map((f) => {
           const rec = fedRecords.recordOf(f.federation);
           const seated = (fedRecords.seatedGuardians(f.federation) || []).map((k) => toHex(k));
-          return { federation: f.federation, status: f.status, nominal: rec && rec.record ? rec.record.nominal : seated.length || 1,
+          return { federation: f.federation, status: f.status, nominal: rec && rec.record ? rec.record.nominal : seated.length || 1, band: rec && rec.record ? rec.record.capacityBand || null : null,
             reserveSats: f.reserveSats || '0', exposureCapSats: f.exposureCapSats || '0',
             guardianBonds: seated.map((node) => { const n = nodeBondOf(entries, node); return { node, bondSats: n ? n.bondSats : 0n }; }),
             gateways: (() => { const gw = gws.find((x) => x && x.ok && x.federationId === f.federation); return gw ? Object.entries(gw.gateways || {}).map(([node, g]) => ({ node, pegInSats: BigInt(g.pegInSats || 0) })) : []; })() };

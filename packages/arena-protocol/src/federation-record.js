@@ -21,6 +21,8 @@ import { exposureCap } from './federation-slash.js';
 
 export const FEDERATION_STATUS = Object.freeze({ OPEN: 1, DRAINING: 2, CRITICAL: 3, CLOSED: 4, HALTED: 5 });
 export const GONE = Object.freeze({ DEPARTED: 1, ABANDONED: 2 });
+/** The capacity band a record names (§23A.3a), after its height; a record that names none ends at its height, as every record before did. */
+export const CAPACITY_BAND = Object.freeze({ CALM: 1, PRESSURE: 2, CRITICAL: 3, FULL: 4 });
 const nameOf = (table, v) => Object.keys(table).find((k) => table[k] === v);
 const cmp = (a, b) => { for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i] - b[i]; return a.length - b.length; };
 
@@ -57,6 +59,10 @@ export function encodeFederationRecord(r) {
   w.u64(r.exposureCapSats);
   w.u64(r.reserveSats);
   w.u32(r.height);
+  if (r.capacityBand !== undefined && r.capacityBand !== null) {
+    if (!CAPACITY_BAND[r.capacityBand]) throw new Error(`capacity band ${r.capacityBand} is not one of ${Object.keys(CAPACITY_BAND).join(', ')}`);
+    w.u8(CAPACITY_BAND[r.capacityBand]);
+  }
   return w.finish();
 }
 
@@ -71,6 +77,7 @@ export function decodeFederationRecord(bytes) {
     gone: r.vec((rr) => ({ peerKey: rr.bytes(33), sinceHeight: rr.u32(), kind: rr.u8(), proofRef: rr.bytes32() })),
     exposureCapSats: r.u64(), reserveSats: r.u64(), height: r.u32(),
   };
+  if (r.at !== bytes.length) { const band = nameOf(CAPACITY_BAND, r.u8()); if (!band) throw new Error('not a capacity band'); out.capacityBand = band; }
   if (r.at !== bytes.length) throw new Error('trailing bytes after the federation record');
   encodeFederationRecord(out);                       // held to the encoder's rules
   return out;
@@ -154,6 +161,23 @@ export function verifyFederationRecord(bytes, { census, verify, inviteFederation
   if (signers.size < r.threshold)
     return { ok: false, why: `${signers.size} of its bonded guardians signed it, and a record needs ${r.threshold}` };
   return { ok: true, record: r, status: nameOf(FEDERATION_STATUS, r.status), signers: signers.size, id };
+}
+
+/**
+ * Of a federation's verified records [{ record, status }], the one to read: the highest height. Two can stand at one height, since a record's
+ * reserve is read when it is gathered: a CLOSED one first, then the lowest record id (§23A.3a), so seats that hold both pick the same.
+ */
+export function highestVerified(rows) {
+  const idOf = (r) => toHex(federationRecordId(r));
+  let best = null;
+  for (const x of rows) {
+    if (!best || x.record.height > best.record.height) { best = x; continue; }
+    if (x.record.height !== best.record.height) continue;
+    const closed = (y) => y.status === 'CLOSED';
+    if (closed(x) !== closed(best)) { if (closed(x)) best = x; continue; }
+    if (idOf(x.record) < idOf(best.record)) best = x;
+  }
+  return best;
 }
 
 /** Of several verified records of one federation, the newest by height (§23A.4: "newest height with valid signatures wins"). */

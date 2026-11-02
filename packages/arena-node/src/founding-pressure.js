@@ -19,30 +19,13 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { foundingPressureBond } from '../../arena-protocol/src/capacity.js';
 import { foundingRecordHeight } from '../../arena-protocol/src/guardian-founding.js';
-import { decodeFederationRecord, federationRecordId, splitSignedRecord, verifyFederationRecord } from '../../arena-protocol/src/federation-record.js';
+import { decodeFederationRecord, highestVerified, splitSignedRecord, verifyFederationRecord } from '../../arena-protocol/src/federation-record.js';
 import { federationsOf } from './federation-records.js';
 
 /** How many seats are asked at a time, and how long each has. */
 const ASK_AT_ONCE = 8, ASK_MS = 8000;
 const decodes = (hex) => { try { return decodeFederationRecord(splitSignedRecord(fromHex(String(hex))).body); } catch { return null; } };
-const idOf = (record) => toHex(federationRecordId(record));
-
-/**
- * Of a federation's verified records, the one a draw uses: the highest height. Two can stand at one height, since a record's reserve is
- * read when it is gathered: a CLOSED one first, as federation-records.js keeps it, then the lowest record id, so the seats that hold both
- * pick the same one.
- */
-export function highestVerified(rows) {
-  let best = null;
-  for (const x of rows) {
-    if (!best || x.record.height > best.record.height) { best = x; continue; }
-    if (x.record.height !== best.record.height) continue;
-    const closed = (y) => y.status === 'CLOSED';
-    if (closed(x) !== closed(best)) { if (closed(x)) best = x; continue; }
-    if (idOf(x.record) < idOf(best.record)) best = x;
-  }
-  return best;
-}
+export { highestVerified };
 
 /**
  * `point` this network's FOUNDING_PRESSURE_HEIGHT; `held(fidHex, height)` this seat's record in force there, hex or null; `seats()` the seats'
@@ -90,7 +73,7 @@ export function foundingPressureReader({ point, bondMinGuardian, held = () => nu
       }
       const best = highestVerified(good);
       if (!best) continue;
-      federations.push({ federation: fid, status: best.status, nominal: best.record.nominal, reserveSats: best.record.reserveSats, exposureCapSats: best.record.exposureCapSats });
+      federations.push({ federation: fid, status: best.status, nominal: best.record.nominal, reserveSats: best.record.reserveSats, exposureCapSats: best.record.exposureCapSats, band: best.record.capacityBand || null });
     }
     const bond = federations.length ? foundingPressureBond({ federations, bondMinSats: bondMinGuardian }) : null;
     answers.set(height, bond);

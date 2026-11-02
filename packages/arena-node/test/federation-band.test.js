@@ -1,0 +1,157 @@
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE CAPACITY BAND IN THE RECORD (§23A.3a, kanban #997), over real guardians signing real bodies: a band entered at 70 % is kept down to 60 %
+// by the previous record, every guardian builds the same bytes, one behind is told the previous record, a gatherer behind signs nothing until
+// it catches up, and below the point a record is what it always was.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { federationRecords, guardiansOf } from '../src/federation-records.js';
+import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, splitSignedRecord, verifyFederationRecord } from '../../arena-protocol/src/federation-record.js';
+import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { foundingPressureReader } from '../src/founding-pressure.js';
+import { networkTargetBond, capacityBandPoint } from '../../arena-protocol/src/capacity.js';
+
+const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
+const FED = new Uint8Array(32).fill(0x37), NET = new Uint8Array(32).fill(0x10), INVITE = `fed:${toHex(FED)}`;
+const inviteFederationId = (inv) => fromHex(String(inv).split(':')[1]);
+
+/** Four guardians (threshold 3, cap 100,000 at 50,000 sat each), at height `w.h`, reading reserve `w.reserve`. */
+function net({ bandFrom = 0, bandAtSeat = () => bandFrom } = {}) {
+  const w = { h: 96, reserve: 0n };
+  const nodes = Array.from({ length: 4 }, (_, i) => { const secret = new Uint8Array(32).fill(i + 1); return { secret, pubkey: schnorr.getPublicKey(secret), guardianKey: Uint8Array.from([2, ...new Uint8Array(32).fill(0x60 + i)]), endpoint: `wss://seat-${i}.example` }; });
+  const census = { ok: true, entries: nodes.map((n, i) => ({ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xa0 + i), vout: 0, bondSats: 50000n,
+    advert: { operatorId: `op${i}`, endpoint: n.endpoint, guardianEndpoint: `wss://g${i}.example`, guardianOf: [{ federationId: FED, guardianKey: n.guardianKey }] } })) };
+  const seats = nodes.map((n, i) => federationRecords({ round: { pubkey: n.pubkey, identity: { secret: n.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: w.h, networkId: NET } }),
+    roster: { censusFor: () => census }, inviteFor: () => (w.mirroring === i ? null : INVITE), networkId: NET, bandFrom: bandAtSeat(i), reserveOf: async () => ({ ok: true, reserveSats: w.reserve }),
+    peerSeats: () => [], fetcher: async (url) => {
+      const j = seats[nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:')))];
+      if (url.endsWith('/federations')) { const held = w.serving && w.serving.recordOf(toHex(FED)); return new Response(JSON.stringify({ federations: held ? [{ federation: toHex(FED), record: toHex(held.bytes) }] : [] })); }
+      const u = new URL(url); w.urls = [...(w.urls || []), url];
+      const body = await j.mySignature(u.searchParams.get('federation'), Number(u.searchParams.get('height')), u.searchParams.get('reserve'), { previous: u.searchParams.get('previous'), inviteFederationId });
+      return new Response(JSON.stringify(body), { status: body.ok ? 200 : 404 });
+    } }));
+  // every guardian seat keeps a record its gatherer got to threshold, as the mirror does
+  const step = async (h, reserve, { by = 0, to = [0, 1, 2, 3] } = {}) => {
+    w.h = h; w.reserve = BigInt(reserve);
+    const r = await seats[by].gather(FED, inviteFederationId);
+    if (r.ok) { for (const i of to) if (i !== by) await take(i, by); }
+    return r;
+  };
+  // a seat with no invite for a federation mirrors its record from the guardians' seats, as a pass does
+  const take = async (i, from) => { w.serving = seats[from]; w.mirroring = i; const got = await seats[i].gatherAll(inviteFederationId); w.serving = null; w.mirroring = null; return got; };
+  const bandAt = (i = 0) => seats[i].recordOf(toHex(FED)).record.capacityBand;
+  return { w, nodes, census, seats, step, bandAt, take };
+}
+const signed = (n, height, reserveSats, capacityBand) => {
+  const b = buildFederationRecord({ federationId: FED, networkId: NET, invite: INVITE, nominal: 4, guardians: guardiansOf(n.census, FED), height, reserveSats });
+  if (capacityBand) b.capacityBand = capacityBand;
+  const id = federationRecordId(b);
+  return toHex(joinSignedRecord(encodeFederationRecord(b), n.nodes.map((x) => ({ nodePubkey: x.pubkey, signature: schnorr.sign(id, x.secret) }))));
+};
+
+test('the gap across records: PRESSURE entered at 70 %, kept at 65 %, left below 60 %; 65 % from CALM stays CALM', async () => {
+  const n = net();
+  assert.equal((await n.step(96, 65000)).ok, true);
+  assert.equal(n.bandAt(), 'CALM', 'the first record: 65 % enters nothing');
+  await n.step(102, 75000); assert.equal(n.bandAt(), 'PRESSURE');
+  await n.step(108, 65000); assert.equal(n.bandAt(), 'PRESSURE', 'kept by the record before');
+  await n.step(114, 59999); assert.equal(n.bandAt(), 'CALM');
+  await n.step(120, 65000); assert.equal(n.bandAt(), 'CALM', 'the same load, from the other side');
+  await n.step(126, 95000); assert.equal(n.bandAt(), 'CRITICAL');
+  await n.step(132, 85000); assert.equal(n.bandAt(), 'CRITICAL');
+  await n.step(138, 79000); assert.equal(n.bandAt(), 'PRESSURE', 'below 80 %, still above 60 %');
+  await n.step(144, 100000); assert.equal(n.bandAt(), 'FULL');
+  await n.step(150, 99999); assert.equal(n.bandAt(), 'CRITICAL', 'FULL leaves below 100 %');
+});
+
+test('a second record at one height keeps its gap from the height below, so a repeat cannot walk the band', async () => {
+  const n = net();
+  await n.step(96, 75000);
+  await n.step(102, 65000); assert.equal(n.bandAt(), 'PRESSURE');
+  const again = await n.step(102, 59000);
+  assert.equal(again.ok, true); assert.equal(n.bandAt(), 'CALM');
+  await n.step(102, 65000);
+  assert.equal(n.bandAt(), 'PRESSURE', 'read against 96, not against the repeat at 102');
+});
+
+test('a guardian that missed the previous record is told it, checks it, and signs the same bytes', async () => {
+  const n = net();
+  await n.step(96, 75000);                                // all four
+  await n.step(102, 65000, { to: [0, 1] });               // 2 and 3 never see the 102 record: for them the previous is 96, here the same band
+  await n.step(108, 59000, { to: [0, 1] });               // nor this one: CALM, which they would not reach from PRESSURE at 65 %
+  const r = await n.step(114, 65000);
+  assert.equal(r.ok, true, r.why);
+  assert.equal(r.signers, 4, 'all four, the two behind told the previous record');
+  assert.equal(n.bandAt(), 'CALM');
+  assert.ok(n.w.urls.some((u) => u.includes('previous=')), 'it went along');
+});
+
+test('a forged previous record is not believed, and a guardian holds to its own', async () => {
+  const n = net();
+  await n.step(96, 75000);
+  n.w.h = 102; n.w.reserve = 65000n;
+  const forgedBy = n.nodes.slice(0, 2);
+  const b = buildFederationRecord({ federationId: FED, networkId: NET, invite: INVITE, nominal: 4, guardians: guardiansOf(n.census, FED), height: 100, reserveSats: 0n });
+  b.capacityBand = 'CALM';
+  const id = federationRecordId(b);
+  const forged = toHex(joinSignedRecord(encodeFederationRecord(b), forgedBy.map((x) => ({ nodePubkey: x.pubkey, signature: schnorr.sign(id, x.secret) }))));
+  const said = await n.seats[1].mySignature(toHex(FED), 102, '65000', { previous: forged, inviteFederationId });
+  assert.equal(said.ok, true, said.why);
+  const body = splitSignedRecord(joinSignedRecord(fromHex(said.body), [])).record;
+  assert.equal(body.capacityBand, 'PRESSURE', 'two signatures of four: its own record at 96 stands');
+  const junk = await n.seats[1].mySignature(toHex(FED), 102, '65000', { previous: 'abcd', inviteFederationId });
+  assert.equal(junk.ok, true);
+  const later = signed(n, 200, 0n, 'CALM');
+  const higher = await n.seats[1].mySignature(toHex(FED), 102, '65000', { previous: later, inviteFederationId });
+  assert.equal(splitSignedRecord(joinSignedRecord(fromHex(higher.body), [])).record.capacityBand, 'PRESSURE', 'a record above this height is no previous record');
+});
+
+test('a gatherer behind its guardians builds a body none signs: no wrong record, and it gathers once it holds the newer one', async () => {
+  const n = net();
+  await n.step(96, 75000);
+  await n.step(102, 59000, { to: [1, 2] });               // seat 3 never holds the record at 102: for it PRESSURE still holds
+  const r = await n.step(108, 65000, { by: 3, to: [] });
+  assert.equal(r.ok, false, 'its body says PRESSURE, theirs CALM');
+  assert.match(r.why, /signed it/);
+  await n.take(3, 0);
+  const again = await n.step(108, 65000, { by: 3, to: [] });
+  assert.equal(again.ok, true, again.why);
+  assert.equal(n.bandAt(3), 'CALM');
+});
+
+test('below the point, and with no point, a body names no band and no previous record is sent', async () => {
+  for (const bandFrom of [null, 1000]) {
+    const n = net({ bandFrom });
+    await n.step(96, 75000); await n.step(102, 65000);
+    const k = n.seats[0].recordOf(toHex(FED));
+    assert.equal('capacityBand' in k.record, false);
+    assert.ok(!n.w.urls.some((u) => u.includes('previous=')));
+    assert.equal(verifyFederationRecord(k.bytes, { census: n.census.entries, verify, inviteFederationId }).ok, true);
+  }
+  const n = net({ bandFrom: 102 });
+  await n.step(96, 75000); assert.equal('capacityBand' in n.seats[0].recordOf(toHex(FED)).record, false);
+  await n.step(102, 65000);
+  assert.equal(n.bandAt(), 'PRESSURE', 'the first record to name one reads the band the old record\'s load enters');
+  assert.deepEqual([capacityBandPoint('testnet4'), capacityBandPoint('testnet'), capacityBandPoint('regtest'), capacityBandPoint('mainnet'), capacityBandPoint(null)], [null, null, null, 0, null]);
+});
+
+test('a band the record names reaches the founding read: 65 % kept in PRESSURE is pressure, as a load alone would not say', async () => {
+  const n = net();
+  const read = (hex) => foundingPressureReader({ point: 0, bondMinGuardian: 50000n, inviteFederationId, networkId: NET, censusAt: async () => n.census.entries, held: () => hex })({ height: 200, entries: n.census.entries });
+  assert.equal(await read(signed(n, 180, 65000n, 'PRESSURE')), networkTargetBond([{ status: 'OPEN', reserveSats: 65000n, nominal: 4 }], 50000n));
+  assert.equal(await read(signed(n, 180, 65000n)), null, 'no band named: 65 % enters nothing');
+  assert.equal(await read(signed(n, 180, 75000n, 'CALM')), null, 'as it says');
+});
+
+test('a roll with the point named too early: guardians building two bodies reach no threshold, no wrong record, and the last one stands', async () => {
+  const n = net({ bandAtSeat: (i) => (i < 2 ? 0 : null) });
+  const r = await n.step(96, 75000);
+  assert.equal(r.ok, false, 'two with a band, two without: a threshold of three signs neither');
+  assert.equal(n.seats[0].recordOf(toHex(FED)), null);
+  const mostly = net({ bandAtSeat: (i) => (i < 3 ? 0 : null) });
+  const m = await mostly.step(96, 75000);
+  assert.equal(m.ok, true, 'three of four are a threshold');
+  assert.equal(m.signers, 3);
+  assert.equal(mostly.bandAt(), 'PRESSURE');
+});
