@@ -8485,6 +8485,48 @@
   "pathParams": []
  },
  {
+  "method": "GET",
+  "path": "/final-sig-evidence",
+  "params": "query round, entry (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {evidence:[{signer,signed,seenMs,why}]}; 400 text",
+  "purpose": "FINAL signatures this seat refused for their time, each with its signed bytes: evidence against the signer (§13A rule 3).",
+  "audience": "node-to-node",
+  "line": 6183,
+  "summary": "FINAL signatures refused for their time",
+  "query": [
+   {
+    "name": "round",
+    "required": true,
+    "type": "string",
+    "description": "Round id, 64 hex (32 bytes)."
+   },
+   {
+    "name": "entry",
+    "required": true,
+    "type": "string",
+    "description": "Entry id, 64 hex (32 bytes)."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{evidence}: each with signer, signed bytes (hex), when it arrived here and why it did not count."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "A round or an entry is not 32 bytes hex."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
   "method": "POST",
   "path": "/final-sig",
   "params": "query round, entry; body: signed FINAL signature (fixed size)",

@@ -3215,6 +3215,50 @@
     "x-changes-state": true
    }
   },
+  "/final-sig-evidence": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "FINAL signatures refused for their time",
+    "description": "FINAL signatures this seat refused for their time, each with its signed bytes: evidence against the signer (\u00a713A rule 3).\n\nAccess: none\n\nReturns: 200 JSON {evidence:[{signer,signed,seenMs,why}]}; 400 text\n\nSource: `packages/arena-node/src/server.js` line 6183.",
+    "operationId": "get_final_sig_evidence",
+    "parameters": [
+     {
+      "name": "round",
+      "in": "query",
+      "required": true,
+      "description": "Round id, 64 hex (32 bytes).",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "entry",
+      "in": "query",
+      "required": true,
+      "description": "Entry id, 64 hex (32 bytes).",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{evidence}: each with signer, signed bytes (hex), when it arrived here and why it did not count.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "A round or an entry is not 32 bytes hex.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
   "/first-mark": {
    "post": {
     "tags": [
