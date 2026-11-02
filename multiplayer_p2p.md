@@ -3209,6 +3209,16 @@ seated     = the first min(7, |present|) present nodes in score order
 round opens for entries iff |seated| >= 5
 ```
 
+**A present node answers (RULED 2026-11-02, kanban #979).** A PRESENT says a node
+means to serve; it does not show that anybody can reach it, because a node can
+push it out from behind an address nobody reaches. So a node leaves out of its
+first seating a drawn node it failed to reach twice in a row at its advertised
+endpoint, with no answer since, and the next drawn node takes the place. It never
+goes below the threshold this way: with fewer than 5 left, the PRESENTs it holds
+stand as written above. It keeps the PRESENT, so seats that disagree on who
+answers meet by the ordered rule below (kanban #738): the seating of more
+PRESENTs comes after, and one seat's bad line costs a reserve, never a round.
+
 **The seating certificate.** The seated nodes sign
 `SEATING(round_id, role, seated list)`; a round's seating is valid only with
 the signature of **every** node it seats. Each node signs at most one seating
