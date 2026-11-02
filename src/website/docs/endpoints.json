@@ -5769,7 +5769,7 @@
   "path": "/settle-commit",
   "params": "query round (hex 32), txid, entry (late settlement, optional), federation (64 hex, optional); body: signed SettlementAcks, 195 bytes each, from protocol 22",
   "auth": "none; node answers only for the txid it rebuilt",
-  "returns": "200 octet-stream nonce commitment; 400/409",
+  "returns": "200 octet-stream nonce commitment, from protocol 26 with the seat's signed commit in the x-settlement-commit header (hex); 400/409",
   "purpose": "Round one of signing the round's settlement of losers' locks. From protocol 22 a seat joins only with acks from at least the threshold in the body.",
   "audience": "node-to-node",
   "line": 5459,
@@ -7966,8 +7966,8 @@
   "path": "/absent",
   "params": "query root (64 hex)",
   "auth": "none",
-  "returns": "200 JSON {root, claims:[{node, proofs}], certs, contracts}; 400; 404",
-  "purpose": "The absent claim of a protocol-22 census root: each node its posting node left out, with the 3 seatings (3 different closes in the 24 h) whose threshold-signed certificates show it drawn, or left out already, and present at none; the certificates; and the contracts of those rounds, so a client draws each itself (§5A.3, kanban #727). Every seat and the client check the proofs; a wrong one makes the census invalid.",
+  "returns": "200 JSON {root, claims:[{node, proofs}], certs, stalled?, contracts}; 400; 404",
+  "purpose": "The absent claim of a protocol-22 census root: each node its posting node left out, with the 3 seatings (3 different closes in the 24 h) whose threshold-signed certificates show it drawn, or left out already, and present at none; the certificates; and the contracts of those rounds, so a client draws each itself (§5A.3, kanban #727). Every seat and the client check the proofs; a wrong one makes the census invalid. From protocol 26 the claim also carries `stalled`: each node left out with the 3 rounds whose seats named it, the notes and the certificates of those rounds' seatings (§5A.3 \"Stalled in its rounds\", kanban #1052).",
   "audience": "node-to-node",
   "line": 0,
   "summary": "Absent claim of a census",
@@ -8005,7 +8005,7 @@
  {
   "method": "POST",
   "path": "/absent",
-  "params": "body JSON {root, claims, certs}",
+  "params": "body JSON {root, claims, certs, stalled?}",
   "auth": "none",
   "returns": "201 JSON {ok, root, nodes, certs}; 400",
   "purpose": "Keep the absent claim of a census root, as the posting node sends it before its grid (§5A.3, kanban #727). Kept as given; the root decides whether it is the census's, and the seat checks every proof - the certificates against its own draw of each seating - before it serves.",
@@ -8027,6 +8027,75 @@
     "status": "400",
     "contentType": "text/plain",
     "description": "Malformed root or claims."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/stall-notes",
+  "params": "query from (ms), to (ms)",
+  "auth": "none",
+  "returns": "200 JSON {node, notes:[hex], certs:[hex]}; 400",
+  "purpose": "The StallNotes this seat holds of rounds whose final_after lies in (from, to], and the seating certificates of those rounds it holds (§5A.3 \"Stalled in its rounds\", protocol 26, kanban #1052). A duty node asks every seat before it posts a census: a node named by 4 seats of 3 duty rounds in the 72 h leaves the census as stalled.",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "Stall notes of a window",
+  "query": [
+   {
+    "name": "from",
+    "required": true,
+    "type": "string",
+    "description": "Start of the window in ms, exclusive."
+   },
+   {
+    "name": "to",
+    "required": true,
+    "type": "string",
+    "description": "End of the window in ms, inclusive: the census block's median time past."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{node, notes:[StallNote hex], certs:[seating certificate hex]}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "No from or to."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/stall-notes",
+  "params": "body StallNotes in hex, one per line",
+  "auth": "none",
+  "returns": "201 JSON {took, of}",
+  "purpose": "StallNotes handed over: each kept when signed by the seat it names, listing other seats, for a protocol-26 round this seat holds (§5A.3 \"Stalled in its rounds\", kanban #1052).",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "Hand over stall notes",
+  "query": [],
+  "body": {
+   "contentType": "text/plain",
+   "description": "StallNotes in hex, one per line (at most 4096)."
+  },
+  "responses": [
+   {
+    "status": "201",
+    "contentType": "application/json",
+    "description": "{took, of}."
    }
   ],
   "headers": [],

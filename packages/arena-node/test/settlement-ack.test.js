@@ -71,7 +71,7 @@ function world({ protocolVersion, rows = () => null, door = null }) {
   const ports = { [A]: fedPort(A, log), [B]: fedPort(B, log) };
   const router = { forFederation: async (f) => ports[f] || null, settle: async () => { throw new Error('a round that takes any federation never settles on the home port'); } };
   const stores = [1, 2].map(() => new Round(openStore(':memory:')));
-  const contract = { stakeMsat: STAKE, protocolVersion, federationId: new Uint8Array(32), nodes: stores.map((r) => r.pubkey), settlementSlots: 2, minScore: 1 };
+  const contract = { stakeMsat: STAKE, protocolVersion, networkId: NETWORK_ID_REGTEST, censusHeight: 900000, federationId: new Uint8Array(32), nodes: stores.map((r) => r.pubkey), settlementSlots: 2, minScore: 1 };
   const nodes = stores.map((round, i) => {
     const ls = new LockSettlement(round, { dkg: {}, port: router, curve, random: (n) => crypto.getRandomValues(new Uint8Array(n)),
       stakeSecrets: { open: async () => ({ ok: true, preimage: b32(0x99) }) }, peersFor: () => (i === 0 ? ['http://peer2'] : []) });
@@ -82,11 +82,11 @@ function world({ protocolVersion, rows = () => null, door = null }) {
   });
   nodes[0].fetcher = async (url, o) => {
     const u = new URL(url); const fed = u.searchParams.get('federation'); const two = nodes[1];
-    const ok = (bytes) => ({ ok: true, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length), text: async () => '' });
+    const ok = (bytes, word = null) => ({ ok: true, headers: new Map(word ? [['x-settlement-commit', toHex(word)]] : []), arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length), text: async () => '' });
     const no = (why) => ({ ok: false, text: async () => why });
     if (door) { const got = door(u, o); if (got) return got; }
     if (u.pathname === '/settle-ack') { const g = await two.ack(RID, { txid: u.searchParams.get('txid'), federation: fed }); return g.ok ? ok(g.bytes) : no(g.why); }
-    if (u.pathname === '/settle-commit') { const g = await two.commit(RID, { txid: u.searchParams.get('txid'), federation: fed, acks: o.body ? new Uint8Array(o.body) : new Uint8Array(0) }); return g.ok ? ok(encodeCommitments([g.commitment])) : no(g.why); }
+    if (u.pathname === '/settle-commit') { const g = await two.commit(RID, { txid: u.searchParams.get('txid'), federation: fed, acks: o.body ? new Uint8Array(o.body) : new Uint8Array(0) }); return g.ok ? ok(encodeCommitments([g.commitment]), g.word) : no(g.why); }
     if (u.pathname === '/settle-share') { const g = await two.share(RID, decodeCommitments(new Uint8Array(o.body)), { federation: fed }); return g.ok ? ok(encodeShare(g.share)) : no(g.why); }
     if (u.pathname === '/settle-signature') { const g = await two.take(RID, o.body, { federation: fed }); return g.ok ? ok(new Uint8Array(0)) : no(g.why); }
     return no('no such door');
@@ -214,4 +214,35 @@ test('the table of a plan with no entries of its own encodes a payout key of 33 
   const rows = planTableRows({ payouts: [{ payoutPk: refund(7), msat: 90000n }, { payoutPk: pk(8), msat: 4000n }] });
   const t = decodeSettlementTable(encodeSettlementTable({ roundId: RID, lateEntryId: b32(9), rows }));
   assert.deepEqual(t.rows.map((r) => [toHex(r.pubkey), r.amountMsat]).sort(), [[toHex(refund(7).subarray(1)), 90000n], [toHex(pk(8)), 4000n]].sort());
+});
+
+// WHO WAS SILENT, AS THE SEAT THAT ASKED HOLDS IT (§5A.3 "Stalled in its rounds", protocol 26, kanban #1052): where the pass stopped, the seats that gave no signed word at that step.
+test('from protocol 26 a commit comes with the seat\'s signed word, and a pass that stops keeps who gave nothing at the step it stopped at', async () => {
+  const fine = world({ protocolVersion: 26 });
+  const peer = toHex(fine.stores[1].pubkey);
+  assert.equal((await fine.nodes[0].settle(RID)).ok, true);
+  assert.deepEqual(fine.stores[0].settlePassesOf(RID), [], 'a pass that worked keeps nothing');
+  close(fine);
+
+  const noAck = world({ protocolVersion: 26, door: (u) => (u.pathname === '/settle-ack' ? { ok: false, text: async () => 'down' } : null) });
+  assert.equal((await noAck.nodes[0].settle(RID)).ok, false);
+  assert.deepEqual(noAck.stores[0].settlePassesOf(RID).map((p) => [p.scope, p.step, p.silent]).sort(), [[A, 'ack', [toHex(noAck.stores[1].pubkey)]], [B, 'ack', [toHex(noAck.stores[1].pubkey)]]]);
+  close(noAck);
+
+  const noCommit = world({ protocolVersion: 26, door: (u) => (u.pathname === '/settle-commit' ? { ok: false, text: async () => 'down' } : null) });
+  assert.equal((await noCommit.nodes[0].settle(RID)).ok, false);
+  assert.deepEqual([...new Set(noCommit.stores[0].settlePassesOf(RID).map((p) => p.step))], ['commit']);
+  assert.deepEqual(noCommit.stores[0].settlePassesOf(RID)[0].silent, [toHex(noCommit.stores[1].pubkey)]);
+  close(noCommit);
+
+  const shortShare = world({ protocolVersion: 26, door: (u) => (u.pathname === '/settle-share' ? { ok: false, text: async () => 'down' } : null) });
+  await shortShare.nodes[0].settle(RID);
+  assert.deepEqual(shortShare.stores[0].settlePassesOf(RID), [], 'a stop at the shares is not noted: the ruling reads the commit');
+  close(shortShare);
+
+  const old = world({ protocolVersion: 22, door: (u) => (u.pathname === '/settle-ack' ? { ok: false, text: async () => 'down' } : null) });
+  await old.nodes[0].settle(RID);
+  assert.deepEqual(old.stores[0].settlePassesOf(RID), [], 'below 26 nothing is kept');
+  assert.equal(peer.length, 64);
+  close(old);
 });

@@ -245,7 +245,7 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     if (dropsAbsent(contract) && seat && typeof seat.lessAbsent === 'function') {
       try {
         const less = await seat.lessAbsent({ ...contract, ...kind.fields }, census, await chainView());
-        if (less) { census = less; absent = { root: toHex(less.root), claims: less.claims, certs: less.certs || {} }; say({ dutyDay: 'absent', game, nodes: less.claims.length, root: absent.root.slice(0, 16) }); }
+        if (less) { census = less; absent = { root: toHex(less.root), claims: less.claims, certs: less.certs || {}, ...(less.stalled ? { stalled: less.stalled } : {}) }; say({ dutyDay: 'absent', game, nodes: less.claims.length, ...(less.stalled ? { stalled: less.stalled.length } : {}), root: absent.root.slice(0, 16) }); }
       } catch (e) { say({ dutyDay: 'absent not read', game, why: e.message }); }
     }
     const built = buildGrid({ contract, kind, ...opts, censusRootFor: () => census.root, censusEntries: () => census.entries,

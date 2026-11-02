@@ -281,6 +281,7 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
     }
     if (!absence.ok) return { ok: false, why: `the round's census leaves out a node without proof: ${absence.why}`, absentRefused: absence };
     got.absent = absence.absent;
+    if (absence.stalled) got.stalled = absence.stalled;
   }
   // THE SEATING (§5A.7 reserve seats): each role's certificate, asked of the seats and checked against the draw
   // this client made itself - every seated node signed it, in score order, within the seats and at least the threshold. A

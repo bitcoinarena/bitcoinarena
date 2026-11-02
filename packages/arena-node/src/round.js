@@ -2748,6 +2748,15 @@ export class Round {
       .run(entryId, roundId, outcome, why, this.now()).changes;
   }
 
+  /** How this seat's last settlement pass of a round stopped (§5A.3, protocol 26, kanban #1052). `silent`: node keys hex. */
+  putSettlePass({ roundId, scope, step, silent }) {
+    this.db.prepare('INSERT OR REPLACE INTO settle_passes (round_id, scope, step, silent, made_ms) VALUES (?, ?, ?, ?, ?)').run(Buffer.from(roundId), String(scope), step, JSON.stringify(silent), this.now());
+  }
+  settlePassesOf(roundIdBytes) {
+    return this.db.prepare('SELECT scope, step, silent, made_ms FROM settle_passes WHERE round_id = ?').all(Buffer.from(roundIdBytes))
+      .map((r) => ({ scope: r.scope, step: r.step, silent: JSON.parse(r.silent), madeMs: r.made_ms }));
+  }
+
   /** The no-quorum outcome this signer node decided for an entry, or null. */
   noQuorum(entryIdBytes) {
     const r = this.db.prepare('SELECT * FROM no_quorum WHERE entry_id = ?').get(entryIdBytes);

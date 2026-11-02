@@ -35,6 +35,7 @@ import { medianTimePast } from './beacon.js';
 import { decodeRoundContract, roundId } from './contracts.js';
 import { seatingCloseMs } from './seating.js';
 import { checkAbsenceProof, presenceWindow, dropsAbsent } from './presence.js';
+import { checkStallProof, stallWindow, stallsOut } from './stall.js';
 import { drawHeartbeat, heartbeatSlotOf, heartbeatCloseMs, hasHeartbeats } from './heartbeat.js';
 import { dutyMarkerOf, dutyRoundStands } from './duty.js';
 import { creatorMessage, seriesCreatorMessage } from './creator.js';
@@ -279,7 +280,7 @@ export function committeeFromChain({ contract, roundId, headers, firstHeight, ev
  * round's census it just checked. What it cannot see is whether an earlier posting of the same day and item exists (the first confirmed
  * one counts): that is the seats' check against their chains, as completeness is.
  * `entries`: the round's own census as this client checked it (committeeFromChain's checkedCensus.entries).
- * Answers { ok: true, absent: [node hex] } or { ok: false, why, node? }.
+ * Answers { ok: true, absent: [node hex], stalled? } or { ok: false, why, node? }.
  */
 export function absenceFromChain({ contract, claim, evidenceOf, headers, firstHeight, bond, verify, entries = null }) {
   if (!dropsAbsent(contract)) return { ok: true, absent: [] };
@@ -344,5 +345,22 @@ export function absenceFromChain({ contract, claim, evidenceOf, headers, firstHe
   const r = checkAbsenceProof(claim.claims, { window, verify, drawOf, dutyOf,
     certOf: (ridHex, role) => { const h = claim.certs && claim.certs[`${ridHex}:${role}`]; return h ? fromHex(h) : null; } });
   if (!r.ok) return { ok: false, node: r.node, why: r.notYet ? `${r.why}: its contract or census was not handed over` : r.why };
-  return { ok: true, absent: claim.claims.map((c) => String(c.node).toLowerCase()) };
+  // AND THE STALLED (§5A.3 "Stalled in its rounds", protocol 26, kanban #1052): every note, on the seating drawn here from its round's contract and census, the round a duty posting's
+  // as above. A claimed node's weight is the one its seating's census gives: the client holds no census that left it out
+  const stalled = Array.isArray(claim.stalled) ? claim.stalled : [];
+  if (stalled.length) {
+    if (!stallsOut(contract)) return { ok: false, why: 'the claim leaves out stalled nodes and that round is not under the rule' };
+    for (const c of stalled) if (inRound.has(String(c.node).toLowerCase())) return { ok: false, node: c.node, why: `the claim names ${String(c.node).slice(0, 16)} stalled, and the round's own census holds it` };
+    const roundOf = (ridHex) => { drawOf(ridHex, 'settlement'); const d = drawn.get(ridHex); return d ? d.contract : null; };
+    const weightOf = (node) => {
+      const c = stalled.find((x) => String(x.node).toLowerCase() === node);
+      const d = c && c.proofs && c.proofs[0] ? drawn.get(String(c.proofs[0].seatRound).toLowerCase()) : null;
+      return (d ? d.entries : []).reduce((s, e) => (toHex(e.pubkey) === node ? s + BigInt(e.bondSats || 0) : s), 0n);
+    };
+    const s = checkStallProof(stalled, { window: stallWindow(BigInt(t) * 1000n), verify, roundOf, drawOf, dutyOf, weightOf,
+      keptWeight: entries && entries.length ? entries.reduce((n, e) => n + BigInt(e.bondSats || 0), 0n) : null,
+      certOf: (ridHex, role) => { const h = claim.certs && claim.certs[`${ridHex}:${role}`]; return h ? fromHex(h) : null; } });
+    if (!s.ok) return { ok: false, node: s.node, why: s.notYet ? `${s.why}: its contract or census was not handed over` : s.why };
+  }
+  return { ok: true, absent: claim.claims.map((c) => String(c.node).toLowerCase()), ...(stalled.length ? { stalled: stalled.map((c) => String(c.node).toLowerCase()) } : {}) };
 }

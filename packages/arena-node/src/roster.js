@@ -21,6 +21,7 @@ import { deriveCensus, censusRootOf } from '../../arena-protocol/src/census.js';
 import { presignedBond, roundPresigPlan } from '../../arena-protocol/src/slash-presig.js';
 import { standingKeysName } from '../../arena-protocol/src/census-key.js';
 import { dropsAbsent, withoutAbsent, presenceWindow, censusTimeMs, ABSENT_WHY } from '../../arena-protocol/src/presence.js';
+import { stallsOut, STALLED_WHY } from '../../arena-protocol/src/stall.js';
 import { selectCommittee, drawCommittee, slotsForRole, drawAttestors } from '../../arena-protocol/src/sortition.js';
 import { drawHeartbeat, hasHeartbeats, heartbeatCloseMs } from '../../arena-protocol/src/heartbeat.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
@@ -462,19 +463,23 @@ export class Roster {
     const held = this.absence.claimFor(toHex(contract.censusRoot));
     if (!held || !Array.isArray(held.claims)) return { ok: false, notYet: true, why: 'no absent claim is held here for that root' };
     const claims = held.claims;
-    const kept = censusRootOf(withoutAbsent(census.entries, claims), { censusHeight: contract.censusHeight, censusConfirmations: contract.censusConfirmations });
+    // AND THE STALLED, AFTER THE ABSENT (§5A.3 "Stalled in its rounds", protocol 26, kanban #1052): the claim's other list, checked with it. Only the census's draw changes
+    const stalled = Array.isArray(held.stalled) ? held.stalled : [];
+    if (stalled.length && !stallsOut(contract)) return { ok: false, why: 'that claim leaves out stalled nodes and that round is not under the rule' };
+    const kept = censusRootOf(withoutAbsent(census.entries, [...claims, ...stalled]), { censusHeight: contract.censusHeight, censusConfirmations: contract.censusConfirmations });
     if (!kept.root.every((b, i) => b === contract.censusRoot[i]))
       return { ok: false, why: `less the ${claims.length} absent node(s) of its claim the chain gives ${toHex(kept.root).slice(0, 16)}` };
     if (!asCommitted) {
       const t = censusTimeMs(view, contract.censusHeight);
       if (t === null) return { ok: false, notYet: true, why: 'this seat\'s view does not reach the census block\'s median time, so its 24 h cannot be read' };
-      const checked = this.absence.check(held, { census: census.entries.map((e) => toHex(e.pubkey)), w: presenceWindow(t) });
+      const checked = this.absence.check(held, { census: census.entries.map((e) => toHex(e.pubkey)), w: presenceWindow(t), entries: census.entries, keptEntries: kept.entries });
       if (!checked.ok && checked.notYet) return { ok: false, notYet: true, why: checked.why };
       if (!checked.ok) return { ok: false, why: checked.why, refuted: { node: checked.node, proof: checked.proof || null } };
     }
-    const out = new Set(claims.map((c) => c.node));
-    return { ...census, entries: kept.entries, leaves: kept.leaves, root: kept.root, absent: claims,
-      excluded: [...(census.excluded || []), ...census.entries.filter((e) => out.has(toHex(e.pubkey))).map((e) => ({ ...e, absent: true, step: 'absent', why: ABSENT_WHY }))] };
+    const out = new Set(claims.map((c) => c.node)), benched = new Set(stalled.map((c) => c.node));
+    return { ...census, entries: kept.entries, leaves: kept.leaves, root: kept.root, absent: claims, ...(stalled.length ? { stalled } : {}),
+      excluded: [...(census.excluded || []), ...census.entries.filter((e) => out.has(toHex(e.pubkey))).map((e) => ({ ...e, absent: true, step: 'absent', why: ABSENT_WHY })),
+        ...census.entries.filter((e) => benched.has(toHex(e.pubkey))).map((e) => ({ ...e, stalled: true, step: 'stalled', why: STALLED_WHY }))] };
   }
 
   censusAtHeight(roundIdBytes, height) {

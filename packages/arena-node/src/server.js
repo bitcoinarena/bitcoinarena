@@ -225,7 +225,9 @@ import { seatingAgent } from './seating-agent.js';
 import { heartbeatAgent } from './heartbeat-agent.js';
 import { HEARTBEAT_SLOTS_PER_ROUND } from '../../arena-protocol/src/heartbeat.js';
 import { presenceBook } from './presence-book.js';
+import { stallBook } from './stall-book.js';
 import { presenceWindow, censusTimeMs, withoutAbsent } from '../../arena-protocol/src/presence.js';
+import { stallsOut } from '../../arena-protocol/src/stall.js';
 import { censusRootOf } from '../../arena-protocol/src/census.js';
 import { decodeSeatingCertificate, encodeSeatingCertificate, signPresent, SEATING_ROLES } from '../../arena-protocol/src/seating.js';
 import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../../arena-protocol/src/genesis.js';
@@ -2469,8 +2471,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (!c && !(Date.now() - (claimAsked.get(rootHex) || 0) < 60000)) { claimAsked.set(rootHex, Date.now()); fetchClaim(rootHex).catch(() => {}); }
       return c;
     },
-    check: presence.check,
+    // THE ABSENT, THEN THE STALLED (§5A.3 "Stalled in its rounds", protocol 26, kanban #1052)
+    check: (claim, ctx) => { const a = presence.check(claim, ctx); return a.ok ? stall.check(claim, ctx) : a; },
   };
+  // THE STALL BOOK (§5A.3 "Stalled in its rounds", protocol 26, kanban #1044, #1052): after a failed round this seat lists who was silent, hands it to every seat, and the duty node
+  // carries a node named by 4 seats of 3 rounds in the census claim. The seating agent, made below, says which certificate seats a table's round
+  let seatRoundStall = (rid) => rid;
+  const stall = stallBook({ round, presence, verify: verifySchnorrKept, sign: (digest) => schnorr.sign(digest, round.identity.secret), log: (m) => console.log(m),
+    seatRoundOf: (rid) => seatRoundStall(rid),
+    hand: async (notes) => { await Promise.all(networkSeats().map((u) => fetch(`${u}/stall-notes`, { method: 'POST', body: notes.join('\n'), signal: AbortSignal.timeout(8000) }).catch(() => {}))); } });
+  const stallTimer = setInterval(() => { if (!shuttingDown) stall.tick().catch((e) => console.error(`[stall] ${e.message}`)); }, Number(process.env.ARENA_STALL_TICK_MS || 60000));
+  stallTimer.unref();
   // LEFT OUT AS ABSENT, THIS NODE COMES BACK BY BEING SEEN (§5A.3, kanban #727): while a census of rounds it holds names it absent, it
   // signs a PRESENT for each of those rounds as its seating comes (drawn or not), keeps it, and hands it before the close to the round's
   // drawn (POST /presents: a seated node lists it in its SEEN, the proof that it was present) and to every seat (POST /presence) - so
@@ -2527,10 +2538,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return { presents: presents.slice(0, 4096), certs: [...new Set(certs)].slice(0, 8192) };
     };
     const claim = await presence.absentForPosting({ census: census.entries.map((e) => toHex(e.pubkey)), w, ask });
-    if (!claim.claims.length) return null;
-    const kept = censusRootOf(withoutAbsent(census.entries, claim.claims), { censusHeight: Number(contract.censusHeight), censusConfirmations: contract.censusConfirmations });
-    presence.keepClaim(toHex(kept.root), claim);
-    return { ...census, root: kept.root, entries: kept.entries, claims: claim.claims, certs: claim.certs };
+    // AND THE STALLED, PAST THE ABSENT (§5A.3 "Stalled in its rounds", protocol 26, kanban #1052): every seat's notes of the 72 h, the 10 % read on what absence left
+    const out = stallsOut(contract) ? await stall.forPosting({ entries: withoutAbsent(census.entries, claim.claims), t, ask: async (sw) => {
+      const notes = [], certs = [];
+      for (const j of await Promise.all(networkSeats().map(async (u) => {
+        try { const r = await fetch(`${u}/stall-notes?from=${sw.fromMs}&to=${sw.toMs}`, { signal: AbortSignal.timeout(10000) }); return r.ok ? await r.json() : null; } catch { return null; }
+      }))) { if (j && Array.isArray(j.notes)) notes.push(...j.notes); if (j && Array.isArray(j.certs)) certs.push(...j.certs); }
+      return { notes: [...new Set(notes)], certs: [...new Set(certs)] };
+    } }) : { stalled: [], certs: {} };
+    if (!claim.claims.length && !out.stalled.length) return null;
+    const kept = censusRootOf(withoutAbsent(census.entries, [...claim.claims, ...out.stalled]), { censusHeight: Number(contract.censusHeight), censusConfirmations: contract.censusConfirmations });
+    const certs = { ...claim.certs, ...out.certs };
+    presence.keepClaim(toHex(kept.root), { ...claim, certs, ...(out.stalled.length ? { stalled: out.stalled } : {}) });
+    return { ...census, root: kept.root, entries: kept.entries, claims: claim.claims, certs, ...(out.stalled.length ? { stalled: out.stalled } : {}) };
   };
   // THIS SEAT AS A DRAWN ATTESTOR (kanban #630, protocol 21): only where it hosts a game whose attestors are drawn. Every 10 s it reads
   // its price; a round of such a game whose window ended in the last 30 min and that this seat is drawn for gets its word, the other
@@ -2700,6 +2720,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (first) makeClaimKey(first);
   }
   if (seating) roster.seatedFor = seating.seatedFor;
+  if (seating) seatRoundStall = (rid) => seating.seatRoundOf(rid);
   const seatingTimer = seating ? setInterval(() => { seating.tick(); }, Number(process.env.ARENA_SEATING_TICK_MS || 2000)) : null;
   if (seatingTimer) seatingTimer.unref();
   // THE HEARTBEAT (§5A.3, protocol 22, kanban #727, the owner 2026-10-27): with seating on, this node beats for every 22 round's heartbeat
@@ -9557,7 +9578,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (url.pathname === '/forfeit-commit') {
           const got = await forfeits.commit(r8, e8, kind);
           if (!got.ok) return text(res, got.status || 409, got.why);
-          res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+          // from protocol 26 the commit comes with the seat's signed word (§5A.3, kanban #1052); a round below it answers the same bytes and headers as before
+          res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS, ...(got.word ? { 'x-settlement-commit': toHex(got.word) } : {}) });
           return res.end(Buffer.from(encodeCommitments([got.commitment])));
         }
         if (url.pathname === '/forfeit-share') {
@@ -10515,20 +10537,33 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // and, per named round, its publication with a merkle branch and its creator's signature: the client checks it is a duty
         // posting's round (kanban #727, client-committee.js absenceFromChain)
         const contracts = {}, publications = {}, creators = {};
-        for (const k of Object.keys(held.certs || {})) {
-          const rid = k.split(':')[0];
+        // the rounds a stalled node's notes name too, beside the seatings that seat them (§5A.3, protocol 26, kanban #1052)
+        const stalled = Array.isArray(held.stalled) ? held.stalled : [];
+        for (const rid of [...Object.keys(held.certs || {}).map((k) => k.split(':')[0]), ...stalled.flatMap((c) => c.proofs.map((p) => p.roundId))]) {
           const row = contracts[rid] ? null : round.get(fromHex(rid));
           if (!row) continue;
           contracts[rid] = toHex(new Uint8Array(row.contract));
           const pub = presence.publicationProofOf(rid); if (pub) publications[rid] = pub;
           const cr = presence.creatorSignatureOf(rid); if (cr) creators[rid] = cr;
         }
-        return json(res, 200, { root, claims: held.claims, certs: held.certs || {}, contracts, publications, creators });
+        return json(res, 200, { root, claims: held.claims, certs: held.certs || {}, ...(stalled.length ? { stalled } : {}), contracts, publications, creators });
       }
       if (req.method === 'POST' && url.pathname === '/absent') {
         let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a JSON body { root, claims }'); }
         const k = presence.keepClaim(body && body.root, body);
         return k.ok ? json(res, 201, k) : text(res, 400, k.why);
+      }
+      // THE STALL DOORS (§5A.3 "Stalled in its rounds", protocol 26, kanban #1052). GET /stall-notes?from=<ms>&to=<ms>: the StallNotes of rounds whose final_after lies in (from, to],
+      // and the seating certificates of those rounds this seat holds, hex. POST /stall-notes: StallNotes, hex, one a line, each kept when it stands and this seat holds its round.
+      if (req.method === 'GET' && url.pathname === '/stall-notes') {
+        const from = url.searchParams.get('from'), to = url.searchParams.get('to');
+        if (!/^\d{1,16}$/.test(String(from)) || !/^\d{1,16}$/.test(String(to))) return text(res, 400, 'from, to: milliseconds');
+        return json(res, 200, { node: toHex(round.pubkey), ...stall.answer({ fromMs: BigInt(from), toMs: BigInt(to) }) });
+      }
+      if (req.method === 'POST' && url.pathname === '/stall-notes') {
+        const lines = Buffer.from(await read(req)).toString('utf8').split(/\s+/).filter(Boolean).slice(0, 4096);
+        let took = 0; for (const h of lines) { try { if (stall.take(fromHex(h)).ok) took++; } catch { /* not one */ } }
+        return json(res, 201, { took, of: lines.length });
       }
       // THE HEARTBEAT DOORS (§5A.3, kanban #727). POST /heartbeats: whole 132-byte HEARTBEATs, kept by a member until the slot closes.
       // POST /heard: other members' HEARDs, JSON [{ round, slot, node, heard, leftOut, signature }]. GET /heartbeat-cert?round=&slot=: the

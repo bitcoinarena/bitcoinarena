@@ -25,13 +25,30 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26]);
 /**
  * THE VERSION THAT RUNS THE CENSUS KEY'S DAEMON (5A.3B, RULED 2026-11-02, kanban #1048 answer 2). A node that does not speak it cannot deal or sign, so a share given to it counts against
  * the threshold and nobody can use it: a node whose advertisement does not list this version is out of the key's census, in T and the shares alike. It is above BOND_SUM_VERSION, so
  * bonds sum. No round runs it, and a build that lists it changes no round.
  */
 export const CENSUS_KEY_VERSION = 25;
+/**
+ * STALLED NODES LEAVE THE DRAW (§5A.3 "Stalled in its rounds", RULED 2026-11-02, kanban #1044 option 2, #1052). 3 of a round's 7 seats can stop an entry or a settlement, which is
+ * silence and leaves nothing to slash, so a set of nodes could do it all day. After a failed round each seat signs which seats gave it nothing (stall.js StallNote); a node named
+ * by 4 of a round's seats in 3 duty rounds at least 1 h apart in 72 h leaves the census, by proof, as absence does (presence.js). It costs it fees for as long as 3 proofs lie in
+ * the window and nothing else. It moves the draw only: not pay, not absence, not the bond, not the census key. Rounds below this version are untouched.
+ */
+export const STALL_VERSION = 26;
+/** A round names a node when this many of its seats signed notes listing it, none of them itself. 4 silent seats leave 3 honest, so no note stands: accepted (#1052). */
+export const STALL_NOTE_QUORUM = 4;
+/** A node is out on this many rounds that named it, closes at least ABSENCE_PROOF_SPACING_MS apart, each a fresh draw and a duty posting's. */
+export const STALL_PROOF_ROUNDS = 3;
+/** The proofs must lie in the 72 h before the census block's median time. There is no timer: a node is back once fewer than 3 do. */
+export const STALL_WINDOW_MS = 72n * 3600n * 1000n;
+/** Nodes out by this rule hold at most this share of the census's weight, in basis points, over and above absence: past it those named longest ago are out and the rest stay in. */
+export const STALL_CAP_BPS = 1000n;
+/** A settlement that has not landed this long after the round's final_after is a stalled one. */
+export const STALL_SETTLEMENT_WAIT_MS = 7200000n;
 /** EVERY BONDED NODE HOSTS A MARKET WITH A SOURCE (kanban #920): its rounds say so in their question (`event.allBonded`), so no node's advertisement has to name each new market. */
 export const SOURCE_HOSTS_VERSION = 23;
 /** THE FOUNDING DRAW UNDER PRESSURE (kanban #993, §23A.3a): no round's layout changes; from FOUNDING_PRESSURE_HEIGHT only a node that advertises this version is a candidate. */
@@ -325,6 +342,9 @@ export const TYPE_SLASH_PROOF = 0x0c;
  */
 export const TYPE_SETTLEMENT_ACK = 0x3e;
 export const TYPE_SETTLEMENT_TABLE = 0x3f;
+/** A seat's signed settlement commit (§5A.3, kanban #1052): settlement-ack.js. A seat's word on who was silent in a failed round: stall.js. */
+export const TYPE_SETTLEMENT_COMMIT = 0x40;
+export const TYPE_STALL_NOTE = 0x41;
 
 /** The byte `feeTableId` opens with (fee.js). It named a fee claim once; no node claims anything (kanban #1035), and the byte stays so no table id moves. */
 export const TYPE_FEE_TABLE = 0x0e;
@@ -555,6 +575,8 @@ export const TAG = {
   // signature binds to the table, and the two must never be interchangeable.
   payoutInputs: 'ARENA/v1/PayoutInputs',
   settlementAck: 'ARENA/v1/SettlementAck',
+  settlementCommit: 'ARENA/v1/SettlementCommit',
+  stallNote: 'ARENA/v1/StallNote',
   settlementTable: 'ARENA/v1/SettlementTable',
   // One signer node's deal in a committee's key generation, and the id of the epoch
   // those deals belong to. Separate tags: a contribution binds to one epoch,
