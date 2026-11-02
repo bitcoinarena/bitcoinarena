@@ -49,6 +49,15 @@ export function censusRunId({ networkId, epoch, censusHeight, holders, threshold
   return taggedHash(TAG.censusRun, w.finish());
 }
 
+/**
+ * THE FOUNDERS' RUN OF KEY 0 (5A.3B, kanban #1050): before any bond and before network_id, which commits the key it makes, so the run's name reads 32 zero bytes there and no record is
+ * ever anchored. `shares` is censusKey0Shares' answer. The deal, the check and the keeping are any keygen's.
+ */
+export function founderRun({ holders, total, threshold }) {
+  const networkId = new Uint8Array(32);
+  return { runId: censusRunId({ networkId, epoch: 0, censusHeight: 0, holders, threshold }), networkId, epoch: 0, censusHeight: 0, holders, total, threshold, needed: threshold };
+}
+
 /** The x a dealer proves under: its key and the run, so a proof of knowledge cannot be carried to another run. */
 const dealerScalar = (runId, key) => modN(bytesToBigInt(taggedHash(TAG.censusDealer, glue(runId, key))));
 

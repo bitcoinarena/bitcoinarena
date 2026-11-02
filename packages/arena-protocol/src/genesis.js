@@ -6,7 +6,7 @@
 // of that block plus the donation authority and recovery pubkeys. Changing any
 // of it later is a different network.
 import { Writer } from './encode.js';
-import { taggedHash } from './hash.js';
+import { taggedHash, toHex } from './hash.js';
 import { TESTNET_CLOCKS, REGTEST_CLOCKS } from './federation-slash.js';
 import { bondMarker } from './constants.js';
 import { receiptsNeeded } from './threshold.js';
@@ -62,6 +62,22 @@ export const CENSUS_KEY_FIRST_HEIGHT = Object.freeze({ testnet4: null, regtest: 
 export function censusKeyFirstHeight(network, genesis = null) {
   if (network === 'mainnet') return genesis && Number.isInteger(genesis.genesisHeight) ? genesis.genesisHeight : null;
   return Object.prototype.hasOwnProperty.call(CENSUS_KEY_FIRST_HEIGHT, network) ? CENSUS_KEY_FIRST_HEIGHT[network] : null;
+}
+
+/**
+ * CENSUS_KEY_0 { public_key, holders[], threshold } (§5A.3B, kanban #1050): the founders' node keys, one share each, in share order, so holders[i] holds x = i + 1. The threshold is any
+ * key's, floor(2 x shares / 3) + 1, and the founders are at least the census minimum. Answers { ok } or { ok: false, why }.
+ */
+export function censusKey0Stands(k0, { minHolders, sharesMax }) {
+  const is32 = (x) => x instanceof Uint8Array && x.length === 32;
+  if (!k0 || !is32(k0.publicKey)) return { ok: false, why: 'census key 0 names its public key' };
+  if (!Array.isArray(k0.holders) || !k0.holders.every(is32)) return { ok: false, why: 'census key 0 names its holders, the founders\' node keys' };
+  if (new Set(k0.holders.map(toHex)).size !== k0.holders.length) return { ok: false, why: 'census key 0 names a holder twice: one share each' };
+  if (k0.holders.length < minHolders) return { ok: false, why: `census key 0 names ${k0.holders.length} holders, under the census minimum of ${minHolders}` };
+  if (k0.holders.length > sharesMax) return { ok: false, why: `census key 0 names ${k0.holders.length} holders, over census_key_shares_max` };
+  const threshold = Math.floor((2 * k0.holders.length) / 3) + 1;
+  if (k0.threshold !== threshold) return { ok: false, why: `census key 0 names threshold ${k0.threshold}, and ${k0.holders.length} shares have ${threshold}` };
+  return { ok: true };
 }
 
 export function censusKeyBondMin(network, genesis = null) {
@@ -159,8 +175,13 @@ export function encodeGenesisParameters(p) {
     w.u32(p.censusKeySharesMax);
     if (typeof p.censusKeyBondMinSats !== 'bigint' || p.censusKeyBondMinSats <= 0n) throw new Error('genesis names the census key\'s bond floor');
     w.u64(p.censusKeyBondMinSats);
-    // THE KEY THE GENESIS FOUNDERS MADE BEFORE ANY BOND (§5A.3B): committed here, so it needs no anchor.
-    w.bytes32(p.censusKey0);
+    // THE KEY THE GENESIS FOUNDERS MADE BEFORE ANY BOND (§5A.3B, kanban #1050): committed here, so it needs no anchor. It stands in for key 0's CensusKeyRecord: the holders are written
+    // so the 80 % trigger can read them, and it leaves out network_id, which would be circular.
+    const zero = censusKey0Stands(p.censusKey0, { minHolders: p.censusMinNodes, sharesMax: p.censusKeySharesMax });
+    if (!zero.ok) throw new Error(zero.why);
+    w.bytes32(p.censusKey0.publicKey);
+    w.vec(p.censusKey0.holders, (h, ww) => ww.bytes32(h));
+    w.u32(p.censusKey0.threshold);
     // WHERE MAINNET'S CHAIN SCAN STARTS (§27A.6, kanban #1048): scanning from height 0 is years of nothing.
     if (!Number.isInteger(p.genesisHeight) || p.genesisHeight < 0) throw new Error('genesis names genesis_height');
     w.u32(p.genesisHeight);
@@ -184,7 +205,7 @@ export function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityP
   if (typeof genesisSeriesStartMs !== 'bigint') throw new Error('mainnet genesis names when series 0 starts');
   if (typeof bondMinGuardianSats !== 'bigint' || bondMinGuardianSats <= 0n) throw new Error('mainnet genesis names a guardian\'s bond floor');
   if (typeof censusKeyBondMinSats !== 'bigint' || censusKeyBondMinSats <= 0n) throw new Error('mainnet genesis names the lowest bracket\'s bond_min, the census key\'s B (§5A.3B)');
-  if (!is32(censusKey0)) throw new Error('mainnet genesis needs census key 0: the founders run its DKG before any bond exists (§5A.3B)');
+  if (!censusKey0) throw new Error('mainnet genesis needs census key 0: the founders run its DKG before any bond exists (§5A.3B)');
   if (!Number.isInteger(genesisHeight) || genesisHeight < 0) throw new Error('mainnet genesis names genesis_height, where its chain scan starts (§5A.3B)');
   const genesis = {
     chain: 'bitcoin-mainnet', genesisSeriesStartMs, genesisHeight, censusKey0, censusKeySharesMax: CENSUS_KEY_SHARES_MAX, censusKeyBondMinSats,

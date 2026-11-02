@@ -65,7 +65,7 @@ test('a binding genesis: the join refuses a contract by the parameter it names o
   const { clientCommittee, clientSettlementSignerNodes } = await import('../src/committee.js');
   const b = (n) => new Uint8Array(32).fill(n);
   const { genesis } = mainnetGenesis({ bondMarker: b(1), arbitrationKeys: [2, 3, 4, 5, 6, 7, 8].map(b), authorityPubkey: b(9), recoveryPubkey: b(10),
-    genesisSeriesStartMs: 1800000000000n, bondMinGuardianSats: 1_000_000n, censusKeyBondMinSats: 500_000n, censusKey0: b(11), genesisHeight: 900000 });
+    genesisSeriesStartMs: 1800000000000n, bondMinGuardianSats: 1_000_000n, censusKeyBondMinSats: 500_000n, censusKey0: { publicKey: b(11), holders: Array.from({ length: 10 }, (_, i) => b(100 + i)), threshold: 7 }, genesisHeight: 900000 });
   const asked = [];
   const fetcher = async (u) => { asked.push(u); throw new Error('no seat should be asked'); };
   const contract = { networkId: NETWORK_ID_TESTNET4, gameVerifySlots: 7, settlementSlots: 7, censusConfirmations: 2, censusRoot: b(4) };

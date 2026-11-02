@@ -606,6 +606,11 @@ if (url) {
       const networkId = net === 'testnet4' ? NETWORK_ID_TESTNET4 : NETWORK_ID_REGTEST;
       const { censusConfirmations } = genesisFor(net);
       const { foundingWindow } = clocksFor(net).clocks;
+      // CENSUS KEY 0, REGTEST'S ALONE (kanban #1050): mainnet's stands in its genesis. A harness names one here, with this seat's founder shares, as ARENA_CENSUS_KEY_FIRST_HEIGHT names a height
+      const zero = net === 'regtest' && process.env.ARENA_CENSUS_KEY_0 ? JSON.parse(readFileSync(process.env.ARENA_CENSUS_KEY_0, 'utf8')) : null;
+      const censusKey0 = zero ? { publicKey: fromHex(zero.publicKey), holders: zero.holders.map(fromHex), threshold: zero.threshold } : null;
+      if (zero && zero.held && !new CensusKeyStore(db).held(censusKey0.publicKey, 0)) new CensusKeyStore(db).keepHeld({ publicKey: censusKey0.publicKey, epoch: 0, runId: fromHex(zero.held.runId), record: new Uint8Array(0),
+        negated: zero.held.negated, shares: new Map(zero.held.shares.map(([x, v]) => [x, BigInt(`0x${v}`)])), commitments: zero.held.commitments.map(fromHex) });
       const blockHashAt = async (height) => { try { return String(await call('getblockhash', [height])); } catch { return null; } };
       const tipHeight = async () => Number(await call('getblockcount'));
       const censusEntriesAt = async (height) => {
@@ -613,7 +618,7 @@ if (url) {
         if (!census.ok) { console.error(`[census-key] no census at ${height}: ${census.why}`); return null; }
         return census.entries;
       };
-      censusKeyScan = createCensusKeyScan({ store: new CensusKeyStore(db), network: net, networkId, firstHeight: here, foundingWindow, censusConfirmations, tipHeight, blockHashAt,
+      censusKeyScan = createCensusKeyScan({ store: new CensusKeyStore(db), network: net, networkId, firstHeight: here, foundingWindow, censusConfirmations, censusKey0, tipHeight, blockHashAt,
         blockAt: async (hash) => fromHex(String(await call('getblock', [hash, 0]))), censusEntriesAt, verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } },
         log: (l) => console.log(l) });
       const wallets = (name) => bitcoindRpc({ url: `${url.replace(/\/+$/, '')}/wallet/${encodeURIComponent(name)}`, cookiePath });

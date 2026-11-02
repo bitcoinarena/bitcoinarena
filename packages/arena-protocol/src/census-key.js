@@ -101,6 +101,15 @@ export function censusKeyShares({ entries, network, genesis = null, blockHash = 
   return { drawn, totalSats, total, threshold: Math.floor((2 * total) / 3) + 1, holders };
 }
 
+/**
+ * THE HOLDERS OF CENSUS KEY 0 AS censusKeyShares ANSWERS ANY KEY'S (kanban #1050): one share each, x = the place in genesis' list plus 1, in ascending key as every holder list stands.
+ * From here the key has no other rule.
+ */
+export function censusKey0Shares(k0) {
+  const holders = k0.holders.map((h, i) => ({ key: toHex(h), shares: 1, ids: [i + 1] })).sort((a, b) => (a.key < b.key ? -1 : 1));
+  return { drawn: false, total: holders.length, threshold: k0.threshold, holders };
+}
+
 /** CensusKeyRecord (5A.3B): what a key is, in the bytes its holders sign and its anchor hashes. */
 export function encodeCensusKeyRecord(r) {
   const w = new Writer();
