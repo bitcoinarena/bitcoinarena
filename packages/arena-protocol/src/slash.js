@@ -119,7 +119,7 @@ export const AUDIT_CONTRADICTED = 'AUDIT_CONTRADICTED';
  */
 export const RELEASE_WITHOUT_PROOF = 'RELEASE_WITHOUT_PROOF';
 
-/** 5A.3, template 3: "Signing a release or an escrow payout that pays other than its payout_table", proof "the release or the payout + the table". A release only: see slashHoldsOnReleaseTable. */
+/** 5A.3, template 3: "Signing a release or an escrow payout that pays other than its payout_table", proof "the release or the payout + the table". slashHoldsOnReleaseTable and slashHoldsOnEscrowSpend. */
 export const RELEASE_OFF_TABLE = 'RELEASE_OFF_TABLE';
 
 // In 5A.3's own document order, which is the order they are being written in; §13A.1's AUDIT after them.
@@ -1605,7 +1605,8 @@ export const slashPayoutTableId = (t) => taggedHash(TAG.slashPayoutTable, encode
  *   escrowScript under the two panels, or the census key if there are none
  *
  * Players' parts round up and the reserves take the rest, and the fee comes off the reserves, never the players. A carrier's part under
- * dust is raised to dust out of the reserves. What fits no carrier and no federation is the escrow; under dust it joins the largest reserve part.
+ * dust is raised to dust out of the reserves, and merged into the carrier before it if they cannot cover that: players are never short.
+ * What fits no carrier and no federation is the escrow; under dust it joins the largest reserve part. A fallback passes `fallbackCarriers`.
  */
 export function buildSlashPayoutTable({ networkId, roundId, proofId, bond, entries = [], filer = null, carriers = [], federations = [], retired = [], feeSats, escrowScript = null }) {
   const no = (why) => ({ ok: false, why });
@@ -1620,10 +1621,15 @@ export function buildSlashPayoutTable({ networkId, roundId, proofId, bond, entri
     if (c.bondSats < P2TR_DUST_SATS) continue;
     const part = owed > c.bondSats ? c.bondSats : owed;
     const sats = part < P2TR_DUST_SATS ? P2TR_DUST_SATS : part;
-    carried.push({ value: sats, script: c.script, pays: 'player_carrier' });
+    carried.push({ value: sats, script: c.script, pays: 'player_carrier', exact: part });
     owed -= part;
   }
-  outputs.push(...carried);
+  const room = () => bond.value - feeSats - (filer ? filer.sats : 0n) - carried.reduce((a, o) => a + o.value, 0n) - owed;
+  if (room() < 0n && carried.length > 1 && carried[carried.length - 1].exact < P2TR_DUST_SATS) {
+    const last = carried.pop();
+    carried[carried.length - 1].value += last.exact;
+  }
+  for (const c of carried) { delete c.exact; outputs.push(c); }
   const spent = outputs.reduce((a, o) => a + o.value, 0n);
   const rest = bond.value - feeSats - spent - owed;
   if (rest < 0n) return no(`a bond of ${bond.value} sat cannot carry ${spent + owed} sat and a ${feeSats} sat fee: the losses are this bond's share of them`);
@@ -1725,12 +1731,57 @@ export function slashHoldsOnRelease({ proof, release, prevouts, panels, holdBloc
 }
 
 /**
+ * AN ESCROW SPEND ANSWERS TO THE RELEASE'S TABLE (5A.3B, kanban #1031): it has no table of its own. It opens with an OP_RETURN of payout_table_id, may pay
+ * only into the table's entries and reserves, and with every earlier escrow spend must not pay more than the release left in escrow.
+ * What it pays into is a peg-in, and the table names entries and federations and no scripts, so `payable(script)` is injected, from the public
+ * federation records; a script back to the escrow itself is change. `release` carries the table; `earlier` the raw spends before this one.
+ */
+export function slashHoldsOnEscrowSpend({ proof, spend, release, earlier = [], prevouts, table, payable, advert, verify }) {
+  const no = (why) => ({ slashed: false, why });
+  if (!proof) return no('no proof');
+  if (hex(proof.playerPubkey) !== hex(EMPTY)) return no('this row names no player: the table does');
+  if (typeof payable !== 'function') return no('no way to read which peg-ins are payable');
+  const signed = signedSpend({ proof, spend, prevouts, verify });
+  if (!signed.ok) return no(signed.why);
+  let carrier, t;
+  try { carrier = parseTransaction(release); } catch (e) { return no(`the release attached is not a transaction: ${e.message}`); }
+  try { t = decodeSlashPayoutTable(table); } catch (e) { return no(`the evidence is not a slash payout table: ${e.message}`); }
+  const id = slashPayoutTableId(t);
+  const said = arbitrationCommitmentIn([carrier.outputs[0] || {}]);
+  if (!said || hex(said.hint) !== hex(id)) return no('the table attached is not the one the release committed to');
+  if (hex(proof.transcriptHash) !== hex(id)) return no('the proof is measured against another table');
+  const escrowOut = t.outputs.findIndex((o) => o.pays === 'escrow');
+  if (escrowOut < 0) return no('that table leaves nothing in escrow');
+  const escrow = t.outputs[escrowOut];
+  const chain = [carrier, ...earlier.map((b) => parseTransaction(b))];
+  const known = (i) => chain.some((c) => hex(i.previousTxid) === hex(c.txid));
+  if (!signed.tx.inputs.some(known)) return no('that spend does not spend the release\'s escrow');
+
+  const paidBy = (tx) => tx.outputs.filter((o) => o.script[0] !== 0x6a && hex(o.script) !== hex(escrow.script));
+  const opening = signed.tx.outputs[0] && signed.tx.outputs[0].script[0] === 0x6a ? signed.tx.outputs[0].script.subarray(2) : null;
+  const names = opening && opening.length === 32 && hex(opening) === hex(id);
+  const stray = paidBy(signed.tx).find((o) => !payable(o.script));
+  const total = [...chain.slice(1), signed.tx].reduce((a, tx) => a + paidBy(tx).reduce((b, o) => b + o.value, 0n), 0n);
+  const over = total > escrow.value;
+  if (names && !stray && !over) return no('that spend answers to its table');
+
+  const elsewhere = ownBond(proof, advert);
+  if (elsewhere) return no(elsewhere);
+  return {
+    slashed: true,
+    offence: RELEASE_OFF_TABLE,
+    bond: { txid: proof.bondTxid, vout: proof.bondVout },
+    commitment: slashCommitment(proof),
+    why: !names ? 'the node signed an escrow spend that does not carry payout_table_id' : stray ? 'the node signed an escrow spend into something neither the table\'s entries nor its reserves' : `the node signed escrow spends of ${total} sat where the release left ${escrow.value}`,
+  };
+}
+
+/**
  * DID THIS NODE SIGN A RELEASE THAT PAYS OTHER THAN ITS TABLE? Nothing is injected but the verifier: the release's OP_RETURN comes first
  * and commits to the table, and every output after it is compared with the table's, in order, value and script.
  * `signedResultId` is the release's txid, `transcriptHash` the table's id.
  *
- * ONLY A RELEASE. The table lists the release's own outputs, so an escrow payout has no table to be compared with, and a spend signed by
- * the census key is one FROST signature that names no one.
+ * A spend signed by the census key is one FROST signature that names no one. An escrow spend answers in slashHoldsOnEscrowSpend.
  */
 export function slashHoldsOnReleaseTable({ proof, spend, prevouts, table, advert, verify }) {
   const no = (why) => ({ slashed: false, why });

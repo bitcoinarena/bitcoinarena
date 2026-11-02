@@ -4,21 +4,30 @@
 // which keys stand, and what each epoch has to do about them. No curve and no round of a DKG here: a signature check is injected, as
 // everywhere in this package, and making the key is the seats' work.
 import { Writer, Reader } from './encode.js';
-import { taggedHash, toHex } from './hash.js';
+import { taggedHash, toHex, fromHex } from './hash.js';
 import { TAG } from './constants.js';
 import { BOND_TEMPLATE_V3, BOND_MATURITY_OFFSET } from './bond-script.js';
 
-/** An epoch is `bond_maturity` long. Counted from height 0: the spec names its length and no origin. */
+/** epoch(h) = floor(h / E), E being BOND_MATURITY_OFFSET for the network (kanban #1031). */
 export function censusKeyEpochOf(height, network) {
   const length = BOND_MATURITY_OFFSET[network];
   if (!Number.isInteger(length)) throw new Error(`no epoch length is set for ${network}`);
   return Math.floor(height / length);
 }
 
+/** The census height of epoch e: e x E - census_confirmations. Null before that is a positive height: the network's first key applies. */
+export function censusHeightOfEpoch(epoch, network, censusConfirmations) {
+  const length = BOND_MATURITY_OFFSET[network];
+  if (!Number.isInteger(length)) throw new Error(`no epoch length is set for ${network}`);
+  const height = epoch * length - censusConfirmations;
+  return height > 0 ? height : null;
+}
+
 /**
  * ONE NUMBER PER EPOCH: unit = max(B, ceil(T / S)), shares(node) = floor(sum of its bonds / unit), threshold = floor(2 x total / 3) + 1.
  * `entries` are the census at the epoch's height, { pubkey, bondSats }; `lowestBondMinSats` is B, the lowest bracket's bond_min in force
  * there; `sharesMax` is S. A node under one unit holds no share: a minimum of one would let many small bonds out-count capital.
+ * The census is 5A.4's, before any role filter: a key belongs to the network and not to a role (kanban #1031). B is a network number, never a round's.
  * Holders are numbered in ascending key order, so everyone hands out the same x. Answers { unit, totalSats, total, threshold, holders }.
  */
 export function censusKeyShares({ entries, lowestBondMinSats, sharesMax }) {
@@ -126,17 +135,46 @@ export function standingCensusKeys({ genesisKey = null, anchors = [], judge }) {
 }
 
 /**
- * THE CENSUS' RULE FOR A TEMPLATE-3 BOND: it names the newest key standing at its confirmation. A record anchored in the bond's own
- * block stands for it. An older key is not enough: a node free to name one could pick a dead key and be unslashable. Other templates answer ok.
+ * THE CENSUS' RULE FOR A TEMPLATE-3 BOND: it names a key that was newest at some height of [confirmation - census_confirmations, confirmation]
+ * (kanban #1031). A record anchored in the bond's own block stands for it, and a bond does not fail for a race with an anchor. An older
+ * key is not enough: a node free to name one could pick a dead key and be unslashable. Other templates answer ok.
  */
-export function bondNamesStandingKey(advert, confirmationHeight, standing) {
+export function bondNamesStandingKey(advert, confirmationHeight, standing, censusConfirmations = 0) {
   if (!advert || advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V3) return { ok: true };
   const known = (standing || []).filter((k) => k.height <= confirmationHeight);
   if (!known.length) return { ok: false, why: 'no census key stands at that bond\'s confirmation, so this network cannot take a template-3 bond yet' };
-  const newest = known[known.length - 1];
-  if (toHex(newest.publicKey) !== toHex(advert.censusKey))
+  const from = confirmationHeight - censusConfirmations;
+  const atStart = known.filter((k) => k.height <= from);
+  const window = [...atStart.slice(-1), ...known.filter((k) => k.height > from)];
+  const named = window.find((k) => toHex(k.publicKey) === toHex(advert.censusKey));
+  if (!named) {
+    const newest = known[known.length - 1];
     return { ok: false, why: `that bond names census key ${toHex(advert.censusKey).slice(0, 16)}, and the newest standing at its confirmation is ${toHex(newest.publicKey).slice(0, 16)}` };
-  return { ok: true, epoch: newest.epoch };
+  }
+  return { ok: true, epoch: named.epoch };
+}
+
+/** What a holder signs to name its peg-in address, for the carrying of a fallback: `carrier_peg_in(network, script)`. */
+export const carrierPegInId = (networkId, script) => taggedHash(TAG.carrierPegIn, Uint8Array.from([...networkId, ...script]));
+
+/**
+ * WHO CARRIES THE PLAYERS' SHARE ON A FALLBACK, AND WHERE THERE ARE NO PANELS (kanban #1031): a fallback means the panels did not sign, so panel A
+ * cannot be trusted with it. The census key's holders in descending shares, less `excluded` (hex: the accused, the proof's other slashed
+ * nodes, the round's seats), each with a peg-in address signed by its node key. A holder with none is passed over.
+ *
+ *   holders   censusKeyShares' list; `bonds` Map hex -> sats; `pegIns` Map hex -> { script, signature }
+ *
+ * Answers [{ key, script, bondSats }], the `carriers` of buildSlashPayoutTable.
+ */
+export function fallbackCarriers({ holders, bonds, excluded = [], pegIns, networkId, verify }) {
+  const out = new Set(excluded);
+  return [...holders].sort((a, b) => b.shares - a.shares || (a.key < b.key ? -1 : 1)).flatMap((h) => {
+    const peg = pegIns.get(h.key);
+    if (out.has(h.key) || !peg) return [];
+    let good = false;
+    try { good = verify(peg.signature, carrierPegInId(networkId, peg.script), fromHex(h.key)) === true; } catch { good = false; }
+    return good ? [{ key: h.key, script: peg.script, bondSats: bonds.get(h.key) || 0n }] : [];
+  });
 }
 
 const RESHARE_BELOW_PERCENT = 80;
