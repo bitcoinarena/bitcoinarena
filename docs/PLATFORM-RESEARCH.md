@@ -38,7 +38,7 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
 | 11 | **Hidden-information games** (cards) via the committee's threshold key: the deck is encrypted to the committee's FROST/DKG key and cards are revealed by threshold decryption to their holder | devs | Poker, blackjack and every card game; uses keys the committees already hold | L |
 | 12 | **Turn-based async games** (chess, board games): per-move deadlines, moves posted to seats or Nostr | devs, players | A large family of games the commit-reveal shape cannot carry | L |
 | 13 | **Achievements and badges** (NIP-58) awarded from signed results | players | Collectible status on the player's own Nostr identity | S-M |
-| 14 | **Zaps between players** and tips to devs (NWC) | players, devs | Social money; tips without a custodian | S |
+| 14 | **Zaps between players** and tips to devs (NWC) | players, devs | Social money; tips no platform holds | S |
 | 15 | **Developer devnet** - one command starts a local chain, a federation and seven nodes, with a game template and a replay simulator | devs | The first hour decides whether a developer stays | M |
 | 16 | **Progressive jackpots** - a slice of fees accumulates across rounds for a rare event (a perfect run) | players | Excitement; needs cross-round custody | L |
 

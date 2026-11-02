@@ -4,7 +4,7 @@
 > Windows `bitcoin-arena-node-setup-*.exe` · macOS `bitcoin-arena-node-*.dmg` · Linux `bitcoin-arena-node_*.deb` · or the plain archives.
 > All releases: [Releases](https://github.com/bitcoinarena/bitcoinarena/releases). Guide: [docs.bitcoinarena.io](https://docs.bitcoinarena.io/#run).
 
-Bitcoin Arena is a set of games and prediction markets played for bitcoin, with **no central server**. The nodes *are* the arena:
+Bitcoin Arena is a set of games and prediction markets played for bitcoin on a **federated network**, with no central server. The nodes *are* the arena:
 
 - they hold the rounds;
 - they check every run and every outcome;
