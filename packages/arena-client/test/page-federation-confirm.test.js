@@ -48,7 +48,7 @@ function page({ storage = memStorage(), status = null, checked = null } = {}) {
   const els = {};
   const document = { getElementById: (id) => (els[id] = els[id] || node(id)), createElement: node };
   // the browser's store through the page's one door, window.ARENA_BROWSER_STORE: the same fake as `localStorage`
-  const window = { ARENA_FED_STATUS: status, ARENA_CURVE: {}, ARENA_LEDGER_LOBBY: { nodes: ['https://seat.example'] }, ARENA_BROWSER_STORE: () => storage,
+  const window = { ARENA_TRACK: () => {}, ARENA_FED_STATUS: status, ARENA_CURVE: {}, ARENA_LEDGER_LOBBY: { nodes: ['https://seat.example'] }, ARENA_BROWSER_STORE: () => storage,
     ArenaConfirm: { ask: (host, props) => dialogs.push(props), clear: () => {} },
     ArenaSettings: { federations: (host, props) => { host.drawn = props; } } };   // Settings' list drawn by React (kanban #564): what it is handed   // the page's bundle (React) as a record of what it was asked to show
   const dialogs = [];
