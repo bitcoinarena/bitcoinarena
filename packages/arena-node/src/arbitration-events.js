@@ -123,7 +123,7 @@ export function slashEvent({ network, proof, v = {} }) {
   const status = v.settled ? 'paid out' : (stages.length && stages[stages.length - 1].kept && stages[stages.length - 1].done) ? 'part of the escrow waits for room'
     : stages.some((s) => s.pegIns.some((p) => p.claimedMsat)) ? 'escrow claimed in the federation' : stages.length ? 'escrow sent to the federation' : 'posted';
   const paidMsat = (v.reserves || []).reduce((t, r) => t + BigInt(r.msat), 0n);
-  return { kind: 'slash', network, proof, node: str(v.node), round: str(v.round), entry: str(v.entry), status, txid: v.posted, slashHeight: n(v.slashHeight),
+  return { kind: 'slash', network, proof, ...(v.offence ? { offence: String(v.offence) } : {}), node: str(v.node), round: str(v.round), entry: str(v.entry), status, txid: v.posted, slashHeight: n(v.slashHeight),
     signers: n(v.signers), sats: { bond: str(v.bondSats), escrow: str(v.escrowSats) },
     msat: { players: str(v.playersMsat), reserves: str(stages.length ? paidMsat : v.reservesMsat) },
     escrows: stages.map((s) => ({ txid: str(s.txid), keptSats: str(s.kept && s.kept.sats), pegIns: s.pegIns.map((p) => ({ federation: p.federation, sats: str(p.sats), claimedMsat: str(p.claimedMsat) })) })),

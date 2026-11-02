@@ -4590,9 +4590,8 @@ verify seat of seven: 11.6 sat, against 12.9 without auditors).
   and the rows are what show a stranger which run of which entry it vouched for; (5) **its own type byte under the slash-proof tag**:
   a proof of one kind never reads as the other, and the commitment stays `H_tag(ARENA/v1/SlashProof, proof)`.
 
-Not built: the `AUDIT` to the round's `publication_relays[]`; a contradicted `AUDIT` filed when the seat reads no census for the
-round yet (it is marked and logged, and not filed later); the offence in the arbitration set's published slash event (kanban #723
-names the proof, not its kind); `GET /slash-owing` for the `AUDIT` kind; the operator exclusion (no player declares an operator since §5A.13's ruling). Two choices the
+Not built: the `AUDIT` to the round's `publication_relays[]`; the operator exclusion (no player declares an operator since §5A.13's ruling). A contradicted `AUDIT` found while
+the seat reads no census for the round is filed by a pass once it does, for 6 h; held in memory, so a restart in that time loses it (kanban #1000). Two choices the
 text above does not make: the players are refused at the seat's door and are not taken out of `W`, so an auditor holding no entry
 draws on the same `W` as the seats. An entry void at the door (§15) is left out of `results_hash`.
 

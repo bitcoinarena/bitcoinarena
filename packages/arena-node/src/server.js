@@ -259,7 +259,7 @@ import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { createDonationBallots } from './donation-ballots.js';
 import { decodeDonationProposal, donationProposalId, donationApprovalDigest, encodeDonationProposal, encodeDonationApproval } from '../../arena-protocol/src/donation-vote.js';
 
-import { SLASH_PROOF_BYTES, splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES, splitAuditSlashEvidence, auditSlashProofId } from '../../arena-protocol/src/slash.js';
+import { SLASH_PROOF_BYTES, splitSlashEvidence, AUDIT_CONTRADICTED, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES, splitAuditSlashEvidence, auditSlashProofId } from '../../arena-protocol/src/slash.js';
 import { slashOwing, entriesForSlash } from './slash-owing.js';
 import os from 'node:os';
 import { createNodeFactsBook, measureFacts, measureBandwidth, measureOrigin, signFacts, FACTS_EVERY_MS, PROBE_BYTES } from './node-facts.js';
@@ -2841,13 +2841,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // AND FILED FOR SLASHING (kanban #724, #725): before this the AUDIT was only unpaid. One proof per contradicted AUDIT, with the same
   // standing and verdict as the first result's signers (verify.js fileAuditSlashProofs), against the round's eligible set as the desk
   // took it (its players out); stored, listed at GET /slashes for the arbitration set, and published to the round's relays.
+  const auditFilesWaiting = new Map();   // `${round}:${entry}` -> a contradicted AUDIT whose census was not read yet (kanban #1000)
+  const auditFilesTimer = setInterval(() => {
+    for (const [k, w] of auditFilesWaiting) {
+      if (Date.now() - w.since > 6 * 3600000) { auditFilesWaiting.delete(k); console.log(`[slash] ${k.slice(0, 16)}: no census read in 6 h, its contradicted AUDITs stay unfiled`); continue; }
+      contradictAudits(w.rid, w.eid, 'filed late, once the round\'s census was read').catch((e) => console.log(`[slash] ${e.message}`));
+    }
+  }, 60000);
+  if (auditFilesTimer.unref) auditFilesTimer.unref();
   async function contradictAudits(rid, eid, why) {
     for (const who of auditDesk.contradict(new Uint8Array(rid), `entry ${toHex(eid)}: ${why}`))
       console.log(`[audit] ${toHex(rid).slice(0, 16)}: the AUDIT of ${who.slice(0, 16)} vouched for the result of ${toHex(eid).slice(0, 16)} a valid objection contradicts - held as the fraud proof against it, paid nothing`);
     const audits = auditDesk.contradicted(new Uint8Array(rid));
     if (!audits.length) return;
     const set = auditSetFor(new Uint8Array(rid));
-    if (!set) { console.log(`[slash] ${toHex(rid).slice(0, 16)}: no census read for the round, so its contradicted AUDITs are not filed yet`); return; }
+    // NO CENSUS READ FOR THE ROUND YET (kanban #1000): filed once one is, by the pass below
+    if (!set) { auditFilesWaiting.set(`${toHex(rid)}:${toHex(eid)}`, { rid: new Uint8Array(rid), eid: new Uint8Array(eid), since: Date.now() }); console.log(`[slash] ${toHex(rid).slice(0, 16)}: no census read for the round, so its contradicted AUDITs are not filed yet`); return; }
+    auditFilesWaiting.delete(`${toHex(rid)}:${toHex(eid)}`);
     const players = new Set(round.entriesOf(new Uint8Array(rid)).map((e) => toHex(e.entry.playerPubkey)));
     const eligible = new Map([...set.eligible].filter(([key]) => !players.has(key)));
     try {
@@ -10117,7 +10127,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const row = round.get(rid);
         if (!row) return text(res, 404, 'this node holds no such round');
         const contract = decodeRoundContract(new Uint8Array(row.contract));
-        const held = round.slashProofs(rid, eid);
+        // AND THE PROOFS AGAINST CONTRADICTED AUDITS OF THAT ENTRY (kanban #1000): the auditor's bond owes as the signer's does
+        const held = [...round.slashProofs(rid, eid), ...round.auditSlashProofs(new Uint8Array(rid)).filter((r) => toHex(r.entryId) === toHex(eid)).map((r) => ({ ...r, audit: true }))];
         if (!held.length) return text(res, 404, 'this node filed no slash proof for that run');
 
         // AND THE HEIGHT IS BOUNDED BEFORE ANY CENSUS IS DERIVED AT IT.
@@ -10153,9 +10164,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // result in the objection that held
           let proof, signed, replayed;
           try {
-            const ev = splitSlashEvidence(p.bytes);
+            // an AUDIT's proof names a run, not a signed result: that run's outcome and score come off the entry's results
+            const ev = p.audit ? splitAuditSlashEvidence(p.bytes) : splitSlashEvidence(p.bytes);
             proof = ev.proof;
-            const b = decodePlayerResult(splitSignedResult(ev.signedResult).body);
+            const signedBytes = p.audit ? round.results(rid, eid).map((r) => r.bytes).find((x) => { try { return toHex(runIdOf(decodePlayerResult(splitSignedResult(x).body))) === toHex(proof.contradictedRunId); } catch { return false; } }) : ev.signedResult;
+            if (!signedBytes) throw new Error('this seat holds no result of the run that AUDIT vouched for');
+            const b = decodePlayerResult(splitSignedResult(signedBytes).body);
             signed = { outcome: b.outcome, score: b.score };
             const held = round.objectionBundle(rid, eid);
             const o = held ? decodeObjectionBundle(new Uint8Array(held)).objection : null;
@@ -10167,9 +10181,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // what VERIFYING those two objects concludes. Every proof in this table was filed by
           // `fileSlashProofs`, which files exactly one kind - a replay that contradicts a signed result -
           // so that is the offence named here. A proof arriving by any other road would need its own
-          // verdict carried with it, and until one does, none is invented.
+          // verdict carried with it, and until one does, none is invented. The AUDIT table holds one kind too (kanban #1000).
           const said = await slashOwing({
-            proof, offence: REPLAY_CONTRADICTS, contract, roundIdBytes: new Uint8Array(rid), entries, signed, replayed, settledOnFalse, paid,
+            proof, offence: p.audit ? AUDIT_CONTRADICTED : REPLAY_CONTRADICTS, contract, roundIdBytes: new Uint8Array(rid), entries, signed, replayed, settledOnFalse, paid,
             payoutShares: rule.ok ? rule.payoutShares : null, slashHeight: height, tipHeight: at.tipHeight,
             bondSatsOf: async () => bondOf(proof.nodePubkey),
           });
