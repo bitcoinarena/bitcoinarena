@@ -577,4 +577,13 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
     requiredProtocolVersion: 2,
   }),
+  'bb29d4291673b4bd019216bc8da4d749ef3996e6184aa5d1f68a4feea3b0ed8c': Object.freeze({
+    name: 'nextblock',
+    cores: Object.freeze({
+      '8cbc74b27bee78727fa395fcc5e5181beb4072f837adbee0e9ea278ff427d387': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+    }),
+    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    requiredProtocolVersion: 11,
+  }),
 });

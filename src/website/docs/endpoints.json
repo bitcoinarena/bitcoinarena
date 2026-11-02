@@ -1729,6 +1729,204 @@
   "pathParams": []
  },
  {
+  "method": "POST",
+  "path": "/owner/market-publish",
+  "params": "body JSON signed request, action \"market-publish\", args {manifest}",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 {ok, game, already?}; 400 no manifest, or one that names no source; 401; 403 not a bonded node; 409 no installed apps or no donation set in force; 422",
+  "purpose": "Publishes a signed market from the owner's page: a bonded node takes the manifest, which must name a source, and hosts it. Other seats host it from there.",
+  "audience": "operator/monitoring",
+  "line": 6547,
+  "summary": "Publish a signed market",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "description": "Signed request, action \"market-publish\", args {manifest}."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok, game, already?}."
+   },
+   {
+    "status": "400",
+    "contentType": "application/json",
+    "description": "Not a manifest, or it names no source."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Not the owner."
+   },
+   {
+    "status": "403",
+    "contentType": "application/json",
+    "description": "Only a bonded node publishes a market."
+   },
+   {
+    "status": "409",
+    "contentType": "application/json",
+    "description": "This node keeps no installed apps, or knows no donation set in force."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/market-test",
+  "params": "body JSON signed request, action \"market-test\", args {example} or a market source",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 the test's answer, {ok, why?} on a refusal; 401",
+  "purpose": "Runs a market's source once, or a proposed source's example, in the node's sandbox and answers what it read, against the listed sources.",
+  "audience": "operator/monitoring",
+  "line": 7004,
+  "summary": "Test a market source",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "description": "Signed request, action \"market-test\", args {example} or a market source."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The result of the run; {ok: false, why} when it was refused."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Not the owner."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/source-proposal",
+  "params": "body JSON signed request, action \"source-proposal\", args {entry, txid?}",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 {ok, paid, depositSats, outputs?, txid?} without txid, the signed proposal with a confirmed one; 400; 401; 422 the example did not answer; 501 no ballot",
+  "purpose": "Proposes a new market source from the owner's page. Without txid: the deposit, paid from the bond wallet, or what to pay where the node has none. With a confirmed txid: the node's key signs the proposal and every seat is asked to take it. The example is read again at each step.",
+  "audience": "operator/monitoring",
+  "line": 7017,
+  "summary": "Propose a market source",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "description": "Signed request, action \"source-proposal\", args {entry, txid?}."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The deposit or the signed proposal."
+   },
+   {
+    "status": "400",
+    "contentType": "application/json",
+    "description": "The plan does not stand, or the deposit could not be paid."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Not the owner."
+   },
+   {
+    "status": "422",
+    "contentType": "application/json",
+    "description": "The example did not answer."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "This node reads no ballot."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/source-vote",
+  "params": "body JSON signed request, action \"source-vote\", args {proposalId, choice}",
+  "auth": "owner's signed JSON request {pubkey, action, args, atMs, sig} (BIP-340 over [node, action, args, atMs], within 2 min, once) or a Nostr kind 27235 event; key must be the claimed owner",
+  "returns": "200 {ok, sent, opReturn?, txid?}; 400 no kept proposal or no choice; 401; 422 an added source did not answer",
+  "purpose": "The node's vote on a kept source list proposal: YES, NO or ABSTAIN, as an OP_RETURN signed by its key, sent from the bond wallet or handed back to be sent by hand. Before a YES each added source's example is read here.",
+  "audience": "operator/monitoring",
+  "line": 7048,
+  "summary": "Vote on a market source list",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "description": "Signed request, action \"source-vote\", args {proposalId, choice}."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok, sent, opReturn?}."
+   },
+   {
+    "status": "400",
+    "contentType": "application/json",
+    "description": "A vote names a kept proposal and YES, NO or ABSTAIN."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Not the owner."
+   },
+   {
+    "status": "422",
+    "contentType": "application/json",
+    "description": "An added source did not answer here."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/market-sources",
+  "params": "query network (hex, optional)",
+  "auth": "none",
+  "returns": "200 JSON {hosts[], entries[], since, by, history[], donationSetId}",
+  "purpose": "The market source list live on this seat's chain, as the bonded nodes voted it, and the donation set id in force. network names the chain; this seat's by default.",
+  "audience": "game/market developer",
+  "line": 7276,
+  "summary": "The market source list",
+  "query": [
+   {
+    "name": "network",
+    "required": false,
+    "description": "Network id, 64 hex."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{hosts[], entries[], since, by, history[], donationSetId}."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
   "method": "GET",
   "path": "/proposals",
   "params": "none",
