@@ -239,6 +239,7 @@ import { decodeDonationProposal, donationProposalId, donationApprovalDigest, enc
 
 import { SLASH_PROOF_BYTES, splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES } from '../../arena-protocol/src/slash.js';
 import { slashOwing, entriesForSlash } from './slash-owing.js';
+import { createNodeFactsBook, measureFacts, measureBandwidth, signFacts, FACTS_EVERY_MS, BANDWIDTH_EVERY_MS, PROBE_BYTES } from './node-facts.js';
 import { StakeSecrets, encodeShareAnswer, SEALED_ANSWER_BYTES } from './stake-secret.js';
 import { Dkg, runAgainIn } from './dkg.js';
 import { reserveEpochId, decodeContribution } from '../../arena-protocol/src/dkg.js';
@@ -4511,6 +4512,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // federation it holds a record of, signs once the last session has not moved for abandon_blocks, and keeps its peers' observations
   const fedClocks = FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet;
   const schnorrVerify = verifySchnorrKept;   // kept per (sig, msg, key) - verified.js (kanban #576)
+  // WHAT THIS NODE RUNS ON, SAID TO THE NETWORK (kanban #984): measured and signed hourly, handed to every seat; each seat keeps every node's last record
+  const nodeFacts = round.db ? createNodeFactsBook({ db: round.db, verify: schnorrVerify,
+    isBonded: (hex) => { const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false }; return now.ok ? now.entries.some((e) => toHex(e.pubkey) === hex) : null; } }) : null;
+  let bandwidthMbps = null, bandwidthAtMs = 0;
+  const sayFacts = async () => {
+    const peers = everySeat();
+    if (Date.now() - bandwidthAtMs >= BANDWIDTH_EVERY_MS) { bandwidthAtMs = Date.now(); bandwidthMbps = await measureBandwidth(peers).catch(() => null); }
+    const facts = measureFacts({ release: releaseHere().version || null, guardian: !!process.env.ARENA_GUARDIAN, bandwidthMbps });
+    const said = signFacts({ node: round.pubkey, atMs: Date.now(), facts, sign: (d) => schnorr.sign(d, round.identity.secret) });
+    nodeFacts.offer(said);
+    await Promise.all(peers.map((u) => fetch(`${u}/node-facts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(said), signal: AbortSignal.timeout(10000) }).catch(() => null)));
+  };
+  if (nodeFacts && process.env.ARENA_NODE_FACTS !== '0') {
+    const t0 = setTimeout(() => sayFacts().catch((e) => console.log(`[facts] ${e.message}`)), 60000 + Math.random() * 300000); if (t0.unref) t0.unref();
+    const t = setInterval(() => sayFacts().catch((e) => console.log(`[facts] ${e.message}`)), FACTS_EVERY_MS); if (t.unref) t.unref();
+  }
   // ... and kept across restarts beside the held absences (kanban #326: a roll counted abandon_blocks again from the restart)
   const haltsFile = db && db.arenaPath ? `${db.arenaPath}.halts.json` : null;
   halts = typeof chainTip === 'function' ? createHalts({ records: fedRecords, censusSeats: () => fedRecords.censusKeys(), clocks: fedClocks, verify: schnorrVerify,
@@ -9805,6 +9822,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // that would relieve it and the seated guardians below it, the gateways' peg-ins against P* (this seat's own federation: the gateways
       // its guardian watches) - and the network's band, B*_net and the installer's minimum bond. Public, read by the health page, the
       // node dashboard, the owner page and the installer
+      // WHAT NODES SAID ABOUT THEMSELVES AND WHO DOES NOT ANSWER (kanban #984, #979): a node's last record stays readable here after it went offline. A record is that node's
+      // word and decides nothing; `unanswered` is this seat's own view, so another node can compare and ask the address itself
+      if (req.method === 'GET' && url.pathname === '/node-facts') {
+        return json(res, 200, { node: toHex(round.pubkey), facts: nodeFacts ? nodeFacts.list() : [], unanswered: seating && seating.unanswered ? seating.unanswered() : [] });
+      }
+      if (req.method === 'GET' && url.pathname === '/node-facts/probe') {
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store', ...CORS });
+        return res.end(Buffer.alloc(PROBE_BYTES));
+      }
+      if (req.method === 'POST' && url.pathname === '/node-facts') {
+        if (!nodeFacts) return text(res, 503, 'this seat keeps no records');
+        let said; try { said = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a record is JSON'); }
+        const r = nodeFacts.offer(said);
+        if (r.ok && r.kept) for (const u of everySeat()) fetch(`${u}/node-facts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(said), signal: AbortSignal.timeout(10000) }).catch(() => null);
+        return r.ok ? json(res, 200, r) : text(res, 409, r.why);
+      }
       if (req.method === 'GET' && url.pathname === '/capacity') {
         const bondMin = BigInt(process.env.ARENA_BOND_MIN_GUARDIAN || 50000), pegInMin = BigInt(process.env.ARENA_PEG_IN_MIN || 50000);
         const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
