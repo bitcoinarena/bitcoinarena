@@ -376,9 +376,9 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
     verifies. The 4 old bonds are spent at maturity, refused one block
     before.
 14. **abandonment to slash:** the attestation set of item 13 committed in a
-    slashing transaction by the arbitration keys, 75% evenly to the active
-    census nodes minus that federation's guardians, 25% to the donation
-    set; and a departure with notice that is *not* slashed and leaves the
+    slashing transaction by the arbitration keys (run under the split of the
+    time; since kanban #976 the rest of a slashed bond goes to the protocol
+    reserves, nothing to nodes or developers); and a departure with notice that is *not* slashed and leaves the
     bond and the census seat as they were. **RUN 2026-10-13 ~22:40Z (`tools/rehearsal-14.mjs`, private regtest on the test host):** census
     of 8 bonded nodes, A = n1-n4 and B = n5-n8, 3 of 4. A4 absent 10 blocks
     (abandon_blocks): 2 attestations, or one spanning 9 blocks, prove
@@ -419,7 +419,8 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
     slashed into the escrow; the federation halts for `abandon_blocks`; the
     two seated guardians publish the spent set; each wallet's client
     presents its notes on its own start and is paid at face from the
-    escrow; a note already spent is refused; the remainder goes 75% / 25%;
+    escrow; a note already spent is refused; the remainder goes on (75% / 25%
+    when this was run; to the protocol reserves since kanban #976);
     then the same with **no** spent set published, paid pro rata, the rate
     shown. **RUN 2026-10-14 ~01:27-01:35Z (`tools/rehearsal-17-regtest.sh` + `tools/rehearsal-17.mjs`, private
     regtest on the test host, fedimintd with `fedimint-spent-nonces.patch`):**
@@ -623,9 +624,9 @@ multiplayer_p2p.md §22A "The donation set", §24A and its payment table (2026-1
 - **Guardians earn from the node fee** (§22A; 5% in Bitcoin Arena): three equal pools, game/verify,
   settlement, and the seated guardians of the round's federation, paid in
   the settlement transaction. The total is 5% in Bitcoin Arena (2026-10-06).
-- **A slashed guardian bond** goes 75% evenly to the active census nodes and
-  25% to the developers (§22A's donation set), never to the guardians who
-  attested the absence (§23A.5).
+- **A slashed guardian bond** pays whoever it owes, and the rest goes to the
+  protocol reserves (§23A.5, kanban #976). Nothing goes to the nodes, the
+  developers or the guardians who attested the absence.
 - **Leaving is free.** A guardian who serves his departure notice keeps his
   bond and his census seat; only leaving without notice is slashed (§23A.5).
 - **Every role is opt-in** (§5A.1): a node advertises what it takes part in
@@ -642,13 +643,12 @@ multiplayer_p2p.md §22A "The donation set", §24A and its payment table (2026-1
   bonds wait in a per-federation escrow under the arbitration keys; a
   federation HALTED for `abandon_blocks` is liquidated - the seated
   guardians publish the spent-note set, the client presents every unspent
-  note on its own, each is paid at face - and only the remainder goes 75%
-  to the active census nodes and 25% to the developers, as it does whole
-  when a federation CLOSES with nothing lost.
+  note on its own, each is paid at face - and only the remainder goes to
+  the protocol reserves, as the whole bond does when a federation CLOSES
+  with nothing lost.
 - **Nothing is ever burned** (§5A.3, §23A.5): every slash remainder, a
-  round's or a federation's, after a halt too, goes 75% to the active
-  census nodes and 25% to the developers. `slashRemainder: BURN` is
-  withdrawn.
+  round's or a federation's, after a halt too, goes to the protocol reserves.
+  `slashRemainder: BURN` is withdrawn.
 - **The client** (spec §24B): balance always in the lobby, never in the
   game; settings icon top right with name, donation 0-5% and the seed
   phrase behind a **Backup** button; a no-backup notice on every load until

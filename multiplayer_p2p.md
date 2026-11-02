@@ -21,11 +21,10 @@
 **Date:** 2026-10-06
 
 > **A slash pays the real loss, the rest goes to the reserves (2026-11-02,
-> kanban #976).** Each harmed player gets what they lost, once. The rest of a
-> slashed bond goes to the protocol reserves: nothing to nodes or developers,
-> nothing back to the slashed node, nothing burned. It is a new slashing rule
-> with a new hash; rounds naming the old one keep the old split. §5A.3, §23A.5,
-> §27A.9.2.
+> kanban #976).** Each harmed player gets what they lost, once, and nothing
+> more. The rest of a slashed bond goes to the protocol reserves. **Nothing goes
+> to the nodes, nothing to the developers**, nothing back to the slashed node,
+> nothing is burned. §5A.3, §23A.5, §27A.9.2.
 
 > **A slash pays who was harmed (2026-11-02, kanban #975).** A false result
 > that raised the player it names no longer pays that player: the other paying
@@ -80,8 +79,8 @@
 > update transaction, not a new bond; maturity is not expiry (§5A.2,
 > §5A.3B).
 > Later the same day: **guardians earn from the 2%** (§22A, three pools);
-> a slashed guardian bond goes **evenly to the active census nodes and 25%
-> to the developers**, never to the witnesses (§23A.5); and a guardian can
+> a slashed guardian bond goes **to whoever it owes, then to the protocol
+> reserves** (2026-11-02, §23A.5), never to the witnesses; and a guardian can
 > **leave a federation with notice and keep his bond** as a census node
 > (§23A.5); every role is opt-in (§5A.1). And: **FEDERATION is the only
 > custody** - THRESHOLD_LN does not exist, past rounds included, no decode-only
@@ -91,9 +90,9 @@
 > what the smallest halting set's bonds cover, slashed guardian bonds wait
 > in escrow until the federation is CLOSED or liquidated, and a halted
 > federation is **liquidated** - every unspent note paid at face from the
-> bonds of those who left - before 75% of the rest goes to the nodes and
-> 25% to the developers (§23A.3, §23A.5), on a halt too, after every
-> note is paid; **nothing is ever burned**, in §5A.3 either.
+> bonds of those who left - before the rest goes to the protocol reserves
+> (§23A.3, §23A.5, 2026-11-02), on a halt too, after every note is paid;
+> **nothing is ever burned**, in §5A.3 either.
 > Timings are fast: 36 h for the
 > liquidation claim window, 48 h abandonment, 72 h notice and founding,
 > four weeks of drain (§23A.1). The client: the balance always in the lobby
@@ -2155,26 +2154,30 @@ a transaction is §5A.3B.
 | Signing an `AUDIT` (§13A.1) over a result a valid objection contradicts (kanban #724, #725) | The `AUDIT` + its signature + the rows it vouched for + transcript + receipts + replay of the objection that held |
 
 **Where a slashed bond goes (RULED 2026-11-02, kanban #976).** Each affected
-player gets their **real loss**, once, and **the rest of the bond goes to the
-protocol reserves** (§27A.9). Nothing goes to the nodes or the developers,
-nothing goes back to the slashed node, and nothing is burned.
+player gets their **real loss**, once, and nothing more. **The rest of the bond
+goes to the protocol reserves** (§27A.9). **Nothing goes to the nodes, nothing
+goes to the developers**, nothing goes back to the slashed node, and nothing is
+burned. That holds for every offence and every bond, a guardian's too (§23A.5).
+Not built yet: kanban #978.
 
 - **The real loss** is what the player should have received less what they did
   receive, floored at zero: `F(contract, membership, true results)` against the
-  settlement that happened. It is an amount, not a share of the bond. A player
+  settlement that happened. It is an amount, never a share of the bond. A player
   a false result raised has no loss. After an objection in time nobody has one:
-  the result was corrected before any money moved, and the whole bond goes to
-  the reserves. A doubled result with no replay shows no loss; a player it
-  harmed is paid through the replay's proof.
+  the result was corrected before any money moved, so no player is paid and the
+  whole bond goes to the reserves. A doubled result with no replay shows no
+  loss; a player it harmed is paid through the replay's proof.
 - **Once.** Several bonds slashed for one round pay one loss. The proofs of a
   round are taken in ascending proof id; the first pays each loss, and each
   later one pays only what is still owed. If a bond cannot cover what it owes,
-  it pays pro rata by loss and the next proof pays the rest.
+  it pays pro rata by loss and the next proof pays the rest. A proof is stored
+  per (round, entry, node), and each bond's slash is its own transaction.
 - **Why the reserves.** Whatever pays a recipient is what a colluder aims for:
   a friend's entry, a share of the census, a developer's share. Nobody collects
-  from the reserves by being in the round. They pay only a proposal that passed
-  §27A.9.5's vote: bonds 3 months old, 60 % of votes and 20 % of everyone, at
-  most 10 % of the reserves, after 2 weeks.
+  from the reserves by being in the round, by being a node or by being a
+  developer. They pay only a proposal that passed §27A.9.5's vote: bonds 3 months
+  old, 60 % of votes and 20 % of everyone, at most 10 % of the reserves, after 2
+  weeks.
 - **Why nothing goes back to the node.** Repaying the damage is not a penalty.
   A node that pays back only what it took risks nothing by cheating, and keeps
   it whenever nobody looks.
@@ -2182,33 +2185,20 @@ nothing goes back to the slashed node, and nothing is burned.
   nodes' fee to look. Any share of a slash is money a colluder can collect.
 
 **The rule's text and hash.** This is `ARENA rule slashing v2`, with a new
-`slashing_rules_hash`. A round names the rule it settles under, so a round
-naming v1 keeps the split below, and a seat of this version takes both.
+`slashing_rules_hash`, and the only slashing rule mainnet knows. The v1 split is
+withdrawn. A testnet round published under v1's hash keeps that hash until it
+has settled.
 
-Under v1, slashed bonds are distributed: half to the affected players of that
-round; the other half 75% evenly to the active census nodes at the slashing
-height minus the round's own seats (the witnesses) and 25% to the donation set
-of §22A - the developers. Three words in that sentence are defined here
-(RULED 2026-09-22, on the implementer's three questions; the owner's order,
-"spec only"):
+Two words in that rule are defined here:
 
-- **The slashing height** is a height the arbitration set **names**, not
-  one the chain hands back. `slash_height` is any height at or below the
-  chain tip when the arbitration keys sign, and at or above the round's
-  `census_height`; it is written into the slashing transaction's own
-  `OP_RETURN` (§5A.3B step 4: `H(fraud_proof) ‖ slash_height ‖ hint`) and
-  the transaction's `nLockTime` is set to it, so it cannot confirm earlier
-  than the height it names (template 3: only the `OP_RETURN`, §5A.3B). "The active census nodes at the slashing
-  height" is then the census **function of §5A.2 evaluated at
-  `slash_height`** - bond outputs confirmed `census_confirmations` deep and
-  unspent at that height, eligible under §5A.3 - exactly as a round reads
-  its census at `census_height`. Every observer recomputes the recipient
-  list from chain data at a height the transaction itself commits to;
-  nothing about the transaction's own confirmation enters it. The height
-  at which a bond output happens to be spent is **not** the slashing
-  height: that height exists for spends that are not slashes at all.
-- **The affected players** are the entries the offence harmed, and each
-  proof names them mechanically, so a recorder needs no judgement:
+- **The slashing height** is a height the arbitration set **names**, not one the
+  chain hands back: any height at or below the chain tip when the slash is
+  signed, and at or above the round's `census_height`. It is written into the
+  slash's `OP_RETURN` (§5A.3B: `H(fraud_proof) ‖ slash_height ‖ hint`). It
+  records when the proof was ruled on, and no payment depends on it.
+- **The affected players** are the entries the offence can have harmed, and each
+  proof names them mechanically, so a recorder needs no judgement. Each is paid
+  its real loss; an entry with none gets nothing.
 
   | Offence (table above) | `affected[]` |
   |---|---|
@@ -2222,42 +2212,27 @@ of §22A - the developers. Three words in that sentence are defined here
   | A release with no valid proof | the node it was taken from, in place of players |
   | A release or escrow payout against its table | the entries of that table |
 
-  **The player a false result favoured is never paid for it (RULED
-  2026-11-02, kanban #975).** The named player is not always the one harmed.
-  Comparing the signed result with the replay's, as a payout reads them - a
-  delivery over a stake handed back over a lost one, then the score - a result
-  that **lowered** them harmed them. One that **raised** them harmed everybody
-  else, and paying them would hand a committee's friend the slash for the lie
-  told in their favour; so do one that moved neither, and a doubled result,
-  which says nothing about which way it went. With no other paying entry nobody
-  was harmed, and that half goes to the pool: 75 % nodes, 25 % developers.
+  **The player a false result favoured is never paid for it (RULED 2026-11-02,
+  kanban #975).** The named player is not always the one harmed. Comparing the
+  signed result with the replay's, as a payout reads them - a delivery over a
+  stake handed back over a lost one, then the score - a result that **lowered**
+  them harmed them. One that **raised** them harmed everybody else; so do one
+  that moved neither, and a doubled result, which says nothing about which way
+  it went.
 
-  §13A's "the affected player, another player in the round" is the same
-  word: the one the offence names first, and the others after. The
-  players' half is divided among `affected[]` **pro rata by net stake**
-  (§18 weights entitlement by net stake, and so does the harm). It is paid
-  the only way a player can be paid: the slashing transaction's players'
-  output goes to an escrow under the arbitration keys (§23A.5's shape),
-  the arbitration set pegs it into the round's federation, and builds one
-  **payout contract per affected entry** to that entry's `player_pubkey`
-  (the refund key of its lock, §23.1 step 4; public in the lock). The
-  client collects it like any payout (§24): pending, then in the wallet, no
-  press. A bond's on-chain outputs are three - players' escrow, nodes,
-  developers - never one per player; sixty players' shares of half a bond
-  are federation amounts in msat, not dust on the chain.
-- **One round, several slashed nodes: each bond pays the players its own
-  proof names**, and nothing is pooled. A proof is stored per (round,
-  entry, node) and its `affected[]` is a function of its own offence; two
-  proofs against two nodes are two slashing transactions, two escrows, two
-  sets of payout contracts, and an entry named by both is paid from both.
-  The witnesses excluded from each bond's nodes' share are the round's
-  seats, all of them, the other slashed ones included - a slashed node is
-  not an active census node at any height after its spend in any case. **Nothing is ever burned (RULED 2026-09-21),
-here or anywhere in this protocol**: a slash that destroys value pays
-nobody for the harm and makes the slashing itself worthless to prove, so
-every remainder in this document has a recipient. The Round Contract's
-`slashRemainder` therefore has one valid value, the split above; `BURN` is
-withdrawn.
+  §13A's "the affected player, another player in the round" is the same word:
+  the one the offence names first, and the others after. A player is paid the
+  only way a player can be paid: the slash's one output goes to an escrow, which
+  is pegged into the round's federation, and each loss becomes one **payout
+  contract** to that entry's `player_pubkey` (the refund key of its lock, §23.1
+  step 4; public in the lock). The client collects it like any payout (§24):
+  pending, then in the wallet, no press. Sixty players' losses are federation
+  amounts in msat, not dust on the chain.
+
+**Nothing is ever burned (RULED 2026-09-21), here or anywhere in this protocol**:
+a slash that destroys value pays nobody for the harm, so every remainder in this
+document has a recipient: the protocol reserves. The Round Contract's
+`slashRemainder` has one valid value, this rule; `BURN` is withdrawn.
 
 ## 5A.3B Bond construction and how a fraud proof becomes a slash
 
@@ -2355,12 +2330,9 @@ serve hands its accusers the evidence itself.
    census_height; nLockTime = slash_height.
 4. That transaction MUST carry OP_RETURN = H(fraud_proof) ‖ slash_height ‖
    retrieval hint.
-5. Outputs pay the distribution of §5A.3. Rule v2: one escrow output, then
-   each loss and the rest to the reserves, both through the federation. Rule
-   v1, computed from the census at slash_height: the players' escrow, the
-   active nodes' share, the developers' share; the height is an input the
-   signers chose, never the height the transaction later confirms at (RULED
-   2026-09-22).
+5. One output, an escrow, pays §5A.3: each player's real loss, then the rest
+   to the protocol reserves, both through the federation. Nothing to the nodes
+   or the developers.
 ```
 
 Because the slashing transaction commits to the proof, **every slash is
@@ -2441,7 +2413,7 @@ anyone from the bond and the round:
 ```text
 release       <slash_hold_blocks> CHECKSEQUENCEVERIFY DROP
               <5-of-7 panel A>  <5-of-7 panel B>
-              -> the distribution of §5A.3, in one transaction
+              -> §5A.3: each real loss, then the rest to the reserves
 
 return        <slash_return_blocks> CHECKSEQUENCEVERIFY DROP
               <bond_maturity> CHECKLOCKTIMEVERIFY DROP
@@ -2463,7 +2435,7 @@ fallback      <slash_fallback_blocks> CHECKSEQUENCEVERIFY DROP
    proof, sign the release, with
    OP_RETURN = H(fraud_proof) ‖ slash_height ‖ H(payout_table). The table
    names every affected entry and its share.
-5. The release pays the distribution of §5A.3. Panel A's members bring the
+5. The release pays §5A.3: each real loss, then the rest to the reserves. Panel A's members bring the
    players' share into the federation and pay the table, in score order, none
    holding more than its own bond.
 ```
