@@ -2095,21 +2095,6 @@ export class Round {
       .map((r) => ({ roundId: new Uint8Array(r.round_id), ...this.payout(new Uint8Array(r.round_id)) }));
   }
 
-  /** One signer node's signature over a round's payout table. */
-  putPayoutSignature(roundIdBytes, nodePubkey, bytes) {
-    this.db.prepare(
-      'INSERT OR IGNORE INTO payout_signatures (round_id, node_pubkey, bytes, seen_ms) '
-      + 'VALUES (?, ?, ?, ?)')
-      .run(Buffer.from(roundIdBytes), Buffer.from(nodePubkey), Buffer.from(bytes), this.now());
-  }
-
-  payoutSignatures(roundIdBytes) {
-    return this.db.prepare(
-      'SELECT node_pubkey, bytes FROM payout_signatures WHERE round_id = ? ORDER BY node_pubkey')
-      .all(Buffer.from(roundIdBytes))
-      .map((r) => ({ nodePubkey: new Uint8Array(r.node_pubkey), bytes: new Uint8Array(r.bytes) }));
-  }
-
   /** One signer node's signed posting of a run's transcript; one per signer node (P2). */
   putPosting(roundIdBytes, entryIdBytes, signerNodePubkey, bytes) {
     return this.db.prepare(
@@ -2906,6 +2891,21 @@ export class Round {
   lockSettlement(roundIdBytes) {
     const r = this.db.prepare('SELECT txid, message, signature, state, why, made_ms FROM lock_settlements WHERE round_id = ?').get(Buffer.from(roundIdBytes));
     return r ? { txid: r.txid, message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), state: r.state, why: r.why, madeMs: Number(r.made_ms) } : null;
+  }
+
+  /** The acks a settlement's signing stood on, and their table (kanban #1040). The row with the most acks stands: a retry never shortens it. */
+  putSettlementAcks({ roundId, scope, txid, tableId, table, acks }) {
+    const held = this.db.prepare('SELECT length(acks) AS n FROM settlement_acks WHERE round_id = ? AND scope = ? AND txid = ?').get(Buffer.from(roundId), scope, String(txid));
+    if (held && Number(held.n) >= acks.length) return;
+    this.db.prepare('INSERT OR REPLACE INTO settlement_acks (round_id, scope, txid, table_id, tbl, acks, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(roundId), scope, String(txid), Buffer.from(tableId), Buffer.from(table), Buffer.from(acks), this.now());
+  }
+
+  settlementAcksOf(roundIdBytes, scope = null) {
+    const rows = scope === null
+      ? this.db.prepare('SELECT scope, txid, table_id, tbl, acks, made_ms FROM settlement_acks WHERE round_id = ? ORDER BY made_ms, txid').all(Buffer.from(roundIdBytes))
+      : this.db.prepare('SELECT scope, txid, table_id, tbl, acks, made_ms FROM settlement_acks WHERE round_id = ? AND scope = ? ORDER BY made_ms, txid').all(Buffer.from(roundIdBytes), scope);
+    return rows.map((r) => ({ scope: r.scope, txid: r.txid, tableId: new Uint8Array(r.table_id), table: new Uint8Array(r.tbl), acks: new Uint8Array(r.acks), madeMs: Number(r.made_ms) }));
   }
 
   /** One federation's settlement of a round that takes any federation (2026.0.3): the same row as a round's own. */

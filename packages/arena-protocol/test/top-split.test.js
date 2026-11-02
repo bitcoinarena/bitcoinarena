@@ -16,7 +16,6 @@ import {
   PAYOUT_SHARES_MAX, PAYOUT_SHARES_TOTAL,
 } from '../src/payout.js';
 import { lockActions } from '../src/lock-action.js';
-import { slashHoldsOnTable } from '../src/slash.js';
 import { TOP_SPLIT_VERSION, speaksVersion } from '../src/constants.js';
 import { toHex, fromHex } from '../src/hash.js';
 import { KNOWN_GOOD_GAMES } from '../src/known-games.js';
@@ -308,10 +307,10 @@ test('lockActions settles a split round by the split table: the losers\' locks a
 
 // ---- F in a slash proof is the game's rule ----
 
-test('slash row 3 reads no table on unsigned bytes: a curve table for a split round is refused by name (kanban #1035)', () => {
-  const es = [...winners(3), ...losers(5)];
-  const bytes = encodePayoutTable({ roundId: ROUND, table: computePayoutTable({ roundId: ROUND, entries: es, minScore: 5, payoutShares: null }).table });
-  const no = slashHoldsOnTable({ signedTable: bytes, entries: es, contract: { minScore: 5 }, manifest: signed(SPLIT) });
-  assert.equal(no.slashed, false);
-  assert.match(no.why, /refused: row 3/);
+test('slash row 3 needs the game\'s manifest once F may be its split: refused without it, and with another game\'s', () => {
+  const m = signed(SPLIT);
+  const contract = { gameId: gameIdOf(m), protocolVersion: 4, minScore: 5 };
+  assert.equal(payoutRuleForRound(contract, null).ok, false);
+  assert.match(payoutRuleForRound(contract, signed(CURVE)).why, /the manifest handed in is/);
+  assert.deepEqual(payoutRuleForRound(contract, m), { ok: true, payoutShares: payoutSharesOf(m) });
 });

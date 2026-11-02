@@ -18,6 +18,12 @@ import { b32, LOSER, STAKE } from './window-fixture.js';
 import { seatsAndAuditor, winnerUnder, heldAt, owedTable, WEBSITE, key, str } from './protocol22-fixture.js';
 import { roundSplit } from '../../arena-protocol/src/reserves.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
+import { splitAcks, splitSignedAck, settlementAckId, countAcks, decodeSettlementTable } from '../../arena-protocol/src/settlement-ack.js';
+import { slashHoldsOnTable } from '../../arena-protocol/src/slash.js';
+import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
+import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
+import { runOf } from '../../arena-protocol/src/rerun.js';
+import { pluginForRound } from '../src/plugins.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
@@ -90,6 +96,34 @@ test('a paid protocol-22 round on seven seats with an auditor: the reserve key k
     // THE DEVELOPERS' AND THE RESERVE OUTPUTS: paid at the lock, still held by the federation for their keys
     for (const p of facts.devOutputs) for (const o of p) assert.ok(o && o.msat, 'a developer output is not held for its key');
     for (const o of facts.reserveOutputs) assert.deepEqual(o, { key: toHex(w.reserveKey), msat: split.reservesMsat });
+
+    // THE ACKS, PUBLISHED WITH THE SETTLEMENT (§5A.3, kanban #1040): a stranger reads them from a seat's door and checks the threshold from the bytes,
+    // and the table this round really settled on stands against F of the round's real FINAL signatures, for every seat that acked it
+    const door = await (await fetch(`http://127.0.0.1:${w.nodes[1].port}/settlement-acks?round=${toHex(w.rid)}`)).json();
+    assert.equal(door.settlements.length, 1, 'one transaction acked');
+    const published = door.settlements[0];
+    assert.equal(published.txid, got.message, 'the acks name the settled transaction');
+    const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
+    const ackSeats = w.c.nodes;
+    const acks = splitAcks(fromHex(published.acks));
+    const counted = countAcks({ acks, seats: ackSeats, slots: w.c.settlementSlots, roundId: w.rid, payoutTableId: fromHex(published.payoutTableId), settlementTxid: fromHex(published.txid), verify });
+    assert.equal(counted.final, true, `${counted.agreed} of ${counted.needed} acks stand from the door`);
+    const table = decodeSettlementTable(fromHex(published.table));
+    assert.equal(table.rows.length, 2, 'one row a played entry');
+    const seat = w.nodes[0].round;
+    const stored = seat.get(w.rid).contract;
+    const contract = decodeRoundContract(new Uint8Array(stored));
+    const finals = [won, lost].map((p) => {
+      const signedResult = seat.results(w.rid, p.eid)[0].bytes;
+      const body = decodePlayerResult(splitSignedResult(signedResult).body);
+      return { entry: decodeEntryContract(seat.entry(p.eid)), signedResult, finalSigs: seat.finalSigs(w.rid, p.eid, runOf(body)).map((r) => r.bytes) };
+    });
+    const plugin = pluginForRound(contract, seat.plugins);
+    const asked = (ack, tableBytes) => { const a = splitSignedAck(ack);
+      return slashHoldsOnTable({ proof: { roundId: w.rid, playerPubkey: new Uint8Array(32), nodePubkey: a.nodePubkey, transcriptHash: a.ack.payoutTableId, signedResultId: settlementAckId(a.ack), bondTxid: b32(1), bondVout: 0 },
+        signedAck: ack, acks, table: tableBytes, finals, contract, manifest: plugin.plugin.manifest, committee: ackSeats, verify, advert: { nodePubkey: a.nodePubkey, bondTxid: b32(1), bondVout: 0 } }); };
+    for (const ack of acks) { const honest = asked(ack, fromHex(published.table)); assert.equal(honest.slashed, false, honest.why); assert.match(honest.why, /exactly F/); }
+    console.log(`  ACKS: ${counted.agreed} of ${counted.needed} over table ${published.payoutTableId.slice(0, 16)}, settlement ${published.txid.slice(0, 16)}; every ack's table is F of the FINAL results`);
 
     // THE WINNER COLLECTS: its payout contract, refunded under its own key (page-lock.js redeemPayout: Refund under the player's
     // refund key), as the lock port's guardians check it - the contract expired from the start, the signature the refund key's

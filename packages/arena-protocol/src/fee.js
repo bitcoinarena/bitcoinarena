@@ -28,7 +28,7 @@ import { Writer } from './encode.js';
 // places for it to differ. It also made this file unbundleable beside
 // hash.js, which is how it was found.
 import { taggedHash, fromHex } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_FEE_CLAIM, TAG, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, CUSTODY_GATEWAY_VERSION } from './constants.js';
+import { PROTOCOL_VERSION, TYPE_FEE_TABLE, TAG, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, CUSTODY_GATEWAY_VERSION } from './constants.js';
 import { roundId } from './contracts.js';
 import { DELIVERED, FAILED, FORFEIT, isRefund, remainderOrder, netStakeMsat } from './payout.js';
 
@@ -291,7 +291,7 @@ const hex = (bytes) => {
  */
 export function feeTableId(table) {
   const w = new Writer();
-  w.u8(TYPE_FEE_CLAIM);
+  w.u8(TYPE_FEE_TABLE);
   w.u16(PROTOCOL_VERSION);
   w.u64(table.gross);
   w.u64(table.fee);
