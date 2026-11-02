@@ -254,11 +254,11 @@ test('the page derives the settlement committee over the seats\' doors, deals to
   assert.equal(dealt.agreed, 2);
   // with the liar among the seats the round is refused and the liar named with what it answered (RULED 2026-09-28)
   await assert.rejects(clientSettlementSignerNodes(rhex, contract, nodes, { curve: pageCurve, fetcher, anchorAt }),
-    /^Error: the round is refused: https:\/\/liar\.example names another game committee .*; names another settlement committee .* - nothing is sealed, locked or signed$/);
+    (e) => e.message === 'the round is refused: https://liar.example names other signer nodes than this client worked out - nothing is sealed, locked or signed' && /names another game committee .*; names another settlement committee /.test(e.detail));
   // and when every seat names another set, nothing is dealt either
   const allLie = async (url) => (url.includes('/committee?') ? new Response(liarSet, { status: 200 }) : fetcher(url));
   await assert.rejects(clientSettlementSignerNodes(rhex, contract, nodes, { curve: pageCurve, fetcher: allLie, anchorAt, nowMs: Date.now() + 1 }),
-    /the round is refused: https:\/\/seat-a\.example names another game committee .*https:\/\/seat-b\.example .*https:\/\/liar\.example /);
+    (e) => /^the round is refused: 3 seats name other signer nodes/.test(e.message) && /https:\/\/seat-a\.example names another game committee .*https:\/\/seat-b\.example .*https:\/\/liar\.example /.test(e.detail));
 });
 
 test('an explorer outside the network: the census block must be its block; a tip that differs is said, not refused', async () => {

@@ -23,13 +23,13 @@ test('every seat agrees: the client\'s settlement committee is dealt to', () => 
 
 test('one seat names another committee: the round is refused and the seat named with what it answered', () => {
   const liar = { node: 'https://g3', agrees: false, why: 'names another settlement committee (66666666) than the one this client derived (01010101, 02020202)' };
-  assert.throws(() => settlementSignerNodesFrom(derived({ seats: [...derived().seats, liar] })),
-    /^Error: the round is refused: https:\/\/g3 names another settlement committee \(66666666\) than the one this client derived .* - nothing is sealed, locked or signed$/);
+  assert.throws(() => settlementSignerNodesFrom(derived({ seats: [...derived().seats, liar] })), (e) => e.message === 'the round is refused: https://g3 names other signer nodes than this client worked out - nothing is sealed, locked or signed'
+    && /^https:\/\/g3 names another settlement committee \(66666666\) than the one this client derived /.test(e.detail));
 });
 
 test('a seating certificate that does not match the draw refuses the round, naming the seat', () => {
   const seating = { ...derived().seating, settlement: { seated: SEVEN, from: 'https://g2', refused: ['https://g1: the certificate\'s signatures do not verify'] } };
-  assert.throws(() => settlementSignerNodesFrom(derived({ seating })), /the round is refused: a settlement seating certificate that does not match this client's draw - https:\/\/g1:/);
+  assert.throws(() => settlementSignerNodesFrom(derived({ seating })), (e) => /^the round is refused: a seating certificate does not match this client's draw/.test(e.message) && /a settlement seating certificate that does not match this client's draw - https:\/\/g1:/.test(e.detail));
 });
 
 test('a seat that does not hold the round (no answer) is not a liar: the round stands', () => {
@@ -65,7 +65,7 @@ test('a binding genesis: the join refuses a contract by the parameter it names o
   const { clientCommittee, clientSettlementSignerNodes } = await import('../src/committee.js');
   const b = (n) => new Uint8Array(32).fill(n);
   const { genesis } = mainnetGenesis({ bondMarker: b(1), arbitrationKeys: [2, 3, 4, 5, 6, 7, 8].map(b), authorityPubkey: b(9), recoveryPubkey: b(10),
-    genesisSeriesStartMs: 1800000000000n, bondMinGuardianSats: 1_000_000n });
+    genesisSeriesStartMs: 1800000000000n, bondMinGuardianSats: 1_000_000n, censusKey0: b(11) });
   const asked = [];
   const fetcher = async (u) => { asked.push(u); throw new Error('no seat should be asked'); };
   const contract = { networkId: NETWORK_ID_TESTNET4, gameVerifySlots: 7, settlementSlots: 7, censusConfirmations: 2, censusRoot: b(4) };
@@ -102,4 +102,19 @@ test('too few of the four picked seats give a chain: the other seats are asked, 
   const src = (await import('node:fs')).readFileSync(new URL('../src/committee.js', import.meta.url), 'utf8');
   assert.match(src, /AND THE OTHER SEATS WHEN TOO FEW OF THOSE ANSWERED/);
   assert.match(src, /headerSources\(nodes, \{ n: 64 \}\)\.filter\(\(u\) => !askedKeys\.has\(originOf\(u\)\)\)/);
+});
+
+// kanban #1036: the owner's Android, nine seats each with two lists of seven ids, and an offline node in the fallback draw
+test('refused by many seats: one short line, the rest on detail', () => {
+  const seat = (i) => ({ node: `https://g${i}`, agrees: false, why: `names another game committee (${'66666666, '.repeat(7)}) than the one this client derived (${'01010101, '.repeat(7)})` });
+  let e = null;
+  try { settlementSignerNodesFrom(derived({ seats: Array.from({ length: 9 }, (_, i) => seat(i)) })); } catch (x) { e = x; }
+  assert.equal(e.message, 'the round is refused: 9 seats name other signer nodes than this client worked out - nothing is sealed, locked or signed');
+  assert.match(e.detail, /https:\/\/g8 names another game committee/);
+});
+
+test('no seating read and the seats differ: try again, the round is not closed', () => {
+  const seating = { game: { unread: true, refused: [] }, settlement: { unread: true, refused: [] } };
+  const liar = { node: 'https://g3', agrees: false, why: 'names another game committee (66666666) than the one this client derived (01010101)' };
+  assert.throws(() => settlementSignerNodesFrom(derived({ seating, seats: [liar] })), (e) => /Try again/.test(e.message) && !/the round is refused/.test(e.message));
 });
