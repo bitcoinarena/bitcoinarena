@@ -367,10 +367,12 @@ if (url) {
     chainCensusInFlight.set(key, p);
     return p;
   };
-  // THE CHAIN'S OWN CENSUS AT A HEIGHT, ONE READ FOR EVERYTHING THAT NAMES NO ROUND (census.js chainCensusContract, kanban #1063). Its kind in the key is not the 'ballot' it was: a census kept
-  // under that one applied the floor per output, and 3 days of them would be read back
-  const chainRead = (networkIdHex, height, opts) => chainCensusKept('sum', networkIdHex, height,
-    chainCensusContract({ networkId: fromHex(networkIdHex), height, bondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000) }), opts);
+  // THE CHAIN'S OWN CENSUS AT A HEIGHT, ONE READ FOR EVERYTHING THAT NAMES NO ROUND (census.js chainCensusContract, kanban #1063, #1064). A summed one is kept under its own kind: a census kept as
+  // 'ballot' applied the floor per output, which is the right answer below the network's point and only there
+  const chainRead = (networkIdHex, height, opts) => {
+    const contract = chainCensusContract({ networkId: fromHex(networkIdHex), height, bondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000) });
+    return chainCensusKept(contract.sumsBonds ? 'sum' : 'ballot', networkIdHex, height, contract, opts);
+  };
   const reading = new Map();                   // view key -> its one read in flight
   const keyOfRound = new Map();                // round id hex -> the view key it was asked under
   const viewFailed = new Map();                // view key -> { atMs, why } of its last failed read

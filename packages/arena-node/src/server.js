@@ -153,7 +153,7 @@ import { createEndpointsOf, federationOfDir, configInvite } from './federation-e
 import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
 import { createArbitrationEvents } from './arbitration-events.js';
-import { startsByCensusKey, isAbandonedProof } from '../../arena-protocol/src/abandoned-slash.js';
+import { startsByCensusKey } from '../../arena-protocol/src/abandoned-slash.js';
 import { createHalts, wsSessionCount } from './halts.js';
 import { reserveMembersOf } from './reserve-members.js';
 import { createSettleBackoff } from './settle-backoff.js';
@@ -10417,12 +10417,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
       // THE ARBITRATION SET'S INTAKE (spec 5A.3B step 1): every slash proof this node filed - round, entry,
       // accused node, proof id - for the arbiter to fetch with its evidence (GET /slash-proofs) and judge itself
-      // AN ABANDONMENT'S PROOF BY ITS HASH (§23A.5, RULED 2026-11-02, kanban #1062), at the door that lists it: the 32 bytes a slash's OP_RETURN commits to name the bytes that hash to them
-      if (req.method === 'GET' && url.pathname === '/slashes' && url.searchParams.has('proof')) {
-        const id = String(url.searchParams.get('proof')).toLowerCase();
+      // AN ABANDONMENT'S PROOF BY ITS HASH (§23A.5, RULED 2026-11-02, kanban #1062), at the door that lists it: the 32 bytes a slash's OP_RETURN commits to name the bytes that hash to them. And
+      // the signed record this seat keeps beside it (kanban #1064), any standing copy, at ?evidence=
+      if (req.method === 'GET' && url.pathname === '/slashes' && (url.searchParams.has('proof') || url.searchParams.has('evidence'))) {
+        const evidence = url.searchParams.has('evidence'), id = String(url.searchParams.get(evidence ? 'evidence' : 'proof')).toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(id)) return text(res, 400, 'a proof is named by its 32 bytes as hex');
-        const kept = fedRecords ? fedRecords.abandonedProof(id) : null;
-        if (!isAbandonedProof(kept)) return text(res, 404, 'this seat holds no proof of an abandonment under that hash');
+        const kept = !fedRecords ? null : evidence ? fedRecords.abandonedEvidence(id) : fedRecords.abandonedProof(id);
+        if (!kept) return text(res, 404, 'this seat holds no proof of an abandonment under that hash');
         res.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'public, max-age=86400', ...CORS });
         return res.end(Buffer.from(kept));
       }
@@ -10821,7 +10822,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const slashed = /^\/slash\/([0-9a-f]{64})$/.exec(url.pathname);
       if (slashed && req.method === 'PUT') {
         const bytes = await read(req);
-        // AN ABANDONMENT'S PROOF (§23A.5, kanban #1062) is its own evidence: the signed record is in it
+        // AN ABANDONMENT'S PROOF (§23A.5, kanban #1062, #1064), the signed record beside it: kept only when the hash, the threshold and the row stand
         if (bytes.length && bytes[0] === TYPE_ABANDONED_PROOF) {
           if (!fedRecords) return text(res, 503, 'this seat holds no federation records yet');
           const r = await fedRecords.takeAbandonedProof(slashed[1], new Uint8Array(bytes), (inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; });

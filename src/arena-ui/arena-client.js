@@ -844,6 +844,18 @@ const abandonedSlashPoint = (network) => {
   const n = network === 'testnet' ? 'testnet4' : String(network || '');
   return Object.prototype.hasOwnProperty.call(ABANDONED_SLASH_HEIGHT, n) ? ABANDONED_SLASH_HEIGHT[n] : null;
 };
+/**
+ * THE FIRST HEIGHT THE CHAIN'S OWN CENSUS SUMS A NODE'S BONDS (RULED 2026-11-02, kanban #1063, #1064). A census decides money and seats, and a reader who differs signs different bytes, so what a
+ * census reads at a height changes for everyone at one height: the height read decides, not the clock. Below the point a census reads as before, the floor on each output, at the point and above
+ * it summed, so a record, a ballot or a founding checked later against an old height gets the old answer on any release. ONE CONSTANT PER NETWORK, as above; a network not named here, or null: never.
+ * Mainnet from genesis. testnet4: null until every seat and installer node runs a release that has this, then a height above the tip at that time.
+ */
+const CHAIN_CENSUS_SUM_HEIGHT = Object.freeze({ mainnet: 0, testnet4: null, regtest: 0, devnet: 0 });
+/** The point of `network` (networkOf's name; 'testnet' is testnet4, as networkAnchor reads it), null on a network that names none. */
+const chainCensusSumPoint = (network) => {
+  const n = network === 'testnet' ? 'testnet4' : String(network || '');
+  return Object.prototype.hasOwnProperty.call(CHAIN_CENSUS_SUM_HEIGHT, n) ? CHAIN_CENSUS_SUM_HEIGHT[n] : null;
+};
 /** The owner's emergency key (§23A.5a): the advert names it, a request it signs takes an offline node out without losing its bond. */
 const EMERGENCY_VERSION = 17;
 const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
@@ -12963,12 +12975,14 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
 // protocol 19 the census counts them as their sum.
 const sumsBonds = (contract) => !!contract && (contract.sumsBonds === true || Number(contract.protocolVersion) >= BOND_SUM_VERSION);
 /**
- * THE CHAIN'S OWN CENSUS AT A HEIGHT (kanban #1063): what a seat reads when no round names the census: a federation record's basis, the ballot, a founding, the duty order, the arbitration set. It
- * always sums (`sumsBonds`, ruling #1058 reading 3: the cap follows what is left, `bond_i` is the sum), or a node with 40,000 sat three times reads as not held at all and as abandoned after one
- * spend. The version stays PROTOCOL_VERSION: reading this at BOND_SUM_VERSION would put out every node whose advertisement does not list 19, and take its signature off the records it signed.
+ * THE CHAIN'S OWN CENSUS AT A HEIGHT (kanban #1063): what a seat reads when no round names the census: a federation record's basis, the ballot, a founding, the duty order, the arbitration set. At
+ * the network's CHAIN_CENSUS_SUM_HEIGHT and above it sums (`sumsBonds`, ruling #1058 reading 3: the cap follows what is left, `bond_i` is the sum), or a node with 40,000 sat three times reads as not
+ * held at all and as abandoned after one spend. Below that point, or on a network that names none, it reads as before (ruling #1064): the height read decides, and this is the one place it does.
+ * `sumFrom` is a harness's own point. The version stays PROTOCOL_VERSION: reading this at BOND_SUM_VERSION would put out every node whose advertisement does not list 19, and take its signature off the records it signed.
  * A round's census is its contract's: decodeRoundContract sets no `sumsBonds`, so no round's census moves.
  */
-const chainCensusContract = ({ networkId, height, bondMinSats, censusConfirmations = 1 }) => ({ networkId, censusHeight: height, censusConfirmations, bondMinSats, protocolVersion: PROTOCOL_VERSION, sumsBonds: true });
+const chainCensusContract = ({ networkId, height, bondMinSats, censusConfirmations = 1, sumFrom = chainCensusSumPoint(networkOf(networkId)) }) => ({ networkId, censusHeight: height, censusConfirmations,
+  bondMinSats, protocolVersion: PROTOCOL_VERSION, sumsBonds: Number.isInteger(sumFrom) && height >= sumFrom });
 const bondHexOf = (x) => (typeof x === 'string' ? x.toLowerCase() : x ? toHex(x) : '');
 /** A node is its key AND its operator: two operators never merge, even under one key. */
 const nodeKeyOf = (e) => `${bondHexOf(e.pubkey || (e.advert && e.advert.nodePubkey))}|${String((e.advert && e.advert.operatorId) || e.operatorId || '')}`;

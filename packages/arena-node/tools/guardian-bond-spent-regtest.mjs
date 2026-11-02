@@ -12,6 +12,10 @@
 // AND THE PROOF A SLASH COMMITS TO (spec 23A.5, ruled on kanban #1062). The slash's OP_RETURN is the hash of an AbandonedProof. It is fetched by that hash over HTTP as anyone would, re-checked with
 // nothing from the service, also after the output is gone, and decideReturn, the reference node's own reading, keeps the slash on it. A row from before the network's point moves no money.
 //
+// AND ONE OUTPUT, ONE HASH (kanban #1064): two seats hold one record under different signatures, and a later record holds the row too: the hash printed for each is one. The record travels beside the
+// proof; a seat that held nothing serves both once it is handed them. And CHAIN_CENSUS_SUM_HEIGHT: the height read decides, either side of a point, and seats with the point above the height sign
+// the bytes of the old read.
+//
 // AND THE CHAIN'S CENSUS OF A NODE WITH SEVERAL OUTPUTS (kanban #1063). A third federation: c3 holds 40,000 sat three times, seated by a census at protocol 19. He spends one and still holds 80,000:
 // seats reading the chain at protocol 1 apply the floor to each output, so they write him ABANDONED; the read a seat makes keeps him. He spends a second, is under the floor by the sum, and what he
 // left goes the whole way to a slash.
@@ -30,8 +34,8 @@ import { withdrawSpend } from '../src/bond-withdraw.js';
 import { inviteForGuardians, readInvite } from '../src/invite.js';
 import { arbitrationMembers } from '../src/arbiter.js';
 import { tweakPoint, combine } from '../src/curve.js';
-import { joinSignedRecord, splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
-import { bondsOf, encodeAbandonedProof, decodeAbandonedProof, abandonedProofId } from '../../arena-protocol/src/abandoned-slash.js';
+import { joinSignedRecord, splitSignedRecord, federationRecordId } from '../../arena-protocol/src/federation-record.js';
+import { bondsOf, encodeAbandonedProof, decodeAbandonedProof, joinAbandonedEvidence, abandonedProofId } from '../../arena-protocol/src/abandoned-slash.js';
 import { chainCensusContract, nodeBondOf } from '../../arena-protocol/src/census.js';
 import { arbitrationCommitmentIn } from '../../arena-protocol/src/arbitration-tx.js';
 import { decideReturn, abandonedProofChecks, proofChecksOf } from '../src/hold-return.js';
@@ -83,20 +87,22 @@ const heldBy = (s, fed = FED) => splitSignedRecord(fromHex(of(fed, s.list()).rec
 const outpoint = (posted) => toHex(fromHex(posted.txid).reverse());
 
 // GET /slashes, GET /slashes?proof= and PUT /slash/<id> as server.js answers them, and the event door; `lists` turns what the seat lists into what the door says, `cut` hands each proof with its
-// record one signature short and names it by that hash
+// record one signature short, under the true hash: the hash no longer covers the record, so only the threshold can catch this
 const events = [];
-const cutProof = (bytes) => { const p = decodeAbandonedProof(bytes), s = splitSignedRecord(p.record); return encodeAbandonedProof({ ...p, record: joinSignedRecord(s.body, s.signatures.slice(0, s.record.threshold - 1)) }); };
+const cutRecord = (bytes) => { const s = splitSignedRecord(bytes); return joinSignedRecord(s.body, s.signatures.slice(0, s.record.threshold - 1)); };
 function door(seat, port, { extra = null, cut = false } = {}) {
   const forged = new Map();
   const listed = async () => {
-    const rows = (await seat.abandonedSlashes()).map((r) => { if (!cut) return r; const bytes = cutProof(seat.abandonedProof(r.proof)), proof = toHex(abandonedProofId(bytes)); forged.set(proof, bytes); return { ...r, proof }; });
-    for (const x of (extra ? extra() : [])) { forged.set(x.proof, x.bytes); rows.push(x); }
+    const rows = await seat.abandonedSlashes();
+    for (const x of (extra ? extra() : [])) { forged.set(x.proof, x); rows.push(x); }
     return rows;
   };
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x'), json = (o) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
-    if (url.pathname === '/slashes' && url.searchParams.has('proof')) {
-      const id = url.searchParams.get('proof'), bytes = forged.get(id) || seat.abandonedProof(id);
+    if (url.pathname === '/slashes' && (url.searchParams.has('proof') || url.searchParams.has('evidence'))) {
+      const evidence = url.searchParams.has('evidence'), id = url.searchParams.get(evidence ? 'evidence' : 'proof'), lie = forged.get(id);
+      const held = evidence ? (lie ? lie.evidence : seat.abandonedEvidence(id)) : (lie ? lie.bytes : seat.abandonedProof(id));
+      const bytes = evidence && cut && held ? cutRecord(held) : held;
       res.writeHead(bytes ? 200 : 404, { 'content-type': 'application/octet-stream' });
       return res.end(bytes ? Buffer.from(bytes) : undefined);
     }
@@ -107,7 +113,8 @@ function door(seat, port, { extra = null, cut = false } = {}) {
   });
   return new Promise((r) => { server.listen(port, '127.0.0.1', () => r(server)); });
 }
-const fetched = async (port, id) => { const r = await fetch(`http://127.0.0.1:${port}/slashes?proof=${id}`); return r.ok ? new Uint8Array(await r.arrayBuffer()) : null; };
+const fetchedAs = (query) => async (port, id) => { const r = await fetch(`http://127.0.0.1:${port}/slashes?${query}=${id}`); return r.ok ? new Uint8Array(await r.arrayBuffer()) : null; };
+const fetched = fetchedAs('proof'), fetchedEvidence = fetchedAs('evidence');
 /** One pass of the service itself, a process of its own, on this chain and these doors. */
 const arbiterPass = (ports, over = {}) => new Promise((done) => {
   const c = spawn(process.execPath, ['tools/arbiter.mjs', '--once'], { cwd: join(dirname(fileURLToPath(import.meta.url)), '..'), stdio: ['ignore', 'pipe', 'pipe'],
@@ -194,12 +201,13 @@ try {
 
   const honest = await door(a[4], BASE + 3);
   const cutter = await door(a[5], BASE + 4, { cut: true });
-  // a true record and a row nobody filed: the liar's proof names b0 and his bond under the true proof_ref, and b3's name on bytes that are b3's own with another output
-  const falseProof = encodeAbandonedProof({ record: a[6].recordOf(toHex(FED2)).bytes, nodePubkey: others[0].pubkey, proofRef: gb.proofRef, txid: fromHex(outpoint(postedB[0])), vout: 0 }), falseId = toHex(abandonedProofId(falseProof));
-  const liar = await door(a[6], BASE + 5, { extra: () => [{ ...listed[0], proof: falseId, bytes: falseProof, peer: toHex(others[0].guardianKey), node: toHex(others[0].pubkey), txid: outpoint(postedB[0]), vout: 0, sats: '100000' }] });
-  const first = await arbiterPass([BASE + 4, BASE + 5, BASE + 3]);
+  // a true record and a row nobody filed: the liar's proof names b0 and his bond under the true proof_ref
+  const falseProof = encodeAbandonedProof({ federationId: FED2, nodePubkey: others[0].pubkey, proofRef: gb.proofRef, txid: fromHex(outpoint(postedB[0])), vout: 0 }), falseId = toHex(abandonedProofId(falseProof));
+  const liar = await door(a[6], BASE + 5, { extra: () => [{ ...listed[0], proof: falseId, bytes: falseProof, evidence: a[6].recordOf(toHex(FED2)).bytes, peer: toHex(others[0].guardianKey), node: toHex(others[0].pubkey), txid: outpoint(postedB[0]), vout: 0, sats: '100000' }] });
+  // a seat that holds no record of this federation and lists nothing: what it serves after the pass is what it was handed
+  const blank = await door(seats(true)[4], BASE + 6);
+  const first = await arbiterPass([BASE + 4, BASE + 5, BASE + 3, BASE + 6]);
   const handled = () => { try { return JSON.parse(readFileSync(join(dir, 'arbiter.json'), 'utf8')).handled; } catch { return {}; } };
-  // SEATS CAN HOLD ONE RECORD UNDER DIFFERENT SIGNATURES, so two can list one output under two hashes: the first posted is the slash, and the other finds the output spent
   const postedHere = () => Object.entries(handled()).filter(([, v]) => v.posted);
   const [slashId, slash] = postedHere()[0] || [];
   ask('the service ran its pass', first.code === 0, `exit ${first.code}`);
@@ -217,16 +225,20 @@ try {
   // ANYONE, with the transaction and a seat's address: what the chain committed to, fetched by that hash, and checked on this reader's own census
   const committed = arbitrationCommitmentIn([{ script: fromHex(slashTx.vout[0].scriptPubKey.hex) }]), bytes = await fetched(BASE + 3, toHex(committed.proofId));
   ask('the bytes come back by that hash from the door that lists them', !!bytes && toHex(abandonedProofId(bytes)) === opReturn.slice(0, 64), bytes ? `${bytes.length} bytes` : 'none');
-  const named = decodeAbandonedProof(bytes), atRecord = censusAt(splitSignedRecord(named.record).record.height).entries;
-  ask('the proof names the signed record, the node, the proof_ref and the output', toHex(named.nodePubkey) === toHex(others[3].pubkey) && toHex(named.proofRef) === toHex(gb.proofRef) && toHex(named.txid) === outpoint(leftB3) && named.vout === 0 && splitSignedRecord(named.record).signatures.length >= 3, `${splitSignedRecord(named.record).signatures.length} signatures, node ${toHex(named.nodePubkey).slice(0, 16)}`);
+  const evidence = await fetchedEvidence(BASE + 3, toHex(committed.proofId));
+  const named = decodeAbandonedProof(bytes), atRecord = censusAt(splitSignedRecord(evidence).record.height).entries;
+  ask('the proof names the federation, the node, the proof_ref and the output, and the signed record comes beside it', toHex(named.federationId) === toHex(FED2) && toHex(named.nodePubkey) === toHex(others[3].pubkey) && toHex(named.proofRef) === toHex(gb.proofRef) && toHex(named.txid) === outpoint(leftB3) && named.vout === 0 && splitSignedRecord(evidence).signatures.length >= 3, `${bytes.length} bytes, record ${evidence.length} bytes, ${splitSignedRecord(evidence).signatures.length} signatures, node ${toHex(named.nodePubkey).slice(0, 16)}`);
   const beforeSlash = censusAt(spentAt);
   const decided = await decideReturn({ start: { proofId: committed.proofId }, startHeight: rt.height(), bondMaturity: 0, returnBlocks: 1, tip: rt.height() + 1, fetchProof: (id) => fetched(BASE + 4, toHex(id)),
-    proofChecks: proofChecksOf({ replay: async () => false, abandoned: (b) => abandonedProofChecks({ bytes: b, nodePubkey: others[3].pubkey, bond: { txid: fromHex(outpoint(leftB3)), vout: 0 }, bonds: bondsOf(beforeSlash), censusAt: async () => atRecord, networkId: NETWORK_ID_REGTEST, inviteFederationId }) }) });
+    proofChecks: proofChecksOf({ replay: async () => false, abandoned: (b) => abandonedProofChecks({ bytes: b, fetchEvidence: (id) => fetchedEvidence(BASE + 3, toHex(id)), nodePubkey: others[3].pubkey, bond: { txid: fromHex(outpoint(leftB3)), vout: 0 }, bonds: bondsOf(beforeSlash), censusAt: async () => atRecord, networkId: NETWORK_ID_REGTEST, inviteFederationId }) }) });
   ask('hold-return reads that commitment and leaves the slash alone: the hash checks, and so does the proof', decided.action === 'keep', `${decided.action}: ${decided.why}`);
   const rehearsal14 = await decideReturn({ start: { proofId: gb.proofRef }, startHeight: rt.height(), bondMaturity: 0, returnBlocks: 1, tip: rt.height() + 1, fetchProof: (id) => fetched(BASE + 3, toHex(id)), proofChecks: async () => true });
   ask('a bare proof_ref in the field, as #1059 had it, is what the node takes its return on', rehearsal14.action === 'return', `${rehearsal14.action}: ${rehearsal14.why}`);
-  const everywhere = await Promise.all([BASE + 3, BASE + 4, BASE + 5].map((port) => fetched(port, slashId)));
-  ask('the service handed the bytes to every seat before it posted', everywhere.every((x) => x && toHex(x) === toHex(bytes)) && slash.proofHeldBy === 3, `${slash.proofHeldBy} seats took them`);
+  const everywhere = await Promise.all([BASE + 3, BASE + 4, BASE + 5, BASE + 6].map((port) => fetched(port, slashId)));
+  ask('the service handed the proof to every seat before it posted', everywhere.every((x) => x && toHex(x) === toHex(bytes)) && slash.proofHeldBy === 4, `${slash.proofHeldBy} seats took it`);
+  ticket = '#1064';
+  const blankRecord = await fetchedEvidence(BASE + 6, slashId);
+  ask('a seat that held nothing serves the proof and a standing record beside it: PUT is what makes it retrievable', !!blankRecord && splitSignedRecord(blankRecord).signatures.length >= 3 && toHex(splitSignedRecord(blankRecord).body) === toHex(splitSignedRecord(evidence).body), blankRecord ? `${blankRecord.length} bytes` : 'none');
   ticket = '#1059';
   ask('one output: the liquidation escrow, the whole output less the fee', slashTx.vout.length === 2 && slashTx.vout[1].scriptPubKey.hex === toHex(escrow.script) && Math.round(slashTx.vout[1].value * 1e8) === 18000, `${Math.round(slashTx.vout[1].value * 1e8)} sat`);
   const second = await arbiterPass([BASE + 3]);
@@ -242,7 +254,7 @@ try {
   ticket = '#1062';
   const later = await fetched(BASE + 3, slashId);
   ask('the output spent and the listing empty, the proof is still served', !!later && toHex(abandonedProofId(later)) === slashId, later ? `${later.length} bytes` : 'none');
-  honest.close(); cutter.close(); liar.close();
+  honest.close(); cutter.close(); liar.close(); blank.close();
 
   ticket = '#1063';
   const fromRecord = async (read) => { const s = seats(true, read, heldC); for (const x of s) await x.restore(inviteFederationId); return { s, gathered: await gatherAll(s, FED3) }; };
@@ -252,6 +264,15 @@ try {
   const read = await fromRecord(censusAt);
   const heldNow = heldBy(read.s[8], FED3), mine = nodeBondOf(censusAt(heldNow.height).entries, thirds[3].pubkey);
   ask('the read a seat makes: he still holds 80,000 sat, so he stays seated and nobody is gone', read.gathered.every((x) => x.ok) && heldNow.gone.length === 0 && !!mine && mine.bondSats === 80000n, `${of(FED3, read.s[8].list()).status}, ${heldNow.gone.length} gone, his bond ${mine ? mine.bondSats : 'none'}`);
+
+  // THE HEIGHT READ DECIDES, THROUGH THE SEATS' OWN RECORD CODE: a point above the height these seats read signs what the old read signed, a point at it what the sum signs
+  ticket = '#1064';
+  const bodyOf = (s) => toHex(splitSignedRecord(fromHex(of(FED3, s.list()).record)).body);
+  const gatedAt = (sumFrom) => censusBy((h) => chainCensusContract({ networkId: NETWORK_ID_REGTEST, height: h, bondMinSats: 50000n, sumFrom }));
+  const above = await fromRecord(gatedAt(heldNow.height + 1)), atPoint = await fromRecord(gatedAt(heldNow.height));
+  ask('seats with the point above the read: the record of the old read, byte for byte, 80,000 sat left and ABANDONED', bodyOf(above.s[8]) === bodyOf(v1.s[8]) && heldBy(above.s[8], FED3).gone.length === 1, `body ${bodyOf(above.s[8]).length / 2} bytes, point ${heldNow.height + 1}, read ${heldNow.height}`);
+  ask('seats with the point at the read: the record of the sum, byte for byte, nobody gone', bodyOf(atPoint.s[8]) === bodyOf(read.s[8]) && heldBy(atPoint.s[8], FED3).gone.length === 0, `point ${heldNow.height}, read ${heldNow.height}`);
+  ticket = '#1063';
 
   // HE SPENDS A SECOND, UNDER THE FLOOR BY THE SUM: the reader's rows on a real census, and a row below the point
   const spendC2 = pathC(forty2);
@@ -263,6 +284,21 @@ try {
   ask('40,000 left of 120,000: under the floor by the sum, ABANDONED from that spend', under.every((x) => x.ok) && rowC.gone.length === 1 && goneC.sinceHeight === spentC2At && toHex(goneC.proofRef) === outpoint({ txid: spendC2 }), `${of(FED3, read.s[8].list()).status}, since ${goneC && goneC.sinceHeight}`);
   const rowsC = (await read.s[8].abandonedSlashes()).filter((x) => x.federation === toHex(FED3));
   ask('the seat lists the 40,000 sat he left', rowsC.length === 1 && rowsC[0].txid === outpoint(forty3) && rowsC[0].sats === '40000', rowsC.map((x) => `${x.txid.slice(0, 16)} ${x.sats} sat`).join(', '));
+  // ONE OUTPUT, ONE HASH (kanban #1064), printed. A signature is not deterministic, so the same three guardians signing the same record again give other bytes: another seat's copy. Under #1062 the
+  // record was in the hash and these were two hashes
+  ticket = '#1064';
+  const copyA = read.s[8].recordOf(toHex(FED3)).bytes, cutA = splitSignedRecord(copyA), idOfRecord = federationRecordId(cutA.record);
+  const copyB = joinSignedRecord(cutA.body, cutA.signatures.map((g) => ({ nodePubkey: g.nodePubkey, signature: schnorr.sign(idOfRecord, thirds.find((t) => toHex(t.pubkey) === toHex(g.nodePubkey)).secret) })));
+  const seatB = seats(true, censusAt, [{ federation: toHex(FED3), record: toHex(copyB) }]);
+  await seatB[8].restore(inviteFederationId);
+  const rowsB = (await seatB[8].abandonedSlashes()).filter((x) => x.federation === toHex(FED3));
+  const heldB = seatB[8].recordOf(toHex(FED3)).bytes, firstSig = (b) => toHex(splitSignedRecord(b).signatures[0].signature).slice(0, 16);
+  ask('one record under two signature sets, two seats: one hash', toHex(heldB) !== toHex(copyA) && rowsB.length === 1 && rowsB[0].proof === rowsC[0].proof, `seat A signature ${firstSig(copyA)} hash ${rowsC[0].proof}, seat B signature ${firstSig(heldB)} hash ${rowsB[0] && rowsB[0].proof}`);
+  rt.mine(12);
+  basisTip();
+  await gatherAll(read.s, FED3);
+  const copyLater = read.s[8].recordOf(toHex(FED3)).bytes, heightLater = splitSignedRecord(copyLater).record.height, rowsLater = (await read.s[8].abandonedSlashes()).filter((x) => x.federation === toHex(FED3));
+  ask('a later record holding the row: the same hash', heightLater > rowC.height && rowsLater.length === 1 && rowsLater[0].proof === rowsC[0].proof, `record at ${rowC.height} hash ${rowsC[0].proof}, record at ${heightLater} hash ${rowsLater[0] && rowsLater[0].proof}`);
   ticket = '#1062';
   const past = seats(true, censusAt, heldC, { abandonedFrom: spentC2At + 1 });
   for (const x of past) await x.restore(inviteFederationId);
@@ -280,6 +316,15 @@ try {
   rt.mine(1);
   // WHAT A ROUND READS DID NOT MOVE: the same blocks through this tree and the tree before the fix, byte for byte, at versions either side of the sum
   ask('a round at protocol 1 or 18 keeps the floor per output: his 40,000 sat outputs were never in it', [1, 18].every((v) => !censusBy(roundAt(v))(spentAt - 1).entries.some((e) => toHex(e.pubkey) === toHex(thirds[3].pubkey))), 'protocols 1 and 18');
+  // EITHER SIDE OF THE POINT, on the real chain: three 40,000 sat outputs unspent at both heights
+  ticket = '#1064';
+  const POINT = spentAt - 1, gated = censusBy((h) => chainCensusContract({ networkId: NETWORK_ID_REGTEST, height: h, bondMinSats: 50000n, sumFrom: POINT })), never = censusBy((h) => chainCensusContract({ networkId: NETWORK_ID_REGTEST, height: h, bondMinSats: 50000n, sumFrom: null }));
+  const reads = (c) => JSON.stringify([c.entries, c.excluded, c.root], (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v));
+  const c3Is = (c) => { const b = nodeBondOf(c.entries, thirds[3].pubkey); return b ? `${b.bondSats} sat` : 'out'; };
+  ask('below the point the census is the old read, byte for byte: 40,000 sat three times is out', reads(gated(POINT - 1)) === reads(censusV1(POINT - 1)) && c3Is(gated(POINT - 1)) === 'out', `height ${POINT - 1}: ${c3Is(gated(POINT - 1))}`);
+  ask('at the point it is the sum, byte for byte: one node of 120,000', reads(gated(POINT)) === reads(censusAt(POINT)) && c3Is(gated(POINT)) === '120000 sat', `height ${POINT}: ${c3Is(gated(POINT))}`);
+  ask('a network that names no point, testnet4 today, reads as before at every height', reads(never(rt.height())) === reads(censusV1(rt.height())), `height ${rt.height()}`);
+  ticket = '#1063';
   if (env.GS_OLD_TREE) {
     const { censusOfView: older } = await import(join(env.GS_OLD_TREE, 'packages/arena-node/src/roster.js'));
     const flat = (c) => JSON.stringify(c, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v));

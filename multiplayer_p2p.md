@@ -4273,6 +4273,19 @@ even under one key. From protocol 19:
   bonded guardians, the record's guardian rows, the gateway seats, the
   capacity view's B*, a node's standing.
 
+**The chain's own census sums from a height (RULED 2026-11-02, kanban #1063,
+#1064).** The census no round names, read by a federation record's basis, the
+ballot, a founding, the duty order and the arbitration set, sums a node's
+bonds from `CHAIN_CENSUS_SUM_HEIGHT`, one per network. A census decides money
+and seats, and a reader who differs signs different bytes, so the **height
+read** decides, not the clock: a census below the point reads as before, the
+floor on each output, and a census at or above it is summed. A record, a ballot
+or a founding checked later against an old height gets the old answer on any
+release, and nothing already decided changes. The one place this is decided is
+where the chain census is derived. Mainnet is from genesis; testnet4's point is
+named after every seat and installer node runs a release that has it, and until
+then it never sums.
+
 Below protocol 19 the floor stays each output's, as before. **Add to bond is
 the default way to raise a bond** (2026-10-19: "e.g. increase your bond
 by 32000 sats"): `arena-install --add-bond <sat>` or the owner page's "Add to
@@ -6984,19 +6997,25 @@ exception. A bare `proof_ref` names evidence, and an absence's is not retrievabl
 bytes. An abandonment's proof is:
 
 ```text
-AbandonedProof { signed FederationRecord holding the row, node key, proof_ref, output }
+AbandonedProof { federation_id, node key, proof_ref, output }     hashed, in the OP_RETURN
+evidence         the signed FederationRecord holding the row      beside it, any standing copy
 OP_RETURN = H(AbandonedProof) ‖ slash_height ‖ federation_id
 ```
 
-It is tagged as every slash proof is. It checks when the record verifies at threshold
-on the checker's own census and the row names this node and `proof_ref`. For a spend,
-whoever checks also reads `proof_ref` on the chain; for an absence, the record's
-signatures are the check (§5A.3B's residual). The notice was read when the row was
-written, so `guardianSlashStands` is asked of the proof without one. Seats serve the
-bytes by that hash, at the door that lists them: `GET /slashes?proof=<hash>`, also
-after the slash has landed. Whoever posts a slash hands the bytes to the seats first,
-at `PUT /slash/<hash>`, because seats can hold one record under different signatures.
-Rehearsal 14's slash, which put `proof_ref` itself there, stays what it was: history,
+It is tagged as every slash proof is. **One output has one hash (RULED 2026-11-02,
+kanban #1064).** Signatures are evidence, not identity: `H(AbandonedProof)` is the same
+at every seat, whichever signatures it holds and whichever later record holds the row.
+A checker fetches the proof and any evidence, checks the hash on the proof, then the
+record at threshold on its own census, that it is the proof's federation's, and that
+the row names this node and `proof_ref`. For a spend, whoever checks also reads
+`proof_ref` on the chain; for an absence, the record's signatures are the check
+(§5A.3B's residual). The notice was read when the row was written, so
+`guardianSlashStands` is asked of the proof without one. Seats serve both by that hash,
+at the door that lists them, `GET /slashes?proof=<hash>` and
+`GET /slashes?evidence=<hash>`, also after the slash has landed. Whoever posts a slash
+hands them to the seats first, at `PUT /slash/<hash>` (the proof, then the record),
+because seats serving the evidence is what makes a proof retrievable. A seat keeps a
+copy when the hash, the threshold and the row stand. Rehearsal 14's slash, which put `proof_ref` itself there, stays what it was: history,
 on a test chain.
 
 **Old rows (RULED 2026-11-02, kanban #1062).** A rule does not reach back. Only a row

@@ -266,16 +266,18 @@ function pathBSpend({ bond, advert, proofId, slashHeight, hint, set, feeSats }) 
 }
 
 /**
- * THE JUDGEMENT OF AN ABANDONMENT'S PROOF (§23A.5, RULED 2026-11-02, kanban #1058, #1059, #1062). `proofBytes` what a seat handed over, believed for nothing: its signed record is held to its
- * threshold of bonded guardians against `census`, this reader's own entries at the record's height, and the row it holds must name the proof's node and proof_ref. Then abandonedSlashStands over
+ * THE JUDGEMENT OF AN ABANDONMENT'S PROOF (§23A.5, RULED 2026-11-02, kanban #1058, #1059, #1062, #1064). `proofBytes` and `evidence`, any standing copy of the signed record, are what a seat
+ * handed over, believed for nothing: the record is held to its threshold of bonded guardians against `census`, this reader's own entries at the record's height, it must be the proof's federation's,
+ * and the row it holds must name the proof's node and proof_ref. Then abandonedSlashStands over
  * `bonds`, this reader's own census, with the network's ABANDONED_SLASH_HEIGHT or `from`. Answers { slashed, offence, proofId (the hash a slash commits to), proofRef, federation, node, output,
  * bondSpent, why }; a template-3 output comes back judged, for the census key's holders: path B is not this set's on such a bond.
  */
-export function judgeAbandoned({ proofBytes, census, bonds, networkId, inviteFederationId, from = abandonedSlashPoint(networkOf(networkId)) }) {
+export function judgeAbandoned({ proofBytes, evidence, census, bonds, networkId, inviteFederationId, from = abandonedSlashPoint(networkOf(networkId)) }) {
   const no = (why) => ({ slashed: false, why });
   let p; try { p = decodeAbandonedProof(proofBytes); } catch (e) { return no(`that is no proof of an abandonment: ${e.message}`); }
-  const v = verifyFederationRecord(p.record, { census, verify: verifySchnorr, inviteFederationId, networkId });
+  const v = verifyFederationRecord(evidence, { census, verify: verifySchnorr, inviteFederationId, networkId });
   if (!v.ok) return no(`that record does not stand: ${v.why}`);
+  if (toHex(v.record.federationId) !== toHex(p.federationId)) return no('that record is another federation\'s');
   const stands = abandonedSlashStands({ record: v.record, nodePubkey: p.nodePubkey, proofRef: p.proofRef, bonds, txid: toHex(p.txid), vout: p.vout, from });
   if (!stands.ok) return no(stands.why);
   return { slashed: true, offence: stands.kind, proofId: abandonedProofId(proofBytes), proofRef: toHex(stands.proofRef), sinceHeight: stands.sinceHeight, federation: toHex(v.record.federationId), node: toHex(stands.nodePubkey), output: stands.output, bondSpent: stands.bondSpent, why: stands.why };

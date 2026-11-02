@@ -5,8 +5,11 @@
 // Without this a guardian could spend most of a bond, leave a little under the floor, and that remainder would walk free at maturity.
 //
 // ONE SLASH FORMAT (RULED 2026-11-02, kanban #1062): every slash commits to H(fraud_proof), so anyone can fetch the proof and re-check it. A proof_ref names evidence and an absence's names none
-// that can be fetched, so the OP_RETURN carries the hash of an AbandonedProof: the signed record, the node, the proof_ref and the output, tagged as every slash proof is. Only rows with
-// since_height at or above the network's ABANDONED_SLASH_HEIGHT act. Older ones stand as records and move no money.
+// that can be fetched, so the OP_RETURN carries the hash of an AbandonedProof, tagged as every slash proof is. Only rows with since_height at or above the network's ABANDONED_SLASH_HEIGHT act.
+// Older ones stand as records and move no money.
+//
+// ONE OUTPUT, ONE HASH (RULED 2026-11-02, kanban #1064): the proof is the federation, the node, the proof_ref and the output, and nothing a seat can hold differently. The signed record holding the
+// row is evidence and travels beside it, any standing copy: signatures are evidence, not identity, so which ones a seat has, or which later record holds the row, does not move the hash.
 //
 // `bonds` is everything one census read of a node's outputs: its entries and its exclusions (`bondsOf`). What a seat lists and what the set judges are the same few lines, so neither has a
 // reading of its own. Pure: the chain, the curve and the record's signatures are the caller's.
@@ -76,17 +79,19 @@ export function abandonedSlashStands({ record, nodePubkey, proofRef, bonds, txid
   return { ok: true, slash: true, kind: stands.kind, why: stands.why, proofRef: row.proofRef, sinceHeight: row.sinceHeight, nodePubkey: row.nodePubkey, output, bondSpent: !!spend };
 }
 
-/** THE PROOF AN ABANDONMENT'S SLASH COMMITS TO: `record` the signed record's bytes, `txid` (internal order) and `vout` the output. Its id is the hash of these bytes, as for every slash proof. */
-export function encodeAbandonedProof({ record, nodePubkey, proofRef, txid, vout }) {
+/** 1 type + 2 version + federation + node + proof_ref + txid + a 4-byte vout. */
+export const ABANDONED_PROOF_BYTES = 135;
+
+/** THE PROOF AN ABANDONMENT'S SLASH COMMITS TO: `txid` (internal order) and `vout` the output. Its id is the hash of these bytes, as for every slash proof. */
+export function encodeAbandonedProof({ federationId, nodePubkey, proofRef, txid, vout }) {
   const w = new Writer();
   w.u8(TYPE_ABANDONED_PROOF);
   w.u16(PROTOCOL_VERSION);
+  w.bytes32(federationId);
   w.bytes32(nodePubkey);
   w.bytes32(proofRef);
   w.bytes32(txid);
   w.u32(vout);
-  w.u32(record.length);
-  w.bytes(record);
   return w.finish();
 }
 
@@ -94,10 +99,25 @@ export function decodeAbandonedProof(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_ABANDONED_PROOF) throw new Error('not a proof of an abandonment');
   if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
-  const p = { nodePubkey: r.bytes32(), proofRef: r.bytes32(), txid: r.bytes32(), vout: r.u32() };
-  p.record = r.bytes(r.u32());
+  const p = { federationId: r.bytes32(), nodePubkey: r.bytes32(), proofRef: r.bytes32(), txid: r.bytes32(), vout: r.u32() };
   r.end();
   return p;
+}
+
+/** A PROOF AND ITS EVIDENCE TOGETHER, as a seat is handed them and keeps them: the proof, then the signed record's bytes. The hash is of the proof alone. */
+export function joinAbandonedEvidence(proofBytes, record) {
+  if (proofBytes.length !== ABANDONED_PROOF_BYTES) throw new Error(`a proof of an abandonment is ${ABANDONED_PROOF_BYTES} bytes, got ${proofBytes.length}`);
+  if (!record.length) throw new Error('a proof of an abandonment travels with its signed record');
+  const out = new Uint8Array(ABANDONED_PROOF_BYTES + record.length);
+  out.set(proofBytes, 0);
+  out.set(record, ABANDONED_PROOF_BYTES);
+  return out;
+}
+
+export function splitAbandonedEvidence(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length <= ABANDONED_PROOF_BYTES) throw new Error('a proof of an abandonment travels with its signed record');
+  const proofBytes = bytes.subarray(0, ABANDONED_PROOF_BYTES);
+  return { proof: decodeAbandonedProof(proofBytes), proofBytes, record: bytes.subarray(ABANDONED_PROOF_BYTES) };
 }
 
 /** Whether `bytes` is this kind of proof: a reader of proofs of every kind asks this first. */
