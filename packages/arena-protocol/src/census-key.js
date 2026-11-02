@@ -460,6 +460,16 @@ export function censusKeyFailing(outcomes) {
   return out;
 }
 
+/**
+ * A KEY UNDER ITS THRESHOLD, IN AN OWNER'S WORDS (5A.3B: "The owner page says so"), or null. `dead` the keys the census can no longer reach (key hex), `outputs` this node's as GET /owner/bond lists them. Dead means unreachable by the current
+ * census: its old holders may still sign, and the chain would take it, but that is nothing a node can measure.
+ */
+export function censusKeyDeadWarning(dead, outputs) {
+  const named = (outputs || []).filter((o) => o.censusKey && (dead || []).includes(o.censusKey));
+  if (!named.length) return null;
+  return { kind: 'census key dead', urgent: false, says: `${named.length} of your bond outputs name${named.length === 1 ? 's' : ''} a census key the current census holds under its threshold. They stay valid, a slash cannot be started on them, and you can still take them back at maturity. Nothing else changes.` };
+}
+
 /** The same in an owner's words, or null: the warning GET /owner/standing carries. */
 export function censusKeyFailingWarning(f) {
   if (!f || !f.warn) return null;

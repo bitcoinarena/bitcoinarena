@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   censusKey0Shares, censusKeyShares, censusKeyDrawHeight, censusKeyWindow, carrierEscrowPegInId, censusKeyEpochOf, encodeCensusKeyRecord, decodeCensusKeyRecord, censusKeyRecordId, censusKeyAnchor, censusKeyAnchorIn,
-  censusKeyRecordStands, standingCensusKeys, bondNamesStandingKey, censusKeyPlan, censusHeightOfEpoch, fallbackCarriers, carrierPegInId,
+  censusKeyRecordStands, standingCensusKeys, bondNamesStandingKey, censusKeyPlan, censusKeyDeadWarning, censusHeightOfEpoch, fallbackCarriers, carrierPegInId,
 } from '../src/census-key.js';
 import { taggedHash, toHex, bytesToBigInt } from '../src/hash.js';
 import { CENSUS_KEY_BOND_MIN, censusKeyBondMin } from '../src/genesis.js';
@@ -211,4 +211,15 @@ test('census key 0 reads as any key: one share each, x its place in genesis, hol
   assert.equal(got.threshold, 3);
   const plan = censusKeyPlan({ keys: [{ epoch: 0, named: 2, totalShares: got.total, threshold: got.threshold, heldNow: 3 }] });
   assert.equal(plan.reshare.epoch, 0, 'three of four founders in the census is under 80 %, and over the threshold');
+});
+
+test('a key under its threshold, in an owner\'s words: only for outputs that name it (5A.3B, kanban #972)', () => {
+  const dead = ['aa'.repeat(32)], outputs = [{ censusKey: 'aa'.repeat(32) }, { censusKey: 'bb'.repeat(32) }, {}];
+  const w = censusKeyDeadWarning(dead, outputs);
+  assert.equal(w.kind, 'census key dead');
+  assert.equal(w.urgent, false, 'deterrence is lost for those bonds, nothing else');
+  assert.match(w.says, /^1 of your bond outputs names a census key/);
+  assert.match(w.says, /stay valid.*cannot be started.*at maturity/);
+  assert.equal(censusKeyDeadWarning(dead, outputs.slice(1)), null);
+  assert.equal(censusKeyDeadWarning([], outputs), null);
 });

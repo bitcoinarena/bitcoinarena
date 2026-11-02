@@ -91,7 +91,7 @@ import { configServesRound } from '../../arena-protocol/src/ballot-chain.js';
 import { createProposals } from './proposals.js';
 import { createBallotTally } from './ballot-tally.js';
 import { CensusKeyStore } from './census-key-store.js';
-import { censusKeyFailingWarning } from '../../arena-protocol/src/census-key.js';
+import { censusKeyDeadWarning, censusKeyFailingWarning } from '../../arena-protocol/src/census-key.js';
 import { createCensusKeyRun } from './census-key-run.js';
 import { createOperatorTokens, operatorUri } from './operator-tokens.js';
 import { isBackupPublication, playedOfWindow, dayMarkersOf, itemTag } from '../../arena-protocol/src/duty.js';
@@ -4131,6 +4131,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const tip = await censusKey.tipHeight();
       if (await ownMoved(tip)) { const entries = await censusKey.censusEntriesAt(tip); if (entries) ownCensus = { height: tip, entries: entries.filter((e) => e && e.pubkey && toHex(e.pubkey) === toHex(round.pubkey)) }; }
       if (ownCensus) { const all = ownBondsOf(ownCensus.entries, toHex(round.pubkey)); if (all) await holdWatch.pass(all.outputs); }
+      await censusKey.scan.readDead().catch((e) => console.error(`[census-key] the keys under their threshold were not read: ${e.message}`));
       if (slashStarter) await slashStarter.pass();
     } finally { ownPassing = false; }
   };
@@ -6736,6 +6737,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
               ...(() => { if (address.announced && !endpointWarning({ advertised: address.announced, serving: address.serving })) return []; const w = endpointWarning(address); return w ? [w] : []; })(),
               // A CENSUS KEY FAILING EPOCH AFTER EPOCH (5A.3B, kanban #972): it reads the chain, so it says the same at every node
               ...(() => { const w = censusKey ? censusKeyFailingWarning(censusKey.scan.failing()) : null; return w ? [w] : []; })(),
+              // A KEY THIS NODE'S BONDS NAME, UNDER ITS THRESHOLD (5A.3B: "The owner page says so")
+              ...(() => { if (!censusKey) return []; const f = ownBondNow(), w = censusKeyDeadWarning(censusKey.scan.dead(), f ? (f.all ? f.all.outputs : [f.bond]) : []); return w ? [w] : []; })(),
               // A SLASH STARTED ON THIS NODE'S BOND (5A.3B): the money is in a hold output, and it still counts until something ends that
               ...(await ownHoldsNow(ownBondNow())).map((h) => ({ kind: 'slash started', urgent: true, says: h.known ? `A slash was started on your bond of ${h.sats} sat at block ${h.startHeight}. It still counts. The return opens at block ${h.returnOpensAt}, and the census key can take it from block ${h.fallbackOpensAt}.`
                 : `A slash was started on your bond of ${h.sats} sat at block ${h.startHeight}, into a hold output this node did not sign for.` }))], address });
