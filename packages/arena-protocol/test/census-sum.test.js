@@ -6,10 +6,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
-import { BOND_SUM_VERSION } from '../src/constants.js';
+import { BOND_SUM_VERSION, PROTOCOL_VERSION } from '../src/constants.js';
 import { parseTransaction } from '../src/tx.js';
 import { bondTransaction } from '../tools/bond.js';
-import { resolveCensus, nodeBonds, nodeBondOf, newestPerNode } from '../src/census.js';
+import { resolveCensus, nodeBonds, nodeBondOf, newestPerNode, sumsBonds, chainCensusContract } from '../src/census.js';
 import { toHex } from '../src/hash.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
@@ -128,4 +128,26 @@ test('the client counts a node by its sum too: 50,000 + 32,000 is in its census 
   assert.match(src, /!sumsBonds\(contract\) && bondSats < contract\.bondMinSats/);
   assert.match(src, /floorOnSums\(entries, contract\)/);
   assert.match(src, /!sumsBonds\(contract\) && \(!sameCC\(read\.bondTxid, tx\.txid\)/, 'from protocol 19 another output\'s update of the same node counts');
+});
+
+test('the chain\'s own census sums at the version it always read: 40,000 three times is in, spent or not, and no round moves (kanban #1063)', () => {
+  const v1 = { protocolVersions: [1] };   // an advertisement of a node that never listed 19
+  const three = [1, 2, 3].map((seq) => output(0x21, 40000, seq, v1));
+  const read = (contract, outs = three) => { const byTxid = new Map(outs.map((o) => [toHex(o.entry.txid), o.transaction])); return resolveCensus(outs.map((o) => o.entry), { contract, resolve: (e) => ({ transaction: byTxid.get(toHex(e.txid)) }) }); };
+  const chain = chainCensusContract({ networkId: NETWORK_ID_REGTEST, height: HEIGHT, bondMinSats: 50000n });
+  assert.equal(chain.protocolVersion, PROTOCOL_VERSION, 'the version gate is the one a seat always read');
+  assert.equal(sumsBonds(chain), true);
+  const got = read(chain);
+  assert.equal(got.eligible.length, 3, 'each output under the floor, the sum above it');
+  assert.equal(read(chain, three.slice(0, 2)).eligible.length, 2, 'one spent: 80,000 is still held');
+  const under = read(chain, three.slice(0, 1));
+  assert.equal(under.eligible.length, 0);
+  assert.match(under.excluded[0].why, /sum to 40000/);
+  for (const protocolVersion of [1, 18]) {
+    const round = { networkId: NETWORK_ID_REGTEST, censusHeight: HEIGHT, bondMinSats: 50000n, protocolVersion };
+    assert.equal(sumsBonds(round), false, `a round at ${protocolVersion} keeps the floor per output`);
+    assert.equal(read(round).eligible.length, 0);
+  }
+  const speaksNot = [1, 2].map((seq) => output(0x22, 40000, seq, { protocolVersions: [18, 19] }));
+  assert.equal(read(chain, speaksNot).eligible.length, 0, 'a node that does not list the version is out as it always was');
 });

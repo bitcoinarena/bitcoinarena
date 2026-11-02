@@ -28,7 +28,7 @@ import {
   TYPE_GAME_MANIFEST, TYPE_OUTCOME_ATTESTATION, TYPE_PRICE_SAMPLE, TYPE_PRICE_TAPE, TYPE_FEDERATION_RECORD, TYPE_PRESENT, TYPE_SEATING,
   TYPE_CONFIG_PROPOSAL, TYPE_ABSENCE_ATTESTATION, TYPE_DEPARTURE_NOTICE, TYPE_EMERGENCY_DEPARTURE, TYPE_SPENT_SET, TYPE_ROUND_RESULT, TYPE_RESULT_FRONT, TYPE_HALT_OBSERVATION,
   TYPE_VALUE_ATTESTATION, TYPE_DONATION_PROPOSAL, TYPE_DONATION_APPROVAL, TYPE_DONATION_SET_KEYS_VESTING,
-  TYPE_AUDIT, TYPE_AUDIT_SLASH_PROOF, TYPE_SEATING_SEEN, TYPE_HEARTBEAT, TYPE_HEARTBEAT_HEARD,
+  TYPE_AUDIT, TYPE_AUDIT_SLASH_PROOF, TYPE_ABANDONED_PROOF, TYPE_SEATING_SEEN, TYPE_HEARTBEAT, TYPE_HEARTBEAT_HEARD,
 } from './constants.js';
 
 /**
@@ -102,6 +102,7 @@ export const FRAMES = new Map([
   [TYPE_AUDIT, { name: 'Audit', authority: true }],
   // A slash proof against a contradicted AUDIT (§13A.1, kanban #724, #725): a slashing transaction commits to its id
   [TYPE_AUDIT_SLASH_PROOF, { name: 'AuditSlashProof', authority: true }],
+  [TYPE_ABANDONED_PROOF, { name: 'AbandonedProof', authority: true }],
   // A halted federation's spent-note set (§23A.5): it decides which notes the liquidation pays.
   [TYPE_SPENT_SET, { name: 'SpentSet', authority: true }],
   // A price round's verdict (§13 RoundResult): who won the war, bulls or bears, by the attested tape. It moves no money.

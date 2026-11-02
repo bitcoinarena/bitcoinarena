@@ -153,7 +153,7 @@ import { createEndpointsOf, federationOfDir, configInvite } from './federation-e
 import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
 import { createArbitrationEvents } from './arbitration-events.js';
-import { startsByCensusKey } from '../../arena-protocol/src/abandoned-slash.js';
+import { startsByCensusKey, isAbandonedProof } from '../../arena-protocol/src/abandoned-slash.js';
 import { createHalts, wsSessionCount } from './halts.js';
 import { reserveMembersOf } from './reserve-members.js';
 import { createSettleBackoff } from './settle-backoff.js';
@@ -177,7 +177,7 @@ import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
-import { TYPE_SETTLEMENT_ACK, TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, TYPE_AUDIT_SLASH_PROOF, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION, seatingRulesEpochOf } from '../../arena-protocol/src/constants.js';
+import { TYPE_SETTLEMENT_ACK, TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, TYPE_AUDIT_SLASH_PROOF, TYPE_ABANDONED_PROOF, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION, seatingRulesEpochOf } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
@@ -5006,6 +5006,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     chainFirst: process.env.ARENA_RECORD_BASIS === 'chain',
     // a record its guardians' own nodes do not hold, asked of the census seats this seat reads (kanban #326)
     peerSeats: () => networkSeats(),
+    // an abandonment's proof kept by its hash where proofs are, for as long as a slash can be audited (§23A.5, kanban #1062)
+    keepProof: (id, bytes) => round.relayPut(Buffer.from(id, 'hex'), bytes), proofOf: (id) => round.relayGet(Buffer.from(id, 'hex')),
     absences, abandonBlocks: (FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet).abandonBlocks,
     departureNotice: (FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet).departureNotice,
     leavingAtMs: () => (owner ? owner.leavingAtMs() : null),
@@ -10415,6 +10417,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
       // THE ARBITRATION SET'S INTAKE (spec 5A.3B step 1): every slash proof this node filed - round, entry,
       // accused node, proof id - for the arbiter to fetch with its evidence (GET /slash-proofs) and judge itself
+      // AN ABANDONMENT'S PROOF BY ITS HASH (§23A.5, RULED 2026-11-02, kanban #1062), at the door that lists it: the 32 bytes a slash's OP_RETURN commits to name the bytes that hash to them
+      if (req.method === 'GET' && url.pathname === '/slashes' && url.searchParams.has('proof')) {
+        const id = String(url.searchParams.get('proof')).toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(id)) return text(res, 400, 'a proof is named by its 32 bytes as hex');
+        const kept = fedRecords ? fedRecords.abandonedProof(id) : null;
+        if (!isAbandonedProof(kept)) return text(res, 404, 'this seat holds no proof of an abandonment under that hash');
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'public, max-age=86400', ...CORS });
+        return res.end(Buffer.from(kept));
+      }
       if (req.method === 'GET' && url.pathname === '/slashes') {
         const rows = round.allSlashProofs().map((r) => ({ round: toHex(r.roundId), entry: toHex(r.entryId), node: toHex(r.nodePubkey),
           proof: toHex(r.proofId), seenMs: r.seenMs, objection: !!round.objectionBundle(r.roundId, r.entryId) }));
@@ -10426,7 +10437,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const doubleRows = round.doubleSlashProofs().map((r) => ({ round: toHex(r.roundId), entry: toHex(r.entryId), node: toHex(r.nodePubkey), proof: toHex(r.proofId), seenMs: r.seenMs }));
         // AND THE PROOFS OF FALSE TABLES (§5A.3 table row, kanban #1040): they accuse a settlement, not an entry
         const tableRows = round.tableSlashProofs().map((r) => ({ round: toHex(r.roundId), entry: '00'.repeat(32), node: toHex(r.nodePubkey), proof: toHex(r.proofId), seenMs: r.seenMs }));
-        // AND WHAT THE RECORDS FILED (§23A.5, kanban #1059): an output an ABANDONED row left, its evidence the signed record (GET /federation-records-at). Template 3 goes to the census key's
+        // AND WHAT THE RECORDS FILED (§23A.5, kanban #1059, #1062): an output an ABANDONED row left, `proof` the hash of its AbandonedProof (GET /slashes?proof=). Template 3 goes to the census key's
         // holders on the output's newest presig, so that is named with it; none named here, the one at bonding stands, and it is on the chain
         let abandonedRows = [];
         try { abandonedRows = fedRecords ? await fedRecords.abandonedSlashes() : []; } catch (e) { console.log(`[slash] abandoned rows: ${e.message}`); }
@@ -10810,6 +10821,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const slashed = /^\/slash\/([0-9a-f]{64})$/.exec(url.pathname);
       if (slashed && req.method === 'PUT') {
         const bytes = await read(req);
+        // AN ABANDONMENT'S PROOF (§23A.5, kanban #1062) is its own evidence: the signed record is in it
+        if (bytes.length && bytes[0] === TYPE_ABANDONED_PROOF) {
+          if (!fedRecords) return text(res, 503, 'this seat holds no federation records yet');
+          const r = await fedRecords.takeAbandonedProof(slashed[1], new Uint8Array(bytes), (inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; });
+          return text(res, r.status, r.ok ? 'kept' : r.why);
+        }
         // A PROOF AGAINST A CONTRADICTED AUDIT (kanban #724, #725) travels with the AUDIT it names, its signature and its rows: kept
         // only when the AUDIT is the one the proof names, by the node it names, and its rows are the results the AUDIT vouched for
         if (bytes.length && bytes[0] === TYPE_AUDIT_SLASH_PROOF) {

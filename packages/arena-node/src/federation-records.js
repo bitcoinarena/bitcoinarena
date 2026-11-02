@@ -13,13 +13,15 @@
 // is DRAINING, CRITICAL or CLOSED makes the federation draining at this seat (no new round names it).
 //
 // A GUARDIAN WHO SPENT HIS BOND WHILE SEATED is ABANDONED from that spend (spentGuardians, §23A.5, kanban #1054), read off the census, so no one has to attest it.
-// WHAT AN ABANDONED ROW LEFT is listed for the arbitration set (abandonedSlashes, §23A.5, kanban #1059): the record is the filing, and an output left is slashed on the row's proof_ref.
+// WHAT AN ABANDONED ROW LEFT is listed for the arbitration set (abandonedSlashes, §23A.5, kanban #1059, #1062): the record is the filing, and an output left is slashed on an AbandonedProof, kept
+// here by its hash for anyone to fetch and check, the slash long landed or not.
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { nodeBonds } from '../../arena-protocol/src/census.js';
 import { abandonmentProof, bondSpentProof } from '../../arena-protocol/src/absence.js';
 import { guardianSlashStands } from '../../arena-protocol/src/federation-slash.js';
-import { abandonedRows, outputsLeft, abandonedSlashId } from '../../arena-protocol/src/abandoned-slash.js';
+import { abandonedRows, outputsLeft, encodeAbandonedProof, decodeAbandonedProof, abandonedProofId } from '../../arena-protocol/src/abandoned-slash.js';
+import { abandonedSlashPoint, networkOf } from '../../arena-protocol/src/constants.js';
 import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDeparture, emergencyHex, readEmergencyHex } from './absences.js';
 import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureId } from '../../arena-protocol/src/emergency.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
@@ -97,7 +99,11 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // are asked too. A record from anywhere stands only as it stands against this seat's census.
   peerSeats = () => [],
   // THE HEIGHT RECORDS NAME THEIR CAPACITY BAND FROM (capacity.js CAPACITY_BAND_HEIGHT, §23A.3a, kanban #997); null: never
-  bandFrom = null }) {
+  bandFrom = null,
+  // AN ABANDONMENT'S PROOF KEPT BY ITS HASH (§23A.5, kanban #1062): (id, bytes) kept, and (id) -> the bytes or null. A row leaves the listing once its output is spent, and the proof must outlive that
+  keepProof = null, proofOf = null,
+  // THE FIRST since_height A ROW MOVES MONEY FROM (constants.js ABANDONED_SLASH_HEIGHT); a harness names its own
+  abandonedFrom = networkId ? abandonedSlashPoint(networkOf(networkId)) : null }) {
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
   const draining = new Map();                // federation id hex -> status name
   // THE HALT A LIQUIDATION COUNTS FROM (§23A.5): the lowest-height signed HALTED record of the run of HALTED records
@@ -350,10 +356,11 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   /**
    * THE SLASHES THE RECORDS FILED (§23A.5, RULED 2026-11-02, kanban #1058, #1059): one row per output an ABANDONED row of a kept record left, read off the chain's census at the shared basis
    * height, for the arbitration set's intake (GET /slashes). No row, no read: a seat whose records name nobody ABANDONED pays nothing here. The output's spent state is the census's, and the
-   * set reads its own chain before it acts. Answers [{ federation, node, peer, proof, proofRef, since, recordHeight, txid, vout, sats, template }].
+   * set reads its own chain before it acts. `proof` is the hash of that output's AbandonedProof (§23A.5, kanban #1062), and the bytes are kept under it: abandonedProof serves them, at the door
+   * that lists them. Answers [{ federation, node, peer, proof, proofRef, since, recordHeight, txid, vout, sats, template }].
    */
   async function abandonedSlashes() {
-    const rows = [...kept.entries()].flatMap(([federation, k]) => abandonedRows(k.record).map((r) => ({ federation, height: k.height, r })));
+    const rows = [...kept.entries()].flatMap(([federation, k]) => abandonedRows(k.record, abandonedFrom).map((r) => ({ federation, height: k.height, bytes: k.bytes, r })));
     if (!rows.length || typeof bondsAt !== 'function' || typeof chainTip !== 'function') return [];
     const h = Math.floor((Number(await chainTip()) - CHAIN_BASIS_LAG) / CHAIN_BASIS_STEP) * CHAIN_BASIS_STEP;
     if (!bondsRead.has(h)) {
@@ -362,9 +369,32 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       bondsRead.set(h, got);
       while (bondsRead.size > 2) bondsRead.delete(bondsRead.keys().next().value);
     }
-    return rows.flatMap(({ federation, height, r }) => outputsLeft(bondsRead.get(h), r.nodePubkey, r.sinceHeight).map((o) => ({ federation, node: toHex(r.nodePubkey), peer: toHex(r.peerKey),
-      proof: toHex(abandonedSlashId({ proofRef: r.proofRef, txid: o.txid, vout: o.vout })), proofRef: toHex(r.proofRef), since: r.sinceHeight, recordHeight: height,
-      txid: o.txid, vout: o.vout, sats: String(o.sats), template: o.template })));
+    return rows.flatMap(({ federation, height, bytes, r }) => outputsLeft(bondsRead.get(h), r.nodePubkey, r.sinceHeight).map((o) => {
+      const proof = encodeAbandonedProof({ record: bytes, nodePubkey: r.nodePubkey, proofRef: r.proofRef, txid: fromHex(o.txid), vout: o.vout }), id = toHex(abandonedProofId(proof));
+      keptProof(id, proof);
+      return { federation, node: toHex(r.nodePubkey), peer: toHex(r.peerKey), proof: id, proofRef: toHex(r.proofRef), since: r.sinceHeight, recordHeight: height, txid: o.txid, vout: o.vout, sats: String(o.sats), template: o.template };
+    }));
+  }
+  const proofsHeld = new Map();              // id hex -> bytes, what no store keeps; with a store only so each is written once
+  const keptProof = (id, bytes) => { if (proofsHeld.has(id)) return; proofsHeld.set(id, keepProof ? true : bytes); if (keepProof) { try { keepProof(id, bytes); } catch { proofsHeld.delete(id); } } };
+  /** The bytes of an AbandonedProof by its hash, or null. */
+  const abandonedProof = (id) => { const held = proofsHeld.get(id); return held instanceof Uint8Array ? held : proofOf ? proofOf(id) : null; };
+
+  /**
+   * AN AbandonedProof HANDED TO THIS SEAT (PUT /slash/<id>): the set hands the bytes its slash commits to to every seat, since seats can hold a record under different signatures. Kept when the bytes
+   * are that hash and their record stands on the census at its height, as a mirrored record is checked, and its row names the proof's node and proof_ref. Answers { ok, status, why }.
+   */
+  async function takeAbandonedProof(id, bytes, inviteFederationId) {
+    if (toHex(abandonedProofId(bytes)) !== id) return { ok: false, status: 409, why: 'that is not the proof that id names' };
+    let p, height;
+    try { p = decodeAbandonedProof(bytes); height = splitSignedRecord(p.record).record.height; } catch (e) { return { ok: false, status: 400, why: e.message }; }
+    const entries = typeof censusAt === 'function' ? await Promise.resolve().then(() => censusAt(height)).catch(() => null) : null;
+    if (!entries) return { ok: false, status: 503, why: `the census at ${height} is not read here` };
+    const v = verifyFederationRecord(p.record, { census: entries, verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, inviteFederationId, networkId });
+    if (!v.ok) return { ok: false, status: 409, why: `that record does not stand: ${v.why}` };
+    if (!abandonedRows(v.record, abandonedFrom).some((r) => toHex(r.nodePubkey) === toHex(p.nodePubkey) && toHex(r.proofRef) === toHex(p.proofRef))) return { ok: false, status: 409, why: 'that record has no such ABANDONED row' };
+    keptProof(id, bytes);
+    return { ok: true, status: 201 };
   }
 
   /** The body for one federation from a basis, with `gone` - the guardians whose nodes said they are leaving. */
@@ -688,7 +718,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     censusKeys: () => { const b = basis(); return b.ok ? (b.census.entries || []).map((e) => e.pubkey).filter(Boolean) : []; },
     /** THE CENSUS THIS SEAT READS, its entries and height (GET /roles), or why none. */
     censusNow: () => { const b = basis(); return b.ok ? { ok: true, height: b.height, entries: b.census.entries || [] } : { ok: false, why: b.why }; },
-    abandonedSlashes,
+    abandonedSlashes, abandonedProof, takeAbandonedProof,
     recordOf: (fidHex) => { const k = kept.get(String(fidHex).toLowerCase()); return k ? { record: k.record, status: k.status, height: k.height, bytes: k.bytes } : null; },
     /**
      * HOW MANY OF A FEDERATION'S GUARDIAN SEATS HOLD ITS RECORD CLOSED (kanban #577, measured 2026-10-22 on 89ce310e: the first guardian to

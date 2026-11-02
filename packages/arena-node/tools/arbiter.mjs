@@ -22,8 +22,8 @@
 // judgeDoubleProof: both signatures, one run, the accused's committee seat and bond. Nothing is replayed, so it asks for no objection and no core.
 // A proof of a false table (5A.3 table row, kanban #1040; GET /slashes `tableSlashes`, its record at GET /table-slash-proofs) is judged by arbiter.js judgeTableProof: the pair on its
 // own bytes, the txid rebuilt by this set's client of the federation (ARENA_STAKE_LOCK_BIN, ARENA_ARBITER_CLIENT_DIRS): a proof with no client to read it waits.
-// An output an ABANDONED row of a federation record left (§23A.5, kanban #1059; GET /slashes `abandonedSlashes`, its record at GET /federation-records-at) is judged by arbiter.js judgeAbandoned:
-// the record's signatures on this set's census, the row and the output on its chain. Path B on the row's proof_ref into the liquidation escrow, where it waits for the federation's end.
+// An output an ABANDONED row of a federation record left (§23A.5, kanban #1059, #1062; GET /slashes `abandonedSlashes`, its proof at GET /slashes?proof=<hash>) is judged by arbiter.js judgeAbandoned:
+// the signatures of the record in the proof on this set's census, the row and the output on its chain. Path B on the proof's hash into the liquidation escrow, where it waits for the federation's end.
 // Its doors (POST /musig/nonce, /musig/partial, GET /status) serve the cooperative key path: it agrees to a release
 // only for a node no handled or open proof accuses.
 // After each pass it publishes every liquidation and posted slash it keeps as a signed event (kanban #723, arbitration-events.js) to
@@ -54,11 +54,11 @@ import { auditEligible } from '../../arena-protocol/src/auditor.js';
 import { makeVrf, SUITE_SECP256K1_TAI } from '../../arena-protocol/src/vrf.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { runId } from '../src/verdict.js';
-import { deriveCensus, censusFirstBlock } from '../../arena-protocol/src/census.js';
-import { bondsOf, startsByCensusKey } from '../../arena-protocol/src/abandoned-slash.js';
+import { deriveCensus, censusFirstBlock, chainCensusContract } from '../../arena-protocol/src/census.js';
+import { bondsOf, startsByCensusKey, abandonedProofId, decodeAbandonedProof } from '../../arena-protocol/src/abandoned-slash.js';
 import { splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
 import { readInvite } from '../src/invite.js';
-import { PROTOCOL_VERSION } from '../../arena-protocol/src/constants.js';
+import { abandonedSlashPoint } from '../../arena-protocol/src/constants.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { beaconFromChain, committeeSeedFromBeacon } from '../../arena-protocol/src/beacon.js';
 import { selectCommittee } from '../../arena-protocol/src/sortition.js';
@@ -92,38 +92,41 @@ async function censusAt(contract, height, from = Math.max(0, height - LOOKBACK))
   return { ...c, tip, view };
 }
 
-// AN OUTPUT AN ABANDONED ROW LEFT (§23A.5, RULED 2026-11-02, kanban #1058, #1059). The seat names the row (GET /slashes `abandonedSlashes`) and hands the signed record (GET /federation-records-at);
-// the record is held to its threshold on this set's own census at its height, and the row and the output are read on this set's own census at the tip, by the same window a seat's chain census
-// has. Path B on the row's proof_ref, the federation in the hint, into the liquidation escrow, and it stays there: `heldFor` keeps the pay-out below off it. A refusal is never kept as handled:
-// the row is named by what a seat said, so a false one must not stand in for the true one a seat hands later. A template-3 output is the census key's holders', named and left.
+// AN OUTPUT AN ABANDONED ROW LEFT (§23A.5, RULED 2026-11-02, kanban #1058, #1059, #1062). The seat names the row (GET /slashes `abandonedSlashes`) and serves its AbandonedProof by hash at the same door.
+// The bytes are believed for nothing: they must hash to the name, their record is held to its threshold on this set's own census at its height, and the row and the output are read on this set's own
+// census at the tip, by the same window a seat's chain census has. Path B commits to that hash, with the federation in the hint, into the liquidation escrow, and it stays there: `heldFor` keeps the
+// pay-out below off it. Every seat is handed the bytes first, as seats can hold a record under different signatures and the proof must be fetchable before the chain commits to it. A refusal is never
+// kept as handled: the row is named by what a seat said, so a false one must not stand in for the true one a seat hands later. A template-3 output is the census key's holders', named and left.
 const chainNetworkId = { regtest: NETWORK_ID_REGTEST, testnet4: NETWORK_ID_TESTNET4 }[network];
-const chainContract = (height) => ({ networkId: chainNetworkId, censusHeight: height, censusConfirmations: 1, bondMinSats: BigInt(env.ARENA_LOWEST_BOND_MIN_SATS || 50000), protocolVersion: PROTOCOL_VERSION });
+const chainContract = (height) => chainCensusContract({ networkId: chainNetworkId, height, bondMinSats: BigInt(env.ARENA_LOWEST_BOND_MIN_SATS || 50000) });
 const censusRead = (height) => censusAt(chainContract(height), height, censusFirstBlock(height, network));
+// a harness names its own point on regtest, as ARENA_CENSUS_KEY_FIRST_HEIGHT; a live network's is the release's
+const abandonedFrom = network === 'regtest' && env.ARENA_ABANDONED_SLASH_HEIGHT ? Number(env.ARENA_ABANDONED_SLASH_HEIGHT) : abandonedSlashPoint(network);
 async function handleAbandoned(seat, s) {
-  const at = await get(`${seat}/federation-records-at?height=${s.recordHeight}&federations=${s.federation}`);
-  const held = (at.records || []).find((r) => r.federation === s.federation);
-  if (!held) return { done: false, why: 'the seat lists that row and does not hand its record over' };
-  const recordBytes = fromHex(held.record);
-  const recordHeight = splitSignedRecord(recordBytes).record.height;
+  const proofBytes = await get(`${seat}/slashes?proof=${s.proof}`, 'bytes');
+  if (toHex(abandonedProofId(proofBytes)) !== s.proof) return { done: false, why: 'the seat lists that proof and hands other bytes' };
+  const recordHeight = splitSignedRecord(decodeAbandonedProof(proofBytes).record).record.height;
   const atRecord = await censusRead(recordHeight);
   if (!atRecord.ok) return { done: false, why: `no census at the record: ${atRecord.why}` };
   const now = await censusRead(atRecord.tip);
   if (!now.ok) return { done: false, why: `no census at the tip: ${now.why}` };
-  const verdict = judgeAbandoned({ recordBytes, census: atRecord.entries, bonds: bondsOf(now), peer: s.peer, txid: s.txid, vout: s.vout, networkId: chainNetworkId,
+  const verdict = judgeAbandoned({ proofBytes, census: atRecord.entries, bonds: bondsOf(now), networkId: chainNetworkId, from: abandonedFrom,
     inviteFederationId: (inv) => fromHex(readInvite(inv).federationId) });
   if (!verdict.slashed) return { done: false, why: `not slashed: ${verdict.why}` };
   if (startsByCensusKey(verdict.output.template)) return { done: false, why: 'a template-3 output: the census key\'s holders start it on its presig' };
-  const displayTxid = toHex(fromHex(s.txid).reverse());
-  const out = await rpc('gettxout', [displayTxid, s.vout, false]);
+  const displayTxid = toHex(fromHex(verdict.output.txid).reverse());
+  const out = await rpc('gettxout', [displayTxid, verdict.output.vout, true]);
   if (!out) return { done: true, why: 'that output is spent already: nothing left to slash' };
-  const bond = { txid: fromHex(s.txid), vout: s.vout, value: BigInt(Math.round(out.value * 1e8)), script: fromHex(out.scriptPubKey.hex) };
+  const bond = { txid: fromHex(verdict.output.txid), vout: verdict.output.vout, value: BigInt(Math.round(out.value * 1e8)), script: fromHex(out.scriptPubKey.hex) };
   const slash = buildAbandonedSlash({ verdict, bond, slashHeight: now.tip, tipHeight: now.tip, recordHeight, set, feeSats: PATH_B_FEE_SATS });
   if (!slash.ok) return { done: false, why: slash.why };
   const tx = assemble({ slash, signatures: set.members.slice(0, set.k).map((m) => ({ key: m.key, sig: memberSign(m, slash.sighash) })), set });
   if (!tx.ok) return { done: false, why: tx.why };
+  const handed = await Promise.all(seats.map((u) => fetch(`${u}/slash/${s.proof}`, { method: 'PUT', body: proofBytes, signal: AbortSignal.timeout(20000) }).then((r) => r.ok, () => false)));
+  if (!handed.some(Boolean)) return { done: false, why: 'no seat took the proof, so nothing commits to it' };
   const sent = await post(rpc, tx.hex);
-  return sent.ok ? { done: true, offence: verdict.offence, posted: sent.txid, slashHeight: now.tip, signers: tx.signers, node: verdict.node, heldFor: verdict.federation, proofRef: toHex(verdict.proofId),
-    bondSpent: verdict.bondSpent, outpoint: `${s.txid}:${s.vout}`, bondSats: String(bond.value), escrowSats: String(slash.built.amounts.escrow) } : { done: false, why: sent.why };
+  return sent.ok ? { done: true, offence: verdict.offence, posted: sent.txid, slashHeight: now.tip, signers: tx.signers, node: verdict.node, heldFor: verdict.federation, proofRef: verdict.proofRef,
+    bondSpent: verdict.bondSpent, outpoint: `${verdict.output.txid}:${verdict.output.vout}`, bondSats: String(bond.value), escrowSats: String(slash.built.amounts.escrow), proofHeldBy: handed.filter(Boolean).length } : { done: false, why: sent.why };
 }
 
 async function handle(seat, s) {
@@ -377,7 +380,8 @@ async function pass() {
     let list; try { list = await get(`${seat}/slashes`); } catch (e) { say({ seat, refused: e.message }); continue; }
     for (const s of [...(list.slashes || []), ...(list.auditSlashes || []).map((x) => ({ ...x, kind: 'audit' })), ...(list.doubleSlashes || []).map((x) => ({ ...x, kind: 'double' })), ...(list.tableSlashes || []).map((x) => ({ ...x, kind: 'table' }))]) if (!state.handled[s.proof] && !found.has(s.proof)) found.set(s.proof, { seat, s });
     // AN OUTPUT AN ABANDONED ROW LEFT (kanban #1059): each seat's own listing, so one seat's false row cannot stand in for another's true one; its node gets no release meanwhile
-    for (const s of list.abandonedSlashes || []) { open.add(s.node); if (!state.handled[s.proof]) abandoned.push({ seat, s }); }
+    // and a row from before the network's point moves no money, so it holds no release either (kanban #1062)
+    for (const s of list.abandonedSlashes || []) { if (abandonedFrom === null || !(s.since >= abandonedFrom)) continue; open.add(s.node); if (!state.handled[s.proof]) abandoned.push({ seat, s }); }
   }
   for (const { seat, s } of abandoned.sort((a, b) => (a.s.proof < b.s.proof ? -1 : 1))) {
     if (state.handled[s.proof]) continue;

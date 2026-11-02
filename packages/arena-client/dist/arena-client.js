@@ -832,6 +832,18 @@ const seatingRulesEpochOf = (network) => {
   const n = network === 'testnet' ? 'testnet4' : String(network || '');
   return Object.prototype.hasOwnProperty.call(SEATING_RULES_EPOCH, n) ? SEATING_RULES_EPOCH[n] : null;
 };
+/**
+ * THE FIRST since_height AN ABANDONED ROW MOVES MONEY FROM (§23A.5, RULED 2026-11-02, kanban #1062). A rule does not reach back: an older row stays in its records and keeps its meaning for the
+ * cap and the seat, and nothing lists it, slashes on it or holds a node's release for it. ONE CONSTANT PER NETWORK, as above; a network not named here: never. Mainnet from genesis.
+ * testnet4 157492: read on every seat store of the three machines, the newest ABANDONED row of any signed record has since_height 157091 (b18947f0), and T2's rehearsals 14 and 17 wrote none,
+ * their guardians' last block being 157491. So nothing of ours is slashed by accident.
+ */
+const ABANDONED_SLASH_HEIGHT = Object.freeze({ mainnet: 0, testnet4: 157492, regtest: 0, devnet: 0 });
+/** The point of `network` (networkOf's name; 'testnet' is testnet4, as networkAnchor reads it), null on a network that names none. */
+const abandonedSlashPoint = (network) => {
+  const n = network === 'testnet' ? 'testnet4' : String(network || '');
+  return Object.prototype.hasOwnProperty.call(ABANDONED_SLASH_HEIGHT, n) ? ABANDONED_SLASH_HEIGHT[n] : null;
+};
 /** The owner's emergency key (§23A.5a): the advert names it, a request it signs takes an offline node out without losing its bond. */
 const EMERGENCY_VERSION = 17;
 const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
@@ -944,6 +956,8 @@ const TYPE_SETTLEMENT_TABLE = 0x3f;
 /** A seat's signed settlement commit (§5A.3, kanban #1052): settlement-ack.js. A seat's word on who was silent in a failed round: stall.js. */
 const TYPE_SETTLEMENT_COMMIT = 0x40;
 const TYPE_STALL_NOTE = 0x41;
+/** The proof an abandonment's slash commits to (§23A.5, kanban #1062): the signed record holding the row, the node, the row's proof_ref and the output. */
+const TYPE_ABANDONED_PROOF = 0x42;
 
 /** The byte `feeTableId` opens with (fee.js). It named a fee claim once; no node claims anything (kanban #1035), and the byte stays so no table id moves. */
 const TYPE_FEE_TABLE = 0x0e;
@@ -12947,7 +12961,14 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
 // ADD TO BOND (spec §5A "Multiple bond outputs", kanban #544, 2026-10-19: "this is also the default way. E.g increase your
 // bond by 32000 sats"): a node raises its bond by posting a second bond output beside the first, each valid on its own; from
 // protocol 19 the census counts them as their sum.
-const sumsBonds = (contract) => !!contract && Number(contract.protocolVersion) >= BOND_SUM_VERSION;
+const sumsBonds = (contract) => !!contract && (contract.sumsBonds === true || Number(contract.protocolVersion) >= BOND_SUM_VERSION);
+/**
+ * THE CHAIN'S OWN CENSUS AT A HEIGHT (kanban #1063): what a seat reads when no round names the census: a federation record's basis, the ballot, a founding, the duty order, the arbitration set. It
+ * always sums (`sumsBonds`, ruling #1058 reading 3: the cap follows what is left, `bond_i` is the sum), or a node with 40,000 sat three times reads as not held at all and as abandoned after one
+ * spend. The version stays PROTOCOL_VERSION: reading this at BOND_SUM_VERSION would put out every node whose advertisement does not list 19, and take its signature off the records it signed.
+ * A round's census is its contract's: decodeRoundContract sets no `sumsBonds`, so no round's census moves.
+ */
+const chainCensusContract = ({ networkId, height, bondMinSats, censusConfirmations = 1 }) => ({ networkId, censusHeight: height, censusConfirmations, bondMinSats, protocolVersion: PROTOCOL_VERSION, sumsBonds: true });
 const bondHexOf = (x) => (typeof x === 'string' ? x.toLowerCase() : x ? toHex(x) : '');
 /** A node is its key AND its operator: two operators never merge, even under one key. */
 const nodeKeyOf = (e) => `${bondHexOf(e.pubkey || (e.advert && e.advert.nodePubkey))}|${String((e.advert && e.advert.operatorId) || e.operatorId || '')}`;

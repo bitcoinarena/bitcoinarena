@@ -6974,17 +6974,45 @@ the same `proof_ref`.
 **From an ABANDONED row to a slash (RULED 2026-11-02, kanban #1058, #1059).** Being
 written into the signed record is the filing, and nothing separate goes anywhere. An
 ABANDONED row with no output of that node left ends there. Any output of his left
-stands for the offence: the row's `proof_ref` is the proof, for a spend the chain's
-transaction and for an absence the attested row, and the record's threshold of
-signatures is checked by whoever acts.
+stands for the offence: the row's `proof_ref` names the evidence, for a spend the
+chain's transaction and for an absence the attested row, and the record's threshold
+of signatures is checked by whoever acts.
+
+**One slash format (RULED 2026-11-02, kanban #1062).** Every slash commits to
+`H(fraud_proof)`, so the rule that anyone can fetch the proof and re-check it has no
+exception. A bare `proof_ref` names evidence, and an absence's is not retrievable
+bytes. An abandonment's proof is:
+
+```text
+AbandonedProof { signed FederationRecord holding the row, node key, proof_ref, output }
+OP_RETURN = H(AbandonedProof) ‖ slash_height ‖ federation_id
+```
+
+It is tagged as every slash proof is. It checks when the record verifies at threshold
+on the checker's own census and the row names this node and `proof_ref`. For a spend,
+whoever checks also reads `proof_ref` on the chain; for an absence, the record's
+signatures are the check (§5A.3B's residual). The notice was read when the row was
+written, so `guardianSlashStands` is asked of the proof without one. Seats serve the
+bytes by that hash, at the door that lists them: `GET /slashes?proof=<hash>`, also
+after the slash has landed. Whoever posts a slash hands the bytes to the seats first,
+at `PUT /slash/<hash>`, because seats can hold one record under different signatures.
+Rehearsal 14's slash, which put `proof_ref` itself there, stays what it was: history,
+on a test chain.
+
+**Old rows (RULED 2026-11-02, kanban #1062).** A rule does not reach back. Only a row
+with `since_height` at or above `ABANDONED_SLASH_HEIGHT`, one point per network, named
+by the release that ships this, is acted on. Mainnet is from genesis. Testnet4's point,
+157,492, is above every rehearsal: the newest ABANDONED row of any signed record has
+`since_height` 157,091, and federation T2's guardians last ran at 157,491. Older rows
+stay in the records, keep their meaning for the cap and the seat, and move no money.
 
 - Every seat lists what the rows it holds left, at `GET /slashes` (`abandonedSlashes`),
   one per output, confirmed at or before the row's `since_height`. Money bonded after
   it stood for nothing at the time of the offence, and is not touched.
 - Under templates 1 and 2 the arbitration set checks the record on its own census,
   reads the row and the output on its own chain, and spends path B with
-  `OP_RETURN = proof_ref ‖ slash_height ‖ federation_id`, the whole output less the fee
-  into the liquidation escrow below. It waits there for the federation's end, as for
+  `OP_RETURN = H(AbandonedProof) ‖ slash_height ‖ federation_id`, the whole output less
+  the fee into the liquidation escrow below. It waits there for the federation's end, as for
   abandonment by absence.
 - A template-3 output is started on its newest presig, or the one at bonding, and the
   census key's holders check the record the same way before they sign.

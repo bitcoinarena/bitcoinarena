@@ -58,7 +58,7 @@ import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { votesInBlock, outpointInBlock } from '../../arena-protocol/src/ballot-chain.js';
-import { PROTOCOL_VERSION, networkOf } from '../../arena-protocol/src/constants.js';
+import { networkOf } from '../../arena-protocol/src/constants.js';
 import { censusOfView, censusReplacer, censusReviver, censusEvidenceOf } from './roster.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { createCensusKeyScan } from './census-key-chain.js';
@@ -68,7 +68,7 @@ import { censusKeyContract, standingKeysName } from '../../arena-protocol/src/ce
 import { censusKeyFirstHeight, genesisFor } from '../../arena-protocol/src/genesis.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { clocksFor } from '../../arena-protocol/src/federation-slash.js';
-import { censusFirstBlock } from '../../arena-protocol/src/census.js';
+import { censusFirstBlock, chainCensusContract } from '../../arena-protocol/src/census.js';
 import { bondsOf } from '../../arena-protocol/src/abandoned-slash.js';
 import { readSeriesLines } from './series-line.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../arena-protocol/src/test-donation-sets.js';
@@ -367,6 +367,10 @@ if (url) {
     chainCensusInFlight.set(key, p);
     return p;
   };
+  // THE CHAIN'S OWN CENSUS AT A HEIGHT, ONE READ FOR EVERYTHING THAT NAMES NO ROUND (census.js chainCensusContract, kanban #1063). Its kind in the key is not the 'ballot' it was: a census kept
+  // under that one applied the floor per output, and 3 days of them would be read back
+  const chainRead = (networkIdHex, height, opts) => chainCensusKept('sum', networkIdHex, height,
+    chainCensusContract({ networkId: fromHex(networkIdHex), height, bondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000) }), opts);
   const reading = new Map();                   // view key -> its one read in flight
   const keyOfRound = new Map();                // round id hex -> the view key it was asked under
   const viewFailed = new Map();                // view key -> { atMs, why } of its last failed read
@@ -429,9 +433,7 @@ if (url) {
         return outpointInBlock(fromHex(String(await call('getblock', [hash, 0]))), outpoint);
       },
       censusAt: async (networkIdHex, height) => {
-        const contract = { networkId: fromHex(networkIdHex), censusHeight: height, censusConfirmations: 1,
-          bondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000), protocolVersion: PROTOCOL_VERSION };
-        const census = await chainCensusKept('ballot', networkIdHex, height, contract);
+        const census = await chainRead(networkIdHex, height);
         if (!census.ok) { console.error(`[ballot] no census at ${height}: ${census.why}`); return null; }
         // each bond's confirmation height and CLTV maturity: the funding vote's age (rules 1, 2) and lock (rule 1), §27A.9.5
         return census.entries.map((e) => ({ pubkey: e.pubkey, outpoint: `${Buffer.from(e.txid).toString('hex')}:${e.vout}`, bondSats: e.bondSats,
@@ -443,22 +445,18 @@ if (url) {
       // started). The same derivation and window as censusAt above, every entry whole (the draw reads guardian_capable,
       // guardian_endpoint, operator and guardian_of).
       censusEntriesAt: async (networkIdHex, height) => {
-        const contract = { networkId: fromHex(networkIdHex), censusHeight: height, censusConfirmations: 1,
-          bondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000), protocolVersion: PROTOCOL_VERSION };
-        const census = await chainCensusKept('ballot', networkIdHex, height, contract);
+        const census = await chainRead(networkIdHex, height);
         if (!census.ok) { console.error(`[founding] no census at ${height}: ${census.why}`); return null; }
         return census.entries;
       },
       // WHAT ENDED THE BONDS THAT CENSUS DROPPED (§23A.5, kanban #1054): the same census, its exclusions that name a spend. A federation record reads a guardian's spent bond from it
       censusSpendsAt: async (networkIdHex, height) => {
-        const census = await chainCensusKept('ballot', networkIdHex, height, { networkId: fromHex(networkIdHex), censusHeight: height, censusConfirmations: 1,
-          bondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000), protocolVersion: PROTOCOL_VERSION });
+        const census = await chainRead(networkIdHex, height);
         return census.ok ? (census.excluded || []).filter((x) => x.spentBy) : null;
       },
       // AND EVERY OUTPUT THAT CENSUS READ, THE UNDER-THE-FLOOR ONES AMONG THEM (§23A.5, kanban #1059): what a guardian's ABANDONED row left is slashed
       censusBondsAt: async (networkIdHex, height) => {
-        const census = await chainCensusKept('ballot', networkIdHex, height, { networkId: fromHex(networkIdHex), censusHeight: height, censusConfirmations: 1,
-          bondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000), protocolVersion: PROTOCOL_VERSION });
+        const census = await chainRead(networkIdHex, height);
         return census.ok ? bondsOf(census) : null;
       },
       everyMs: Number(process.env.ARENA_BALLOT_EVERY_MS || 10000),
@@ -601,8 +599,7 @@ if (url) {
       networkIdHex: () => (nid ? toHexMain(nid) : null),
       // THE CENSUS AT A HEIGHT AS EVERY NODE DERIVES IT (the ballot's, the founding's), not held back by another view's failed block read
       censusEntriesAt: async (networkIdHex, height) => {
-        const census = await chainCensusKept('ballot', networkIdHex, height, { networkId: fromHex(networkIdHex), censusHeight: height, censusConfirmations: 1,
-          bondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000), protocolVersion: PROTOCOL_VERSION }, { hold: false });
+        const census = await chainRead(networkIdHex, height, { hold: false });
         if (!census.ok) throw new Error(census.why);
         return census.entries;
       },
