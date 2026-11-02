@@ -5891,7 +5891,8 @@ by itself once enough guardians and gateways have raised.
 
 ### The signal: everyone computes the same numbers
 
-All inputs are public, and each is read at the **census height of the round** that pays:
+All inputs are public, and each is read at the **census height of the round** that pays (a founding has no round, and reads at its own
+heights: "The founding draw under pressure" below):
 
 | Input | Where it comes from |
 |---|---|
@@ -5953,12 +5954,42 @@ Rounds settle as before: one payout contract per guardian, sized by these weight
 round's census height, so every signer node builds the same outputs.
 
 *Implemented from protocol 2026.0.20 (kanban #559/#543).* Every seat keeps each federation record it verified by height and reads the one in
-force at the round's census height. Until records carry the capacity band, the band is the one the record's own load enters (70 / 90 /
-100 %, no hysteresis); a record that names its band is read as it says.
+force at the round's census height. For rounds and foundings, until records carry the capacity band, the band is the one the record's own
+load enters (70 / 90 / 100 %, no hysteresis); a record that names its band is read as it says. The hysteresis of the bands table is for
+the warnings: a seat's memory of the band it last showed never feeds a payout or a draw.
 
 **The founding draw under pressure** (§23A.2). When the network is under pressure and a new federation is founded, candidates with a
 bond of at least the network's `B*_net` (below) are seated first. So a non-guardian node that raises its bond is first in line for
-the federation that adds capacity.
+the federation that adds capacity. The draw is otherwise §23A.2's: candidates at the bar take the drawn places before the others, in
+ticket order among themselves, the others follow in ticket order, and the alternates carry on down the same list. *(Rulings 2026-11-02,
+kanban #993.)*
+
+- **Which bond.** Eligibility and weight stay the operator's, as §23A.2 has them. The bar reads the bond of **the node that takes the
+  seat** (the one its ticket names), the sum of that node's outputs (§"Multiple bond outputs"), never the operator's sum:
+  `exposure_cap` is `(f + 1)` times the smallest seated guardian's bond, so two small nodes summing to `B*_net` lift nothing.
+- **Two heights.** Bonds, operators and `guardian_of[]` are the census at `trigger_height`, as the draw reads them. The records (reserve,
+  `nominal`, status, `exposure_cap`, band) are those in force at `trigger_height - 12`: records step every 6 blocks and are built from a
+  census 6 deep, so 12 back is the first height every seat can already hold. A trigger under 12 reads no records and is not under
+  pressure.
+- **Reading the records.** A seat does not use the newest it holds. Before it draws, it asks the seats it can reach for each
+  federation's records at or below that height, verifies them at threshold, and uses the highest verified one from any of them. A
+  record cannot be forged, so a seat that hides one changes nothing. Nothing about this goes on chain: a wrong read costs one redraw and
+  no money.
+- **No record, no draw yet.** A federation named in the census at `trigger_height` with no record at that height holds the seat back
+  from drawing, as a beacon or census it has not read yet does.
+- **The band.** Each federation's band is the one its record names, else the one its load enters, as above. The network is under
+  pressure when, by those records, the OPEN federation with the lowest load is in PRESSURE or worse; `B*_net` is over the OPEN ones among
+  them.
+- **The founding's id covers it.** With `B*_net` applied, `founding_id = H(tag, seed || trigger_height || pressure_bond)`; otherwise it is
+  `H(tag, seed || trigger_height)`, byte for byte as before. Seats that read different amounts name different foundings, with different
+  setup codes, and cannot meet in one ceremony: nobody can take a seat on the wrong number. **What is left:** a record that reaches
+  some seats late can void one founding, and the rules for a void founding draw again. It cannot seat anyone wrongly.
+- **From a height, per network.** One point per network, `FOUNDING_PRESSURE_HEIGHT`, named by the release after every seat of that
+  network runs it; not named, nothing is under pressure and the draw is plain everywhere. Mainnet has it from genesis. The trigger's own
+  height decides the rule: a `trigger_height` below the point draws plain forever, on any seat of any release, so a founding already
+  drawn cannot change, and a cohort redraw takes the rule of its own new height. From the point, a node whose advertisement does not
+  list the version (below) is not a candidate, whether or not the network is under pressure: it would compute another draw and burn an
+  alternate. The counts that start a genesis or a cohort hold to the same rule.
 
 ### 2. Bigger peg-ins earn a larger gateway share
 
@@ -5996,7 +6027,7 @@ claims name counts for neither. The guardian signs each paid seat's proved peg-i
 that names none hashes as before), so a seating stands only on the same seats **and** the same proved amounts. A 2026.0.20 round
 splits the gateways' part by `(min(proved, P*))^2` from the seating of its census epoch, with the record in force at its census height
 and `peg_in_min` the network's gateway peg-in minimum (§23A.9 table); CALM, no peg-in pressure, or nothing proved - evenly. Not yet
-checked: "not older than the gateway's current seat", and the ranking by peg-in before volume.
+checked: "not older than the gateway's current seat".
 
 **Open.** A peg-in proves money went in, not that the gateway still holds it as e-cash. A balance proof needs a guardian-side check
 of the gateway's notes, which stock Fedimint does not offer. Until there is one, the proved peg-in is the weight, and a seated gateway
@@ -6038,6 +6069,8 @@ install_minimum = max( bond_min_guardian, B*_net )        rounded up to 10,000 s
 
 - The weighting of 1 and 2 is a **protocol version** (the next after 18): every signer node must build the same payout outputs.
   Rounds of earlier versions pay evenly as before.
+- The founding draw under pressure is **protocol 24**: every seat of a founding must compute the same draw. It changes no round, and
+  it applies from `FOUNDING_PRESSURE_HEIGHT`, not from a round's version.
 - The bands in the record, `GET /capacity`, the warnings and the installer minimum need no protocol version. They ship with the seats,
   the page and the installer.
 - Tests: the example table above to the msat; flapping at 0.69 / 0.71 / 0.61; `B*` and `P*` at the floors; a guardian above `B*`
@@ -6322,7 +6355,10 @@ upgrade, a change of `federation_nominal` by §27A).
    non-departing guardians of the old federation are **seated first** in
    the new one - same operators, new key shares, continuity of who is
    trusted - and only the missing seats up to `federation_nominal` are
-   drawn. If they are fewer than `f + 1`, everything is drawn.
+   drawn. If they are fewer than `f + 1`, everything is drawn. Under
+   capacity pressure (§23A.3a) they stay first whatever their bonds, and
+   the bar orders only the missing seats; if they are fewer than `f + 1`,
+   everything is drawn and the bar orders all of it.
 2. **Open it.** The successor's first record is `OPEN`. The old
    federation's guardians sign a record with `status = DRAINING` and
    `successor_id`; seats and relays carry both. From this record on no
