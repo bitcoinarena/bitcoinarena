@@ -22,6 +22,8 @@
 //   FIRST     ascending), and draws the missing seats (drawGuardians). The draw's pool leaves out the operators guarding an OPEN
 //             federation other than the one succeeded (their census adverts' guardian_of[] naming a federation whose held record is
 //             OPEN), and the leaving guardians' operators (the succeeded federation's departing / gone guardians).
+//   PRESSURE  `pressureBondAt` answers B*_net for a draw while the network is under pressure, null otherwise (drawGuardians, §23A.3a).
+//             Not given, the draw is the plain one. A reader that fails starts no founding: a guess would draw another set than the others.
 import { triggerKey, foundingTrigger, COHORT_NOMINAL } from '../../arena-protocol/src/guardian-founding.js';
 import { departureStands } from '../../arena-protocol/src/absence.js';
 import { statusFor } from '../../arena-protocol/src/federation-record.js';
@@ -183,9 +185,10 @@ export function cliSetup({ run, apiPort, password, guardianName, freshSetup = nu
  * whose GET /founding is read for codes this seat missed.: `records()` rows may carry `record` (the held record,
  * decoded) - a DRAINING one then seats its seated guardians first, and the notice trigger reads it; `notices()` the departure
  * notices this seat holds (decoded); `next` { inSetup(), setup } the node's guardian-next, if it runs one; `guardingOpen({ entries,
- * records, except })` the operators guarding an OPEN federation (by default guardingOpenOf over the census and the held records).
+ * records, except })` the operators guarding an OPEN federation (by default guardingOpenOf over the census and the held records);
+ * `pressureBondAt({ height, entries })` B*_net for the draw at that trigger height under capacity pressure, else null (none given: null).
  */
-export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardianInSetup, setup, guardingOpen = null, notices = () => [], emergencies = () => [], next = null, nominal,
+export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardianInSetup, setup, guardingOpen = null, pressureBondAt = null, notices = () => [], emergencies = () => [], next = null, nominal,
   bondMinGuardian, clocks, ownKey, sign, verify, post = async () => {}, postTo = null, peers = () => [], fetchJson = null, endpointOf = (e) => e.advert.endpoint, say = () => {}, keep = 4096 }) {
   let current = null;                        // { key, founding }
   // HOW FAR BACK A SEAT'S FIRST TICK READS THE RUN OF FREE OPERATORS: a cohort draws at the newest multiple of founding_window + 1 below
@@ -290,6 +293,11 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       if (!entries) return { ok: false, why: `no census read at ${t.height} yet` };
       const except = t.federation || null;
       const seatedFirst = (t.seatedFirst || []).map((k) => entries.find((e) => toHex(e.pubkey) === k)).filter(Boolean);
+      let pressureBond = null;
+      if (pressureBondAt) {
+        try { pressureBond = (await pressureBondAt({ height: t.height, entries })) ?? null; }
+        catch (e) { return { ok: false, why: `the capacity pressure at ${t.height} could not be read: ${e.message}` }; }
+      }
       const out = new Set(guardingOpen ? guardingOpen({ entries, records: held, except }) : guardingOpenOf({ entries, held, except }));
       for (const k of t.departing || []) { const e = entries.find((x) => toHex(x.pubkey) === k); if (e) out.add(opOf(e)); }
       // WHICH GUARDIAN TAKES PART: the node's own while it waits in setup, else its guardian-next while that one does
@@ -302,7 +310,7 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       // node starts its guardian again in a fresh setup (its old setup kept beside it), once per founding
       if (!use && setup && typeof setup.freshSetup === 'function' && !freshTried.has(key)) {
         const probe = createFounding({ seed, triggerHeight: t.height, entries, nominal: Number.isInteger(t.nominal) && t.nominal > 0 ? t.nominal : nominal, bondMinGuardian,
-          guardingOpen: out, seatedFirst, foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: null });
+          guardingOpen: out, seatedFirst, pressureBond, foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: null });
         const ps = probe.state(), me = toHex(ownKey);
         const named = (ps.seated || []).some((x) => String(x.node || x).toLowerCase() === me) || (ps.alternates || []).some((x) => String(x).toLowerCase() === me);
         let running = false; try { running = typeof setup.done === 'function' && await setup.done(); } catch { running = false; }
@@ -316,7 +324,7 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       // A SUCCESSOR HAS ITS PREDECESSOR'S SIZE: the held record's nominal (federation B: 7) - genesis's federation_nominal
       // is 4 on testnet4 and regtest, and B's successor drawn at 4 would seat four of B and draw nobody
       const size = Number.isInteger(t.nominal) && t.nominal > 0 ? t.nominal : nominal;
-      current = { key, trigger: t, via, entries, founding: createFounding({ seed, triggerHeight: t.height, entries, nominal: size, bondMinGuardian, guardingOpen: out, seatedFirst,
+      current = { key, trigger: t, via, entries, founding: createFounding({ seed, triggerHeight: t.height, entries, nominal: size, bondMinGuardian, guardingOpen: out, seatedFirst, pressureBond,
         foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: use, post, say }) };
       say({ founding: current.founding.id.slice(0, 16), trigger: t.kind, height: t.height, why: t.why, nominal: size, seatedFirst: seatedFirst.length,
         leftOut: [...out], takesPart: !!use, via });

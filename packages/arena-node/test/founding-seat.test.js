@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { taggedHash, toHex } from '../../arena-protocol/src/hash.js';
 import { createFoundingSeat, guardingWhy, cliSetup, execCli } from '../src/founding-seat.js';
+import { drawGuardians } from '../../arena-protocol/src/guardian-founding.js';
 import { execFile } from 'node:child_process';
 import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -536,4 +537,51 @@ test('a seat that first ticks long after the run of free operators began reads b
   assert.equal(b.state().trigger.height, a.state().trigger.height, 'the same draw height');
   assert.equal(b.state().id, a.state().id, 'and the same founding');
   assert.ok(rb.length <= 2 * 6 + 3, `B read ${rb.length} heights, not 288`);
+});
+
+// UNDER CAPACITY PRESSURE (§23A.3a, kanban #993): the seat asks pressureBondAt once for the draw and hands it on, to the probe too
+function pressureSeat({ ents = entries, own = 0, pressureBondAt, setup: extra = {}, inSetup = true } = {}) {
+  const w = { tip: 201 }, recs = [{ federation: 'aa'.repeat(32), status: 'DRAINING', height: 200 }];
+  const setup = { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null, ...extra };
+  return createFoundingSeat({ records: () => recs, entriesAt: async (h) => (h === 200 ? ents : null), beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null),
+    tip: async () => w.tip, guardianInSetup: async () => inSetup, setup, nominal: 4, bondMinGuardian: 500000n, clocks, ownKey: ents[own].pubkey, sign: () => new Uint8Array(64), verify, ...(pressureBondAt ? { pressureBondAt } : {}) });
+}
+const seatedOfState = (s) => s.state().seated.map((x) => x.node);
+
+test('capacity pressure: the seat reads B*_net at the trigger height and the census there; no reader, or one that answers null, is the plain draw', async () => {
+  const bonded = entries.map((e, i) => ({ ...e, bondSats: i === 5 ? 2000000n : 1000000n }));
+  const plain = pressureSeat({ ents: bonded }); await plain.tick();
+  const nulled = pressureSeat({ ents: bonded, pressureBondAt: async () => null }); await nulled.tick();
+  assert.deepEqual(seatedOfState(nulled), seatedOfState(plain));
+  const asked = [];
+  const under = pressureSeat({ ents: bonded, pressureBondAt: async ({ height, entries: e }) => { asked.push([height, e.length]); return 2000000n; } });
+  const r = await under.tick();
+  assert.equal(r.ok, true, r.why);
+  assert.deepEqual(asked, [[200, 6]]);
+  assert.equal(seatedOfState(under)[0], toHex(bonded[5].pubkey), 'the operator at B*_net sits first');
+  const other = pressureSeat({ ents: bonded, own: 3, pressureBondAt: async () => 2000000n }); await other.tick();
+  assert.deepEqual(seatedOfState(other), seatedOfState(under), 'the same value on two seats, the same seats');
+});
+
+test('capacity pressure: a reader that fails starts no founding, it does not fall back to the plain draw', async () => {
+  const seat = pressureSeat({ pressureBondAt: async () => { throw new Error('no record at that height'); } });
+  const r = await seat.tick();
+  assert.equal(r.ok, false); assert.match(r.why, /capacity pressure at 200 could not be read: no record at that height/);
+  assert.equal(seat.state(), null);
+});
+
+test('capacity pressure reaches the probe: a node named only under pressure starts its guardian again in a fresh setup', async () => {
+  const many = Array.from({ length: 12 }, (_, i) => { const k = key(`p${i}`); return { pubkey: k.pub, txid: taggedHash('TEST/tx-p', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
+    advert: { operatorId: `pop${i}`, guardianCapable: true, guardianEndpoint: `wss://p${i}` } }; });
+  const seed = taggedHash('TEST/block', Uint8Array.of(201));
+  // a node left out of the plain draw, with the bond it needs for the pressure rule to name it
+  const raised = (own) => many.map((e, i) => (i === own ? { ...e, bondSats: 2000000n } : e));
+  const own = many.findIndex((e, i) => { const d = drawGuardians({ entries: raised(i), seed, height: 200, nominal: 4, bondMinGuardian: 500000n });
+    return ![...d.drawn, ...d.alternates].some((x) => toHex(x.pubkey) === toHex(e.pubkey)); });
+  assert.ok(own >= 0, 'such a node exists in this fixture');
+  const tried = (extra) => { const log = []; return [pressureSeat({ ents: raised(own), own, inSetup: false, setup: { freshSetup: async () => { log.push('fresh'); return { ok: false, why: 'test' }; } }, ...extra }), log]; };
+  const [plain, none] = tried({}); await plain.tick();
+  assert.deepEqual(none, [], 'not named in the plain draw: its guardian is left alone');
+  const [under, log] = tried({ pressureBondAt: async () => 2000000n }); await under.tick();
+  assert.deepEqual(log, ['fresh'], 'named under pressure');
 });
