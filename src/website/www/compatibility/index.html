@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bitcoin Arena: tested signers and wallets</title>
+<meta name="description" content="Which Nostr signers and Lightning wallets have been tested with Bitcoin Arena, with version, date and result.">
+<meta property="og:title" content="Bitcoin Arena: tested signers and wallets">
+<meta property="og:description" content="Which Nostr signers and Lightning wallets have been tested with Bitcoin Arena, with version, date and result.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://bitcoinarena.io/compatibility/">
+<meta property="og:image" content="https://testnet.bitcoinarena.io/arena-og.png">
+<meta name="twitter:card" content="summary_large_image">
+<script>/* kanban #943: a visit from X arrives through t.co with no campaign in its link: named here, before the stats script reads the address */if(/^https?:\/\/t\.co(\/|$)/.test(document.referrer)&&!/[?&]utm_/.test(location.search))history.replaceState(history.state,'',location.pathname+(location.search?location.search+'&':'?')+'utm_source=x&utm_medium=social&utm_content=profile'+location.hash)</script>
+  <script defer src="https://stats.bitcoinarena.io/script.js" data-website-id="4f00ff2b-032e-4683-890c-63458e0b178e" data-domains="bitcoinarena.io,www.bitcoinarena.io"></script>
+  <script>/* kanban #943: the campaign reached the stats when the script read the address; then it leaves the address, past the script's own history hook, so no second view */addEventListener('load',function(){var n=0,c=function(){if(!window.umami&&n++<50)return setTimeout(c,100);setTimeout(function(){var u=new URL(location.href),k=Array.from(u.searchParams.keys()).filter(function(x){return/^utm_/.test(x)});if(k.length){k.forEach(function(x){u.searchParams.delete(x)});History.prototype.replaceState.call(history,history.state,'',u.pathname+u.search+u.hash)}},500)};c()})</script>
+<style>
+  :root { --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --dim: #8b949e; --btc: #f7931a; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, sans-serif; padding: 32px 16px 56px; }
+  main { max-width: 640px; margin: 0 auto; }
+  a { color: var(--btc); } h1 { font-size: 30px; margin: 0 0 6px; } p { color: var(--dim); margin: 0 0 18px; }
+  .go { display: inline-block; margin: 8px 0 22px; padding: 12px 22px; border-radius: 10px; background: var(--btc); color: #1a1000; font-weight: 700; text-decoration: none; }
+  ul { color: var(--dim); padding-left: 20px; } li { margin-bottom: 8px; }
+  .big { font: 700 56px/1 system-ui, sans-serif; color: var(--btc); } table { width: 100%; border-collapse: collapse; margin-top: 18px; background: var(--panel); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; } th { color: var(--dim); font-size: 13px; font-weight: 600; } tr:last-child td { border-bottom: 0; }
+</style>
+</head>
+<body>
+<main>
+  <p><a href="/">Bitcoin Arena</a></p>
+  <h1>Tested signers and wallets</h1>
+  <p>Each row is one product at one version, run through the same calls the page makes. A product is listed as working only after that test. "Not tested yet" means only that.</p>
+  <table id="rows"><thead><tr><th>Product</th><th>Kind</th><th>Version</th><th>Tested</th><th>Result</th></tr></thead><tbody></tbody></table>
+  <p style="margin-top:18px">Make a wallet or a signer? The check is one command: <a href="https://github.com/bitcoinarena/bitcoinarena/blob/main/packages/arena-node/tools/compat-check.mjs">compat-check.mjs</a>. Send us the output or ask us to run it.</p>
+  <script>
+  (function () {
+    var waiting = [['Alby', 'Browser extension'], ['nos2x', 'Browser extension'], ['Amber', 'Remote signer'], ['nsec.app', 'Remote signer'], ['nsecBunker', 'Remote signer']];
+    var body = document.querySelector('#rows tbody');
+    var row = function (c) { var tr = document.createElement('tr'); c.forEach(function (x) { var td = document.createElement('td'); td.textContent = x; tr.appendChild(td); }); body.appendChild(tr); };
+    fetch('results.json').then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; }).then(function (list) {
+      list.forEach(function (r) { row([r.name, r.kind, r.version, r.date, r.result === 'works' ? 'Works' : 'Problems found']); });
+      waiting.filter(function (w) { return !list.some(function (r) { return r.name === w[0]; }); }).forEach(function (w) { row([w[0], w[1], '-', '-', 'Not tested yet']); });
+    });
+  })();
+  </script>
+</main>
+</body>
+</html>

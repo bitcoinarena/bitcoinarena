@@ -77,7 +77,7 @@ async fetch(request, env, ctx) {
   const url = new URL(request.url);
   // NIP-05: who our Nostr names are (kanban #958). Answered on every host, because the spec forbids a redirect here.
   if (url.pathname === '/.well-known/nostr.json') {
-    return new Response(JSON.stringify({ names: { 'george-prime': '97b7b1282ed2308f088c43b24b6e51ba9b5582c4d92aeae8691cfacf0f7c5e05', 'mateo-vives': 'cdbb9e44a92663610ffdfbedc003f9e5077dbc6470ca54ce973e06f683546e16' } }), { headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=3600' } });
+    return new Response(JSON.stringify({ names: { 'george-prime': '97b7b1282ed2308f088c43b24b6e51ba9b5582c4d92aeae8691cfacf0f7c5e05', 'mateo-vives': 'cdbb9e44a92663610ffdfbedc003f9e5077dbc6470ca54ce973e06f683546e16', badges: '4e3c070cc5ed4cc1bb359edff94516313dfe9f782c04f261c89315d6641e63c5' } }), { headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=3600' } });
   }
   if (!url.pathname.startsWith('/api/')) { const went = moved(url); if (went) return went; }   // a page already open still calls /api/ here
   if (url.pathname === '/games' || url.pathname === '/games/') return Response.redirect(`${url.origin}/#games`, 301);   // kanban #948: the page is gone, a link to it lands on the home page's games
@@ -86,11 +86,11 @@ async fetch(request, env, ctx) {
   // A SHORT LINK PER CHANNEL (kanban #943): a profile shows bitcoinarena.io/x, the visit still arrives with its campaign, and the referrer stays
   { const utm = CHANNEL_LINKS[url.pathname.replace(/\/$/, '')]; if (utm) return Response.redirect(`${url.origin}/?${utm}`, 302); }
   // THE PLAYERS' FAUCET AND THE TABLE WANTS (kanban #926): passed on to the faucet service, whose address is a secret of this Worker (FAUCET_ORIGIN), with the caller's address for its limits
-  if (url.pathname === '/api/faucet/player' || url.pathname === '/api/faucet/opponent' || url.pathname === '/api/faucet/feedback' || url.pathname === '/api/faucet/refill') {
+  if (url.pathname === '/api/faucet/player' || url.pathname === '/api/faucet/opponent' || url.pathname === '/api/faucet/feedback' || url.pathname === '/api/faucet/founding' || url.pathname === '/api/faucet/refill') {
     if (!env.FAUCET_ORIGIN) return new Response('{"ok":false,"why":"the faucet is off"}', { status: 503, headers: { 'content-type': 'application/json' } });
     const headers = new Headers({ 'content-type': 'application/json', 'x-arena-ip': request.headers.get('cf-connecting-ip') || '' });
     const origin = request.headers.get('origin'); if (origin) headers.set('origin', origin);
-    return fetch(`${env.FAUCET_ORIGIN}${url.pathname.slice('/api/faucet'.length)}`, { method: request.method, headers, body: request.method === 'POST' ? await request.text() : undefined });
+    return fetch(`${env.FAUCET_ORIGIN}${url.pathname.slice('/api/faucet'.length)}${url.search}`, { method: request.method, headers, body: request.method === 'POST' ? await request.text() : undefined });
   }
   // A PHONE'S BENCHMARK LINES (the page's ?bench=1): logged for wrangler tail, nothing stored, nothing served back
   if (url.pathname === '/__bench' && request.method === 'POST') {
