@@ -161,6 +161,7 @@
     html.arena-boot-steps #creep { display: none; }
     #arena-feedback { position: fixed; inset: 0; z-index: 2147483001; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0,0,0,.6); }
     #arena-feedback .card { width: min(440px, 100%); padding: 18px; border-radius: 12px; background: #161b22; border: 1px solid #30363d; color: #e6edf3; font: 400 14px/1.4 system-ui, sans-serif; }
+    #arena-feedback label.badge { display: block; margin: 8px 0 0; color: #8b949e; font-size: 13px; } #arena-feedback label.badge[hidden] { display: none; }
     #arena-feedback h3 { margin: 0 0 6px; font-size: 17px; } #arena-feedback p { margin: 0 0 10px; color: #8b949e; }
     #arena-feedback textarea { width: 100%; box-sizing: border-box; padding: 8px; border-radius: 8px; border: 1px solid #30363d; background: #0d1117; color: #e6edf3; font: inherit; resize: vertical; }
     #arena-feedback .say { min-height: 1.4em; margin: 8px 0; } #arena-feedback .row { display: flex; justify-content: flex-end; gap: 8px; }
@@ -1704,14 +1705,17 @@
       b.addEventListener('click', () => {
         if (document.getElementById('arena-feedback')) return;
         const d = document.createElement('div'); d.id = 'arena-feedback'; d.setAttribute('role', 'dialog'); d.setAttribute('aria-modal', 'true'); d.setAttribute('aria-label', 'Feedback');
-        d.innerHTML = '<div class="card"><h3>Feedback</h3><p>What happened, or what would you change? Your words, the build and the game are sent. No keys or amounts.</p><textarea rows="5" maxlength="4000"></textarea><p class="say" role="status"></p><div class="row"><button type="button" class="off">Close</button><button type="button" class="send">Send</button></div></div>';
+        d.innerHTML = '<div class="card"><h3>Feedback</h3><p>What happened, or what would you change? Your words, the build and the game are sent. No amounts, and no private key.</p><textarea rows="5" maxlength="4000"></textarea><label class="badge" hidden><input type="checkbox"> Send my public key too, for the Founding Tester badge (you need a finished round).</label><p class="say" role="status"></p><div class="row"><button type="button" class="off">Close</button><button type="button" class="send">Send</button></div></div>';
         const t = d.querySelector('textarea'), say = d.querySelector('.say'), send = d.querySelector('.send');
+        // THE FOUNDING TESTER BADGE (kanban #926 item 8): the public key goes only when the box is ticked
+        const me = window.ARENA_IDENTITY && typeof window.ARENA_IDENTITY.pubkey === 'string' ? window.ARENA_IDENTITY.pubkey : null, tick = d.querySelector('.badge');
+        if (me) tick.hidden = false;
         d.querySelector('.off').onclick = () => d.remove();
         send.onclick = async () => {
           send.disabled = true; say.textContent = 'Sending \u2026';
           const ui = (document.getElementById('arena-build') || {}).textContent || '';
           try {
-            const r = await fetch(window.ARENA_FAUCET_URL.replace(/\/player$/, '/feedback'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: t.value, build: ui.trim(), game: window.ARENA_SITE_GAME || '', round: (window.ARENA_JOIN && window.ARENA_JOIN.round) || '' }) });
+            const r = await fetch(window.ARENA_FAUCET_URL.replace(/\/player$/, '/feedback'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: t.value, player: me && tick.querySelector('input').checked ? me : undefined, build: ui.trim(), game: window.ARENA_SITE_GAME || '', round: (window.ARENA_JOIN && window.ARENA_JOIN.round) || '' }) });
             const j = await r.json();
             if (!j.ok) throw new Error(j.why || 'not sent');
             if (window.ARENA_TRACK) window.ARENA_TRACK('feedback-sent');
@@ -6422,7 +6426,7 @@
       const sayMine = () => {
         const me = viewer()[0];
         const merged = me && s.book ? s.book.get(me) : null;
-        if (myBadges) window.ArenaText.say(myBadges, (ARENACLIENT.yourBadgesLine && ARENACLIENT.yourBadgesLine(merged)) || '');
+        if (myBadges) window.ArenaText.say(myBadges, [(ARENACLIENT.yourBadgesLine && ARENACLIENT.yourBadgesLine(merged)) || '', s.founding ? 'Founding Tester' : ''].filter(Boolean).join(' \u00b7 '));
       };
       const dropBook = () => {
         if (s.book) s.book.close();
@@ -6516,6 +6520,8 @@
         if (!g || !g.name) return;
         const same = s.game && s.game.name === g.name;
         s.game = g; s.open = true; s.polled = false;
+        // THE FOUNDING TESTER BADGE (kanban #926 item 8): one question per board's life, from the faucet that keeps the awards
+        if (s.founding === undefined && window.ARENA_FAUCET_URL && viewer()[0]) { s.founding = false; fetch(window.ARENA_FAUCET_URL.replace(/\/player$/, '/founding') + '?player=' + viewer()[0]).then((r) => r.json()).then((j) => { s.founding = !!(j && j.founding); sayMine(); }).catch(() => {}); }
         if (days) s.days = Number(days);
         pressDays();
         if (!same) { reactRows = []; drawReact(); window.ArenaText.say(foot, ''); window.ArenaText.say(head, ''); dropBook(); }
