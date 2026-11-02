@@ -23,23 +23,20 @@
 // A missing verdict is NOT a slash: an accusation nobody has replayed is a
 // claim, and a bond taken on a claim is the arbitration set's own offence.
 //
-// WHAT IS DELIBERATELY NOT HERE. The distribution - "half to the affected
-// players of that round; the other half 75% to the active census nodes at the
-// slashing height MINUS the round's own seats, and 25% to the developers
-// members, as fixed by the Round Contract" - needs a contract field that does
-// not exist yet, and adding one moves every round id. It is named and left.
+// WHERE THE BOND GOES is slashing rule v2 (§5A.3, RULED 2026-11-02, kanban #976): each affected player's real loss, once, and the rest to the
+// protocol reserves. `realLosses` and `slashDistribution` at the end of this file.
 import { SIGNED_RERUN_BYTES, splitSignedRerun, decodeRerunResult, rerunResultId, runOf, signedRerunBytesOf } from './rerun.js';
 import { Writer, Reader } from './encode.js';
-import { taggedHash, toHex } from './hash.js';
+import { taggedHash, toHex, fromHex } from './hash.js';
 import {
   PROTOCOL_VERSION, speaksVersion, TYPE_SLASH_PROOF, TYPE_AUDIT_SLASH_PROOF, TYPE_PAYOUT_TABLE, TYPE_SETTLEMENT_RECORD,
   TYPE_RESULT, TYPE_FEE_CLAIM, TYPE_SERVICE_RECORD, ROLES, roleByte,
-  SLASH_REMAINDERS, SLASH_TO_PLAYERS_BPS, TAG, splitNodesDevelopers,
+  SLASH_REMAINDERS, TAG,
 } from './constants.js';
 import { entryId } from './contracts.js';
 import { feeOwed, feeTableId } from './fee.js';
 import { decodePlayerResult, resultId, splitSignedResult, SIGNED_RESULT_BYTES, signedResultBytesOf } from './result.js';
-import { computePayoutTable, payoutTableId, decodePayoutTable } from './payout.js';
+import { computePayoutTable, payoutTableId, decodePayoutTable, isRefund, netStakeMsat } from './payout.js';
 import { payoutRuleForRound } from './manifest.js';
 import { lockAction, lockActionByte, lockActionOf, EXPIRE } from './lock-action.js';
 import { outcomeByte, outcomeOf } from './result.js';
@@ -137,7 +134,8 @@ export function resultMoved({ signed, replayed } = {}) {
  * in their favour - so they get nothing and the other FINANCIALLY ACTIVATED entries are named. A doubled result says nothing about
  * which way it went, so it is read the same way: a player it lowered is shown by the replay's proof, not this one.
  * The other four harmed the whole paying field, so they name every activated entry (§22A's fee base),
- * and `OPERATOR_PLAYED` drops the operator's own, which §5A.13 voids. With nobody named, §5A.3's half goes to the pool.
+ * and `OPERATOR_PLAYED` drops the operator's own, which §5A.13 voids. Being named is not being paid: each gets its real loss
+ * (`realLosses`), and an entry with none gets nothing.
  *
  * `entries` are the round's, each `{ playerPubkey, netStakeMsat, activated, operatorOwn }`. The caller
  * supplies them because only a node holding the round knows which entries paid; this decides nothing
@@ -160,33 +158,6 @@ export function affectedEntries({ offence, playerPubkey, entries = [], signed, r
   const paying = entries.filter((e) => e && e.activated);
   const affected = offence === OPERATOR_PLAYED ? paying.filter((e) => !e.operatorOwn) : paying;
   return { ok: true, affected };
-}
-
-/**
- * §5A.3: the players' half divided PRO RATA BY NET STAKE - §18 weights entitlement by net stake, and so
- * does the harm. Floors each share and hands the leftover out one satoshi at a time in the round's own
- * order, the rule 22A names for fees. With nothing to divide among, the caller is told so rather than
- * given a silent zero.
- */
-export function playersShares({ toPlayers, affected = [], roundId } = {}) {
-  if (typeof toPlayers !== 'bigint' || toPlayers < 0n)
-    return { ok: false, why: 'the players\' half is a number of satoshi' };
-  const total = affected.reduce((a, e) => a + (e.netStakeMsat || 0n), 0n);
-  if (!affected.length || total <= 0n)
-    return { ok: false, why: 'that offence harmed no entry with a net stake, so there is nobody to divide among' };
-  const shares = new Map();
-  let paid = 0n;
-  for (const e of affected) {
-    const share = (toPlayers * e.netStakeMsat) / total;
-    shares.set(hex(e.playerPubkey), share);
-    paid += share;
-  }
-  for (const k of remainderKeys(roundId, affected.map((e) => e.playerPubkey))) {
-    if (paid >= toPlayers) break;
-    shares.set(hex(k), shares.get(hex(k)) + 1n);
-    paid += 1n;
-  }
-  return { ok: true, shares, paid };
 }
 
 /**
@@ -1493,43 +1464,11 @@ export function slashHoldsOnFeeClaim({
 }
 
 /**
- * WHERE A SLASHED BOND GOES, section 5A.3.
- *
- * "Slashed bonds are distributed: half to the affected players of that round,
- * the other half 75% to the active census at the slashing height minus the
- * round's own seats (the witnesses), and 25% to the donation set of §22A, as
- * fixed by the Round Contract."
- *
- * PURE, AND IT MOVES NOTHING. This says who is owed what out of a bond that
- * has been spent; spending it is 5A.3B steps 3 and 5, an arbitration set with
- * MuSig2 keys, and is not here.
- *
- * THE HALVES ARE THE SPEC'S AND THE DESTINATION IS THE CONTRACT'S. A contract
- * that could move the proportions would let an operator write itself the whole
- * bond, which is the fault a contract field exists to prevent rather than one
- * to import. So `SLASH_TO_PLAYERS_BPS` is a constant and `slashRemainder` is
- * the field, and it has one value: the split above.
- *
- * A SLASHED IDENTITY IN THE CENSUS IS REFUSED, NOT FILTERED. The second half
- * goes to the active census at the slashing height, and a slash SPENDS the bond
- * output, so `deriveCensus` has already dropped that node - a census still
- * listing it is wrong. Pass such a node in `slashed` and this THROWS. It is not
- * quietly removed and its share is not moved anywhere, because silently
- * patching the set would hide a census that is counting a spent bond.
- *
- * REMAINDERS the way this repo already does them: floor each share, then hand
- * the leftover out one satoshi at a time in ascending `H(roundId || pubkey)`,
- * the rule 22A names for fees and `payout.js` already uses for the pool. With
- * nobody to pay - no affected players, or a set entirely slashed - that half
- * goes to the FEDERATION POOL, 75% nodes and 25% developers, never burned.
- */
-/**
  * §5A.3 (RULED 2026-09-22): the slashing height is one the ARBITRATION SET NAMES, not one the chain hands
  * back. Valid iff `censusHeight <= slashHeight <= tipHeight` at the moment they sign. It goes into the
  * slashing transaction's OP_RETURN and its nLockTime, so the transaction cannot confirm earlier than the
- * height it names, and every observer recomputes the recipient list from chain data at a height the
- * transaction itself commits to. The height at which a bond happens to be SPENT is not it: that height
- * exists for spends that are not slashes at all.
+ * height it names. It records when the proof was ruled on, and no payment depends on it. The height at which a bond happens to be SPENT
+ * is not it: that height exists for spends that are not slashes at all.
  */
 export function slashHeightIsValid({ slashHeight, censusHeight, tipHeight } = {}) {
   if (!Number.isInteger(slashHeight) || slashHeight < 0)
@@ -1545,122 +1484,75 @@ export function slashHeightIsValid({ slashHeight, censusHeight, tipHeight } = {}
   return { ok: true, slashHeight };
 }
 
-export function slashDistribution({
-  bondSats, roundId, contract, affectedPlayers = [],
-  // THE ACTIVE CENSUS AT THE SLASHING HEIGHT, and the round's own seats taken out
-  // of it. Not "the remaining honest committee": §5A.3 subtracts the witnesses
-  // from the set that is paid, so paying them is paying the set the rule excludes.
-  censusNodes = [], seats = [],
-  slashed = [],
-}) {
-  if (typeof bondSats !== 'bigint' || bondSats < 0n)
-    throw new Error('a bond is BigInt satoshi');
-  if (!contract || !SLASH_REMAINDERS.includes(contract.slashRemainder))
-    throw new Error('the round contract fixes where the other half goes');
+/**
+ * WHAT F PAYS EACH ENTRY, in msat, by key: a table row, or the net stake where the money never left the player or comes back to them (a VOID
+ * entry's refund, a delivered player under the round's floor, computePayoutTable's `settling`).
+ */
+function receivedBy({ roundId, rows, minScore, payoutShares }) {
+  const computed = computePayoutTable({ roundId, entries: rows, minScore, payoutShares });
+  const out = new Map(computed.table.map((r) => [hex(r.pubkey), r.amountMsat]));
+  const settling = new Set(computed.settling);
+  for (const e of rows) if (isRefund(e.outcome) || (computed.activated.includes(e) && !settling.has(e))) out.set(hex(e.pubkey), netStakeMsat(e));
+  return out;
+}
 
-  const toPlayers = (bondSats * BigInt(SLASH_TO_PLAYERS_BPS)) / 10000n;
-  const rest = bondSats - toPlayers;
+/**
+ * THE REAL LOSS (§5A.3, RULED 2026-11-02, kanban #976): "what the player should have received less what they did receive, floored at zero:
+ * F(contract, membership, true results) against the settlement that happened. It is an amount, never a share of the bond."
+ *
+ * `entries` are the round's as they SETTLED, each { pubkey, stakeMsat, feeMsat, donationMsat, outcome, score }; `truth` the results the
+ * settlement got wrong, [{ pubkey, outcome, score }]; `affected` the entries the offence names (`affectedEntries`), read by `playerPubkey`.
+ * An empty `truth` is the case with no loss: an objection in time (the result was corrected before any money moved) and a doubled result
+ * with no replay. Answers a Map of player key hex -> msat, holding only losses above zero.
+ */
+export function realLosses({ roundId, entries = [], truth = [], affected = [], minScore = 0, payoutShares = null } = {}) {
+  const losses = new Map();
+  if (!truth.length || !affected.length) return losses;
+  const correct = new Map(truth.map((t) => [hex(t.pubkey), t]));
+  // AN ENTRY WITH NO RESULT YET IS NOT IN F, as a table leaves it out until it is decided
+  const settled = entries.filter((e) => e.outcome);
+  const did = receivedBy({ roundId, rows: settled, minScore, payoutShares });
+  const should = receivedBy({ roundId, minScore, payoutShares,
+    rows: settled.map((e) => { const t = correct.get(hex(e.pubkey)); return t ? { ...e, outcome: t.outcome, score: t.score } : e; }) });
+  for (const e of affected) {
+    const k = hex(e.playerPubkey);
+    const loss = (should.get(k) || 0n) - (did.get(k) || 0n);
+    if (loss > 0n) losses.set(k, loss);
+  }
+  return losses;
+}
 
-  const shares = new Map();
-  // WHAT NOBODY ON THE ROUND CAN BE PAID goes to the federation pool, and is not
-  // destroyed (RULED 2026-09-21; §5A.3 "every remainder in this document
-  // has a recipient"). Two structural holes used to burn here - a half with
-  // nobody at all to pay, and the share of a member excluded for being slashed -
-  // and both are income nobody receives, which is exactly what the rule forbids.
-  let toPool = 0n;
-
-  /**
-   * Splits `amount` evenly over `who`, floor each and hand the leftover out one
-   * satoshi at a time in ascending `H(roundId || pubkey)`.
-   *
-   * NOBODY IS EXCLUDED HERE ANY MORE. Exclusion happens BEFORE this is called:
-   * the round's own seats are taken out of the census, and a slashed identity
-   * inside that census is refused outright. So `who` is exactly the set to be
-   * paid, and the divisor is its length - there is no share to set aside and
-   * nowhere for one to go.
-   *
-   * WITH NOBODY TO PAY, the amount goes to the federation pool rather than
-   * being destroyed: §5A.3, "every remainder in this document has a recipient".
-   */
-  // AND EACH HALF IS ALSO KEPT ON ITS OWN. `shares` is the union of both hands and stays exactly what
-  // it was, because it is what the sum below is checked against and what every existing caller reads.
-  // But a caller that wants "who was paid AS A NODE" cannot get it out of the union: measured on the
-  // slash-owing door over a real chain, the answer listed the harmed PLAYER among the census nodes,
-  // owed the players' half a second time, because the two hands share one map and a pubkey carries no
-  // mark saying which half put it there. A key can honestly be in both - a node operator's own entry -
-  // so the union cannot be split after the fact, and the only place that knows is here.
-  const playerShares = new Map();
-  const nodeShares = new Map();
-  const hand = (who, amount, into) => {
-    if (!who.length || amount <= 0n) { toPool += amount > 0n ? amount : 0n; return; }
-    const each = amount / BigInt(who.length);
-    let left = amount - each * BigInt(who.length);
-    const put = (k, v) => {
-      shares.set(hex(k), (shares.get(hex(k)) || 0n) + v);
-      into.set(hex(k), (into.get(hex(k)) || 0n) + v);
-    };
-    for (const k of who) put(k, each);
-    // The leftover satoshis follow the round's own order.
-    for (const k of remainderKeys(roundId, who)) {
+/**
+ * WHERE ONE SLASHED BOND GOES (§5A.3, slashing rule v2): each player its real loss, once, and the rest to the protocol reserves. Nothing to
+ * the nodes, nothing to the developers, nothing back to the slashed node, nothing burned.
+ *
+ * `escrowSats` is the bond less path B's fee: all this slash has. `losses` is `realLosses`' Map; `paid` (key hex -> msat) what earlier proofs
+ * of this round already paid - "the proofs of a round are taken in ascending proof id; the first pays each loss, and each later one pays only
+ * what is still owed". A bond that cannot cover what it owes "pays pro rata by loss and the next proof pays the rest": shares floored, the
+ * leftover one msat at a time in ascending H(round_id || pubkey), the order §22A names for fees. Pure: it moves nothing.
+ *
+ * Answers { players: Map key hex -> msat, playersMsat, reservesMsat, shortMsat, burned: 0n }; playersMsat + reservesMsat is the escrow, to the msat.
+ */
+export function slashDistribution({ escrowSats, roundId, contract, losses = new Map(), paid = new Map() }) {
+  if (typeof escrowSats !== 'bigint' || escrowSats < 0n) throw new Error('an escrow is BigInt satoshi');
+  if (!contract || !SLASH_REMAINDERS.includes(contract.slashRemainder)) throw new Error('that round contract names no slashing rule this build runs');
+  const haveMsat = escrowSats * 1000n;
+  const owed = new Map();
+  for (const [k, loss] of losses) { const left = loss - (paid.get(k) || 0n); if (left > 0n) owed.set(k, left); }
+  const owedMsat = [...owed.values()].reduce((a, b) => a + b, 0n);
+  const players = new Map();
+  if (owedMsat <= haveMsat) for (const [k, v] of owed) players.set(k, v);
+  else {
+    let left = haveMsat;
+    for (const [k, v] of owed) { const share = (haveMsat * v) / owedMsat; players.set(k, share); left -= share; }
+    for (const k of remainderKeys(roundId, [...owed.keys()].map(fromHex))) {
       if (left <= 0n) break;
-      put(k, 1n);
+      players.set(hex(k), players.get(hex(k)) + 1n);
       left -= 1n;
     }
-    toPool += left;
-  };
-
-  // THE WITNESSES ARE THE SET THE RULE TAKES OUT, NOT THE SET IT PAYS.
-  //
-  // This paid `honestCommittee` - the round's own remaining seats - which is the
-  // withdrawn rule, and it is the exact set §5A.3 subtracts: "minus the round's
-  // own seats (the witnesses)". Measured on a clean 100000 sat bond before this
-  // line changed: the two seats took 25000 each and the census took nothing.
-  hand(affectedPlayers, toPlayers, playerShares);
-
-  // A NODE SLASHED AT THIS HEIGHT IS NOT IN THE ACTIVE CENSUS, BY DEFINITION: the
-  // slash SPENDS its bond output and `deriveCensus` filters spent bonds
-  // (census.js `.filter((e) => !e.spent)`). So no second exclusion is added here.
-  // If a caller hands one in anyway the set is wrong, and that is said rather
-  // than quietly patched - dropping it silently would hide a census that is
-  // counting a spent bond.
-  const outs = new Set(slashed.map(hex));
-  const stillIn = censusNodes.filter((k) => outs.has(hex(k)));
-  if (stillIn.length)
-    throw new Error(`a node slashed at this height is still inside the active census `
-      + `(${hex(stillIn[0]).slice(0, 16)}): its bond output is spent, so the census that counts it `
-      + `is wrong - this is not silently dropped`);
-
-  // THE SECOND HALF, TO THE CENSUS MINUS THE ROUND'S OWN SEATS (§5A.3, spec line 811):
-  // "the other half 75% evenly to the active census nodes at the slashing height
-  // minus the round's own seats (the witnesses) and 25% to the donation set".
-  const isSeat = new Set(seats.map(hex));
-  const eligible = censusNodes.filter((k) => !isSeat.has(hex(k)));
-  const { nodes: toNodes, developers: toDevelopers } = splitNodesDevelopers(rest);
-  // AN EMPTY ELIGIBLE SET HAS NO RECIPIENT IN THE SPEC, so it is not invented one:
-  // the seats are the set the rule excludes, a burn is withdrawn, and moving the
-  // 75% onto the developers would be a third recipient written here rather than
-  // ruled. The sats are named and the caller stops.
-  if (!eligible.length && toNodes > 0n)
-    throw new Error(`${toNodes} sat of a slashed bond have no recipient: the active census at the `
-      + `slashing height is empty once the round's ${seats.length} seat(s) are taken out, and §5A.3 `
-      + `names nobody else - not the seats, not a burn, not the donation set`);
-  hand(eligible, toNodes, nodeShares);
-  // AND THE OTHER HALF IS ALWAYS HANDED OUT (RULED 2026-09-21). It used to depend on the
-  // contract: BURN destroyed it, COMMITTEE paid it. Both are withdrawn - "nothing is ever burned, here
-  // or anywhere in this protocol: a slash that destroys value pays nobody for the harm and makes the
-  // slashing itself worthless to prove". `slashRemainder` has one value now and this line no longer
-  // asks it anything, so no round can be written that burns its own remainder.
-  const paid = [...shares.values()].reduce((a, b) => a + b, 0n);
-  if (paid + toDevelopers + toPool !== bondSats)
-    throw new Error(`slash distribution broken: ${paid} paid, ${toDevelopers} to the donation set `
-      + `and ${toPool} to the pool of ${bondSats}`);
-
-  // AND THE POOL'S OWN SPLIT IS THE ONE ALREADY WRITTEN DOWN: 75% to the nodes,
-  // 25% to the developers, the same rule `federation-slash.js` applies to a
-  // slashed guardian bond. Split here rather than left as one number, so a caller
-  // cannot pay it somewhere else by reading past it.
-  return { toPlayers, toNodes, toDevelopers, toPool,
-    pool: splitNodesDevelopers(toPool), burned: 0n, shares, playerShares, nodeShares };
+  }
+  const playersMsat = [...players.values()].reduce((a, b) => a + b, 0n);
+  return { players, playersMsat, reservesMsat: haveMsat - playersMsat, shortMsat: owedMsat - playersMsat, burned: 0n };
 }
 
 /** Ascending `H(roundId || pubkey)`, the order 22A names and payout.js uses. */

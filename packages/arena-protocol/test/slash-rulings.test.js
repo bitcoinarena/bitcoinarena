@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  slashHeightIsValid, affectedEntries, playersShares, resultMoved, NAMES_ONE_ENTRY, OFFENCES,
+  slashHeightIsValid, affectedEntries, resultMoved, NAMES_ONE_ENTRY, OFFENCES,
   TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, SETTLED_WITHOUT_AUTHORITY,
   OPERATOR_PLAYED, FEE_WITHOUT_SERVICE, AUDIT_CONTRADICTED,
 } from '../src/slash.js';
@@ -97,26 +97,6 @@ test('a proof naming a player the round has no entry for is refused, not silentl
   const said = affectedEntries({ offence: REPLAY_CONTRADICTS, playerPubkey: b32(0xff), entries });
   assert.equal(said.ok, false);
   assert.match(said.why, /no entry for/);
-});
-
-test('the players\' half goes pro rata by net stake, and the leftover is handed out', () => {
-  const affected = affectedEntries({ offence: TABLE_IS_NOT_F, entries }).affected;
-  const got = playersShares({ toPlayers: 50000n, affected, roundId: ROUND });
-  const facts = {
-    alice: String(got.shares.get(toHex(ALICE))), bob: String(got.shares.get(toHex(BOB))),
-    oper: String(got.shares.get(toHex(OPER))), paid: String(got.paid),
-  };
-  console.log('  FACTS (pro rata by net stake):', JSON.stringify(facts));
-  // 100000 : 300000 : 200000 of 600000 -> 1/6, 1/2, 1/3 of 50000 = 8333, 25000, 16666, and 1 left.
-  assert.equal(got.paid, 50000n, 'the players\' half was not handed out in full');
-  assert.equal(got.shares.get(toHex(BOB)) > got.shares.get(toHex(ALICE)), true,
-    'the bigger net stake did not take the bigger share');
-});
-
-test('with nobody harmed who paid anything, the split says so rather than returning zero', () => {
-  const said = playersShares({ toPlayers: 50000n, affected: [], roundId: ROUND });
-  assert.equal(said.ok, false);
-  assert.match(said.why, /nobody to divide among/);
 });
 
 test('one round with several slashed nodes: each bond pays the players its own proof names', () => {

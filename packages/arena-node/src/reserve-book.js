@@ -14,6 +14,8 @@ import { fromHex } from '../../arena-protocol/src/hash.js';
 
 /** The payments in that GET /reserves lists per federation (all of them with ?all=1). */
 export const RESERVES_LAST = 50;
+/** A reserve row a slash paid in carries this in its `item` (a reserve row of a purchase carries the item's name). */
+export const SLASH_ITEM = 'slash';
 
 const isHex = (s, n) => typeof s === 'string' && s.length === n * 2 && /^[0-9a-f]+$/.test(s);
 
@@ -26,10 +28,26 @@ export function reserveFigures(rows, { federationId, last = RESERVES_LAST, gameO
   const mine = (rows || []).filter((r) => !federationId || r.federationId === federationId);
   const heldMsat = mine.reduce((t, r) => t + BigInt(r.amountMsat), 0n);
   const shown = last === Infinity ? mine : mine.slice(-last);
-  return { heldMsat: String(heldMsat), entries: mine.length,
+  // WHAT A SLASH PAID IN (§27A.9.2, kanban #976): its own row and its own line, spent as any reserve
+  const slashMsat = mine.filter((r) => r.item === SLASH_ITEM).reduce((t, r) => t + BigInt(r.amountMsat), 0n);
+  return { heldMsat: String(heldMsat), slashMsat: String(slashMsat), entries: mine.length,
     paidIn: shown.slice().reverse().map((r) => ({ outpoint: r.outpoint, roundId: r.roundId, entryId: r.entryId, amountMsat: String(r.amountMsat),
       at: new Date(r.verifiedMs).toISOString(), game: gameOf(r.roundId) || null, image: r.senderOnContract && r.playerKey ? r.playerKey : null,
-      ...(r.item ? { item: r.item } : {}) })) };
+      ...(r.item ? { item: r.item } : {}), ...(r.item === SLASH_ITEM ? { kind: 'slash' } : {}) })) };
+}
+
+/**
+ * THE ROWS A SLASH'S EVENT NAMES FOR ONE FEDERATION (arbitration-events.js slashEvent): each its reserve payout, as a row of GET /reserves. They go through
+ * `verifyPeerReserveRow` like every other seat's: signed by the arbitration set or not, a row is kept only once this seat's own port holds that contract.
+ */
+export function slashReserveRows(events, federationId) {
+  const out = [];
+  for (const said of events || []) {
+    const e = (said && said.event) || said;
+    if (!e || e.kind !== 'slash' || !isHex(e.round, 32) || !isHex(e.entry, 32)) continue;
+    for (const r of e.reserves || []) if (r.federation === federationId && Number.isInteger(r.outIdx)) out.push({ outpoint: `${r.txid}:${r.outIdx}`, roundId: e.round, entryId: e.entry, amountMsat: r.msat, image: null, item: SLASH_ITEM });
+  }
+  return out;
 }
 
 /**

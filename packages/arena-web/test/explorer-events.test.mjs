@@ -29,8 +29,10 @@ const FULL = { escrow: 'd96364ecc7f8f75f8fb60e64c9b61e3dfee36fae8390cc30a2c995c0
   remainder: '1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62' };
 const t2 = (atMs, v = T2.state) => ({ ...liquidationEvent({ network: 'testnet4', fid: T2.federation, v, claims: T2.claims, escrowAt: T2.escrowAt, into: T2.into }), firstMs: T2.firstMs, atMs });
 const SLASH = { ...slashEvent({ network: 'testnet4', proof: 'cd'.repeat(32), v: { posted: 'ef'.repeat(32), node: 'aa'.repeat(32), round: '11'.repeat(32), entry: '22'.repeat(32),
-  slashHeight: 157000, signers: 5, bondSats: '100000', playersSats: '60000', nodesSats: '30000', developersSats: '10000', escrowTxid: '33'.repeat(32), pegInSats: '59000', claimedMsat: '58000000',
-  payouts: [{ round: '11'.repeat(32), entry: '22'.repeat(32), refundPk: '02' + '44'.repeat(32), msat: '58000000', txid: '55'.repeat(32), outIdx: 0 }] } }), firstMs: Date.parse('2026-10-20T10:00:00Z'), atMs: 5000 };
+  slashHeight: 157000, signers: 5, bondSats: '100000', escrowSats: '98000', playersMsat: '58000000', reservesMsat: '40000000', settled: true,
+  stages: [{ txid: '33'.repeat(32), done: true, kept: null, pegIns: [{ federation: '66'.repeat(32), sats: '97000', claimedMsat: '96000000' }] }],
+  payouts: [{ round: '11'.repeat(32), entry: '22'.repeat(32), refundPk: '02' + '44'.repeat(32), msat: '58000000', txid: '55'.repeat(32), outIdx: 0 }],
+  reserves: [{ federation: '66'.repeat(32), reserveKey: '02' + '77'.repeat(32), msat: '37990000', txid: '55'.repeat(32), outIdx: 1 }] } }), firstMs: Date.parse('2026-10-20T10:00:00Z'), atMs: 5000 };
 
 test('the set\'s liquidations and slashes are rows of their own kinds, the newest version any seat holds, found by every transaction they name', async () => {
   const { env } = store();
@@ -88,7 +90,9 @@ test('a slash on its page and both kinds in the list, with their filter', () => 
   const s = renderToStaticMarkup(React.createElement(Slash, { tx: { id: SLASH.proof, kind: 'slash', event: SLASH } }));
   assert.match(s, /<dt>Node slashed<\/dt><dd class="mono">a{64}<\/dd>/);
   assert.match(s, /<dt>Slash transaction<\/dt><dd><span class="mono">(ef){32}<span class="dim"> \(bitcoin\)<\/span><\/span><span class="dim"> · height 157,000, 5 signers<\/span>/);
-  assert.match(s, /<dt>Bond<\/dt><dd>100,000 sat<span class="dim"> · players 60,000 sat<\/span><span class="dim"> · nodes 30,000 sat<\/span><span class="dim"> · developers 10,000 sat<\/span>/);
+  assert.match(s, /<dt>Bond<\/dt><dd>100,000 sat<span class="dim"> · real loss paid 58,000 sat<\/span><span class="dim"> · protocol reserves 37,990 sat<\/span>/);
+  assert.match(s, /Into the protocol reserves/);
+  assert.doesNotMatch(s, /nodes \d|developers \d/);
   assert.match(s, /<td class="mono">02(44){32}<\/td><td class="n nw">58,000 sat<\/td><td class="mono">(55){32}<\/td><td>0<\/td>/);
   assert.deepEqual([KINDS.liquidation, KINDS.slash], ['Liquidation', 'Slash']);
   const data = { txs: [{ id: T2.federation, kind: 'liquidation', app: null, federation: T2.federation, storedMs: T2.firstMs, stakeMsat: '44999680', status: 'paid out', result: null }],

@@ -23,7 +23,7 @@ import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { bondOutputKey, bondInternalKey, slashLeaf, tapLeafHash, controlBlockFor, maturityHeightFor } from '../../arena-protocol/src/bond-script.js';
 import { escrowOutput, arbitrationSpend, arbitrationSighash, arbitrationWitness, arbitrationTransaction } from '../../arena-protocol/src/arbitration-tx.js';
 import { signAbsence, abandonmentProof } from '../../arena-protocol/src/absence.js';
-import { guardianSlashStands, guardianSlashPayees, clocksFor, exposureCap, liquidationSchedule } from '../../arena-protocol/src/federation-slash.js';
+import { guardianSlashStands, clocksFor, exposureCap, liquidationSchedule } from '../../arena-protocol/src/federation-slash.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord, GONE } from '../../arena-protocol/src/federation-record.js';
 import { decodeSpentSet, newestSpentSet, spentNonceSet } from '../../arena-protocol/src/spent-set.js';
 import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
@@ -115,8 +115,7 @@ if (step === 'bonds') {
     const escrow = escrowOutput({ arbitrationKeys: g.arbitrationKeys, k: K }, { tweakPoint, combine });
     const feeSats = 3000n;
     const tx = arbitrationSpend({ bond: { txid: fromHex(bond.txid).reverse(), vout: bond.vout, value: BOND_SATS, script: fromHex(bond.spk) }, proofId: proof.id, slashHeight: height(),
-      hint: new TextEncoder().encode('r17'), distribution: { playerShares: new Map([['escrow', BOND_SATS - feeSats]]), nodeShares: new Map(), pool: { nodes: feeSats, developers: 0n }, toDevelopers: 0n },
-      escrowScript: escrow.script, nodesScript: null, developersScript: null, feeSats });
+      hint: new TextEncoder().encode('r17'), escrowScript: escrow.script, feeSats });
     if (!tx.ok) { out({ step: `g${G}: slashing transaction NOT built`, why: tx.why }); process.exit(1); }
     const h = arbitrationSighash(tx, tapLeafHash(slashLeaf(g.arbitrationKeys, K)));
     const w = arbitrationWitness({ arbitrationKeys: g.arbitrationKeys, k: K, signatures: signBy(K)(h), controlBlock: controlBlockFor('slash', built).controlBlock });
@@ -216,12 +215,9 @@ if (step === 'bonds') {
   table(await withSet.plan(state.federation, { escrowMsat: both }), 'with the spent set: the table, had both bonds been slashed');
   table(await noSet.plan(state.federation), 'no spent set published: the table, from the escrow the slashes made');
   table(await noSet.plan(state.federation, { escrowMsat: both }), 'no spent set published: the table, had both bonds been slashed');
-  // after drain_blocks: the remainder splits 75 / 25 (the census less the federation's guardians, and the donation set)
+  // after drain_blocks: the remainder goes to the protocol reserves (§5A.3, RULED 2026-11-02, kanban #976)
   if (height() < when.remainderSplitsAt) mine(when.remainderSplitsAt - height());
   const late = await withSet.plan(state.federation, { escrowMsat: both });
   table(late, `with the spent set, after drain_blocks (${when.remainderSplitsAt}), had both bonds been slashed`);
-  if (late.ok && BigInt(late.remainderMsat) > 0n) {
-    const payees = guardianSlashPayees({ amountSats: BigInt(late.remainderMsat) / 1000n, censusNodes: [...guardians, ...outside].map((n) => n.key), record: plainRecord() });
-    out({ step: 'the remainder\'s payees', ok: payees.ok, nodes: payees.nodes, donationSet: payees.developers, guardiansLeftOut: payees.guardiansLeftOut });
-  }
+  if (late.ok && BigInt(late.remainderMsat) > 0n) out({ step: 'the remainder, to the protocol reserves', msat: late.remainderMsat, split: late.split });
 } else throw new Error(`step ${step}?`);

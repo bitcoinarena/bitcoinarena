@@ -22,15 +22,15 @@ test('enough escrow: every valid note at face value; the refused named; the rema
   assert.match(r.refused[3].why, /after drain_blocks/);
   assert.deepEqual([r.proRata, r.rate, r.remainderMsat, r.split], [false, 1, 900000n, null], 'no split before 1100');
   const later = settleClaims({ ...base, escrowMsat: 1_000_000n, atHeight: 1100, spentNonces: [], claims: [claim('aa', 100, 1005)] });
-  assert.deepEqual(later.split, { nodes: 675000n, developers: 225000n }, '75 / 25 of the 900 000 msat left');
+  assert.deepEqual(later.split, { reserves: 900000n }, 'the 900 000 msat left go to the protocol reserves');
 });
 
-test('a short escrow pays the window pro rata and says the rate; nothing is left for late claims or the nodes', () => {
+test('a short escrow pays the window pro rata and says the rate; nothing is left for late claims or the reserves', () => {
   const r = settleClaims({ ...base, escrowMsat: 150_000n, atHeight: 1100, spentNonces: null,
     claims: [claim('aa', 100, 1002), claim('bb', 100, 1003), claim('cc', 50, 1050)] });
   assert.deepEqual(r.paid.map((p) => [p.nonce, p.msat, p.late]), [['aa', 75000n, false], ['bb', 75000n, false], ['cc', 0n, true]]);
   assert.deepEqual([r.proRata, r.rate, r.spentSetPublished, r.remainderMsat], [true, 0.75, false, 0n]);
-  assert.deepEqual(r.split, { nodes: 0n, developers: 0n });
+  assert.deepEqual(r.split, { reserves: 0n });
 });
 
 test('late notes are paid at face from what is left, in order of height, until it runs out', () => {

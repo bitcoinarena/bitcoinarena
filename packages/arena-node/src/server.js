@@ -226,14 +226,14 @@ import { donationSetId, donationOutputsExpected, encodeDonationSet, vestedShares
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { timed, watchLoop } from './slow.js';
 import { resultFinality, finalSignatureNow } from './finality.js';
-import { standingOf, marketStandingOf } from './standing.js';
+import { standingOf, marketStandingOf, settledOutcomeOf } from './standing.js';
 import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
 import { outageOutcome } from '../../arena-protocol/src/entry-void.js';
 import { ENTRY_VOID, netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/objection.js';
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/src/posting.js';
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
-import { hostedPlugins, pluginForRound, advertisedAppsCheck } from './plugins.js';
+import { hostedPlugins, pluginForRound, advertisedAppsCheck, payoutRuleOfRound } from './plugins.js';
 import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf, attestedTable, VALUE_HELD_OUTCOME } from './game-market.js';
 import { isHeadToHead, marketOfRound, isGameMarket, isScalar, isDrawnAttest, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
 import { decodeValueAttestation, valueAttestationStands, valueAttestationBodyId, isValueAttestationBytes } from '../../arena-protocol/src/scalar.js';
@@ -262,7 +262,7 @@ import { StakeSecrets, encodeShareAnswer, SEALED_ANSWER_BYTES } from './stake-se
 import { Dkg, runAgainIn } from './dkg.js';
 import { reserveEpochId, decodeContribution } from '../../arena-protocol/src/dkg.js';
 import { reservesEntryExpected, entryFeeBpsForRound, entryPaysReserves } from '../../arena-protocol/src/reserves.js';
-import { reserveFigures, verifyPeerReserveRow, RESERVES_LAST } from './reserve-book.js';
+import { reserveFigures, verifyPeerReserveRow, slashReserveRows, RESERVES_LAST } from './reserve-book.js';
 import { createFundingBook } from './funding-book.js';
 import { LB_SCOPE } from '../../arena-protocol/src/leaderboard-payout.js';
 import { leaderboardWindow, leaderboardWinners } from '../../arena-protocol/src/leaderboard-winners.js';
@@ -1626,6 +1626,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const port = key ? await portOf(fedHex) : null;
       if (!key || !port) continue;
       const seen = new Set();
+      // WHAT A SLASH PAID IN (§27A.9.2, kanban #978): named by the arbitration set's event, kept as any other seat's row - once this seat's port holds it
+      for (const row of slashReserveRows(arbitrationEvents ? arbitrationEvents.list() : [], fedHex)) {
+        if (seen.has(row.outpoint)) continue;
+        seen.add(row.outpoint);
+        const [tx, idx] = row.outpoint.split(':');
+        try { if (round.donationOutputAt({ txid: fromHex(tx), outIdx: idx })) continue; } catch { continue; }
+        const v = await verifyPeerReserveRow({ row, port, reserveKey: key, federationId: fromHex(fedHex) }).catch((e) => ({ ok: false, why: e.message }));
+        if (v.ok) { round.putDonationOutputs([v.row]); console.log(`[reserves] ${fedHex.slice(0, 8)}: kept the slash's ${row.amountMsat} msat at ${row.outpoint.slice(0, 16)}…`); }
+        else console.log(`[reserves] ${fedHex.slice(0, 8)}: the slash's ${String(row.outpoint).slice(0, 16)}… not kept: ${v.why}`);
+      }
       for (const u of seats) {
         let listed = [];
         try { const r = await (await fetch(`${u}/reserves?all=1`, { signal: AbortSignal.timeout(8000) })).json();
@@ -10002,16 +10012,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // the signed result it accuses, fixed-size records back to back.
       // WHAT A FILED SLASH OWES, at a height the ARBITRATION SET NAMES (§5A.3, ruled 2026-09-22).
       //
-      // The height is the caller's, not this node's: §5A.3 pays "the active census nodes at the
-      // slashing height", and that height is one the arbitration set names - at or below the tip when
-      // they sign, at or above the round's own census height. So the door takes it and refuses it out
-      // of range rather than choosing one, and `slashOwing` refuses it BEFORE any census is read at it.
+      // The height is the caller's, not this node's: it is one the arbitration set names - at or below the tip when they sign, at or above the
+      // round's own census height - so the door takes it and refuses it out of range rather than choosing one.
       //
-      // IT RECORDS NOTHING AND SPENDS NOTHING. Steps 3 and 5 of §5A.3B - the escrow output and MuSig2
-      // over the arbitration keys - are not in this tree and this door does not pretend they are. What
-      // it is for: every observer must be able to recompute the same recipient list from chain data
-      // before any money is built on it, and the first time those numbers are worked out should not be
-      // the first time money moves.
+      // IT RECORDS NOTHING AND SPENDS NOTHING. What it is for: anyone can recompute what a slash pays (§5A.3: each real loss, the rest to the
+      // reserves) before any money is built on it.
       if (req.method === 'GET' && url.pathname === '/slash-owing') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
@@ -10035,21 +10040,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (height < contract.censusHeight)
           return text(res, 409, `${height} is below the round's census height ${contract.censusHeight}`);
 
-        // THE CENSUS AT THAT HEIGHT, read once for every proof: the recipients and, in the same rows,
-        // the bond values. A proof names `bondTxid`/`bondVout` and NEVER an amount, and the ruling puts
-        // the slashing height at or below the tip when the set signs, so the accused bond is still
-        // unspent there and the census entry still carries what the chain says it is worth.
+        // THE CENSUS AT THAT HEIGHT, read once for every proof: the bond values. A proof names `bondTxid`/`bondVout` and NEVER an amount,
+        // and the ruling puts the slashing height at or below the tip when the set signs, so the accused bond is still unspent there
+        // and the census entry still carries what the chain says it is worth.
         const at = roster.censusAtHeight(rid, height);
         if (!at.ok) return text(res, 409, at.why);
-        const censusKeys = at.entries.map((e) => e.pubkey);
         const bondOf = (nodePubkey) => {
           const e = at.entries.find((x) => toHex(x.pubkey) === toHex(nodePubkey));
           return e && typeof e.bondSats === 'bigint' ? e.bondSats : 0n;
         };
-        const entries = entriesForSlash(round, new Uint8Array(rid));
-
+        // THE ROUND AS THIS SEAT SAW IT SETTLE, and whether the contradicted run is the one it settled on: a late objection (§13A)
+        const entries = entriesForSlash(round, new Uint8Array(rid), { outcomeOf: (id) => { const o = settledOutcomeOf(round, new Uint8Array(rid), id); return o.decided ? o : null; } });
+        let standing = null; try { standing = resultFinality(round, rid, eid); } catch { standing = null; }
+        const settledOnFalse = !!(standing && standing.state === FINAL && standing.lateObjection && !standing.contradictedRunId);
+        const rule = payoutRuleOfRound(contract, round.plugins);
+        // ONE LOSS, ONCE (§5A.3): the proofs of a round in ascending proof id, each paying only what is still owed
+        const paid = new Map();
         const owing = [];
-        for (const p of held) {
+        for (const p of [...held].sort((a, b) => (toHex(a.proofId) < toHex(b.proofId) ? -1 : 1))) {
           // WHICH WAY THE FALSE RESULT WENT DECIDES WHO IT HARMED (kanban #975): the signed result beside the proof, and the replay's
           // result in the objection that held
           let proof, signed, replayed;
@@ -10070,20 +10078,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // so that is the offence named here. A proof arriving by any other road would need its own
           // verdict carried with it, and until one does, none is invented.
           const said = await slashOwing({
-            proof, offence: REPLAY_CONTRADICTS, contract, roundIdBytes: new Uint8Array(rid), entries, signed, replayed,
-            slashHeight: height, tipHeight: at.tipHeight,
-            censusAt: async () => censusKeys,
+            proof, offence: REPLAY_CONTRADICTS, contract, roundIdBytes: new Uint8Array(rid), entries, signed, replayed, settledOnFalse, paid,
+            payoutShares: rule.ok ? rule.payoutShares : null, slashHeight: height, tipHeight: at.tipHeight,
             bondSatsOf: async () => bondOf(proof.nodePubkey),
           });
           if (!said.ok) { owing.push({ node: toHex(proof.nodePubkey), why: said.why }); continue; }
           const o = said.owing;
           owing.push({
             node: o.node, bond: o.bond, offence: o.offence, bondSats: String(o.bondSats),
-            toPlayers: String(o.toPlayers), toNodes: String(o.toNodes), toDevelopers: String(o.toDevelopers),
-            players: [...o.players].map(([k, v]) => ({ player: k, sats: String(v) })),
-            nodes: [...o.nodes].filter(([, v]) => v > 0n).map(([k, v]) => ({ node: k, sats: String(v) })),
-            censusSeen: o.censusSeen, seatsOut: o.seatsOut,
+            playersMsat: String(o.playersMsat), reservesMsat: String(o.reservesMsat), shortMsat: String(o.shortMsat),
+            players: [...o.players].map(([k, v]) => ({ player: k, msat: String(v) })),
           });
+          for (const [k, v] of o.players) paid.set(k, (paid.get(k) || 0n) + v);
         }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ slashHeight: height, tipHeight: at.tipHeight, owing }));
@@ -10536,7 +10542,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (rid.length !== 32) return text(res, 400, 'a round is asked for by its id');
         if (!round.get(rid)) return text(res, 404, 'no such round');
         const entries = auditEntries(new Uint8Array(rid)).map((e) => ({ id: toHex(e.entryId), entry: toHex(new Uint8Array(round.entry(e.entryId))),
-          results: round.results(rid, e.entryId).map((r) => toHex(new Uint8Array(r.bytes))) }));
+          results: round.results(rid, e.entryId).map((r) => toHex(new Uint8Array(r.bytes))),
+          // AND WHAT THE ROUND SETTLED ON (§5A.3 real loss, kanban #978): the re-runs and the FINAL signatures, for the arbitration set to count
+          reruns: round.reruns(rid, e.entryId).map((r) => toHex(new Uint8Array(r.bytes))),
+          finals: round.entryFinalSigs(rid, e.entryId).map((r) => toHex(r)) }));
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ round: toHex(rid), entries }) + '\n');
       }

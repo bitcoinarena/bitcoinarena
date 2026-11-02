@@ -2158,7 +2158,6 @@ player gets their **real loss**, once, and nothing more. **The rest of the bond
 goes to the protocol reserves** (§27A.9). **Nothing goes to the nodes, nothing
 goes to the developers**, nothing goes back to the slashed node, and nothing is
 burned. That holds for every offence and every bond, a guardian's too (§23A.5).
-Not built yet: kanban #978.
 
 - **The real loss** is what the player should have received less what they did
   receive, floored at zero: `F(contract, membership, true results)` against the
@@ -8362,6 +8361,11 @@ a 100 sat entry pays nodes 4,000, protocol devs 2,000, game devs 2,000, reserves
   - What does not fit stays in its escrow and enters when a federation has room. A slash never closes a federation
     to deposits.
   - A network with no reserve key yet keeps it in the escrow until there is one.
+  - **As built (kanban #978):** the arbitration set reads the federations from its seats (`GET /federations`, `GET /reserves`) and
+    takes only what more than half of those that answered name alike. `slash-reserves.js` computes the parts. Fees come off the escrow, so off the
+    reserves' part, and a loss stays whole while the bond covers it. A federation a ruling closed to new peg-ins (`ARENA_ARBITER_RETIRED`) takes no
+    part, and a loss in it is still paid there. The real loss needs five FINAL signatures on the false run (`GET /audit-run`): a seat cannot say a
+    run settled by saying so. A seat keeps a slash's reserve row from the set's signed event, once its own port holds that payout contract.
 
 ### 27A.9.3 Project funding proposals
 

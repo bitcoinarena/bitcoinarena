@@ -93,8 +93,7 @@ if (known.length < K) { out({ step: 'refused', why: `only ${known.length} of the
 const feeSats = BigInt(env.FEE_SATS || 3000);
 const escrow = escrowOutput({ arbitrationKeys: g.arbitrationKeys, k: K }, { tweakPoint, combine });
 const bond = { txid: fromHex(btxid).reverse(), vout: bvout, value, script: fromHex(spk) };
-const distribution = { playerShares: new Map([['escrow', value - feeSats]]), nodeShares: new Map(), pool: { nodes: feeSats, developers: 0n }, toDevelopers: 0n };
-const spend = arbitrationSpend({ bond, proofId: proof.id, slashHeight: height, hint: new TextEncoder().encode('326'), distribution, escrowScript: escrow.script, nodesScript: null, developersScript: null, feeSats });
+const spend = arbitrationSpend({ bond, proofId: proof.id, slashHeight: height, hint: new TextEncoder().encode('326'), escrowScript: escrow.script, feeSats });
 if (!spend.ok) { out({ step: 'refused', why: spend.why }); process.exit(2); }
 const sighash = arbitrationSighash(spend, tapLeafHash(slashLeaf(g.arbitrationKeys, K)));
 const signatures = new Map(known.slice(0, K).map((k) => [toHex(k), schnorr.sign(sighash, secrets.get(toHex(k)))]));

@@ -43,19 +43,15 @@ test('a reserve above four of the smallest bond does not fit, however big the ot
     'a reserve only the sum-of-all-bonds rule would allow was accepted');
 });
 
-test('on a halt every note is paid at face value BEFORE a node or a developer sees a sat', () => {
+test('on a halt every note is paid at face value BEFORE the reserves see a sat', () => {
   const bond = 1000000n * SAT;
   const said = slashSplit({ amountMsat: bond, halted: true, notesOwedMsat: 600000n * SAT });
   assert.equal(said.ok, true, said.why);
   assert.equal(said.notes, 600000n * SAT, 'the notes were not paid at face value first');
-  // The order is the rule: only what no player claimed is split, and it is the REMAINDER that is split.
-  const rest = bond - said.notes;
-  assert.equal(said.nodes, (rest * 75n) / 100n, 'the nodes were not paid out of the remainder');
-  assert.equal(said.developers, rest - (rest * 75n) / 100n);
-  assert.equal(said.nodes + said.developers, rest, 'the split did not come out of the remainder');
-  assert.ok(said.nodes < (bond * 75n) / 100n,
-    'the nodes were paid as if the whole bond were theirs - the notes were not taken off first');
-  assert.equal(said.notes + said.nodes + said.developers + said.burned, bond, 'the bond did not add up');
+  assert.equal(said.reserves, 400000n * SAT, 'the remainder goes to the protocol reserves');
+  assert.equal(said.notes + said.reserves + said.burned, bond, 'the bond did not add up');
+  assert.equal(said.nodes, undefined, 'nothing goes to the nodes');
+  assert.equal(said.developers, undefined, 'nothing goes to the developers');
 });
 
 test('a short escrow goes entirely to the notes, pro rata, and pays nobody else at all', () => {
@@ -63,15 +59,13 @@ test('a short escrow goes entirely to the notes, pro rata, and pays nobody else 
   const said = slashSplit({ amountMsat: bond, halted: true, notesOwedMsat: 900000n * SAT });
   assert.equal(said.proRata, true);
   assert.equal(said.notes, bond, 'every msat of a short escrow goes to the notes');
-  assert.equal(said.nodes, 0n, 'a node was paid while a player was still short');
-  assert.equal(said.developers, 0n, 'a developer was paid while a player was still short');
+  assert.equal(said.reserves, 0n, 'the reserves were paid while a player was still short');
   assert.equal(said.burned, 0n);
 });
 
-test('a federation that kept running still pays 75 to the nodes and 25 to the developers', () => {
+test('a federation that kept running lost nothing: the whole bond goes to the reserves', () => {
   const said = slashSplit({ amountMsat: 1000000n * SAT, halted: false });
-  assert.equal(said.nodes, 750000n * SAT);
-  assert.equal(said.developers, 250000n * SAT);
+  assert.equal(said.reserves, 1000000n * SAT);
   assert.equal(said.notes, 0n, 'a running federation pays no notes out of a bond');
   assert.equal(said.burned, 0n);
 });

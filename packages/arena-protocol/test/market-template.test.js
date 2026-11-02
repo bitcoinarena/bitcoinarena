@@ -15,7 +15,7 @@ import {
 import { encodeRoundContract, decodeRoundContract, roundId, EVENT_MARKER, contractEventFits } from '../src/contracts.js';
 import { attestationStands, attestationBodyId, attestationTimely, marketVoided, marketTimes, roundTermsOf } from '../src/attested.js';
 import { stakeExpiryFits } from '../src/lock-expiry.js';
-import { buildRules } from '../src/rules.js';
+import { buildRules, SLASHING_V1_HASH } from '../src/rules.js';
 import { toHex, fromHex, sha256 } from '../src/hash.js';
 import { TEST_FEDERATION_ID } from '../src/test-federation.js';
 import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
@@ -65,7 +65,8 @@ const BASE = {
   blockTicks: 9000, exposureReference: 12451840, corridorHalfWidth: 3014656, spawnFreeRadius: 1441792, timeFloor: 16384, timeCeil: 98304,
   minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes: [b32(4), b32(7), b32(9)],
 };
-const RULES = buildRules({ claimWindowDays: 3, bondMinGameVerifySats: 50000n, bondMinSettlementSats: 200000n });
+// A LAYOUT WRITTEN BEFORE names the slashing rule of its day (§5A.3: a testnet round keeps v1's hash until it has settled)
+const RULES = { ...buildRules({ claimWindowDays: 3, bondMinGameVerifySats: 50000n, bondMinSettlementSats: 200000n }), slashing: SLASHING_V1_HASH };
 function* variants() {
   for (const v of [1, 2, 3])
     for (const more of [{}, { startDeadlineTicks: 100 }, { seriesId: b32(0x5e), roundIndex: 7 }, { startDeadlineTicks: 100, seriesId: b32(0x5e), roundIndex: 7 }])

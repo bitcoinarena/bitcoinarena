@@ -25,7 +25,7 @@ import { runId } from './verdict.js';
 export { OBJECTION_WINDOW_MS };
 
 // One entry's outcome as far as this node can say: from its threshold of signed results, or a refund/forfeit word.
-function outcomeOf(round, roundIdBytes, entryId) {
+export function settledOutcomeOf(round, roundIdBytes, entryId) {
   if (round.entryVoid && round.entryVoid(entryId)) return { decided: true, outcome: ENTRY_VOID, score: 0, state: ENTRY_VOID };
   const nq = round.noQuorum ? round.noQuorum(entryId) : null;
   if (nq && (nq.outcome === VOID || nq.outcome === FORFEIT)) return { decided: true, outcome: nq.outcome, score: 0, state: nq.outcome };
@@ -60,7 +60,7 @@ export function standingOf(round, roundIdBytes, entryIdBytes, contract) {
   for (const { entryId, entry } of all) {
     // a stake no seat saw committed is not in the round (§23.1 step 5)
     if (round.stakeSeen && !round.stakeSeen(entryId)) continue;
-    const o = outcomeOf(round, roundIdBytes, entryId);
+    const o = settledOutcomeOf(round, roundIdBytes, entryId);
     if (toHex(entryId) === toHex(entryIdBytes)) mine = { ...o, pubkey: entry.playerPubkey };
     if (!o.decided) continue;
     entries.push({ entryId, pubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat,

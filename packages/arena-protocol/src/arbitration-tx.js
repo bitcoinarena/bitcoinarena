@@ -6,23 +6,17 @@
 //   3. k-of-m arbitration keys sign a slashing transaction spending path B (the bond's slash leaf), naming
 //      slash_height: <= the tip when they sign, >= the round's census_height; nLockTime = slash_height.
 //   4. It MUST carry OP_RETURN = H(fraud_proof) || slash_height || retrieval hint.
-//   5. Outputs pay §5A.3's distribution from the census at slash_height: the players' escrow, the active nodes'
-//      share, the developers' share. "A bond's on-chain outputs are three - players' escrow, nodes, developers -
-//      never one per player."
+//   5. One output, an escrow, pays §5A.3: each player's real loss, then the rest to the protocol reserves, both through
+//      the federation. Nothing to the nodes or the developers.
 //
 // WHAT THE SPEC FIXES AND WHAT IT LEAVES TO THE CALLER, said rather than invented:
-//   - the players' output goes to an escrow under the arbitration keys (§23A.5's shape): here a P2TR output whose one
-//     leaf is the same k-of-m `slashLeaf` the bond carries, its internal key the keys' BIP-327 aggregate. Built by
-//     `escrowOutput`, the curve injected (this package carries none).
-//   - the nodes' and the developers' outputs: the spec names who is paid, not the script that pays them, so their
-//     scripts are the caller's (`nodesScript`, `developersScript`).
+//   - the escrow is under the arbitration keys (§23A.5's shape): here a P2TR output whose one leaf is the same k-of-m
+//     `slashLeaf` the bond carries, its internal key the keys' BIP-327 aggregate. Built by `escrowOutput`, the curve
+//     injected (this package carries none).
 //   - slash_height in the OP_RETURN: 4 bytes, big-endian - this protocol's own u32 (encode.js); the spec fixes the
 //     order of the three fields, not the width.
-//   - the transaction's fee is not in §5A.3's distribution. It is taken from the nodes' output and then the
-//     developers', never from the players' escrow (§23A: players cannot lose). NOT RULED: the caller is told the fee
-//     it took and from where.
-// Amounts come from `slashDistribution` (slash.js): players = its players' shares; nodes = its nodes' shares + the pool's nodes' part;
-// developers = toDevelopers + the pool's developers' part. They sum to the bond, less the fee.
+//   - the fees: one output leaves one place to take them from. They come off the escrow, and so off what the
+//     reserves get; a player's loss is paid whole while the bond covers it (slash.js slashDistribution).
 import { slashLeaf, tapLeafHash, tapTweak, aggregateKeys } from './bond-script.js';
 import { tapSighash, scriptPathWitness, serializeSpend, compactSize } from './bond-spend.js';
 import { toHex } from './hash.js';
@@ -61,7 +55,7 @@ export function arbitrationCommitmentIn(outputs) {
 }
 
 /**
- * THE PLAYERS' ESCROW (§23A.5's shape): a P2TR output under the arbitration set's k-of-m keys - one leaf, the slash
+ * THE SLASH'S ESCROW (§23A.5's shape, §5A.3B step 5): a P2TR output under the arbitration set's k-of-m keys - one leaf, the slash
  * leaf; the internal key the keys' aggregate. `curve` is `{ tweakPoint, combine }` as bond-script.js takes them.
  */
 export function escrowOutput({ arbitrationKeys, k }, { tweakPoint, combine }) {
@@ -77,47 +71,26 @@ export function escrowOutput({ arbitrationKeys, k }, { tweakPoint, combine }) {
 }
 
 /**
- * THE UNSIGNED SLASHING TRANSACTION: the bond's outpoint spent by path B, nLockTime = slash_height, the commitment
- * first, then the players' escrow, the nodes' output and the developers' output.
+ * THE UNSIGNED SLASHING TRANSACTION: the bond's outpoint spent by path B, nLockTime = slash_height, the commitment first, then the
+ * ONE output: the escrow, the whole bond less the fee (§5A.3B step 5). Who the escrow pays is decided when it is spent.
  *
  *   bond         { txid (internal byte order), vout, value (sat, BigInt), script (the bond's P2TR scriptPubKey) }
- *   distribution slashDistribution(...)'s answer for this bond's value
  *   feeSats      the transaction's fee, BigInt
- * Refuses by name: a height out of range, amounts that do not come to the bond, a fee the nodes' and developers'
- * outputs cannot carry, an output below dust.
+ * Refuses by name: a height out of range, a fee that leaves the escrow below dust, no escrow script.
  */
-export function arbitrationSpend({ bond, proofId, slashHeight, hint = new Uint8Array(0), distribution, escrowScript, nodesScript, developersScript, feeSats }) {
+export function arbitrationSpend({ bond, proofId, slashHeight, hint = new Uint8Array(0), escrowScript, feeSats }) {
   if (typeof feeSats !== 'bigint' || feeSats < 0n) return { ok: false, why: 'the fee is BigInt satoshi' };
-  const d = distribution;
-  // WHAT WAS HANDED OUT, not the halves' nominal sizes: a half with nobody to pay, and every leftover satoshi, is in the
-  // pool, which slash.js splits 75/25 between the nodes and the developers.
-  const sum = (m) => [...(m || new Map()).values()].reduce((x, y) => x + y, 0n);
-  const players = sum(d.playerShares);
-  let nodes = sum(d.nodeShares) + d.pool.nodes;
-  let developers = d.toDevelopers + d.pool.developers;
-  if (players + nodes + developers !== bond.value)
-    return { ok: false, why: `the distribution comes to ${players + nodes + developers} sat and the bond holds ${bond.value}` };
-  // THE FEE, from the nodes' output and then the developers' - never the players'.
-  const fromNodes = feeSats <= nodes ? feeSats : nodes;
-  const fromDevelopers = feeSats - fromNodes;
-  if (fromDevelopers > developers) return { ok: false, why: `a fee of ${feeSats} sat is more than the nodes' and developers' outputs carry` };
-  nodes -= fromNodes; developers -= fromDevelopers;
-  const outputs = [arbitrationCommitment(proofId, slashHeight, hint)];
-  for (const [what, value, script] of [['players\' escrow', players, escrowScript], ['nodes\'', nodes, nodesScript], ['developers\'', developers, developersScript]]) {
-    if (value === 0n) continue;
-    if (value < P2TR_DUST_SATS) return { ok: false, why: `the ${what} output would be ${value} sat, below dust` };
-    if (!(script instanceof Uint8Array)) return { ok: false, why: `no script for the ${what} output` };
-    outputs.push({ value, script, pays: what });
-  }
+  const escrow = bond.value - feeSats;
+  if (escrow < P2TR_DUST_SATS) return { ok: false, why: `a bond of ${bond.value} sat less a ${feeSats} sat fee is ${escrow} sat, below dust` };
+  if (!(escrowScript instanceof Uint8Array)) return { ok: false, why: 'no script for the escrow output' };
+  const outputs = [arbitrationCommitment(proofId, slashHeight, hint), { value: escrow, script: escrowScript, pays: 'the slash\'s escrow' }];
   const tx = { version: 2, locktime: slashHeight, inputs: [{ txid: bond.txid, vout: bond.vout, sequence: 0xfffffffe }], outputs };
-  return { ok: true, tx, prevouts: [{ value: bond.value, script: bond.script }], fee: { sats: feeSats, fromNodes, fromDevelopers },
-    amounts: { players, nodes, developers } };
+  return { ok: true, tx, prevouts: [{ value: bond.value, script: bond.script }], fee: { sats: feeSats }, amounts: { escrow } };
 }
 
 /**
- * THE PLAYERS' ESCROW INTO THE FEDERATION (§5A.3B "escrow into the federation"): the arbitration set spends an
- * escrow output a slash paid (`escrowOutput`'s one k-of-m leaf) to the federation's peg-in address - the whole output less
- * the fee, one output - and the e-cash claimed from it is what the players' locks are made from. Signed as path B is:
+ * AN ESCROW INTO ONE FEDERATION (§23A.5 step 4): the arbitration set spends an escrow output (`escrowOutput`'s one k-of-m leaf) to the
+ * federation's peg-in address - the whole output less the fee, one output. Signed as path B is:
  * `arbitrationSighash(built, escrow.leaf)`, `arbitrationWitness` with the escrow's control block.
  *
  *   escrow   { txid (internal byte order), vout, value (sat, BigInt), script (the escrow's P2TR scriptPubKey) }
@@ -134,9 +107,8 @@ export function escrowSpend({ escrow, toScript, feeSats }) {
 }
 
 /**
- * A SLASHED GUARDIAN'S ESCROW, PAID OUT ONCE ITS FEDERATION IS CLOSED (§23A.5, FEDERATION.md rehearsal 14): the arbitration set
- * spends the escrow output to the payees federation-slash.js `guardianSlashPayees` names - each census node outside the
- * federation's guardians, and the donation set. Signed as `escrowSpend` is.
+ * ONE ESCROW SPEND, SEVERAL OUTPUTS (§27A.9.2 "One escrow spend pays them, one peg-in each"): a slash's escrow to the peg-ins its plan
+ * names, and what does not fit back to the same escrow (slash-reserves.js planEscrowSpend). Signed as `escrowSpend` is.
  *
  *   escrow   { txid (internal byte order), vout, value (sat, BigInt), script }
  *   payees   [{ script, sats (BigInt), pays }] - with the fee, exactly the escrow

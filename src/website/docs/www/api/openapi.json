@@ -12515,7 +12515,7 @@
      "Operators"
     ],
     "summary": "What filed slash proofs owe",
-    "description": "What filed slash proofs owe and to whom at a given height; records nothing.\n\nAccess: none\n\nReturns: 200 JSON {slashHeight, tipHeight, owing:[{node, bond, offence, bondSats, toPlayers, toNodes, toDevelopers, players[], nodes[], ...}]}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5916.",
+    "description": "What filed slash proofs owe and to whom at a given height; records nothing.\n\nAccess: none\n\nReturns: 200 JSON {slashHeight, tipHeight, owing:[{node, bond, offence, bondSats, playersMsat, reservesMsat, shortMsat, players[]}]}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5916.",
     "operationId": "get_slash_owing",
     "parameters": [
      {

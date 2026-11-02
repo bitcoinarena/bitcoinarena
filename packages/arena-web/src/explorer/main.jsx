@@ -181,7 +181,7 @@ export function Liquidation({ tx }) {
       <dt>Claimed there</dt><dd>{sat(x.claimedMsat)}<At ms={x.claimedAtMs} /></dd>
       <dt>Claims</dt><dd>{count((c.accepted || []).length)} notes accepted ({sat(c.msat)}, {keys} {keys === 1 ? 'key' : 'keys'}) · {count((c.refused || []).length)} refused</dd>
       <dt>Paid to claims</dt><dd>{sat(String(paid))} <span className="dim">in {(e.payouts || []).length} {(e.payouts || []).length === 1 ? 'payout' : 'payouts'}</span></dd>
-      <dt>Remainder</dt><dd>{r ? <>{sat(r.msat)} to {r.payees} payees{parts.length ? <span className="dim"> · {parts.map(([k, v]) => `${v.n} ${k === 'donation' ? 'donation set' : k === 'node' ? 'node' : k}${v.n === 1 ? '' : 's'} ${sats(String(v.msat))} sat`).join(', ')}</span> : null}<At ms={r.atMs} /></> : <span className="dim">not yet</span>}</dd>
+      <dt>Remainder</dt><dd>{r ? <>{sat(r.msat)} to {r.payees} payees{parts.length ? <span className="dim"> · {parts.map(([k, v]) => k === 'reserves' ? `protocol reserves ${sats(String(v.msat))} sat` : `${v.n} ${k === 'donation' ? 'donation set' : k === 'node' ? 'node' : k}${v.n === 1 ? '' : 's'} ${sats(String(v.msat))} sat`).join(', ')}</span> : null}<At ms={r.atMs} /></> : <span className="dim">not yet</span>}</dd>
       {r ? <><dt>Remainder transaction</dt><dd><Tx64 id={r.txid} chain="federation" /></dd></> : null}
       <dt>First recorded</dt><dd>{when(e.firstMs) || '–'}</dd><dt>Last changed</dt><dd>{when(e.atMs) || '–'}</dd></dl></div>
     <h2>Payouts to claims</h2>
@@ -201,8 +201,10 @@ export function Liquidation({ tx }) {
 }
 
 export function Slash({ tx }) {
-  const e = tx.event || {}, x = e.escrow || {}, s = e.sats || {};
+  const e = tx.event || {}, x = e.escrow || {}, s = e.sats || {}, m = e.msat || {};
+  // A SLASH BEFORE RULE V2 (§5A.3, kanban #976) keeps what it said: its parts of the bond, and one escrow
   const part = (k, l) => (s[k] ? <span className="dim">{' · '}{l} {count(s[k])} sat</span> : null);
+  const escrows = e.escrows || [];
   return (<>
     <h1>Slash</h1><p className="mono">{e.proof}</p>
     <div className="card"><dl>
@@ -210,14 +212,22 @@ export function Slash({ tx }) {
       <dt>Node slashed</dt><dd className="mono">{e.node || '–'}</dd>
       <dt>Round</dt><dd className="mono">{e.round || '–'}</dd><dt>Entry</dt><dd className="mono">{e.entry || '–'}</dd>
       <dt>Slash transaction</dt><dd><Tx64 id={e.txid} chain="bitcoin" />{e.slashHeight ? <span className="dim"> · height {count(e.slashHeight)}, {e.signers} signers</span> : null}</dd>
-      <dt>Bond</dt><dd>{s.bond ? count(s.bond) + ' sat' : '–'}{part('players', 'players')}{part('nodes', 'nodes')}{part('developers', 'developers')}</dd>
-      <dt>Players' escrow into the federation</dt><dd><Tx64 id={x.txid} chain="bitcoin" />{x.sats ? <span className="dim"> · {count(x.sats)} sat</span> : null}</dd>
-      <dt>Claimed there</dt><dd>{sat(x.claimedMsat)}{x.into ? <span className="mono dim"> · {x.into}</span> : null}</dd>
+      <dt>Bond</dt><dd>{s.bond ? count(s.bond) + ' sat' : '–'}{m.players ? <span className="dim"> · real loss paid {sat(m.players)}</span> : null}{m.reserves ? <span className="dim"> · protocol reserves {sat(m.reserves)}</span> : null}{part('players', 'players')}{part('nodes', 'nodes')}{part('developers', 'developers')}</dd>
+      {escrows.length ? escrows.map((y, i) => <React.Fragment key={i}>
+        <dt>Escrow spent</dt><dd><Tx64 id={y.txid} chain="bitcoin" />{y.keptSats ? <span className="dim"> · {count(y.keptSats)} sat wait for room</span> : null}</dd>
+        {(y.pegIns || []).map((p, j) => <React.Fragment key={j}><dt>Into the federation</dt><dd>{count(p.sats)} sat{p.claimedMsat ? <span className="dim"> · claimed {sat(p.claimedMsat)}</span> : null}<span className="mono dim"> · {p.federation}</span></dd></React.Fragment>)}
+      </React.Fragment>) : <>
+        <dt>Players' escrow into the federation</dt><dd><Tx64 id={x.txid} chain="bitcoin" />{x.sats ? <span className="dim"> · {count(x.sats)} sat</span> : null}</dd>
+        <dt>Claimed there</dt><dd>{sat(x.claimedMsat)}{x.into ? <span className="mono dim"> · {x.into}</span> : null}</dd>
+      </>}
       <dt>First recorded</dt><dd>{when(e.firstMs) || '–'}</dd><dt>Last changed</dt><dd>{when(e.atMs) || '–'}</dd></dl></div>
     <h2>Payouts to players</h2>
     <div className="card"><table className="rows"><thead><tr><th>Paid to</th><th className="n">Amount</th><th>Federation transaction</th><th>Output</th></tr></thead><tbody>
       {(e.payouts || []).map((p, i) => <tr key={i}><td className="mono">{p.refundPk}</td><td className="n nw">{sat(p.msat)}</td><td className="mono">{p.txid}</td><td>{p.outIdx ?? '–'}</td></tr>)}
-      {!(e.payouts || []).length ? <tr><td colSpan={4} className="dim">None yet.</td></tr> : null}</tbody></table></div>
+      {!(e.payouts || []).length ? <tr><td colSpan={4} className="dim">{e.status === 'paid out' ? 'None: nobody had a loss.' : 'None yet.'}</td></tr> : null}</tbody></table></div>
+    {(e.reserves || []).length ? <><h2>Into the protocol reserves</h2>
+      <div className="card"><table className="rows"><thead><tr><th>Federation</th><th className="n">Amount</th><th>Federation transaction</th><th>Output</th></tr></thead><tbody>
+        {e.reserves.map((p, i) => <tr key={i}><td className="mono">{p.federation}</td><td className="n nw">{sat(p.msat)}</td><td className="mono">{p.txid}</td><td>{p.outIdx ?? '–'}</td></tr>)}</tbody></table></div></> : null}
   </>);
 }
 

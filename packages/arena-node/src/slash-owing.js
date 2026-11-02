@@ -2,39 +2,28 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // WHO A FILED SLASH OWES, WRITTEN DOWN AND NOT SPENT.
 //
-// §5A.3's three rulings of 2026-09-22 made this computable, and until they landed it was not: nothing
-// said which height "the active census nodes at the slashing height" meant, who "the affected players"
-// were, or what happened when one round slashed two nodes. `arena-protocol/src/slash.js` now answers all
-// three, and this is the node path that calls them.
+// §5A.3 (slashing rule v2, RULED 2026-11-02, kanban #976) says what a slash pays: each affected player's real loss, once, and the rest to the
+// protocol reserves. `arena-protocol/src/slash.js` computes it, and this is the node path that calls it.
 //
-// RECORDING ONLY. It moves nothing. §5A.3B steps 3 and 5 - the arbitration set signing a transaction
-// that spends path B, and the outputs that pay - need MuSig2 over the arbitration keys, which is not
-// implemented anywhere in this tree, and an escrow output that no builder exists for. Those are their
-// own letter. What a node can do today, from what it already holds, is say what a slash OWES: the bond,
-// the census at the named height, the round's seats, the entries the offence harmed, and the split.
-//
-// WHY A NODE SHOULD DO IT AT ALL BEFORE IT CAN PAY: every observer must recompute the same recipient
-// list from chain data at a height the transaction commits to. A node that files a proof and cannot say
-// what it implies has filed an assertion, not an accusation - and the first time the numbers are worked
-// out should not be the first time money moves.
-import {
-  slashHeightIsValid, affectedEntries, playersShares, slashDistribution,
-} from '../../arena-protocol/src/slash.js';
+// RECORDING ONLY. It moves nothing: the arbitration set signs and pays (arbiter.js). What a node can do from what it already holds is say what a
+// slash OWES, so that anyone can recompute it before any money moves and the first time the numbers are worked out is not the first time they count.
+import { slashHeightIsValid, affectedEntries, realLosses, slashDistribution, TWO_RESULTS } from '../../arena-protocol/src/slash.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
 /**
  * What one filed proof owes, or why it cannot be said yet.
  *
- * `censusAt(height)` is the caller's - a node reads its own chain view, and this must not guess one.
- * `bondSatsOf(outpoint)` likewise: the proof names the bond's OUTPOINT and never its value, so the
- * value comes off the chain entry for it.
+ * `bondSatsOf(outpoint)` is the caller's: the proof names the bond's OUTPOINT and never its value, so the value comes off the chain entry for it.
+ * `entries` are the round's as they settled (`entriesForSlash` with its `outcomeOf`). `settledOnFalse` says the contradicted run is the one the
+ * round settled on - a late objection; after an objection in time the result was corrected before any money moved, so nobody has a loss. `paid` is
+ * what earlier proofs of this round pay (key hex -> msat): the proofs of a round go in ascending proof id. `payoutShares` the round's game's split.
  *
  * @returns {{ ok: true, owing }|{ ok: false, why: string }}
  */
 export async function slashOwing({
-  proof, offence, contract, roundIdBytes, entries = [], signed, replayed,
-  slashHeight, tipHeight, censusAt, bondSatsOf,
+  proof, offence, contract, roundIdBytes, entries = [], signed, replayed, settledOnFalse = false, paid = new Map(), payoutShares = null,
+  slashHeight, tipHeight, bondSatsOf,
 } = {}) {
   if (!proof || !contract) return { ok: false, why: 'a slash owes nothing without its proof and the round' };
 
@@ -49,55 +38,17 @@ export async function slashOwing({
   if (typeof bondSats !== 'bigint' || bondSats <= 0n)
     return { ok: false, why: `no bond output at ${toHex(proof.bondTxid).slice(0, 16)}:${proof.bondVout}` };
 
-  // 3. WHO WAS HARMED - the offence decides, never this.
+  // 3. WHO THE OFFENCE CAN HAVE HARMED - the offence decides, never this.
   const harmed = affectedEntries({ offence, playerPubkey: proof.playerPubkey, entries, signed, replayed });
   if (!harmed.ok) return { ok: false, why: harmed.why };
 
-  // 4. THE CENSUS AT THAT HEIGHT, and the round's own seats taken out of it by `slashDistribution`.
-  let census;
-  try { census = await censusAt(slashHeight); }
-  catch (e) { return { ok: false, why: `no census at ${slashHeight}: ${e.message}` }; }
-  if (!Array.isArray(census)) return { ok: false, why: `no census at ${slashHeight} to pay out of` };
-
-  // 5. AND THE ACCUSED COMES OUT OF THAT CENSUS BEFORE THE SPLIT.
-  //
-  //    Measured on a real chain: without this the node the proof accuses was paid 18750000 sat out of
-  //    the very bond it is being slashed for - a refund of a fifth of its own penalty - because at
-  //    `slash_height` its bond is STILL UNSPENT and `deriveCensus` therefore counts it. That is not an
-  //    accident of this door: it is the same fact that lets step 2 above read the bond's value there.
-  //
-  //    `slashDistribution` already says "a node slashed at this height is NOT in the active census, by
-  //    definition: the slash SPENDS its bond output and deriveCensus filters spent bonds" - and it
-  //    THROWS if a caller hands one in, to catch a census counting a bond already spent. Both are
-  //    right about their own height and they disagree about this one: the ruled window is
-  //    `census_height <= slash_height <= tip when they sign`, and the spend happens in the slashing
-  //    transaction, which is signed AFTER that height is fixed. So at `slash_height` the bond is
-  //    unspent by construction and the "by definition" does not hold yet.
-  //
-  //    Taken out here rather than passed as `slashed`, which would trip that guard, and rather than
-  //    loosening the guard, which protects a different height. No recipient is invented: §5A.3's 75%
-  //    divides among the census nodes that are left.
-  const accused = toHex(proof.nodePubkey);
-  const payable = census.filter((k) => toHex(k) !== accused);
-
-  // 6. THE TWO HALVES. `slashDistribution` refuses an empty eligible set by name rather than inventing
-  //    a recipient for it, and that refusal is passed on as it stands.
+  // 4. THE REAL LOSS: a doubled result with no replay and an objection in time show none (§5A.3).
+  const truth = settledOnFalse && offence !== TWO_RESULTS && replayed ? [{ pubkey: proof.playerPubkey, outcome: replayed.outcome, score: replayed.score }] : [];
   let split;
   try {
-    split = slashDistribution({
-      bondSats, roundId: roundIdBytes, contract,
-      affectedPlayers: harmed.affected.map((e) => e.playerPubkey),
-      censusNodes: payable, seats: contract.nodes || [],
-    });
+    const losses = realLosses({ roundId: roundIdBytes, entries, truth, affected: harmed.affected, minScore: contract.minScore, payoutShares });
+    split = slashDistribution({ escrowSats: bondSats, roundId: roundIdBytes, contract, losses, paid });
   } catch (e) { return { ok: false, why: e.message }; }
-
-  // 7. AND THE PLAYERS' HALF PRO RATA BY NET STAKE, which `slashDistribution` divides evenly because it
-  //    does not know the stakes. §5A.3 weights it, so the weighted split is what is recorded.
-  //    NOBODY HARMED (a raised result in a round with no other paying entry): that half went to the pool in step 6.
-  const byStake = harmed.affected.length
-    ? playersShares({ toPlayers: split.toPlayers, affected: harmed.affected, roundId: roundIdBytes })
-    : { ok: true, shares: new Map() };
-  if (!byStake.ok) return { ok: false, why: byStake.why };
 
   return {
     ok: true,
@@ -105,15 +56,8 @@ export async function slashOwing({
       slashHeight, bondSats, offence,
       node: toHex(proof.nodePubkey),
       bond: `${toHex(proof.bondTxid)}:${proof.bondVout}`,
-      toPlayers: split.toPlayers, toNodes: split.toNodes, toDevelopers: split.toDevelopers,
-      // one payout contract per affected entry, §5A.3 - a map, never one pooled number
-      players: byStake.shares,
-      // THE NODES' HALF ONLY. This was `split.shares`, the union of both hands, so the harmed player
-      // was reported among the census nodes owed the players' half a second time - measured on a real
-      // chain, 50000000 sat listed twice under one 100000000 sat bond.
-      nodes: split.nodeShares,
-      censusSeen: census.length, seatsOut: (contract.nodes || []).length,
-      accusedOut: payable.length !== census.length,
+      // one payout contract per entry with a loss, §5A.3 - a map, never one pooled number; before the transaction's fees
+      players: split.players, playersMsat: split.playersMsat, reservesMsat: split.reservesMsat, shortMsat: split.shortMsat,
     },
   };
 }
@@ -127,12 +71,13 @@ export async function slashOwing({
  * on a decode failure is the right shape for bytes off the wire and the wrong shape for a field name,
  * which is why the field is now read as the store returns it and nothing is decoded twice.
  */
-export function entriesForSlash(round, roundIdBytes, { operatorPlayer = null } = {}) {
+export function entriesForSlash(round, roundIdBytes, { operatorPlayer = null, outcomeOf = null } = {}) {
   const out = [];
   for (const row of round.entriesOf ? round.entriesOf(roundIdBytes) : []) {
     const c = row.entry;
     if (!c || !(c.playerPubkey instanceof Uint8Array)) continue;
-    out.push(entryForSlash(c, operatorPlayer));
+    const settled = outcomeOf ? outcomeOf(row.entryId) : null;
+    out.push({ ...entryForSlash(c, operatorPlayer), ...(settled ? { outcome: settled.outcome, score: settled.score } : {}) });
   }
   return out;
 }
@@ -141,6 +86,8 @@ export function entriesForSlash(round, roundIdBytes, { operatorPlayer = null } =
 export function entryForSlash(c, operatorPlayer = null) {
   return {
     playerPubkey: c.playerPubkey,
+    // what F reads (§20): the same key under its name there, and the stake's parts
+    pubkey: c.playerPubkey, stakeMsat: c.stakeMsat, feeMsat: c.feeMsat, donationMsat: c.donationMsat,
     netStakeMsat: netStakeMsat(c),
     // §22A's fee base: an entry that paid is activated. A free round's entries owe nothing and are
     // harmed by no money offence.

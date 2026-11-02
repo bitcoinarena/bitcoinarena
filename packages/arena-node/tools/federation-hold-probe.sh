@@ -65,7 +65,7 @@ if [ -n "$EXT" ]; then
   BOB_DIR=$EXT_BOB_LNDDIR; BOB_RPC=$EXT_BOB_RPC
 else
   RPC=30101
-  BTC_USER=blwp; BTC_PASS=blwp
+  BTC_USER=arena; BTC_PASS=arena
   BTC_AUTH=("-datadir=$P/btc" -rpcuser=arena -rpcpassword=arena); WALLET=probe
   BOB_DIR=$P/bob; BOB_RPC=127.0.0.1:${LRPC[bob]}
 fi

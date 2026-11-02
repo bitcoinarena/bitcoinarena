@@ -11,28 +11,34 @@
 //      beacon (checkObjectionBundle, the function a seat's objection door runs) - it must contradict exactly the result
 //      the proof names - and the accused's signature over that result is verified. Then slashHolds' comparisons:
 //      committee member, same round/player/transcript, the bond the node's own advertisement names.
-//   3. slash_height: at or below the tip, at or above the round's census height (slashHeightIsValid); the distribution
-//      from the census at that height (slashDistribution): players' escrow, nodes, developers.
+//   3. slash_height: at or below the tip, at or above the round's census height (slashHeightIsValid). What the bond pays is
+//      §5A.3's rule v2 (RULED 2026-11-02, kanban #976): each player's real loss, once, the rest to the protocol reserves.
 //   4. THE TRANSACTION: path B of the bond, nLockTime = slash_height, OP_RETURN = H(proof) || slash_height || hint,
-//      three outputs (arbitrationSpend). Each member signs the leaf's sighash on its own (BIP-342 CHECKSIGADD: k plain
+//      one escrow output (arbitrationSpend). Each member signs the leaf's sighash on its own (BIP-342 CHECKSIGADD: k plain
 //      BIP-340 signatures, no MuSig on this path).
 //   5. Fewer than k signatures is never posted; k or more is checked by testmempoolaccept and only then broadcast.
-// The nodes' and developers' outputs go to the arbitration escrow too (k-of-m), to be paid on by the same set: the spec
-// names who is paid, not the script (arbitration-tx.js) - and the federation step (pegin) waits for the stake-lock tool.
+//   6. THE ESCROW SPENT (payOutSlash): one peg-in per federation, each loss a payout contract to its player, the rest a payout
+//      contract to that federation's reserve key (§27A.9.2); what does not fit stays in the escrow until a federation has room.
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { affectedEntries, playersShares, slashHolds, slashProofId, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS,
+import { affectedEntries, realLosses, slashHolds, slashProofId, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS, TWO_RESULTS,
   splitAuditSlashEvidence, slashHoldsOnAudit, auditSlashProofId, AUDIT_CONTRADICTED } from '../../arena-protocol/src/slash.js';
+import { planEscrowSpend } from '../../arena-protocol/src/slash-reserves.js';
+import { finalSigned, splitSignedFinalSig, decodeFinalSig } from '../../arena-protocol/src/final-sig.js';
+import { splitSignedRerun, decodeRerunResult } from '../../arena-protocol/src/rerun.js';
+import { decodeEntryContract, entryId as entryIdOf, entryFederation } from '../../arena-protocol/src/contracts.js';
 import { windowsOf } from '../../arena-protocol/src/window.js';
 import { splitSignedResult, decodePlayerResult, resultId } from '../../arena-protocol/src/result.js';
-import { arbitrationSpend, arbitrationSighash, arbitrationWitness, arbitrationTransaction, escrowOutput, escrowSpend } from '../../arena-protocol/src/arbitration-tx.js';
+import { arbitrationSpend, arbitrationSighash, arbitrationWitness, arbitrationTransaction, escrowOutput, escrowSpend, escrowSplitSpend } from '../../arena-protocol/src/arbitration-tx.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { bondOutputKey, bondInternalKey, slashLeaf, tapLeafHash, controlBlockFor, bondMaturityOf } from '../../arena-protocol/src/bond-script.js';
 import { decodeObjectionBundle } from '../../arena-protocol/src/objection.js';
 import { transcriptHash, decodeTranscript } from '../../arena-protocol/src/transcript.js';
 import { checkObjectionBundle } from './objection-check.js';
-import { runId } from './verdict.js';
+import { runId, verifiedFinal } from './verdict.js';
+import { entryForSlash } from './slash-owing.js';
+import { REMAINDER_FEE_MARGIN_MSAT } from './liquidation-claims.js';
 import { tweakPoint, combine } from './curve.js';
 import { nonceGen, bondSigningContext, bondPartialSign, MusigError } from './musig2.js';
 import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
@@ -98,7 +104,7 @@ export async function judgeProof({ evidence, bundle, entry, entryId, contract, c
     advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
   if (!held.slashed) return no(held.why);
   return { slashed: true, offence: held.offence, bond: held.bond, proof, proofId: slashProofId(proof), playerPubkey: proof.playerPubkey,
-    signed: { outcome: body.outcome, score: body.score }, replayed: checked.replayed, why: held.why };
+    signed: { outcome: body.outcome, score: body.score }, replayed: checked.replayed, contradictedRunId: toHex(objected), why: held.why };
 }
 
 /**
@@ -136,33 +142,65 @@ export async function judgeAuditProof({ evidence, bundle, entry, contract, commi
     advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
   if (!held.slashed) return no(held.why);
   return { slashed: true, offence: held.offence, bond: held.bond, proof, proofId: auditSlashProofId(proof), playerPubkey: proof.playerPubkey,
-    replayed: checked.replayed, why: held.why };
+    replayed: checked.replayed, contradictedRunId: toHex(objected), why: held.why };
+}
+
+const verifySchnorr = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
+
+/**
+ * THE ROUND AS IT SETTLED, FROM A SEAT'S GET /audit-run, believed for nothing: each entry checked against its id, and each entry's run read off the
+ * signatures. The run five seats signed FINAL is the one the round settled on (§13A: "FINAL takes 5 of 7 such signatures", and a settlement waits for it),
+ * so a seat cannot say a run settled by saying so; with no FINAL shown it is the agreed first run, marked `finalProven: false`.
+ * Answers [{ ...entryForSlash, entryId, federation, runId, outcome, score, finalProven }]; an entry with no agreed run has no outcome.
+ */
+export function settledEntries({ run, roundId, contract, committee, finalAfterMs }) {
+  const out = [];
+  for (const e of (run && run.entries) || []) {
+    let x;
+    try { x = decodeEntryContract(fromHex(e.entry)); } catch { continue; }
+    if (toHex(entryIdOf(x)) !== e.id) continue;
+    const eid = fromHex(e.id);
+    const results = new Map();    // run hex -> { outcome, score }
+    const records = (e.results || []).map(fromHex);
+    for (const r of records) { try { const b = decodePlayerResult(splitSignedResult(r).body); results.set(toHex(runId(b)), { outcome: b.outcome, score: b.score }); } catch { /* not a result */ } }
+    for (const r of e.reruns || []) { try { const b = decodeRerunResult(splitSignedRerun(fromHex(r)).body).result; results.set(toHex(runId(b)), { outcome: b.outcome, score: b.score }); } catch { /* not a re-run */ } }
+    // WHEN A SEAT HELD A SIGNATURE IS ITS OWN WORD, so a FINAL counts here on its signed time alone: signed after the window's final_after
+    const byRun = new Map();
+    for (const f of e.finals || []) {
+      try { const bytes = fromHex(f); const d = decodeFinalSig(splitSignedFinalSig(bytes).body); const k = toHex(d.runId); byRun.set(k, [...(byRun.get(k) || []), { bytes, seenMs: d.signedAtMs }]); } catch { /* not a signature */ }
+    }
+    let settled = null, finalProven = false;
+    for (const [k, list] of byRun) {
+      if (!results.has(k)) continue;
+      if (finalSigned({ roundId, entryId: eid, runId: fromHex(k), records: list, committee, slots: contract.settlementSlots, finalAfterMs, verify: verifySchnorr }).ok) { settled = k; finalProven = true; }
+    }
+    if (!settled) { const seen = verifiedFinal(records, { contract, signerNodes: committee }); if (seen.ok && seen.final) settled = seen.runId; }
+    const fed = entryFederation(contract, x);
+    out.push({ ...entryForSlash(x), entryId: e.id, federation: fed.ok ? toHex(fed.federationId) : null, runId: settled, finalProven, ...(settled && results.has(settled) ? results.get(settled) : {}) });
+  }
+  return out;
 }
 
 /**
- * THE SLASHING TRANSACTION FOR A JUDGED PROOF, unsigned: its sighash and what its witness needs.
- * `bond` is { txid (internal order), vout, value (BigInt sat), script } as the chain holds it; `advert` the accused's
- * (its template and maturity rebuild the bond's tree); `censusNodes` the census keys at `slashHeight`; `seats` the round's;
- * `entries` the round's, in the shape `entriesForSlash` gives them; `signed` the contradicted run's { outcome, score } (kanban #975).
+ * THE SLASHING TRANSACTION FOR A JUDGED PROOF, unsigned: its sighash and what its witness needs, and what it pays (§5A.3).
+ * `bond` is { txid (internal order), vout, value (BigInt sat), script } as the chain holds it; `advert` the accused's (its template and maturity
+ * rebuild the bond's tree); `entries` the round's as they settled (`settledEntries`); `signed` the contradicted run's { outcome, score } (kanban #975);
+ * `truth` the corrections earlier proofs of this round made ([{ pubkey, outcome, score }]), `paid` what they pay (key hex -> msat): a late objection
+ * adds its own. Only a run proven FINAL can have cost anybody: after an objection in time the result was corrected before any money moved.
  */
-export function buildSlash({ verdict, bond, advert, contract, roundId, slashHeight, tipHeight, censusNodes, seats, entries, signed = verdict.signed, set, feeSats = 2000n, hint = new TextEncoder().encode('arena') }) {
+export function buildSlash({ verdict, bond, advert, contract, roundId, slashHeight, tipHeight, entries, signed = verdict.signed, truth = [], paid = new Map(), payoutShares = null, set, feeSats = 2000n, hint = new TextEncoder().encode('arena') }) {
   const h = slashHeightIsValid({ slashHeight, censusHeight: contract.censusHeight, tipHeight });
   if (!h.ok) return { ok: false, why: h.why };
-  // AS slash-owing.js PAYS IT: the accused out of the census it would be paid from, the round's seats out by the rule
-  const accused = toHex(verdict.proof.nodePubkey);
   const harmed = affectedEntries({ offence: verdict.offence, playerPubkey: verdict.playerPubkey, entries, signed, replayed: verdict.replayed });
   if (!harmed.ok) return { ok: false, why: harmed.why };
+  const named = entries.find((e) => toHex(e.playerPubkey) === toHex(verdict.playerPubkey));
+  const settledOnFalse = !!(named && named.finalProven && named.runId === verdict.contradictedRunId && verdict.offence !== TWO_RESULTS && verdict.replayed);
+  const correct = [...truth.filter((t) => toHex(t.pubkey) !== toHex(verdict.playerPubkey)), ...(settledOnFalse ? [{ pubkey: verdict.playerPubkey, outcome: verdict.replayed.outcome, score: verdict.replayed.score }] : [])];
   let distribution;
   try {
-    distribution = slashDistribution({ bondSats: bond.value, roundId, contract, affectedPlayers: harmed.affected.map((e) => e.playerPubkey),
-      censusNodes: censusNodes.filter((k) => toHex(k) !== accused), seats });
+    const losses = realLosses({ roundId, entries, truth: correct, affected: harmed.affected, minScore: contract.minScore, payoutShares });
+    distribution = slashDistribution({ escrowSats: bond.value - feeSats, roundId, contract, losses, paid });
   } catch (e) { return { ok: false, why: e.message }; }
-  // PRO RATA BY NET STAKE (§5A.3): `slashDistribution` divides evenly because it does not know the stakes, as slash-owing.js says
-  if (harmed.affected.length) {
-    const byStake = playersShares({ toPlayers: distribution.toPlayers, affected: harmed.affected, roundId });
-    if (!byStake.ok) return { ok: false, why: byStake.why };
-    distribution = { ...distribution, playerShares: byStake.shares };
-  }
   const maturity = bondMaturityOf(advert, { genesisMaturity: genesisFor(set.network).bondMaturity, network: set.network });
   if (!maturity.ok) return { ok: false, why: maturity.why };
   const nodeKey = advert.nodePubkey;
@@ -171,15 +209,14 @@ export function buildSlash({ verdict, bond, advert, contract, roundId, slashHeig
   if (!tree.ok) return { ok: false, why: tree.why };
   if (toHex(bond.script.subarray(2, 34)) !== toHex(tree.outputKey)) return { ok: false, why: 'that output is not the bond this node\'s advertisement builds' };
   const escrow = escrowOutput({ arbitrationKeys: set.keys, k: set.k }, { tweakPoint, combine });
-  const built = arbitrationSpend({ bond, proofId: verdict.proofId, slashHeight, hint, distribution, feeSats,
-    escrowScript: escrow.script, nodesScript: escrow.script, developersScript: escrow.script });
+  const built = arbitrationSpend({ bond, proofId: verdict.proofId, slashHeight, hint, feeSats, escrowScript: escrow.script });
   if (!built.ok) return built;
   const leaf = tapLeafHash(slashLeaf(set.keys, set.k));
-  return { ok: true, built, leaf, sighash: arbitrationSighash(built, leaf), controlBlock: controlBlockFor('slash', tree).controlBlock, distribution };
+  return { ok: true, built, leaf, sighash: arbitrationSighash(built, leaf), controlBlock: controlBlockFor('slash', tree).controlBlock, distribution, truth: correct };
 }
 
 /**
- * THE ESCROW INTO THE FEDERATION (§5A.3B): the set's spend of a players' escrow output (`escrow`: { txid
+ * AN ESCROW INTO ONE FEDERATION (§23A.5 step 4): the set's spend of an escrow output (`escrow`: { txid
  * (internal order), vout, value }) to the peg-in script `toScript`. The escrow must be the set's own escrowOutput; answers
  * the same shape as buildSlash, so memberSign and assemble take it as they take path B.
  */
@@ -191,59 +228,82 @@ export function buildEscrowPegin({ escrow, set, toScript, feeSats = 1000n }) {
   return { ok: true, built, leaf: out.leaf, sighash: arbitrationSighash(built, out.leaf), controlBlock: out.controlBlock, escrow: out };
 }
 
-// AFTER PATH B (spec §5A.3B: "the arbitration set pegs it into the round's federation and locks each share to its player",
-//): once the slash is confirmed, its players' escrow is spent by k of the set to a peg-in address of the
-// arbiter's own client of the round's federation (ARENA_ARBITER_CLIENT_DIR, through ARENA_STAKE_LOCK_BIN), claimed, and each
-// wronged player's share locked to refundKeyOf(their entry key) - the key a settlement's payout names, so the page collects
-// it the same way. Each step is kept (`keep`, the service's state file) before the next, so a restart picks up where it
-// stopped. `bin` is the stake-lock tool, `dir` its client of the round's federation, `rpc` the arbiter's own bitcoind.
-export async function payOutSlash({ proof, v, set, rpc, keep = () => {}, say = () => {}, bin, dir: dataDir, feeSats = 1000n, env: runEnv = process.env }) {
-  if (!v.players.length) return { paid: 0 };   // nobody harmed: that half went to the nodes and the developers, and no escrow exists
-  if (!bin || !dataDir) return { why: 'no client of the round\'s federation here (ARENA_STAKE_LOCK_BIN, ARENA_ARBITER_CLIENT_DIR)' };
+// AFTER PATH B (§5A.3, §5A.3B step 5, §27A.9.2): once the slash is confirmed its escrow is spent by k of the set, one peg-in per federation, to a
+// peg-in address of the arbiter's own client of that federation (`dirOf`, through the stake-lock tool `bin`), and claimed. Each player's loss is locked to
+// refundKeyOf(their entry key), the key a settlement's payout names, so the page collects it the same way; the rest of that federation's claim is a
+// payout contract to its reserve key, which enters as any reserve (`slash` in GET /reserves). What did not fit went back to the same escrow, and a later pass
+// spends it when a federation has room. Each step is kept (`keep`, the service's state file) before the next, so a restart picks up where it stopped.
+// `federations()` is the view planEscrowSpend reads, `rpc` the arbiter's own bitcoind.
+export async function payOutSlash({ proof, v, set, rpc, keep = () => {}, say = () => {}, bin, dirOf, federations = async () => [], retired = [], feeSats = 1000n, pegInFeeSats = 1000n, env: runEnv = process.env }) {
+  if (!bin) return { why: 'no stake-lock tool here (ARENA_STAKE_LOCK_BIN)' };
   const { execFile } = await import('node:child_process');
-  const run = (args, timeoutMs = 120000) => new Promise((done) => execFile(bin, args, { timeout: timeoutMs, maxBuffer: 1 << 24, env: runEnv },
+  const run = (dir, args, timeoutMs = 120000) => new Promise((done) => execFile(bin, [...args, '--data-dir', dir], { timeout: timeoutMs, maxBuffer: 1 << 24, env: runEnv },
     (err, out) => { const line = String(out || '').split('\n').find((l) => l.startsWith('{')); done(line ? JSON.parse(line) : { error: String((err && err.message) || 'no answer').slice(0, 200) }); }));
-  const dir = ['--data-dir', dataDir];
-  if (!v.escrowTxid) {
-    // THE ESCROW OUTPUT FROM THE UTXO SET (gettxout: no transaction index needed): path B carries at most four outputs
-    const escrow = escrowOutput({ arbitrationKeys: set.keys, k: set.k }, { tweakPoint, combine });
-    let o = null;
-    for (let n = 0; n < 6 && !o; n++) {
-      const x = await rpc('gettxout', [v.posted, n, false]).catch(() => null);
-      if (x && x.scriptPubKey.hex === toHex(escrow.script) && BigInt(Math.round(x.value * 1e8)) === BigInt(v.playersSats)) o = { n, confirmations: x.confirmations };
+  const escrow = escrowOutput({ arbitrationKeys: set.keys, k: set.k }, { tweakPoint, combine });
+  v.stages = v.stages || [];
+  let stage = v.stages[v.stages.length - 1];
+  if (!stage || stage.done) {
+    const first = !stage;
+    const out = first ? { txid: v.posted, vout: 1, sats: v.escrowSats } : stage.kept;
+    if (!out) { v.settled = true; keep(); return { paid: (v.payouts || []).length, reserves: (v.reserves || []).length }; }
+    const o = await rpc('gettxout', [out.txid, out.vout, false]).catch(() => null);
+    if (!o || o.scriptPubKey.hex !== toHex(escrow.script) || BigInt(Math.round(o.value * 1e8)) !== BigInt(out.sats)) return { why: 'no unspent escrow of that amount (not seen yet, or spent)' };
+    if (!(o.confirmations >= 1)) return { why: 'the escrow is not confirmed yet' };
+    const plan = planEscrowSpend({ escrowSats: BigInt(out.sats), feeSats, pegInFeeSats, players: first ? v.players : [], federations: await federations(), retired });
+    if (!plan.ok) return { why: plan.why };
+    const pegIns = [];
+    for (const p of plan.pegIns) {
+      const dir = dirOf(p.federation);
+      if (!dir) return { why: `no client of federation ${p.federation.slice(0, 16)} here` };
+      const addr = await run(dir, ['--mode', 'pegin-address']);
+      if (!addr.address) return { why: `no peg-in address: ${addr.error || JSON.stringify(addr)}` };
+      pegIns.push({ federation: p.federation, reserveKey: p.reserveKey, sats: String(p.sats), playersMsat: String(p.playersMsat), address: addr.address, script: fromHex((await rpc('validateaddress', [addr.address])).scriptPubKey) });
     }
-    if (!o) return { why: 'path B holds no unspent players\' escrow of that amount (not confirmed and seen yet, or spent)' };
-    if (!(o.confirmations >= 1)) return { why: 'path B is not confirmed yet' };
-    const addr = await run(['--mode', 'pegin-address', ...dir]);
-    if (!addr.address) return { why: `no peg-in address: ${addr.error || JSON.stringify(addr)}` };
-    const toScript = fromHex((await rpc('validateaddress', [addr.address])).scriptPubKey);
-    const spend = buildEscrowPegin({ escrow: { txid: fromHex(v.posted).reverse(), vout: o.n, value: BigInt(v.playersSats), script: escrow.script }, set, toScript,
-      feeSats });
-    if (!spend.ok) return { why: spend.why };
-    const signed = assemble({ slash: spend, signatures: set.members.slice(0, set.k).map((m) => ({ key: m.key, sig: memberSign(m, spend.sighash) })), set });
+    const payees = pegIns.map((p) => ({ script: p.script, sats: BigInt(p.sats), pays: `the peg-in of ${p.federation.slice(0, 16)}` }));
+    if (plan.keptSats > 0n) payees.push({ script: escrow.script, sats: plan.keptSats, pays: 'what does not fit: the same escrow' });
+    const built = escrowSplitSpend({ escrow: { txid: fromHex(out.txid).reverse(), vout: out.vout, value: BigInt(out.sats), script: escrow.script }, payees, feeSats });
+    if (!built.ok) return { why: built.why };
+    const slash = { built, sighash: arbitrationSighash(built, escrow.leaf), controlBlock: escrow.controlBlock };
+    const signed = assemble({ slash, signatures: set.members.slice(0, set.k).map((m) => ({ key: m.key, sig: memberSign(m, slash.sighash) })), set });
     if (!signed.ok) return { why: signed.why };
     const sent = await post(rpc, signed.hex);
     if (!sent.ok) return { why: sent.why };
-    Object.assign(v, { escrowTxid: sent.txid, pegInAddress: addr.address, pegInSats: String(spend.built.amounts.pegIn) }); keep();
-    say({ proof: proof.slice(0, 16), escrowIntoFederation: sent.txid, sats: String(spend.built.amounts.pegIn) });
+    stage = { txid: sent.txid, feeSats: String(feeSats), players: first, pegIns: pegIns.map(({ script, ...p }, i) => ({ ...p, vout: i })),
+      kept: plan.keptSats > 0n ? { txid: sent.txid, vout: pegIns.length, sats: String(plan.keptSats) } : null };
+    v.stages.push(stage); keep();
+    say({ proof: proof.slice(0, 16), escrowSpent: sent.txid, pegIns: stage.pegIns.map((p) => ({ federation: p.federation.slice(0, 16), sats: p.sats })), keptSats: String(plan.keptSats) });
   }
-  if (!v.claimedMsat) {
-    const c = await run(['--mode', 'pegin-claim', ...dir, '--address', v.pegInAddress, '--timeout-s', '840'], 900000);
-    if (!(c.balance_after_msat > c.balance_before_msat)) return { why: `the peg-in is not claimed yet: ${c.error || JSON.stringify(c)}` };
-    v.claimedMsat = String(c.balance_after_msat - c.balance_before_msat); keep();
-  }
-  if (!v.payouts) {
-    // THE SHARES AS THE DISTRIBUTION NAMES THEM, scaled to what the federation credited (the peg-in's own fee came off it)
-    const want = v.players.reduce((t, p) => t + BigInt(p.sats) * 1000n, 0n);
-    const have = BigInt(v.claimedMsat);
-    const payouts = v.players.map((p) => ({ key: toHex(refundKeyOf(fromHex(p.key))), msat: have >= want ? BigInt(p.sats) * 1000n : (BigInt(p.sats) * 1000n * have) / want }));
-    const paid = await run(['--mode', 'pay', ...dir, '--payouts', payouts.map((p) => `${p.key}:${p.msat}`).join(',')], 300000);
+  for (const p of stage.pegIns) {
+    const dir = dirOf(p.federation);
+    if (!dir) return { why: `no client of federation ${p.federation.slice(0, 16)} here` };
+    if (!p.claimedMsat) {
+      const c = await run(dir, ['--mode', 'pegin-claim', '--address', p.address, '--timeout-s', '840'], 900000);
+      if (!(c.balance_after_msat > c.balance_before_msat)) return { why: `the peg-in is not claimed yet: ${c.error || JSON.stringify(c)}` };
+      p.claimedMsat = String(c.balance_after_msat - c.balance_before_msat); keep();
+    }
+    if (p.paidTxid) continue;
+    // THE LOSSES FIRST, WHOLE WHILE THE CLAIM CARRIES THEM, THE REST TO THE RESERVE KEY; a bond too short pays them pro rata and the next proof pays the rest
+    const spendable = BigInt(p.claimedMsat) - REMAINDER_FEE_MARGIN_MSAT;
+    const due = stage.players ? v.players.filter((x) => x.federation === p.federation) : [];
+    const want = due.reduce((t, x) => t + BigInt(x.msat), 0n);
+    const pays = due.map((x) => ({ x, key: toHex(refundKeyOf(fromHex(x.key))), msat: want <= spendable ? BigInt(x.msat) : (BigInt(x.msat) * (spendable > 0n ? spendable : 0n)) / want }));
+    const rest = spendable - pays.reduce((t, x) => t + x.msat, 0n);
+    const toReserves = p.reserveKey && rest > 0n ? rest : 0n;
+    const list = [...pays.map((x) => `${x.key}:${x.msat}`), ...(toReserves > 0n ? [`${p.reserveKey}:${toReserves}`] : [])];
+    if (!list.length) { p.paidTxid = 'nothing'; keep(); continue; }
+    const paid = await run(dir, ['--mode', 'pay', '--payouts', list.join(',')], 300000);
     if (!paid.txid) return { why: `no payout transaction: ${paid.error || JSON.stringify(paid)}` };
-    v.payouts = paid.payouts.map((x) => ({ round: v.round, entry: v.entry, refundPk: x.refund_pk, msat: String(x.amount_msat), txid: paid.txid, outIdx: x.out_idx, contractId: x.contract_id }));
-    keep();
-    say({ proof: proof.slice(0, 16), paid: v.payouts.length, txid: paid.txid });
+    const rowOf = (key) => (paid.payouts || []).find((y) => String(y.refund_pk).toLowerCase() === key.toLowerCase());
+    v.payouts = [...(v.payouts || []), ...pays.map(({ x, key, msat }) => { const y = rowOf(key); x.paidMsat = String(msat);
+      return { round: v.round, entry: x.entry || v.entry, federation: p.federation, refundPk: key, msat: String(msat), txid: paid.txid, outIdx: y ? y.out_idx : null, contractId: y ? y.contract_id : null }; })];
+    if (toReserves > 0n) { const y = rowOf(p.reserveKey); v.reserves = [...(v.reserves || []), { federation: p.federation, reserveKey: p.reserveKey, msat: String(toReserves), txid: paid.txid, outIdx: y ? y.out_idx : null, contractId: y ? y.contract_id : null }]; }
+    p.paidTxid = paid.txid; keep();
+    say({ proof: proof.slice(0, 16), federation: p.federation.slice(0, 16), paid: pays.length, reservesMsat: String(toReserves), txid: paid.txid });
   }
-  return { paid: v.payouts.length };
+  stage.done = true;
+  if (!stage.kept) v.settled = true;
+  keep();
+  return { paid: (v.payouts || []).length, reserves: (v.reserves || []).length };
 }
 
 /** One member's signature: its own key over the spend's sighash, nothing else. */

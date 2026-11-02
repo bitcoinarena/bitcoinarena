@@ -3,8 +3,8 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ARBITRATION TRANSACTION, ASKED OF BITCOIND (§5A.3B; PRIORITIES 2026-09-29 item 4 - M4 in the repo only). A
 // private regtest, never testnet4, never a live bond: a bond is funded here, and the slashing transaction
-// `arbitration-tx.js` builds from slash.js's own distribution is handed to `testmempoolaccept` - 5 of 7 arbitration
-// signatures, then the ways it must fail - then mined, and the players' escrow it pays is spent by the arbitration set
+// `arbitration-tx.js` builds (§5A.3B step 5: one output, an escrow) is handed to `testmempoolaccept` - 5 of 7 arbitration
+// signatures, then the ways it must fail - then mined, and the escrow it pays is spent by the arbitration set
 // in turn. Printed, one JSON line per question; it decides nothing.
 //
 //   bitcoind -regtest -datadir=DIR -port=19444 -rpcport=19443 -fallbackfee=0.0001 -daemon
@@ -17,7 +17,6 @@ import { tapSighash, scriptPathWitness, serializeSpend } from '../../arena-proto
 import {
   escrowOutput, arbitrationSpend, arbitrationSighash, arbitrationWitness, arbitrationTransaction, arbitrationCommitmentIn,
 } from '../../arena-protocol/src/arbitration-tx.js';
-import { slashDistribution } from '../../arena-protocol/src/slash.js';
 import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
 
 const RT = process.env.RT, PORT = process.env.RPCPORT || '19443', B = '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';
@@ -65,13 +64,8 @@ mine(1);
 const fundVout = JSON.parse(cli('gettransaction', fundTxid, 'true', 'true')).decoded.vout.find((o) => o.scriptPubKey.hex === toHex(bondSpk)).n;
 const bond = { txid: fromHex(fundTxid).reverse(), vout: fundVout, value: 100000000n, script: bondSpk };
 
-// ---- the distribution, slash.js's own: two affected players, a census of four, one of them the round's seat
-const key = (n) => schnorr.getPublicKey(taggedHash('ARENA/v1/ArbProbe', Uint8Array.from([n])));
-const distribution = slashDistribution({ bondSats: bond.value, roundId: new Uint8Array(32).fill(7), contract: { slashRemainder: 'SPLIT' },
-  affectedPlayers: [key(1), key(2)], censusNodes: [key(10), key(11), key(12), key(13)], seats: [key(10)] });
 const escrow = escrowOutput({ arbitrationKeys: g.arbitrationKeys, k: K }, { tweakPoint, combine });
 const walletSpk = () => fromHex(JSON.parse(cli('getaddressinfo', cli('getnewaddress'))).scriptPubKey);
-const nodesScript = walletSpk(); const developersScript = walletSpk();
 const proofId = taggedHash('ARENA/v1/SlashProof', fromHex('cd'.repeat(32)));
 const tip = Number(cli('getblockcount'));
 const slashLeafScript = slashLeaf(g.arbitrationKeys, K);
@@ -79,8 +73,8 @@ const leaf = tapLeafHash(slashLeafScript);
 const control = controlBlockFor('slash', bondBuilt).controlBlock;
 
 const build = (slashHeight, signers = K, tamper = null) => {
-  const built = arbitrationSpend({ bond, proofId, slashHeight, hint: new TextEncoder().encode('arena'), distribution,
-    escrowScript: escrow.script, nodesScript, developersScript, feeSats: 3000n });
+  const built = arbitrationSpend({ bond, proofId, slashHeight, hint: new TextEncoder().encode('arena'),
+    escrowScript: escrow.script, feeSats: 3000n });
   if (!built.ok) return { built };
   const h = arbitrationSighash(built, leaf);
   const w = arbitrationWitness({ arbitrationKeys: g.arbitrationKeys, k: K, signatures: signBy(signers)(h), controlBlock: control });
@@ -92,13 +86,12 @@ const build = (slashHeight, signers = K, tamper = null) => {
 
 const good = build(tip);
 out({ step: 'built', slashHeight: tip, amounts: Object.fromEntries(Object.entries(good.built.amounts).map(([k, v]) => [k, String(v)])),
-  fee: { sats: String(good.built.fee.sats), fromNodes: String(good.built.fee.fromNodes), fromDevelopers: String(good.built.fee.fromDevelopers) },
-  distribution: { toPlayers: String(distribution.toPlayers), toNodes: String(distribution.toNodes), toDevelopers: String(distribution.toDevelopers), toPool: String(distribution.toPool) },
+  fee: String(good.built.fee.sats),
   outputs: good.built.tx.outputs.map((o) => ({ pays: o.pays || 'commitment', value: String(o.value) })) });
 out({ step: `${K} of ${g.arbitrationM}, slash_height = tip`, ...accepts(good.hex) });
 out({ step: `${K - 1} of ${g.arbitrationM}`, builder: build(tip, K - 1).builderRefused, ...accepts(build(tip, K - 1).hex) });
 out({ step: 'slash_height above the tip (nLockTime not reached)', ...accepts(build(tip + 2).hex) });
-out({ step: 'an output moved after signing (1 sat from the escrow to the nodes)', ...accepts(build(tip, K, (b) => { b.tx.outputs[1].value -= 1n; b.tx.outputs[2].value += 1n; }).hex) });
+out({ step: 'an output moved after signing (1 sat off the escrow)', ...accepts(build(tip, K, (b) => { b.tx.outputs[1].value -= 1n; }).hex) });
 
 // ---- mined, and read back: nLockTime and the commitment name the height the signers chose
 const txid = cli('sendrawtransaction', good.hex);
@@ -111,7 +104,7 @@ out({ step: 'mined', txid, confirmations: decoded.confirmations, locktime: decod
 
 // ---- the players' escrow: spent by the arbitration set, k of m, and by nobody with fewer
 const escrowVout = decoded.vout.findIndex((o) => o.scriptPubKey.hex === toHex(escrow.script));
-const escrowValue = good.built.amounts.players;
+const escrowValue = good.built.amounts.escrow;
 const spendEscrow = (signers) => {
   const tx = { version: 2, locktime: 0, inputs: [{ txid: fromHex(txid).reverse(), vout: escrowVout, sequence: 0xfffffffd }],
     outputs: [{ value: escrowValue - 2000n, script: walletSpk() }] };

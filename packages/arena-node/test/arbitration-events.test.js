@@ -66,14 +66,18 @@ test('a seat keeps the newest version of each event across restarts, an older on
   const a = book();
   assert.deepEqual([a.offer(signEvent(t2Event(2000), set, memberSign)).kept, a.offer(signEvent(t2Event(1000), set, memberSign)).kept], [true, false]);
   const slash = { ...slashEvent({ network: 'regtest', proof: 'cd'.repeat(32), v: { posted: 'ef'.repeat(32), node: 'aa'.repeat(32), round: '11'.repeat(32), entry: '22'.repeat(32),
-    slashHeight: 900, signers: 5, bondSats: '100000', playersSats: '60000', nodesSats: '30000', developersSats: '10000', escrowTxid: '33'.repeat(32), pegInSats: '59000', claimedMsat: '58000000',
-    payouts: [{ round: '11'.repeat(32), entry: '22'.repeat(32), refundPk: '02' + '44'.repeat(32), msat: '58000000', txid: '55'.repeat(32), outIdx: 0 }] } }), firstMs: 500, atMs: 3000 };
+    slashHeight: 900, signers: 5, bondSats: '100000', escrowSats: '98000', playersMsat: '58000000', reservesMsat: '40000000', settled: true,
+    stages: [{ txid: '33'.repeat(32), done: true, kept: null, pegIns: [{ federation: '66'.repeat(32), sats: '97000', claimedMsat: '96000000' }] }],
+    payouts: [{ round: '11'.repeat(32), entry: '22'.repeat(32), refundPk: '02' + '44'.repeat(32), msat: '58000000', txid: '55'.repeat(32), outIdx: 0 }],
+    reserves: [{ federation: '66'.repeat(32), reserveKey: '02' + '77'.repeat(32), msat: '37990000', txid: '55'.repeat(32), outIdx: 1 }] } }), firstMs: 500, atMs: 3000 };
   assert.equal(a.offer(signEvent(slash, set, memberSign)).kept, true);
   assert.equal(a.offer({ event: slash, signatures: [] }).ok, false);
   const b = book();                                         // the seat restarted
   assert.deepEqual(b.list().map((r) => [r.event.kind, r.event.atMs]), [['slash', 3000], ['liquidation', 2000]]);
   assert.deepEqual(b.list({ kind: 'liquidation' }).map((r) => r.event.federation.slice(0, 8)), ['9919a571']);
-  assert.deepEqual([slash.status, slash.sats.bond, eventTxids(slash).length], ['paid out', '100000', 3]);
+  assert.deepEqual([slash.status, slash.sats.bond, slash.msat.players, slash.msat.reserves, eventTxids(slash).length], ['paid out', '100000', '58000000', '37990000', 3]);
+  assert.equal(slash.sats.nodes, undefined, 'nothing goes to the nodes');
+  assert.equal(slash.sats.developers, undefined, 'nothing goes to the developers');
   assert.equal(createArbitrationEvents({ keys: [], k: 5, verify }).offer(signEvent(slash, set, memberSign)).status, 503, 'no set for its chain: nothing taken');
 });
 
