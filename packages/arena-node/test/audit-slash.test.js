@@ -137,18 +137,20 @@ test('a contradicted AUDIT is filed by the seat as AUDIT_CONTRADICTED, listed, s
     assert.match((await judged({ bundle: new Uint8Array(0) })).why, /no objection bundle/);
     assert.match((await judged({ eligible: new Map() })).why, /may not audit this round/);
 
-    // PATH B ON THE AUDITOR'S BOND, SPLIT AS EVERY SLASH: the players' escrow (the contradicted entry's player), the nodes', the developers'
+    // PATH B ON THE AUDITOR'S BOND, PAID AS EVERY SLASH (§5A.3): one escrow; the round settled on the run the AUDIT vouched for, so the contradicted
+    // entry's player has the real loss, read off the round's entries
     const internalKey = bondInternalKey({ nodeKey: advert.nodePubkey, arbitrationKeys: set.keys }, { combine }).internalKey;
     const k = bondOutputKey({ nodeKey: advert.nodePubkey, arbitrationKeys: set.keys, arbitrationK: set.k, bondMaturity: 100, internalKey }, { tweakPoint, combine });
     const bond = { txid: advert.bondTxid, vout: advert.bondVout, value: 2_000_000n, script: Uint8Array.from([0x51, 0x20, ...k.outputKey]) };
-    const censusNodes = [...[...w.adverts.values()].map((x) => x.nodePubkey), ...[1, 2, 3].map((i) => schnorr.getPublicKey(new Uint8Array(32).fill(0x40 + i)))];
-    const slash = buildSlash({ verdict, bond, advert: { ...advert, bondScriptTemplateVersion: 1 }, contract, roundId: w.rid,
-      slashHeight: contract.censusHeight + 10, tipHeight: contract.censusHeight + 12, censusNodes, seats: committee, set,
-      // the run the AUDIT vouched for lowered its player: a raised one pays the others (kanban #975)
-      entries: entriesForSlash(w.holder.round, w.rid), signed: { outcome: 'FORFEIT', score: 0 } });
+    assert.ok(verdict.contradictedRunId, 'the verdict names the run it contradicts');
+    const slash = buildSlash({ verdict: { ...verdict, replayed: { outcome: 'DELIVERED', score: 5 } }, bond, advert: { ...advert, bondScriptTemplateVersion: 1 }, contract, roundId: w.rid,
+      slashHeight: contract.censusHeight + 10, tipHeight: contract.censusHeight + 12, set,
+      entries: entriesForSlash(w.holder.round, w.rid).map((e) => ({ ...e, stakeMsat: 1_000_000n, activated: true, outcome: 'FORFEIT', score: 0, runId: verdict.contradictedRunId, finalProven: true })),
+      signed: { outcome: 'FORFEIT', score: 0 } });
+
     assert.equal(slash.ok, true, slash.why);
-    assert.deepEqual(slash.built.tx.outputs.slice(1).map((o) => o.pays), ['players\' escrow', 'nodes\'', 'developers\'']);
-    assert.deepEqual([...slash.distribution.playerShares.keys()], [toHex(entry.playerPubkey)], 'the contradicted entry\'s player');
+    assert.deepEqual(slash.built.tx.outputs.slice(1).map((o) => o.pays), ['the slash\'s escrow']);
+    assert.deepEqual([...slash.distribution.players.keys()], [toHex(entry.playerPubkey)], 'the contradicted entry\'s player');
     const five = assemble({ slash, signatures: set.members.slice(0, 5).map((m) => ({ key: m.key, sig: memberSign(m, slash.sighash) })), set });
     assert.equal(five.ok, true, five.why);
   } finally { await auditor.close(); await w.close(); }

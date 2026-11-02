@@ -65,3 +65,21 @@ test('the draw admits by the role\'s own floor; a v2+ round\'s one draw for both
   // a contract naming no rules admits every bond at its bond_min, as before
   assert.equal(selectCommittee({ entries, contract: { ...round, gameVerifySlots: 2, settlementSlots: 2 }, role: 'settlement', committeeSeed: b32(0x77), count: 10 }).length, 10);
 });
+
+test('slashing rule v2 is what a round is built with; v1 stands only for a testnet round already published under it, and never on mainnet (§5A.3, kanban #976)', async () => {
+  const { RULE_TEXTS, RULE_HASHES, SLASHING_V1_HASH, buildRules, rulesStand } = await import('../src/rules.js');
+  const { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } = await import('../src/genesis-ids.js');
+  assert.match(RULE_TEXTS.slashing, /^ARENA rule slashing v2/);
+  assert.doesNotMatch(RULE_TEXTS.slashing, /75 %|25 %|census nodes, /);
+  const rules = buildRules({ claimWindowDays: 1, bondMinGameVerifySats: 1n, bondMinSettlementSats: 1n });
+  assert.deepEqual(rules.slashing, RULE_HASHES.slashing);
+  assert.notDeepEqual(rules.slashing, SLASHING_V1_HASH, 'a new rule, a new hash');
+  const onChain = (networkId, slashing) => rulesStand({ networkId, bondMinSats: 1n, rules: { ...rules, slashing } });
+  assert.equal(onChain(NETWORK_ID_TESTNET4, rules.slashing).ok, true);
+  assert.equal(onChain(NETWORK_ID_TESTNET4, SLASHING_V1_HASH).ok, true, 'a published testnet round keeps its hash');
+  assert.equal(onChain(NETWORK_ID_REGTEST, SLASHING_V1_HASH).ok, true);
+  const mainnet = new Uint8Array(32).fill(0x77);
+  assert.equal(onChain(mainnet, rules.slashing).ok, true);
+  assert.equal(onChain(mainnet, SLASHING_V1_HASH).ok, false, 'mainnet knows only v2');
+  assert.equal(onChain(NETWORK_ID_TESTNET4, new Uint8Array(32).fill(1)).ok, false, 'no other hash');
+});

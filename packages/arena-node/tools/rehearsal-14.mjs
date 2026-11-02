@@ -25,7 +25,7 @@ import {
   escrowOutput, arbitrationSpend, arbitrationSighash, arbitrationWitness, arbitrationTransaction, arbitrationCommitmentIn, escrowSplitSpend,
 } from '../../arena-protocol/src/arbitration-tx.js';
 import { signAbsence, abandonmentProof, signDeparture, departureStands } from '../../arena-protocol/src/absence.js';
-import { guardianSlashStands, guardianSlashPayees, clocksFor } from '../../arena-protocol/src/federation-slash.js';
+import { guardianSlashStands, clocksFor } from '../../arena-protocol/src/federation-slash.js';
 import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
 
 const RT = process.env.RT, PORT = process.env.RPCPORT || '29443', B = process.env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';
@@ -111,14 +111,12 @@ out({ step: 'A: slash decision', slash: decide.slash, kind: decide.kind, why: de
 const b4 = bonds.get('n4');
 const escrow = escrowOutput({ arbitrationKeys: g.arbitrationKeys, k: K }, { tweakPoint, combine });
 const feeSats = 3000n;
-// the whole bond waits in the escrow (§23A.5: "a slashed bond never goes straight to anybody"); the fee is the nodes' part
-// arbitrationSpend takes it from - here exactly the fee, so no nodes' output is made
-const distribution = { playerShares: new Map([['escrow', b4.bond.value - feeSats]]), nodeShares: new Map(), pool: { nodes: feeSats, developers: 0n }, toDevelopers: 0n };
+// the whole bond waits in the escrow (§23A.5: "a slashed bond never goes straight to anybody")
 const leaf = tapLeafHash(slashLeaf(g.arbitrationKeys, K));
 const control = controlBlockFor('slash', b4.built).controlBlock;
 const slashTx = (signers) => {
-  const built = arbitrationSpend({ bond: b4.bond, proofId: proof.id, slashHeight: height(), hint: new TextEncoder().encode('r14'), distribution,
-    escrowScript: escrow.script, nodesScript: null, developersScript: null, feeSats });
+  const built = arbitrationSpend({ bond: b4.bond, proofId: proof.id, slashHeight: height(), hint: new TextEncoder().encode('r14'),
+    escrowScript: escrow.script, feeSats });
   if (!built.ok) return { why: built.why };
   const h = arbitrationSighash(built, leaf);
   const w = arbitrationWitness({ arbitrationKeys: g.arbitrationKeys, k: K, signatures: signBy(signers)(h), controlBlock: control });
@@ -136,24 +134,21 @@ const read = arbitrationCommitmentIn(dec.vout.map((o) => ({ script: fromHex(o.sc
 out({ step: 'A: slash mined', txid: slashTxid, locktime: dec.locktime, committedHeight: read && read.slashHeight,
   committedProof: !!read && toHex(read.proofId) === toHex(proof.id), a4BondSpent: !unspent(b4) });
 
-// ---- A CLOSED, nothing lost: the escrow pays the census less A's guardians, 75 %, and the donation set, 25 %
+// ---- A CLOSED, nothing lost: the whole escrow goes to the protocol reserves (§5A.3, RULED 2026-11-02, kanban #976): here one key standing in for the reserve key
 const escrowVout = dec.vout.findIndex((o) => o.scriptPubKey.hex === toHex(escrow.script));
 const esc = { txid: fromHex(slashTxid).reverse(), vout: escrowVout, value: b4.bond.value - feeSats, script: escrow.script };
 const payFee = 2000n;
-const payees = guardianSlashPayees({ amountSats: esc.value - payFee, censusNodes: nodes.map((n) => n.key), record: A });
-const donationSecret = taggedHash('ARENA/v1/Rehearsal14Donation', new Uint8Array(1));
-const donationScript = fromHex('5120' + toHex(schnorr.getPublicKey(donationSecret)));
-const nodeScript = (keyHex) => fromHex('5120' + keyHex);
-const split = escrowSplitSpend({ escrow: esc, feeSats: payFee,
-  payees: [...payees.nodes.map((p) => ({ script: nodeScript(p.key), sats: p.sats, pays: nodes.find((n) => toHex(n.key) === p.key).name })), { script: donationScript, sats: payees.developers, pays: 'donation set' }] });
+const reserveSecret = taggedHash('ARENA/v1/Rehearsal14Donation', new Uint8Array(1));
+const reserveScript = fromHex('5120' + toHex(schnorr.getPublicKey(reserveSecret)));
+const split = escrowSplitSpend({ escrow: esc, feeSats: payFee, payees: [{ script: reserveScript, sats: esc.value - payFee, pays: 'the protocol reserves' }] });
 const signEscrow = (signers) => {
   const h = tapSighash({ ...split.tx, prevouts: split.prevouts, inputIndex: 0, leafHash: escrow.leaf });
   const sigs = signBy(signers)(h);
   const stack = sorted.map((k) => sigs.get(toHex(k)) || new Uint8Array(0)).reverse();
   return toHex(serializeSpend({ ...split.tx, witnesses: [scriptPathWitness({ stack, script: escrow.leafScript, controlBlock: escrow.controlBlock })] }));
 };
-out({ step: 'A: escrow paid out on CLOSED', escrowSats: esc.value, guardiansLeftOut: payees.guardiansLeftOut,
-  outputs: split.tx.outputs.map((o) => ({ pays: o.pays, sats: o.value })), nodesShare: payees.nodes.reduce((a, p) => a + p.sats, 0n), donationShare: payees.developers,
+out({ step: 'A: escrow paid out on CLOSED', escrowSats: esc.value,
+  outputs: split.tx.outputs.map((o) => ({ pays: o.pays, sats: o.value })),
   [`by ${K - 1} of ${g.arbitrationM}`]: accepts(signEscrow(K - 1)), [`by ${K} of ${g.arbitrationM}`]: accepts(signEscrow(K)) });
 const payTxid = cli('sendrawtransaction', signEscrow(K));
 const payBlock = mine(1)[0];

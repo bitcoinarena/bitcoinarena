@@ -9,9 +9,11 @@
 //     the entry (GET /entry) - from the seat, believed for nothing;
 //   - reads its own chain (its bitcoind): the round's beacon off the headers, the round's census and its committee
 //     (deriveCensus + selectCommittee as a seat does, the census checked against the round's census_root), and the
-//     census at the slash height (the tip), and the accused's bond output itself;
+//     accused's bond output itself;
 //   - judges the proof (arbiter.js judgeProof: the objection REPLAYED here under the round's core), builds path B at
-//     slash_height = the tip, has 5 of its 7 members sign on their own, and posts it only after testmempoolaccept.
+//     slash_height = the tip, has 5 of its 7 members sign on their own, and posts it only after testmempoolaccept;
+//   - pays it (§5A.3, rule v2): the proofs in ascending proof id, each loss once, the rest to the protocol reserves of the
+//     federations with room, read from the seats (GET /federations, GET /reserves): what more than half of them say.
 // A proof against a contradicted AUDIT (kanban #724, #725; GET /slashes `auditSlashes`, its record at GET /audit-slash-proofs) is judged
 // the same way by arbiter.js judgeAuditProof - the objection replayed here, the AUDIT's signature and VRF draw checked against the round's
 // census less its drawn nodes and its players (GET /audit-run) - and paid as every slash.
@@ -25,18 +27,14 @@
 //   ARENA_ARBITER_PORT=31290 ARENA_ARBITER_STATE=<file> node tools/arbiter.mjs [--once]
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
-import { ed25519 } from '@noble/curves/ed25519.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
-import { arbitrationMembers, judgeProof, judgeAuditProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin } from '../src/arbiter.js';
+import { arbitrationMembers, judgeProof, judgeAuditProof, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin } from '../src/arbiter.js';
 import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
 import { liquidationEvent, slashEvent, stampEvent, signEvent, eventKey } from '../src/arbitration-events.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
 import { decodeSpentSet, spentNonceSet } from '../../arena-protocol/src/spent-set.js';
-import { clocksFor, liquidationRemainderPayees } from '../../arena-protocol/src/federation-slash.js';
-import { splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
-import { donationSetInForce } from '../../arena-protocol/src/authority.js';
-import { donationKeysForNetworkId } from '../../arena-protocol/src/donation-keys.js';
-import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
+import { clocksFor } from '../../arena-protocol/src/federation-slash.js';
+import { windowsOf } from '../../arena-protocol/src/window.js';
 
 import { bondSetFor } from '../src/curve.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
@@ -44,10 +42,9 @@ import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/s
 import { splitSlashEvidence, cutSlashEvidence, splitAuditSlashEvidence, cutAuditSlashEvidence, auditSlashProofId } from '../../arena-protocol/src/slash.js';
 import { auditEligible } from '../../arena-protocol/src/auditor.js';
 import { makeVrf, SUITE_SECP256K1_TAI } from '../../arena-protocol/src/vrf.js';
-import { entryId as entryIdOf } from '../../arena-protocol/src/contracts.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
-import { entryForSlash } from '../src/slash-owing.js';
 import { runId } from '../src/verdict.js';
+import { payoutRuleOfRound } from '../src/plugins.js';
 import { deriveCensus } from '../../arena-protocol/src/census.js';
 import { beaconFromChain, committeeSeedFromBeacon } from '../../arena-protocol/src/beacon.js';
 import { selectCommittee } from '../../arena-protocol/src/sortition.js';
@@ -114,13 +111,9 @@ async function handle(seat, s) {
   // THE ROUND'S ENTRIES AND RESULTS, OFF THE SEAT'S GET /audit-run, checked against their own entry ids: a slash pays whoever the
   // false result harmed, and that takes the whole field (kanban #975)
   const run = await get(`${seat}/audit-run?round=${s.round}`);
-  const playerKeys = new Set(), entries = [];
-  for (const e of run.entries || []) {
-    try {
-      const x = decodeEntryContract(fromHex(e.entry));
-      if (toHex(entryIdOf(x)) === e.id) { playerKeys.add(toHex(x.playerPubkey)); entries.push(entryForSlash(x)); }
-    } catch { /* not an entry */ }
-  }
+  // AS THE ROUND SETTLED (§5A.3's real loss): each entry's run off the signatures
+  const entries = settledEntries({ run, roundId: rid, contract, committee, finalAfterMs: windowsOf(contract).finalAfterMs });
+  const playerKeys = new Set(entries.map((e) => toHex(e.playerPubkey)));
   let verdict;
   if (audit) {
     // WHO COULD AUDIT THE ROUND, FROM THIS ARBITER'S OWN CENSUS (§13A.1): its census less every node drawn for its roles; its players'
@@ -134,12 +127,10 @@ async function handle(seat, s) {
       bondOutpoint: { txid: accused.txid, vout: accused.vout }, core, roundRandomness: beacon.hash });
   }
   if (!verdict.slashed) return { done: true, why: `not slashed: ${verdict.why}` };
-  // THE BOND AS THE CHAIN HOLDS IT NOW, AND THE CENSUS AT THE SLASH HEIGHT (the tip)
+  // THE BOND AS THE CHAIN HOLDS IT NOW
   const out = await rpc('gettxout', [toHex([...accused.txid].reverse()), accused.vout, false]);
   if (!out) return { done: true, why: 'the bond is spent already' };
   const bond = { txid: accused.txid, vout: accused.vout, value: BigInt(Math.round(out.value * 1e8)), script: fromHex(out.scriptPubKey.hex) };
-  const at = await censusAt(contract, census.tip);
-  if (!at.ok) return { done: false, why: `no census at the slash height: ${at.why}` };
   // AN AUDIT'S PROOF NAMES A RUN, NOT A SIGNED RESULT: that run's outcome and score come off the seat's results for the entry
   let signed = verdict.signed;
   if (audit) {
@@ -147,26 +138,58 @@ async function handle(seat, s) {
       try { const b = decodePlayerResult(splitSignedResult(fromHex(r)).body); if (toHex(runId(b)) === toHex(verdict.proof.contradictedRunId)) signed = { outcome: b.outcome, score: b.score }; } catch { /* not a result */ }
     }
   }
+  // ONE LOSS, ONCE (§5A.3): what the earlier proofs of this round paid and corrected
+  const before = Object.values(state.handled).filter((v) => v.round === s.round && v.posted);
+  const paid = new Map();
+  for (const v of before) for (const p of v.players || []) paid.set(p.key, (paid.get(p.key) || 0n) + BigInt(p.paidMsat ?? p.msat ?? 0));
+  const truth = before.flatMap((v) => (v.truth || []).map((t) => ({ pubkey: fromHex(t.key), outcome: t.outcome, score: t.score })));
+  const rule = payoutRuleOfRound(contract, (await import('../src/plugins.js')).hostedPlugins(await loadApps()));
+  if (!rule.ok) return { done: false, why: rule.why };
   const slash = buildSlash({ verdict, bond, advert: accused.advert, contract, roundId: rid, slashHeight: census.tip, tipHeight: census.tip,
-    censusNodes: at.entries.map((e) => e.pubkey), seats: contract.nodes || committee, entries, signed, set });
+    entries, signed, truth, paid, payoutShares: rule.payoutShares, set, feeSats: PATH_B_FEE_SATS });
   if (!slash.ok) return { done: false, why: slash.why };
   // EACH MEMBER SIGNS ON ITS OWN; k OF THEM ARE ENOUGH, AND THE REST ARE NOT ASKED
   const signatures = set.members.slice(0, set.k).map((m) => ({ key: m.key, sig: memberSign(m, slash.sighash) }));
   const tx = assemble({ slash, signatures, set });
   if (!tx.ok) return { done: false, why: tx.why };
   const sent = await post(rpc, tx.hex);
-  // WHO THE PLAYERS' ESCROW IS FOR, kept with the slash: the step after (payOut) pays each from the federation
-  const players = [...slash.distribution.playerShares].map(([key, sats]) => ({ key, sats: String(sats) }));
+  // WHAT THE ESCROW OWES, kept with the slash: the step after (payOut) pays it through the federations
+  const byKey = new Map(entries.map((e) => [toHex(e.playerPubkey), e]));
+  const players = [...slash.distribution.players].map(([key, msat]) => ({ key, msat: String(msat), entry: byKey.get(key).entryId, federation: byKey.get(key).federation }));
   return sent.ok ? { done: true, posted: sent.txid, slashHeight: census.tip, signers: tx.signers, node: s.node, round: s.round, entry: s.entry,
-    playersSats: String(slash.built.amounts.players), players,
-    // THE WHOLE SPLIT KEPT (kanban #723): the slash's event says the bond and every part of it, not only the players'
-    bondSats: String(bond.value), nodesSats: String(slash.built.amounts.nodes), developersSats: String(slash.built.amounts.developers) } : { done: false, why: sent.why };
+    bondSats: String(bond.value), escrowSats: String(slash.built.amounts.escrow), players,
+    playersMsat: String(slash.distribution.playersMsat), reservesMsat: String(slash.distribution.reservesMsat), shortMsat: String(slash.distribution.shortMsat),
+    truth: slash.truth.map((t) => ({ key: toHex(t.pubkey), outcome: t.outcome, score: t.score })) } : { done: false, why: sent.why };
 }
 
-// AFTER PATH B (spec §5A.3B): the players' escrow into the round's federation, claimed, each share paid
-// (arbiter.js payOutSlash, through ARENA_STAKE_LOCK_BIN on the client in ARENA_ARBITER_CLIENT_DIR)
-const payOut = (proof, v) => payOutSlash({ proof, v, set, rpc, keep, say, bin: env.ARENA_STAKE_LOCK_BIN, dir: env.ARENA_ARBITER_CLIENT_DIR,
-  feeSats: BigInt(env.ARENA_ARBITER_FEE_SATS || 1000) });
+// WHERE A SLASH'S RESERVES MAY GO (§27A.9.2), as the seats say it: only what more than half of those that answered name alike, so no single seat can
+// name a key of its own. Every OPEN federation with its load and reserve key; loads move with the chain, so a pass where they differ waits for the next.
+async function federationView() {
+  const votes = new Map();
+  let answered = 0;
+  await Promise.all(seats.map(async (seat) => {
+    try {
+      const [feds, res] = await Promise.all([get(`${seat}/federations`), get(`${seat}/reserves`)]);
+      const keys = new Map((res.federations || []).map((f) => [f.federationId, f.reserveKey || f.key || null]));
+      for (const f of feds.federations || []) {
+        const row = { federation: f.federation, status: f.status, reserveSats: String(f.reserveSats || 0), exposureCapSats: String(f.exposureCapSats || 0), reserveKey: keys.get(f.federation) || null };
+        const k = JSON.stringify(row);
+        votes.set(k, { row, n: (votes.get(k) ? votes.get(k).n : 0) + 1 });
+      }
+      answered += 1;
+    } catch (e) { say({ seat, federations: e.message }); }
+  }));
+  return [...votes.values()].filter((x) => x.n * 2 > answered).map((x) => x.row);
+}
+
+const clientDirs = new Map(String(env.ARENA_ARBITER_CLIENT_DIRS || '').split(',').map((x) => x.trim()).filter(Boolean).map((x) => x.split('=')).filter((x) => x.length === 2).map(([k, d]) => [k.toLowerCase(), d]));
+const PATH_B_FEE_SATS = BigInt(env.ARENA_ARBITER_PATH_B_FEE_SATS || 2000);
+// AFTER PATH B (§5A.3B step 5): the escrow into the federations, claimed, each loss and each reserve part paid (arbiter.js payOutSlash, through
+// ARENA_STAKE_LOCK_BIN on this set's clients: ARENA_ARBITER_CLIENT_DIRS=<federation hex>=<dir>,..., or the one client ARENA_ARBITER_CLIENT_DIR);
+// ARENA_ARBITER_RETIRED names the federations a ruling closed to new peg-ins
+const payOut = (proof, v) => payOutSlash({ proof, v, set, rpc, keep, say, bin: env.ARENA_STAKE_LOCK_BIN, dirOf: (fid) => clientDirs.get(fid) || env.ARENA_ARBITER_CLIENT_DIR || null,
+  federations: federationView, retired: String(env.ARENA_ARBITER_RETIRED || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
+  feeSats: BigInt(env.ARENA_ARBITER_FEE_SATS || 1000), pegInFeeSats: BigInt(env.ARENA_ARBITER_PEGIN_FEE_SATS || 1000) });
 
 let games = null;
 async function loadApps() {
@@ -201,29 +224,12 @@ async function payLiquidations() {
       // with the escrow's amount (kanban #723: the liquidation's event names it), read before it is spent
       return { ...(await post(rpc, signed.hex)), sats: String(BigInt(Math.round(Number(o.value) * 1e8))) };
     };
-    // THE REMAINDER'S PAYEES at the tip: the census this set derives from its own chain (a seat's newest round as the template),
-    // less the slashed and the federation's guardians (its halt record), and the donation set in force (its keys)
+    // THE REMAINDER GOES TO THE PROTOCOL RESERVES (§5A.3, §23A.5): it is e-cash in the safe federation by now, so that federation's reserve key
     const remainderPayees = async (fidHex, msat) => {
-      const l = await claims.liquidation(fidHex);
-      if (!l) throw new Error('no seat lists that liquidation');
-      if (!l.record) throw new Error('no seat lists the record of that federation');
-      const record = splitSignedRecord(fromHex(l.record)).record;
-      const list = await get(`${seats[0]}/rounds?next=1`);
-      const contract = decodeRoundContract(await get(`${seats[0]}/round?id=${list.rounds[0].id}`, 'bytes'));
-      const tip = Number(await rpc('getblockcount'));
-      const census = await censusAt(contract, tip);
-      if (!census.ok) throw new Error(`no census at ${tip}: ${census.why}`);
-      const keys = donationKeysForNetworkId(contract.networkId);
-      const forced = donationSetInForce({ networkId: contract.networkId, authority: keys.authority, recovery: keys.recovery, sets: [TESTNET4_DONATION_SET_KEYS],
-        rotations: [], height: tip, verify: (sg, m, k) => { try { return ed25519.verify(sg, m, k); } catch { return false; } } });
-      if (!forced.ok) throw new Error(`no donation set in force: ${forced.why}`);
-      const got = liquidationRemainderPayees({ msat, censusNodes: census.entries.map((e) => e.pubkey), slashed: Object.values(state.handled).map((h) => h.node).filter(Boolean),
-        record, donation: forced.recipients });
-      if (!got.ok) throw new Error(got.why);
-      // a payout is a lock to a refund key (the tool's `pay`, as 's): the 33-byte form of each x-only key
-      // - node keys are x-only; the donation set's recipients are 33 bytes already (measured 2026-10-26, rehearsal 17: "02" before
-      // them made 34 and the tool refused the whole remainder, "malformed public key")
-      return got.payees.map((x) => ({ ...x, key: x.key.length === 64 ? `02${x.key}` : x.key }));
+      const into = String(env.ARENA_LIQ_PAY_FEDERATION || '').toLowerCase();
+      const f = (await federationView()).find((x) => x.federation === into);
+      if (!f || !f.reserveKey) throw new Error(`no reserve key named for federation ${into.slice(0, 16)}: the remainder waits`);
+      return [{ key: f.reserveKey, msat, part: 'reserves' }];
     };
     // THE HALT AS THE SEATS LISTED IT, kept once (kanban #723): the liquidation's event says it after the seats forget the federation
     if (!v.halt) { try { const l = await claims.liquidation(fid); if (l) { v.halt = haltOfListing(l); keep(); } } catch { /* next pass */ } }
@@ -254,7 +260,7 @@ function arbiterEvents() {
   }
   for (const [proof, v] of Object.entries(state.handled || {})) {
     if (!v.posted) continue;
-    const body = slashEvent({ network, proof, v, into: String(env.ARENA_ARBITER_FEDERATION || '').toLowerCase() || null });
+    const body = slashEvent({ network, proof, v });
     const kept = state.events[`slash:${proof}`] = state.events[`slash:${proof}`] || {};
     if (!Number.isFinite(kept.firstMs) && Number.isFinite(v.at)) kept.firstMs = v.at;
     const s1 = stampEvent(body, kept); changed = changed || s1.changed; out.push(s1.event);
@@ -283,17 +289,19 @@ async function publishEvents() {
 
 async function pass() {
   await payLiquidations().catch((e) => say({ liquidationsError: e.message }));
+  // THE PROOFS OF A ROUND IN ASCENDING PROOF ID (§5A.3): the first pays each loss, a later one only what is still owed
+  const found = new Map();
   for (const seat of seats) {
     let list; try { list = await get(`${seat}/slashes`); } catch (e) { say({ seat, refused: e.message }); continue; }
-    for (const s of [...(list.slashes || []), ...(list.auditSlashes || []).map((x) => ({ ...x, kind: 'audit' }))]) {
-      if (state.handled[s.proof]) continue;
-      let r; try { r = await handle(seat, s); } catch (e) { r = { done: false, why: e.message }; }
-      say({ seat, proof: s.proof.slice(0, 16), node: s.node.slice(0, 16), ...r });
-      if (r.done) { state.handled[s.proof] = { at: Date.now(), ...r }; keep(); }
-    }
+    for (const s of [...(list.slashes || []), ...(list.auditSlashes || []).map((x) => ({ ...x, kind: 'audit' }))]) if (!state.handled[s.proof] && !found.has(s.proof)) found.set(s.proof, { seat, s });
+  }
+  for (const { seat, s } of [...found.values()].sort((a, b) => (a.s.proof < b.s.proof ? -1 : 1))) {
+    let r; try { r = await handle(seat, s); } catch (e) { r = { done: false, why: e.message }; }
+    say({ seat, proof: s.proof.slice(0, 16), node: s.node.slice(0, 16), ...r });
+    if (r.done) { state.handled[s.proof] = { at: Date.now(), ...r }; keep(); }
   }
   for (const [proof, v] of Object.entries(state.handled)) {
-    if (!v.posted || !v.players || v.payouts) continue;
+    if (!v.posted || !v.escrowSats || v.settled) continue;
     let r; try { r = await payOut(proof, v); } catch (e) { r = { why: e.message }; }
     if (r.why) say({ proof: proof.slice(0, 16), payouts: r.why });
   }

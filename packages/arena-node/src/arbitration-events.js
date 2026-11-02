@@ -12,10 +12,11 @@
 //                  escrow: { outpoint, sats, txid (bitcoin: the escrow into the safe federation), address, into, claimedMsat, atMs, claimedAtMs },
 //                  claims: { accepted: [{ nonce, amountMsat, height, payoutPk }], refused: [{ nonce, why, height }], msat },
 //                  payouts: [{ payoutPk, msat, txid (federation), outIdx, federation, atMs }],
-//                  remainder: { txid (federation), msat, federation, atMs, payees: n, payouts: [{ part: node | donation, payoutPk, msat, outIdx }] } | null }
+//                  remainder: { txid (federation), msat, federation, atMs, payees: n, payouts: [{ part: reserves, payoutPk, msat, outIdx }] } | null }
 //   slash        { kind, network, proof, node, round, entry, firstMs, atMs, status, txid (bitcoin: path B), slashHeight, signers,
-//                  sats: { bond, players, nodes, developers }, escrow: { txid (bitcoin), sats, address, claimedMsat, into },
-//                  payouts: [{ refundPk, msat, txid (federation), outIdx, round, entry }] }
+//                  sats: { bond, escrow }, msat: { players, reserves }, escrows: [{ txid (bitcoin), keptSats, pegIns: [{ federation, sats, claimedMsat }] }],
+//                  payouts: [{ refundPk, msat, txid (federation), outIdx, round, entry, federation }],
+//                  reserves: [{ federation, reserveKey, msat, txid (federation), outIdx }] }
 // An event is named by its kind and its subject (the federation liquidated, the slash proof); a newer `atMs` replaces the one kept.
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
@@ -117,12 +118,17 @@ export function liquidationEvent({ network, fid, v = {}, claims = [], liq = null
 }
 
 /** A SLASH AS THE ARBITER'S STATE HOLDS IT (`v`, state.handled[proof]) - only one it posted. */
-export function slashEvent({ network, proof, v = {}, into = null }) {
-  const status = v.payouts ? 'paid out' : v.claimedMsat ? 'escrow claimed in the federation' : v.escrowTxid ? 'escrow sent to the federation' : 'posted';
+export function slashEvent({ network, proof, v = {} }) {
+  const stages = v.stages || [];
+  const status = v.settled ? 'paid out' : (stages.length && stages[stages.length - 1].kept && stages[stages.length - 1].done) ? 'part of the escrow waits for room'
+    : stages.some((s) => s.pegIns.some((p) => p.claimedMsat)) ? 'escrow claimed in the federation' : stages.length ? 'escrow sent to the federation' : 'posted';
+  const paidMsat = (v.reserves || []).reduce((t, r) => t + BigInt(r.msat), 0n);
   return { kind: 'slash', network, proof, node: str(v.node), round: str(v.round), entry: str(v.entry), status, txid: v.posted, slashHeight: n(v.slashHeight),
-    signers: n(v.signers), sats: { bond: str(v.bondSats), players: str(v.playersSats), nodes: str(v.nodesSats), developers: str(v.developersSats) },
-    escrow: { txid: str(v.escrowTxid), sats: str(v.pegInSats), address: str(v.pegInAddress), claimedMsat: str(v.claimedMsat), into: str(v.into || into) },
-    payouts: (v.payouts || []).map((p) => ({ refundPk: p.refundPk, msat: String(p.msat), txid: p.txid, outIdx: n(p.outIdx), round: p.round || null, entry: p.entry || null })) };
+    signers: n(v.signers), sats: { bond: str(v.bondSats), escrow: str(v.escrowSats) },
+    msat: { players: str(v.playersMsat), reserves: str(stages.length ? paidMsat : v.reservesMsat) },
+    escrows: stages.map((s) => ({ txid: str(s.txid), keptSats: str(s.kept && s.kept.sats), pegIns: s.pegIns.map((p) => ({ federation: p.federation, sats: str(p.sats), claimedMsat: str(p.claimedMsat) })) })),
+    payouts: (v.payouts || []).map((p) => ({ refundPk: p.refundPk, msat: String(p.msat), txid: p.txid, outIdx: n(p.outIdx), round: p.round || null, entry: p.entry || null, federation: p.federation || null })),
+    reserves: (v.reserves || []).map((r) => ({ federation: r.federation, reserveKey: r.reserveKey, msat: String(r.msat), txid: r.txid, outIdx: n(r.outIdx) })) };
 }
 
 /**
@@ -141,7 +147,7 @@ export function stampEvent(body, kept, now = Date.now()) {
 export function eventTxids(e) {
   const out = new Set();
   const add = (x) => { if (hex64.test(String(x || ''))) out.add(String(x)); };
-  if (e.kind === 'slash') { add(e.txid); add(e.escrow && e.escrow.txid); for (const p of e.payouts || []) add(p.txid); }
+  if (e.kind === 'slash') { add(e.txid); for (const x of e.escrows || []) add(x.txid); for (const p of [...(e.payouts || []), ...(e.reserves || [])]) add(p.txid); }
   else { add(e.escrow && e.escrow.txid); add(e.escrow && e.escrow.outpoint && e.escrow.outpoint.split(':')[0]); for (const p of e.payouts || []) add(p.txid); add(e.remainder && e.remainder.txid); }
   return [...out];
 }

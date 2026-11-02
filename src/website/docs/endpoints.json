@@ -6861,7 +6861,7 @@
   "path": "/slash-owing",
   "params": "query round, entry (hex 32), height (required)",
   "auth": "none",
-  "returns": "200 JSON {slashHeight, tipHeight, owing:[{node, bond, offence, bondSats, toPlayers, toNodes, toDevelopers, players[], nodes[], ...}]}; 400/404/409",
+  "returns": "200 JSON {slashHeight, tipHeight, owing:[{node, bond, offence, bondSats, playersMsat, reservesMsat, shortMsat, players[]}]}; 400/404/409",
   "purpose": "What filed slash proofs owe and to whom at a given height; records nothing.",
   "audience": "operator/monitoring",
   "line": 5916,

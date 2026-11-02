@@ -2161,6 +2161,11 @@ export class Round {
       .map((r) => ({ signerPubkey: new Uint8Array(r.signer_pubkey), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
   }
 
+  /** Every FINAL signature this seat holds for one entry, on any run: GET /audit-run hands them on, the arbitration set reads what settled off them. */
+  entryFinalSigs(roundIdBytes, entryIdBytes) {
+    return this.db.prepare('SELECT bytes FROM final_sigs WHERE round_id = ? AND entry_id = ? ORDER BY run_id, signer_pubkey').all(roundIdBytes, entryIdBytes).map((r) => new Uint8Array(r.bytes));
+  }
+
   /**
    * EVERY FINAL SIGNATURE THAT CAME BETWEEN TWO TIMES, by round (who served a round in the last 24 h): rows that
    * arrived in [fromMs, toMs + 5 s) - a FINAL counts only when signed within 5 s of its arrival, so its own time is then within the

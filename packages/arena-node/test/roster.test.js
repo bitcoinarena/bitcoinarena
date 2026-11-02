@@ -743,10 +743,10 @@ test('the committee and the seed are kept per view, and a new header builds them
 // funding outputs, a height above the round's own `census_height`.
 test('the slash-owing door answers off the chain at a height above the round\'s own, and the census it reads there is not checked against the round\'s root', async () => {
   const { encodeSlashProof, joinSlashEvidence, slashProofId } = await import('../../arena-protocol/src/slash.js');
-  // a stand-in signed result: its bytes do not matter here, its type byte does - a stream of results is cut by it
-  const { TYPE_RESULT } = await import('../../arena-protocol/src/constants.js');
-  const standIn = () => { const x = new Uint8Array(SIGNED_RESULT_BYTES); x[0] = TYPE_RESULT; return x; };
-  const { SIGNED_RESULT_BYTES } = await import('../../arena-protocol/src/result.js');
+  // A SIGNED RESULT AND THE OBJECTION BESIDE IT, as bytes that read: the door compares them to see who the false result harmed (kanban #975)
+  const standIn = (r) => joinSignedResult(encodePlayerResult({ roundId: r.roundId, playerPubkey: r.playerPubkey, outcome: 'DELIVERED', score: 1, transcriptHash: r.transcriptHash, simCoreHash: b32(0x73), nodePubkey: r.nodePubkey }), new Uint8Array(64));
+  const { encodePlayerResult, joinSignedResult } = await import('../../arena-protocol/src/result.js');
+  const { encodeObjectionBundle } = await import('../../arena-protocol/src/objection.js');
   const { entryId: entryIdOf } = await import('../../arena-protocol/src/contracts.js');
 
   // FOUR BONDED NODES, so the census at the slashing height still has somebody in it once §5A.3 takes
@@ -791,7 +791,9 @@ test('the slash-owing door answers off the chain at a height above the round\'s 
       transcriptHash: b32(0x71), signedResultId: b32(0x72),
       bondTxid: parseTransaction(bonds[0]).txid, bondVout: 0,
     };
-    const evidence = joinSlashEvidence(encodeSlashProof(proof), standIn());
+    const evidence = joinSlashEvidence(encodeSlashProof(proof), standIn(proof));
+    node.round.objectionBundle = () => encodeObjectionBundle({ signature: new Uint8Array(64), transcript: new Uint8Array(0), receipts: new Uint8Array(0),
+      objection: { roundId: rid, playerPubkey: entry.playerPubkey, transcriptHash: b32(0x71), signedResultId: b32(0x72), claimedOutcome: 'DELIVERED', claimedScore: 2, objectorPubkey: b32(0x74), atMs: 1n } });
     node.round.putSlashProof(rid, eid, accused, slashProofId(proof), evidence);
 
     // AND A SECOND PROOF, AGAINST A SECOND NODE, IN THE SAME RUN (ruling 3, 2026-09-22: "nothing
@@ -802,7 +804,7 @@ test('the slash-owing door answers off the chain at a height above the round\'s 
     const second = keyFor(0x12);
     const alsoProof = { ...proof, nodePubkey: second, bondTxid: parseTransaction(bonds[1]).txid };
     node.round.putSlashProof(rid, eid, second,
-      slashProofId(alsoProof), joinSlashEvidence(encodeSlashProof(alsoProof), standIn()));
+      slashProofId(alsoProof), joinSlashEvidence(encodeSlashProof(alsoProof), standIn(alsoProof)));
 
     // THE ROUND'S OWN CENSUS STILL CHECKS AGAINST ITS ROOT; the one at another height must not, which
     // is the bug this door found. Both read here, off the same node.
@@ -834,32 +836,14 @@ test('the slash-owing door answers off the chain at a height above the round\'s 
     const owed = body.owing.find((o) => o.node === toHex(accused));
     const also = body.owing.find((o) => o.node === toHex(second));
     // THE BOND'S VALUE IS THE CHAIN'S, off the funding output - not a number the proof carries.
-    assert.equal(owed.bondSats, '100000000');
-    assert.deepEqual([owed.toPlayers, owed.toNodes, owed.toDevelopers], ['50000000', '37500000', '12500000']);
-    // THE HARMED PLAYER IS NOT A NODE. The two halves used to share one map, so he was listed here too.
-    assert.deepEqual(owed.players.map((p) => p.player), [toHex(entry.playerPubkey)]);
-    assert.equal(owed.nodes.some((n) => n.node === toHex(entry.playerPubkey)), false,
-      'the harmed player is listed among the census nodes, owed the players\' half a second time');
-    // AND THE ACCUSED IS NOT PAID OUT OF THE BOND IT IS SLASHED FOR.
-    assert.equal(owed.nodes.some((n) => n.node === toHex(accused)), false,
-      'the slashed node was paid a share of its own bond');
-    // THE SEATS ARE SUBTRACTED, so of four bonded nodes only the one that is neither seat nor accused
-    // is left - and it takes the whole 75%.
-    assert.deepEqual(owed.nodes, [{ node: toHex(second), sats: '37500000' }]);
-    assert.equal(owed.nodes.reduce((a, n) => a + BigInt(n.sats), 0n), BigInt(owed.toNodes),
-      'the nodes\' half did not reach the nodes');
-
-    // THE SECOND PROOF IS COMPUTED OUT OF THE SAME CENSUS AND EXCLUDES ITS OWN ACCUSED, not the first's:
-    // it pays 0x11 and not 0x12. A census the loop mutated once would pay neither.
-    assert.deepEqual(also.nodes, [{ node: toHex(accused), sats: '37500000' }],
-      'the second proof did not pay out of a census holding the first proof\'s accused');
-    // NOTHING IS POOLED ACROSS THEM: the harmed player is paid the players' half out of EACH bond.
-    assert.deepEqual([owed.players, also.players].map((ps) => ps.map((p) => p.sats)),
-      [['50000000'], ['50000000']]);
-    // AND EVERY ANSWER ADDS UP TO ITS OWN BOND, so no satoshi of a slashed bond goes unreported.
-    for (const o of body.owing)
-      assert.equal(BigInt(o.toPlayers) + BigInt(o.toNodes) + BigInt(o.toDevelopers), BigInt(o.bondSats),
-        `the three amounts do not sum to the bond for ${o.node.slice(0, 16)}`);
+    assert.equal(owed.bondSats, '100000000', JSON.stringify(body.owing));
+    // RULE V2 (§5A.3, kanban #976): no node and no developer in the answer; with no late objection nobody has a loss, so all of it is the reserves'
+    for (const o of body.owing) {
+      assert.deepEqual([o.playersMsat, o.reservesMsat], ['0', String(BigInt(o.bondSats) * 1000n)], `what ${o.node.slice(0, 16)} owes`);
+      assert.deepEqual(o.players, []);
+      assert.equal(o.nodes, undefined, 'a slash pays no node');
+      assert.equal(o.toDevelopers, undefined, 'a slash pays no developer');
+    }
 
     // AND A HEIGHT BELOW THE ROUND'S OWN IS REFUSED WITHOUT DERIVING A CENSUS AT IT.
     const low = await fetch(`http://127.0.0.1:${node.port}/slash-owing?round=${toHex(rid)}&entry=${toHex(eid)}&height=${HEIGHT - 1}`);

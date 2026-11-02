@@ -155,14 +155,15 @@ const eventSubject = (e) => (e.kind === 'slash' ? e.proof : e.federation);
 export function eventTxids(e) {
   const out = new Set(); const add = (x) => { if (hex64.test(String(x || ''))) out.add(String(x)); };
   add(e.txid); add(e.escrow && e.escrow.txid); add(e.escrow && e.escrow.outpoint && String(e.escrow.outpoint).split(':')[0]);
-  for (const p of e.payouts || []) add(p.txid);
+  for (const x of e.escrows || []) add(x.txid);
+  for (const p of [...(e.payouts || []), ...(e.reserves || [])]) add(p.txid);
   add(e.remainder && e.remainder.txid);
   return [...out];
 }
 const msatOf = (sats) => (sats === null || sats === undefined ? null : String(BigInt(sats) * 1000n));
 /** One event as the row the list and its page read: what it moved (a liquidation's escrow, a slash's bond), its status, its transactions. */
 export function eventTx(e, seats) {
-  const amountMsat = e.kind === 'slash' ? msatOf((e.sats && (e.sats.bond || e.sats.players)) || null)
+  const amountMsat = e.kind === 'slash' ? msatOf((e.sats && e.sats.bond) || null)
     : (e.escrow && (e.escrow.claimedMsat || msatOf(e.escrow.sats))) || null;
   return { id: eventSubject(e), kind: e.kind, found: true, readAt: new Date().toISOString(), readMs: null, event: e, status: e.status || null, amountMsat,
     entry: { app: null, federation: e.kind === 'liquidation' ? e.federation : null, round: e.kind === 'slash' ? e.round : null },

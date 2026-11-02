@@ -49,7 +49,7 @@ test('the table: every valid note at face value from a large escrow; pro rata fr
   await big.claims.offer({ federation: FED, ecash: 'e1', payoutPk: P1 }); await big.claims.offer({ federation: FED, ecash: 'e2', payoutPk: P2 });
   const p = await big.claims.plan(FED);
   assert.deepEqual([p.ok, p.proRata, p.payouts.find((x) => x.payoutPk === P1).msat, p.payouts.find((x) => x.payoutPk === P2).msat, p.split], [true, false, '768000', '1024000', null]);
-  big.at(1100); assert.equal((await big.claims.plan(FED)).split.nodes, String((10_000_000n - 1_792_000n) * 75n / 100n));
+  big.at(1100); assert.equal((await big.claims.plan(FED)).split.reserves, String(10_000_000n - 1_792_000n));
   const short = book({ escrowMsat: 896_000n }); short.at(1012);
   await short.claims.offer({ federation: FED, ecash: 'e1', payoutPk: P1 }); await short.claims.offer({ federation: FED, ecash: 'e2', payoutPk: P2 });
   const q = await short.claims.plan(FED);
@@ -143,14 +143,14 @@ test('after drain_blocks the remainder is paid once to its payees, never before 
     if (args[1] === 'balance') return { msat: 1_300_000 };
     return {}; };
   let h = 1021;
-  const remainderPayees = async (_fid, msat) => [{ key: 'aa'.repeat(32), msat: (msat * 75n) / 100n }, { key: 'dd'.repeat(32), msat: msat - (msat * 75n) / 100n }];
+  const remainderPayees = async (_fid, msat) => [{ key: 'aa'.repeat(32), msat, part: 'reserves' }];
   const pass = () => payOutLiquidation({ fid: FED, v, claims: b.claims, height: async () => h, run, spendEscrow: async () => ({ txid: 'x' }), remainderPayees });
   await pass();
   assert.equal(pays.length, 1, 'the notes first');
   assert.deepEqual(await pass(), { paid: 0, notes: 2 }, 'no remainder before drain_blocks');
   b.at(1100); h = 1100;
   const r = await pass();
-  assert.deepEqual([r.remainder, pays.length, pays[1]], ['1232000', 2, `${'aa'.repeat(32)}:924000,${'dd'.repeat(32)}:308000`]);
+  assert.deepEqual([r.remainder, pays.length, pays[1]], ['1232000', 2, `${'aa'.repeat(32)}:1232000`]);
   await pass(); assert.equal(pays.length, 2, 'once');
 });
 

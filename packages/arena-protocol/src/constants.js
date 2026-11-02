@@ -685,24 +685,15 @@ export const TAG = {
  * minus the round's own seats (the witnesses) and 25% to the donation set of
  * §22A - the developers."
  *
- * BURN AND COMMITTEE ARE BOTH WITHDRAWN (RULED 2026-09-21). "Nothing is
- * ever burned, here or anywhere in this protocol: a slash that destroys value
- * pays nobody for the harm and makes the slashing itself worthless to prove, so
- * every remainder in this document has a recipient." The other half of a round's
- * slash now goes 75% to the active census nodes at the slashing height MINUS the
- * round's own seats - the witnesses - and 25% to the donation set of §22A. That
- * is one rule, so `slashRemainder` has one valid value and a round naming
- * anything else is invalid.
+ * BURN AND COMMITTEE ARE BOTH WITHDRAWN (RULED 2026-09-21), and so is the split between nodes and developers (RULED 2026-11-02,
+ * kanban #976, slashing rule v2). "Nothing is ever burned": every remainder has a recipient, and that recipient is the protocol reserves
+ * (§5A.3). That is one rule, so `slashRemainder` has one valid value and a round naming anything else is invalid.
  *
- * THE HALVES ARE NOT A FIELD: the spec states them as numbers, and a contract
- * that could move them would let an operator write itself the whole bond - which
- * is the fault putting anything in the contract is meant to stop, not one to
- * import. Order is protocol: it indexes the byte.
+ * THE AMOUNTS ARE NOT A FIELD: a player's real loss is computed and the rest goes to the reserves. A contract that could move them would let
+ * an operator write itself the bond, which is the fault a contract field exists to stop. Order is protocol: it indexes the byte.
  *
- * SPLIT takes byte 0, which BURN used to hold. A contract stored before this
- * therefore reads as SPLIT rather than as a burn, and that is the safe
- * direction: the money it describes is paid out instead of destroyed. Byte 1,
- * the old COMMITTEE, no longer decodes at all.
+ * The value keeps its name and byte 0: a contract stored before names the same rule, and the money it describes is paid by v2. Byte 1, the
+ * old COMMITTEE, no longer decodes at all.
  */
 export const SLASH_REMAINDERS = ['SPLIT'];
 export const slashRemainderByte = (where) => {
@@ -715,13 +706,6 @@ export const slashRemainderOf = (byte) => {
   if (!where) throw new Error(`${byte} is not a slash remainder byte`);
   return where;
 };
-
-/**
- * Half, in basis points, and a CONSTANT rather than a field for the reason
- * above. 5A.3 says half to the affected players; the contract says where the
- * rest goes, not how much of it there is.
- */
-export const SLASH_TO_PLAYERS_BPS = 5000;
 
 /** Roles a bonded node can stand for. Order is protocol: it indexes roleByte. `audit` (§13A.1, protocol 22): replays rounds it is
  * drawn to audit; a decoder from protocol 22 on skips a role index it does not know instead of refusing the advertisement. */
@@ -880,30 +864,6 @@ export const FINAL_TOLERANCE_MS = 5_000n;
  * rehearsed on stock fedimintd 0.12.0 in arena-node/tools, but this field and
  * its byte do not bring custody into the node or the client.
  */
-/**
- * THE ONE 75/25, so two money paths cannot drift apart.
- *
- * §5A.3 for a slashed round bond and §23A.5 for a slashed guardian bond say the
- * same thing in the same words: 75% to the nodes, 25% to the donation set of
- * §22A - the developers. It was written out twice, once in `slash.js` and once
- * in `federation-slash.js`, and two copies of a split are two chances to change
- * one of them.
- *
- * FLOOR THE NODES AND GIVE THE REST TO THE DEVELOPERS, so the two always add
- * back to the amount exactly and no satoshi can fall between them.
- *
- * WHICH SIDE TAKES THE ODD SATOSHI IS A CHOICE MADE HERE, not a number the spec
- * states: §5A.3 and §23A.5 say 75 and 25 and stop. `payout.js` names an order
- * for leftovers WITHIN one set (`remainderOrder`, ascending H(roundId||pubkey))
- * but says nothing about a 75/25, so there was no existing rule to reuse.
- * Flooring the developers instead would be equally compliant; this direction is
- * written down so nobody later reads 12501 as the spec's own figure.
- */
-export const NODE_SHARE_PCT = 75n;
-export const splitNodesDevelopers = (amount) => {
-  const nodes = (amount * NODE_SHARE_PCT) / 100n;
-  return { nodes, developers: amount - nodes };
-};
 
 /**
  * THE CUSTODY FIELD HAS ONE VALUE (RULED 2026-09-22 22:59, §23.6):

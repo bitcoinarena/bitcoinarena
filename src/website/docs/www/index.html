@@ -421,7 +421,7 @@
   <p>Every node puts up a <b>bond</b> on Bitcoin to get a seat. The bond has a slash path that only a separate set of <b>arbitration</b> keys can use, and only with a proof:</p>
   <ul>
     <li>The arbitration keys sign a transaction that takes the bond. It names the proof's hash on chain, so anyone can fetch the proof later and check it again. A slash without a valid proof is itself public evidence against the arbitration set.</li>
-    <li>Half the bond goes to the players the cheat harmed. Of the other half, 75% goes evenly to the other active nodes (not the round's own seats) and 25% to the developers. Nothing is burned.</li>
+    <li>Each player the cheat harmed gets their real loss back, once: what the true result should have paid less what they got. The rest of the bond goes to the protocol reserves. Nothing goes to the nodes or the developers, and nothing is burned.</li>
     <li>A spent bond is no longer a bond, so the node drops out of the census and out of every future committee. It would need a new bond to come back.</li>
   </ul>
   <p>Arbitration touches bonds only. It can never move a player's stake, delay a round or change a result.</p>

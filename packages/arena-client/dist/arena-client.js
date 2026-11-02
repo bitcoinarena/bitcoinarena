@@ -1274,24 +1274,15 @@ const TAG = {
  * minus the round's own seats (the witnesses) and 25% to the donation set of
  * §22A - the developers."
  *
- * BURN AND COMMITTEE ARE BOTH WITHDRAWN (RULED 2026-09-21). "Nothing is
- * ever burned, here or anywhere in this protocol: a slash that destroys value
- * pays nobody for the harm and makes the slashing itself worthless to prove, so
- * every remainder in this document has a recipient." The other half of a round's
- * slash now goes 75% to the active census nodes at the slashing height MINUS the
- * round's own seats - the witnesses - and 25% to the donation set of §22A. That
- * is one rule, so `slashRemainder` has one valid value and a round naming
- * anything else is invalid.
+ * BURN AND COMMITTEE ARE BOTH WITHDRAWN (RULED 2026-09-21), and so is the split between nodes and developers (RULED 2026-11-02,
+ * kanban #976, slashing rule v2). "Nothing is ever burned": every remainder has a recipient, and that recipient is the protocol reserves
+ * (§5A.3). That is one rule, so `slashRemainder` has one valid value and a round naming anything else is invalid.
  *
- * THE HALVES ARE NOT A FIELD: the spec states them as numbers, and a contract
- * that could move them would let an operator write itself the whole bond - which
- * is the fault putting anything in the contract is meant to stop, not one to
- * import. Order is protocol: it indexes the byte.
+ * THE AMOUNTS ARE NOT A FIELD: a player's real loss is computed and the rest goes to the reserves. A contract that could move them would let
+ * an operator write itself the bond, which is the fault a contract field exists to stop. Order is protocol: it indexes the byte.
  *
- * SPLIT takes byte 0, which BURN used to hold. A contract stored before this
- * therefore reads as SPLIT rather than as a burn, and that is the safe
- * direction: the money it describes is paid out instead of destroyed. Byte 1,
- * the old COMMITTEE, no longer decodes at all.
+ * The value keeps its name and byte 0: a contract stored before names the same rule, and the money it describes is paid by v2. Byte 1, the
+ * old COMMITTEE, no longer decodes at all.
  */
 const SLASH_REMAINDERS = ['SPLIT'];
 const slashRemainderByte = (where) => {
@@ -1304,13 +1295,6 @@ const slashRemainderOf = (byte) => {
   if (!where) throw new Error(`${byte} is not a slash remainder byte`);
   return where;
 };
-
-/**
- * Half, in basis points, and a CONSTANT rather than a field for the reason
- * above. 5A.3 says half to the affected players; the contract says where the
- * rest goes, not how much of it there is.
- */
-const SLASH_TO_PLAYERS_BPS = 5000;
 
 /** Roles a bonded node can stand for. Order is protocol: it indexes roleByte. `audit` (§13A.1, protocol 22): replays rounds it is
  * drawn to audit; a decoder from protocol 22 on skips a role index it does not know instead of refusing the advertisement. */
@@ -1468,30 +1452,6 @@ const FINAL_TOLERANCE_MS = 5_000n;
  * rehearsed on stock fedimintd 0.12.0 in arena-node/tools, but this field and
  * its byte do not bring custody into the node or the client.
  */
-/**
- * THE ONE 75/25, so two money paths cannot drift apart.
- *
- * §5A.3 for a slashed round bond and §23A.5 for a slashed guardian bond say the
- * same thing in the same words: 75% to the nodes, 25% to the donation set of
- * §22A - the developers. It was written out twice, once in `slash.js` and once
- * in `federation-slash.js`, and two copies of a split are two chances to change
- * one of them.
- *
- * FLOOR THE NODES AND GIVE THE REST TO THE DEVELOPERS, so the two always add
- * back to the amount exactly and no satoshi can fall between them.
- *
- * WHICH SIDE TAKES THE ODD SATOSHI IS A CHOICE MADE HERE, not a number the spec
- * states: §5A.3 and §23A.5 say 75 and 25 and stop. `payout.js` names an order
- * for leftovers WITHIN one set (`remainderOrder`, ascending H(roundId||pubkey))
- * but says nothing about a 75/25, so there was no existing rule to reuse.
- * Flooring the developers instead would be equally compliant; this direction is
- * written down so nobody later reads 12501 as the spec's own figure.
- */
-const NODE_SHARE_PCT = 75n;
-const splitNodesDevelopers = (amount) => {
-  const nodes = (amount * NODE_SHARE_PCT) / 100n;
-  return { nodes, developers: amount - nodes };
-};
 
 /**
  * THE CUSTODY FIELD HAS ONE VALUE (RULED 2026-09-22 22:59, §23.6):
@@ -7556,10 +7516,10 @@ function feeMatchesEntry(entry, { feeBps = NODE_FEE_BPS, donationInFee: inFee = 
 //                         federation hold cover it can only produce if EVERY guardian is slashed.
 //   a slashed bond        never goes straight to anybody: it waits in the federation's liquidation
 //                         escrow under the arbitration keys, and spends only when the federation is
-//                         CLOSED (nothing was lost: 75% census nodes, 25% developers) or HALTED. On a
-//                         HALT the ORDER is the whole of it - every unspent note is paid at face value
-//                         FIRST, and only what no player claimed is split 75/25. The people who run the
-//                         network are never paid out of money a player could still have claimed.
+//                         CLOSED (nothing was lost: the whole bond to the protocol reserves) or HALTED.
+//                         On a HALT the ORDER is the whole of it - every unspent note is paid at face
+//                         value FIRST, and only what no player claimed goes to the reserves (§5A.3,
+//                         RULED 2026-11-02, kanban #976).
 //   the abandonment proof needs `2f + 1` attestations normally, and on a halt cannot have them: the
 //                         federation no longer has that many guardians. Then it is whoever is left,
 //                         plus the halt itself, which anyone can see.
@@ -7595,31 +7555,22 @@ function reserveFits({ reserve, bonds, f }) {
 }
 
 /**
- * §23A.5: where a slashed guardian bond goes.
+ * §23A.5: where a slashed guardian bond goes (§5A.3, RULED 2026-11-02, kanban #976).
  *
- * `halted` is the whole of the difference. A federation that kept running pays the census and the
- * developers; one that froze pays its note holders at face value FIRST and splits only what is left
- * over the same way. Nothing is burned on either road - `burned` stays in the answer at 0n so a burn
- * cannot come back unnoticed.
+ * `halted` is the whole of the difference. A federation that kept running lost nothing, so the whole bond goes to the protocol reserves;
+ * one that froze pays its note holders at face value FIRST and the remainder goes to the reserves. Nothing is burned on either road -
+ * `burned` stays in the answer at 0n so a burn cannot come back unnoticed.
  */
 function slashSplit({ amountMsat, halted = false, notesOwedMsat = 0n }) {
   if (typeof amountMsat !== 'bigint' || amountMsat < 0n)
     return { ok: false, why: 'a slashed bond is a number of msat' };
-  if (!halted) {
-    // The running case, unchanged: 75% to the active census nodes, 25% to the donation set.
-    const { nodes, developers } = splitNodesDevelopers(amountMsat);
-    return { ok: true, halted: false, notes: 0n, nodes, developers, burned: 0n };
-  }
+  if (!halted) return { ok: true, halted: false, notes: 0n, reserves: amountMsat, burned: 0n };
   if (typeof notesOwedMsat !== 'bigint' || notesOwedMsat < 0n)
     return { ok: false, why: 'the notes owed are a number of msat' };
-  // THE HALT CASE, AND THE ORDER IS THE RULE. Every unspent note is paid at face value first; only the
-  // remainder - what no player claimed inside the window - is split 75/25. A short escrow pays the notes
-  // pro rata and leaves nothing over, so nobody who runs the network is paid at all.
+  // THE HALT CASE, AND THE ORDER IS THE RULE. Every unspent note is paid at face value first; only the remainder - what no player claimed
+  // inside the window - goes to the reserves. A short escrow pays the notes pro rata and leaves nothing over.
   const notes = notesOwedMsat < amountMsat ? notesOwedMsat : amountMsat;
-  const rest = amountMsat - notes;
-  const { nodes, developers } = splitNodesDevelopers(rest);
-  return { ok: true, halted: true, notes, nodes, developers, burned: 0n,
-    proRata: notesOwedMsat > amountMsat };
+  return { ok: true, halted: true, notes, reserves: amountMsat - notes, burned: 0n, proRata: notesOwedMsat > amountMsat };
 }
 
 /**
@@ -7693,8 +7644,8 @@ function lifecycleBlocks(clocks) {
  *
  * The claim window closes at `claim_blocks` and every valid claim filed in it is paid. A note shown LATE
  * is still paid from what is left until `drain_blocks` after the halt - the player who was offline for a
- * weekend is not the one the deadline is for. Only the remainder after THAT is split 75/25, and nothing
- * a player could still have claimed is ever destroyed.
+ * weekend is not the one the deadline is for. Only the remainder after THAT goes to the reserves, and
+ * nothing a player could still have claimed is ever destroyed.
  */
 function liquidationSchedule({ haltHeight, clocks = MAINNET_CLOCKS }) {
   if (!Number.isInteger(haltHeight) || haltHeight < 0)
@@ -7712,7 +7663,7 @@ function liquidationSchedule({ haltHeight, clocks = MAINNET_CLOCKS }) {
   };
 }
 
-/** May the remainder be split yet? Never before the late-claim tail has run out. */
+/** May the remainder go to the reserves yet? Never before the late-claim tail has run out. */
 function remainderMaySplit({ haltHeight, atHeight, clocks = MAINNET_CLOCKS }) {
   const when = liquidationSchedule({ haltHeight, clocks });
   if (!when.ok) return when;
@@ -7730,7 +7681,7 @@ function remainderMaySplit({ haltHeight, atHeight, clocks = MAINNET_CLOCKS }) {
  *      shows it)
  *   3. the late ones, up to drain_blocks after the halt: from what is left, in order of height then nonce, each at face value
  *      while it lasts
- *   4. only then the remainder, 75 % / 25 % (slashSplit), and only once remainderMaySplit says so at `atHeight`
+ *   4. only then the remainder, to the protocol reserves (slashSplit), and only once remainderMaySplit says so at `atHeight`
  */
 function settleClaims({ escrowMsat, claims = [], spentNonces = null, haltHeight, atHeight, clocks = MAINNET_CLOCKS, noteSigned }) {
   const when = liquidationSchedule({ haltHeight, clocks });
@@ -7760,7 +7711,7 @@ function settleClaims({ escrowMsat, claims = [], spentNonces = null, haltHeight,
   const may = remainderMaySplit({ haltHeight, atHeight, clocks });
   const split = may.ok && may.may ? slashSplit({ amountMsat: left }) : null;
   return { ok: true, paid, refused, proRata: short, rate: short ? Number((escrowMsat * 10000n) / owed) / 10000 : 1,
-    spentSetPublished: spentNonces !== null, remainderMsat: left, split: split ? { nodes: split.nodes, developers: split.developers } : null,
+    spentSetPublished: spentNonces !== null, remainderMsat: left, split: split ? { reserves: split.reserves } : null,
     remainderSplitsAt: when.remainderSplitsAt };
 }
 
@@ -7789,46 +7740,6 @@ function guardianSlashStands({ proof, departure = null, emergency = null, abando
     return { ok: true, slash: true, kind: 'ABANDONED', why: `stopped at ${proof.sinceHeight}, before the notice's leave_after ${departure.leaveAfterHeight}: a departure that stops serving early is abandonment (§23A.5)` };
   }
   return { ok: true, slash: true, kind: 'ABANDONED', why: `absent since ${proof.sinceHeight}, attested by ${proof.signers}: abandonment (§23A.4)` };
-}
-
-/**
- * WHO A SLASHED GUARDIAN'S BOND PAYS once its federation is CLOSED with nothing lost (§23A.5, FEDERATION.md rehearsal 14):
- * 75 % evenly to the census nodes active at the slash height LESS EVERY GUARDIAN OF THAT FEDERATION (they guarded the federation
- * that lost one), 25 % to the donation set (splitNodesDevelopers). Amounts in sat, BigInt; the nodes' division's leftover
- * satoshi go to the first node in key order, so the outputs sum to the amount. Answers { ok, nodes: [{ key, sats }], developers }.
- */
-function guardianSlashPayees({ amountSats, censusNodes, record }) {
-  if (typeof amountSats !== 'bigint' || amountSats <= 0n) return { ok: false, why: 'a slashed bond is a positive number of sat' };
-  const guardians = new Set((record && record.guardians || []).map((g) => hexKey(g.nodePubkey)));
-  const keys = [...new Set((censusNodes || []).map(hexKey))].filter((k) => k && !guardians.has(k)).sort();
-  if (!keys.length) return { ok: false, why: 'no census node outside the federation\'s guardians to pay' };
-  const { nodes, developers } = splitNodesDevelopers(amountSats);
-  const each = nodes / BigInt(keys.length);
-  const out = keys.map((key) => ({ key, sats: each }));
-  out[0].sats += nodes - each * BigInt(keys.length);
-  return { ok: true, nodes: out, developers, guardiansLeftOut: guardians.size };
-}
-
-/**
- * A LIQUIDATION'S REMAINDER, BY NAME (§23A.5: "only the remainder then, 75% / 25% as above" - "75% evenly to every active census
- * node at that height ... minus the slashed nodes and minus every guardian of the federation concerned; 25% to the donation set
- * of §22A - the developers - by share_bps"). `msat` BigInt; `censusNodes` keys at the spending height; `slashed` keys; `record`
- * the federation's; `donation` the donation set in force, recipients with `recipientPk` (x-only, hex or bytes) and `shareBps`.
- * The division's leftover goes to the first payee of each part in key order, so the payees sum to `msat`. Answers
- * { ok, payees: [{ key, msat, part: 'node' | 'donation' }] } or why not.
- */
-function liquidationRemainderPayees({ msat, censusNodes, slashed = [], record, donation }) {
-  if (typeof msat !== 'bigint' || msat <= 0n) return { ok: false, why: 'a remainder is a positive number of msat' };
-  const out = new Set((slashed || []).map(hexKey));
-  const nodes = guardianSlashPayees({ amountSats: msat, censusNodes: (censusNodes || []).filter((k) => !out.has(hexKey(k))), record });
-  if (!nodes.ok) return nodes;
-  const keyed = (donation || []).filter((r) => r && r.recipientPk !== undefined && Number.isInteger(r.shareBps) && r.shareBps > 0)
-    .map((r) => ({ key: hexKey(r.recipientPk), bps: BigInt(r.shareBps) })).sort((a, b) => (a.key < b.key ? -1 : 1));
-  const bps = keyed.reduce((a, r) => a + r.bps, 0n);
-  if (!keyed.length || bps !== 10000n) return { ok: false, why: 'the donation set in force names no key recipients whose shares make 10000 bps' };
-  const dev = keyed.map((r) => ({ key: r.key, msat: (nodes.developers * r.bps) / 10000n, part: 'donation' }));
-  dev[0].msat += nodes.developers - dev.reduce((a, r) => a + r.msat, 0n);
-  return { ok: true, payees: [...nodes.nodes.map((n) => ({ key: n.key, msat: n.sats, part: 'node' })), ...dev] };
 }
 
 // ---- arena-protocol/src/threshold.js
@@ -9053,6 +8964,7 @@ function seatingSignedTwice(cert, { node, seated, signature, justification = nul
 // shows which rules it stakes under. The texts are the rules as built; changing one is a new hash, i.e. a new rule.
 
 
+
 const te = new TextEncoder();
 const RULE_TEXTS = Object.freeze({
   equivocation: 'ARENA rule equivocation v1 (§10, kanban #25, RULED 2026-10-05 (b)): two checkpoints of one entry, each signed by its session key, '
@@ -9063,13 +8975,21 @@ const RULE_TEXTS = Object.freeze({
     + 'entries ENTRY_VOID.',
   finality: 'ARENA rule finality v1 (§13A, WINDOW-10-SPEC 2026-10-01): a result is PROVISIONAL until its objection window of exactly 600000 ms '
     + 'closes without a standing objection, then FINAL; a standing objection is decided by deterministic re-run, SUSPENDED meanwhile.',
-  slashing: 'ARENA rule slashing v1 (§5A.3, §5A.3B): the offences of §5A.3 (double result, signing a result the re-run contradicts, signing for a '
-    + 'round its operator played, a false operator declaration), each with its one-artifact proof, slash the bond; 75 % evenly to the active '
-    + 'census nodes, 25 % to the donation set.',
+  slashing: 'ARENA rule slashing v2 (§5A.3, §5A.3B, RULED 2026-11-02, kanban #976): the offences of §5A.3 (double result, signing a result the re-run '
+    + 'contradicts, signing for a round its operator played, a false operator declaration), each with its one-artifact proof, slash the bond. Each '
+    + 'affected player gets their real loss, once: F(contract, membership, true results) less what the settlement paid, floored at zero. The rest of '
+    + 'the bond goes to the protocol reserves. Nothing goes to the nodes, to the developers or back to the slashed node, and nothing is burned.',
 });
 /** A rule's hash: its text under the rule tag. */
 const ruleHash = (text) => taggedHash(TAG.contractRule, te.encode(text));
 const RULE_HASHES = Object.freeze(Object.fromEntries(Object.entries(RULE_TEXTS).map(([k, t]) => [k, ruleHash(t)])));
+/**
+ * THE WITHDRAWN SLASHING RULE'S HASH (§5A.3): "A testnet round published under v1's hash keeps that hash until it has settled." Its text is
+ * kept only to give that hash. No contract is built with it, mainnet refuses it, and a slash pays by v2 whichever hash a round names.
+ */
+const SLASHING_V1_HASH = ruleHash('ARENA rule slashing v1 (§5A.3, §5A.3B): the offences of §5A.3 (double result, signing a result the re-run contradicts, signing for a '
+  + 'round its operator played, a false operator declaration), each with its one-artifact proof, slash the bond; 75 % evenly to the active '
+  + 'census nodes, 25 % to the donation set.');
 /** disconnect_rule: what a player who stops sending inputs gets - 1, the run ends at its last receipted checkpoint (§15). */
 const DISCONNECT_LAST_MARK = 1;
 const DISCONNECT_RULES = Object.freeze([DISCONNECT_LAST_MARK]);
@@ -9082,15 +9002,17 @@ function buildRules({ claimWindowDays = 1, bondMinGameVerifySats, bondMinSettlem
 
 /**
  * DOES THIS BUILD SETTLE UNDER THE RULES A CONTRACT NAMES? { ok, why }. A contract naming none is bound only implicitly, as before;
- * one naming them must name this build's four hashes and a disconnect rule it runs, a claim window of 1 day or more, and a floor per
+ * one naming them must name this build's four hashes (on a test network, a round published under slashing v1 keeps that hash until it has
+ * settled, SLASHING_V1_HASH) and a disconnect rule it runs, a claim window of 1 day or more, and a floor per
  * role no lower than the round's bond_min.
  */
 function rulesStand(contract) {
   const r = contract && contract.rules;
   if (!r) return { ok: true, why: 'that round names no rules: bound by its config only' };
   const eq = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
+  const onTestnet = [NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4].some((id) => eq(contract.networkId, id));
   for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing'])
-    if (!eq(r[k], RULE_HASHES[k])) return { ok: false, why: `that round names a ${k} rule this build does not run: it is not selectable here, not slashed` };
+    if (!eq(r[k], RULE_HASHES[k]) && !(k === 'slashing' && onTestnet && eq(r[k], SLASHING_V1_HASH))) return { ok: false, why: `that round names a ${k} rule this build does not run: it is not selectable here, not slashed` };
   if (!DISCONNECT_RULES.includes(r.disconnect)) return { ok: false, why: `that round names disconnect rule ${r.disconnect}, which this build does not run` };
   if (!Number.isInteger(r.claimWindowDays) || r.claimWindowDays < 1) return { ok: false, why: 'a claim window is 1 day or more' };
   for (const k of ['bondMinGameVerifySats', 'bondMinSettlementSats'])

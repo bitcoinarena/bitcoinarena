@@ -19,7 +19,7 @@ import { settleClaims } from '../../arena-protocol/src/federation-slash.js';
 
 const isHex = (s, n) => typeof s === 'string' && new RegExp(`^[0-9a-f]{${n}}$`).test(s);
 // left in the paying client for the remainder pay's own fees (one payout's measured 352 msat, room for many payees)
-const REMAINDER_FEE_MARGIN_MSAT = 10_000n;
+export const REMAINDER_FEE_MARGIN_MSAT = 10_000n;
 
 // PENDING OUTPUTS (spec §23A.5 "Notes still in issuance at the halt", RULED 2026-10-14): `checkPending(federationHex, requestHex)`
 // recomputes an issuance request's note nonce, the hash160 of its blinded message and its amount (the fork's `mintv2 check-pending`)
@@ -116,7 +116,7 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
       paidNotes: got.paid.map((p) => ({ nonce: p.nonce, msat: String(p.msat), late: p.late, payoutPk: payTo.get(p.nonce) })),
       claimWindowCloses: liq.claimWindowCloses, lateClaimsUntil: liq.lateClaimsUntil,
       spentSetPublished: got.spentSetPublished, payouts: [...byKey.entries()].map(([payoutPk, msat]) => ({ payoutPk, msat: String(msat) })),
-      refused: got.refused, remainderMsat: String(got.remainderMsat), split: got.split ? { nodes: String(got.split.nodes), developers: String(got.split.developers) } : null,
+      refused: got.refused, remainderMsat: String(got.remainderMsat), split: got.split ? { reserves: String(got.split.reserves) } : null,
       remainderSplitsAt: got.remainderSplitsAt };
   }
   // THE CLAIMS TAKEN for one federation, as kept (kanban #723: the liquidation's event names every note accepted)
@@ -132,9 +132,8 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
  *      federation (`run` the stake-lock tool over that client), and claimed there;
  *   2. the table (`claims.plan`, over what that federation credited) is paid note by note: every note not paid yet, summed per
  *      payout key, locked to that key (the tool's `pay`) - so a late note is paid by a later pass from what is left, never twice;
- *   3. after drain_blocks, the remainder - what no note claimed - 75 % to the nodes and 25 % to the donation set, as
- *      `remainderPayees(fid, msat)` names them ([{ key, msat }]: the census at that height less the slashed nodes and that
- *      federation's guardians, evenly, and the donation set by share_bps - federation-slash.js guardianSlashPayees' rule).
+ *   3. after drain_blocks, the remainder - what no note claimed - to the protocol reserves (§5A.3, RULED 2026-11-02, kanban #976), as
+ *      `remainderPayees(fid, msat)` names them ([{ key, msat }]: the reserve key of the federation it was paid into).
  * `spendEscrow(toScript)` builds, signs and posts the escrow's spend (buildEscrowPegin + assemble + post) and answers { txid } or why.
  */
 export async function payOutLiquidation({ fid, v, claims, height, run, spendEscrow, remainderPayees = null, keep = () => {}, say = () => {} }) {

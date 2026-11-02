@@ -152,17 +152,13 @@ test('the door will not pick the slashing height, and says what the five proofs 
     // an empty list here means every offence looks as if it harmed nobody.
     const entries = entriesForSlash(w.holder.round, w.rid);
 
-    // AND THE SPLIT OVER ONE REAL FILED PROOF, with the census a node with a chain view would give:
-    // the round's seven seats and three other bonded nodes.
-    const seats = w.holder.round.signerNodes(w.rid);
-    const others = [b32(0x31), b32(0x32), b32(0x33)];
+    // AND WHAT ONE REAL FILED PROOF OWES (§5A.3, rule v2): an objection in time, so nobody has a loss and the bond goes to the reserves
     const proof = splitSlashEvidence(filed[0].bytes).proof;
     const contract = decodeRoundContract(new Uint8Array(w.holder.round.get(w.rid).contract));
     const said = await slashOwing({
       proof, offence: REPLAY_CONTRADICTS, contract, roundIdBytes: w.rid, entries,
       signed: { outcome: 'DELIVERED', score: 1 }, replayed: { outcome: 'DELIVERED', score: 2 },   // lowered: the named player is who it harmed
       slashHeight: contract.censusHeight + 50, tipHeight: contract.censusHeight + 100,
-      censusAt: async () => [...seats, ...others],
       bondSatsOf: async () => 100000n,
     });
 
@@ -173,12 +169,7 @@ test('the door will not pick the slashing height, and says what the five proofs 
       entriesSeen: entries.length,
       entryPlayers: entries.every((e) => e.playerPubkey instanceof Uint8Array),
       owed: said.ok && {
-        toPlayers: String(said.owing.toPlayers), toNodes: String(said.owing.toNodes),
-        toDevelopers: String(said.owing.toDevelopers),
-        // the seven seats are subtracted; the 75% reaches the three others
-        seatsPaid: seats.reduce((a, k) => a + (said.owing.nodes.get(toHex(k)) || 0n), 0n) === 0n,
-        othersPaid: others.map((k) => String(said.owing.nodes.get(toHex(k)) || 0n)),
-        players: said.owing.players.size, censusSeen: said.owing.censusSeen, seatsOut: said.owing.seatsOut,
+        playersMsat: String(said.owing.playersMsat), reservesMsat: String(said.owing.reservesMsat), players: said.owing.players.size,
       },
     };
     console.log('  FACTS (what the five filed proofs owe):', JSON.stringify(facts, null, 1));
@@ -195,9 +186,7 @@ test('the door will not pick the slashing height, and says what the five proofs 
     // THE ROUND'S OWN TWO ENTRIES, which is the input the first version of `entriesForSlash` lost.
     assert.equal(facts.entriesSeen, 2);
     assert.deepEqual(facts.owed, {
-      toPlayers: '50000', toNodes: '37500', toDevelopers: '12500',
-      seatsPaid: true, othersPaid: ['12500', '12500', '12500'],
-      players: 1, censusSeen: 10, seatsOut: 7,
+      playersMsat: '0', reservesMsat: '100000000', players: 0,
     });
   } finally { await w.close(); }
 });
