@@ -111,8 +111,9 @@ test('the founding draw matches, seat by seat and alternate by alternate', () =>
   const entries = v.entries.map((e) => ({ ...e, pubkey: fromHex(e.pubkey), txid: fromHex(e.txid), bondSats: BigInt(e.bondSats) }));
   for (const c of v.cases) {
     const d = drawGuardians({ entries, seed: fromHex(v.seed), height: v.height, nominal: v.nominal, bondMinGuardian: BigInt(v.bondMinGuardian), guardingOpen: new Set(c.guardingOpen),
-      seatedFirst: c.seatedFirst.map((k) => entries.find((e) => toHex(e.pubkey) === k)) });
+      seatedFirst: c.seatedFirst.map((k) => entries.find((e) => toHex(e.pubkey) === k)), ...(c.pressureBond ? { pressureBond: BigInt(c.pressureBond) } : {}) });
     assert.equal(d.ok, true, c.what);
+    assert.equal(d.atPressureBond, c.atPressureBond, c.what);
     assert.deepEqual(d.drawn.map((e) => toHex(e.pubkey)), c.drawn, c.what);
     assert.deepEqual(d.alternates.map((e) => toHex(e.pubkey)), c.alternates, c.what);
     assert.deepEqual([d.eligible, d.seatedFirst, d.why], [c.eligible, c.seatedFirstCount, c.why], c.what);

@@ -155,3 +155,85 @@ test('a cohort is drawn again every 6 blocks (2026-10-22: "every 6 blocks on all
   const late = capable.slice(5);
   assert.equal(foundingTrigger({ capable: late, federationExists: true, nominal: 10, abandonBlocks: 12, tip: 115, foundingWindow: FOUNDING_WINDOW }).height, 114);
 });
+
+// UNDER CAPACITY PRESSURE (§23A.3a, kanban #993): operators at or above B*_net take the drawn places first; the draw is otherwise the same.
+const ids = (l) => l.map((e) => toHex(e.pubkey));
+const pressured = () => [...[100000n, 100000n, 100000n, 50000n, 50000n, 50000n, 50000n, 50000n, 50000n, 50000n, 50000n, 50000n].map((bond, i) => node(i + 1, `op${i + 1}`, { bond }))];
+const base = { seed: b32(0x77), height: 200, nominal: 7, bondMinGuardian: 50000n };
+
+test('no pressure: the draw and the whole answer are what they were, whether the argument is left out or null', () => {
+  const entries = pressured();
+  const plain = drawGuardians({ ...base, entries });
+  assert.deepEqual(drawGuardians({ ...base, entries, pressureBond: null }), plain);
+  assert.deepEqual(drawGuardians({ ...base, entries, pressureBond: undefined }), plain);
+  assert.ok(!('atPressureBond' in plain), 'the answer gains no field');
+  assert.doesNotMatch(plain.why, /pressure/);
+});
+
+test('pressure: the operators at B*_net sit first, in ticket order among themselves; the same set whatever the census order', () => {
+  const entries = pressured();
+  const plain = drawGuardians({ ...base, entries });
+  const d = drawGuardians({ ...base, entries, pressureBond: 100000n });
+  assert.equal(d.ok, true, d.why); assert.equal(d.atPressureBond, 3); assert.equal(d.eligible, plain.eligible, 'it orders the pool, it does not shrink it');
+  const rich = ids(entries.slice(0, 3));
+  assert.deepEqual([...ids(d.drawn).slice(0, 3)].sort(), [...rich].sort());
+  const alone = drawGuardians({ ...base, nominal: 1, entries: entries.slice(0, 3) });
+  assert.deepEqual(ids(d.drawn).slice(0, 3), ids([...alone.drawn, ...alone.alternates]), 'their own ticket order');
+  assert.match(d.why, /under pressure 3 at or above B\*_net 100000 go ahead of the rest/);
+  assert.deepEqual(ids(drawGuardians({ ...base, entries: [...entries].reverse(), pressureBond: 100000n }).drawn), ids(d.drawn), 'the census order decides nothing');
+  assert.notDeepEqual(ids(drawGuardians({ ...base, seed: b32(0x78), entries, pressureBond: 100000n }).drawn), ids(d.drawn), 'the beacon still decides the order');
+});
+
+test('pressure with too few at B*_net: the other seats are drawn from the rest by ticket, then the alternates carry on', () => {
+  const entries = pressured();
+  const plain = drawGuardians({ ...base, entries });
+  const d = drawGuardians({ ...base, entries, pressureBond: 100000n });
+  const rich = new Set(ids(entries.slice(0, 3)));
+  const restInPlainOrder = [...ids(plain.drawn), ...ids(plain.alternates)].filter((k) => !rich.has(k));
+  assert.deepEqual([...ids(d.drawn).slice(3), ...ids(d.alternates)], restInPlainOrder.slice(0, 7), 'the rest keep the plain order among themselves');
+  assert.equal(d.drawn.length, 7); assert.equal(d.alternates.length, 3);
+});
+
+test('pressure with more at B*_net than seats: only they are drawn, and the next of them is the first alternate', () => {
+  const entries = Array.from({ length: 12 }, (_, i) => node(i + 1, `op${i + 1}`, { bond: i < 9 ? 100000n : 50000n }));
+  const d = drawGuardians({ ...base, entries, pressureBond: 100000n });
+  const rich = new Set(ids(entries.slice(0, 9)));
+  assert.ok(ids(d.drawn).every((k) => rich.has(k)));
+  assert.deepEqual(ids(d.alternates).map((k) => rich.has(k)), [true, true, false], 'nine of them: seven drawn, two alternates, then the rest');
+});
+
+test('ties at the boundary: exactly B*_net counts, a sat below does not, an operator counts its summed bond, equal bonds fall to the ticket', () => {
+  const at = node(1, 'at', { bond: 100000n }), below = node(2, 'below', { bond: 99999n }), two = [node(3, 'two', { bond: 60000n }), node(4, 'two', { bond: 40000n })];
+  const others = Array.from({ length: 8 }, (_, i) => node(i + 10, `op${i + 10}`, { bond: 50000n }));
+  const entries = [at, below, ...two, ...others];
+  const d = drawGuardians({ ...base, entries, pressureBond: 100000n });
+  assert.equal(d.atPressureBond, 2, 'at, and two by its sum: not below');
+  const ahead = ids([at, two[0]]);
+  assert.deepEqual([...ids(d.drawn).slice(0, 2)].sort(), [...ahead].sort(), 'the operator of two nodes holds one ticket, its lowest outpoint');
+  // equal bonds: the plain draw between the same two is the order, so the rule adds no tie of its own
+  const pair = drawGuardians({ ...base, nominal: 1, entries: [at, node(5, 'peer', { bond: 100000n })], pressureBond: 100000n });
+  const same = drawGuardians({ ...base, nominal: 1, entries: [at, node(5, 'peer', { bond: 100000n })] });
+  assert.deepEqual([ids(pair.drawn), ids(pair.alternates)], [ids(same.drawn), ids(same.alternates)]);
+});
+
+test('pressure leaves a succession alone: the old guardians first whatever their bonds, the rule orders the missing seats', () => {
+  const old = [node(1, 'opA', { bond: 50000n }), node(2, 'opB', { bond: 50000n }), node(3, 'opC', { bond: 50000n })];
+  const rich = node(4, 'opD', { bond: 100000n });
+  const entries = [...old, rich, ...Array.from({ length: 5 }, (_, i) => node(i + 5, `op${i + 5}`, { bond: 50000n }))];
+  const d = drawGuardians({ ...base, nominal: 4, entries, seatedFirst: old, pressureBond: 100000n });
+  assert.deepEqual(ids(d.drawn), ids([...old, rich]));
+  assert.equal(d.seatedFirst, 3); assert.equal(d.atPressureBond, 1);
+});
+
+test('pressure does not lower or lift who may sit: too few eligible founds nothing, and a bond under the floor is not eligible at any B*_net', () => {
+  const entries = [...Array.from({ length: 6 }, (_, i) => node(i + 1, `op${i + 1}`, { bond: 100000n })), node(7, 'small', { bond: 1000n })];
+  const d = drawGuardians({ ...base, entries, pressureBond: 1000n });
+  assert.equal(d.ok, false); assert.match(d.why, /not founded with fewer/);
+});
+
+test('B*_net that is not a positive amount is refused, not read as no pressure', () => {
+  for (const pressureBond of [0n, -1n, 100000, '100000', true]) {
+    const d = drawGuardians({ ...base, entries: pressured(), pressureBond });
+    assert.equal(d.ok, false); assert.match(d.why, /B\*_net under pressure is a positive amount/);
+  }
+});
