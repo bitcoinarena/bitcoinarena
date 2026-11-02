@@ -18,6 +18,7 @@ import { NETWORK_ID_TESTNET4, ARBITRATION_KEYS_TESTNET4, ARBITRATION_KEYS_REGTES
 import { genesisFor, committeesStand } from '../../arena-protocol/src/genesis.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
+import { seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
 import { agreedChain, httpProvider, headerSources } from './headers.js';
 import { fetchRound } from './join.js';
 import { explorerAgrees } from './explorer-check.js';
@@ -205,7 +206,7 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
     // limit, a restarting seat held an order's committee 20 s): read in the seats' order once more than half answered and the grace passed
     const said = new Array(nodes.length).fill(null);
     await majorityThenGrace(nodes.map(async (u, i) => {
-      try { const r = await fetcher(`${baseOf(u)}/seating?round=${seatHex}&role=${role}`, { signal: AbortSignal.timeout(SEATING_ASK_MS) }); said[i] = { status: r.status, ok: r.ok, body: await r.text() }; }
+      try { const r = await fetcher(`${baseOf(u)}/seating?round=${seatHex}&role=${role}${anchor ? `&at=${toHex(roundId)}` : ''}`, { signal: AbortSignal.timeout(SEATING_ASK_MS) }); said[i] = { status: r.status, ok: r.ok, body: await r.text() }; }
       catch { said[i] = null; }
     }), COMPARE_GRACE_MS);
     for (const [i, u] of nodes.entries()) {
@@ -216,9 +217,15 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
         if (r.status === 404 && /no seating certificate/.test(body)) { spoke = true; continue; }
         if (!r.ok) continue;
         spoke = true;
-        const cert = JSON.parse(body).cert;
-        const v = verifySeating(fromHex(cert), { roundId: seatId, role, drawn: got.drawn[role], slots: slotsForRole(contract, role), verify: curve.verify });
-        if (v.ok) { found = { seated: v.seating.seated, from: u }; break; }
+        const { cert, index = 0 } = JSON.parse(body);
+        // A TABLE'S LATER SEATING (kanban #1020): a check-in of this table at or before this round; of those a seat hands, the newest stands
+        if (anchor && index > contract.roundIndex) { refused.push(`${u}: a seating of a later round of the table`); continue; }
+        const v = verifySeating(fromHex(cert), { roundId: anchor && index > 0 ? seriesRoundIdOf(contract.seriesId, index) : seatId, role, drawn: got.drawn[role], slots: slotsForRole(contract, role), verify: curve.verify });
+        if (v.ok) {
+          if (!found || index > found.index) found = { seated: v.seating.seated, from: u, index };
+          if (!anchor) break;
+          continue;
+        }
         refused.push(`${u}: ${v.why}`);
       } catch { /* that seat says nothing */ }
     }
