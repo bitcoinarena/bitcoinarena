@@ -128,6 +128,37 @@ export function escrowSplitSpend({ escrow, payees, feeSats }) {
   return { ok: true, tx, prevouts: [{ value: escrow.value, script: escrow.script }], fee: { sats: feeSats } };
 }
 
+/**
+ * A SLASH OUT OF A HOLD OUTPUT (5A.3B, kanban #1021): a release or a fallback, the same transaction but for its wait. The OP_RETURN comes
+ * first, H(fraud_proof) || slash_height || payout_table_id, then the table's outputs in its order: "a fallback carries the same OP_RETURN
+ * and the same table as a release". The fee is what the table leaves of the bond.
+ *
+ *   hold     { txid (internal byte order), vout, value (sat, BigInt), script }, the output the start paid
+ *   clocks   { holdBlocks, fallbackBlocks }
+ *   table    a PayoutTable (slash.js), `tableId` its id
+ */
+export function holdSlashSpend({ path, hold, proofId, slashHeight, table, tableId, clocks }) {
+  if (path !== 'release' && path !== 'fallback') return { ok: false, why: `a slash leaves a hold output by its release or its fallback, not ${path}` };
+  const paid = table.outputs.reduce((a, o) => a + o.value, 0n);
+  if (paid > hold.value) return { ok: false, why: `that table pays ${paid} sat out of ${hold.value}` };
+  const sequence = path === 'release' ? clocks.holdBlocks : clocks.fallbackBlocks;
+  const tx = { version: 2, locktime: 0, inputs: [{ txid: hold.txid, vout: hold.vout, sequence }],
+    outputs: [arbitrationCommitment(proofId, slashHeight, tableId), ...table.outputs.map((o) => ({ value: o.value, script: o.script }))] };
+  return { ok: true, tx, prevouts: [{ value: hold.value, script: hold.script }], fee: { sats: hold.value - paid } };
+}
+
+/**
+ * THE NODE'S WAY OUT OF A HOLD OUTPUT: the return leaf, the whole output less the fee to `toScript`. nLockTime is the bond's maturity and
+ * the sequence is the return clock, so the leaf's two locks both read true from the first block they can.
+ */
+export function holdReturnSpend({ hold, bondMaturity, returnBlocks, toScript, feeSats }) {
+  if (typeof feeSats !== 'bigint' || feeSats < 0n) return { ok: false, why: 'the fee is BigInt satoshi' };
+  const value = hold.value - feeSats;
+  if (value < P2TR_DUST_SATS) return { ok: false, why: `a hold of ${hold.value} sat less a ${feeSats} sat fee is below dust` };
+  const tx = { version: 2, locktime: bondMaturity, inputs: [{ txid: hold.txid, vout: hold.vout, sequence: returnBlocks }], outputs: [{ value, script: toScript }] };
+  return { ok: true, tx, prevouts: [{ value: hold.value, script: hold.script }], fee: { sats: feeSats } };
+}
+
 /** What each arbitration key signs: the BIP-341 script-path sighash of the spend's one input under the slash leaf. */
 export function arbitrationSighash(built, leaf) {
   return tapSighash({ ...built.tx, prevouts: built.prevouts, inputIndex: 0, leafHash: leaf });
