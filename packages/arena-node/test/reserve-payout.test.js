@@ -8,7 +8,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../src/store.js';
-import { createReservePayouts, contractForInvoice, PAYOUT, planIdOf } from '../src/reserve-payout.js';
+import { createReservePayouts, contractForInvoice, PAYOUT, planIdOf, heldBeforeOwnPayment } from '../src/reserve-payout.js';
+import { capStands } from '../../arena-protocol/src/funding.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { trustedDealerSplit } from '../../arena-protocol/src/frost.js';
 import { evenGroupSecret, signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
@@ -206,4 +207,18 @@ test('a gateway that does not pay: the contract expires and is spent back to the
   w.fed.gatewayFails = false;
   assert.deepEqual(await w.seats[0].api.round({ height: 900 }), [], 'no re-try after a refund in this slice');
   assert.equal(w.fed.payments.length, 0);
+});
+
+test('a payment\'s cap reads the reserves as they were before it: its own plan does not shrink them under it, and another payment\'s still does', () => {
+  const plan = { refunds: [{ outpoint: 'a:4', amountMsat: '2000000' }], changeMsat: '1980000' };
+  // PLANNED: the one 2 000-sat output is marked spent, so 0 sat read as held
+  assert.equal(heldBeforeOwnPayment(0n, { state: PAYOUT.PLANNED, plan }), 2000n);
+  assert.equal(capStands({ proposalSats: 20n, paymentSats: 20n, reservesSats: 0n }).ok, false);
+  assert.equal(capStands({ proposalSats: 20n, paymentSats: 20n, reservesSats: heldBeforeOwnPayment(0n, { state: PAYOUT.PLANNED, plan }) }).ok, true);
+  // SENT: the change is held again and is not counted twice
+  assert.equal(heldBeforeOwnPayment(1980n, { state: PAYOUT.SENT, plan }), 2000n);
+  // no record, or one past the sending: what is held, as before
+  assert.equal(heldBeforeOwnPayment(1980n, null), 1980n);
+  assert.equal(heldBeforeOwnPayment(1980n, { state: PAYOUT.PAID, plan }), 1980n);
+  assert.equal(heldBeforeOwnPayment(1980n, { state: PAYOUT.SHORT, plan: null }), 1980n);
 });
