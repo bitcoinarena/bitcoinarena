@@ -8353,8 +8353,12 @@ a 100 sat entry pays nodes 4,000, protocol devs 2,000, game devs 2,000, reserves
 
 - **What a slash pays in (RULED 2026-11-02, kanban #976).** The rest of a slashed bond (§5A.3, §23A.5)
   enters as a reserve output, shown as `slash` in `GET /reserves`, and is spent only as any reserve is.
-  - It is on-chain money entering a federation, so it counts in that federation's load (§23A.3). It goes to the OPEN
-    federation with a reserve key and the lowest load, and only as far as that load stays under 80 %.
+  - It is on-chain money entering federations, so it counts in their load (§23A.3). It is **spread over every OPEN
+    federation with a reserve key**, so that no single one takes it all: the lowest load is filled up to the next
+    one's, then both together, and so on, none past 80 %. With loads of 20, 40 and 70 %, the first takes it up to 40,
+    the first two up to 70, then all three up to 80.
+  - Every seat computes the same parts from the federation records at the release's height. One escrow spend pays
+    them, one peg-in each. A part too small to peg in joins the largest.
   - What does not fit stays in its escrow and enters when a federation has room. A slash never closes a federation
     to deposits.
   - A network with no reserve key yet keeps it in the escrow until there is one.
