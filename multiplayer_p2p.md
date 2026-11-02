@@ -2585,8 +2585,10 @@ few blocks ago, so nobody reaches a dead one this way, and no bond fails for a r
 with an anchor.
 
 - **Mainnet, epoch 0:** the genesis founders, at least the census minimum of 10,
-  run the DKG before any bond exists, one share each, threshold 2/3. They bond naming
-  it, and epoch 1 is the first key by weight. `genesis_parameters` names the key and
+  run the DKG before any bond exists, one share each, threshold 2/3, each on its own
+  machine with `tools/founders-dkg.mjs`: there is no chain yet to run it on, so the deals
+  and statements go by files in a folder they share, and nothing in it is secret. They
+  bond naming it, and epoch 1 is the first key by weight. `genesis_parameters` names the key and
   who holds it (RULED 2026-11-02, kanban #1050):
 
   ```text
