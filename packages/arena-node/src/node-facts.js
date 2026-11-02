@@ -10,6 +10,7 @@
 // A NODE'S WORD ABOUT ITSELF: the signature says who said it, not that it is true. It decides nothing: no draw, no seat, no slash. It is what operators and other nodes read.
 // No addresses, paths, keys or wallet figures go in it.
 import os from 'node:os';
+import { readFileSync } from 'node:fs';
 import { sha256, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 /** How often a node reads its RAM and load and sends them. */
@@ -25,20 +26,30 @@ const te = new TextEncoder();
 export const factsDigest = (r) => sha256(te.encode(`ARENA/v1/NodeFacts\n${JSON.stringify([r.node, r.atMs, r.facts])}`));
 
 /** This machine, as a node can read it without asking anyone. */
-export function measureFacts({ release = null, roles = [], guardian = false, once = {}, osApi = os, versions = process.versions } = {}) {
+export function measureFacts({ release = null, commit = null, roles = [], guardian = false, once = {}, osApi = os, versions = process.versions } = {}) {
   const cpus = osApi.cpus() || [];
-  return { cores: once.cores ?? cpus.length, country: once.country ?? null, bandwidthMbps: once.bandwidthMbps ?? null, cpu: String((cpus[0] && cpus[0].model) || '').slice(0, 64), ramMb: Math.round(osApi.totalmem() / 1048576), freeRamMb: Math.round(osApi.freemem() / 1048576),
-    load: osApi.loadavg().map((x) => Math.round(x * 100) / 100), platform: osApi.platform(), arch: osApi.arch(), node: versions.node, release: release ? String(release).slice(0, 32) : null,
+  return { cores: once.cores ?? cpus.length, country: once.country ?? null, colo: once.colo ?? null, bandwidthMbps: once.bandwidthMbps ?? null, cpu: String((cpus[0] && cpus[0].model) || '').slice(0, 64), ramMb: Math.round(osApi.totalmem() / 1048576), freeRamMb: Math.round(osApi.freemem() / 1048576),
+    load: osApi.loadavg().map((x) => Math.round(x * 100) / 100), platform: osApi.platform(), os: osName({ osApi }), kernel: String(osApi.release()).slice(0, 32), arch: osApi.arch(), node: versions.node, release: release ? String(release).slice(0, 32) : null, commit: commit ? String(commit).slice(0, 12) : null,
     roles: [...roles].map(String).slice(0, 8), guardian: !!guardian, uptimeS: Math.round(osApi.uptime()) };
 }
 
-/** The country this machine reaches the internet from, two letters, by Cloudflare's trace: only `loc` is read, its line with the address is dropped. Null when unknown. */
-export async function measureCountry({ fetcher = fetch } = {}) {
+/**
+ * WHERE THIS MACHINE IS, FOUND HERE AND NEVER AS AN ADDRESS (the owner 2026-11-02: "herkunft, nicht ip senden aber selber erfassen und senden"): Cloudflare's trace names its country
+ * and the data centre it reached. Only those two are read; the line with the address is dropped and goes nowhere. Null when unknown.
+ */
+export async function measureOrigin({ fetcher = fetch } = {}) {
   try {
     const r = await fetcher('https://www.cloudflare.com/cdn-cgi/trace', { signal: AbortSignal.timeout(10000) });
-    const m = /^loc=([A-Z]{2})$/m.exec(await r.text());
-    return m ? m[1] : null;
+    const t = await r.text();
+    const loc = /^loc=([A-Z]{2})$/m.exec(t), colo = /^colo=([A-Z]{3})$/m.exec(t);
+    return loc ? { country: loc[1], colo: colo ? colo[1] : null } : null;
   } catch { return null; }
+}
+
+/** The operating system's name: its pretty name on Linux, else the type and release. */
+export function osName({ osApi = os, read = readFileSync } = {}) {
+  try { const m = /^PRETTY_NAME="?([^"\n]+)"?$/m.exec(String(read('/etc/os-release', 'utf8'))); if (m) return m[1].slice(0, 48); } catch { /* no such file: not Linux */ }
+  return `${osApi.type()} ${osApi.release()}`.slice(0, 48);
 }
 
 /** The download speed from a few peers, Mbit/s, the middle reading; null with none answering. */
