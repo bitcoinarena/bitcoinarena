@@ -614,9 +614,11 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24]);
 /** EVERY BONDED NODE HOSTS A MARKET WITH A SOURCE (kanban #920): its rounds say so in their question (`event.allBonded`), so no node's advertisement has to name each new market. */
 const SOURCE_HOSTS_VERSION = 23;
+/** THE FOUNDING DRAW UNDER PRESSURE (kanban #993, §23A.3a): no round's layout changes; from FOUNDING_PRESSURE_HEIGHT only a node that advertises this version is a candidate. */
+const FOUNDING_PRESSURE_VERSION = 24;
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
@@ -771,6 +773,13 @@ const CUSTODY_GATEWAY_VERSION = 22;
  * by epoch N-2.
  */
 const SEATING_RULES_EPOCH = Object.freeze({ regtest: 0, devnet: 0, testnet4: null, mainnet: null });
+/**
+ * HOW OLD A PEG-IN MAY BE AND STILL COUNT (§23A.3a, kanban #999/#1026), in blocks at the first height of the epoch being seated. A genesis
+ * parameter; the test networks' genesis bytes cannot take it, so it stands here beside genesis. It applies from SEATING_RULES_EPOCH.
+ * testnet4 is a week, not a day, because a peg-in there needs 100 confirmations.
+ */
+const PEG_IN_MAX_AGE = Object.freeze({ mainnet: 4320, testnet4: 1008, regtest: 100, devnet: 100 });
+const pegInMaxAgeOf = (network) => { const n = network === 'testnet' ? 'testnet4' : network; return Object.prototype.hasOwnProperty.call(PEG_IN_MAX_AGE, n) ? PEG_IN_MAX_AGE[n] : null; };
 /** The activation epoch of the 2.0 seating rules on `network` (SEATING_RULES_EPOCH; 'testnet' is testnet4, as networkAnchor reads it). */
 const seatingRulesEpochOf = (network) => {
   const n = network === 'testnet' ? 'testnet4' : String(network || '');
@@ -802,6 +811,9 @@ const MIN_PLAYERS_PER_ROUND = 2;
  * The number is the spec's reference, not a taste: sixty seconds.
  */
 const MIN_ENTRY_WINDOW_MS = 60000n;
+
+/** min_publication_lead, 5A.5's other number: how long before a round's committee forms its publication must already be in a block (kanban #1015). */
+const MIN_PUBLICATION_LEAD_MS = 300000n;
 
 /**
  * THE START DEADLINE A ROUND GETS WHEN IT NAMES NONE (§16), in ticks after a
@@ -17321,6 +17333,8 @@ function readInvite(invite) {
 
 const FEDERATION_STATUS = Object.freeze({ OPEN: 1, DRAINING: 2, CRITICAL: 3, CLOSED: 4, HALTED: 5 });
 const GONE = Object.freeze({ DEPARTED: 1, ABANDONED: 2 });
+/** The capacity band a record names (§23A.3a), after its height; a record that names none ends at its height, as every record before did. */
+const CAPACITY_BAND = Object.freeze({ CALM: 1, PRESSURE: 2, CRITICAL: 3, FULL: 4 });
 const nameOf = (table, v) => Object.keys(table).find((k) => table[k] === v);
 const cmp = (a, b) => { for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i] - b[i]; return a.length - b.length; };
 
@@ -17357,6 +17371,10 @@ function encodeFederationRecord(r) {
   w.u64(r.exposureCapSats);
   w.u64(r.reserveSats);
   w.u32(r.height);
+  if (r.capacityBand !== undefined && r.capacityBand !== null) {
+    if (!CAPACITY_BAND[r.capacityBand]) throw new Error(`capacity band ${r.capacityBand} is not one of ${Object.keys(CAPACITY_BAND).join(', ')}`);
+    w.u8(CAPACITY_BAND[r.capacityBand]);
+  }
   return w.finish();
 }
 
@@ -17371,6 +17389,7 @@ function decodeFederationRecord(bytes) {
     gone: r.vec((rr) => ({ peerKey: rr.bytes(33), sinceHeight: rr.u32(), kind: rr.u8(), proofRef: rr.bytes32() })),
     exposureCapSats: r.u64(), reserveSats: r.u64(), height: r.u32(),
   };
+  if (r.at !== bytes.length) { const band = nameOf(CAPACITY_BAND, r.u8()); if (!band) throw new Error('not a capacity band'); out.capacityBand = band; }
   if (r.at !== bytes.length) throw new Error('trailing bytes after the federation record');
   encodeFederationRecord(out);                       // held to the encoder's rules
   return out;
@@ -17454,6 +17473,23 @@ function verifyFederationRecord(bytes, { census, verify, inviteFederationId, net
   if (signers.size < r.threshold)
     return { ok: false, why: `${signers.size} of its bonded guardians signed it, and a record needs ${r.threshold}` };
   return { ok: true, record: r, status: nameOf(FEDERATION_STATUS, r.status), signers: signers.size, id };
+}
+
+/**
+ * Of a federation's verified records [{ record, status }], the one to read: the highest height. Two can stand at one height, since a record's
+ * reserve is read when it is gathered: a CLOSED one first, then the lowest record id (§23A.3a), so seats that hold both pick the same.
+ */
+function highestVerified(rows) {
+  const idOf = (r) => toHex(federationRecordId(r));
+  let best = null;
+  for (const x of rows) {
+    if (!best || x.record.height > best.record.height) { best = x; continue; }
+    if (x.record.height !== best.record.height) continue;
+    const closed = (y) => y.status === 'CLOSED';
+    if (closed(x) !== closed(best)) { if (closed(x)) best = x; continue; }
+    if (idOf(x.record) < idOf(best.record)) best = x;
+  }
+  return best;
 }
 
 /** Of several verified records of one federation, the newest by height (§23A.4: "newest height with valid signatures wins"). */
@@ -29674,6 +29710,7 @@ function seriesCreatorStands(template, signature, { verify, seriesIdOf }) {
 // is 0x52, 'R', in keeping with the ASCII "ARN". A vote (27A.7.3) is "ARN" 'V'
 // (ballot.js, 2026-10-13), 77 bytes: the kind byte keeps them apart.
 
+
 const PUBLICATION_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e]);   // "ARN"
 const PUBLICATION_KIND_ROUND = 0x52;                             // 'R'
 const PUBLICATION_BYTES = 36;
@@ -29725,6 +29762,25 @@ function findPublication(view, roundIdBytes) {
     }
   }
   return null;
+}
+
+/** The time in a block header, in ms: four little-endian bytes at offset 68. */
+function headerTimeMs(header) {
+  const h = typeof header === 'string' ? Uint8Array.from(header.match(/../g).map((x) => parseInt(x, 16))) : header;
+  return BigInt(new DataView(h.buffer, h.byteOffset, h.byteLength).getUint32(68, true)) * 1000n;
+}
+
+/**
+ * THE LEAD OF A PUBLICATION (kanban #1015, 5A.5: "committee_time >= published_at + min_publication_lead", reference 5 minutes). published_at is the time in the header of the
+ * block that holds the publication, so every node reads the same number. A round whose committee forms sooner gave nobody the time to see it coming. Regtest mines on demand
+ * and is not held to it, and a free round is not published at all, so the roster does not ask.
+ */
+function publicationLeadHolds({ committeeTimeMs, publishedAtMs, network = null, leadMs = MIN_PUBLICATION_LEAD_MS }) {
+  if (network === 'regtest') return { ok: true };
+  if (typeof committeeTimeMs !== 'bigint' || typeof publishedAtMs !== 'bigint') return { ok: false, why: 'that round\'s publication has no time to measure its lead from' };
+  if (committeeTimeMs < publishedAtMs + leadMs)
+    return { ok: false, why: `that round's committee forms at ${committeeTimeMs}, ${committeeTimeMs - publishedAtMs} ms after its publication at ${publishedAtMs}, where this protocol asks for ${leadMs}` };
+  return { ok: true };
 }
 
 /**
