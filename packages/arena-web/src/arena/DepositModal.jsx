@@ -256,6 +256,8 @@ export class DepositModal extends React.Component {
           <code ref={this.box} className="dep-invoice">{s.invoiceText}</code>
           <button type="button" className={'dep-copy' + (s.copy ? ' ' + s.copy : '')} disabled={!s.invoice} onClick={() => this.copyInvoice()}>
             {s.copy === 'copied' ? 'Copied ✓' : s.copy === 'failed' ? 'Copy failed - select the invoice' : 'Copy invoice'}</button>
+          {/* THE DEEP LINK (§24, kanban #1018): a wallet on this same device opens the invoice with a tap */}
+          {s.invoice ? <a className="dep-copy dep-open" href={'lightning:' + s.invoice}>Open in wallet</a> : null}
         </div>
         {/* WHAT IS HAPPENING NOW, UNDER THE INVOICE (2026-09-30): making the invoice, waiting for the payment, the e-cash in the wallet */}
         <div className={'pay-status' + (st && st.kind ? ' ' + st.kind : '')}>

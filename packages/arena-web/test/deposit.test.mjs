@@ -39,6 +39,7 @@ test('the tabs, the first chosen: its invoice, the QR, Copy, the gateway named; 
   assert.match(h, /<div class="dep-amount">Pay 101 sat from any Lightning wallet to top up your player wallet\.<\/div><div class="dep-why">why one round<\/div>/);
   assert.match(h, /<svg data-i="lntbs101000n1x"><\/svg>/);
   assert.match(h, /<code class="dep-invoice">lntbs101000n1x<\/code><button type="button" class="dep-copy">Copy invoice<\/button>/);
+  assert.match(h, /<a class="dep-copy dep-open" href="lightning:lntbs101000n1x">Open in wallet<\/a>/, 'a wallet on this device opens the invoice with a tap (kanban #1018)');
   assert.match(h, /<div class="pay-status busy"><div class="pay-status-text">Waiting for your Lightning payment of 101 sat via gw-a\.example:8443 …<\/div><div class="pay-bar"><div class="pay-bar-fill" style="width:66\.66666666666666%"><\/div>/);
   m.close();
   assert.deepEqual([o.closed, m.doneCalls], [1, 1]);
