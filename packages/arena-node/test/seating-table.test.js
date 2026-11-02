@@ -144,7 +144,7 @@ const reseatFixture = ({ failingNode = true, lastSeated = 6, withReserve = true 
     return encodeSeatingCertificate({ roundId: rid, role: 'settlement', seated: keys, signatures: list.map((n) => ({ nodePubkey: n.pubkey, signature: signSeating({ roundId: rid, role: 'settlement', seated: keys }, signer(n)) })) }); };
   assert.equal(agent.keepCert(rid0, 'settlement', certFor(rid0, seat7)).ok, true);
   const present = (n, rid) => agent.takePresent(signPresent({ roundId: rid, role: 'settlement', nodePubkey: n.pubkey }, signer(n)));
-  return { agent, rows, contractIn: cIn, setContractOf: (fn) => { contractOf = fn; }, rid0, ridIn, ridBefore, ridAfter, dead, present, certFor, seat7, withReserve, tick: async (at) => { if (at !== undefined) now = at; await agent.tick(); }, closeMs: Number(cIn.startTimeMs) - 120000, get now() { return now; } };
+  return { agent, round, rows, contractIn: cIn, setContractOf: (fn) => { contractOf = fn; }, rid0, ridIn, ridBefore, ridAfter, dead, present, certFor, seat7, withReserve, tick: async (at) => { if (at !== undefined) now = at; await agent.tick(); }, closeMs: Number(cIn.startTimeMs) - 120000, get now() { return now; } };
 };
 
 test('a seated node gone from a table: a later check-in seats the reserve from that round on, not before (kanban #1020)', async () => {
@@ -214,4 +214,17 @@ test('a seat that never wrote the check-in keeps its certificate, built from the
   assert.deepEqual(f.agent.keepCert(f.ridIn, 'settlement', bytes, { index: c.roundIndex }), { ok: true, kept: true });
   assert.deepEqual(f.agent.seatedFor(f.ridAfter, 'settlement'), list.map((n) => toHex(n.pubkey)), 'and the rounds after it are seated by it');
   assert.equal(f.agent.certRoundOf(f.ridAfter, 'settlement'), c.roundIndex, 'the door names the check-in\'s index though this seat has no row of it');
+});
+
+test('a seat restarted with no row of the check-in still knows the table\'s later seating (kanban #1020)', () => {
+  const f = reseatFixture();
+  const list = [...nodes.slice(0, 6), nodes[7]];
+  const bytes = f.certFor(f.ridIn, list);
+  const c = f.contractIn;
+  f.rows.delete(toHex(f.ridIn));
+  f.setContractOf((rid, index) => (index === c.roundIndex ? c : null));
+  assert.equal(f.agent.keepCert(f.ridIn, 'settlement', bytes, { index: c.roundIndex }).ok, true);
+  const again = seatingAgent({ round: f.round, roster: { committeeFor: () => ({ ok: true, drawn: nodes.map((n) => ({ pubkey: n.pubkey, advert: { endpoint: n.endpoint } })) }) }, sign: signer(nodes[0]), verify: () => true, fetcher: async () => new Response('{}'), nowMs: () => f.now });
+  assert.deepEqual(again.seatedFor(f.ridAfter, 'settlement'), list.map((n) => toHex(n.pubkey)));
+  assert.equal(again.certRoundOf(f.ridAfter, 'settlement'), c.roundIndex);
 });
