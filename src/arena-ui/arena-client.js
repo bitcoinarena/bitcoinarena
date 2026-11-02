@@ -12780,6 +12780,8 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
       ...(e.ancestor ? { ancestor: true } : {}),
     });
     if (!output.ok) { excluded.push({ ...e, why: output.why }); continue; }
+    // A REAL BOND LEFT OUT STAYS READABLE AS ONE (§23A.5, kanban #1059): every exclusion from here on is an output its node's own script holds, and an ABANDONED row's reader acts on it. Not in any leaf or root
+    const heldOut = { advert: read.advert, bondSats: output.valueSats };
 
     let chainSays = null;
     if (facts) {
@@ -12825,10 +12827,10 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
     // network's maturity, and it is excluded by name.
     const confirmed = chainSays ? chainSays.height : e.height;
     const matures = maturityStands(read.advert, confirmed, network);
-    if (!matures.ok) { excluded.push({ ...e, why: matures.why }); continue; }
+    if (!matures.ok) { excluded.push({ ...e, ...heldOut, why: matures.why }); continue; }
     // A TEMPLATE-3 BOND NAMES A KEY NEWEST WITHIN census_confirmations OF ITS CONFIRMATION (5A.3B, kanban #1031). `bond.standingKeys` is the reader's list.
     const named = bondNamesStandingKey(read.advert, confirmed, bond && bond.standingKeys, Number(contract.censusConfirmations ?? 0));
-    if (!named.ok) { excluded.push({ ...e, why: named.why }); continue; }
+    if (!named.ok) { excluded.push({ ...e, ...heldOut, why: named.why }); continue; }
     // WHO STILL NAMES A KEY (5A.3B "Retired"): an unspent bond or a hold output, whatever the rest of this census makes of its node. A floor, a version or serving = false keeps a node
     // out of a census and takes no bond off a key. The body read here is the one the bond's own script was built from
     if (named.epoch !== undefined) { const k = toHex(read.advert.censusKey); namedKeys[k] = (namedKeys[k] || 0) + 1; }
@@ -12850,7 +12852,7 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
     if (!sumsBonds(contract) && bondSats < contract.bondMinSats) {
       excluded.push({
         ...e,
-        bondSats,
+        ...heldOut,
         why: `that bond is ${bondSats} where this round's floor is ${contract.bondMinSats}`,
       });
       continue;
@@ -12860,10 +12862,10 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
     // role this census is for, or speaks no version this software does, is a
     // node that has not said it can serve the round it is being counted into.
     const roles = read.advert.roles || [];
-    if (!roles.length) { excluded.push({ ...e, why: 'that advertisement declares no role' }); continue; }
+    if (!roles.length) { excluded.push({ ...e, ...heldOut, why: 'that advertisement declares no role' }); continue; }
     // STEPPED OUT (§5A.3 "advertisement declares serving = true"): with updates to come, the newest one decides below
     if (!versionAfterUpdates && read.advert.serving === false) {
-      excluded.push({ ...e, notServing: true, why: 'that advertisement says serving = false: its node stepped out of the census, its bond untouched' });
+      excluded.push({ ...e, ...heldOut, notServing: true, why: 'that advertisement says serving = false: its node stepped out of the census, its bond untouched' });
       continue;
     }
 
@@ -12875,6 +12877,7 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
     if (!versionAfterUpdates && !versions.includes(contract.protocolVersion)) {
       excluded.push({
         ...e,
+        ...heldOut,
         // PROTOCOL TOO OLD, BY NAME (scope 3): a node left out for the version it speaks, as the page shows it
         tooOld: true, speaks: versions,
         why: `that advertisement speaks ${versions.map(protocolVersionName).join(', ') || 'no version'} and this `

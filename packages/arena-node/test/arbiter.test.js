@@ -47,6 +47,7 @@ async function filed() {
 async function intake(w) {
   const at = `http://127.0.0.1:${w.holder.port}`;
   const list = await (await fetch(`${at}/slashes`)).json();
+  assert.deepEqual(list.abandonedSlashes, [], 'no federation record here names anybody ABANDONED (§23A.5, kanban #1059)');
   const s = list.slashes[0];
   const recs = new Uint8Array(await (await fetch(`${at}/slash-proofs?round=${s.round}&entry=${s.entry}`)).arrayBuffer());
   const records = []; for (let i = 0; i < recs.length; i += SLASH_EVIDENCE_BYTES) records.push(recs.subarray(i, i + SLASH_EVIDENCE_BYTES));

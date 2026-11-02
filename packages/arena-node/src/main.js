@@ -69,6 +69,7 @@ import { censusKeyFirstHeight, genesisFor } from '../../arena-protocol/src/genes
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { clocksFor } from '../../arena-protocol/src/federation-slash.js';
 import { censusFirstBlock } from '../../arena-protocol/src/census.js';
+import { bondsOf } from '../../arena-protocol/src/abandoned-slash.js';
 import { readSeriesLines } from './series-line.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../arena-protocol/src/test-donation-sets.js';
 import { TEST_DONATION_SET_KEYS_REGTEST } from '../../arena-protocol/src/test-donation-set-keys-regtest.js';
@@ -453,6 +454,12 @@ if (url) {
         const census = await chainCensusKept('ballot', networkIdHex, height, { networkId: fromHex(networkIdHex), censusHeight: height, censusConfirmations: 1,
           bondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000), protocolVersion: PROTOCOL_VERSION });
         return census.ok ? (census.excluded || []).filter((x) => x.spentBy) : null;
+      },
+      // AND EVERY OUTPUT THAT CENSUS READ, THE UNDER-THE-FLOOR ONES AMONG THEM (§23A.5, kanban #1059): what a guardian's ABANDONED row left is slashed
+      censusBondsAt: async (networkIdHex, height) => {
+        const census = await chainCensusKept('ballot', networkIdHex, height, { networkId: fromHex(networkIdHex), censusHeight: height, censusConfirmations: 1,
+          bondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000), protocolVersion: PROTOCOL_VERSION });
+        return census.ok ? bondsOf(census) : null;
       },
       everyMs: Number(process.env.ARENA_BALLOT_EVERY_MS || 10000),
     },

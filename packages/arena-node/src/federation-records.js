@@ -13,11 +13,13 @@
 // is DRAINING, CRITICAL or CLOSED makes the federation draining at this seat (no new round names it).
 //
 // A GUARDIAN WHO SPENT HIS BOND WHILE SEATED is ABANDONED from that spend (spentGuardians, §23A.5, kanban #1054), read off the census, so no one has to attest it.
+// WHAT AN ABANDONED ROW LEFT is listed for the arbitration set (abandonedSlashes, §23A.5, kanban #1059): the record is the filing, and an output left is slashed on the row's proof_ref.
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { nodeBonds } from '../../arena-protocol/src/census.js';
 import { abandonmentProof, bondSpentProof } from '../../arena-protocol/src/absence.js';
 import { guardianSlashStands } from '../../arena-protocol/src/federation-slash.js';
+import { abandonedRows, outputsLeft, abandonedSlashId } from '../../arena-protocol/src/abandoned-slash.js';
 import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDeparture, emergencyHex, readEmergencyHex } from './absences.js';
 import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureId } from '../../arena-protocol/src/emergency.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
@@ -77,6 +79,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   censusAt = null,
   // WHAT ENDED THE BONDS OF THAT CENSUS (§23A.5, kanban #1054): async (height) -> [{ pubkey, txid, vout, spentBy: { txid, height } }], the census's own exclusions (main.js ballot.censusSpendsAt)
   spendsAt = null,
+  // EVERY OUTPUT THAT CENSUS READ, THE UNDER-THE-FLOOR ONES AMONG THEM (§23A.5, kanban #1059): async (height) -> its entries and exclusions (main.js ballot.censusBondsAt), for what an ABANDONED row left
+  bondsAt = null,
   // THE CHAIN'S TIP: async () -> height, for the census a seat that holds no round builds and checks records from
   chainTip = null,
   // THE CHAIN'S CENSUS FIRST: a seat that runs no series - federation T2's relay seats hold 8 old rounds, census 156768
@@ -161,6 +165,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // multiple of CHAIN_BASIS_STEP, so a federation's seats name the same one; a gatherer's named height is read too. Read ahead by
   // gatherAll (the census read is async, basis is not) and kept; only when no held round gives a basis, so a seat of a series is as it was.
   const chainCensus = new Map();             // height -> { entries, spends } once read; null while reading
+  const bondsRead = new Map();               // height -> what bondsAt answered, the newest few
   const chainCensusAt = async (h) => {
     const entries = await censusAt(h);
     if (!Array.isArray(entries) || !entries.length) return null;
@@ -340,6 +345,26 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       if (stands.ok && stands.slash) out.push({ row, gone: { peerKey: g.peerKey, sinceHeight: proof.sinceHeight, kind: GONE.ABANDONED, proofRef: proof.id } });
     }
     return out;
+  }
+
+  /**
+   * THE SLASHES THE RECORDS FILED (§23A.5, RULED 2026-11-02, kanban #1058, #1059): one row per output an ABANDONED row of a kept record left, read off the chain's census at the shared basis
+   * height, for the arbitration set's intake (GET /slashes). No row, no read: a seat whose records name nobody ABANDONED pays nothing here. The output's spent state is the census's, and the
+   * set reads its own chain before it acts. Answers [{ federation, node, peer, proof, proofRef, since, recordHeight, txid, vout, sats, template }].
+   */
+  async function abandonedSlashes() {
+    const rows = [...kept.entries()].flatMap(([federation, k]) => abandonedRows(k.record).map((r) => ({ federation, height: k.height, r })));
+    if (!rows.length || typeof bondsAt !== 'function' || typeof chainTip !== 'function') return [];
+    const h = Math.floor((Number(await chainTip()) - CHAIN_BASIS_LAG) / CHAIN_BASIS_STEP) * CHAIN_BASIS_STEP;
+    if (!bondsRead.has(h)) {
+      const got = await bondsAt(h);
+      if (!Array.isArray(got)) return [];
+      bondsRead.set(h, got);
+      while (bondsRead.size > 2) bondsRead.delete(bondsRead.keys().next().value);
+    }
+    return rows.flatMap(({ federation, height, r }) => outputsLeft(bondsRead.get(h), r.nodePubkey, r.sinceHeight).map((o) => ({ federation, node: toHex(r.nodePubkey), peer: toHex(r.peerKey),
+      proof: toHex(abandonedSlashId({ proofRef: r.proofRef, txid: o.txid, vout: o.vout })), proofRef: toHex(r.proofRef), since: r.sinceHeight, recordHeight: height,
+      txid: o.txid, vout: o.vout, sats: String(o.sats), template: o.template })));
   }
 
   /** The body for one federation from a basis, with `gone` - the guardians whose nodes said they are leaving. */
@@ -663,6 +688,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     censusKeys: () => { const b = basis(); return b.ok ? (b.census.entries || []).map((e) => e.pubkey).filter(Boolean) : []; },
     /** THE CENSUS THIS SEAT READS, its entries and height (GET /roles), or why none. */
     censusNow: () => { const b = basis(); return b.ok ? { ok: true, height: b.height, entries: b.census.entries || [] } : { ok: false, why: b.why }; },
+    abandonedSlashes,
     recordOf: (fidHex) => { const k = kept.get(String(fidHex).toLowerCase()); return k ? { record: k.record, status: k.status, height: k.height, bytes: k.bytes } : null; },
     /**
      * HOW MANY OF A FEDERATION'S GUARDIAN SEATS HOLD ITS RECORD CLOSED (kanban #577, measured 2026-10-22 on 89ce310e: the first guardian to

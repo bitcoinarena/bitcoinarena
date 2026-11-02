@@ -56,6 +56,7 @@ test('50,000 + 32,000 of one node count as 82,000 in protocol 19; protocol 18 st
   assert.deepEqual(v18.eligible.map((e) => toHex(e.txid)), [toHex(first.entry.txid)]);
   const out = v18.excluded.find((e) => toHex(e.txid) === toHex(added.entry.txid));
   assert.match(out.why, /that bond is 32000 where this round's floor is 50000/);
+  assert.deepEqual([toHex(out.advert.nodePubkey), out.bondSats], [toHex(out.pubkey), 32000n], 'an output under the floor reads as the bond it is, for an ABANDONED row (§23A.5, kanban #1059)');
   assert.equal(nodeBonds(v18.eligible)[0].bondSats, 50000n);
 });
 
