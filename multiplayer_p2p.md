@@ -2145,15 +2145,64 @@ a transaction is §5A.3B.
 
 | Offence | Proof |
 |---|---|
-| Signing two different results for the same (round, player) | The two signed results |
+| Signing two different results for the same (round, player, transcript_hash) | The two signed results |
 | Signing a result contradicted by replay of the canonical transcript | Transcript + receipts + replay |
-| Signing a payout table that does not equal `F(contract, membership, results)` | The table and its inputs |
-| Settlement action without the required 5-of-7 result and payout signatures | The settlement record |
-| Claiming a fee share without meeting the availability rule (§22A) | Receipt record |
-| Withholding a settlement signature: a seat that acknowledged the round's settlement transaction and did not sign it before the locks expired | The signed acknowledgement + the transaction + the expiry — a stall refunds losers and unpays winners, so it is an offence and not only a delay |
+| Acknowledging a payout table that does not equal `F(contract, membership, results)` | The seat's `SettlementAck` + the threshold of acks + the table + for each entry that differs, its result with the threshold of `FINAL` signatures, or its Entry Contract |
+| Withholding a settlement signature: a seat that acknowledged the round's settlement transaction and did not sign it before the locks expired | The `SettlementAck` + the transaction + the expiry — a stall refunds losers and unpays winners, so it is an offence and not only a delay |
 | Signing a release with no valid proof (template 3, §5A.3B, kanban #971) | The release, whose witness names the signers + the bytes that hash to its `OP_RETURN` and do not check |
 | Signing a release or an escrow payout that pays other than its `payout_table` (template 3, §5A.3B) | The release or the payout + the table |
 | Signing an `AUDIT` (§13A.1) over a result a valid objection contradicts (kanban #724, #725) | The `AUDIT` + its signature + the rows it vouched for + transcript + receipts + replay of the objection that held |
+
+**Only bytes the accused signed (RULED 2026-11-02, kanban #1035).** A row of
+this table stands only on bytes the accused signed with its node key. A FROST
+signature names nobody, so it is never the proof.
+
+- *Two results.* A `PlayerResult` names no entry and every PLAY is an entry, so
+  two honest entries of one player are two results for one (round, player).
+  The offence is two results for one transcript. A node that doubles under a
+  second transcript has signed at least one result that replay contradicts,
+  which is the next row.
+- *`SettlementAck`.* Before a seat joins the FROST signing of a settlement it
+  signs, with its node key:
+
+  ```text
+  SettlementAck { round_id, payout_table_id, settlement_txid }
+  ```
+
+  `payout_table_id` is the id of the table the seat computed. A seat joins the
+  signing only with acks from at least the threshold over the same three
+  fields, and each seat keeps them with the table and publishes them with the
+  settlement (`GET /settlement-acks`). A round of protocol 22 and later settles
+  this way. The cost is one signature per seat per settlement, off chain.
+- *The table.* A settlement table's rows name their entry: `entry_id`,
+  `player_pubkey`, `amount_msat`, and the table names the late entry a second
+  settlement is for. So what a seat said about each entry is its own word, and
+  nobody filing a proof can choose which of a player's entries a row meant.
+- *What the table row reads.* A table no threshold of seats acked moved nothing
+  and proves nothing. `F` is read only on entries with a threshold of `FINAL`
+  signatures: a §13C outcome is decided on one seat's clock, so an entry
+  decided that way is left out of the proof and the table is not false on it.
+  With every row proved, `F` is recomputed and compared. With a row out, what
+  `F` pays the others moves with it, so only what holds whatever that row was
+  is read: a proved non-qualifier is owed nothing, a proved qualifier at least
+  its net stake. An entry with a signed `FINAL` and no row is not read, since
+  it can be a late entry left to a second settlement. A late loser's table and
+  a market's are not made by `F`, and the row does not read them.
+- *What is gone.* "Settlement action without the required signatures" merged
+  into the table row: the FROST key needs its threshold anyway, and paying an
+  entry with no signed `FINAL` is a table that differs from `F`. "Claiming a fee
+  share" went: no node claims anything, fee shares come from the settlement
+  plan, so a wrong one is a wrong table, and availability stays a condition of
+  being paid (§22A), not an offence.
+- *What is left unslashable.* An entry settled wrongly on a §13C decision. A
+  `VOID` or `FORFEIT` is one seat's clock and cannot be proved false from signed
+  bytes; §13C's own rule, that only proven equivocation forfeits, is the guard.
+- *Open (kanban #1040).* The withheld-signature row has its bytes and its check
+  still refuses: an ack, a transaction and an expiry do not show which seat did
+  not sign. A FROST signature names nobody, so a stall reads the same for a seat
+  that gave its share as for one that held it back, and for a federation that
+  was down. And an ack names a table and a transaction, and nothing yet shows
+  the transaction pays what the table says.
 
 **Where a slashed bond goes (RULED 2026-11-02, kanban #976).** Each affected
 player gets their **real loss**, once, and nothing more. **The rest of the bond
@@ -2203,11 +2252,9 @@ Two words in that rule are defined here:
 
   | Offence (table above) | `affected[]` |
   |---|---|
-  | Two results for one (round, player) | every other financially activated entry |
+  | Two results for one (round, player, transcript_hash) | every other financially activated entry |
   | A result contradicted by replay | that `playerPubkey` if the signed result lowered them; otherwise every other financially activated entry |
   | A payout table that is not `F(contract, membership, results)` | every financially activated entry |
-  | Settlement action without the required signatures | every financially activated entry |
-  | A fee share claimed without the availability rule | every financially activated entry - they paid the fee |
   | A withheld settlement signature | every financially activated entry - a stall refunds losers and unpays winners alike |
   | A contradicted `AUDIT` (§13A.1) | as a result contradicted by replay, for the entry whose contradicted run the proof names |
   | A release with no valid proof | the node it was taken from, in place of players |
@@ -2323,7 +2370,8 @@ serve hands its accusers the evidence itself.
 
 ```text
 1. Anyone publishes a fraud proof: the two contradicting signatures, or the
-   transcript + receipts + replay, or the payout table + its inputs.
+   transcript + receipts + replay, or the SettlementAck + the table + the
+   FINAL signatures of the entries it is false on.
 2. The proof is mechanically checkable — every offence in the table above is
    either a signature comparison or a deterministic replay. No judgement.
 3. k-of-m arbitration keys sign a slashing transaction spending path B,
@@ -5179,9 +5227,10 @@ Once entry is closed, membership is known and every accepted player has a
 PayoutTable = F(RoundContract, Membership, FinalResults)
 ```
 
-Deterministic. Nodes sign the payout-table hash; **5-of-7 matching
-signatures** make it final. A node signing a table that does not equal `F(...)`
-of its published inputs is slashable.
+Deterministic. Seats sign the table's id in their `SettlementAck` (§5A.3), and
+a seat joins the settlement's signing only with **5-of-7 matching acks**. A seat
+acknowledging a table that does not equal `F(...)` is slashable, on the entries
+with signed `FINAL` results.
 
 ---
 
@@ -5194,11 +5243,12 @@ arena-node --roles game_verify,settlement
 ```
 
 **GAME/VERIFY role:** receives entries and checkpoints; stores transcripts;
-replays the deterministic simulation; signs final results; signs the final
-payout table; **does not move funds**.
+replays the deterministic simulation; signs final results; **does not move
+funds**.
 
 **SETTLEMENT role:** verifies the Round Contract; verifies 5-of-7 final
-result and payout signatures; holds one share of each entry preimage;
+results; acknowledges the table it computed and the transaction it rebuilt,
+and joins the signing on 5-of-7 acks (§5A.3); holds one share of each entry preimage;
 participates in threshold Lightning settlement; **cannot change a result or
 the payout formula**.
 
@@ -5716,7 +5766,8 @@ federation's own consensus view of Bitcoin.
 The **settlement transaction** is one atomic federation transaction per
 round: every loser's stake lock and every fee lock in; one payout contract
 per qualifier and per paid node slot out. Every settlement node rebuilds it
-from the public payout table and signs only the transaction it rebuilt.
+from the public payout table, acknowledges it (§5A.3) and signs only the
+transaction it rebuilt.
 
 > **REFUSED-RETURN (RULED 2026-10-06 08:57).** A round the signer
 > nodes refuse gets an immediate refund: a stake that was locked for it and
@@ -7672,7 +7723,7 @@ with "window closes 12:11:37 UTC". Nobody objects; from 12:11:42 the seats
 sign `FINAL`, and with the fifth it is.
 
 At 12:07 entry closes: 61 players. Final results: 24 delivered, 31 failed,
-6 forfeit → loser pool 3,700 sat. The deterministic payout table is signed
+6 forfeit → loser pool 3,700 sat. The deterministic payout table is acknowledged
 5-of-7. The settlement committee forfeits the qualifiers' locks back to
 them, releases preimage shares for the losers, and signs one settlement
 transaction that moves the losers' locks straight into the qualifiers'

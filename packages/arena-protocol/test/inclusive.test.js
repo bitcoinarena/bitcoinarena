@@ -34,7 +34,6 @@ import {
 } from '../src/fee.js';
 import { donatedMsat } from '../src/donation.js';
 import { winnings } from '../src/payout-spend.js';
-import { payoutInputsId } from '../src/slash.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -230,17 +229,3 @@ test('every money path refuses an entry that names only its stake', () => {
   assert.match(w.why, /names its stake, its fee and its donation/);
 });
 
-/**
- * A SLASHING PROOF IS BOUND TO ALL THREE NUMBERS, because F reads all three.
- * Two inputs that differ only in a donation have different honest tables, and
- * an id that could not tell them apart would let an accuser choose the split.
- */
-test('the inputs a payout proof binds to carry the fee and the donation', () => {
-  const inputs = (over) => payoutInputsId({
-    roundId: b32(9), minScore: 1, entries: [{ ...entryOf(1, DELIVERED, { score: 5 }), ...over }],
-  });
-  const base = toHex(inputs({}));
-  assert.notEqual(toHex(inputs({ feeMsat: FEE + 1n })), base, 'the fee is outside the hash');
-  assert.notEqual(toHex(inputs({ donationMsat: 1n })), base, 'the donation is outside the hash');
-  assert.notEqual(toHex(inputs({ stakeMsat: STAKE + 1n })), base, 'the stake is outside the hash');
-});

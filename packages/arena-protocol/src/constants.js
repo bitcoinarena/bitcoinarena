@@ -39,6 +39,13 @@ export const PRESSURE_WEIGHT_VERSION = 20;
 /** About three auditors, drawn in secret by a VRF, replay every paid round and object to a false result (§13A.1, kanban #725). */
 export const AUDITOR_VERSION = 22;
 /**
+ * A seat joins the FROST signing of a settlement only with acks from at least the threshold (settlement-ack.js, §5A.3, kanban #1040).
+ * Folded into 22 with the auditors: 2.0 is unreleased and no series of 22 is posted on any network, so one number keeps 2.0's rules one
+ * set, and a round of an older version settles as it always did with seats that have no ack door.
+ */
+export const SETTLEMENT_ACK_VERSION = 22;
+export const acksSettlement = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= SETTLEMENT_ACK_VERSION;
+/**
  * A node that seating certificates prove drawn and not present at 3 seatings of the 24 h before the census, and present at none,
  * leaves the census (§5A.3, presence.js, kanban #727); from the same version the certificate names who was present (seating.js SEEN).
  * Folded into 22 with the auditors: 2.0 is unreleased and no series of 22 is posted on any network, so one number keeps 2.0's rules one set.
@@ -300,21 +307,14 @@ export const TYPE_OBJECTION = 0x0b;
 export const TYPE_SLASH_PROOF = 0x0c;
 
 /**
- * The settlement record of 5A.3 row 4: what a settlement node DID to a hold
- * invoice, and the conditions it published for having done it. 23.2's table
- * names the action and the requirements; the spec reserves no type for the
- * record itself, so this is the next free number, like the objection's.
+ * A SEAT'S SIGNED WORD ON A SETTLEMENT AND THE TABLE IT NAMES (§5A.3, RULED 2026-11-02, kanban #1035): settlement-ack.js.
+ * 0x0d and 0x0f held the settlement record and the service record, gone with rows 4 and 5, and stay unused.
  */
-export const TYPE_SETTLEMENT_RECORD = 0x0d;
+export const TYPE_SETTLEMENT_ACK = 0x3e;
+export const TYPE_SETTLEMENT_TABLE = 0x3f;
 
-/**
- * 22A's fee share, as the two objects row 6 of 5A.3 needs: what a node CLAIMS
- * for a round and a role, and the record of what it actually did. The spec
- * gives the arithmetic and the availability rule and reserves no types, so
- * these are the next free numbers, like the objection's and the record's.
- */
-export const TYPE_FEE_CLAIM = 0x0e;
-export const TYPE_SERVICE_RECORD = 0x0f;
+/** The byte `feeTableId` opens with (fee.js). It named a fee claim once; no node claims anything (kanban #1035), and the byte stays so no table id moves. */
+export const TYPE_FEE_TABLE = 0x0e;
 
 /**
  * 22A's donation set: the recipients and their shares, as bytes.
@@ -539,7 +539,8 @@ export const TAG = {
   // rather than the table's, because a proof binds to the inputs and a
   // signature binds to the table, and the two must never be interchangeable.
   payoutInputs: 'ARENA/v1/PayoutInputs',
-  settlementRecord: 'ARENA/v1/SettlementRecord',
+  settlementAck: 'ARENA/v1/SettlementAck',
+  settlementTable: 'ARENA/v1/SettlementTable',
   // One signer node's deal in a committee's key generation, and the id of the epoch
   // those deals belong to. Separate tags: a contribution binds to one epoch,
   // and an epoch is a set of signer nodes - neither may be produced by hashing the
@@ -548,11 +549,8 @@ export const TAG = {
   dkgEpoch: 'ARENA/v1/DkgEpoch',
   // A FEDERATION'S RESERVE KEY (§27A.9.2): its own epoch, never a round committee's, even over the same seven nodes
   reserveEpoch: 'ARENA/v1/ReserveEpoch',
-  feeClaim: 'ARENA/v1/FeeClaim',
-  serviceRecord: 'ARENA/v1/ServiceRecord',
   // The record and the minimum a claim is measured against, bound as one hash
   // so an accuser cannot choose either of them after the fact.
-  feeInputs: 'ARENA/v1/FeeInputs',
   // The whole 22A table a claim is measured against: the gross, the fee and
   // every signer node's share. A proof names which table, or the accuser picks one.
   feeTable: 'ARENA/v1/FeeTable',

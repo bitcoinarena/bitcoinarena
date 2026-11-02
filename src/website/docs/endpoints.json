@@ -5707,11 +5707,70 @@
  },
  {
   "method": "POST",
-  "path": "/settle-commit",
+  "path": "/settle-ack",
   "params": "query round (hex 32), txid, entry (late settlement, optional), federation (64 hex, optional)",
   "auth": "none; node answers only for the txid it rebuilt",
+  "returns": "200 octet-stream signed SettlementAck (195 bytes); 400/409",
+  "purpose": "A seat's signed word on the table it computed and the transaction it rebuilt, given before it joins the FROST signing (protocol 22).",
+  "audience": "node-to-node",
+  "line": 5459,
+  "summary": "A seat's SettlementAck",
+  "query": [
+   {
+    "name": "round",
+    "required": true,
+    "type": "string",
+    "description": "Round id, 64 hex (32 bytes)."
+   },
+   {
+    "name": "txid",
+    "required": true,
+    "type": "string",
+    "description": "Settlement txid the asker rebuilt."
+   },
+   {
+    "name": "entry",
+    "required": false,
+    "type": "string",
+    "description": "Entry id (64 hex) of a late loser's second settlement."
+   },
+   {
+    "name": "federation",
+    "required": false,
+    "type": "string",
+    "description": "Federation id (64 hex) for one federation's settlement of an any-federation round."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/octet-stream",
+    "description": "Signed SettlementAck: its 99-byte body, the node key, the signature."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Malformed id or request."
+   },
+   {
+    "status": "409",
+    "contentType": "text/plain",
+    "description": "Refused, with the reason."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/settle-commit",
+  "params": "query round (hex 32), txid, entry (late settlement, optional), federation (64 hex, optional); body: signed SettlementAcks, 195 bytes each, from protocol 22",
+  "auth": "none; node answers only for the txid it rebuilt",
   "returns": "200 octet-stream nonce commitment; 400/409",
-  "purpose": "Round one of signing the round's settlement of losers' locks.",
+  "purpose": "Round one of signing the round's settlement of losers' locks. From protocol 22 a seat joins only with acks from at least the threshold in the body.",
   "audience": "node-to-node",
   "line": 5459,
   "summary": "Settlement signing, round one",
@@ -6112,6 +6171,53 @@
     "status": "200",
     "contentType": "application/json",
     "description": "{planId, certificate}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Malformed id or request."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "None held."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/settlement-acks",
+  "params": "query round (hex 32), scope? (late entry or federation id, 64 hex)",
+  "auth": "none",
+  "returns": "200 JSON {round, settlements: [{scope, txid, payoutTableId, table, acks, madeMs}]}; 400; 404",
+  "purpose": "The signed acks and the table each settlement of a round stood on, as this seat joined it, landed or not.",
+  "audience": "node-to-node",
+  "line": 5554,
+  "summary": "Acks published with a settlement",
+  "query": [
+   {
+    "name": "round",
+    "required": true,
+    "type": "string",
+    "description": "Round id, 64 hex (32 bytes)."
+   },
+   {
+    "name": "scope",
+    "required": false,
+    "type": "string",
+    "description": "A late entry's id or a federation's id (64 hex); omit for every settlement of the round."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{round, settlements}: each with its txid, its table and its acks in hex."
    },
    {
     "status": "400",

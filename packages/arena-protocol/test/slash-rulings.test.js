@@ -10,8 +10,7 @@ import assert from 'node:assert/strict';
 
 import {
   slashHeightIsValid, affectedEntries, resultMoved, NAMES_ONE_ENTRY, OFFENCES, RELEASE_WITHOUT_PROOF, RELEASE_OFF_TABLE,
-  TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, SETTLED_WITHOUT_AUTHORITY,
-  OPERATOR_PLAYED, FEE_WITHOUT_SERVICE, AUDIT_CONTRADICTED,
+  TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, OPERATOR_PLAYED, AUDIT_CONTRADICTED,
 } from '../src/slash.js';
 import { toHex } from '../src/hash.js';
 
@@ -55,8 +54,6 @@ test('three offences name one entry and the other four name the paying field (ka
     [AUDIT_CONTRADICTED]: ['a1'],
     // every financially activated entry - Cara never paid, so she is not harmed by a money offence
     [TABLE_IS_NOT_F]: ['a1', 'a2', 'a4'],
-    [SETTLED_WITHOUT_AUTHORITY]: ['a1', 'a2', 'a4'],
-    [FEE_WITHOUT_SERVICE]: ['a1', 'a2', 'a4'],
     // ... except the operator's own, which §5A.13 voids
     [OPERATOR_PLAYED]: ['a1', 'a2'],
     // template 3: a release with no valid proof harmed a node, and paying off the table harmed the paying field

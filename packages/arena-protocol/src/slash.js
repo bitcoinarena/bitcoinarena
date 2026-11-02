@@ -35,15 +35,16 @@ import { arbitrationCommitmentIn, P2TR_DUST_SATS } from './arbitration-tx.js';
 import { carrierEscrowPegInId } from './census-key.js';
 import { reserveParts } from './slash-reserves.js';
 import {
-  PROTOCOL_VERSION, speaksVersion, TYPE_SLASH_PROOF, TYPE_AUDIT_SLASH_PROOF, TYPE_PAYOUT_TABLE, TYPE_SETTLEMENT_RECORD,
-  TYPE_RESULT, TYPE_FEE_CLAIM, TYPE_SERVICE_RECORD, ROLES, roleByte,
+  PROTOCOL_VERSION, speaksVersion, TYPE_SLASH_PROOF, TYPE_AUDIT_SLASH_PROOF,
   SLASH_REMAINDERS, TAG,
 } from './constants.js';
-import { entryId } from './contracts.js';
+import { entryId, roundId as roundIdOf } from './contracts.js';
 import { decodePlayerResult, resultId, splitSignedResult, SIGNED_RESULT_BYTES, signedResultBytesOf } from './result.js';
-import { computePayoutTable, isRefund, netStakeMsat } from './payout.js';
-import { lockActionByte, lockActionOf } from './lock-action.js';
-import { outcomeByte, outcomeOf } from './result.js';
+import { computePayoutTable, isRefund, isQualifier, netStakeMsat } from './payout.js';
+import { payoutRuleForRound } from './manifest.js';
+import { windowsOf } from './window.js';
+import { splitSignedAck, settlementAckId, countAcks, decodeSettlementTable, settlementTableId, namesNoEntry } from './settlement-ack.js';
+import { decodeFinalSig, splitSignedFinalSig, finalSigned } from './final-sig.js';
 import { decodeAudit, auditId, auditStands, auditResultsHash } from './auditor.js';
 
 const hex = (b) => toHex(b);
@@ -61,27 +62,9 @@ const EMPTY = new Uint8Array(32);
 export const REPLAY_CONTRADICTS = 'REPLAY_CONTRADICTS';
 
 /**
- * 5A.3 row 3: "Signing a payout table that does not equal
- * `F(contract, membership, results)`", proof "the table and its inputs".
- *
- * §20 is what makes it mechanical: "PayoutTable = F(RoundContract, Membership,
- * FinalResults). Deterministic. Nodes sign the payout-table hash... A node
- * signing a table that does not equal F(...) of its published inputs is
- * slashable." So the check is a recomputation and a comparison of two hashes,
- * and no verdict is injected at all - unlike the replay, this one nobody has
- * to attest to, because `F` is right here.
+ * §5A.3: "Signing a payout table that does not equal `F(contract, membership, results)`", on the seat's SettlementAck (kanban #1035).
  */
 export const TABLE_IS_NOT_F = 'TABLE_IS_NOT_F';
-
-/**
- * 5A.3 row 4: "Settlement action without the required 5-of-7 result and payout
- * signatures", proof "the settlement record".
- *
- * 23.2's table is the law and `lockAction` (lock-action.js) is that table, so like row 3
- * this needs no attesting party: the record's own published conditions are
- * recomputed and compared with what was done.
- */
-export const SETTLED_WITHOUT_AUTHORITY = 'SETTLED_WITHOUT_AUTHORITY';
 
 /**
  * 5A.3 row 1: "Signing two different results for the same (round, player)",
@@ -96,14 +79,6 @@ export const TWO_RESULTS = 'TWO_RESULTS';
  * offence - signing while conflicted is.
  */
 export const OPERATOR_PLAYED = 'OPERATOR_PLAYED';
-
-/**
- * 5A.3 row 6: "Claiming a fee share without meeting the availability rule
- * (22A)", proof "the receipt record". Claiming nothing is not the offence -
- * 22A redistributes an unearned share rather than taking a bond for one
- * nobody asked for.
- */
-export const FEE_WITHOUT_SERVICE = 'FEE_WITHOUT_SERVICE';
 
 /**
  * §13A.1 (kanban #724, #725): "an AUDIT over a result that a valid objection later contradicts is a fraud proof against its signer,
@@ -123,8 +98,8 @@ export const RELEASE_OFF_TABLE = 'RELEASE_OFF_TABLE';
 
 // In 5A.3's own document order, which is the order they are being written in; §13A.1's AUDIT after them.
 export const OFFENCES = [
-  TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, SETTLED_WITHOUT_AUTHORITY,
-  OPERATOR_PLAYED, FEE_WITHOUT_SERVICE, RELEASE_WITHOUT_PROOF, RELEASE_OFF_TABLE, AUDIT_CONTRADICTED,
+  TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, OPERATOR_PLAYED,
+  RELEASE_WITHOUT_PROOF, RELEASE_OFF_TABLE, AUDIT_CONTRADICTED,
 ];
 
 /**
@@ -146,7 +121,7 @@ export function resultMoved({ signed, replayed } = {}) {
  * that raised them harmed everybody else, and paying the named player would hand a committee's friend the slash for the lie told
  * in their favour - so they get nothing and the other FINANCIALLY ACTIVATED entries are named. A doubled result says nothing about
  * which way it went, so it is read the same way: a player it lowered is shown by the replay's proof, not this one.
- * The other four harmed the whole paying field, so they name every activated entry (§22A's fee base),
+ * The others harmed the whole paying field, so they name every activated entry (§22A's fee base),
  * and `OPERATOR_PLAYED` drops the operator's own, which §5A.13 voids. Being named is not being paid: each gets its real loss
  * (`realLosses`), and an entry with none gets nothing.
  *
@@ -628,120 +603,147 @@ export function slashHoldsOnAudit({
 }
 
 /**
- * NOTHING SLASHES ON BYTES THE ACCUSED NEVER SIGNED (§5A.3, RULED 2026-11-02, kanban #1035, #1040). A row stands only on bytes the
- * accused signed with its node key, and a FROST signature names nobody. These three answered `slashed: true` on an unsigned table, an
- * unsigned record and an unsigned claim, so anyone could have written the evidence against any bond. They refuse by name, whatever
- * they are handed, and no arguments are read.
+ * DOES THIS ACK SLASH THIS BOND? §5A.3, "a payout table that is not F", RULED 2026-11-02 (kanban #1035, #1040).
+ *
+ * A row stands only on bytes the accused signed with its node key, and a FROST signature names nobody. So the evidence is the accused's
+ * own SettlementAck over the table's id. `verify` is injected, as for every signature here. No verifier, no slash.
+ *
+ *   proof           `signedResultId` the ack's id, `transcriptHash` the table's id, `playerPubkey` empty: the table names the players
+ *   signedAck       the accused's signed ack
+ *   acks            the signed acks published with the settlement: at least the threshold over this table, the accused's among them.
+ *                   A table only one seat acked moved nothing, and it is how a seat left behind on a §13C clock would look
+ *   table           the table's bytes
+ *   finals          [{ entry, signedResult, finalSigs }]: an entry contract, a signed result of its run, the threshold of FINAL signatures
+ *   entries         other entry contracts, shown for a row they contradict
+ *
+ * ONLY A SIGNED FINAL IS READ. A §13C outcome is decided on one seat's clock, so an entry with no threshold of FINAL signatures is left
+ * out, and the table is not false on it: that is what stops a filer feeding inputs that make an honest table look false. What the seats
+ * signed binds everything F reads: the run's id is the result, the entry id is the stake, the round id is the floor and the game.
+ *
+ * ONE ENTRY OUT, THE EXACT TABLE CANNOT BE READ. With every row of the table proved, F is recomputed over those rows and compared row by
+ * row. With a row unproved, what F pays the others moves with it, so only what holds whatever it was is read: a proved non-qualifier
+ * is owed nothing, a proved qualifier at least its own net stake. An entry with a signed FINAL and no row is not read either: it can be
+ * a late entry the table rightly left to a second settlement.
+ *
+ * Not read at all: a late loser's table and a market's, which F does not make. Their rows name no entry, or their late entry is set.
  */
-export function slashHoldsOnTable() {
-  return { slashed: false, why: 'refused: row 3 stands on a SettlementAck the accused signed, and nodes sign no table (kanban #1035)' };
-}
+export function slashHoldsOnTable({
+  proof, signedAck, acks = [], table, finals = [], entries = [], contract, manifest = null, advert, committee, verify,
+}) {
+  const no = (why) => ({ slashed: false, why });
+  if (!proof) return no('no proof');
+  if (!Array.isArray(committee) || !committee.length) return no('no committee, so nobody was serving this round');
+  if (!committee.some((k) => hex(k) === hex(proof.nodePubkey)))
+    return no(`${hex(proof.nodePubkey)} is not on this round's committee, so it acked nothing it owed`);
+  if (typeof verify !== 'function') return no('checking a signed ack needs a verifier, and none was injected');
 
-/**
- * THE INPUTS, AS ONE HASH, so a proof can be bound to them.
- *
- * §20's offence is about a table against "its published inputs", so a proof
- * that did not name them would be an accusation with a free variable: whoever
- * checks it later could recompute from a different membership and get a
- * different answer. This is the membership and the floor, in the order `F`
- * itself sorts by, so two people who publish the same inputs commit to the
- * same 32 bytes.
- *
- * It rides in the proof's `transcriptHash` field rather than adding one:
- * that field is "the object this offence is measured against", and for the
- * replay row that object is a transcript while for this row it is the inputs.
- * One field, one meaning - what was published that the signature is wrong
- * about - and no widening of a body that is already committed to on chain.
- */
-export function payoutInputsId({ roundId, entries, minScore = 0 }) {
-  const w = new Writer();
-  w.u8(TYPE_PAYOUT_TABLE);
-  w.u16(PROTOCOL_VERSION);
-  w.bytes32(roundId);
-  w.u32(minScore);
-  const rows = [...entries].sort((a, b) => {
-    for (let i = 0; i < a.pubkey.length && i < b.pubkey.length; i++)
-      if (a.pubkey[i] !== b.pubkey[i]) return a.pubkey[i] - b.pubkey[i];
-    return 0;
-  });
-  // ALL THREE AMOUNTS, because F reads all three (22A): the pool and every
-  // share are NET stakes. Committing to the stake alone would give two inputs
-  // that differ only in a donation - and so in their honest tables - one id,
-  // and an accuser could pick whichever split makes the accused wrong.
-  w.vec(rows, (e, ww) => {
-    ww.bytes32(e.pubkey);
-    ww.u8(outcomeByte(e.outcome));
-    ww.u32(e.score);
-    ww.u64(e.stakeMsat);
-    ww.u64(e.feeMsat);
-    ww.u64(e.donationMsat);
-  });
-  return taggedHash(TAG.payoutInputs, w.finish());
-}
+  // THE CONTRACT IS THE ROUND'S, so the floor and the game's rule are not the filer's to pick
+  if (!contract || !Number.isInteger(contract.minScore) || contract.minScore < 0) return no('no round contract to read the score floor from');
+  let rid;
+  try { rid = roundIdOf(contract); } catch (e) { return no(`the contract does not encode: ${e.message}`); }
+  if (hex(rid) !== hex(proof.roundId)) return no('the contract handed in is not this round\'s');
+  const rule = payoutRuleForRound(contract, manifest);
+  if (!rule.ok) return no(`F's payout rule cannot be read: ${rule.why}`);
 
-/**
- * THE SETTLEMENT RECORD, 5A.3 row 4's proof.
- *
- * 23.2's table is the law (lock-action.js): DELIVERED returns its lock on 5-of-7
- * settlement signatures, FAILED and FORFEIT are claimed only on a FINAL result
- * with 5 preimage shares and 5-of-7 settlement signatures, and VOID needs nobody
- * to act at all - the lock expires back. The action byte is LOCK_ACTIONS' order
- * (CLAIM, RETURN, EXPIRE), the same bytes the hold invoice's names had (cut 6b). The
- * record is what a settlement node DID and the conditions it published for
- * having done it - the same shape row 3 uses, where the accusation is measured
- * against what the accused itself put its name to.
- *
- * The spec names no encoding for it, so this fills the type reserved above the
- * way the objection and the payout table did.
- *
- * THE ENTRY IS IN IT. A settlement action is about one player's stake lock,
- * and a record without the entry would be an action against no particular
- * money - and its signature would carry to any entry of the round.
- */
-export function encodeSettlementRecord(r) {
-  const w = new Writer();
-  w.u8(TYPE_SETTLEMENT_RECORD);
-  w.u16(PROTOCOL_VERSION);
-  w.bytes32(r.roundId);
-  w.bytes32(r.entryId);
-  w.bytes32(r.nodePubkey);
-  w.u8(lockActionByte(r.action));
+  // THE ACK, THE ACCUSED'S OWN
+  let got;
+  try { got = splitSignedAck(signedAck); } catch (e) { return no(`the evidence is not a signed ack: ${e.message}`); }
+  if (hex(got.nodePubkey) !== hex(proof.nodePubkey)) return no('the ack attached was signed by a different node');
+  if (hex(got.ack.roundId) !== hex(proof.roundId)) return no('the ack attached is for a different round');
+  if (hex(settlementAckId(got.ack)) !== hex(proof.signedResultId)) return no('the ack attached is not the one this proof names');
+  if (hex(got.ack.payoutTableId) !== hex(proof.transcriptHash)) return no('the proof is bound to a different table than the ack names');
+  if (hex(proof.playerPubkey) !== hex(EMPTY)) return no('this row names no player: the table does');
+  let theirs = false;
+  try { theirs = verify(got.signature, settlementAckId(got.ack), proof.nodePubkey) === true; } catch { theirs = false; }
+  if (!theirs) return no('the signature on the ack is not the accused node\'s');
 
-  // WHAT THE NODE SAID IT HAD. Every one of 23.2's conditions, as the node
-  // published them: the outcome it acted on, whether that player qualified,
-  // how far the result had got, and the two counts.
-  w.u8(outcomeByte(r.outcome));
-  w.u8(r.qualifies ? 1 : 0);
-  w.str(r.state || '');
-  w.u16(r.shares | 0);
-  w.u16(r.signatures | 0);
-  return w.finish();
-}
+  // THE TABLE IT NAMES
+  let claimed;
+  try { claimed = decodeSettlementTable(table); } catch (e) { return no(`the evidence is not a settlement table: ${e.message}`); }
+  if (hex(settlementTableId(claimed)) !== hex(got.ack.payoutTableId)) return no('the table attached is not the one the ack names');
+  if (hex(claimed.roundId) !== hex(proof.roundId)) return no('the table attached is for a different round');
+  if (hex(claimed.lateEntryId) !== hex(EMPTY)) return no('that is a late loser\'s second settlement: F does not make its table');
+  if (!claimed.rows.length || claimed.rows.some(namesNoEntry)) return no('that table names no entries: F does not make it');
 
-export function decodeSettlementRecord(bytes) {
-  const r = new Reader(bytes);
-  if (r.u8() !== TYPE_SETTLEMENT_RECORD) throw new Error('not a settlement record');
-  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
-  const out = {
-    roundId: r.bytes32(),
-    entryId: r.bytes32(),
-    nodePubkey: r.bytes32(),
-    action: lockActionOf(r.u8()),
-    outcome: outcomeOf(r.u8()),
-    qualifies: r.u8() === 1,
-    state: r.str(),
-    shares: r.u16(),
-    signatures: r.u16(),
+  // A TABLE THE SETTLEMENT STOOD ON
+  let counted;
+  try {
+    counted = countAcks({ acks: [signedAck, ...acks], seats: committee, slots: contract.settlementSlots, roundId: proof.roundId,
+      payoutTableId: got.ack.payoutTableId, settlementTxid: got.ack.settlementTxid, verify });
+  } catch (e) { return no(`the acks cannot be counted: ${e.message}`); }
+  if (!counted.final) return no(`${counted.agreed} of the ${counted.needed} seats acked that table, so no settlement stood on it`);
+
+  // THE ENTRIES, EACH BOUND TO THE ROW THAT NAMES IT
+  let finalAfterMs;
+  try { ({ finalAfterMs } = windowsOf(contract)); } catch (e) { return no(`the round's window cannot be read: ${e.message}`); }
+  const rowOf = new Map(claimed.rows.map((r) => [hex(r.entryId), r]));
+  const differs = [];
+  const shown = new Map();
+  for (const e of [...entries, ...finals.map((f) => f && f.entry)]) {
+    let id;
+    try { id = hex(entryId(e)); } catch { continue; }
+    if (rowOf.has(id)) shown.set(id, e);
+  }
+  for (const [id, e] of shown) {
+    const row = rowOf.get(id);
+    if (hex(e.roundId) !== hex(proof.roundId)) differs.push(`entry ${id.slice(0, 16)} is of another round`);
+    else if (hex(e.playerPubkey) !== hex(row.pubkey)) differs.push(`entry ${id.slice(0, 16)} is another player's`);
+  }
+  const proved = new Map();
+  for (const f of finals) {
+    if (!f || !f.entry) continue;
+    let id, body;
+    try { id = entryId(f.entry); body = decodePlayerResult(splitSignedResult(f.signedResult).body); } catch { continue; }
+    if (!rowOf.has(hex(id)) || hex(body.roundId) !== hex(proof.roundId) || hex(body.playerPubkey) !== hex(f.entry.playerPubkey)) continue;
+    // A FINAL SIGNATURE IS JUDGED BY ITS OWN SIGNED TIME HERE: the tolerance is a receiving seat's clock, and a proof has none
+    const records = [];
+    for (const bytes of f.finalSigs || []) {
+      try { records.push({ bytes, seenMs: decodeFinalSig(splitSignedFinalSig(bytes).body).signedAtMs }); } catch { /* it does not count */ }
+    }
+    const signed = finalSigned({ roundId: proof.roundId, entryId: id, runId: runOf(body), records, committee, slots: contract.settlementSlots, finalAfterMs, verify });
+    if (signed.ok) proved.set(hex(id), { entryId: id, pubkey: f.entry.playerPubkey, outcome: body.outcome, score: body.score,
+      stakeMsat: f.entry.stakeMsat, feeMsat: f.entry.feeMsat, donationMsat: f.entry.donationMsat });
+  }
+
+  const complete = claimed.rows.every((r) => proved.has(hex(r.entryId)));
+  if (complete) {
+    const rows = claimed.rows.map((r) => proved.get(hex(r.entryId)));
+    let honest;
+    try { honest = computePayoutTable({ roundId: claimed.roundId, entries: rows, minScore: contract.minScore, payoutShares: rule.payoutShares }); }
+    catch (e) { return no(`F cannot be computed from those entries: ${e.message}`); }
+    const owed = new Map(honest.activated.map((e, i) => [hex(e.entryId), honest.table[i].amountMsat]));
+    for (const r of claimed.rows) {
+      const id = hex(r.entryId);
+      const want = owed.has(id) ? owed.get(id) : 0n;
+      if (r.amountMsat !== want) differs.push(`entry ${id.slice(0, 16)} is paid ${r.amountMsat} and F pays ${want}`);
+    }
+  } else {
+    for (const [id, e] of proved) {
+      const row = rowOf.get(id);
+      if (!isQualifier(e, contract.minScore)) {
+        if (row.amountMsat !== 0n) differs.push(`entry ${id.slice(0, 16)} did not qualify and is paid ${row.amountMsat}`);
+      } else if (row.amountMsat < netStakeMsat(e)) differs.push(`entry ${id.slice(0, 16)} qualified and is paid ${row.amountMsat}, under its own net stake`);
+    }
+  }
+  if (!differs.length) return no(complete ? 'the table is exactly F of the signed FINAL results' : 'the table is not false on any entry with a signed FINAL result');
+
+  if (!advert || hex(advert.nodePubkey) !== hex(proof.nodePubkey)) return no('no advertisement from the accused node to name its bond');
+  if (hex(advert.bondTxid) !== hex(proof.bondTxid) || advert.bondVout !== proof.bondVout)
+    return no(`the proof names bond ${hex(proof.bondTxid)}:${proof.bondVout} and the node advertised ${hex(advert.bondTxid)}:${advert.bondVout}`);
+  return {
+    slashed: true, offence: TABLE_IS_NOT_F, bond: { txid: proof.bondTxid, vout: proof.bondVout }, commitment: slashCommitment(proof), differs, complete,
+    why: `the node acked a table that is not F: ${differs[0]}`,
   };
-  if (r.at !== bytes.length) throw new Error('trailing bytes after the settlement record');
-  return out;
 }
 
-export const settlementRecordId = (r) =>
-  taggedHash(TAG.settlementRecord, encodeSettlementRecord(r));
-
-export function slashHoldsOnSettlement() {
-  return { slashed: false, why: 'refused: row 4 has no bytes the accused signed; a FROST signature names nobody (kanban #1035)' };
+/**
+ * §5A.3, "withholding a settlement signature" (RULED on bytes 2026-11-02, kanban #1035): the ack is its bytes, and the acks are kept and
+ * published. It refuses by name, because an ack, a transaction and an expiry do not show WHO did not sign. A FROST signature names nobody,
+ * so a stall reads the same for the seats that gave their share as for the ones that held it back, and for a federation that was down.
+ * Every seat that acked a settlement that never landed would be slashed, the honest ones with the rest.
+ */
+export function slashHoldsOnWithheld() {
+  return { slashed: false, why: 'refused: an ack, a transaction and an expiry do not show which seat did not sign (kanban #1040)' };
 }
 
 /**
@@ -772,7 +774,7 @@ export const orderedResultIds = (idA, idB) =>
  * "Signing two different results for the same (round, player). Proof: the two
  * signed results."
  *
- * THE PUREST OF THE FOUR. Rows 3 and 4 recompute an `F`; this one compares.
+ * THE PUREST OF THEM. Row 3 recomputes an `F`; this one compares.
  * Nothing is recomputed, nothing is replayed and nothing is injected, so there
  * is no attesting party at any point - the two objects ARE the offence, which
  * is what 5A.3 means by "a portable artifact anyone can check" and what 13B
@@ -943,122 +945,6 @@ export function slashHoldsOnConflict({ proof, entry, signedByNode, advert, commi
   // operator played is no offence; self-dealing is priced by 5 of 7 bonded slots (§5A.6) and overturnable by replay (§13A)
   void proof; void entry; void signedByNode; void advert; void committee;
   return { slashed: false, why: 'withdrawn: a player declares no operator, so signing in a round the operator played is no offence (§5A.13, ruled 2026-10-14)' };
-}
-
-/**
- * 22A'S TWO OBJECTS: what a node claims, and what it actually did.
- *
- * "Each eligible slot receives 1.00% / 7 of gross volume for its role...
- * A selected node earns its share only if it performed the contract-defined
- * minimum service: for game/verify, the required receipts plus replay and
- * signing; for settlement, participation in the settlement protocol during the
- * settlement window. A conflicted node (5A.13) never qualifies."
- *
- * The claim is one node's demand for one role of one round. The role is in it
- * because 22A pays the two pools separately and "an operator selected for both
- * roles earns both shares, because it performs both services" - a claim that
- * did not say which role would be a claim on either.
- */
-export function encodeFeeClaim(c) {
-  const w = new Writer();
-  w.u8(TYPE_FEE_CLAIM);
-  w.u16(PROTOCOL_VERSION);
-  w.bytes32(c.roundId);
-  w.bytes32(c.nodePubkey);
-  w.u8(roleByte(c.role));
-  w.u64(c.amountMsat);
-  return w.finish();
-}
-
-export function decodeFeeClaim(bytes) {
-  const r = new Reader(bytes);
-  if (r.u8() !== TYPE_FEE_CLAIM) throw new Error('not a fee claim');
-  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
-  const c = {
-    roundId: r.bytes32(),
-    nodePubkey: r.bytes32(),
-    role: ROLES[r.u8()],
-    amountMsat: r.u64(),
-  };
-  if (!c.role) throw new Error('unknown role byte in a fee claim');
-  if (r.at !== bytes.length) throw new Error('trailing bytes after the fee claim');
-  return c;
-}
-
-export const feeClaimId = (c) => taggedHash(TAG.feeClaim, encodeFeeClaim(c));
-
-/**
- * WHAT THE NODE ACTUALLY DID, in the unit its own role is measured in.
- *
- * `served` is receipts for game and verify - 22A's "the required receipts" -
- * and settlement participations for settlement. ONE COUNT AND NOT TWO
- * SCHEMES: the roles are measured in different units and the rule over them is
- * the same rule, so the unit belongs to the role and the arithmetic does not
- * fork. What each unit IS stays 22A's sentence and is not redefined here.
- */
-export function encodeServiceRecord(r) {
-  const w = new Writer();
-  w.u8(TYPE_SERVICE_RECORD);
-  w.u16(PROTOCOL_VERSION);
-  w.bytes32(r.roundId);
-  w.bytes32(r.nodePubkey);
-  w.u8(roleByte(r.role));
-  w.u32(r.served);
-  return w.finish();
-}
-
-export function decodeServiceRecord(bytes) {
-  const r = new Reader(bytes);
-  if (r.u8() !== TYPE_SERVICE_RECORD) throw new Error('not a service record');
-  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
-  const out = {
-    roundId: r.bytes32(),
-    nodePubkey: r.bytes32(),
-    role: ROLES[r.u8()],
-    served: r.u32(),
-  };
-  if (!out.role) throw new Error('unknown role byte in a service record');
-  if (r.at !== bytes.length) throw new Error('trailing bytes after the service record');
-  return out;
-}
-
-export const serviceRecordId = (r) => taggedHash(TAG.serviceRecord, encodeServiceRecord(r));
-
-/**
- * THE RECORD AND THE MINIMUM, AS ONE HASH, so a proof binds to both.
- *
- * The same discipline row 3 needed: an accusation whose threshold the accuser
- * picks after the fact is an accusation with a free variable, and every honest
- * claim is then slashable by choosing a higher number.
- *
- * THE MINIMUM HAS NO FIELD IN THE ROUND CONTRACT, and that is stated rather
- * than papered over. 22A says "contract-defined minimum service" and
- * `encodeRoundContract` defines no such field - measured, it carries none - so
- * the number is handed in and bound here, exactly as `minScore` is handed to
- * `computePayoutTable` while living in the contract. Adding the field is what
- * would make one minimum canonical for a whole network, and adding a field
- * moves every round id, which is the same blocker the slash distribution has.
- */
-export function feeInputsId({ roundId, role, minimumServed, recordId, feeTableId }) {
-  const w = new Writer();
-  w.u8(TYPE_SERVICE_RECORD);
-  w.u16(PROTOCOL_VERSION);
-  w.bytes32(roundId);
-  w.u8(roleByte(role));
-  w.u32(minimumServed);
-  w.bytes32(recordId);
-
-  // AND WHICH TABLE THE CLAIM IS MEASURED AGAINST. An over-claim is a
-  // comparison with a number, and a number an accuser recomputes from an
-  // eligibility set of their choosing makes every honest claim an over-claim.
-  // The table has one hash and the proof names it, so a stranger re-deriving
-  // the accusation later gets the same answer or none.
-  w.bytes32(feeTableId);
-  return taggedHash(TAG.feeInputs, w.finish());
-}
-
-export function slashHoldsOnFeeClaim() {
-  return { slashed: false, why: 'refused: row 5 has no bytes the accused signed; no node claims a fee, shares come from the settlement plan (kanban #1035)' };
 }
 
 /**

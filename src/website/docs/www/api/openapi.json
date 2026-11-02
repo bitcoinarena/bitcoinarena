@@ -12361,13 +12361,87 @@
     }
    }
   },
+  "/settle-ack": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "A seat's SettlementAck",
+    "description": "A seat's signed word on the table it computed and the transaction it rebuilt, given before it joins the FROST signing (protocol 22).\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none; node answers only for the txid it rebuilt\n\nReturns: 200 octet-stream signed SettlementAck (195 bytes); 400/409\n\nSource: `packages/arena-node/src/server.js` line 5459.",
+    "operationId": "post_settle_ack",
+    "parameters": [
+     {
+      "name": "round",
+      "in": "query",
+      "required": true,
+      "description": "Round id, 64 hex (32 bytes).",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "txid",
+      "in": "query",
+      "required": true,
+      "description": "Settlement txid the asker rebuilt.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "entry",
+      "in": "query",
+      "required": false,
+      "description": "Entry id (64 hex) of a late loser's second settlement.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "federation",
+      "in": "query",
+      "required": false,
+      "description": "Federation id (64 hex) for one federation's settlement of an any-federation round.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Signed SettlementAck: its 99-byte body, the node key, the signature.",
+      "content": {
+       "application/octet-stream": {
+        "schema": {
+         "type": "string",
+         "format": "binary"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Malformed id or request.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "409": {
+      "description": "Refused, with the reason.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
   "/settle-commit": {
    "post": {
     "tags": [
      "Nodes"
     ],
     "summary": "Settlement signing, round one",
-    "description": "Round one of signing the round's settlement of losers' locks.\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none; node answers only for the txid it rebuilt\n\nReturns: 200 octet-stream nonce commitment; 400/409\n\nSource: `packages/arena-node/src/server.js` line 5459.",
+    "description": "Round one of signing the round's settlement of losers' locks. From protocol 22 a seat joins only with acks from at least the threshold in the body.\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none; node answers only for the txid it rebuilt\n\nReturns: 200 octet-stream nonce commitment; 400/409\n\nSource: `packages/arena-node/src/server.js` line 5459.",
     "operationId": "post_settle_commit",
     "parameters": [
      {
@@ -12878,6 +12952,56 @@
      },
      "404": {
       "description": "No such entry.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/settlement-acks": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Acks published with a settlement",
+    "description": "The signed acks and the table each settlement of a round stood on, as this seat joined it, landed or not.\n\nAccess: none\n\nReturns: 200 JSON {round, settlements: [{scope, txid, payoutTableId, table, acks, madeMs}]}; 400; 404\n\nSource: `packages/arena-node/src/server.js` line 5554.",
+    "operationId": "get_settlement_acks",
+    "parameters": [
+     {
+      "name": "round",
+      "in": "query",
+      "required": true,
+      "description": "Round id, 64 hex (32 bytes).",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "scope",
+      "in": "query",
+      "required": false,
+      "description": "A late entry's id or a federation's id (64 hex); omit for every settlement of the round.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{round, settlements}: each with its txid, its table and its acks in hex.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Malformed id or request.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "404": {
+      "description": "None held.",
       "content": {
        "text/plain": {}
       }

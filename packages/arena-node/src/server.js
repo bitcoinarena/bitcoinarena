@@ -9531,7 +9531,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // nonce commitment, a share over one commitment list, the combined
       // signature. Each signer node answers only for the txid it rebuilt itself from its
       // own record (settlement.js).
-      if (req.method === 'POST' && ['/settle-commit', '/settle-share', '/settle-signature'].includes(url.pathname)) {
+      if (req.method === 'POST' && ['/settle-ack', '/settle-commit', '/settle-share', '/settle-signature'].includes(url.pathname)) {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (rid.length !== 32) return text(res, 400, 'a settlement is asked for by a round id');
         const r8 = new Uint8Array(rid);
@@ -9543,8 +9543,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // ONE FEDERATION'S SETTLEMENT of a round that takes any federation (2026.0.3) is asked for by that federation's id
         const federation = url.searchParams.get('federation');
         if (federation !== null && !/^[0-9a-f]{64}$/.test(federation)) return text(res, 400, 'a federation\'s settlement is asked for by its 64-hex id');
+        // A SEAT'S ACK, SIGNED BEFORE IT JOINS (§5A.3, kanban #1040): over the table it computed and the txid it rebuilt
+        if (url.pathname === '/settle-ack') {
+          const got = await settlements.ack(r8, { txid: url.searchParams.get('txid'), entry, federation });
+          if (!got.ok) return text(res, got.status || 409, got.why);
+          res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+          return res.end(Buffer.from(got.bytes));
+        }
         if (url.pathname === '/settle-commit') {
-          const got = await settlements.commit(r8, { txid: url.searchParams.get('txid'), entry, federation });
+          const got = await settlements.commit(r8, { txid: url.searchParams.get('txid'), entry, federation, acks: new Uint8Array(await read(req)) });
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           return res.end(Buffer.from(encodeCommitments([got.commitment])));
@@ -9636,6 +9643,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const got = settlements.takeCertificate(new Uint8Array(rid), lateHex ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null,
           new Uint8Array(await read(req)));
         return got.ok ? text(res, 201, `${got.agreed} of ${got.needed} seats' signed agreement kept`) : text(res, got.status || 409, got.why);
+      }
+
+      // THE ACKS A SETTLEMENT STOOD ON, PUBLISHED WITH IT (§5A.3, kanban #1040): each transaction this seat joined, its table and the signed acks
+      // that counted, for anyone who checks them, and landed or not: the offences stand on these bytes.
+      if (req.method === 'GET' && url.pathname === '/settlement-acks') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'acks are asked for by a round id');
+        const scope = url.searchParams.get('scope');
+        if (scope !== null && !/^[0-9a-f]{64}$/.test(scope)) return text(res, 400, 'a late entry or a federation is named by 64 hex');
+        const rows = round.settlementAcksOf(new Uint8Array(rid), scope);
+        if (!rows.length) return text(res, 404, 'this seat joined no signing of that settlement');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ round: toHex(rid), settlements: rows.map((r) => ({ scope: r.scope, txid: r.txid, payoutTableId: toHex(r.tableId),
+          table: toHex(r.table), acks: toHex(r.acks), madeMs: String(r.madeMs) })) }));
       }
 
       if (req.method === 'GET' && url.pathname === '/settle-taken') {

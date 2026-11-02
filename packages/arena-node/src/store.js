@@ -505,16 +505,6 @@ export function openStore(path = ':memory:') {
       updated_ms     INTEGER NOT NULL
     );
 
-    -- The signer nodes' signatures over that table id. Keyed by signer, so one signer node
-    -- signing twice is one vote, the way results already are.
-    CREATE TABLE IF NOT EXISTS payout_signatures (
-      round_id    BLOB NOT NULL,
-      node_pubkey BLOB NOT NULL,
-      bytes       BLOB NOT NULL,
-      seen_ms     INTEGER NOT NULL,
-      PRIMARY KEY (round_id, node_pubkey)
-    );
-
     CREATE TABLE IF NOT EXISTS identity (
       one    INTEGER PRIMARY KEY CHECK (one = 0),
       secret BLOB NOT NULL,
@@ -925,6 +915,20 @@ export function openStore(path = ':memory:') {
     CREATE TABLE IF NOT EXISTS round_creators (
       round_id  BLOB PRIMARY KEY,
       signature BLOB NOT NULL
+    );
+
+    -- THE ACKS A SEAT JOINED A SETTLEMENT'S SIGNING ON (§5A.3, kanban #1040), and the table they name, served by GET /settlement-acks.
+    -- scope: empty for the round's own settlement, else a late entry's id or a federation's id in hex. Kept for every transaction acked,
+    -- landed or not.
+    CREATE TABLE IF NOT EXISTS settlement_acks (
+      round_id BLOB NOT NULL,
+      scope    TEXT NOT NULL,
+      txid     TEXT NOT NULL,
+      table_id BLOB NOT NULL,
+      tbl      BLOB NOT NULL,
+      acks     BLOB NOT NULL,
+      made_ms  INTEGER NOT NULL,
+      PRIMARY KEY (round_id, scope, txid)
     );
 
     -- A ROUND THAT TAKES ANY FEDERATION (2026.0.3) SETTLES ONE TRANSACTION PER FEDERATION (federation-settlement.js):
