@@ -1729,6 +1729,7 @@ advertisement signature valid under node_pubkey
 advertisement declares the role and a supported protocol version
 advertisement declares serving = true          (2026-09-28, below)
 node is not absent from its seatings           (protocol 22, kanban #727, below)
+node is not stalled in its rounds              (protocol 26, kanban #1052, below)
 ```
 
 **Stepping out without unbonding** *(RULED 2026-09-28)*. A node that
@@ -2096,6 +2097,100 @@ arena-node `presence-book.js` dutyOf, `roster.js` absentCensus and
 heartbeatCommitteeFor, `seating-agent.js`, `heartbeat-agent.js`,
 `duty-poster.js`; arena-client `committee.js`.)
 
+**Stalled in its rounds - a node named by the seats of 3 failed rounds leaves
+the draw (protocol 26; RULED 2026-11-02, kanban #1044 option 2, #1052).** 3 of
+a round's 7 seats can stop an entry at its result or the whole round at its
+settlement. That is silence: it leaves no signed bytes, so no bond answers for
+it (§5A.3B, #1043). A set of nodes could enter only the rounds where it holds 3
+seats, lose, stay silent and get the stake back, all day. This rule does not
+stop the one free bet, and it does not stop a round with 4 or more colluders. It
+stops doing it all day, on the path absence already walks: signed proofs in the
+census claim, checked by every seat and by the client.
+
+```text
+StallNote   { round_id, stage, silent[] }, signed by a seat's node key, after a
+            failed round only. Nothing is noted in a round that worked.
+stage       RESULT      an entry of the round went VOID by no quorum (§13C),
+                        read once the round's re-run windows are over
+            SETTLEMENT  the round's settlement has not landed 2 h after
+                        final_after
+silent[]    the round's seats that gave this seat no signed result for that
+            entry, or no settlement commit, by that moment; never the seat itself
+named       at least STALL_NOTE_QUORUM = 4 of the round's seats signed notes
+            listing the node, none of them itself. The lists need not be equal
+stalled     named by STALL_PROOF_ROUNDS = 3 rounds whose final_afters lie at least
+            ABSENCE_PROOF_SPACING_MS = 1 h apart inside STALL_WINDOW = 72 h before
+            the median time past of the census_height block, each a fresh draw
+            and each a duty posting's round (below)
+census      from protocol 26, past the absent: every output of a stalled node is
+            left out; census_root (§5A.4) is taken over what is left
+cap         nodes out by this rule hold at most 10 % of the census's weight past
+            absence. Past that those named longest ago are out and the rest stay
+            in. The first always goes, so on a small census the cap is 1 node
+```
+
+- **What a seat lists.** For RESULT, the seats whose signed result it did not
+  hold when it decided the entry. A round's several VOID entries make one note,
+  the union of their lists. For SETTLEMENT, the seats that gave no signed word
+  at the step where this seat's own last settlement pass stopped. That is the
+  commit (`SettlementCommit`, §5A.3 table row), and it is the ack or the signed
+  plan when the pass stopped there: a pass short of acks asks nobody to commit,
+  so a list of commits alone would name the honest seats beside the silent ones.
+  Only a seat that asked knows, and each seat asks in its turn, one every 2 blocks,
+  so all 7 have had theirs inside the 2 h. A seat that gave no result itself
+  signs no note for that entry, and a seat that never asked has nothing to list.
+- **4 silent seats leave 3 honest, so no note stands. Accepted.** A round with 4
+  or more colluders goes unrecorded: 3.3 % of rounds at 20 % of capital, 12.6 %
+  at 30 %.
+- **A frame is bounded, not stopped.** 4 colluders can name 3 honest seats. A
+  signed result cannot clear them at the draw, because a refutation spreading
+  from seat to seat was refused (§5A.3 above): a claim stands on what it
+  carries. Slashing a false note is refused too: an honest seat cut off from a
+  peer would sign one in good faith and lose its bond. What bounds it: a note
+  needs a real VOID or a stalled settlement, so a frame costs its authors that
+  round's fee, in the open. It takes 3 rounds an hour apart, each a fresh draw and
+  a duty posting's, so they cannot make their own rounds. The cap holds. The
+  victim loses fees for the window and nothing else. At 30 % of capital with 10 %
+  of honest weight out the attacker's share is 33.3 %: 3 of 7 goes from 35.3 % to
+  about 43 %, 5 of 7 from 2.9 % to about 4.5 %. It needs 4 of 7, repeatedly.
+- **How the draw agrees: exactly as absence.** The census claim (`GET /absent`,
+  `POST /absent`) carries, beside the absent, `stalled`: each node with its 3
+  rounds, for each round at least 4 notes and the seating that seats it. The
+  certificate of that seating says who the round's seats were; a table's round
+  names its table's seating. Every seat and the client check each proof on
+  their own draw: the note signed by a seat of that seating, listing the node and
+  not itself, the node seated there, the round under this rule and a duty
+  posting's (the check above), its final_after in the window, the 3 an hour apart
+  and of 3 different seatings, and the cap, in the order above, on the weight the
+  root commits. A claim without valid notes makes the census invalid, as for
+  absence. No new transaction, nobody new pays. The client reads a stalled node's
+  weight from the census of its seating. A duty node gathers the window's notes
+  from every seat first (`GET /stall-notes`); seats hand their notes on as they
+  sign them (`POST /stall-notes`).
+- **Out for as long as 3 proofs lie in the window.** There is no timer and no
+  sentence to serve: a node is back by itself once fewer than 3 proofs lie in the
+  last 72 h, and nobody decides anything, so nobody can be asked. It is drawn for
+  nothing while it is out, so nothing new names it.
+- **Slow honest seats.** Nothing is noted unless the round failed, so 1-2 slow
+  seats never count. A restart shorter than the spacing is one proof at most. A
+  load spike is the real risk: 3 seats on one overloaded host failing rounds again
+  and again. The cap limits that to 1 node on today's network.
+- **The draw only.** The census of rounds, so seats, reserves, panels and
+  attestors alike. Not pay: a stalled round pays nobody already. Not absence: a
+  stalled node is in no `left_out` list. Not the bond. Not the census key, which is
+  chain-only and keeps its shares (§5A.3B).
+
+**Version.** Protocol 26, `STALL_VERSION`, on one height per network
+(`STALL_HEIGHT`, named after every seat of the network runs it; mainnet from
+genesis, testnet4 not named yet). 2.0 only. A census below it never leaves a
+stalled node out, and its claim and its commit are the bytes they were.
+StallNote is type 0x41, `SettlementCommit` 0x40.
+(arena-protocol `stall.js` stallsOut, stalledFrom, checkStallProof, stallCapKept,
+`STALL_NOTE_QUORUM`, `STALL_PROOF_ROUNDS`, `STALL_WINDOW_MS`, `STALL_CAP_BPS`,
+`STALL_SETTLEMENT_WAIT_MS`; `settlement-ack.js` signSettlementCommit;
+`client-committee.js` absenceFromChain; arena-node `stall-book.js`, `settlement.js`
+`#stoppedAt`, `roster.js` absentCensus; `tools/stall-replay.mjs`, the replay.)
+
 `bond_min(role)` is **named in the Round Contract**, not global. A round
 declares the bracket it plays at and the floor that goes with it, and a
 node is eligible for *that round* or not.
@@ -2175,6 +2270,11 @@ signature names nobody, so it is never the proof.
   fields, and each seat keeps them with the table and publishes them with the
   settlement (`GET /settlement-acks`). A round of protocol 22 and later settles
   this way. The cost is one signature per seat per settlement, off chain.
+  From protocol 26 a seat answers a settlement's commit with a signed word too,
+  `SettlementCommit { round_id, settlement_txid, H(nonce points) }`, one signature
+  per seat per settlement (`x-settlement-commit`, kanban #1052). It slashes
+  nobody: it is what makes a seat's list of who stayed silent read
+  (§5A.3, "Stalled in its rounds").
 - *The table.* A settlement table's rows name their entry: `entry_id`,
   `player_pubkey`, `amount_msat`, with the outcome and score the seat held for
   it, and the table names the late entry a second settlement is for. So what a
@@ -3070,6 +3170,9 @@ Given `census_height`, every participant runs the same five steps:
             the absent nodes of the posting node's claim (5A.3), each with
             3 seating certificates proving it absent, checked by every
             seat and by the client.
+            From protocol 26 also the stalled nodes of that claim (5A.3,
+            "Stalled in its rounds"), each with the notes of 3 failed
+            rounds, checked the same way.
 
 4. SORT     ascending by (funding_txid, vout) as raw bytes.
             Outpoints are unique, so the order is total and tie-free.
@@ -5524,7 +5627,8 @@ player wallet balance (§24A.1)
 3 SETTLEMENT or GAME/VERIFY slots withholding receipts or signatures (P6)
     -> can void a winner's entry (refund instead of winnings). Griefing,
        not theft; a withheld settlement signature or receipt leaves no
-       artifact and is not
+       artifact and is not slashable. From protocol 26 a set of nodes that
+       does it again and again leaves the draw (§5A.3, "Stalled in its rounds").
 
 The first two require five bonded operators to collude and forfeit five
 bonds, in a round whose committee they could not choose (§5A.5). The federation lines - guardians, halt,
@@ -9462,7 +9566,7 @@ committee nor outcome).
 | **Creator names his own federation** | Round creator | Not considered | A federation is valid only if its threshold of guardians are bonded census nodes, config hash matches, known-good list (§23.6, P3) |
 | **Forged chain view** | Whoever feeds the client its headers/census | "Never funds" — false | Corrected: it is the stake; ≥2 independent header sources mandatory for paying rounds (§5A.4, §25.1, P4) |
 | **Fork selection by a player-run quorum** | 5 game/verify slots | Claimed caught by replay — false, the fork is genuine | Stated residual, priced by capital; publication makes the chosen fork public (§22, P5) |
-| **Receipt withholding** to void a winner | 3 slots | Not considered | Griefing, not theft; unpunishable, stated residual (§22, P6) |
+| **Receipt withholding** to void a winner | 3 slots | Not considered | Griefing, not theft; unpunishable, stated residual (§22, P6). Repeated, it leaves the draw (§5A.3, protocol 26) |
 
 ---
 
