@@ -1,13 +1,23 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SEED PHRASE IN REACT (kanban #564, the Arena page): the modal the page's Settings opens - the 24 words numbered in a grid with why
-// they matter, then "Verify seed phrase" from memory, one word at a time, 1 to 24, each out of four taken from this phrase (a wrong tap
-// does not advance), then done. The backup is recorded by the page's own rule (`onRecord(words)` -> verifyAndRecord's { ok, why });
+// they matter, then "Verify seed phrase" from memory: three of the 24 words at random, in order (kanban #1033, the owner 2026-11-02: "verify seed nur 3 der 24 Woerter"), each
+// out of four taken from this phrase (a wrong tap does not advance), then done. The backup is recorded by the page's own rule (`onRecord(words)` -> verifyAndRecord's { ok, why });
 // `random(n)` is the page's crypto.getRandomValues. `onQuiz` keeps window.ARENA_VERIFY for the page's probes. A class component.
 import React from 'react';
 
+/** How many of the 24 words the check asks for. */
+export const SEED_CHECK_WORDS = 3;
+
 export class SeedModal extends React.Component {
-  constructor(props) { super(props); this.state = { pane: 'words', at: 0, options: [], why: '' }; }
+  constructor(props) { super(props); this.state = { pane: 'words', step: 0, picks: [], options: [], why: '' }; }
+  /** Three positions of the phrase, lowest first. */
+  draw() {
+    const { words, random } = this.props;
+    const left = words.map((_, i) => i), picks = [];
+    while (picks.length < SEED_CHECK_WORDS && left.length) picks.push(left.splice(random(left.length), 1)[0]);
+    return picks.sort((a, b) => a - b);
+  }
   optionsFor(at) {
     const { words, random } = this.props;
     const right = words[at], others = [...new Set(words.filter((w) => w !== right))], options = [right];
@@ -16,21 +26,21 @@ export class SeedModal extends React.Component {
     if (this.props.onQuiz) this.props.onQuiz({ word: at + 1, options, right });
     return options;
   }
-  start() { this.setState({ pane: 'verify', at: 0, why: '', options: this.optionsFor(0) }); }
+  start() { const picks = this.draw(); this.setState({ pane: 'verify', step: 0, picks, why: '', options: this.optionsFor(picks[0]) }); }
   pick(w) {
-    const { words } = this.props, { at } = this.state;
+    const { words } = this.props, { step, picks } = this.state, at = picks[step];
     if (w !== words[at]) return this.setState({ why: `Not word ${at + 1}. Try again.` });
-    if (at + 1 < words.length) return this.setState({ at: at + 1, why: '', options: this.optionsFor(at + 1) });
+    if (step + 1 < picks.length) return this.setState({ step: step + 1, why: '', options: this.optionsFor(picks[step + 1]) });
     const said = this.props.onRecord(words);
     if (this.props.onQuiz) this.props.onQuiz({ done: !!said.ok });
     this.setState(said.ok ? { pane: 'done', why: '' } : { why: said.why });
   }
   render() {
-    const { words, notReady, onClose } = this.props, { pane, at, options, why } = this.state;
+    const { words, notReady, onClose } = this.props, { pane, step, picks, options, why } = this.state, at = picks[step];
     if (pane === 'verify') return (
       <div className="modal-box">
         <h3>Verify seed phrase</h3>
-        <div>Word <span className="verify-n">{at + 1}</span> of {words.length}</div>
+        <div>Word <span className="verify-n">{at + 1}</span> of {words.length} ({step + 1} of {picks.length} to check)</div>
         <div className="opt-grid">{options.map((w) => <button key={w} type="button" data-word={w} onClick={() => this.pick(w)}>{w}</button>)}</div>
         <div className="why">{why}</div>
         <button type="button" onClick={onClose}>Cancel</button>
