@@ -28,6 +28,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { decodeRoundContract, decodeEntryContract, entryFederation, entryId as entryIdOf } from '../../arena-protocol/src/contracts.js';
 import { takesAnyFederation, acksSettlement } from '../../arena-protocol/src/constants.js';
+import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { signSettlementAck, settlementAckId, countAcks, joinAcks, splitAcks, splitSignedAck, encodeSettlementTable, decodeSettlementTable, settlementTableId, planTableRows, planTableBuild } from '../../arena-protocol/src/settlement-ack.js';
 import { tableBuild } from '../../arena-protocol/src/settlement-rebuild.js';
 import { slashHoldsOnTable, slashProofId, encodeSlashProof, joinTableSlashEvidence } from '../../arena-protocol/src/slash.js';
