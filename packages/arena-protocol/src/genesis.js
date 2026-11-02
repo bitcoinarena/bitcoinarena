@@ -32,6 +32,17 @@ export const TAG_NETWORK_ID = 'ARENA/v1/NetworkId';
  */
 export const RANDOMNESS_SOURCE = 'bitcoin-block-hash';
 
+/**
+ * THE SLASH CLOCKS OF TEMPLATE 3, by network (§27A.6's table, §5A.3B). Hashed into mainnet's network id. On testnet4 and regtest they are
+ * read from genesis and NOT hashed: their ids are fixed and a moved id is a new network, the same reason as BOND_MATURITY_OFFSET
+ * (bond-script.js) and the ruling of 2026-10-14 below. A network founded on these clocks hashes them.
+ */
+export const SLASH_CLOCKS = Object.freeze({
+  mainnet: Object.freeze({ slashHoldBlocks: 6, slashReturnBlocks: 144, slashFallbackBlocks: 288 }),
+  testnet4: Object.freeze({ slashHoldBlocks: 1, slashReturnBlocks: 36, slashFallbackBlocks: 72 }),
+  regtest: Object.freeze({ slashHoldBlocks: 1, slashReturnBlocks: 12, slashFallbackBlocks: 24 }),
+});
+
 export function encodeGenesisParameters(p) {
   const w = new Writer();
   w.str(p.chain);
@@ -105,6 +116,14 @@ export function encodeGenesisParameters(p) {
     w.u64(p.bondMinGuardianSats);
     for (const k of ['design', 'money', 'upgrade']) { w.u32(sched[k].review); w.u32(sched[k].voting); w.u32(sched[k].cooldown); }
     w.u8(p.committeesBind ? 1 : 0);
+    // TEMPLATE 3'S CLOCKS (§27A.6, §5A.3B), in this block for the reason the block exists: the test networks' bytes do not move.
+    if (![p.slashHoldBlocks, p.slashReturnBlocks, p.slashFallbackBlocks].every((n) => Number.isInteger(n) && n >= 1 && n <= 0xffff))
+      throw new Error('genesis names the slash clocks: hold, return and fallback blocks, each one CHECKSEQUENCEVERIFY can wait for');
+    if (!(p.slashHoldBlocks < p.slashReturnBlocks && p.slashReturnBlocks < p.slashFallbackBlocks))
+      throw new Error('the slash clocks run hold, then return, then fallback: a mature node leaves before the fallback opens (§5A.3B)');
+    w.u32(p.slashHoldBlocks);
+    w.u32(p.slashReturnBlocks);
+    w.u32(p.slashFallbackBlocks);
   }
   return w.finish();
 }
@@ -129,7 +148,7 @@ export function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityP
     federationNominal: 10, federationMin: 7, bondMinGuardianSats,
     abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216,
     gameVerifySlots: 7, gameVerifyThreshold: 5, settlementSlots: 7, settlementThreshold: 5, committeesBind: true,
-    censusMinNodes: 10, censusConfirmations: 6, bondMaturity: 4320,
+    censusMinNodes: 10, censusConfirmations: 6, bondMaturity: 4320, ...SLASH_CLOCKS.mainnet,
     arbitrationK: 5, arbitrationM: 7, arbitrationKeys, noticePeriod: 4320,
     bondMarker: marker, randomnessSource: RANDOMNESS_SOURCE, genesisConfigHash: GENESIS_CONFIG_HASH,
     brackets: [{ minSats: 1000n, maxSats: 10_000_000n }],
@@ -183,6 +202,9 @@ export function testnetShape(chain, marker, arbitrationKeys, federation, genesis
     foundingWindow: federation.foundingWindow,
     drainBlocks: federation.drainBlocks,
     claimBlocks: federation.claimBlocks,
+    slashHoldBlocks: federation.slashHoldBlocks,
+    slashReturnBlocks: federation.slashReturnBlocks,
+    slashFallbackBlocks: federation.slashFallbackBlocks,
     gameVerifySlots: 2,
     gameVerifyThreshold: 2,
     settlementSlots: 2,
@@ -235,10 +257,10 @@ export { receiptsNeeded };
 export function genesisFor(network) {
   if (network === 'regtest')
     return testnetShape('bitcoin-regtest', bondMarker('regtest'), ARBITRATION_KEYS_REGTEST,
-      { federationNominal: 4, ...REGTEST_CLOCKS }, GENESIS_SERIES_START_MS.regtest);
+      { federationNominal: 4, ...REGTEST_CLOCKS, ...SLASH_CLOCKS.regtest }, GENESIS_SERIES_START_MS.regtest);
   if (network === 'testnet4' || network === 'testnet')
     return testnetShape('bitcoin-testnet4', bondMarker('testnet'), ARBITRATION_KEYS_TESTNET4,
-      { federationNominal: 4, ...TESTNET_CLOCKS }, GENESIS_SERIES_START_MS.testnet4);
+      { federationNominal: 4, ...TESTNET_CLOCKS, ...SLASH_CLOCKS.testnet4 }, GENESIS_SERIES_START_MS.testnet4);
   throw new Error('no genesis for ' + network);
 }
 
