@@ -6038,20 +6038,35 @@ The same squared rule: the gateway that raises its peg-in to P\* while the other
 while peg-in pressure lasts, so a gateway that can take the deposits is seated ahead of one that has routed more but cannot.
 
 **What counts as the peg-in.** A claim states `pegInSats` (§23A.9). The weight counts it only if it is **proved**:
-- the claim names its peg-in outpoints (`txid:vout`), each a deposit to F's on-chain wallet address that the gateway's own client
+- the claim names its peg-in outpoints (`txid:vout@height`), each a deposit to F's on-chain wallet address that the gateway's own client
   requested;
-- every guardian checks those outputs in F's wallet module (they are F's own UTXOs), and that they are not older than the gateway's
-  current seat;
+- every guardian checks those outputs in F's wallet module (they are F's own UTXOs), and that each is at most `peg_in_max_age` blocks old
+  at the first height of the epoch being seated;
 - the counted peg-in is their sum.
 
-*Implemented from protocol 2026.0.20 (kanban #559/#543).* A claim names its outpoints (`pegInOutpoints`, signed with the claim; a claim
-naming none hashes as before). Each guardian reads F's own coins from its guardian's API at most every 10 minutes (the original wallet
+`peg_in_max_age` is a genesis parameter: 4320 blocks on mainnet (about 30 days), 1008 on testnet4 (about a week, because a peg-in there
+needs 100 confirmations), 100 on regtest. A coin stays in F's wallet long after the gateway spent the e-cash, so "still unspent" says
+nothing about the gateway, and one old peg-in would otherwise earn weight and rank for ever. Staying weighted costs a fresh on-chain peg-in
+every month. An honest gateway still holding month-old e-cash pegs in again to stay weighted, and with no pressure on it loses nothing.
+
+**The height comes from the claim.** A guardian reads that one block and checks that the transaction is in it, the output exists and the
+age holds: one block per outpoint, from the chain view it already has, with no index and no change to how it reads F's coins. A wrong
+height counts nothing. Age is read at the epoch's first height, not at a guardian's tip, so every guardian signs the same proved amounts.
+
+**From a rules epoch, per network** (`SEATING_RULES_EPOCH`). Before it a claim reads as it did: heights are ignored and no block is read.
+From it an outpoint with no height counts nothing, and a claim with no outpoints hashes as before. A seat of a release before this
+refuses a claim that names a height, the whole claim and not just the outpoint, so a gateway names heights only once its network has a
+rules epoch, and that epoch is named after every seat runs this release. The gateway's height is read from its own chain view (`gettxout`
+on the unspent coin).
+
+*Implemented from protocol 2026.0.20 (kanban #559/#543).* A claim names its outpoints (`pegInOutpoints`, signed with the claim, each item
+with its height as it stands; a claim naming none, or naming no heights, hashes as before). Each guardian reads F's own coins from its guardian's API at most every 10 minutes (the original wallet
 module's spendable coins, or wallet v2's unspent outputs) and proves a gateway's claimed outpoints that are among them; an outpoint two
 claims name counts for neither. The guardian signs each paid seat's proved peg-in into the epoch's gateway seating (§23A.9; a seating
 that names none hashes as before), so a seating stands only on the same seats **and** the same proved amounts. A 2026.0.20 round
 splits the gateways' part by `(min(proved, P*))^2` from the seating of its census epoch, with the record in force at its census height
-and `peg_in_min` the network's gateway peg-in minimum (§23A.9 table); CALM, no peg-in pressure, or nothing proved - evenly. Not yet
-checked: "not older than the gateway's current seat".
+and `peg_in_min` the network's gateway peg-in minimum (§23A.9 table); CALM, no peg-in pressure, or nothing proved - evenly. An outpoint
+older than `peg_in_max_age`, or at a height that does not hold it, counts for nothing from the rules epoch (kanban #999, 2026-11-02).
 
 **Open.** A peg-in proves money went in, not that the gateway still holds it as e-cash. A balance proof needs a guardian-side check
 of the gateway's notes, which stock Fedimint does not offer. Until there is one, the proved peg-in is the weight, and a seated gateway
@@ -7678,6 +7693,7 @@ genesis_parameters {
   federation_nominal     guardians per federation (§23A.1)
   federation_min         below this a federation is CRITICAL (§23A.1)
   bond_min_guardian      a guardian's bond floor (§23A.2)
+  peg_in_max_age         the oldest peg-in that still counts (§23A.3a)
   abandon_blocks         absence that is abandonment (§23A.5)
   departure_notice       notice a guardian must give (§23A.5)
   founding_window        time a drawn set has to finish DKG (§23A.2)
