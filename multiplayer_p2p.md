@@ -2687,6 +2687,8 @@ entry_open_time == committee_time
 start_time      >= committee_time + min_entry_window     (reference: 60 s)
 ```
 
+A series' publication is not held to this lead: its own rule is below.
+
 **Anti-grinding is anchored on chain, not on receipts**. An earlier revision
 had the creator collect timestamp receipts from five census nodes predating
 the beacon. That was two holes. Any five bonded nodes — not selected ones,
