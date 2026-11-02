@@ -5,7 +5,10 @@
 // parts never counted as a clash against it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { devnetPorts, forbiddenWhy, parseListening, clashes, portsOfPart, NODE_COUNT } from '../tools/devnet-plan.mjs';
+import { devnetPorts, forbiddenWhy, parseListening, clashes, portsOfPart, NODE_COUNT, lnurlPayRequest, LNURL_METADATA, firstRoundHeight, nextRoundHeight, signalHeights, weekOf } from '../tools/devnet-plan.mjs';
+import { payRequestStands, callbackFor } from '../../arena-protocol/src/lnurl-pay.js';
+import { lnurlStands, FUNDING_SCHEDULES } from '../../arena-protocol/src/funding.js';
+import { lnurlFor, urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 
 test('the default base: the chain, the control door, seven nodes and their guardians, all below 32768', () => {
   const p = devnetPorts();
@@ -15,6 +18,8 @@ test('the default base: the chain, the control door, seven nodes and their guard
   assert.deepEqual([p.zmqBlock, p.zmqTx], [24006, 24007]);
   assert.deepEqual(p.lnd.a, { rpc: 24010, p2p: 24011, rest: 24012 });
   assert.deepEqual(p.gateway.b, { api: 24040, iroh: 24041, metrics: 24042 });
+  assert.deepEqual(p.lnd.c, { rpc: 24050, p2p: 24051, rest: 24052 });
+  assert.equal(p.lnurl, 24008);
   assert.deepEqual(p.nodes, [24100, 24110, 24120, 24130, 24140, 24150, 24160]);
   assert.deepEqual(p.guardians[0], { api: 25100, p2p: 26100, ui: 27100, metrics: 28100 });
   assert.equal(p.nodes.length, NODE_COUNT);
@@ -62,4 +67,37 @@ test('a clash is a port of the plan that something else holds; a running part of
   assert.deepEqual(portsOfPart(p, 'bitcoind'), [24001, 24002, 24006, 24007]);
   assert.deepEqual(portsOfPart(p, 'gateway-a'), [24030, 24031, 24032]);
   assert.deepEqual(portsOfPart(p, 'node-8'), []);
+});
+
+test('the LNURL door: a pay request the payout rule takes, at an LNURL a funding proposal may name, on plain http on this machine', () => {
+  const p = devnetPorts(24000);
+  const said = lnurlPayRequest(p.lnurl);
+  const pr = payRequestStands(said, 100000n);
+  assert.equal(pr.ok, true, pr.why);
+  assert.equal(pr.metadata, LNURL_METADATA);
+  assert.match(callbackFor({ callback: pr.callback, amountMsat: 100000n }), /^http:\/\/127\.0\.0\.1:24008\/invoice\?amount=100000$/);
+  const url = `http://127.0.0.1:${p.lnurl}/.well-known/lnurlp/payee`;
+  const lnurl = lnurlFor(url);
+  assert.equal(lnurlStands(lnurl), true);
+  assert.equal(urlOfLnurl(lnurl), url);
+  assert.deepEqual(portsOfPart(p, 'lnurl'), [24008]);
+  assert.deepEqual(portsOfPart(p, 'lnd-c'), [24050, 24051, 24052]);
+});
+
+test('a payout\'s heights: from where each FINAL fell, the last three served weeks are three of the four before the signal ends', () => {
+  const S = FUNDING_SCHEDULES.short;
+  assert.equal(firstRoundHeight({ tip: 368, lastBond: 270, schedule: S }), 369);
+  assert.equal(firstRoundHeight({ tip: 100, lastBond: 800, schedule: S }), 800 + S.season + 12 - 2 * S.week);
+  // what opening a round mines, 0 to 75 blocks, at each round: every case holds three weeks
+  for (const a of [0, 40, 75]) for (const b of [0, 40, 75]) {
+    const f0 = 395, f1 = nextRoundHeight(f0, S) + a, f2 = nextRoundHeight(f1, S) + b;
+    const { E, P } = signalHeights(f2, S);
+    assert.equal(E - P, S.signal);
+    assert.ok(P > f2, 'the proposal comes after the last FINAL');
+    assert.ok(P - 270 >= S.season);
+    const weeks = [f0, f1, f2].map((f) => weekOf(f, E, S));
+    assert.ok(weeks.every((w) => w !== null), String(weeks));
+    assert.equal(new Set(weeks).size, 3, String(weeks));
+  }
+  assert.equal(weekOf(100, 1000, S), null);
 });

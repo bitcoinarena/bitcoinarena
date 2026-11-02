@@ -236,6 +236,9 @@ try {
   // THROUGH THE PAGE'S OWN GATEWAY (GATEWAY, else the lobby's): with none named the federation picks one, and gateway A runs
   // on lnd-testnet4 itself - the payer - so its invoice was one the payer cannot pay (lnd does not pay its own invoices):
   // the three hung deposits of 2026-10-11 (12:31:44, 13:47:52, 14:04:58Z) were gateway A's invoices, never paid
+  // A PRIVATE CHAIN NAMES ITS OWN (kanban #397, measured 2026-11-02 on a devnet: this default, a testnet4 gateway the devnet's federation does not list, answered
+  // "Failed to connect to gateway" in 85 ms; the devnet's own gateway gave its invoice in 89 ms, on localhost and on 127.0.0.1)
+  if (anchorAt && !env.GATEWAY) throw new Error('a private chain has its own gateways: name one, GATEWAY=<url>');
   const gateway = env.GATEWAY || 'https://cleaner-cindy-duty-biggest.trycloudflare.com/';
   const rcv = JSON.parse(await lc.receive(String(depositMsat), gateway));
   const payee = JSON.parse((await payer('decodepayreq', rcv.invoice)).out).destination;
