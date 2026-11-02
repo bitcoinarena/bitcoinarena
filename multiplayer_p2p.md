@@ -1593,6 +1593,8 @@ NodeAdvertisement {
   lightning_capabilities
   bond_outpoint                // MANDATORY; the census entry itself (§5A.2)
   bond_script_template_version
+  bond_maturity_height         // templates 2 and 3: the height in the recovery leaf (§5A.3B)
+  census_key                   // template 3: the key path B names (§5A.3B)
   payout_pubkey                // where fee shares are paid
   guardian_of[]                // (federation_id, guardian peer key) this operator runs (§23.6)
   guardian_capable             // the third role, opt-in: willing to hold custody as a guardian (§23A.2)
@@ -2352,7 +2354,7 @@ job for the one step that needs it. **None of this adds a transaction to a
 round.** It adds one signature per seat per round, kept off chain. Only a slash
 that really happens goes on chain.
 
-**Who is responsible for a round.** Two panels of 7, threshold 5, for every
+**Who is responsible for a round.** Two panels, of up to 7 each, for every
 round, fixed when its committees are:
 
 ```text
@@ -2360,9 +2362,19 @@ panel_seed(r)  = tagged_hash("ARENA/v1/SlashPanel", committee_seed(r))
 order          the §5A.6 selection over the round's census, on panel_seed(r),
                less every node drawn for any role of the round (all 9 per role,
                §5A.7), its attestors, and the nodes of its players
-panel A        the first 7 of that order
-panel B        the next 7
+E              the nodes left in that order
+n              min(7, floor(|E| / 2))
+t              floor(2n / 3) + 1        n 3..7 -> t 3, 3, 4, 5, 5
+panel A        the first n of that order
+panel B        the next n
 ```
+
+**A small census gets smaller panels (RULED 2026-11-02, kanban #1021).** The
+census minimum stays, and no round is refused for this. A panel is a check on a
+slash the census key has already started, not the theft barrier: nothing starts
+without 2/3 of the shares. With n under 3 there are no panels: the hold output
+has no release leaf, only the return and the fallback, so a slash pays at
+`slash_fallback_blocks`.
 
 The lobby and the explorer list both panels beside the committee. Anyone can
 recompute them, nobody applies for them, and no node can move itself in or out.
@@ -2370,12 +2382,66 @@ Being drawn takes no work unless a slash comes, and pays nothing.
 
 **The census key: who gates the first step.** A key in a bond is fixed when it
 is bonded, and a round is drawn later, so the first step needs a key that exists
-already. `census_key(e)` is a FROST key (RFC 9591, BIP-340) of the census of
-epoch `e`, one share per weight (§5A.6), threshold 2/3 of the shares. No one is
-chosen: every bonded node holds shares by its bond. An epoch is `bond_maturity`
-long. A bond names the key of the epoch it is bonded in, and each epoch's new
-census takes over the shares of the older keys by a reshare that keeps the
-public key. A holder signs a slash start only after replaying the proof itself.
+already. `census_key(e)` is a FROST key (RFC 9591, BIP-340) of the census at the
+start of epoch `e`. No one is chosen: every bonded node holds shares by its
+bond. An epoch is `bond_maturity` long. A bond names the newest standing key when
+it is made. A holder signs a slash start only after replaying the proof itself.
+
+**One number per epoch, set by the network (RULED 2026-11-02, kanban #1021).**
+
+```text
+B             the lowest bracket's bond_min in force at the epoch's census height
+T             total bonded sats in that census
+S             census_key_shares_max = 1024, a genesis parameter
+unit          max(B, ceil(T / S))
+shares(node)  floor(sum of the node's bonds / unit)
+threshold     floor(2 x total shares / 3) + 1
+```
+
+`bond_min(role)` per round stays what it is for rounds; the key does not read it.
+A node under one `unit` holds no share, never a minimum of one: that would let
+many small bonds out-count capital, because shares would stop being linear.
+
+**Which keys stand (RULED 2026-11-02, kanban #1021).** A bond stays valid and
+nobody re-bonds (§5A.2), so a key cannot retire while something names it.
+
+- **Retired:** a key with no unspent bond or hold output naming it. Nothing is
+  done for it again.
+- **Reshared only when needed:** when nodes of the current census hold under 80 %
+  of its shares, at most one key at a time, oldest first. The reshare keeps the
+  public key. A stable census costs nothing.
+- **New key:** at an epoch's start, and only if the newest key has been named by a
+  bond. A DKG that fails leaves the newest key standing, and the next epoch tries
+  again.
+- **Never one key for all time:** old shares still combine among their old
+  holders, whatever a reshare does, and nobody can prove a deletion. A single key
+  would leave the genesis founders able to reach every bond forever.
+- **A key under its threshold is dead:** its bonds stay valid, cannot be started,
+  and path A still works. Deterrence is lost for those bonds, nothing else. The
+  owner page says so.
+
+**The first key is made before the first bond (RULED 2026-11-02, kanban #1021).**
+
+```text
+CensusKeyRecord { network_id, epoch, public_key, census_height,
+                  total_shares, threshold, transcript_hash }
+signed by node keys holding the threshold of its shares
+anchored by OP_RETURN "ARN" 'K' H(record)
+```
+
+The census reads the first valid record per epoch. A bond naming a key with no
+standing record at its confirmation does not count.
+
+- **Mainnet, epoch 0:** the genesis founders, at least the census minimum of 10,
+  run the DKG before any bond exists, one share each, threshold 2/3. The public
+  key goes into `genesis_parameters`, so it is committed in `network_id` and needs
+  no anchor. They bond naming it. Epoch 1 is the first key by weight. The founders'
+  reach is the bonds naming key 0, and until then they are the capital anyway.
+- **Testnet4 and a network with a census already:** the census at an announced
+  height makes the first key by the rule above, on its existing template 1 and 2
+  bonds, and anchors the record. No genesis change, no re-bond.
+- A network with no key yet cannot take a template-3 bond. That is the only
+  refusal.
 
 **The bond (`bond_script_template_version` 3).** The key path and path A stay.
 Path B needs both the node's advance signature and the census key:
@@ -2404,15 +2470,17 @@ the release pays their fee back. A slash uses the `slash_presig` of the round
 the offence is in; an offence with no round uses the node's newest. A node
 also posts one in an advertisement update when it bonds (the bond's txid does
 not exist before), naming panels drawn on `H(bond outpoint ‖ that block's
-hash)`, and a template-3 bond counts only with it `census_confirmations` deep.
+hash)`, by the same rule at their own height, and a template-3 bond counts only
+with it `census_confirmations` deep.
 
 **The hold output.** A P2TR output with an unspendable internal key, rebuilt by
 anyone from the bond and the round:
 
 ```text
 release       <slash_hold_blocks> CHECKSEQUENCEVERIFY DROP
-              <5-of-7 panel A>  <5-of-7 panel B>
-              -> §5A.3: each real loss, then the rest to the reserves
+              <t-of-n panel A>  <t-of-n panel B>
+              -> §5A.3: each real loss, then the rest to the reserves;
+                 no such leaf when the round has no panels
 
 return        <slash_return_blocks> CHECKSEQUENCEVERIFY DROP
               <bond_maturity> CHECKLOCKTIMEVERIFY DROP
@@ -2421,7 +2489,7 @@ return        <slash_return_blocks> CHECKSEQUENCEVERIFY DROP
 
 fallback      <slash_fallback_blocks> CHECKSEQUENCEVERIFY DROP
               <census_key(e)> CHECKSIG
-              -> the census key, if the panels do not sign
+              -> the census key, if the panels do not sign, or there are none
 ```
 
 **The flow, replacing steps 3-5 above for a template-3 bond:**
@@ -2430,14 +2498,41 @@ fallback      <slash_fallback_blocks> CHECKSEQUENCEVERIFY DROP
 3. The census key signs the slash start after replaying the proof, with
    OP_RETURN = H(fraud_proof) ‖ slash_height ‖ hint. slash_height keeps its
    meaning but is not the nLockTime: slash_presig fixes that at 0.
-4. slash_hold_blocks later, 5 of 7 of both panels, each having replayed the
+4. slash_hold_blocks later, t of n of both panels, each having replayed the
    proof, sign the release, with
-   OP_RETURN = H(fraud_proof) ‖ slash_height ‖ H(payout_table). The table
-   names every affected entry and its share.
+   OP_RETURN = H(fraud_proof) ‖ slash_height ‖ H(payout_table) as its first
+   output. The table names every affected entry and its share.
 5. The release pays §5A.3: each real loss, then the rest to the reserves. Panel A's members bring the
    players' share into the federation and pay the table, in score order, none
    holding more than its own bond.
 ```
+
+**The payout table (RULED 2026-11-02, kanban #1021).**
+
+```text
+PayoutTable {
+  version 1, network_id, round_id, proof_id, bond outpoint
+  entries[]    ascending entry_id: entry_id, player_pubkey, loss_msat
+  reserves[]   ascending federation_id: federation_id, msat
+  outputs[]    the release's outputs after its OP_RETURN, in order:
+               value_sats, script, pays
+}
+payout_table_id = tagged_hash("ARENA/v1/SlashPayoutTable", its bytes)
+pays in order: filer, player_carrier, reserves, escrow
+```
+
+The release's `OP_RETURN` comes first and is left out of the table, because it
+carries the table's hash. `filer` repays the start's fee input. `player_carrier`
+outputs are the peg-ins of panel A's members in score order, none above that
+member's own bond. `reserves` are the parts of §27A.9.2. `escrow` is what does not
+fit, under the round's two panels, or the census key if there are none.
+
+In sats the players' parts round up and the reserves take the rest. The
+transaction fee comes off the reserves, never the players. Outputs + fee = the
+bond, exactly. A panel member signs only if its own recomputed table is
+byte-equal. Any seat serves the table by its id. A fallback carries the same
+`OP_RETURN` and the same table as a release, and census key holders sign one only
+after replaying the proof.
 
 **The clocks are hours, not days.** The money a player is waiting for here is
 the slash share. Their own stake and winnings never wait for it: a false result
@@ -2463,13 +2558,23 @@ release and refill itself from the peg-in; nothing depends on it.
 | the census key sends a bond anywhere but a hold output its node signed | refused by Bitcoin: `slash_presig` no longer verifies |
 | the census key starts a slash with no valid proof | no money moves: the panels do not sign, and the hold output stays the bond (below) |
 | a round's panels, both captured | they cannot start without the census key, and a panel reaches only that round's seats, not every bond |
-| one panel blocks a true slash (3 of 7 refuse) | the census key releases at `slash_fallback_blocks` if the bond is immature; a mature node can already leave, as under path A |
+| one panel blocks a true slash (3 of 7 refuse) | the census key releases at `slash_fallback_blocks`; a mature node can leave first, at `slash_return_blocks`, as under path A |
 | a node buys a slash start to get out before maturity | nothing: the return leaf waits for `bond_maturity` too |
 | 2/3 of the bonded capital | can still take a bond that has not matured. At that size it holds the committees anyway |
 
-A mature node leaves at `slash_return_blocks`, before the fallback opens, so the
-census key can never take a mature bond by itself. So a key whose epoch is over
-reaches nothing: bonds that named it have matured.
+**The fallback is meant (RULED 2026-11-02, kanban #1021).** A mature node can
+leave at `slash_return_blocks`, before the fallback opens. If it does not, the
+census key can take its bond at `slash_fallback_blocks`. Script cannot say "only
+before maturity", and a mature node that does nothing should not be safer than one
+that reacts.
+
+The reference node takes the return leaf itself, as soon as it opens, when a start
+names a proof that does not check on its own replay. An owner does not have to
+watch.
+
+The residual: an offline mature node can lose its bond to 2/3 of a key's shares.
+Threshold signers cannot be named, so a false fallback has no offence row; it is
+public through the committed proof hash.
 
 **The hold output is still the bond (§5A.2).** A spend through path B is the one
 spend of a bond that does not end it: the census reads its output 0 as the same
@@ -7703,6 +7808,8 @@ genesis_parameters {
   slash_hold_blocks      template 3: start to earliest release (§5A.3B)
   slash_return_blocks    template 3: start to the node's return (§5A.3B)
   slash_fallback_blocks  template 3: start to the census key's release (§5A.3B)
+  census_key_shares_max  template 3: the cap on a census key's shares (§5A.3B)
+  census_key_0           mainnet: the key the genesis founders made (§5A.3B)
   notice_period          for a rise in bond_min (§27A.3)
   bracket_table          the §5A.10 stake ceiling table
   bond_marker            the §25.1 discovery address
@@ -7754,6 +7861,7 @@ a state whose origin nobody can check.
 | writer horizon (rounds generated ahead, TN24-1405) | 72 h | **72 h** | 72 h |
 | `bond_maturity` | ~30 days | ~1 day | **100 blocks** |
 | `slash_hold_blocks` / `slash_return_blocks` / `slash_fallback_blocks` | 6 / 144 / 288 | 1 / 36 / 72 | **1 / 12 / 24** |
+| `census_key_shares_max` | 1024 | 1024 | **1024** |
 | `notice_period` | ~30 days | ~1 day | **10 blocks** |
 | stake ceiling | §5A.10 table | testnet sats | play money only |
 | beacon | Bitcoin block after `committee_time` | Bitcoin block | **mock, seeded** |
@@ -8693,7 +8801,7 @@ with PIP. Users can sign in with their ingame key and their custom name or their
 | Census roots in a contract do not match the chain | Contract invalid; no node issues receipts; no entry possible |
 | Client's chain view is wrong (bad header source) | If the forged view is also the contract's, the player locks to the forger's committee and loses the stake — the corrected statement of §5A.4. Prevented only by verifying headers from ≥2 independent sources (§25.1); a mismatch between an honest view and the contract fails the entry safely |
 | Arbitration set inactive | No slashing; deterrence lost. Rounds settle and refund normally; bonds recoverable by the node after `bond_maturity` |
-| Arbitration set slashes without a valid proof | Templates 1 and 2: bond stolen from that node. Template 3: no money moves without the round's two panels, and their signers are slashed. Publicly provable from the committed proof hash; player funds untouched (arbitration cannot reach stakes) |
+| Arbitration set slashes without a valid proof | Templates 1 and 2: bond stolen from that node. Template 3: no money moves without the round's two panels before `slash_fallback_blocks`, and their signers are slashed; after it the census key alone can release. Publicly provable from the committed proof hash; player funds untouched (arbitration cannot reach stakes) |
 | Lightning payout route fails | Retry within the claim window |
 | Website compromised | Wallet approval still required; hashes/mirrors; donation cap limits the damage |
 | 5 game/verify nodes collude **and** the victim's transcript is unavailable | Residual result-integrity failure; five bonds slashable afterwards |
