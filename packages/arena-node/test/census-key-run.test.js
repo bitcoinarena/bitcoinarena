@@ -610,6 +610,9 @@ test('key 0 with too few founders left is dead, and one no bond names is retired
   const dead = network([2n, 2n, 2n, 2n, 2n, 2n].map((n) => n * BOND), { entries: census([0, 1, 4, 5], named(censusKey0.publicKey)), censusKey0 });
   await dead.pass();
   assert.deepEqual([(await dead.nodes[0].scan.planAt(EPOCH)).reshare, (await dead.nodes[0].scan.planAt(EPOCH)).dead], [null, 1], 'two of four founders, under its threshold');
+  await dead.nodes[0].scan.readDead();
+  assert.deepEqual(dead.nodes[0].scan.dead(), [toHex(censusKey0.publicKey)], 'read with the plan, for the owner page');
+  assert.deepEqual(dead.nodes[0].scan.status().dead, [toHex(censusKey0.publicKey)]);
   const quiet = network([2n, 2n, 2n, 2n, 2n, 2n].map((n) => n * BOND), { entries: census([0, 1, 2, 4], {}), censusKey0 });
   await quiet.pass();
   const plan = await quiet.nodes[0].scan.planAt(EPOCH);

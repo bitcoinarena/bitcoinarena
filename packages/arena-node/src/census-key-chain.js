@@ -15,7 +15,7 @@
 //                 and everything above it is forgotten. Past all of them it starts again from the first height
 import { censusKeyAnchorIn, censusKeyBodyIn, censusKeyRecordDue, censusKeyShares, censusKeyRecordStands, standingCensusKeys, decodeCensusKeyBody, encodeCensusKeyBody,
   censusKey0Shares, censusKeyDrawHeight, censusKeyPlan, censusHeightOfEpoch, decodeReshareList, encodeReshareList, reshareAnchorIn, reshareListIn, reshareListStands,
-  reshareWindow, censusKeyFailing } from '../../arena-protocol/src/census-key.js';
+  reshareWindow, censusKeyFailing, censusKeyEpochOf } from '../../arena-protocol/src/census-key.js';
 import { BOND_MATURITY_OFFSET } from '../../arena-protocol/src/bond-script.js';
 import { splitBlock } from '../../arena-protocol/src/block.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -54,6 +54,7 @@ export function createCensusKeyScan({ store, network, networkId, firstHeight, fo
   let plans = new Map();                // epoch -> the plan, until the chain or the keys move
   let running = false;
   let failing = censusKeyFailing([]), failingMemo = null;
+  let deadKeys = [];
 
   /** The anchors that stand are the whole of it: everything below is read from them, so a restart and a reorg need nothing else. */
   const refresh = () => {
@@ -97,7 +98,7 @@ export function createCensusKeyScan({ store, network, networkId, firstHeight, fo
     if (plans.has(epoch)) return plans.get(epoch);
     const start = censusKeyDrawHeight(epoch, network);
     const census = censusHeightOfEpoch(epoch, network, censusConfirmations);
-    if (census === null) return { newKey: false, reshare: null };
+    if (census === null) return { newKey: false, reshare: null, deadKeys: [] };
     const entries = await censusEntriesAt(census);
     if (!entries) throw new Error(`the census at ${census} cannot be read yet`);
     const here = new Set(entries.map((e) => toHex(e.pubkey)));
@@ -114,7 +115,7 @@ export function createCensusKeyScan({ store, network, networkId, firstHeight, fo
     }
     const plan = censusKeyPlan({ keys: read, epochStart: true });
     const r = plan.reshare;
-    const out = { newKey: plan.newKey, dead: plan.dead.length, retired: plan.retired.length, reshare: r ? { publicKey: r.publicKey, key: toHex(r.publicKey), epoch: r.epoch, generation: r.generation,
+    const out = { newKey: plan.newKey, dead: plan.dead.length, deadKeys: plan.dead.map((k) => toHex(k.publicKey)), retired: plan.retired.length, reshare: r ? { publicKey: r.publicKey, key: toHex(r.publicKey), epoch: r.epoch, generation: r.generation,
       holders: r.holders, threshold: r.threshold, total: r.totalShares, heldNow: r.heldNow } : null };
     plans.set(epoch, out);
     return out;
@@ -222,6 +223,12 @@ export function createCensusKeyScan({ store, network, networkId, firstHeight, fo
     failingMemo = memo;
   }
 
+  /** A KEY UNDER ITS THRESHOLD, read from this epoch's plan, once an epoch: apart from a pass, so a posted anchor buys no census read. A census not yet readable throws and leaves the last answer. */
+  async function readDead() {
+    const top = store.scanTop();
+    if (top) deadKeys = (await planAt(censusKeyEpochOf(top.height, network))).deadKeys || [];
+  }
+
   /** The anchors of the keys, each with what puts it in a block: what a page checks for itself (GET /census-key/records). */
   async function recordProofs() {
     const out = [];
@@ -234,9 +241,11 @@ export function createCensusKeyScan({ store, network, networkId, firstHeight, fo
   }
 
   return {
-    pass, planAt, recordProofs,
+    pass, planAt, recordProofs, readDead,
     /** { epochs, since, keygen, reshare, warn }: the epochs in a row a key was due and did not come. */
     failing: () => failing,
+    /** The keys, hex, that bonds name and the current epoch's census holds under their threshold (5A.3B "A key under its threshold is dead"). Read with the plan, once an epoch. */
+    dead: () => deadKeys,
     /** The keys that stand on this node's chain, oldest first: [{ epoch, publicKey, height }], the census' `bond.standingKeys`. */
     standing: () => keys,
     /** The highest height read, null before the first. */
@@ -251,7 +260,7 @@ export function createCensusKeyScan({ store, network, networkId, firstHeight, fo
     },
     /** The first valid list of a run: { height, present }, or null. */
     reshareList: (keyHex, run) => lists.get(`${keyHex}:${run}`) || null,
-    status: () => ({ firstHeight, scannedTo: (store.scanTop() || { height: null }).height, failing,
+    status: () => ({ firstHeight, scannedTo: (store.scanTop() || { height: null }).height, failing, dead: deadKeys,
       keys: keys.map((k) => ({ epoch: k.epoch, publicKey: toHex(k.publicKey), height: k.height, holdersFrom: (generations.get(toHex(k.publicKey)) || []).slice(-1).map((g) => g.epoch)[0] ?? null })),
       anchors: store.anchors().map((a) => ({ height: a.height, index: a.index, kind: a.kind, txid: a.txid, recordId: toHex(a.id), stands: a.stands, why: a.why })) }),
   };
