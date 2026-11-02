@@ -1026,6 +1026,8 @@ const TYPE_SEATING_SEEN = 0x38;
 const TYPE_HEARTBEAT = 0x39;
 /** A heartbeat committee member's HEARD: who it held a HEARTBEAT of at the slot's close; a heartbeat certificate carries them (kanban #727). */
 const TYPE_HEARTBEAT_HEARD = 0x3a;
+// WHAT A TEMPLATE-3 RELEASE COMMITS TO PAY (5A.3B step 4, H(payout_table); slash.js encodeSlashTable).
+const TYPE_SLASH_TABLE = 0x3b;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 const TYPE_SPENT_SET = 0x26;
@@ -1088,6 +1090,9 @@ const TAG = {
   committeeSeed: 'ARENA/v1/CommitteeSeed',
   // #630: a round's attestors are drawn on their own seed, H(this tag || committee seed) - never the settlement draw's
   attestorDraw: 'ARENA/v1/AttestorDraw',
+  // Template 3: a round's two slash panels are drawn on their own seed (5A.3B), and a release commits to its table by this tag.
+  slashPanel: 'ARENA/v1/SlashPanel',
+  slashTable: 'ARENA/v1/SlashTable',
   checkpoint: 'ARENA/v1/Checkpoint',
   checkpointReceipt: 'ARENA/v1/CheckpointReceipt',
   result: 'ARENA/v1/Result',
@@ -5230,7 +5235,9 @@ function parseTransaction(raw) {
       | (raw[at + 34] << 16) | (raw[at + 35] << 24)) >>> 0;
     const script = readSlice(raw, end, 'input script');
     at = need(raw, script.next, 4, 'sequence');
-    inputs.push({ previousTxid, previousVout, script: script.bytes });
+    const sequence = (raw[script.next] | (raw[script.next + 1] << 8)
+      | (raw[script.next + 2] << 16) | (raw[script.next + 3] << 24)) >>> 0;
+    inputs.push({ previousTxid, previousVout, script: script.bytes, sequence });
   }
 
   const outs = readVarint(raw, at);
@@ -5837,6 +5844,9 @@ function maturityHeightFor(tipHeight, network, { slackBlocks = 6 } = {}) {
 }
 
 const OP_CHECKLOCKTIMEVERIFY = 0xb1;
+const OP_CHECKSEQUENCEVERIFY = 0xb2;
+const OP_CHECKSIGVERIFY = 0xad;
+const OP_NUMEQUALVERIFY = 0x9d;
 const OP_DROP = 0x75;
 const OP_CHECKSIG = 0xac;
 const OP_CHECKSIGADD = 0xba;
@@ -5929,8 +5939,10 @@ function slashLeaf(arbitrationKeys, k) {
 
 /** BIP-341: tagged_hash("TapLeaf", version || compact_size(script) || script). */
 function tapLeafHash(script, version = TAPLEAF_VERSION) {
-  if (script.length > 252) throw new RangeError('this template writes no script that long');
-  return taggedHash('TapLeaf', cat(Uint8Array.from([version, script.length]), script));
+  if (script.length > 0xffff) throw new RangeError('no template writes a script that long');
+  // Template 3's release leaf holds 14 keys, over the 252 bytes one length byte can say. Every shorter leaf hashes as it always did.
+  const size = script.length <= 252 ? [script.length] : [0xfd, script.length & 255, script.length >>> 8];
+  return taggedHash('TapLeaf', cat(Uint8Array.from([version, ...size]), script));
 }
 
 /** BIP-341: tagged_hash("TapBranch", the two children in lexicographic order). */
@@ -6216,6 +6228,174 @@ function bondOutputKeyMatches(onChain, inputs, { tweakPoint, combine } = {}) {
     };
   }
   return { ok: true, ...built };
+}
+
+/**
+ * TEMPLATE 3 (spec 5A.3B "A false slash does not pay", RULED 2026-11-02, kanban #971, #974): new bonds and mainnet. The key path and
+ * path A are templates 1 and 2's, and path B needs the node's advance signature AND the census key, so the only place a bond can
+ * go without its node is a hold output the node signed for that round.
+ *
+ * Nothing above this line reads it: an advertisement naming template 3 is still refused by name in `bondMaturityOf`, until the census
+ * knows what a hold output is.
+ */
+const BOND_TEMPLATE_V3 = 3;
+
+/**
+ * THE HOLD OUTPUT'S INTERNAL KEY: BIP-341's own point with no known discrete log, x of the hash of G. The spec says "an unspendable
+ * internal key, rebuilt by anyone", and one fixed key is the one everybody rebuilds; a random r*G would have to be carried.
+ */
+const HOLD_INTERNAL_KEY = fromHex('50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0');
+
+/** Two panels of 7, threshold 5 (5A.3B): the numbers the release leaf is written with. */
+const PANEL_SEATS = 7;
+const PANEL_THRESHOLD = 5;
+
+/** A height a CLTV can compare with a block, or a refusal: a time here would compare with the wrong clock. */
+const blockHeight = (h) => {
+  if (!Number.isInteger(h) || h < 1 || h >= LOCKTIME_THRESHOLD) throw new RangeError(`${h} is not a block height`);
+  return h;
+};
+
+/** BIP-68 counts blocks in 16 bits. Above that the sequence check reads other bits, and the leaf would mean something else. */
+const relativeBlocks = (n) => {
+  if (!Number.isInteger(n) || n < 1 || n > 0xffff) throw new RangeError(`${n} is not a block count CHECKSEQUENCEVERIFY can wait for`);
+  return n;
+};
+
+const relativeLock = (n) => cat(pushNumber(relativeBlocks(n)), Uint8Array.from([OP_CHECKSEQUENCEVERIFY, OP_DROP]));
+
+/** PATH B OF TEMPLATE 3: `<node_key> CHECKSIGVERIFY <census_key(e)> CHECKSIG`, the spec's script as written. */
+function slashStartLeaf(nodeKey, censusKey) {
+  return cat(pushKey(nodeKey), Uint8Array.from([OP_CHECKSIGVERIFY]), pushKey(censusKey), Uint8Array.from([OP_CHECKSIG]));
+}
+
+/**
+ * THE TEMPLATE-3 TREE: path A as ever, path B the slash start, the key path the MuSig2 of the node and the arbitration set that
+ * "stays" (5A.3B). Answers the same names `bondTapTree` does, so `controlBlockFor` serves both.
+ */
+function bond3TapTree({ nodeKey, censusKey, arbitrationKeys, bondMaturity, internalKey }, { combine } = {}) {
+  if (typeof combine !== 'function') throw new Error('no curve was given to aggregate the key path with');
+  const want = bondInternalKey({ nodeKey, arbitrationKeys }, { combine });
+  if (!want.ok) throw new Error(want.why);
+  if (!isKey32(internalKey)) throw new TypeError('the internal key is 32 bytes');
+  if (!sameKey(want.internalKey, internalKey))
+    throw new Error('that internal key is not the MuSig2 aggregate of the node and arbitration keys');
+  const a = tapLeafHash(recoveryLeaf(nodeKey, blockHeight(bondMaturity)));
+  const b = tapLeafHash(slashStartLeaf(nodeKey, censusKey));
+  const merkleRoot = tapBranchHash(a, b);
+  return { internalKey, recovery: a, slash: b, merkleRoot, tweak: tapTweak(internalKey, merkleRoot) };
+}
+
+/** Q = P + t*G for a tree already built, with the parity a control block needs. */
+function outputOfTree(tree, tweakPoint) {
+  let answer;
+  try { answer = tweakPoint(tree.internalKey, tree.tweak); }
+  catch (e) { return { ok: false, why: `that curve refused the tweak: ${e.message}` }; }
+  const outputKey = answer && answer.outputKey;
+  const parity = answer && answer.parity;
+  if (!isKey32(outputKey)) return { ok: false, why: 'that curve did not return a 32-byte key' };
+  if (parity !== 0 && parity !== 1) return { ok: false, why: 'that curve did not say whether the output key is even or odd' };
+  return { ok: true, outputKey, parity, ...tree };
+}
+
+function bond3OutputKey(inputs, { tweakPoint, combine } = {}) {
+  if (typeof tweakPoint !== 'function') return { ok: false, why: 'no curve was given to add the tweak with' };
+  if (typeof combine !== 'function') return { ok: false, why: 'no curve was given to aggregate the key path with' };
+  let tree;
+  try { tree = bond3TapTree(inputs, { combine }); } catch (e) { return { ok: false, why: e.message }; }
+  return outputOfTree(tree, tweakPoint);
+}
+
+function bond3OutputKeyMatches(onChain, inputs, curve = {}) {
+  if (!isKey32(onChain)) return { ok: false, why: 'that is not a 32-byte taproot output key' };
+  const built = bond3OutputKey(inputs, curve);
+  if (!built.ok) return built;
+  if (!sameKey(built.outputKey, onChain)) return { ok: false, why: 'that output key is not the template-3 tweak of the keys, census key and maturity it declares' };
+  return { ok: true, ...built };
+}
+
+const sortedPanel = (keys) => [...keys].sort((a, b) => {
+  for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i];
+  return 0;
+});
+
+/** `k` of these keys, BIP-342's counting form, left on the stack for `close` to compare. */
+function panelCount(keys, close) {
+  const [first, ...rest] = sortedPanel(keys);
+  return cat(pushKey(first), Uint8Array.from([OP_CHECKSIG]),
+    ...rest.map((key) => cat(pushKey(key), Uint8Array.from([OP_CHECKSIGADD]))),
+    smallNumber(PANEL_THRESHOLD), Uint8Array.from([close]));
+}
+
+function checkPanels(panelA, panelB) {
+  for (const panel of [panelA, panelB]) {
+    if (!Array.isArray(panel) || panel.length !== PANEL_SEATS) throw new RangeError(`a panel is ${PANEL_SEATS} keys`);
+    for (const key of panel) if (!isKey32(key)) throw new TypeError('a panel key is 32 bytes');
+  }
+  const all = [...panelA, ...panelB];
+  for (let i = 0; i < all.length; i++)
+    for (let j = i + 1; j < all.length; j++)
+      if (sameKey(all[i], all[j])) throw new RangeError('one key sits twice in the two panels, so two panels would be fewer signers');
+}
+
+/**
+ * RELEASE: `<slash_hold_blocks> CHECKSEQUENCEVERIFY DROP <5-of-7 panel A> <5-of-7 panel B>`. Each panel's keys sorted, for the reason
+ * `slashLeaf` sorts: one set, one leaf. Panel A's count ends in NUMEQUALVERIFY so that B's is what the leaf leaves true.
+ */
+function releaseLeaf({ panelA, panelB, holdBlocks }) {
+  checkPanels(panelA, panelB);
+  return cat(relativeLock(holdBlocks), panelCount(panelA, OP_NUMEQUALVERIFY), panelCount(panelB, OP_NUMEQUAL));
+}
+
+/** RETURN: `<slash_return_blocks> CHECKSEQUENCEVERIFY DROP <bond_maturity> CHECKLOCKTIMEVERIFY DROP <node_key> CHECKSIG`. */
+function returnLeaf({ nodeKey, bondMaturity, returnBlocks }) {
+  return cat(relativeLock(returnBlocks), recoveryLeaf(nodeKey, blockHeight(bondMaturity)));
+}
+
+/** FALLBACK: `<slash_fallback_blocks> CHECKSEQUENCEVERIFY DROP <census_key(e)> CHECKSIG`. */
+function fallbackLeaf({ censusKey, fallbackBlocks }) {
+  return cat(relativeLock(fallbackBlocks), pushKey(censusKey), Uint8Array.from([OP_CHECKSIG]));
+}
+
+/**
+ * THE HOLD OUTPUT, AS HASHES, rebuilt by anyone from the bond and the round: `{ nodeKey, censusKey, panelA, panelB, bondMaturity,
+ * holdBlocks, returnBlocks, fallbackBlocks }`. The spec names the three leaves and not their shape: the release sits one level
+ * down, because it is the spend the design expects, and the two leaves that should never run share the deeper branch.
+ *
+ * 5A.3B: "a mature node leaves at slash_return_blocks, before the fallback opens". That is only true with hold < return < fallback.
+ */
+function holdTapTree({ nodeKey, censusKey, panelA, panelB, bondMaturity, holdBlocks, returnBlocks, fallbackBlocks }) {
+  if (!(holdBlocks < returnBlocks && returnBlocks < fallbackBlocks))
+    throw new RangeError(`the clocks ${holdBlocks} / ${returnBlocks} / ${fallbackBlocks} do not run hold, then return, then fallback`);
+  const scripts = {
+    release: releaseLeaf({ panelA, panelB, holdBlocks }),
+    return: returnLeaf({ nodeKey, bondMaturity, returnBlocks }),
+    fallback: fallbackLeaf({ censusKey, fallbackBlocks }),
+  };
+  const leaves = { release: tapLeafHash(scripts.release), return: tapLeafHash(scripts.return), fallback: tapLeafHash(scripts.fallback) };
+  const lower = tapBranchHash(leaves.return, leaves.fallback);
+  const merkleRoot = tapBranchHash(leaves.release, lower);
+  return { internalKey: HOLD_INTERNAL_KEY, scripts, leaves, lower, merkleRoot, tweak: tapTweak(HOLD_INTERNAL_KEY, merkleRoot) };
+}
+
+/** The output key of a hold, and the P2TR script a slash start pays it with. */
+function holdOutputKey(inputs, { tweakPoint } = {}) {
+  if (typeof tweakPoint !== 'function') return { ok: false, why: 'no curve was given to add the tweak with' };
+  let tree;
+  try { tree = holdTapTree(inputs); } catch (e) { return { ok: false, why: e.message }; }
+  const built = outputOfTree(tree, tweakPoint);
+  if (!built.ok) return built;
+  return { ...built, script: cat(Uint8Array.from([0x51, 0x20]), built.outputKey) };
+}
+
+/** The control block of one of the three leaves. The release proves one level, the other two prove two. */
+function holdControlBlock(path, { internalKey, leaves, lower, parity }) {
+  if (path !== 'release' && path !== 'return' && path !== 'fallback')
+    return { ok: false, why: `a hold output has a release, a return and a fallback, not ${path}` };
+  if (parity !== 0 && parity !== 1) return { ok: false, why: 'a control block carries the output key parity, and none was given' };
+  const proof = path === 'release' ? [lower]
+    : path === 'return' ? [leaves.fallback, leaves.release] : [leaves.return, leaves.release];
+  return { ok: true, path, controlBlock: cat(Uint8Array.from([TAPLEAF_VERSION | parity]), internalKey, ...proof) };
 }
 
 // ---- arena-protocol/src/chain.js
@@ -7803,6 +7983,17 @@ const TAG_NETWORK_ID = 'ARENA/v1/NetworkId';
  */
 const RANDOMNESS_SOURCE = 'bitcoin-block-hash';
 
+/**
+ * THE SLASH CLOCKS OF TEMPLATE 3, by network (§27A.6's table, §5A.3B). Hashed into mainnet's network id. On testnet4 and regtest they are
+ * read from genesis and NOT hashed: their ids are fixed and a moved id is a new network, the same reason as BOND_MATURITY_OFFSET
+ * (bond-script.js) and the ruling of 2026-10-14 below. A network founded on these clocks hashes them.
+ */
+const SLASH_CLOCKS = Object.freeze({
+  mainnet: Object.freeze({ slashHoldBlocks: 6, slashReturnBlocks: 144, slashFallbackBlocks: 288 }),
+  testnet4: Object.freeze({ slashHoldBlocks: 1, slashReturnBlocks: 36, slashFallbackBlocks: 72 }),
+  regtest: Object.freeze({ slashHoldBlocks: 1, slashReturnBlocks: 12, slashFallbackBlocks: 24 }),
+});
+
 function encodeGenesisParameters(p) {
   const w = new Writer();
   w.str(p.chain);
@@ -7876,6 +8067,14 @@ function encodeGenesisParameters(p) {
     w.u64(p.bondMinGuardianSats);
     for (const k of ['design', 'money', 'upgrade']) { w.u32(sched[k].review); w.u32(sched[k].voting); w.u32(sched[k].cooldown); }
     w.u8(p.committeesBind ? 1 : 0);
+    // TEMPLATE 3'S CLOCKS (§27A.6, §5A.3B), in this block for the reason the block exists: the test networks' bytes do not move.
+    if (![p.slashHoldBlocks, p.slashReturnBlocks, p.slashFallbackBlocks].every((n) => Number.isInteger(n) && n >= 1 && n <= 0xffff))
+      throw new Error('genesis names the slash clocks: hold, return and fallback blocks, each one CHECKSEQUENCEVERIFY can wait for');
+    if (!(p.slashHoldBlocks < p.slashReturnBlocks && p.slashReturnBlocks < p.slashFallbackBlocks))
+      throw new Error('the slash clocks run hold, then return, then fallback: a mature node leaves before the fallback opens (§5A.3B)');
+    w.u32(p.slashHoldBlocks);
+    w.u32(p.slashReturnBlocks);
+    w.u32(p.slashFallbackBlocks);
   }
   return w.finish();
 }
@@ -7900,7 +8099,7 @@ function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityPubkey, 
     federationNominal: 10, federationMin: 7, bondMinGuardianSats,
     abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216,
     gameVerifySlots: 7, gameVerifyThreshold: 5, settlementSlots: 7, settlementThreshold: 5, committeesBind: true,
-    censusMinNodes: 10, censusConfirmations: 6, bondMaturity: 4320,
+    censusMinNodes: 10, censusConfirmations: 6, bondMaturity: 4320, ...SLASH_CLOCKS.mainnet,
     arbitrationK: 5, arbitrationM: 7, arbitrationKeys, noticePeriod: 4320,
     bondMarker: marker, randomnessSource: RANDOMNESS_SOURCE, genesisConfigHash: GENESIS_CONFIG_HASH,
     brackets: [{ minSats: 1000n, maxSats: 10_000_000n }],
@@ -7954,6 +8153,9 @@ function testnetShape(chain, marker, arbitrationKeys, federation, genesisSeriesS
     foundingWindow: federation.foundingWindow,
     drainBlocks: federation.drainBlocks,
     claimBlocks: federation.claimBlocks,
+    slashHoldBlocks: federation.slashHoldBlocks,
+    slashReturnBlocks: federation.slashReturnBlocks,
+    slashFallbackBlocks: federation.slashFallbackBlocks,
     gameVerifySlots: 2,
     gameVerifyThreshold: 2,
     settlementSlots: 2,
@@ -8005,10 +8207,10 @@ function computeNetworkId({ genesis, authorityPubkey, recoveryPubkey }) {
 function genesisFor(network) {
   if (network === 'regtest')
     return testnetShape('bitcoin-regtest', bondMarker('regtest'), ARBITRATION_KEYS_REGTEST,
-      { federationNominal: 4, ...REGTEST_CLOCKS }, GENESIS_SERIES_START_MS.regtest);
+      { federationNominal: 4, ...REGTEST_CLOCKS, ...SLASH_CLOCKS.regtest }, GENESIS_SERIES_START_MS.regtest);
   if (network === 'testnet4' || network === 'testnet')
     return testnetShape('bitcoin-testnet4', bondMarker('testnet'), ARBITRATION_KEYS_TESTNET4,
-      { federationNominal: 4, ...TESTNET_CLOCKS }, GENESIS_SERIES_START_MS.testnet4);
+      { federationNominal: 4, ...TESTNET_CLOCKS, ...SLASH_CLOCKS.testnet4 }, GENESIS_SERIES_START_MS.testnet4);
   throw new Error('no genesis for ' + network);
 }
 
@@ -9038,6 +9240,7 @@ function roleFloorSats(contract, role) {
 
 
 
+
 /**
  * HOW MANY SIGNER NODES THIS ROUND GIVES THE POOL A ROLE SERVES IN.
  *
@@ -9239,6 +9442,47 @@ function drawAttestors({ entries, contract, committeeSeed }) {
   if (!(committeeSeed instanceof Uint8Array) || committeeSeed.length !== 32)
     throw new Error('a round\'s attestors are drawn on the seed its beacon produced');
   return selectCommittee({ entries, contract, role: 'settlement', committeeSeed: taggedHash(TAG.attestorDraw, committeeSeed), count: ATTESTORS_DRAWN });
+}
+
+/** panel_seed(r) = tagged_hash("ARENA/v1/SlashPanel", committee_seed(r)) (5A.3B). */
+function panelSeed(committeeSeed) {
+  if (!(committeeSeed instanceof Uint8Array) || committeeSeed.length !== 32)
+    throw new Error('a round\'s panels are drawn on the seed its beacon produced');
+  return taggedHash(TAG.slashPanel, committeeSeed);
+}
+
+/** The roles a round draws for: all of each role's draw is out of the panels, reserves too. */
+const PANEL_LEAVES_OUT = ['game', 'settlement'];
+
+/**
+ * A ROUND'S TWO SLASH PANELS (5A.3B "Who is responsible for a round"): the 5A.6 selection over the round's census on panel_seed(r), less
+ * every node drawn for any role of the round (all 9 per role, 5A.7), its attestors and the nodes of its players; panel A the first 7
+ * of that order, panel B the next 7. Pure, and worked out here rather than taken in: nobody hands the draw its own exclusions but what
+ * only the round knows.
+ *
+ *   drawsAttestors   the round's game draws its attestors (manifest attestDraw): they are drawn here and left out
+ *   attestorKeys     a game's own named attestors, 32-byte keys
+ *   playerNodes      the nodes of the round's players, 32-byte keys. A player declares no operator (5A.13), so the caller says who they are
+ *
+ * Drawn as `drawAttestors` is, on the settlement ticket: 5A.6 draws per role and the spec names none for a panel.
+ *
+ * A census that cannot fill both panels is refused by name, and never answered with smaller panels: the release leaf is 5 of 7 twice.
+ * Answers { ok: true, panelA, panelB, order } of census entries, or { ok: false, why, have, need }.
+ */
+function drawPanels({ entries, contract, committeeSeed, drawsAttestors = false, attestorKeys = [], playerNodes = [] }) {
+  try {
+    const out = new Set([...attestorKeys, ...playerNodes].map(toHex));
+    for (const role of PANEL_LEAVES_OUT)
+      for (const e of drawCommittee({ entries, contract, role, committeeSeed })) out.add(toHex(e.pubkey));
+    if (drawsAttestors) for (const e of drawAttestors({ entries, contract, committeeSeed })) out.add(toHex(e.pubkey));
+    const need = 2 * PANEL_SEATS;
+    const order = selectCommittee({ entries, contract, role: 'settlement', committeeSeed: panelSeed(committeeSeed), count: need,
+      exclude: entries.filter((e) => out.has(toHex(e.pubkey))) });
+    if (order.length < need)
+      return { ok: false, have: order.length, need,
+        why: `the round's census leaves ${order.length} nodes after the ${out.size} it leaves out, and two panels are ${need}` };
+    return { ok: true, panelA: order.slice(0, PANEL_SEATS), panelB: order.slice(PANEL_SEATS), order };
+  } catch (e) { return { ok: false, why: `the panels cannot be drawn: ${e.message}` }; }
 }
 
 // ---- arena-protocol/src/known-games.js
@@ -30191,6 +30435,7 @@ async function explorerAgrees({ base, points, fetcher = fetch, timeoutMs = 8000 
 //   3. the beacon off the same headers, and the seat's own sortition.
 // The nodes' /committee answers are still read, and only compared: a seat naming another set is named in the answer.
 // Kept per census and committee time: every round of a series shares them, so a series' second join asks nothing new.
+
 
 
 
