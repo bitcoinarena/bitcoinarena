@@ -12,9 +12,12 @@ import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/
 import { matchStep, matchRecordId, matchResultOf, MATCH_CONTINUE_MS } from '../../arena-protocol/src/match.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { pluginForRound } from './plugins.js';
+import { finalRerunResult } from './finality.js';
 
 /** The result most of a round's seats signed for one entry: { outcome, score } or null. */
 function agreedResult(round, rid, eid) {
+  const rerun = finalRerunResult(round, rid, eid);   // FINAL on an agreed re-run (kanban #1049): the run that stands
+  if (rerun) return { outcome: rerun.outcome, score: rerun.score };
   const tally = new Map();
   for (const r of round.results(rid, eid)) {
     try { const x = decodePlayerResult(splitSignedResult(r.bytes).body); const k = `${x.outcome}:${x.score}`; tally.set(k, { outcome: x.outcome, score: x.score, n: ((tally.get(k) || {}).n || 0) + 1 }); }

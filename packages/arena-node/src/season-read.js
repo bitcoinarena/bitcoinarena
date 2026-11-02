@@ -28,6 +28,7 @@ import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { decodeLobbyName } from '../../arena-protocol/src/lobby-name.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { finalRerunResult } from './finality.js';
 import { verifiedFinal, runId } from './verdict.js';
 import { stateOf } from './settlement-state.js';
 
@@ -125,6 +126,9 @@ function resultOf(round, rid, entryId, contract, committee, member) {
   if (voided) return { outcome: 'ENTRY_VOID', score: 0 };
   const decided = typeof round.noQuorum === 'function' ? round.noQuorum(eid) : null;
   if (decided) return { outcome: decided.outcome, score: 0 };
+  // FINAL ON AN AGREED RE-RUN (kanban #1049): its result is the run that stands
+  const onRerun = finalRerunResult(round, rid, entryId);
+  if (onRerun) return { outcome: onRerun.outcome, score: onRerun.score };
   const held = round.results(rid, entryId);
   const seen = verifiedFinal(held.map((r) => r.bytes), { contract, signerNodes: committee });
   if (!seen.ok || !seen.final) return null;

@@ -34,7 +34,6 @@ import { slashHoldsOnTable, slashProofId, encodeSlashProof, joinTableSlashEviden
 import { splitByFederation } from '../../arena-protocol/src/federation-settlement.js';
 import { pluginForRound, payoutRuleOfRound } from './plugins.js';
 import { heldOutcomes, marketVoidOf, attestedTable } from './game-market.js';
-import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { lockSettlement, lateLockSettlement, attestedLockSettlement, bookLockSettlement, RESERVE_LATER_PK } from '../../arena-protocol/src/lock-settlement.js';
 import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
 import { paysReserves } from '../../arena-protocol/src/reserves.js';
@@ -48,7 +47,7 @@ import { lockFieldsFromJson } from '../../arena-protocol/src/stake-lock.js';
 import { scalarFrom32, FIELD } from '../../arena-protocol/src/shares.js';
 import { FINAL, SUSPENDED, PROVISIONALLY_FINAL } from '../../arena-protocol/src/objection.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { resultFinality } from './finality.js';
+import { resultFinality, settledResult } from './finality.js';
 import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
 import { sendPlanToJson, planKey } from './winnings-send.js';
 import { askerOrder, eligibleAsker } from './payout.js';
@@ -238,9 +237,8 @@ export class LockSettlement {
       if (standing.state !== FINAL)
         return refuse(`nothing is claimed while a run is not final with its window closed: ${toHex(entryId).slice(0, 16)} is `
           + `${standing.state || 'without a result'}${standing.why ? ` (${standing.why})` : ''}`);
-      const mine = this.round.results(roundIdBytes, entryId).find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
-      if (!mine) return refuse(`this signer node signed no result for ${toHex(entryId).slice(0, 16)}, so it settles nothing`);
-      const r = decodePlayerResult(splitSignedResult(mine.bytes).body);
+      const r = settledResult(this.round, roundIdBytes, entryId, standing);
+      if (!r) return refuse(`this signer node signed no result for ${toHex(entryId).slice(0, 16)}, so it settles nothing`);
       // A WALK-AWAY, AS ONLY THIS STORE KNOWS IT (RULED 2026-09-30): FORFEIT at the §15 door - no first mark held
       // here, or a first mark past the line already recorded FORFEIT. Its lock is never a refund (lock-action.js). The
       // other FORFEITs above - no quorum, proven equivocation - are left unmarked and keep the no-qualifier expiry.
@@ -281,8 +279,7 @@ export class LockSettlement {
     if (standing.state === FORFEIT) return { claimed: false, why: 'claimed in the round\'s second settlement, not built yet' };
     if (standing.state === FINAL) {
       const row = this.round.get(roundIdBytes);
-      const mine = this.round.results(roundIdBytes, entryIdBytes).find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
-      const r = mine ? decodePlayerResult(splitSignedResult(mine.bytes).body) : null;
+      const r = settledResult(this.round, roundIdBytes, entryIdBytes, standing);
       const minScore = row ? decodeRoundContract(new Uint8Array(row.contract)).minScore : Infinity;
       if (r && isQualifier(r, minScore))
         return { claimed: false, why: 'a qualifier: its stake comes back by its own forfeit - stake back only, no share' };
@@ -390,9 +387,8 @@ export class LockSettlement {
     if (!found) return refuse('no such entry in that round', 404);
     let outcome = standing.state; let score = 0;
     if (standing.state === FINAL) {
-      const mine = this.round.results(roundIdBytes, entryIdBytes).find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
-      if (!mine) return refuse('this signer node signed no result for that entry, so it settles nothing');
-      const r = decodePlayerResult(splitSignedResult(mine.bytes).body);
+      const r = settledResult(this.round, roundIdBytes, entryIdBytes, standing);
+      if (!r) return refuse('this signer node signed no result for that entry, so it settles nothing');
       outcome = r.outcome; score = r.score;
     } else if (standing.state !== FORFEIT && standing.state !== VOID) {
       return refuse(`that entry is not decided: ${standing.state || 'without a result'}`);
