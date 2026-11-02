@@ -24,6 +24,16 @@ import { toHex, fromHex } from './hash.js';
 import { splitDonation, donationSetPaysKeys } from './donation.js';
 
 /** The vote outputs of one raw block at `height`: [{ payload, height, txid }], txid hex in Bitcoin's display order. */
+/** Whether the block `raw` holds transaction `txid` (hex as an explorer prints it) with an output at `vout` (§23A.3a: a claimed peg-in's height). */
+export function outpointInBlock(raw, outpoint) {
+  const [txid, vout] = String(outpoint).split(':');
+  for (const t of splitBlock(raw).transactions) {
+    let tx; try { tx = parseTransaction(t); } catch { continue; }
+    if (toHex(Uint8Array.from(tx.txid).reverse()) === txid) return Number(vout) < tx.outputs.length;
+  }
+  return false;
+}
+
 export function votesInBlock(raw, height) {
   const out = [];
   for (const t of splitBlock(raw).transactions) {

@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { votesInBlock, liveConfig, depositOf, depositOutputsExpected, depositScriptOf, configServesRound, configForNewRound, BALLOT_GENESIS } from '../src/ballot-chain.js';
+import { votesInBlock, outpointInBlock, liveConfig, depositOf, depositOutputsExpected, depositScriptOf, configServesRound, configForNewRound, BALLOT_GENESIS } from '../src/ballot-chain.js';
 import { TESTNET4_DONATION_SET } from '../src/testnet4-donation-set.js';
 import { encodeVote, voteMessage, decodeVote, CHOICE, CLASS, proposalStands, proposalBodyId, isRepeal, SCHEDULES, REPEAL_SCHEDULES, configHashOf } from '../src/ballot.js';
 import { splitBlock } from '../src/block.js';
@@ -131,4 +131,12 @@ test('the ballot starts at the config the rulings left live (2170f250), with its
   const later = { id: H(0xa), parent: BALLOT_GENESIS.configHash, configHash: H(2), config: Uint8Array.of(2), activationHeight: 50 };
   const history = liveConfig({ genesis: BALLOT_GENESIS, passed: [later], height: 60 }).history;
   assert.equal(isRepeal({ config: Uint8Array.from(BALLOT_GENESIS.config) }, history), true);
+});
+
+test('the one block a claimed peg-in names: the transaction is in it, and the output exists (kanban #999)', () => {
+  const first = parseTransaction(splitBlock(RAW).transactions[1] || splitBlock(RAW).transactions[0]);
+  const txid = toHex(Uint8Array.from(first.txid).reverse());
+  assert.equal(outpointInBlock(RAW, `${txid}:0`), true);
+  assert.equal(outpointInBlock(RAW, `${txid}:${first.outputs.length}`), false, 'no such output');
+  assert.equal(outpointInBlock(RAW, `${'ab'.repeat(32)}:0`), false, 'not in this block');
 });

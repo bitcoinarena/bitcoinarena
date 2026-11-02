@@ -184,6 +184,13 @@ export const CUSTODY_GATEWAY_VERSION = 22;
  * by epoch N-2.
  */
 export const SEATING_RULES_EPOCH = Object.freeze({ regtest: 0, devnet: 0, testnet4: null, mainnet: null });
+/**
+ * HOW OLD A PEG-IN MAY BE AND STILL COUNT (§23A.3a, kanban #999/#1026), in blocks at the first height of the epoch being seated. A genesis
+ * parameter; the test networks' genesis bytes cannot take it, so it stands here beside genesis. It applies from SEATING_RULES_EPOCH.
+ * testnet4 is a week, not a day, because a peg-in there needs 100 confirmations.
+ */
+export const PEG_IN_MAX_AGE = Object.freeze({ mainnet: 4320, testnet4: 1008, regtest: 100, devnet: 100 });
+export const pegInMaxAgeOf = (network) => { const n = network === 'testnet' ? 'testnet4' : network; return Object.prototype.hasOwnProperty.call(PEG_IN_MAX_AGE, n) ? PEG_IN_MAX_AGE[n] : null; };
 /** The activation epoch of the 2.0 seating rules on `network` (SEATING_RULES_EPOCH; 'testnet' is testnet4, as networkAnchor reads it). */
 export const seatingRulesEpochOf = (network) => {
   const n = network === 'testnet' ? 'testnet4' : String(network || '');
