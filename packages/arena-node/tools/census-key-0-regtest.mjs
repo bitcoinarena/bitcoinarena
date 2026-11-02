@@ -121,7 +121,8 @@ try {
   ask('the trigger reads the founders genesis names: three of four in the census, under 80 %', true, `${got[0].reshare.signed} ReshareReady signatures`);
   await until('the first key by weight runs beside it', all, (s) => s.run && s.run.epoch === 3 && s.run.deals === 4);
   rt.mine(2);      // the end of the first quarter, 302
-  for (let t = 0; t < 60 && !(await seats(founding)).some((s) => s && s.reshare && s.reshare.posted); t++) await wait(500);
+  // RANKS POST ONE BLOCK APART, IN AN ORDER OF THE KEYS: the fourth founder never bonds, so at rank 0 nobody posts until a block later. Measured: 2 runs of 3 stopped here, with the list posted at 303 and no block to take it
+  for (let t = 0; t < 180 && !(await seats(founding)).some((s) => s && s.reshare && s.reshare.posted); t++) { await wait(500); if (t % 20 === 19) rt.mine(1); }
   const listed = (await seats(founding)).filter((s) => s.reshare.posted);
   ask('one founder anchors the list', listed.length === 1, listed.length ? listed[0].reshare.posted : '');
   rt.mine(1);
