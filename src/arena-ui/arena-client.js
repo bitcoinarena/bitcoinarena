@@ -10996,6 +10996,7 @@ function committeeSeedFrom({
 
 
 
+
 function playerSubSeed({ roundRandomness, playerPubkey, worldSecret, joinTick }) {
   if (!(roundRandomness instanceof Uint8Array) || roundRandomness.length !== 32)
     throw new Error('round_randomness is 32 bytes');
@@ -11071,6 +11072,24 @@ function worldSeedWord({ entry, roundRandomness, contract, roundId, sharedWorld 
   if (!(id instanceof Uint8Array) || id.length !== 32) throw new Error('a shared world needs the round id');
   if (!(roundRandomness instanceof Uint8Array) || roundRandomness.length !== 32) throw new Error('round_randomness is 32 bytes');
   return seedWordFromSubSeed(roundWorldSeed({ contract, roundId: id, roundRandomness }));
+}
+
+/**
+ * HOW MANY PLACES A SHARED WORLD STARTS ITS PLAYERS AT (kanban #828, the owner 2026-10-31: "Die müssen an unterschiedlichen Slots
+ * starten, nah beinander dass man sich sieht"). One seed word means one of everything that word decides, the starting door too.
+ */
+const WORLD_SLOTS = 12;
+
+/** The place an entry id starts at, 0 to WORLD_SLOTS - 1: its first four bytes, big-endian, as a seed word is read. */
+const slotOfEntryId = (id) => seedWordFromSubSeed(id) % WORLD_SLOTS;
+
+/**
+ * THE PLAYER'S PLACE IN A SHARED WORLD, BESIDE THE ONE FUNCTION ABOVE: the page's join, the signer nodes' replay, the ghosts and
+ * the replay page all take it from here, once per entry, off the entry's own id. Undefined under a per-player config, whose
+ * world already differs. The world itself does not move: only where this run starts in it, and a core older than the slot ignores it.
+ */
+function worldSlot({ entry, contract, sharedWorld }) {
+  return worldIsShared(contract, sharedWorld) ? slotOfEntryId(entryId(entry)) : undefined;
 }
 
 /** On a shared-world round the entry's secret field must be zeros (it is kept so stored entry ids hold). */
@@ -11898,6 +11917,15 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     fee: Object.freeze({ nodeBps: 40, donationBps: 60 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
     requiredProtocolVersion: 2,
+  }),
+  'bb29d4291673b4bd019216bc8da4d749ef3996e6184aa5d1f68a4feea3b0ed8c': Object.freeze({
+    name: 'nextblock',
+    cores: Object.freeze({
+      '8cbc74b27bee78727fa395fcc5e5181beb4072f837adbee0e9ea278ff427d387': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+    }),
+    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    requiredProtocolVersion: 11,
   }),
 });
 
@@ -14563,10 +14591,52 @@ async function worldSeedFor({ entry, round, nodes, contract, fetcher = fetch } =
   return {
     // THE ONE FUNCTION (seed.js worldSeedWord): the round's contract chooses the rule - one world per round, or per player
     seedWord: worldSeedWord({ entry, roundRandomness: beacon.randomness, contract, roundId: fromHex(id), sharedWorld: sharedWorldOf(contract.gameId) }),
+    // AND WHERE IN IT THIS PLAYER STARTS (kanban #828): a shared world's place, the one the signer nodes' replay takes
+    slot: worldSlot({ entry, contract, sharedWorld: sharedWorldOf(contract.gameId) }),
     randomness: beacon.randomness,
     height: beacon.height,
     agreed: beacon.agreed,
   };
+}
+
+/**
+ * THE PLACES OF A SHARED WORLD ALREADY TAKEN (kanban #828), off the entries the round's seats hold (GET /api/round-result, public,
+ * and open before a round ends). Asked of every node at once and never for longer than `waitMs`: a seat that says nothing, or
+ * says it late, only costs a place that may be shared. Join in seconds (ruling 2026-10-02): this is not a thing to wait for.
+ */
+async function slotsTaken({ round, nodes, fetcher = fetch, waitMs = 700 } = {}) {
+  const id = typeof round === 'string' ? round : toHex(round);
+  const taken = new Set();
+  const reads = (nodes || []).map(async (node) => {
+    try {
+      const r = await fetcher(node.replace(/\/+$/, '') + '/api/round-result?round=' + id);
+      if (!r.ok) return;
+      for (const p of (await r.json()).players || []) taken.add(slotOfEntryId(fromHex(p.entry)));
+    } catch { /* that seat says nothing */ }
+  });
+  let timer;
+  await Promise.race([Promise.all(reads), new Promise((go) => { timer = setTimeout(go, waitMs); })]);
+  clearTimeout(timer);
+  return taken;
+}
+
+/**
+ * A SESSION KEY WHOSE ENTRY STARTS AT A PLACE NOBODY HOLDS (kanban #828). A hash gives two players the same place 1 time in
+ * WORLD_SLOTS, and the session key is the one part of an entry nothing else depends on: it signs the run's marks and no lock
+ * names it. So a shared-world entry draws its key again while the id it makes lands on a place listed as taken. `makeKey`
+ * answers { raw, ... }; on a per-player round, with all places taken or with nothing listed: the first key, as before.
+ * Two players joining in the same instant cannot see each other, and can still share a place then.
+ */
+async function keyOnFreeSlot({ makeKey, entry, contract, nodes, fetcher = fetch, waitMs, tries = 64 } = {}) {
+  let sharedWorld = null;
+  try { sharedWorld = contract && entry && Array.isArray(nodes) && nodes.length ? sharedWorldOf(contract.gameId) : null; } catch { sharedWorld = null; }
+  if (!sharedWorld || !worldIsShared(contract, sharedWorld)) return makeKey();
+  const rid = roundId(contract);
+  const taken = await slotsTaken({ round: rid, nodes, fetcher, ...(waitMs === undefined ? {} : { waitMs }) });
+  const slotOf = (k) => worldSlot({ entry: { ...entry, roundId: rid, sessionPubkey: k.raw }, contract, sharedWorld });
+  let key = await makeKey();
+  for (let i = 1; i < tries && taken.size < WORLD_SLOTS && taken.has(slotOf(key)); i++) key = await makeKey();
+  return key;
 }
 
 /**
@@ -16735,10 +16805,10 @@ function lockSecretFor(seed, roundId) {
 }
 
 /**
- * A WRITE THE BROWSER REFUSES FOR ROOM (2026-10-30, order at "locking your stake": a wallet's write that throws QuotaExceededError ends in the lock
+ * A WRITE THE BROWSER REFUSES FOR ROOM (the owner 2026-10-30, order at "locking your stake": a wallet's write that throws QuotaExceededError ends in the lock
  * client's panic, and every wallet call of that page then hangs until a reload): `onStorageFull` frees what it can, and the write is tried once more.
  */
-// A WALLET'S KEYS AND VALUES, PACKED (kanban #883, 2026-10-31, iPhone log: 4,992,831 characters in 3,759 keys, a deposit paid and never claimed): the client hands
+// A WALLET'S KEYS AND VALUES, PACKED (kanban #883, the owner 2026-10-31, iPhone log: 4,992,831 characters in 3,759 keys, a deposit paid and never claimed): the client hands
 // hex, two characters a byte, and iOS Safari gives 5 million characters. 15 bits to a character is under a third of that, and nothing has to be deleted for it.
 const PACKED = '~';
 function packHex(hex) {
@@ -16805,7 +16875,7 @@ function packWallets(storage) {
 }
 let storageFull = null;
 function onStorageFull(fn) { storageFull = typeof fn === 'function' ? fn : null; }
-// A WRITE STILL REFUSED IS SAID (kanban #883, 2026-10-31: "Du musst den Fehler abfangen damit es nicht silent failed"): the client panics in its own task and nothing reached the player
+// A WRITE STILL REFUSED IS SAID (kanban #883, the owner 2026-10-31: "Du musst den Fehler abfangen damit es nicht silent failed"): the client panics in its own task and nothing reached the player
 let storageRefused = null;
 function onStorageRefused(fn) { storageRefused = typeof fn === 'function' ? fn : null; }
 function putRoomy(storage, key, value) {
@@ -16818,7 +16888,7 @@ function putRoomy(storage, key, value) {
 }
 
 /**
- * THE PLAYER'S WALLET KEEPS ITS ROOM (2026-10-30: "Your browser's storage is full", and 1000 sat paid but not claimed: each kept round's lock wallet
+ * THE PLAYER'S WALLET KEEPS ITS ROOM (the owner 2026-10-30: "Your browser's storage is full", and 1000 sat paid but not claimed: each kept round's lock wallet
  * takes ~150 KB, 50 kept rounds fill the 5 million characters a browser gives, and the next write of the player's wallet then ends its task). Past
  * LOCK_ROOM_CHARS a round's lock wallet goes on in memory: it is the seed's and the round's, and joined anew when needed. Safari gives half of Chrome's room.
  */
@@ -16895,7 +16965,7 @@ const PAYOUT_GRACE_MS = 600000;
 // A SEAT THAT NEVER ANSWERS IS A SEAT THAT SAID NOTHING (measured 2026-10-27: a market bot's collect waited 13 min on one
 // seat that took the connection and never answered): the reads collect makes of every seat give up after 15 s
 const SEAT_READ_MS = 15000;
-// BLOCKS AS TIME (kanban #827, 2026-10-31: "Sag wann das ist, in Xh 3m ETA"): nobody reads a block height as a moment
+// BLOCKS AS TIME (kanban #827, the owner 2026-10-31: "Sag wann das ist, in Xh 3m ETA"): nobody reads a block height as a moment
 const blocksAsTime = (blocks, secondsPerBlock = 600) => {
   const m = Math.max(1, Math.ceil((Number(blocks) * Number(secondsPerBlock)) / 60));
   return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
@@ -17080,7 +17150,7 @@ function tidyStorage(storage, { seeds = [], current = null, federations = [], he
     for (const k of ks) { bytes += (k.length + String(storage.getItem(k) || '').length) * 2; storage.removeItem(k); removed++; }
     wallets++;
   }
-  // A BROWSER STILL FULL (2026-10-30: "exceeded the quota" on the wallet of federation 4dc88be7 itself, 19 kept phrases: the wallet would not
+  // A BROWSER STILL FULL (the owner 2026-10-30: "exceeded the quota" on the wallet of federation 4dc88be7 itself, 19 kept phrases: the wallet would not
   // open, a paid deposit could not be claimed, the order hung): above `pressureChars` what can be had again from the seed goes too. A done round's
   // lock wallet at any age, then the database of a kept phrase that no tab plays with, that holds no known balance, has no e-cash on its way and no
   // deposit waiting in its federation; the phrase stays kept and is marked to recover, so its next open reads it back from the federation. The
@@ -23951,6 +24021,18 @@ const MARK_INPUT_WAIT_MS = 10000;
  * send - is byte for byte what it was.
  */
 const FEED_WINDOW = 32;
+// A SEAT STILL TAKING THE HANDOUT IS ASKED AGAIN (kanban #828, 2026-11-02 04:05:41Z, both players of round a5fc9c2f): postHandout goes on once enough seats
+// took it, the entry goes to one seat, and that seat's handout can still be on its way; its 400 ended the join with the stake already locked. 8 s; any other refusal stands.
+async function postEntry(url, body, { fetcher = (...a) => fetch(...a), tries = 16, waitMs = 500 } = {}) {
+  for (let n = 0; ; n++) {
+    const r = await fetcher(url, { method: 'POST', body });
+    if (r.status === 201) return r;
+    const said = (await r.text()).trim();
+    if (n + 1 >= tries || !/publish the handout first/.test(said)) throw new Error(`the node refused the entry: ${said}`);
+    await new Promise((res) => setTimeout(res, waitMs));
+  }
+}
+
 /** A peer that refused the entry is asked again after ENTRY_BACKOFF_MS, then twice as long each time, at most ENTRY_BACKOFF_MAX_MS. */
 const ENTRY_BACKOFF_MS = 2000;
 const ENTRY_BACKOFF_MAX_MS = 60000;
@@ -24309,10 +24391,7 @@ class Client {
    */
   async join(entry) {
     const mine = entryId(entry);
-    const r = await fetch(`${this.base}/entry`, {
-      method: 'POST', body: encodeEntryContract(entry),
-    });
-    if (r.status !== 201) throw new Error(`the node refused the entry: ${(await r.text()).trim()}`);
+    await postEntry(`${this.base}/entry`, encodeEntryContract(entry));
 
     // WHO THIS CLIENT JOINED, kept for the ghost field. A reload keeps the
     // player's key (sessionStorage) and draws a NEW entry, so the signer node this tab
@@ -26222,7 +26301,7 @@ async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher = (u, 
 }
 
 /**
- * THE FEDERATIONS NO ENTRY CAN PAY INTO (2026-10-30, the second time at a table of federation 337ae01a: "Order not placed: this round pays
+ * THE FEDERATIONS NO ENTRY CAN PAY INTO (the owner 2026-10-30, the second time at a table of federation 337ae01a: "Order not placed: this round pays
  * the protocol reserves, and none of the round's 14 signer nodes names a reserve key"): a federation at least `minAnswers` nodes list on
  * GET /reserves and none names a key for. Too few answers, or a page that could not ask, holds nothing back. Answers a Set of federation hex.
  */
@@ -26241,7 +26320,7 @@ function keylessFederations(answers, { minAnswers = 3 } = {}) {
 }
 
 /**
- * THE FEDERATIONS THE PAGE DOES NOT PAY INTO (2026-10-30: "Wenn die Federation nicht aktiv ist, soll er in der UI auch nicht versuchen mit der zu
+ * THE FEDERATIONS THE PAGE DOES NOT PAY INTO (the owner 2026-10-30: "Wenn die Federation nicht aktiv ist, soll er in der UI auch nicht versuchen mit der zu
  * bezahlen"): `statuses`, the Map of ARENA_FED_LOADS, federation -> { status, allows }. One whose record this page could not verify, or that takes no
  * entries. A federation not read yet is not named, and when no federation at all stands OPEN the read failed, not the network: none is named.
  */
@@ -26252,7 +26331,7 @@ function inactiveFederations(statuses) {
 }
 
 /**
- * WHY THIS WALLET CANNOT PLAY WITH ITS BALANCE (2026-10-30: "If it's unavailable to play because the funds are locked it should say so in a
+ * WHY THIS WALLET CANNOT PLAY WITH ITS BALANCE (the owner 2026-10-30: "If it's unavailable to play because the funds are locked it should say so in a
  * message"): the part of the wallet held in federations no entry can pay into. `parts`: the wallet's [{ federation, sats }]. Null when none is.
  */
 function keylessFundsLine({ parts, keyless, expected = {}, tip = 0, blockMinutes = 10 } = {}) {
@@ -26263,7 +26342,7 @@ function keylessFundsLine({ parts, keyless, expected = {}, tip = 0, blockMinutes
   if (!stuck.length) return null;
   const sats = stuck.reduce((n, p) => n + Number(p.sats), 0);
   const where = [...new Set(stuck.map((p) => String(p.federation).slice(0, 8)))].join(', ');
-  // WHEN IT CAN BE PLAYED (2026-10-30: "Sage, ab wann es funktionieren wird in der Meldung"): the block the site names for the federation
+  // WHEN IT CAN BE PLAYED (the owner 2026-10-30: "Sage, ab wann es funktionieren wird in der Meldung"): the block the site names for the federation
   const at = Math.max(0, ...stuck.map((p) => Number(expected[fullOf(p.federation)]) || 0));
   const left = at && tip ? at - tip : 0;
   const hours = left > 0 ? Math.max(1, Math.round((left * blockMinutes) / 60)) : 0;
@@ -29518,7 +29597,7 @@ async function roundVerdict({ roundId, nodes, committee, verify, threshold = nul
 
 
 
-// AS MANY AS SETTLE THE ROUND (2026-10-30: "0 of 2 macht gar keinen sinn"): the two was the two-node test network's; a run fewer than five signer nodes hold cannot settle
+// AS MANY AS SETTLE THE ROUND (the owner 2026-10-30: "0 of 2 macht gar keinen sinn"): the two was the two-node test network's; a run fewer than five signer nodes hold cannot settle
 const NODES_HOLDING = SETTLEMENT_THRESHOLD;
 
 /**
@@ -30662,7 +30741,7 @@ function approvalWords(f, tooOld = []) {
 }
 
 /**
- * THE SETTLEMENT FACTS IN WORDS A PLAYER READS (kanban #821, 2026-10-30, of "Settled by 5 of 9 drawn (d5faf2, ...) · 1 operator (2of2) · both
+ * THE SETTLEMENT FACTS IN WORDS A PLAYER READS (kanban #821, the owner 2026-10-30, of "Settled by 5 of 9 drawn (d5faf2, ...) · 1 operator (2of2) · both
  * committees 5/5 · no operator playing · left out,...": "Die Meldung ist eher verwirrend"). `facts`: the lobby line from "signer nodes" on. The
  * whole line stays one tap away; one operator behind every node is said, never hidden.
  */
@@ -30816,7 +30895,7 @@ function nextRoundAfter(played, rows, nowMs = Date.now()) {
   const start = Number(played.startTimeMs);
   const candidates = (rows || []).filter((r) => r && r.joinable
     && !!r.free === (stake === 0n) && (r.free || big(r.stakeMsat) === stake)
-    // A ROUND ALREADY RUNNING IS NOT ENTERED BY ITSELF (kanban #827, 2026-10-31: "wenn man zum Ziel kommt werde ich zum Anfang zurück katapultiert"):
+    // A ROUND ALREADY RUNNING IS NOT ENTERED BY ITSELF (kanban #827, the owner 2026-10-31: "wenn man zum Ziel kommt werde ich zum Anfang zurück katapultiert"):
     // a late join starts the core the moment it opens, so the truck left the goal for the next round's bay under the result card. Late join stays what PLAY in the lobby does.
     && Number(r.startTimeMs) > start && Number(r.startTimeMs) > nowMs && Number(r.entryCloseMs) > nowMs + NEXT_ROUND_MARGIN_MS);
   candidates.sort((a, b) => Number(a.startTimeMs) - Number(b.startTimeMs));
@@ -34697,7 +34776,7 @@ function oneTilePerGame(games) {
     const shown = versions[0];
     // `older`: the other versions, each with its own info - a description its developer signed for that version's id, which
     // the tile shows while the shown version carries none that stands (checkedGameInfoOfTile)
-    // WHAT THE LOBBY LISTS, THE TILE COUNTS (2026-10-31: "keine Runden fuer next block", while the seats held v6's rounds and hosted v7
+    // WHAT THE LOBBY LISTS, THE TILE COUNTS (the owner 2026-10-31: "keine Runden fuer next block", while the seats held v6's rounds and hosted v7
     // with none): Next Block's lobby shows every version's rounds (ARENA_GAME_IDS), so its tile adds them up
     const live = shown.name === 'nextblock' && shown.live ? { live: versions.reduce((n, g) => ({ rounds: n.rounds + (Number(g.live && g.live.rounds) || 0), players: n.players + (Number(g.live && g.live.players) || 0) }), { rounds: 0, players: 0 }) } : {};
     out.push(Object.assign({}, shown, live, { versions: versions.map((g) => g.id), older: versions.filter((g) => g !== shown) }));
@@ -35559,6 +35638,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          fetchRound: fetchRound, bondProvider: bondProvider,
          fetchRandomness: fetchRandomness, worldSeedFor: worldSeedFor,
          seedWordForEntry: seedWordForEntry, worldSeedWord: worldSeedWord, worldIsShared: worldIsShared, sharedWorldOf: sharedWorldOf,
+         worldSlot: worldSlot, keyOnFreeSlot: keyOnFreeSlot,
          tabSeed: tabSeed, importSeed: importSeed, restoreSeed: restoreSeed, seedOrigin: seedOrigin,
          playerFor: playerFor, entryFor: entryFor,
          chooseDonation: chooseDonation, donationChoice: donationChoice, DONATION_CONFIRM_BPS: DONATION_CONFIRM_BPS,
@@ -35574,7 +35654,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
          fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, referralOf: referralOf, referralNameFor: referralNameFor, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
-         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
+         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, FAUCET_GRANTS: FAUCET_GRANTS, askFaucet: askFaucet, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
          roundEndMs: roundEndMs,
