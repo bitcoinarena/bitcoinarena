@@ -489,6 +489,35 @@ test('the page takes the set from every signer node of the round, checked under 
   } finally { await Promise.all(signerNodes.map((s) => s.close())); }
 });
 
+// A DEAD SEAT MUST NOT REFUSE THE FIRST TAP (kanban #926): measured live, a tester's tap got "the round's nodes could not be read just now", and bonded nodes advertise
+// addresses that no longer resolve. Seven seats, 1 to 3 of them dead in each way a dead seat looks from a page: no DNS, a read that hangs, a Cloudflare 530 or 502.
+test('up to three dead seats of seven, however they look, leave the donation set readable and quick', async () => {
+  const round = contractFor([1, 2, 3, 4, 5, 6, 7].map((n) => b32(n)));
+  const honest = signedBytes(SET);
+  const nodes = [1, 2, 3, 4, 5, 6, 7].map((n) => `http://127.0.0.1:${n}`);
+  const alive = async (url) => {
+    const u = new URL(url);
+    if (u.pathname === '/donation-rotations') return new Response(JSON.stringify({ rotations: [] }), { status: 200 });
+    if (u.pathname === '/game-donation-set') return new Response(encodeDonationSet(NEXTBLOCK.donationSet), { status: 200 });
+    return new Response(honest, { status: 200 });
+  };
+  const ways = {
+    'no DNS': async () => { throw new TypeError('Failed to fetch'); },
+    hang: () => new Promise(() => {}),
+    530: async () => new Response('error code: 1033', { status: 530 }),
+    502: async () => new Response('Bad Gateway', { status: 502 }),
+  };
+  const facts = [];
+  for (const [way, dead] of Object.entries(ways)) for (const n of [1, 2, 3]) {
+    const t = Date.now();
+    const got = await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: (u) => (Number(new URL(u).port) <= n ? dead(u) : alive(u)) });
+    facts.push({ way, dead: n, ok: got.ok, ms: Date.now() - t, why: got.ok ? null : String(got.why).slice(0, 90) });
+  }
+  console.log('  FACTS (dead seats):', JSON.stringify(facts));
+  assert.deepEqual(facts.filter((f) => !f.ok), []);
+  assert.ok(facts.every((f) => f.ms < 7000), 'a dead seat holds the tap at most its answer time');
+});
+
 test('a signer node missing, a signer node serving another set, a forged set, or a set the rotated-away authority signed is refused', async () => {
   const round = contractFor([b32(1), b32(2)]);
   // AND EACH SIGNER NODE SERVES THE ROUND'S GAME'S DONATION SET: nextblock's, unless a test hands another

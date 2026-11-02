@@ -23667,6 +23667,9 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
     const base = String(node).replace(/\/+$/, '');
     try {
       const r = await donationWithinMs(fetcher(`${base}/donation-set?round=${rid}`), DONATION_ANSWER_MS);
+      // A 5xx IS A SEAT THAT DID NOT ANSWER, NOT ONE THAT REFUSED (kanban #926): a dead tunnel answers 530, a seat in a restart 502 behind its relay; one of them refused a
+      // tester's first tap ("the round's nodes could not be read") while six seats served the set. A 4xx is the seat's own word and still refuses.
+      if (r.status >= 500) return { node: base, why: `${r.status}`, late: true };
       if (r.status !== 200) return { node: base, why: `${r.status} ${(await r.text()).trim().slice(0, 100)}` };
       const bytes = new Uint8Array(await r.arrayBuffer());
       let rotations = [];
