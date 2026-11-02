@@ -1539,6 +1539,88 @@
     }
    }
   },
+  "/census-dkg/ready": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "[signed] Say ready for a reshare",
+    "description": "An old holder's ReshareReady for the reshare going round. Signatures covering the old threshold go on the chain in an 'ARN' 'R' anchor, and that anchor says who is present.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the node's signature in the body\n\nReturns: 200 \"taken\"; 400; 409\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "post_census_dkg_ready",
+    "requestBody": {
+     "required": true,
+     "description": "The key, the run (the epoch), the node and its signature on ReshareReady, in hex.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "\"taken\"",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "400": {
+      "description": "Not a ReshareReady.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "409": {
+      "description": "Refused, with the reason.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   },
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "ReshareReady signatures held",
+    "description": "The ReshareReady signatures this node holds, so an old holder that missed one asks a peer.\n\nAccess: none\n\nReturns: 200 JSON { key, run, signatures }; 404\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_census_dkg_ready",
+    "parameters": [
+     {
+      "name": "key",
+      "in": "query",
+      "required": true,
+      "description": "The census key.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "run",
+      "in": "query",
+      "required": true,
+      "description": "The run: the epoch.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The signatures.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "This node is not reading that reshare.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
   "/census-dkg/statement": {
    "post": {
     "tags": [
@@ -1632,11 +1714,70 @@
      "Nodes"
     ],
     "summary": "Census keys and the current run",
-    "description": "The census keys standing on this seat's chain, how far its scan read, and the run it is in. A convenience: a key stands by its anchor on the chain alone.\n\nAccess: none\n\nReturns: 200 JSON { firstHeight, scannedTo, keys, anchors, run, recent, lastWhy }; 404\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "description": "The census keys standing on this seat's chain, how far its scan read, and the runs it is in, a keygen and a reshare. A convenience: a key stands by its anchor on the chain alone.\n\nAccess: none\n\nReturns: 200 JSON { firstHeight, scannedTo, keys, anchors, run, reshare, recent, lastWhy }; 404\n\nSource: `packages/arena-node/src/server.js` line 0.",
     "operationId": "get_census_key",
     "responses": {
      "200": {
       "description": "The keys that stand, the anchors read, and the run.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "This seat's network names no first height.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/census-key/census": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "A census key's census as evidence",
+    "description": "The census a key's record is held to, as evidence of the same form as GET /census.\n\nAccess: none\n\nReturns: 200 JSON { height, entries }; 404; 503\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_census_key_census",
+    "parameters": [
+     {
+      "name": "height",
+      "in": "query",
+      "required": true,
+      "description": "The census height of a key on this chain.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Each entry's transaction and merkle branch, with its update and re-affirmation.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "No key on this chain reads the census at that height.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/census-key/records": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Census key anchors with proofs",
+    "description": "Each standing key's anchor with its transaction and merkle branch. A page proves each into the chain it agreed and checks its signatures, so a seat can withhold a key and cannot make one up.\n\nAccess: none\n\nReturns: 200 JSON { firstHeight, records }; 404\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_census_key_records",
+    "responses": {
+     "200": {
+      "description": "Each anchor: height, census height, transaction, position, branch.",
       "content": {
        "application/json": {}
       }

@@ -72,7 +72,7 @@ test('a leaf over 252 bytes hashes with BIP-341\'s longer compact size; every sh
   assert.equal(hexOf(tapLeafHash(of(252))), hexOf(tagged([252], of(252))));
   assert.equal(hexOf(tapLeafHash(of(253))), hexOf(tagged([0xfd, 253, 0], of(253))));
   assert.equal(hexOf(tapLeafHash(of(483))), hexOf(tagged([0xfd, 0xe3, 0x01], of(483))));
-  assert.throws(() => tapLeafHash(of(0x10000)), /that long/);
+  assert.equal(hexOf(tapLeafHash(of(0x10000))), hexOf(tagged([0xfe, 0, 0, 1, 0], of(0x10000))), 'and an anchor\'s leaf over 65,535 bytes');
 });
 
 test('the bond: key path and path A as before, path B the census key\'s, and the output key depends on all of them', () => {

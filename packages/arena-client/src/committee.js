@@ -11,12 +11,12 @@
 // Kept per census and committee time: every round of a series shares them, so a series' second join asks nothing new.
 import { verifySeating } from '../../arena-protocol/src/seating.js';
 import { slotsForRole } from '../../arena-protocol/src/sortition.js';
-import { committeeFromChain, absenceFromChain } from '../../arena-protocol/src/client-committee.js';
+import { committeeFromChain, absenceFromChain, censusKeyRecordFromEvidence, evidenceNamesCensusKey } from '../../arena-protocol/src/client-committee.js';
 import { dropsAbsent } from '../../arena-protocol/src/presence.js';
 import { blockHashOf, TESTNET4_ANCHOR_HEIGHT } from '../../arena-protocol/src/chain.js';
 import { networkOf } from '../../arena-protocol/src/constants.js';
 import { NETWORK_ID_TESTNET4, ARBITRATION_KEYS_TESTNET4, ARBITRATION_KEYS_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
-import { genesisFor, committeesStand } from '../../arena-protocol/src/genesis.js';
+import { genesisFor, committeesStand, censusKeyFirstHeight } from '../../arena-protocol/src/genesis.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
@@ -37,6 +37,8 @@ export const BOND_TERMS = Object.freeze({
 });
 
 const CHAIN_KEPT_MS = 180000;
+const STANDING_KEPT = new Map();  // network id -> { below, keys }: the keys read, and the census height they were read for
+const CENSUS_KEY_SEATS_ASKED = 3;
 export const COMPARE_GRACE_MS = 400;
 const SEATING_ASK_MS = 6000;
 /** Resolves once every promise settled, or `graceMs` after more than half did - whichever is first (kanban #625: no wait for the slowest seat). */
@@ -137,6 +139,46 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
   return { ok: false, why: `no node handed over the census: ${refused.join('; ')}` };
 }
 
+/**
+ * THE CENSUS KEYS THAT STAND, AS THIS CLIENT CHECKS THEM (5A.3B, kanban #1048): "the records from a seat, each checked against its signatures and its anchor in the chain the client reads".
+ * Asked of a few seats, since a seat can leave a key out and cannot make one up (client-committee.js censusKeyRecordFromEvidence): every anchor one of them hands is judged, in chain order,
+ * each against the census it names. Only a census holding a template-3 bond comes here. A record that does not stand is left out and said, and the bond naming it then fails
+ * as any other evidence does. `chain`: { headers, firstHeight }. Answers { ok, keys, refused }.
+ */
+export async function standingKeysFor({ contract, nodes, chain, bond, verify, genesis = null, fetcher = fetch }) {
+  const network = networkOf(contract.networkId);
+  const seen = new Map();          // transaction hex -> { item, from }
+  let doorFirst = null;
+  const refused = [];
+  await Promise.all(headerSources(nodes, { n: CENSUS_KEY_SEATS_ASKED }).map(async (u) => {
+    try {
+      const r = await readWithOneRetry(fetcher, `${baseOf(u)}/census-key/records`);
+      if (!r.ok) { refused.push(`${u}: ${r.status}`); return; }
+      const j = await r.json();
+      if (Number.isInteger(j && j.firstHeight)) doorFirst = j.firstHeight;
+      for (const item of (j && Array.isArray(j.records) ? j.records : [])) if (item && item.transaction && !seen.has(item.transaction)) seen.set(item.transaction, { item, from: u });
+    } catch (e) { refused.push(`${u}: ${e.message}`); }
+  }));
+  // REGTEST ALONE TAKES A SEAT'S WORD FOR WHERE KEYS BEGIN: a harness names its own, and a network with a page has its height in this build
+  const keyFirstHeight = network === 'regtest' ? doorFirst : censusKeyFirstHeight(network, genesis);
+  if (keyFirstHeight === null || keyFirstHeight === undefined) return { ok: false, why: `${network} names no first census key height` };
+  const keys = genesis && genesis.censusKey0 ? [{ epoch: 0, publicKey: genesis.censusKey0, height: 0 }] : [];
+  const taken = new Set(keys.map((k) => k.epoch));
+  for (const { item, from } of [...seen.values()].sort((a, b) => a.item.height - b.item.height || a.item.position - b.item.position)) {
+    if (item.height > Number(contract.censusHeight)) continue;
+    let evidence = null;
+    try { const r = await readWithOneRetry(fetcher, `${baseOf(from)}/census-key/census?height=${Number(item.censusHeight)}`); if (r.ok) evidence = (await r.json()).entries; } catch { /* said below */ }
+    if (!evidence) { refused.push(`${from}: no census at ${item.censusHeight}`); continue; }
+    const got = censusKeyRecordFromEvidence({ item, evidence, networkId: contract.networkId, network, genesis, keyFirstHeight, censusConfirmations: Number(contract.censusConfirmations ?? 0),
+      headers: chain.headers, firstHeight: chain.firstHeight, bond: { ...bond, standingKeys: keys }, verify });
+    if (!got.ok) { refused.push(`${from}: ${got.why}`); continue; }
+    if (taken.has(got.key.epoch)) continue;       // the first valid record of an epoch stands
+    taken.add(got.key.epoch);
+    keys.push(got.key);
+  }
+  return { ok: true, keys, refused };
+}
+
 /** The absent claim of a 22 round's census root, checked here (client-committee.js absenceFromChain); no claim held anywhere: none. */
 async function absenceFor(contract, nodes, { fetcher, headers, firstHeight, entries, bond, verify }) {
   const rootHex = toHex(contract.censusRoot);
@@ -190,18 +232,33 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
     return chain;
   }
   const t1 = Date.now();
+  // THE TERMS EVERY BOND HERE IS REBUILT WITH, AND THE KEYS A TEMPLATE-3 BOND MAY NAME: read only when this census holds such a bond, so a network with none asks nothing new
+  const bondTerms = { arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity, tweakPoint: curve.bondTweakPoint, combine: curve.bondCombine };
+  const withKeys = async (evidenceNow) => {
+    if (network !== 'regtest' && censusKeyFirstHeight(network, genesis) === null) return bondTerms;
+    const name = toHex(contract.networkId), height = Number(contract.censusHeight);
+    let kept = STANDING_KEPT.get(name);
+    if (!kept || kept.below < height) {
+      if (!evidenceNamesCensusKey(evidenceNow.entries)) return bondTerms;
+      const read = await standingKeysFor({ contract, nodes, chain: { headers: chain.chain.headers, firstHeight: chain.firstHeight }, bond: bondTerms, verify: curve.verify, genesis, fetcher });
+      if (!read.ok) return bondTerms;
+      kept = { below: height, keys: read.keys };
+      STANDING_KEPT.set(name, kept);
+    }
+    return { ...bondTerms, standingKeys: kept.keys.filter((k) => k.height <= height) };
+  };
   const roundId = Uint8Array.from(roundIdHex.match(/../g).map((h) => parseInt(h, 16)));
   // A CENSUS THAT DOES NOT HASH TO THE CONTRACT'S ROOT NAMES ITS SEAT, AND THE NEXT SEAT IS ASKED (the spec's "The client computes the
   // committee itself": "A census entry missing from what a node sent shows as a root that does not match the contract's census_root,
   // and the client asks another source"measured 2026-10-16: one seat's census with an entry dropped refused the whole
   // round and named nobody)
   const censusRefused = []; const skip = new Set();
-  let got;
+  let got, bondRead = bondTerms;
   for (;;) {
     if (!evidence.ok) return { ...evidence, why: evidence.why + (censusRefused.length ? `; ${censusRefused.map((x) => `${x.node}: ${x.why}`).join('; ')}` : ''), censusRefused };
+    bondRead = await withKeys(evidence);
     got = committeeFromChain({ contract, roundId, headers: chain.chain.headers, firstHeight: chain.firstHeight, evidence: evidence.entries, roles,
-      bond: { arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity, tweakPoint: curve.bondTweakPoint, combine: curve.bondCombine },
-      verify: curve.verify, census: skip.size ? null : keptChecked.get(toHex(contract.censusRoot)) || null });
+      bond: bondRead, verify: curve.verify, census: skip.size ? null : keptChecked.get(toHex(contract.censusRoot)) || null });
     if (got.ok || evidence.from === 'kept' || !/^the census the seats handed over hashes to /.test(String(got.why))) break;
     censusRefused.push({ node: evidence.from, why: `its census ${String(got.why).replace(/^the census the seats handed over /, '')}` });
     skip.add(evidence.from);
@@ -219,7 +276,7 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
     let absence = keptAbsence.get(rootHex);
     if (!absence) {
       absence = await absenceFor(contract, nodes, { fetcher, headers: chain.chain.headers, firstHeight: chain.firstHeight, entries: got.checkedCensus ? got.checkedCensus.entries : [],
-        bond: { arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity, tweakPoint: curve.bondTweakPoint, combine: curve.bondCombine }, verify: curve.verify });
+        bond: bondRead, verify: curve.verify });
       if (absence.ok) keptAbsence.set(rootHex, absence);
     }
     if (!absence.ok) return { ok: false, why: `the round's census leaves out a node without proof: ${absence.why}`, absentRefused: absence };

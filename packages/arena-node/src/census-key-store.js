@@ -68,14 +68,23 @@ export class CensusKeyStore {
       .run(buf(publicKey), epoch, buf(runId), buf(record), negated ? 1 : 0, JSON.stringify([...shares].map(([x, v]) => [x, v.toString(16)])), buf(flat), this.now());
   }
 
-  /** A key's shares this node holds, or null. `commitments` are the even key's, 33 bytes each. */
-  held(publicKey) {
-    const row = this.db.prepare('SELECT * FROM census_key_held WHERE public_key = ?').get(buf(publicKey));
+  /**
+   * A key's shares this node holds, or null: `epoch`'s, or by default the newest it holds. `commitments` are the even key's, 33 bytes each. A reshare's shares are kept beside the
+   * old ones under their own epoch: a run can fail after them, and only the chain says which stand.
+   */
+  held(publicKey, epoch = null) {
+    const row = epoch === null ? this.db.prepare('SELECT * FROM census_key_held WHERE public_key = ? ORDER BY epoch DESC LIMIT 1').get(buf(publicKey))
+      : this.db.prepare('SELECT * FROM census_key_held WHERE public_key = ? AND epoch = ?').get(buf(publicKey), epoch);
     if (!row) return null;
     const flat = u8(row.commitments), commitments = [];
     for (let at = 0; at < flat.length; at += 33) commitments.push(flat.subarray(at, at + 33));
     return { publicKey: u8(row.public_key), epoch: row.epoch, runId: u8(row.run_id), record: u8(row.record), negated: !!row.negated, commitments,
       shares: new Map(JSON.parse(row.shares).map(([x, v]) => [x, BigInt(`0x${v}`)])) };
+  }
+
+  /** A reshare stands on the chain: the shares below it go. Anyone may keep a copy and nobody can prove a deletion, but a node holds no secret it has no use for. */
+  dropHeldBefore(publicKey, epoch) {
+    return this.db.prepare('DELETE FROM census_key_held WHERE public_key = ? AND epoch < ?').run(buf(publicKey), epoch).changes;
   }
 
   /** A run over: its deals, complaints and statements go. Its state stays, and the epochs that failed are read from it. */
@@ -90,7 +99,7 @@ export class CensusKeyStore {
 
   /** The epochs of every run and how each ended, newest first. */
   runsNewestFirst(limit = 8) {
-    return this.db.prepare('SELECT epoch, state FROM census_key_runs ORDER BY epoch DESC LIMIT ?').all(limit).map((r) => ({ epoch: r.epoch, ...JSON.parse(r.state) }));
+    return this.db.prepare('SELECT epoch, state FROM census_key_runs ORDER BY epoch DESC, updated_ms DESC').all().map((r) => ({ epoch: r.epoch, ...JSON.parse(r.state) })).filter((r) => !r.ready).slice(0, limit);
   }
 
   // THE CHAIN SCAN
@@ -104,17 +113,17 @@ export class CensusKeyStore {
   /** One height finished, with its anchors. The height goes last: a stop between them reads the block again and writes the same rows. Keeps the last `keep` hashes. */
   scanned(height, hash, anchors, keep) {
     for (const a of anchors) {
-      this.db.prepare('INSERT OR REPLACE INTO census_key_anchors (height, idx, block_hash, txid, record_id, body, stands, why) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(height, a.index, hash, a.txid, buf(a.id), a.stands ? buf(a.bodyBytes) : null, a.stands ? 1 : 0, a.why || null);
+      this.db.prepare('INSERT OR REPLACE INTO census_key_anchors (height, idx, block_hash, txid, record_id, kind, body, stands, why) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(height, a.index, hash, a.txid, buf(a.id), a.kind, a.stands ? buf(a.bodyBytes) : null, a.stands ? 1 : 0, a.why || null);
     }
     this.db.prepare('INSERT OR REPLACE INTO census_key_scan (height, hash) VALUES (?, ?)').run(height, hash);
     this.db.prepare('DELETE FROM census_key_scan WHERE height <= ?').run(height - keep);
   }
 
-  /** Every anchor, chain order. A refused one has no body and says why. */
+  /** Every anchor, chain order. `kind`: 'K' a new key, 'G' a reshare's record, 'R' a reshare's list. A refused one has no body and says why. */
   anchors() {
     return this.db.prepare('SELECT * FROM census_key_anchors ORDER BY height, idx').all()
-      .map((r) => ({ height: r.height, index: r.idx, blockHash: r.block_hash, txid: r.txid, id: u8(r.record_id), body: r.body ? u8(r.body) : null, stands: !!r.stands, why: r.why }));
+      .map((r) => ({ height: r.height, index: r.idx, kind: r.kind, blockHash: r.block_hash, txid: r.txid, id: u8(r.record_id), body: r.body ? u8(r.body) : null, stands: !!r.stands, why: r.why }));
   }
 
   /** A reorg: nothing above `height` was ever seen. Null forgets it all, and the scan starts over from its first height. */

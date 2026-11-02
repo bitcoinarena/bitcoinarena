@@ -614,7 +614,13 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25]);
+/**
+ * THE VERSION THAT RUNS THE CENSUS KEY'S DAEMON (5A.3B, RULED 2026-11-02, kanban #1048 answer 2). A node that does not speak it cannot deal or sign, so a share given to it counts against
+ * the threshold and nobody can use it: a node whose advertisement does not list this version is out of the key's census, in T and the shares alike. It is above BOND_SUM_VERSION, so
+ * bonds sum. No round runs it, and a build that lists it changes no round.
+ */
+const CENSUS_KEY_VERSION = 25;
 /** EVERY BONDED NODE HOSTS A MARKET WITH A SOURCE (kanban #920): its rounds say so in their question (`event.allBonded`), so no node's advertisement has to name each new market. */
 const SOURCE_HOSTS_VERSION = 23;
 /** THE FOUNDING DRAW UNDER PRESSURE (kanban #993, §23A.3a): no round's layout changes; from FOUNDING_PRESSURE_HEIGHT only a node that advertises this version is a candidate. */
@@ -1117,6 +1123,8 @@ const TAG = {
   carrierEscrowPegIn: 'ARENA/v1/CarrierEscrowPegIn',
   censusKeyRecord: 'ARENA/v1/CensusKeyRecord',
   censusKeyShare: 'ARENA/v1/CensusKeyShare',
+  reshareReady: 'ARENA/v1/ReshareReady',
+  reshareList: 'ARENA/v1/ReshareList',
   carrierPegIn: 'ARENA/v1/CarrierPegIn',
   censusRun: 'ARENA/v1/CensusRun',
   censusDealer: 'ARENA/v1/CensusDealer',
@@ -5973,9 +5981,9 @@ function slashLeaf(arbitrationKeys, k) {
 
 /** BIP-341: tagged_hash("TapLeaf", version || compact_size(script) || script). */
 function tapLeafHash(script, version = TAPLEAF_VERSION) {
-  if (script.length > 0xffff) throw new RangeError('no template writes a script that long');
-  // Template 3's release leaf holds 14 keys, over the 252 bytes one length byte can say. Every shorter leaf hashes as it always did.
-  const size = script.length <= 252 ? [script.length] : [0xfd, script.length & 255, script.length >>> 8];
+  // Template 3's release leaf holds 14 keys, over the 252 bytes one length byte can say, and a census key's anchor at most 683 signers, over two bytes. Every shorter leaf hashes as it always did.
+  const n = script.length;
+  const size = n <= 252 ? [n] : n <= 0xffff ? [0xfd, n & 255, n >>> 8] : [0xfe, n & 255, (n >>> 8) & 255, (n >>> 16) & 255, n >>> 24];
   return taggedHash('TapLeaf', cat(Uint8Array.from([version, ...size]), script));
 }
 
@@ -7635,11 +7643,14 @@ const CENSUS_KEY_BOND_MIN = Object.freeze({ testnet4: 50000n, regtest: 50000n })
 /**
  * WHERE A NETWORK'S CENSUS KEYS BEGIN (kanban #1041 answer 2, #1021 ruling 5): the chain scan for "ARN" 'K' runs forward from this height and keeps what it
  * found across restarts, with no lookback window (a key is named by bonds for years, and #820 is what a window does). A run belongs to the epochs that
- * start at or after it, so the first key is that epoch's. Null is not named: no key and no template-3 bond on that network. Mainnet scans from genesis, key 0
- * being in genesis_parameters. Named per network by the release, as FOUNDING_PRESSURE_HEIGHT is.
+ * start at or after it, so the first key is that epoch's. Null is not named: no key and no template-3 bond on that network. Named per network by the release, as
+ * FOUNDING_PRESSURE_HEIGHT is, and only after the network runs CENSUS_KEY_VERSION. Mainnet has none here: it scans from genesis_height, which its genesis commits (kanban #1048).
  */
-const CENSUS_KEY_FIRST_HEIGHT = Object.freeze({ mainnet: 0, testnet4: null, regtest: null });
-const censusKeyFirstHeight = (network) => (Object.prototype.hasOwnProperty.call(CENSUS_KEY_FIRST_HEIGHT, network) ? CENSUS_KEY_FIRST_HEIGHT[network] : null);
+const CENSUS_KEY_FIRST_HEIGHT = Object.freeze({ testnet4: null, regtest: null });
+function censusKeyFirstHeight(network, genesis = null) {
+  if (network === 'mainnet') return genesis && Number.isInteger(genesis.genesisHeight) ? genesis.genesisHeight : null;
+  return Object.prototype.hasOwnProperty.call(CENSUS_KEY_FIRST_HEIGHT, network) ? CENSUS_KEY_FIRST_HEIGHT[network] : null;
+}
 
 function censusKeyBondMin(network, genesis = null) {
   if (network === 'mainnet') {
@@ -7738,6 +7749,9 @@ function encodeGenesisParameters(p) {
     w.u64(p.censusKeyBondMinSats);
     // THE KEY THE GENESIS FOUNDERS MADE BEFORE ANY BOND (§5A.3B): committed here, so it needs no anchor.
     w.bytes32(p.censusKey0);
+    // WHERE MAINNET'S CHAIN SCAN STARTS (§27A.6, kanban #1048): scanning from height 0 is years of nothing.
+    if (!Number.isInteger(p.genesisHeight) || p.genesisHeight < 0) throw new Error('genesis names genesis_height');
+    w.u32(p.genesisHeight);
   }
   return w.finish();
 }
@@ -7750,7 +7764,7 @@ function encodeGenesisParameters(p) {
  * 6 confirmations; federations of 10 with federation_min 7; the fast clocks the owner set; ~30 days of bond maturity and notice;
  * governance 1008 / 1440 / 2016 (upgrades 2016 / 2016 / 4320, ballot.js).
  */
-function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityPubkey, recoveryPubkey, genesisSeriesStartMs, bondMinGuardianSats, censusKey0, censusKeyBondMinSats } = {}) {
+function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityPubkey, recoveryPubkey, genesisSeriesStartMs, bondMinGuardianSats, censusKey0, censusKeyBondMinSats, genesisHeight } = {}) {
   const is32 = (x) => x instanceof Uint8Array && x.length === 32;
   if (!is32(marker)) throw new Error('mainnet genesis needs its bond marker (32 bytes, §25.1): it has not been chosen');
   if (!Array.isArray(arbitrationKeys) || arbitrationKeys.length !== 7 || !arbitrationKeys.every(is32)) throw new Error('mainnet genesis needs its 7 arbitration keys');
@@ -7759,8 +7773,9 @@ function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityPubkey, 
   if (typeof bondMinGuardianSats !== 'bigint' || bondMinGuardianSats <= 0n) throw new Error('mainnet genesis names a guardian\'s bond floor');
   if (typeof censusKeyBondMinSats !== 'bigint' || censusKeyBondMinSats <= 0n) throw new Error('mainnet genesis names the lowest bracket\'s bond_min, the census key\'s B (§5A.3B)');
   if (!is32(censusKey0)) throw new Error('mainnet genesis needs census key 0: the founders run its DKG before any bond exists (§5A.3B)');
+  if (!Number.isInteger(genesisHeight) || genesisHeight < 0) throw new Error('mainnet genesis names genesis_height, where its chain scan starts (§5A.3B)');
   const genesis = {
-    chain: 'bitcoin-mainnet', genesisSeriesStartMs, censusKey0, censusKeySharesMax: CENSUS_KEY_SHARES_MAX, censusKeyBondMinSats,
+    chain: 'bitcoin-mainnet', genesisSeriesStartMs, genesisHeight, censusKey0, censusKeySharesMax: CENSUS_KEY_SHARES_MAX, censusKeyBondMinSats,
     federationNominal: 10, federationMin: 7, bondMinGuardianSats,
     abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216,
     gameVerifySlots: 7, gameVerifyThreshold: 5, settlementSlots: 7, settlementThreshold: 5, committeesBind: true,
@@ -8033,27 +8048,100 @@ function decodeCensusKeyRecord(bytes) {
 const censusKeyRecordId = (r) => taggedHash(TAG.censusKeyRecord, encodeCensusKeyRecord(r));
 
 const ANCHOR_MAGIC = [0x41, 0x52, 0x4e, 0x4b];         // "ARN" 'K'
+const RESHARE_MAGIC = [0x41, 0x52, 0x4e, 0x52];        // "ARN" 'R'
+const censusKeyJoin = (parts) => { const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let at = 0; for (const p of parts) { out.set(p, at); at += p.length; } return out; };
+const censusKeyU32 = (n) => Uint8Array.of(n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255);
 
 /** The anchor: OP_RETURN "ARN" 'K' H(record). */
 function censusKeyAnchor(record) {
   return { value: 0n, script: Uint8Array.from([0x6a, 36, ...ANCHOR_MAGIC, ...censusKeyRecordId(record)]) };
 }
 
-/** And the reading of one: the record's id, or null. */
-function censusKeyAnchorIn(outputs) {
+const hashPushIn = (outputs, magic) => {
   for (const o of outputs || []) {
     const s = o.script;
-    if (s && s.length === 38 && s[0] === 0x6a && s[1] === 36 && ANCHOR_MAGIC.every((b, i) => s[2 + i] === b)) return s.slice(6);
+    if (s && s.length === 38 && s[0] === 0x6a && s[1] === 36 && magic.every((b, i) => s[2 + i] === b)) return s.slice(6);
+  }
+  return null;
+};
+
+/** And the reading of one: the record's id, or null. */
+const censusKeyAnchorIn = (outputs) => hashPushIn(outputs, ANCHOR_MAGIC);
+
+/**
+ * WHO IS PRESENT AT A RESHARE (kanban #1048 answer 1): the chain says, so every node has one set. Old holders sign ReshareReady { key, run } in the first quarter of founding_window, and
+ * the first holder in duty order with signatures covering the old threshold anchors them, the list in its leaf, OP_RETURN "ARN" 'R' H(list). The first valid anchor of a run IS
+ * `present`. A key's run is the epoch whose window it runs in, so a run that fails is followed by the next epoch's.
+ */
+const reshareReadyId = ({ networkId, key, run }) => taggedHash(TAG.reshareReady, censusKeyJoin([networkId, key, censusKeyU32(run)]));
+
+function encodeReshareList({ networkId, key, run, signatures }) {
+  const w = new Writer();
+  w.bytes32(networkId);
+  w.bytes32(key);
+  w.u32(run);
+  w.vec(signatures, (s, ww) => { ww.bytes32(s.key); ww.bytes(s.signature, 64); }, { sortedBy: (a, b) => (toHex(a.key) < toHex(b.key) ? -1 : 1) });
+  return w.finish();
+}
+
+function decodeReshareList(bytes) {
+  const r = new Reader(bytes);
+  const out = { networkId: r.bytes32(), key: r.bytes32(), run: r.u32(), signatures: r.vec((rr) => ({ key: rr.bytes32(), signature: rr.bytes(64) })) };
+  r.end();
+  return out;
+}
+
+const reshareListId = (bytes) => taggedHash(TAG.reshareList, bytes);
+const reshareAnchor = (bytes) => ({ value: 0n, script: Uint8Array.from([0x6a, 36, ...RESHARE_MAGIC, ...reshareListId(bytes)]) });
+const reshareAnchorIn = (outputs) => hashPushIn(outputs, RESHARE_MAGIC);
+
+/** The list an 'R' anchor's own transaction carries, by the id its OP_RETURN names, or null. */
+function reshareListIn(tx, id) {
+  const want = toHex(id);
+  for (const body of envelopesIn(tx)) {
+    if (toHex(reshareListId(body)) !== want) continue;
+    try { return decodeReshareList(body); } catch { /* not a list after all */ }
   }
   return null;
 }
 
-const RECORD_BYTES = 112, BODY_SIGNATURE_BYTES = 96;
-/** Bitcoin Core holds a tapscript witness item to 80 bytes, so a body travels in pieces, as an advertisement's does (regtest-bond.mjs). */
-const CENSUS_KEY_BODY_PIECE = 80;
+/**
+ * A RESHARE'S WINDOW: the epoch's founding_window, as a keygen's. Its first quarter is for ReshareReady, and the deals run in the rest as in a keygen: the rest's first half deals, its
+ * second half signatures. An anchor counts from the window's first block until the midpoint, so at least one block of deals follows it.
+ */
+function reshareWindow(epoch, network, foundingWindow) {
+  const { start, end } = censusKeyWindow(epoch, network, foundingWindow);
+  const ready = start + Math.floor(foundingWindow / 4);
+  return { start, ready, midpoint: ready + Math.floor((end - ready) / 2), end };
+}
 
 /**
- * THE BODY OF AN ANCHOR (kanban #1041 answer 3): the record and its signatures, in the witness of the anchor transaction, as an advertisement body is (5A.2, 25.1).
+ * IS THIS LIST `present`? This network's, and every signer an old holder whose signature on ReshareReady verifies, together holding the old threshold. `holders` and `threshold` are the
+ * key's as its newest record stands. Answers { ok, present: [hex], have } or { ok: false, why }.
+ */
+function reshareListStands({ list, networkId, holders, threshold, verify }) {
+  if (typeof verify !== 'function') return { ok: false, why: 'checking a list needs a verifier, and none was injected' };
+  if (toHex(list.networkId) !== toHex(networkId)) return { ok: false, why: 'that list is for another network' };
+  const held = new Map(holders.map((h) => [h.key, h.shares]));
+  const digest = reshareReadyId(list);
+  const present = new Set();
+  let have = 0;
+  for (const s of list.signatures) {
+    const k = toHex(s.key);
+    if (!held.has(k)) return { ok: false, why: `${k.slice(0, 16)} holds no share of that key` };
+    let good = false;
+    try { good = verify(s.signature, digest, s.key) === true; } catch { good = false; }
+    if (!good) return { ok: false, why: `${k.slice(0, 16)}'s ReshareReady does not verify` };
+    if (!present.has(k)) { present.add(k); have += held.get(k); }
+  }
+  if (have < threshold) return { ok: false, why: `holders of ${have} shares signed that list, and the key's threshold is ${threshold}` };
+  return { ok: true, present: [...present], have };
+}
+
+const RECORD_BYTES = 112;
+
+/**
+ * THE BODY OF AN ANCHOR (kanban #1041 answer 3): the record and its signatures, on the chain with the anchor transaction, as an advertisement body is (5A.2, 25.1).
  * So it is retrievable by anyone with the chain, there is nothing to serve, and a census stays a pure function of the chain. Signers in ascending key.
  */
 function encodeCensusKeyBody({ record, signatures }) {
@@ -8071,49 +8159,69 @@ function decodeCensusKeyBody(bytes) {
   return { record, signatures };
 }
 
-/** The body in pieces of at most 80 bytes, each one witness item. */
-function censusKeyBodyPieces(body) {
+const ENVELOPE_PIECE = 520;     // the most one push may hold
+
+/**
+ * AN ANCHOR'S BODY LIVES IN THE LEAF ITS TRANSACTION SPENDS (kanban #1048): `<key> CHECKSIG OP_0 OP_IF <pushes> OP_ENDIF`. The funded output commits to the leaf, so no relay can take the
+ * body off a spend, and the signatures are as safe as the record. It costs nothing: a piece of 520 bytes takes 3 bytes of script where 80 bytes on the stack took 2.
+ */
+function censusKeyEnvelope(body) {
+  const parts = [Uint8Array.of(0x00, 0x63)];
+  for (let at = 0; at < body.length; at += ENVELOPE_PIECE) {
+    const piece = body.subarray(at, Math.min(at + ENVELOPE_PIECE, body.length));
+    parts.push(piece.length < 76 ? Uint8Array.of(piece.length) : piece.length < 256 ? Uint8Array.of(0x4c, piece.length) : Uint8Array.of(0x4d, piece.length & 255, piece.length >> 8), piece);
+  }
+  parts.push(Uint8Array.of(0x68));
+  return censusKeyJoin(parts);
+}
+
+/** The pushes of an envelope at `at`, joined, or null where the script is not one to its last byte. */
+function envelopeBody(script, at) {
+  if (script[at] !== 0x00 || script[at + 1] !== 0x63) return null;
+  const parts = [];
+  let i = at + 2;
+  while (i < script.length && script[i] !== 0x68) {
+    const op = script[i];
+    const wide = op === 0x4d ? 3 : op === 0x4c ? 2 : op >= 1 && op < 76 ? 1 : 0;
+    if (!wide || i + wide > script.length) return null;
+    const length = op === 0x4d ? script[i + 1] | (script[i + 2] << 8) : op === 0x4c ? script[i + 1] : op;
+    i += wide;
+    if (i + length > script.length) return null;
+    parts.push(script.subarray(i, i + length));
+    i += length;
+  }
+  return i === script.length - 1 ? censusKeyJoin(parts) : null;
+}
+
+/** Every envelope a transaction's inputs reveal: the leaf is the last witness item but the control block, an annex aside. */
+function envelopesIn(tx) {
   const out = [];
-  for (let at = 0; at < body.length; at += CENSUS_KEY_BODY_PIECE) out.push(body.subarray(at, Math.min(at + CENSUS_KEY_BODY_PIECE, body.length)));
+  for (const stack of tx.witnesses || []) {
+    const items = stack.length > 2 && stack[stack.length - 1][0] === 0x50 ? stack.slice(0, -1) : stack;
+    const script = items[items.length - 2];
+    if (!script || script.length < 37 || script[0] !== 0x20 || script[33] !== 0xac) continue;
+    const body = envelopeBody(script, 34);
+    if (body) out.push(body);
+  }
   return out;
 }
 
-const joinedFrom = (stack, first, length) => {
-  const out = new Uint8Array(length);
-  let at = 0;
-  for (let i = first; i < stack.length && at < length; i++) {
-    const part = stack[i].subarray(0, Math.min(stack[i].length, length - at));
-    out.set(part, at); at += part.length;
-  }
-  return at === length ? out : null;
-};
-
-/**
- * THE BODY AN ANCHOR'S OWN WITNESS CARRIES, by the id its OP_RETURN names, or null. Not witnessRunsOf: that joins every run of a stack, and a 245-piece body
- * would be about 30,000 joins per transaction. The record has a fixed size, so its first bytes say where a body starts, and its count says where it ends.
- */
+/** THE BODY AN ANCHOR'S OWN TRANSACTION CARRIES, by the id its OP_RETURN names, or null. */
 function censusKeyBodyIn(tx, id) {
   const want = toHex(id);
-  for (const stack of tx.witnesses || []) {
-    for (let i = 0; i < stack.length; i++) {
-      const head = joinedFrom(stack, i, RECORD_BYTES + 2);
-      if (!head || toHex(taggedHash(TAG.censusKeyRecord, head.subarray(0, RECORD_BYTES))) !== want) continue;
-      const length = RECORD_BYTES + 2 + ((head[RECORD_BYTES] << 8) | head[RECORD_BYTES + 1]) * BODY_SIGNATURE_BYTES;
-      const whole = joinedFrom(stack, i, length);
-      if (!whole) continue;
-      try { return decodeCensusKeyBody(whole); } catch { /* not a body after all */ }
-    }
+  for (const body of envelopesIn(tx)) {
+    if (body.length < RECORD_BYTES || toHex(taggedHash(TAG.censusKeyRecord, body.subarray(0, RECORD_BYTES))) !== want) continue;
+    try { return decodeCensusKeyBody(body); } catch { /* not a body after all */ }
   }
   return null;
 }
 
 /**
  * THE CENSUS A KEY READS (5A.4, before any role filter). A pure function of the chain, so it names no version a build moves: the key's census is read at
- * BOND_SUM_VERSION, the first whose bonds count as their node's sum, with B as its floor and the network's census_confirmations.
+ * CENSUS_KEY_VERSION, the version that runs the daemon, with B as its floor and the network's census_confirmations (kanban #1048 answer 2).
  */
-const CENSUS_KEY_CENSUS_VERSION = BOND_SUM_VERSION;
 const censusKeyContract = ({ networkId, network, height, censusConfirmations, genesis = null }) => ({
-  networkId, censusHeight: height, censusConfirmations, bondMinSats: censusKeyBondMin(network, genesis), protocolVersion: CENSUS_KEY_CENSUS_VERSION,
+  networkId, censusHeight: height, censusConfirmations, bondMinSats: censusKeyBondMin(network, genesis), protocolVersion: CENSUS_KEY_VERSION,
 });
 
 /**
@@ -30668,6 +30776,7 @@ function seriesPublicationOutput(seriesIdBytes) {
 
 
 
+
 const sameCC = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
 const bytesOfCC = (v) => (v instanceof Uint8Array ? v : typeof v === 'string' ? fromHex(v) : null);
 const proofOf = (p) => (p ? { transaction: bytesOfCC(p.transaction), branch: (p.branch || []).map(bytesOfCC), position: p.position | 0 } : null);
@@ -30787,6 +30896,49 @@ function entryFromEvidence(item, { contract, headers, firstHeight, bond, verify 
     entry = { ...entry, advert: advertNow, advertId: read.advertId, roles, hostedGames: read.advert.hostedGames };
   }
   return { ok: true, entry };
+}
+
+/** Does any bond of this evidence name a census key? Only then has a client any standing key to read, and a census without one costs it nothing. */
+function evidenceNamesCensusKey(evidence) {
+  return (evidence || []).some((item) => {
+    const b = proofOf(item);
+    if (!b || !b.transaction || item.reaffirm) return false;
+    try { const c = committedSigned(parseTransaction(b.transaction)); return !!c && c.advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3; } catch { return false; }
+  });
+}
+
+/**
+ * ONE STANDING KEY, CHECKED BY THE CLIENT (5A.3B, kanban #1048): "a client that cannot count a bond cannot check a draw". A seat hands the anchor with its merkle branch and the census the
+ * record names; here the anchor is proved into the agreed headers, the body read from the leaf it spends, the record held to its epoch's rule, every census entry rebuilt as a round's
+ * is, and its signatures counted against the shares of that census. So a seat can withhold a key and cannot make one up. Keys are read in chain order: a record's census reads the keys
+ * standing below it, in `bond.standingKeys`. `firstHeight` is the network's, `keyFirstHeight` where its keys begin. Answers { ok, key: { epoch, publicKey, height } } or { ok: false, why }.
+ */
+function censusKeyRecordFromEvidence({ item, evidence, networkId, network, genesis = null, keyFirstHeight, censusConfirmations, headers, firstHeight, bond, verify, sharesMax = undefined }) {
+  const b = proofOf(item);
+  if (!b || !b.transaction) return { ok: false, why: 'no anchor transaction' };
+  let tx; try { tx = parseTransaction(b.transaction); } catch (e) { return { ok: false, why: `the anchor is not a transaction: ${e.message}` }; }
+  const height = provenAt(headers, firstHeight, tx.txid, b);
+  if (height === null) return { ok: false, why: 'that anchor is not in any block of the agreed headers' };
+  const id = censusKeyAnchorIn(tx.outputs);
+  const body = id ? censusKeyBodyIn(tx, id) : null;
+  if (!body) return { ok: false, why: 'that transaction is no anchor with its body' };
+  const { record, signatures } = body;
+  if (!sameCC(record.networkId, networkId)) return { ok: false, why: 'that record is for another network' };
+  const due = censusKeyRecordDue({ record, height, network, firstHeight: keyFirstHeight, censusConfirmations });
+  if (!due.ok) return due;
+  const contract = censusKeyContract({ networkId, network, height: due.censusHeight, censusConfirmations, genesis });
+  const entries = [];
+  for (const piece of evidence || []) {
+    const got = entryFromEvidence(piece, { contract, headers, firstHeight, bond, verify });
+    if (!got.ok) return { ok: false, why: `that census holds an entry that does not stand: ${got.why}` };
+    entries.push(got.entry);
+  }
+  const counted = floorOnSums(entries, contract);
+  const draw = headers[censusKeyDrawHeight(record.epoch, network) - firstHeight];
+  if (!draw) return { ok: false, why: 'the agreed headers do not reach that key\'s draw' };
+  const shares = censusKeyShares({ entries: counted.kept, network, genesis, blockHash: Uint8Array.from(blockHashOf(draw)).reverse(), ...(sharesMax ? { sharesMax } : {}) });
+  const stands = censusKeyRecordStands({ record, signatures, networkId, shares, verify });
+  return stands.ok ? { ok: true, key: { epoch: record.epoch, publicKey: record.publicKey, height } } : stands;
 }
 
 /**
@@ -31005,6 +31157,8 @@ const BOND_TERMS = Object.freeze({
 });
 
 const CHAIN_KEPT_MS = 180000;
+const STANDING_KEPT = new Map();  // network id -> { below, keys }: the keys read, and the census height they were read for
+const CENSUS_KEY_SEATS_ASKED = 3;
 const COMPARE_GRACE_MS = 400;
 const SEATING_ASK_MS = 6000;
 /** Resolves once every promise settled, or `graceMs` after more than half did - whichever is first (kanban #625: no wait for the slowest seat). */
@@ -31105,6 +31259,46 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
   return { ok: false, why: `no node handed over the census: ${refused.join('; ')}` };
 }
 
+/**
+ * THE CENSUS KEYS THAT STAND, AS THIS CLIENT CHECKS THEM (5A.3B, kanban #1048): "the records from a seat, each checked against its signatures and its anchor in the chain the client reads".
+ * Asked of a few seats, since a seat can leave a key out and cannot make one up (client-committee.js censusKeyRecordFromEvidence): every anchor one of them hands is judged, in chain order,
+ * each against the census it names. Only a census holding a template-3 bond comes here. A record that does not stand is left out and said, and the bond naming it then fails
+ * as any other evidence does. `chain`: { headers, firstHeight }. Answers { ok, keys, refused }.
+ */
+async function standingKeysFor({ contract, nodes, chain, bond, verify, genesis = null, fetcher = fetch }) {
+  const network = networkOf(contract.networkId);
+  const seen = new Map();          // transaction hex -> { item, from }
+  let doorFirst = null;
+  const refused = [];
+  await Promise.all(headerSources(nodes, { n: CENSUS_KEY_SEATS_ASKED }).map(async (u) => {
+    try {
+      const r = await readWithOneRetry(fetcher, `${baseOf(u)}/census-key/records`);
+      if (!r.ok) { refused.push(`${u}: ${r.status}`); return; }
+      const j = await r.json();
+      if (Number.isInteger(j && j.firstHeight)) doorFirst = j.firstHeight;
+      for (const item of (j && Array.isArray(j.records) ? j.records : [])) if (item && item.transaction && !seen.has(item.transaction)) seen.set(item.transaction, { item, from: u });
+    } catch (e) { refused.push(`${u}: ${e.message}`); }
+  }));
+  // REGTEST ALONE TAKES A SEAT'S WORD FOR WHERE KEYS BEGIN: a harness names its own, and a network with a page has its height in this build
+  const keyFirstHeight = network === 'regtest' ? doorFirst : censusKeyFirstHeight(network, genesis);
+  if (keyFirstHeight === null || keyFirstHeight === undefined) return { ok: false, why: `${network} names no first census key height` };
+  const keys = genesis && genesis.censusKey0 ? [{ epoch: 0, publicKey: genesis.censusKey0, height: 0 }] : [];
+  const taken = new Set(keys.map((k) => k.epoch));
+  for (const { item, from } of [...seen.values()].sort((a, b) => a.item.height - b.item.height || a.item.position - b.item.position)) {
+    if (item.height > Number(contract.censusHeight)) continue;
+    let evidence = null;
+    try { const r = await readWithOneRetry(fetcher, `${baseOf(from)}/census-key/census?height=${Number(item.censusHeight)}`); if (r.ok) evidence = (await r.json()).entries; } catch { /* said below */ }
+    if (!evidence) { refused.push(`${from}: no census at ${item.censusHeight}`); continue; }
+    const got = censusKeyRecordFromEvidence({ item, evidence, networkId: contract.networkId, network, genesis, keyFirstHeight, censusConfirmations: Number(contract.censusConfirmations ?? 0),
+      headers: chain.headers, firstHeight: chain.firstHeight, bond: { ...bond, standingKeys: keys }, verify });
+    if (!got.ok) { refused.push(`${from}: ${got.why}`); continue; }
+    if (taken.has(got.key.epoch)) continue;       // the first valid record of an epoch stands
+    taken.add(got.key.epoch);
+    keys.push(got.key);
+  }
+  return { ok: true, keys, refused };
+}
+
 /** The absent claim of a 22 round's census root, checked here (client-committee.js absenceFromChain); no claim held anywhere: none. */
 async function absenceFor(contract, nodes, { fetcher, headers, firstHeight, entries, bond, verify }) {
   const rootHex = toHex(contract.censusRoot);
@@ -31158,18 +31352,33 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
     return chain;
   }
   const t1 = Date.now();
+  // THE TERMS EVERY BOND HERE IS REBUILT WITH, AND THE KEYS A TEMPLATE-3 BOND MAY NAME: read only when this census holds such a bond, so a network with none asks nothing new
+  const bondTerms = { arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity, tweakPoint: curve.bondTweakPoint, combine: curve.bondCombine };
+  const withKeys = async (evidenceNow) => {
+    if (network !== 'regtest' && censusKeyFirstHeight(network, genesis) === null) return bondTerms;
+    const name = toHex(contract.networkId), height = Number(contract.censusHeight);
+    let kept = STANDING_KEPT.get(name);
+    if (!kept || kept.below < height) {
+      if (!evidenceNamesCensusKey(evidenceNow.entries)) return bondTerms;
+      const read = await standingKeysFor({ contract, nodes, chain: { headers: chain.chain.headers, firstHeight: chain.firstHeight }, bond: bondTerms, verify: curve.verify, genesis, fetcher });
+      if (!read.ok) return bondTerms;
+      kept = { below: height, keys: read.keys };
+      STANDING_KEPT.set(name, kept);
+    }
+    return { ...bondTerms, standingKeys: kept.keys.filter((k) => k.height <= height) };
+  };
   const roundId = Uint8Array.from(roundIdHex.match(/../g).map((h) => parseInt(h, 16)));
   // A CENSUS THAT DOES NOT HASH TO THE CONTRACT'S ROOT NAMES ITS SEAT, AND THE NEXT SEAT IS ASKED (the spec's "The client computes the
   // committee itself": "A census entry missing from what a node sent shows as a root that does not match the contract's census_root,
   // and the client asks another source"measured 2026-10-16: one seat's census with an entry dropped refused the whole
   // round and named nobody)
   const censusRefused = []; const skip = new Set();
-  let got;
+  let got, bondRead = bondTerms;
   for (;;) {
     if (!evidence.ok) return { ...evidence, why: evidence.why + (censusRefused.length ? `; ${censusRefused.map((x) => `${x.node}: ${x.why}`).join('; ')}` : ''), censusRefused };
+    bondRead = await withKeys(evidence);
     got = committeeFromChain({ contract, roundId, headers: chain.chain.headers, firstHeight: chain.firstHeight, evidence: evidence.entries, roles,
-      bond: { arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity, tweakPoint: curve.bondTweakPoint, combine: curve.bondCombine },
-      verify: curve.verify, census: skip.size ? null : keptChecked.get(toHex(contract.censusRoot)) || null });
+      bond: bondRead, verify: curve.verify, census: skip.size ? null : keptChecked.get(toHex(contract.censusRoot)) || null });
     if (got.ok || evidence.from === 'kept' || !/^the census the seats handed over hashes to /.test(String(got.why))) break;
     censusRefused.push({ node: evidence.from, why: `its census ${String(got.why).replace(/^the census the seats handed over /, '')}` });
     skip.add(evidence.from);
@@ -31187,7 +31396,7 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
     let absence = keptAbsence.get(rootHex);
     if (!absence) {
       absence = await absenceFor(contract, nodes, { fetcher, headers: chain.chain.headers, firstHeight: chain.firstHeight, entries: got.checkedCensus ? got.checkedCensus.entries : [],
-        bond: { arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity, tweakPoint: curve.bondTweakPoint, combine: curve.bondCombine }, verify: curve.verify });
+        bond: bondRead, verify: curve.verify });
       if (absence.ok) keptAbsence.set(rootHex, absence);
     }
     if (!absence.ok) return { ok: false, why: `the round's census leaves out a node without proof: ${absence.why}`, absentRefused: absence };

@@ -199,6 +199,31 @@ export function censusOfView(view, contract, { network = networkOf(contract.netw
   });
 }
 
+/** Each entry of a census as evidence off the view it was read from: { ok, entries }, what Roster.censusEvidenceFor hands a client, and GET /census-key/census for a key's census. */
+export function censusEvidenceOf(census, view) {
+  let where = view && typeof view === 'object' ? whereOf.get(view) : null;
+  if (!where) {
+    where = new Map();
+    for (const block of (view && Array.isArray(view.blocks) ? view.blocks : [])) {
+      let txids;
+      try { txids = (block.transactions || []).map((raw) => parseTransaction(raw).txid); } catch { continue; }
+      txids.forEach((t, position) => where.set(toHex(t), { block, txids, position }));
+    }
+    if (view && typeof view === 'object') whereOf.set(view, where);
+  }
+  const proof = (txid) => { const at = txid ? where.get(toHex(txid)) : null; return at ? { transaction: toHex(at.block.transactions[at.position]),
+    position: at.position, branch: merkleBranchOf(at.txids, at.position).map(toHex) } : null; };
+  const entries = [];
+  for (const e of census.entries) {
+    const bond = proof(e.txid);
+    if (!bond) return { ok: false, why: `this node's view does not hold bond ${toHex(e.txid).slice(0, 16)}` };
+    const update = e.updatedBy ? proof(e.updatedBy.txid) : null;
+    const reaffirm = e.reaffirmedBy && e.reaffirmedBy.txid ? proof(e.reaffirmedBy.txid) : null;
+    entries.push({ ...bond, ...(update ? { update } : {}), ...(reaffirm ? { reaffirm } : {}) });
+  }
+  return { ok: true, entries };
+}
+
 export class Roster {
   constructor(round, { chainFor = NO_CHAIN_VIEW, randomnessFor = NO_BEACON, seatedFor = null, absence = null, standingKeys = null } = {}) {
     this.round = round;
@@ -673,27 +698,9 @@ export class Roster {
     const census = this.censusFor(roundIdBytes);
     if (!census.ok) return census;
     const contract = this.#held(roundIdBytes);
-    const view = this.chainFor({ contract, roundIdBytes });
-    let where = view && typeof view === 'object' ? whereOf.get(view) : null;
-    if (!where) {
-      where = new Map();
-      for (const block of (view && Array.isArray(view.blocks) ? view.blocks : [])) {
-        let txids;
-        try { txids = (block.transactions || []).map((raw) => parseTransaction(raw).txid); } catch { continue; }
-        txids.forEach((t, position) => where.set(toHex(t), { block, txids, position }));
-      }
-      if (view && typeof view === 'object') whereOf.set(view, where);
-    }
-    const proof = (txid) => { const at = txid ? where.get(toHex(txid)) : null; return at ? { transaction: toHex(at.block.transactions[at.position]),
-      position: at.position, branch: merkleBranchOf(at.txids, at.position).map(toHex) } : null; };
-    const entries = [];
-    for (const e of census.entries) {
-      const bond = proof(e.txid);
-      if (!bond) return { ok: false, why: `this node's view does not hold bond ${toHex(e.txid).slice(0, 16)}` };
-      const update = e.updatedBy ? proof(e.updatedBy.txid) : null;
-      const reaffirm = e.reaffirmedBy && e.reaffirmedBy.txid ? proof(e.reaffirmedBy.txid) : null;
-      entries.push({ ...bond, ...(update ? { update } : {}), ...(reaffirm ? { reaffirm } : {}) });
-    }
+    const evidence = censusEvidenceOf(census, this.chainFor({ contract, roundIdBytes }));
+    if (!evidence.ok) return evidence;
+    const { entries } = evidence;
     // THE NODES LEFT OUT FOR THEIR PROTOCOL VERSION (scope 3): bonded, but speaking no version this round runs - the
     // page names them ("protocol too old"); what decides the round is the root above, which they are not in
     const tooOld = (census.excluded || []).filter((x) => x.tooOld && x.pubkey)

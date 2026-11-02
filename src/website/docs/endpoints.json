@@ -9043,8 +9043,8 @@
   "path": "/census-key",
   "params": "none",
   "auth": "none",
-  "returns": "200 JSON { firstHeight, scannedTo, keys, anchors, run, recent, lastWhy }; 404",
-  "purpose": "The census keys standing on this seat's chain, how far its scan read, and the run it is in. A convenience: a key stands by its anchor on the chain alone.",
+  "returns": "200 JSON { firstHeight, scannedTo, keys, anchors, run, reshare, recent, lastWhy }; 404",
+  "purpose": "The census keys standing on this seat's chain, how far its scan read, and the runs it is in, a keygen and a reshare. A convenience: a key stands by its anchor on the chain alone.",
   "audience": "node-to-node",
   "line": 0,
   "summary": "Census keys and the current run",
@@ -9060,6 +9060,151 @@
     "status": "404",
     "contentType": "text/plain",
     "description": "This seat's network names no first height."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/census-key/records",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON { firstHeight, records }; 404",
+  "purpose": "Each standing key's anchor with its transaction and merkle branch. A page proves each into the chain it agreed and checks its signatures, so a seat can withhold a key and cannot make one up.",
+  "audience": "player/page",
+  "line": 0,
+  "summary": "Census key anchors with proofs",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "Each anchor: height, census height, transaction, position, branch."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "This seat's network names no first height."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/census-key/census",
+  "params": "?height=<census height of a key>",
+  "auth": "none",
+  "returns": "200 JSON { height, entries }; 404; 503",
+  "purpose": "The census a key's record is held to, as evidence of the same form as GET /census.",
+  "audience": "player/page",
+  "line": 0,
+  "summary": "A census key's census as evidence",
+  "query": [
+   {
+    "name": "height",
+    "required": true,
+    "type": "string",
+    "description": "The census height of a key on this chain."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "Each entry's transaction and merkle branch, with its update and re-affirmation."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "No key on this chain reads the census at that height."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/census-dkg/ready",
+  "params": "body: JSON { key, run, node, signature }",
+  "auth": "the node's signature in the body",
+  "returns": "200 \"taken\"; 400; 409",
+  "purpose": "An old holder's ReshareReady for the reshare going round. Signatures covering the old threshold go on the chain in an 'ARN' 'R' anchor, and that anchor says who is present.",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "Say ready for a reshare",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "The key, the run (the epoch), the node and its signature on ReshareReady, in hex."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "text/plain",
+    "description": "\"taken\""
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a ReshareReady."
+   },
+   {
+    "status": "409",
+    "contentType": "text/plain",
+    "description": "Refused, with the reason."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signature",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/census-dkg/ready",
+  "params": "?key=<64 hex>&run=<epoch>",
+  "auth": "none",
+  "returns": "200 JSON { key, run, signatures }; 404",
+  "purpose": "The ReshareReady signatures this node holds, so an old holder that missed one asks a peer.",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "ReshareReady signatures held",
+  "query": [
+   {
+    "name": "key",
+    "required": true,
+    "type": "string",
+    "description": "The census key."
+   },
+   {
+    "name": "run",
+    "required": true,
+    "type": "string",
+    "description": "The run: the epoch."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The signatures."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "This node is not reading that reshare."
    }
   ],
   "headers": [],

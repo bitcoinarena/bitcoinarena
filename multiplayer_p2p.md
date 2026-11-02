@@ -2488,8 +2488,14 @@ threshold     floor(2 x total shares / 3) + 1, 683 of 1024
 ```
 
 `T` and the shares read the census of §5A.4 before any role filter: every node in
-it, by its sum. A key belongs to the network, not to a role. `serving = false` and
-absent nodes are not in the census, so they hold no share. `B` is a network
+it, by its sum. A key belongs to the network, not to a role. That census is the
+chain's, read at `CENSUS_KEY_VERSION`, the protocol version that runs the key's
+daemon (it is at or above 19, so bonds sum). A node whose advertisement does not list
+that version cannot deal or sign, so it is out of the key's census, in `T` and the
+shares alike. `serving = false` is on the chain, so such a node is out too. Absence
+is not on the chain: a node left out of a round's census by an absence claim keeps
+its share, and an absent holder is simply a share that does not sign (RULED
+2026-11-02, kanban #1048). `B` is a network
 number, never a round's, and no caller passes it: testnet4 uses its live floor,
 50,000 sat, and mainnet takes the lowest bracket's value from genesis.
 `bond_min(role)` per round stays what it is for rounds; the key does not read it.
@@ -2535,8 +2541,9 @@ nobody re-bonds (§5A.2), so a key cannot retire while something names it.
   of its shares, at most one key at a time, oldest first. The reshare keeps the
   public key. A stable census costs nothing. A keygen tolerates absence, a reshare
   does not: it fixes its dealers at its start, and they must hold the old
-  threshold. If one drops out, it restarts at the next step with those left.
-  Nothing is lost meanwhile, since the old shares still work.
+  threshold. If one drops out, the run fails and the next starts at the next
+  `founding_window`. Nothing is lost meanwhile, since the old shares still work.
+  The chain decides all of it: see "A reshare" below.
 - **New key:** at an epoch's start, and only if the newest key has been named by a
   bond. The DKG starts at the epoch's first height, when `h` is known, and the key
   is new once anchored. A DKG that fails leaves the newest key standing, and the
@@ -2580,7 +2587,8 @@ with an anchor.
   height makes the first key by the rule above, on its existing template 1 and 2
   bonds, and anchors the record. No genesis change, no re-bond. That height is
   `CENSUS_KEY_FIRST_HEIGHT`, a constant beside genesis, and the first key is the
-  epoch that starts at or after it, by the epoch's own census height and draw.
+  epoch that starts at or after it, by the epoch's own census height and draw. A
+  height is named only after the network runs `CENSUS_KEY_VERSION`.
 - A network with no key yet cannot take a template-3 bond. That is the only
   refusal.
 
@@ -2592,20 +2600,21 @@ with an anchor.
   `duty_post` settings and fee rates as a day's posting. A node that cannot pay says
   so and falls to the next. Anyone else may post it too: the record proves itself,
   and the first valid one per epoch counts. Nobody is paid and nobody is punished.
-- **Where the record travels:** the record and its signatures go in the witness of
-  the anchor transaction, as an advertisement body does (§5A.2, §25.1), in items of
-  at most 80 bytes, one `OP_DROP` each. `OP_RETURN "ARN" 'K' H(record)` is its only
-  output. So it is retrievable by anyone with the chain, there is nothing to serve,
-  and a census stays a pure function of the chain. A door may show a record as a
-  convenience, and nothing rests on it. The signers are the fewest that reach the
-  threshold, largest first: 204 signers are 19.5 KB, about 5,000 vB, once per key.
-- **The hash covers the record, not its signatures,** and a witness is not in the
-  txid, so a relay can strip them. An anchor without a standing body counts for
-  nothing and the same record can be posted again.
+- **Where the record travels:** the record and its signatures go in the script-path
+  leaf the anchor transaction spends: `<key> CHECKSIG OP_0 OP_IF <pushes of at most 520
+  bytes> OP_ENDIF`. `OP_RETURN "ARN" 'K' H(record)` is its only output. So it is
+  retrievable by anyone with the chain, there is nothing to serve, and a census stays
+  a pure function of the chain. A door may show a record as a convenience, and nothing
+  rests on it. The signers are the fewest that reach the threshold, largest first: 204
+  signers are 19.5 KB, about 5,000 vB, once per key.
+- **The hash covers the record, not its signatures,** but the spent output commits to
+  the leaf, so no relay can strip them. An anchor without a standing body counts for
+  nothing and the same record can be posted again. A reshare's list travels the same
+  way.
 - **Where the scan starts:** at `CENSUS_KEY_FIRST_HEIGHT`, forward, with what it found
   kept across restarts. It never uses a lookback window: a key is named by bonds for
   years. A network that names no height has no key and no template-3 bond. Mainnet
-  scans from genesis, key 0 being in `genesis_parameters`.
+  scans from `genesis_height` in `genesis_parameters`, key 0 being there too.
 - **A record stands** when its epoch starts at or after that height, its census
   height is its epoch's, it is anchored no earlier than the epoch's first block, and
   nodes holding the threshold of that census' shares signed it. Records are judged in
@@ -2616,9 +2625,64 @@ with an anchor.
   transcript does not change. The first signed deal per dealer stands. **The midpoint**
   freezes the deal set and runs the check; a node signs its record one block later, so
   a complaint heard in that block drops the deal everywhere first.
-- **The census a key reads** is the chain's, at `census_key_bond_min` and protocol
-  version 19, the first whose bonds count as a node's sum. The chain says nothing of
-  absence, so a node left out of a round's census by an absence claim keeps its share.
+- **The census a key reads** is the chain's, at `census_key_bond_min` and
+  `CENSUS_KEY_VERSION`.
+
+**A reshare (RULED 2026-11-02, kanban #1048).** Anything nodes must agree on byte for
+byte goes on the chain, not a gossip view.
+
+```text
+ReshareReady  { key, run }    signed by an old holder's node key
+list          { network_id, key, run, signatures }
+anchored by   OP_RETURN "ARN" 'R' H(list)
+run           the epoch whose founding_window it runs in
+```
+
+- **Trigger:** read from the chain, so every node has one answer. For epoch `e`: the
+  keys standing at its first block, each with the holders its newest record names,
+  against that epoch's census. The oldest key that a bond names, held at or over its
+  threshold and under 80 % of its shares, is reshared. The window is the epoch's
+  `founding_window`, beside that epoch's keygen, and the new holders are that
+  epoch's census, the same shares and draw as its keygen.
+- **Present:** old holders sign `ReshareReady` in the first quarter of the window.
+  From the quarter's end, the first holder in duty order with signatures covering the
+  old threshold anchors them, rank `k` from `k - 1` blocks after it, by the same
+  `duty_post` settings as any anchor. The list counts from the window's first block
+  until the midpoint below. Its signers are the fewest that reach the threshold,
+  largest first. The first valid anchor of a run **is** `present`, and
+  `reshare_dealers` fixes the dealers from it.
+- **Then** the deals run for the rest of the window, as a keygen: the rest's first half
+  deals, its second half signatures, the midpoint freezing the set. Each dealer deals
+  its part of the key to the new census.
+- **A drop-out:** each part is a term over exactly the dealers' set, so a dealer that
+  does not deal fails the run. The next starts at the next `founding_window`.
+- **No anchor, no reshare.** A list short of the threshold, for a key the epoch's plan
+  does not name, or after the midpoint counts for nothing.
+- **The record** is a `CensusKeyRecord` as a keygen's: `epoch` the run, the same public
+  key, the new census' height and counts, signed by holders of the new threshold,
+  anchored by `"ARN" 'K'` by the new holders in duty order. A record naming a key that
+  stands is a reshare's, and it stands only after its run's list. It adds no key and
+  makes no key newer: it says who holds that key from then on. A node keeps its new
+  shares beside the old until that anchor stands, since only the chain says the run
+  held, and then deletes the old.
+- **A new holder has not the old polynomial,** and nothing on the chain proves one a
+  peer could hand it. It needs only that the parts add up to the key, so that is what
+  it checks. An old holder also checks each part, and refuses to sign if one is not its
+  dealer's.
+- Key 0 has no record, and `genesis_parameters` names its public key alone, so no
+  reader of the chain can say who holds it, and it is not reshared this way.
+
+**What a client reads (RULED 2026-11-02, kanban #1048).** A client that cannot count a
+bond cannot check a draw, so a census holding a template-3 bond is read with the
+standing keys. They are read like any census input: from a few seats, `GET
+/census-key/records` for each anchor with its merkle branch, `GET /census-key/census`
+for the census its record names. Each anchor is proved into the headers the client
+agreed, the body read from the leaf it spends, the record held to its epoch's rule,
+every entry of that census rebuilt as a round's is, and the signatures counted against
+the shares of that census. They are judged in chain order, so a census that names an
+earlier key reads it. A seat can withhold a key and cannot make one up, and a withheld
+key shows as a root that does not match. A census with no template-3 bond asks nothing.
+This must stand before `CENSUS_KEY_FIRST_HEIGHT` is named for a network with a page.
 
 **The bond (`bond_script_template_version` 3).** The key path and path A stay.
 Path B needs both the node's advance signature and the census key:
@@ -2867,8 +2931,23 @@ crossed the seats' doors in 3 s, the record was complete 2 to 3 s after the stat
 block, and the anchor from a seat's wallet was 236 vB with 3 signers. All five read the key
 from their own chain, a template-3 bond naming it counted, one naming another key did
 not, and the next epoch's key had the new node among its holders. The largest body a
-key can need, 683 signers, is 822 items and 16,965 vB, and bitcoind takes it as
+key can need, 683 signers, was 822 stack items and 16,965 vB, and bitcoind took it as
 standard.
+
+**A reshare through the node's own code (2026-11-02, kanban #972, #1048),** the same
+harness, 31 of 31 as expected. A bonded node that does not list `CENSUS_KEY_VERSION`
+added nothing to 11 shares, threshold 8. A node of 3 shares left, 8 of 11 held, and all
+four old holders said ready. The list was 224 vB with 3 signers. With the largest
+holder stopped after its list went out, the run ended with 2 of 3 deals, no record
+and the old shares standing. The next epoch's window ran with it back: 3 dealers, the
+same public key, a second holder set on every chain, no key added, and all 11 new
+shares open that key. The node that left keeps none, and the next epoch asks for no
+reshare. A page read both keys from the seats in about 0.1 s in the page's code, against
+headers read straight from bitcoind, and refused an anchor outside its chain, a census
+with an entry left out, and a second key whose census names a withheld first. The
+largest body, 683 signers, in its leaf is 16,650 vB against 16,965 on the stack, and
+bitcoind takes it as standard. Not measured: a real round with a template-3 bond
+joined through a page, a Chrome, and a reshare at size or across machines.
 
 **A drawn key against the skew that broke the unit (2026-11-02, kanban #1039).** 1000
 nodes, Zipf bonds, 2000 draws of 1024 shares, threshold 683, `tools/census-draw-measure.mjs`.
@@ -8125,6 +8204,7 @@ genesis_parameters {
   census_key_shares_max  template 3: the cap on a census key's shares (§5A.3B)
   census_key_bond_min    template 3: B of a census key, the lowest bracket's bond_min (§5A.3B)
   census_key_0           mainnet: the key the genesis founders made (§5A.3B)
+  genesis_height         mainnet: where the census key's chain scan starts (§5A.3B)
   notice_period          for a rise in bond_min (§27A.3)
   bracket_table          the §5A.10 stake ceiling table
   bond_marker            the §25.1 discovery address

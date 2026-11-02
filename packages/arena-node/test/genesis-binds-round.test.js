@@ -15,7 +15,7 @@ import { mainnetGenesis } from '../../arena-protocol/src/genesis.js';
 import { HOSTED } from './plugins/hosted.js';
 
 const { genesis } = mainnetGenesis({ bondMarker: b32(1), arbitrationKeys: [2, 3, 4, 5, 6, 7, 8].map(b32), authorityPubkey: b32(9), recoveryPubkey: b32(10),
-  genesisSeriesStartMs: 1800000000000n, bondMinGuardianSats: 1_000_000n, censusKeyBondMinSats: 500_000n, censusKey0: b32(11) });
+  genesisSeriesStartMs: 1800000000000n, bondMinGuardianSats: 1_000_000n, censusKeyBondMinSats: 500_000n, censusKey0: b32(11), genesisHeight: 900000 });
 
 test('a seat whose genesis binds refuses a contract by the parameter it names otherwise; the same seat unbound takes it', async () => {
   for (const [bound, want] of [[false, 201], [true, 409]]) {

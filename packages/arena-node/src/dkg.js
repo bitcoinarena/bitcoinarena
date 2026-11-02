@@ -503,6 +503,16 @@ export class CensusDkg {
     return { ok: !complaints.length, complaints, checks };
   }
 
+  /** A reshare's deal set is whole and its parts add up to the key, or this node signs nothing and keeps nothing of it. */
+  reshareHolds() {
+    const { reshare } = this.run;
+    if (this.deals.size !== reshare.dealers.length) return { ok: false, why: `${this.deals.size} of the ${reshare.dealers.length} dealers of that reshare dealt: each part is a term over exactly that set, so the run fails` };
+    const idsOf = new Map(reshare.dealers.map((h) => [h.key, h.ids]));
+    const parts = checkReshareDeals({ deals: [...this.deals.values()].map((h) => ({ deal: h.deal, ids: idsOf.get(toHex(h.deal.from)) })), xs: reshare.xs, oldCommitments: reshare.oldCommitments,
+      groupPublicKey: reshare.groupPublicKey, random: this.random, curve: this.curve });
+    return parts.ok ? parts : { ok: false, why: parts.why || 'a reshare deal is not its dealer\'s part' };
+  }
+
   /** A proven complaint from anyone drops the deal here too, so every honest node signs one set. */
   async hearComplaint(complaint) {
     const held = this.deals.get(toHex(complaint.dealer));
@@ -543,6 +553,7 @@ export class CensusDkg {
     if (reshare && held.length !== reshare.dealers.length) return { ok: false, why: `${held.length} of the ${reshare.dealers.length} dealers of that reshare dealt: each part is a term over exactly that set, so the run goes again without the absent` };
     const key = combineCensusKey({ opened: held.map((h) => ({ deal: h.deal, shares: h.shares })), holders: this.dealers, threshold: reshare ? reshare.oldThreshold : threshold, curve: this.curve });
     if (!key.ok) return key;
+    if (reshare && toHex(key.groupPublicKey) !== toHex(reshare.groupPublicKey)) return { ok: false, why: 'the parts of that reshare do not add up to the key' };
     return { ...key, record, recordId: agreed.recordId, have: agreed.have, equivocated: agreed.equivocated };
   }
 }

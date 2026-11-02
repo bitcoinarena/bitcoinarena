@@ -8,11 +8,15 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../src/store.js';
 import { CensusKeyStore } from '../src/census-key-store.js';
 import { createCensusKeyScan, censusKeyAnchorsInBlock } from '../src/census-key-chain.js';
-import { createCensusKeyRun, censusKeyPostOrder, censusKeySigners, CENSUS_KEY_POST_STEP } from '../src/census-key-run.js';
+import { createCensusKeyRun, censusKeyPostOrder, censusKeySigners, CENSUS_KEY_POST_STEP, RESHARE_POST_STEP } from '../src/census-key-run.js';
 import { censusKeyWork } from '../src/census-key-work.js';
 import { censusKeyCarrier, censusKeyAnchorSpend } from '../src/census-key-anchor.js';
-import { censusKeyAnchor, censusKeyBodyIn, censusKeyBodyPieces, censusKeyContract, censusKeyRecordDue, censusKeyRecordId, censusKeyShares,
-  censusHeightOfEpoch, decodeCensusKeyBody, encodeCensusKeyBody, standingKeysName, CENSUS_KEY_CENSUS_VERSION } from '../../arena-protocol/src/census-key.js';
+import { censusKeyAnchor, censusKeyBodyIn, censusKeyContract, censusKeyEnvelope, censusKeyRecordDue, censusKeyRecordId, censusKeyShares, censusHeightOfEpoch, decodeCensusKeyBody, encodeCensusKeyBody,
+  encodeReshareList, reshareAnchor, reshareAnchorIn, reshareListIn, reshareReadyId, reshareWindow, standingKeysName } from '../../arena-protocol/src/census-key.js';
+import { CENSUS_KEY_VERSION, BOND_SUM_VERSION } from '../../arena-protocol/src/constants.js';
+import { lagrangeOf } from '../../arena-protocol/src/census-dkg.js';
+import { BOND_TEMPLATE_V3 } from '../../arena-protocol/src/bond-script.js';
+import { feldmanGroup } from '../src/curve.js';
 import { CENSUS_KEY_BOND_MIN, CENSUS_KEY_FIRST_HEIGHT, censusKeyFirstHeight } from '../../arena-protocol/src/genesis.js';
 import { decodeCensusDeal, joinSignedCensusDeal, splitSignedCensusDeal, censusDealId, encodeCensusDeal, censusRunId } from '../../arena-protocol/src/census-dkg.js';
 import { BOND_MATURITY_OFFSET } from '../../arena-protocol/src/bond-script.js';
@@ -47,9 +51,10 @@ const person = (i) => { const secret = new Uint8Array(32).fill(i + 1); return { 
 const entriesOf = (nodes) => nodes.map((n, i) => ({ pubkey: n.key, bondSats: n.bond, txid: new Uint8Array(32).fill(i + 1), vout: 0, advert: { endpoint: `ws://n${i}`, ...(n.advert || {}) } }));
 
 /** N nodes on one chain, their doors joined by a fetch in memory. */
-function network(bonds, { c = chain(), down = [], canPay = () => true, entries = null } = {}) {
+function network(bonds, { c = chain(), down = [], canPay = () => true, entries = null, censusAt = null } = {}) {
   const nodes = bonds.map((bond, i) => ({ ...person(i), bond, url: `http://n${i}` }));
   const list = entries || entriesOf(nodes);
+  const read = (h) => (censusAt ? censusAt(h, list) : list);
   const byUrl = new Map();
   const fetchFn = async (url, opts = {}) => {
     const u = new URL(url), n = byUrl.get(`http://${u.host}`);
@@ -59,7 +64,9 @@ function network(bonds, { c = chain(), down = [], canPay = () => true, entries =
       if (u.pathname === '/census-dkg/deal') { const t = await n.run.takeDeal(new Uint8Array(opts.body)); return say(t.ok, t.why); }
       if (u.pathname === '/census-dkg/complaint') { const t = await n.run.takeComplaint(new Uint8Array(opts.body)); return say(t.ok, t.why); }
       if (u.pathname === '/census-dkg/statement') { const t = n.run.takeStatement(JSON.parse(opts.body)); return say(t.ok, t.why); }
+      if (u.pathname === '/census-dkg/ready') { const t = n.run.takeReady(JSON.parse(opts.body)); return say(t.ok, t.why); }
     }
+    if (u.pathname === '/census-dkg/ready') { const h = n.run.readyHeld(u.searchParams.get('key'), u.searchParams.get('run')); return say(!!h, h); }
     if (u.pathname === '/census-dkg/deal') { const w = n.run.dealWire(u.searchParams.get('run'), u.searchParams.get('dealer')); return say(!!w, w && w.buffer.slice(w.byteOffset, w.byteOffset + w.length)); }
     if (u.pathname === '/census-dkg') { const h = n.run.heldOf(u.searchParams.get('run')); return say(!!h, h); }
     throw new Error(`no door ${url}`);
@@ -70,14 +77,15 @@ function network(bonds, { c = chain(), down = [], canPay = () => true, entries =
     n.store = new CensusKeyStore(n.db);
     n.posted = [];
     n.build = (extra = {}) => {
-      n.scan = createCensusKeyScan({ store: n.store, network: NETWORK, networkId: NET, firstHeight: FIRST, censusConfirmations: CONF, tipHeight: () => c.tip, blockHashAt: c.hashAt,
-        blockAt: c.blockAt, censusEntriesAt: () => list, verify });
+      n.scan = createCensusKeyScan({ store: n.store, network: NETWORK, networkId: NET, firstHeight: FIRST, foundingWindow: WINDOW, censusConfirmations: CONF, tipHeight: () => c.tip, blockHashAt: c.hashAt,
+        blockAt: c.blockAt, censusEntriesAt: read, verify });
       n.run = createCensusKeyRun({ store: n.store, network: NETWORK, networkId: NET, key: n.key, secret: n.secret, firstHeight: FIRST, foundingWindow: WINDOW, censusConfirmations: CONF,
-        tipHeight: () => c.tip, blockHashAt: c.hashAt, censusEntriesAt: () => list, standing: n.scan.standing, scannedTo: n.scan.scannedTo, fetchFn, work: censusKeyWork,
-        post: async ({ body, record }) => {
+        tipHeight: () => c.tip, blockHashAt: c.hashAt, censusEntriesAt: read, standing: n.scan.standing, scannedTo: n.scan.scannedTo, plan: n.scan.planAt, reshareList: n.scan.reshareList,
+        generationOf: n.scan.generationOf, fetchFn, work: censusKeyWork,
+        post: async ({ body, output }) => {
           if (!canPay(i)) return { ok: false, why: 'this wallet holds no confirmed coins' };
-          const secret = new Uint8Array(32).fill(200), pieces = censusKeyBodyPieces(body), carrier = censusKeyCarrier(secret, pieces.length);
-          const raw = censusKeyAnchorSpend({ carrier, secret, pieces, funding: { txid: '11'.repeat(32), vout: 0, value: 10000n }, record });
+          const secret = new Uint8Array(32).fill(200), carrier = censusKeyCarrier(secret, body);
+          const raw = censusKeyAnchorSpend({ carrier, secret, funding: { txid: '11'.repeat(32), vout: 0, value: 10000n }, output });
           n.posted.push(c.tip); c.mempool.push(raw);
           return { ok: true, txid: toHex(parseTransaction(raw).txid), vsize: 0 };
         }, ...extra });
@@ -266,7 +274,8 @@ test('no run where none is due: before the first height, without a named newest 
 
   assert.equal(CENSUS_KEY_FIRST_HEIGHT.testnet4, null, 'testnet4 stays off until a release names it');
   assert.equal(censusKeyFirstHeight('testnet4'), null);
-  assert.equal(censusKeyFirstHeight('mainnet'), 0);
+  assert.equal(censusKeyFirstHeight('mainnet'), null, 'mainnet reads its genesis');
+  assert.equal(censusKeyFirstHeight('mainnet', { genesisHeight: 900000 }), 900000, 'and scans from genesis_height, not from 0');
   assert.equal(censusKeyFirstHeight('nowhere'), null);
   const off = createCensusKeyScan({ store: new CensusKeyStore(openStore(':memory:')), network: 'testnet4', networkId: NET, firstHeight: null, censusConfirmations: 6 });
   assert.equal((await off.pass()).skipped, true);
@@ -276,18 +285,21 @@ test('no run where none is due: before the first height, without a named newest 
 const fixedRecord = (over = {}) => ({ networkId: NET, epoch: EPOCH, publicKey: new Uint8Array(32).fill(4), censusHeight: START - CONF, totalShares: 3, threshold: 3, transcriptHash: new Uint8Array(32).fill(5), ...over });
 const signaturesOf = (nodes, record) => nodes.map((n) => ({ key: n.key, signature: schnorr.sign(censusKeyRecordId(record), n.secret) })).sort((a, b) => (toHex(a.key) < toHex(b.key) ? -1 : 1));
 function anchorTx(record, signatures, value = 10000n) {
-  const secret = new Uint8Array(32).fill(200), pieces = censusKeyBodyPieces(encodeCensusKeyBody({ record, signatures })), carrier = censusKeyCarrier(secret, pieces.length);
-  return censusKeyAnchorSpend({ carrier, secret, pieces, funding: { txid: '11'.repeat(32), vout: 0, value }, record });
+  const secret = new Uint8Array(32).fill(200), carrier = censusKeyCarrier(secret, encodeCensusKeyBody({ record, signatures }));
+  return censusKeyAnchorSpend({ carrier, secret, funding: { txid: '11'.repeat(32), vout: 0, value }, output: censusKeyAnchor(record) });
 }
 
-test('the body travels in the witness: pieces of 80 bytes, read back by the id the OP_RETURN names, at the largest a key can need', () => {
+test('the body travels in the leaf the anchor spends, read back by the id the OP_RETURN names, at the largest a key can need, and no relay can take it off', () => {
   const nodes = Array.from({ length: 683 }, (_, i) => { const secret = fromHex((i + 1).toString(16).padStart(64, '0')); return { secret, key: schnorr.getPublicKey(secret) }; });
   const record = fixedRecord();
   const signatures = nodes.map((n) => ({ key: n.key, signature: new Uint8Array(64).fill(1) })).sort((a, b) => (toHex(a.key) < toHex(b.key) ? -1 : 1));
   const raw = anchorTx(record, signatures);
   const tx = parseTransaction(raw);
-  assert.ok(tx.witnesses[0].every((x, i) => x.length <= 80 || i >= tx.witnesses[0].length - 2), 'each piece is standard');
-  assert.ok(tx.witnesses[0].length <= 1000, `${tx.witnesses[0].length} items, under script's stack limit of 1000`);
+  assert.equal(tx.witnesses[0].length, 3, 'a signature, the leaf and its control block');
+  assert.ok(tx.witnesses[0][0].length <= 80, 'the only stack item is the signature');
+  const stripped = { ...tx, witnesses: [[tx.witnesses[0][0], Uint8Array.from([...tx.witnesses[0][1].subarray(0, 34)]), tx.witnesses[0][2]]] };
+  assert.equal(censusKeyBodyIn(stripped, censusKeyRecordId(record)), null, 'a leaf without the body is another leaf, and the output commits to this one');
+  assert.ok(censusKeyEnvelope(new Uint8Array(1)).length < 6);
   const seen = censusKeyBodyIn(tx, censusKeyRecordId(record));
   assert.equal(seen.signatures.length, 683);
   assert.deepEqual(seen.record, decodeCensusKeyBody(encodeCensusKeyBody({ record, signatures })).record);
@@ -339,7 +351,7 @@ test('the scan keeps the first valid record per epoch and refuses the rest by na
   assert.equal(store.anchors().filter((a) => a.body).length, 1, 'a refused anchor keeps no body');
 });
 
-test('a record whose anchor was stripped of its signatures counts for nothing, and the same record posted again stands', async () => {
+test('an anchor whose record has too few signatures counts for nothing, and the same record posted again stands', async () => {
   const nodes = [person(0), person(1), person(2)].map((n) => ({ ...n, bond: BOND }));
   const entries = entriesOf(nodes);
   const c = chain(START + 1);
@@ -416,7 +428,8 @@ test('the rules of a record before any census is read, and the census a key read
   assert.match(due({ censusHeight: 7 }).why, /reads/);
   assert.match(due({}, START, null).why, /no census key/);
   const contract = censusKeyContract({ networkId: NET, network: NETWORK, height: 299, censusConfirmations: CONF });
-  assert.equal(contract.protocolVersion, CENSUS_KEY_CENSUS_VERSION);
+  assert.equal(contract.protocolVersion, CENSUS_KEY_VERSION);
+  assert.ok(CENSUS_KEY_VERSION >= BOND_SUM_VERSION, 'bonds still sum');
   assert.equal(contract.bondMinSats, BOND);
   assert.equal(contract.censusHeight, 299);
 });
@@ -432,3 +445,139 @@ test('the signers of an anchor are the fewest that reach the threshold, largest 
   assert.ok(toHex(got[0].key) < toHex(got[1].key));
 });
 
+
+// A RESHARE (kanban #1048 answer 1): the census changes under a key, and the chain decides the rest
+const named = (key) => ({ bondScriptTemplateVersion: BOND_TEMPLATE_V3, censusKey: key });
+function fourThenMoved() {
+  // 2 + 2 + 3 + 4 shares, threshold 8. Node 2 leaves the census: 8 of 11 held, under 80 %, still over the threshold. Node 4 comes in naming the key
+  const shape = [2n, 2n, 3n, 4n, 3n].map((n) => n * BOND);
+  const everyone = shape.map((bond, i) => ({ ...person(i), bond }));
+  let key = null;
+  const first = entriesOf(everyone.slice(0, 4));
+  const w = network(shape, { entries: first, censusAt: (h) => {
+    if (h < START + E - CONF || !key) return first;
+    const later = entriesOf([0, 1, 3, 4].map((i) => ({ ...everyone[i], advert: i === 4 ? named(key) : {} })));
+    for (const e of later) e.advert.endpoint = e.advert.endpoint.replace(/ws:\/\/n(\d)/, (_, x) => `http://n${[0, 1, 3, 4][Number(x)]}`);
+    return later;
+  } });
+  w.setKey = (k) => { key = k; };
+  return w;
+}
+const jump = async (w, height) => { w.c.tip = height - 1; w.c.mine(); await w.pass(4); };
+async function firstKey(w) {
+  await w.pass(2);
+  await w.to(midpoint + 1);
+  await w.pass(2);
+  w.c.mine(); await w.pass(2);
+  const key = w.live()[0].scan.standing()[0].publicKey;
+  w.setKey(key);
+  return key;
+}
+const resharedStart = START + E, rw = reshareWindow(EPOCH + 1, NETWORK, WINDOW);
+
+test('reshare: the census moves under the key, the chain says who is present, and the new census holds the same key', async () => {
+  const w = fourThenMoved();
+  const key = await firstKey(w);
+  await jump(w, resharedStart);
+  const n0 = w.nodes[0];
+  const plan = await n0.scan.planAt(EPOCH + 1);
+  assert.equal(plan.reshare.key, toHex(key), 'read from the chain: 8 of 11 shares held, under 80 %');
+  assert.equal(plan.reshare.heldNow, 8);
+  await w.pass(2);
+  assert.ok(w.nodes.slice(0, 4).every((n) => n.run.status().reshare.signed === 4), 'all four old holders said ready, the one that left too');
+  assert.equal(w.nodes[4].run.status().reshare.signed, 0, 'a new node has no part to offer');
+  while (w.c.tip < rw.ready + 3 && !w.c.mempool.some((t) => reshareAnchorIn(parseTransaction(t).outputs))) { w.c.mine(); await w.pass(2); }
+  w.c.mine(); await w.pass(2);
+  const list = n0.scan.reshareList(toHex(key), EPOCH + 1);
+  assert.ok(list.height >= rw.ready && list.height < rw.midpoint, `the list is on the chain at ${list.height}`);
+  assert.ok(list.present.length >= 2);
+  await w.to(rw.midpoint + 1);
+  await w.pass(3);
+  const r = w.nodes[3].run.status().reshare;
+  assert.equal(r.state.publicKey, toHex(key), 'the reshare keeps the public key');
+  assert.notEqual(r.runId, w.nodes[3].run.status().run.runId, 'a keygen ran beside it, as another run');
+  for (let i = 0; i < CENSUS_KEY_POST_STEP * 4 && n0.scan.generationOf(toHex(key)).epoch !== EPOCH + 1; i++) { w.c.mine(); await w.pass(2); }
+  assert.equal(n0.scan.generationOf(toHex(key)).epoch, EPOCH + 1, 'the record of the new census stands');
+  assert.equal(n0.scan.standing().filter((k) => toHex(k.publicKey) === toHex(key)).length, 1, 'and no key was added by it');
+  await w.pass(2);
+  assert.equal(w.nodes[2].store.held(key), null, 'the node that left no longer keeps its shares');
+  // THE NEW SHARES OPEN THE SAME KEY: enough of them, interpolated at zero
+  const shares = new Map();
+  for (const i of [0, 1, 3, 4]) for (const [x, v] of w.nodes[i].store.held(key, EPOCH + 1).shares) shares.set(x, v);
+  const xs = [...shares.keys()].sort((a, b) => a - b).slice(0, r.threshold);
+  const lambda = lagrangeOf(xs, xs);
+  const FIELD = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
+  const secret = xs.reduce((a, x) => (a + lambda.get(x) * shares.get(x)) % FIELD, 0n);
+  assert.equal(toHex(feldmanGroup.pointFromScalar(secret)).slice(2), toHex(key));
+  // AND THE TRIGGER IS QUIET NOW: the new census holds all of the key's shares
+  await jump(w, resharedStart + E);
+  assert.equal((await n0.scan.planAt(EPOCH + 2)).reshare, null);
+});
+
+test('reshare: no anchor, no reshare. A record of a standing key with no list is refused, and so is a list short of the threshold, late, or for a key the plan does not name', async () => {
+  const w = fourThenMoved();
+  const key = await firstKey(w);
+  await jump(w, resharedStart);
+  const n0 = w.nodes[0];
+  const id = reshareReadyId({ networkId: NET, key, run: EPOCH + 1 });
+  const listOf = (nodes, over = {}) => encodeReshareList({ networkId: NET, key, run: EPOCH + 1, signatures: nodes.map((n) => ({ key: n.key, signature: schnorr.sign(id, n.secret) })).sort((a, b) => (toHex(a.key) < toHex(b.key) ? -1 : 1)), ...over });
+  const tx = (body) => { const secret = new Uint8Array(32).fill(201); return censusKeyAnchorSpend({ carrier: censusKeyCarrier(secret, body), secret, funding: { txid: '22'.repeat(32), vout: 0, value: 10000n }, output: reshareAnchor(body) }); };
+  const read = async () => { w.c.mine(); await n0.scan.pass(); return n0.scan.status().anchors.slice(-1)[0]; };
+  w.c.mempool = [anchorTx(fixedRecord({ publicKey: key, epoch: EPOCH + 1, censusHeight: resharedStart - CONF, totalShares: 11, threshold: 8 }), [])];
+  assert.match((await read()).why, /no anchor, no reshare/);
+  w.c.mempool = [tx(listOf(w.nodes.slice(0, 2)))];
+  assert.match((await read()).why, /holders of 4 shares signed that list/);
+  const stranger = person(9);
+  w.c.mempool = [tx(listOf([...w.nodes.slice(0, 3), stranger]))];
+  assert.match((await read()).why, /holds no share/);
+  const other = new Uint8Array(32).fill(5);
+  w.c.mempool = [tx(listOf(w.nodes.slice(0, 4), { key: other }))];
+  assert.match((await read()).why, /reshares/);
+  w.c.tip = rw.midpoint;
+  w.c.mempool = [tx(listOf(w.nodes.slice(0, 4)))];
+  assert.match((await read()).why, /takes one from/);
+  assert.equal(n0.scan.reshareList(toHex(key), EPOCH + 1), null);
+  const again = listOf(w.nodes.slice(0, 4));
+  assert.equal(toHex(reshareListIn(parseTransaction(tx(again)), reshareAnchorIn(parseTransaction(tx(again)).outputs)).key), toHex(key));
+});
+
+test('reshare: a dealer that drops out fails the run, nothing is lost, and the next window starts again', async () => {
+  const down = [];
+  const shape = [2n, 2n, 3n, 4n, 3n].map((n) => n * BOND);
+  const everyone = shape.map((bond, i) => ({ ...person(i), bond }));
+  let key = null;
+  const first = entriesOf(everyone.slice(0, 4));
+  const w = network(shape, { entries: first, down, censusAt: (h) => {
+    if (h < START + E - CONF || !key) return first;
+    const later = entriesOf([0, 1, 3, 4].map((i) => ({ ...everyone[i], advert: i === 4 ? named(key) : {} })));
+    for (const e of later) e.advert.endpoint = e.advert.endpoint.replace(/ws:\/\/n(\d)/, (_, x) => `http://n${[0, 1, 3, 4][Number(x)]}`);
+    return later;
+  } });
+  w.setKey = (k) => { key = k; };
+  await firstKey(w);
+  await jump(w, resharedStart);
+  await w.pass(2);
+  const K = toHex(key);
+  while (!w.c.mempool.some((t) => reshareAnchorIn(parseTransaction(t).outputs))) { w.c.mine(); await w.pass(2); }
+  // the list is on its way, and the largest holder, a dealer, stops before it deals
+  down.push(3);
+  w.c.mine(); await w.pass(2);
+  const n0 = w.nodes[0];
+  assert.ok(n0.scan.reshareList(K, EPOCH + 1).present.includes(toHex(w.nodes[3].key)), 'present by the chain');
+  while (w.c.tip < rw.end + 1) { w.c.mine(); await w.pass(2); }
+  await w.pass(2);
+  assert.equal(n0.scan.generationOf(K).epoch, EPOCH, 'the old shares stand');
+  assert.ok(n0.run.status().reshare.state.failed, 'the run failed by the end of its window');
+  assert.ok(n0.store.held(key, EPOCH), 'and every old share is still kept');
+  down.length = 0;
+  await jump(w, resharedStart + E);
+  await w.pass(2);
+  assert.equal((await n0.scan.planAt(EPOCH + 2)).reshare.key, K, 'the next window tries again');
+  const rw2 = reshareWindow(EPOCH + 2, NETWORK, WINDOW);
+  while (!n0.scan.reshareList(K, EPOCH + 2)) { assert.ok(w.c.tip < rw2.midpoint); w.c.mine(); await w.pass(2); }
+  await w.to(rw2.midpoint + 1);
+  await w.pass(3);
+  for (let i = 0; i < CENSUS_KEY_POST_STEP * 4 && n0.scan.generationOf(K).epoch !== EPOCH + 2; i++) { w.c.mine(); await w.pass(2); }
+  assert.equal(n0.scan.generationOf(K).epoch, EPOCH + 2);
+  assert.equal(RESHARE_POST_STEP, 1);
+});

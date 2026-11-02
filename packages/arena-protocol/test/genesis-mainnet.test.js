@@ -10,7 +10,7 @@ import { NETWORK_ID_TESTNET4, NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const hex = (b) => Buffer.from(b).toString('hex');
 const parts = () => ({ bondMarker: b32(1), arbitrationKeys: [2, 3, 4, 5, 6, 7, 8].map(b32), authorityPubkey: b32(9), recoveryPubkey: b32(10),
-  genesisSeriesStartMs: 1800000000000n, bondMinGuardianSats: 1_000_000n, censusKeyBondMinSats: 500_000n, censusKey0: b32(11) });
+  genesisSeriesStartMs: 1800000000000n, bondMinGuardianSats: 1_000_000n, censusKeyBondMinSats: 500_000n, censusKey0: b32(11), genesisHeight: 900000 });
 
 test('the test networks keep their genesis bytes and network ids: no new series', () => {
   for (const [net, id] of [['testnet4', NETWORK_ID_TESTNET4], ['regtest', NETWORK_ID_REGTEST]]) {
@@ -30,7 +30,7 @@ test('mainnet genesis: the table\'s values, federation_min, bond_min_guardian an
   // each named field moves the id: none of them is decoration
   const idWith = (change) => { const g = { ...genesis, ...change }; return hex(computeNetworkId({ genesis: g, authorityPubkey: b32(9), recoveryPubkey: b32(10) })); };
   const base = hex(networkId);
-  for (const change of [{ federationMin: 6 }, { bondMinGuardianSats: 2_000_000n }, { censusKeyBondMinSats: 600_000n }, { committeesBind: false },
+  for (const change of [{ federationMin: 6 }, { bondMinGuardianSats: 2_000_000n }, { censusKeyBondMinSats: 600_000n }, { genesisHeight: 900001 }, { committeesBind: false },
     { governanceSchedule: { ...genesis.governanceSchedule, money: { review: 1008, voting: 1441, cooldown: 2016 } } }])
     assert.notEqual(idWith(change), base, JSON.stringify(change, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
   // and the cold recovery key is in the name (§27A.4)
@@ -72,7 +72,7 @@ test('census_key_shares_max is 1024 and census key 0 is in mainnet\'s id; neithe
 
 test('mainnet genesis is built only from what a launch names: no invented marker or keys', () => {
   for (const [k, why] of [['bondMarker', /bond marker/], ['recoveryPubkey', /cold recovery key/], ['arbitrationKeys', /arbitration keys/],
-    ['genesisSeriesStartMs', /series 0/], ['bondMinGuardianSats', /bond floor/], ['censusKey0', /census key 0/], ['censusKeyBondMinSats', /bond_min/]]) {
+    ['genesisSeriesStartMs', /series 0/], ['bondMinGuardianSats', /bond floor/], ['censusKey0', /census key 0/], ['censusKeyBondMinSats', /bond_min/], ['genesisHeight', /genesis_height/]]) {
     const p = parts(); delete p[k];
     assert.throws(() => mainnetGenesis(p), why, k);
   }

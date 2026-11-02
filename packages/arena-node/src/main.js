@@ -59,7 +59,7 @@ import { fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { votesInBlock, outpointInBlock } from '../../arena-protocol/src/ballot-chain.js';
 import { PROTOCOL_VERSION, networkOf } from '../../arena-protocol/src/constants.js';
-import { censusOfView, censusReplacer, censusReviver } from './roster.js';
+import { censusOfView, censusReplacer, censusReviver, censusEvidenceOf } from './roster.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { createCensusKeyScan } from './census-key-chain.js';
 import { CensusKeyStore } from './census-key-store.js';
@@ -613,11 +613,22 @@ if (url) {
         if (!census.ok) { console.error(`[census-key] no census at ${height}: ${census.why}`); return null; }
         return census.entries;
       };
-      censusKeyScan = createCensusKeyScan({ store: new CensusKeyStore(db), network: net, networkId, firstHeight: here, censusConfirmations, tipHeight, blockHashAt,
+      censusKeyScan = createCensusKeyScan({ store: new CensusKeyStore(db), network: net, networkId, firstHeight: here, foundingWindow, censusConfirmations, tipHeight, blockHashAt,
         blockAt: async (hash) => fromHex(String(await call('getblock', [hash, 0]))), censusEntriesAt, verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } },
         log: (l) => console.log(l) });
       const wallets = (name) => bitcoindRpc({ url: `${url.replace(/\/+$/, '')}/wallet/${encodeURIComponent(name)}`, cookiePath });
-      options.censusKey = { scan: censusKeyScan, network: net, networkId, firstHeight: here, foundingWindow, censusConfirmations, tipHeight, blockHashAt, censusEntriesAt,
+      // THE CENSUS OF A KEY, AS EVIDENCE A PAGE CHECKS (kanban #1048): each read a whole census' proofs, so the last few are kept, by height and that height's block
+      const evidenceKept = new Map();
+      const censusEvidenceAt = async (height) => {
+        const name = `${height}:${await blockHashAt(height)}:${standingKeysName(censusKeyScan.standing(), height)}`;
+        if (evidenceKept.has(name)) return evidenceKept.get(name);
+        const census = await chainCensusKept('censuskey', toHexMain(networkId), height, censusKeyContract({ networkId, network: net, height, censusConfirmations }), { hold: false });
+        if (!census.ok) return census;
+        const got = censusEvidenceOf(census, await blocksOver(call, censusFirstBlock(height, networkOf(networkId)), height, { cache: blocksKept }));
+        if (got.ok) { evidenceKept.set(name, got); if (evidenceKept.size > 8) evidenceKept.delete(evidenceKept.keys().next().value); }
+        return got;
+      };
+      options.censusKey = { scan: censusKeyScan, network: net, networkId, firstHeight: here, foundingWindow, censusConfirmations, tipHeight, blockHashAt, censusEntriesAt, censusEvidenceAt,
         post: createCensusKeyPoster({ call, walletCall: wallets, env: process.env }), everyMs: Number(process.env.ARENA_CENSUS_KEY_EVERY_MS || 10000) };
     }
   }

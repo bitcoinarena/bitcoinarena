@@ -291,3 +291,27 @@ test('an explorer outside the network: the census block must be its block; a tip
   assert.equal(tip.ok, true, 'a tip that differs is either side\'s lag on testnet4');
   assert.deepEqual([tip.explorer.census.ok, tip.explorer.tip.ok, !!tip.explorer.tip.mismatch], [true, false, true]);
 });
+
+// THE PAGE READS STANDING KEYS ONLY FOR A CENSUS THAT NEEDS THEM (kanban #1048): a census of template 1 and 2 bonds asks nothing new. tools/census-key-regtest.mjs checks the keys themselves.
+test('a census holding a template-3 bond reads the standing keys, and one without asks nothing', async () => {
+  const { view, ev, contract, rid } = setup();
+  const headerBytes = Buffer.concat(headersOf(view).map((h) => Buffer.from(h)));
+  const third = bondTransaction({ ...advertFor(9, ['game']), bondScriptTemplateVersion: 3, bondMaturityHeight: HEIGHT + 100, censusKey: b32(0x51) }, { previousTxid: b32(0xc1), previousVout: 0, outputKey: bondFor(keyFor(9)) });
+  const asked = [];
+  const answers = (entries) => async (url) => {
+    asked.push(url.replace(/^https?:\/\/[^/]+/, ''));
+    if (url.endsWith('/headers')) return new Response(headerBytes, { status: 200 });
+    if (url.includes('/census?')) return new Response(JSON.stringify({ ...ev, entries }), { status: 200 });
+    if (url.endsWith('/census-key/records')) return new Response(JSON.stringify({ firstHeight: 1, records: [] }), { status: 200 });
+    return new Response('no', { status: 404 });
+  };
+  const nodes = ['https://seat-a.example', 'https://seat-b.example'];
+  const anchorAt = { hash: blockHashOf(headersOf(view)[0]), height: view.firstHeight };
+  const asks = { curve: pageCurve, anchorAt, compare: false, roles: ['settlement'] };
+  await clientCommittee(toHex(rid), contract, nodes, { ...asks, fetcher: answers(ev.entries) });
+  assert.ok(!asked.some((u) => u.includes('/census-key')), 'no key is read for a census that names none');
+  const named = { ...contract, censusRoot: b32(0x7e) };
+  const got = await clientCommittee(toHex(rid), named, nodes, { ...asks, fetcher: answers([...ev.entries, { transaction: toHex(third), position: 0, branch: [] }]) });
+  assert.ok(asked.includes('/census-key/records'), 'a template-3 bond sends the client to the seats\' records');
+  assert.equal(got.ok, false, 'and a bond it cannot prove into its chain does not count');
+});

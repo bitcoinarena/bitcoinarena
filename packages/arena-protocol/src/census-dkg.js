@@ -373,34 +373,38 @@ export function reshareConstant({ xs, shares }) {
 /**
  * EVERY RESHARE DEAL HOLDS ITS DEALER'S TRUE PART. Each first commitment must be the dealer's shares under their coefficients, off the OLD key's
  * polynomial, and they must add up to the key itself: without this one dealer moves the key. One random combination, split by halves on a
- * failure, as checkDealsBatched does. `deals` [{ deal, ids }], `oldCommitments` the even key's. Answers { ok, bad }.
+ * failure, as checkDealsBatched does. `deals` [{ deal, ids }], `oldCommitments` the even key's, null at a node that never held them. Answers { ok, bad }.
  */
 export function checkReshareDeals({ deals, xs, oldCommitments, groupPublicKey, random, curve, complete = true }) {
   const sum = curve.combinePoints(deals.map((d) => ({ point: d.deal.commitments[0], coefficient: 1n })));
-  const lambda = lagrangeOf(xs, xs);
-  const lines = deals.map((d) => {
-    const line = new Array(oldCommitments.length).fill(0n);
-    for (const x of d.ids) { let v = lambda.get(x); for (let j = 0; j < line.length; j++) { line[j] = modN(line[j] + v); v = modN(v * BigInt(x)); } }
-    return { deal: d.deal, line };
-  });
-  const holds = (list) => {
-    const points = [...oldCommitments], scalars = oldCommitments.map(() => 0n);
-    for (const { deal, line } of list) {
-      const r = bytesToBigInt(random(16)) + 1n;
-      points.push(deal.commitments[0]); scalars.push(modN(-r));
-      line.forEach((v, j) => { scalars[j] = modN(scalars[j] + r * v); });
-    }
-    const out = curve.msm(points, scalars);
-    return out.every((b) => b === 0);
-  };
+  // A NEW HOLDER HAS NOT THE OLD POLYNOMIAL, and nothing on the chain proves one a peer hands it. It needs only the sum: the shares it keeps are of the key if the parts add up to the
+  // key, however they were split. Who cheated is for the old holders to name
   const bad = [];
-  const walk = (list) => {
-    if (holds(list)) return;
-    if (list.length === 1) { bad.push(list[0].deal); return; }
-    const half = list.length >> 1;
-    walk(list.slice(0, half)); walk(list.slice(half));
-  };
-  walk(lines);
+  if (oldCommitments) {
+    const lambda = lagrangeOf(xs, xs);
+    const lines = deals.map((d) => {
+      const line = new Array(oldCommitments.length).fill(0n);
+      for (const x of d.ids) { let v = lambda.get(x); for (let j = 0; j < line.length; j++) { line[j] = modN(line[j] + v); v = modN(v * BigInt(x)); } }
+      return { deal: d.deal, line };
+    });
+    const holds = (list) => {
+      const points = [...oldCommitments], scalars = oldCommitments.map(() => 0n);
+      for (const { deal, line } of list) {
+        const r = bytesToBigInt(random(16)) + 1n;
+        points.push(deal.commitments[0]); scalars.push(modN(-r));
+        line.forEach((v, j) => { scalars[j] = modN(scalars[j] + r * v); });
+      }
+      const out = curve.msm(points, scalars);
+      return out.every((b) => b === 0);
+    };
+    const walk = (list) => {
+      if (holds(list)) return;
+      if (list.length === 1) { bad.push(list[0].deal); return; }
+      const half = list.length >> 1;
+      walk(list.slice(0, half)); walk(list.slice(half));
+    };
+    walk(lines);
+  }
   if (bad.length) return { ok: false, bad };
   if (complete && toHex(sum) !== toHex(groupPublicKey)) return { ok: false, bad: [], why: 'the parts of that reshare do not add up to the key' };
   return { ok: true, bad: [] };
