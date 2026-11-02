@@ -155,3 +155,22 @@ test('B*_net for a founding: the band the lowest-load OPEN record enters, no hys
   assert.equal(foundingPressureBond({ federations: tied, bondMinSats }), foundingPressureBond({ federations: [...tied].reverse(), bondMinSats }));
   assert.notEqual(foundingPressureBond({ federations: tied, bondMinSats }), null, 'a, the lower id');
 });
+
+test('a record\'s band: what its load enters, kept by the gap from the record before; read as it says; the view and the weights take it (kanban #997)', async () => {
+  const { recordBand, bandOfRecord, capacityView, guardianWeights, gatewayWeights, CAPACITY_BAND_HEIGHT } = await import('../src/capacity.js');
+  const at = (reserveSats, was) => recordBand({ reserveSats, exposureCapSats: 100000n, was });
+  assert.deepEqual([at(70000n), at(69999n), at(65000n, 'PRESSURE'), at(59999n, 'PRESSURE'), at(85000n, 'CRITICAL'), at(100000n, 'CRITICAL'), at(99999n, 'FULL')], ['PRESSURE', 'CALM', 'PRESSURE', 'CALM', 'CRITICAL', 'FULL', 'CRITICAL']);
+  assert.equal(recordBand({ reserveSats: 5n, exposureCapSats: 0n, was: 'FULL' }), 'CALM', 'no cap, no load');
+  assert.equal(bandOfRecord({ reserveSats: 65000n, exposureCapSats: 100000n }), 'CALM', 'a record naming none: its own load enters');
+  assert.equal(bandOfRecord({ reserveSats: 65000n, exposureCapSats: 100000n, capacityBand: 'PRESSURE' }), 'PRESSURE');
+  assert.deepEqual({ ...CAPACITY_BAND_HEIGHT }, { mainnet: 0, testnet4: null, regtest: null, devnet: null }, 'nothing moves on a live network until a release names a height');
+  const row = (band) => ({ federation: 'a'.repeat(64), status: 'OPEN', nominal: 7, reserveSats: 65000n, exposureCapSats: 100000n, guardianBonds: [{ node: 'b', bondSats: 50000n }], gateways: [], ...(band ? { band } : {}) });
+  const view = (band, was = {}) => capacityView({ federations: [row(band)], bondMinSats: 50000n, pegInMinSats: 50000n, was }).network.band;
+  assert.equal(view('PRESSURE'), 'PRESSURE', 'the record, with no memory of this seat');
+  assert.equal(view('CALM', { ['a'.repeat(64)]: 'PRESSURE' }), 'CALM', 'over this seat\'s memory');
+  assert.equal(view(null, { ['a'.repeat(64)]: 'PRESSURE' }), 'PRESSURE', 'a record naming none: that memory, for the warnings');
+  const g = { bonds: [{ node: 'a', bondSats: 50000n }, { node: 'b', bondSats: 30000n }], reserveSats: 65000n, exposureCapSats: 100000n, nominal: 7, bondMinSats: 50000n };
+  assert.equal(guardianWeights(g), null); assert.notEqual(guardianWeights({ ...g, band: 'PRESSURE' }), null, 'weighted on the record\'s word in the gap');
+  assert.equal(gatewayWeights({ pegIns: [{ node: 'a', pegInSats: 10000n }, { node: 'b', pegInSats: 60000n }], reserveSats: 65000n, exposureCapSats: 100000n, pegInMinSats: 50000n }), null);
+  assert.notEqual(gatewayWeights({ pegIns: [{ node: 'a', pegInSats: 10000n }, { node: 'b', pegInSats: 60000n }], reserveSats: 65000n, exposureCapSats: 100000n, pegInMinSats: 50000n, band: 'PRESSURE' }), null);
+});

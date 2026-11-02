@@ -26,6 +26,19 @@ export function capacityBand(load, was = 'CALM') {
   return pick ? pick.band : 'CALM';
 }
 
+/**
+ * WHEN RECORDS NAME THEIR BAND (§23A.3a, kanban #997): one point per network, named by the release after every seat and the page read such
+ * records: a seat or page before this refuses a record with a band, whole, so a body built with one at a mixed network gathers no threshold
+ * and the page verifies no federation. Null: not named, and records are built as they always were.
+ */
+export const CAPACITY_BAND_HEIGHT = Object.freeze({ mainnet: 0, testnet4: null, regtest: null, devnet: null });
+export const capacityBandPoint = (network) => { const n = network === 'testnet' ? 'testnet4' : network; return Object.prototype.hasOwnProperty.call(CAPACITY_BAND_HEIGHT, n) ? CAPACITY_BAND_HEIGHT[n] : null; };
+const loadOfRecord = (reserveSats, exposureCapSats) => { const cap = BigInt(exposureCapSats || 0); return cap > 0n ? Number(BigInt(reserveSats || 0) * 1000000n / cap) / 1000000 : null; };
+/** The band a new record names: what its load enters, kept by the gap from `was`, the previous record's band. */
+export const recordBand = ({ reserveSats, exposureCapSats, was = 'CALM' }) => capacityBand(loadOfRecord(reserveSats, exposureCapSats), was);
+/** A record's band: the one it names, else the one its own load enters (no hysteresis without the record's). */
+export const bandOfRecord = (r) => (r && r.capacityBand) || recordBand({ reserveSats: r && r.reserveSats, exposureCapSats: r && r.exposureCapSats });
+
 /** B*: the per-guardian bond at which the federation's load would be 50 % - ceil(reserve / (0.5 × (f + 1))), never below the floor. */
 export function targetBond({ reserveSats, nominal, bondMinSats }) {
   const f1 = BigInt(faultsOf(Number(nominal)) + 1);
@@ -67,7 +80,8 @@ export function capacityView({ federations, bondMinSats, pegInMinSats, was = {},
     // A FEDERATION THAT TAKES NO DEPOSITS (DRAINING, CRITICAL while draining, CLOSED, HALTED; kanban #553 health, 2026-10-20: B draining into
     // 4dc88be7 showed "PRESSURE - increase your bond by 22,000 sat"): its load says nothing about room, so no band, no B*, no plea
     const open = !x.status || x.status === 'OPEN';
-    const band = open ? capacityBand(load, was[x.federation] || 'CALM') : 'NOT_OPEN';
+    // the band the record names; a record that names none falls back on this seat's memory of the gap, for the warnings alone
+    const band = open ? (x.band || capacityBand(load, was[x.federation] || 'CALM')) : 'NOT_OPEN';
     const headroom = cap > reserve ? cap - reserve : 0n;
     const bStar = targetBond({ reserveSats: reserve, nominal: x.nominal || 1, bondMinSats });
     const pStar = targetPegIn({ headroomSats: headroom, pegInMinSats, seats: gatewaySeats });
@@ -91,7 +105,7 @@ export function capacityView({ federations, bondMinSats, pegInMinSats, was = {},
  * B*_NET FOR A FOUNDING DRAW (§23A.3a, kanban #993/#1023): the amount while the network is under pressure, null otherwise. `federations`
  * [{ federation, status, nominal, reserveSats, exposureCapSats, band }], every one from its record in force at trigger_height - 12. The
  * network is under pressure when the OPEN federation with the lowest load is in PRESSURE or worse: the band its record names, else the
- * band its own load enters (no hysteresis). Never capacityBand's `was` or capacityView's network.band: those are one seat's memory, for
+ * band its own load enters (no hysteresis, bandOfRecord). Never capacityBand's `was` or capacityView's network.band: those are one seat's memory, for
  * the warnings. The lowest load is compared exactly, and a tie of loads goes to the lowest federation id.
  */
 export function foundingPressureBond({ federations, bondMinSats }) {

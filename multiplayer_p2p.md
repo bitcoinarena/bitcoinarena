@@ -6141,6 +6141,7 @@ FederationRecord {
   gone[]                       (peer key, since_height, DEPARTED | ABANDONED, proof_ref)
   exposure_cap, reserve        as of height
   height
+  capacity_band                CALM | PRESSURE | CRITICAL | FULL, optional, after height (§23A.3a)
   signatures[]                 >= threshold guardian signatures over all of the above
 }
 ```

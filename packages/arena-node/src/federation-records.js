@@ -21,7 +21,8 @@ import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureI
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { withConfigEndpoints } from './federation-endpoints.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord,
-  FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
+  FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, highestVerified } from '../../arena-protocol/src/federation-record.js';
+import { recordBand, bandOfRecord } from '../../arena-protocol/src/capacity.js';
 
 /** The census nodes guarding `federationId`, as the record lists them. */
 export function guardiansOf(census, federationId) {
@@ -86,7 +87,9 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // whose seats hold no T2 record, while T2's own seats do - every other seat logged "none of its guardians holds a record" and
   // never observed T2's halt. `peerSeats` () -> [base URL]: the census seats this seat reads; MIRROR_PEERS of them, in turn,
   // are asked too. A record from anywhere stands only as it stands against this seat's census.
-  peerSeats = () => [] }) {
+  peerSeats = () => [],
+  // THE HEIGHT RECORDS NAME THEIR CAPACITY BAND FROM (capacity.js CAPACITY_BAND_HEIGHT, §23A.3a, kanban #997); null: never
+  bandFrom = null }) {
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
   const draining = new Map();                // federation id hex -> status name
   // THE HALT A LIQUIDATION COUNTS FROM (§23A.5): the lowest-height signed HALTED record of the run of HALTED records
@@ -95,7 +98,6 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // EVERY RECORD BY ITS HEIGHT TOO (kanban #559/#543, §23A.3a: the pressure weights read "the federation record in force at" the round's
   // census height, which may be older than the newest): each verified record kept per federation and height, in memory and the store
   const history = new Map();                 // fid -> Map(height -> record)
-  const historyRead = new Set();             // federations whose stored history is in memory
   const remember = (fid, rec) => { if (!history.has(fid)) history.set(fid, new Map()); history.get(fid).set(Number(rec.height), rec);
     if (store && store.saveAt) { try { store.saveAt(fid, Number(rec.height), rec.__hex); } catch { /* in memory */ } } };
   function keep(fid, bytes, v) {
@@ -240,8 +242,45 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     return { ok: false, why: why || 'this seat holds no round, so it reads no census' };
   }
 
+  // THE RECORD IN FORCE AT A HEIGHT: the newest this seat verified at or below it (null when it holds none)
+  const historyRead = new Set();             // federations whose stored history is in memory
+  function recordAt(fid, height) {
+    const f = String(fid).toLowerCase(); let m = history.get(f);
+    // THE STORED HISTORY ONCE PER FEDERATION, NOT ONLY WHEN NONE IS IN MEMORY (kanban #993): after a restart restore() remembers the newest
+    // record alone, and every older height then answered null - a round's census height, or a founding's trigger_height - 12
+    if (!historyRead.has(f) && store && store.loadAt) { historyRead.add(f); try { for (const r of store.loadAt(f) || []) { try { const bytes = fromHex(r.record); const rec = decodeFederationRecord(splitSignedRecord(bytes).body); remember(f, Object.assign(Object.create(null), rec, { __hex: r.record })); } catch { /* skip */ } } } catch { /* none */ } m = history.get(f); }
+    if (!m) return null;
+    let best = null; for (const [h, rec] of m) if (h <= Number(height) && (!best || h > best.height)) best = rec;
+    return best;
+  }
+  const statusNameOf = (rec) => rec.__status || Object.keys(FEDERATION_STATUS).find((k) => FEDERATION_STATUS[k] === rec.status);
+  /**
+   * THE BAND A NEW RECORD KEEPS ITS GAP FROM (§23A.3a, kanban #997): the band of the previous record, the highest verified one below this
+   * record's height. A body must come out byte for byte at every guardian, so the gatherer hands along the one it holds (`previous`, signed
+   * hex), and a guardian takes the higher of that and its own. A gatherer behind its guardians builds a body none of them signs, until it
+   * mirrors the newer record. Null below bandFrom: the body names no band.
+   */
+  async function wasFor(fidHex, b, previous = null, inviteFederationId = null) {
+    if (!Number.isInteger(bandFrom) || b.height < bandFrom) return null;
+    const rows = [], own = recordAt(fidHex, b.height - 1);
+    if (own) rows.push({ record: own, status: statusNameOf(own) });
+    if (previous && inviteFederationId) {
+      try {
+        const bytes = fromHex(String(previous)), r = splitSignedRecord(bytes).record;
+        if (toHex(r.federationId) === String(fidHex).toLowerCase() && r.height < b.height) {
+          const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
+          let v = verifyFederationRecord(bytes, { census: b.census.entries, verify, inviteFederationId });
+          if (!v.ok && typeof censusAt === 'function') { const entries = await Promise.resolve(censusAt(r.height)).catch(() => null); if (entries) v = verifyFederationRecord(bytes, { census: entries, verify, inviteFederationId }); }
+          if (v.ok) rows.push(v);
+        }
+      } catch { /* not a record: this guardian's own */ }
+    }
+    const best = highestVerified(rows);
+    return best ? bandOfRecord(best.record) : 'CALM';
+  }
+
   /** The body for one federation from a basis, with `gone` - the guardians whose nodes said they are leaving. */
-  function bodyFor(b, federationId, gone = [], reserveSats = 0n, eps = null) {
+  function bodyFor(b, federationId, gone = [], reserveSats = 0n, eps = null, was = null) {
     const fid = toHex(federationId);
     const invite = inviteFor(fid);
     if (!invite) return { ok: false, why: 'this seat names no invite for that federation' };
@@ -250,6 +289,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const succ = successorOf(fid);
     const r = buildFederationRecord({ federationId, networkId: b.networkId || networkId, invite, nominal: guardians.length, guardians, gone, height: b.height, reserveSats,
       ...(succ ? { successorId: fromHex(succ), closed: !!closedOf(fid) } : retiringOf(fid) ? { closed: true } : {}) });   // retiringOf: federation-retire.js
+    if (was !== null) r.capacityBand = recordBand({ reserveSats, exposureCapSats: r.exposureCapSats, was });
     return { ok: true, record: r, guardians };
   }
 
@@ -265,16 +305,17 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     if (named !== null && r.reserveSats !== BigInt(named)) return { ok: false, why: `this seat reads a reserve of ${r.reserveSats} sat, not ${named}` };
     return { ok: true, reserveSats: r.reserveSats };
   }
-  async function mySignature(federationIdHex, atHeight = null, reserveNamed = null) {
+  async function mySignature(federationIdHex, atHeight = null, reserveNamed = null, { previous = null, inviteFederationId = null } = {}) {
     await chainReady(atHeight);
     const b = basisFor(federationIdHex, atHeight);
     if (!b.ok) return b;
+    const was = await wasFor(federationIdHex, b, previous, inviteFederationId);
     const eps = await epsFor(federationIdHex);
     const first = bodyFor(b, fromHex(federationIdHex), [], 0n, eps);
     if (!first.ok) return first;
     const res = await reserveFor(federationIdHex, first.guardians, reserveNamed);
     if (!res.ok) return res;
-    const built = bodyFor(b, fromHex(federationIdHex), [], res.reserveSats, eps);
+    const built = bodyFor(b, fromHex(federationIdHex), [], res.reserveSats, eps, was);
     if (!built.guardians.some((g) => toHex(g.nodePubkey) === toHex(round.pubkey))) return { ok: false, why: 'this node does not guard that federation' };
     const leaving = leavingAtMs() !== null;
     const id = federationRecordId(built.record);
@@ -293,11 +334,14 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const res = await reserveFor(toHex(federationId), first.guardians);
     if (!res.ok) return res;
     const reserveSats = res.reserveSats;
-    const plain = bodyFor(b, federationId, [], reserveSats, eps);
+    const was = await wasFor(toHex(federationId), b, null, inviteFederationId);
+    const prior = was === null ? null : recordAt(toHex(federationId), b.height - 1);
+    const handed = prior && prior.__hex ? `&previous=${prior.__hex}` : '';
+    const plain = bodyFor(b, federationId, [], reserveSats, eps, was);
     const asked = await Promise.all(plain.guardians.map(async (g) => {
       const base = String(g.advertEndpoint || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
       if (toHex(g.nodePubkey) === toHex(round.pubkey)) return { g, said: await mySignature(toHex(federationId), null, reserveSats) };
-      try { const r = await fetcher(`${base}/federation-record?federation=${toHex(federationId)}&height=${b.height}&reserve=${reserveSats}`, { signal: AbortSignal.timeout(8000) }); return { g, said: r.ok ? await r.json() : null }; }
+      try { const r = await fetcher(`${base}/federation-record?federation=${toHex(federationId)}&height=${b.height}&reserve=${reserveSats}${handed}`, { signal: AbortSignal.timeout(8000) }); return { g, said: r.ok ? await r.json() : null }; }
       catch { return { g, said: null }; }
     }));
     // WHO SAYS IT IS LEAVING, each by its own key over the plain body's id
@@ -330,7 +374,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     }
     // THE BODY WITH THEM GONE, and the signatures over exactly it: a guardian's signature counts for the body it signed,
     // so with anyone gone every seat signs again - the leave statements move the body, and the seat asks once more
-    const final = gone.length ? bodyFor(b, federationId, gone, reserveSats, eps) : plain;
+    const final = gone.length ? bodyFor(b, federationId, gone, reserveSats, eps, was) : plain;
     const finalBytes = encodeFederationRecord(final.record);
     const id = federationRecordId(final.record);
     let answers = asked;
@@ -338,7 +382,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       answers = await Promise.all(plain.guardians.map(async (g) => {
         if (toHex(g.nodePubkey) === toHex(round.pubkey)) return { g, said: signBody(final.record) };
         const base = String(g.advertEndpoint || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
-        try { const r = await fetcher(`${base}/federation-record?federation=${toHex(federationId)}&height=${b.height}&reserve=${reserveSats}&gone=${gone.map((x) => toHex(x.peerKey)).join(',')}${absent.length ? `&absent=${absent.map(absenceHex).join(',')}` : ''}${departed.length ? `&departed=${departed.map(departureHex).join(',')}` : ''}${emergent.length ? `&emergency=${emergent.map(emergencyHex).join(',')}` : ''}`, { signal: AbortSignal.timeout(8000) }); return { g, said: r.ok ? await r.json() : null }; }
+        try { const r = await fetcher(`${base}/federation-record?federation=${toHex(federationId)}&height=${b.height}&reserve=${reserveSats}${handed}&gone=${gone.map((x) => toHex(x.peerKey)).join(',')}${absent.length ? `&absent=${absent.map(absenceHex).join(',')}` : ''}${departed.length ? `&departed=${departed.map(departureHex).join(',')}` : ''}${emergent.length ? `&emergency=${emergent.map(emergencyHex).join(',')}` : ''}`, { signal: AbortSignal.timeout(8000) }); return { g, said: r.ok ? await r.json() : null }; }
         catch { return { g, said: null }; }
       }));
     }
@@ -455,16 +499,17 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   }
 
   /** GET /federation-record with `gone` named: the same body with those peer keys gone, signed - if they are its guardians. */
-  async function mySignatureWithGone(federationIdHex, goneHex, atHeight = null, reserveNamed = null, absentHex = [], departedHex = [], emergencyHexes = []) {
+  async function mySignatureWithGone(federationIdHex, goneHex, atHeight = null, reserveNamed = null, absentHex = [], departedHex = [], emergencyHexes = [], { previous = null, inviteFederationId = null } = {}) {
     await chainReady(atHeight);
     const b = basisFor(federationIdHex, atHeight);
     if (!b.ok) return b;
+    const was = await wasFor(federationIdHex, b, previous, inviteFederationId);
     const eps = await epsFor(federationIdHex);
     const first = bodyFor(b, fromHex(federationIdHex), [], 0n, eps);
     if (!first.ok) return first;
     const res = await reserveFor(federationIdHex, first.guardians, reserveNamed);
     if (!res.ok) return res;
-    const plain = bodyFor(b, fromHex(federationIdHex), [], res.reserveSats, eps);
+    const plain = bodyFor(b, fromHex(federationIdHex), [], res.reserveSats, eps, was);
     if (!plain.guardians.some((g) => toHex(g.nodePubkey) === toHex(round.pubkey))) return { ok: false, why: 'this node does not guard that federation' };
     const keys = new Set(plain.guardians.map((g) => toHex(g.peerKey)));
     if (!goneHex.every((k) => keys.has(k))) return { ok: false, why: 'that names a guardian this federation does not have' };
@@ -503,7 +548,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       if (!p.ok) return { ok: false, why: `that abandonment does not stand here: ${p.why}` };
       gone.push({ peerKey: g.peerKey, sinceHeight: p.sinceHeight, kind: GONE.ABANDONED, proofRef: p.id });
     }
-    return signBody(bodyFor(b, fromHex(federationIdHex), gone, res.reserveSats, eps).record);
+    return signBody(bodyFor(b, fromHex(federationIdHex), gone, res.reserveSats, eps, was).record);
   }
 
   return {
@@ -582,16 +627,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     // only when the rounds' census moves past it, a day later): the chain's when read, else the basis's
     censusNewest() { const cb = chainBasis(null); if (cb && cb.ok) return cb.census.entries || []; const b = basis(); return b.ok ? b.census.entries || [] : []; },
     // and with its height (GET /roles, kanban #560: every seat answers the same census - the chain's at the same step - not its newest round's)
-    // the record in force at `height`: the newest this seat verified at or below it (null when it holds none)
-    recordAt(fid, height) {
-      const f = String(fid).toLowerCase(); let m = history.get(f);
-      // THE STORED HISTORY ONCE PER FEDERATION, NOT ONLY WHEN NONE IS IN MEMORY (kanban #993): after a restart restore() remembers the newest
-      // record alone, and every older height then answered null - a round's census height, or a founding's trigger_height - 12
-      if (!historyRead.has(f) && store && store.loadAt) { historyRead.add(f); try { for (const r of store.loadAt(f) || []) { try { const bytes = fromHex(r.record); const rec = decodeFederationRecord(splitSignedRecord(bytes).body); remember(f, Object.assign(Object.create(null), rec, { __hex: r.record })); } catch { /* skip */ } } } catch { /* none */ } m = history.get(f); }
-      if (!m) return null;
-      let best = null; for (const [h, rec] of m) if (h <= Number(height) && (!best || h > best.height)) best = rec;
-      return best;
-    },
+    recordAt,
     censusNewestAt() { const cb = chainBasis(null); return cb && cb.ok ? { height: cb.height, entries: cb.census.entries || [] } : null; },
     // THE FEDERATION'S GUARDIANS BY THE CENSUS (kanban #552): node keys hex of the census that names it (the held round's, else the chain's) -
     // what stands before this seat holds its record (seatedGuardians is null then; "the census rule then stands")

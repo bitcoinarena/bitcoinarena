@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { statusFor, buildFederationRecord, encodeFederationRecord, decodeFederationRecord, federationRecordId, joinSignedRecord,
-  splitSignedRecord, verifyFederationRecord, FEDERATION_STATUS } from '../../arena-protocol/src/federation-record.js';
+  splitSignedRecord, verifyFederationRecord, FEDERATION_STATUS, CAPACITY_BAND } from '../../arena-protocol/src/federation-record.js';
 import { federationRecords, guardiansOf, MIRROR_PEERS } from '../src/federation-records.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { readFileSync } from 'node:fs';
@@ -107,6 +107,7 @@ test('the seat\'s doors: GET /federations lists what it holds, GET /federation-r
     const at = await (await fetch(`${S}/federation-records-at?height=188&federations=${toHex(FED)}`)).json();
     assert.deepEqual([at.height, at.records], [188, []]);
     assert.equal((await fetch(`${S}/federation-records-at?height=x&federations=${toHex(FED)}`)).status, 400);
+    assert.equal((await fetch(`${S}/federation-record?federation=${toHex(FED)}&previous=zz`)).status, 400, 'a previous record is hex');
     assert.equal((await fetch(`${S}/federation-records-at?height=188&federations=zz`)).status, 400);
     const none = await fetch(`${S}/federation-record?federation=${toHex(FED)}`);
     assert.equal(none.status, 404);
@@ -693,4 +694,34 @@ test('after a restart every stored height still answers: restore keeps the newes
   assert.equal(seat.recordAt(toHex(FED), 250).height, 200);
   assert.equal(seat.recordAt(toHex(FED), 50), null);
   assert.equal(seat.recordAt(toHex(FED), 150).__hex, rows[0].record, 'as signed: what another seat is handed');
+});
+
+// THE BAND IN THE BYTES (kanban #997): after the height, only when a record names one
+const bare = () => { const b = (n) => new Uint8Array(32).fill(n); return { federationId: b(1), networkId: b(2), invite: 'fed:x', nominal: 4, threshold: 3, status: 1, successorId: new Uint8Array(32), gone: [], exposureCapSats: 100000n, reserveSats: 75000n, height: 180,
+  guardians: [1, 2, 3, 4].map((n) => ({ peerKey: new Uint8Array(33).fill(n), nodePubkey: b(n), operatorId: `op${n}`, bondTxid: b(0x40 + n), bondVout: 0, endpoint: `wss://g${n}` })) }; };
+
+test('a record naming no band hashes as the code before it did, a hash from that code; one naming a band is one byte longer and signed over it', () => {
+  const plain = bare();
+  assert.equal(toHex(federationRecordId(plain)), 'e8bc7bbba80b07e913e2a42d48e113fa759dc394610a336601a567a051fa878f');
+  const back = decodeFederationRecord(encodeFederationRecord(plain));
+  assert.equal('capacityBand' in back, false, 'decoded as today');
+  assert.deepEqual(encodeFederationRecord(back), encodeFederationRecord(plain));
+  for (const capacityBand of Object.keys(CAPACITY_BAND)) {
+    const r = { ...plain, capacityBand }, bytes = encodeFederationRecord(r);
+    assert.equal(bytes.length, encodeFederationRecord(plain).length + 1);
+    assert.equal(decodeFederationRecord(bytes).capacityBand, capacityBand);
+    assert.notEqual(toHex(federationRecordId(r)), toHex(federationRecordId(plain)));
+  }
+});
+
+test('a signed record splits with or without a band; an unknown band and a second trailing byte are refused', () => {
+  const secret = new Uint8Array(32).fill(9), nodePubkey = schnorr.getPublicKey(secret);
+  for (const r of [bare(), { ...bare(), capacityBand: 'CRITICAL' }]) {
+    const body = encodeFederationRecord(r), sigs = [{ nodePubkey, signature: new Uint8Array(64).fill(3) }];
+    for (const list of [[], sigs]) { const s = splitSignedRecord(joinSignedRecord(body, list)); assert.equal(s.record.capacityBand, r.capacityBand); assert.equal(s.signatures.length, list.length); assert.deepEqual(s.body, body); }
+  }
+  const body = encodeFederationRecord(bare());
+  assert.throws(() => decodeFederationRecord(Uint8Array.from([...body, 9])), /not a capacity band/);
+  assert.throws(() => decodeFederationRecord(Uint8Array.from([...body, 2, 2])), /trailing bytes/);
+  assert.throws(() => encodeFederationRecord({ ...bare(), capacityBand: 'NOT_OPEN' }), /capacity band NOT_OPEN/);
 });
