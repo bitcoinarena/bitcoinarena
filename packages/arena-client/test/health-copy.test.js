@@ -6,7 +6,7 @@
 // asks every door the page asks, the oldest first within its budget, and serves the copy at /api/health for any page to read.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeHealth, recorder, replay, keepable, ageOf, keyOf, live, roundPosting, etaHm, playablePostings, dutyNotes, withDuty, nodeLabel } from '../../../src/arena-ui/health/network.js';
+import { makeHealth, recorder, replay, keepable, censusKeyFact, ageOf, keyOf, live, roundPosting, etaHm, playablePostings, dutyNotes, withDuty, nodeLabel } from '../../../src/arena-ui/health/network.js';
 import { readHealth, HEALTH_DAILY, HEALTH_CRON } from '../../../src/website/explorer/health.js';
 import explorer from '../../../src/website/explorer/worker.js';
 
@@ -345,4 +345,12 @@ test('the APPS table says posted only for rounds that can be played (kanban #778
   assert.deepEqual([got.get('rps').today.t, got.get('rps').today.c], ['posted (12)', 'ok']);
   assert.equal(got.get('nextblock').today.t, 'posted (5)');
   assert.equal(playablePostings(null, seating), null);
+});
+
+test('the census key\'s card: quiet with no failed epoch, a warning at one, bad from two in a row; the copy keeps only that (5A.3B, kanban #972)', () => {
+  assert.deepEqual(censusKeyFact({ epochs: 0, since: null, warn: false }), ['Census key', 'no failed epoch', 'ok']);
+  assert.deepEqual(censusKeyFact({ epochs: 1, since: 7, warn: false }), ['Census key', '1 failed epoch in a row, since 7', 'warn']);
+  assert.deepEqual(censusKeyFact({ epochs: 3, since: 7, warn: true }), ['Census key', '3 failed epochs in a row, since 7', 'bad']);
+  const kept = keepable({ 'https://s1.example/a/census-key': { ok: true, body: { failing: { epochs: 2 }, keys: [1, 2], anchors: [3] } } });
+  assert.deepEqual(kept['https://s1.example/a/census-key'].body, { failing: { epochs: 2 } });
 });

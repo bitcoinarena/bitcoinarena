@@ -2519,7 +2519,11 @@ most a buyer can win is one epoch's new bonds, and a new key at each epoch's sta
 keeps it there. A hidden holder set, a higher threshold and a draw with less variance
 were each refused. A DKG failing epoch after epoch is the thing to watch, because a
 key then gathers more live immature bonds: past 2 failed epochs in a row, the owner
-page and the health page say so.
+page and the health page say so. Every node reads that from its chain, so all say the
+same: a closed epoch failed if the plan at its first block asked a new key or a reshare
+and no record of that epoch stands; an epoch that asked nothing ends the count, since a
+key no bond named gathers nothing. `GET /census-key` answers it as `failing`, and
+`GET /owner/standing` carries the warning (kanban #972).
 
 The chance that capital share `p`, fixed before `h`, draws the threshold of one key,
 exact binomial:

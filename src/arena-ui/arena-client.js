@@ -8383,6 +8383,35 @@ const RESHARE_BELOW_PERCENT = 80;
  *   reshare  the oldest live key held under 80 %, at most one
  *   newKey   at an epoch's start, only if the newest key has been named by a bond
  */
+/** How many failed epochs in a row the owner page and the health page speak up at (5A.3B, RULED 2026-11-02, kanban #1041, #1050). */
+const CENSUS_KEY_WARN_EPOCHS = 2;
+
+/**
+ * THE EPOCHS IN A ROW A KEY WAS DUE AND DID NOT COME (5A.3B). `outcomes`, newest closed epoch first: { epoch, keygen, reshare, madeKey, madeReshare }, `keygen` and `reshare` what the epoch's plan
+ * asked, the `made` two what stands on the chain for that epoch. An epoch that asked nothing ends the count: a key no bond named gathers no bonds, which is what the warning is about.
+ * Answers { epochs, since (the oldest of them), keygen, reshare (how many of them failed each), warn }. From the chain alone, so every node reads the same.
+ */
+function censusKeyFailing(outcomes) {
+  const out = { epochs: 0, since: null, keygen: 0, reshare: 0, warn: false };
+  for (const o of outcomes || []) {
+    const keygen = !!o.keygen && !o.madeKey, reshare = !!o.reshare && !o.madeReshare;
+    if (!keygen && !reshare) break;
+    out.epochs += 1; out.since = o.epoch;
+    if (keygen) out.keygen += 1;
+    if (reshare) out.reshare += 1;
+  }
+  out.warn = out.epochs >= CENSUS_KEY_WARN_EPOCHS;
+  return out;
+}
+
+/** The same in an owner's words, or null: the warning GET /owner/standing carries. */
+function censusKeyFailingWarning(f) {
+  if (!f || !f.warn) return null;
+  const parts = [...(f.keygen ? ['no new key was made'] : []), ...(f.reshare ? ['a reshare did not finish'] : [])].join(' and ');
+  return { kind: 'census key', urgent: true, epochs: f.epochs, since: f.since,
+    says: `The census key has failed ${f.epochs} epochs in a row, since epoch ${f.since}: ${parts}. Bonds made now name the older key. Check that this node answers and that its peers reach it.` };
+}
+
 function censusKeyPlan({ keys = [], epochStart = false }) {
   const retired = [], dead = [], live = [];
   for (const k of keys) {
