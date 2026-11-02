@@ -102,8 +102,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   // certificate on a later round of the table seats that round and the ones after it. Empty for every table that lost nobody.
   const reseats = new Map();
   const tableStarts = new Map();   // anchor hex -> round 0's start
-  const noteReseat = (rid, role, seated) => {
-    let c; try { const row = round.get(rid); c = row ? decodeRoundContract(new Uint8Array(row.contract)) : null; } catch { c = null; }
+  const noteReseat = (rid, role, seated, posted = null) => {
+    let c; try { const row = round.get(rid); c = row ? decodeRoundContract(new Uint8Array(row.contract)) : posted; } catch { c = posted; }
     const a = c ? tableAnchorOf(c) : null;
     if (!a || a.first) return;
     const key = `${toHex(a.anchorId)}:${role}`;
@@ -137,31 +137,35 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   };
 
   // THE CHECK OF A CERTIFICATE, against this node's own draw for the round
-  const checkFor = (rid, role) => {
+  const checkFor = (rid, role, index = null) => {
     // A TABLE'S FIRST ROUND THIS SEAT NEVER WROTE (kanban #604: the 10-24 series reached the test host seats at 00:12Z, after their
     // tables' round 0 had started, so no certificate could be checked and they answered the unseated draw): `contractOf` builds it
     // from a series this seat holds, and it is drawn as a posted contract
     const row = round.get(rid);
-    const posted = row ? null : contractOf(rid);
+    const posted = row ? null : contractOf(rid, index);
     if (!row && !posted) return null;
     const c = roster.committeeFor(rid, role, posted ? { posted } : {});
     if (!c.ok) return { refused: c.why };
     const contract = row ? decodeRoundContract(new Uint8Array(row.contract)) : posted;
-    return { roundId: rid, role, drawn: c.drawn.map((e) => e.pubkey), slots: slotsForRole(contract, role), verify, listsPresent: seatingListsPresent(contract) };
+    return { roundId: rid, role, drawn: c.drawn.map((e) => e.pubkey), slots: slotsForRole(contract, role), verify, listsPresent: seatingListsPresent(contract), contract };
   };
-  const keepCert = (rid, role, bytes) => {
+  const keepCert = (rid, role, bytes, { index = null } = {}) => {
     // ONE HELD ALREADY, byte for byte, is not checked again (2026-10-12 "figure out why CPU usage so high and
     // optimise it": every batch answer repeats a round's certificate, and each was verified - all its signatures - before the
     // seat looked whether it held exactly these bytes)
     const held = db.prepare('SELECT cert FROM seat_certs WHERE round_id = ? AND role = ?').get(rid, role);
-    if (held && Buffer.compare(Buffer.from(held.cert), Buffer.from(bytes)) === 0) return { ok: true, kept: false };
-    const check = checkFor(rid, role);
+    if (held && Buffer.compare(Buffer.from(held.cert), Buffer.from(bytes)) === 0) {
+      // held from before a restart, on a round this seat has no row of: read back here (kanban #1020)
+      if (index !== null) { const posted = contractOf(rid, index); if (posted) noteReseat(rid, role, decodeSeated(bytes), posted); }
+      return { ok: true, kept: false };
+    }
+    const check = checkFor(rid, role, index);
     if (!check || check.refused) return { ok: false, why: `this node cannot draw that round yet${check ? `: ${check.refused}` : ''}` };
     const v = verifySeating(bytes, check);
     if (!v.ok) return v;
     // on a table only the first round and its check-ins hold a seating (kanban #1020)
-    try { const row = round.get(rid); const c = row ? decodeRoundContract(new Uint8Array(row.contract)) : null; const a = c ? tableAnchorOf(c) : null;
-      if (a && !a.first && !checkInOf(c, a)) return { ok: false, why: 'that round of its table is no check-in' }; } catch { /* the draw above read it */ }
+    try { const a = tableAnchorOf(check.contract);
+      if (a && !a.first && !checkInOf(check.contract, a)) return { ok: false, why: 'that round of its table is no check-in' }; } catch { /* the draw above read it */ }
     const key = `${toHex(rid)}:${role}`;
     const had = db.prepare('SELECT cert FROM seat_certs WHERE round_id = ? AND role = ?').get(rid, role);
     if (had) {
@@ -180,9 +184,9 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     db.prepare('INSERT OR IGNORE INTO seat_certs (round_id, role, cert) VALUES (?, ?, ?)').run(rid, role, bytes);
     if (!certs.has(key) || certs.get(key) !== null) certs.set(key, v.seating.seated.map(toHex));
     keepPeers(rid, role, v.seating.seated);
-    noteReseat(rid, role, v.seating.seated.map(toHex));
+    noteReseat(rid, role, v.seating.seated.map(toHex), check.contract);
     // the seats a v2 round counts are these (2026.0.2): the server writes them into the stored contract
-    try { onSeated(rid, role, v.seating.seated); } catch (e) { log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: ${e.message}`); }
+    try { onSeated(rid, role, v.seating.seated, check.contract); } catch (e) { log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: ${e.message}`); }
     return { ok: true, kept: true };
   };
 
@@ -535,7 +539,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
         await Promise.all(endpointsOf(c.drawn, round.pubkey, endpointOf).filter((b) => !rests(b)).map(async (b) => {
           const j = await getJson(b, `/seating?round=${a}&role=${role}&at=${toHex(table.rid)}`);
           if (!j || !j.cert) return;
-          try { const d = decodeSeatingCertificate(fromHex(j.cert)); if (toHex(d.roundId) !== a && d.role === role) keepCert(d.roundId, role, fromHex(j.cert)); } catch { /* says nothing */ }
+          // a check-in this seat never wrote is built from the series it holds, by the index the door names
+          try { const d = decodeSeatingCertificate(fromHex(j.cert)); if (toHex(d.roundId) !== a && d.role === role) keepCert(d.roundId, role, fromHex(j.cert), { index: j.index }); } catch { /* says nothing */ }
         }));
       }));
     }
