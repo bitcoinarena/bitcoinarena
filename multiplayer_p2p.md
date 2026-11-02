@@ -2469,10 +2469,24 @@ number, never a round's, and no caller passes it: testnet4 uses its live floor,
 no floor and is linear in sats: splitting a bond changes nothing, and a node can
 draw several shares, or none. A small network stays exact.
 
-The 2/3 line depends on which kind a key is. On an exact key the threshold is 2/3 of
-the shares and of the capital. On a drawn key it is **about 60 % of the bonded
-capital**. The chance that capital share `p`, fixed before `h`, draws the threshold
-of one key, exact binomial:
+The 2/3 line depends on which kind a key is. On a drawn key, capital held together
+before `h` needs about 60 % to reach the threshold. A buyer who picks holders after
+`h` needs about a third on a skewed census (measured: Zipf bonds, 33.5 % median,
+30.5 % lowest of 2000 draws). That buys one key: bonds that name it, as far as the
+fallback reaches. An exact key is 2/3 in both cases (RULED 2026-11-02, kanban #1041).
+
+The bound stands by what it reaches. One key reaches only the bonds that name it,
+which are bonds made while it was newest, and among those the immature ones after
+`slash_fallback_blocks`, plus mature ones whose node stays offline past
+`slash_return_blocks`. It reaches no stake, no other key's bonds and no round. So the
+most a buyer can win is one epoch's new bonds, and a new key at each epoch's start
+keeps it there. A hidden holder set, a higher threshold and a draw with less variance
+were each refused. A DKG failing epoch after epoch is the thing to watch, because a
+key then gathers more live immature bonds: past 2 failed epochs in a row, the owner
+page and the health page say so.
+
+The chance that capital share `p`, fixed before `h`, draws the threshold of one key,
+exact binomial:
 
 | Share of bonded capital | Chance of 683 of 1024 |
 |---:|---:|
@@ -2535,9 +2549,47 @@ with an anchor.
   reach is the bonds naming key 0, and until then they are the capital anyway.
 - **Testnet4 and a network with a census already:** the census at an announced
   height makes the first key by the rule above, on its existing template 1 and 2
-  bonds, and anchors the record. No genesis change, no re-bond.
+  bonds, and anchors the record. No genesis change, no re-bond. That height is
+  `CENSUS_KEY_FIRST_HEIGHT`, a constant beside genesis, and the first key is the
+  epoch that starts at or after it, by the epoch's own census height and draw.
 - A network with no key yet cannot take a template-3 bond. That is the only
   refusal.
+
+**The anchor and its scan (RULED 2026-11-02, kanban #1041).**
+
+- **Who funds it:** any holder, in duty order, from its own wallet: the holders
+  ordered by `H(duty tag || network_id || epoch || node key)`. Rank `k` posts from
+  `(k - 1) x 6` blocks after the record is complete at that node, by the same
+  `duty_post` settings and fee rates as a day's posting. A node that cannot pay says
+  so and falls to the next. Anyone else may post it too: the record proves itself,
+  and the first valid one per epoch counts. Nobody is paid and nobody is punished.
+- **Where the record travels:** the record and its signatures go in the witness of
+  the anchor transaction, as an advertisement body does (§5A.2, §25.1), in items of
+  at most 80 bytes, one `OP_DROP` each. `OP_RETURN "ARN" 'K' H(record)` is its only
+  output. So it is retrievable by anyone with the chain, there is nothing to serve,
+  and a census stays a pure function of the chain. A door may show a record as a
+  convenience, and nothing rests on it. The signers are the fewest that reach the
+  threshold, largest first: 204 signers are 19.5 KB, about 5,000 vB, once per key.
+- **The hash covers the record, not its signatures,** and a witness is not in the
+  txid, so a relay can strip them. An anchor without a standing body counts for
+  nothing and the same record can be posted again.
+- **Where the scan starts:** at `CENSUS_KEY_FIRST_HEIGHT`, forward, with what it found
+  kept across restarts. It never uses a lookback window: a key is named by bonds for
+  years. A network that names no height has no key and no template-3 bond. Mainnet
+  scans from genesis, key 0 being in `genesis_parameters`.
+- **A record stands** when its epoch starts at or after that height, its census
+  height is its epoch's, it is anchored no earlier than the epoch's first block, and
+  nodes holding the threshold of that census' shares signed it. Records are judged in
+  chain order, so the keys a census reads were judged before it.
+- **A cached census** names the standing keys at or below its height, or a census kept
+  before an anchor was read would hold that key's bonds out.
+- **A deal on the wire** is signed by its dealer's node key, outside the deal, so the
+  transcript does not change. The first signed deal per dealer stands. **The midpoint**
+  freezes the deal set and runs the check; a node signs its record one block later, so
+  a complaint heard in that block drops the deal everywhere first.
+- **The census a key reads** is the chain's, at `census_key_bond_min` and protocol
+  version 19, the first whose bonds count as a node's sum. The chain says nothing of
+  absence, so a node left out of a round's census by an absence claim keeps its share.
 
 **The bond (`bond_script_template_version` 3).** The key path and path A stay.
 Path B needs both the node's advance signature and the census key:
@@ -2709,7 +2761,7 @@ release and refill itself from the peg-in; nothing depends on it.
 | a round's panels, both captured | they cannot start without the census key, and a panel reaches only that round's seats, not every bond |
 | one panel blocks a true slash (3 of 7 refuse) | the census key releases at `slash_fallback_blocks`; a mature node can leave first, at `slash_return_blocks`, as under path A |
 | a node buys a slash start to get out before maturity | nothing: the return leaf waits for `bond_maturity` too |
-| 2/3 of the bonded capital on an exact key, about 60 % on a drawn one | can still take a bond that has not matured. At that size it holds the committees anyway |
+| 2/3 of the bonded capital on an exact key; on a drawn one about 60 % held together before `h`, about a third for a buyer who picks holders after it | can still take a bond that has not matured, and only among the bonds naming that one key. At 2/3 it holds the committees anyway |
 
 **The fallback is meant (RULED 2026-11-02, kanban #1021).** A mature node can
 leave at `slash_return_blocks`, before the fallback opens. If it does not, the
@@ -2780,6 +2832,15 @@ the bad deal is named.
 Not measured: the batch at 1000 nodes over all its deals, and a run across real
 machines.
 
+**Through the node's own code (2026-11-02, kanban #972),** `tools/census-key-regtest.mjs`:
+five real seats on one machine and a private regtest, 11 shares, threshold 8. Deals
+crossed the seats' doors in 3 s, the record was complete 2 to 3 s after the statement
+block, and the anchor from a seat's wallet was 236 vB with 3 signers. All five read the key
+from their own chain, a template-3 bond naming it counted, one naming another key did
+not, and the next epoch's key had the new node among its holders. The largest body a
+key can need, 683 signers, is 822 items and 16,965 vB, and bitcoind takes it as
+standard.
+
 **A drawn key against the skew that broke the unit (2026-11-02, kanban #1039).** 1000
 nodes, Zipf bonds, 2000 draws of 1024 shares, threshold 683, `tools/census-draw-measure.mjs`.
 Under the old unit 9 nodes with about 20 % of the capital reached the threshold.
@@ -2791,7 +2852,9 @@ Under the old unit 9 nodes with about 20 % of the capital reached the threshold.
 | the most shares per sat, picked after `h` | 33.5 % | 30.5 % |
 
 The about 60 % is capital that holds together before `h`. The shares are public from `h`
-on, so holders picked after it are a bribe, not a stake, and for them the figure is lower.
+on, so holders picked after it are a bribe, not a stake, and for them it is about a
+third on this skew. A flatter census costs more. The Zipf skew is an assumption. See
+"The 2/3 line" above for why the bound stands.
 
 ### The residual, named
 

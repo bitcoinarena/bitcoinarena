@@ -18,6 +18,7 @@
 // that reach the census the same way it counts the files that reach the core.
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { deriveCensus, censusRootOf } from '../../arena-protocol/src/census.js';
+import { standingKeysName } from '../../arena-protocol/src/census-key.js';
 import { dropsAbsent, withoutAbsent, presenceWindow, censusTimeMs, ABSENT_WHY } from '../../arena-protocol/src/presence.js';
 import { selectCommittee, drawCommittee, slotsForRole, drawAttestors } from '../../arena-protocol/src/sortition.js';
 import { drawHeartbeat, hasHeartbeats, heartbeatCloseMs } from '../../arena-protocol/src/heartbeat.js';
@@ -156,7 +157,8 @@ function keepCensus(round, key, census) {
  * txid once per view, `deriveCensus` with this network's bond set and the BIP-340 check of advertisement updates and
  * re-affirmations. The roster's `censusFor` calls it for a round; the ballot's tally (ballot-tally.js, via main.js) for the
  * bonds active at a proposal's publication height (§27A.7.3) - one derivation, so a vote is weighed by the census a round
- * would draw from. `readFrom`: the part of the view the scan reads (PICK B's slice), the whole view by default.
+ * would draw from. `readFrom`: the part of the view the scan reads (PICK B's slice), the whole view by default. `standingKeys`: the
+ * census keys standing on this chain, and any cache of the answer must name them (census-key.js standingKeysName).
  */
 /**
  * THE ROUND'S GUARDIAN POOL (§22A v4.6.4), by node key: from SEATED_GUARDIAN_VERSION the guardians its federation's record seats
@@ -170,7 +172,7 @@ export function guardianPoolOf({ contract, census, seated = null, drain = [] }) 
   return [...own, ...drain];
 }
 
-export function censusOfView(view, contract, { network = networkOf(contract.networkId), readFrom = view } = {}) {
+export function censusOfView(view, contract, { network = networkOf(contract.networkId), readFrom = view, standingKeys = null } = {}) {
   // THE VIEW'S TRANSACTIONS BY TXID, ONCE PER VIEW (2026-10-03, measured: a restarted seat held its loop 3-8 s per
   // assignment - every series' census parsed every transaction of the same ~2,080-block view again). Kept with the view
   // object itself, so a new view is indexed afresh and an old one is let go with it.
@@ -186,7 +188,8 @@ export function censusOfView(view, contract, { network = networkOf(contract.netw
   }
   return deriveCensus(readFrom, {
     contract,
-    bond: bondSetFor(network),
+    // A TEMPLATE-3 BOND COUNTS ONLY NAMING A KEY THAT STOOD (5A.3B): the keys of this node's own chain scan, census-key-chain.js. None held refuses such a bond by name.
+    bond: standingKeys ? { ...bondSetFor(network), standingKeys } : bondSetFor(network),
     resolve: (e) => {
       const raw = byTxid.get(toHex(e.txid));
       return raw ? { transaction: raw } : null;
@@ -197,8 +200,10 @@ export function censusOfView(view, contract, { network = networkOf(contract.netw
 }
 
 export class Roster {
-  constructor(round, { chainFor = NO_CHAIN_VIEW, randomnessFor = NO_BEACON, seatedFor = null, absence = null } = {}) {
+  constructor(round, { chainFor = NO_CHAIN_VIEW, randomnessFor = NO_BEACON, seatedFor = null, absence = null, standingKeys = null } = {}) {
     this.round = round;
+    // THE CENSUS KEYS THIS NODE'S CHAIN SCAN FOUND (5A.3B, kanban #972): a function, as the list grows. A census is a function of them too, so they name its caches.
+    this.standingKeys = standingKeys;
     // THE ABSENT OF A 22 CENSUS (§5A.3, kanban #727): `{ claimFor(rootHex), check(claims, { census, w }) }` - the seat's presence book
     // (presence-book.js). With none, a 22 round whose root leaves nodes out is refused as any other root the chain does not give.
     this.absence = absence;
@@ -488,7 +493,11 @@ export class Roster {
     // still checked against each round's own root below, on every ask.
     const whose = contract.seriesId instanceof Uint8Array ? `series:${toHex(contract.seriesId)}`
       : `census:${contract.networkId instanceof Uint8Array ? toHex(contract.networkId) : ''}:${contract.protocolVersion ?? ''}`;
-    const kept = `${whose}:${view.firstHeight}:${contract.censusHeight}:${asRoundsOwn ? (asCommitted ? 'committed' : 'round') : 'height'}`;
+    // AND THE KEYS IT READS (kanban #1041 answer 4): a census kept before a key's anchor was read would hold its bonds out, so a key at or below this height is another census.
+    // None is the empty name, and a network with no census key keeps every name it had.
+    const standingKeys = this.standingKeys ? this.standingKeys() : null;
+    const keysName = standingKeysName(standingKeys, Number(contract.censusHeight));
+    const kept = `${whose}:${view.firstHeight}:${contract.censusHeight}${keysName ? `:keys${keysName}` : ''}:${asRoundsOwn ? (asCommitted ? 'committed' : 'round') : 'height'}`;
     // a census checked in full as the round's own serves a draw as committed too
     const had = this.censuses.get(kept) || (asCommitted ? this.censuses.get(kept.replace(/:committed$/, ':round')) : null);
     if (had) {
@@ -523,7 +532,7 @@ export class Roster {
     const readFrom = isOldTestnet4Id(contract.networkId) && contract.seriesId instanceof Uint8Array && isOldTestnet4Series(contract.seriesId)
       && view.firstHeight < OLD_TESTNET4_SERIES_CENSUS_FROM
       ? { firstHeight: OLD_TESTNET4_SERIES_CENSUS_FROM, blocks: view.blocks.slice(OLD_TESTNET4_SERIES_CENSUS_FROM - view.firstHeight) } : view;
-    let census = censusOfView(view, contract, { network, readFrom });
+    let census = censusOfView(view, contract, { network, readFrom, standingKeys });
     if (!census.ok) return census;
 
     // AND IT HAS TO BE THIS ROUND'S CENSUS - when it is being asked for as this round's.
