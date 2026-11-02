@@ -15,6 +15,7 @@ import { TAG, PROTOCOL_VERSION } from '../src/constants.js';
 import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
 import { commitCensus, leafHash, encodeEntry } from '../src/census.js';
 import { selectCommittee, ticketFor, weightOf, panelSeed, drawPanels } from '../src/sortition.js';
+import { drawGuardians } from '../src/guardian-founding.js';
 import { computePayoutTable, rankWeights, DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../src/contracts.js';
 import { encodeCheckpoint, checkpointId, NO_PREVIOUS, CHECKPOINT_BYTES, SIGNED_CHECKPOINT_BYTES } from '../src/checkpoint.js';
@@ -310,6 +311,36 @@ out.tagged = {
       'The signature sits BESIDE the object, as for a checkpoint and a receipt: inside, the id would move the moment it was signed, and the bond output commits to a body fixed when the funding transaction is built.',
       'The endpoint is fixed for the life of the bond. A server move means a new funding transaction and new confirmations (25.1).',
       'operatorId is self-declared (5A.13) and is never treated as proof of identity.',
+    ],
+  };
+}
+
+
+// THE FOUNDING DRAW (§23A.2, kanban #993): who sits in a new federation, from the census and the beacon. No message decides it, so a
+// second implementation has to reach these seats and these alternates in this order.
+{
+  const seed = taggedHash('BLWP/test/founding-beacon', new Uint8Array(0));
+  const height = 200, nominal = 7, bondMinGuardian = 50000n;
+  const mk = (n, op, bond, capable = true) => ({ pubkey: b32(n), txid: b32(0x40 + n), vout: 0, bondSats: BigInt(bond),
+    advert: { operatorId: op, guardianCapable: capable, guardianEndpoint: capable ? `wss://g${n}` : '' } });
+  const entries = [[1, 50000], [2, 60000], [3, 86667], [4, 86666], [5, 200000], [6, 50000], [7, 90000], [8, 55000], [9, 50000], [10, 120000], [11, 70000], [12, 50000]]
+    .map(([n, bond]) => mk(n, `op${n}`, bond));
+  entries.push(mk(20, 'op2', 40000),                // a second node of op2: one ticket, its bonds summed to 100,000
+    mk(21, 'lazy', 900000, false),                  // not guardian-capable
+    mk(22, 'small', 10000),                         // under bond_min_guardian
+    mk(23, 'busy', 500000));                        // guards an OPEN federation already
+  const hex = (e) => toHex(e.pubkey);
+  const drawCase = (what, { guardingOpen = [], seatedFirst = [], ...rest } = {}) => {
+    const d = drawGuardians({ entries, seed, height, nominal, bondMinGuardian, guardingOpen: new Set(guardingOpen), seatedFirst: seatedFirst.map((n) => entries.find((e) => e.pubkey[0] === n)), ...rest });
+    return { what, guardingOpen, seatedFirst: seatedFirst.map((n) => toHex(b32(n))),
+      eligible: d.eligible, seatedFirstCount: d.seatedFirst, drawn: d.drawn.map(hex), alternates: d.alternates.map(hex), why: d.why };
+  };
+  out.founding = {
+    seed: toHex(seed), height, nominal, bondMinGuardian: String(bondMinGuardian),
+    entries: entries.map((e) => ({ pubkey: toHex(e.pubkey), txid: toHex(e.txid), vout: e.vout, bondSats: String(e.bondSats), advert: e.advert })),
+    cases: [
+      drawCase('The plain draw: bond-weighted tickets over the eligible operators, one ticket per operator.', { guardingOpen: ['busy'] }),
+      drawCase('A succession: the old guardians seated first in the order given, the missing seats drawn.', { guardingOpen: ['busy'], seatedFirst: [1, 6, 9] }),
     ],
   };
 }
