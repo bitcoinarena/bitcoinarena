@@ -24447,7 +24447,7 @@ class Client {
    */
   async join(entry) {
     const mine = entryId(entry);
-    await postEntry(`${this.base}/entry`, encodeEntryContract(entry));
+    const r = await postEntry(`${this.base}/entry`, encodeEntryContract(entry));
 
     // WHO THIS CLIENT JOINED, kept for the ghost field. A reload keeps the
     // player's key (sessionStorage) and draws a NEW entry, so the signer node this tab
