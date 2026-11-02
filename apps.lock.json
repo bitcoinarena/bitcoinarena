@@ -18,6 +18,7 @@
     },
     "arena-app-hello-world": {
       "repo": "a tester/arena-app-hello-world",
+      "optional": true,
       "commit": "2453b935baefac694b2274e6bc17bce26aae43eb",
       "copy": "packages/hello-world",
       "paths": [
