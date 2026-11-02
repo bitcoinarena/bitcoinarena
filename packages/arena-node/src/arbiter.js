@@ -17,6 +17,8 @@
 //      one escrow output (arbitrationSpend). Each member signs the leaf's sighash on its own (BIP-342 CHECKSIGADD: k plain
 //      BIP-340 signatures, no MuSig on this path).
 //   5. Fewer than k signatures is never posted; k or more is checked by testmempoolaccept and only then broadcast.
+//   An output an ABANDONED row of a federation record left (§23A.5, kanban #1059) comes this way from step 3: judgeAbandoned, buildAbandonedSlash, into the liquidation escrow, and step 6 is not
+//   its: it waits there for the federation's end.
 //   6. THE ESCROW SPENT (payOutSlash): one peg-in per federation, each loss a payout contract to its player, the rest a payout
 //      contract to that federation's reserve key (§27A.9.2); what does not fit stays in the escrow until a federation has room.
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -24,6 +26,8 @@ import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { affectedEntries, realLosses, slashHolds, slashProofId, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS, TWO_RESULTS,
   splitAuditSlashEvidence, slashHoldsOnAudit, auditSlashProofId, AUDIT_CONTRADICTED, splitDoubleSlashEvidence, slashHoldsOnDoubleSign, splitTableSlashEvidence, slashHoldsOnTable } from '../../arena-protocol/src/slash.js';
+import { abandonedSlashStands } from '../../arena-protocol/src/abandoned-slash.js';
+import { verifyFederationRecord } from '../../arena-protocol/src/federation-record.js';
 import { decodeSettlementTable } from '../../arena-protocol/src/settlement-ack.js';
 import { tableBuild } from '../../arena-protocol/src/settlement-rebuild.js';
 import { planEscrowSpend } from '../../arena-protocol/src/slash-reserves.js';
@@ -240,6 +244,12 @@ export function buildSlash({ verdict, bond, advert, contract, roundId, slashHeig
     const losses = realLosses({ roundId, entries, truth: correct, affected: harmed.affected, minScore: contract.minScore, payoutShares });
     distribution = slashDistribution({ escrowSats: bond.value - feeSats, roundId, contract, losses, paid });
   } catch (e) { return { ok: false, why: e.message }; }
+  const spend = pathBSpend({ bond, advert, proofId: verdict.proofId, slashHeight, hint, set, feeSats });
+  return spend.ok ? { ...spend, distribution, truth: correct } : spend;
+}
+
+/** PATH B OF A BOND INTO THE ESCROW (5A.3B step 4): the output rebuilt from the node's advertisement and held to it, and the unsigned spend committing to `proofId`. */
+function pathBSpend({ bond, advert, proofId, slashHeight, hint, set, feeSats }) {
   const maturity = bondMaturityOf(advert, { genesisMaturity: genesisFor(set.network).bondMaturity, network: set.network });
   if (!maturity.ok) return { ok: false, why: maturity.why };
   const nodeKey = advert.nodePubkey;
@@ -248,10 +258,34 @@ export function buildSlash({ verdict, bond, advert, contract, roundId, slashHeig
   if (!tree.ok) return { ok: false, why: tree.why };
   if (toHex(bond.script.subarray(2, 34)) !== toHex(tree.outputKey)) return { ok: false, why: 'that output is not the bond this node\'s advertisement builds' };
   const escrow = escrowOutput({ arbitrationKeys: set.keys, k: set.k }, { tweakPoint, combine });
-  const built = arbitrationSpend({ bond, proofId: verdict.proofId, slashHeight, hint, feeSats, escrowScript: escrow.script });
+  const built = arbitrationSpend({ bond, proofId, slashHeight, hint, feeSats, escrowScript: escrow.script });
   if (!built.ok) return built;
   const leaf = tapLeafHash(slashLeaf(set.keys, set.k));
-  return { ok: true, built, leaf, sighash: arbitrationSighash(built, leaf), controlBlock: controlBlockFor('slash', tree).controlBlock, distribution, truth: correct };
+  return { ok: true, built, leaf, sighash: arbitrationSighash(built, leaf), controlBlock: controlBlockFor('slash', tree).controlBlock };
+}
+
+/**
+ * THE JUDGEMENT OF AN ABANDONED ROW (§23A.5, RULED 2026-11-02, kanban #1058, #1059). `recordBytes` the signed record a seat handed over, believed for nothing: held to its threshold of bonded
+ * guardians against `census`, this set's own entries at the record's height. Then abandonedSlashStands over `bonds`, this set's own census at its tip. Answers { slashed, offence, proofId
+ * (the row's proof_ref), federation, node, output, bondSpent, why }; a template-3 output comes back judged, for the census key's holders: path B is not this set's on such a bond.
+ */
+export function judgeAbandoned({ recordBytes, census, bonds, peer, txid, vout, networkId, inviteFederationId }) {
+  const no = (why) => ({ slashed: false, why });
+  const v = verifyFederationRecord(recordBytes, { census, verify: verifySchnorr, inviteFederationId, networkId });
+  if (!v.ok) return no(`that record does not stand: ${v.why}`);
+  const stands = abandonedSlashStands({ record: v.record, peerKey: fromHex(peer), bonds, txid, vout });
+  if (!stands.ok) return no(stands.why);
+  return { slashed: true, offence: stands.kind, proofId: stands.proofRef, sinceHeight: stands.sinceHeight, federation: toHex(v.record.federationId), node: toHex(stands.nodePubkey), output: stands.output, bondSpent: stands.bondSpent, why: stands.why };
+}
+
+/**
+ * THE SLASH OF AN OUTPUT A ROW LEFT, unsigned: path B on the row's proof_ref, the federation in the hint, and the whole output less the fee into the liquidation escrow (§23A.5, as for
+ * abandonment by absence). It waits there for the federation's end, so nothing here says who it pays. Answers what buildSlash does, less its distribution, so memberSign and assemble take it.
+ */
+export function buildAbandonedSlash({ verdict, bond, slashHeight, tipHeight, recordHeight, set, feeSats = 2000n }) {
+  const h = slashHeightIsValid({ slashHeight, censusHeight: recordHeight, tipHeight });
+  if (!h.ok) return { ok: false, why: h.why };
+  return pathBSpend({ bond, advert: verdict.output.advert, proofId: verdict.proofId, slashHeight, hint: fromHex(verdict.federation), set, feeSats });
 }
 
 /**

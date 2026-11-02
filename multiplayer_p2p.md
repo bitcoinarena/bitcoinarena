@@ -6968,7 +6968,26 @@ counts him gone at once. A node still bonded by another output is still seated, 
 the cap follows what is left. A guardian who served his notice out first and spends at or
 after `leave_after` has committed no offence. A slash start does not count; what ends its
 hold output does, from that spend. With no other output there is nothing left to slash
-on the chain: the record is what stands.
+on the chain: the record is what stands. An output left under the floor is slashed, on
+the same `proof_ref`.
+
+**From an ABANDONED row to a slash (RULED 2026-11-02, kanban #1058, #1059).** Being
+written into the signed record is the filing, and nothing separate goes anywhere. An
+ABANDONED row with no output of that node left ends there. Any output of his left
+stands for the offence: the row's `proof_ref` is the proof, for a spend the chain's
+transaction and for an absence the attested row, and the record's threshold of
+signatures is checked by whoever acts.
+
+- Every seat lists what the rows it holds left, at `GET /slashes` (`abandonedSlashes`),
+  one per output, confirmed at or before the row's `since_height`. Money bonded after
+  it stood for nothing at the time of the offence, and is not touched.
+- Under templates 1 and 2 the arbitration set checks the record on its own census,
+  reads the row and the output on its own chain, and spends path B with
+  `OP_RETURN = proof_ref ‖ slash_height ‖ federation_id`, the whole output less the fee
+  into the liquidation escrow below. It waits there for the federation's end, as for
+  abandonment by absence.
+- A template-3 output is started on its newest presig, or the one at bonding, and the
+  census key's holders check the record the same way before they sign.
 
 **Leaving is legitimate, and costs nothing (RULED 2026-09-21).**
 Guarding a federation is a term of service, not a life sentence, and leaving

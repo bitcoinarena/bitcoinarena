@@ -22,6 +22,8 @@
 // judgeDoubleProof: both signatures, one run, the accused's committee seat and bond. Nothing is replayed, so it asks for no objection and no core.
 // A proof of a false table (5A.3 table row, kanban #1040; GET /slashes `tableSlashes`, its record at GET /table-slash-proofs) is judged by arbiter.js judgeTableProof: the pair on its
 // own bytes, the txid rebuilt by this set's client of the federation (ARENA_STAKE_LOCK_BIN, ARENA_ARBITER_CLIENT_DIRS): a proof with no client to read it waits.
+// An output an ABANDONED row of a federation record left (§23A.5, kanban #1059; GET /slashes `abandonedSlashes`, its record at GET /federation-records-at) is judged by arbiter.js judgeAbandoned:
+// the record's signatures on this set's census, the row and the output on its chain. Path B on the row's proof_ref into the liquidation escrow, where it waits for the federation's end.
 // Its doors (POST /musig/nonce, /musig/partial, GET /status) serve the cooperative key path: it agrees to a release
 // only for a node no handled or open proof accuses.
 // After each pass it publishes every liquidation and posted slash it keeps as a signed event (kanban #723, arbitration-events.js) to
@@ -32,7 +34,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
-import { arbitrationMembers, judgeProof, judgeAuditProof, judgeDoubleProof, judgeTableProof, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin } from '../src/arbiter.js';
+import { arbitrationMembers, judgeProof, judgeAuditProof, judgeDoubleProof, judgeTableProof, judgeAbandoned, buildAbandonedSlash, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin } from '../src/arbiter.js';
 import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
 import { liquidationEvent, slashEvent, stampEvent, signEvent, eventKey } from '../src/arbitration-events.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
@@ -52,7 +54,12 @@ import { auditEligible } from '../../arena-protocol/src/auditor.js';
 import { makeVrf, SUITE_SECP256K1_TAI } from '../../arena-protocol/src/vrf.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { runId } from '../src/verdict.js';
-import { deriveCensus } from '../../arena-protocol/src/census.js';
+import { deriveCensus, censusFirstBlock } from '../../arena-protocol/src/census.js';
+import { bondsOf, startsByCensusKey } from '../../arena-protocol/src/abandoned-slash.js';
+import { splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
+import { readInvite } from '../src/invite.js';
+import { PROTOCOL_VERSION } from '../../arena-protocol/src/constants.js';
+import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { beaconFromChain, committeeSeedFromBeacon } from '../../arena-protocol/src/beacon.js';
 import { selectCommittee } from '../../arena-protocol/src/sortition.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -74,15 +81,49 @@ const LOOKBACK = Number(env.ARENA_ARBITER_LOOKBACK || 2100);
 const get = async (url, as = 'json') => { const r = await fetch(url, { signal: AbortSignal.timeout(20000) }); if (!r.ok) throw new Error(`${url} answered ${r.status}`); return as === 'json' ? r.json() : new Uint8Array(await r.arrayBuffer()); };
 
 /** The census of a round's contract at `height`, from this arbiter's own blocks, with its entries' adverts. */
-async function censusAt(contract, height) {
+async function censusAt(contract, height, from = Math.max(0, height - LOOKBACK)) {
   const tip = Number(await rpc('getblockcount'));
-  const view = await blocksOver(rpc, Math.max(0, height - LOOKBACK), Math.min(tip, height), { cache });
+  const view = await blocksOver(rpc, from, Math.min(tip, height), { cache });
   const byTxid = new Map();
   for (const b of view.blocks) for (const raw of b.transactions || []) { try { byTxid.set(toHex(parseTransaction(raw).txid), raw); } catch { /* */ } }
   const c = deriveCensus(view, { contract: { ...contract, censusHeight: height }, bond: bondSetFor(network),
     resolve: (e) => { const raw = byTxid.get(toHex(e.txid)); return raw ? { transaction: raw } : null; },
     verifyUpdate: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } } });
   return { ...c, tip, view };
+}
+
+// AN OUTPUT AN ABANDONED ROW LEFT (§23A.5, RULED 2026-11-02, kanban #1058, #1059). The seat names the row (GET /slashes `abandonedSlashes`) and hands the signed record (GET /federation-records-at);
+// the record is held to its threshold on this set's own census at its height, and the row and the output are read on this set's own census at the tip, by the same window a seat's chain census
+// has. Path B on the row's proof_ref, the federation in the hint, into the liquidation escrow, and it stays there: `heldFor` keeps the pay-out below off it. A refusal is never kept as handled:
+// the row is named by what a seat said, so a false one must not stand in for the true one a seat hands later. A template-3 output is the census key's holders', named and left.
+const chainNetworkId = { regtest: NETWORK_ID_REGTEST, testnet4: NETWORK_ID_TESTNET4 }[network];
+const chainContract = (height) => ({ networkId: chainNetworkId, censusHeight: height, censusConfirmations: 1, bondMinSats: BigInt(env.ARENA_LOWEST_BOND_MIN_SATS || 50000), protocolVersion: PROTOCOL_VERSION });
+const censusRead = (height) => censusAt(chainContract(height), height, censusFirstBlock(height, network));
+async function handleAbandoned(seat, s) {
+  const at = await get(`${seat}/federation-records-at?height=${s.recordHeight}&federations=${s.federation}`);
+  const held = (at.records || []).find((r) => r.federation === s.federation);
+  if (!held) return { done: false, why: 'the seat lists that row and does not hand its record over' };
+  const recordBytes = fromHex(held.record);
+  const recordHeight = splitSignedRecord(recordBytes).record.height;
+  const atRecord = await censusRead(recordHeight);
+  if (!atRecord.ok) return { done: false, why: `no census at the record: ${atRecord.why}` };
+  const now = await censusRead(atRecord.tip);
+  if (!now.ok) return { done: false, why: `no census at the tip: ${now.why}` };
+  const verdict = judgeAbandoned({ recordBytes, census: atRecord.entries, bonds: bondsOf(now), peer: s.peer, txid: s.txid, vout: s.vout, networkId: chainNetworkId,
+    inviteFederationId: (inv) => fromHex(readInvite(inv).federationId) });
+  if (!verdict.slashed) return { done: false, why: `not slashed: ${verdict.why}` };
+  if (startsByCensusKey(verdict.output.template)) return { done: false, why: 'a template-3 output: the census key\'s holders start it on its presig' };
+  const displayTxid = toHex(fromHex(s.txid).reverse());
+  const out = await rpc('gettxout', [displayTxid, s.vout, false]);
+  if (!out) return { done: true, why: 'that output is spent already: nothing left to slash' };
+  const bond = { txid: fromHex(s.txid), vout: s.vout, value: BigInt(Math.round(out.value * 1e8)), script: fromHex(out.scriptPubKey.hex) };
+  const slash = buildAbandonedSlash({ verdict, bond, slashHeight: now.tip, tipHeight: now.tip, recordHeight, set, feeSats: PATH_B_FEE_SATS });
+  if (!slash.ok) return { done: false, why: slash.why };
+  const tx = assemble({ slash, signatures: set.members.slice(0, set.k).map((m) => ({ key: m.key, sig: memberSign(m, slash.sighash) })), set });
+  if (!tx.ok) return { done: false, why: tx.why };
+  const sent = await post(rpc, tx.hex);
+  return sent.ok ? { done: true, offence: verdict.offence, posted: sent.txid, slashHeight: now.tip, signers: tx.signers, node: verdict.node, heldFor: verdict.federation, proofRef: toHex(verdict.proofId),
+    bondSpent: verdict.bondSpent, outpoint: `${s.txid}:${s.vout}`, bondSats: String(bond.value), escrowSats: String(slash.built.amounts.escrow) } : { done: false, why: sent.why };
 }
 
 async function handle(seat, s) {
@@ -331,10 +372,18 @@ async function publishEvents() {
 async function pass() {
   await payLiquidations().catch((e) => say({ liquidationsError: e.message }));
   // THE PROOFS OF A ROUND IN ASCENDING PROOF ID (§5A.3): the first pays each loss, a later one only what is still owed
-  const found = new Map();
+  const found = new Map(), abandoned = [];
   for (const seat of seats) {
     let list; try { list = await get(`${seat}/slashes`); } catch (e) { say({ seat, refused: e.message }); continue; }
     for (const s of [...(list.slashes || []), ...(list.auditSlashes || []).map((x) => ({ ...x, kind: 'audit' })), ...(list.doubleSlashes || []).map((x) => ({ ...x, kind: 'double' })), ...(list.tableSlashes || []).map((x) => ({ ...x, kind: 'table' }))]) if (!state.handled[s.proof] && !found.has(s.proof)) found.set(s.proof, { seat, s });
+    // AN OUTPUT AN ABANDONED ROW LEFT (kanban #1059): each seat's own listing, so one seat's false row cannot stand in for another's true one; its node gets no release meanwhile
+    for (const s of list.abandonedSlashes || []) { open.add(s.node); if (!state.handled[s.proof]) abandoned.push({ seat, s }); }
+  }
+  for (const { seat, s } of abandoned.sort((a, b) => (a.s.proof < b.s.proof ? -1 : 1))) {
+    if (state.handled[s.proof]) continue;
+    let r; try { r = await handleAbandoned(seat, s); } catch (e) { r = { done: false, why: e.message }; }
+    say({ seat, proof: s.proof.slice(0, 16), node: s.node.slice(0, 16), abandoned: s.proofRef.slice(0, 16), ...r });
+    if (r.done) { state.handled[s.proof] = { at: Date.now(), ...r }; keep(); }
   }
   for (const { seat, s } of [...found.values()].sort((a, b) => (a.s.proof < b.s.proof ? -1 : 1))) {
     let r; try { r = await handle(seat, s); } catch (e) { r = { done: false, why: e.message }; }
@@ -343,7 +392,7 @@ async function pass() {
     if (r.done) { state.handled[s.proof] = { at: Date.now(), ...r }; keep(); }
   }
   for (const [proof, v] of Object.entries(state.handled)) {
-    if (!v.posted || !v.escrowSats || v.settled) continue;
+    if (!v.posted || !v.escrowSats || v.settled || v.heldFor) continue;
     let r; try { r = await payOut(proof, v); } catch (e) { r = { why: e.message }; }
     if (r.why) say({ proof: proof.slice(0, 16), payouts: r.why });
   }
@@ -352,7 +401,7 @@ async function pass() {
 // THE SLASH'S PAYOUTS (GET /slash-payouts?round=), for a page to collect its player's: each a pre-expired lock at txid:outIdx
 const payouts = () => Object.values(state.handled).flatMap((v) => v.payouts || []);
 
-const posted = () => Object.entries(state.handled).filter(([, v]) => v.posted).map(([proof, v]) => ({ proof, txid: v.posted, slashHeight: v.slashHeight }));
+const posted = () => Object.entries(state.handled).filter(([, v]) => v.posted).map(([proof, v]) => ({ proof, txid: v.posted, slashHeight: v.slashHeight, ...(v.heldFor ? { heldFor: v.heldFor, proofRef: v.proofRef } : {}) }));
 // A RELEASE ONLY FOR A NODE NO HANDLED OR OPEN PROOF ACCUSES
 const open = new Set();
 const allow = ({ nodeKey }) => (open.has(toHex(nodeKey)) || Object.values(state.handled).some((v) => v.node === toHex(nodeKey))

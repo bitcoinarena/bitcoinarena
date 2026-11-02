@@ -153,6 +153,7 @@ import { createEndpointsOf, federationOfDir, configInvite } from './federation-e
 import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
 import { createArbitrationEvents } from './arbitration-events.js';
+import { startsByCensusKey } from '../../arena-protocol/src/abandoned-slash.js';
 import { createHalts, wsSessionCount } from './halts.js';
 import { reserveMembersOf } from './reserve-members.js';
 import { createSettleBackoff } from './settle-backoff.js';
@@ -4997,6 +4998,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     censusAt: ballot && typeof ballot.censusEntriesAt === 'function' ? (h) => (chainNetworkId() ? ballot.censusEntriesAt(chainNetworkId(), h) : null) : null,
     // what ended the bonds that census dropped: a seated guardian's spent bond is his abandonment (§23A.5, kanban #1054)
     spendsAt: ballot && typeof ballot.censusSpendsAt === 'function' ? (h) => (chainNetworkId() ? ballot.censusSpendsAt(chainNetworkId(), h) : null) : null,
+    // and every output it read: what an ABANDONED row left is listed for the arbitration set (§23A.5, kanban #1059)
+    bondsAt: ballot && typeof ballot.censusBondsAt === 'function' ? (h) => (chainNetworkId() ? ballot.censusBondsAt(chainNetworkId(), h) : null) : null,
     // and its tip: a seat that holds no round builds and checks records from the chain's census
     chainTip: typeof chainTip === 'function' ? async () => Number(await chainTip()) : null,
     // ARENA_RECORD_BASIS=chain: records from the chain's census before any held round's (seats that run no series)
@@ -10423,8 +10426,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const doubleRows = round.doubleSlashProofs().map((r) => ({ round: toHex(r.roundId), entry: toHex(r.entryId), node: toHex(r.nodePubkey), proof: toHex(r.proofId), seenMs: r.seenMs }));
         // AND THE PROOFS OF FALSE TABLES (§5A.3 table row, kanban #1040): they accuse a settlement, not an entry
         const tableRows = round.tableSlashProofs().map((r) => ({ round: toHex(r.roundId), entry: '00'.repeat(32), node: toHex(r.nodePubkey), proof: toHex(r.proofId), seenMs: r.seenMs }));
+        // AND WHAT THE RECORDS FILED (§23A.5, kanban #1059): an output an ABANDONED row left, its evidence the signed record (GET /federation-records-at). Template 3 goes to the census key's
+        // holders on the output's newest presig, so that is named with it; none named here, the one at bonding stands, and it is on the chain
+        let abandonedRows = [];
+        try { abandonedRows = fedRecords ? await fedRecords.abandonedSlashes() : []; } catch (e) { console.log(`[slash] abandoned rows: ${e.message}`); }
+        abandonedRows = abandonedRows.map((r) => { const got = startsByCensusKey(r.template) && seating ? seating.presigOf({ txid: r.txid, vout: r.vout }) : null; return got ? { ...r, presig: got.signature, presigRound: got.round } : r; });
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), slashes: rows, auditSlashes: auditRows, doubleSlashes: doubleRows, tableSlashes: tableRows }));
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), slashes: rows, auditSlashes: auditRows, doubleSlashes: doubleRows, tableSlashes: tableRows, abandonedSlashes: abandonedRows }));
       }
       // A ROUND'S PROOFS OF FALSE TABLES, as published (proof, ack, the rest), one after another (kanban #1040)
       if (req.method === 'GET' && url.pathname === '/table-slash-proofs') {
