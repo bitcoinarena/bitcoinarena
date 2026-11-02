@@ -1,0 +1,238 @@
+{
+ "seed": "863846f917e493e7de3fc9cb63d6d67e3beeff550c4cb53db9dc5b04f2767f29",
+ "height": 200,
+ "nominal": 7,
+ "bondMinGuardian": "50000",
+ "entries": [
+  {
+   "pubkey": "0101010101010101010101010101010101010101010101010101010101010101",
+   "txid": "4141414141414141414141414141414141414141414141414141414141414141",
+   "vout": 0,
+   "bondSats": "50000",
+   "advert": {
+    "operatorId": "op1",
+    "guardianCapable": true,
+    "guardianEndpoint": "wss://g1"
+   }
+  },
+  {
+   "pubkey": "0202020202020202020202020202020202020202020202020202020202020202",
+   "txid": "4242424242424242424242424242424242424242424242424242424242424242",
+   "vout": 0,
+   "bondSats": "60000",
+   "advert": {
+    "operatorId": "op2",
+    "guardianCapable": true,
+    "guardianEndpoint": "wss://g2"
+   }
+  },
+  {
+   "pubkey": "0303030303030303030303030303030303030303030303030303030303030303",
+   "txid": "4343434343434343434343434343434343434343434343434343434343434343",
+   "vout": 0,
+   "bondSats": "86667",
+   "advert": {
+    "operatorId": "op3",
+    "guardianCapable": true,
+    "guardianEndpoint": "wss://g3"
+   }
+  },
+  {
+   "pubkey": "0404040404040404040404040404040404040404040404040404040404040404",
+   "txid": "4444444444444444444444444444444444444444444444444444444444444444",
+   "vout": 0,
+   "bondSats": "86666",
+   "advert": {
+    "operatorId": "op4",
+    "guardianCapable": true,
+    "guardianEndpoint": "wss://g4"
+   }
+  },
+  {
+   "pubkey": "0505050505050505050505050505050505050505050505050505050505050505",
+   "txid": "4545454545454545454545454545454545454545454545454545454545454545",
+   "vout": 0,
+   "bondSats": "200000",
+   "advert": {
+    "operatorId": "op5",
+    "guardianCapable": true,
+    "guardianEndpoint": "wss://g5"
+   }
+  },
+  {
+   "pubkey": "0606060606060606060606060606060606060606060606060606060606060606",
+   "txid": "4646464646464646464646464646464646464646464646464646464646464646",
+   "vout": 0,
+   "bondSats": "50000",
+   "advert": {
+    "operatorId": "op6",
+    "guardianCapable": true,
+    "guardianEndpoint": "wss://g6"
+   }
+  },
+  {
+   "pubkey": "0707070707070707070707070707070707070707070707070707070707070707",
+   "txid": "4747474747474747474747474747474747474747474747474747474747474747",
+   "vout": 0,
+   "bondSats": "90000",
+   "advert": {
+    "operatorId": "op7",
+    "guardianCapable": true,
+    "guardianEndpoint": "wss://g7"
+   }
+  },
+  {
+   "pubkey": "0808080808080808080808080808080808080808080808080808080808080808",
+   "txid": "4848484848484848484848484848484848484848484848484848484848484848",
+   "vout": 0,
+   "bondSats": "55000",
+   "advert": {
+    "operatorId": "op8",
+    "guardianCapable": true,
+    "guardianEndpoint": "wss://g8"
+   }
+  },
+  {
+   "pubkey": "0909090909090909090909090909090909090909090909090909090909090909",
+   "txid": "4949494949494949494949494949494949494949494949494949494949494949",
+   "vout": 0,
+   "bondSats": "50000",
+   "advert": {
+    "operatorId": "op9",
+    "guardianCapable": true,
+    "guardianEndpoint": "wss://g9"
+   }
+  },
+  {
+   "pubkey": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+   "txid": "4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a",
+   "vout": 0,
+   "bondSats": "120000",
+   "advert": {
+    "operatorId": "op10",
+    "guardianCapable": true,
+    "guardianEndpoint": "wss://g10"
+   }
+  },
+  {
+   "pubkey": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+   "txid": "4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b",
+   "vout": 0,
+   "bondSats": "70000",
+   "advert": {
+    "operatorId": "op11",
+    "guardianCapable": true,
+    "guardianEndpoint": "wss://g11"
+   }
+  },
+  {
+   "pubkey": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+   "txid": "4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c",
+   "vout": 0,
+   "bondSats": "50000",
+   "advert": {
+    "operatorId": "op12",
+    "guardianCapable": true,
+    "guardianEndpoint": "wss://g12"
+   }
+  },
+  {
+   "pubkey": "1414141414141414141414141414141414141414141414141414141414141414",
+   "txid": "5454545454545454545454545454545454545454545454545454545454545454",
+   "vout": 0,
+   "bondSats": "40000",
+   "advert": {
+    "operatorId": "op2",
+    "guardianCapable": true,
+    "guardianEndpoint": "wss://g20"
+   }
+  },
+  {
+   "pubkey": "1515151515151515151515151515151515151515151515151515151515151515",
+   "txid": "5555555555555555555555555555555555555555555555555555555555555555",
+   "vout": 0,
+   "bondSats": "900000",
+   "advert": {
+    "operatorId": "lazy",
+    "guardianCapable": false,
+    "guardianEndpoint": ""
+   }
+  },
+  {
+   "pubkey": "1616161616161616161616161616161616161616161616161616161616161616",
+   "txid": "5656565656565656565656565656565656565656565656565656565656565656",
+   "vout": 0,
+   "bondSats": "10000",
+   "advert": {
+    "operatorId": "small",
+    "guardianCapable": true,
+    "guardianEndpoint": "wss://g22"
+   }
+  },
+  {
+   "pubkey": "1717171717171717171717171717171717171717171717171717171717171717",
+   "txid": "5757575757575757575757575757575757575757575757575757575757575757",
+   "vout": 0,
+   "bondSats": "500000",
+   "advert": {
+    "operatorId": "busy",
+    "guardianCapable": true,
+    "guardianEndpoint": "wss://g23"
+   }
+  }
+ ],
+ "cases": [
+  {
+   "what": "The plain draw: bond-weighted tickets over the eligible operators, one ticket per operator.",
+   "guardingOpen": [
+    "busy"
+   ],
+   "seatedFirst": [],
+   "eligible": 12,
+   "seatedFirstCount": 0,
+   "drawn": [
+    "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+    "0505050505050505050505050505050505050505050505050505050505050505",
+    "0303030303030303030303030303030303030303030303030303030303030303",
+    "0606060606060606060606060606060606060606060606060606060606060606",
+    "0202020202020202020202020202020202020202020202020202020202020202",
+    "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+    "0909090909090909090909090909090909090909090909090909090909090909"
+   ],
+   "alternates": [
+    "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+    "0707070707070707070707070707070707070707070707070707070707070707",
+    "0808080808080808080808080808080808080808080808080808080808080808"
+   ],
+   "why": "7 drawn of 12 eligible operators, 3 alternates in order"
+  },
+  {
+   "what": "A succession: the old guardians seated first in the order given, the missing seats drawn.",
+   "guardingOpen": [
+    "busy"
+   ],
+   "seatedFirst": [
+    "0101010101010101010101010101010101010101010101010101010101010101",
+    "0606060606060606060606060606060606060606060606060606060606060606",
+    "0909090909090909090909090909090909090909090909090909090909090909"
+   ],
+   "eligible": 9,
+   "seatedFirstCount": 3,
+   "drawn": [
+    "0101010101010101010101010101010101010101010101010101010101010101",
+    "0606060606060606060606060606060606060606060606060606060606060606",
+    "0909090909090909090909090909090909090909090909090909090909090909",
+    "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+    "0505050505050505050505050505050505050505050505050505050505050505",
+    "0303030303030303030303030303030303030303030303030303030303030303",
+    "0202020202020202020202020202020202020202020202020202020202020202"
+   ],
+   "alternates": [
+    "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+    "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+    "0707070707070707070707070707070707070707070707070707070707070707"
+   ],
+   "why": "3 seated first, 4 drawn of 9 eligible operators, 3 alternates in order"
+  }
+ ]
+}

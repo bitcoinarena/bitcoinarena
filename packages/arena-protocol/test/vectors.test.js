@@ -19,6 +19,7 @@ import { Writer } from '../src/encode.js';
 import { taggedHash, toHex, fromHex } from '../src/hash.js';
 import { commitCensus, leafHash, encodeEntry } from '../src/census.js';
 import { selectCommittee, ticketFor, weightOf, panelSeed, drawPanels } from '../src/sortition.js';
+import { drawGuardians } from '../src/guardian-founding.js';
 import { computePayoutTable, rankWeights, DELIVERED, FAILED } from '../src/payout.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../src/contracts.js';
 import { encodeCheckpoint, checkpointId, NO_PREVIOUS } from '../src/checkpoint.js';
@@ -103,6 +104,19 @@ test('tickets, weights and the chosen committee match', () => {
     contract: { gameVerifySlots: 3, bondMinSats: BigInt(v.bondMin), networkId: NETWORK_ID_REGTEST, gameId: b32(0x67) },
     committeeSeed: seed });
   assert.deepEqual(picked.map((e) => toHex(e.txid)), v.selected);
+});
+
+test('the founding draw matches, seat by seat and alternate by alternate', () => {
+  const v = load('founding');
+  const entries = v.entries.map((e) => ({ ...e, pubkey: fromHex(e.pubkey), txid: fromHex(e.txid), bondSats: BigInt(e.bondSats) }));
+  for (const c of v.cases) {
+    const d = drawGuardians({ entries, seed: fromHex(v.seed), height: v.height, nominal: v.nominal, bondMinGuardian: BigInt(v.bondMinGuardian), guardingOpen: new Set(c.guardingOpen),
+      seatedFirst: c.seatedFirst.map((k) => entries.find((e) => toHex(e.pubkey) === k)) });
+    assert.equal(d.ok, true, c.what);
+    assert.deepEqual(d.drawn.map((e) => toHex(e.pubkey)), c.drawn, c.what);
+    assert.deepEqual(d.alternates.map((e) => toHex(e.pubkey)), c.alternates, c.what);
+    assert.deepEqual([d.eligible, d.seatedFirst, d.why], [c.eligible, c.seatedFirstCount, c.why], c.what);
+  }
 });
 
 test('the payout table matches the specification worked example', () => {
