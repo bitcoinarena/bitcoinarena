@@ -16,9 +16,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { toHex } from '../src/hash.js';
 import { encodePlayerResult, resultId, joinSignedResult } from '../src/result.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import {
-  slashHoldsOnDoubleSign, orderedResultIds, slashCommitment, TWO_RESULTS,
+  slashHoldsOnDoubleSign as holds, orderedResultIds, slashCommitment, TWO_RESULTS, encodeSlashProof, SLASH_PROOF_BYTES,
+  joinDoubleSlashEvidence, splitDoubleSlashEvidence, cutDoubleSlashEvidence, doubleSlashEvidenceBytesOf,
 } from '../src/slash.js';
+
+// These cases are about the pair, so their signatures stand; the test below that drops this reads real ones.
+const slashHoldsOnDoubleSign = (a) => holds({ verify: () => true, ...a });
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const NODE = b32(0x11);
@@ -193,8 +198,7 @@ test('a different signature over the same result is still one result', () => {
 });
 
 test('every field of the result is one the pair can differ in', () => {
-  for (const over of [{ outcome: 'FAILED' }, { score: 4201 }, { transcriptHash: b32(0x45) },
-                      { simCoreHash: b32(0x34) }]) {
+  for (const over of [{ outcome: 'FAILED' }, { score: 4201 }, { simCoreHash: b32(0x34) }]) {
     const other = resultOf(over);
     assert.equal(ask(DELIVERED, other).slashed, true, JSON.stringify(over));
   }
@@ -238,4 +242,57 @@ test('rubbish is refused as evidence rather than decoded into an offence', () =>
     assert.equal(no.slashed, false);
     assert.match(no.why, /not a signed result|named in the wrong order/);
   }
+});
+
+// kanban #986. A transcript's bytes name its round and its entry, and a result names no entry: two transcripts are two entries.
+test('two entries of one player key are two honest results, not an offence', () => {
+  const first = resultOf({ transcriptHash: b32(0x44), score: 4200 });
+  const second = resultOf({ transcriptHash: b32(0x45), score: 900 });
+  const no = ask(first, second);
+  assert.equal(no.slashed, false, 'a node was slashed for a player who pressed PLAY twice');
+  assert.equal(no.bond, undefined, 'and no bond may even be NAMED for one');
+  assert.match(no.why, /two entries of one player/);
+});
+
+test('the pair stands on the accused node\'s own signatures, and nothing else', () => {
+  const secret = new Uint8Array(32).fill(0x31), stranger = new Uint8Array(32).fill(0x32);
+  const key = schnorr.getPublicKey(secret);
+  const verify = (s, m, k) => schnorr.verify(s, m, k);
+  const real = (r, by = secret) => joinSignedResult(encodePlayerResult(r), schnorr.sign(resultId(r), by));
+  const a = resultOf({ nodePubkey: key }), b = resultOf({ nodePubkey: key, outcome: 'FAILED', score: 0 });
+  const proof = proofFor(a, b, { nodePubkey: key });
+  const on = (signedResults, over = {}) => holds({ proof, signedResults, committee: [key], advert: { ...advert, nodePubkey: key }, verify, ...over });
+
+  assert.equal(on([real(a), real(b)]).slashed, true);
+  assert.match(on([real(a), real(b, stranger)]).why, /result 1 is not the accused node's/);
+  assert.match(on([real(a, stranger), real(b)]).why, /result 0 is not the accused node's/);
+  assert.match(on([sign(a), sign(b)]).why, /result 0 is not the accused node's/);
+  // ONE FLIPPED BYTE OF A SIGNATURE, AND A BODY MOVED UNDER A GOOD ONE
+  const flipped = real(b); flipped[flipped.length - 1] ^= 1;
+  assert.match(on([real(a), flipped]).why, /result 1 is not the accused node's/);
+  const moved = real(b); moved.set(new TextEncoder().encode('x'), 3 + 32 + 32 + 2);
+  assert.equal(on([real(a), moved]).slashed, false);
+  // AND NO VERIFIER IS NO SLASH, never a pass
+  assert.match(holds({ proof, signedResults: [real(a), real(b)], committee: [key], advert: { ...advert, nodePubkey: key } }).why, /needs a verifier/);
+  assert.equal(on([real(a), real(b)], { verify: () => { throw new Error('boom'); } }).slashed, false);
+});
+
+test('a published pair cuts, splits and rejoins to the same bytes, and nothing else reads as one', () => {
+  const proofBytes = encodeSlashProof(proofFor(DELIVERED, FAILED));
+  const front = resultOf({ front: 1, frontOpenCents: 100, frontCloseCents: 200, frontMode: 1 });
+  const small = joinDoubleSlashEvidence(proofBytes, sign(DELIVERED), sign(FAILED));
+  const mixed = joinDoubleSlashEvidence(proofBytes, sign(front), sign(FAILED));
+  assert.equal(doubleSlashEvidenceBytesOf(small), small.length);
+  assert.equal(mixed.length, small.length + 10, 'a price round\'s result is 10 longer, and sizes itself');
+  const stream = new Uint8Array([...small, ...mixed]);
+  const cut = cutDoubleSlashEvidence(stream);
+  assert.deepEqual(cut.map((c) => c.length), [small.length, mixed.length]);
+  const got = splitDoubleSlashEvidence(cut[1]);
+  assert.equal(toHex(got.signedResults[0]), toHex(sign(front)));
+  assert.equal(toHex(got.signedResults[1]), toHex(sign(FAILED)));
+  assert.equal(toHex(got.proofBytes), toHex(proofBytes));
+  assert.throws(() => splitDoubleSlashEvidence(small.subarray(0, small.length - 1)), /two results/);
+  assert.throws(() => splitDoubleSlashEvidence(new Uint8Array([...proofBytes, ...sign(FAILED)])), /two results/);
+  assert.throws(() => splitDoubleSlashEvidence(new Uint8Array(SLASH_PROOF_BYTES)), /two results/);
+  assert.deepEqual(cutDoubleSlashEvidence(stream.subarray(0, stream.length - 1)).length, 1);
 });
