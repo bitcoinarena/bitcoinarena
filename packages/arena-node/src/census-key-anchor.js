@@ -35,6 +35,29 @@ export function censusKeyAnchorSpend({ carrier, secret, funding, output }) {
 }
 
 /**
+ * A COIN THAT HOLDS A FEE, FROM THE SAME WALLET (kanban #972): `fund(spk, value)` -> { ok, txid, vout, value } or { ok: false, why }. A slash start takes a fee input whoever files it, so a node that can pay for an anchor can file.
+ */
+export function createFeeCoin({ call, walletCall, env = {} }) {
+  const setting = dutySetting(env.ARENA_DUTY_POST);
+  const feeRate = Number(env.ARENA_DUTY_FEE_RATE || 0.1);
+  return async function fund(spk, value) {
+    if (setting === 'off') return { ok: false, why: 'round posting is off (duty_post=off), and that wallet pays this too' };
+    let listed; try { listed = await call('listwallets', []); } catch (e) { listed = e; }
+    const named = String(env.ARENA_DUTY_WALLET || '').trim();
+    const pre = walletVerdict({ listed, named, unspent: [] });
+    if (!pre.wallet || listed instanceof Error) return { ok: false, why: pre.why };
+    const rpc = walletCall(pre.wallet);
+    let unspent; try { unspent = await rpc('listunspent', [1, 9999999, [], false]); } catch (e) { unspent = e; }
+    const wallet = walletVerdict({ listed, named, unspent });
+    if (!wallet.canPay) return { ok: false, why: wallet.why };
+    try {
+      const funded = await fundAtRate(rpc, [Buffer.concat([le64(value), Buffer.from([spk.length]), Buffer.from(spk)])], feeRate);
+      return { ok: true, txid: String(await rpc('sendrawtransaction', [funded.hex])), vout: 0, value: BigInt(value) };
+    } catch (e) { return { ok: false, why: e.message.slice(0, 200) }; }
+  };
+}
+
+/**
  * `post({ body, output })` -> { ok, txid, vsize, fee } or { ok: false, why }. `output` is the OP_RETURN that names the body. `call` the node's bitcoind, `walletCall(name)` a wallet's; `env` ARENA_DUTY_POST, ARENA_DUTY_WALLET,
  * ARENA_DUTY_FEE_RATE, as the day's posting reads them.
  */

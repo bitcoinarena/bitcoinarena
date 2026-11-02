@@ -2925,6 +2925,17 @@ fallback      <slash_fallback_blocks> CHECKSEQUENCEVERIFY DROP
    holding more than its own bond.
 ```
 
+**A seat files it (kanban #972).** A seat holding a proof against a template-3 bond takes
+the round's presig, or the bond's own if it holds none, a fee coin from its own wallet that
+holds the whole fee, and the proof's `OP_RETURN`. It then asks the key's holders, in two
+rounds of FROST. A holder commits a nonce only after it has replayed the proof itself and
+held the transaction to its own census: that bond, unstarted, the whole amount to a hold
+output it rebuilt, a presig that verifies, the proof named. A nonce is used once. The
+filer checks the signature before it sends anything, and whatever it claims, Bitcoin takes
+the result or refuses it. Seats holding one proof wait their turn by a hash of the proof
+and the node key. Two signed results are judged by every seat from what it holds; a replay
+or a table is not judged by this path yet, and a holder signs nothing it cannot judge.
+
 **The payout table (RULED 2026-11-02, kanban #1021).**
 
 ```text

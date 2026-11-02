@@ -9,6 +9,8 @@ import { CensusDkg } from './dkg.js';
 import { feldmanGroup } from './curve.js';
 import { encodeCensusComplaint } from '../../arena-protocol/src/census-dkg.js';
 import { encodeCensusKeyRecord } from '../../arena-protocol/src/census-key.js';
+import { lagrangeOf } from '../../arena-protocol/src/census-dkg.js';
+import { signNodeShare340 } from '../../arena-protocol/src/frost-bip340.js';
 
 const random = (n) => new Uint8Array(randomBytes(n));
 
@@ -18,8 +20,14 @@ const random = (n) => new Uint8Array(randomBytes(n));
  *   check    answers each bad deal's complaint and every dealer it refuses
  *   sign     this node's signature on the record of the deals handed in
  *   finish   this node's shares, once `statements` show the threshold on the record of those deals
+ *   frostShare  one node's part of a signature (census-sign.js): { id, held, all, groupPublicKey, nonces, message, commitments }. A lambda over 683 shares is half a million products
  */
-export async function censusKeyWork({ kind, key, secret, run, part = null, deals = [], statements = [] }) {
+export async function censusKeyWork(job) {
+  if (job.kind === 'frostShare') {
+    const { id, held, all, groupPublicKey, nonces, message, commitments } = job;
+    return { ok: true, z: signNodeShare340({ id, held, lambda: lagrangeOf(all, [...held.keys()]), groupPublicKey, nonces, message, commitments, curve: feldmanGroup }) };
+  }
+  const { kind, key, secret, run, part = null, deals = [], statements = [] } = job;
   const dkg = new CensusDkg({ key, secret, run, part, curve: feldmanGroup, random });
   if (kind === 'deal') return dkg.deal();
   const refused = [];
