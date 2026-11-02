@@ -213,4 +213,5 @@ test('a seat that never wrote the check-in keeps its certificate, built from the
   f.setContractOf((rid, index) => (index === c.roundIndex ? c : null));
   assert.deepEqual(f.agent.keepCert(f.ridIn, 'settlement', bytes, { index: c.roundIndex }), { ok: true, kept: true });
   assert.deepEqual(f.agent.seatedFor(f.ridAfter, 'settlement'), list.map((n) => toHex(n.pubkey)), 'and the rounds after it are seated by it');
+  assert.equal(f.agent.certRoundOf(f.ridAfter, 'settlement'), c.roundIndex, 'the door names the check-in\'s index though this seat has no row of it');
 });
