@@ -347,7 +347,7 @@
       ]
     },
     "arena-app-rock-paper-scissors": {
-      "commit": "9b1f72a983fe2aec821d09efa1f89316fcd7ccb9",
+      "commit": "145f2ba14b5f832dcfada7d22ec5f68e1a0da0b8",
       "files": {
         "app.json": "414384d51cb16f11d9733f9edc30d87f28a269acc1e4b2e00fa71c9ae6bdae93",
         "brand/rps-icon.svg": "ae9a1a196e3c3194a269df00eaf94ddcfe22ededad568cd19bebb025b02d8f36",
@@ -357,7 +357,7 @@
         "client/index.html": "1242d7d39c8a218dff54a34b92bde5b4a25704a92e09d8fc9fecb2c7b52f3f85",
         "dist/rps-view-v5.js": "0f70d437492bd79c024c56457257208218d78c0d6a546aaeec625061f3775f49",
         "dist/rps-view.js": "a9d958a26ceafa1580e5c17a3c41160d03b243d5f4d28ab79ce0d0ae6f43825b",
-        "package.json": "e80b987aef7cb96e0973db7b25bd1bbdab9125351ff571d0098b2b7e2bf870b9",
+        "package.json": "ca44b3cd8906e9b425e877846aa6b3b874283f60fe51797dd29aeebbbbe0a92e",
         "plugin/decide-v4.js": "f86afd62734989cca3004021d00879af5d57008958908ca28973100625d7f031",
         "plugin/decide.js": "d65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434",
         "plugin/info.js": "807281ea2eb05bb56bac1f579c901bdc33c2f1391071d82cceaca48d2a6f9c07",
@@ -383,7 +383,7 @@
       "exec": []
     },
     "arena-app-up-or-down": {
-      "commit": "1f14b89f6861763146fb55690ab93d89f5ebcd1f",
+      "commit": "613f66edce498a33f493176b0940c0f0ac05011f",
       "files": {
         "app.json": "3482954b8dd93640ac044b3b4f82072b0785031f6da0c62ddf62c79437773ad1",
         "brand/updown-icon.svg": "3b6d03a10e6e3173ad19cbfe6c3850b8c78d7c37fdd0f06ad25e1c4299a8ec4b",
@@ -415,10 +415,10 @@
         "client/src-v22.js": "b3e1062c2df112a3b776721709ef8bf0e3081a38467862e07ee016383650e739",
         "client/src-v23.js": "5298d558397a8d32e3a539aba2f6d623dada892c1ea831a94b6989ab9075a901",
         "dist/updown-view.js": "d83fdf4a287635635d0f851c7cf16b5368815dec0f5e529a8527384fa83df285",
-        "package.json": "4f0a5c68bcc233f6d3b7ae93f52e47ef874d9ea4f9e1935c0115a63eaf609bec",
+        "package.json": "2e0b61ff9c039512bcfa16ff69cbb2f72ade3612af8fd1bc853e3006e9e89951",
         "page/book-bot.js": "c5ad215e49559425cc4183fa3fc3a1510542277bb42190195f228ad1f09576d0",
         "page/market-page.css": "e711b857a639bfdb0b174847fcca8504072637a600c50b036af8b75a9e5f7d23",
-        "page/market-page.js": "93b3635f060e2502c302eb9c4f61ce5c87920cb29ee808e190dac7fe48010dcd",
+        "page/market-page.js": "1eabb6e8f8225e41a45953de613529d227df0478abf25687c7fc90ad52a8e263",
         "plugin/attestors.js": "b5dfb5f40eb6b315ef0f98dcab73fe603eebb329f4dd6c985513086a1a1f8837",
         "plugin/btc-updown-v10.js": "3c8652c5bc8941c231e266ebcca520fcf8ae137eccd365f9f576c4e186610783",
         "plugin/btc-updown-v11.js": "3e5ef1fc8c371499175d65a7d913771605b030bd5a815229f290440c5b7a36e3",
@@ -479,7 +479,7 @@
         "tools/sign-manifest-v7.mjs": "860db2df94cd7873b91166e4e294d82e68810420f4c01676f2415cfbcd3e4827",
         "tools/sign-manifest-v8.mjs": "6278e00f4b3fe50c45e7325579fdb5b919176b0aa300c3ded00d5e8b8e0ff674",
         "tools/sign-manifest-v9.mjs": "d70ebe2d8f9e90f29870e22d08b66ea014527bd7337060e8390e7955531b0824",
-        "view/UpDownView.jsx": "02240dc8af2b4aa77888553c2132fc9af7abd5961b3468ca926d14a159da8225",
+        "view/UpDownView.jsx": "604c626e40122158eda615acb91eac446db61c7f758fde143b43e7335156ac4f",
         "view/main.jsx": "8fac2cf3eaf1a87b9fd049c86d36e9eb1552c31039eebba3c47c16f7fb33908a"
       },
       "exec": []
