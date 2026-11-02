@@ -7223,7 +7223,7 @@
   "path": "/slashes",
   "params": "none",
   "auth": "none",
-  "returns": "200 JSON {node, slashes:[{round, entry, node, proof, seenMs, objection}], auditSlashes:[...], doubleSlashes:[{round, entry, node, proof, seenMs}]}",
+  "returns": "200 JSON {node, slashes:[{round, entry, node, proof, seenMs, objection}], auditSlashes:[...], doubleSlashes:[{round, entry, node, proof, seenMs}], tableSlashes:[{round, entry (zeros), node, proof, seenMs}]}",
   "purpose": "Every slash proof this node filed, for the arbitration set to fetch.",
   "audience": "node-to-node",
   "line": 5986,
@@ -7234,7 +7234,7 @@
    {
     "status": "200",
     "contentType": "application/json",
-    "description": "{node, slashes:[{round, entry, node, proof, seenMs, objection}], auditSlashes:[...], doubleSlashes:[{round, entry, node, proof, seenMs}]}."
+    "description": "{node, slashes:[{round, entry, node, proof, seenMs, objection}], auditSlashes:[...], doubleSlashes:[{round, entry, node, proof, seenMs}], tableSlashes:[{round, entry (zeros), node, proof, seenMs}]}."
    }
   ],
   "headers": [],
@@ -13218,6 +13218,44 @@
   "audience": "node-to-node",
   "line": 9547,
   "summary": "A round's proofs of two results",
+  "query": [
+   {
+    "name": "round",
+    "required": true,
+    "type": "string",
+    "description": "The round id, 64 hex."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/octet-stream",
+    "description": "The proofs' bytes, one after another."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a round id."
+   }
+  ],
+  "headers": [
+   "x-slash-proofs"
+  ],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/table-slash-proofs",
+  "params": "query round (64 hex)",
+  "auth": "none",
+  "returns": "200 octet-stream: the proofs one after another, header x-slash-proofs = count; 400",
+  "purpose": "A round's fraud proofs of false tables (§5A.3 table row): a seat's SettlementAck over a table that is false or a transaction that does not rebuild from it, as published: each proof with the ack, the threshold of acks, the table, the Entry Contracts, each stake lock's P and the FINAL records, concatenated. The arbitration service reads these; a seat files one only after checking it holds.",
+  "audience": "node-to-node",
+  "line": 9547,
+  "summary": "A round's proofs of false tables",
   "query": [
    {
     "name": "round",

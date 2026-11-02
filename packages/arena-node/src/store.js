@@ -988,6 +988,22 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, scope, txid)
     );
 
+    -- A FALSE TABLE, FILED (§5A.3 table row, kanban #1040): one proof per seat that acked it. The bytes are the proof and all it stands on.
+    CREATE TABLE IF NOT EXISTS table_slash_proofs (
+      proof_id    BLOB PRIMARY KEY,
+      round_id    BLOB NOT NULL,
+      node_pubkey BLOB NOT NULL,
+      bytes       BLOB NOT NULL,
+      seen_ms     INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS table_slash_proofs_round ON table_slash_proofs (round_id);
+
+    -- ROUNDS A SEAT WAS ASKED TO ACK OR COMMIT TO ANOTHER PAIR THAN IT REBUILT: read for a false table for 6 h, and only these, so no honest round costs a read.
+    CREATE TABLE IF NOT EXISTS settlement_suspects (
+      round_id BLOB PRIMARY KEY,
+      seen_ms  INTEGER NOT NULL
+    );
+
     -- A ROUND THAT TAKES ANY FEDERATION (2026.0.3) SETTLES ONE TRANSACTION PER FEDERATION (federation-settlement.js):
     -- one row per (round, federation), with the same intent and state as a round's own settlement row.
     CREATE TABLE IF NOT EXISTS fed_lock_settlements (

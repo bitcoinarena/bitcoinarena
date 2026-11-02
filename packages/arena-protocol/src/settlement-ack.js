@@ -11,8 +11,9 @@
 // and nobody filing a proof can choose which of a player's entries a row meant. No curve lives in this package: `verify` and `sign` are injected.
 import { PROTOCOL_VERSION, speaksVersion, TYPE_SETTLEMENT_ACK, TYPE_SETTLEMENT_TABLE, TAG } from './constants.js';
 import { Writer, Reader } from './encode.js';
-import { taggedHash, toHex } from './hash.js';
+import { taggedHash, toHex, fromHex } from './hash.js';
 import { compareBytes } from './payout.js';
+import { OUTCOMES, outcomeByte } from './result.js';
 import { receiptsNeeded } from './threshold.js';
 
 export const SETTLEMENT_ACK_BYTES = 1 + 2 + 32 + 32 + 32;
@@ -108,19 +109,42 @@ export function splitAcks(bytes) {
 }
 
 /**
- * THE TABLE A SEAT ACKS. `rows` are { entryId, pubkey, amountMsat }, sorted here. `lateEntryId` is the late loser a second settlement
- * is for, zero on the round's own. A round's own settlement of played entries names each row's entry; a table with no such entry (a
- * market's, a late loser's: what the plan pays) has entryId zero in its rows, and row 3 does not read it, because F does not make it.
+ * THE TABLE A SEAT ACKS. `rows` are { entryId, pubkey, amountMsat, outcome, score, atTheDoor }, sorted here. `lateEntryId` is the late loser a
+ * second settlement is for, zero on the round's own; `federationId` the federation one part of a round that takes any federation settles
+ * in, zero otherwise. A round's own settlement of played entries names each row's entry and what the seat held for it; a table with no such
+ * entry (a market's, a late loser's: what the plan pays) has entryId zero and no outcome in its rows, and F does not read it.
+ *
+ * AND THE TRANSACTION IT REBUILDS TO (§5A.3, RULED 2026-11-02, kanban #1043): `claims` and `payouts` in the transaction's order, and its
+ * `nonce`. A settlement_txid is the hash of these and the P of each stake claim, so a pair the seat acked either rebuilds or is false by
+ * itself. A claim names the entry whose lock it spends: the Entry Contract says which lock that is, and which P opens it.
  */
-export function encodeSettlementTable({ roundId, lateEntryId = ZERO, rows }) {
+export const NO_OUTCOME = 255;
+export const CLAIM_STAKE = 0;
+export const CLAIM_FEE = 1;
+const NONCE_BYTES = 8;
+const PK_BYTES = 33;
+export function encodeSettlementTable({ roundId, lateEntryId = ZERO, federationId = ZERO, nonce = new Uint8Array(NONCE_BYTES), claimPk = new Uint8Array(PK_BYTES), rows, claims = [], payouts = [] }) {
   const w = new Writer();
   w.u8(TYPE_SETTLEMENT_TABLE);
   w.u16(PROTOCOL_VERSION);
   w.bytes32(roundId);
   w.bytes32(lateEntryId);
+  w.bytes32(federationId);
+  w.bytes(nonce, NONCE_BYTES);
+  w.bytes(claimPk, PK_BYTES);
   const sorted = [...rows].sort((a, b) => compareBytes(a.entryId, b.entryId) || compareBytes(a.pubkey, b.pubkey)
     || (a.amountMsat < b.amountMsat ? -1 : a.amountMsat > b.amountMsat ? 1 : 0));
-  w.vec(sorted, (row, ww) => { ww.bytes32(row.entryId); ww.bytes32(row.pubkey); ww.u64(row.amountMsat); });
+  w.vec(sorted, (row, ww) => {
+    ww.bytes32(row.entryId); ww.bytes32(row.pubkey); ww.u64(row.amountMsat);
+    ww.u8(row.outcome ? outcomeByte(row.outcome) : NO_OUTCOME); ww.u32(row.score || 0); ww.u8(row.atTheDoor ? 1 : 0);
+  });
+  w.vec(claims, (c, ww) => {
+    ww.bytes32(c.entryId); ww.bytes32(c.outpoint.txid); ww.u64(BigInt(c.outpoint.outIdx)); ww.u64(c.amountMsat); ww.u8(c.kind === 'fee' ? CLAIM_FEE : CLAIM_STAKE);
+  });
+  w.vec(payouts, (p, ww) => {
+    ww.bytes(p.payoutPk, PK_BYTES); ww.u64(p.msat); ww.u8(p.sent ? 1 : 0);
+    if (p.sent) { ww.bytes32(fromHex(p.sent.paymentHash)); ww.bytes(fromHex(p.sent.gatewayPk), PK_BYTES); ww.u64(BigInt(p.sent.expiration)); }
+  });
   return w.finish();
 }
 
@@ -128,14 +152,36 @@ export function decodeSettlementTable(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_SETTLEMENT_TABLE) throw new Error('not a settlement table');
   if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
-  const out = { roundId: r.bytes32(), lateEntryId: r.bytes32(), rows: r.vec((rr) => ({ entryId: rr.bytes32(), pubkey: rr.bytes32(), amountMsat: rr.u64() })) };
+  const out = { roundId: r.bytes32(), lateEntryId: r.bytes32(), federationId: r.bytes32(), nonce: r.bytes(NONCE_BYTES), claimPk: r.bytes(PK_BYTES),
+    rows: r.vec((rr) => {
+      const row = { entryId: rr.bytes32(), pubkey: rr.bytes32(), amountMsat: rr.u64() };
+      const said = rr.u8(), score = rr.u32(), door = rr.u8();
+      if (said !== NO_OUTCOME && !OUTCOMES[said]) throw new Error(`${said} is no outcome`);
+      return { ...row, ...(said === NO_OUTCOME ? {} : { outcome: OUTCOMES[said] }), score, ...(door ? { atTheDoor: true } : {}) };
+    }),
+    claims: r.vec((rr) => {
+      const c = { entryId: rr.bytes32(), outpoint: { txid: rr.bytes32(), outIdx: rr.u64() }, amountMsat: rr.u64() };
+      return { ...c, kind: rr.u8() === CLAIM_FEE ? 'fee' : 'stake' };
+    }),
+    payouts: r.vec((rr) => {
+      const p = { payoutPk: rr.bytes(PK_BYTES), msat: rr.u64() };
+      if (!rr.u8()) return p;
+      return { ...p, sent: { paymentHash: toHex(rr.bytes32()), gatewayPk: toHex(rr.bytes(PK_BYTES)), expiration: rr.u64() } };
+    }) };
   if (r.at !== bytes.length) throw new Error('trailing bytes after the settlement table');
   return out;
 }
 
 export const settlementTableId = (t) => taggedHash(TAG.settlementTable, encodeSettlementTable(t));
 
-/** The table of a plan with no entries of its own: what it pays, by key. */
-export const planTableRows = (plan) => (plan.payouts || []).map((p) => ({ entryId: ZERO, pubkey: p.payoutPk, amountMsat: p.msat }));
+/** The table of a plan with no entries of its own: what it pays, by the x-only half of each payout key. */
+export const planTableRows = (plan) => (plan.payouts || []).map((p) => ({ entryId: ZERO, pubkey: p.payoutPk.subarray(p.payoutPk.length - 32), amountMsat: p.msat }));
+
+/** A plan's claims and payouts as a table lists them: each claim by the entry whose lock it spends (`entryOf(claim)`), zero if it has none. */
+export const planTableBuild = (plan, entryOf) => ({
+  nonce: plan.nonce,
+  claims: (plan.claims || []).map((c) => ({ entryId: entryOf(c) || ZERO, outpoint: c.outpoint, amountMsat: c.amountMsat, kind: c.kind === 'fee' ? 'fee' : 'stake' })),
+  payouts: (plan.payouts || []).map((p) => ({ payoutPk: p.payoutPk, msat: p.msat, ...(p.sent ? { sent: p.sent } : {}) })),
+});
 
 export const namesNoEntry = (row) => !is32(row.entryId) || row.entryId.every((b) => b === 0);

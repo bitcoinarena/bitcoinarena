@@ -20,9 +20,16 @@ import { windowsOf } from '../src/window.js';
 import { signFinalSig } from '../src/final-sig.js';
 import {
   signSettlementAck, settlementAckId, encodeSettlementTable, decodeSettlementTable, settlementTableId, splitSignedAck, countAcks, checkAck,
-  joinAcks, splitAcks, encodeSettlementAck, decodeSettlementAck, planTableRows,
+  joinAcks, splitAcks, encodeSettlementAck, decodeSettlementAck, planTableRows, planTableBuild,
 } from '../src/settlement-ack.js';
-import { slashHoldsOnTable, slashHoldsOnWithheld, slashCommitment, TABLE_IS_NOT_F } from '../src/slash.js';
+import { slashHoldsOnTable, slashHoldsOnWithheld, slashCommitment, TABLE_IS_NOT_F, encodeSlashProof, slashProofId, joinTableSlashEvidence, splitTableSlashEvidence, cutTableSlashEvidence, tableSlashEvidenceBytesOf } from '../src/slash.js';
+import { lockSettlement, lateSettlementNonce, settlementNonce } from '../src/lock-settlement.js';
+import { federationSettlementNonce } from '../src/federation-settlement.js';
+import { tableBuild } from '../src/settlement-rebuild.js';
+import { refundKeyOf } from '../src/stake-lock.js';
+import { RESULT_TYPE } from '../src/manifest.js';
+import { sha256 } from '../src/hash.js';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 
 const verify = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -43,10 +50,13 @@ const TXID = b32(0x77);
 const advert = { nodePubkey: NODE.pubkey, bondTxid: BOND, bondVout: 3 };
 const { finalAfterMs } = windowsOf(contract);
 
+// EACH ENTRY'S P IS THE SCALAR b32(0x10 + n): a real point in its contract, so a shown P either opens it or does not
+const secretOf = (n) => b32(0x10 + n);
+const pointOf = (scalar) => secp256k1.Point.BASE.multiply(scalar).toBytes(true);
 const entryOf = (n) => ({
   roundId: ROUND, playerPubkey: b32(0xa0 + n), sessionPubkey: b32(0x0b), stakeCommitment: b32(0x0c), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n),
-  donationMsat: 0n, joinTick: 0, worldSecret: b32(n), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32),
-  stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
+  donationMsat: 0n, joinTick: 0, worldSecret: b32(n), vssSharesRef: new Uint8Array(32), stakePoint: secp256k1.getPublicKey(secretOf(n), true), feePreimage: b32(0x20 + n),
+  stakeLockOutpoint: { txid: b32(0x30 + n), outIdx: 0n }, feeLockOutpoint: { txid: b32(0x30 + n), outIdx: 1n }, claimKeyAttestationRef: new Uint8Array(32),
 });
 const OUTCOMES = [['DELIVERED', 900], ['DELIVERED', 500], ['FAILED', 0], ['FORFEIT', 0]];
 const entries = OUTCOMES.map((_, i) => entryOf(i + 1));
@@ -63,13 +73,27 @@ const finalOf = (i, over = {}, signers = seats.slice(0, 5)) => ({
 });
 const finals = () => entries.map((_, i) => finalOf(i));
 
-// F over the four entries, as a seat's table: each row names its entry
+// F over the four entries, as a seat's table: each row names its entry and what the seat held for it
+const FEES = { ppm: 1000n, baseMsat: 100n };
+const CLAIM_PK = refundKeyOf(b32(0xcc));
+const inF = () => entries.map((e, i) => ({ entryId: entryId(e), pubkey: e.playerPubkey, outcome: OUTCOMES[i][0], score: OUTCOMES[i][1], stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat }));
 const honestRows = () => {
-  const inF = entries.map((e, i) => ({ entryId: entryId(e), pubkey: e.playerPubkey, outcome: OUTCOMES[i][0], score: OUTCOMES[i][1], stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat }));
-  const f = computePayoutTable({ roundId: ROUND, entries: inF, minScore: contract.minScore });
-  return f.activated.map((e, i) => ({ entryId: e.entryId, pubkey: e.pubkey, amountMsat: f.table[i].amountMsat }));
+  const f = computePayoutTable({ roundId: ROUND, entries: inF(), minScore: contract.minScore });
+  return f.activated.map((e, i) => ({ entryId: e.entryId, pubkey: e.pubkey, amountMsat: f.table[i].amountMsat, outcome: e.outcome, score: e.score }));
 };
-const tableOf = (rows, over = {}) => ({ roundId: ROUND, rows, ...over });
+// THE PLAN THE SEATS BUILD, stake and fee part, listed in the table as the seats list it
+const plan = () => lockSettlement({ roundId: ROUND, entries: inF(), minScore: contract.minScore, fees: FEES, contract, signerNodes: { gameVerify: committee, settlement: committee },
+  locks: new Map(entries.map((e) => [toHex(e.playerPubkey), { outpoint: e.stakeLockOutpoint, amountMsat: netStakeMsat(e), refundPk: refundKeyOf(e.playerPubkey) }])),
+  feeLocks: new Map(entries.map((e) => [toHex(e.playerPubkey), { outpoint: e.feeLockOutpoint, amountMsat: e.feeMsat, preimage: e.feePreimage }])) });
+const entryByKey = new Map(entries.map((e) => [toHex(e.playerPubkey), entryId(e)]));
+const built = () => planTableBuild(plan(), (c) => entryByKey.get(toHex(c.pubkey)));
+const tableOf = (rows, over = {}) => ({ roundId: ROUND, rows, claimPk: CLAIM_PK, ...built(), ...over });
+const preimages = () => new Map(entries.map((e, i) => [toHex(entryId(e)), secretOf(i + 1)]));
+const shownEntries = () => new Map(entries.map((e) => [toHex(entryId(e)), e]));
+// A STAND-IN FOR THE STOCK CLIENT'S HASH: everything the real one covers (settle in the stake-lock tool), in order
+const txidOf = (b) => sha256(new TextEncoder().encode(JSON.stringify({ c: b.claims.map((c) => [toHex(c.outpoint.txid), String(c.outpoint.outIdx), toHex(c.preimage), String(c.amountMsat)]),
+  p: b.payouts.map((x) => [toHex(x.payoutPk), String(x.msat), x.sent || null]), n: toHex(b.nonce) })));
+const rebuilt = (t) => { const b = tableBuild({ table: decodeSettlementTable(encodeSettlementTable(t)), entries: shownEntries(), preimages: preimages(), pointOf }); assert.equal(b.ok, true, b.why); return txidOf(b.build); };
 const ackBy = (seat, table, txid = TXID) => signSettlementAck({ roundId: table.roundId, payoutTableId: settlementTableId(table), settlementTxid: txid }, seat.pubkey, (d) => schnorr.sign(d, seat.secret));
 const ask = (t, over = {}) => {
   const signedAck = ackBy(NODE, t);
@@ -78,6 +102,12 @@ const ask = (t, over = {}) => {
     proof: { roundId: ROUND, playerPubkey: new Uint8Array(32), nodePubkey: NODE.pubkey, transcriptHash: ack.payoutTableId, signedResultId: settlementAckId(ack), bondTxid: BOND, bondVout: 3 },
     signedAck, acks: seats.slice(1, 5).map((s) => ackBy(s, t)), table: encodeSettlementTable(t), finals: finals(), contract, advert, committee, verify, ...over,
   });
+};
+const askWhole = (t, txid, over = {}) => {
+  const signedAck = ackBy(NODE, t, txid);
+  const { ack } = splitSignedAck(signedAck);
+  return slashHoldsOnTable({ proof: { roundId: ROUND, playerPubkey: new Uint8Array(32), nodePubkey: NODE.pubkey, transcriptHash: ack.payoutTableId, signedResultId: settlementAckId(ack), bondTxid: BOND, bondVout: 3 },
+    signedAck, acks: seats.slice(1, 5).map((s) => ackBy(s, t, txid)), table: encodeSettlementTable(t), finals: [], entries, contract, advert, committee, verify, rebuiltTxid: rebuilt(t), feesOf: () => FEES, ...over });
 };
 const shaved = () => tableOf(honestRows().map((r) => (r.amountMsat > 0n ? { ...r, amountMsat: r.amountMsat - 1n } : r)));
 
@@ -97,7 +127,7 @@ test('an honest table stands, one millisatoshi off it slashes the bond that acke
   assert.equal(toHex(after.bond.txid), toHex(BOND));
   assert.equal(after.bond.vout, 3);
   assert.equal(after.complete, true);
-  assert.equal(after.differs.length, 1);
+  assert.ok(after.differs.some((d) => /and F pays/.test(d)), after.differs.join('; '));
   const { ack } = splitSignedAck(ackBy(NODE, t));
   assert.equal(toHex(after.commitment), toHex(slashCommitment({ roundId: ROUND, playerPubkey: new Uint8Array(32), nodePubkey: NODE.pubkey,
     transcriptHash: ack.payoutTableId, signedResultId: settlementAckId(ack), bondTxid: BOND, bondVout: 3 })));
@@ -134,7 +164,7 @@ test('an entry with no signed FINAL is left out: a §13C row makes no honest tab
   const noFourth = [finalOf(0), finalOf(1), finalOf(2)];
   const honest = ask(tableOf(honestRows()), { finals: noFourth });
   assert.equal(honest.slashed, false, honest.why);
-  assert.match(honest.why, /not false on any entry with a signed FINAL/);
+  assert.match(honest.why, /nor on any entry with a signed FINAL/);
   // F of the three proved alone is another table (the pool is smaller): it must not be read as the exact F
   const short = ask(tableOf(honestRows()), { finals: [finalOf(0), finalOf(1), finalOf(2), finalOf(3, {}, seats.slice(0, 4))] });
   assert.equal(short.slashed, false, 'four FINAL signatures are not FINAL');
@@ -174,13 +204,140 @@ test('an entry shown without FINAL contradicts a row only by its own bytes', () 
   assert.match(yes.why, /another player's/);
 });
 
-test('a table F did not make is not read: a late loser\'s, and one that names no entries', () => {
-  const late = ask(tableOf(honestRows(), { lateEntryId: b32(0x31) }));
-  assert.equal(late.slashed, false);
-  assert.match(late.why, /late loser/);
-  const plan = ask(tableOf(planTableRows({ payouts: [{ payoutPk: b32(0xa1), msat: 5n }] })));
-  assert.equal(plan.slashed, false);
-  assert.match(plan.why, /names no entries/);
+test('a txid that does not rebuild from its table is the offence, with no FINAL signature: five seats ack an honest table over a transaction that pays otherwise', () => {
+  const t = tableOf(honestRows());
+  const honest = askWhole(t, rebuilt(t));
+  assert.equal(honest.slashed, false, honest.why);
+  const other = askWhole(t, b32(0x78));
+  assert.equal(other.slashed, true, other.why);
+  assert.equal(other.offence, TABLE_IS_NOT_F);
+  assert.match(other.why, /does not rebuild from the table/);
+  assert.equal(other.complete, false, 'no FINAL signature was read');
+  // the same acks with no rebuild shown read as nothing: a missing P is no offence
+  assert.equal(askWhole(t, b32(0x78), { rebuiltTxid: null }).slashed, false);
+});
+
+test('a false rebuild cannot be fed in: a P that does not open the entry\'s stake point, or a missing one, leaves the txid unread', () => {
+  const t = decodeSettlementTable(encodeSettlementTable(tableOf(honestRows())));
+  const stake = t.claims.find((c) => c.kind === 'stake');
+  const wrong = preimages(); wrong.set(toHex(stake.entryId), b32(0x7e));
+  assert.match(tableBuild({ table: t, entries: shownEntries(), preimages: wrong, pointOf }).why, /does not open its stake point/);
+  const none = preimages(); none.delete(toHex(stake.entryId));
+  assert.match(tableBuild({ table: t, entries: shownEntries(), preimages: none, pointOf }).why, /no P is shown/);
+  const high = preimages(); high.set(toHex(stake.entryId), new Uint8Array(32).fill(0xff));
+  assert.match(tableBuild({ table: t, entries: shownEntries(), preimages: high, pointOf }).why, /is not a scalar/);
+  const gone = shownEntries(); gone.delete(toHex(stake.entryId));
+  assert.match(tableBuild({ table: t, entries: gone, preimages: preimages(), pointOf }).why, /is not shown/);
+  assert.match(tableBuild({ table: t, entries: shownEntries(), preimages: preimages() }).why, /needs the curve/);
+});
+
+test('a table that lists a theft in its own build is false: the stake part is exactly what its rows make', () => {
+  const b = built();
+  const winner = refundKeyOf(entries[0].playerPubkey);
+  const i = b.payouts.findIndex((p) => toHex(p.payoutPk) === toHex(winner));
+  assert.ok(i >= 0);
+  const robbed = b.payouts.map((p, at) => (at === i ? { ...p, msat: p.msat - 500n } : p));
+  const thief = [...robbed, { payoutPk: refundKeyOf(b32(0xdd)), msat: 400n }];
+  const t = tableOf(honestRows(), { payouts: thief });
+  const got = askWhole(t, rebuilt(t));
+  assert.equal(got.slashed, true, got.why);
+  assert.match(got.why, /the transaction does not/);
+
+  const extra = tableOf(honestRows(), { claims: b.claims.filter((c) => c.kind === 'fee' || toHex(c.entryId) !== toHex(entryId(entries[3]))) });
+  assert.match(askWhole(extra, rebuilt(extra)).differs.join('; '), /left out and its rows claim it/);
+  const qualifier = { entryId: entryId(entries[0]), outpoint: entries[0].stakeLockOutpoint, amountMsat: netStakeMsat(entries[0]), kind: 'stake' };
+  const seized = tableOf(honestRows(), { claims: [...b.claims, qualifier] });
+  assert.match(askWhole(seized, rebuilt(seized)).differs.join('; '), /is claimed and its rows do not claim it/);
+  const seizedFinal = askWhole(seized, rebuilt(seized), { entries: [], finals: finals() });
+  assert.match(seizedFinal.differs.join('; '), /qualified and its stake lock is claimed/);
+  const over = tableOf(honestRows(), { payouts: [...b.payouts, { payoutPk: refundKeyOf(b32(0xdd)), msat: 90000n }] });
+  assert.match(askWhole(over, rebuilt(over)).why, /with the guardians' fees out of/);
+  const amounts = tableOf(honestRows().map((r) => (r.amountMsat > 0n ? { ...r, amountMsat: r.amountMsat + 1n } : r)));
+  assert.match(askWhole(amounts, rebuilt(amounts)).why, /F of the table's own outcomes/);
+  const lockOf = tableOf(honestRows(), { claims: b.claims.map((c) => (c.kind === 'stake' ? { ...c, outpoint: { txid: b32(0x66), outIdx: 0n } } : c)) });
+  assert.match(askWhole(lockOf, rebuilt(lockOf)).differs.join('; '), /not the one its contract names/);
+  const wrongNonce = tableOf(honestRows(), { nonce: new Uint8Array(8).fill(1) });
+  assert.match(askWhole(wrongNonce, rebuilt(wrongNonce)).why, /nonce/);
+});
+
+test('an empty table, or a played round\'s table marked as naming no entry, is false by itself: it does not hide from the row', () => {
+  const empty = tableOf([], { claims: [], payouts: [] });
+  const a = ask(empty);
+  assert.equal(a.slashed, true, a.why);
+  assert.match(a.why, /moves no money/);
+  const unnamed = tableOf(planTableRows(plan()));
+  const b = askWhole(unnamed, rebuilt(unnamed));
+  assert.equal(b.slashed, true, b.why);
+  assert.match(b.differs.join('; '), /names an entry and an outcome in every row/);
+  const noOutcome = tableOf(honestRows().map(({ outcome: _o, ...r }) => r));
+  assert.match(askWhole(noOutcome, rebuilt(noOutcome)).differs.join('; '), /names an entry and an outcome/);
+});
+
+test('a late table claims its own entry and no other, and a table marked late for an entry already claimed is false; its amounts stay unread', () => {
+  const late = entries[2], lateId = entryId(late);
+  const claims = [{ entryId: lateId, outpoint: late.stakeLockOutpoint, amountMsat: netStakeMsat(late), kind: 'stake' }];
+  const payouts = [{ payoutPk: refundKeyOf(entries[0].playerPubkey), msat: 50000n }];
+  const table = (over = {}) => tableOf(planTableRows({ payouts }), { lateEntryId: lateId, nonce: lateSettlementNonce(ROUND, lateId), claims, payouts, ...over });
+  const honest = askWhole(table(), rebuilt(table()));
+  assert.equal(honest.slashed, false, honest.why);
+  const other = table({ claims: [...claims, { entryId: entryId(entries[3]), outpoint: entries[3].stakeLockOutpoint, amountMsat: netStakeMsat(entries[3]), kind: 'stake' }] });
+  assert.match(askWhole(other, rebuilt(other)).why, /marked late .* claims entry/);
+  const own = tableOf(honestRows());
+  const ownBytes = { table: encodeSettlementTable(own), acks: seats.slice(0, 5).map((s) => ackBy(s, own, b32(0x79))) };
+  const notLate = askWhole(table(), rebuilt(table()), { own: ownBytes });
+  assert.equal(notLate.slashed, true, notLate.why);
+  assert.match(notLate.why, /is not late/);
+  assert.equal(askWhole(table(), rebuilt(table()), { own: { ...ownBytes, acks: ownBytes.acks.slice(0, 4) } }).slashed, false, 'an own table short of the threshold shows nothing');
+  const framed = { ...ownBytes, acks: seats.slice(1, 7).map((s) => ackBy(s, own, b32(0x79))) };
+  assert.equal(askWhole(table(), rebuilt(table()), { own: framed }).slashed, false, 'six seats acking a table the accused never acked do not make its late table false');
+  assert.match(askWhole(table(), b32(0x78)).why, /does not rebuild/, 'the rebuild binds a late table too');
+});
+
+test('a market\'s table is read for its rebuild and its claims, and F is not read on it', () => {
+  const manifest = { resultType: RESULT_TYPE.ATTESTED };
+  const p = plan();
+  const t = tableOf(planTableRows(p));
+  const honest = askWhole(t, rebuilt(t), { manifest });
+  assert.equal(honest.slashed, false, honest.why);
+  const bad = askWhole(t, b32(0x78), { manifest });
+  assert.equal(bad.slashed, true);
+  assert.match(bad.why, /does not rebuild/);
+  const stray = tableOf(planTableRows(p), { claims: [...built().claims, { entryId: new Uint8Array(32), outpoint: { txid: b32(0x66), outIdx: 0n }, amountMsat: 1n, kind: 'stake' }] });
+  assert.match(ask(stray, { manifest, entries }).why, /claimed with no entry/);
+});
+
+test('a false table travels as one record: proof, ack, the rest, cut from a stream and read back', () => {
+  const t = tableOf(honestRows());
+  const signedAck = ackBy(NODE, t, b32(0x78));
+  const { ack } = splitSignedAck(signedAck);
+  const proof = { roundId: ROUND, playerPubkey: new Uint8Array(32), nodePubkey: NODE.pubkey, transcriptHash: ack.payoutTableId, signedResultId: settlementAckId(ack), bondTxid: BOND, bondVout: 3 };
+  const rest = { signedAck, acks: seats.slice(1, 5).map((s) => ackBy(s, t, b32(0x78))), table: encodeSettlementTable(t), entries, finals: finals(),
+    preimages: entries.map((e, i) => ({ entryId: entryId(e), preimage: secretOf(i + 1) })), own: { table: encodeSettlementTable(t), acks: [signedAck] } };
+  const a = joinTableSlashEvidence(encodeSlashProof(proof), rest);
+  assert.equal(tableSlashEvidenceBytesOf(a), a.length);
+  const stream = new Uint8Array(a.length * 2); stream.set(a); stream.set(a, a.length);
+  assert.equal(cutTableSlashEvidence(stream).length, 2);
+  assert.equal(cutTableSlashEvidence(stream.subarray(0, a.length + 9)).length, 1);
+  const got = splitTableSlashEvidence(a);
+  assert.equal(toHex(slashProofId(got.proof)), toHex(slashProofId(proof)));
+  assert.equal(toHex(got.signedAck), toHex(signedAck));
+  assert.equal(got.acks.length, 4);
+  assert.equal(toHex(got.table), toHex(rest.table));
+  assert.deepEqual(got.entries.map((e) => toHex(entryId(e))), entries.map((e) => toHex(entryId(e))));
+  assert.equal(toHex(got.preimages[0].preimage), toHex(secretOf(1)));
+  assert.equal(got.finals.length, 4);
+  assert.equal(got.finals[0].finalSigs.length, 5);
+  assert.equal(got.own.acks.length, 1);
+  assert.throws(() => splitTableSlashEvidence(a.subarray(0, a.length - 1)), /not a published proof/);
+  const judged = slashHoldsOnTable({ proof: got.proof, signedAck: got.signedAck, acks: got.acks, table: got.table, entries: got.entries, finals: got.finals, contract, advert, committee, verify, feesOf: () => FEES, rebuiltTxid: rebuilt(t) });
+  assert.equal(judged.slashed, true, judged.why);
+});
+
+test('a table of one federation of a round that takes any names its nonce, and a table of a one-federation round cannot claim to', () => {
+  const fid = b32(0x5a);
+  const t = tableOf(honestRows(), { federationId: fid, nonce: federationSettlementNonce(ROUND, fid) });
+  assert.match(askWhole(t, rebuilt(t)).differs.join('; '), /names a federation, and the round takes one/);
+  assert.equal(toHex(tableOf(honestRows()).nonce), toHex(settlementNonce(ROUND)));
 });
 
 test('the proof, the contract, the table and the bond are each bound', () => {
@@ -227,8 +384,8 @@ test('the ack and the table are bytes that survive, and every field is in their 
   assert.match(checkAck(ackBy(stranger, t), { seats: committee, roundId: ROUND, payoutTableId: settlementTableId(t), settlementTxid: TXID, verify }).why, /not one of the round's seats/);
 });
 
-test('a withheld signature refuses by name: an ack, a transaction and an expiry do not show who did not sign', () => {
+test('a withheld signature is no offence: silence is not signed bytes', () => {
   const no = slashHoldsOnWithheld();
   assert.equal(no.slashed, false);
-  assert.match(no.why, /do not show which seat/);
+  assert.match(no.why, /silence is not signed bytes/);
 });

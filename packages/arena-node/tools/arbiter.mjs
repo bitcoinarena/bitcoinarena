@@ -20,6 +20,8 @@
 // The members' keys are the test network's derivable ones (genesis-ids.js); mainnet has no set and this refuses it.
 // A proof of two results (5A.3 row 1, kanban #986; GET /slashes `doubleSlashes`, its record at GET /double-slash-proofs) is judged by arbiter.js
 // judgeDoubleProof: both signatures, one run, the accused's committee seat and bond. Nothing is replayed, so it asks for no objection and no core.
+// A proof of a false table (5A.3 table row, kanban #1040; GET /slashes `tableSlashes`, its record at GET /table-slash-proofs) is judged by arbiter.js judgeTableProof: the pair on its
+// own bytes, the txid rebuilt by this set's client of the federation (ARENA_STAKE_LOCK_BIN, ARENA_ARBITER_CLIENT_DIRS): a proof with no client to read it waits.
 // Its doors (POST /musig/nonce, /musig/partial, GET /status) serve the cooperative key path: it agrees to a release
 // only for a node no handled or open proof accuses.
 // After each pass it publishes every liquidation and posted slash it keeps as a signed event (kanban #723, arbitration-events.js) to
@@ -30,7 +32,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
-import { arbitrationMembers, judgeProof, judgeAuditProof, judgeDoubleProof, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin } from '../src/arbiter.js';
+import { arbitrationMembers, judgeProof, judgeAuditProof, judgeDoubleProof, judgeTableProof, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin } from '../src/arbiter.js';
 import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
 import { liquidationEvent, slashEvent, stampEvent, signEvent, eventKey } from '../src/arbitration-events.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
@@ -41,12 +43,15 @@ import { windowsOf } from '../../arena-protocol/src/window.js';
 import { bondSetFor } from '../src/curve.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
-import { splitSlashEvidence, cutSlashEvidence, splitAuditSlashEvidence, cutAuditSlashEvidence, auditSlashProofId, splitDoubleSlashEvidence, cutDoubleSlashEvidence, slashProofId } from '../../arena-protocol/src/slash.js';
+import { splitSlashEvidence, cutSlashEvidence, splitAuditSlashEvidence, cutAuditSlashEvidence, auditSlashProofId, splitDoubleSlashEvidence, cutDoubleSlashEvidence, splitTableSlashEvidence, cutTableSlashEvidence, slashProofId } from '../../arena-protocol/src/slash.js';
+import { decodeSettlementTable } from '../../arena-protocol/src/settlement-ack.js';
+import { takesAnyFederation } from '../../arena-protocol/src/constants.js';
+import { stakeLockPort } from '../src/stake-lock-port.js';
+import { pluginForRound, hostedPlugins, payoutRuleOfRound } from '../src/plugins.js';
 import { auditEligible } from '../../arena-protocol/src/auditor.js';
 import { makeVrf, SUITE_SECP256K1_TAI } from '../../arena-protocol/src/vrf.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { runId } from '../src/verdict.js';
-import { payoutRuleOfRound } from '../src/plugins.js';
 import { deriveCensus } from '../../arena-protocol/src/census.js';
 import { beaconFromChain, committeeSeedFromBeacon } from '../../arena-protocol/src/beacon.js';
 import { selectCommittee } from '../../arena-protocol/src/sortition.js';
@@ -86,9 +91,13 @@ async function handle(seat, s) {
   const audit = s.kind === 'audit';
   // A PROOF OF TWO RESULTS (kanban #986): its own record (GET /double-slash-proofs), judged by judgeDoubleProof on the signatures alone
   const double = s.kind === 'double';
-  const recs = await get(double ? `${seat}/double-slash-proofs?round=${s.round}` : audit ? `${seat}/audit-slash-proofs?round=${s.round}` : `${seat}/slash-proofs?round=${s.round}&entry=${s.entry}`, 'bytes');
+  // A PROOF OF A FALSE TABLE (kanban #1040): its own record (GET /table-slash-proofs), judged by judgeTableProof
+  const falseTable = s.kind === 'table';
+  const recs = await get(falseTable ? `${seat}/table-slash-proofs?round=${s.round}` : double ? `${seat}/double-slash-proofs?round=${s.round}` : audit ? `${seat}/audit-slash-proofs?round=${s.round}` : `${seat}/slash-proofs?round=${s.round}&entry=${s.entry}`, 'bytes');
   let evidence = null;
-  if (double) {
+  if (falseTable) {
+    for (const r of cutTableSlashEvidence(recs)) { let sp; try { sp = splitTableSlashEvidence(r); } catch { continue; } if (toHex(sp.proof.nodePubkey) === s.node && toHex(slashProofId(sp.proof)) === s.proof) evidence = r; }
+  } else if (double) {
     for (const r of cutDoubleSlashEvidence(recs)) { let sp; try { sp = splitDoubleSlashEvidence(r); } catch { continue; } if (toHex(sp.proof.nodePubkey) === s.node && toHex(slashProofId(sp.proof)) === s.proof) evidence = r; }
   } else if (audit) {
     for (const r of cutAuditSlashEvidence(recs)) { let sp; try { sp = splitAuditSlashEvidence(r); } catch { continue; } if (toHex(sp.proof.nodePubkey) === s.node && toHex(auditSlashProofId(sp.proof)) === s.proof) evidence = r; }
@@ -96,9 +105,9 @@ async function handle(seat, s) {
     for (const r of cutSlashEvidence(recs)) { let sp; try { sp = splitSlashEvidence(r); } catch { continue; } if (toHex(sp.proof.nodePubkey) === s.node) evidence = r; }
   }
   if (!evidence) return { done: false, why: 'the seat lists that proof and does not hand it over' };
-  const bundle = double ? null : await get(`${seat}/objection-bundle?round=${s.round}&entry=${s.entry}`, 'bytes');
+  const bundle = double || falseTable ? null : await get(`${seat}/objection-bundle?round=${s.round}&entry=${s.entry}`, 'bytes');
   const contract = decodeRoundContract(await get(`${seat}/round?id=${s.round}`, 'bytes'));
-  const entry = decodeEntryContract(await get(`${seat}/entry?id=${s.entry}`, 'bytes'));
+  const entry = falseTable ? null : decodeEntryContract(await get(`${seat}/entry?id=${s.entry}`, 'bytes'));
   // THE ROUND'S CENSUS AND COMMITTEE, FROM THIS ARBITER'S OWN CHAIN
   const census = await censusAt(contract, contract.censusHeight);
   if (!census.ok) return { done: false, why: `no census: ${census.why}` };
@@ -113,7 +122,7 @@ async function handle(seat, s) {
     ...selectCommittee({ entries: census.entries, contract, role: 'settlement', committeeSeed: seeded.seed })].map((e) => [toHex(e.pubkey), e.pubkey])).values()];
   const accused = census.entries.find((e) => toHex(e.pubkey) === s.node);
   if (!accused) return { done: true, why: 'the accused is not in the round\'s census' };
-  const core = double ? null : coreForRound(contract, rid, (await import('../src/plugins.js')).hostedPlugins((await loadApps())));
+  const core = double || falseTable ? null : coreForRound(contract, rid, hostedPlugins(await loadApps()));
   // THE ROUND'S ENTRIES AND RESULTS, OFF THE SEAT'S GET /audit-run, checked against their own entry ids: a slash pays whoever the
   // false result harmed, and that takes the whole field (kanban #975)
   const run = await get(`${seat}/audit-run?round=${s.round}`);
@@ -121,7 +130,23 @@ async function handle(seat, s) {
   const entries = settledEntries({ run, roundId: rid, contract, committee, finalAfterMs: windowsOf(contract).finalAfterMs });
   const playerKeys = new Set(entries.map((e) => toHex(e.playerPubkey)));
   let verdict;
-  if (double) {
+  if (falseTable) {
+    const found = pluginForRound(contract, hostedPlugins(await loadApps()));
+    if (!found.ok) return { done: false, why: `no manifest for that round: ${found.why}` };
+    const record = splitTableSlashEvidence(evidence);
+    const table = decodeSettlementTable(record.table);
+    const any = takesAnyFederation(contract);
+    const named = any ? [...record.entries, ...record.finals.map((f) => f.entry)].map((e) => toHex(e.federationId || new Uint8Array(32))) : [toHex(contract.federationId)];
+    const fees = new Map();
+    for (const fid of new Set(named)) {
+      const port = portOf(fid);
+      if (!port) return { done: false, why: `this set holds no client of federation ${fid.slice(0, 16)}, so it cannot read that table` };
+      fees.set(fid, await port.feesRead());
+    }
+    const home = any ? toHex(table.federationId) : toHex(contract.federationId);
+    verdict = await judgeTableProof({ evidence, roundIdBytes: rid, contract, manifest: found.plugin.manifest, committee, advert: accused.advert, bondOutpoint: { txid: accused.txid, vout: accused.vout },
+      feesOf: (fid) => fees.get(fid) || null, txidOf: async (_table, build) => fromHex((await portOf(home).settle(build)).txid) });
+  } else if (double) {
     verdict = judgeDoubleProof({ evidence, roundIdBytes: rid, committee, advert: accused.advert, bondOutpoint: { txid: accused.txid, vout: accused.vout } });
   } else if (audit) {
     // WHO COULD AUDIT THE ROUND, FROM THIS ARBITER'S OWN CENSUS (§13A.1): its census less every node drawn for its roles; its players'
@@ -151,7 +176,7 @@ async function handle(seat, s) {
   const paid = new Map();
   for (const v of before) for (const p of v.players || []) paid.set(p.key, (paid.get(p.key) || 0n) + BigInt(p.paidMsat ?? p.msat ?? 0));
   const truth = before.flatMap((v) => (v.truth || []).map((t) => ({ pubkey: fromHex(t.key), outcome: t.outcome, score: t.score })));
-  const rule = payoutRuleOfRound(contract, (await import('../src/plugins.js')).hostedPlugins(await loadApps()));
+  const rule = payoutRuleOfRound(contract, hostedPlugins(await loadApps()));
   if (!rule.ok) return { done: false, why: rule.why };
   const slash = buildSlash({ verdict, bond, advert: accused.advert, contract, roundId: rid, slashHeight: census.tip, tipHeight: census.tip,
     entries, signed, truth, paid, payoutShares: rule.payoutShares, set, feeSats: PATH_B_FEE_SATS });
@@ -192,6 +217,14 @@ async function federationView() {
 
 const clientDirs = new Map(String(env.ARENA_ARBITER_CLIENT_DIRS || '').split(',').map((x) => x.trim()).filter(Boolean).map((x) => x.split('=')).filter((x) => x.length === 2).map(([k, d]) => [k.toLowerCase(), d]));
 const PATH_B_FEE_SATS = BigInt(env.ARENA_ARBITER_PATH_B_FEE_SATS || 2000);
+// THIS SET'S OWN CLIENT OF A FEDERATION (a false table's txid and fee rule): the stock tool on the client folder named for it, read only
+const ports = new Map();
+const portOf = (fid) => {
+  const dir = clientDirs.get(fid) || env.ARENA_ARBITER_CLIENT_DIR || null;
+  if (!dir || !env.ARENA_STAKE_LOCK_BIN) return null;
+  if (!ports.has(dir)) ports.set(dir, stakeLockPort({ bin: env.ARENA_STAKE_LOCK_BIN, dataDir: dir }));
+  return ports.get(dir);
+};
 // AFTER PATH B (§5A.3B step 5): the escrow into the federations, claimed, each loss and each reserve part paid (arbiter.js payOutSlash, through
 // ARENA_STAKE_LOCK_BIN on this set's clients: ARENA_ARBITER_CLIENT_DIRS=<federation hex>=<dir>,..., or the one client ARENA_ARBITER_CLIENT_DIR);
 // ARENA_ARBITER_RETIRED names the federations a ruling closed to new peg-ins
@@ -301,7 +334,7 @@ async function pass() {
   const found = new Map();
   for (const seat of seats) {
     let list; try { list = await get(`${seat}/slashes`); } catch (e) { say({ seat, refused: e.message }); continue; }
-    for (const s of [...(list.slashes || []), ...(list.auditSlashes || []).map((x) => ({ ...x, kind: 'audit' })), ...(list.doubleSlashes || []).map((x) => ({ ...x, kind: 'double' }))]) if (!state.handled[s.proof] && !found.has(s.proof)) found.set(s.proof, { seat, s });
+    for (const s of [...(list.slashes || []), ...(list.auditSlashes || []).map((x) => ({ ...x, kind: 'audit' })), ...(list.doubleSlashes || []).map((x) => ({ ...x, kind: 'double' })), ...(list.tableSlashes || []).map((x) => ({ ...x, kind: 'table' }))]) if (!state.handled[s.proof] && !found.has(s.proof)) found.set(s.proof, { seat, s });
   }
   for (const { seat, s } of [...found.values()].sort((a, b) => (a.s.proof < b.s.proof ? -1 : 1))) {
     let r; try { r = await handle(seat, s); } catch (e) { r = { done: false, why: e.message }; }

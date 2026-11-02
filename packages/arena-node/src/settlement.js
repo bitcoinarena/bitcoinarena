@@ -26,9 +26,11 @@ import { cancelId } from '../../arena-protocol/src/order-book.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
-import { decodeRoundContract, decodeEntryContract, entryFederation } from '../../arena-protocol/src/contracts.js';
+import { decodeRoundContract, decodeEntryContract, entryFederation, entryId as entryIdOf } from '../../arena-protocol/src/contracts.js';
 import { takesAnyFederation, acksSettlement } from '../../arena-protocol/src/constants.js';
-import { signSettlementAck, countAcks, joinAcks, splitAcks, encodeSettlementTable, settlementTableId, planTableRows } from '../../arena-protocol/src/settlement-ack.js';
+import { signSettlementAck, settlementAckId, countAcks, joinAcks, splitAcks, splitSignedAck, encodeSettlementTable, decodeSettlementTable, settlementTableId, planTableRows, planTableBuild } from '../../arena-protocol/src/settlement-ack.js';
+import { tableBuild } from '../../arena-protocol/src/settlement-rebuild.js';
+import { slashHoldsOnTable, slashProofId, encodeSlashProof, joinTableSlashEvidence } from '../../arena-protocol/src/slash.js';
 import { splitByFederation } from '../../arena-protocol/src/federation-settlement.js';
 import { pluginForRound, payoutRuleOfRound } from './plugins.js';
 import { heldOutcomes, marketVoidOf, attestedTable } from './game-market.js';
@@ -69,8 +71,11 @@ const verifyAck = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key
 // F OVER THE ENTRIES THIS SEAT SETTLES, each row naming its entry: the table a seat's SettlementAck is about (§5A.3, kanban #1040)
 const entryRows = (roundId, entries, minScore, payoutShares) => {
   const f = computePayoutTable({ roundId, entries, minScore, payoutShares });
-  return f.activated.map((e, i) => ({ entryId: e.entryId, pubkey: e.pubkey, amountMsat: f.table[i].amountMsat }));
+  return f.activated.map((e, i) => ({ entryId: e.entryId, pubkey: e.pubkey, amountMsat: f.table[i].amountMsat, outcome: e.outcome, score: e.score, ...(e.atTheDoor ? { atTheDoor: true } : {}) }));
 };
+// THE WHOLE OF WHAT A SEAT ACKS (§5A.3, kanban #1043): the rows and the transaction they rebuild to, each claim by the entry whose lock it spends
+const ackTableOf = (base, plan, claimPk, rows, entryOf) => ({ ...base, claimPk, rows, ...planTableBuild(plan, entryOf) });
+const byLockKey = (lockEntry) => (c) => (lockEntry ? lockEntry.get(toHex(c.pubkey)) : null);
 const outpointOf = (s) => { const [txid, idx] = String(s).split(':'); return { txid: fromHex(txid), outIdx: BigInt(idx) }; };
 
 /** How often the backfill tries a recovered round it could not rebuild before it marks it checked. */
@@ -338,7 +343,7 @@ export class LockSettlement {
     const tx = await port.settle({ claimPk: got.claimPk, claims, payouts: s.payouts, nonce: s.nonce });
     const built = { ok: true, message: fromHex(tx.message), txid: tx.txid, settlement: s, plan: got.plan, claims, claimPk: got.claimPk,
       signerNode: got.held.signerNode, needed: receiptsNeeded(got.contract.settlementSlots), federation: String(fid).toLowerCase(), contract: got.contract,
-      ackTable: { roundId: roundIdBytes, rows: got.ackRows || planTableRows(got.plan) } };
+      ackTable: ackTableOf({ roundId: roundIdBytes, federationId: fromHex(String(fid).toLowerCase()) }, s, got.claimPk, got.ackRows || planTableRows(s), byLockKey(got.lockEntry)) };
     this.built.set(key, built);
     return built;
   }
@@ -441,7 +446,7 @@ export class LockSettlement {
     const tx = await (await this.portFor(roundIdBytes)).settle({ claimPk, claims, payouts: plan.payouts, nonce: plan.nonce });
     const built = { ok: true, message: fromHex(tx.message), txid: tx.txid, plan, claims, claimPk,
       signerNode: held.signerNode, needed: receiptsNeeded(contract.settlementSlots), contract,
-      ackTable: { roundId: roundIdBytes, lateEntryId: entryIdBytes, rows: planTableRows(plan) } };
+      ackTable: ackTableOf({ roundId: roundIdBytes, lateEntryId: entryIdBytes }, plan, claimPk, planTableRows(plan), () => entryIdBytes) };
     this.built.set(key, built);
     return built;
   }
@@ -892,7 +897,7 @@ export class LockSettlement {
     const tx = await (await this.portFor(roundIdBytes)).settle({ claimPk, claims, payouts: plan.payouts, nonce: plan.nonce });
     const built = { ok: true, message: fromHex(tx.message), txid: tx.txid, plan, claims, claimPk,
       signerNode: held.signerNode, needed: receiptsNeeded(contract.settlementSlots), contract,
-      ackTable: { roundId: roundIdBytes, rows: ackRows || planTableRows(plan) } };
+      ackTable: ackTableOf({ roundId: roundIdBytes }, plan, claimPk, ackRows || planTableRows(plan), byLockKey(lockEntry)) };
     this.built.set(key, built);
     this.byPlan.set(key, { fp, built });
     if (this.byPlan.size > 4096) this.byPlan.delete(this.byPlan.keys().next().value);
@@ -1079,10 +1084,15 @@ export class LockSettlement {
     // A COMMITMENT ONLY TO THE BYTES THE ASKER BUILT (measured on a 5-of-7): a signer node that rebuilt another
     // settlement - it saw a run end differently - would otherwise commit, and its share over its own bytes spoils the
     // combined signature for everyone. It refuses by name, and the threshold of the others decides.
-    if (txid && String(txid).toLowerCase() !== String(m.txid).toLowerCase())
+    if (txid && String(txid).toLowerCase() !== String(m.txid).toLowerCase()) {
+      this.#suspect(roundIdBytes);
       return refuse(`this signer node rebuilt settlement ${String(m.txid).slice(0, 16)}, not ${String(txid).slice(0, 16)}: it commits to no other bytes`, 409);
+    }
     return m;
   }
+
+  /** A seat asked about another transaction or another table than it rebuilt: the round is read again for a false table (fileTableProofs). */
+  #suspect(roundIdBytes) { if (this.round.markSettlementSuspect) this.round.markSettlementSuspect(roundIdBytes); }
 
   /** This seat's SettlementAck over the table it computed and the transaction it rebuilt, signed by its node key (§5A.3, kanban #1035). */
   #ownAck(roundIdBytes, m) {
@@ -1124,12 +1134,115 @@ export class LockSettlement {
     return { ok: true, acks: joinAcks(counted.kept) };
   }
 
+  /**
+   * FILE A PROOF OF EACH FALSE TABLE THIS SEAT CAN SHOW (§5A.3 table row, kanban #1040, #1043): the acks and tables this seat kept and every peer publishes at GET
+   * /settlement-acks, each pair not this seat's own judged by slashHoldsOnTable on the bytes a stranger would hold, the txid rebuilt by this seat's stock client, and
+   * only a pair that slashes filed: one proof per seat that acked it, kept once by proof id, listed at GET /slashes `tableSlashes`, served at GET /table-slash-proofs and
+   * posted to the round's relays. `advertOf(hex)` -> the accused's advertisement; a seat whose advertisement is not held yet stays for the next pass. Money is not touched.
+   */
+  async fileTableProofs(roundIdBytes, { advertOf = () => null, relays = [] } = {}) {
+    const report = { filed: [], refused: [], published: 0 };
+    const row = this.round.get(roundIdBytes);
+    if (!row) { report.refused.push('no such round'); return report; }
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    if (!acksSettlement(contract)) return report;
+    const committee = this.round.signerNodes(roundIdBytes);
+    const pairKey = (x) => `${toHex(x.tableId)}:${String(x.txid).toLowerCase()}`;
+    const own = this.round.settlementAcksOf(roundIdBytes);
+    const mine = new Set(own.map(pairKey));
+    const pairs = new Map(own.map((r) => [pairKey(r), r]));
+    for (const base of this.peersFor(roundIdBytes)) {
+      try {
+        const r = await this.fetcher(`${base}/settlement-acks?round=${toHex(roundIdBytes)}`);
+        if (!r.ok) continue;
+        for (const x of (await r.json()).settlements || []) {
+          const got = { scope: x.scope, txid: String(x.txid), tableId: fromHex(x.payoutTableId), table: fromHex(x.table), acks: fromHex(x.acks) };
+          const had = pairs.get(pairKey(got));
+          if (!had || had.acks.length < got.acks.length) pairs.set(pairKey(got), got);
+        }
+      } catch (e) { report.refused.push(`${base}: ${e.message}`); }
+    }
+    const found = pluginForRound(contract, this.round.plugins || []);
+    const manifest = found && found.ok ? found.plugin.manifest : null;
+    const byId = new Map(this.round.entriesOf(roundIdBytes).map((x) => [toHex(x.entryId), x]));
+    const fees = new Map();
+    const feesFrom = async (fid) => {
+      if (!fees.has(fid)) { try { fees.set(fid, await (await this.portForFederation(fid)).fees()); } catch { fees.set(fid, null); } }
+      return fees.get(fid);
+    };
+    for (const [key, pair] of pairs) {
+      // A PAIR IS READ ONCE (NODE-OPT-1648's lesson: a rebuild is a stock-client run on the seat's own client directory), unless a seat's advertisement was missing
+      if (mine.has(key) || this.#pairsRead.has(key)) continue;
+      let table;
+      try {
+        table = decodeSettlementTable(pair.table);
+        if (toHex(settlementTableId(table)) !== toHex(pair.tableId) || toHex(table.roundId) !== toHex(roundIdBytes)) continue;
+      } catch { continue; }
+      const named = [...new Set([...table.rows.map((r) => toHex(r.entryId)), ...table.claims.map((c) => toHex(c.entryId))])].filter((id) => byId.has(id));
+      const entries = named.map((id) => byId.get(id).entry);
+      const finals = [];
+      const preimages = [];
+      for (const id of named) {
+        const eid = fromHex(id);
+        const held = this.round.results(roundIdBytes, eid).find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
+        const body = held ? decodePlayerResult(splitSignedResult(held.bytes).body) : null;
+        if (held) finals.push({ entry: byId.get(id).entry, signedResult: new Uint8Array(held.bytes), finalSigs: this.round.entryFinalSigs(roundIdBytes, eid).map((b) => new Uint8Array(b)) });
+        // NEVER A QUALIFIER'S P: a table naming a winner's lock is false without it, and the opening is a thing a winner's stake must never see
+        if (!table.claims.some((c) => c.kind === 'stake' && toHex(c.entryId) === id) || (body && body.outcome === 'DELIVERED')) continue;
+        const opened = await this.stakeSecrets.open({ roundId: roundIdBytes, entryId: eid, needed: receiptsNeeded(contract.settlementSlots) }).catch((e) => ({ ok: false, why: e.message }));
+        if (opened.ok) preimages.push({ entryId: eid, preimage: opened.preimage });
+        else report.refused.push(`${id.slice(0, 16)}: ${opened.why}`);
+      }
+      const federationIds = new Set(takesAnyFederation(contract) ? entries.map((e) => toHex(e.federationId || new Uint8Array(32))) : [toHex(contract.federationId)]);
+      for (const fid of federationIds) await feesFrom(fid);
+      const home = toHex(table.federationId).match(/[^0]/) ? toHex(table.federationId) : toHex(contract.federationId);
+      const built = tableBuild({ table, entries: new Map(entries.map((e) => [toHex(entryIdOf(e)), e])), preimages: new Map(preimages.map((p) => [toHex(p.entryId), p.preimage])), pointOf: (x) => this.curve.pointFromScalar(x) });
+      let rebuiltTxid = null;
+      if (built.ok) {
+        try { rebuiltTxid = fromHex((await (await this.portForFederation(home)).settle(built.build)).txid); }
+        catch (e) { report.refused.push(`no rebuild: ${e.message}`); }
+      } else report.refused.push(`no rebuild: ${built.why}`);
+      // A TABLE MARKED LATE IS CHECKED AGAINST THE ROUND'S OWN
+      const first = [...pairs.values()].find((x) => { try { return toHex(decodeSettlementTable(x.table).lateEntryId) === '00'.repeat(32) && toHex(table.lateEntryId) !== '00'.repeat(32); } catch { return false; } });
+      const ownTable = first ? { table: first.table, acks: splitAcks(first.acks) } : null;
+      const acks = splitAcks(pair.acks);
+      let waits = false;
+      for (const signedAck of acks) {
+        let got;
+        try { got = splitSignedAck(signedAck); } catch { continue; }
+        const who = toHex(got.nodePubkey);
+        const advert = advertOf(who);
+        if (!advert) { waits = true; report.refused.push(`${who.slice(0, 16)}: no advertisement names its bond`); continue; }
+        const proof = { roundId: roundIdBytes, playerPubkey: new Uint8Array(32), nodePubkey: got.nodePubkey, transcriptHash: got.ack.payoutTableId, signedResultId: settlementAckId(got.ack),
+          bondTxid: advert.bondTxid, bondVout: advert.bondVout };
+        const check = slashHoldsOnTable({ proof, signedAck, acks, table: pair.table, entries, finals, contract, manifest, advert, committee, verify: verifyAck, rebuiltTxid, feesOf: (f) => fees.get(f) || null, own: ownTable });
+        if (!check.slashed) { report.refused.push(`${who.slice(0, 16)}: ${check.why}`); continue; }
+        const id = slashProofId(proof);
+        const record = joinTableSlashEvidence(encodeSlashProof(proof), { signedAck, acks, table: pair.table, entries, preimages, finals, own: ownTable });
+        if (!this.round.fileTableProof(roundIdBytes, got.nodePubkey, id, record)) continue;
+        report.filed.push(who);
+        console.log(`[slash] ${toHex(roundIdBytes).slice(0, 16)} filed TABLE_IS_NOT_F against ${who.slice(0, 16)}: ${check.why}`);
+        for (const relay of relays) {
+          try {
+            const put = await this.fetcher(`${String(relay).replace(/\/+$/, '')}/slash/${toHex(id)}`, { method: 'PUT', body: record });
+            if (put.ok) report.published += 1;
+            else report.refused.push(`${relay}: kept no proof (${put.status})`);
+          } catch (e) { report.refused.push(`${relay}: ${e.message}`); }
+        }
+      }
+      if (!waits) { this.#pairsRead.add(key); if (this.#pairsRead.size > 4096) this.#pairsRead.delete(this.#pairsRead.values().next().value); }
+    }
+    return report;
+  }
+  #pairsRead = new Set();
+
   /** ROUND ONE: this signer node's nonce commitment for the settlement it would sign; from version 22, only with a threshold of acks. */
   async commit(roundIdBytes, { txid = null, entry = null, federation = null, acks = null } = {}) {
     const m = await this.#askedMessage(roundIdBytes, { txid, entry, federation });
     if (!m.ok) return m;
     if (acksSettlement(m.contract)) {
       const counted = this.#countAcks(roundIdBytes, m, splitAcks(acks));
+      if (counted.refused.length) this.#suspect(roundIdBytes);
       if (!counted.final) return refuse(`this signer node joins the signing only with acks from ${counted.needed} of the round's seats, and holds ${counted.agreed}${counted.refused.length ? `: ${counted.refused.join('; ')}` : ''}`);
       if (this.round.putSettlementAcks)
         this.round.putSettlementAcks({ roundId: roundIdBytes, scope: federation ? String(federation).toLowerCase() : entry ? toHex(entry) : '', txid: m.txid,

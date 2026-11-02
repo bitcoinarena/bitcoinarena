@@ -35,15 +35,16 @@ import { arbitrationCommitmentIn, P2TR_DUST_SATS } from './arbitration-tx.js';
 import { carrierEscrowPegInId } from './census-key.js';
 import { reserveParts } from './slash-reserves.js';
 import {
-  PROTOCOL_VERSION, speaksVersion, TYPE_SLASH_PROOF, TYPE_AUDIT_SLASH_PROOF,
+  PROTOCOL_VERSION, speaksVersion, TYPE_SLASH_PROOF, TYPE_AUDIT_SLASH_PROOF, TYPE_SETTLEMENT_ACK,
   SLASH_REMAINDERS, TAG,
 } from './constants.js';
-import { entryId, roundId as roundIdOf } from './contracts.js';
+import { entryId, roundId as roundIdOf, encodeEntryContract, decodeEntryContract } from './contracts.js';
 import { decodePlayerResult, resultId, splitSignedResult, SIGNED_RESULT_BYTES, signedResultBytesOf } from './result.js';
 import { computePayoutTable, isRefund, isQualifier, netStakeMsat } from './payout.js';
-import { payoutRuleForRound } from './manifest.js';
+import { payoutRuleForRound, isAttested } from './manifest.js';
 import { windowsOf } from './window.js';
-import { splitSignedAck, settlementAckId, countAcks, decodeSettlementTable, settlementTableId, namesNoEntry } from './settlement-ack.js';
+import { splitSignedAck, settlementAckId, countAcks, decodeSettlementTable, settlementTableId, namesNoEntry, SIGNED_SETTLEMENT_ACK_BYTES } from './settlement-ack.js';
+import { tableFalse, claimsProvedQualifier } from './settlement-rebuild.js';
 import { decodeFinalSig, splitSignedFinalSig, finalSigned } from './final-sig.js';
 import { decodeAudit, auditId, auditStands, auditResultsHash } from './auditor.js';
 
@@ -625,10 +626,15 @@ export function slashHoldsOnAudit({
  * is owed nothing, a proved qualifier at least its own net stake. An entry with a signed FINAL and no row is not read either: it can be
  * a late entry the table rightly left to a second settlement.
  *
- * Not read at all: a late loser's table and a market's, which F does not make. Their rows name no entry, or their late entry is set.
+ * THE PAIR, FALSE BY ITSELF (RULED 2026-11-02, kanban #1043). A txid that does not rebuild from its table is the offence with no FINAL signature at all, and a table
+ * marked late, or empty, or naming no entries gains nothing by it: settlement-rebuild.js. `rebuiltTxid` is the injected verdict of that rebuild, as the replay's is
+ * in slashHolds: the stock client's hash of tableBuild's answer, or null where a P or an entry is not shown, and then the txid is not read. `feesOf(federation hex)` is the
+ * guardians' rule, read by the caller from the federation; `own` { table, acks } is the round's own settlement, for a table marked late: read only if the accused acked it too.
+ *
+ * F does not make a late loser's table or a market's: F is not read on them, the rebuild and the claims are.
  */
 export function slashHoldsOnTable({
-  proof, signedAck, acks = [], table, finals = [], entries = [], contract, manifest = null, advert, committee, verify,
+  proof, signedAck, acks = [], table, finals = [], entries = [], contract, manifest = null, advert, committee, verify, rebuiltTxid = null, feesOf = () => null, own = null,
 }) {
   const no = (why) => ({ slashed: false, why });
   if (!proof) return no('no proof');
@@ -642,7 +648,8 @@ export function slashHoldsOnTable({
   let rid;
   try { rid = roundIdOf(contract); } catch (e) { return no(`the contract does not encode: ${e.message}`); }
   if (hex(rid) !== hex(proof.roundId)) return no('the contract handed in is not this round\'s');
-  const rule = payoutRuleForRound(contract, manifest);
+  const attested = !!manifest && isAttested(manifest);
+  const rule = attested ? { ok: true, payoutShares: null } : payoutRuleForRound(contract, manifest);
   if (!rule.ok) return no(`F's payout rule cannot be read: ${rule.why}`);
 
   // THE ACK, THE ACCUSED'S OWN
@@ -662,8 +669,6 @@ export function slashHoldsOnTable({
   try { claimed = decodeSettlementTable(table); } catch (e) { return no(`the evidence is not a settlement table: ${e.message}`); }
   if (hex(settlementTableId(claimed)) !== hex(got.ack.payoutTableId)) return no('the table attached is not the one the ack names');
   if (hex(claimed.roundId) !== hex(proof.roundId)) return no('the table attached is for a different round');
-  if (hex(claimed.lateEntryId) !== hex(EMPTY)) return no('that is a late loser\'s second settlement: F does not make its table');
-  if (!claimed.rows.length || claimed.rows.some(namesNoEntry)) return no('that table names no entries: F does not make it');
 
   // A TABLE THE SETTLEMENT STOOD ON
   let counted;
@@ -682,19 +687,36 @@ export function slashHoldsOnTable({
   for (const e of [...entries, ...finals.map((f) => f && f.entry)]) {
     let id;
     try { id = hex(entryId(e)); } catch { continue; }
-    if (rowOf.has(id)) shown.set(id, e);
-  }
-  for (const [id, e] of shown) {
+    shown.set(id, e);
     const row = rowOf.get(id);
+    if (!row) continue;
     if (hex(e.roundId) !== hex(proof.roundId)) differs.push(`entry ${id.slice(0, 16)} is of another round`);
     else if (hex(e.playerPubkey) !== hex(row.pubkey)) differs.push(`entry ${id.slice(0, 16)} is another player's`);
   }
+
+  // THE PAIR AGAINST ITSELF: no FINAL signature reads here
+  let ownTable = null;
+  if (own) {
+    try {
+      const t = decodeSettlementTable(own.table);
+      const first = splitSignedAck(own.acks[0]).ack;
+      const c = countAcks({ acks: own.acks, seats: committee, slots: contract.settlementSlots, roundId: proof.roundId, payoutTableId: settlementTableId(t), settlementTxid: first.settlementTxid, verify });
+      // THE ACCUSED'S OWN WORD TOO: five seats can ack any table they like, and that must not turn an honest seat's late table false
+      const itsOwn = c.kept.some((b) => hex(splitSignedAck(b).nodePubkey) === hex(proof.nodePubkey));
+      if (c.final && itsOwn && hex(t.roundId) === hex(proof.roundId) && hex(t.lateEntryId) === hex(EMPTY)) ownTable = t;
+    } catch { ownTable = null; }
+  }
+  try { differs.push(...tableFalse({ table: claimed, contract, entries: shown, payoutShares: rule.payoutShares, feesOf, attested, ownTable })); }
+  catch (e) { return no(`the table cannot be read: ${e.message}`); }
+  if (rebuiltTxid && hex(rebuiltTxid) !== hex(got.ack.settlementTxid))
+    differs.push(`the acked transaction ${hex(got.ack.settlementTxid).slice(0, 16)} does not rebuild from the table, which makes ${hex(rebuiltTxid).slice(0, 16)}`);
+
   const proved = new Map();
   for (const f of finals) {
     if (!f || !f.entry) continue;
     let id, body;
     try { id = entryId(f.entry); body = decodePlayerResult(splitSignedResult(f.signedResult).body); } catch { continue; }
-    if (!rowOf.has(hex(id)) || hex(body.roundId) !== hex(proof.roundId) || hex(body.playerPubkey) !== hex(f.entry.playerPubkey)) continue;
+    if (hex(body.roundId) !== hex(proof.roundId) || hex(body.playerPubkey) !== hex(f.entry.playerPubkey)) continue;
     // A FINAL SIGNATURE IS JUDGED BY ITS OWN SIGNED TIME HERE: the tolerance is a receiving seat's clock, and a proof has none
     const records = [];
     for (const bytes of f.finalSigs || []) {
@@ -704,8 +726,12 @@ export function slashHoldsOnTable({
     if (signed.ok) proved.set(hex(id), { entryId: id, pubkey: f.entry.playerPubkey, outcome: body.outcome, score: body.score,
       stakeMsat: f.entry.stakeMsat, feeMsat: f.entry.feeMsat, donationMsat: f.entry.donationMsat });
   }
+  differs.push(...claimsProvedQualifier({ table: claimed, proved, minScore: contract.minScore }));
 
-  const complete = claimed.rows.every((r) => proved.has(hex(r.entryId)));
+  // F, READ ONLY WHERE F MAKES THE TABLE
+  const isLate = hex(claimed.lateEntryId) !== hex(EMPTY);
+  const readsF = !isLate && !attested && claimed.rows.length > 0 && !claimed.rows.some(namesNoEntry);
+  const complete = readsF && claimed.rows.every((r) => proved.has(hex(r.entryId)));
   if (complete) {
     const rows = claimed.rows.map((r) => proved.get(hex(r.entryId)));
     let honest;
@@ -717,33 +743,90 @@ export function slashHoldsOnTable({
       const want = owed.has(id) ? owed.get(id) : 0n;
       if (r.amountMsat !== want) differs.push(`entry ${id.slice(0, 16)} is paid ${r.amountMsat} and F pays ${want}`);
     }
-  } else {
+  } else if (readsF) {
     for (const [id, e] of proved) {
       const row = rowOf.get(id);
+      if (!row) continue;
       if (!isQualifier(e, contract.minScore)) {
         if (row.amountMsat !== 0n) differs.push(`entry ${id.slice(0, 16)} did not qualify and is paid ${row.amountMsat}`);
       } else if (row.amountMsat < netStakeMsat(e)) differs.push(`entry ${id.slice(0, 16)} qualified and is paid ${row.amountMsat}, under its own net stake`);
     }
   }
-  if (!differs.length) return no(complete ? 'the table is exactly F of the signed FINAL results' : 'the table is not false on any entry with a signed FINAL result');
+  if (!differs.length) return no(complete ? 'the table is exactly F of the signed FINAL results' : 'the table is not false on anything shown, nor on any entry with a signed FINAL result');
 
   if (!advert || hex(advert.nodePubkey) !== hex(proof.nodePubkey)) return no('no advertisement from the accused node to name its bond');
   if (hex(advert.bondTxid) !== hex(proof.bondTxid) || advert.bondVout !== proof.bondVout)
     return no(`the proof names bond ${hex(proof.bondTxid)}:${proof.bondVout} and the node advertised ${hex(advert.bondTxid)}:${advert.bondVout}`);
   return {
     slashed: true, offence: TABLE_IS_NOT_F, bond: { txid: proof.bondTxid, vout: proof.bondVout }, commitment: slashCommitment(proof), differs, complete,
-    why: `the node acked a table that is not F: ${differs[0]}`,
+    why: `the node acked a false table: ${differs[0]}`,
   };
 }
 
 /**
- * §5A.3, "withholding a settlement signature" (RULED on bytes 2026-11-02, kanban #1035): the ack is its bytes, and the acks are kept and
- * published. It refuses by name, because an ack, a transaction and an expiry do not show WHO did not sign. A FROST signature names nobody,
- * so a stall reads the same for the seats that gave their share as for the ones that held it back, and for a federation that was down.
- * Every seat that acked a settlement that never landed would be slashed, the honest ones with the rest.
+ * A FALSE TABLE, AS PUBLISHED (§5A.3, kanban #1040): the 199-byte proof body - `signedResultId` the ack's id, `transcriptHash` the table's, `playerPubkey` zero - then the
+ * accused's signed ack, whose type byte tells this record from the others, then the length of the rest and the rest: the acks, the table, the Entry Contracts, each stake
+ * claim's P, the FINAL records, and the round's own settlement for a table marked late. Everything slashHoldsOnTable reads but the committee, the fee rule and the bond.
+ */
+const long = (w, b) => { w.u32(b.length); w.bytes(b); };
+const longOf = (r) => r.bytes(r.u32());
+export const tableSlashEvidenceBytesOf = (bytes, at = 0) => {
+  const lenAt = at + SLASH_PROOF_BYTES + SIGNED_SETTLEMENT_ACK_BYTES;
+  if (bytes[at + SLASH_PROOF_BYTES] !== TYPE_SETTLEMENT_ACK || bytes.length < lenAt + 4) throw new Error('not a proof of a false table');
+  return lenAt + 4 - at + new DataView(bytes.buffer, bytes.byteOffset + lenAt, 4).getUint32(0);
+};
+export function joinTableSlashEvidence(proofBytes, { signedAck, acks, table, entries = [], preimages = [], finals = [], own = null }) {
+  if (proofBytes.length !== SLASH_PROOF_BYTES) throw new Error(`a slash proof is ${SLASH_PROOF_BYTES} bytes, got ${proofBytes.length}`);
+  if (signedAck.length !== SIGNED_SETTLEMENT_ACK_BYTES) throw new Error(`a signed ack is ${SIGNED_SETTLEMENT_ACK_BYTES} bytes, got ${signedAck.length}`);
+  const w = new Writer();
+  w.vec(acks, (a, ww) => ww.bytes(a, SIGNED_SETTLEMENT_ACK_BYTES));
+  long(w, table);
+  w.vec(entries, (e, ww) => long(ww, encodeEntryContract(e)));
+  w.vec(preimages, (p, ww) => { ww.bytes32(p.entryId); ww.bytes32(p.preimage); });
+  w.vec(finals, (f, ww) => { long(ww, encodeEntryContract(f.entry)); long(ww, f.signedResult); ww.vec(f.finalSigs, (s, w2) => long(w2, s)); });
+  w.u8(own ? 1 : 0);
+  if (own) { long(w, own.table); w.vec(own.acks, (a, ww) => ww.bytes(a, SIGNED_SETTLEMENT_ACK_BYTES)); }
+  const rest = w.finish();
+  const out = new Uint8Array(SLASH_PROOF_BYTES + SIGNED_SETTLEMENT_ACK_BYTES + 4 + rest.length);
+  out.set(proofBytes, 0);
+  out.set(signedAck, SLASH_PROOF_BYTES);
+  new DataView(out.buffer).setUint32(SLASH_PROOF_BYTES + SIGNED_SETTLEMENT_ACK_BYTES, rest.length);
+  out.set(rest, SLASH_PROOF_BYTES + SIGNED_SETTLEMENT_ACK_BYTES + 4);
+  return out;
+}
+export function splitTableSlashEvidence(bytes) {
+  let n = -1; if (bytes instanceof Uint8Array) { try { n = tableSlashEvidenceBytesOf(bytes); } catch { n = -1; } }
+  if (n < 0 || bytes.length !== n) throw new Error('that is not a published proof of a false table');
+  const proofBytes = bytes.subarray(0, SLASH_PROOF_BYTES);
+  const r = new Reader(bytes.subarray(SLASH_PROOF_BYTES + SIGNED_SETTLEMENT_ACK_BYTES + 4));
+  const out = { proof: decodeSlashProof(proofBytes), proofBytes, signedAck: bytes.subarray(SLASH_PROOF_BYTES, SLASH_PROOF_BYTES + SIGNED_SETTLEMENT_ACK_BYTES) };
+  out.acks = r.vec((rr) => rr.bytes(SIGNED_SETTLEMENT_ACK_BYTES));
+  out.table = longOf(r);
+  out.entries = r.vec((rr) => decodeEntryContract(longOf(rr)));
+  out.preimages = r.vec((rr) => ({ entryId: rr.bytes32(), preimage: rr.bytes32() }));
+  out.finals = r.vec((rr) => ({ entry: decodeEntryContract(longOf(rr)), signedResult: longOf(rr), finalSigs: rr.vec(longOf) }));
+  out.own = r.u8() ? { table: longOf(r), acks: r.vec((rr) => rr.bytes(SIGNED_SETTLEMENT_ACK_BYTES)) } : null;
+  if (r.at !== bytes.length - SLASH_PROOF_BYTES - SIGNED_SETTLEMENT_ACK_BYTES - 4) throw new Error('trailing bytes after the proof of a false table');
+  return out;
+}
+/** Cut a stream of published proofs of false tables; a record that does not fit ends the stream. */
+export function cutTableSlashEvidence(body) {
+  const out = [];
+  for (let at = 0; at < body.length;) {
+    let n; try { n = tableSlashEvidenceBytesOf(body, at); } catch { break; }
+    if (at + n > body.length) break;
+    out.push(body.subarray(at, at + n)); at += n;
+  }
+  return out;
+}
+
+/**
+ * NOT AN OFFENCE (RULED 2026-11-02, kanban #1043: my #1035 row went). Withholding a settlement signature is silence, and silence is not signed bytes: an ack says a
+ * seat agreed, not that it then refused. An honest seat that acks and crashes must not lose its bond, and with three seats silent the others never reach a share at
+ * all. So this stays refused. What that leaves open, three settlement seats stalling alone, is kanban #1044.
  */
 export function slashHoldsOnWithheld() {
-  return { slashed: false, why: 'refused: an ack, a transaction and an expiry do not show which seat did not sign (kanban #1040)' };
+  return { slashed: false, why: 'refused: silence is not signed bytes, and an ack does not show which seat did not sign (kanban #1043)' };
 }
 
 /**
