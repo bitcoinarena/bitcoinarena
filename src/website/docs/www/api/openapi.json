@@ -3029,6 +3029,50 @@
     }
    }
   },
+  "/federation-records-at": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Federation records at a height",
+    "description": "The signed record of each named federation this seat holds at or below a height, so a seat can read the same records as its peers.\n\nAccess: none\n\nReturns: 200 JSON {node, height, records}; 400 text\n\nSource: `packages/arena-node/src/server.js` line 6183.",
+    "operationId": "get_federation_records_at",
+    "parameters": [
+     {
+      "name": "height",
+      "in": "query",
+      "required": true,
+      "description": "Block height.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "federations",
+      "in": "query",
+      "required": true,
+      "description": "Federation ids, comma-separated, 64 hex each, at most 64.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The records held at or below that height.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "No usable height.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
   "/federations": {
    "get": {
     "tags": [
