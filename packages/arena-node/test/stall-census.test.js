@@ -386,6 +386,11 @@ test('the duty node: notes gathered from the seats, a seat holding them answers 
   assert.equal(client(W, back).ok, true);
   const size = JSON.stringify(back.stalled[0]).length / 2 + Object.values(got.certs).reduce((s, h) => s + h.length / 2, 0);
   console.log(`one stalled node in a claim: ${back.stalled[0].proofs.flatMap((p) => p.notes).reduce((s, h) => s + h.length / 2, 0)} bytes of notes, ${Object.values(got.certs).reduce((s, h) => s + h.length / 2, 0)} bytes of certificates, ~${Math.round(size)} in all`);
+  // the door takes a note only from a key its round drew
+  const stranger = toHex(W.round.pubkey);
+  const notDrawn = W.seatings.find((x) => !x.drawn.includes(stranger));
+  const signed = signStallNote({ roundId: fromHex(notDrawn.roundId), stage: STALL_STAGE.RESULT, silent: [notDrawn.seated[0]] }, W.round.pubkey, (m) => schnorr.sign(m, W.round.identity.secret));
+  assert.match(W.stall.take(signed).why, /was not drawn for that round/);
   const a = W.stall.answer(stallWindow(t));
   assert.equal(a.notes.length, notes.length);
   assert.equal(a.certs.length, 3);

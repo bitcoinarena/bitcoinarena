@@ -34,6 +34,8 @@ if (!seats.length) { console.error('usage: stall-replay.mjs --days 14 --out file
 const fromMs = nowMs - days * 86400000;
 const say = (m) => console.error(`[replay] ${m}`);
 const hexOf = (b) => toHex(new Uint8Array(b));
+/** An advert's address as a log names it: the doors are http, the adverts may say ws. */
+const addressOf = (a) => String(a).replace(/^ws/, 'http').replace(/\/+$/, '');
 const utc = (ms) => new Date(Number(ms)).toISOString().slice(0, 16).replace('T', ' ');
 
 const rounds = new Map();          // round hex -> { closeMs, seatRound, series, seats:Set, notes: Map(signer -> { signer, silent:Set, stages:Set }), landedMs, stakes, entries }
@@ -52,7 +54,7 @@ function roundOf(hex, contractBytes) {
   rounds.set(hex, r);
   return r;
 }
-const noteOf = (r, signer) => { if (!r.notes.has(signer)) r.notes.set(signer, { signer, silent: new Set(), stages: new Set() }); return r.notes.get(signer); };
+const noteOf = (r, signer) => { if (!r.notes.has(signer)) r.notes.set(signer, { signer, silent: new Set(), gone: new Set(), stages: new Set() }); return r.notes.get(signer); };
 
 for (const s of seats) {
   if (!existsSync(s.db)) { say(`${s.name}: no database at ${s.db}`); continue; }
@@ -84,7 +86,7 @@ for (const s of seats) {
     if (!held.has(me)) { selfSilent++; continue; }
     if (!list.length) continue;
     const n = noteOf(r, me);
-    for (const k of list) n.silent.add(k);
+    for (const k of list) { n.silent.add(k); n.gone.add(k); }
     n.stages.add(STALL_STAGE.RESULT);
     notes++;
   }
@@ -96,10 +98,10 @@ for (const s of seats) {
     const fresh = new Map();
     for (const e of body.entries || []) {
       const k = key(e.pubkey); fresh.set(k, (fresh.get(k) || 0n) + BigInt((e.bondSats && e.bondSats.big) || 0));
-      const ep = e.advert && e.advert.endpoint; if (ep) endpoints.set(String(ep).replace(/\/+$/, ''), k);
+      const ep = e.advert && e.advert.endpoint; if (ep) endpoints.set(addressOf(ep), k);
     }
     for (const [k, w] of fresh) census.set(k, w);
-    for (const ex of body.excluded || []) { const ep = ex.advert && ex.advert.endpoint; if (ep) endpoints.set(String(ep).replace(/\/+$/, ''), key(ex.pubkey)); }
+    for (const ex of body.excluded || []) { const ep = ex.advert && ex.advert.endpoint; if (ep) endpoints.set(addressOf(ep), key(ex.pubkey)); }
   }
   coverage.dbFrom.push({ seat: s.name, oldestRoundWithEntries: db.prepare('SELECT MIN(r.opened_ms) AS m FROM rounds r JOIN entries e ON e.round_id = r.round_id').get().m });
   say(`${s.name}: ${rows.length} rounds with entries, ${voids.length} VOID entries, ${notes} listed, ${selfSilent} where it held no result of its own`);
@@ -146,11 +148,14 @@ for (const s of seats) {
     const r = byPrefix.get(prefix);
     if (!r.seats.has(s.me)) continue;
     const silent = l.refused.map((x) => endpoints.get(x.base)).filter(Boolean).filter((k) => r.seats.has(k) && k !== s.me);
+    // a seat that answered with a reason was not gone: it refused by name. The rule cannot tell them apart, the table can
+    const gone = l.refused.filter((x) => /fetch failed|timeout|aborted|ECONN|socket|terminated/i.test(x.why)).map((x) => endpoints.get(x.base)).filter(Boolean).filter((k) => r.seats.has(k) && k !== s.me);
     r.unmapped = (r.unmapped || 0) + l.refused.filter((x) => !endpoints.get(x.base)).length;
     (r.whys = r.whys || []).push(...l.refused.map((x) => `${x.why}`));
     if (!silent.length) continue;
     const n = noteOf(r, s.me);
     for (const k of silent) n.silent.add(k);
+    for (const k of gone) n.gone.add(k);
     n.stages.add(STALL_STAGE.SETTLEMENT);
   }
   say(`${s.name}: ${lines} log lines, the last refusal of ${last.size} late rounds`);
@@ -158,7 +163,7 @@ for (const s of seats) {
 
 // THE RULE, READ HOURLY. `notes` as stalledFrom takes them, unsigned: nothing here checks a signature
 const failed = [...rounds.values()].filter((r) => r.notes.size).map((r) => ({ roundId: r.hex, closeMs: r.closeMs, seatRound: r.seatRound, seated: [...r.seats], series: r.series, stages: new Set([...r.notes.values()].flatMap((n) => [...n.stages])),
-  notes: [...r.notes.values()].map((n) => ({ signer: n.signer, silent: [...n.silent], bytes: '' })) })).filter((r) => r.closeMs > BigInt(fromMs));
+  whys: r.whys || [], notes: [...r.notes.values()].map((n) => ({ signer: n.signer, silent: [...n.silent], gone: [...n.gone], bytes: '' })) })).filter((r) => r.closeMs > BigInt(fromMs));
 const hour = 3600000n;
 const baseWeight = [...census.values()].reduce((a, b) => a + b, 0n);
 const allNodes = [...new Set(failed.flatMap((r) => r.notes.flatMap((n) => n.silent)))];
@@ -208,9 +213,11 @@ const table = { nowUtc: utc(nowMs), fromUtc: utc(fromMs), days, seats: seats.map
   failedByDay: Object.fromEntries(Object.entries(failed.reduce((a, r) => { const d = utc(r.closeMs).slice(5, 10); a[d] = (a[d] || 0) + 1; return a; }, {})).sort()),
   cap: { baseWeight: String(baseWeight), censusNodes: census.size }, named,
   out: { ruled: showSpans(replay({ list: failed, baseline: true })), ruledNoCap: showSpans(replay({ list: failed })), seriesRoundsOnly: showSpans(replay({ list: failed.filter((r) => r.series) })),
+    onlySeatsThatDidNotAnswer: showSpans(replay({ list: failed.map((r) => ({ ...r, notes: r.notes.map((n) => ({ ...n, silent: n.gone })) })) })),
     resultOnly: showSpans(replay({ list: failed.filter((r) => r.stages.has(STALL_STAGE.RESULT)) })), settlementOnly: showSpans(replay({ list: failed.filter((r) => r.stages.has(STALL_STAGE.SETTLEMENT)) })) },
   sensitivity: Object.fromEntries([['quorum 5', { quorum: 5 }], ['4 rounds', { proofs: 4 }], ['5 rounds', { proofs: 5 }], ['spacing 2 h', { spacing: 2n * hour }], ['spacing 4 h', { spacing: 4n * hour }], ['window 48 h', { window: 48n * hour }], ['quorum 5, 4 rounds, 2 h', { quorum: 5, proofs: 4, spacing: 2n * hour }]]
     .map(([k, o]) => [k, showSpans(replay({ list: failed, ...o }))])),
+  whys: Object.entries(failed.flatMap((r) => r.whys).reduce((a, w) => { const k = w.replace(/[0-9a-f]{16,}/g, 'H').slice(0, 60); a[k] = (a[k] || 0) + 1; return a; }, {})).sort((a, b) => b[1] - a[1]).slice(0, 12),
   failed: failed.sort((a, b) => (a.closeMs < b.closeMs ? -1 : 1)).map((r) => ({ round: r.roundId.slice(0, 16), at: utc(r.closeMs), stages: [...r.stages], seats: r.seated.map(label), notes: r.notes.map((n) => ({ by: label(n.signer), silent: n.silent.map(label) })) })) };
 const text = JSON.stringify(table, (k, v) => (typeof v === 'bigint' ? String(v) : v), 1);
 if (out) writeFileSync(out, text);
