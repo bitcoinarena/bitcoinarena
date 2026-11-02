@@ -24,6 +24,7 @@
 // is 0x52, 'R', in keeping with the ASCII "ARN". A vote (27A.7.3) is "ARN" 'V'
 // (ballot.js, 2026-10-13), 77 bytes: the kind byte keeps them apart.
 import { commitmentsOf, parseTransaction, OP_RETURN } from './tx.js';
+import { MIN_PUBLICATION_LEAD_MS } from './constants.js';
 
 export const PUBLICATION_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e]);   // "ARN"
 export const PUBLICATION_KIND_ROUND = 0x52;                             // 'R'
@@ -76,6 +77,25 @@ export function findPublication(view, roundIdBytes) {
     }
   }
   return null;
+}
+
+/** The time in a block header, in ms: four little-endian bytes at offset 68. */
+export function headerTimeMs(header) {
+  const h = typeof header === 'string' ? Uint8Array.from(header.match(/../g).map((x) => parseInt(x, 16))) : header;
+  return BigInt(new DataView(h.buffer, h.byteOffset, h.byteLength).getUint32(68, true)) * 1000n;
+}
+
+/**
+ * THE LEAD OF A PUBLICATION (kanban #1015, 5A.5: "committee_time >= published_at + min_publication_lead", reference 5 minutes). published_at is the time in the header of the
+ * block that holds the publication, so every node reads the same number. A round whose committee forms sooner gave nobody the time to see it coming. Regtest mines on demand
+ * and is not held to it, and a free round is not published at all, so the roster does not ask.
+ */
+export function publicationLeadHolds({ committeeTimeMs, publishedAtMs, network = null, leadMs = MIN_PUBLICATION_LEAD_MS }) {
+  if (network === 'regtest') return { ok: true };
+  if (typeof committeeTimeMs !== 'bigint' || typeof publishedAtMs !== 'bigint') return { ok: false, why: 'that round\'s publication has no time to measure its lead from' };
+  if (committeeTimeMs < publishedAtMs + leadMs)
+    return { ok: false, why: `that round's committee forms at ${committeeTimeMs}, ${committeeTimeMs - publishedAtMs} ms after its publication at ${publishedAtMs}, where this protocol asks for ${leadMs}` };
+  return { ok: true };
 }
 
 /**
