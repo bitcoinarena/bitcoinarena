@@ -23,7 +23,7 @@ import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donatio
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 import { tableFalse } from '../../arena-protocol/src/settlement-rebuild.js';
-import { joinAcks, splitAcks, splitSignedAck, decodeSettlementTable, settlementTableId, countAcks, signSettlementAck } from '../../arena-protocol/src/settlement-ack.js';
+import { joinAcks, splitAcks, splitSignedAck, encodeSettlementTable, decodeSettlementTable, settlementTableId, countAcks, signSettlementAck, planTableRows } from '../../arena-protocol/src/settlement-ack.js';
 
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -208,4 +208,10 @@ test('a late loser\'s second settlement goes through the same acks, under its ow
   assert.equal(splitAcks(row.acks).length, 2);
   assert.equal(toHex(decodeSettlementTable(row.table).lateEntryId), toHex(LATE));
   close(w);
+});
+
+test('the table of a plan with no entries of its own encodes a payout key of 33 bytes (kanban #1049: every late settlement of protocol 22 threw at the seat\'s own ack)', () => {
+  const rows = planTableRows({ payouts: [{ payoutPk: refund(7), msat: 90000n }, { payoutPk: pk(8), msat: 4000n }] });
+  const t = decodeSettlementTable(encodeSettlementTable({ roundId: RID, lateEntryId: b32(9), rows }));
+  assert.deepEqual(t.rows.map((r) => [toHex(r.pubkey), r.amountMsat]).sort(), [[toHex(refund(7).subarray(1)), 90000n], [toHex(pk(8)), 4000n]].sort());
 });

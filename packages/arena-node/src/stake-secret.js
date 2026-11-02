@@ -33,10 +33,9 @@ import { reconstruct, SHARES_NEEDED } from '../../arena-protocol/src/shares.js';
 import { openMyShare, decodeHandout } from '../../arena-protocol/src/handout.js';
 import { sealShare, openShare } from '../../arena-protocol/src/seal.js';
 
-import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { isQualifier } from '../../arena-protocol/src/payout.js';
 import { lockAction, CLAIM } from '../../arena-protocol/src/lock-action.js';
-import { resultFinality } from './finality.js';
+import { resultFinality, settledResult } from './finality.js';
 import { FINAL } from '../../arena-protocol/src/objection.js';
 import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
@@ -212,9 +211,9 @@ export class StakeSecrets {
 
     // THIS NODE'S OWN RESULT, not whichever arrived first. A peer's record is
     // a peer's claim; what this node is willing to act on is what it replayed.
-    const mine = held.find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
-    if (!mine) return { ok: false, why: 'this node signed no result for that run, so it releases nothing' };
-    const result = decodePlayerResult(splitSignedResult(mine.bytes).body);
+    // AND THE AGREED RE-RUN'S ONCE THE RUN IS FINAL ON ONE (§13A, kanban #1049): that is the run that stands.
+    const result = settledResult(this.round, roundIdBytes, entryIdBytes, standing);
+    if (!result) return { ok: false, why: 'this node signed no result for that run, so it releases nothing' };
     // A QUALIFIER IS DELIVERED AND AT THE SCORE (§18), the payout table's own
     // rule - not the word Delivered alone. A Delivered run below it still
     // returns its lock (`lockAction`): its stake was never at risk.

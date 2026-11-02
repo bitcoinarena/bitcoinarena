@@ -232,7 +232,7 @@ import { authorityAt, donationSetSignedBy, donationSetInForce, encodeDonationSet
 import { donationSetId, donationOutputsExpected, encodeDonationSet, vestedShares } from '../../arena-protocol/src/donation.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { timed, watchLoop } from './slow.js';
-import { resultFinality, finalSignatureNow } from './finality.js';
+import { resultFinality, finalSignatureNow, finalRerunResult } from './finality.js';
 import { standingOf, marketStandingOf, settledOutcomeOf } from './standing.js';
 import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
 import { outageOutcome } from '../../arena-protocol/src/entry-void.js';
@@ -3975,7 +3975,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           tally.set(k, { outcome: x.outcome, score: x.score, n: ((tally.get(k) || {}).n || 0) + 1 });
         } catch { /* not a result */ }
       }
-      const best = [...tally.values()].sort((a, b) => b.n - a.n || (a.outcome < b.outcome ? -1 : a.outcome > b.outcome ? 1 : a.score - b.score))[0];
+      const onRerun = finalRerunResult(round, new Uint8Array(rid), new Uint8Array(entryId));   // FINAL on an agreed re-run (kanban #1049): the run that stands
+      const best = onRerun || [...tally.values()].sort((a, b) => b.n - a.n || (a.outcome < b.outcome ? -1 : a.outcome > b.outcome ? 1 : a.score - b.score))[0];
       if (best) { row.outcome = best.outcome; row.score = Number(best.score); }
       else { const nq = round.noQuorum(new Uint8Array(entryId)); if (nq) row.outcome = nq.outcome; }
       return row;
@@ -7985,7 +7986,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
               tally.set(k, { outcome: x.outcome, score: x.score, signers: ((tally.get(k) || {}).signers || 0) + 1 });
             } catch { /* not a result */ }
           }
-          const best = [...tally.values()].sort((a, b) => b.signers - a.signers)[0] || null;
+          const onRerun = finalRerunResult(round, new Uint8Array(rid), new Uint8Array(entryId));   // FINAL on an agreed re-run (kanban #1049): the run that stands
+          const best = onRerun ? { outcome: onRerun.outcome, score: onRerun.score, signers: round.reruns(new Uint8Array(rid), new Uint8Array(entryId)).length }
+            : [...tally.values()].sort((a, b) => b.signers - a.signers)[0] || null;
           const won = round.winnings(entryId);
           const player = toHex(entry.playerPubkey);
           return { entry: toHex(entryId), player, name: names.get(player) || `${displayNameFromKey(entry.playerPubkey)} (no lobby name)`, stakeMsat: String(entry.stakeMsat),

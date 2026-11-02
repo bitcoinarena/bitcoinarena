@@ -30,14 +30,13 @@ import { scalarOneSided } from '../../arena-protocol/src/scalar.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
-import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { isQualifier, FORFEIT as FORFEIT_OUTCOME } from '../../arena-protocol/src/payout.js';
 import { signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { lockFieldsFromJson } from '../../arena-protocol/src/stake-lock.js';
 import { FINAL, SUSPENDED, PROVISIONALLY_FINAL } from '../../arena-protocol/src/objection.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
-import { resultFinality } from './finality.js';
+import { resultFinality, settledResult } from './finality.js';
 import { stateOf } from './settlement-state.js';
 import { pluginForRound } from './plugins.js';
 import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
@@ -181,9 +180,8 @@ export class Forfeit {
         return refuse('that entry is VOID (§13C): nothing is forfeited - nobody acts, and the lock returns to the player at its expiry');
       if (standing.state !== FINAL)
         return refuse(`no forfeit before the result is final with its objection window closed: ${standing.why || standing.state}`);
-      const mine = this.round.results(roundIdBytes, entryIdBytes).find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
-      if (!mine) return refuse('this signer node signed no result for that run, so it forfeits nothing');
-      const result = decodePlayerResult(splitSignedResult(mine.bytes).body);
+      const result = settledResult(this.round, roundIdBytes, entryIdBytes, standing);
+      if (!result) return refuse('this signer node signed no result for that run, so it forfeits nothing');
       if (!isQualifier(result, contract.minScore)) {
         const back = this.nobodyWonReturn(roundIdBytes, entryIdBytes, lock, result);
         if (!back.ok)

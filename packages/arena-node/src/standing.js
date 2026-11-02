@@ -33,6 +33,8 @@ export function settledOutcomeOf(round, roundIdBytes, entryId) {
   try { s = resultFinality(round, roundIdBytes, entryId); } catch (e) { return { decided: false, state: null, why: e.message }; }
   if (s.state === VOID || s.state === FORFEIT) return { decided: true, outcome: s.state, score: 0, state: s.state, why: s.why };
   // signed by the threshold - PROVISIONALLY_FINAL or FINAL - and not in a re-run: its agreed result
+  // FINAL ON AN AGREED RE-RUN (kanban #1049): the re-run's result, the run that stands
+  if (s.state === FINAL && s.rerunResult) return { decided: true, outcome: s.rerunResult.outcome, score: s.rerunResult.score, state: s.state, why: s.why };
   if ((s.state === PROVISIONALLY_FINAL || s.state === FINAL) && !s.rerun && s.runId) {
     for (const r of round.results(roundIdBytes, entryId)) {
       let body;

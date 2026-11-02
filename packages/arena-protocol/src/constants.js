@@ -46,6 +46,13 @@ export const AUDITOR_VERSION = 22;
 export const SETTLEMENT_ACK_VERSION = 22;
 export const acksSettlement = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= SETTLEMENT_ACK_VERSION;
 /**
+ * AFTER A RE-RUN ENDS FINAL THE MONEY READS THE RE-RUN'S RESULT, NOT THE SEAT'S OWN (§13A "the replay outcome is authoritative", kanban #1049). It changes
+ * what a seat that signed the contradicted run puts in a table, so it is gated, and folded into 22 as the acks are: no series of 22 is posted on any network.
+ * A round of an older version reads each seat's own PlayerResult, as it always did.
+ */
+export const RERUN_SETTLES_VERSION = 22;
+export const settlesOnRerun = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= RERUN_SETTLES_VERSION;
+/**
  * A node that seating certificates prove drawn and not present at 3 seatings of the 24 h before the census, and present at none,
  * leaves the census (§5A.3, presence.js, kanban #727); from the same version the certificate names who was present (seating.js SEEN).
  * Folded into 22 with the auditors: 2.0 is unreleased and no series of 22 is posted on any network, so one number keeps 2.0's rules one set.

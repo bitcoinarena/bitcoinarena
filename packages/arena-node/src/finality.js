@@ -32,6 +32,7 @@ import {
   splitSignedReceipt, decodeCheckpointReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../arena-protocol/src/receipt.js';
 import { windowsOf, withinTolerance, FINAL_TOLERANCE_MS } from '../../arena-protocol/src/window.js';
+import { settlesOnRerun } from '../../arena-protocol/src/constants.js';
 import { finalSigned, signFinalSig } from '../../arena-protocol/src/final-sig.js';
 import { verifiedFinal, runId } from './verdict.js';
 import { transcriptIsPublished } from '../../arena-protocol/src/posting.js';
@@ -287,7 +288,7 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
   for (let k = 1; k <= bySeen.length; k++) if (agreedOn(bySeen.slice(0, k)).ok) { agreedAtMs = bySeen[k - 1].seenMs; break; }
   const agreedCommon = { ...common, rerun: { ...said, runId: hex(rerun.runId) }, agreedAtMs, closesAtMs: win.ownCloseMs,
     ownWindowOpenMs: win.ownOpenMs, ownWindowCloseMs: win.ownCloseMs, finalAfterMs: win.ownFinalAfterMs,
-    runId: hex(rerun.runId), contradictedRunId: seen.runId };
+    runId: hex(rerun.runId), contradictedRunId: seen.runId, ...(settlesOnRerun(contract) ? { rerunResult: rerun.result } : {}) };
 
   // A SECOND VALID OBJECTION, RECEIVED HERE BEFORE end + 1805 s, VOIDS THE ENTRY AT ONCE (§13A, slice C2b).
   const secondAt = typeof round.rerunObjectedAt === 'function' ? round.rerunObjectedAt(roundIdBytes, entryIdBytes) : null;
@@ -323,6 +324,23 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
   return { ...agreedCommon, state: PROVISIONALLY_FINAL, published: true, posted: posted.posted, finalSigs: finSaid, lateObjection: lateSecond,
     signable: { runId: rerun.runId, finalAfterMs: win.ownFinalAfterMs },
     why: `re-run agreed; its own window closed at ${utc(win.ownCloseMs)} with no valid objection in time; ${fin.why}` };
+}
+
+/**
+ * THE RESULT A FINAL ENTRY'S MONEY READS (§13A "the replay outcome is authoritative", kanban #1049): the agreed re-run's when `standing` is FINAL on one (a round of
+ * protocol 22 and later), else this seat's own PlayerResult - decoded, or null when this seat signed none. Measured before: a seat that signed the contradicted run
+ * read its own result in the table, the late plan, the forfeit door and the stake secret, so a loser by the re-run kept its stake and a winner's P was released.
+ */
+export function settledResult(round, roundIdBytes, entryIdBytes, standing) {
+  if (standing && standing.state === FINAL && standing.rerunResult) return standing.rerunResult;
+  const mine = round.results(roundIdBytes, entryIdBytes).find((r) => hex(r.nodePubkey) === hex(round.pubkey));
+  return mine ? decodePlayerResult(splitSignedResult(mine.bytes).body) : null;
+}
+
+/** A FINAL re-run's result for this entry, for the readers that tally signed results; null with no re-run on record, without reading the finality. */
+export function finalRerunResult(round, roundIdBytes, entryIdBytes) {
+  if (typeof round.reruns !== 'function' || !round.reruns(roundIdBytes, entryIdBytes).length) return null;
+  try { const s = resultFinality(round, roundIdBytes, entryIdBytes); return s.state === FINAL && s.rerunResult ? s.rerunResult : null; } catch { return null; }
 }
 
 /**
