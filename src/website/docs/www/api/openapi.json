@@ -2318,6 +2318,46 @@
     "x-changes-state": true
    }
   },
+  "/double-slash-proofs": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "A round's proofs of two results",
+    "description": "A round's fraud proofs of two results (\u00a75A.3 row 1): one signer's two different signed results about one run, as published: each proof with both signed results, concatenated. The arbiter reads them; GET /slashes lists them under doubleSlashes.\n\nAccess: none\n\nReturns: 200 octet-stream: the proofs one after another, header x-slash-proofs = count; 400\n\nHeaders: `x-slash-proofs`\n\nSource: `packages/arena-node/src/server.js` line 9547.",
+    "operationId": "get_double_slash_proofs",
+    "parameters": [
+     {
+      "name": "round",
+      "in": "query",
+      "required": true,
+      "description": "The round id, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The proofs' bytes, one after another.",
+      "content": {
+       "application/octet-stream": {
+        "schema": {
+         "type": "string",
+         "format": "binary"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Not a round id.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
   "/duty": {
    "get": {
     "tags": [
@@ -13024,11 +13064,11 @@
      "Nodes"
     ],
     "summary": "Slash proofs this node filed",
-    "description": "Every slash proof this node filed, for the arbitration set to fetch.\n\nAccess: none\n\nReturns: 200 JSON {node, slashes:[{round, entry, node, proof, seenMs, objection}]}\n\nSource: `packages/arena-node/src/server.js` line 5986.",
+    "description": "Every slash proof this node filed, for the arbitration set to fetch.\n\nAccess: none\n\nReturns: 200 JSON {node, slashes:[{round, entry, node, proof, seenMs, objection}], auditSlashes:[...], doubleSlashes:[{round, entry, node, proof, seenMs}]}\n\nSource: `packages/arena-node/src/server.js` line 5986.",
     "operationId": "get_slashes",
     "responses": {
      "200": {
-      "description": "{node, slashes:[{round, entry, node, proof, seenMs, objection}]}.",
+      "description": "{node, slashes:[{round, entry, node, proof, seenMs, objection}], auditSlashes:[...], doubleSlashes:[{round, entry, node, proof, seenMs}]}.",
       "content": {
        "application/json": {}
       }

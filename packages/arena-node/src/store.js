@@ -690,6 +690,21 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, node_pubkey)
     );
 
+    -- TWO DIFFERENT RESULTS ONE SIGNER NODE SIGNED ABOUT ONE RUN (5A.3 row 1, kanban #986): the results table keeps one per signer, so the second
+    -- is kept here the moment it arrives, or it is gone. One row per (round, entry, node), as a proof is stored; proof_id and bytes are set
+    -- when the proof is filed, which waits for the advertisement that names the bond. The bytes are the proof and both signed results.
+    CREATE TABLE IF NOT EXISTS double_results (
+      round_id    BLOB NOT NULL,
+      entry_id    BLOB NOT NULL,
+      node_pubkey BLOB NOT NULL,
+      first       BLOB NOT NULL,
+      second      BLOB NOT NULL,
+      proof_id    BLOB,
+      bytes       BLOB,
+      seen_ms     INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id, node_pubkey)
+    );
+
     -- A CENSUS THIS NODE DERIVED AND CHECKED AGAINST ITS ROUND'S OWN ROOT (OPEN-LIST-2140 item 4): a pure function of the
     -- chain below its height, so it is kept across a restart - a cold derivation held a starting seat's loop 2.7 s each.
     CREATE TABLE IF NOT EXISTS census_kept (

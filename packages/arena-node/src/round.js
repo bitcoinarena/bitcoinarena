@@ -1810,6 +1810,13 @@ export class Round {
       .run(roundIdBytes, entryIdBytes, nodePubkey, resultIdBytes, bytes, this.now()).changes;
   }
 
+  /** The result this node keeps for one signer of a run, or null. */
+  heldResult(roundIdBytes, entryIdBytes, nodePubkey) {
+    const r = this.db.prepare('SELECT result_id, bytes FROM results WHERE round_id = ? AND entry_id = ? AND node_pubkey = ?')
+      .get(roundIdBytes, entryIdBytes, nodePubkey);
+    return r ? { resultId: new Uint8Array(r.result_id), bytes: new Uint8Array(r.bytes) } : null;
+  }
+
   /** Which run a mark belongs to, so a receipt can say what it completed. */
   runOf(checkpointIdBytes) {
     const row = this.db.prepare(
@@ -2249,6 +2256,41 @@ export class Round {
       ? this.db.prepare('SELECT round_id, node_pubkey, entry_id, proof_id, bytes, seen_ms FROM audit_slash_proofs WHERE round_id = ? ORDER BY node_pubkey').all(roundIdBytes)
       : this.db.prepare('SELECT round_id, node_pubkey, entry_id, proof_id, bytes, seen_ms FROM audit_slash_proofs ORDER BY seen_ms DESC LIMIT ?').all(limit);
     return rows.map((r) => ({ roundId: new Uint8Array(r.round_id), nodePubkey: new Uint8Array(r.node_pubkey), entryId: new Uint8Array(r.entry_id),
+      proofId: new Uint8Array(r.proof_id), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
+  }
+
+  /** A SECOND RESULT OF ONE SIGNER ABOUT ONE RUN, with the first (5A.3 row 1, kanban #986): kept once per (round, entry, node). */
+  putDoubleResult(roundIdBytes, entryIdBytes, nodePubkey, first, second) {
+    return this.db.prepare('INSERT OR IGNORE INTO double_results (round_id, entry_id, node_pubkey, first, second, seen_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(roundIdBytes, entryIdBytes, nodePubkey, first, second, this.now()).changes;
+  }
+
+  /** The proof filed from a kept pair: once, so two passes publish it once. */
+  fileDoubleResult(roundIdBytes, entryIdBytes, nodePubkey, proofId, bytes) {
+    return this.db.prepare('UPDATE double_results SET proof_id = ?, bytes = ? WHERE round_id = ? AND entry_id = ? AND node_pubkey = ? AND proof_id IS NULL')
+      .run(proofId, bytes, roundIdBytes, entryIdBytes, nodePubkey).changes;
+  }
+
+  /** Every pair kept for a run, filed or not. */
+  doubleResults(roundIdBytes, entryIdBytes) {
+    return this.db.prepare('SELECT node_pubkey, first, second, proof_id, bytes FROM double_results WHERE round_id = ? AND entry_id = ? ORDER BY node_pubkey')
+      .all(roundIdBytes, entryIdBytes)
+      .map((r) => ({ nodePubkey: new Uint8Array(r.node_pubkey), first: new Uint8Array(r.first), second: new Uint8Array(r.second),
+        proofId: r.proof_id ? new Uint8Array(r.proof_id) : null, bytes: r.bytes ? new Uint8Array(r.bytes) : null }));
+  }
+
+  /** The runs with a pair not filed yet, seen since `sinceMs`: a pair that names no bond for that long stays kept, and unfiled. */
+  unfiledDoubleResults(sinceMs) {
+    return this.db.prepare('SELECT DISTINCT round_id, entry_id FROM double_results WHERE proof_id IS NULL AND seen_ms >= ?').all(sinceMs)
+      .map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id) }));
+  }
+
+  /** Every proof of two results this node filed for a round, or all of them (newest first) for GET /slashes. */
+  doubleSlashProofs(roundIdBytes = null, { limit = 500 } = {}) {
+    const rows = roundIdBytes
+      ? this.db.prepare('SELECT round_id, entry_id, node_pubkey, proof_id, bytes, seen_ms FROM double_results WHERE round_id = ? AND proof_id IS NOT NULL ORDER BY node_pubkey').all(roundIdBytes)
+      : this.db.prepare('SELECT round_id, entry_id, node_pubkey, proof_id, bytes, seen_ms FROM double_results WHERE proof_id IS NOT NULL ORDER BY seen_ms DESC LIMIT ?').all(limit);
+    return rows.map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id), nodePubkey: new Uint8Array(r.node_pubkey),
       proofId: new Uint8Array(r.proof_id), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
   }
 

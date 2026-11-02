@@ -46,7 +46,8 @@ import {
   SIGNED_RERUN_BYTES, runOf, cutSignedReruns,
 } from '../../arena-protocol/src/rerun.js';
 import { encodeSlashProof, slashProofId, slashHolds, joinSlashEvidence, slashHoldsOnRerun, joinRerunSlashEvidence,
-  encodeAuditSlashProof, auditSlashProofId, joinAuditSlashEvidence, slashHoldsOnAudit } from '../../arena-protocol/src/slash.js';
+  encodeAuditSlashProof, auditSlashProofId, joinAuditSlashEvidence, slashHoldsOnAudit, slashHoldsOnDoubleSign, orderedResultIds,
+  joinDoubleSlashEvidence } from '../../arena-protocol/src/slash.js';
 import { decodeAudit, auditId } from '../../arena-protocol/src/auditor.js';
 import { agreedRunsOf } from './audit-seat.js';
 import {
@@ -1906,8 +1907,74 @@ export class Verifier {
     try { ok = schnorr.verify(signature, id, result.nodePubkey); } catch { ok = false; }
     if (!ok) return false;
 
-    return this.round.putResult(
-      roundIdBytes, entryIdBytes, result.nodePubkey, id, record) === 1;
+    const kept = this.round.putResult(roundIdBytes, entryIdBytes, result.nodePubkey, id, record) === 1;
+    if (!kept) this.#noteSecondResult(roundIdBytes, entryIdBytes, result, id, record);
+    return kept;
+  }
+
+  /**
+   * THE STORE KEEPS ONE RESULT PER SIGNER, AND A SIGNER'S SECOND ONE USED TO STOP THERE (5A.3 row 1, kanban #986). `record` was just
+   * checked: this run's round and player, signed by the key it names. A repeat of what is held says nothing. A different result about
+   * ANOTHER transcript says nothing either: one player key holds several entries, and a peer can hand one entry's result under another.
+   * About the SAME transcript, by a signer of this round, it is the offence, and it is kept before anything else can lose it.
+   */
+  #noteSecondResult(roundIdBytes, entryIdBytes, result, id, record) {
+    const first = this.round.heldResult(roundIdBytes, entryIdBytes, result.nodePubkey);
+    if (!first || hex(first.resultId) === hex(id)) return;
+    let held;
+    try { held = decodePlayerResult(splitSignedResult(first.bytes).body); } catch { return; }
+    if (hex(held.transcriptHash) !== hex(result.transcriptHash)) return;
+    if (!this.round.signerNodes(roundIdBytes).some((k) => hex(k) === hex(result.nodePubkey))) return;
+    if (!this.round.putDoubleResult(roundIdBytes, entryIdBytes, result.nodePubkey, first.bytes, record)) return;
+    console.log(`[slash] ${hex(entryIdBytes).slice(0, 16)}: ${hex(result.nodePubkey).slice(0, 16)} signed two results about one run`);
+    this.fileDoubleSignProofs(roundIdBytes, entryIdBytes).catch((e) => console.log(`[slash] ${hex(entryIdBytes).slice(0, 16)}: ${e.message}`));
+  }
+
+  /**
+   * FILE A SLASH PROOF FROM EACH PAIR THIS NODE KEPT (5A.3 row 1, kanban #986): TWO_RESULTS, filed only if `slashHoldsOnDoubleSign` says it
+   * slashes, stored once per (round, entry, node), listed at GET /slashes `doubleSlashes`, served at GET /double-slash-proofs and posted to
+   * the round's relays. Nothing is replayed and nothing is this node's word: the two signatures are the proof. A signer whose advertisement
+   * this node does not hold yet is refused by name and tried again by the seat's pass. Money is not touched.
+   */
+  async fileDoubleSignProofs(roundIdBytes, entryIdBytes) {
+    const report = { filed: [], refused: [], published: 0 };
+    const row = this.round.get(roundIdBytes);
+    if (!row) { report.refused.push('no such round'); return report; }
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const committee = this.round.signerNodes(roundIdBytes);
+    let adverts = null;
+    try { adverts = this.advertsFor ? this.advertsFor(roundIdBytes) : null; } catch { adverts = null; }
+    const verify = (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } };
+    for (const held of this.round.doubleResults(roundIdBytes, entryIdBytes)) {
+      if (held.proofId) continue;
+      const who = hex(held.nodePubkey);
+      const advert = adverts instanceof Map ? adverts.get(who) : null;
+      if (!advert) { report.refused.push(`${who.slice(0, 16)}: no advertisement names its bond`); continue; }
+      let a, b;
+      try {
+        a = decodePlayerResult(splitSignedResult(held.first).body);
+        b = decodePlayerResult(splitSignedResult(held.second).body);
+      } catch (e) { report.refused.push(`${who.slice(0, 16)}: ${e.message}`); continue; }
+      const { named, other } = orderedResultIds(resultId(a), resultId(b));
+      const proof = { roundId: roundIdBytes, playerPubkey: a.playerPubkey, nodePubkey: a.nodePubkey, transcriptHash: other, signedResultId: named,
+        bondTxid: advert.bondTxid, bondVout: advert.bondVout };
+      const check = slashHoldsOnDoubleSign({ proof, signedResults: [held.first, held.second], advert, committee, verify });
+      if (!check.slashed) { report.refused.push(`${who.slice(0, 16)}: ${check.why}`); continue; }
+      const id = slashProofId(proof);
+      const pair = hex(resultId(a)) === hex(named) ? [held.first, held.second] : [held.second, held.first];
+      const record = joinDoubleSlashEvidence(encodeSlashProof(proof), ...pair);
+      if (!this.round.fileDoubleResult(roundIdBytes, entryIdBytes, held.nodePubkey, id, record)) continue;
+      report.filed.push(who);
+      console.log(`[slash] ${hex(entryIdBytes).slice(0, 16)} filed TWO_RESULTS against ${who.slice(0, 16)}`);
+      for (const relay of relayTargets(contract.publicationRelays, this.peersOf(roundIdBytes))) {
+        try {
+          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: record, signal: AbortSignal.timeout(PEER_WAIT_MS) });
+          if (put.ok) report.published += 1;
+          else report.refused.push(`${relay}: kept no proof (${put.status})`);
+        } catch (e) { report.refused.push(`${relay}: ${e.message}`); }
+      }
+    }
+    return report;
   }
 
   /**

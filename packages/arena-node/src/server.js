@@ -259,7 +259,7 @@ import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { createDonationBallots } from './donation-ballots.js';
 import { decodeDonationProposal, donationProposalId, donationApprovalDigest, encodeDonationProposal, encodeDonationApproval } from '../../arena-protocol/src/donation-vote.js';
 
-import { SLASH_PROOF_BYTES, splitSlashEvidence, AUDIT_CONTRADICTED, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES, splitAuditSlashEvidence, auditSlashProofId } from '../../arena-protocol/src/slash.js';
+import { SLASH_PROOF_BYTES, splitSlashEvidence, AUDIT_CONTRADICTED, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES, splitAuditSlashEvidence, auditSlashProofId, TWO_RESULTS, splitDoubleSlashEvidence, doubleSlashEvidenceBytesOf } from '../../arena-protocol/src/slash.js';
 import { slashOwing, entriesForSlash } from './slash-owing.js';
 import os from 'node:os';
 import { createNodeFactsBook, measureFacts, measureBandwidth, measureOrigin, signFacts, FACTS_EVERY_MS, PROBE_BYTES } from './node-facts.js';
@@ -2849,6 +2849,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
   }, 60000);
   if (auditFilesTimer.unref) auditFilesTimer.unref();
+  // TWO RESULTS KEPT AND NOT FILED YET (5A.3 row 1, kanban #986): the pair is filed the moment it is noticed if the signer's advertisement is
+  // held; this pass files the ones that waited for it, a restart included, for 6 h. The pair itself stays kept after that.
+  const doubleFilesTimer = setInterval(() => {
+    let waiting = [];
+    try { waiting = round.unfiledDoubleResults(Date.now() - 6 * 3600000); } catch { return; }
+    for (const w of waiting) verifier.fileDoubleSignProofs(w.roundId, w.entryId).then((f) => { for (const why of f.refused) console.log(`[slash] ${toHex(w.entryId).slice(0, 16)} two results: ${why}`); },
+      (e) => console.log(`[slash] ${e.message}`));
+  }, Number(finality.doubleFileMs ?? 60000));
+  if (doubleFilesTimer.unref) doubleFilesTimer.unref();
   async function contradictAudits(rid, eid, why) {
     for (const who of auditDesk.contradict(new Uint8Array(rid), `entry ${toHex(eid)}: ${why}`))
       console.log(`[audit] ${toHex(rid).slice(0, 16)}: the AUDIT of ${who.slice(0, 16)} vouched for the result of ${toHex(eid).slice(0, 16)} a valid objection contradicts - held as the fraud proof against it, paid nothing`);
@@ -10143,7 +10152,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!row) return text(res, 404, 'this node holds no such round');
         const contract = decodeRoundContract(new Uint8Array(row.contract));
         // AND THE PROOFS AGAINST CONTRADICTED AUDITS OF THAT ENTRY (kanban #1000): the auditor's bond owes as the signer's does
-        const held = [...round.slashProofs(rid, eid), ...round.auditSlashProofs(new Uint8Array(rid)).filter((r) => toHex(r.entryId) === toHex(eid)).map((r) => ({ ...r, audit: true }))];
+        // AND THE PROOFS OF TWO RESULTS OF THAT ENTRY (kanban #986)
+        const held = [...round.slashProofs(rid, eid), ...round.auditSlashProofs(new Uint8Array(rid)).filter((r) => toHex(r.entryId) === toHex(eid)).map((r) => ({ ...r, audit: true })),
+          ...round.doubleSlashProofs(new Uint8Array(rid)).filter((r) => toHex(r.entryId) === toHex(eid)).map((r) => ({ ...r, double: true }))];
         if (!held.length) return text(res, 404, 'this node filed no slash proof for that run');
 
         // AND THE HEIGHT IS BOUNDED BEFORE ANY CENSUS IS DERIVED AT IT.
@@ -10178,7 +10189,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // WHICH WAY THE FALSE RESULT WENT DECIDES WHO IT HARMED (kanban #975): the signed result beside the proof, and the replay's
           // result in the objection that held
           let proof, signed, replayed;
-          try {
+          // TWO RESULTS SAY NOTHING ABOUT WHICH WAY THEY WENT (§5A.3): they name no replay, and a player either harmed is paid through the replay's proof
+          if (p.double) { try { proof = splitDoubleSlashEvidence(p.bytes).proof; } catch (e) { owing.push({ node: toHex(p.nodePubkey), why: `unreadable proof: ${e.message}` }); continue; } }
+          else try {
             // an AUDIT's proof names a run, not a signed result: that run's outcome and score come off the entry's results
             const ev = p.audit ? splitAuditSlashEvidence(p.bytes) : splitSlashEvidence(p.bytes);
             proof = ev.proof;
@@ -10198,7 +10211,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // so that is the offence named here. A proof arriving by any other road would need its own
           // verdict carried with it, and until one does, none is invented. The AUDIT table holds one kind too (kanban #1000).
           const said = await slashOwing({
-            proof, offence: p.audit ? AUDIT_CONTRADICTED : REPLAY_CONTRADICTS, contract, roundIdBytes: new Uint8Array(rid), entries, signed, replayed, settledOnFalse, paid,
+            proof, offence: p.double ? TWO_RESULTS : p.audit ? AUDIT_CONTRADICTED : REPLAY_CONTRADICTS, contract, roundIdBytes: new Uint8Array(rid), entries, signed, replayed, settledOnFalse, paid,
             payoutShares: rule.ok ? rule.payoutShares : null, slashHeight: height, tipHeight: at.tipHeight,
             bondSatsOf: async () => bondOf(proof.nodePubkey),
           });
@@ -10224,8 +10237,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // player-result kind reads `slashes` as before and is never handed a proof it would look for in the wrong table
         const auditRows = round.auditSlashProofs().map((r) => ({ round: toHex(r.roundId), entry: toHex(r.entryId), node: toHex(r.nodePubkey),
           proof: toHex(r.proofId), seenMs: r.seenMs, objection: !!round.objectionBundle(r.roundId, r.entryId) }));
+        // AND THE PROOFS OF TWO RESULTS (kanban #986), under theirs: nothing to replay, so no objection is asked after
+        const doubleRows = round.doubleSlashProofs().map((r) => ({ round: toHex(r.roundId), entry: toHex(r.entryId), node: toHex(r.nodePubkey), proof: toHex(r.proofId), seenMs: r.seenMs }));
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), slashes: rows, auditSlashes: auditRows }));
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), slashes: rows, auditSlashes: auditRows, doubleSlashes: doubleRows }));
+      }
+      // A ROUND'S PROOFS OF TWO RESULTS, as published (proof, both signed results), one after another (kanban #986)
+      if (req.method === 'GET' && url.pathname === '/double-slash-proofs') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'a round id is 32 bytes');
+        const filed = round.doubleSlashProofs(rid);
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-slash-proofs': String(filed.length), ...CORS });
+        return res.end(Buffer.concat(filed.map((p) => Buffer.from(p.bytes))));
       }
       // A ROUND'S PROOFS AGAINST CONTRADICTED AUDITS, as published (proof, AUDIT, signature, rows), one after another (kanban #724, #725)
       if (req.method === 'GET' && url.pathname === '/audit-slash-proofs') {
@@ -10583,6 +10606,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try { rerunNamed = toHex(rerunResultId(decodeRerunResult(splitSignedRerun(rr.signedRerun).body))); }
           catch (e) { return text(res, 409, `the evidence is not a signed re-run result: ${e.message}`); }
           if (rerunNamed !== toHex(rr.proof.signedResultId)) return text(res, 409, 'the evidence is not the re-run the proof names');
+          round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
+          return text(res, 201, 'kept');
+        }
+        // A PROOF OF TWO RESULTS (kanban #986) travels with both, each at its own size: kept only when they are the pair the proof names
+        let doubledAt = -1;
+        try { doubledAt = doubleSlashEvidenceBytesOf(new Uint8Array(bytes)); } catch { doubledAt = -1; }
+        if (doubledAt === bytes.length) {
+          let pair;
+          try { pair = splitDoubleSlashEvidence(new Uint8Array(bytes)); } catch (e) { return text(res, 400, e.message); }
+          if (toHex(slashProofId(pair.proof)) !== slashed[1]) return text(res, 409, 'that is not the proof that id names');
+          let ids;
+          try { ids = pair.signedResults.map((r) => toHex(resultId(decodePlayerResult(splitSignedResult(r).body)))); }
+          catch (e) { return text(res, 409, `the evidence is not two signed results: ${e.message}`); }
+          if (ids[0] !== toHex(pair.proof.signedResultId) || ids[1] !== toHex(pair.proof.transcriptHash)) return text(res, 409, 'the evidence is not the pair the proof names');
           round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
           return text(res, 201, 'kept');
         }
@@ -11442,6 +11479,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         clearInterval(networkAppsTimer);
         clearInterval(winningsTimer);
         if (auditTimer) clearInterval(auditTimer);
+        clearInterval(doubleFilesTimer);
         clearInterval(lateTimer);
         nostr.stop();
         badges.stop();
