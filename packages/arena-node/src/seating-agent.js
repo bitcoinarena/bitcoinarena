@@ -735,7 +735,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     presentHere: (rid, role = 'settlement') => !!db.prepare('SELECT 1 FROM seat_presents WHERE round_id = ? AND role = ? AND node = ?').get(seatOf(rid), role, me),
     takePresent, presentsOf, mySignature, certOf: (rid, role, at = rid) => certOf(seatRoundOf(at, role), role), keepCert, equivocationOf, takePresents, batchOf,
     /** The table round a door's certificate is on, and its index (kanban #1020): 0 for the table's first. */
-    certRoundOf: (at, role) => { const r = seatRoundOf(at, role); let index = 0; try { index = decodeRoundContract(new Uint8Array(round.get(r).contract)).roundIndex || 0; } catch { index = 0; } return index; },
+    certRoundOf: (at, role) => { const r = toHex(seatRoundOf(at, role)); const e = (reseats.get(`${toHex(seatOf(at))}:${role}`) || []).find((x) => toHex(x.rid) === r); return e ? e.index : 0; },
     /** A round deleted from the store (transcript-prune.js, unused and past its windows): its certificates leave memory too. */
     forget: (ridHex) => { for (const role of SEATING_ROLES) certs.delete(`${ridHex}:${role}`); },
   };
