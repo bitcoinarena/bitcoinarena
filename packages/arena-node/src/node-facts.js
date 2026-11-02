@@ -3,7 +3,8 @@
 // WHAT A NODE RUNS ON, SAID TO THE NETWORK (kanban #984, the owner 2026-11-02: "Auch verfügbare cores configuration, ram, bandbreite regelmäßig scannen und erfassen und alles
 // regelmäßig ans Netzwerk schicken damit andere nodes das wissen. Auch wenn die betroffene node offline ist").
 //
-// Each node measures itself on a schedule, signs one small record with its node key and hands it to every seat it can name; a seat keeps the newest record of each bonded
+// The owner 2026-11-02: "Bandbreite nur einmal messen, und land und Anzahl Cores. ram und load regelmaessig und ans Netzwerk schicken": cores, country and bandwidth are measured
+// once and kept; RAM and load are read each hour. Each record is signed with the node key and handed to every seat it can name; a seat keeps the newest record of each bonded
 // node and passes on what is new. So the record of a node that went offline stays readable at every other seat, with its age: GET /node-facts.
 //
 // A NODE'S WORD ABOUT ITSELF: the signature says who said it, not that it is true. It decides nothing: no draw, no seat, no slash. It is what operators and other nodes read.
@@ -11,9 +12,8 @@
 import os from 'node:os';
 import { sha256, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
-/** How often a node measures and sends: hourly; the bandwidth, which moves real bytes, four times a day. */
+/** How often a node reads its RAM and load and sends them. */
 export const FACTS_EVERY_MS = 3600000;
-export const BANDWIDTH_EVERY_MS = 6 * 3600000;
 /** What one bandwidth reading downloads from one peer. */
 export const PROBE_BYTES = 1000000;
 export const FACTS_MOST_BYTES = 1024;
@@ -25,11 +25,20 @@ const te = new TextEncoder();
 export const factsDigest = (r) => sha256(te.encode(`ARENA/v1/NodeFacts\n${JSON.stringify([r.node, r.atMs, r.facts])}`));
 
 /** This machine, as a node can read it without asking anyone. */
-export function measureFacts({ release = null, roles = [], guardian = false, bandwidthMbps = null, osApi = os, versions = process.versions } = {}) {
+export function measureFacts({ release = null, roles = [], guardian = false, once = {}, osApi = os, versions = process.versions } = {}) {
   const cpus = osApi.cpus() || [];
-  return { cores: cpus.length, cpu: String((cpus[0] && cpus[0].model) || '').slice(0, 64), ramMb: Math.round(osApi.totalmem() / 1048576), freeRamMb: Math.round(osApi.freemem() / 1048576),
+  return { cores: once.cores ?? cpus.length, country: once.country ?? null, bandwidthMbps: once.bandwidthMbps ?? null, cpu: String((cpus[0] && cpus[0].model) || '').slice(0, 64), ramMb: Math.round(osApi.totalmem() / 1048576), freeRamMb: Math.round(osApi.freemem() / 1048576),
     load: osApi.loadavg().map((x) => Math.round(x * 100) / 100), platform: osApi.platform(), arch: osApi.arch(), node: versions.node, release: release ? String(release).slice(0, 32) : null,
-    roles: [...roles].map(String).slice(0, 8), guardian: !!guardian, uptimeS: Math.round(osApi.uptime()), bandwidthMbps };
+    roles: [...roles].map(String).slice(0, 8), guardian: !!guardian, uptimeS: Math.round(osApi.uptime()) };
+}
+
+/** The country this machine reaches the internet from, two letters, by Cloudflare's trace: only `loc` is read, its line with the address is dropped. Null when unknown. */
+export async function measureCountry({ fetcher = fetch } = {}) {
+  try {
+    const r = await fetcher('https://www.cloudflare.com/cdn-cgi/trace', { signal: AbortSignal.timeout(10000) });
+    const m = /^loc=([A-Z]{2})$/m.exec(await r.text());
+    return m ? m[1] : null;
+  } catch { return null; }
 }
 
 /** The download speed from a few peers, Mbit/s, the middle reading; null with none answering. */
@@ -57,6 +66,15 @@ export function signFacts({ node, atMs, facts, sign }) {
 /** The seat's book of what nodes said. `isBonded(hex)`: true, false, or null while unknown (taken: a seat that reads no census yet refuses nobody). */
 export function createNodeFactsBook({ db, verify, isBonded = () => null, nowMs = () => Date.now() }) {
   db.exec('CREATE TABLE IF NOT EXISTS node_facts (node TEXT PRIMARY KEY, at_ms INTEGER NOT NULL, said TEXT NOT NULL, seen_ms INTEGER NOT NULL)');
+  db.exec('CREATE TABLE IF NOT EXISTS node_facts_once (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+  /** What this node measures once: kept, so a restart does not measure it again. `measure()` runs only for a value still missing. */
+  async function once(key, measure) {
+    const had = db.prepare('SELECT value FROM node_facts_once WHERE key = ?').get(key);
+    if (had) return JSON.parse(had.value);
+    const v = await measure();
+    if (v !== null && v !== undefined) db.prepare('INSERT OR REPLACE INTO node_facts_once (key, value) VALUES (?, ?)').run(key, JSON.stringify(v));
+    return v ?? null;
+  }
   /** Keeps a record that stands and is newer than the one held. { ok, kept } or { ok: false, why }. */
   function offer(said) {
     const r = said && said.record;
@@ -75,5 +93,5 @@ export function createNodeFactsBook({ db, verify, isBonded = () => null, nowMs =
   }
   /** Every record held, newest first, each with its age: a node's last word stays here after it went offline. */
   const list = () => db.prepare('SELECT said, at_ms FROM node_facts ORDER BY at_ms DESC').all().map((x) => ({ ...JSON.parse(x.said), ageS: Math.round((nowMs() - Number(x.at_ms)) / 1000) }));
-  return { offer, list };
+  return { offer, list, once };
 }

@@ -239,7 +239,8 @@ import { decodeDonationProposal, donationProposalId, donationApprovalDigest, enc
 
 import { SLASH_PROOF_BYTES, splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES } from '../../arena-protocol/src/slash.js';
 import { slashOwing, entriesForSlash } from './slash-owing.js';
-import { createNodeFactsBook, measureFacts, measureBandwidth, signFacts, FACTS_EVERY_MS, BANDWIDTH_EVERY_MS, PROBE_BYTES } from './node-facts.js';
+import os from 'node:os';
+import { createNodeFactsBook, measureFacts, measureBandwidth, measureCountry, signFacts, FACTS_EVERY_MS, PROBE_BYTES } from './node-facts.js';
 import { StakeSecrets, encodeShareAnswer, SEALED_ANSWER_BYTES } from './stake-secret.js';
 import { Dkg, runAgainIn } from './dkg.js';
 import { reserveEpochId, decodeContribution } from '../../arena-protocol/src/dkg.js';
@@ -4515,11 +4516,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHAT THIS NODE RUNS ON, SAID TO THE NETWORK (kanban #984): measured and signed hourly, handed to every seat; each seat keeps every node's last record
   const nodeFacts = round.db ? createNodeFactsBook({ db: round.db, verify: schnorrVerify,
     isBonded: (hex) => { const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false }; return now.ok ? now.entries.some((e) => toHex(e.pubkey) === hex) : null; } }) : null;
-  let bandwidthMbps = null, bandwidthAtMs = 0;
   const sayFacts = async () => {
     const peers = everySeat();
-    if (Date.now() - bandwidthAtMs >= BANDWIDTH_EVERY_MS) { bandwidthAtMs = Date.now(); bandwidthMbps = await measureBandwidth(peers).catch(() => null); }
-    const facts = measureFacts({ release: releaseHere().version || null, guardian: !!process.env.ARENA_GUARDIAN, bandwidthMbps });
+    // ONCE: cores, country and bandwidth are kept; a value that could not be read is tried again on the next pass. RAM and load are read every pass
+    const once = { cores: await nodeFacts.once('cores', async () => os.cpus().length), country: await nodeFacts.once('country', () => measureCountry()),
+      bandwidthMbps: await nodeFacts.once('bandwidthMbps', () => measureBandwidth(peers).catch(() => null)) };
+    const facts = measureFacts({ release: releaseHere().version || null, guardian: !!process.env.ARENA_GUARDIAN, once });
     const said = signFacts({ node: round.pubkey, atMs: Date.now(), facts, sign: (d) => schnorr.sign(d, round.identity.secret) });
     nodeFacts.offer(said);
     await Promise.all(peers.map((u) => fetch(`${u}/node-facts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(said), signal: AbortSignal.timeout(10000) }).catch(() => null)));

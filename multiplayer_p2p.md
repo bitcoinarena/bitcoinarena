@@ -2645,7 +2645,7 @@ PRESENTs comes after, and one seat's bad line costs a reserve, never a round.
 
 Which nodes a seat counts as not answering is public at its `GET /node-facts`, with the address, the failed tries and since when, so any node can compare and ask that address itself. That a node did not answer cannot be proven, only observed, so it costs a seat in a round and never a bond.
 
-**What a node runs on (kanban #984).** Each node measures its cores, RAM, load, platform, release and bandwidth on a schedule, signs one small record and hands it to every seat. A seat keeps the newest record of each bonded node, so it stays readable with its age after that node went offline. It is the node's own word: it decides no draw and no seat, and it names no address, path or key.
+**What a node runs on (kanban #984).** Each node measures its cores, country and bandwidth once, reads its RAM and load every hour, signs one small record and hands it to every seat. A seat keeps the newest record of each bonded node, so it stays readable with its age after that node went offline. It is the node's own word: it decides no draw and no seat, and it names no address, path or key.
 
 **The seating certificate.** The seated nodes sign
 `SEATING(round_id, role, seated list)`; a round's seating is valid only with

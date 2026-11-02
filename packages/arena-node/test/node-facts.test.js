@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { createNodeFactsBook, measureFacts, measureBandwidth, signFacts, PROBE_BYTES } from '../src/node-facts.js';
+import { createNodeFactsBook, measureFacts, measureBandwidth, measureCountry, signFacts, PROBE_BYTES } from '../src/node-facts.js';
 
 const secret = new Uint8Array(32).fill(3), pubkey = schnorr.getPublicKey(secret);
 const sign = (d) => schnorr.sign(d, secret), verify = (s, m, k) => schnorr.verify(s, m, k);
@@ -37,9 +37,9 @@ test('a seat that reads no census yet refuses nobody', () => {
 });
 
 test('the measured facts name the machine, and nothing that points at it', () => {
-  const f = measureFacts({ release: '2026.1.9.21', bandwidthMbps: 40 });
+  const f = measureFacts({ release: '2026.1.9.21', once: { cores: 12, country: 'AR', bandwidthMbps: 40 } });
   assert.ok(f.cores > 0 && f.ramMb > 0);
-  assert.deepEqual(Object.keys(f).sort(), ['arch', 'bandwidthMbps', 'cores', 'cpu', 'freeRamMb', 'guardian', 'load', 'node', 'platform', 'ramMb', 'release', 'roles', 'uptimeS'].sort());
+  assert.deepEqual(Object.keys(f).sort(), ['arch', 'bandwidthMbps', 'cores', 'country', 'cpu', 'freeRamMb', 'guardian', 'load', 'node', 'platform', 'ramMb', 'release', 'roles', 'uptimeS'].sort());
 });
 
 test('the bandwidth is the middle of the peers that answered', async () => {
@@ -48,4 +48,18 @@ test('the bandwidth is the middle of the peers that answered', async () => {
   const v = await measureBandwidth(['http://a', 'http://dead', 'http://b'], { fetcher, nowMs: () => (t += 100) });
   assert.equal(v, 80);
   assert.equal(await measureBandwidth(['http://dead'], { fetcher }), null);
+});
+
+test('cores, country and bandwidth are measured once and kept; a value not read is tried again', async () => {
+  const { b } = book(); let asked = 0;
+  assert.equal(await b.once('country', async () => { asked++; return null; }), null);
+  assert.equal(await b.once('country', async () => { asked++; return 'DE'; }), 'DE');
+  assert.equal(await b.once('country', async () => { asked++; return 'FR'; }), 'DE');
+  assert.equal(asked, 2);
+});
+
+test('the country is the two letters of the trace, and the address line is not read', async () => {
+  const fetcher = async () => new Response('fl=1\nip=203.0.113.9\nloc=AR\nwarp=off\n');
+  assert.equal(await measureCountry({ fetcher }), 'AR');
+  assert.equal(await measureCountry({ fetcher: async () => { throw new Error('no'); } }), null);
 });
