@@ -5267,6 +5267,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const r = fromHex(id);
       const cc = id === toHex(rid) ? c : round.contractOf(r);
       if (!cc) continue;
+      // A SERIES THIS SEAT NO LONGER HOLDS HAS NO SAY IN THE WINDOW (kanban #828, 11-02 00:00-01:25Z): the dropped primary efe4963f still counted as drawn, so all 14 seats
+      // refused every backup round of the day's first 85 minutes and no Next Block round could be played.
+      if (id !== toHex(rid) && seriesRefusal(cc)) continue;
       rows.push({ id, backup: isBackupRound(r, cc), drawn: !!committeeOf(r).drawn, entries: round.entriesOf(r).length });   // an object where the seats seat (kanban #781)
     }
     const me = rows.find((x) => x.id === toHex(rid));
