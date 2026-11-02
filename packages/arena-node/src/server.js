@@ -2608,10 +2608,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // kanban #738: the forced overloaded seat, regtest rounds only (seating-agent.js)
     testHoldPresents: Number(process.env.ARENA_TEST_SEATING_HOLD) || null,
     // a table's round 0 this seat never wrote, built from the series it holds (kanban #604); `writers` is set further down
-    contractOf: (rid) => {
+    contractOf: (rid, index = null) => {
       try {
         const hex = toHex(rid);
         for (const w of writers) if (toHex(seriesRoundIdOf(w.id, 0)) === hex) return seriesRound(w.template, 0);
+        // a table's check-in this seat never wrote (kanban #1020), named by its index
+        if (Number.isInteger(index) && index > 0) for (const w of writers) if (toHex(seriesRoundIdOf(w.id, index)) === hex) return seriesRound(w.template, index);
       } catch { /* writers not set yet */ }
       return null;
     },
@@ -2623,11 +2625,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     verify: verifySchnorrKept,   // kept per (sig, msg, key): a PRESENT refused once is not checked again (kanban #587)
     log: (m) => console.log(m), windowOf: marketWindowFor,
     // A V2 ROUND'S SEATS (2026.0.2): the settlement seating's certified seated set is the round's 7 signer nodes
-    onSeated: (rid, role, seated) => {
+    onSeated: (rid, role, seated, contract = null) => {
       if (role !== 'settlement') return;
       // A TABLE'S LATER SEATING (kanban #1020): it seats that check-in and the rounds after it
-      let later = null; try { const t = tableAnchorOf(decodeRoundContract(new Uint8Array(round.get(rid).contract))); later = t && !t.first ? t : null; } catch { later = null; }
-      if (later) { reseatTable(later.anchorId, rid); return; }
+      let later = null; try { const t = tableAnchorOf(contract || decodeRoundContract(new Uint8Array(round.get(rid).contract))); later = t && !t.first ? t : null; } catch { later = null; }
+      if (later) { reseatTable(later.anchorId, contract ? contract.roundIndex : decodeRoundContract(new Uint8Array(round.get(rid).contract)).roundIndex); return; }
       // a seating that differs from the draw's first seats deals the claim key again, to the seated (dkg epoch per committee)
       if (round.seatDrawFree(rid, seated)) { console.log(`[seating] ${toHex(rid).slice(0, 16)}: v2 round, its 7 seated written in`); makeClaimKey(rid); }
       seatTable(rid, seated);
@@ -2657,11 +2659,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (n) { console.log(`[seating] table ${hex.slice(0, 16)}: ${n} round(s) of it seated again, as its certificate says`); makeClaimKey(first); }
   }
   /** A check-in seated the table anew (kanban #1020): every round of it not started and without entries is written in again, and the new seats' key is made at once. */
-  function reseatTable(anchorRid, rid) {
+  function reseatTable(anchorRid, from) {
     const hex = toHex(anchorRid);
     let w; try { w = writers.find((x) => toHex(seriesRoundIdOf(x.id, 0)) === hex); } catch { return; }
     if (!w) return;
-    const from = decodeRoundContract(new Uint8Array(round.get(rid).contract)).roundIndex;
     wantedTables.add(hex);
     let n = 0, first = null;
     for (const id of w.startingWithin(round.now(), Number.MAX_SAFE_INTEGER - Number(round.now()))) {

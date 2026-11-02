@@ -136,14 +136,15 @@ const reseatFixture = ({ failingNode = true, lastSeated = 6, withReserve = true 
   };
   const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
   let now = Number(cIn.startTimeMs) - 170000;
+  let contractOf = () => null;
   const agent = seatingAgent({ round, roster: { committeeFor: () => ({ ok: true, drawn }) }, sign: signer(me), verify, fetcher, nowMs: () => now,
-    endpointOf: undefined });
+    endpointOf: undefined, contractOf: (rid, index) => contractOf(rid, index) });
   const seat7 = nodes.slice(0, 7);
   const certFor = (rid, list) => { const keys = list.map((n) => n.pubkey);
     return encodeSeatingCertificate({ roundId: rid, role: 'settlement', seated: keys, signatures: list.map((n) => ({ nodePubkey: n.pubkey, signature: signSeating({ roundId: rid, role: 'settlement', seated: keys }, signer(n)) })) }); };
   assert.equal(agent.keepCert(rid0, 'settlement', certFor(rid0, seat7)).ok, true);
   const present = (n, rid) => agent.takePresent(signPresent({ roundId: rid, role: 'settlement', nodePubkey: n.pubkey }, signer(n)));
-  return { agent, rid0, ridIn, ridBefore, ridAfter, dead, present, certFor, seat7, withReserve, tick: async (at) => { if (at !== undefined) now = at; await agent.tick(); }, closeMs: Number(cIn.startTimeMs) - 120000, get now() { return now; } };
+  return { agent, rows, contractIn: cIn, setContractOf: (fn) => { contractOf = fn; }, rid0, ridIn, ridBefore, ridAfter, dead, present, certFor, seat7, withReserve, tick: async (at) => { if (at !== undefined) now = at; await agent.tick(); }, closeMs: Number(cIn.startTimeMs) - 120000, get now() { return now; } };
 };
 
 test('a seated node gone from a table: a later check-in seats the reserve from that round on, not before (kanban #1020)', async () => {
@@ -200,4 +201,16 @@ test('with no reserve that checked in, the table stays as it is: a seat is never
   const f = reseatFixture();
   await toCheckIn(f, { presents: nodes.slice(1, 6) });
   assert.equal(f.agent.mySignature(f.ridIn, 'settlement'), null);
+});
+
+test('a seat that never wrote the check-in keeps its certificate, built from the series it holds (kanban #1020)', () => {
+  const f = reseatFixture();
+  const list = [...nodes.slice(0, 6), nodes[7]];
+  const bytes = f.certFor(f.ridIn, list);
+  const c = f.contractIn;
+  f.rows.delete(toHex(f.ridIn));
+  assert.equal(f.agent.keepCert(f.ridIn, 'settlement', bytes).ok, false, 'with no index it cannot be drawn');
+  f.setContractOf((rid, index) => (index === c.roundIndex ? c : null));
+  assert.deepEqual(f.agent.keepCert(f.ridIn, 'settlement', bytes, { index: c.roundIndex }), { ok: true, kept: true });
+  assert.deepEqual(f.agent.seatedFor(f.ridAfter, 'settlement'), list.map((n) => toHex(n.pubkey)), 'and the rounds after it are seated by it');
 });
