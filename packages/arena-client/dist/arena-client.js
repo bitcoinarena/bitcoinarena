@@ -1038,8 +1038,6 @@ const TYPE_SEATING_SEEN = 0x38;
 const TYPE_HEARTBEAT = 0x39;
 /** A heartbeat committee member's HEARD: who it held a HEARTBEAT of at the slot's close; a heartbeat certificate carries them (kanban #727). */
 const TYPE_HEARTBEAT_HEARD = 0x3a;
-// WHAT A TEMPLATE-3 RELEASE COMMITS TO PAY (5A.3B step 4, H(payout_table); slash.js encodeSlashTable).
-const TYPE_SLASH_TABLE = 0x3b;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 const TYPE_SPENT_SET = 0x26;
@@ -1102,9 +1100,10 @@ const TAG = {
   committeeSeed: 'ARENA/v1/CommitteeSeed',
   // #630: a round's attestors are drawn on their own seed, H(this tag || committee seed) - never the settlement draw's
   attestorDraw: 'ARENA/v1/AttestorDraw',
-  // Template 3: a round's two slash panels are drawn on their own seed (5A.3B), and a release commits to its table by this tag.
+  // Template 3: a round's two slash panels are drawn on their own seed, a release commits to its table, and a census key is named (5A.3B).
   slashPanel: 'ARENA/v1/SlashPanel',
-  slashTable: 'ARENA/v1/SlashTable',
+  slashPayoutTable: 'ARENA/v1/SlashPayoutTable',
+  censusKeyRecord: 'ARENA/v1/CensusKeyRecord',
   checkpoint: 'ARENA/v1/Checkpoint',
   checkpointReceipt: 'ARENA/v1/CheckpointReceipt',
   result: 'ARENA/v1/Result',
@@ -5491,10 +5490,12 @@ function encodeAdvert(a) {
   // TEMPLATE 2 CARRIES ITS OWN MATURITY (5A.3B): the absolute height in its recovery leaf, so a reader can
   // rebuild the output key from the body alone. Only template 2 writes it: a template-1 body is byte for byte what it
   // was, so the bonds already on chain keep their ids.
-  if (a.bondScriptTemplateVersion === 2) {
+  if (a.bondScriptTemplateVersion === 2 || a.bondScriptTemplateVersion === 3) {
     if (!Number.isInteger(a.bondMaturityHeight) || a.bondMaturityHeight < 1 || a.bondMaturityHeight >= 500000000)
-      throw new Error(`a template-2 advertisement names its bond_maturity_height as a block height, not ${a.bondMaturityHeight}`);
+      throw new Error(`a template-${a.bondScriptTemplateVersion} advertisement names its bond_maturity_height as a block height, not ${a.bondMaturityHeight}`);
     w.u32(a.bondMaturityHeight);
+    // TEMPLATE 3 NAMES ITS CENSUS KEY (5A.3B): path B's leaf holds it, so a reader cannot rebuild the output key without it.
+    if (a.bondScriptTemplateVersion === 3) w.bytes32(a.censusKey);
   } else if (a.bondMaturityHeight !== undefined) {
     throw new Error(`template ${a.bondScriptTemplateVersion} carries no bond_maturity_height`);
   }
@@ -5593,7 +5594,8 @@ function decodeAdvert(bytes) {
     bondVout: r.u32(),
     bondScriptTemplateVersion: r.u16(),
   };
-  if (a.bondScriptTemplateVersion === 2) a.bondMaturityHeight = r.u32();
+  if (a.bondScriptTemplateVersion === 2 || a.bondScriptTemplateVersion === 3) a.bondMaturityHeight = r.u32();
+  if (a.bondScriptTemplateVersion === 3) a.censusKey = r.bytes32();
   Object.assign(a, {
     payoutPubkey: r.bytes32(),
     guardianOf: r.vec((rr) => ({ federationId: rr.bytes32(), guardianKey: rr.bytes(GUARDIAN_KEY_BYTES) })),
@@ -5793,6 +5795,9 @@ const BOND_SCRIPT_TEMPLATE_VERSION = 1;
  */
 const BOND_TEMPLATE_V2 = 2;
 
+/** Template 3 (spec 5A.3B): written out below, beside its leaves. Here because the readers above name it. */
+const BOND_TEMPLATE_V3 = 3;
+
 /** Blocks from a template-2 bond's confirmation to its maturity: ~30 days, ~1 day, regtest's 100 (5A.3B networks table). */
 const BOND_MATURITY_OFFSET = Object.freeze({ mainnet: 4320, testnet4: 144, regtest: 100 });
 
@@ -5820,13 +5825,13 @@ function bondMaturityOf(advert, { genesisMaturity, network } = {}) {
       return { ok: false, why: 'no bond maturity was given to rebuild the bond with' };
     return { ok: true, maturity: genesisMaturity };
   }
-  if (v === BOND_TEMPLATE_V2) {
+  if (v === BOND_TEMPLATE_V2 || v === BOND_TEMPLATE_V3) {
     const h = advert.bondMaturityHeight;
     if (!Number.isInteger(h) || h < 1 || h >= LOCKTIME_THRESHOLD)
       return { ok: false, why: `that advertisement's bond_maturity_height ${h} is not a block height` };
     return { ok: true, maturity: h };
   }
-  return { ok: false, why: `that advertisement names bond script template ${v}, and this code reads templates 1 and 2` };
+  return { ok: false, why: `that advertisement names bond script template ${v}, and this code reads templates 1, 2 and 3` };
 }
 
 /**
@@ -5836,7 +5841,7 @@ function bondMaturityOf(advert, { genesisMaturity, network } = {}) {
  * still read (`bondMaturityOf` refuses it elsewhere).
  */
 function maturityStands(advert, confirmationHeight, network) {
-  if (!advert || advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V2) return { ok: true };
+  if (!advert || (advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V2 && advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V3)) return { ok: true };
   const offset = BOND_MATURITY_OFFSET[network];
   if (!Number.isInteger(offset)) return { ok: false, why: `no bond maturity offset is set for ${network}` };
   if (!Number.isInteger(confirmationHeight))
@@ -6247,10 +6252,9 @@ function bondOutputKeyMatches(onChain, inputs, { tweakPoint, combine } = {}) {
  * path A are templates 1 and 2's, and path B needs the node's advance signature AND the census key, so the only place a bond can
  * go without its node is a hold output the node signed for that round.
  *
- * Nothing above this line reads it: an advertisement naming template 3 is still refused by name in `bondMaturityOf`, until the census
- * knows what a hold output is.
+ * Read through `bondMaturityOf` and `maturityStands` as template 2 is, and rebuilt in chain.js `bondKeyMatches` from the census key its
+ * advertisement names. A hold output is not read yet: a started bond leaves the census as any spent one does.
  */
-const BOND_TEMPLATE_V3 = 3;
 
 /**
  * THE HOLD OUTPUT'S INTERNAL KEY: BIP-341's own point with no known discrete log, x of the hash of G. The spec says "an unspendable
@@ -6258,9 +6262,18 @@ const BOND_TEMPLATE_V3 = 3;
  */
 const HOLD_INTERNAL_KEY = fromHex('50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0');
 
-/** Two panels of 7, threshold 5 (5A.3B): the numbers the release leaf is written with. */
-const PANEL_SEATS = 7;
-const PANEL_THRESHOLD = 5;
+/**
+ * THE PANEL SIZE (5A.3B, RULED 2026-11-02, kanban #1021): a small census gets smaller panels, and no round is refused for it. `eligible` is
+ * |E|, the nodes left in the round's order. Under 3 there are no panels (0), and the hold output has no release leaf.
+ */
+const PANEL_SEATS_MAX = 7;
+const PANEL_SEATS_MIN = 3;
+function panelSeats(eligible) {
+  const n = Math.min(PANEL_SEATS_MAX, Math.floor(eligible / 2));
+  return n < PANEL_SEATS_MIN ? 0 : n;
+}
+/** t = floor(2n / 3) + 1: n 3..7 -> t 3, 3, 4, 5, 5. */
+const panelThreshold = (n) => Math.floor((2 * n) / 3) + 1;
 
 /** A height a CLTV can compare with a block, or a refusal: a time here would compare with the wrong clock. */
 const blockHeight = (h) => {
@@ -6331,19 +6344,21 @@ const sortedPanel = (keys) => [...keys].sort((a, b) => {
   return 0;
 });
 
-/** `k` of these keys, BIP-342's counting form, left on the stack for `close` to compare. */
+/** t of these keys, BIP-342's counting form, left on the stack for `close` to compare. */
 function panelCount(keys, close) {
   const [first, ...rest] = sortedPanel(keys);
   return cat(pushKey(first), Uint8Array.from([OP_CHECKSIG]),
     ...rest.map((key) => cat(pushKey(key), Uint8Array.from([OP_CHECKSIGADD]))),
-    smallNumber(PANEL_THRESHOLD), Uint8Array.from([close]));
+    smallNumber(panelThreshold(keys.length)), Uint8Array.from([close]));
 }
 
 function checkPanels(panelA, panelB) {
   for (const panel of [panelA, panelB]) {
-    if (!Array.isArray(panel) || panel.length !== PANEL_SEATS) throw new RangeError(`a panel is ${PANEL_SEATS} keys`);
+    if (!Array.isArray(panel) || panel.length < PANEL_SEATS_MIN || panel.length > PANEL_SEATS_MAX)
+      throw new RangeError(`a panel is ${PANEL_SEATS_MIN} to ${PANEL_SEATS_MAX} keys`);
     for (const key of panel) if (!isKey32(key)) throw new TypeError('a panel key is 32 bytes');
   }
+  if (panelA.length !== panelB.length) throw new RangeError('the two panels of a round are one size');
   const all = [...panelA, ...panelB];
   for (let i = 0; i < all.length; i++)
     for (let j = i + 1; j < all.length; j++)
@@ -6351,7 +6366,7 @@ function checkPanels(panelA, panelB) {
 }
 
 /**
- * RELEASE: `<slash_hold_blocks> CHECKSEQUENCEVERIFY DROP <5-of-7 panel A> <5-of-7 panel B>`. Each panel's keys sorted, for the reason
+ * RELEASE: `<slash_hold_blocks> CHECKSEQUENCEVERIFY DROP <t-of-n panel A> <t-of-n panel B>`. Each panel's keys sorted, for the reason
  * `slashLeaf` sorts: one set, one leaf. Panel A's count ends in NUMEQUALVERIFY so that B's is what the leaf leaves true.
  */
 function releaseLeaf({ panelA, panelB, holdBlocks }) {
@@ -6372,21 +6387,24 @@ function fallbackLeaf({ censusKey, fallbackBlocks }) {
 /**
  * THE HOLD OUTPUT, AS HASHES, rebuilt by anyone from the bond and the round: `{ nodeKey, censusKey, panelA, panelB, bondMaturity,
  * holdBlocks, returnBlocks, fallbackBlocks }`. The spec names the three leaves and not their shape: the release sits one level
- * down, because it is the spend the design expects, and the two leaves that should never run share the deeper branch.
+ * down, because it is the spend the design expects, and the two leaves that should never run share the deeper branch. A round
+ * with no panels (both empty) has no release leaf, and the tree is those two alone.
  *
  * 5A.3B: "a mature node leaves at slash_return_blocks, before the fallback opens". That is only true with hold < return < fallback.
  */
 function holdTapTree({ nodeKey, censusKey, panelA, panelB, bondMaturity, holdBlocks, returnBlocks, fallbackBlocks }) {
   if (!(holdBlocks < returnBlocks && returnBlocks < fallbackBlocks))
     throw new RangeError(`the clocks ${holdBlocks} / ${returnBlocks} / ${fallbackBlocks} do not run hold, then return, then fallback`);
+  const noPanels = (panelA || []).length === 0 && (panelB || []).length === 0;
   const scripts = {
-    release: releaseLeaf({ panelA, panelB, holdBlocks }),
+    ...(noPanels ? {} : { release: releaseLeaf({ panelA, panelB, holdBlocks }) }),
     return: returnLeaf({ nodeKey, bondMaturity, returnBlocks }),
     fallback: fallbackLeaf({ censusKey, fallbackBlocks }),
   };
-  const leaves = { release: tapLeafHash(scripts.release), return: tapLeafHash(scripts.return), fallback: tapLeafHash(scripts.fallback) };
+  const leaves = { return: tapLeafHash(scripts.return), fallback: tapLeafHash(scripts.fallback) };
+  if (!noPanels) leaves.release = tapLeafHash(scripts.release);
   const lower = tapBranchHash(leaves.return, leaves.fallback);
-  const merkleRoot = tapBranchHash(leaves.release, lower);
+  const merkleRoot = noPanels ? lower : tapBranchHash(leaves.release, lower);
   return { internalKey: HOLD_INTERNAL_KEY, scripts, leaves, lower, merkleRoot, tweak: tapTweak(HOLD_INTERNAL_KEY, merkleRoot) };
 }
 
@@ -6400,13 +6418,15 @@ function holdOutputKey(inputs, { tweakPoint } = {}) {
   return { ...built, script: cat(Uint8Array.from([0x51, 0x20]), built.outputKey) };
 }
 
-/** The control block of one of the three leaves. The release proves one level, the other two prove two. */
+/** The control block of one leaf. With a release leaf it proves one level and the other two prove two; with none, those two prove one. */
 function holdControlBlock(path, { internalKey, leaves, lower, parity }) {
   if (path !== 'release' && path !== 'return' && path !== 'fallback')
     return { ok: false, why: `a hold output has a release, a return and a fallback, not ${path}` };
   if (parity !== 0 && parity !== 1) return { ok: false, why: 'a control block carries the output key parity, and none was given' };
+  if (path === 'release' && !leaves.release) return { ok: false, why: 'that hold output has no panels, so it has no release leaf' };
+  const above = leaves.release ? [leaves.release] : [];
   const proof = path === 'release' ? [lower]
-    : path === 'return' ? [leaves.fallback, leaves.release] : [leaves.return, leaves.release];
+    : path === 'return' ? [leaves.fallback, ...above] : [leaves.return, ...above];
   return { ok: true, path, controlBlock: cat(Uint8Array.from([TAPLEAF_VERSION | parity]), internalKey, ...proof) };
 }
 
@@ -6765,6 +6785,13 @@ function bondKeyMatches(script, advert, { arbitrationKeys, arbitrationK, bondMat
   const derived = bondInternalKey(
     { nodeKey: advert.nodePubkey, arbitrationKeys }, { combine });
   if (!derived.ok) return derived;
+
+  // TEMPLATE 3: path B holds the census key the advertisement names. Whether that key may be named is the census' question.
+  if (advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3)
+    return bond3OutputKeyMatches(script.subarray(2, 34), {
+      nodeKey: advert.nodePubkey, censusKey: advert.censusKey, arbitrationKeys, bondMaturity: maturity.maturity,
+      internalKey: derived.internalKey,
+    }, { tweakPoint, combine });
 
   return bondOutputKeyMatches(script.subarray(2, 34), {
     nodeKey: advert.nodePubkey, arbitrationKeys, arbitrationK, bondMaturity: maturity.maturity,
@@ -7264,6 +7291,170 @@ function readProtocolVersionName(name) {
   const r = byVersion.get(v);
   if (r && (r.year !== year || r.x !== x)) return { ok: false, why: `${s}: build ${v} is ${r.year}.${r.x}.${v}` };
   return { ok: true, version: v, known: !!r };
+}
+
+// ---- arena-protocol/src/census-key.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE CENSUS KEY, AS PLAIN RULES (spec 5A.3B, RULED 2026-11-02, kanban #1021): who holds how many shares, which record makes a key stand,
+// which keys stand, and what each epoch has to do about them. No curve and no round of a DKG here: a signature check is injected, as
+// everywhere in this package, and making the key is the seats' work.
+
+
+
+
+/** An epoch is `bond_maturity` long. Counted from height 0: the spec names its length and no origin. */
+function censusKeyEpochOf(height, network) {
+  const length = BOND_MATURITY_OFFSET[network];
+  if (!Number.isInteger(length)) throw new Error(`no epoch length is set for ${network}`);
+  return Math.floor(height / length);
+}
+
+/**
+ * ONE NUMBER PER EPOCH: unit = max(B, ceil(T / S)), shares(node) = floor(sum of its bonds / unit), threshold = floor(2 x total / 3) + 1.
+ * `entries` are the census at the epoch's height, { pubkey, bondSats }; `lowestBondMinSats` is B, the lowest bracket's bond_min in force
+ * there; `sharesMax` is S. A node under one unit holds no share: a minimum of one would let many small bonds out-count capital.
+ * Holders are numbered in ascending key order, so everyone hands out the same x. Answers { unit, totalSats, total, threshold, holders }.
+ */
+function censusKeyShares({ entries, lowestBondMinSats, sharesMax }) {
+  if (typeof lowestBondMinSats !== 'bigint' || lowestBondMinSats <= 0n) throw new Error('the unit reads a positive bond_min in sats');
+  if (!Number.isInteger(sharesMax) || sharesMax < 1) throw new Error('the unit reads census_key_shares_max');
+  const bonded = new Map();
+  let totalSats = 0n;
+  for (const e of entries || []) {
+    const k = toHex(e.pubkey);
+    bonded.set(k, (bonded.get(k) || 0n) + e.bondSats);
+    totalSats += e.bondSats;
+  }
+  const S = BigInt(sharesMax);
+  const fair = (totalSats + S - 1n) / S;
+  const unit = fair > lowestBondMinSats ? fair : lowestBondMinSats;
+  const holders = [];
+  let total = 0;
+  for (const key of [...bonded.keys()].sort()) {
+    const shares = Number(bonded.get(key) / unit);
+    if (!shares) continue;
+    holders.push({ key, shares, ids: Array.from({ length: shares }, (_, i) => total + i + 1) });
+    total += shares;
+  }
+  return { unit, totalSats, total, threshold: Math.floor((2 * total) / 3) + 1, holders };
+}
+
+/** CensusKeyRecord (5A.3B): what a key is, in the bytes its holders sign and its anchor hashes. */
+function encodeCensusKeyRecord(r) {
+  const w = new Writer();
+  w.bytes32(r.networkId);
+  w.u32(r.epoch);
+  w.bytes32(r.publicKey);
+  w.u32(r.censusHeight);
+  w.u32(r.totalShares);
+  w.u32(r.threshold);
+  w.bytes32(r.transcriptHash);
+  return w.finish();
+}
+
+function decodeCensusKeyRecord(bytes) {
+  const r = new Reader(bytes);
+  const out = { networkId: r.bytes32(), epoch: r.u32(), publicKey: r.bytes32(), censusHeight: r.u32(), totalShares: r.u32(), threshold: r.u32(), transcriptHash: r.bytes32() };
+  r.end();
+  return out;
+}
+
+/** H(record), the hash the anchor carries and the holders sign. */
+const censusKeyRecordId = (r) => taggedHash(TAG.censusKeyRecord, encodeCensusKeyRecord(r));
+
+const ANCHOR_MAGIC = [0x41, 0x52, 0x4e, 0x4b];         // "ARN" 'K'
+
+/** The anchor: OP_RETURN "ARN" 'K' H(record). */
+function censusKeyAnchor(record) {
+  return { value: 0n, script: Uint8Array.from([0x6a, 36, ...ANCHOR_MAGIC, ...censusKeyRecordId(record)]) };
+}
+
+/** And the reading of one: the record's id, or null. */
+function censusKeyAnchorIn(outputs) {
+  for (const o of outputs || []) {
+    const s = o.script;
+    if (s && s.length === 38 && s[0] === 0x6a && s[1] === 36 && ANCHOR_MAGIC.every((b, i) => s[2 + i] === b)) return s.slice(6);
+  }
+  return null;
+}
+
+/**
+ * DOES THIS RECORD STAND? It is this network's, its counts are the census' own (`shares`, censusKeyShares at the record's height), and
+ * distinct nodes holding the threshold of its shares signed its id. `signatures` [{ key, signature }]; `verify(signature, digest, key)`.
+ */
+function censusKeyRecordStands({ record, signatures, networkId, shares, verify }) {
+  if (typeof verify !== 'function') return { ok: false, why: 'checking a record needs a verifier, and none was injected' };
+  if (toHex(record.networkId) !== toHex(networkId)) return { ok: false, why: 'that record is for another network' };
+  if (!shares || record.totalShares !== shares.total || record.threshold !== shares.threshold)
+    return { ok: false, why: `that record says ${record.totalShares} shares, threshold ${record.threshold}, and the census at its height gives ${shares ? shares.total : '?'}, ${shares ? shares.threshold : '?'}` };
+  const held = new Map((shares.holders || []).map((h) => [h.key, h.shares]));
+  const digest = censusKeyRecordId(record);
+  const seen = new Set();
+  let have = 0;
+  for (const s of signatures || []) {
+    const k = toHex(s.key);
+    if (seen.has(k) || !held.has(k)) continue;
+    let good = false;
+    try { good = verify(s.signature, digest, s.key) === true; } catch { good = false; }
+    if (good) { seen.add(k); have += held.get(k); }
+  }
+  if (have < record.threshold) return { ok: false, why: `nodes holding ${have} shares signed that record, and its threshold is ${record.threshold}` };
+  return { ok: true, have };
+}
+
+/**
+ * THE KEYS THAT STAND: the first valid record per epoch, in chain order. `anchors` [{ height, index, id }]; `judge(id)` answers
+ * { ok, record } for a record this reader holds and has checked. `genesisKey` is mainnet's key 0, committed in network_id, needing no
+ * anchor. Answers [{ epoch, publicKey, height }], oldest first.
+ */
+function standingCensusKeys({ genesisKey = null, anchors = [], judge }) {
+  const out = genesisKey ? [{ epoch: 0, publicKey: genesisKey, height: 0 }] : [];
+  const taken = new Set(out.map((k) => k.epoch));
+  for (const a of [...anchors].sort((x, y) => x.height - y.height || x.index - y.index)) {
+    const said = judge(a.id);
+    if (!said || !said.ok || taken.has(said.record.epoch)) continue;
+    taken.add(said.record.epoch);
+    out.push({ epoch: said.record.epoch, publicKey: said.record.publicKey, height: a.height });
+  }
+  return out;
+}
+
+/**
+ * THE CENSUS' RULE FOR A TEMPLATE-3 BOND: it names the newest key standing at its confirmation. A record anchored in the bond's own
+ * block stands for it. An older key is not enough: a node free to name one could pick a dead key and be unslashable. Other templates answer ok.
+ */
+function bondNamesStandingKey(advert, confirmationHeight, standing) {
+  if (!advert || advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V3) return { ok: true };
+  const known = (standing || []).filter((k) => k.height <= confirmationHeight);
+  if (!known.length) return { ok: false, why: 'no census key stands at that bond\'s confirmation, so this network cannot take a template-3 bond yet' };
+  const newest = known[known.length - 1];
+  if (toHex(newest.publicKey) !== toHex(advert.censusKey))
+    return { ok: false, why: `that bond names census key ${toHex(advert.censusKey).slice(0, 16)}, and the newest standing at its confirmation is ${toHex(newest.publicKey).slice(0, 16)}` };
+  return { ok: true, epoch: newest.epoch };
+}
+
+const RESHARE_BELOW_PERCENT = 80;
+
+/**
+ * WHAT AN EPOCH HAS TO DO ABOUT ITS KEYS. `keys`, oldest first: { epoch, totalShares, threshold, heldNow, named }, with `heldNow` the
+ * shares held by nodes of the current census and `named` the unspent bonds and hold outputs naming the key.
+ *
+ *   retired  named by nothing: nothing is done for it again
+ *   dead     held under its threshold: its bonds stay valid, cannot be started, and path A still works
+ *   reshare  the oldest live key held under 80 %, at most one
+ *   newKey   at an epoch's start, only if the newest key has been named by a bond
+ */
+function censusKeyPlan({ keys = [], epochStart = false }) {
+  const retired = [], dead = [], live = [];
+  for (const k of keys) {
+    if (!k.named) retired.push(k);
+    else if (k.heldNow < k.threshold) dead.push(k);
+    else live.push(k);
+  }
+  const reshare = live.find((k) => k.heldNow * 100 < k.totalShares * RESHARE_BELOW_PERCENT) || null;
+  const newest = keys[keys.length - 1];
+  return { retired, dead, reshare, newKey: !!epochStart && (!newest || newest.named > 0) };
 }
 
 // ---- arena-protocol/src/fee.js
@@ -8006,6 +8197,9 @@ const SLASH_CLOCKS = Object.freeze({
   regtest: Object.freeze({ slashHoldBlocks: 1, slashReturnBlocks: 12, slashFallbackBlocks: 24 }),
 });
 
+/** census_key_shares_max (§27A.6, §5A.3B, RULED 2026-11-02, kanban #1021): hashed as the slash clocks are, and for the same reason not on the test networks. */
+const CENSUS_KEY_SHARES_MAX = 1024;
+
 function encodeGenesisParameters(p) {
   const w = new Writer();
   w.str(p.chain);
@@ -8087,6 +8281,10 @@ function encodeGenesisParameters(p) {
     w.u32(p.slashHoldBlocks);
     w.u32(p.slashReturnBlocks);
     w.u32(p.slashFallbackBlocks);
+    if (!Number.isInteger(p.censusKeySharesMax) || p.censusKeySharesMax < 1) throw new Error('genesis names census_key_shares_max');
+    w.u32(p.censusKeySharesMax);
+    // THE KEY THE GENESIS FOUNDERS MADE BEFORE ANY BOND (§5A.3B): committed here, so it needs no anchor.
+    w.bytes32(p.censusKey0);
   }
   return w.finish();
 }
@@ -8099,15 +8297,16 @@ function encodeGenesisParameters(p) {
  * 6 confirmations; federations of 10 with federation_min 7; the fast clocks the owner set; ~30 days of bond maturity and notice;
  * governance 1008 / 1440 / 2016 (upgrades 2016 / 2016 / 4320, ballot.js).
  */
-function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityPubkey, recoveryPubkey, genesisSeriesStartMs, bondMinGuardianSats } = {}) {
+function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityPubkey, recoveryPubkey, genesisSeriesStartMs, bondMinGuardianSats, censusKey0 } = {}) {
   const is32 = (x) => x instanceof Uint8Array && x.length === 32;
   if (!is32(marker)) throw new Error('mainnet genesis needs its bond marker (32 bytes, §25.1): it has not been chosen');
   if (!Array.isArray(arbitrationKeys) || arbitrationKeys.length !== 7 || !arbitrationKeys.every(is32)) throw new Error('mainnet genesis needs its 7 arbitration keys');
   if (!is32(authorityPubkey) || !is32(recoveryPubkey)) throw new Error('mainnet genesis needs the donation authority and the cold recovery key (§27A.4)');
   if (typeof genesisSeriesStartMs !== 'bigint') throw new Error('mainnet genesis names when series 0 starts');
   if (typeof bondMinGuardianSats !== 'bigint' || bondMinGuardianSats <= 0n) throw new Error('mainnet genesis names a guardian\'s bond floor');
+  if (!is32(censusKey0)) throw new Error('mainnet genesis needs census key 0: the founders run its DKG before any bond exists (§5A.3B)');
   const genesis = {
-    chain: 'bitcoin-mainnet', genesisSeriesStartMs,
+    chain: 'bitcoin-mainnet', genesisSeriesStartMs, censusKey0, censusKeySharesMax: CENSUS_KEY_SHARES_MAX,
     federationNominal: 10, federationMin: 7, bondMinGuardianSats,
     abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216,
     gameVerifySlots: 7, gameVerifyThreshold: 5, settlementSlots: 7, settlementThreshold: 5, committeesBind: true,
@@ -8168,6 +8367,7 @@ function testnetShape(chain, marker, arbitrationKeys, federation, genesisSeriesS
     slashHoldBlocks: federation.slashHoldBlocks,
     slashReturnBlocks: federation.slashReturnBlocks,
     slashFallbackBlocks: federation.slashFallbackBlocks,
+    censusKeySharesMax: CENSUS_KEY_SHARES_MAX,
     gameVerifySlots: 2,
     gameVerifyThreshold: 2,
     settlementSlots: 2,
@@ -9468,9 +9668,9 @@ const PANEL_LEAVES_OUT = ['game', 'settlement'];
 
 /**
  * A ROUND'S TWO SLASH PANELS (5A.3B "Who is responsible for a round"): the 5A.6 selection over the round's census on panel_seed(r), less
- * every node drawn for any role of the round (all 9 per role, 5A.7), its attestors and the nodes of its players; panel A the first 7
- * of that order, panel B the next 7. Pure, and worked out here rather than taken in: nobody hands the draw its own exclusions but what
- * only the round knows.
+ * every node drawn for any role of the round (all 9 per role, 5A.7), its attestors and the nodes of its players. What is left is E;
+ * n = min(7, floor(|E| / 2)), t = floor(2n / 3) + 1, panel A the first n of the order, panel B the next n. Pure, and worked out here rather
+ * than taken in: nobody hands the draw its own exclusions but what only the round knows.
  *
  *   drawsAttestors   the round's game draws its attestors (manifest attestDraw): they are drawn here and left out
  *   attestorKeys     a game's own named attestors, 32-byte keys
@@ -9478,8 +9678,9 @@ const PANEL_LEAVES_OUT = ['game', 'settlement'];
  *
  * Drawn as `drawAttestors` is, on the settlement ticket: 5A.6 draws per role and the spec names none for a panel.
  *
- * A census that cannot fill both panels is refused by name, and never answered with smaller panels: the release leaf is 5 of 7 twice.
- * Answers { ok: true, panelA, panelB, order } of census entries, or { ok: false, why, have, need }.
+ * A SMALL CENSUS IS NOT A REFUSAL (RULED 2026-11-02, kanban #1021): n shrinks with E, and under 3 the answer is no panels, n = 0: the hold
+ * output then has no release leaf and a slash pays at the fallback. Only a round that cannot be drawn at all answers ok: false.
+ * Answers { ok: true, n, t, panelA, panelB, order, eligible } of census entries, or { ok: false, why }.
  */
 function drawPanels({ entries, contract, committeeSeed, drawsAttestors = false, attestorKeys = [], playerNodes = [] }) {
   try {
@@ -9487,13 +9688,10 @@ function drawPanels({ entries, contract, committeeSeed, drawsAttestors = false, 
     for (const role of PANEL_LEAVES_OUT)
       for (const e of drawCommittee({ entries, contract, role, committeeSeed })) out.add(toHex(e.pubkey));
     if (drawsAttestors) for (const e of drawAttestors({ entries, contract, committeeSeed })) out.add(toHex(e.pubkey));
-    const need = 2 * PANEL_SEATS;
-    const order = selectCommittee({ entries, contract, role: 'settlement', committeeSeed: panelSeed(committeeSeed), count: need,
+    const rest = selectCommittee({ entries, contract, role: 'settlement', committeeSeed: panelSeed(committeeSeed), count: entries.length,
       exclude: entries.filter((e) => out.has(toHex(e.pubkey))) });
-    if (order.length < need)
-      return { ok: false, have: order.length, need,
-        why: `the round's census leaves ${order.length} nodes after the ${out.size} it leaves out, and two panels are ${need}` };
-    return { ok: true, panelA: order.slice(0, PANEL_SEATS), panelB: order.slice(PANEL_SEATS), order };
+    const n = panelSeats(rest.length);
+    return { ok: true, n, t: n ? panelThreshold(n) : 0, eligible: rest.length, panelA: rest.slice(0, n), panelB: rest.slice(n, 2 * n), order: rest.slice(0, 2 * n) };
   } catch (e) { return { ok: false, why: `the panels cannot be drawn: ${e.message}` }; }
 }
 
@@ -10677,6 +10875,7 @@ function txidHexOf(tx) {
 
 
 
+
 /**
  * One census entry, encoded.
  *
@@ -11787,6 +11986,9 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
     const confirmed = chainSays ? chainSays.height : e.height;
     const matures = maturityStands(read.advert, confirmed, network);
     if (!matures.ok) { excluded.push({ ...e, why: matures.why }); continue; }
+    // A TEMPLATE-3 BOND NAMES THE NEWEST KEY STANDING AT ITS CONFIRMATION (5A.3B, kanban #1021). `bond.standingKeys` is the reader's list.
+    const named = bondNamesStandingKey(read.advert, confirmed, bond && bond.standingKeys);
+    if (!named.ok) { excluded.push({ ...e, why: named.why }); continue; }
 
     // AND THE AMOUNT IS THE CHAIN'S. This was the entry's own claim, measured:
     // an output worth 60000 sats, an entry claiming 100000000000, accepted -
@@ -11901,7 +12103,7 @@ const bondHexOf = (x) => (typeof x === 'string' ? x.toLowerCase() : x ? toHex(x)
 /** A node is its key AND its operator: two operators never merge, even under one key. */
 const nodeKeyOf = (e) => `${bondHexOf(e.pubkey || (e.advert && e.advert.nodePubkey))}|${String((e.advert && e.advert.operatorId) || e.operatorId || '')}`;
 /** Another output's advertisement, with this output's own maturity and template (each output keeps its own lock). */
-const ownMaturity = (advert, own) => (own ? { ...advert, bondMaturityHeight: own.bondMaturityHeight, bondScriptTemplateVersion: own.bondScriptTemplateVersion } : advert);
+const ownMaturity = (advert, own) => (own ? { ...advert, bondMaturityHeight: own.bondMaturityHeight, censusKey: own.censusKey, bondScriptTemplateVersion: own.bondScriptTemplateVersion } : advert);
 
 /**
  * A NODE'S BONDS, SUMMED: census entries grouped by node key and operator id into { pubkey (hex), operatorId, bondSats (bigint, their
@@ -30196,6 +30398,7 @@ function seriesPublicationOutput(seriesIdBytes) {
 
 
 
+
 const sameCC = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
 const bytesOfCC = (v) => (v instanceof Uint8Array ? v : typeof v === 'string' ? fromHex(v) : null);
 const proofOf = (p) => (p ? { transaction: bytesOfCC(p.transaction), branch: (p.branch || []).map(bytesOfCC), position: p.position | 0 } : null);
@@ -30280,6 +30483,8 @@ function entryFromEvidence(item, { contract, headers, firstHeight, bond, verify 
   bondSats = seen.valueSats;
   const matures = maturityStands(advert, height, network);
   if (!matures.ok) return { ok: false, why: matures.why };
+  const named = bondNamesStandingKey(advert, height, bond && bond.standingKeys);
+  if (!named.ok) return { ok: false, why: named.why };
   // RESOLVE's filters, on the body the bond committed to
   // FROM PROTOCOL 19 THE FLOOR IS THE NODE'S SUM (kanban #544), asked over the whole census below - as a seat's census asks it.
   // Asked per output here, a node's 32,000 top-up was refused where every seat counted it, and no paid round could be joined (#543).
@@ -30309,7 +30514,7 @@ function entryFromEvidence(item, { contract, headers, firstHeight, bond, verify 
     if (!roles.length || !(read.advert.protocolVersions || []).includes(contract.protocolVersion))
       return { ok: false, why: 'its newest update declares no role or not this round\'s version' };
     // each output keeps its own maturity and template (census.js ownMaturity)
-    const advertNow = sumsBonds(contract) ? { ...read.advert, bondMaturityHeight: entry.advert.bondMaturityHeight, bondScriptTemplateVersion: entry.advert.bondScriptTemplateVersion } : read.advert;
+    const advertNow = sumsBonds(contract) ? { ...read.advert, bondMaturityHeight: entry.advert.bondMaturityHeight, censusKey: entry.advert.censusKey, bondScriptTemplateVersion: entry.advert.bondScriptTemplateVersion } : read.advert;
     entry = { ...entry, advert: advertNow, advertId: read.advertId, roles, hostedGames: read.advert.hostedGames };
   }
   return { ok: true, entry };
