@@ -1371,6 +1371,214 @@
     }
    }
   },
+  "/census-dkg": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "What a node holds of a census key run",
+    "description": "What this node holds of a census key run, all of it public, so a holder can pull what it missed.\n\nAccess: none\n\nReturns: 200 JSON { run, epoch, dealers, set, recordId, statements, complaints }; 404\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_census_dkg",
+    "parameters": [
+     {
+      "name": "run",
+      "in": "query",
+      "required": true,
+      "description": "The run id, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The dealers held, the set signed, statements and complaints.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "This node is not in that run.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/census-dkg/complaint": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "[signed] Prove a census key deal bad",
+    "description": "Proves a deal bad, in a form anyone can check, so every honest node drops it before it signs.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: proves itself against the deal\n\nReturns: 200 \"taken\"; 400; 409\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "post_census_dkg_complaint",
+    "requestBody": {
+     "required": true,
+     "description": "The complaint.",
+     "content": {
+      "application/octet-stream": {
+       "schema": {
+        "type": "string",
+        "format": "binary"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "\"taken\"",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "400": {
+      "description": "Not a complaint.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "409": {
+      "description": "Refused, with the reason.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/census-dkg/deal": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "[signed] Hand over a census key deal",
+    "description": "Hands over a census key deal, signed by its dealer. The first signed deal per dealer stands, and the deals close at the run's midpoint.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the dealer's signature in the body\n\nReturns: 201 \"taken\" / 200 \"already\"; 409\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "post_census_dkg_deal",
+    "requestBody": {
+     "required": true,
+     "description": "The deal, then 64 bytes: its dealer's signature over its id.",
+     "content": {
+      "application/octet-stream": {
+       "schema": {
+        "type": "string",
+        "format": "binary"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "\"taken\"",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "200": {
+      "description": "\"already\"",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "409": {
+      "description": "Refused, with the reason.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   },
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Fetch a census key deal",
+    "description": "Serves a signed deal this node holds, so a holder that missed it asks a peer and not the dealer.\n\nAccess: none\n\nReturns: 200 binary; 404\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_census_dkg_deal",
+    "parameters": [
+     {
+      "name": "run",
+      "in": "query",
+      "required": true,
+      "description": "The run id, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "dealer",
+      "in": "query",
+      "required": true,
+      "description": "The dealer's node key, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The signed deal.",
+      "content": {
+       "application/octet-stream": {
+        "schema": {
+         "type": "string",
+         "format": "binary"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "This node holds no such deal.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/census-dkg/statement": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "[signed] Sign a census key record",
+    "description": "A holder's signature on the CensusKeyRecord of the deals it holds. Holders of the threshold on one record make the key.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the node's signature in the body\n\nReturns: 200 \"taken\"; 400; 409\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "post_census_dkg_statement",
+    "requestBody": {
+     "required": true,
+     "description": "The run, the node, the record's id and the node's signature on it, in hex.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "\"taken\"",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "400": {
+      "description": "Not a statement.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "409": {
+      "description": "Refused, with the reason.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
   "/census-health": {
    "get": {
     "tags": [
@@ -1411,6 +1619,30 @@
      },
      "409": {
       "description": "No census read.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/census-key": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Census keys and the current run",
+    "description": "The census keys standing on this seat's chain, how far its scan read, and the run it is in. A convenience: a key stands by its anchor on the chain alone.\n\nAccess: none\n\nReturns: 200 JSON { firstHeight, scannedTo, keys, anchors, run, recent, lastWhy }; 404\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_census_key",
+    "responses": {
+     "200": {
+      "description": "The keys that stand, the anchors read, and the run.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "This seat's network names no first height.",
       "content": {
        "text/plain": {}
       }

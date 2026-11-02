@@ -90,6 +90,8 @@ import { CHOICE, voteMessage, encodeVote, SCHEDULES, REPEAL_SCHEDULES } from '..
 import { configServesRound } from '../../arena-protocol/src/ballot-chain.js';
 import { createProposals } from './proposals.js';
 import { createBallotTally } from './ballot-tally.js';
+import { CensusKeyStore } from './census-key-store.js';
+import { createCensusKeyRun } from './census-key-run.js';
 import { createOperatorTokens, operatorUri } from './operator-tokens.js';
 import { isBackupPublication, playedOfWindow, dayMarkersOf, itemTag } from '../../arena-protocol/src/duty.js';
 import { nextToAsk } from './dup-ask.js';
@@ -416,6 +418,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   randomnessFor, chainFor, peers = [], headerBytes, bondProof, proposals: givenProposals = null,
   // THE BALLOT'S PROPOSALS: { confirmedTx(txidHex, blockHashHex), lowestBondMinSats } - main.js reads bitcoind
   ballot = null,
+  // THE CENSUS KEY'S READS OF THIS SEAT'S CHAIN (main.js): { scan, network, networkId, firstHeight, foundingWindow, censusConfirmations, tipHeight, blockHashAt, censusEntriesAt, post, everyMs }
+  censusKey = null,
   // A LIGHTNING INVOICE READER, AND NOTHING MORE (§23.6, RULED 2026-09-22 22:59). `/federation-invoice`
   // uses its `decode` to read what the federation's LNv2 invoice commits to. It no longer issues, looks up,
   // settles or cancels holds, and it pays nothing: that was the withdrawn Lightning custody's custody by one operator.
@@ -2409,6 +2413,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // The same beacon the verifier reads: one source, so a node cannot assign
     // one committee and sign results against another.
     ...(randomnessFor ? { randomnessFor } : {}),
+    // THE KEYS THE CENSUS READS FOR A TEMPLATE-3 BOND (5A.3B, kanban #972): this seat's own chain scan (census-key-chain.js)
+    ...(censusKey ? { standingKeys: censusKey.scan.standing } : {}),
   });
   // THE ROUND'S SIGNER NODES' ADDRESSES WHEN THE ROSTER CANNOT SAY (kanban #735, measured 2026-10-27: seat 1 was restarted inside round
   // 2927d830's objection window and for ~15 min read no chain view for the round - bitcoind re-read seven seats' views under load - so
@@ -3417,6 +3423,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     tick();
   }
   let shuttingDown = false;
+  // THE CENSUS KEY (5A.3B, kanban #972): the chain scan, then this node's side of a run, one pass at a time. Off on a network that names no first height (census-key-chain.js).
+  const censusKeyRun = censusKey ? createCensusKeyRun({ store: new CensusKeyStore(round.db), network: censusKey.network, networkId: censusKey.networkId, key: round.identity.pubkey,
+    secret: round.identity.secret, firstHeight: censusKey.firstHeight, foundingWindow: censusKey.foundingWindow, censusConfirmations: censusKey.censusConfirmations, tipHeight: censusKey.tipHeight,
+    blockHashAt: censusKey.blockHashAt, censusEntriesAt: censusKey.censusEntriesAt, standing: censusKey.scan.standing, scannedTo: censusKey.scan.scannedTo, post: censusKey.post,
+    log: (l) => console.log(l) }) : null;
+  const censusKeyTimer = censusKey ? setInterval(() => {
+    if (shuttingDown) return;
+    censusKey.scan.pass().then(() => censusKeyRun.pass()).catch((e) => console.error(`[census-key] the pass did not run: ${e.message}`));
+  }, Number(censusKey.everyMs) > 0 ? Number(censusKey.everyMs) : 10000) : null;
+  if (censusKeyTimer && censusKeyTimer.unref) censusKeyTimer.unref();
   // THE BALLOT COUNTED EVERY `ballot.everyMs` (10 s by default): one pass at a time, each bounded (ballot-tally.js)
   const ballotTimer = ballotTally ? setInterval(() => { if (!shuttingDown) ballotTally.pass().catch((e) => console.error(`[ballot] the pass did not run: ${e.message}`)); },
     Number(ballot.everyMs) > 0 ? Number(ballot.everyMs) : 10000) : null;
@@ -10988,6 +11004,41 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(Buffer.from(said.bytes));
       }
 
+      // THE CENSUS KEY (5A.3B, kanban #972). GET /census-key: the keys that stand on this seat's chain, how far it read, and the run it is in. The rest is a run between holders:
+      // nothing secret crosses, as with /dkg, and a seat with a share of nothing answers 409. A door here is a convenience: a key stands by its anchor alone (kanban #1041).
+      if (req.method === 'GET' && url.pathname === '/census-key') {
+        if (!censusKey) return text(res, 404, 'this seat runs no census key: its network names no first height');
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify({ ...censusKey.scan.status(), ...censusKeyRun.status() }));
+      }
+      if (censusKeyRun && req.method === 'POST' && url.pathname === '/census-dkg/deal') {
+        const took = await censusKeyRun.takeDeal(await read(req));
+        if (!took.ok) return text(res, took.status || 409, took.why);
+        res.writeHead(took.fresh ? 201 : 200, { 'content-type': 'text/plain', ...CORS });
+        return res.end(took.fresh ? 'taken' : 'already');
+      }
+      if (censusKeyRun && req.method === 'POST' && url.pathname === '/census-dkg/complaint') {
+        const took = await censusKeyRun.takeComplaint(await read(req));
+        return took.ok ? text(res, 200, 'taken') : text(res, took.status || 409, took.why);
+      }
+      if (censusKeyRun && req.method === 'POST' && url.pathname === '/census-dkg/statement') {
+        let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'that is not JSON'); }
+        const took = censusKeyRun.takeStatement(body);
+        return took.ok ? text(res, 200, 'taken') : text(res, took.status || 409, took.why);
+      }
+      if (censusKeyRun && req.method === 'GET' && url.pathname === '/census-dkg') {
+        const held = censusKeyRun.heldOf(String(url.searchParams.get('run') || '').toLowerCase());
+        if (!held) return text(res, 404, 'this node is not in that run');
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify(held));
+      }
+      if (censusKeyRun && req.method === 'GET' && url.pathname === '/census-dkg/deal') {
+        const wire = censusKeyRun.dealWire(String(url.searchParams.get('run') || '').toLowerCase(), String(url.searchParams.get('dealer') || '').toLowerCase());
+        if (!wire) return text(res, 404, 'this node holds no such deal');
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(wire));
+      }
+
       if (req.method === 'GET' && url.pathname === '/committee') {
         const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const role = url.searchParams.get('role') || 'game';
@@ -11543,6 +11594,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (seriesPullTimer) clearInterval(seriesPullTimer);
         if (seriesPullFirst) clearTimeout(seriesPullFirst);
         if (ballotTimer) clearInterval(ballotTimer);
+        if (censusKeyTimer) clearInterval(censusKeyTimer);
         for (const t of finalityTimers) clearTimeout(t);
         finalityTimers.clear();
         for (const t of rerunTimers) clearTimeout(t);

@@ -52,6 +52,15 @@ export const CENSUS_KEY_SHARES_MAX = 1024;
  */
 export const CENSUS_KEY_BOND_MIN = Object.freeze({ testnet4: 50000n, regtest: 50000n });
 
+/**
+ * WHERE A NETWORK'S CENSUS KEYS BEGIN (kanban #1041 answer 2, #1021 ruling 5): the chain scan for "ARN" 'K' runs forward from this height and keeps what it
+ * found across restarts, with no lookback window (a key is named by bonds for years, and #820 is what a window does). A run belongs to the epochs that
+ * start at or after it, so the first key is that epoch's. Null is not named: no key and no template-3 bond on that network. Mainnet scans from genesis, key 0
+ * being in genesis_parameters. Named per network by the release, as FOUNDING_PRESSURE_HEIGHT is.
+ */
+export const CENSUS_KEY_FIRST_HEIGHT = Object.freeze({ mainnet: 0, testnet4: null, regtest: null });
+export const censusKeyFirstHeight = (network) => (Object.prototype.hasOwnProperty.call(CENSUS_KEY_FIRST_HEIGHT, network) ? CENSUS_KEY_FIRST_HEIGHT[network] : null);
+
 export function censusKeyBondMin(network, genesis = null) {
   if (network === 'mainnet') {
     if (!genesis || typeof genesis.censusKeyBondMinSats !== 'bigint') throw new Error('mainnet reads the census key\'s bond floor from its genesis');
