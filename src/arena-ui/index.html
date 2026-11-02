@@ -2021,6 +2021,18 @@
         const seg = x.pathname.split('/').filter(Boolean); return x.origin + (seg.length > 1 ? '/' + seg[0] : ''); } catch { return null; }
     };
     const closeIt = (k) => { const n = (closedTimes.get(k) || 0) + 1; closedTimes.set(k, n); closedUntil.set(k, Date.now() + (n > 1 ? 1800000 : 300000)); };
+    // SEVERAL SEATS FAILING TOGETHER IS THIS DEVICE'S NETWORK (kanban #1036, measured 2026-11-02: one burst of failed reads closed all 14 seats for 5 min, and the round screen
+    // said "The next round opens in a moment" for as long as it was watched; the owner: "Eine Runde darf fuer den client nicht fehlschlagen, nur weil eine Node offline ist"):
+    // three hosts that had answered this page, failing within 10 s, are not three dead hosts. None of them stays closed. A host that never answered still closes, as #593 asks.
+    const answeredHere = new Set(); let failedTogether = [];
+    const failedHost = (k) => {
+      if (!answeredHere.has(k)) return closeIt(k);
+      const now = Date.now();
+      failedTogether = failedTogether.filter((x) => now - x.at < 10000 && x.k !== k); failedTogether.push({ k, at: now });
+      if (failedTogether.length < 3) return closeIt(k);
+      for (const x of failedTogether) { closedUntil.delete(x.k); closedTimes.delete(x.k); }
+    };
+    window.addEventListener('online', () => { for (const k of answeredHere) { closedUntil.delete(k); closedTimes.delete(k); } });
     window.ARENA_CLOSED_ROUTES = () => [...closedUntil].filter(([, t]) => t > Date.now()).map(([k, t]) => k + ' until ' + new Date(t).toISOString().slice(11, 19));
     // AN http:// NODE FROM AN https:// PAGE IS NEVER ASKED (kanban #594, the owner's console 2026-10-23: ~150 "Mixed Content ...
     // requested an insecure resource" a load - test nodes advertising http://198.51.100.106:65xx): the browser blocks it anyway and
@@ -2035,11 +2047,11 @@
         const got = await RealFetch(input, init);
         if (k) {
           if (got.status === 404 && /\/(headers|rounds|games)$/.test(new URL(String(url), location.href).pathname)) closeIt(k);
-          else { closedUntil.delete(k); closedTimes.delete(k); }
+          else { closedUntil.delete(k); closedTimes.delete(k); answeredHere.add(k); }
         }
         return got;
       } catch (e) {
-        if (k && !(init && init.signal && init.signal.aborted) && !(e && (e.name === 'AbortError' || e.name === 'TimeoutError'))) closeIt(k);
+        if (k && !(init && init.signal && init.signal.aborted) && !(e && (e.name === 'AbortError' || e.name === 'TimeoutError'))) failedHost(k);
         throw e;
       }
     }

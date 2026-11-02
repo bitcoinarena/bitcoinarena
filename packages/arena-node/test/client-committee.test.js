@@ -218,14 +218,14 @@ test('the bond terms the page carries are genesis\' own', () => {
 test('the page derives the settlement committee over the seats\' doors, deals to it, and names a seat that says otherwise', async () => {
   const { roster, rid, view, ev, contract } = setup();
   const headerBytes = Buffer.concat(headersOf(view).map((h) => Buffer.from(h)));
-  const seatSet = Buffer.concat(roster.committeeFor(rid, 'settlement').committee.map((e) => Buffer.from(e.pubkey)));
+  const setOf = (role) => Buffer.concat(roster.committeeFor(rid, role).committee.map((e) => Buffer.from(e.pubkey)));
   const liarSet = Buffer.concat([1, 2, 3].map((n) => Buffer.from(keyFor(n))));
   const asked = [];
   const fetcher = async (url) => {
     asked.push(url.replace(/^https?:\/\/[^/]+/, ''));
     const liar = url.startsWith('https://liar.example');
     const body = url.endsWith('/headers') ? headerBytes : url.includes('/census?') ? Buffer.from(JSON.stringify(ev))
-      : url.includes('/committee?') ? (liar ? liarSet : seatSet) : null;
+      : url.includes('/committee?') ? (liar ? liarSet : setOf(url.includes('role=game') ? 'game' : 'settlement')) : null;
     if (!body) return new Response('no', { status: 404 });
     return new Response(body, { status: 200 });
   };
@@ -237,13 +237,13 @@ test('the page derives the settlement committee over the seats\' doors, deals to
   assert.deepEqual(keys(got.committees.settlement), keys(roster.committeeFor(rid, 'settlement').committee.map((e) => e.pubkey)));
   assert.deepEqual(got.seats.map((s) => [s.node, s.agrees]).sort(), [['https://liar.example', false], ['https://seat-a.example', true], ['https://seat-b.example', true]]);
   assert.equal(got.headers.agreed, 3, 'three sources agreed the headers');
-  const dealt = await clientSettlementSignerNodes(rhex, contract, nodes, { curve: pageCurve, fetcher, anchorAt });
-  assert.deepEqual(keys(dealt.signerNodes), keys(got.committees.settlement), 'the stake goes to the client\'s own committee');
-  assert.match(dealt.refused[0], /^https:\/\/liar.example: names another settlement committee/);
+  // one seat that says otherwise refuses the round (ruled 2026-09-28, measured 2026-10-16), and a short line names it; the lists are on `detail` (kanban #1036)
+  await assert.rejects(clientSettlementSignerNodes(rhex, contract, nodes, { curve: pageCurve, fetcher, anchorAt }),
+    (e) => /^the round is refused: https:\/\/liar\.example names other signer nodes/.test(e.message) && /names another settlement committee/.test(e.detail));
   // and when every seat names another set, nothing is dealt
   const allLie = async (url) => (url.includes('/committee?') ? new Response(liarSet, { status: 200 }) : fetcher(url));
   await assert.rejects(clientSettlementSignerNodes(rhex, contract, nodes, { curve: pageCurve, fetcher: allLie, anchorAt, nowMs: Date.now() + 1 }),
-    /every node that answered names another settlement committee/);
+    /the round is refused: 3 seats name other signer nodes/);
 });
 
 test('an explorer outside the network: the census block must be its block; a tip that differs is said, not refused', async () => {
