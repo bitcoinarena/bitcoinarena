@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE ARBITRATION SET ON AN ABANDONED ROW (§23A.5, RULED 2026-11-02, kanban #1058, #1059, #1062). A proof and a seat's listing are believed for nothing: a record short of its threshold, a row the
 // record does not hold, and an output the node has no more are refused. A true one gives path B on the proof's hash, the federation in the hint, into the liquidation escrow, 5 of 7 signing.
-// decideReturn takes those bytes as any slash proof's, and a seat serves them by that hash.
+// decideReturn takes the proof as any slash proof, and a seat serves it and the signed record beside it by that hash.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -10,7 +10,7 @@ import { arbitrationMembers, judgeAbandoned, buildAbandonedSlash, memberSign, as
 import { federationRecords } from '../src/federation-records.js';
 import { slashEvent } from '../src/arbitration-events.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, GONE } from '../../arena-protocol/src/federation-record.js';
-import { startsByCensusKey, encodeAbandonedProof, abandonedProofId } from '../../arena-protocol/src/abandoned-slash.js';
+import { startsByCensusKey, encodeAbandonedProof, joinAbandonedEvidence, abandonedProofId } from '../../arena-protocol/src/abandoned-slash.js';
 import { decideReturn, abandonedProofChecks, proofChecksOf } from '../src/hold-return.js';
 import { arbitrationCommitmentIn, escrowOutput } from '../../arena-protocol/src/arbitration-tx.js';
 import { bondOutputKey, bondInternalKey } from '../../arena-protocol/src/bond-script.js';
@@ -38,9 +38,10 @@ function signed({ gone = [{ peerKey: nodes[3].guardianKey, sinceHeight: SINCE, k
 }
 const LEFT = { pubkey: nodes[3].pubkey, txid: new Uint8Array(32).fill(0xb3), vout: 1, bondSats: 20000n, height: 150, advert: advertOf(nodes[3], 3), why: 'that node\'s bonds sum to 20000' };
 const SPENT = { pubkey: nodes[3].pubkey, txid: new Uint8Array(32).fill(0xa3), vout: 0, bondSats: 100000n, height: 120, spent: true, spentBy: { txid: toHex(SPEND), height: SINCE } };
-const SIGNED = signed();   // a signature is not deterministic, and the record is in the proof's hash
-const proofOf = ({ record = SIGNED, node = nodes[3], proofRef = SPEND, txid = LEFT.txid, vout = 1 } = {}) => encodeAbandonedProof({ record, nodePubkey: node.pubkey, proofRef, txid, vout });
-const judge = (over = {}) => judgeAbandoned({ proofBytes: proofOf(over), census: seated, bonds: [...seated, SPENT, LEFT], networkId: NETWORK_ID_REGTEST, inviteFederationId, ...over });
+const SIGNED = signed();
+const proofOf = ({ federationId = FED, node = nodes[3], proofRef = SPEND, txid = LEFT.txid, vout = 1 } = {}) => encodeAbandonedProof({ federationId, nodePubkey: node.pubkey, proofRef, txid, vout });
+const handed = (over = {}, record = SIGNED) => joinAbandonedEvidence(proofOf(over), record);
+const judge = ({ record = SIGNED, ...over } = {}) => judgeAbandoned({ proofBytes: proofOf(over), evidence: record, census: seated, bonds: [...seated, SPENT, LEFT], networkId: NETWORK_ID_REGTEST, inviteFederationId, ...over });
 
 test('a true row: judged on the record\'s signatures and this set\'s census, and the spend read as the chain\'s proof', () => {
   const v = judge();
@@ -50,13 +51,25 @@ test('a true row: judged on the record\'s signatures and this set\'s census, and
   assert.notEqual(toHex(v.proofId), toHex(SPEND));
 });
 
+test('one output has one hash: the same record under other signatures, or a later record, moves nothing (ruling #1064)', () => {
+  const other = signed(), later = (() => { const guardians = nodes.map((n, i) => ({ nodePubkey: n.pubkey, peerKey: n.guardianKey, operatorId: `op${i}`, bondTxid: new Uint8Array(32).fill(0xa0 + i), bondVout: 0, bondSats: i === 3 ? 0n : 100000n, endpoint: `wss://g${i}.example` }));
+    const record = buildFederationRecord({ federationId: FED, networkId: NETWORK_ID_REGTEST, invite: INVITE, nominal: 4, guardians, gone: [{ peerKey: nodes[3].guardianKey, sinceHeight: SINCE, kind: GONE.ABANDONED, proofRef: SPEND }], height: HEIGHT + 6, reserveSats: 0n });
+    const id = federationRecordId(record);
+    return joinSignedRecord(encodeFederationRecord(record), nodes.slice(0, 3).map((n) => ({ nodePubkey: n.pubkey, signature: schnorr.sign(id, n.secret) }))); })();
+  assert.notEqual(toHex(other), toHex(SIGNED), 'a signature is not deterministic: these are other bytes');
+  const ids = [SIGNED, other, later].map((record) => judge({ record }));
+  assert.deepEqual(ids.map((v) => v.slashed), [true, true, true]);
+  assert.equal(new Set(ids.map((v) => toHex(v.proofId))).size, 1);
+});
+
 test('a record is believed for nothing: short of its threshold, of another network, or naming nobody', () => {
   assert.match(judge({ record: signed({ signers: nodes.slice(0, 2) }) }).why, /does not stand: 2 of its bonded guardians/);
   assert.match(judge({ networkId: new Uint8Array(32).fill(1) }).why, /another network/);
   assert.match(judge({ record: signed({ gone: [] }) }).why, /no ABANDONED row/);
   assert.match(judge({ node: nodes[1] }).why, /no ABANDONED row/);
   assert.match(judge({ proofRef: new Uint8Array(32).fill(0x55) }).why, /no ABANDONED row/);
-  assert.match(judgeAbandoned({ proofBytes: Uint8Array.of(1, 2, 3), census: seated, bonds: [], networkId: NETWORK_ID_REGTEST, inviteFederationId }).why, /no proof of an abandonment/);
+  assert.match(judge({ federationId: new Uint8Array(32).fill(0x38) }).why, /another federation/, 'a true record of another federation is no evidence for this proof');
+  assert.match(judgeAbandoned({ proofBytes: Uint8Array.of(1, 2, 3), evidence: SIGNED, census: seated, bonds: [], networkId: NETWORK_ID_REGTEST, inviteFederationId }).why, /no proof of an abandonment/);
   assert.match(judge({ bonds: [...seated, SPENT] }).why, /no output of that node left/, 'the seat named an output this set does not read');
   assert.match(judge({ from: SINCE + 1 }).why, /no ABANDONED row/, 'a row from before the point moves no money');
   assert.match(judge({ record: signed({ signers: [nodes[3], ...nodes.slice(0, 2)] }) }).why, /does not stand/, 'a node the census no longer holds signs nothing');
@@ -110,9 +123,9 @@ test('a seat lists one row per output left, reading the census only once a recor
   const rows = await s.abandonedSlashes();
   assert.deepEqual(rows.map((r) => [r.federation, r.node, r.peer, r.proofRef, r.since, r.recordHeight, r.txid, r.vout, r.sats, r.template]),
     [[toHex(FED), toHex(nodes[3].pubkey), toHex(nodes[3].guardianKey), toHex(SPEND), SINCE, HEIGHT, toHex(LEFT.txid), 1, '20000', 2]]);
-  const bytes = s.abandonedProof(rows[0].proof);
+  const bytes = s.abandonedProof(rows[0].proof), evidence = s.abandonedEvidence(rows[0].proof);
   assert.equal(toHex(abandonedProofId(bytes)), rows[0].proof, 'the seat serves the bytes by the hash it lists');
-  assert.equal(judgeAbandoned({ proofBytes: bytes, census: seated, bonds: [...seated, SPENT, LEFT], networkId: NETWORK_ID_REGTEST, inviteFederationId }).slashed, true, 'and they check for anyone');
+  assert.equal(judgeAbandoned({ proofBytes: bytes, evidence, census: seated, bonds: [...seated, SPENT, LEFT], networkId: NETWORK_ID_REGTEST, inviteFederationId }).slashed, true, 'and they check for anyone');
   await s.abandonedSlashes();
   assert.equal(reads, 1, 'one read per census height');
 
@@ -136,37 +149,45 @@ test('the proof outlives its listing: a seat with a store serves it once the out
   const store = new Map();
   let left = [...seated, SPENT, LEFT];
   const s = seat({ bonds: async () => left, keepProof: (id, bytes) => store.set(id, bytes), proofOf: (id) => store.get(id) || null });
+  store.set('ee'.repeat(32), Uint8Array.of(0x0c, ...new Uint8Array(200)));
   await s.restore(inviteFederationId);
   const [row] = await s.abandonedSlashes();
-  assert.equal(store.size, 1);
+  assert.equal(store.size, 2);
   left = [...seated, SPENT];
   assert.equal(toHex(abandonedProofId(s.abandonedProof(row.proof))), row.proof);
+  assert.ok(s.abandonedEvidence(row.proof).length > 0);
   assert.equal(s.abandonedProof('ff'.repeat(32)), null);
+  assert.equal(s.abandonedProof('ee'.repeat(32)), null, 'what else the relay keeps is not served as a proof');
+  assert.equal(s.abandonedEvidence('ee'.repeat(32)), null);
 });
 
 test('a proof handed to a seat is kept only when it is that hash, its record stands and its row is there', async () => {
   const s = seat();
   await s.restore(inviteFederationId);
-  const bytes = proofOf(), id = toHex(abandonedProofId(bytes));
+  const bytes = handed(), id = toHex(abandonedProofId(proofOf()));
   assert.equal((await s.takeAbandonedProof('00'.repeat(32), bytes, inviteFederationId)).status, 409);
-  const short = proofOf({ record: signed({ signers: nodes.slice(0, 2) }) });
-  assert.match((await s.takeAbandonedProof(toHex(abandonedProofId(short)), short, inviteFederationId)).why, /does not stand/);
-  const noRow = proofOf({ record: signed({ gone: [] }) });
-  assert.match((await s.takeAbandonedProof(toHex(abandonedProofId(noRow)), noRow, inviteFederationId)).why, /no such ABANDONED row/);
+  assert.equal((await s.takeAbandonedProof(id, proofOf(), inviteFederationId)).status, 400, 'a proof with nothing beside it');
+  assert.match((await s.takeAbandonedProof(id, handed({}, signed({ signers: nodes.slice(0, 2) })), inviteFederationId)).why, /does not stand/);
+  assert.match((await s.takeAbandonedProof(id, handed({}, signed({ gone: [] })), inviteFederationId)).why, /no such ABANDONED row/);
+  const elsewhere = proofOf({ federationId: new Uint8Array(32).fill(0x38) });
+  assert.match((await s.takeAbandonedProof(toHex(abandonedProofId(elsewhere)), joinAbandonedEvidence(elsewhere, SIGNED), inviteFederationId)).why, /another federation/);
   assert.equal(s.abandonedProof(id), null);
   assert.deepEqual(await s.takeAbandonedProof(id, bytes, inviteFederationId), { ok: true, status: 201 });
-  assert.equal(toHex(s.abandonedProof(id)), toHex(bytes));
+  assert.equal(toHex(s.abandonedProof(id)), toHex(proofOf()));
+  assert.equal(toHex(s.abandonedEvidence(id)), toHex(SIGNED));
 });
 
 test('decideReturn takes an abandonment\'s proof as any slash proof: a true one keeps the slash, a false one takes the return (ruling #1062)', async () => {
   const bytes = proofOf(), bond = { txid: LEFT.txid, vout: 1 };
-  const decide = (over = {}, proof = bytes, checks = {}) => decideReturn({ start: { proofId: abandonedProofId(proof) }, startHeight: 400, bondMaturity: 100, returnBlocks: 6, tip: 410, fetchProof: async () => proof,
+  const decide = (over = {}, proof = bytes, checks = {}, evidence = SIGNED) => decideReturn({ start: { proofId: abandonedProofId(proof) }, startHeight: 400, bondMaturity: 100, returnBlocks: 6, tip: 410, fetchProof: async () => proof,
     proofChecks: proofChecksOf({ replay: async () => { throw new Error('nothing to replay'); },
-      abandoned: (b) => abandonedProofChecks({ bytes: b, nodePubkey: nodes[3].pubkey, bond, bonds: [...seated, SPENT, LEFT], censusAt: async () => seated, networkId: NETWORK_ID_REGTEST, inviteFederationId, ...checks }) }), ...over });
+      abandoned: (b) => abandonedProofChecks({ bytes: b, fetchEvidence: async (id) => { assert.equal(toHex(id), toHex(abandonedProofId(b))); return evidence; }, nodePubkey: nodes[3].pubkey, bond, bonds: [...seated, SPENT, LEFT], censusAt: async () => seated, networkId: NETWORK_ID_REGTEST, inviteFederationId, ...checks }) }), ...over });
   assert.equal((await decide()).action, 'keep');
   assert.equal((await decide({ start: { proofId: SPEND } })).action, 'return', 'a bare proof_ref, as rehearsal 14 had it, retrieves nothing that hashes to it');
-  assert.equal((await decide({}, proofOf({ record: signed({ signers: nodes.slice(0, 2) }) }))).action, 'return', 'a record short of its threshold');
-  assert.equal((await decide({}, proofOf({ record: signed({ gone: [] }) }))).action, 'return', 'no row');
+  assert.equal((await decide({}, bytes, {}, signed({ signers: nodes.slice(0, 2) }))).action, 'return', 'a record short of its threshold');
+  assert.equal((await decide({}, bytes, {}, signed({ gone: [] }))).action, 'return', 'no row');
+  assert.equal((await decide({}, bytes, {}, null)).action, 'return', 'nobody serves the record');
+  assert.equal((await decide({}, bytes, {}, Uint8Array.of(1, 2, 3))).action, 'return', 'bytes that are no record');
   assert.equal((await decide({}, proofOf({ node: nodes[1] }))).action, 'return', 'another node\'s row');
   assert.equal((await decide({}, proofOf({ txid: new Uint8Array(32).fill(0xee) }))).action, 'return', 'another output than the start spent');
   assert.equal((await decide({}, bytes, { from: SINCE + 1 })).action, 'return', 'a row from before the point');
@@ -176,19 +197,21 @@ test('decideReturn takes an abandonment\'s proof as any slash proof: a true one 
 
 test('the real doors: a proof is taken at PUT /slash/<hash> and anyone fetches it at GET /slashes?proof=<hash>', async () => {
   const invite = inviteForGuardians(FED, [{ url: 'ws://guardian.invalid', peer: 0 }]);
-  const bytes = proofOf({ record: signed({ invite }) }), id = toHex(abandonedProofId(bytes));
+  const record = signed({ invite }), proof = proofOf(), bytes = joinAbandonedEvidence(proof, record), id = toHex(abandonedProofId(proof));
   const node = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, chain: 'bitcoin-regtest', chainTip: async () => 340, ballot: { censusEntriesAt: async () => census } });
   const at = `http://127.0.0.1:${node.port}`;
   try {
     assert.equal((await fetch(`${at}/slashes?proof=${id}`)).status, 404, 'nothing kept yet');
     assert.equal((await fetch(`${at}/slashes?proof=abc`)).status, 400);
     assert.equal((await fetch(`${at}/slash/${'00'.repeat(32)}`, { method: 'PUT', body: bytes })).status, 409, 'not the proof that hash names');
-    const short = proofOf({ record: signed({ invite, signers: nodes.slice(0, 2) }) });
-    assert.equal((await fetch(`${at}/slash/${toHex(abandonedProofId(short))}`, { method: 'PUT', body: short })).status, 409, 'a record short of its threshold');
+    assert.equal((await fetch(`${at}/slashes?evidence=${id}`)).status, 404);
+    assert.equal((await fetch(`${at}/slash/${id}`, { method: 'PUT', body: joinAbandonedEvidence(proof, signed({ invite, signers: nodes.slice(0, 2) })) })).status, 409, 'a record short of its threshold');
     assert.equal((await fetch(`${at}/slash/${id}`, { method: 'PUT', body: bytes })).status, 201);
     const got = await fetch(`${at}/slashes?proof=${id}`);
     assert.equal(got.status, 200);
-    assert.equal(toHex(new Uint8Array(await got.arrayBuffer())), toHex(bytes));
+    assert.equal(toHex(new Uint8Array(await got.arrayBuffer())), toHex(proof), 'the proof alone: its hash is the name');
+    assert.equal(toHex(new Uint8Array(await (await fetch(`${at}/slashes?evidence=${id}`)).arrayBuffer())), toHex(record), 'and the record beside it');
+    assert.equal((await fetch(`${at}/slashes?evidence=abc`)).status, 400);
     assert.deepEqual((await (await fetch(`${at}/slashes`)).json()).abandonedSlashes, [], 'the listing is the records\', and a served proof is no filing');
   } finally { await node.close(); }
 });

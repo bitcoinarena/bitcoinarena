@@ -10,6 +10,7 @@ import { BOND_SUM_VERSION, PROTOCOL_VERSION } from '../src/constants.js';
 import { parseTransaction } from '../src/tx.js';
 import { bondTransaction } from '../tools/bond.js';
 import { resolveCensus, nodeBonds, nodeBondOf, newestPerNode, sumsBonds, chainCensusContract } from '../src/census.js';
+import { CHAIN_CENSUS_SUM_HEIGHT, chainCensusSumPoint } from '../src/constants.js';
 import { toHex } from '../src/hash.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
@@ -150,4 +151,11 @@ test('the chain\'s own census sums at the version it always read: 40,000 three t
   }
   const speaksNot = [1, 2].map((seq) => output(0x22, 40000, seq, { protocolVersions: [18, 19] }));
   assert.equal(read(chain, speaksNot).eligible.length, 0, 'a node that does not list the version is out as it always was');
+  // THE HEIGHT READ DECIDES (ruling #1064): the same outputs, one height either side of a point
+  const at = (height, sumFrom) => chainCensusContract({ networkId: NETWORK_ID_REGTEST, height, bondMinSats: 50000n, sumFrom });
+  assert.equal(read(at(HEIGHT, HEIGHT + 1)).eligible.length, 0, 'below the point the floor is on each output, as a census always read');
+  assert.equal(read(at(HEIGHT, HEIGHT)).eligible.length, 3, 'at the point, summed');
+  assert.equal(read(at(HEIGHT, HEIGHT - 1)).eligible.length, 3, 'above it, summed');
+  assert.equal(read(at(HEIGHT, null)).eligible.length, 0, 'a network that names no point never sums');
+  assert.equal(at(HEIGHT, HEIGHT + 1).protocolVersion, PROTOCOL_VERSION, 'nothing else about the read moves');
 });

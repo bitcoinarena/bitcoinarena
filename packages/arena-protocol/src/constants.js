@@ -255,6 +255,18 @@ export const abandonedSlashPoint = (network) => {
   const n = network === 'testnet' ? 'testnet4' : String(network || '');
   return Object.prototype.hasOwnProperty.call(ABANDONED_SLASH_HEIGHT, n) ? ABANDONED_SLASH_HEIGHT[n] : null;
 };
+/**
+ * THE FIRST HEIGHT THE CHAIN'S OWN CENSUS SUMS A NODE'S BONDS (RULED 2026-11-02, kanban #1063, #1064). A census decides money and seats, and a reader who differs signs different bytes, so what a
+ * census reads at a height changes for everyone at one height: the height read decides, not the clock. Below the point a census reads as before, the floor on each output, at the point and above
+ * it summed, so a record, a ballot or a founding checked later against an old height gets the old answer on any release. ONE CONSTANT PER NETWORK, as above; a network not named here, or null: never.
+ * Mainnet from genesis. testnet4: null until every seat and installer node runs a release that has this, then a height above the tip at that time.
+ */
+export const CHAIN_CENSUS_SUM_HEIGHT = Object.freeze({ mainnet: 0, testnet4: null, regtest: 0, devnet: 0 });
+/** The point of `network` (networkOf's name; 'testnet' is testnet4, as networkAnchor reads it), null on a network that names none. */
+export const chainCensusSumPoint = (network) => {
+  const n = network === 'testnet' ? 'testnet4' : String(network || '');
+  return Object.prototype.hasOwnProperty.call(CHAIN_CENSUS_SUM_HEIGHT, n) ? CHAIN_CENSUS_SUM_HEIGHT[n] : null;
+};
 /** The owner's emergency key (§23A.5a): the advert names it, a request it signs takes an offline node out without losing its bond. */
 export const EMERGENCY_VERSION = 17;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);

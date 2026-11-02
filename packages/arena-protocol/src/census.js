@@ -10,7 +10,7 @@ import { reaffirmedBonds } from './reaffirm.js';
 import { protocolVersionName } from './protocol-version.js';
 import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
-import { TAG, ROLES, PROTOCOL_VERSION, TYPE_CENSUS_LEAF, BOND_SUM_VERSION, networkOf } from './constants.js';
+import { TAG, ROLES, PROTOCOL_VERSION, TYPE_CENSUS_LEAF, BOND_SUM_VERSION, networkOf, chainCensusSumPoint } from './constants.js';
 import { parseTransaction, commitmentsOf, witnessRunsOf, blockMerkleRoot } from './tx.js';
 
 // ONE PARSE PER TRANSACTION (kanban #586/#587, measured 2026-10-23 17:11Z on a test host seat after a restart: 10 min at 100 % CPU,
@@ -1326,12 +1326,14 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
 // protocol 19 the census counts them as their sum.
 export const sumsBonds = (contract) => !!contract && (contract.sumsBonds === true || Number(contract.protocolVersion) >= BOND_SUM_VERSION);
 /**
- * THE CHAIN'S OWN CENSUS AT A HEIGHT (kanban #1063): what a seat reads when no round names the census: a federation record's basis, the ballot, a founding, the duty order, the arbitration set. It
- * always sums (`sumsBonds`, ruling #1058 reading 3: the cap follows what is left, `bond_i` is the sum), or a node with 40,000 sat three times reads as not held at all and as abandoned after one
- * spend. The version stays PROTOCOL_VERSION: reading this at BOND_SUM_VERSION would put out every node whose advertisement does not list 19, and take its signature off the records it signed.
+ * THE CHAIN'S OWN CENSUS AT A HEIGHT (kanban #1063): what a seat reads when no round names the census: a federation record's basis, the ballot, a founding, the duty order, the arbitration set. At
+ * the network's CHAIN_CENSUS_SUM_HEIGHT and above it sums (`sumsBonds`, ruling #1058 reading 3: the cap follows what is left, `bond_i` is the sum), or a node with 40,000 sat three times reads as not
+ * held at all and as abandoned after one spend. Below that point, or on a network that names none, it reads as before (ruling #1064): the height read decides, and this is the one place it does.
+ * `sumFrom` is a harness's own point. The version stays PROTOCOL_VERSION: reading this at BOND_SUM_VERSION would put out every node whose advertisement does not list 19, and take its signature off the records it signed.
  * A round's census is its contract's: decodeRoundContract sets no `sumsBonds`, so no round's census moves.
  */
-export const chainCensusContract = ({ networkId, height, bondMinSats, censusConfirmations = 1 }) => ({ networkId, censusHeight: height, censusConfirmations, bondMinSats, protocolVersion: PROTOCOL_VERSION, sumsBonds: true });
+export const chainCensusContract = ({ networkId, height, bondMinSats, censusConfirmations = 1, sumFrom = chainCensusSumPoint(networkOf(networkId)) }) => ({ networkId, censusHeight: height, censusConfirmations,
+  bondMinSats, protocolVersion: PROTOCOL_VERSION, sumsBonds: Number.isInteger(sumFrom) && height >= sumFrom });
 const bondHexOf = (x) => (typeof x === 'string' ? x.toLowerCase() : x ? toHex(x) : '');
 /** A node is its key AND its operator: two operators never merge, even under one key. */
 const nodeKeyOf = (e) => `${bondHexOf(e.pubkey || (e.advert && e.advert.nodePubkey))}|${String((e.advert && e.advert.operatorId) || e.operatorId || '')}`;

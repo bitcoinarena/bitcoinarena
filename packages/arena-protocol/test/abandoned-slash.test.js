@@ -3,7 +3,7 @@
 // FROM AN ABANDONED ROW TO A SLASH (§23A.5, RULED 2026-11-02, kanban #1058, #1059, #1062): which rows act, what they left, what stands on them, and the proof a slash commits to.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { abandonedRows, outputsLeft, abandonedSlashStands, encodeAbandonedProof, decodeAbandonedProof, abandonedProofId, isAbandonedProof, bondsOf, startsByCensusKey } from '../src/abandoned-slash.js';
+import { abandonedRows, outputsLeft, abandonedSlashStands, encodeAbandonedProof, decodeAbandonedProof, joinAbandonedEvidence, splitAbandonedEvidence, ABANDONED_PROOF_BYTES, abandonedProofId, isAbandonedProof, bondsOf, startsByCensusKey } from '../src/abandoned-slash.js';
 import { GONE } from '../src/federation-record.js';
 import { ABANDONED_SLASH_HEIGHT, abandonedSlashPoint, TAG } from '../src/constants.js';
 import { taggedHash, toHex } from '../src/hash.js';
@@ -82,15 +82,29 @@ test('old rows stand as records and move no money: a row acts from the network\'
 });
 
 test('the proof: its bytes round trip, it is tagged as every slash proof, and each output has its own', () => {
-  const signed = Uint8Array.from({ length: 300 }, (_, i) => i & 255);
-  const p = { record: signed, nodePubkey: NODE, proofRef: TXID, txid: new Uint8Array(32).fill(0xa1), vout: 7 };
+  const FEDERATION = new Uint8Array(32).fill(0x37);
+  const p = { federationId: FEDERATION, nodePubkey: NODE, proofRef: TXID, txid: new Uint8Array(32).fill(0xa1), vout: 7 };
   const bytes = encodeAbandonedProof(p), back = decodeAbandonedProof(bytes);
-  assert.deepEqual([toHex(back.record), toHex(back.nodePubkey), toHex(back.proofRef), toHex(back.txid), back.vout], [toHex(signed), toHex(NODE), toHex(TXID), toHex(p.txid), 7]);
+  assert.equal(bytes.length, ABANDONED_PROOF_BYTES);
+  assert.deepEqual([toHex(back.federationId), toHex(back.nodePubkey), toHex(back.proofRef), toHex(back.txid), back.vout], [toHex(FEDERATION), toHex(NODE), toHex(TXID), toHex(p.txid), 7]);
   assert.equal(toHex(abandonedProofId(bytes)), toHex(taggedHash(TAG.slashProof, bytes)));
   assert.equal(isAbandonedProof(bytes), true);
   assert.notEqual(toHex(abandonedProofId(encodeAbandonedProof({ ...p, vout: 8 }))), toHex(abandonedProofId(bytes)));
-  assert.notEqual(toHex(abandonedProofId(encodeAbandonedProof({ ...p, record: signed.slice(1) }))), toHex(abandonedProofId(bytes)), 'the record is in the hash, signatures and all');
+  assert.notEqual(toHex(abandonedProofId(encodeAbandonedProof({ ...p, federationId: new Uint8Array(32).fill(0x38) }))), toHex(abandonedProofId(bytes)), 'the federation is in the hash');
+  assert.equal(toHex(abandonedProofId(encodeAbandonedProof({ ...p, record: new Uint8Array(300) }))), toHex(abandonedProofId(bytes)), 'nothing a seat can hold differently is in it');
   assert.throws(() => decodeAbandonedProof(Uint8Array.of(...bytes, 0)), /trailing/);
   assert.throws(() => decodeAbandonedProof(Uint8Array.of(0x0c, ...bytes.subarray(1))), /not a proof of an abandonment/);
   assert.throws(() => decodeAbandonedProof(bytes.subarray(0, bytes.length - 1)));
+});
+
+test('the signed record travels beside the proof, and the hash is of the proof alone (ruling #1064)', () => {
+  const p = encodeAbandonedProof({ federationId: new Uint8Array(32).fill(0x37), nodePubkey: NODE, proofRef: TXID, txid: new Uint8Array(32).fill(0xa1), vout: 7 });
+  const record = Uint8Array.from({ length: 300 }, (_, i) => i & 255);
+  const got = splitAbandonedEvidence(joinAbandonedEvidence(p, record));
+  assert.deepEqual([toHex(got.proofBytes), toHex(got.record), got.proof.vout], [toHex(p), toHex(record), 7]);
+  assert.throws(() => splitAbandonedEvidence(p), /travels with its signed record/, 'a proof alone is no copy to keep');
+  assert.throws(() => splitAbandonedEvidence(null), /travels with its signed record/);
+  assert.throws(() => splitAbandonedEvidence(Uint8Array.of(0x0c, ...p.subarray(1), 1)), /not a proof of an abandonment/, 'what else a relay keeps is not one');
+  assert.throws(() => joinAbandonedEvidence(p.subarray(1), record), /135 bytes/);
+  assert.throws(() => joinAbandonedEvidence(p, new Uint8Array(0)), /signed record/);
 });
