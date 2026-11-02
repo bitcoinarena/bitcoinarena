@@ -4,7 +4,7 @@
 // OPEN federation left out, bond_min_guardian held; nominal drawn and three alternates in order; a no-show replaced by the next.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { drawGuardians, replaceNoShows, FOUNDING_WINDOW, foundingTrigger, FOUNDING_PRESSURE_HEIGHT, foundingPressurePoint, foundingRecordHeight, foundingCandidateVersion } from '../src/guardian-founding.js';
+import { drawGuardians, replaceNoShows, FOUNDING_WINDOW, foundingTrigger, FOUNDING_PRESSURE_HEIGHT, foundingPressurePoint, foundingRecordHeight, foundingCandidateVersion, triggerKey, bondMinGuardianOf, BOND_MIN_GUARDIAN } from '../src/guardian-founding.js';
 import { FOUNDING_PRESSURE_VERSION } from '../src/constants.js';
 import { toHex } from '../src/hash.js';
 
@@ -267,4 +267,72 @@ test('B*_net that is not a positive amount is refused, not read as no pressure',
     const d = drawGuardians({ ...base, entries: pressured(), pressureBond });
     assert.equal(d.ok, false); assert.match(d.why, /B\*_net under pressure is a positive amount/);
   }
+});
+
+// EVERY KIND REDRAWS (kanban #1025): T + n x (founding_window + 1), from the chain alone, while the condition holds
+const step = FOUNDING_WINDOW + 1;
+const redraw = (tip, extra = {}) => foundingTrigger({ federationExists: true, nominal: 4, abandonBlocks: 12, tip, foundingWindow: FOUNDING_WINDOW, redrawFrom: 0, ...extra });
+const drain = { federation: 'bb'.repeat(32), status: 'DRAINING', height: 100 };
+
+test('with no point named nothing changes: the trigger stays where it was, whatever the tip', () => {
+  const held = foundingTrigger({ records: [drain], federationExists: true, nominal: 4, tip: 500, foundingWindow: FOUNDING_WINDOW });
+  assert.deepEqual([held.height, held.base, held.origin], [100, undefined, undefined]);
+  assert.equal(foundingTrigger({ records: [drain], federationExists: true, nominal: 4, tip: 500, foundingWindow: FOUNDING_WINDOW, redrawFrom: 501 }).height, 100, 'nor before the point');
+  assert.equal(redraw(500, { records: [{ ...drain, successor: true }], redrawFrom: 501 }).height, 100);
+});
+
+test('a succession redraws at T + n x (founding_window + 1), every seat at a tip naming the same one, with its origin fixed', () => {
+  const at = (tip) => redraw(tip, { records: [drain] });
+  assert.deepEqual([101, 105, 106, 107, 112, 113].map((tip) => at(tip).height), [100, 100, 100, 106, 106, 112]);
+  assert.deepEqual([at(101).firstDraw, at(107).firstDraw], [true, false]);
+  assert.deepEqual([at(107).base, at(113).origin], [100, at(101).origin]);
+  assert.notEqual(triggerKey(at(107)), triggerKey(at(101)), 'each redraw is a founding of its own');
+  assert.match(at(107).why, /drawn again at 106/);
+  assert.equal(at(100).height, 100, 'at its own height');
+});
+
+test('while its condition holds: a named successor ends a succession, a dip ends a load, a federation ends a genesis', () => {
+  assert.equal(redraw(120, { records: [{ ...drain, successor: true }] }).ok, false);
+  assert.equal(redraw(120, { notices: [{ federation: 'bb'.repeat(32), height: 100, successor: true }] }).ok, false);
+  assert.equal(redraw(120, { notices: [{ federation: 'bb'.repeat(32), height: 100 }] }).height, 118);
+  const row = (height, load) => ({ height, federations: [{ federation: 'a', status: 'OPEN', load }] });
+  const loads = Array.from({ length: 20 }, (_, i) => row(100 + i, 0.9));
+  const l = redraw(120, { loads });
+  assert.deepEqual([l.kind, l.base, l.height], ['load', 112, 118]);
+  assert.equal(redraw(120, { loads: [...loads, row(120, 0.5)] }).ok, false, 'the load fell: no redraw');
+  const capable = [{ height: 100, operators: 4 }, { height: 110, operators: 5 }];
+  const g = redraw(120, { capable, federationExists: false });
+  assert.deepEqual([g.kind, g.base, g.height], ['genesis', 100, 118]);
+  assert.equal(redraw(120, { capable: [...capable, { height: 115, operators: 3 }], federationExists: false }).ok, false, 'fewer than nominal now');
+});
+
+test('nothing void holds anything back: a later trigger on its first draw goes before a redraw, and a seat\'s void draw passes to the next', () => {
+  const later = { federation: 'cc'.repeat(32), status: 'DRAINING', height: 109 };
+  const both = redraw(110, { records: [drain, later] });
+  assert.deepEqual([both.federation, both.height], [later.federation, 109], 'bb is on its redraw at 106; cc is new');
+  const early = redraw(102, { records: [drain, { ...later, height: 101 }] });
+  assert.deepEqual([early.federation, early.height], [drain.federation, 100], 'the earliest of the first draws wins, as always');
+  const redrawn = redraw(116, { records: [drain, later] });
+  assert.deepEqual([redrawn.federation, redrawn.height], [drain.federation, 112], 'both redrawn: the lowest draw height, 112 against 115');
+  const next = redraw(116, { records: [drain, later], voided: [triggerKey(redrawn)] });
+  assert.deepEqual([next.federation, next.height], [later.federation, 115], 'that draw void here: the other');
+  assert.equal(redraw(116, { records: [drain], voided: [triggerKey(redrawn)] }).ok, false, 'its own draw void: the chain names the next');
+  assert.equal(redraw(119, { records: [drain], voided: [triggerKey(redrawn)] }).height, 118);
+});
+
+test('the cohort keeps its multiples under the same rule, and says where its run began', () => {
+  const capable = Array.from({ length: 30 }, (_, i) => ({ height: 100 + i, operators: 14, free: 12, federations: 2 }));
+  const c = redraw(115, { capable });
+  assert.deepEqual([c.kind, c.height, c.base, c.firstDraw], ['cohort', 114, 100, false]);
+  assert.equal(redraw(103, { capable }).firstDraw, true);
+});
+
+test('a guardian\'s floor is the network\'s: mainnet\'s genesis, testnet4 beside it, an override on regtest alone', () => {
+  assert.equal(bondMinGuardianOf({ network: 'mainnet', genesisSats: 123n, override: '5' }), 123n);
+  assert.equal(bondMinGuardianOf({ network: 'testnet4', override: '5' }), BOND_MIN_GUARDIAN.testnet4);
+  assert.equal(bondMinGuardianOf({ network: 'testnet', override: '5' }), 50000n);
+  assert.equal(bondMinGuardianOf({ network: 'regtest', override: '5' }), 5n);
+  assert.equal(bondMinGuardianOf({ network: 'regtest' }), 50000n);
+  assert.equal(bondMinGuardianOf({ network: '' }), 50000n, 'a seat on no chain, as a test runs one');
+  assert.throws(() => bondMinGuardianOf({ network: 'mainnet', override: '5' }), /names its guardian bond floor in its genesis/);
 });

@@ -26,6 +26,8 @@
 //             founding-pressure.js reads it). Not given, the draw is the plain one. A reader that fails starts no founding: a guess would
 //             draw another set than the others. `candidateVersionAt(height)`: the version a candidate advertises from the network's point,
 //             null before it - the count of capable and free operators holds to it too, or a cohort would trigger on nodes it cannot draw.
+//   VOID      from `redrawFrom`, a draw with no founding started by its height + founding_window is void and holds nothing back, and a founding
+//             whose federation runs is kept through its trigger's redraws: it is not drawn over while its record names no successor yet.
 import { triggerKey, foundingTrigger, COHORT_NOMINAL } from '../../arena-protocol/src/guardian-founding.js';
 import { departureStands } from '../../arena-protocol/src/absence.js';
 import { statusFor } from '../../arena-protocol/src/federation-record.js';
@@ -189,9 +191,10 @@ export function cliSetup({ run, apiPort, password, guardianName, freshSetup = nu
  * notices this seat holds (decoded); `next` { inSetup(), setup } the node's guardian-next, if it runs one; `guardingOpen({ entries,
  * records, except })` the operators guarding an OPEN federation (by default guardingOpenOf over the census and the held records);
  * `pressureBondAt({ height, entries })` B*_net for the draw at that trigger height under capacity pressure, else null (none given: null);
- * `candidateVersionAt(height)` the version a candidate at that height has to advertise, else null.
+ * `candidateVersionAt(height)` the version a candidate at that height has to advertise, else null; `redrawFrom` the height every kind of
+ * trigger redraws from (foundingTrigger), null for none.
  */
-export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardianInSetup, setup, guardingOpen = null, pressureBondAt = null, candidateVersionAt = () => null, notices = () => [], emergencies = () => [], next = null, nominal,
+export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardianInSetup, setup, guardingOpen = null, pressureBondAt = null, candidateVersionAt = () => null, redrawFrom = null, notices = () => [], emergencies = () => [], next = null, nominal,
   bondMinGuardian, clocks, ownKey, sign, verify, post = async () => {}, postTo = null, peers = () => [], fetchJson = null, endpointOf = (e) => e.advert.endpoint, say = () => {}, keep = 4096 }) {
   let current = null;                        // { key, founding }
   // HOW FAR BACK A SEAT'S FIRST TICK READS THE RUN OF FREE OPERATORS: a cohort draws at the newest multiple of founding_window + 1 below
@@ -273,8 +276,9 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     const h0 = await tip();
     const held = await history(h0);
     // a DRAINING record seats its seated guardians first, its gone ones leave; a standing notice triggers as of its posting
+    const named = (r) => !!(r && r.record && r.record.successorId && r.record.successorId.some((x) => x));
     const rows = held.map((r) => (r && r.record && r.status === 'DRAINING'
-      ? { ...r, nominal: r.record.nominal, seatedFirst: seatedOf(r.record).map((g) => toHex(g.nodePubkey)), departing: goneNodes(r.record) } : r));
+      ? { ...r, nominal: r.record.nominal, seatedFirst: seatedOf(r.record).map((g) => toHex(g.nodePubkey)), departing: goneNodes(r.record), successor: named(r) } : r));
     let notes = [];
     try { notes = noticeTriggers({ held, notices: (await notices()) || [], departureNotice: clocks.departureNotice, verify }); } catch { notes = []; }
     try { notes = notes.concat(emergencyTriggers({ held, requests: (await emergencies()) || [] })); } catch { /* the notices alone */ }
@@ -282,11 +286,19 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     // new seats and the three installer nodes hold no round, so no record - they drew a GENESIS trigger at 156970 on a network with two
     // federations, and the cohort of ten could never trigger there). guardian_of[] in the bond adverts is the chain's own word for it.
     const federationExists = held.length > 0 || capable.some((x) => x.federations > 0);
-    const t = foundingTrigger({ records: rows, notices: notes, capable, loads, nominal, abandonBlocks: clocks.abandonBlocks, federationExists, voided: [...voided],
-      tip: h0, foundingWindow: clocks.foundingWindow });
+    notes = notes.map((n) => (named(held.find((r) => r && lower(r.federation) === n.federation)) ? { ...n, successor: true } : n));
+    let t = foundingTrigger({ records: rows, notices: notes, capable, loads, nominal, abandonBlocks: clocks.abandonBlocks, federationExists, voided: [...voided],
+      tip: h0, foundingWindow: clocks.foundingWindow, redrawFrom });
     if (!t.ok) return { ok: false, why: t.why };
+    // A FOUNDING THAT WORKED IS NOT DRAWN OVER: its trigger stands until the old record names the successor, a redraw height or two later
+    if (t.origin && current && current.trigger.origin === t.origin && current.founding.state().federation === true) t = current.trigger;
     const key = triggerKey(t);
     const h = await tip();
+    // VOID, NOT STUCK: a draw that has no founding by its height + founding_window has no window left, and the next draw is the chain's
+    if (t.origin && (!current || current.key !== key) && h >= t.height + clocks.foundingWindow) {
+      voided.add(key);
+      return { ok: false, why: `no founding started by ${t.height + clocks.foundingWindow} for the draw at ${t.height}: void, drawn again at ${t.height + clocks.foundingWindow + 1}` };
+    }
     // A FOUNDING THIS SEAT JOINED WITHOUT ITS GUARDIAN is joined again once the guardian waits in setup (kanban #577, measured
     // 2026-10-22 on founding a27706f2: n495-1/2's guardians were started again in a fresh setup, asked at once - before fedimintd's
     // setup API answered - and the founding was kept with no guardian; both seated, both no-shows while their guardians waited in

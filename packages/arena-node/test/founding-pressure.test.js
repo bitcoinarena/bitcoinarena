@@ -69,16 +69,30 @@ test('a record above the height, short of its threshold, or signed by others is 
     const { r } = reader({ held: stale, peers: { 'https://x': { [fidHex(A)]: bad } } });
     assert.equal(await r({ height: 200, entries: census }), null, 'the record that verifies is calm');
   }
-  const noCensus = reader({ held: under(), censusAt: async () => null });
-  await assert.rejects(noCensus.r({ height: 200, entries: census }), /no record at or below 188: no draw yet/, 'a census not read verifies nothing');
 });
 
-test('a federation the census names with no record at that height means no draw yet, and an answer comes once it arrives', async () => {
-  const peers = { 'https://x': { [fidHex(A)]: signed(A, { height: 180, reserveSats: 80000n }) } };
-  const { r } = reader({ peers });
-  await assert.rejects(r({ height: 200, entries: census }), new RegExp(`${fidHex(B).slice(0, 16)}, named in the census at 200, has no record at or below 188: no draw yet`));
-  peers['https://x'][fidHex(B)] = signed(B, { height: 180, reserveSats: 90000n });
-  assert.notEqual(await r({ height: 200, entries: census }), null, 'a refusal is not kept');
+test('only a record counts: a federation with none at that height is left out and holds nothing back, on every seat (ruling #1025)', async () => {
+  // B has no record: a made-up id, or a federation under 12 blocks old. A alone decides, and its amount is A's alone
+  const { r } = reader({ held: { [fidHex(A)]: signed(A, { height: 180, reserveSats: 80000n }) } });
+  assert.equal(await r({ height: 200, entries: census }), 80000n);
+  const calm = reader({ held: { [fidHex(A)]: signed(A, { height: 180, reserveSats: 10000n }) } });
+  assert.equal(await calm.r({ height: 200, entries: census }), null, 'and A with room is no pressure, whoever else is named');
+  const none = reader({});
+  assert.equal(await none.r({ height: 200, entries: census }), null, 'no record of any federation: no pressure');
+  const forged = reader({ peers: { 'https://x': { [fidHex(A)]: signed(A, { height: 180, reserveSats: 90000n, signers: B.nodes }), [fidHex(B)]: 'zz' } } });
+  assert.equal(await forged.r({ height: 200, entries: census }), null, 'a record that does not verify is no record');
+});
+
+test('only this seat\'s unread chain is "not yet": a record it was given and cannot check is not left out, and a read census answers', async () => {
+  let read = false;
+  const { r } = reader({ held: under(), censusAt: async () => (read ? census : null) });
+  await assert.rejects(r({ height: 200, entries: census }), /the census at 180 is not read yet, so a record of federation .* cannot be checked: no draw yet/);
+  read = true;
+  assert.equal(await r({ height: 200, entries: census }), 85000n, 'a refusal is not kept');
+  const thrown = reader({ held: under(), censusAt: async () => { throw new Error('still reading'); } });
+  await assert.rejects(thrown.r({ height: 200, entries: census }), /not read yet/);
+  const noRecords = reader({ censusAt: async () => null });
+  assert.equal(await noRecords.r({ height: 200, entries: census }), null, 'nothing to check holds nothing back');
 });
 
 test('a network no census names a federation of is not under pressure; an answer is kept for its trigger', async () => {
@@ -121,10 +135,9 @@ test('the reader feeds a seat: under pressure the operator at B*_net sits first 
   assert.equal(same.state().id, a.state().id);
   const other = seat(under({ [fidHex(B)]: signed(B, { height: 180, reserveSats: 100000n }) })); await other.tick();
   assert.notEqual(other.state().id, a.state().id, 'another record, another B*_net, another founding: they cannot meet in one ceremony');
-  const late = seat({ [fidHex(A)]: under()[fidHex(A)] });
-  const refused = await late.tick();
-  assert.equal(refused.ok, false); assert.match(refused.why, /capacity pressure at 200 could not be read: .* no draw yet/);
-  assert.equal(late.state(), null);
+  const partial = seat({ [fidHex(A)]: under()[fidHex(A)] }); const p = await partial.tick();
+  assert.equal(p.ok, true, 'a federation with no record stops nothing');
+  assert.notEqual(partial.state().id, a.state().id, 'a seat that missed B reads another amount, another founding: the residual, void and drawn again');
 });
 
 test('a real seat with ARENA_FOUNDING=1 builds its founding with the reader, and no point on regtest changes nothing', async () => {

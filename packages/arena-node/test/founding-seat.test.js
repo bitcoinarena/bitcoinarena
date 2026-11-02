@@ -6,7 +6,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { taggedHash, toHex } from '../../arena-protocol/src/hash.js';
+import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { setupDigest } from '../src/founding.js';
 import { createFoundingSeat, guardingWhy, cliSetup, execCli } from '../src/founding-seat.js';
 import { drawGuardians } from '../../arena-protocol/src/guardian-founding.js';
 import { execFile } from 'node:child_process';
@@ -597,4 +598,63 @@ test('from the point the count holds to the version too: a cohort does not trigg
   assert.equal(a.ok, true, a.why); assert.equal(a.trigger.kind, 'cohort');
   const after = asOf(() => 24); const b = await after.tick();
   assert.equal(b.ok, false, 'nine that speak it are not ten');
+});
+
+// VOID, NOT STUCK (kanban #1025): from the point a succession redraws by the chain, a run founding is kept, and a named successor ends it
+function redrawSeat({ w, recs, setup = {}, reader = null, fetchJson = null }) {
+  const made = [];
+  const s = createFoundingSeat({ records: () => recs(), entriesAt: async (h) => { made.push(h); return entries; }, beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
+    guardianInSetup: async () => true, setup: { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null, ...setup }, nominal: 4, bondMinGuardian: 500000n,
+    clocks: { abandonBlocks: 10, foundingWindow: 5 }, ownKey: keys[0].pub, sign: () => new Uint8Array(64), verify, redrawFrom: 0, ...(reader ? { pressureBondAt: reader } : {}), ...(fetchJson ? { fetchJson, peers: () => ['https://peer'] } : {}) });
+  return s;
+}
+const drainingAt = (height, extra = {}) => [{ federation: 'aa'.repeat(32), status: 'DRAINING', height, ...extra }];
+
+test('a void succession is drawn again on its own beacon, not held for ever; two seats at one tip name the same founding', async () => {
+  const w = { tip: 201 };
+  const a = redrawSeat({ w, recs: () => drainingAt(200) }), b = redrawSeat({ w, recs: () => drainingAt(200) });
+  await a.tick();
+  const first = a.state();
+  assert.equal(first.void, false);
+  w.tip = 206;                            // the window (beacon 201 + 5) has passed
+  await a.tick();
+  assert.equal(a.state().void, true, 'the first draw went void');
+  w.tip = 207;
+  const r = await a.tick();
+  assert.equal(r.ok, true, r.why);
+  assert.equal(r.trigger.height, 206); assert.equal(r.trigger.firstDraw, false);
+  assert.notEqual(a.state().id, first.id, 'its own beacon');
+  await b.tick();                         // b comes up late and never saw the first draw
+  assert.equal(b.state().id, a.state().id, 'the same draw from the chain alone');
+});
+
+test('a draw that started nothing by its height + founding_window is void and holds nothing back', async () => {
+  const w = { tip: 205 };
+  const s = redrawSeat({ w, recs: () => drainingAt(200) });
+  const r = await s.tick();
+  assert.equal(r.ok, false); assert.match(r.why, /no founding started by 205 for the draw at 200: void, drawn again at 206/);
+  assert.equal(s.state(), null);
+  w.tip = 207;
+  assert.equal((await s.tick()).trigger.height, 206);
+});
+
+test('a founding that runs is not drawn over at its trigger\'s next height, and a record naming the successor ends the trigger', async () => {
+  const w = { tip: 201 }; let recs = drainingAt(200), s = null;
+  s = redrawSeat({ w, recs: () => recs, fetchJson: async () => ({ id: s.state().id, codes: [], federation: true }) });
+  await s.tick();
+  const id = s.state().id;
+  assert.equal(s.state().federation, true, 'a peer says it runs');
+  w.tip = 208;
+  await s.tick();
+  assert.equal(s.state().id, id, 'kept: no redraw over a federation that runs');
+  recs = drainingAt(204, { record: { nominal: 4, guardians: [], gone: [], successorId: new Uint8Array(32).fill(7) } });
+  const after = await s.tick();
+  assert.equal(after.ok, false, 'the successor is named: the condition is over');
+});
+
+test('a made-up federation in an advert stops no founding from the point on', async () => {
+  const w = { tip: 201 };
+  const s = redrawSeat({ w, recs: () => drainingAt(200), reader: async () => null });
+  const r = await s.tick();
+  assert.equal(r.ok, true, r.why);
 });
