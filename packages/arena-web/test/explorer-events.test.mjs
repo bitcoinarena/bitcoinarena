@@ -23,7 +23,7 @@ function store() {
   return { db, env: { DB: { prepare, batch: async (l) => { for (const s of l) await s.run(); } },
     EXPLORER: { get: async (k) => (kv.has(k) ? kv.get(k) : null), put: async (k, v) => { kv.set(k, v); } } } };
 }
-const ask = async (env, path) => (await worker.fetch(new Request('https://explorer.bitcoin-arena.io' + path), env, { waitUntil: () => {} })).json();
+const ask = async (env, path) => (await worker.fetch(new Request('https://explorer.bitcoinarena.io' + path), env, { waitUntil: () => {} })).json();
 const T2 = JSON.parse(readFileSync(new URL('../../arena-node/test/fixtures/t2-liquidation-723.json', import.meta.url), 'utf8'));
 const FULL = { escrow: 'd96364ecc7f8f75f8fb60e64c9b61e3dfee36fae8390cc30a2c995c0690da72a', payout: 'a6c8636f34b02a12a583599f3c649a211fe9857c28df435c094f239921710f91',
   remainder: '1f10749173eb4a7135a0d059b51ea09a43bae12c2baa73313ebaec73dc0acb62' };
