@@ -4,7 +4,7 @@
 //
 //   signing   after a failed round this seat lists the seats that gave it nothing, once per round and stage, and hands the note to the round's seats and the network's:
 //             RESULT      once the round's windows are over (final_after, its re-run window, the re-run's own window), for the entries §13C decided VOID: the seats whose
-//                         signed result this seat did not hold when it decided
+//                         signed result this seat did not hold at the end of the re-run window. A seat that was not running at that moment signs nothing
 //             SETTLEMENT  2 h after final_after with the settlement not landed: the seats that gave this seat's last settlement pass no signed word where it stopped.
 //                         By then every seat has had its turn to ask (a turn every 2 blocks, 7 seats)
 //             A seat that was silent itself signs nothing: its own list would have no standing. A seat that never asked has nothing to list. Nothing is noted in a round that worked.
@@ -21,6 +21,8 @@ const STALL_KEEP_MS = 7n * 86400000n;
 /** At most this many notes or certificates one GET /stall-notes answers. */
 export const STALL_NOTES_PER_ANSWER = 4096;
 const ACCEPTED_STATE = 'ACCEPTED';
+/** Two passes further apart than this mean this seat was not running between them. */
+const STALL_TICK_GAP_MS = 300000n;
 
 const weightsOfStall = (entries) => {
   const out = new Map();
@@ -37,6 +39,7 @@ export function stallBook({ round, presence, verify, sign, log = () => {}, seatR
     CREATE TABLE IF NOT EXISTS stall_noted (round_id BLOB NOT NULL, stage INTEGER NOT NULL, PRIMARY KEY (round_id, stage));
   `);
   const me = () => toHex(round.pubkey);
+  let lastTick = null;
   const contractOfStall = (rid) => { const row = round.get(rid); if (!row) return null; try { return decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; } };
 
   const keep = (rid, stage, signer, c, bytes) => db.prepare('INSERT OR IGNORE INTO stall_notes (round_id, stage, signer, close_ms, bytes) VALUES (?, ?, ?, ?, ?)').run(rid, stage, signer, Number(stallCloseMs(c)), bytes);
@@ -54,12 +57,15 @@ export function stallBook({ round, presence, verify, sign, log = () => {}, seatR
     return { ok: true };
   }
 
-  /** The seats this seat lists for a round's RESULT stage, or null where it signs nothing: its own result missing, or nobody silent. */
-  function resultSilent(rid, seats) {
-    const voided = db.prepare("SELECT entry_id, decided_ms FROM no_quorum WHERE round_id = ? AND outcome = 'VOID'").all(rid);
+  /**
+   * The seats this seat lists for a round's RESULT stage, or null where it signs nothing: its own result missing, or nobody silent. What counts is what it held at the end of the
+   * re-run window, the ruling's moment, so a slow seat's result that came after the entry was decided still clears it.
+   */
+  function resultSilent(rid, seats, untilMs) {
+    const voided = db.prepare("SELECT entry_id FROM no_quorum WHERE round_id = ? AND outcome = 'VOID'").all(rid);
     const out = new Set();
     for (const v of voided) {
-      const heard = new Set(db.prepare('SELECT node_pubkey FROM results WHERE round_id = ? AND entry_id = ? AND seen_ms <= ?').all(rid, v.entry_id, v.decided_ms).map((r) => toHex(new Uint8Array(r.node_pubkey))));
+      const heard = new Set(db.prepare('SELECT node_pubkey FROM results WHERE round_id = ? AND entry_id = ? AND seen_ms <= ?').all(rid, v.entry_id, Number(untilMs)).map((r) => toHex(new Uint8Array(r.node_pubkey))));
       if (!heard.has(me())) continue;                                       // silent itself on this entry: no standing
       for (const k of seats) if (!heard.has(k)) out.add(k);
     }
@@ -73,12 +79,17 @@ export function stallBook({ round, presence, verify, sign, log = () => {}, seatR
     return out.size ? [...out] : null;
   }
 
-  /** One round at this moment: signs what is due, once. Answers the notes signed. */
-  function noteRound(rid, c, nowMs) {
+  /**
+   * One round at this moment: signs what is due, once. Answers the notes signed. `upSinceMs`: since when this seat has been running. MEASURED on seven real seats (kanban #1052): seats
+   * stopped through a round came back holding no result of the others, and each listed all of them. So a seat that was not up when the RESULT moment passed signs nothing for it. Its
+   * SETTLEMENT list needs no such care: it reads answers to a pass this seat itself ran.
+   */
+  function noteRound(rid, c, nowMs, { upSinceMs = null } = {}) {
     const seats = round.signerNodes(rid).map((k) => toHex(k));
     if (!seats.includes(me())) return [];
     const win = windowsOf(c), out = [];
-    const due = [[STALL_STAGE.RESULT, BigInt(nowMs) >= win.ownFinalAfterMs, () => resultSilent(rid, seats)],
+    const up = upSinceMs === null || win.ownFinalAfterMs >= BigInt(upSinceMs);
+    const due = [[STALL_STAGE.RESULT, BigInt(nowMs) >= win.ownFinalAfterMs && up, () => resultSilent(rid, seats, win.rerunDeadlineMs)],
       [STALL_STAGE.SETTLEMENT, BigInt(nowMs) >= win.finalAfterMs + STALL_SETTLEMENT_WAIT_MS, () => settlementSilent(rid)]];
     for (const [stage, now, listOf] of due) {
       if (!now || db.prepare('SELECT 1 FROM stall_noted WHERE round_id = ? AND stage = ?').get(rid, stage)) continue;
@@ -96,6 +107,9 @@ export function stallBook({ round, presence, verify, sign, log = () => {}, seatR
   /** Every round due, a pass. A round's seats get its notes, then every seat, so the duty node holds them whoever it is. */
   async function tick(nowMs = round.now()) {
     const now = BigInt(nowMs);
+    // UP SINCE THE LAST PASS, if that was recent: a pass after a restart, or after this process stood still for 5 minutes, starts the clock again
+    const upSinceMs = lastTick !== null && now - lastTick <= STALL_TICK_GAP_MS ? lastTick : now;
+    lastTick = now;
     const since = Number(now - STALL_KEEP_MS);
     const made = [];
     const rows = db.prepare(`SELECT DISTINCT round_id FROM no_quorum WHERE outcome = 'VOID' AND decided_ms > ?
@@ -103,7 +117,7 @@ export function stallBook({ round, presence, verify, sign, log = () => {}, seatR
     for (const r of rows) {
       const rid = new Uint8Array(r.round_id), c = contractOfStall(rid);
       if (!c || !stallsOut(c)) continue;
-      made.push(...noteRound(rid, c, nowMs));
+      made.push(...noteRound(rid, c, nowMs, { upSinceMs }));
     }
     db.prepare('DELETE FROM stall_notes WHERE close_ms < ?').run(since);
     if (made.length) await hand(made.map((b) => toHex(b)));

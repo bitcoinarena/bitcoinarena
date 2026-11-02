@@ -2132,8 +2132,11 @@ cap         nodes out by this rule hold at most 10 % of the census's weight past
 ```
 
 - **What a seat lists.** For RESULT, the seats whose signed result it did not
-  hold when it decided the entry. A round's several VOID entries make one note,
-  the union of their lists. For SETTLEMENT, the seats that gave no signed word
+  hold at the end of the re-run window, so a slow seat's late result still clears
+  it. A seat that was not running at that moment signs nothing: seats stopped
+  through a round came back holding nobody's result and listed everyone (measured,
+  7 real seats, 3 stopped). A round's several VOID entries make one note, the union
+  of their lists. For SETTLEMENT, the seats that gave no signed word
   at the step where this seat's own last settlement pass stopped. That is the
   commit (`SettlementCommit`, §5A.3 table row), and it is the ack or the signed
   plan when the pass stopped there: a pass short of acks asks nobody to commit,

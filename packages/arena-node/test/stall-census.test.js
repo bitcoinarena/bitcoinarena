@@ -306,8 +306,12 @@ test('a seat notes who gave it no signed result after a round failed, once its w
   const me = toHex(W.round.pubkey);
   const others = W.seatings[0].seated.slice(0, 6);
   const seats = [me, ...others];
-  const { rid, contract } = failedRound(W, { seats, results: [[me, 1], [others[0], 1], [others[1], 1], [others[2], 9000]] });
+  const { rid, contract } = failedRound(W, { seats, results: [[me, 1], [others[0], 1], [others[1], 1]] });
   const end = windowsOf(contract);
+  // one result after the entry was decided and inside the re-run window, one after that window
+  { const { results } = { results: [[others[2], end.rerunDeadlineMs], [others[3], end.rerunDeadlineMs + 1n]] };
+    for (const [h, seen] of results) W.round.db.prepare('INSERT INTO results (round_id, entry_id, node_pubkey, result_id, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)').run(rid, Buffer.alloc(32, 'e1'), fromHex(h), Buffer.alloc(32), Buffer.alloc(1), Number(seen)); }
+  assert.deepEqual(W.stall.noteRound(rid, contract, end.ownFinalAfterMs, { upSinceMs: end.ownFinalAfterMs + 1n }), [], 'a seat not up at the moment signs nothing');
   assert.deepEqual(W.stall.noteRound(rid, contract, end.finalAfterMs), [], 'not before the re-run windows are over');
   const made = W.stall.noteRound(rid, contract, end.ownFinalAfterMs);
   assert.equal(made.length, 1);
@@ -315,7 +319,7 @@ test('a seat notes who gave it no signed result after a round failed, once its w
   assert.equal(v.ok, true, v.why);
   assert.equal(v.note.signer, me);
   assert.equal(v.note.stage, STALL_STAGE.RESULT);
-  assert.deepEqual(v.note.silent, [others[2], others[3], others[4], others[5]].sort(), 'a result that came after the decision is no answer');
+  assert.deepEqual(v.note.silent, [others[3], others[4], others[5]].sort(), 'a slow seat inside the re-run window clears itself; past it, it is silent');
   assert.deepEqual(W.stall.noteRound(rid, contract, end.ownFinalAfterMs), [], 'once');
   assert.equal(W.stall.notesIn({ fromMs: 0n, toMs: stallCloseMs(contract) }).length, 1);
   // silent itself: nothing
