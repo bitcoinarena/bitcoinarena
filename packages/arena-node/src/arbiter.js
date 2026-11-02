@@ -23,7 +23,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { affectedEntries, realLosses, slashHolds, slashProofId, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS, TWO_RESULTS,
-  splitAuditSlashEvidence, slashHoldsOnAudit, auditSlashProofId, AUDIT_CONTRADICTED } from '../../arena-protocol/src/slash.js';
+  splitAuditSlashEvidence, slashHoldsOnAudit, auditSlashProofId, AUDIT_CONTRADICTED, splitDoubleSlashEvidence, slashHoldsOnDoubleSign } from '../../arena-protocol/src/slash.js';
 import { planEscrowSpend } from '../../arena-protocol/src/slash-reserves.js';
 import { finalSigned, splitSignedFinalSig, decodeFinalSig } from '../../arena-protocol/src/final-sig.js';
 import { splitSignedRerun, decodeRerunResult } from '../../arena-protocol/src/rerun.js';
@@ -146,6 +146,24 @@ export async function judgeAuditProof({ evidence, bundle, entry, contract, commi
 }
 
 const verifySchnorr = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
+
+/**
+ * THE JUDGEMENT OF TWO RESULTS (5A.3 row 1, kanban #986). No replay and no objection: the two records beside the proof, each verified under
+ * the accused's key, about one player of the round asked after and ONE transcript, the accused on the round's committee and the bond the one its
+ * own advertisement names (slashHoldsOnDoubleSign). `roundIdBytes` is the round this arbiter read the committee for: a pair of another round
+ * accuses nobody here. Answers what judgeProof answers, less the replay: a doubled result shows no loss (§5A.3), so buildSlash pays its bond
+ * to the reserves unless an earlier proof of the round left a correction.
+ */
+export function judgeDoubleProof({ evidence, roundIdBytes, committee, advert, bondOutpoint }) {
+  const no = (why) => ({ slashed: false, why });
+  let got;
+  try { got = splitDoubleSlashEvidence(evidence); } catch (e) { return no(`not a proof of two results: ${e.message}`); }
+  if (toHex(got.proof.roundId) !== toHex(roundIdBytes)) return no('that pair is about another round');
+  const held = slashHoldsOnDoubleSign({ proof: got.proof, signedResults: got.signedResults, committee, verify: verifySchnorr,
+    advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
+  if (!held.slashed) return no(held.why);
+  return { slashed: true, offence: held.offence, bond: held.bond, proof: got.proof, proofId: slashProofId(got.proof), playerPubkey: got.proof.playerPubkey, why: held.why };
+}
 
 /**
  * THE ROUND AS IT SETTLED, FROM A SEAT'S GET /audit-run, believed for nothing: each entry checked against its id, and each entry's run read off the

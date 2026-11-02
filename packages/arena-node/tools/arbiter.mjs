@@ -18,6 +18,8 @@
 // the same way by arbiter.js judgeAuditProof - the objection replayed here, the AUDIT's signature and VRF draw checked against the round's
 // census less its drawn nodes and its players (GET /audit-run) - and paid as every slash.
 // The members' keys are the test network's derivable ones (genesis-ids.js); mainnet has no set and this refuses it.
+// A proof of two results (5A.3 row 1, kanban #986; GET /slashes `doubleSlashes`, its record at GET /double-slash-proofs) is judged by arbiter.js
+// judgeDoubleProof: both signatures, one run, the accused's committee seat and bond. Nothing is replayed, so it asks for no objection and no core.
 // Its doors (POST /musig/nonce, /musig/partial, GET /status) serve the cooperative key path: it agrees to a release
 // only for a node no handled or open proof accuses.
 // After each pass it publishes every liquidation and posted slash it keeps as a signed event (kanban #723, arbitration-events.js) to
@@ -28,7 +30,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
-import { arbitrationMembers, judgeProof, judgeAuditProof, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin } from '../src/arbiter.js';
+import { arbitrationMembers, judgeProof, judgeAuditProof, judgeDoubleProof, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin } from '../src/arbiter.js';
 import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
 import { liquidationEvent, slashEvent, stampEvent, signEvent, eventKey } from '../src/arbitration-events.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
@@ -39,7 +41,7 @@ import { windowsOf } from '../../arena-protocol/src/window.js';
 import { bondSetFor } from '../src/curve.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
-import { splitSlashEvidence, cutSlashEvidence, splitAuditSlashEvidence, cutAuditSlashEvidence, auditSlashProofId } from '../../arena-protocol/src/slash.js';
+import { splitSlashEvidence, cutSlashEvidence, splitAuditSlashEvidence, cutAuditSlashEvidence, auditSlashProofId, splitDoubleSlashEvidence, cutDoubleSlashEvidence, slashProofId } from '../../arena-protocol/src/slash.js';
 import { auditEligible } from '../../arena-protocol/src/auditor.js';
 import { makeVrf, SUITE_SECP256K1_TAI } from '../../arena-protocol/src/vrf.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
@@ -82,15 +84,19 @@ async function handle(seat, s) {
   const rid = fromHex(s.round), eid = fromHex(s.entry);
   // A PROOF AGAINST A CONTRADICTED AUDIT (kanban #724, #725): its own record (GET /audit-slash-proofs), judged by judgeAuditProof
   const audit = s.kind === 'audit';
-  const recs = await get(audit ? `${seat}/audit-slash-proofs?round=${s.round}` : `${seat}/slash-proofs?round=${s.round}&entry=${s.entry}`, 'bytes');
+  // A PROOF OF TWO RESULTS (kanban #986): its own record (GET /double-slash-proofs), judged by judgeDoubleProof on the signatures alone
+  const double = s.kind === 'double';
+  const recs = await get(double ? `${seat}/double-slash-proofs?round=${s.round}` : audit ? `${seat}/audit-slash-proofs?round=${s.round}` : `${seat}/slash-proofs?round=${s.round}&entry=${s.entry}`, 'bytes');
   let evidence = null;
-  if (audit) {
+  if (double) {
+    for (const r of cutDoubleSlashEvidence(recs)) { let sp; try { sp = splitDoubleSlashEvidence(r); } catch { continue; } if (toHex(sp.proof.nodePubkey) === s.node && toHex(slashProofId(sp.proof)) === s.proof) evidence = r; }
+  } else if (audit) {
     for (const r of cutAuditSlashEvidence(recs)) { let sp; try { sp = splitAuditSlashEvidence(r); } catch { continue; } if (toHex(sp.proof.nodePubkey) === s.node && toHex(auditSlashProofId(sp.proof)) === s.proof) evidence = r; }
   } else {
     for (const r of cutSlashEvidence(recs)) { let sp; try { sp = splitSlashEvidence(r); } catch { continue; } if (toHex(sp.proof.nodePubkey) === s.node) evidence = r; }
   }
   if (!evidence) return { done: false, why: 'the seat lists that proof and does not hand it over' };
-  const bundle = await get(`${seat}/objection-bundle?round=${s.round}&entry=${s.entry}`, 'bytes');
+  const bundle = double ? null : await get(`${seat}/objection-bundle?round=${s.round}&entry=${s.entry}`, 'bytes');
   const contract = decodeRoundContract(await get(`${seat}/round?id=${s.round}`, 'bytes'));
   const entry = decodeEntryContract(await get(`${seat}/entry?id=${s.entry}`, 'bytes'));
   // THE ROUND'S CENSUS AND COMMITTEE, FROM THIS ARBITER'S OWN CHAIN
@@ -107,7 +113,7 @@ async function handle(seat, s) {
     ...selectCommittee({ entries: census.entries, contract, role: 'settlement', committeeSeed: seeded.seed })].map((e) => [toHex(e.pubkey), e.pubkey])).values()];
   const accused = census.entries.find((e) => toHex(e.pubkey) === s.node);
   if (!accused) return { done: true, why: 'the accused is not in the round\'s census' };
-  const core = coreForRound(contract, rid, (await import('../src/plugins.js')).hostedPlugins((await loadApps())));
+  const core = double ? null : coreForRound(contract, rid, (await import('../src/plugins.js')).hostedPlugins((await loadApps())));
   // THE ROUND'S ENTRIES AND RESULTS, OFF THE SEAT'S GET /audit-run, checked against their own entry ids: a slash pays whoever the
   // false result harmed, and that takes the whole field (kanban #975)
   const run = await get(`${seat}/audit-run?round=${s.round}`);
@@ -115,7 +121,9 @@ async function handle(seat, s) {
   const entries = settledEntries({ run, roundId: rid, contract, committee, finalAfterMs: windowsOf(contract).finalAfterMs });
   const playerKeys = new Set(entries.map((e) => toHex(e.playerPubkey)));
   let verdict;
-  if (audit) {
+  if (double) {
+    verdict = judgeDoubleProof({ evidence, roundIdBytes: rid, committee, advert: accused.advert, bondOutpoint: { txid: accused.txid, vout: accused.vout } });
+  } else if (audit) {
     // WHO COULD AUDIT THE ROUND, FROM THIS ARBITER'S OWN CENSUS (§13A.1): its census less every node drawn for its roles; its players'
     // keys out of the eligible set and still in W, as a seat's door takes them
     const set = auditEligible({ entries: census.entries, bondMinSats: BigInt(contract.bondMinSats || 50000n), drawn: committee.map(toHex) });
@@ -156,7 +164,7 @@ async function handle(seat, s) {
   // WHAT THE ESCROW OWES, kept with the slash: the step after (payOut) pays it through the federations
   const byKey = new Map(entries.map((e) => [toHex(e.playerPubkey), e]));
   const players = [...slash.distribution.players].map(([key, msat]) => ({ key, msat: String(msat), entry: byKey.get(key).entryId, federation: byKey.get(key).federation }));
-  return sent.ok ? { done: true, posted: sent.txid, slashHeight: census.tip, signers: tx.signers, node: s.node, round: s.round, entry: s.entry,
+  return sent.ok ? { done: true, offence: verdict.offence, posted: sent.txid, slashHeight: census.tip, signers: tx.signers, node: s.node, round: s.round, entry: s.entry,
     bondSats: String(bond.value), escrowSats: String(slash.built.amounts.escrow), players,
     playersMsat: String(slash.distribution.playersMsat), reservesMsat: String(slash.distribution.reservesMsat), shortMsat: String(slash.distribution.shortMsat),
     truth: slash.truth.map((t) => ({ key: toHex(t.pubkey), outcome: t.outcome, score: t.score })) } : { done: false, why: sent.why };
@@ -293,13 +301,13 @@ async function pass() {
   const found = new Map();
   for (const seat of seats) {
     let list; try { list = await get(`${seat}/slashes`); } catch (e) { say({ seat, refused: e.message }); continue; }
-    for (const s of [...(list.slashes || []), ...(list.auditSlashes || []).map((x) => ({ ...x, kind: 'audit' }))]) if (!state.handled[s.proof] && !found.has(s.proof)) found.set(s.proof, { seat, s });
+    for (const s of [...(list.slashes || []), ...(list.auditSlashes || []).map((x) => ({ ...x, kind: 'audit' })), ...(list.doubleSlashes || []).map((x) => ({ ...x, kind: 'double' }))]) if (!state.handled[s.proof] && !found.has(s.proof)) found.set(s.proof, { seat, s });
   }
   for (const { seat, s } of [...found.values()].sort((a, b) => (a.s.proof < b.s.proof ? -1 : 1))) {
     let r; try { r = await handle(seat, s); } catch (e) { r = { done: false, why: e.message }; }
     say({ seat, proof: s.proof.slice(0, 16), node: s.node.slice(0, 16), ...r });
-    // the offence the published event names (kanban #1000): the table a proof came from holds one kind
-    if (r.done) { state.handled[s.proof] = { at: Date.now(), offence: s.kind === 'audit' ? 'AUDIT_CONTRADICTED' : 'REPLAY_CONTRADICTS', ...r }; keep(); }
+    // the offence the published event names (kanban #1000, #986): what the judgement found, in `r`, never read off the list a proof came from
+    if (r.done) { state.handled[s.proof] = { at: Date.now(), ...r }; keep(); }
   }
   for (const [proof, v] of Object.entries(state.handled)) {
     if (!v.posted || !v.escrowSats || v.settled) continue;

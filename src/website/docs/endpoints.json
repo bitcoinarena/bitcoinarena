@@ -7117,7 +7117,7 @@
   "path": "/slashes",
   "params": "none",
   "auth": "none",
-  "returns": "200 JSON {node, slashes:[{round, entry, node, proof, seenMs, objection}]}",
+  "returns": "200 JSON {node, slashes:[{round, entry, node, proof, seenMs, objection}], auditSlashes:[...], doubleSlashes:[{round, entry, node, proof, seenMs}]}",
   "purpose": "Every slash proof this node filed, for the arbitration set to fetch.",
   "audience": "node-to-node",
   "line": 5986,
@@ -7128,7 +7128,7 @@
    {
     "status": "200",
     "contentType": "application/json",
-    "description": "{node, slashes:[{round, entry, node, proof, seenMs, objection}]}."
+    "description": "{node, slashes:[{round, entry, node, proof, seenMs, objection}], auditSlashes:[...], doubleSlashes:[{round, entry, node, proof, seenMs}]}."
    }
   ],
   "headers": [],
@@ -12737,6 +12737,44 @@
   "audience": "node-to-node",
   "line": 9547,
   "summary": "A round's proofs against contradicted audits",
+  "query": [
+   {
+    "name": "round",
+    "required": true,
+    "type": "string",
+    "description": "The round id, 64 hex."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/octet-stream",
+    "description": "The proofs' bytes, one after another."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a round id."
+   }
+  ],
+  "headers": [
+   "x-slash-proofs"
+  ],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/double-slash-proofs",
+  "params": "query round (64 hex)",
+  "auth": "none",
+  "returns": "200 octet-stream: the proofs one after another, header x-slash-proofs = count; 400",
+  "purpose": "A round's fraud proofs of two results (§5A.3 row 1): one signer's two different signed results about one run, as published: each proof with both signed results, concatenated. The arbiter reads them; GET /slashes lists them under doubleSlashes.",
+  "audience": "node-to-node",
+  "line": 9547,
+  "summary": "A round's proofs of two results",
   "query": [
    {
     "name": "round",
