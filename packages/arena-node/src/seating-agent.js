@@ -57,6 +57,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     CREATE TABLE IF NOT EXISTS seat_sigs (round_id BLOB NOT NULL, role TEXT NOT NULL, seating TEXT NOT NULL, node TEXT NOT NULL, signature BLOB NOT NULL,
       PRIMARY KEY (round_id, role, seating, node));
     CREATE TABLE IF NOT EXISTS seat_certs (round_id BLOB NOT NULL, role TEXT NOT NULL, cert BLOB NOT NULL, PRIMARY KEY (round_id, role));
+    CREATE TABLE IF NOT EXISTS seat_reseats (round_id BLOB NOT NULL, role TEXT NOT NULL, anchor TEXT NOT NULL, idx INTEGER NOT NULL, PRIMARY KEY (round_id, role));
     CREATE TABLE IF NOT EXISTS seat_equivocations (round_id BLOB NOT NULL, role TEXT NOT NULL, a BLOB NOT NULL, b BLOB NOT NULL,
       PRIMARY KEY (round_id, role));
   `);
@@ -86,14 +87,22 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     let c; try { const row = round.get(rid); c = row ? decodeRoundContract(new Uint8Array(row.contract)) : posted; } catch { c = posted; }
     const a = c ? tableAnchorOf(c) : null;
     if (!a || a.first) return;
-    const key = `${toHex(a.anchorId)}:${role}`;
+    // kept beside the certificate: a seat may hold no row of the check-in, and must still know it after a restart
+    db.prepare('INSERT OR IGNORE INTO seat_reseats (round_id, role, anchor, idx) VALUES (?, ?, ?, ?)').run(rid, role, toHex(a.anchorId), c.roundIndex);
+    listReseat(toHex(a.anchorId), role, c.roundIndex, rid, seated);
+  };
+  const listReseat = (anchorHex, role, index, rid, seated) => {
+    const key = `${anchorHex}:${role}`;
     const list = reseats.get(key) || reseats.set(key, []).get(key);
-    if (list.some((x) => x.index === c.roundIndex)) return;
-    list.push({ index: c.roundIndex, rid, seated });
+    if (list.some((x) => x.index === index)) return;
+    list.push({ index, rid, seated });
     list.sort((x, y) => x.index - y.index);
   };
   for (const r of db.prepare('SELECT round_id, role, cert FROM seat_certs').all()) {
     try { noteReseat(new Uint8Array(r.round_id), r.role, decodeSeated(new Uint8Array(r.cert))); } catch { /* unread */ }
+  }
+  for (const r of db.prepare('SELECT s.round_id, s.role, s.anchor, s.idx, c.cert FROM seat_reseats s JOIN seat_certs c ON c.round_id = s.round_id AND c.role = s.role').all()) {
+    try { listReseat(r.anchor, r.role, Number(r.idx), new Uint8Array(r.round_id), decodeSeated(new Uint8Array(r.cert))); } catch { /* unread */ }
   }
   /** The seating that seats round `index` of the table: the newest certificate at or before it, and the table's first otherwise. Null while none stands. */
   const tableSeatingAt = (anchorHex, role, index) => {
