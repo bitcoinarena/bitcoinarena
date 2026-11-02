@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { taggedHash, toHex } from '../../arena-protocol/src/hash.js';
-import { createFounding, setupDigest } from '../src/founding.js';
+import { createFounding, setupDigest, foundingId } from '../src/founding.js';
 
 const key = (s) => { const secret = taggedHash('TEST/founding', new TextEncoder().encode(s)); return { secret, pub: schnorr.getPublicKey(secret) }; };
 const verify = (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } };
@@ -323,5 +323,8 @@ test('capacity pressure orders the seats and alternates of the ceremony; null is
   const plain = open({}), none = open({ pressureBond: null }), under = open({ pressureBond: 2000000n });
   assert.deepEqual(none, plain);
   assert.equal(under.seated[0].node, toHex(keys[7].pub), 'the one at B*_net sits first, and position 0 leads');
-  assert.equal(under.id, plain.id, 'the founding id does not name the pressure: every seat has to read the same value');
+  assert.notEqual(under.id, plain.id, 'the founding id covers the amount, so seats that read another one name another founding');
+  assert.notEqual(open({ pressureBond: 1500000n }).id, under.id);
+  assert.equal(plain.id, toHex(foundingId(seed, 100)), 'with null it is the plain id');
+  assert.equal(open({ candidateVersion: 24 }).ok, false, 'none of these adverts lists the version: no candidates');
 });

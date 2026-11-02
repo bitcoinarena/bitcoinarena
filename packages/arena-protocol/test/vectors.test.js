@@ -19,7 +19,7 @@ import { Writer } from '../src/encode.js';
 import { taggedHash, toHex, fromHex } from '../src/hash.js';
 import { commitCensus, leafHash, encodeEntry } from '../src/census.js';
 import { selectCommittee, ticketFor, weightOf, panelSeed, drawPanels } from '../src/sortition.js';
-import { drawGuardians } from '../src/guardian-founding.js';
+import { drawGuardians, foundingId } from '../src/guardian-founding.js';
 import { computePayoutTable, rankWeights, DELIVERED, FAILED } from '../src/payout.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../src/contracts.js';
 import { encodeCheckpoint, checkpointId, NO_PREVIOUS } from '../src/checkpoint.js';
@@ -108,16 +108,29 @@ test('tickets, weights and the chosen committee match', () => {
 
 test('the founding draw matches, seat by seat and alternate by alternate', () => {
   const v = load('founding');
-  const entries = v.entries.map((e) => ({ ...e, pubkey: fromHex(e.pubkey), txid: fromHex(e.txid), bondSats: BigInt(e.bondSats) }));
+  const read = (e) => ({ ...e, pubkey: fromHex(e.pubkey), txid: fromHex(e.txid), bondSats: BigInt(e.bondSats) });
+  const entries = v.entries.map(read);
   for (const c of v.cases) {
-    const d = drawGuardians({ entries, seed: fromHex(v.seed), height: v.height, nominal: v.nominal, bondMinGuardian: BigInt(v.bondMinGuardian), guardingOpen: new Set(c.guardingOpen),
+    const d = drawGuardians({ entries: [...entries, ...(c.extra || []).map(read)], candidateVersion: c.candidateVersion ?? null, seed: fromHex(v.seed), height: v.height, nominal: v.nominal, bondMinGuardian: BigInt(v.bondMinGuardian), guardingOpen: new Set(c.guardingOpen),
       seatedFirst: c.seatedFirst.map((k) => entries.find((e) => toHex(e.pubkey) === k)), ...(c.pressureBond ? { pressureBond: BigInt(c.pressureBond) } : {}) });
     assert.equal(d.ok, true, c.what);
     assert.equal(d.atPressureBond, c.atPressureBond, c.what);
     assert.deepEqual(d.drawn.map((e) => toHex(e.pubkey)), c.drawn, c.what);
     assert.deepEqual(d.alternates.map((e) => toHex(e.pubkey)), c.alternates, c.what);
     assert.deepEqual([d.eligible, d.seatedFirst, d.why], [c.eligible, c.seatedFirstCount, c.why], c.what);
+    assert.equal(toHex(foundingId(fromHex(v.seed), v.height, c.pressureBond ? BigInt(c.pressureBond) : null)), c.foundingId, c.what);
   }
+});
+
+test('a founding id with no pressure is H(tag, seed || trigger_height), byte for byte; with pressure it covers the amount', () => {
+  const v = load('founding'), seed = fromHex(v.seed);
+  const plain = (height, tag) => { const w = new Writer(); w.bytes32(seed); w.u32(height); return toHex(taggedHash(tag, w.finish())); };
+  assert.equal(toHex(foundingId(seed, v.height)), plain(v.height, 'BLWP/v1/FOUNDING'));
+  assert.equal(v.plainIdAtTheTagSwitch.foundingId, plain(v.plainIdAtTheTagSwitch.height, 'ARENA/v1/FOUNDING'));
+  assert.equal(v.cases[0].foundingId, 'f3a2e3db1f4a1266e4c56e9ffb25c408dc51e421c0248b8da06f46e131c0d38c', 'made by the code before the id could cover anything');
+  assert.equal(v.plainIdAtTheTagSwitch.foundingId, '009a39675efee17943a512d60b8a0745902f2f62ce6192063b8f34eff7d7e3e1', 'and past the tag switch');
+  assert.notEqual(toHex(foundingId(seed, v.height, 86667n)), toHex(foundingId(seed, v.height)));
+  assert.notEqual(toHex(foundingId(seed, v.height, 86667n)), toHex(foundingId(seed, v.height, 86668n)));
 });
 
 test('the payout table matches the specification worked example', () => {

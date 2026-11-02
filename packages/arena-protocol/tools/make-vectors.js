@@ -15,7 +15,7 @@ import { TAG, PROTOCOL_VERSION } from '../src/constants.js';
 import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
 import { commitCensus, leafHash, encodeEntry } from '../src/census.js';
 import { selectCommittee, ticketFor, weightOf, panelSeed, drawPanels } from '../src/sortition.js';
-import { drawGuardians } from '../src/guardian-founding.js';
+import { drawGuardians, foundingId } from '../src/guardian-founding.js';
 import { computePayoutTable, rankWeights, DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../src/contracts.js';
 import { encodeCheckpoint, checkpointId, NO_PREVIOUS, CHECKPOINT_BYTES, SIGNED_CHECKPOINT_BYTES } from '../src/checkpoint.js';
@@ -322,7 +322,7 @@ out.tagged = {
   const seed = taggedHash('BLWP/test/founding-beacon', new Uint8Array(0));
   const height = 200, nominal = 7, bondMinGuardian = 50000n;
   const mk = (n, op, bond, capable = true) => ({ pubkey: b32(n), txid: b32(0x40 + n), vout: 0, bondSats: BigInt(bond),
-    advert: { operatorId: op, guardianCapable: capable, guardianEndpoint: capable ? `wss://g${n}` : '' } });
+    advert: { operatorId: op, guardianCapable: capable, guardianEndpoint: capable ? `wss://g${n}` : '', protocolVersions: n === 11 || n === 12 ? [23] : [23, 24] } });
   const entries = [[1, 50000], [2, 60000], [3, 86667], [4, 86666], [5, 200000], [6, 50000], [7, 90000], [8, 55000], [9, 50000], [10, 120000], [11, 70000], [12, 50000]]
     .map(([n, bond]) => mk(n, `op${n}`, bond));
   entries.push(mk(20, 'op2', 40000),                // a second node of op2: one ticket, its bonds summed to 100,000
@@ -330,19 +330,27 @@ out.tagged = {
     mk(22, 'small', 10000),                         // under bond_min_guardian
     mk(23, 'busy', 500000));                        // guards an OPEN federation already
   const hex = (e) => toHex(e.pubkey);
-  const drawCase = (what, { guardingOpen = [], seatedFirst = [], ...rest } = {}) => {
-    const d = drawGuardians({ entries, seed, height, nominal, bondMinGuardian, guardingOpen: new Set(guardingOpen), seatedFirst: seatedFirst.map((n) => entries.find((e) => e.pubkey[0] === n)), ...rest });
+  // a second output of node 4 beside its first: the node holds 86,667, one sat over the 86,666 of its first
+  const added = { ...mk(4, 'op4', 1), txid: b32(0x7f) };
+  const drawCase = (what, { guardingOpen = [], seatedFirst = [], extra = [], ...rest } = {}) => {
+    const d = drawGuardians({ entries: [...entries, ...extra], seed, height, nominal, bondMinGuardian, guardingOpen: new Set(guardingOpen), seatedFirst: seatedFirst.map((n) => entries.find((e) => e.pubkey[0] === n)), ...rest });
     return { what, guardingOpen, seatedFirst: seatedFirst.map((n) => toHex(b32(n))),
       ...(rest.pressureBond ? { pressureBond: String(rest.pressureBond), atPressureBond: d.atPressureBond } : {}),
+      ...(rest.candidateVersion ? { candidateVersion: rest.candidateVersion } : {}),
+      ...(extra.length ? { extra: extra.map((e) => ({ pubkey: toHex(e.pubkey), txid: toHex(e.txid), vout: e.vout, bondSats: String(e.bondSats), advert: e.advert })) } : {}),
+      foundingId: toHex(foundingId(seed, height, rest.pressureBond ?? null)),
       eligible: d.eligible, seatedFirstCount: d.seatedFirst, drawn: d.drawn.map(hex), alternates: d.alternates.map(hex), why: d.why };
   };
   out.founding = {
     seed: toHex(seed), height, nominal, bondMinGuardian: String(bondMinGuardian),
+    plainIdAtTheTagSwitch: { height: 160000, foundingId: toHex(foundingId(seed, 160000)) },
     entries: entries.map((e) => ({ pubkey: toHex(e.pubkey), txid: toHex(e.txid), vout: e.vout, bondSats: String(e.bondSats), advert: e.advert })),
     cases: [
       drawCase('The plain draw: bond-weighted tickets over the eligible operators, one ticket per operator.', { guardingOpen: ['busy'] }),
       drawCase('A succession: the old guardians seated first in the order given, the missing seats drawn.', { guardingOpen: ['busy'], seatedFirst: [1, 6, 9] }),
-      drawCase('Under pressure with too few at B*_net: op2 (two nodes summed), op3, op5, op7, op10 first; op4 at one sat below is not; the other two seats by ticket.', { guardingOpen: ['busy'], pressureBond: 86667n }),
+      drawCase('Under pressure with too few at B*_net: op3, op5, op7, op10 first; op4 at one sat below is not, nor op2, whose two nodes only sum to it; the other three seats by ticket.', { guardingOpen: ['busy'], pressureBond: 86667n }),
+      drawCase('A node that added a second output counts its sum: op4 joins them.', { guardingOpen: ['busy'], pressureBond: 86667n, extra: [added] }),
+      drawCase('From the point, a node that does not advertise the version is no candidate: op11 and op12 are out, no pressure needed.', { guardingOpen: ['busy'], candidateVersion: 24 }),
       drawCase('Under pressure with more at B*_net than seats: ticket order among them, and the eighth is the first alternate.', { guardingOpen: ['busy'], pressureBond: 55000n }),
       drawCase('Under pressure with B*_net at the floor: everyone qualifies, the plain draw.', { guardingOpen: ['busy'], pressureBond: 50000n }),
       drawCase('Under pressure with nobody at B*_net: the plain draw.', { guardingOpen: ['busy'], pressureBond: 1000000n }),

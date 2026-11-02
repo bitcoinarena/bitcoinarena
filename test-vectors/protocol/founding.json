@@ -3,6 +3,10 @@
  "height": 200,
  "nominal": 7,
  "bondMinGuardian": "50000",
+ "plainIdAtTheTagSwitch": {
+  "height": 160000,
+  "foundingId": "009a39675efee17943a512d60b8a0745902f2f62ce6192063b8f34eff7d7e3e1"
+ },
  "entries": [
   {
    "pubkey": "0101010101010101010101010101010101010101010101010101010101010101",
@@ -12,7 +16,11 @@
    "advert": {
     "operatorId": "op1",
     "guardianCapable": true,
-    "guardianEndpoint": "wss://g1"
+    "guardianEndpoint": "wss://g1",
+    "protocolVersions": [
+     23,
+     24
+    ]
    }
   },
   {
@@ -23,7 +31,11 @@
    "advert": {
     "operatorId": "op2",
     "guardianCapable": true,
-    "guardianEndpoint": "wss://g2"
+    "guardianEndpoint": "wss://g2",
+    "protocolVersions": [
+     23,
+     24
+    ]
    }
   },
   {
@@ -34,7 +46,11 @@
    "advert": {
     "operatorId": "op3",
     "guardianCapable": true,
-    "guardianEndpoint": "wss://g3"
+    "guardianEndpoint": "wss://g3",
+    "protocolVersions": [
+     23,
+     24
+    ]
    }
   },
   {
@@ -45,7 +61,11 @@
    "advert": {
     "operatorId": "op4",
     "guardianCapable": true,
-    "guardianEndpoint": "wss://g4"
+    "guardianEndpoint": "wss://g4",
+    "protocolVersions": [
+     23,
+     24
+    ]
    }
   },
   {
@@ -56,7 +76,11 @@
    "advert": {
     "operatorId": "op5",
     "guardianCapable": true,
-    "guardianEndpoint": "wss://g5"
+    "guardianEndpoint": "wss://g5",
+    "protocolVersions": [
+     23,
+     24
+    ]
    }
   },
   {
@@ -67,7 +91,11 @@
    "advert": {
     "operatorId": "op6",
     "guardianCapable": true,
-    "guardianEndpoint": "wss://g6"
+    "guardianEndpoint": "wss://g6",
+    "protocolVersions": [
+     23,
+     24
+    ]
    }
   },
   {
@@ -78,7 +106,11 @@
    "advert": {
     "operatorId": "op7",
     "guardianCapable": true,
-    "guardianEndpoint": "wss://g7"
+    "guardianEndpoint": "wss://g7",
+    "protocolVersions": [
+     23,
+     24
+    ]
    }
   },
   {
@@ -89,7 +121,11 @@
    "advert": {
     "operatorId": "op8",
     "guardianCapable": true,
-    "guardianEndpoint": "wss://g8"
+    "guardianEndpoint": "wss://g8",
+    "protocolVersions": [
+     23,
+     24
+    ]
    }
   },
   {
@@ -100,7 +136,11 @@
    "advert": {
     "operatorId": "op9",
     "guardianCapable": true,
-    "guardianEndpoint": "wss://g9"
+    "guardianEndpoint": "wss://g9",
+    "protocolVersions": [
+     23,
+     24
+    ]
    }
   },
   {
@@ -111,7 +151,11 @@
    "advert": {
     "operatorId": "op10",
     "guardianCapable": true,
-    "guardianEndpoint": "wss://g10"
+    "guardianEndpoint": "wss://g10",
+    "protocolVersions": [
+     23,
+     24
+    ]
    }
   },
   {
@@ -122,7 +166,10 @@
    "advert": {
     "operatorId": "op11",
     "guardianCapable": true,
-    "guardianEndpoint": "wss://g11"
+    "guardianEndpoint": "wss://g11",
+    "protocolVersions": [
+     23
+    ]
    }
   },
   {
@@ -133,7 +180,10 @@
    "advert": {
     "operatorId": "op12",
     "guardianCapable": true,
-    "guardianEndpoint": "wss://g12"
+    "guardianEndpoint": "wss://g12",
+    "protocolVersions": [
+     23
+    ]
    }
   },
   {
@@ -144,7 +194,11 @@
    "advert": {
     "operatorId": "op2",
     "guardianCapable": true,
-    "guardianEndpoint": "wss://g20"
+    "guardianEndpoint": "wss://g20",
+    "protocolVersions": [
+     23,
+     24
+    ]
    }
   },
   {
@@ -155,7 +209,11 @@
    "advert": {
     "operatorId": "lazy",
     "guardianCapable": false,
-    "guardianEndpoint": ""
+    "guardianEndpoint": "",
+    "protocolVersions": [
+     23,
+     24
+    ]
    }
   },
   {
@@ -166,7 +224,11 @@
    "advert": {
     "operatorId": "small",
     "guardianCapable": true,
-    "guardianEndpoint": "wss://g22"
+    "guardianEndpoint": "wss://g22",
+    "protocolVersions": [
+     23,
+     24
+    ]
    }
   },
   {
@@ -177,7 +239,11 @@
    "advert": {
     "operatorId": "busy",
     "guardianCapable": true,
-    "guardianEndpoint": "wss://g23"
+    "guardianEndpoint": "wss://g23",
+    "protocolVersions": [
+     23,
+     24
+    ]
    }
   }
  ],
@@ -188,6 +254,7 @@
     "busy"
    ],
    "seatedFirst": [],
+   "foundingId": "f3a2e3db1f4a1266e4c56e9ffb25c408dc51e421c0248b8da06f46e131c0d38c",
    "eligible": 12,
    "seatedFirstCount": 0,
    "drawn": [
@@ -216,6 +283,7 @@
     "0606060606060606060606060606060606060606060606060606060606060606",
     "0909090909090909090909090909090909090909090909090909090909090909"
    ],
+   "foundingId": "f3a2e3db1f4a1266e4c56e9ffb25c408dc51e421c0248b8da06f46e131c0d38c",
    "eligible": 9,
    "seatedFirstCount": 3,
    "drawn": [
@@ -235,30 +303,101 @@
    "why": "3 seated first, 4 drawn of 9 eligible operators, 3 alternates in order"
   },
   {
-   "what": "Under pressure with too few at B*_net: op2 (two nodes summed), op3, op5, op7, op10 first; op4 at one sat below is not; the other two seats by ticket.",
+   "what": "Under pressure with too few at B*_net: op3, op5, op7, op10 first; op4 at one sat below is not, nor op2, whose two nodes only sum to it; the other three seats by ticket.",
    "guardingOpen": [
     "busy"
    ],
    "seatedFirst": [],
    "pressureBond": "86667",
-   "atPressureBond": 5,
+   "atPressureBond": 4,
+   "foundingId": "594b855217388ff95c297f8952281132cdff9cc2b6e5348557446327eb9be0f7",
    "eligible": 12,
    "seatedFirstCount": 0,
    "drawn": [
     "0505050505050505050505050505050505050505050505050505050505050505",
     "0303030303030303030303030303030303030303030303030303030303030303",
-    "0202020202020202020202020202020202020202020202020202020202020202",
     "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
     "0707070707070707070707070707070707070707070707070707070707070707",
     "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
-    "0606060606060606060606060606060606060606060606060606060606060606"
+    "0606060606060606060606060606060606060606060606060606060606060606",
+    "0202020202020202020202020202020202020202020202020202020202020202"
    ],
    "alternates": [
     "0909090909090909090909090909090909090909090909090909090909090909",
     "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
     "0808080808080808080808080808080808080808080808080808080808080808"
    ],
+   "why": "7 drawn of 12 eligible operators, 3 alternates in order, under pressure 4 at or above B*_net 86667 go ahead of the rest"
+  },
+  {
+   "what": "A node that added a second output counts its sum: op4 joins them.",
+   "guardingOpen": [
+    "busy"
+   ],
+   "seatedFirst": [],
+   "pressureBond": "86667",
+   "atPressureBond": 5,
+   "extra": [
+    {
+     "pubkey": "0404040404040404040404040404040404040404040404040404040404040404",
+     "txid": "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+     "vout": 0,
+     "bondSats": "1",
+     "advert": {
+      "operatorId": "op4",
+      "guardianCapable": true,
+      "guardianEndpoint": "wss://g4",
+      "protocolVersions": [
+       23,
+       24
+      ]
+     }
+    }
+   ],
+   "foundingId": "594b855217388ff95c297f8952281132cdff9cc2b6e5348557446327eb9be0f7",
+   "eligible": 12,
+   "seatedFirstCount": 0,
+   "drawn": [
+    "0505050505050505050505050505050505050505050505050505050505050505",
+    "0303030303030303030303030303030303030303030303030303030303030303",
+    "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+    "0707070707070707070707070707070707070707070707070707070707070707",
+    "0404040404040404040404040404040404040404040404040404040404040404",
+    "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+    "0606060606060606060606060606060606060606060606060606060606060606"
+   ],
+   "alternates": [
+    "0202020202020202020202020202020202020202020202020202020202020202",
+    "0909090909090909090909090909090909090909090909090909090909090909",
+    "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"
+   ],
    "why": "7 drawn of 12 eligible operators, 3 alternates in order, under pressure 5 at or above B*_net 86667 go ahead of the rest"
+  },
+  {
+   "what": "From the point, a node that does not advertise the version is no candidate: op11 and op12 are out, no pressure needed.",
+   "guardingOpen": [
+    "busy"
+   ],
+   "seatedFirst": [],
+   "candidateVersion": 24,
+   "foundingId": "f3a2e3db1f4a1266e4c56e9ffb25c408dc51e421c0248b8da06f46e131c0d38c",
+   "eligible": 10,
+   "seatedFirstCount": 0,
+   "drawn": [
+    "0505050505050505050505050505050505050505050505050505050505050505",
+    "0303030303030303030303030303030303030303030303030303030303030303",
+    "0606060606060606060606060606060606060606060606060606060606060606",
+    "0202020202020202020202020202020202020202020202020202020202020202",
+    "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+    "0909090909090909090909090909090909090909090909090909090909090909",
+    "0707070707070707070707070707070707070707070707070707070707070707"
+   ],
+   "alternates": [
+    "0808080808080808080808080808080808080808080808080808080808080808",
+    "0101010101010101010101010101010101010101010101010101010101010101",
+    "0404040404040404040404040404040404040404040404040404040404040404"
+   ],
+   "why": "7 drawn of 10 eligible operators, 3 alternates in order"
   },
   {
    "what": "Under pressure with more at B*_net than seats: ticket order among them, and the eighth is the first alternate.",
@@ -268,6 +407,7 @@
    "seatedFirst": [],
    "pressureBond": "55000",
    "atPressureBond": 8,
+   "foundingId": "3f05b09be9914b6971b398531da6edcabb49e7edf035ea969781921796dc4685",
    "eligible": 12,
    "seatedFirstCount": 0,
    "drawn": [
@@ -294,6 +434,7 @@
    "seatedFirst": [],
    "pressureBond": "50000",
    "atPressureBond": 12,
+   "foundingId": "d8d3f620609b727d4fc6fffb5fc65feece1cf2dec775ddd1d02c30df1719b00d",
    "eligible": 12,
    "seatedFirstCount": 0,
    "drawn": [
@@ -320,6 +461,7 @@
    "seatedFirst": [],
    "pressureBond": "1000000",
    "atPressureBond": 0,
+   "foundingId": "7dff6e28b762748c8f3094205ae05321a20f3b483b16b21c4f2d83936d550b20",
    "eligible": 12,
    "seatedFirstCount": 0,
    "drawn": [
@@ -349,7 +491,8 @@
     "0909090909090909090909090909090909090909090909090909090909090909"
    ],
    "pressureBond": "86667",
-   "atPressureBond": 5,
+   "atPressureBond": 4,
+   "foundingId": "594b855217388ff95c297f8952281132cdff9cc2b6e5348557446327eb9be0f7",
    "eligible": 9,
    "seatedFirstCount": 3,
    "drawn": [
@@ -358,15 +501,15 @@
     "0909090909090909090909090909090909090909090909090909090909090909",
     "0505050505050505050505050505050505050505050505050505050505050505",
     "0303030303030303030303030303030303030303030303030303030303030303",
-    "0202020202020202020202020202020202020202020202020202020202020202",
-    "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+    "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+    "0707070707070707070707070707070707070707070707070707070707070707"
    ],
    "alternates": [
-    "0707070707070707070707070707070707070707070707070707070707070707",
     "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+    "0202020202020202020202020202020202020202020202020202020202020202",
     "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"
    ],
-   "why": "3 seated first, 4 drawn of 9 eligible operators, 3 alternates in order, under pressure 5 at or above B*_net 86667 go ahead of the rest"
+   "why": "3 seated first, 4 drawn of 9 eligible operators, 3 alternates in order, under pressure 4 at or above B*_net 86667 go ahead of the rest"
   }
  ]
 }
