@@ -57,7 +57,15 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     // the apps a node hosts are public (kanban #575): https, no key; one that is not (arena-app-hello-world) over ssh with this machine's key
     if (!existsSync(join(dir, '.git'))) {
       const clone = (url) => execFileSync('git', ['clone', '--quiet', '--filter=blob:none', '--no-checkout', url, name], { cwd: APPS_DIR, stdio: 'ignore', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
-      try { clone(`https://github.com/${app.repo}.git`); } catch { rmSync(dir, { recursive: true, force: true }); clone(`git@github.com:${app.repo}.git`); }
+      try {
+        try { clone(`https://github.com/${app.repo}.git`); } catch { rmSync(dir, { recursive: true, force: true }); clone(`git@github.com:${app.repo}.git`); }
+      } catch (e) {
+        // a private app no node hosts stops nothing on a machine that cannot read it (kanban #1006): the public apps after it still come
+        if (!app.optional) throw e;
+        rmSync(dir, { recursive: true, force: true });
+        console.log(`${name}: not readable from here, skipped (optional)`);
+        continue;
+      }
     }
     git(dir, 'sparse-checkout', 'set', '--no-cone', ...app.paths);
     try { git(dir, 'cat-file', '-e', `${app.commit}^{commit}`); } catch { git(dir, 'fetch', '--quiet', '--filter=blob:none', 'origin', app.commit); }
