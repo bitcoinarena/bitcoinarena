@@ -48,7 +48,7 @@
 //
 // Both say what 5A.3B says - the node alone after maturity, the quorum before
 // it - in bytes that a node can actually spend with.
-import { taggedHash } from './hash.js';
+import { taggedHash, fromHex } from './hash.js';
 
 /** BIP-341's leaf version for tapscript. */
 export const TAPLEAF_VERSION = 0xc0;
@@ -146,6 +146,9 @@ export function maturityHeightFor(tipHeight, network, { slackBlocks = 6 } = {}) 
 }
 
 const OP_CHECKLOCKTIMEVERIFY = 0xb1;
+const OP_CHECKSEQUENCEVERIFY = 0xb2;
+const OP_CHECKSIGVERIFY = 0xad;
+const OP_NUMEQUALVERIFY = 0x9d;
 const OP_DROP = 0x75;
 const OP_CHECKSIG = 0xac;
 const OP_CHECKSIGADD = 0xba;
@@ -238,8 +241,10 @@ export function slashLeaf(arbitrationKeys, k) {
 
 /** BIP-341: tagged_hash("TapLeaf", version || compact_size(script) || script). */
 export function tapLeafHash(script, version = TAPLEAF_VERSION) {
-  if (script.length > 252) throw new RangeError('this template writes no script that long');
-  return taggedHash('TapLeaf', cat(Uint8Array.from([version, script.length]), script));
+  if (script.length > 0xffff) throw new RangeError('no template writes a script that long');
+  // Template 3's release leaf holds 14 keys, over the 252 bytes one length byte can say. Every shorter leaf hashes as it always did.
+  const size = script.length <= 252 ? [script.length] : [0xfd, script.length & 255, script.length >>> 8];
+  return taggedHash('TapLeaf', cat(Uint8Array.from([version, ...size]), script));
 }
 
 /** BIP-341: tagged_hash("TapBranch", the two children in lexicographic order). */
@@ -525,4 +530,172 @@ export function bondOutputKeyMatches(onChain, inputs, { tweakPoint, combine } = 
     };
   }
   return { ok: true, ...built };
+}
+
+/**
+ * TEMPLATE 3 (spec 5A.3B "A false slash does not pay", RULED 2026-11-02, kanban #971, #974): new bonds and mainnet. The key path and
+ * path A are templates 1 and 2's, and path B needs the node's advance signature AND the census key, so the only place a bond can
+ * go without its node is a hold output the node signed for that round.
+ *
+ * Nothing above this line reads it: an advertisement naming template 3 is still refused by name in `bondMaturityOf`, until the census
+ * knows what a hold output is.
+ */
+export const BOND_TEMPLATE_V3 = 3;
+
+/**
+ * THE HOLD OUTPUT'S INTERNAL KEY: BIP-341's own point with no known discrete log, x of the hash of G. The spec says "an unspendable
+ * internal key, rebuilt by anyone", and one fixed key is the one everybody rebuilds; a random r*G would have to be carried.
+ */
+export const HOLD_INTERNAL_KEY = fromHex('50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0');
+
+/** Two panels of 7, threshold 5 (5A.3B): the numbers the release leaf is written with. */
+export const PANEL_SEATS = 7;
+export const PANEL_THRESHOLD = 5;
+
+/** A height a CLTV can compare with a block, or a refusal: a time here would compare with the wrong clock. */
+const blockHeight = (h) => {
+  if (!Number.isInteger(h) || h < 1 || h >= LOCKTIME_THRESHOLD) throw new RangeError(`${h} is not a block height`);
+  return h;
+};
+
+/** BIP-68 counts blocks in 16 bits. Above that the sequence check reads other bits, and the leaf would mean something else. */
+const relativeBlocks = (n) => {
+  if (!Number.isInteger(n) || n < 1 || n > 0xffff) throw new RangeError(`${n} is not a block count CHECKSEQUENCEVERIFY can wait for`);
+  return n;
+};
+
+const relativeLock = (n) => cat(pushNumber(relativeBlocks(n)), Uint8Array.from([OP_CHECKSEQUENCEVERIFY, OP_DROP]));
+
+/** PATH B OF TEMPLATE 3: `<node_key> CHECKSIGVERIFY <census_key(e)> CHECKSIG`, the spec's script as written. */
+export function slashStartLeaf(nodeKey, censusKey) {
+  return cat(pushKey(nodeKey), Uint8Array.from([OP_CHECKSIGVERIFY]), pushKey(censusKey), Uint8Array.from([OP_CHECKSIG]));
+}
+
+/**
+ * THE TEMPLATE-3 TREE: path A as ever, path B the slash start, the key path the MuSig2 of the node and the arbitration set that
+ * "stays" (5A.3B). Answers the same names `bondTapTree` does, so `controlBlockFor` serves both.
+ */
+export function bond3TapTree({ nodeKey, censusKey, arbitrationKeys, bondMaturity, internalKey }, { combine } = {}) {
+  if (typeof combine !== 'function') throw new Error('no curve was given to aggregate the key path with');
+  const want = bondInternalKey({ nodeKey, arbitrationKeys }, { combine });
+  if (!want.ok) throw new Error(want.why);
+  if (!isKey32(internalKey)) throw new TypeError('the internal key is 32 bytes');
+  if (!sameKey(want.internalKey, internalKey))
+    throw new Error('that internal key is not the MuSig2 aggregate of the node and arbitration keys');
+  const a = tapLeafHash(recoveryLeaf(nodeKey, blockHeight(bondMaturity)));
+  const b = tapLeafHash(slashStartLeaf(nodeKey, censusKey));
+  const merkleRoot = tapBranchHash(a, b);
+  return { internalKey, recovery: a, slash: b, merkleRoot, tweak: tapTweak(internalKey, merkleRoot) };
+}
+
+/** Q = P + t*G for a tree already built, with the parity a control block needs. */
+function outputOfTree(tree, tweakPoint) {
+  let answer;
+  try { answer = tweakPoint(tree.internalKey, tree.tweak); }
+  catch (e) { return { ok: false, why: `that curve refused the tweak: ${e.message}` }; }
+  const outputKey = answer && answer.outputKey;
+  const parity = answer && answer.parity;
+  if (!isKey32(outputKey)) return { ok: false, why: 'that curve did not return a 32-byte key' };
+  if (parity !== 0 && parity !== 1) return { ok: false, why: 'that curve did not say whether the output key is even or odd' };
+  return { ok: true, outputKey, parity, ...tree };
+}
+
+export function bond3OutputKey(inputs, { tweakPoint, combine } = {}) {
+  if (typeof tweakPoint !== 'function') return { ok: false, why: 'no curve was given to add the tweak with' };
+  if (typeof combine !== 'function') return { ok: false, why: 'no curve was given to aggregate the key path with' };
+  let tree;
+  try { tree = bond3TapTree(inputs, { combine }); } catch (e) { return { ok: false, why: e.message }; }
+  return outputOfTree(tree, tweakPoint);
+}
+
+export function bond3OutputKeyMatches(onChain, inputs, curve = {}) {
+  if (!isKey32(onChain)) return { ok: false, why: 'that is not a 32-byte taproot output key' };
+  const built = bond3OutputKey(inputs, curve);
+  if (!built.ok) return built;
+  if (!sameKey(built.outputKey, onChain)) return { ok: false, why: 'that output key is not the template-3 tweak of the keys, census key and maturity it declares' };
+  return { ok: true, ...built };
+}
+
+const sortedPanel = (keys) => [...keys].sort((a, b) => {
+  for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i];
+  return 0;
+});
+
+/** `k` of these keys, BIP-342's counting form, left on the stack for `close` to compare. */
+function panelCount(keys, close) {
+  const [first, ...rest] = sortedPanel(keys);
+  return cat(pushKey(first), Uint8Array.from([OP_CHECKSIG]),
+    ...rest.map((key) => cat(pushKey(key), Uint8Array.from([OP_CHECKSIGADD]))),
+    smallNumber(PANEL_THRESHOLD), Uint8Array.from([close]));
+}
+
+function checkPanels(panelA, panelB) {
+  for (const panel of [panelA, panelB]) {
+    if (!Array.isArray(panel) || panel.length !== PANEL_SEATS) throw new RangeError(`a panel is ${PANEL_SEATS} keys`);
+    for (const key of panel) if (!isKey32(key)) throw new TypeError('a panel key is 32 bytes');
+  }
+  const all = [...panelA, ...panelB];
+  for (let i = 0; i < all.length; i++)
+    for (let j = i + 1; j < all.length; j++)
+      if (sameKey(all[i], all[j])) throw new RangeError('one key sits twice in the two panels, so two panels would be fewer signers');
+}
+
+/**
+ * RELEASE: `<slash_hold_blocks> CHECKSEQUENCEVERIFY DROP <5-of-7 panel A> <5-of-7 panel B>`. Each panel's keys sorted, for the reason
+ * `slashLeaf` sorts: one set, one leaf. Panel A's count ends in NUMEQUALVERIFY so that B's is what the leaf leaves true.
+ */
+export function releaseLeaf({ panelA, panelB, holdBlocks }) {
+  checkPanels(panelA, panelB);
+  return cat(relativeLock(holdBlocks), panelCount(panelA, OP_NUMEQUALVERIFY), panelCount(panelB, OP_NUMEQUAL));
+}
+
+/** RETURN: `<slash_return_blocks> CHECKSEQUENCEVERIFY DROP <bond_maturity> CHECKLOCKTIMEVERIFY DROP <node_key> CHECKSIG`. */
+export function returnLeaf({ nodeKey, bondMaturity, returnBlocks }) {
+  return cat(relativeLock(returnBlocks), recoveryLeaf(nodeKey, blockHeight(bondMaturity)));
+}
+
+/** FALLBACK: `<slash_fallback_blocks> CHECKSEQUENCEVERIFY DROP <census_key(e)> CHECKSIG`. */
+export function fallbackLeaf({ censusKey, fallbackBlocks }) {
+  return cat(relativeLock(fallbackBlocks), pushKey(censusKey), Uint8Array.from([OP_CHECKSIG]));
+}
+
+/**
+ * THE HOLD OUTPUT, AS HASHES, rebuilt by anyone from the bond and the round: `{ nodeKey, censusKey, panelA, panelB, bondMaturity,
+ * holdBlocks, returnBlocks, fallbackBlocks }`. The spec names the three leaves and not their shape: the release sits one level
+ * down, because it is the spend the design expects, and the two leaves that should never run share the deeper branch.
+ *
+ * 5A.3B: "a mature node leaves at slash_return_blocks, before the fallback opens". That is only true with hold < return < fallback.
+ */
+export function holdTapTree({ nodeKey, censusKey, panelA, panelB, bondMaturity, holdBlocks, returnBlocks, fallbackBlocks }) {
+  if (!(holdBlocks < returnBlocks && returnBlocks < fallbackBlocks))
+    throw new RangeError(`the clocks ${holdBlocks} / ${returnBlocks} / ${fallbackBlocks} do not run hold, then return, then fallback`);
+  const scripts = {
+    release: releaseLeaf({ panelA, panelB, holdBlocks }),
+    return: returnLeaf({ nodeKey, bondMaturity, returnBlocks }),
+    fallback: fallbackLeaf({ censusKey, fallbackBlocks }),
+  };
+  const leaves = { release: tapLeafHash(scripts.release), return: tapLeafHash(scripts.return), fallback: tapLeafHash(scripts.fallback) };
+  const lower = tapBranchHash(leaves.return, leaves.fallback);
+  const merkleRoot = tapBranchHash(leaves.release, lower);
+  return { internalKey: HOLD_INTERNAL_KEY, scripts, leaves, lower, merkleRoot, tweak: tapTweak(HOLD_INTERNAL_KEY, merkleRoot) };
+}
+
+/** The output key of a hold, and the P2TR script a slash start pays it with. */
+export function holdOutputKey(inputs, { tweakPoint } = {}) {
+  if (typeof tweakPoint !== 'function') return { ok: false, why: 'no curve was given to add the tweak with' };
+  let tree;
+  try { tree = holdTapTree(inputs); } catch (e) { return { ok: false, why: e.message }; }
+  const built = outputOfTree(tree, tweakPoint);
+  if (!built.ok) return built;
+  return { ...built, script: cat(Uint8Array.from([0x51, 0x20]), built.outputKey) };
+}
+
+/** The control block of one of the three leaves. The release proves one level, the other two prove two. */
+export function holdControlBlock(path, { internalKey, leaves, lower, parity }) {
+  if (path !== 'release' && path !== 'return' && path !== 'fallback')
+    return { ok: false, why: `a hold output has a release, a return and a fallback, not ${path}` };
+  if (parity !== 0 && parity !== 1) return { ok: false, why: 'a control block carries the output key parity, and none was given' };
+  const proof = path === 'release' ? [lower]
+    : path === 'return' ? [leaves.fallback, leaves.release] : [leaves.return, leaves.release];
+  return { ok: true, path, controlBlock: cat(Uint8Array.from([TAPLEAF_VERSION | parity]), internalKey, ...proof) };
 }
