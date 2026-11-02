@@ -214,7 +214,7 @@ export function settleClaims({ escrowMsat, claims = [], spentNonces = null, halt
 const hexKey = (k) => (k instanceof Uint8Array ? Array.from(k, (b) => b.toString(16).padStart(2, '0')).join('') : String(k || '')).toLowerCase();
 
 /**
- * MAY A GONE GUARDIAN'S BOND BE SLASHED (§23A.5's table, FEDERATION.md rehearsal 14). `proof`: abandonmentProof's answer for the
+ * MAY A GONE GUARDIAN'S BOND BE SLASHED (§23A.5's table, FEDERATION.md rehearsal 14). `proof`: abandonmentProof's or bondSpentProof's answer for the
  * peer (absence.js); `departure`: departureStands' answer for the same peer's notice, or null. "Leaving is legitimate" (RULED,
  * 2026-09-21): an absence that begins at or after a standing notice's leave_after is the departure - DEPARTED, the bond
  * untouched. "A departure that stops serving before its leave_after" is abandonment, and so is an absence with no notice.
@@ -235,5 +235,6 @@ export function guardianSlashStands({ proof, departure = null, emergency = null,
       return { ok: true, slash: false, kind: 'DEPARTED', why: `gone since ${proof.sinceHeight}, at or after the notice's leave_after ${departure.leaveAfterHeight}: departed with notice, the bond untouched (§23A.5)` };
     return { ok: true, slash: true, kind: 'ABANDONED', why: `stopped at ${proof.sinceHeight}, before the notice's leave_after ${departure.leaveAfterHeight}: a departure that stops serving early is abandonment (§23A.5)` };
   }
+  if (proof.bondSpent) return { ok: true, slash: true, kind: 'ABANDONED', why: `his bond was spent at ${proof.sinceHeight} while seated: abandonment (§23A.5)` };
   return { ok: true, slash: true, kind: 'ABANDONED', why: `absent since ${proof.sinceHeight}, attested by ${proof.signers}: abandonment (§23A.4)` };
 }

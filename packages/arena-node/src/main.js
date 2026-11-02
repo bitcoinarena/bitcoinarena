@@ -448,6 +448,12 @@ if (url) {
         if (!census.ok) { console.error(`[founding] no census at ${height}: ${census.why}`); return null; }
         return census.entries;
       },
+      // WHAT ENDED THE BONDS THAT CENSUS DROPPED (§23A.5, kanban #1054): the same census, its exclusions that name a spend. A federation record reads a guardian's spent bond from it
+      censusSpendsAt: async (networkIdHex, height) => {
+        const census = await chainCensusKept('ballot', networkIdHex, height, { networkId: fromHex(networkIdHex), censusHeight: height, censusConfirmations: 1,
+          bondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000), protocolVersion: PROTOCOL_VERSION });
+        return census.ok ? (census.excluded || []).filter((x) => x.spentBy) : null;
+      },
       everyMs: Number(process.env.ARENA_BALLOT_EVERY_MS || 10000),
     },
     // THE CHAIN'S TIP, for the settlement's takeover order (M3.3-19) and a lock's expiry, as the launcher gave its nodes

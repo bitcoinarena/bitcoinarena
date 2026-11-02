@@ -4937,6 +4937,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     bandFrom: capacityBandPoint(chainNetworkId() ? networkOf(fromHex(chainNetworkId())) : null), endpointsOf: fedEndpointsOf,
     // a mirrored record checked against the census at its own height, read off this seat's chain
     censusAt: ballot && typeof ballot.censusEntriesAt === 'function' ? (h) => (chainNetworkId() ? ballot.censusEntriesAt(chainNetworkId(), h) : null) : null,
+    // what ended the bonds that census dropped: a seated guardian's spent bond is his abandonment (§23A.5, kanban #1054)
+    spendsAt: ballot && typeof ballot.censusSpendsAt === 'function' ? (h) => (chainNetworkId() ? ballot.censusSpendsAt(chainNetworkId(), h) : null) : null,
     // and its tip: a seat that holds no round builds and checks records from the chain's census
     chainTip: typeof chainTip === 'function' ? async () => Number(await chainTip()) : null,
     // ARENA_RECORD_BASIS=chain: records from the chain's census before any held round's (seats that run no series)

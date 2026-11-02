@@ -31,15 +31,15 @@ test('the bands are §23A.1\'s table: 10, 7 and 4 guardians', () => {
 });
 
 /** Seven seats on one census: node keys, guardian keys, 50 000-sat bonds; `leaving` the ones whose owners left. */
-function seven({ leaving = [], successor = null, closed = false, retiring = [], reserves = null, absencesOf = null, abandonBlocks = null, departureNotice = null, emergencyKeys = {} } = {}) {
+function seven({ leaving = [], successor = null, closed = false, retiring = [], reserves = null, absencesOf = null, abandonBlocks = null, departureNotice = null, emergencyKeys = {}, heightOf = () => 156036, censusNow = null } = {}) {
   const nodes = Array.from({ length: 7 }, (_, i) => ({ secret: new Uint8Array(32).fill(i + 1) }));
   for (const [i, n] of nodes.entries()) { n.pubkey = schnorr.getPublicKey(n.secret); n.guardianKey = Uint8Array.from([2, ...new Uint8Array(32).fill(0x60 + i)]); n.endpoint = `wss://seat-${i}.example`; }
   const census = { ok: true, entries: nodes.map((n, i) => ({ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xa0 + i), vout: 0, bondSats: 50000n,
     advert: { operatorId: `op${i}`, endpoint: n.endpoint, guardianEndpoint: `wss://g${i}.example`, guardianOf: [{ federationId: FED, guardianKey: n.guardianKey }],
       ...(emergencyKeys[i] ? { emergencyPubkey: emergencyKeys[i] } : {}) } })) };
   const seats = nodes.map((n, i) => federationRecords({
-    round: { pubkey: n.pubkey, identity: { secret: n.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: 156036, networkId: NET } }),
-    roster: { censusFor: () => census }, inviteFor: () => INVITE, networkId: NET, leavingAtMs: () => (leaving.includes(i) ? 1 : null),
+    round: { pubkey: n.pubkey, identity: { secret: n.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: heightOf(), networkId: NET } }),
+    roster: { censusFor: () => (censusNow ? censusNow(census) : census) }, inviteFor: () => INVITE, networkId: NET, leavingAtMs: () => (leaving.includes(i) ? 1 : null),
     successorOf: () => successor, closedOf: () => closed, retiringOf: () => retiring.includes(i),
     ...(absencesOf ? { absences: absencesOf(i), abandonBlocks, departureNotice } : {}),
     ...(reserves ? { reserveOf: async () => (reserves[i] === null ? { ok: false, why: 'no answer' } : { ok: true, reserveSats: BigInt(reserves[i]) }) } : {}),
@@ -250,6 +250,103 @@ function outsider(census, guardianSeats, nodes) {
     },
   });
 }
+
+// A BOND SPENT WHILE SEATED (§23A.5, kanban #1054): the census drops the guardian, and a record used to shrink its nominal around him with nobody gone
+const SPEND = 'cd'.repeat(32), H0 = 156036;
+function spentAway({ who = 3, spendAt = H0 + 3, absencesOf = null, departureNotice = null, closed = false, keepOutput = false } = {}) {
+  let h = H0, spends = null;
+  const s = seven({ absencesOf, departureNotice, abandonBlocks: absencesOf ? 288 : null, retiring: closed ? [0, 1, 2, 3, 4, 5, 6] : [], heightOf: () => h, censusNow: (c) => {
+    if (!spends) return c;
+    const n = s.nodes[who];
+    return { ok: true, entries: keepOutput ? c.entries.map((e) => (e.pubkey === n.pubkey ? { ...e, bondSats: 40000n } : e)) : c.entries.filter((e) => e.pubkey !== n.pubkey),
+      excluded: spends.length ? [{ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xa0 + who), vout: 0, why: 'spent', spentBy: { txid: SPEND, height: spendAt } }] : [] };
+  } });
+  const everyone = async () => { let got = null; for (const seat of s.seats) got = await seat.gather(FED, inviteFederationId); return got; };
+  const read = () => splitSignedRecord(fromHex(s.seats[0].list()[0].record)).record;
+  return { s, everyone, read, next: (height, list) => { h = height; spends = list; }, spent: [{}] };
+}
+
+test('a guardian who spends his bond while seated is ABANDONED from that spend, under its txid, every seat signing the same record; nominal, threshold and the cap do not move around him', async () => {
+  const t = spentAway();
+  const first = await t.everyone();
+  assert.deepEqual([first.ok, first.status, first.of], [true, 'OPEN', 7], first.why);
+  t.next(H0 + 6, t.spent);
+  const got = await t.everyone();
+  assert.deepEqual([got.ok, got.status, got.signers, got.of], [true, 'DRAINING', 6, 6], got.why);
+  const r = t.read();
+  assert.deepEqual([r.nominal, r.threshold, r.guardians.length, r.height], [7, 5, 7, H0 + 6]);
+  assert.deepEqual(r.gone.map((g) => [toHex(g.peerKey), g.sinceHeight, g.kind, toHex(g.proofRef)]), [[toHex(t.s.nodes[3].guardianKey), H0 + 3, 2, SPEND]]);
+  assert.equal(r.exposureCapSats, 3n * 50000n, 'the cap counts him gone at once: (f + 1) of the seated bonds');
+  // the spend leaves the census's window, and his row stays as it was
+  t.next(H0 + 12, []);
+  const later = await t.everyone();
+  assert.deepEqual([later.ok, later.status], [true, 'DRAINING'], later.why);
+  const r2 = t.read();
+  assert.deepEqual([r2.nominal, r2.gone.length, r2.gone[0].sinceHeight, toHex(r2.gone[0].proofRef)], [7, 1, H0 + 3, SPEND]);
+});
+
+test('before this, the record shrank: with no record in force the census alone says nothing of who sat', async () => {
+  const t = spentAway();
+  t.next(H0, t.spent);
+  const got = await t.everyone();
+  assert.deepEqual([got.ok, got.status, got.gone, got.of], [true, 'OPEN', 0, 6], 'nobody is called gone on a census alone');
+  assert.equal(t.read().nominal, 6);
+});
+
+test('still bonded by another output is still seated: nothing is filed, and the bond in the cap is what is left', async () => {
+  const t = spentAway({ keepOutput: true });
+  await t.everyone();
+  t.next(H0 + 6, t.spent);
+  const got = await t.everyone();
+  assert.deepEqual([got.ok, got.status, got.gone, got.of], [true, 'OPEN', 0, 7], got.why);
+  assert.deepEqual([t.read().gone.length, t.read().exposureCapSats], [0, 3n * 40000n]);
+});
+
+test('a notice served out first is no offence, a spend before leave_after is abandonment, and a CLOSED federation asks nothing', async () => {
+  const { createAbsences } = await import('../src/absences.js');
+  const { signDeparture } = await import('../../arena-protocol/src/absence.js');
+  const NOTICE = 3;
+  const run = async (leaveAfter, spendAt) => {
+    const held = Array.from({ length: 7 }, () => createAbsences({ verify }));
+    const t = spentAway({ absencesOf: (i) => held[i], departureNotice: NOTICE, spendAt });
+    await t.everyone();
+    const n = t.s.nodes[3];
+    for (const a of held) a.offerDeparture(signDeparture({ federationId: FED, peerKey: n.guardianKey, leaveAfterHeight: leaveAfter, postedAt: H0, nodePubkey: n.pubkey }, (m) => schnorr.sign(m, n.secret)));
+    t.next(H0 + 12, t.spent);
+    const got = await t.everyone();
+    return { got, r: t.read() };
+  };
+  const served = await run(H0 + 5, H0 + 8);
+  assert.deepEqual([served.got.ok, served.r.gone.length, served.r.nominal], [true, 0, 6], served.got.why);
+  const early = await run(H0 + 10, H0 + 8);
+  assert.deepEqual([early.got.ok, early.r.gone.map((g) => [g.kind, g.sinceHeight]), early.r.nominal], [true, [[2, H0 + 8]], 7], early.got.why);
+  const shut = spentAway({ closed: true });
+  await shut.everyone();
+  shut.next(H0 + 6, shut.spent);
+  const got = await shut.everyone();
+  assert.deepEqual([got.ok, shut.read().gone.length], [true, 0], got.why);
+});
+
+test('a seat with no round reads the spend from its chain\'s census (spendsAt), as it reads the census', async () => {
+  const nodes = Array.from({ length: 4 }, (_, i) => { const secret = new Uint8Array(32).fill(0x40 + i); return { secret, pubkey: schnorr.getPublicKey(secret), guardianKey: Uint8Array.from([2, ...new Uint8Array(32).fill(0x70 + i)]), endpoint: `wss://chain-${i}.example` }; });
+  const entry = (n, i) => ({ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xb0 + i), vout: 0, bondSats: 50000n, advert: { operatorId: `op${i}`, endpoint: n.endpoint, guardianEndpoint: `wss://g${i}.example`, guardianOf: [{ federationId: FED, guardianKey: n.guardianKey }] } });
+  let tip = 120;
+  const entriesAt = (h) => (h >= 118 ? nodes.slice(1) : nodes).map((n) => entry(n, nodes.indexOf(n)));
+  const seats = nodes.map((n) => federationRecords({ round: { pubkey: n.pubkey, identity: { secret: n.secret }, db: { prepare: () => ({ all: () => [], get: () => ({ m: 0 }) }) } }, roster: { censusFor: () => ({ ok: false, why: 'none' }) }, inviteFor: () => INVITE, networkId: NET,
+    censusAt: async (h) => entriesAt(h), chainTip: async () => tip, spendsAt: async (h) => (h >= 118 ? [{ pubkey: nodes[0].pubkey, txid: new Uint8Array(32).fill(0xb0), vout: 0, spentBy: { txid: SPEND, height: 117 } }] : []),
+    fetcher: async (url) => {
+      const j = seats[nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:')))];
+      if (!j) throw new Error('no seat');
+      const u = new URL(url), at = Number(u.searchParams.get('height'));
+      const body = await j.mySignature(u.searchParams.get('federation'), at, u.searchParams.get('reserve'));
+      return new Response(JSON.stringify(body), { status: body.ok ? 200 : 404 });
+    } }));
+  for (const seat of seats) assert.equal((await seat.gatherAll(inviteFederationId))[0].ok, true);
+  tip = 126;
+  for (const seat of seats.slice(1)) { const [got] = await seat.gatherAll(inviteFederationId); assert.equal(got.ok, true, got.why); }
+  const r = splitSignedRecord(fromHex(seats[1].list()[0].record)).record;
+  assert.deepEqual([r.nominal, r.height, r.gone.length, r.gone[0].sinceHeight, toHex(r.gone[0].proofRef)], [4, 120, 1, 117, SPEND]);
+});
 
 test('a seat with no invite for a federation its census knows mirrors the record its guardians hold', async () => {
   const s = seven();

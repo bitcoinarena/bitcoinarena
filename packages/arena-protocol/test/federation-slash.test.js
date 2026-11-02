@@ -149,3 +149,19 @@ test('a guardian leaving costs more than a day on testnet, and the drain alone i
   assert.equal(hours(t.overlapped), 26, 'still 26 h, not a day');
   assert.equal(hours(TESTNET_CLOCKS.drainBlocks), 24, 'the DRAIN is the day; the cycle around it is not');
 });
+
+test('a bond spent while seated: the chain\'s proof, no attestation, and guardianSlashStands reads it as it reads an absence (kanban #1054)', async () => {
+  const { bondSpentProof } = await import('../src/absence.js');
+  const { guardianSlashStands } = await import('../src/federation-slash.js');
+  const peerKey = new Uint8Array(33).fill(2), txid = 'ab'.repeat(32);
+  const proof = bondSpentProof({ peerKey, spent: { txid, height: 500 } });
+  assert.deepEqual([proof.ok, proof.sinceHeight, proof.bondSpent, Buffer.from(proof.id).toString('hex')], [true, 500, true, txid]);
+  assert.equal(bondSpentProof({ peerKey, spent: null }).ok, false);
+  const plain = guardianSlashStands({ proof });
+  assert.deepEqual([plain.slash, plain.kind], [true, 'ABANDONED']);
+  assert.match(plain.why, /spent at 500 while seated/);
+  const late = guardianSlashStands({ proof, departure: { ok: true, peerKey, leaveAfterHeight: 501 } });
+  assert.deepEqual([late.slash, late.kind], [true, 'ABANDONED'], 'spent before leave_after');
+  const served = guardianSlashStands({ proof, departure: { ok: true, peerKey, leaveAfterHeight: 500 } });
+  assert.deepEqual([served.slash, served.kind], [false, 'DEPARTED'], 'spent from leave_after on');
+});
