@@ -33,7 +33,7 @@ export { highestVerified };
  * them. Answers an async ({ height, entries }) -> B*_net or null, for createFoundingSeat's pressureBondAt; it throws only while this seat's
  * chain is unread. An answer is kept per trigger height: a seat that started a founding again in the same trigger must not name another one.
  */
-export function foundingPressureReader({ point, bondMinGuardian, held = () => null, seats = () => [], censusAt, inviteFederationId, networkId = null, fetcher = fetch,
+export function foundingPressureReader({ point, bandPoint = undefined, bondMinGuardian, held = () => null, seats = () => [], censusAt, inviteFederationId, networkId = null, fetcher = fetch,
   verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } } }) {
   const answers = new Map();
   async function asked(height, fids) {
@@ -68,7 +68,7 @@ export function foundingPressureReader({ point, bondMinGuardian, held = () => nu
         if (!r || toHex(r.federationId) !== fid || r.height > at) continue;   // only what the height allows, whoever sent it
         const entriesThere = await censusOf(r.height);
         if (!entriesThere) throw new Error(`the census at ${r.height} is not read yet, so a record of federation ${fid.slice(0, 16)} cannot be checked: no draw yet`);
-        const v = verifyFederationRecord(fromHex(hex), { census: entriesThere, verify, inviteFederationId, networkId });
+        const v = verifyFederationRecord(fromHex(hex), { census: entriesThere, verify, inviteFederationId, networkId, bandPoint });
         if (v.ok) good.push(v);
       }
       const best = highestVerified(good);

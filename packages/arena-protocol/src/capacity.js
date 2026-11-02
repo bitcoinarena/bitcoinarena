@@ -4,7 +4,7 @@
 // bond and peg-in that would relieve it - the numbers the seats serve at GET /capacity, the health page, the node dashboard and the owner
 // page warn with, and the installer's minimum bond follows. Pure arithmetic over public inputs (the signed records, the census's bonds,
 // the gateways' claims), so every seat that reads the same inputs says the same thing.
-import { faultsOf } from './federation-record.js';
+import { faultsOf, recordStatusName } from './federation-record.js';
 
 /** The bands of §23A.3a: enter at, leave below (the gap keeps a federation from flapping at a boundary). */
 export const CAPACITY_BANDS = Object.freeze([
@@ -26,18 +26,19 @@ export function capacityBand(load, was = 'CALM') {
   return pick ? pick.band : 'CALM';
 }
 
-/**
- * WHEN RECORDS NAME THEIR BAND (§23A.3a, kanban #997): one point per network, named by the release after every seat and the page read such
- * records: a seat or page before this refuses a record with a band, whole, so a body built with one at a mixed network gathers no threshold
- * and the page verifies no federation. Null: not named, and records are built as they always were.
- */
-export const CAPACITY_BAND_HEIGHT = Object.freeze({ mainnet: 0, testnet4: null, regtest: null, devnet: null });
-export const capacityBandPoint = (network) => { const n = network === 'testnet' ? 'testnet4' : network; return Object.prototype.hasOwnProperty.call(CAPACITY_BAND_HEIGHT, n) ? CAPACITY_BAND_HEIGHT[n] : null; };
 const loadOfRecord = (reserveSats, exposureCapSats) => { const cap = BigInt(exposureCapSats || 0); return cap > 0n ? Number(BigInt(reserveSats || 0) * 1000000n / cap) / 1000000 : null; };
 /** The band a new record names: what its load enters, kept by the gap from `was`, the previous record's band. */
 export const recordBand = ({ reserveSats, exposureCapSats, was = 'CALM' }) => capacityBand(loadOfRecord(reserveSats, exposureCapSats), was);
 /** A record's band: the one it names, else the one its own load enters (no hysteresis without the record's). */
 export const bandOfRecord = (r) => (r && r.capacityBand) || recordBand({ reserveSats: r && r.reserveSats, exposureCapSats: r && r.exposureCapSats });
+
+/**
+ * WHAT A RECORD SAYS ABOUT PRESSURE (§23A.3a, kanban #1028): its band, and its status only when it names a band. Only an OPEN federation's
+ * band has effect: one that is not OPEN takes no new deposits, so a bigger bond or peg-in frees nothing. A record naming none reads as it
+ * always did, so a round on a network before its point pays the same on every signer of every release.
+ */
+export const pressureOf = (r) => ({ band: (r && r.capacityBand) || null, status: r && r.capacityBand ? recordStatusName(r) : null });
+const hasEffect = (status) => status === null || status === undefined || status === 'OPEN';
 
 /** B*: the per-guardian bond at which the federation's load would be 50 % - ceil(reserve / (0.5 × (f + 1))), never below the floor. */
 export function targetBond({ reserveSats, nominal, bondMinSats }) {
@@ -137,7 +138,7 @@ export function capacityPlea(view, node) {
   if (mine.length) {
     const { f, bond, gw } = mine[0];
     const level = rank[f.band] >= 2 ? 'bad' : 'warn';
-    const parts = [`Federation ${f.federation.slice(0, 8)} holds ${pct(f.load)} of what its bonds cover (${f.band}${f.band === 'FULL' ? ': deposits are closed' : ''}).`];
+    const parts = [`Federation ${f.federation.slice(0, 8)} holds ${pct(f.load)} of what its bonds cover (capacity band ${f.band}${f.band === 'FULL' ? ': deposits are closed' : ''}).`];
     if (bond) parts.push(`Increase your bond by ${sat(bond.addSats)} sat (Add to bond) to bring it to ${sat(f.targetBondSats)} sat: the federation can then take more deposits, and a larger bond earns a larger share.`);
     if (gw) parts.push(`Raise your gateway's peg-in by ${sat(gw.addSats)} sat, to ${sat(f.targetPegInSats)} sat.`);
     return { level, band: f.band, federation: f.federation, says: parts.join(' '), ...(bond ? { addSats: String(bond.addSats) } : {}), ...(gw ? { pegInAddSats: String(gw.addSats) } : {}) };
@@ -179,9 +180,9 @@ export function bondIncentive({ bonds, targetBondSats, node, pressure }) {
  * hex, bondSats }] from its census, `reserveSats`, `exposureCapSats`, `nominal` from the record in force there, `band` that record's band when
  * it carries one, else the band its load enters (no hysteresis without the record's).
  */
-export function guardianWeights({ bonds, reserveSats, exposureCapSats, nominal, bondMinSats, band = null }) {
+export function guardianWeights({ bonds, reserveSats, exposureCapSats, nominal, bondMinSats, band = null, status = null }) {
   const cap = BigInt(exposureCapSats || 0);
-  if (cap <= 0n || !(bonds || []).length) return null;
+  if (cap <= 0n || !(bonds || []).length || !hasEffect(status)) return null;
   const load = Number(BigInt(reserveSats || 0) * 1000000n / cap) / 1000000;
   const b = band || capacityBand(load, 'CALM');
   if (!['PRESSURE', 'CRITICAL', 'FULL'].includes(b)) return null;
@@ -201,9 +202,9 @@ export function guardianWeights({ bonds, reserveSats, exposureCapSats, nominal, 
  * (`pegIns` [{ node, pegInSats }]) fall short of seats x P* - else null. One rule for the ranking (gateway-seats.js: peg-in up to P*
  * before routed volume) and the gateways' part (gatewayWeights).
  */
-export function pegInPressure({ pegIns, reserveSats, exposureCapSats, pegInMinSats, seats = 2, band = null }) {
+export function pegInPressure({ pegIns, reserveSats, exposureCapSats, pegInMinSats, seats = 2, band = null, status = null }) {
   const cap = BigInt(exposureCapSats || 0), reserve = BigInt(reserveSats || 0);
-  if (cap <= 0n || !(pegIns || []).length) return null;
+  if (cap <= 0n || !(pegIns || []).length || !hasEffect(status)) return null;
   const load = Number(reserve * 1000000n / cap) / 1000000;
   const b = band || capacityBand(load, 'CALM');
   if (!['PRESSURE', 'CRITICAL', 'FULL'].includes(b)) return null;
@@ -212,8 +213,8 @@ export function pegInPressure({ pegIns, reserveSats, exposureCapSats, pegInMinSa
   return held >= BigInt(seats) * star ? null : { targetPegInSats: star };
 }
 
-export function gatewayWeights({ pegIns, reserveSats, exposureCapSats, pegInMinSats, seats = 2, band = null }) {
-  const p = pegInPressure({ pegIns, reserveSats, exposureCapSats, pegInMinSats, seats, band });
+export function gatewayWeights({ pegIns, reserveSats, exposureCapSats, pegInMinSats, seats = 2, band = null, status = null }) {
+  const p = pegInPressure({ pegIns, reserveSats, exposureCapSats, pegInMinSats, seats, band, status });
   if (!p) return null;
   const star = p.targetPegInSats;
   const held = pegIns.map((g) => { const x = BigInt(g.pegInSats || 0); return [String(g.node).toLowerCase(), x < star ? x : star]; });

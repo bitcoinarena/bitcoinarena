@@ -16,14 +16,23 @@
 // every signature. No curve here: `verify` (BIP-340) is the caller's.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { TAG, TYPE_FEDERATION_RECORD, PROTOCOL_VERSION, speaksVersion } from './constants.js';
+import { TAG, TYPE_FEDERATION_RECORD, PROTOCOL_VERSION, speaksVersion, networkOf } from './constants.js';
 import { exposureCap } from './federation-slash.js';
 
 export const FEDERATION_STATUS = Object.freeze({ OPEN: 1, DRAINING: 2, CRITICAL: 3, CLOSED: 4, HALTED: 5 });
 export const GONE = Object.freeze({ DEPARTED: 1, ABANDONED: 2 });
 /** The capacity band a record names (§23A.3a), after its height; a record that names none ends at its height, as every record before did. */
 export const CAPACITY_BAND = Object.freeze({ CALM: 1, PRESSURE: 2, CRITICAL: 3, FULL: 4 });
+/**
+ * WHEN RECORDS NAME THEIR BAND (§23A.3a, kanban #997/#1028): one point per network, named after every seat and installer node runs this and
+ * the page is deployed, because an older seat or page refuses a record with a band, whole. A hard line: a record at or above the point must
+ * name a band, one below it must not, anything else is refused by name. Null: not named, and no record may name one.
+ */
+export const CAPACITY_BAND_HEIGHT = Object.freeze({ mainnet: 0, testnet4: null, regtest: null, devnet: null });
+export const capacityBandPoint = (network) => { const n = network === 'testnet' ? 'testnet4' : network; return Object.prototype.hasOwnProperty.call(CAPACITY_BAND_HEIGHT, n) ? CAPACITY_BAND_HEIGHT[n] : null; };
 const nameOf = (table, v) => Object.keys(table).find((k) => table[k] === v);
+/** A record's status by name, whether it was decoded or kept. */
+export const recordStatusName = (r) => nameOf(FEDERATION_STATUS, r.status);
 const cmp = (a, b) => { for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i] - b[i]; return a.length - b.length; };
 
 /** n guardians tolerate f = floor((n - 1) / 3); the stock threshold n - f, which is 2f + 1 wherever §23A writes it. */
@@ -135,13 +144,17 @@ export function splitSignedRecord(bytes) {
 /**
  * IS THIS A RECORD A CLIENT MAY BELIEVE? `census` is a census this client checked (entries with `pubkey` and `advert`);
  * a signature counts only from a census node whose advertisement names this federation with the guardian key the record
- * lists for that node. `inviteFederationId(invite)` reads the invite's federation id (the caller's parser). Answers
- * { ok, record, status, signers } or { ok: false, why }.
+ * lists for that node. `inviteFederationId(invite)` reads the invite's federation id (the caller's parser). `bandPoint`: the height records
+ * name their band from, by default the one of the network the record names. Answers { ok, record, status, signers } or { ok: false, why }.
  */
-export function verifyFederationRecord(bytes, { census, verify, inviteFederationId, networkId = null }) {
+export function verifyFederationRecord(bytes, { census, verify, inviteFederationId, networkId = null, bandPoint = undefined }) {
   let s; try { s = splitSignedRecord(bytes); } catch (e) { return { ok: false, why: e.message }; }
   const r = s.record;
   if (networkId && toHex(networkId) !== toHex(r.networkId)) return { ok: false, why: 'that record is of another network' };
+  const point = bandPoint === undefined ? capacityBandPoint(networkOf(r.networkId)) : bandPoint;
+  const due = Number.isInteger(point) && r.height >= point;
+  if (due && !r.capacityBand) return { ok: false, why: `a record at ${r.height} must name its capacity band: CAPACITY_BAND_HEIGHT is ${point}` };
+  if (!due && r.capacityBand) return { ok: false, why: `a record at ${r.height} must not name a capacity band: CAPACITY_BAND_HEIGHT is ${point === null ? 'not named' : point}` };
   let named; try { named = inviteFederationId(r.invite); } catch (e) { return { ok: false, why: `its invite does not read: ${e.message}` }; }
   if (!named || toHex(named) !== toHex(r.federationId)) return { ok: false, why: 'its invite names another federation than the record' };
   const fid = toHex(r.federationId);
