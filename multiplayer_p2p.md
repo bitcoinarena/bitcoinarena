@@ -2727,9 +2727,23 @@ the bad deal is named.
 | 15 / 32 / 22 | 0.4 s | 39 KB | 5 nodes, 0.5 KB | 70 ms |
 | 200 / 357 / 239 | 19 s | 5.0 MB | 82 nodes, 7.8 KB | 1.3 s |
 | 1000 / 1382 / 922 | 7-10 min | 95 MB | 540 nodes, 52 KB | 6.9 s |
+| 1000 / 1024 drawn / 683 | 2.2-2.4 min | 37.5 MB | 204 nodes, 19.5 KB | 2.7 s |
 
 Not measured: the batch at 1000 nodes over all its deals, and a run across real
 machines.
+
+**A drawn key against the skew that broke the unit (2026-11-02, kanban #1039).** 1000
+nodes, Zipf bonds, 2000 draws of 1024 shares, threshold 683, `tools/census-draw-measure.mjs`.
+Under the old unit 9 nodes with about 20 % of the capital reached the threshold.
+
+| Who reaches 683 | Capital needed, median | Least of 2000 |
+|---|---:|---:|
+| the largest nodes, fixed before `h` | 66.7 % | 61.5 % |
+| the fewest nodes, picked after `h` (203 median, 178 least) | 40.8 % | 38.4 % |
+| the most shares per sat, picked after `h` | 33.5 % | 30.5 % |
+
+The about 60 % is capital that holds together before `h`. The shares are public from `h`
+on, so holders picked after it are a bribe, not a stake, and for them the figure is lower.
 
 ### The residual, named
 
