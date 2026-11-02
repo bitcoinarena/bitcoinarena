@@ -881,7 +881,11 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     const h = toHex(rid);
     if (anchors.has(h)) return anchors.get(h);
     let to = rid;
-    try { const row = round.get(rid); const a = row ? tableAnchorOf(decodeRoundContract(new Uint8Array(row.contract))) : null; if (a) to = a.anchorId; } catch { /* itself */ }
+    // A ROUND THIS SEAT HOLDS NO ROW OF YET IS NOT REMEMBERED AS ITS OWN TABLE (kanban #1046, measured 2026-11-02 in running seats: asked before its row was written, a round stayed "no
+    // table" here, seatedFor answered with the table's first seating, and that list, absent node and all, went into the round's row when it was assigned)
+    let row = null;
+    try { row = round.get(rid); const a = row ? tableAnchorOf(decodeRoundContract(new Uint8Array(row.contract))) : null; if (a) to = a.anchorId; } catch { /* itself */ }
+    if (!row) return to;
     anchors.set(h, to);
     if (anchors.size > 20000) anchors.delete(anchors.keys().next().value);
     return to;

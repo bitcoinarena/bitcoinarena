@@ -228,3 +228,25 @@ test('a seat restarted with no row of the check-in still knows the table\'s late
   assert.deepEqual(again.seatedFor(f.ridAfter, 'settlement'), list.map((n) => toHex(n.pubkey)));
   assert.equal(again.certRoundOf(f.ridAfter, 'settlement'), c.roundIndex);
 });
+
+// kanban #1046: asked before its row existed, a round stayed "no table" for the life of the process
+test('a round asked about before its row is written still takes its table\'s seating once it is', async () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE rounds (round_id BLOB, contract BLOB)');
+  const base = { ...contractFor([]), gameId: RPS_V2, protocolVersion: 2, seriesId: new Uint8Array(32).fill(0x5f), nodes: [], gameVerifySlots: 7, settlementSlots: 7 };
+  const c0 = { ...base, roundIndex: 0, startTimeMs: START }, c5 = { ...base, roundIndex: 5, startTimeMs: START + 40000n };
+  const rid0 = roundIdOf(c0), rid5 = roundIdOf(c5);
+  const rows = new Map([[toHex(rid0), encodeRoundContract(c0)]]);
+  db.prepare('INSERT INTO rounds (round_id, contract) VALUES (?, ?)').run(rid0, rows.get(toHex(rid0)));
+  const round = { db, pubkey: nodes[0].pubkey, get: (id) => (rows.has(toHex(id)) ? { contract: rows.get(toHex(id)) } : null) };
+  const drawn = nodes.map((n) => ({ pubkey: n.pubkey, advert: { endpoint: n.endpoint } }));
+  const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
+  const agent = seatingAgent({ round, roster: { committeeFor: () => ({ ok: true, drawn }) }, sign: signer(nodes[0]), verify, fetcher: async () => new Response('{}', { status: 200 }), nowMs: () => NOW });
+  const seated = seatedFrom({ drawn: nodes.map((n) => n.pubkey), present: nodes.map((n) => n.pubkey), slots: 7 });
+  const cert = encodeSeatingCertificate({ roundId: rid0, role: 'settlement', seated,
+    signatures: seated.map((k) => ({ nodePubkey: k, signature: signSeating({ roundId: rid0, role: 'settlement', seated }, signer(nodes.find((n) => toHex(n.pubkey) === toHex(k)))) })) });
+  assert.deepEqual(agent.keepCert(rid0, 'settlement', cert), { ok: true, kept: true });
+  assert.equal(agent.seatedFor(rid5, 'settlement'), null, 'no row yet');
+  rows.set(toHex(rid5), encodeRoundContract(c5));
+  assert.deepEqual(agent.seatedFor(rid5, 'settlement'), agent.seatedFor(rid0, 'settlement'), 'the row is there: its table seats it');
+});
