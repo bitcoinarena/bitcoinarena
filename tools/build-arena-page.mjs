@@ -14,6 +14,7 @@
 // before; everything this tool writes replaces it.
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, copyFileSync, existsSync, cpSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { brotliDecompressSync } from 'node:zlib';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -75,7 +76,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (!out || !ui || !client) { console.error('usage: build-arena-page.mjs <out> --ui <n> --client <release folder> [--base <page>]'); process.exit(2); }
   if (existsSync(out)) throw new Error(`${out} exists: a page folder is made once`);
   const pin = JSON.parse(readFileSync(PIN, 'utf8'));
-  if (base) { cpSync(base, out, { recursive: true }); for (const p of CLIENT_PATHS) rmSync(join(out, p), { recursive: true, force: true }); }
+  if (base) {
+    // THE CHANNEL'S PIECES ARE LINKED, NOT COPIED (kanban #966: release/ is 9 GB of the page's 9.2, and 150 copies filled the disk on 2026-11-01). Nothing here writes
+    // under release/; a release replaces latest.json by removing it first.
+    cpSync(base, out, { recursive: true, filter: (p) => p !== join(base, 'release') });
+    if (existsSync(join(base, 'release'))) execFileSync('cp', ['-al', join(base, 'release'), join(out, 'release')]); for (const p of CLIENT_PATHS) rmSync(join(out, p), { recursive: true, force: true }); }
   mkdirSync(out, { recursive: true });
   // THE CLIENT, AS PINNED: every file the pin names, each checked before it is copied; nothing the pin does not name
   const sizes = {};

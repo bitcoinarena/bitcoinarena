@@ -28,6 +28,7 @@ import { decodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import { daySlotOf, targetDay, dayStartMs, DUTY_FALLBACK_MS, DUTY_BACKUP_AFTER_MS, DUTY_BACKUP_RANK_CAP } from '../../arena-protocol/src/duty.js';
 import { seriesId, isGridSeries } from '../../arena-protocol/src/series.js';
+import { takesNewRounds } from '../../arena-protocol/src/known-federations.js';
 import { createGridBase, createDayDuty, DUTY_APPS } from './duty-day.js';
 import { buildGrid, publishGridTx, announceGrid, postSeriesLine } from './grid-build.js';
 import * as guard from './duty-guard.js';
@@ -265,13 +266,13 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
   const postSeries = async (line) => postSeriesLine(line, (await seatUrls()).map((u) => [u.replace(/^https?:\/\//, ''), u]), { fetchFn });
   const fedsNow = async () => {
     const own = self();
-    const named = String(env.ARENA_DUTY_FEDERATIONS || '').split(',').map((x) => x.trim().toLowerCase()).filter((x) => /^[0-9a-f]{64}$/.test(x));
+    const named = String(env.ARENA_DUTY_FEDERATIONS || '').split(',').map((x) => x.trim().toLowerCase()).filter((x) => /^[0-9a-f]{64}$/.test(x) && takesNewRounds(x));
     // THE FEDERATIONS THE LAST THREE DAYS' GRIDS OF THE DUTY'S APPS NAMED, as this node holds them
     const fams = new Set(); for (const g of apps) for (const id of (await familyOf(g, gridBaseOf()))) fams.add(id);
     const since = BigInt(now() - 3 * 86400000);
     const played = [...new Set(seat.heldTemplates().filter((t) => t && isGridSeries(t) && t.gameId && fams.has(toHex(t.gameId)) && BigInt(t.startTimeMs) >= since
-      && t.federationId instanceof Uint8Array).map((t) => toHex(t.federationId)))];
-    return planFederations((await seatJson(`${own}/federations`)).federations || [], { named, played });
+      && t.federationId instanceof Uint8Array && takesNewRounds(t.federationId)).map((t) => toHex(t.federationId)))];
+    return planFederations((await seatJson(`${own}/federations`)).federations || [], { named, played }).filter((f) => takesNewRounds(f));   // B's successor list and the OPEN fallback too (kanban #807)
   };
 
   // TWO ENGINES PER APP: the day's primary grid (rank 1) and its backup (rank 2, duty.js) - the backup never from the node that posted the primary

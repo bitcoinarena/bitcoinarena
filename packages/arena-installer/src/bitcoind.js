@@ -110,7 +110,7 @@ export const portFree = (port) => new Promise((ok) => {
   srv.listen(port, '127.0.0.1', () => srv.close(() => ok(true)));
 });
 /**
- * THE CORE'S PORTS, FREE ONES (kanban #635, the owner's playtest 2026-10-25: the installer's Core on his test host exited 26 times - "Binding
+ * THE CORE'S PORTS, FREE ONES (kanban #635, the owner's playtest 2026-10-25: the installer's Core on his macOS exited 26 times - "Binding
  * RPC on address 127.0.0.1 port 48342 failed", another Bitcoin Core held it - and the page said "bitcoind is starting (no cookie yet)"
  * for ever): the network's pair, else the next pair 10 up, checked on this machine before the config names them.
  */

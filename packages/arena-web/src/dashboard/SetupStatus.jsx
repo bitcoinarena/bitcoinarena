@@ -28,12 +28,12 @@ export const eta = (ms) => (ms === null || ms === undefined ? '' : ms < 3600000 
 // the state under it, a bar where there is one to fill
 class Step extends React.Component {
   render() {
-    const { id, label, done, problem, later, text, meter, left } = this.props;
-    const st = done ? 'ok' : problem ? 'bad' : later ? 'later' : 'wait';
+    const { id, label, done, problem, later, missing, text, meter, left } = this.props;
+    const st = done ? 'ok' : problem || missing ? 'bad' : later ? 'later' : 'wait';
     const t = !done && left ? dur(left) : '';
     return (
       <div className={`setup-step s-${st}`} id={id}>
-        <span className="setup-ic" aria-hidden="true">{done ? '✓' : problem ? '!' : later ? '–' : '…'}</span>
+        <span className="setup-ic" aria-hidden="true">{done ? '✓' : problem || missing ? '!' : later ? '–' : '…'}</span>
         <div className="setup-body"><b>{label}</b><span className="setup-text">{text}</span>
           {meter !== undefined ? <div className="bar"><i style={{ width: `${meter}%` }} /></div> : null}</div>
         {t ? <span className="setup-eta">{t}</span> : null}
@@ -49,6 +49,9 @@ export function coreLine(c) {
   if (!s) return { done: false, text: c.why ? `starting: ${c.why}` : 'starting' };
   return { done: false, meter: Math.round(s.progress * 100), text: `syncing, block ${n(s.blocks)} of ${n(s.headers)} (${(s.progress * 100).toFixed(1)} %). Until then your node reads the chain from a public server.` };
 }
+// NOT THERE AT ALL (kanban #837: "Complete" in green under the red "No bond" card): the setup is not done without one. `missing`, not `problem`:
+// it is the owner's next step, and it never closes the owner area
+export const NO_BOND_LINE = Object.freeze({ done: false, missing: true, text: 'none yet. Your node is not drawn for rounds and earns nothing until it has one.' });
 export function bondLine(b) {
   if (!b) return null;
   if (!b.seen) return { done: false, text: `${n(b.sats)} sat, ${shortTx(b.txid)}: not seen on the chain yet` };
@@ -120,10 +123,12 @@ export function setupRowsOf(s) {
   if (!s || !s.ok) return [];
   const e = s.etas || {};
   const at = (l, left) => (l ? { ...l, left: left === undefined ? null : left } : l);
-  return [['setup-core', 'Bitcoin Core', at(coreLine(s.core), e.core)], ['setup-address', 'Public address', addressLine(s.address)], ['setup-faucet', 'Test coins', at(faucetLine(s.faucet, s.bond), e.faucet)],
+  const rows = [['setup-core', 'Bitcoin Core', at(coreLine(s.core), e.core)], ['setup-address', 'Public address', addressLine(s.address)], ['setup-faucet', 'Test coins', at(faucetLine(s.faucet, s.bond), e.faucet)],
       ['setup-bond', 'Bond', at(bondLine(s.bond), e.bond)], ['setup-lnd', 'LND', s.lnd ? at(lndLine(s.lnd), e.lnd) : laterLine(s.later, 'lnd')], ['setup-gateway', 'Gateway', s.gateway ? at(gatewayLine(s.gateway, s.founding, !noBond(s)), e.gateway) : laterLine(s.later, 'gateway')], ['setup-pegin', 'Peg-in', at(pegInLine(s.pegIn), e.pegIn)],
       ...(s.updates || []).map((u, i) => [`setup-update-${i}`, 'Update', at(updateLine(u), (e.updates || [])[i])]),
       ...(s.oldBonds || []).map((o, i) => [`setup-old-${i}`, 'Old bond', oldBondLine(o)])].filter(([, , l]) => l);
+  if (rows.length && !s.bond) rows.splice(rows.filter(([id]) => ['setup-core', 'setup-address', 'setup-faucet'].includes(id)).length, 0, ['setup-bond', 'Bond', NO_BOND_LINE]);
+  return rows;
 }
 
 /** The big number: how long until the node is ready, or null when it cannot be told. */
@@ -171,25 +176,28 @@ export class SetupStatus extends React.Component {
   constructor(props) { super(props); this.state = { hidden: hiddenFor(this.nodeOf(props)) }; }
   nodeOf(props = this.props) { return props.node || (props.status && props.status.node) || null; }
   hide() { try { localStorage.setItem(`${SETUP_HIDDEN}:${this.nodeOf()}`, '1'); } catch { /* storage blocked: hidden until the page reloads */ } this.setState({ hidden: true }); }
+  // AND BACK (kanban #849: the choice could not be undone)
+  show() { try { localStorage.removeItem(`${SETUP_HIDDEN}:${this.nodeOf()}`); } catch { /* storage blocked: shown until the page reloads */ } this.setState({ hidden: false }); }
   render() {
     const s = this.props.status;
     const rows = setupRowsOf(s);
     if (!rows.length) return null;
     const all = rows.every(([, , l]) => l.done);
-    if (all && (this.state.hidden || hiddenFor(this.nodeOf()))) return null;
+    if (all && (this.state.hidden || hiddenFor(this.nodeOf()))) return <p className="setup-tip"><button type="button" className="setup-hide" onClick={() => this.show()}>Show setup</button></p>;
     const problems = rows.filter(([, , l]) => l.problem).length;
     const done = rows.filter(([, , l]) => l.done).length;
     // ONLY WHAT WAS LEFT FOR LATER IS OPEN (kanban #711): said so, not "Complete" and not "n of m done"
     const onlyLater = !all && rows.every(([, , l]) => l.done || l.later);
+    const bondMissing = rows.some(([, , l]) => l.missing);
     const ready = readyIn(s);
     return (
       <div className="card setup-status" id="setup-status">
         <div className="setup-head"><h3>Setup</h3>
-          <span className={`setup-pill ${all ? 'ok' : problems ? 'bad' : 'wait'}`}>{all ? 'Complete' : problems ? `${problems} problem${problems === 1 ? '' : 's'}` : onlyLater ? 'Lightning left for later' : `${done} of ${rows.length} done`}</span></div>
+          <span className={`setup-pill ${all ? 'ok' : problems || bondMissing ? 'bad' : 'wait'}`}>{all ? 'Complete' : problems ? `${problems} problem${problems === 1 ? '' : 's'}` : bondMissing ? 'Bond missing' : onlyLater ? 'Lightning left for later' : `${done} of ${rows.length} done`}</span></div>
         {!all && ready ? <div className="setup-ready" id="setup-ready"><span className="setup-ready-n">{ready.atLeast ? 'at least ' : ''}{ready.text}</span>
           <span className="setup-ready-l">until your node is ready</span></div> : null}
         <div className="setup-total" role="progressbar" aria-valuemin="0" aria-valuemax={rows.length} aria-valuenow={done}><i style={{ width: `${Math.round((100 * done) / rows.length)}%` }} /></div>
-        <div className="setup-grid">{rows.map(([id, label, l]) => <Step key={id} id={id} label={label} done={l.done} problem={l.problem} later={l.later} text={l.text} meter={l.meter} left={l.left} />)}</div>
+        <div className="setup-grid">{rows.map(([id, label, l]) => <Step key={id} id={id} label={label} done={l.done} problem={l.problem} later={l.later} missing={l.missing} text={l.text} meter={l.meter} left={l.left} />)}</div>
         {s.tip || (all && this.nodeOf()) ? <p className="setup-tip">{s.tip ? <>Chain tip · block {n(s.tip)}{s.blockMs && s.blockMsMeasured ? ` · lately a block every ${dur(s.blockMs)}` : ''}</> : null}
           {all && this.nodeOf() ? <button type="button" className="setup-hide" onClick={() => this.hide()}>Don't show again</button> : null}</p> : null}
       </div>);

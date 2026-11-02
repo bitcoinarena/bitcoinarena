@@ -340,7 +340,7 @@ export function createDayDuty(o) {
         || foreign.some((m) => m.tag === emergencyTag && (m.height === null || idx.tip - m.height < 15));
       const postedAny = ks.length > 0 || foreign.length > 0;
       // CONFIRMED ROUNDS OF THE DAY (kanban #775): one of this node's postings in a block and not dead, or rounds of it the seats list
-      // and another node's posting of it in a block (the owner 2026-10-29 ~21:10Z: accepted at its block, nothing new posted)
+      // and another node's posting of it in a block (2026-10-29 ~21:10Z: accepted at its block, nothing new posted)
       const confirmedAny = verdict.state === 'drawable' || ks.some((k) => guard.confirmedPosting(k.verdict)) || drawnNow.of > 0
         || guard.foreignConfirmed({ markers: foreign, slot, tag, tipHeight: idx.tip });
       const pending = ks.filter((k) => k.verdict && k.verdict.state === 'pending').map((k) => Number(k.committeeMs ?? (day.startMs - DUTY_COMMITTEE_LEAD_MS)));

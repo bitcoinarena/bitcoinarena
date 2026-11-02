@@ -73,7 +73,7 @@ export function statusLines(v, name = 'bitcoinarena') {
 }
 
 /** The Arena site's owner page (kanban #687), as the installer's FinishSteps names it. */
-export const OWNER_SITE = 'https://testnet.bitcoin-arena.io/owner/';
+export const OWNER_SITE = 'https://testnet.bitcoinarena.io/owner/';
 // on Windows through the URL handler, not `cmd /c start`: cmd cuts a URL at its & (the owner page's #node=...&local=..., kanban #687)
 // the one-time sign-in page (bin/owner-handoff.mjs) started apart, so this command returns at once; its address, or null
 const startHandoff = ({ home, target, all = false }) => new Promise((ok) => {

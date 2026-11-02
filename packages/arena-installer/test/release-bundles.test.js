@@ -24,7 +24,7 @@ test('build-release.sh archives the whole of arena-web/dist', () => {
 
 test('every bundle the node and the installer serve is tracked, so the release carries it', () => {
   const server = readFileSync(join(repo, 'packages/arena-node/src/server.js'), 'utf8');
-  for (const [path, file] of [['/owner/react.js', 'owner.js'], ['/owner/react.css', 'arena.css'], ['/dashboard/react.js', 'dashboard.js'], ['/rounds/react.js', 'rounds.js'], ['/emergency/react.js', 'emergency.js']]) {
+  for (const [path, file] of [['/owner/react.js', 'owner.js'], ['/Dashboard/owner', 'owner-page.html'], ['/owner/react.css', 'arena.css'], ['/dashboard/react.js', 'dashboard.js'], ['/rounds/react.js', 'rounds.js'], ['/emergency/react.js', 'emergency.js']]) {
     assert.ok(server.includes(`'${path}'`), `the node serves ${path}`);
     assert.ok(tracked.has(`packages/arena-web/dist/${file}`), `packages/arena-web/dist/${file} is tracked`);
   }

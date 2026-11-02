@@ -1,5 +1,9 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bitcoin Arena · Node Owner</title>
+<script>/* kanban #943: a visit from X arrives through t.co with no campaign in its link: named here, before the stats script reads the address */if(/^https?:\/\/t\.co(\/|$)/.test(document.referrer)&&!/[?&]utm_/.test(location.search))history.replaceState(history.state,'',location.pathname+(location.search?location.search+'&':'?')+'utm_source=x&utm_medium=social&utm_content=profile'+location.hash)</script>
+  <script defer src="https://stats.bitcoinarena.io/script.js" data-website-id="024ff09e-c3a6-4dfd-bede-3163eb8be36a" data-domains="testnet.bitcoinarena.io"></script>
+  <script>/* kanban #943: the campaign reached the stats when the script read the address; then it leaves the address, past the script's own history hook, so no second view */addEventListener('load',function(){var n=0,c=function(){if(!window.umami&&n++<50)return setTimeout(c,100);setTimeout(function(){var u=new URL(location.href),k=Array.from(u.searchParams.keys()).filter(function(x){return/^utm_/.test(x)});if(k.length){k.forEach(function(x){u.searchParams.delete(x)});History.prototype.replaceState.call(history,history.state,'',u.pathname+u.search+u.hash)}},500)};c()})</script>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%23f7931a'/%3E%3Ctext x='16' y='23' font-size='21' font-weight='700' font-family='system-ui,sans-serif' text-anchor='middle' fill='%23fff'%3E%E2%82%BF%3C/text%3E%3C/svg%3E">
 <!-- THE OWNER AREA OF A NODE: /Dashboard/owner. The owner is a key made from 24 words this browser keeps;
      every request it sends is signed with it (src/owner.js). Nothing here is a password, and nothing leaves the browser
      but public keys and signatures. -->
@@ -22,6 +26,8 @@ textarea{min-height:110px}
 .words span::before{counter-increment:w;content:counter(w) ". ";color:var(--dim)}
 .warn{border-left:3px solid var(--gv);padding:8px 12px;background:rgba(242,169,59,.08);border-radius:0 8px 8px 0;margin:10px 0}
 .err{color:var(--bad);min-height:1.5em}.ok{color:var(--ok)}
+/* an error at its field takes no room until it has something to say (kanban #841); focus on a new screen's heading draws no ring (kanban #843) */
+.field-err:empty{min-height:0}h2[tabindex="-1"]:focus,h3[tabindex="-1"]:focus{outline:none}
 label{display:block;margin:8px 0 4px;color:var(--dim)}
   .info { margin: 2px 0 6px; } .info a { color: inherit; }
   /* the dev key's earnings by period: scrolls sideways on a phone, numbers right-aligned */
@@ -157,7 +163,7 @@ select:focus{outline:2px solid var(--st);outline-offset:1px}
 /* the owner area waits for the setup (playtest 2026-10-25): a screen over the whole page until every part is done */.setup-gate{position:fixed;inset:0;z-index:1000;background:var(--bg,#0d1117);overflow:auto;padding:32px 16px}.setup-gate-in{max-width:760px;margin:0 auto}.setup-gate h2{margin:0 0 10px;font-size:24px;text-transform:none;letter-spacing:0;color:var(--text,#e6edf3)}.setup-gate-fix{margin-top:16px}.setup-banner{border:1px solid var(--accent,#f7931a);border-left-width:4px;border-radius:10px;padding:10px 14px;margin:0 0 14px;background:rgba(247,147,26,.08)}body[data-setup="open"] #side a[data-s="roles"],body[data-setup="open"] #side a[data-s="bond"],body[data-setup="open"] #side a[data-s="apps"],body[data-setup="open"] #side a[data-s="money"],body[data-setup="open"] #side a[data-s="leave"],body[data-setup="open"] #side a[data-s="developer"]{pointer-events:none;opacity:.35}body[data-setup="open"] #needs,body[data-setup="open"] #s-roles,body[data-setup="open"] #s-bond,body[data-setup="open"] #s-apps,body[data-setup="open"] #s-money,body[data-setup="open"] #s-leave,body[data-setup="open"] #s-developer{display:none!important}.setup-gate-msg{border:1px solid var(--accent,#f7931a);border-left-width:4px;border-radius:10px;padding:10px 14px;margin:0 0 16px;background:rgba(247,147,26,.08)}
 /* the Overview's Custody when its guardian does not run (the 2026.1.9.11 install test) */.stat b.bad{color:var(--bad)}
 /* no bond (kanban #728): no empty offer card, the red card on the Overview; no place drawn as an empty box (the 2026.1.9.11 install test) */#bond-answer:empty,main .card:empty{display:none}.no-bond{border-color:#f85149}.no-bond p{margin:10px 0}.no-bond .btn{display:inline-block;padding:8px 14px;border-radius:10px;text-decoration:none;font-weight:600}
-/* the setup's progress (kanban #635), as tiles (playtest 2026-10-25: "make this more pretty") */.founding-wait{padding:18px 20px;margin-top:12px}.founding-wait p{margin:10px 0 0;line-height:1.5}.founding-wait .dim{color:var(--dim,#8b949e)}.setup-status{padding:18px 20px}.setup-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.setup-head h3{margin:0}.setup-pill{font:600 12px system-ui;padding:3px 10px;border-radius:999px;white-space:nowrap}.setup-pill.ok{background:rgba(63,185,80,.15);color:#3fb950}.setup-pill.wait{background:rgba(210,153,34,.15);color:#d29922}.setup-pill.bad{background:rgba(248,81,73,.15);color:#f85149}.setup-total{height:6px;border-radius:3px;background:rgba(127,127,127,.18);overflow:hidden;margin-bottom:14px}.setup-total>i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,#3fb950,#56d364)}.setup-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}.setup-step{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:12px;border:1px solid rgba(127,127,127,.2);background:rgba(127,127,127,.06)}.setup-step.s-bad{border-color:rgba(248,81,73,.55)}.setup-ic{flex:0 0 26px;height:26px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:14px}.s-ok .setup-ic{background:rgba(63,185,80,.18);color:#3fb950}.s-wait .setup-ic{background:rgba(210,153,34,.18);color:#d29922}.s-later .setup-ic{background:rgba(139,148,158,.18);color:#8b949e}.s-bad .setup-ic{background:rgba(248,81,73,.18);color:#f85149}.setup-body{display:flex;flex-direction:column;gap:3px;min-width:0}.setup-body b{font-size:14px}.setup-text{font-size:13px;line-height:1.4;color:#8b949e;overflow-wrap:anywhere}.setup-step .bar{height:5px;border-radius:3px;background:rgba(127,127,127,.18);overflow:hidden;margin-top:6px;max-width:none}.setup-step .bar>i{display:block;height:100%;background:#d29922}.setup-tip{margin:12px 0 0;font-size:12px;color:#8b949e}.setup-ready{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:2px 0 12px}.setup-ready-n{font:700 30px/1.1 system-ui;color:#d29922}.setup-ready-l{font-size:14px;color:#8b949e}.setup-body{flex:1}.setup-eta{margin-left:auto;padding-top:2px;font:600 12px system-ui;color:#d29922;white-space:nowrap}.copy-ic{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:6px;vertical-align:middle;color:var(--dim,#8b949e)}.copy-ic:hover{background:rgba(127,127,127,.18);color:inherit;text-decoration:none}.stat b .copy-ic{margin-left:4px}.rel-state{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border-radius:12px;margin:12px 0}.rel-state b{font-size:17px}.rel-state span{color:var(--dim,#8b949e);font-size:13.5px}.rel-state.ok{background:rgba(63,185,80,.13);border:1px solid rgba(63,185,80,.55)}.rel-state.ok b{color:#3fb950}.rel-state.new{background:rgba(247,147,26,.13);border:1px solid rgba(247,147,26,.65)}.rel-state.new b{color:#f7931a}.pegin-card{padding:18px 20px;margin-bottom:12px}.pegin-card .dim{color:var(--dim,#8b949e);margin:10px 0 0}.founding-count{display:flex;align-items:baseline;gap:12px;margin:4px 0 10px}.founding-n{font-size:40px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;color:#d9a400}.founding-n.ok{color:#3fb950}.founding-l{color:var(--dim,#8b949e);font-size:14px}.setup-hide{float:right;border:0;background:transparent;color:var(--st,#58a6ff);font:600 12.5px system-ui;padding:0;cursor:pointer}.setup-hide:hover{text-decoration:underline}
+/* the setup's progress (kanban #635), as tiles (playtest 2026-10-25: "make this more pretty") */.founding-wait{padding:18px 20px;margin-top:12px}.founding-wait p{margin:10px 0 0;line-height:1.5}.founding-wait .dim{color:var(--dim,#8b949e)}.setup-status{padding:18px 20px}.setup-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.setup-head h3{margin:0}.setup-pill{font:600 12px system-ui;padding:3px 10px;border-radius:999px;white-space:nowrap}.setup-pill.ok{background:rgba(63,185,80,.15);color:#3fb950}.setup-pill.wait{background:rgba(210,153,34,.15);color:#d29922}.setup-pill.bad{background:rgba(248,81,73,.15);color:#f85149}.setup-total{height:6px;border-radius:3px;background:rgba(127,127,127,.18);overflow:hidden;margin-bottom:14px}.setup-total>i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,#3fb950,#56d364)}.setup-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(280px,100%),1fr));gap:10px}.setup-step{min-width:0;display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:12px;border:1px solid rgba(127,127,127,.2);background:rgba(127,127,127,.06)}.setup-step.s-bad{border-color:rgba(248,81,73,.55)}.setup-ic{flex:0 0 26px;height:26px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:14px}.s-ok .setup-ic{background:rgba(63,185,80,.18);color:#3fb950}.s-wait .setup-ic{background:rgba(210,153,34,.18);color:#d29922}.s-later .setup-ic{background:rgba(139,148,158,.18);color:#8b949e}.s-bad .setup-ic{background:rgba(248,81,73,.18);color:#f85149}.setup-body{display:flex;flex-direction:column;gap:3px;min-width:0}.setup-body b{font-size:14px}.setup-text{font-size:13px;line-height:1.4;color:#8b949e;overflow-wrap:anywhere}.setup-step .bar{height:5px;border-radius:3px;background:rgba(127,127,127,.18);overflow:hidden;margin-top:6px;max-width:none}.setup-step .bar>i{display:block;height:100%;background:#d29922}.setup-tip{margin:12px 0 0;font-size:12px;color:#8b949e}.setup-ready{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:2px 0 12px}.setup-ready-n{font:700 30px/1.1 system-ui;color:#d29922}.setup-ready-l{font-size:14px;color:#8b949e}.setup-body{flex:1}.setup-eta{margin-left:auto;padding-top:2px;font:600 12px system-ui;color:#d29922;white-space:nowrap}.copy-ic{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:6px;vertical-align:middle;color:var(--dim,#8b949e)}.copy-ic:hover{background:rgba(127,127,127,.18);color:inherit;text-decoration:none}.stat b .copy-ic{margin-left:4px}.rel-state{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border-radius:12px;margin:12px 0}.rel-state b{font-size:17px}.rel-state span{color:var(--dim,#8b949e);font-size:13.5px}.rel-state.ok{background:rgba(63,185,80,.13);border:1px solid rgba(63,185,80,.55)}.rel-state.ok b{color:#3fb950}.rel-state.new{background:rgba(247,147,26,.13);border:1px solid rgba(247,147,26,.65)}.rel-state.new b{color:#f7931a}.pegin-card{padding:18px 20px;margin-bottom:12px}.pegin-card .dim{color:var(--dim,#8b949e);margin:10px 0 0}.founding-count{display:flex;align-items:baseline;gap:12px;margin:4px 0 10px}.founding-n{font-size:40px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;color:#d9a400}.founding-n.ok{color:#3fb950}.founding-l{color:var(--dim,#8b949e);font-size:14px}.setup-hide{float:right;border:0;background:transparent;color:var(--st,#58a6ff);font:600 12.5px system-ui;padding:0;cursor:pointer}.setup-hide:hover{text-decoration:underline}
 /* kanban #805: the uptime tiles and the Overview's signs live in this page's own styles - the page does not load arena-web's arena.css,
    so 9.19 drew the new uptime markup unstyled, as plain lines (the owner 10-30 screenshot) */
 /* THE UPTIME AS TILES (kanban #805, a tester: "not as a wall of text but as nice looking tiles"): the figure large, a bar under it, the
@@ -178,21 +184,24 @@ select:focus{outline:2px solid var(--st);outline-offset:1px}
 .si{font-style:normal;font-size:13px;width:24px;height:24px;border-radius:7px;display:inline-grid;place-items:center;background:var(--bg);color:var(--gv);letter-spacing:0}
 /* THE TILES GO DOWN TO ONE COLUMN ON A NARROW PHONE (kanban #805, checked at 320 / 390 / 1440 px): no track wider than its screen */
 .stats{grid-template-columns:repeat(auto-fill,minmax(min(200px,100%),1fr))}.up-tiles{grid-template-columns:repeat(auto-fill,minmax(min(150px,100%),1fr))}
-/* THE PAGE SAYS WHAT IT WAITS FOR (kanban #809, the owner 2026-10-30 after 2026.1.9.20: "it shows loading for a really really long time. There
+/* THE PAGE SAYS WHAT IT WAITS FOR (kanban #809, 2026-10-30 after 2026.1.9.20: "it shows loading for a really really long time. There
    should be a progress bar"): a bar, the step and the seconds instead of one word */
 .boot{display:flex;flex-direction:column;gap:6px;max-width:420px}.boot-bar{display:block;height:6px;border-radius:999px;background:var(--line);overflow:hidden}
 .boot-bar i{display:block;height:100%;background:var(--st);border-radius:inherit;transition:width .4s}
-/* THE FIRST LOAD FROM THE NODE (kanban #809, the owner 2026-10-30: the Overview said "checking this node…" and the uptime stayed empty with nothing
+/* THE FIRST LOAD FROM THE NODE (kanban #809, 2026-10-30: the Overview said "checking this node…" and the uptime stayed empty with nothing
    moving - "Needs a progress bar while it's loading from the node"): the answers the page waits for, counted, under the title */
 .loadbar{display:flex;flex-direction:column;gap:6px;max-width:420px;margin:6px 0 10px}.loadbar[hidden]{display:none}#loadbar-t{color:var(--dim);font-size:13px}
 .mc-check{overflow-wrap:anywhere}/* a source up for a vote (kanban #921) */.mc-vote{border:1px solid var(--line,#30363d);border-radius:10px;padding:12px;margin:0 0 12px}.mc-vote .mono{word-break:break-all;font-size:13px}.mc-code{max-height:220px;overflow:auto;margin:8px 0;padding:10px;background:#0d1117;border-radius:8px;white-space:pre-wrap}/* create a market (kanban #920) */.mc{max-width:860px}.mc-steps{display:flex;gap:4px;list-style:none;margin:0 0 18px;padding:0;overflow-x:auto}.mc-steps li{flex:1;min-width:64px;border-top:3px solid var(--line);padding-top:6px;font-size:12.5px;color:var(--dim);white-space:nowrap}.mc-steps li.done{border-color:var(--ok)}.mc-steps li.on{border-color:var(--gv);color:var(--text);font-weight:600}.mc-steps button{all:unset;cursor:pointer;color:var(--text)}.mc-body{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:18px;align-items:start}@media (max-width:760px){.mc-body{grid-template-columns:minmax(0,1fr)}}.mc-pane{display:grid;gap:14px;min-width:0}.mc-tiles{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px}.mc-body:has(.mc-tiles){grid-template-columns:minmax(0,1fr)}.mc-tile{display:grid;gap:4px;justify-items:start;text-align:left;padding:16px;background:var(--card);border:1px solid var(--line);border-radius:14px;cursor:pointer;color:var(--text);transition:border-color .15s,transform .15s}.mc-tile:hover,.mc-tile:focus-visible{border-color:var(--gv);transform:translateY(-1px)}.mc-tile i{font-style:normal;font-size:22px;color:var(--gv)}.mc-tile small{color:var(--dim)}.mc-f{display:grid;gap:5px;font-size:13px;color:var(--dim)}.mc-f input,.mc-f textarea,.mc-row input{width:100%;box-sizing:border-box;margin:0;font-size:15px}.mc-err{color:var(--bad);font-size:12.5px}.mc-two{display:grid;grid-template-columns:1fr 1fr;gap:12px}.mc-seg{display:flex;flex-wrap:wrap;gap:2px;padding:3px;background:var(--bg);border:1px solid var(--line);border-radius:10px;width:fit-content;max-width:100%}.mc-seg button{margin:0;border:0;background:none;padding:6px 12px;border-radius:7px;font-size:13.5px;color:var(--dim);cursor:pointer}.mc-seg button.on{background:var(--card);color:var(--text);font-weight:600}.mc-list{display:grid;gap:8px}.mc-row{display:flex;gap:6px}.mc-row button{margin:0}.mc-add,.mc-link{all:unset;cursor:pointer;color:var(--st);font-size:13.5px}.mc-link{display:block;margin-top:14px;color:var(--dim)}.mc-nav{display:flex;justify-content:space-between;gap:10px;margin-top:6px}.mc-card{display:grid;gap:8px;padding:16px;background:var(--card);border:1px solid var(--line);border-radius:14px;position:sticky;top:12px}.mc-card b{font-size:16px;line-height:1.3;overflow-wrap:anywhere}.mc-card small{color:var(--dim)}.mc-odds{display:flex;flex-wrap:wrap;gap:6px}.mc-odds span{flex:1 1 40%;padding:8px;border:1px solid var(--line);border-radius:9px;text-align:center;font-size:13.5px;overflow-wrap:anywhere}.mc-odds span.on{border-color:var(--ok);color:var(--ok);font-weight:600}.mc-range b{color:var(--ok)}.mc-range{display:flex;align-items:center;gap:8px;font-size:13px}.mc-range i{flex:1;height:4px;border-radius:2px;background:linear-gradient(90deg,var(--st),var(--gv))}.mc-result{display:flex;flex-wrap:wrap;gap:6px 18px;padding:12px;border-radius:10px;border:1px solid var(--line);font-size:14px;overflow-wrap:anywhere}.mc-result.ok{border-color:var(--ok)}.mc-result.bad{border-color:var(--bad);color:var(--bad)}.mc-result small{flex-basis:100%;color:var(--dim)}.mc-test{justify-self:start;margin:0}.mc-fields{display:flex;flex-wrap:wrap;gap:6px}.mc-fields button{display:grid;gap:1px;margin:0;padding:5px 9px;max-width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;text-align:left;cursor:pointer;overflow:hidden}.mc-fields button.on{border-color:var(--gv)}.mc-fields code{font-size:12.5px;color:var(--text)}.mc-fields small{font-size:11.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mc-chips{display:flex;flex-wrap:wrap;gap:6px}.mc-chips button{display:inline-flex;align-items:baseline;gap:6px;margin:0;padding:6px 11px;background:var(--bg);border:1px solid var(--line);border-radius:999px;font-size:13px;color:var(--text);cursor:pointer}.mc-chips button.on,.mc-chips button:hover{border-color:var(--gv)}.mc-chips button.on{color:var(--gv);font-weight:600}.mc-chips small{color:var(--dim);font-size:11.5px}.mc-read{display:grid;grid-template-columns:96px auto minmax(0,1fr) auto;gap:6px;align-items:center}.mc-read input{margin:0;min-width:0;width:100%;box-sizing:border-box;font-size:13.5px}.mc-read input[aria-label="Message to send"]{grid-column:1/-1;grid-row:2}.mc-read>button{margin:0}@media (max-width:560px){.mc-read{grid-template-columns:minmax(0,1fr) auto}.mc-read input[aria-label="Address"],.mc-read input[aria-label="Message to send"]{grid-column:1/-1;grid-row:auto}}.mc-check{margin:0;padding:8px 12px;border-radius:9px;font-size:13px;list-style:none;border:1px solid var(--line)}.mc-check.ok{color:var(--ok);border-color:var(--ok)}.mc-check.bad{color:var(--bad);border-color:var(--bad)}.ce{display:grid;grid-template-columns:auto minmax(0,1fr);border:1px solid var(--line);border-radius:10px;background:#0d1117;overflow:hidden;font:13px/20px ui-monospace,SFMono-Regular,Menlo,monospace}.ce-lines{display:grid;align-content:start;padding:10px 8px;height:280px;box-sizing:border-box;overflow:hidden;color:#566;text-align:right;user-select:none;background:#0b0e13}.ce-lines .bad{color:#fff;background:var(--bad);border-radius:3px;padding:0 3px}.ce-area{position:relative;height:280px;min-width:0}.ce-area pre,.ce-area textarea{position:absolute;inset:0;margin:0;padding:10px;border:0;box-sizing:border-box;width:100%;height:100%;font:inherit;line-height:20px;white-space:pre;tab-size:2;overflow:auto;letter-spacing:0}.ce-area pre{color:#d6deeb;pointer-events:none;overflow:hidden}.ce-area textarea{background:transparent;color:transparent;caret-color:#fff;resize:none;outline:none}.ce-c{color:#6a7f94;font-style:italic}.ce-s{color:#a5d6a7}.ce-k{color:#c792ea}.ce-n{color:#f5a97f}.ce-f{color:#82aaff}.mc-sources{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px}.mc-src{display:grid;gap:2px;padding:9px 11px;background:var(--bg);border:1px solid var(--line);border-radius:10px}.mc-src.on{border-color:var(--gv)}.mc-src button{all:unset;display:grid;gap:1px;cursor:pointer}.mc-src button:focus-visible{outline:2px solid var(--st);outline-offset:2px}.mc-src small{color:var(--dim);font-size:12px}.mc-src a,.mc-docs{font-size:12.5px;color:var(--st);text-decoration:none}.mc-docs{justify-self:start}.mc-sum{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 14px;margin:0;font-size:14px}.mc-sum dt{color:var(--dim)}.mc-sum dd{margin:0;overflow-wrap:anywhere}.mc-note{margin:0;color:var(--dim);font-size:13px}
 .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 </style></head><body>
+<main>
 <h1>Bitcoin Arena · Node Owner <span class="ver" id="ver"></span></h1>
 <div class="sub" id="who"><div class="boot" id="boot"><span class="boot-bar"><i id="boot-i" style="width:5%"></i></span><span id="boot-t">Finding your node…</span></div></div>
 <div class="loadbar" id="loadbar" hidden><span class="boot-bar"><i id="loadbar-i"></i></span><span id="loadbar-t"></span></div>
+<h2 class="vh">Your node</h2>
 <div id="view"></div>
-<p class="sub" id="public-line"><a id="public" href="#">← Public dashboard</a></p>
+<p class="sub" id="public-line" hidden><a id="public"></a></p>
+</main>
 <script type="module">
 // The node's address: this page is <base>/Dashboard/owner, its doors are <base>/owner...
 // THE OWNER PAGE ON THE ARENA SITE (kanban #668, the owner's playtest 2026-10-25: logged out after a restart - "Das reicht nicht wenn der
@@ -201,7 +210,11 @@ select:focus{outline:2px solid var(--st);outline-offset:1px}
 // address stays the site's, the login is kept per node key, and the node is found where it is now: the seats' signed address announcements
 // (GET /address-announcements, #562) name its current address. The node that answers there must be that key (checked in start()).
 const ON_SITE = !/\/[Dd]ashboard\/owner\/?$/.test(location.pathname);
-const OWNER_SITE = 'https://testnet.bitcoin-arena.io/owner/';   // the Arena site's owner page (installer FinishSteps OWNER_SITE, bitcoinarena open)
+const OWNER_SITE = 'https://testnet.bitcoinarena.io/owner/';   // the Arena site's owner page (installer FinishSteps OWNER_SITE, bitcoinarena open)
+// NEVER A DEAD LINK (kanban #835: href="#" did nothing on the screens with no node, where it was the only link): the line under the page stays
+// hidden until it has somewhere to go - on the site that is the site, at once; the node's dashboard once the node has answered as itself
+function publicLink(href, text) { const a = document.getElementById('public'); a.href = href; a.textContent = text; document.getElementById('public-line').hidden = false; }
+if (ON_SITE) publicLink('/', '← Bitcoin Arena');
 // A RELOAD KEEPS THE NODE (kanban #764, the owner: "Refresh on the logged-in owner page loses the login"): the area's menu and its links
 // are plain #section anchors (OwnerArea, RolesPanel goTo), and each one replaced the whole # - node=, local=, url= went with it, and a
 // reload found no node key. Every # the page moves to keeps the node's own part beside the section (section=, which OwnerArea reads), and
@@ -312,7 +325,14 @@ const handoff = HASH.has('owner-handoff') && window.opener ? new Promise((done) 
 if (handoff) await handoff;
 const BASE = ON_SITE ? await siteBase() : location.pathname.replace(/\/[Dd]ashboard\/owner\/?$/, '');
 if (ON_SITE && !BASE) {
-  document.getElementById('who').textContent = NODE_KEY ? 'No node announces this key right now (' + NODE_KEY.slice(0, 16) + '…). Is it running?' : 'Open this page from your node\'s dashboard or the installer: it needs your node\'s key.';
+  // NOT A DEAD END (kanban #845): a key that is no key says so, a key to paste, and Try again when the node has not announced itself yet
+  const who = document.getElementById('who'), good = /^[0-9a-f]{64}$/.test(NODE_KEY || '');
+  who.textContent = ''; who.className = 'sub';
+  const say = document.createElement('p'); say.textContent = !NODE_KEY ? 'Paste your node key, or open this page from your node\'s dashboard or the installer.' : !good ? 'That is not a valid node key: it has 64 hex characters.' : 'No node announces this key right now (' + NODE_KEY.slice(0, 16) + '…). Is it running?';
+  const key = document.createElement('input'); key.placeholder = 'node key (64 hex characters)'; key.setAttribute('aria-label', 'Node key'); key.autocomplete = 'off'; key.spellcheck = false; key.value = NODE_KEY || '';
+  const open = document.createElement('button'); open.type = 'button'; open.className = 'primary'; open.textContent = good ? 'Try again' : 'Open';
+  open.onclick = () => { const v = key.value.trim().toLowerCase(); if (!/^[0-9a-f]{64}$/.test(v)) { say.textContent = 'That is not a valid node key: it has 64 hex characters.'; return; } location.hash = 'node=' + v; location.reload(); };
+  who.append(say, key, open);
   throw new Error('no node address');
 }
 const at = (p) => BASE + p;
@@ -340,10 +360,13 @@ function drawLoad() {
       drawLoad();
     });
   };
-  const tick = setInterval(() => { if (LOAD.over) clearInterval(tick); else drawLoad(); }, 1000);
+  setInterval(() => { if (!LOAD.over) drawLoad(); }, 1000);
   setTimeout(() => { LOAD.over = true; drawLoad(); }, 120000);   // never longer than two minutes
 }
-document.getElementById('public').href = at('/Dashboard');
+// THE LOAD ENDS WITH ANY SCREEN BUT THE AREA (kanban #834: LOAD.over waited for the area, so the bar stayed at "2 of 2 answers, 96 s" on the
+// sign-in, claim, message and error screens): nothing more is coming there. A sign-in counts again, for the area it opens
+const loadEnd = () => { LOAD.over = true; drawLoad(); };
+const loadAgain = () => { Object.assign(LOAD, { started: 0, done: 0, over: false, area: false, t0: Date.now() }); };
 // THE RELEASE THIS NODE RUNS, BESIDE THE TITLE (kanban #674: "include version in node dashboard and owner dashboard") - asked of the
 // node, so the page on the Arena site shows it too; and in the footer, the release alone (kanban #753)
 fetch(at('/owner/version'), { cache: 'no-store' }).then((r) => r.json()).then((v) => {
@@ -351,25 +374,38 @@ fetch(at('/owner/version'), { cache: 'no-store' }).then((r) => r.json()).then((v
   document.getElementById('ver').textContent = v.version || String(v.commit).slice(0, 8);
   if (v.version) document.getElementById('build').textContent = 'Bitcoin Arena ' + v.version;
 }).catch(() => {});
-const C = await import(at('/owner/client.js'));
+// a node that stops answering here is said, not waited for under a bar that counts on (kanban #834)
+const loaded = (p) => import(at(p)).catch((e) => { document.getElementById('who').textContent = 'This node did not answer: ' + e.message; loadEnd(); throw e; });
+const C = await loaded('/owner/client.js');
 // THE REACT SCREENS (kanban #564, 2026-10-21: "Delete the old html code of those components you have ported, no fall backs"): the
 // bundle is loaded once, here, and every ported panel is drawn by it alone
-await import(at('/owner/react.js'));
+await loaded('/owner/react.js');
 const O = window.ArenaOwner;
 boot(70, 'Asking your node');
 const STORE = ON_SITE ? 'arena-owner-seed:node:' + NODE_KEY : 'arena-owner-seed:' + BASE;   // per node address (on the site: per node key), in this browser only
 const $ = (id) => document.getElementById(id);
-const readSeed = () => { try { const h = localStorage.getItem(STORE); return h && /^[0-9a-f]{64}$/.test(h) ? C.fromHex(h) : null; } catch { return null; } };
-const keepSeed = (seed) => { try { localStorage.setItem(STORE, C.toHex(seed)); return true; } catch { return false; } };
+// NOTHING IS WRITTEN BEFORE THE NODE TAKES THE KEY (kanban #832: words typed on a node with another owner stayed in localStorage in the clear
+// next to "This key is not this node's owner"): what the way in hands over is held here, in this page's memory, and goes to localStorage
+// only once the node has taken a login signed with it (keepHeld, in area()); a key the node refuses is dropped in start(). The installer's
+// hand-over above is not held: it comes from the owner's own installer, before the node can be asked, and writes the keys of every node of
+// the machine (kanban #713)
+let held = null;   // { seed } | { nostr }
+const readSeed = () => { if (held) return held.seed || null; try { const h = localStorage.getItem(STORE); return h && /^[0-9a-f]{64}$/.test(h) ? C.fromHex(h) : null; } catch { return null; } };
+const holdSeed = (seed) => { held = { seed }; };
 // LOGIN WITH NOSTR (2026-10-10: "a login with Nostr feature for node claiming instead of generating your
 // own seed"): the owner key is the Nostr key itself. An nsec signs owner requests as the words' key does; an extension
 // (NIP-07) or a remote signer (NIP-46: bunker://, or a code a phone signer scans) signs each request as a Nostr event.
 // Kept per node address in this browser: { how: 'nsec', secret } | { how: 'extension', pubkey } | { how: 'bunker', bunker, client }
 const NSTORE = ON_SITE ? 'arena-owner-nostr:node:' + NODE_KEY : 'arena-owner-nostr:' + BASE;
 
-const readNostr = () => { try { const j = JSON.parse(localStorage.getItem(NSTORE) || 'null'); return j && j.how ? j : null; } catch { return null; } };
-const keepNostr = (o) => { try { localStorage.setItem(NSTORE, JSON.stringify(o)); return true; } catch { return false; } };
-const forget = () => { try { localStorage.removeItem(STORE); localStorage.removeItem(NSTORE); } catch {} me = null; start(); };
+const readNostr = () => { if (held) return held.nostr || null; try { const j = JSON.parse(localStorage.getItem(NSTORE) || 'null'); return j && j.how ? j : null; } catch { return null; } };
+const holdNostr = (o) => { held = { nostr: o }; };
+// false when the browser keeps nothing (private mode): the login then lasts as long as this tab, and the Overview says so
+const keepHeld = () => {
+  if (!held) return true;
+  try { if (held.seed) localStorage.setItem(STORE, C.toHex(held.seed)); else localStorage.setItem(NSTORE, JSON.stringify(held.nostr)); held = null; return true; } catch { return false; }
+};
+const forget = () => { held = null; try { localStorage.removeItem(STORE); localStorage.removeItem(NSTORE); } catch {} me = null; start(); };
 let state = null, me = null;     // me: { how, pubkey, sign(action, args) -> request, devSeed, words }
 async function identity() {
   if (me) return me;
@@ -392,6 +428,8 @@ async function identity() {
   return null;
 }
 const signed = async (action, args = {}) => (await identity()).sign(action, args);
+// the Arena site's page counts these (kanban #923); a node's own page sends nothing, Umami answers only on its one host
+const counted = (name) => { try { if (window.umami) window.umami.track(name); } catch { /* not counted */ } };
 const post = async (path, body) => {
   body = await body;
   const r = await fetch(at(path), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -407,18 +445,22 @@ const getOrNull = async (p) => { try { return await getOk(p); } catch { return n
 const fetchJson = async (u) => { const r = await fetch(u, { cache: 'no-store' }); if (!r.ok) throw new Error((await r.text()).trim()); return r.json(); };
 // A REACT SCREEN INTO ITS ELEMENT (kanban #564): the one drawn there before is unmounted first
 const mount = (id, how, props) => { const el = $(id); if (el._react) el._react.unmount(); el.innerHTML = ''; return (el._react = O[how](el, props)); };
+// BACK FROM A CARD (kanban #843): the way in follows the browser by itself (OwnerStart); the claim and a message are no steps of it, so Back from
+// one starts the page again, with nothing held. `card` is true while one is drawn
+let card = false;
+addEventListener('popstate', () => { if (card) { held = null; me = null; start(); } });
 
 // 1. THE WAY IN (kanban #564: drawn by React, OwnerStart): the welcome - new 24 words, restore them, or Login with Nostr - and 2. the
 // claim with the code from the node's log. The page hands over what it keeps and how; React draws the screens
-const startProps = () => ({ client: C, keepSeed, keepNostr, random32: () => globalThis.crypto.getRandomValues(new Uint8Array(32)),
-  claim: async (code) => post('/owner/claim', signed('claim', { code })), onIn: () => { me = null; start(); },
-  onNostr: (o) => { window.OWNER_NOSTR = o; }, onConnectUri: (u) => { window.OWNER_CONNECT_URI = u; }, onNewNsec: (n) => { window.OWNER_NEW_NSEC = n; } });
-// a node with an owner asks for that owner's words or Nostr key, never offers new words (playtest 2026-10-25)
-function welcome() { mount('view', 'mountStart', { ...startProps(), screen: 'welcome', claimed: !!(state && state.claimed) }); }
+const startProps = () => ({ client: C, holdSeed, holdNostr, random32: () => globalThis.crypto.getRandomValues(new Uint8Array(32)),
+  claim: async (code) => { const r = await post('/owner/claim', signed('claim', { code })); counted('owner-claim'); return r; }, onIn: () => { counted('owner-login'); me = null; loadAgain(); start(); },
+  onNostr: (o) => { window.OWNER_NOSTR = o; }, onConnectUri: (u) => { window.OWNER_CONNECT_URI = u; } });
+// a node with an owner asks for that owner's words or Nostr key, never offers new words (playtest 2026-10-25) or a new Nostr account (kanban #833)
+function welcome() { loadEnd(); card = false; mount('view', 'mountStart', { ...startProps(), screen: 'welcome', claimed: !!(state && state.claimed) }); }
 // (kanban #550, 2026-10-20: "show the complete path to the file instead of showing it cryptic"): the node names the file's full path
-function claim(mine, file) { mount('view', 'mountStart', { ...startProps(), screen: 'claim', mine, claimFile: file }); }
+function claim(mine, file) { loadEnd(); card = true; mount('view', 'mountStart', { ...startProps(), screen: 'claim', mine, claimFile: file }); }
 // A ONE-CARD MESSAGE (no answer, not the owner), drawn by React (OwnerMessage)
-const message = (props) => mount('view', 'mountMessage', props);
+const message = (props) => { loadEnd(); card = true; return mount('view', 'mountMessage', props); };
 // WHAT NEEDS THE OWNER (kanban #553): each section that finds something to do says it here, in one line, with a link to it; the Overview
 // lists them, the sidebar marks the section - both React's (kanban #564, OwnerArea), drawn again with the list on each change
 const needs = new Map();   // key -> { level: 'bad' | 'warn', text, section }
@@ -443,6 +485,7 @@ async function area() {
   let me;     // the node's answer to the login, as before (the identity is the outer \`me\` behind signed())
   try { me = await post('/owner/login', signed('login')); }
   catch (e) { message({ title: 'Could not sign in', err: e.message, buttons: [{ label: 'Try again', onClick: start }] }); return; }
+  const kept = keepHeld();   // the node took it: this is the owner's key (kanban #832)
   // ONE LINE PER APP (kanban #553, 2026-10-20: "why does btc-updown-15m come dozens of times"): a seat hosts every version it
   // still has rounds for; the owner sees each app once, at its newest version
   const games = newestApps(me.games || []);
@@ -467,9 +510,16 @@ async function area() {
     proposeSource: (args) => post('/owner/source-proposal', signed('source-proposal', args)),
     voteSource: (args) => post('/owner/source-vote', signed('source-vote', args)),
     signManifest: (text) => { const out = C.signManifestWithSeed(C.bodyFromJson(text, { devPubkey: devPub }), devSeed); window.OWNER_SIGNED = out; return out; } };
+  card = false;
+  // THE WAY IN IS OVER (kanban #843): no step left in the address, and focus on the section it opened
+  const hash = new URLSearchParams(location.hash.slice(1));
+  if (hash.has('step')) { hash.delete('step'); history.replaceState(history.state, '', location.pathname + location.search + (hash.toString() ? '#' + hash : '')); }
   drawArea();
   // the public dashboard is the menu's last entry now (kanban #733): the line under the page is for the screens before the login
   $('public-line').hidden = true;
+  const heading = $('view').querySelector('section:not([hidden]) h2');
+  if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
+  if (!kept) need('kept', 'warn', 'This browser does not keep your login (private mode?): you sign in again after a reload.', 'login');
   setupPanel();
   rolesPanel();
   if (who.how === 'words') keySwitchPanel();   // a node of 24 words may move to their key (kanban #650); a Nostr login has no words here
@@ -642,7 +692,7 @@ async function devClients() {
   // REFERRAL PROGRAMS (kanban #675) are the clients of kind 'referrer': drawn in Referrer, kept out of Donations
   const programs = r && Array.isArray(r.clients) ? r.clients.filter((c) => c.kind === 'referrer') : [];
   if (r && Array.isArray(r.clients)) r = { ...r, clients: r.clients.filter((c) => c.kind !== 'referrer') };
-  if ($('referrer')) O.drawInto($('referrer'), 'ReferrerPanel', { programs, why: r ? null : why, site: 'https://testnet.bitcoin-arena.io', reread: devClients,
+  if ($('referrer')) O.drawInto($('referrer'), 'ReferrerPanel', { programs, why: r ? null : why, site: 'https://testnet.bitcoinarena.io', reread: devClients,
     create: (name) => post('/owner/referrer/setup', signed('referrer/setup', { name })),
     withdraw: (args) => post('/owner/dev/withdraw', signed('dev/withdraw', args)),
     follow: (slug) => { let n = 0; const poll = () => { devClients(); if (++n < 20) setTimeout(poll, 3000); }; setTimeout(poll, 3000); } });
@@ -673,14 +723,20 @@ function showNode(key) {
   const COPY_ICON = '<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5.5" y="5.5" width="8" height="8" rx="1.6"/><path d="M10.5 3.2V3a1.5 1.5 0 0 0-1.5-1.5H3A1.5 1.5 0 0 0 1.5 3v6A1.5 1.5 0 0 0 3 10.5h.2"/></svg>';
   const b = document.createElement('button'); b.type = 'button'; b.className = 'fact-copy copy-ic'; b.title = 'Copy'; b.innerHTML = COPY_ICON; b.setAttribute('aria-label', 'Copy the node key');
   // an icon, not the word (kanban #717, 2026-10-26: "As a copy icon, not as Copy"); a tick for a moment once copied
-  b.onclick = () => { try { navigator.clipboard.writeText(key); b.textContent = '✓'; b.title = 'Copied'; setTimeout(() => { b.innerHTML = COPY_ICON; b.title = 'Copy'; }, 1500); } catch {} };
+  // a refused write says so and selects the key instead of ticking (kanban #852)
+  b.onclick = async () => {
+    let done = true;
+    try { await navigator.clipboard.writeText(key); } catch { done = false; c.textContent = key; const r = document.createRange(); r.selectNodeContents(c); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+    b.textContent = done ? '✓' : '✕'; b.title = done ? 'Copied' : 'Copy failed: the key is selected, copy it by hand';
+    setTimeout(() => { b.innerHTML = COPY_ICON; b.title = 'Copy'; }, done ? 1500 : 4000);
+  };
   chip.append(k, c, b); w.append(chip);
 }
 async function start() {
   areaProps = null; needs.clear();   // a new start draws no old area again
-  $('public-line').hidden = false;
+  $('public-line').hidden = !$('public').hasAttribute('href');
   try { state = await (await fetch(at('/owner'), { cache: 'no-store' })).json(); }
-  catch (e) { $('who').textContent = 'This node did not answer: ' + e.message; return; }
+  catch (e) { $('who').textContent = 'This node did not answer: ' + e.message; loadEnd(); return; }
   boot(90, 'Signing in');
   showNode(state.node);
   // THE OWNER'S LOGIN IS ON THE ARENA SITE (kanban #687, the owner's playtest 2026-10-26 on 1.9.7: "the owner page still points to
@@ -691,7 +747,8 @@ async function start() {
     location.replace(OWNER_SITE + '#node=' + state.node + '&local=' + encodeURIComponent(location.origin));
     return;
   }
-  if (ON_SITE && NODE_KEY && state.node !== NODE_KEY) { $('who').textContent = 'The address announced for ' + NODE_KEY.slice(0, 16) + '… answers as another node (' + String(state.node).slice(0, 16) + '…). Try again in a minute.'; return; }
+  if (ON_SITE && NODE_KEY && state.node !== NODE_KEY) { $('who').textContent = 'The address announced for ' + NODE_KEY.slice(0, 16) + '… answers as another node (' + String(state.node).slice(0, 16) + '…). Try again in a minute.'; loadEnd(); return; }
+  publicLink(at('/Dashboard'), '← Node dashboard');
   let id = null;
   try { id = await identity(); }
   catch (e) { message({ title: 'Your Nostr login did not answer', err: e.message, buttons: [{ label: 'Try again', onClick: () => { me = null; start(); } }, { label: 'Sign out on this browser', onClick: forget }] }); return; }
@@ -699,15 +756,18 @@ async function start() {
   const mine = id.pubkey;
   if (!state.claimed) return claim(mine, state.claimFile);
   if (state.owner !== mine) {
-    message({ title: 'This key is not this node\'s owner', text: 'This node belongs to another key. Sign in with the right 24 words or Nostr key, or forget this one.',
-      buttons: [{ label: 'Sign out on this browser', onClick: forget }] }); return;
+    const typed = !!held;
+    if (typed) { held = null; me = null; }   // never kept, and gone from memory too (kanban #832)
+    message({ title: 'This key is not this node\'s owner', text: typed ? 'This node belongs to another key. Nothing was kept in this browser. Try the right 24 words or Nostr key.'
+      : 'This node belongs to another key. Sign in with the right 24 words or Nostr key, or forget this one.',
+      buttons: [{ label: typed ? 'Try another key' : 'Sign out on this browser', onClick: forget }] }); return;
   }
   return area();
 }
 start();
 </script>
-<!-- the release this node runs, and Bitcoin Arena on X, Discord, Telegram and GitHub (kanban #749, #753; the release only, no build commit: the owner 2026-10-28 "just not the static build number") -->
-<footer class="build"><span id="build"></span><span class="social"><a href="https://x.com/bitcoinarena_io" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on X" title="X"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"/></svg></a><a href="https://discord.gg/tH8SPzyKq" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on Discord" title="Discord"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.211.375-.445.865-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.74 19.74 0 0 0 3.677 4.37a.07.07 0 0 0-.032.028C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.873-1.295 1.226-1.994a.076.076 0 0 0-.042-.106 13.1 13.1 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .078-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.099.246.198.373.292a.077.077 0 0 1-.007.127 12.3 12.3 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.363 1.225 1.993a.076.076 0 0 0 .084.028 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03ZM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.956 2.418-2.157 2.418Zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.946 2.418-2.157 2.418Z"/></svg></a><a href="https://t.me/+KihHE8JhcVM3NDVi" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on Telegram" title="Telegram"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0Zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635Z"/></svg></a><a href="https://docs.bitcoin-arena.io/repos/" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on GitHub" title="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a></span></footer>
+<!-- the release this node runs, and Bitcoin Arena on X, Discord, Telegram and GitHub (kanban #749, #753; the release only, no build commit: 2026-10-28 "just not the static build number") -->
+<footer class="build"><span id="build"></span><span class="social"><a href="https://x.com/bitcoinarena_io" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on X" title="X"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"/></svg></a><a href="https://discord.gg/9zZbASZyue" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on Discord" title="Discord"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.211.375-.445.865-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.74 19.74 0 0 0 3.677 4.37a.07.07 0 0 0-.032.028C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.873-1.295 1.226-1.994a.076.076 0 0 0-.042-.106 13.1 13.1 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .078-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.099.246.198.373.292a.077.077 0 0 1-.007.127 12.3 12.3 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.363 1.225 1.993a.076.076 0 0 0 .084.028 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03ZM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.956 2.418-2.157 2.418Zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.946 2.418-2.157 2.418Z"/></svg></a><a href="https://t.me/+KihHE8JhcVM3NDVi" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on Telegram" title="Telegram"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0Zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635Z"/></svg></a><a href="https://github.com/bitcoinarena" target="_blank" rel="noopener noreferrer" aria-label="Bitcoin Arena on GitHub" title="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a></span></footer>
 <style>/* the Referrer section (kanban #675): a program per card, its two figures, its links to copy */.ref-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}.ref-head h3{margin:0}.ref-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:12px 0}.ref-stats>div{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border:1px solid var(--line,#30363d);border-radius:10px}.ref-stats span{font-size:12px;color:var(--dim,#8b949e)}.ref-stats b{font-size:20px;color:#f7931a}.ref-stats small{color:var(--dim,#8b949e)}.ref-link{display:flex;gap:8px;align-items:center;margin-bottom:8px}.ref-link code{flex:1;min-width:0;overflow-wrap:anywhere;font-size:12px;padding:6px 8px;border:1px solid var(--line,#30363d);border-radius:8px}
 h1 .ver,h2 .ver{font:600 13px system-ui;color:var(--dim,#8b949e);border:1px solid var(--line,#30363d);border-radius:999px;padding:2px 10px;vertical-align:middle;margin-left:6px}h1 .ver:empty{display:none}footer.build{max-width:1100px;margin:28px auto 18px;padding:0 16px;color:var(--dim,#8b949e);font-size:12px;text-align:center}footer.build .social{display:inline-flex;gap:8px;vertical-align:middle}footer.build #build:not(:empty){margin-right:16px}footer.build .social a{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:6px;color:var(--dim,#8b949e)}footer.build .social a:hover,footer.build .social a:focus-visible{color:#f7931a}footer.build .social svg{display:block;width:15px;height:15px;fill:currentColor}</style>
 </body></html>

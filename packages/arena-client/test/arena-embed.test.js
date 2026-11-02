@@ -22,7 +22,7 @@ const HELPERS = [
 const lift = () => pageFunction(KIT, ['BASE', 'window', 'ResizeObserver'], HELPERS, ' return { sizeOnly, boxCss, boxMedia };');
 const OBSERVED = [];
 class FakeObserver { constructor(fn) { this.fn = fn; } observe(el) { OBSERVED.push([this.fn, el]); } }
-const H = lift()('https://testnet.bitcoin-arena.io/', { matchMedia: (q) => ({ media: q, page: true }) }, FakeObserver);
+const H = lift()('https://testnet.bitcoinarena.io/', { matchMedia: (q) => ({ media: q, page: true }) }, FakeObserver);
 
 test('the engine\'s CSS in the box: :root is its <html>, width rules and viewport units are the box\'s, a relative url() the site\'s', () => {
   const css = H.boxCss(':root { --bg: #000 } html.other-game :root{x:1}\n'
@@ -33,7 +33,7 @@ test('the engine\'s CSS in the box: :root is its <html>, width rules and viewpor
     + '@media (pointer: coarse) { e { x: 1 } }\n'
     + '@media (max-width: 560px) and (hover: none) { f { x: 1 } }\n'
     + 'g { background: url(nextblock-icon.svg), url("data:image/png;base64,AA"), url(\'https://x.example/a.png\') } h { margin: 2px 5vmin }',
-  'https://testnet.bitcoin-arena.io/');
+  'https://testnet.bitcoinarena.io/');
   assert.match(css, /^html \{ --bg: #000 \} html\.other-game html\{x:1\}/);
   assert.match(css, /@container arena-box \(max-width: 560px\) \{ a \{ height: 100cqh; width: 46cqw \} \}/);
   assert.match(css, /@container arena-box \(orientation: landscape\) and \(max-height: 500px\) \{ b \{ top: 23\.5cqh \} \}/);
@@ -42,7 +42,7 @@ test('the engine\'s CSS in the box: :root is its <html>, width rules and viewpor
   // what a box cannot answer stays the screen's
   assert.match(css, /@media \(pointer: coarse\) \{ e/);
   assert.match(css, /@media \(max-width: 560px\) and \(hover: none\) \{ f/);
-  assert.match(css, /url\(https:\/\/testnet\.bitcoin-arena\.io\/nextblock-icon\.svg\), url\("data:image\/png;base64,AA"\), url\('https:\/\/x\.example\/a\.png'\)/);
+  assert.match(css, /url\(https:\/\/testnet\.bitcoin-?arena\.io\/nextblock-icon\.svg\), url\("data:image\/png;base64,AA"\), url\('https:\/\/x\.example\/a\.png'\)/);
   assert.match(css, /margin: 2px 5cqmin/);
 });
 
@@ -77,6 +77,6 @@ test('the demo site embeds the kit with its program\'s key, no frame; the how-to
   assert.match(demo, /kit\.setAttribute\('data-ref', key\);/);
   const howto = UI('referral/index.html');
   assert.doesNotMatch(howto, /&lt;iframe/);
-  assert.match(howto, /&lt;script src="https:\/\/testnet\.bitcoin-arena\.io\/arena-embed\.js" data-game="rock-paper-scissors"/);
+  assert.match(howto, /&lt;script src="https:\/\/testnet\.bitcoin-?arena\.io\/arena-embed\.js" data-game="rock-paper-scissors"/);
   assert.match(howto, /The player's wallet is kept in your site's browser storage/);
 });

@@ -58,7 +58,7 @@ test('a collected round\'s lock wallet goes once its collect is done and an hour
   assert.ok(L.getItem(`arena.collect.${R1}`), 'the collect record itself stays');
 });
 
-test('a full browser: what the seed can give back goes, the playing wallet, money and deposits on their way stay (the owner 2026-10-30, 19 kept phrases, "exceeded the quota")', () => {
+test('a full browser: what the seed can give back goes, the playing wallet, money and deposits on their way stay (2026-10-30, 19 kept phrases, "exceeded the quota")', () => {
   const fake = () => { const m = new Map(); return { get length() { return m.size; }, key: (i) => [...m.keys()][i] ?? null, getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { m.set(k, String(v)); }, removeItem: (k) => { m.delete(k); } }; };
   const L = fake();
   const FED2 = 'cd'.repeat(32);
@@ -91,7 +91,7 @@ test('below the pressure line nothing more goes', () => {
   assert.equal(tidyStorage(L, { seeds: ['11'.repeat(32)], current: '11'.repeat(32), federations: [], pressureChars: 3500000 }).removed, 0);
 });
 
-test('a write refused for room frees storage and goes in; with no room to free it still throws, and another error is not swallowed (the owner 2026-10-30)', async () => {
+test('a write refused for room frees storage and goes in; with no room to free it still throws, and another error is not swallowed (2026-10-30)', async () => {
   const { putRoomy, onStorageFull } = await import('../src/page-lock.js');
   let full = true, freed = 0;
   const q = () => Object.assign(new Error('exceeded the quota'), { name: 'QuotaExceededError' });
@@ -107,7 +107,7 @@ test('a write refused for room frees storage and goes in; with no room to free i
   onStorageFull(null);
 });
 
-test('a phrase lock with no heartbeat for two minutes is taken over, not asked of a tab that is not there (the owner 2026-10-30)', () => {
+test('a phrase lock with no heartbeat for two minutes is taken over, not asked of a tab that is not there (2026-10-30)', () => {
   const src = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   const at = src.indexOf('A LOCK NO LIVING TAB STANDS BEHIND');
   const ask = src.indexOf("is open in another tab - asking that tab to hand its money over", at);

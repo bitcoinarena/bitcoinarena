@@ -41,7 +41,7 @@ walk(SRC + 'client.js');
 // packages/nextblock/page/ghost-page.js, loaded by the page after this bundle, puts them on ARENACLIENT. §0A.2, kanban #525)
 // THE PROTOCOL RESERVES: the reserve key a version-11 entry pays and its mandatory split - the page asks before a lock
 walk(SRC + 'reserves-page.js');
-// AND PROJECT PROPOSALS: bitcoin-arena.io reads, signs and posts proposals and comments with this bundle
+// AND PROJECT PROPOSALS: bitcoinarena.io reads, signs and posts proposals and comments with this bundle
 walk(SRC + 'funding-page.js');
 walk(SRC + 'donation-gift-page.js');
 // WHEN THE NEXT ROUND STARTS (kanban #690): the market page's line under "No window is open"
@@ -232,7 +232,7 @@ out += '         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchRese
 // stake, and the stake is spent from it.
 out += '         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, useSeatedGateways: useSeatedGateways, seatedGatewaysOf: seatedGatewaysOf, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, joinFundingPlan: joinFundingPlan, notSpendableYet: notSpendableYet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, tidyStorage: tidyStorage, seedRecovers: seedRecovers,\n';
 out += '         withdrawPlayerWallet: withdrawPlayerWallet,\n';
-out += '         saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,\n';
+out += '         onStorageRefused: onStorageRefused, packWallets: packWallets, scanLostDeposits: scanLostDeposits, saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,\n';
 // AND THE ROUND'S CLOSE, which ends a reloaded tab's resume (keptLockUse beforeClose)
 out += '         roundEndMs: roundEndMs,\n';
 out += '         ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes, ledgerHistory: ledgerHistory,\n';
@@ -308,7 +308,7 @@ out += '         checkMarketOutcome: checkMarketOutcome, scalarValueLine: scalar
 // A HEAD-TO-HEAD ROUND: the hidden move, its commitment, its reveal, and the reveals the seats hold
 out += '         hiddenMove: hiddenMove, moveCommitment: moveCommitment, revealMove: revealMove, revealsOfRound: revealsOfRound,\n';
 // THE SEASON BOARD: its lines from a /season answer, and the ask of the game's seats in turn
-out += '         seasonView: seasonView, fetchSeason: fetchSeason, seasonPath: seasonPath, seasonSats: seasonSats, seasonScore: seasonScore,\n';
+out += '         seasonView: seasonView, fetchSeason: fetchSeason, fetchSeasonSnapshot, seasonPath: seasonPath, seasonSats: seasonSats, seasonScore: seasonScore,\n';
 out += '         SEASON_DAYS_CHOICES: SEASON_DAYS_CHOICES, SEASON_POLL_MS: SEASON_POLL_MS,\n';
 // A PLAYER'S BADGES ON THE BOARD: the merge of the badge seats' awards, their words, and the board's book
 out += '         badgeBook: badgeBook, mergeBadgeAwards: mergeBadgeAwards, readBadgeDefinition: readBadgeDefinition, badgeTitle: badgeTitle,\n';

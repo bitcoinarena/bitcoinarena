@@ -76,7 +76,7 @@ const rand = (n) => new Uint8Array(randomBytes(n));
   globalThis.fetch = async (u, o) => { for (let i = 0; ; i++) { try { return await once(u, o); }
     catch (e) { if (i >= 2 || !/fetch failed/.test(String(e && e.message))) throw e; await new Promise((ok) => setTimeout(ok, 1000)); } } }; }
 // A SEAT'S /play AT ITS OWN ADDRESS (the fixture's say() opens ws://127.0.0.1:<port>/play, so with NODES naming the
-// test host's seats every batch and mark went to a local port nothing listens on, and those signers never held the run)
+// macOS's seats every batch and mark went to a local port nothing listens on, and those signers never held the run)
 const sayAt = (node, message) => new Promise((resolve, reject) => {
   const ws = new WebSocket(`${String(node).replace(/^http/, 'ws').replace(/\/+$/, '')}/play`);
   const t = setTimeout(() => { try { ws.close(); } catch { /* closed */ } reject(new Error('no answer in 20 s')); }, 20000);
@@ -88,6 +88,8 @@ const saidOf = (got) => (got instanceof Uint8Array ? (got.length === SIGNED_RECE
 const run = (bin, args) => new Promise((done) => execFile(bin, args, { timeout: 240000 },
   (err, out, errOut) => done({ ok: !err, out: String(out), err: String(errOut || (err && err.message) || '') })));
 const payer = (...a) => run(env.LNCLI, [`--lnddir=${env.PAYER_DIR}`, `--rpcserver=${env.PAYER_RPC}`, `--network=${env.ARENA_TN4_NETWORK || 'testnet4'}`, ...a]);
+// A PRIVATE CHAIN'S OWN GENESIS (kanban #397): ANCHOR_HASH=<block hash hex, display order> on a devnet, where no compiled-in anchor names the chain. A page never has this
+const anchorAt = env.ANCHOR_HASH ? { hash: Uint8Array.from(Buffer.from(env.ANCHOR_HASH, 'hex')).reverse(), height: Number(env.ANCHOR_HEIGHT || 0) } : null;
 const scalar = () => { for (;;) { const s = rand(32); const v = scalarFrom32(s); if (v > 0n && v < FIELD) return s; } };
 // the player's key with its secret: a winner collects its payout and its stake under it (redeemPayout / redeemStake)
 const evenPlayer = () => { let k; do { k = secp256k1.utils.randomSecretKey(); } while (secp256k1.getPublicKey(k, true)[0] !== 0x02); return { secret: k, pubkey: schnorr.getPublicKey(k) }; };
@@ -170,7 +172,7 @@ try {
     let lastWhy = null;
     for (const until = Date.now() + 60000; ;) {
       try {
-        const got = await clientSettlementSignerNodes(env.ROUND, c0, nodes, { curve: pageCurve });
+        const got = await clientSettlementSignerNodes(env.ROUND, c0, nodes, { curve: pageCurve, ...(anchorAt ? { anchorAt } : {}) });
         const st = got.derived.seating || {};
         seatedKeys = [...(st.game && st.game.seated) || [], ...(st.settlement && st.settlement.seated) || []];
         log({ step: 'seated', signerNodes: got.signerNodes.length, agreed: got.agreed,

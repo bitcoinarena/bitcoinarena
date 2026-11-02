@@ -38,7 +38,7 @@ export function nextRoundAfter(played, rows, nowMs = Date.now()) {
   const start = Number(played.startTimeMs);
   const candidates = (rows || []).filter((r) => r && r.joinable
     && !!r.free === (stake === 0n) && (r.free || big(r.stakeMsat) === stake)
-    // A ROUND ALREADY RUNNING IS NOT ENTERED BY ITSELF (kanban #827, the owner 2026-10-31: "wenn man zum Ziel kommt werde ich zum Anfang zurück katapultiert"):
+    // A ROUND ALREADY RUNNING IS NOT ENTERED BY ITSELF (kanban #827, 2026-10-31: "wenn man zum Ziel kommt werde ich zum Anfang zurück katapultiert"):
     // a late join starts the core the moment it opens, so the truck left the goal for the next round's bay under the result card. Late join stays what PLAY in the lobby does.
     && Number(r.startTimeMs) > start && Number(r.startTimeMs) > nowMs && Number(r.entryCloseMs) > nowMs + NEXT_ROUND_MARGIN_MS);
   candidates.sort((a, b) => Number(a.startTimeMs) - Number(b.startTimeMs));

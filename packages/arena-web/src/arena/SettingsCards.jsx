@@ -134,12 +134,20 @@ export class CommunityCard extends React.Component {
   }
 }
 
-// YOUR REFERRAL LINK (kanban #681, 2026-10-26: "A user may also use a referrer code and link to testnet.bitcoin-arena.io. He gets 10% of
+// YOUR REFERRAL LINK (kanban #681, 2026-10-26: "A user may also use a referrer code and link to testnet.bitcoinarena.io. He gets 10% of
 // the node's income"): this wallet's own link - its key is the player's identity key, nothing to set up - Copy, and what it earned so
 // far as the page read it from the seats. Copy is the page's (it also names the program on the seats); the card says its answer.
+// THREE PERSONAL INVITES (kanban #926 item 6): the referral link with a tag each, which the stats read and the page then takes out of the address
+export const invites = (link) => [1, 2, 3].map((n) => `${link}${link.includes('?') ? '&' : '?'}utm_source=invite&utm_medium=referral&utm_content=tester-${n}`);
 export class ReferralCard extends React.Component {
   constructor(props) { super(props); this.state = { said: '' }; }
   async copy() { this.setState({ said: await this.props.onCopy() }); }
+  async share(url) {
+    try {
+      if (navigator.share) { await navigator.share({ title: 'Bitcoin Arena', text: 'Play on testnet with free test sats.', url }); return; }
+      await navigator.clipboard.writeText(url); this.setState({ said: 'Copied.' });
+    } catch { /* the sheet was closed */ }
+  }
   render() {
     const { link, earned = '' } = this.props;
     return (<>
@@ -151,6 +159,14 @@ export class ReferralCard extends React.Component {
       </div> : <div className="muted">Open or create your wallet first.</div>}
       <div className="muted" id="arena-referral-earned">{earned}</div>
       <div className="muted">{this.state.said}</div>
+      {link ? <>
+        <h3>Invite testers</h3>
+        <div className="muted">One link for each person you invite, so you can see which invite worked. No key is in a link.</div>
+        {invites(link).map((u, i) => <div className="name-row" key={u}>
+          <input id={`arena-invite-${i + 1}`} type="text" readOnly aria-label={`Invite link ${i + 1}`} value={u} onFocus={(e) => e.target.select()} />
+          <button type="button" onClick={() => this.share(u)}>Share</button>
+        </div>)}
+      </> : null}
       <a href="/referral/" target="_blank" rel="noopener" style={{ color: '#c9a8ff' }}>How the referral program works →</a>
     </>);
   }

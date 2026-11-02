@@ -88,7 +88,7 @@ test('the rescan: progress on the button and the bar while it runs, then what ca
 // YOUR REFERRAL LINK (kanban #681): the wallet's own link with Copy, what it earned as the page says it, and the page's answer to Copy;
 // no wallet yet, no link
 test('the referral link: the link, Copy, what it earned, the answer; none before a wallet', async () => {
-  const link = 'https://testnet.bitcoin-arena.io/?ref=02' + 'ab'.repeat(32);
+  const link = 'https://testnet.bitcoinarena.io/?ref=02' + 'ab'.repeat(32);
   const c = live(ReferralCard, { link, earned: 'Earned so far: 12 sat from 3 payouts.', onCopy: async () => 'Copied.' });
   let h = html(c);
   assert.match(h, /<h3>Referral link<\/h3>/);

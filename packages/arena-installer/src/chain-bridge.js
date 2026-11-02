@@ -21,7 +21,7 @@ import { electrumSession, TESTNET4_GENESIS } from './chain-test.js';
 
 // OURS FIRST (kanban #656): the Arena's block API (tools/chain-api.mjs on its public-chain testnet4 node), then mempool.space - each
 // block checked against its header whichever answers
-export const ARENA_ESPLORA = 'https://seat.example.com/esplora';
+export const ARENA_ESPLORA = 'https://tn4.bitcoinarena.io/esplora';
 export const ESPLORA_TESTNET4 = 'https://mempool.space/testnet4/api';
 export const ESPLORAS_TESTNET4 = Object.freeze([ARENA_ESPLORA, ESPLORA_TESTNET4]);
 export const BLOCK_CACHE_BYTES = 200 * 1048576;

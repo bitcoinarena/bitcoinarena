@@ -88,7 +88,7 @@ test('bitcoinarena nodes: each node, running or not, as lines or JSON with its d
     const j = JSON.parse(out.pop());
     assert.deepEqual(j.map((x) => [x.instance, x.running, x.key]), [['', true, 'cd'.repeat(32)], ['b', false, null]]);
     assert.equal(j[0].dashboard, `http://127.0.0.1:${port}/dashboard`);
-    assert.equal(j[0].owner, `https://testnet.bitcoin-arena.io/owner/#node=${'cd'.repeat(32)}&local=${encodeURIComponent(`http://127.0.0.1:${port}`)}`);
+    assert.equal(j[0].owner, `https://testnet.bitcoinarena.io/owner/#node=${'cd'.repeat(32)}&local=${encodeURIComponent(`http://127.0.0.1:${port}`)}`);
     assert.equal(await main(['nodes'], { home: join(m.env.HOME, '.bitcoinarena'), io, deps: { platform: 'linux', env: m.env } }), 0);
     assert.match(out.join('\n'), /● running .* port \d+ .*\.bitcoinarena\n○ stopped .* b +port 1 /);
     // add-nodes: the installer's --add-nodes for this node's home
@@ -114,9 +114,9 @@ test('bitcoinarena sign-in-all: one hand-over for every node with a key, its lin
     const code = await main(['sign-in-all'], { home: one, io: { out: (l) => out.push(l), err: (l) => out.push(`ERR ${l}`) },
       deps: { platform: 'linux', env: m.env, openUrl: async (u) => opened.push(u), handoff: async (o) => { handed.push(o); return 'http://127.0.0.1:41001/t'; } } });
     assert.equal(code, 0);
-    assert.deepEqual(handed.map((h) => [h.all, h.target]), [[true, `https://testnet.bitcoin-arena.io/owner/#node=${'a1'.repeat(32)}&local=http%3A%2F%2F127.0.0.1%3A8470&owner-handoff`]]);
+    assert.deepEqual(handed.map((h) => [h.all, h.target]), [[true, `https://testnet.bitcoinarena.io/owner/#node=${'a1'.repeat(32)}&local=http%3A%2F%2F127.0.0.1%3A8470&owner-handoff`]]);
     assert.deepEqual(opened, ['http://127.0.0.1:41001/t']);
-    assert.match(out.join('\n'), /Signing you in on 2 owner page\(s\) at once[\s\S]*Node 1: https:\/\/testnet\.bitcoin-arena\.io\/owner\/#node=a1a1[\s\S]*Node b: https:\/\/testnet\.bitcoin-arena\.io\/owner\/#node=b2b2/);
+    assert.match(out.join('\n'), /Signing you in on 2 owner page\(s\) at once[\s\S]*Node 1: https:\/\/testnet\.bitcoin-?arena\.io\/owner\/#node=a1a1[\s\S]*Node b: https:\/\/testnet\.bitcoin-?arena\.io\/owner\/#node=b2b2/);
   } finally { rmSync(m.root, { recursive: true, force: true }); }
 });
 

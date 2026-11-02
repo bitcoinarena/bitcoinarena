@@ -7,7 +7,7 @@
 // same `chartView` words the HUD is handed - and then asks the page what it has drawn. A reader that only checked
 // that the words exist would be measuring the core twice and the client not at all.
 //
-// The page is the Daily on the owner's test host (HARD 2026-09-18 19:05: live Chrome runs there, CDP 9341/9342 forwarded
+// The page is the Daily on the owner's macOS (HARD 2026-09-18 19:05: live Chrome runs there, CDP 9341/9342 forwarded
 // by monitoring/arena_mac_playtest.sh). With no page reachable this test FAILS rather than skipping: O4 is a red row,
 // and a silent skip would read as an answer.
 import test from 'node:test';
@@ -22,7 +22,7 @@ import { WebSocket } from 'ws';
 // 9352; ARENA_CDP_PORT still overrides. Measured against 9351 with the Daily
 // open: 1 pass, 18.2 s.
 const PORT = Number(process.env.ARENA_CDP_PORT || 9351);
-const PAGE = process.env.ARENA_PAGE || 'https://testnet.bitcoin-arena.io/';
+const PAGE = process.env.ARENA_PAGE || 'https://testnet.bitcoinarena.io/';
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** The few CDP calls this needs, against a browser somebody else is running. */

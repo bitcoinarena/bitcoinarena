@@ -6,7 +6,7 @@
 // final becomes final within seconds, which is why the retry exists); later ones wait longer, up to a minute.
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { LockSettlement } from '../src/settlement.js';
+import { LockSettlement, planOutOfReach, PLAN_OUT_OF_REACH_OFFERS } from '../src/settlement.js';
 
 function refusingSeat() {
   const seat = { planRetries: new Map(), retryTimers: new Set(), offers: [] };
@@ -40,5 +40,24 @@ test('a round still refused keeps being offered, a minute apart, until its bound
     for (let t = 0; t < 3 * 3600 * 1000; t += 1000) { mock.timers.tick(1000); await new Promise((r) => setImmediate(r)); }
     assert.equal(seat.offers.length, 120, 'the bound of 120 offers is kept');
     assert.ok(seat.offers[119] - seat.offers[0] > 3600 * 1000, 'spread over more than an hour, not two minutes');
+  } finally { mock.timers.reset(); }
+});
+
+test('a plan the seats cannot sign for want of the series stops after 16 offers, any other refusal keeps its 120 (kanban #970)', async () => {
+  const noSeries = 'a: settlement refused: that round names series 5da5a619de27bd95, and this node holds no such series';
+  assert.equal(planOutOfReach({ agreed: 1, needed: 5, refused: Array(13).fill(noSeries) }), true);
+  assert.equal(planOutOfReach({ agreed: 1, needed: 5, refused: [...Array(10).fill(noSeries), ...Array(3).fill('b: not final yet')] }), true, '1 + 3 never make 5');
+  assert.equal(planOutOfReach({ agreed: 1, needed: 5, refused: [...Array(9).fill(noSeries), ...Array(4).fill('b: not final yet')] }), false, '1 + 4 may still make 5');
+  assert.equal(planOutOfReach({ agreed: 1, needed: 5, refused: Array(13).fill('b: not final yet') }), false, 'no series is missing');
+  mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  try {
+    const seat = { planRetries: new Map(), retryTimers: new Set(), offers: [] };
+    seat.retryPlan = LockSettlement.prototype.retryPlan.bind(seat);
+    seat.settle = async (rid) => { seat.offers.push(Date.now()); seat.retryPlan(rid, { most: PLAN_OUT_OF_REACH_OFFERS }); return { ok: false, why: 'x' }; };
+    seat.retryPlan(new Uint8Array(32).fill(3), { most: PLAN_OUT_OF_REACH_OFFERS });
+    for (let t = 0; t < 3600; t += 1) { mock.timers.tick(1000); await new Promise((r) => setImmediate(r)); }
+    assert.equal(seat.offers.length, PLAN_OUT_OF_REACH_OFFERS);
+    const spanMin = (seat.offers[15] - seat.offers[0]) / 60000;
+    assert.ok(spanMin > 9 && spanMin < 13, `about 11 minutes, measured ${spanMin}`);
   } finally { mock.timers.reset(); }
 });

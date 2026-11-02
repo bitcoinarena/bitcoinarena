@@ -14,14 +14,19 @@ export async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher
   const fed = toHex(federationId);
   const said = new Map();
   const asked = [...new Set((nodes || []).map((n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')))];
-  await Promise.all(asked.map(async (base) => {
-    try {
-      const r = await fetcher(`${base}/reserves`, { signal: AbortSignal.timeout(timeoutMs) });
-      if (!r.ok) return;
-      const f = ((await r.json()).federations || []).find((x) => x.federationId === fed && /^0[23][0-9a-f]{64}$/.test(String(x.key || '')));
-      if (f) said.set(f.key, (said.get(f.key) || 0) + 1);
-    } catch { /* a node that does not answer names nothing */ }
-  }));
+  // DONE AS SOON AS ENOUGH AGREE (kanban #926, measured 2026-11-01: an 8 s round was gone while the page waited out the slowest of the round's nodes): the slower ones are not waited for
+  await new Promise((done) => {
+    let left = asked.length;
+    if (!left) done();
+    for (const base of asked) (async () => {
+      try {
+        const r = await fetcher(`${base}/reserves`, { signal: AbortSignal.timeout(timeoutMs) });
+        if (!r.ok) return;
+        const f = ((await r.json()).federations || []).find((x) => x.federationId === fed && /^0[23][0-9a-f]{64}$/.test(String(x.key || '')));
+        if (f) { said.set(f.key, (said.get(f.key) || 0) + 1); if (said.get(f.key) >= needed) done(); }
+      } catch { /* a node that does not answer names nothing */ }
+    })().finally(() => { left -= 1; if (!left) done(); });
+  });
   const best = [...said.entries()].sort((a, b) => b[1] - a[1])[0];
   if (!best) return { ok: false, why: `none of the round's ${asked.length} signer nodes names a reserve key for federation ${fed.slice(0, 8)}` };
   if (best[1] < needed) return { ok: false, why: `only ${best[1]} of the round's signer nodes name reserve key ${best[0].slice(0, 16)}, and ${needed} must` };
@@ -29,7 +34,7 @@ export async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher
 }
 
 /**
- * THE FEDERATIONS NO ENTRY CAN PAY INTO (the owner 2026-10-30, the second time at a table of federation 337ae01a: "Order not placed: this round pays
+ * THE FEDERATIONS NO ENTRY CAN PAY INTO (2026-10-30, the second time at a table of federation 337ae01a: "Order not placed: this round pays
  * the protocol reserves, and none of the round's 14 signer nodes names a reserve key"): a federation at least `minAnswers` nodes list on
  * GET /reserves and none names a key for. Too few answers, or a page that could not ask, holds nothing back. Answers a Set of federation hex.
  */
@@ -48,7 +53,7 @@ export function keylessFederations(answers, { minAnswers = 3 } = {}) {
 }
 
 /**
- * THE FEDERATIONS THE PAGE DOES NOT PAY INTO (the owner 2026-10-30: "Wenn die Federation nicht aktiv ist, soll er in der UI auch nicht versuchen mit der zu
+ * THE FEDERATIONS THE PAGE DOES NOT PAY INTO (2026-10-30: "Wenn die Federation nicht aktiv ist, soll er in der UI auch nicht versuchen mit der zu
  * bezahlen"): `statuses`, the Map of ARENA_FED_LOADS, federation -> { status, allows }. One whose record this page could not verify, or that takes no
  * entries. A federation not read yet is not named, and when no federation at all stands OPEN the read failed, not the network: none is named.
  */
@@ -59,7 +64,7 @@ export function inactiveFederations(statuses) {
 }
 
 /**
- * WHY THIS WALLET CANNOT PLAY WITH ITS BALANCE (the owner 2026-10-30: "If it's unavailable to play because the funds are locked it should say so in a
+ * WHY THIS WALLET CANNOT PLAY WITH ITS BALANCE (2026-10-30: "If it's unavailable to play because the funds are locked it should say so in a
  * message"): the part of the wallet held in federations no entry can pay into. `parts`: the wallet's [{ federation, sats }]. Null when none is.
  */
 export function keylessFundsLine({ parts, keyless, expected = {}, tip = 0, blockMinutes = 10 } = {}) {
@@ -70,7 +75,7 @@ export function keylessFundsLine({ parts, keyless, expected = {}, tip = 0, block
   if (!stuck.length) return null;
   const sats = stuck.reduce((n, p) => n + Number(p.sats), 0);
   const where = [...new Set(stuck.map((p) => String(p.federation).slice(0, 8)))].join(', ');
-  // WHEN IT CAN BE PLAYED (the owner 2026-10-30: "Sage, ab wann es funktionieren wird in der Meldung"): the block the site names for the federation
+  // WHEN IT CAN BE PLAYED (2026-10-30: "Sage, ab wann es funktionieren wird in der Meldung"): the block the site names for the federation
   const at = Math.max(0, ...stuck.map((p) => Number(expected[fullOf(p.federation)]) || 0));
   const left = at && tip ? at - tip : 0;
   const hours = left > 0 ? Math.max(1, Math.round((left * blockMinutes) / 60)) : 0;
@@ -98,7 +103,7 @@ export function reservesDonation(stakeMsat, split = ROUND_SPLIT_BPS) {
 export const reservesDonationForRound = (round) => reservesDonation(stakeOf(round), round && round.feeSet ? roundSplitBps(round.feeSet) : ROUND_SPLIT_BPS);
 
 /**
- * THE RESERVES' TOTAL ON THE PAGE (§27A.9.2,: "testnet.bitcoin-arena.io shows the total and the latest
+ * THE RESERVES' TOTAL ON THE PAGE (§27A.9.2,: "testnet.bitcoinarena.io shows the total and the latest
  * payments in"): GET /reserves on the network's nodes; a total is shown only when at least `needed` of them answer the same one,
  * and its payments in are those nodes' own list, newest first. Answers { ok, totalMsat, entries, paidIn, agreeing, asked } or why not.
  */

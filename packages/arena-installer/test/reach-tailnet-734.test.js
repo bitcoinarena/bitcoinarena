@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A MACHINE THE INTERNET CANNOT REACH DIRECTLY, ON A TAILNET, IS POINTED AT TAILSCALE FUNNEL (kanban #734, measured 2026-10-29 on the
-// test host: behind the home router with no forward the seats answered reached:false for 46.22.17.30:6221, and asked over the tailnet they
+// macOS: behind the home router with no forward the seats answered reached:false for 46.22.17.30:6221, and asked over the tailnet they
 // refused 127.0.0.1 as not a public address). The check never claims direct reach, opens no port, and says what it cannot do.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

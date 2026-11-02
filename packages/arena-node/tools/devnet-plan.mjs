@@ -20,7 +20,7 @@
 // EVERY PORT BELOW 32768, outside the ephemeral range Linux and macOS hand to outbound sockets (an lnd once lost its listen
 // port to one; docs in tools/tn4-tools-regtest.sh), and none of the ports the live stacks hold: signal-cli's 8080, OpenClaw's
 // 18789, the seats and guardians of both testnet4 federations, the live bitcoinds, lnd-testnet4, the harness metrics and the
-// test host's gateway and arbiter. A base that would land on one is refused by name before anything starts.
+// macOS's gateway and arbiter. A base that would land on one is refused by name before anything starts.
 export const NODE_COUNT = 7;
 
 /** Ports and ranges a devnet may never bind: [from, to, whose]. */

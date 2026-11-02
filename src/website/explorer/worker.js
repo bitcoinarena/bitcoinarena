@@ -1,5 +1,5 @@
-// THE ARENA'S TRANSACTION EXPLORER, explorer.bitcoin-arena.io (kanban #624, 2026-10-24: "each order that was executed gets a transaction
-// id in upordown and in the account history. They point to explorer.bitcoin-arena.io which records all transactions. They query nodes in the
+// THE ARENA'S TRANSACTION EXPLORER, explorer.bitcoinarena.io (kanban #624, 2026-10-24: "each order that was executed gets a transaction
+// id in upordown and in the account history. They point to explorer.bitcoinarena.io which records all transactions. They query nodes in the
 // background for new transactions but maintains a local cache for faster loading. Also records the timing info we already display there and
 // all relevant data. Also timings for all other apps."; "It should all be cached not be fetched from a node"; "You should do that for each
 // tx not just on the fly"). A transaction's id is its entry id, the same at every seat.
@@ -395,6 +395,9 @@ async function inline(env, request, data) {
   return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
 }
 
+// THE OLD DOMAIN (kanban #937): every (sub)domain of it sends to the same place on the new one, path and query kept
+const OLD_DOMAIN = /(^|\.)bitcoin-arena\.io$/;
+const moved = (url) => { if (!OLD_DOMAIN.test(url.hostname)) return null; const to = new URL(url); to.hostname = url.hostname.replace(/bitcoin-arena\.io$/, 'bitcoinarena.io'); return Response.redirect(to.toString(), 308); };
 export default {
   // the health copy on its own trigger (kanban #686): its own run, so its fetches do not count against the transactions' read
   async scheduled(event, env, ctx) {
@@ -402,6 +405,7 @@ export default {
   },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+  { const went = moved(url); if (went) return went; }
     if (url.pathname === '/robots.txt') return new Response('User-agent: *\nAllow: /\n', { headers: { 'content-type': 'text/plain' } });
     if (url.pathname === '/api/recent') return json(await recent(env, url.searchParams), { maxAge: 10 });
     if (url.pathname === '/api/metrics') return json(await metrics(env), { maxAge: 30 });

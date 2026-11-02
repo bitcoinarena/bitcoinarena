@@ -146,7 +146,7 @@ for BIN in gatewayd fedimintd fedimint-cli fedimint-dbtool arena-stake-lock; do
   F="$BIN-$KEY$EXE"
   if [ ! -f "$CACHE/$F" ] || ! echo "$PIN  $CACHE/$F" | sha256sum -c --status; then
     if [ -n "${ARENA_CUSTODY_DIR:-}" ]; then cp "$ARENA_CUSTODY_DIR/$F" "$CACHE/$F.part"
-    else gh release download "$CUSTODY_TAG" --repo bitcoin-arena/bitcoin-arena -p "$F" -O "$CACHE/$F.part" --clobber; fi
+    else gh release download "$CUSTODY_TAG" --repo bitcoinarena/bitcoinarena -p "$F" -O "$CACHE/$F.part" --clobber; fi
     echo "$PIN  $CACHE/$F.part" | sha256sum -c --status || { echo "$F: checksum mismatch" >&2; rm -f "$CACHE/$F.part"; exit 1; }
     mv "$CACHE/$F.part" "$CACHE/$F"
   fi

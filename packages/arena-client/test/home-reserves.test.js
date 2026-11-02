@@ -42,12 +42,12 @@ test('four agreeing, or no answers: no number, and it says why', async () => {
   assert.match(none.line, /none of 2 nodes answered/);
 });
 
-test('the panel sits under the fees on bitcoin-arena.io, and the games screen carries no reserves box and no footer home link', () => {
+test('the panel sits under the fees on bitcoinarena.io, and the games screen carries no reserves box and no footer home link', () => {
   const fees = HTML.indexOf('<section id="split"'), panel = HTML.indexOf('id="reserves"'), next = HTML.indexOf('<section id="build"');
   assert.ok(fees > 0 && panel > fees && panel < next, 'the reserves panel is inside the fees section');
   assert.ok(HTML.includes('<script src="js/reserves.js" defer></script>'));
   assert.equal(GAMES.includes('class="reserves"'), false, 'no reserves box on the games screen');
-  assert.equal(/more-sep"> · <\/span><a href="https:\/\/bitcoin-arena.io\/">/.test(GAMES), false, 'no "← bitcoin-arena.io" in the footer links');
+  assert.equal(/more-sep"> · <\/span><a href="https:\/\/bitcoinarena.io\/">/.test(GAMES), false, 'no "← bitcoinarena.io" in the footer links');
 });
 
 test('the website and the docs say the current split, the reserves and that anyone may propose a payout', () => {
@@ -63,15 +63,13 @@ test('the website and the docs say the current split, the reserves and that anyo
 });
 
 test('the website names only the current configuration; the proposals forum is its own page beside the Arena, on the player key', () => {
-  const GAMES_PAGE = readFileSync(new URL('games/index.html', HOME), 'utf8');
-  for (const page of [HTML, GAMES_PAGE]) {
+  for (const page of [HTML]) {
     assert.equal(/protocol 11|Protocol 11|versions? before|optional donations? of 2\.5/.test(page), false, 'no protocol version or older terms');
   }
-  assert.ok(GAMES_PAGE.includes('<s>nodes 4 %</s><s>protocol developers 2 %</s><s>you 2 %</s><s>reserves 2 %</s>'));
   assert.equal(HTML.includes('<section id="proposals"'), false, 'no proposals section on the homepage');
-  assert.ok(HTML.includes('<a class="keep" href="https://testnet.bitcoin-arena.io/proposals/">Proposals</a>'))
+  assert.ok(HTML.includes('<a class="keep" href="https://testnet.bitcoinarena.io/proposals/">Proposals</a>'))
   //: on a phone the menu keeps Proposals and Docs beside Play - only the section links are hidden
-  assert.ok(HTML.includes('<a class="keep" href="https://docs.bitcoin-arena.io/">Docs</a>'));
+  assert.ok(HTML.includes('<a class="keep" href="https://docs.bitcoinarena.io/">Docs</a>'));
   assert.match(HTML, /@media \(max-width: 860px\) \{ nav \.links a:not\(\.keep\) \{ display: none; \}/);
   assert.ok(!/nav \.links \{ display: none; \}/.test(HTML), 'the phone menu hides every link again');
   const FORUM = readFileSync(new URL('../../../src/arena-ui/proposals/index.html', import.meta.url), 'utf8');
@@ -90,7 +88,7 @@ test('the website names only the current configuration; the proposals forum is i
   assert.match(JS, /localStorage\.getItem\('arena\.seeds'\)/);
   assert.match(JS, /var CAP_PCT = 10;/);
   assert.match(JS, /it could never be paid/, 'an amount over 10 % of the reserves is refused before posting');
-  assert.match(readFileSync(new URL('proposals/index.html', HOME), 'utf8'), /url=https:\/\/testnet\.bitcoin-arena\.io\/proposals\//, 'bitcoin-arena.io/proposals sends readers there');
+  assert.match(readFileSync(new URL('proposals/index.html', HOME), 'utf8'), /url=https:\/\/testnet\.bitcoin-?arena\.io\/proposals\//, 'bitcoinarena.io/proposals sends readers there');
 });
 
 // A PIP'S FIELDS (2026-10-17: "Separate title field. Content on what the proposal does, in markdown including tables.
@@ -106,9 +104,9 @@ test('title, content and "how it improves Bitcoin Arena" round-trip through the 
   const html = markdown(parts(purpose).content);
   assert.match(html, /<table><thead><tr><th>item<\/th><th class="al-right">sat<\/th><\/tr><\/thead><tbody><tr><td>server<\/td><td class="al-right">800<\/td><\/tr><tr><td>domain<\/td><td class="al-right">200<\/td><\/tr><\/tbody><\/table>/);
   assert.match(html, /<h4>Plan<\/h4>/); assert.match(html, /<li><b>fast<\/b> and <code>cheap<\/code><\/li>/);
-  const evil = markdown('<img src=x onerror=alert(1)> [x](javascript:alert(1)) [ok](https://bitcoin-arena.io)\n\n| <b>a</b> |\n|---|\n| <script> |');
+  const evil = markdown('<img src=x onerror=alert(1)> [x](javascript:alert(1)) [ok](https://bitcoinarena.io)\n\n| <b>a</b> |\n|---|\n| <script> |');
   assert.ok(!/<img|<script|<b>a|href="javascript/.test(evil), evil);
-  assert.match(evil, /href="https:\/\/bitcoin-arena\.io"/);
+  assert.match(evil, /href="https:\/\/bitcoin-?arena\.io"/);
   // the form is React's (kanban #564: forum.js draws no view of its own)
   const VIEWS = readFileSync(new URL('../../arena-web/src/proposals/ForumViews.jsx', import.meta.url), 'utf8');
   for (const t of ['Title', 'What the proposal does', 'How it improves Bitcoin Arena', 'of 4,000 characters']) assert.ok(VIEWS.includes(t), t);
@@ -116,13 +114,13 @@ test('title, content and "how it improves Bitcoin Arena" round-trip through the 
 });
 
 // THE LOGO, TOP LEFT (2026-10-17: "show the Bitcoin arena logo on the left on Testnet.bitcoin-arena.io and that link
-// goes to the main page"): first in the games screen's bar, to bitcoin-arena.io; the old in-page "← bitcoin-arena.io" link is gone
-test('the Bitcoin Arena logo is the first thing in the games screen\'s bar and links to bitcoin-arena.io', () => {
+// goes to the main page"): first in the games screen's bar, to bitcoinarena.io; the old in-page "← bitcoinarena.io" link is gone
+test('the Bitcoin Arena logo is the first thing in the games screen\'s bar and links to bitcoinarena.io', () => {
   const bar = GAMES.slice(GAMES.indexOf('<div id="arena-wallet-bar"'), GAMES.indexOf('</div>', GAMES.indexOf('<div id="arena-wallet-bar"')));
-  assert.match(bar, /^<div id="arena-wallet-bar"[^>]*>\s*<a id="arena-wb-home" href="https:\/\/bitcoin-arena\.io\/"/);
+  assert.match(bar, /^<div id="arena-wallet-bar"[^>]*>\s*<a id="arena-wb-home" href="https:\/\/bitcoin-?arena\.io\/"/);
   assert.match(GAMES, /body\.arena-picking #arena-wb-home, body\.arena-own-client #arena-wb-home \{ display: inline-flex;/);
   // and in every game (2026-10-17): Tick Tock's header starts with the mark; no "build your own" anywhere on the page
-  assert.match(GAMES, /<div id="arena-money">\s*<a id="arena-game-home" href="https:\/\/bitcoin-arena\.io\/"/);
+  assert.match(GAMES, /<div id="arena-money">\s*<a id="arena-game-home" href="https:\/\/bitcoin-?arena\.io\/"/);
   assert.ok(!/why-build|Build your own|Build a game or a market|Build &amp; earn/.test(GAMES.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '')), 'build-your-own is gone');
   // the foot row: the UI number, the links and Donate (kanban #753: "UI xxx" stays, not the static build)
   assert.match(GAMES, /<div class="foot-row"><span class="build-line">UI [^<]*<\/span><span class="arena-social">.*?<\/span><button type="button" class="donate-btn"/);

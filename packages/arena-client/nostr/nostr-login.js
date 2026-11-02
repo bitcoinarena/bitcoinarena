@@ -20,10 +20,10 @@ import { sha256 } from '@noble/hashes/sha2.js';
 
 export const SEED_KIND = 30078;
 export const SEED_D = 'bitcoin-arena/seed';
-// OURS FIRST, then three public relays that keep app data and pass NIP-46 messages (measured from the test host 2026-10-10)
-export const NOSTR_RELAYS = Object.freeze(['wss://relay.bitcoin-arena.io', 'wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net']);
+// OURS FIRST, then three public relays that keep app data and pass NIP-46 messages (measured from the test host 2026-10-10; relay.damus.io answers 520/521 since, kanban #854)
+export const NOSTR_RELAYS = Object.freeze(['wss://relay.bitcoin-arena.io', 'wss://relay.snort.social', 'wss://nos.lol', 'wss://relay.primal.net']);
 // a remote signer listens on these unless its bunker:// link names its own (nsec.app's relay is where most bunkers sit)
-export const SIGNER_RELAYS = Object.freeze(['wss://relay.bitcoin-arena.io', 'wss://relay.nsec.app', 'wss://relay.damus.io']);
+export const SIGNER_RELAYS = Object.freeze(['wss://relay.bitcoin-arena.io', 'wss://relay.nsec.app', 'wss://relay.snort.social']);
 
 const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 const unhex = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) => parseInt(x, 16));
@@ -79,7 +79,7 @@ export async function bunkerSigner(input, { pool, onauth, clientSecret = generat
  * NIP-46 THE OTHER WAY (nostrconnect://, what Amber and most mobile signers scan): the page shows `uri` as a QR code and a
  * link; `signer` resolves once the player's signer answered on those relays.
  */
-export function nostrConnect({ relays = SIGNER_RELAYS, name = 'Bitcoin Arena', url = 'https://bitcoin-arena.io', pool, onauth, maxWait = 300000, clientSecret = generateSecretKey() } = {}) {
+export function nostrConnect({ relays = SIGNER_RELAYS, name = 'Bitcoin Arena', url = 'https://bitcoinarena.io', pool, onauth, maxWait = 300000, clientSecret = generateSecretKey() } = {}) {
   const secret = hex(generateSecretKey()).slice(0, 16);
   const uri = createNostrConnectURI({ clientPubkey: getPublicKey(clientSecret), relays: [...relays], secret, name, url,
     perms: [`sign_event:${SEED_KIND}`, 'sign_event:0', 'nip44_encrypt', 'nip44_decrypt'] });

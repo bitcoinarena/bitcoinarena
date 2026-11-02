@@ -164,7 +164,12 @@ export const startupScript = (name, file) => `' ${name}, written by the installe
   + `CreateObject("WScript.Shell").Run """${file.replace(/"/g, '""')}""", 0, False\r\n`;
 export async function windowsAutostart({ name, file, sh, env = process.env }) {
   const c = await sh('schtasks', windowsTaskArgs({ launcher: file }).map((x) => (x === WINDOWS_TASK ? name : x)));
-  if (c.ok) { await sh('schtasks', ['/run', '/tn', name]); return { ok: true, mode: 'task' }; }
+  if (c.ok) {
+    // A TASK THAT WOULD NOT START IS STARTED BY HAND (kanban #964): the task is Interactive only, and a run refused here used to pass in silence
+    const r = await sh('schtasks', ['/run', '/tn', name]);
+    if (!r.ok) await sh('cmd', ['/c', 'start', '""', '/b', file]);
+    return { ok: true, mode: 'task', started: r.ok ? 'task' : 'direct' };
+  }
   const dir = startupDir(env);
   mkdirSync(dir, { recursive: true });
   const vbs = join(dir, `${name}.vbs`);

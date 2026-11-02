@@ -20,7 +20,7 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: radial-gradient(120% 50% at 50% 0%, rgba(226,103,42,.10), transparent 60%), var(--bg); color: var(--text); font: 400 16px/1.6 Inter, system-ui, sans-serif; }
   a { color: var(--btc); text-decoration: none; } a:hover { text-decoration: underline; }
-  /* THE ARENA'S HEADER AND FOOTER (kanban #700, 2026-10-26: "docs missing footer"; #694, #701): https://testnet.bitcoin-arena.io/site-chrome.js -
+  /* THE ARENA'S HEADER AND FOOTER (kanban #700, 2026-10-26: "docs missing footer"; #694, #701): https://testnet.bitcoinarena.io/site-chrome.js -
      the logo, "← Arena" (it was "Play on testnet") and the menu, the build line and Donate; the way back to the docs above the title */
   .crumb { margin: 0 0 6px; font-size: 14px; } .crumb a { color: var(--dim); }
   .wrap { width: min(1280px, calc(100% - 32px)); margin: 0 auto; }
@@ -45,9 +45,12 @@
   .api-foot .wrap { display: flex; flex-wrap: wrap; gap: 10px 22px; }
   @media (max-width: 640px) { .paper { border-radius: 12px; } }
 </style>
+  <script>/* kanban #943: a visit from X arrives through t.co with no campaign in its link: named here, before the stats script reads the address */if(/^https?:\/\/t\.co(\/|$)/.test(document.referrer)&&!/[?&]utm_/.test(location.search))history.replaceState(history.state,'',location.pathname+(location.search?location.search+'&':'?')+'utm_source=x&utm_medium=social&utm_content=profile'+location.hash)</script>
+  <script defer src="https://stats.bitcoinarena.io/script.js" data-website-id="e67a52be-966d-44a1-9a37-ee1872d65ec5" data-domains="docs.bitcoinarena.io"></script>
+  <script>/* kanban #943: the campaign reached the stats when the script read the address; then it leaves the address, past the script's own history hook, so no second view */addEventListener('load',function(){var n=0,c=function(){if(!window.umami&&n++<50)return setTimeout(c,100);setTimeout(function(){var u=new URL(location.href),k=Array.from(u.searchParams.keys()).filter(function(x){return/^utm_/.test(x)});if(k.length){k.forEach(function(x){u.searchParams.delete(x)});History.prototype.replaceState.call(history,history.state,'',u.pathname+u.search+u.hash)}},500)};c()})</script>
 </head>
 <body>
-<script src="https://testnet.bitcoin-arena.io/site-chrome.js"></script>
+<script src="https://testnet.bitcoinarena.io/site-chrome.js"></script>
 
 <header class="intro wrap">
   <p class="crumb"><a href="/">← Bitcoin Arena docs</a></p>
@@ -64,7 +67,7 @@
 
 <main class="wrap"><div class="paper"><div id="swagger"></div></div></main>
 
-<div class="api-foot"><div class="wrap"><a href="/">← Bitcoin Arena docs</a><a href="https://bitcoin-arena.io/">bitcoin-arena.io</a><a href="openapi.json">openapi.json</a></div></div>
+<div class="api-foot"><div class="wrap"><a href="/">← Bitcoin Arena docs</a><a href="https://bitcoinarena.io/">bitcoinarena.io</a><a href="openapi.json">openapi.json</a></div></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.17.14/swagger-ui-bundle.min.js"></script>
 <script>

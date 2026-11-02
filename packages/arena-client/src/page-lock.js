@@ -31,6 +31,7 @@ import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { roundLocks, playerFor } from './join.js';
 import { encodeRoundContract, decodeRoundContract, roundId as roundIdOf, custodyFieldsAreValid, entryId } from '../../arena-protocol/src/contracts.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
+import { takesDeposits } from '../../arena-protocol/src/known-federations.js';
 import { splitDonation, donationSetPaysKeys } from '../../arena-protocol/src/donation.js';
 
 const namesNothing = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
@@ -51,21 +52,90 @@ export function lockSecretFor(seed, roundId) {
 }
 
 /**
- * A WRITE THE BROWSER REFUSES FOR ROOM (the owner 2026-10-30, order at "locking your stake": a wallet's write that throws QuotaExceededError ends in the lock
+ * A WRITE THE BROWSER REFUSES FOR ROOM (2026-10-30, order at "locking your stake": a wallet's write that throws QuotaExceededError ends in the lock
  * client's panic, and every wallet call of that page then hangs until a reload): `onStorageFull` frees what it can, and the write is tried once more.
  */
+// A WALLET'S KEYS AND VALUES, PACKED (kanban #883, 2026-10-31, iPhone log: 4,992,831 characters in 3,759 keys, a deposit paid and never claimed): the client hands
+// hex, two characters a byte, and iOS Safari gives 5 million characters. 15 bits to a character is under a third of that, and nothing has to be deleted for it.
+const PACKED = '~';
+export function packHex(hex) {
+  const s = String(hex);
+  if (!s || s[0] === PACKED || s.length % 2 || !/^[0-9a-f]+$/.test(s)) return s;
+  const out = []; let acc = 0, bits = 0;
+  for (let i = 0; i < s.length; i++) {
+    acc = (acc << 4) | parseInt(s[i], 16); bits += 4;
+    if (bits >= 15) { bits -= 15; out.push(0x100 + ((acc >> bits) & 0x7fff)); acc &= (1 << bits) - 1; }
+  }
+  const pad = bits ? 15 - bits : 0;
+  if (bits) out.push(0x100 + (acc << pad));
+  let r = PACKED + String.fromCharCode(0x100 + pad);
+  for (let i = 0; i < out.length; i += 4096) r += String.fromCharCode(...out.slice(i, i + 4096));
+  return r;
+}
+export function unpackHex(s) {
+  if (!s || s[0] !== PACKED) return s;
+  const pad = s.charCodeAt(1) - 0x100;
+  const nibbles = ((s.length - 2) * 15 - pad) / 4;
+  const out = new Array(nibbles); let acc = 0, bits = 0, n = 0;
+  for (let i = 2; i < s.length; i++) {
+    acc = (acc << 15) | (s.charCodeAt(i) - 0x100); bits += 15;
+    while (bits >= 4 && n < nibbles) { bits -= 4; out[n++] = ((acc >> bits) & 15).toString(16); }
+    acc &= (1 << bits) - 1;
+  }
+  return out.join('');
+}
+// AND A LONG VALUE ONCE (measured: a federation's config, 68,888 hex, the same bytes in every wallet of it - 55 % of all values; e-cash itself does not compress, zlib saves 3 %)
+const BLOB_PREFIX = 'arena.walletblob.', BLOB_MIN = 2048, BLOB_MARK = '^';
+function keptValue(storage, hex) {
+  const s = String(hex);
+  if (s.length < BLOB_MIN || s.length % 2 || !/^[0-9a-f]+$/.test(s)) return packHex(s);
+  const id = toHex(sha256(fromHex(s))).slice(0, 32);
+  if (storage.getItem(BLOB_PREFIX + id) === null) putRoomy(storage, BLOB_PREFIX + id, packHex(s));
+  return BLOB_MARK + id;
+}
+function valueOf(storage, s) {
+  if (!s || s[0] !== BLOB_MARK) return unpackHex(s);
+  const blob = storage.getItem(BLOB_PREFIX + s.slice(1));
+  if (blob === null) throw new Error(`the wallet's long value ${s.slice(1, 9)} is gone from this browser`);
+  return unpackHex(blob);
+}
+const WALLET_KEY = /^(arena\.(?:walletdb|lockdb)\.[0-9a-f]{16}\.[0-9a-f]{16}\.)(.*)$/s;
+/** EVERY WALLET THIS BROWSER KEEPS, PACKED IN PLACE: nothing is lost, an entry already packed is left. Answers the characters freed. */
+export function packWallets(storage) {
+  if (!storage) return 0;
+  let freed = 0;
+  for (const k of storageKeys(storage)) {
+    const m = WALLET_KEY.exec(k); if (!m) continue;
+    const v = storage.getItem(k); if (v === null) continue;
+    const key = m[1] + packHex(m[2]);
+    const val = v[0] === BLOB_MARK || (v[0] === PACKED && unpackHex(v).length < BLOB_MIN) ? v : keptValue(storage, unpackHex(v));
+    if (key === k && val === v) continue;
+    // the old one first: on a full browser the shorter copy fits only then, and it goes straight back if the browser refuses
+    storage.removeItem(k);
+    try { storage.setItem(key, val); freed += k.length + v.length - key.length - val.length; } catch (e) { storage.setItem(k, v); throw e; }
+  }
+  // a long value no wallet names any more
+  const named = new Set();
+  for (const k of storageKeys(storage)) if (WALLET_KEY.test(k)) { const v = storage.getItem(k); if (v && v[0] === BLOB_MARK) named.add(v.slice(1)); }
+  for (const k of storageKeys(storage)) if (k.startsWith(BLOB_PREFIX) && !named.has(k.slice(BLOB_PREFIX.length))) { freed += k.length + String(storage.getItem(k) || '').length; storage.removeItem(k); }
+  return freed;
+}
 let storageFull = null;
 export function onStorageFull(fn) { storageFull = typeof fn === 'function' ? fn : null; }
+// A WRITE STILL REFUSED IS SAID (kanban #883, 2026-10-31: "Du musst den Fehler abfangen damit es nicht silent failed"): the client panics in its own task and nothing reached the player
+let storageRefused = null;
+export function onStorageRefused(fn) { storageRefused = typeof fn === 'function' ? fn : null; }
 export function putRoomy(storage, key, value) {
   try { storage.setItem(key, value); } catch (e) {
-    if (!storageFull || !/quota/i.test(`${e && e.name} ${e && e.message}`)) throw e;
+    const quota = /quota/i.test(`${e && e.name} ${e && e.message}`);
+    if (!storageFull || !quota) { if (quota && storageRefused) storageRefused(e); throw e; }
     storageFull();
-    storage.setItem(key, value);
+    try { storage.setItem(key, value); } catch (e2) { if (storageRefused) storageRefused(e2); throw e2; }
   }
 }
 
 /**
- * THE PLAYER'S WALLET KEEPS ITS ROOM (the owner 2026-10-30: "Your browser's storage is full", and 1000 sat paid but not claimed: each kept round's lock wallet
+ * THE PLAYER'S WALLET KEEPS ITS ROOM (2026-10-30: "Your browser's storage is full", and 1000 sat paid but not claimed: each kept round's lock wallet
  * takes ~150 KB, 50 kept rounds fill the 5 million characters a browser gives, and the next write of the player's wallet then ends its task). Past
  * LOCK_ROOM_CHARS a round's lock wallet goes on in memory: it is the seed's and the round's, and joined anew when needed. Safari gives half of Chrome's room.
  */
@@ -93,22 +163,23 @@ export function lockStoreFor(storage, roundId, secret) {
     const out = [];
     for (let i = 0; i < storage.length; i++) {
       const k = storage.key(i);
-      if (k && k.startsWith(prefix)) out.push([k.slice(prefix.length), storage.getItem(k)]);
+      if (k && k.startsWith(prefix)) out.push([unpackHex(k.slice(prefix.length)), valueOf(storage, storage.getItem(k))]);
     }
     return out;
   };
+  const drop = (k) => { storage.removeItem(prefix + packHex(k)); storage.removeItem(prefix + k); };
   let inMemory = null;   // the whole database or none of it: a part of one left in storage would not open again
-  const toMemory = () => { const all = kept(); inMemory = new Map(all); for (const [k] of all) storage.removeItem(prefix + k); };
+  const toMemory = () => { const all = kept(); inMemory = new Map(all); for (const [k] of all) drop(k); };
   return {
     entries() { return JSON.stringify(inMemory ? [...inMemory] : kept()); },
     put(k, v) {
       if (!inMemory && storageChars(storage) >= LOCK_ROOM_CHARS) toMemory();
       if (!inMemory) {
-        try { putRoomy(storage, prefix + k, v); return; } catch (e) { if (!/quota/i.test(`${e && e.name} ${e && e.message}`)) throw e; toMemory(); }
+        try { putRoomy(storage, prefix + packHex(k), keptValue(storage, v)); return; } catch (e) { if (!/quota/i.test(`${e && e.name} ${e && e.message}`)) throw e; toMemory(); }
       }
       inMemory.set(k, v);
     },
-    remove(k) { if (inMemory) inMemory.delete(k); else storage.removeItem(prefix + k); },
+    remove(k) { if (inMemory) inMemory.delete(k); else drop(k); },
   };
 }
 
@@ -141,7 +212,7 @@ export const PAYOUT_GRACE_MS = 600000;
 // A SEAT THAT NEVER ANSWERS IS A SEAT THAT SAID NOTHING (measured 2026-10-27: a market bot's collect waited 13 min on one
 // seat that took the connection and never answered): the reads collect makes of every seat give up after 15 s
 const SEAT_READ_MS = 15000;
-// BLOCKS AS TIME (kanban #827, the owner 2026-10-31: "Sag wann das ist, in Xh 3m ETA"): nobody reads a block height as a moment
+// BLOCKS AS TIME (kanban #827, 2026-10-31: "Sag wann das ist, in Xh 3m ETA"): nobody reads a block height as a moment
 export const blocksAsTime = (blocks, secondsPerBlock = 600) => {
   const m = Math.max(1, Math.ceil((Number(blocks) * Number(secondsPerBlock)) / 60));
   return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
@@ -326,7 +397,7 @@ export function tidyStorage(storage, { seeds = [], current = null, federations =
     for (const k of ks) { bytes += (k.length + String(storage.getItem(k) || '').length) * 2; storage.removeItem(k); removed++; }
     wallets++;
   }
-  // A BROWSER STILL FULL (the owner 2026-10-30: "exceeded the quota" on the wallet of federation 4dc88be7 itself, 19 kept phrases: the wallet would not
+  // A BROWSER STILL FULL (2026-10-30: "exceeded the quota" on the wallet of federation 4dc88be7 itself, 19 kept phrases: the wallet would not
   // open, a paid deposit could not be claimed, the order hung): above `pressureChars` what can be had again from the seed goes too. A done round's
   // lock wallet at any age, then the database of a kept phrase that no tab plays with, that holds no known balance, has no e-cash on its way and no
   // deposit waiting in its federation; the phrase stays kept and is marked to recover, so its next open reads it back from the federation. The
@@ -375,7 +446,7 @@ export function tidyStorage(storage, { seeds = [], current = null, federations =
         let known = 0n; try { known = BigInt(storage.getItem(`arena.wallet.known.${o.fed.slice(0, 16)}.${o.hex.slice(0, 16)}`) || 0); } catch { known = 1n; }
         if (known > 0n) continue;
         const ks = storageKeys(storage).filter((k) => k.startsWith(prefix));
-        if (!ks.length || ks.some((k) => waitingOps.some((op) => k.toLowerCase().includes(op)))) continue;
+        if (!ks.length || ks.some((k) => { const tail = unpackHex(k.slice(prefix.length)).toLowerCase(); return waitingOps.some((op) => tail.includes(op)); })) continue;
         take(ks); markSeedRecover(storage, o.hex);
       }
     }
@@ -391,12 +462,12 @@ export function walletStoreFor(storage, federationId, secret) {
       const out = [];
       for (let i = 0; i < storage.length; i++) {
         const k = storage.key(i);
-        if (k && k.startsWith(prefix)) out.push([k.slice(prefix.length), storage.getItem(k)]);
+        if (k && k.startsWith(prefix)) out.push([unpackHex(k.slice(prefix.length)), valueOf(storage, storage.getItem(k))]);
       }
       return JSON.stringify(out);
     },
-    put(k, v) { putRoomy(storage, prefix + k, v); },
-    remove(k) { storage.removeItem(prefix + k); },
+    put(k, v) { putRoomy(storage, prefix + packHex(k), keptValue(storage, v)); },
+    remove(k) { storage.removeItem(prefix + packHex(k)); storage.removeItem(prefix + k); },
   };
 }
 
@@ -868,6 +939,8 @@ export async function playerWithdrawable({ round, invite, seed, LockClient, stor
  */
 export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gateways = [], onDeposit = () => {},
   storage = null, federationId = null, restMsat = null, sizeOf = null, choices = null } = {}) {
+  // THE LAST WORD ON WHERE NEW MONEY GOES (kanban #807): whichever path asked, no invoice is made for a federation that takes no new deposits
+  if (federationId && !takesDeposits(federationId)) throw new Error('this federation takes no new deposits');
   let settle; let fail;
   // WHAT CAME OF IT (option 2, 2026-10-01): once a paid deposit is claimed, the round is looked at again -
   // `outcome` resolves { funded: true } or { funded: false, rest } with the offer for exactly the rest
@@ -953,7 +1026,7 @@ function depositRowOnce(storage, federationId, d) {
  * made just before it must still be in the history): the reopened wallet waits on each kept operation; a claimed one
  * gets its row, and every ended one leaves the list. `onClaimed(d)` for each new row. Spends nothing.
  */
-export function resumeDeposits({ client, storage, federationId, onClaimed = () => {}, others = async () => [] } = {}) {
+export function resumeDeposits({ client, storage, federationId, onClaimed = () => {}, others = async () => [], onLost = () => {} } = {}) {
   const d0 = (p) => ({ invoice: p.invoice, amountMsat: BigInt(p.msat) });
   const ended = (p, final, from = null) => {
     if (final === 'Claimed' && depositRowOnce(storage, federationId, d0(p))) onClaimed({ ...d0(p), ...(from ? { from } : {}) });
@@ -973,8 +1046,39 @@ export function resumeDeposits({ client, storage, federationId, onClaimed = () =
         }
       }
       // THE REASON A RESUME COULD NOT BE READ, said (17:4xZ: it printed only "unknown"); the entry stays, so the next page tries again
+      onLost(p, why);
       return `unknown (operation ${String(p.operation).slice(0, 12)}: ${why.slice(0, 160)})`;
     })));
+}
+/**
+ * THE DEPOSITS THE WALLET'S DATABASE LOST, FOUND AT THE FEDERATION (kanban #883, a full browser: the invoice paid, the operation never written, "Operation not found"). The
+ * federation's incoming contracts are read from the start and each is tried against this wallet's key: only a deposit really paid has one, so what this credits is
+ * what arrived, and `lost` - invoices that may never have been paid - is dropped once the whole stream was read. The federation holds a read at the stream's end: `timeoutMs` ends it.
+ */
+export async function scanLostDeposits({ client, storage, federationId, lost = [], onClaimed = () => {}, timeoutMs = 15000 } = {}) {
+  if (typeof client.scanDeposits !== 'function') return { read: false, msat: 0n, found: 0 };
+  let next = '0', done = false, msat = 0n, foundN = 0;
+  const waits = [];
+  while (!done) {
+    let got;
+    try { got = JSON.parse(await withinMs(client.scanDeposits(next), timeoutMs, 'the federation held the read')); }
+    catch { if (next === '0') return { read: false, msat: 0n, found: 0 }; break; }
+    next = got.next; done = got.done;
+    for (const f of got.found) {
+      foundN++;
+      // BOUNDED, ONE BY ONE (kanban #883, the owner's iPhone: one wait that never ended held the whole scan, so its "done" never came and unpaid invoices stayed in the red line)
+      pendingDrop(storage, federationId, f.operation);
+      waits.push(withinMs(client.awaitReceive(f.operation), 60000, 'the claim did not end').then((final) => {
+        if (final !== 'Claimed') return;
+        msat += BigInt(f.msat);
+        ledgerAppend(storage, federationId, { kind: 'deposit', msat: String(f.msat), invoiceHash: null });
+        onClaimed({ amountMsat: BigInt(f.msat), operation: f.operation });
+      }, () => {}));
+    }
+  }
+  await Promise.all(waits);
+  for (const p of lost) pendingDrop(storage, federationId, p.operation);
+  return { read: true, msat, found: foundN };
 }
 /** A deposit into the player wallet from Settings: the same tabs, this round's stake, no round to fund. */
 export async function settingsDepositOffer({ round, invite, seed, LockClient, storage, gateways = [], donationMsat = 0n, donationRecipients = null, onDeposit = () => {}, onClaimed = () => {} } = {}) {
@@ -995,12 +1099,25 @@ export const WALLET_DEPOSIT_SATS = Object.freeze([1000, 5000, 10000, 50000]);
 export const walletDepositChoices = () => [...WALLET_DEPOSIT_SATS.map((sat) => ({ key: `sat${sat}`, label: `${sat.toLocaleString('en-US')} sat`, rounds: null, msat: BigInt(sat) * 1000n })),
   { key: 'custom', label: 'Custom', rounds: null, msat: null }];
 export async function walletDepositOffer({ federationId, invite, seed, LockClient, storage, gateways = [], onDeposit = () => {}, onClaimed = () => {} } = {}) {
+  if (federationId && !takesDeposits(federationId)) throw new Error('this federation takes no new deposits');   // before a wallet is opened in it (kanban #807)
   const client = await openPlayerWallet({ federationId, invite, seed, LockClient, storage });
   const offer = depositOffer({ client, stakeMsat: 0n, haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit, storage, federationId,
     choices: walletDepositChoices() });
   offer.claimed.then((d) => { depositRowOnce(storage, federationId, d); onClaimed(d); offer.decided({ funded: true }); }, () => {});
   offer.client = client;   // the page keeps it with its other wallets: summed, and its pending deposits waited on (2026-10-20)
   return offer;
+}
+/**
+ * TEST SATS FROM THE FAUCET (kanban #926): the invoice `offer` makes for this wallet, paid by the faucet; `offer.claimed` says when it landed. `account` is a
+ * hash of the seed, so the faucet can pay a welcome once and learns no key. Throws naming why it gave nothing.
+ */
+export const FAUCET_GRANTS = Object.freeze({ welcome: { sats: 500, invoiceMsat: 500000n }, topup: { sats: 250, invoiceMsat: 250000n } });
+export const faucetAccountOf = (seed) => toHex(taggedHash('arena/faucet/account/v1', seed instanceof Uint8Array ? seed : fromHex(String(seed))));
+export async function askFaucet({ url, kind, invoice, seed, fetcher = fetch } = {}) {
+  const r = await fetcher(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind, account: faucetAccountOf(seed), invoice }), signal: AbortSignal.timeout(45000) });
+  const j = await r.json().catch(() => ({ ok: false, why: `the faucet answered ${r.status}` }));
+  if (!j.ok) throw new Error(j.why || 'the faucet gave nothing');
+  return j;
 }
 export const DEPOSIT_MARGIN_PPM = 6000n;
 export const DEPOSIT_MARGIN_MSAT = 10000n;

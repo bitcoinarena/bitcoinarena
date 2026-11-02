@@ -86,7 +86,7 @@ export function beginAddCustody(state) {
 const laterCustody = (s) => Boolean(s.custodyLater && s.bond && s.bond.txid && (s.roles || []).includes('custody') && !s.bond.custodyAdvert);
 /**
  * WHAT THE NODE'S WALLET MUST RECEIVE, BY PART, for the roles chosen (the bond step shows the total from the start - measured on the
- * test host, rc.12: a custody node was told "at least 52,000 sat", the bond alone, while it needs the peg-in and both channels too).
+ * macOS, rc.12: a custody node was told "at least 52,000 sat", the bond alone, while it needs the peg-in and both channels too).
  * Custody added to a node with a bond: no second bond - this update of its advertisement, and later the one naming its federation,
  * the ring channel to the next node of its federation and the outside channel (custody-agent.js). A liquidity provider: its deposit
  * (§23A.10: 5 x L on testnet4), sent to LND's wallet by the node's agent.
@@ -109,7 +109,7 @@ export function depositParts(s, pegInSats) {
 export const SPLIT_FEE_SATS = 500;
 
 /** The Arena faucet (kanban #635): testnet4 coins for a new node, from our own coins - ARENA_FAUCET_URL to point elsewhere. */
-export const FAUCET_URL = process.env.ARENA_FAUCET_URL || 'https://seat.example.com/faucet';
+export const FAUCET_URL = process.env.ARENA_FAUCET_URL || 'https://tn4.bitcoinarena.io/faucet';
 export function withOtherNodes(s, parts, { further = false } = {}) {
   const n = s && s.instances ? Number(s.instances.count) || 1 : 1;
   if (n <= 1 || further) return parts;
@@ -121,7 +121,7 @@ export function withOtherNodes(s, parts, { further = false } = {}) {
 export const seatNeedsRestart = (before, after) => String(before || '') !== String(after || '');
 
 /**
- * A CORE WHOSE PORT ANOTHER PROGRAM HOLDS (kanban #635, the owner's playtest 2026-10-25: his test host's own testnet4 Core held 48342, and
+ * A CORE WHOSE PORT ANOTHER PROGRAM HOLDS (kanban #635, the owner's playtest 2026-10-25: his macOS's own testnet4 Core held 48342, and
  * the installer's Core exited at every start): free ports chosen, its bitcoin.conf written again, its service started again, the new
  * address kept in the state. Used by the Bitcoin step's status and by the chain-switch keeper.
  */
@@ -1026,7 +1026,7 @@ const serviceRun = async (b) => {
       const reachNow = state.read().reach || {};
       // the owner page where the installer hands the key over (kanban #687): the Arena site's, by this node's key
       const idNow = (state.read().service || {}).identity;
-      return { ok: true, owner: /^[0-9a-f]{64}$/.test(String(idNow || '')) ? `https://testnet.bitcoin-arena.io/owner/#node=${idNow}&local=${encodeURIComponent(`http://127.0.0.1:${portOf()}`)}`
+      return { ok: true, owner: /^[0-9a-f]{64}$/.test(String(idNow || '')) ? `https://testnet.bitcoinarena.io/owner/#node=${idNow}&local=${encodeURIComponent(`http://127.0.0.1:${portOf()}`)}`
         : `http://127.0.0.1:${portOf()}/dashboard/owner`, url: reachNow.url || null, mode: reachNow.mode || null };
     },
   };

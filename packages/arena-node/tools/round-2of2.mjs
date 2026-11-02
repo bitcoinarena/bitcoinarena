@@ -137,7 +137,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // seats attached, and nothing is published or posted until openGrid / openNext is asked
                                      openFirst = true,
                                      store = ':memory:', rpc = null, cli = null,
-                                     page = 'https://testnet.bitcoin-arena.io',
+                                     page = 'https://testnet.bitcoinarena.io',
                                      // A PAYING ROUND, for a rehearsal with Lightning. Every
                                      // existing caller asks for none and gets a free round.
                                      stakeMsat = 0n,
@@ -448,7 +448,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       if (b && b.updatedBy) console.log(`[bond] node ${members[i].name}: its advertisement is the update ${b.updatedBy.txid} (height ${b.updatedBy.height})`);
     const toPost = members.map((m, i) => (reused[i] ? null : i)).filter((i) => i !== null);
     // A FIRST BOND FOR A NODE THAT HAS NONE (2026-10-12: "Poste neue bonds wenn nötig, du kannst auch neue
-    // nodes auf dem test host dafür starten, für eine zweite Federation"): with ARENA_POST_FIRST_BONDS=1 an attached node whose
+    // nodes auf dem macOS dafür starten, für eine zweite Federation"): with ARENA_POST_FIRST_BONDS=1 an attached node whose
     // key has no confirmed unspent bond AT ALL is bonded here - its secret read from its own store, read-only, beside the
     // running node. A node with any bond is never bonded again (the 2026-09-28 rule below stands for it).
     const firstBond = new Set();
@@ -485,7 +485,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       const p = rt.postBond(m.id.secret, {
         // THE PUBLIC ENDPOINT, THE SAME ONE THE ADVERT NAMES (2026-09-25 21:41: the replay link a player copies
         // is built from these, and "a copied link that only opens on 127.0.0.1 does not count"). The bond said
-        // ws://<host>:<port> - on the Daily 198.51.100.7, a tailnet address no phone off this machine can open -
+        // ws://<host>:<port> - on the Daily 198.51.100.98, a tailnet address no phone off this machine can open -
         // while the advert already said ARENA_WSS_<port>; the census reads the bond.
         endpoint: process.env[`ARENA_WSS_${m.port}`] || `ws://${host}:${m.port}`,
         // THE GAMES IT HOSTS, as its advertisement above names them
@@ -808,7 +808,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // daemons' own relay doors. A result is final only once both have posted
     // it, and a round naming no relay could never settle a stake.
     // ARENA_PUBLICATION_RELAYS (kanban #808): the seats' public addresses when `host` is only where this tool reaches them. A contract is
-    // signed for the day, so a machine's address in it outlives that machine (10-31 07:19Z: 5e7fe7e0 VOID, its relays on the retired test host).
+    // signed for the day, so a machine's address in it outlives that machine (10-31 07:19Z: 5e7fe7e0 VOID, its relays on the retired macOS).
     publicationRelays: process.env.ARENA_PUBLICATION_RELAYS ? process.env.ARENA_PUBLICATION_RELAYS.split(',') : members.map((m) => `http://${host}:${m.port}`),
     donationSetId: (donationSetAt && donationSetAt(censusHeight, NETWORK_ID)) || idOfDonationSet(DONATION_SET.recipients), censusHeight,
     censusRoot: new Uint8Array(32), stakeMsat, bondMinSats: 50000n, blockTicks: runTicksAt(committeeTimeMs + MIN_ENTRY_WINDOW_MS),
@@ -1555,7 +1555,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       pageServer = await servePage(build, { host, port: Number(process.env.ARENA_PAGE_PORT || 8000) });
       page = `http://${host}:${pageServer.port}`;
     } else {
-      page = 'https://testnet.bitcoin-arena.io';
+      page = 'https://testnet.bitcoinarena.io';
       console.log('NOTE: no build at ' + build + ', so the daily is named instead.');
     }
   }

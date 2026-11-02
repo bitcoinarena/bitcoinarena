@@ -243,7 +243,7 @@ test('a guardian whose quick tunnel took a new name is read at its announced add
   assert.equal(v.seated.length, 2);
 });
 
-test('a gateway whose tunnel took a new name is said at its new address, though the ranking is still the last whole epoch\'s (the owner 2026-10-30)', async () => {
+test('a gateway whose tunnel took a new name is said at its new address, though the ranking is still the last whole epoch\'s (2026-10-30)', async () => {
   const urls = { 0: 'https://before-reboot.example/', 1: 'https://other.example/' };
   let height = 144 * 10 + 5;
   const live = new Set(['https://before-reboot.example/', 'https://other.example/']);

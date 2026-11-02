@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // EVERY DOOR IS IN THE API REFERENCE (2026-10-18: "update docs and api with all changes"): six routes of 10-17/18
 // (/gateway/*, /gateway-claim, /liquidity-claim, /liquidity-seating, /gateway-seating, /gateway-seats, /owner/liquidity/new-address)
-// were served but missing from src/website/docs/endpoints.json, so docs.bitcoin-arena.io/api did not list them. A route server.js
+// were served but missing from src/website/docs/endpoints.json, so docs.bitcoinarena.io/api did not list them. A route server.js
 // answers by exact path or prefix must have an entry there.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

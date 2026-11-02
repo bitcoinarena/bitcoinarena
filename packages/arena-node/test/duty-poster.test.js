@@ -337,7 +337,7 @@ test('an anchor at the bottom of a short chain view is not taken: the view is wi
 });
 
 test('a seat or a chain read that fails never stops the poster: the pass says why and the next one tries again', async () => {
-  const w = world({ view: async () => { throw new Error('fetch failed: connect ETIMEDOUT 198.51.100.7:6281'); } });
+  const w = world({ view: async () => { throw new Error('fetch failed: connect ETIMEDOUT 198.51.100.106:6281'); } });
   const d = createDayDuty(w.opts);
   const st = await d.look();
   assert.match(st.error.why, /ETIMEDOUT/);

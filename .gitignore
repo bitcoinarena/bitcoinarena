@@ -12,3 +12,7 @@ devnet-data/
 /packages/*.fetching/
 # a package's node_modules is each machine's own - a real install or an untracked link, never a tracked path into /tmp or the test host (kanban #739)
 packages/*/node_modules
+.env
+.env.*
+!.env.example
+.wrangler/

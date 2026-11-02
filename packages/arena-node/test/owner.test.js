@@ -75,7 +75,9 @@ test('the owner doors on a running node', async () => {
     const base = `http://127.0.0.1:${node.port}`;
     const page = await fetch(`${base}/Dashboard/owner`);
     assert.equal(page.status, 200);
-    assert.match(await page.text(), /Node Owner/);
+    const served = await page.text();
+    assert.match(served, /Node Owner/);
+    assert.doesNotMatch(served, /kanban/, 'the page without its notes (kanban #838)');
     assert.equal((await fetch(`${base}/owner/client.js`)).status, 200);
     const s = await (await fetch(`${base}/owner`)).json();
     assert.equal(s.claimed, false);

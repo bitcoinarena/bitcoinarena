@@ -53,9 +53,16 @@ export class Earnings extends React.Component {
     const owedSum = big(owed.gameVerifyMsat) + big(owed.settlementMsat) + big(owed.guardianMsat);
     return (
       <div>
-        <div className="seg" role="tablist">{Object.entries(PERIOD).map(([p, name]) => (
-          <button key={p} type="button" role="tab" aria-selected={p === period} className={p === period ? 'on' : undefined} onClick={() => onPeriod(p)}>{name}</button>))}</div>
-        <div className="stats">
+        <div className="seg" role="tablist" onKeyDown={(ev) => {
+          // arrow keys move between the periods, and only the chosen one is in the tab order (kanban #847)
+          const keys = Object.keys(PERIOD), step = { ArrowRight: 1, ArrowLeft: -1 }[ev.key];
+          if (!step) return;
+          ev.preventDefault();
+          const next = (keys.indexOf(period) + step + keys.length) % keys.length;
+          onPeriod(keys[next]); ev.currentTarget.children[next].focus();
+        }}>{Object.entries(PERIOD).map(([p, name]) => (
+          <button key={p} type="button" role="tab" id={`earn-tab-${p}`} aria-controls="earn-panel" aria-selected={p === period} tabIndex={p === period ? 0 : -1} className={p === period ? 'on' : undefined} onClick={() => onPeriod(p)}>{name}</button>))}</div>
+        <div className="stats" role="tabpanel" id="earn-panel" aria-labelledby={`earn-tab-${period}`}>
           <div className="stat wide"><span>Earned · {PERIOD[period].toLowerCase()}</span><b>{sat(e.earned)}</b>
             {e.parts.length ? <>
               <div className="split" aria-hidden="true">{e.parts.map((p) => <i key={p.k} style={{ flex: `${Number(p.msat)} 0 0`, background: p.color }} />)}</div>
@@ -80,16 +87,17 @@ export class Chart extends React.Component {
       <div className="chart">
         <div className="chart-head"><span className="legend">{ROLES.slice(0, 3).map(([k, n, c]) => <span key={k}><i style={{ background: c }} />{n}</span>)}</span>
           <span className="sub">{hov ? `${hov.day}: ${sat(sum(hov))}` : `last ${days.length} days · tap a day`}</span></div>
-        <svg viewBox={`0 0 ${W} ${H + 20}`} role="img" aria-label="fees earned per day" onPointerLeave={() => this.setState({ at: null })}>
+        <svg viewBox={`0 0 ${W} ${H}`} role="group" aria-label="fees earned per day" onPointerLeave={() => this.setState({ at: null })}>
           {days.map((d, i) => {
             let y = H; const x = P + i * bw + 2, w = Math.max(1, bw - 4);
             const parts = [['gameVerifyMsat', 'var(--gv)'], ['settlementMsat', 'var(--st)'], ['guardianMsat', 'var(--gd)']].map(([k, c]) => { const h = (H - 6) * Number(d[k]) / max; y -= h; return <rect key={k} x={x} y={y} width={w} height={h} fill={c} rx="2" />; });
             return (
-              <g key={d.day} onPointerEnter={() => this.setState({ at: i })} onPointerDown={() => this.setState({ at: i })}>
-                <rect x={x - 2} y="0" width={bw} height={H} fill={this.state.at === i ? 'rgba(127,127,127,.12)' : 'transparent'} />{parts}
-                {i % 5 === 0 ? <text x={x} y={H + 16} fill="var(--dim)" fontSize="13">{d.day.slice(5)}</text> : null}</g>);
+              <g key={d.day} tabIndex={0} aria-label={`${d.day}: ${sat(sum(d))}`} style={{ cursor: 'pointer' }} onFocus={() => this.setState({ at: i })} onBlur={() => this.setState({ at: null })} onPointerEnter={() => this.setState({ at: i })} onPointerDown={() => this.setState({ at: i })}>
+                <rect x={x - 2} y="0" width={bw} height={H} fill={this.state.at === i ? 'rgba(127,127,127,.12)' : 'transparent'} />{parts}</g>);
           })}
         </svg>
+        {/* in page pixels, not the drawing's: 13 units of 1000 were 6 px on a laptop and 4 on a phone (kanban #846) */}
+        <div className="chart-days" aria-hidden="true">{days.filter((d, i) => i % 5 === 0).map((d) => <span key={d.day}>{d.day.slice(5)}</span>)}</div>
       </div>);
   }
 }
@@ -140,7 +148,7 @@ export function noteRows(D) {
 // THE OWNER AREA ON THE ARENA SITE (2026-10-26, the owner on 2026.1.9.9: "It works via owner page but not Open Dashboard"): the link opened
 // this node's own page at 127.0.0.1, another origin than the site's, which keeps the owner key the installer and the update hand over -
 // so it asked for the 24 words. Now the site's page for this node's key, with this page's address when it is the node's own (127.0.0.1)
-export const OWNER_SITE = 'https://testnet.bitcoin-arena.io/owner/';
+export const OWNER_SITE = 'https://testnet.bitcoinarena.io/owner/';
 export function ownerHref(node, loc) {
   if (!/^[0-9a-f]{64}$/.test(String(node || ''))) return 'Dashboard/owner';
   const local = loc && /^(127\.0\.0\.1|localhost)$/.test(loc.hostname) ? `&local=${encodeURIComponent(loc.origin)}` : '';
@@ -184,6 +192,30 @@ export class Liquidity extends React.Component {
   }
 }
 
+// WHAT THE PLAYERS' FAUCET GAVE (kanban #926, 2026-11-01: new and returning accounts apart, in the nodes' dashboard): its public totals, no account and no address in
+// them. Testnet only; no answer, no card.
+export const FAUCET_TOTALS = 'https://bitcoinarena.io/api/faucet/player';
+export class FaucetGrants extends React.Component {
+  constructor(props) { super(props); this.state = { t: null }; }
+  componentDidMount() {
+    const read = this.props.read || (() => fetch(FAUCET_TOTALS, { cache: 'no-store' }).then((r) => r.json()));
+    Promise.resolve().then(read).then((t) => { if (t && t.ok && !this.gone) this.setState({ t }); }, () => {});
+  }
+  componentWillUnmount() { this.gone = true; }
+  render() {
+    const { t } = this.state;
+    if (!t) return null;
+    const row = (name, p) => <tr key={name}><td>{name}</td><td className="n">{p.accounts.toLocaleString('en-US')}</td><td className="n">{p.grants.toLocaleString('en-US')}</td><td className="n">{p.sats.toLocaleString('en-US')} sat</td><td className="n">{p.today.sats.toLocaleString('en-US')} sat</td></tr>;
+    return (
+      <section><h2>Test sats given by the faucet</h2><div className="card scroll">
+        <table className="tbl"><thead><tr><th>Who</th><th className="n">Accounts</th><th className="n">Grants</th><th className="n">In all</th><th className="n">Today</th></tr></thead>
+          <tbody>{row('New accounts', t.newAccounts)}{row('Returning', t.returning)}</tbody></table>
+        <p className="sub">{t.totalSats.toLocaleString('en-US')} sat in all. Test sats only, on testnet4.</p>
+      </div></section>
+    );
+  }
+}
+
 export class DashboardPage extends React.Component {
   constructor(props) { super(props); this.state = { period: 'day', open: {}, players: {} }; }
   async toggle(id) {
@@ -212,7 +244,7 @@ export class DashboardPage extends React.Component {
             <div className="dash-facts">
               <span className="fact" title={String(D.node)}><span className="fact-k">Node</span><code>{String(D.node).slice(0, 8)}…{String(D.node).slice(-6)}</code>
                 <CopyButton text={D.node} label="Copy the node key" /></span>
-              <span className="fact"><span className="fact-k">Active since</span>{D.sinceMs ? short(D.sinceMs, now) : <span className="dim">no round checked yet</span>}</span>
+              <span className="fact"><span className="fact-k">Active since</span>{D.sinceMs ? `${short(D.sinceMs, now)} UTC` : <span className="dim">no round checked yet</span>}</span>
               <span className="fact"><span className="fact-k">Rounds checked</span>{Number(D.roundsChecked || 0).toLocaleString('en-US')}</span>
             </div></div>
           <a className="btn" href={ownerHref(D.node, typeof location === 'undefined' ? null : location)}>Owner area →</a>
@@ -227,6 +259,7 @@ export class DashboardPage extends React.Component {
         {D.uptime && Array.isArray(D.uptime.windows) ? <section><h2>Uptime</h2><UptimeStats uptime={D.uptime} /></section> : null}
         <section><h2>Earnings</h2><Earnings totals={D.totals} period={period} onPeriod={(p) => this.setState({ period: p })} /></section>
         <section><div className="card"><Chart days={D.days || []} /></div></section>
+        {D.network === undefined || D.network === null || /test/i.test(String(D.network)) ? <FaucetGrants /> : null}
         {devs.length || L || G || (D.byGame || []).length || notes.length ? (
           <section><h2>Money</h2>
             <div className="cards">
@@ -249,7 +282,7 @@ export class DashboardPage extends React.Component {
         {D.liquidity ? <Liquidity claim={D.liquidity} /> : null}
         <section><h2>Rounds checked</h2>
           <div className="card scroll"><table className="tbl"><thead><tr><th>Round</th><th>Started</th><th>Game</th><th className="n">Entries</th><th className="n">Earned</th><th>Settled</th></tr></thead>
-            <tbody>{(D.rounds || []).slice(0, 50).map((r) => {
+            <tbody>{(D.rounds || []).length ? null : <tr><td colSpan={6} className="sub">No rounds yet. Your node is drawn once it has a bond.</td></tr>}{(D.rounds || []).slice(0, 50).map((r) => {
               const earned = big(r.gameVerifyMsat) + big(r.settlementMsat) + big(r.guardianMsat); const st = r.settlement && r.settlement.state; const isOpen = !!(this.state.open || {})[r.id];
               return (<React.Fragment key={r.id}>
                 <tr className="rr" aria-expanded={isOpen ? 'true' : 'false'} onClick={() => this.toggle(r.id)}><td><code>{isOpen ? '▾ ' : '▸ '}{r.id.slice(0, 8)}</code></td><td className="nowrap">{short(r.startMs, now)}</td>
@@ -263,7 +296,7 @@ export class DashboardPage extends React.Component {
             <p className="sub">{states.length ? states.map(([k, v]) => `${v} ${k.toLowerCase()}`).join(' · ') : 'none yet'}</p>
             <table className="tbl"><tbody>{(D.settlements || []).slice(0, 20).map((s, i) => <tr key={i} title={s.why || undefined}><td><code>{s.round.slice(0, 8)}</code></td><td className="nowrap">{short(s.madeMs, now)}</td><td className={s.state === 'ACCEPTED' ? 'ok' : s.state === 'REFUSED' ? 'bad' : ''}>{String(s.state).toLowerCase()}</td></tr>)}</tbody></table></div></div>
           <div><h2>Federations</h2><div className="card scroll"><table className="tbl"><thead><tr><th>Federation</th><th className="n">Paid rounds</th><th className="n">Last</th></tr></thead>
-            <tbody>{(D.federations || []).map((f) => <tr key={f.federation}><td><code>{f.federation.slice(0, 12)}</code></td><td className="n">{f.rounds}</td><td className="n nowrap">{short(f.lastMs, now)}</td></tr>)}</tbody></table></div></div>
+            <tbody>{(D.federations || []).length ? null : <tr><td colSpan={3} className="sub">No paid rounds in a federation yet.</td></tr>}{(D.federations || []).map((f) => <tr key={f.federation}><td><code>{f.federation.slice(0, 12)}</code></td><td className="n">{f.rounds}</td><td className="n nowrap">{short(f.lastMs, now)}</td></tr>)}</tbody></table></div></div>
         </section>
       </div>);
   }

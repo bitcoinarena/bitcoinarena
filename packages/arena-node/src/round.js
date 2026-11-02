@@ -2927,7 +2927,8 @@ export class Round {
    * retry reads. A round that takes any federation counts until every row it holds is ACCEPTED.
    */
   closedLockRoundsUnsettled(fromMs, toMs) {
-    return this.db.prepare(`SELECT DISTINCT r.round_id FROM stake_locks s JOIN rounds r ON r.round_id = s.round_id
+    // FROM THE LOCKS, NEVER FROM THE ROUNDS (kanban #927, measured 2026-11-01): left to choose, SQLite walked all 122,591 rounds with their contracts and held a seat's loop for 398 s, every minute. There are 4,736 locks
+    return this.db.prepare(`SELECT r.round_id FROM (SELECT DISTINCT round_id FROM stake_locks) s CROSS JOIN rounds r ON r.round_id = s.round_id
       WHERE r.state = ? AND r.closed_ms >= ? AND r.closed_ms < ?
         AND NOT EXISTS (SELECT 1 FROM lock_settlements l WHERE l.round_id = r.round_id AND l.state = 'ACCEPTED')
         AND NOT (EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id)
