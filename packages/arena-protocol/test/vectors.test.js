@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs';
 import { Writer } from '../src/encode.js';
 import { taggedHash, toHex, fromHex } from '../src/hash.js';
 import { commitCensus, leafHash, encodeEntry } from '../src/census.js';
-import { selectCommittee, ticketFor, weightOf } from '../src/sortition.js';
+import { selectCommittee, ticketFor, weightOf, panelSeed, drawPanels } from '../src/sortition.js';
 import { computePayoutTable, rankWeights, DELIVERED, FAILED } from '../src/payout.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../src/contracts.js';
 import { encodeCheckpoint, checkpointId, NO_PREVIOUS } from '../src/checkpoint.js';
@@ -67,6 +67,20 @@ test('the census root matches, and so does every leaf', () => {
     assert.equal(toHex(leafHash(e)), v.entries[i].leaf, 'leaf ' + i);
   });
   assert.equal(toHex(c.root), v.root);
+});
+
+test('a round\'s two slash panels match', () => {
+  const v = load('panels');
+  const mk = (n) => ({ txid: b32(n), vout: 0, pubkey: b32(n), bondSats: n % 6 === 0 ? 300000n : 100000n, height: 1,
+    hostedGames: [b32(0x67)], roles: ['game', 'settlement'], spent: false });
+  const entries = Array.from({ length: v.nodes }, (_, i) => mk(i + 1));
+  const contract = { networkId: NETWORK_ID_REGTEST, gameId: b32(0x67), gameVerifySlots: v.slots, settlementSlots: v.slots, bondMinSats: BigInt(v.bondMin) };
+  const seed = fromHex(v.committeeSeed);
+  assert.equal(toHex(panelSeed(seed)), v.panelSeed);
+  const got = drawPanels({ entries, contract, committeeSeed: seed, drawsAttestors: v.drawsAttestors, playerNodes: v.playerNodes.map(fromHex) });
+  assert.equal(got.ok, true, got.why);
+  assert.deepEqual(got.panelA.map((e) => toHex(e.pubkey)), v.panelA);
+  assert.deepEqual(got.panelB.map((e) => toHex(e.pubkey)), v.panelB);
 });
 
 test('tickets, weights and the chosen committee match', () => {

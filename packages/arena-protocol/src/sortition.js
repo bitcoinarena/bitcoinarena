@@ -8,6 +8,7 @@ import { TAG, roleByte, namesNoDraw } from './constants.js';
 import { compareEntries, meetsCensusMinimum, eligibleFor } from './census.js';
 import { poolOfRole, GAME_VERIFY, SETTLEMENT } from './fee.js';
 import { roleFloorSats } from './rules.js';
+import { PANEL_SEATS } from './bond-script.js';
 
 /**
  * HOW MANY SIGNER NODES THIS ROUND GIVES THE POOL A ROLE SERVES IN.
@@ -210,4 +211,45 @@ export function drawAttestors({ entries, contract, committeeSeed }) {
   if (!(committeeSeed instanceof Uint8Array) || committeeSeed.length !== 32)
     throw new Error('a round\'s attestors are drawn on the seed its beacon produced');
   return selectCommittee({ entries, contract, role: 'settlement', committeeSeed: taggedHash(TAG.attestorDraw, committeeSeed), count: ATTESTORS_DRAWN });
+}
+
+/** panel_seed(r) = tagged_hash("ARENA/v1/SlashPanel", committee_seed(r)) (5A.3B). */
+export function panelSeed(committeeSeed) {
+  if (!(committeeSeed instanceof Uint8Array) || committeeSeed.length !== 32)
+    throw new Error('a round\'s panels are drawn on the seed its beacon produced');
+  return taggedHash(TAG.slashPanel, committeeSeed);
+}
+
+/** The roles a round draws for: all of each role's draw is out of the panels, reserves too. */
+const PANEL_LEAVES_OUT = ['game', 'settlement'];
+
+/**
+ * A ROUND'S TWO SLASH PANELS (5A.3B "Who is responsible for a round"): the 5A.6 selection over the round's census on panel_seed(r), less
+ * every node drawn for any role of the round (all 9 per role, 5A.7), its attestors and the nodes of its players; panel A the first 7
+ * of that order, panel B the next 7. Pure, and worked out here rather than taken in: nobody hands the draw its own exclusions but what
+ * only the round knows.
+ *
+ *   drawsAttestors   the round's game draws its attestors (manifest attestDraw): they are drawn here and left out
+ *   attestorKeys     a game's own named attestors, 32-byte keys
+ *   playerNodes      the nodes of the round's players, 32-byte keys. A player declares no operator (5A.13), so the caller says who they are
+ *
+ * Drawn as `drawAttestors` is, on the settlement ticket: 5A.6 draws per role and the spec names none for a panel.
+ *
+ * A census that cannot fill both panels is refused by name, and never answered with smaller panels: the release leaf is 5 of 7 twice.
+ * Answers { ok: true, panelA, panelB, order } of census entries, or { ok: false, why, have, need }.
+ */
+export function drawPanels({ entries, contract, committeeSeed, drawsAttestors = false, attestorKeys = [], playerNodes = [] }) {
+  try {
+    const out = new Set([...attestorKeys, ...playerNodes].map(toHex));
+    for (const role of PANEL_LEAVES_OUT)
+      for (const e of drawCommittee({ entries, contract, role, committeeSeed })) out.add(toHex(e.pubkey));
+    if (drawsAttestors) for (const e of drawAttestors({ entries, contract, committeeSeed })) out.add(toHex(e.pubkey));
+    const need = 2 * PANEL_SEATS;
+    const order = selectCommittee({ entries, contract, role: 'settlement', committeeSeed: panelSeed(committeeSeed), count: need,
+      exclude: entries.filter((e) => out.has(toHex(e.pubkey))) });
+    if (order.length < need)
+      return { ok: false, have: order.length, need,
+        why: `the round's census leaves ${order.length} nodes after the ${out.size} it leaves out, and two panels are ${need}` };
+    return { ok: true, panelA: order.slice(0, PANEL_SEATS), panelB: order.slice(PANEL_SEATS), order };
+  } catch (e) { return { ok: false, why: `the panels cannot be drawn: ${e.message}` }; }
 }

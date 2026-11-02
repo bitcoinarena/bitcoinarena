@@ -14,7 +14,7 @@ import { taggedHash, toHex } from '../src/hash.js';
 import { TAG, PROTOCOL_VERSION } from '../src/constants.js';
 import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
 import { commitCensus, leafHash, encodeEntry } from '../src/census.js';
-import { selectCommittee, ticketFor, weightOf } from '../src/sortition.js';
+import { selectCommittee, ticketFor, weightOf, panelSeed, drawPanels } from '../src/sortition.js';
 import { computePayoutTable, rankWeights, DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../src/contracts.js';
 import { encodeCheckpoint, checkpointId, NO_PREVIOUS, CHECKPOINT_BYTES, SIGNED_CHECKPOINT_BYTES } from '../src/checkpoint.js';
@@ -83,6 +83,35 @@ out.tagged = {
     rules: [
       'Sort by (txid, vout). NOT by H(pubkey): a pubkey can be ground until its hash lands where the operator wants, a txid cannot be chosen after funding.',
       'An odd level PROMOTES the last node. Duplicating it makes two leaf sets share a root, which is CVE-2012-2459.',
+    ],
+  };
+}
+
+/* ------------------------------------------------------------ slash panels */
+{
+  // Forty nodes, seven of them at larger bonds. Key n's outpoint is b32(n), so a stranger can rebuild the census from this comment.
+  const mk = (n) => ({ txid: b32(n), vout: 0, pubkey: b32(n), bondSats: n % 6 === 0 ? 300000n : 100000n, height: 1,
+                       hostedGames: [b32(0x67)], roles: ['game', 'settlement'], spent: false });
+  const entries = Array.from({ length: 40 }, (_, i) => mk(i + 1));
+  const contract = { networkId: NETWORK_ID_REGTEST, gameId: b32(0x67), gameVerifySlots: 7, settlementSlots: 7, bondMinSats: 100000n };
+  const seed = b32(42);
+  const drawn = drawPanels({ entries, contract, committeeSeed: seed, drawsAttestors: true, playerNodes: [b32(40)] });
+  out.panels = {
+    what: 'A round\'s two slash panels (5A.3B): the selection on tagged_hash("ARENA/v1/SlashPanel", committee_seed), less its draws, attestors and players\' nodes.',
+    committeeSeed: toHex(seed),
+    panelSeed: toHex(panelSeed(seed)),
+    bondMin: '100000',
+    nodes: 40,
+    bonds: 'key n = 32 bytes of n, outpoint (32 bytes of n, 0), 300000 sat where n % 6 = 0, else 100000',
+    slots: 7,
+    playerNodes: [toHex(b32(40))],
+    drawsAttestors: true,
+    panelA: drawn.panelA.map((e) => toHex(e.pubkey)),
+    panelB: drawn.panelB.map((e) => toHex(e.pubkey)),
+    rules: [
+      'Tickets are the settlement role\'s, as a drawn attestor\'s are.',
+      'Every node drawn for game or settlement, reserves included, its drawn attestors and the listed players\' nodes are out before the order is read.',
+      'Panel A is the first 7 of the order, panel B the next 7. Fewer than 14 left is a refusal, never smaller panels.',
     ],
   };
 }
