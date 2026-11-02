@@ -135,6 +135,12 @@ test('2. the window is 600000 ms from the round\'s end with no block for 30 minu
     assert.match(fastClock, /^409 .*outside the 5 s tolerance/);
     assert.deepEqual(atFast.finalSigs, { signed: 4, needed: 5 }, 'the fast clock\'s signature was counted');
     assert.equal(w.holder.round.finalSigEvidence(w.rid, eid).filter((x) => /tolerance/.test(x.why)).length, 1);
+    // and another seat can read it, with the signed bytes (§13A rule 3, kanban #1016)
+    const shown = await (await fetch(`http://127.0.0.1:${w.holder.port}/final-sig-evidence?round=${toHex(w.rid)}&entry=${toHex(eid)}`)).json();
+    assert.equal(shown.evidence.length, w.holder.round.finalSigEvidence(w.rid, eid).length, 'every signature kept as evidence is shown');
+    const offClock = shown.evidence.filter((x) => /tolerance/.test(x.why));
+    assert.equal(offClock.length, 1);
+    assert.match(offClock[0].signed, /^[0-9a-f]+$/);
     assert.equal(atFive.state, 'FINAL', atFive.why);
     assert.deepEqual(atFive.finalSigs, { signed: 5, needed: 5 });
   } finally { await w.close(); }

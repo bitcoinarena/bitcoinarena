@@ -10576,6 +10576,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
         return res.end(Buffer.from(signed));
       }
+      // A BADLY TIMED FINAL SIGNATURE, SHOWN (§13A rule 3, kanban #1016): it did not count and it is evidence against its signer, so another seat can read it, with the signed bytes
+      if (req.method === 'GET' && url.pathname === '/final-sig-evidence') {
+        const rid = new Uint8Array(Buffer.from(url.searchParams.get('round') || '', 'hex'));
+        const eid = new Uint8Array(Buffer.from(url.searchParams.get('entry') || '', 'hex'));
+        if (rid.length !== 32 || eid.length !== 32) return text(res, 400, 'name a round and an entry: 32 bytes hex each');
+        return json(res, 200, { evidence: round.finalSigEvidence(rid, eid).map((x) => ({ signer: toHex(x.signerPubkey), signed: toHex(x.bytes), seenMs: x.seenMs, why: x.why })) });
+      }
       // AND ONE PUSHED HERE: checked on arrival, against this seat's clock.
       if (req.method === 'POST' && url.pathname === '/final-sig') {
         const rid = new Uint8Array(Buffer.from(url.searchParams.get('round') || '', 'hex'));
