@@ -449,6 +449,10 @@ export const TYPE_SEATING_SEEN = 0x38;
 export const TYPE_HEARTBEAT = 0x39;
 /** A heartbeat committee member's HEARD: who it held a HEARTBEAT of at the slot's close; a heartbeat certificate carries them (kanban #727). */
 export const TYPE_HEARTBEAT_HEARD = 0x3a;
+// MAKING THE CENSUS KEY (5A.3B, census-dkg.js): never read as the claim key's messages, or the other way round.
+export const TYPE_CENSUS_DEAL = 0x3b;
+export const TYPE_CENSUS_STATEMENT = 0x3c;
+export const TYPE_CENSUS_COMPLAINT = 0x3d;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 export const TYPE_SPENT_SET = 0x26;
@@ -515,6 +519,12 @@ export const TAG = {
   slashPanel: 'ARENA/v1/SlashPanel',
   slashPayoutTable: 'ARENA/v1/SlashPayoutTable',
   censusKeyRecord: 'ARENA/v1/CensusKeyRecord',
+  censusRun: 'ARENA/v1/CensusRun',
+  censusDealer: 'ARENA/v1/CensusDealer',
+  censusDeal: 'ARENA/v1/CensusDeal',
+  censusSet: 'ARENA/v1/CensusSet',
+  censusStatement: 'ARENA/v1/CensusStatement',
+  censusComplaint: 'ARENA/v1/CensusComplaint',
   checkpoint: 'ARENA/v1/Checkpoint',
   checkpointReceipt: 'ARENA/v1/CheckpointReceipt',
   result: 'ARENA/v1/Result',

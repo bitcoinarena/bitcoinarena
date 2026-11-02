@@ -23,8 +23,12 @@ import {
   groupKeyOf, combineShares, encodeContribution, decodeContribution,
   contributionSetOf, encodeAgreement, agreementId, splitSignedAgreement, agreementHolds,
 } from '../../arena-protocol/src/dkg.js';
+import {
+  dealCensusKey, acceptCensusDeal, openCensusDeal, checkDealsBatched, makeCensusComplaint, censusComplaintHolds, censusSetId, censusStatementId,
+  censusSetAgreed, combineCensusKey, encodeCensusDeal, decodeCensusDeal, checkReshareDeals,
+} from '../../arena-protocol/src/census-dkg.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { scalarFrom32, scalarTo32, FIELD } from '../../arena-protocol/src/shares.js';
+import { scalarFrom32, scalarTo32, FIELD, shareOpensTo } from '../../arena-protocol/src/shares.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
@@ -416,5 +420,114 @@ export class Dkg {
     // `told` / `got`: the peers that hold this node's contribution / whose contribution this node holds, all runs together;
     // `moved`: how many of them this run added
     return { ok: finished.ok, told: done.told.size, got: done.got.size, moved: told.length + got.length, refused, ...finished };
+  }
+}
+
+/**
+ * THE CENSUS KEY, ONE NODE'S SIDE (spec 5A.3B, kanban #972). Beside `Dkg` and sharing nothing of its store: a round's claim key runs as ever. One
+ * node, one run: it deals once, takes others' deals, complains of a bad one, signs the set it holds, and keeps its shares when holders of
+ * the threshold signed one set.
+ *
+ * `run` is { runId, holders, threshold, needed }, and for a reshare also { reshare: { dealers, oldThreshold, xs, oldCommitments, groupPublicKey } }:
+ * `dealers` the old nodes of censusRunId's list as holders of the old key, all of whom must deal. `part` is this node's own, when it deals.
+ * The window a run waits for deals is the caller's, and these messages reach no route of the daemon yet.
+ */
+export class CensusDkg {
+  constructor({ key, secret, run, curve, random, part = null }) {
+    Object.assign(this, { key, secret, run, curve, random, part });
+    this.me = run.holders.find((h) => h.key === toHex(key)) || null;
+    this.dealers = run.reshare ? run.reshare.dealers : run.holders;
+    this.deals = new Map();      // dealer hex -> { bytes, deal, shares }
+    this.bad = new Map();        // dealer hex -> why
+  }
+
+  /** This node's deal, made once. A reshare deals its part of the key, a keygen a fresh secret. */
+  async deal() {
+    if (this.own) return { ok: true, bytes: this.own };
+    const { runId, holders, needed, reshare } = this.run;
+    if (reshare && this.part === null) return { ok: false, why: 'a reshare deals the node\'s part of the key, and none was given' };
+    const scalar = () => { for (;;) { const v = scalarFrom32(this.random(32)); if (v > 0n && v < FIELD) return v; } };
+    const made = await dealCensusKey({ holders, dealers: this.dealers, runId, from: this.key, needed, secret: scalarTo32(reshare ? this.part : scalar()),
+      coefficients: Array.from({ length: needed - 1 }, scalar), ephemeralSecret: scalarTo32(scalar()), proofNonce: scalar(), curve: this.curve });
+    if (!made.ok) return made;
+    this.own = encodeCensusDeal(made.deal);
+    return { ok: true, bytes: this.own };
+  }
+
+  /** Take a deal. Its envelopes are opened now; whether they lie on its polynomial is `check`'s, in one batch. */
+  async accept(bytes) {
+    let deal;
+    try { deal = decodeCensusDeal(bytes); } catch (e) { return { ok: false, why: e.message }; }
+    const who = toHex(deal.from);
+    if (this.deals.has(who)) return { ok: Buffer.compare(Buffer.from(this.deals.get(who).bytes), Buffer.from(bytes)) === 0, why: 'that node dealt twice', from: who };
+    const { runId, holders, needed } = this.run;
+    const shaped = acceptCensusDeal(deal, { holders, dealers: this.dealers, runId, needed, curve: this.curve });
+    if (!shaped.ok) { this.bad.set(who, shaped.why); return shaped; }
+    const opened = this.me ? await openCensusDeal(deal, { ids: this.me.ids, secret: this.secret, curve: this.curve }) : { ok: true, shares: [] };
+    this.deals.set(who, { bytes, deal, shares: opened.ok ? opened.shares : null, unopened: opened.ok ? null : opened.x });
+    return { ok: true, from: who };
+  }
+
+  /** Check what is held in one batch. Answers the complaints to publish, one for each bad deal, and drops those deals. */
+  check() {
+    const complaints = [];
+    const complain = (deal, x) => {
+      complaints.push(makeCensusComplaint({ deal, x, secret: this.secret, nonce: scalarFrom32(this.random(32)) % FIELD, curve: this.curve }));
+      this.bad.set(toHex(deal.from), `a bad share at x ${x}`);
+      this.deals.delete(toHex(deal.from));
+    };
+    for (const held of [...this.deals.values()]) if (held.unopened) complain(held.deal, held.unopened);
+    let checks = 0;
+    if (this.me) {
+      const seen = checkDealsBatched({ opened: [...this.deals.values()].map((h) => ({ deal: h.deal, shares: h.shares })), random: this.random, curve: this.curve });
+      checks = seen.checks;
+      for (const deal of seen.bad) {
+        // the batch names the deal; a complaint has to name the x, so this node's shares of it are checked one by one
+        const held = this.deals.get(toHex(deal.from));
+        const wrong = held.shares.find((s) => !shareOpensTo({ signerNode: s.x, value: s.value }, { commitments: deal.commitments, curve: this.curve }).ok);
+        complain(deal, wrong.x);
+      }
+    }
+    const { reshare } = this.run;
+    if (reshare && this.deals.size) {
+      const idsOf = new Map(reshare.dealers.map((h) => [h.key, h.ids]));
+      const parts = checkReshareDeals({ deals: [...this.deals.values()].map((h) => ({ deal: h.deal, ids: idsOf.get(toHex(h.deal.from)) })), xs: reshare.xs,
+        oldCommitments: reshare.oldCommitments, groupPublicKey: reshare.groupPublicKey, random: this.random, curve: this.curve, complete: this.deals.size === reshare.dealers.length });
+      if (!parts.ok) {
+        for (const deal of parts.bad) { this.bad.set(toHex(deal.from), 'a reshare deal that is not its dealer\'s part'); this.deals.delete(toHex(deal.from)); }
+        return { ok: false, complaints, checks, why: parts.why || 'a reshare deal is not its dealer\'s part: the run goes again without it' };
+      }
+    }
+    return { ok: !complaints.length, complaints, checks };
+  }
+
+  /** A proven complaint from anyone drops the deal here too, so every honest node signs one set. */
+  async hearComplaint(complaint) {
+    const held = this.deals.get(toHex(complaint.dealer));
+    if (!held) return { ok: false, why: 'this node holds no such deal' };
+    const proven = await censusComplaintHolds({ complaint, deal: held.deal, holders: this.run.holders, curve: this.curve });
+    if (proven.ok) { this.bad.set(toHex(complaint.dealer), proven.why); this.deals.delete(toHex(complaint.dealer)); }
+    return proven;
+  }
+
+  /** This node's signed word on the deals it holds. It says one set, once: a second is what names an equivocator. */
+  statement() {
+    if (this.said) return this.said;
+    const s = { runId: this.run.runId, node: this.key, setId: censusSetId([...this.deals.values()].map((h) => h.deal)) };
+    this.said = { ...s, signature: schnorr.sign(censusStatementId(s), this.secret) };
+    return this.said;
+  }
+
+  /** Keep the shares, once `statements` show holders of the threshold on the set this node holds. Absent nodes stop nothing, in a keygen. */
+  finish(statements) {
+    const { runId, holders, threshold, reshare } = this.run;
+    const agreed = censusSetAgreed({ runId, holders, threshold, statements, verify: (sig, digest, key) => schnorr.verify(sig, digest, key) });
+    if (!agreed.ok) return agreed;
+    const held = [...this.deals.values()];
+    if (toHex(censusSetId(held.map((h) => h.deal))) !== toHex(agreed.setId)) return { ok: false, why: 'the agreed set is not the deals this node holds: fetch the rest from any holder' };
+    if (reshare && held.length !== reshare.dealers.length) return { ok: false, why: `${held.length} of the ${reshare.dealers.length} dealers of that reshare dealt: each part is a term over exactly that set, so the run goes again without the absent` };
+    const key = combineCensusKey({ opened: held.map((h) => ({ deal: h.deal, shares: h.shares })), holders: this.dealers, threshold: reshare ? reshare.oldThreshold : threshold, curve: this.curve });
+    if (!key.ok) return key;
+    return { ...key, setId: agreed.setId, have: agreed.have, equivocated: agreed.equivocated };
   }
 }
