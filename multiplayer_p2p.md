@@ -2579,10 +2579,25 @@ few blocks ago, so nobody reaches a dead one this way, and no bond fails for a r
 with an anchor.
 
 - **Mainnet, epoch 0:** the genesis founders, at least the census minimum of 10,
-  run the DKG before any bond exists, one share each, threshold 2/3. The public
-  key goes into `genesis_parameters`, so it is committed in `network_id` and needs
-  no anchor. They bond naming it. Epoch 1 is the first key by weight. The founders'
-  reach is the bonds naming key 0, and until then they are the capital anyway.
+  run the DKG before any bond exists, one share each, threshold 2/3. They bond naming
+  it, and epoch 1 is the first key by weight. `genesis_parameters` names the key and
+  who holds it (RULED 2026-11-02, kanban #1050):
+
+  ```text
+  census_key_0 { public_key, holders[], threshold }
+  holders[]    the founders' node keys, one share each, in share order
+  ```
+
+  This stands in for key 0's `CensusKeyRecord`. It needs no signatures or anchor,
+  because genesis commits it in `network_id`, and it leaves out `network_id` itself,
+  which would be circular. From there key 0 is a key like any other: the 80 % trigger
+  reads those holders, a reshare runs when it trips, and a `K` record names the new
+  holders. It is not retired at epoch 1: a key cannot retire while a bond names it,
+  and nobody re-bonds, so the first bonds would become unslashable or stay with the
+  founders for good. A reshare moves them on. As for any key, old shares still combine
+  among the founders and nobody can prove a deletion, so the founders keep their reach
+  over the bonds naming key 0. Until the first key by weight they are the capital
+  anyway.
 - **Testnet4 and a network with a census already:** the census at an announced
   height makes the first key by the rule above, on its existing template 1 and 2
   bonds, and anchors the record. No genesis change, no re-bond. That height is
@@ -2640,7 +2655,7 @@ run           the epoch whose founding_window it runs in
 
 - **Trigger:** read from the chain, so every node has one answer. For epoch `e`: the
   keys standing at its first block, each with the holders its newest record names,
-  against that epoch's census. The oldest key that a bond names, held at or over its
+  or `census_key_0`'s before it has one, against that epoch's census. The oldest key that a bond names, held at or over its
   threshold and under 80 % of its shares, is reshared. The window is the epoch's
   `founding_window`, beside that epoch's keygen, and the new holders are that
   epoch's census, the same shares and draw as its keygen.
@@ -2669,8 +2684,6 @@ run           the epoch whose founding_window it runs in
   peer could hand it. It needs only that the parts add up to the key, so that is what
   it checks. An old holder also checks each part, and refuses to sign if one is not its
   dealer's.
-- Key 0 has no record, and `genesis_parameters` names its public key alone, so no
-  reader of the chain can say who holds it, and it is not reshared this way.
 
 **What a client reads (RULED 2026-11-02, kanban #1048).** A client that cannot count a
 bond cannot check a draw, so a census holding a template-3 bond is read with the
@@ -8203,7 +8216,8 @@ genesis_parameters {
   slash_fallback_blocks  template 3: start to the census key's release (§5A.3B)
   census_key_shares_max  template 3: the cap on a census key's shares (§5A.3B)
   census_key_bond_min    template 3: B of a census key, the lowest bracket's bond_min (§5A.3B)
-  census_key_0           mainnet: the key the genesis founders made (§5A.3B)
+  census_key_0           mainnet: { public_key, holders[], threshold }, the key the
+                         genesis founders made and who holds it (§5A.3B)
   genesis_height         mainnet: where the census key's chain scan starts (§5A.3B)
   notice_period          for a rise in bond_min (§27A.3)
   bracket_table          the §5A.10 stake ceiling table

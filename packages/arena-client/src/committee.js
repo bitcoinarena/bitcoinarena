@@ -162,7 +162,7 @@ export async function standingKeysFor({ contract, nodes, chain, bond, verify, ge
   // REGTEST ALONE TAKES A SEAT'S WORD FOR WHERE KEYS BEGIN: a harness names its own, and a network with a page has its height in this build
   const keyFirstHeight = network === 'regtest' ? doorFirst : censusKeyFirstHeight(network, genesis);
   if (keyFirstHeight === null || keyFirstHeight === undefined) return { ok: false, why: `${network} names no first census key height` };
-  const keys = genesis && genesis.censusKey0 ? [{ epoch: 0, publicKey: genesis.censusKey0, height: 0 }] : [];
+  const keys = genesis && genesis.censusKey0 ? [{ epoch: 0, publicKey: genesis.censusKey0.publicKey, height: 0 }] : [];
   const taken = new Set(keys.map((k) => k.epoch));
   for (const { item, from } of [...seen.values()].sort((a, b) => a.item.height - b.item.height || a.item.position - b.item.position)) {
     if (item.height > Number(contract.censusHeight)) continue;

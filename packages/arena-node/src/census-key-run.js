@@ -384,7 +384,7 @@ export function createCensusKeyRun({ store, network, networkId, key, secret, fir
   async function resharePass(epoch, tip, t) {
     const window = reshareWindow(epoch, network, foundingWindow);
     if (!ready || ready.epoch !== epoch || ready.target.key !== t.key) {
-      const old = await censusEntriesAt(t.generation.censusHeight);
+      const old = t.generation.censusHeight === null ? [] : await censusEntriesAt(t.generation.censusHeight);      // key 0's holders are named by genesis: their addresses are this census'
       const now = await censusOf(epoch);
       if (!old || !now) return { phase: 'waits for its census' };
       const endpoints = new Map();

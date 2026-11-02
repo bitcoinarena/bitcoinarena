@@ -10,7 +10,7 @@ import { NETWORK_ID_TESTNET4, NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const hex = (b) => Buffer.from(b).toString('hex');
 const parts = () => ({ bondMarker: b32(1), arbitrationKeys: [2, 3, 4, 5, 6, 7, 8].map(b32), authorityPubkey: b32(9), recoveryPubkey: b32(10),
-  genesisSeriesStartMs: 1800000000000n, bondMinGuardianSats: 1_000_000n, censusKeyBondMinSats: 500_000n, censusKey0: b32(11), genesisHeight: 900000 });
+  genesisSeriesStartMs: 1800000000000n, bondMinGuardianSats: 1_000_000n, censusKeyBondMinSats: 500_000n, censusKey0: { publicKey: b32(11), holders: Array.from({ length: 10 }, (_, i) => b32(100 + i)), threshold: 7 }, genesisHeight: 900000 });
 
 test('the test networks keep their genesis bytes and network ids: no new series', () => {
   for (const [net, id] of [['testnet4', NETWORK_ID_TESTNET4], ['regtest', NETWORK_ID_REGTEST]]) {
@@ -63,11 +63,24 @@ test('the clocks are in mainnet\'s id, are not in the test networks\', and a wro
 test('census_key_shares_max is 1024 and census key 0 is in mainnet\'s id; neither moves the test networks\' bytes (kanban #1021)', () => {
   const { genesis, networkId } = mainnetGenesis(parts());
   for (const g of [genesis, genesisFor('testnet4'), genesisFor('regtest')]) assert.equal(g.censusKeySharesMax, 1024);
-  for (const change of [{ censusKeySharesMax: 1023 }, { censusKey0: b32(12) }])
+  for (const change of [{ censusKeySharesMax: 1023 }, { censusKey0: { ...genesis.censusKey0, publicKey: b32(12) } },
+    { censusKey0: { ...genesis.censusKey0, holders: [...genesis.censusKey0.holders].reverse() } }])
     assert.notEqual(hex(computeNetworkId({ genesis: { ...genesis, ...change }, authorityPubkey: b32(9), recoveryPubkey: b32(10) })), hex(networkId), Object.keys(change)[0]);
   for (const net of ['testnet4', 'regtest'])
     assert.equal(hex(encodeGenesisParameters({ ...genesisFor(net), censusKeySharesMax: 7 })), hex(encodeGenesisParameters(genesisFor(net))), net);
   assert.throws(() => encodeGenesisParameters({ ...genesis, censusKeySharesMax: 0 }), /census_key_shares_max/);
+});
+
+test('census key 0 names its holders and threshold: at least the census minimum, one share each, 2/3 (kanban #1050)', () => {
+  const { genesis } = mainnetGenesis(parts());
+  const k0 = genesis.censusKey0;
+  assert.equal(encodeGenesisParameters(genesis).length, encodeGenesisParameters({ ...genesis, censusKey0: { ...k0, holders: [...k0.holders].reverse() } }).length);
+  const refused = [[{ ...k0, publicKey: undefined }, /public key/], [{ ...k0, holders: undefined }, /holders/], [{ ...k0, holders: k0.holders.slice(0, 9), threshold: 7 }, /under the census minimum of 10/],
+    [{ ...k0, holders: [k0.holders[0], ...k0.holders.slice(1, 9), k0.holders[0]] }, /twice/], [{ ...k0, threshold: 6 }, /threshold 6, and 10 shares have 7/]];
+  for (const [censusKey0, why] of refused) {
+    assert.throws(() => encodeGenesisParameters({ ...genesis, censusKey0 }), why);
+    assert.throws(() => mainnetGenesis({ ...parts(), censusKey0 }), why);
+  }
 });
 
 test('mainnet genesis is built only from what a launch names: no invented marker or keys', () => {

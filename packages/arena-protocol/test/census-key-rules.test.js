@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
-  censusKeyShares, censusKeyDrawHeight, censusKeyWindow, carrierEscrowPegInId, censusKeyEpochOf, encodeCensusKeyRecord, decodeCensusKeyRecord, censusKeyRecordId, censusKeyAnchor, censusKeyAnchorIn,
+  censusKey0Shares, censusKeyShares, censusKeyDrawHeight, censusKeyWindow, carrierEscrowPegInId, censusKeyEpochOf, encodeCensusKeyRecord, decodeCensusKeyRecord, censusKeyRecordId, censusKeyAnchor, censusKeyAnchorIn,
   censusKeyRecordStands, standingCensusKeys, bondNamesStandingKey, censusKeyPlan, censusHeightOfEpoch, fallbackCarriers, carrierPegInId,
 } from '../src/census-key.js';
 import { taggedHash, toHex, bytesToBigInt } from '../src/hash.js';
@@ -201,4 +201,14 @@ test('the epoch\'s plan: retired, dead, one reshare, oldest first under 80 %, a 
   assert.deepEqual([stable.reshare, stable.newKey], [null, false], 'a stable census costs nothing; only an epoch\'s start makes a key');
   assert.equal(censusKeyPlan({ epochStart: true, keys: [key(1, 100, 0)] }).newKey, false, 'a key nobody named is not followed by another');
   assert.equal(censusKeyPlan({ epochStart: true, keys: [] }).newKey, true);
+});
+
+test('census key 0 reads as any key: one share each, x its place in genesis, holders in ascending key (kanban #1050)', () => {
+  const holders = [K(3), K(1), K(2), K(4)];
+  const got = censusKey0Shares({ publicKey: K(0x70), holders, threshold: 3 });
+  assert.deepEqual(got.holders.map((h) => [h.key, h.shares, h.ids[0]]), [[toHex(K(1)), 1, 2], [toHex(K(2)), 1, 3], [toHex(K(3)), 1, 1], [toHex(K(4)), 1, 4]]);
+  assert.equal(got.total, 4);
+  assert.equal(got.threshold, 3);
+  const plan = censusKeyPlan({ keys: [{ epoch: 0, named: 2, totalShares: got.total, threshold: got.threshold, heldNow: 3 }] });
+  assert.equal(plan.reshare.epoch, 0, 'three of four founders in the census is under 80 %, and over the threshold');
 });

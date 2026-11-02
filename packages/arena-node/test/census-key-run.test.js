@@ -11,14 +11,16 @@ import { createCensusKeyScan, censusKeyAnchorsInBlock } from '../src/census-key-
 import { createCensusKeyRun, censusKeyPostOrder, censusKeySigners, CENSUS_KEY_POST_STEP, RESHARE_POST_STEP } from '../src/census-key-run.js';
 import { censusKeyWork } from '../src/census-key-work.js';
 import { censusKeyCarrier, censusKeyAnchorSpend } from '../src/census-key-anchor.js';
-import { censusKeyAnchor, censusKeyBodyIn, censusKeyContract, censusKeyEnvelope, censusKeyRecordDue, censusKeyRecordId, censusKeyShares, censusHeightOfEpoch, decodeCensusKeyBody, encodeCensusKeyBody,
+import { censusKey0Shares, censusKeyAnchor, censusKeyBodyIn, censusKeyContract, censusKeyEnvelope, censusKeyRecordDue, censusKeyRecordId, censusKeyShares, censusHeightOfEpoch, decodeCensusKeyBody, encodeCensusKeyBody,
   encodeReshareList, reshareAnchor, reshareAnchorIn, reshareListIn, reshareReadyId, reshareWindow, standingKeysName } from '../../arena-protocol/src/census-key.js';
 import { CENSUS_KEY_VERSION, BOND_SUM_VERSION } from '../../arena-protocol/src/constants.js';
 import { lagrangeOf } from '../../arena-protocol/src/census-dkg.js';
 import { BOND_TEMPLATE_V3 } from '../../arena-protocol/src/bond-script.js';
 import { feldmanGroup } from '../src/curve.js';
+import { CensusDkg } from '../src/dkg.js';
+import { randomBytes } from 'node:crypto';
 import { CENSUS_KEY_BOND_MIN, CENSUS_KEY_FIRST_HEIGHT, censusKeyFirstHeight } from '../../arena-protocol/src/genesis.js';
-import { decodeCensusDeal, joinSignedCensusDeal, splitSignedCensusDeal, censusDealId, encodeCensusDeal, censusRunId } from '../../arena-protocol/src/census-dkg.js';
+import { decodeCensusDeal, joinSignedCensusDeal, splitSignedCensusDeal, censusDealId, encodeCensusDeal, censusRunId, founderRun } from '../../arena-protocol/src/census-dkg.js';
 import { BOND_MATURITY_OFFSET } from '../../arena-protocol/src/bond-script.js';
 import { clocksFor } from '../../arena-protocol/src/federation-slash.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -51,7 +53,7 @@ const person = (i) => { const secret = new Uint8Array(32).fill(i + 1); return { 
 const entriesOf = (nodes) => nodes.map((n, i) => ({ pubkey: n.key, bondSats: n.bond, txid: new Uint8Array(32).fill(i + 1), vout: 0, advert: { endpoint: `ws://n${i}`, ...(n.advert || {}) } }));
 
 /** N nodes on one chain, their doors joined by a fetch in memory. */
-function network(bonds, { c = chain(), down = [], canPay = () => true, entries = null, censusAt = null } = {}) {
+function network(bonds, { c = chain(), down = [], canPay = () => true, entries = null, censusAt = null, censusKey0 = null } = {}) {
   const nodes = bonds.map((bond, i) => ({ ...person(i), bond, url: `http://n${i}` }));
   const list = entries || entriesOf(nodes);
   const read = (h) => (censusAt ? censusAt(h, list) : list);
@@ -77,7 +79,7 @@ function network(bonds, { c = chain(), down = [], canPay = () => true, entries =
     n.store = new CensusKeyStore(n.db);
     n.posted = [];
     n.build = (extra = {}) => {
-      n.scan = createCensusKeyScan({ store: n.store, network: NETWORK, networkId: NET, firstHeight: FIRST, foundingWindow: WINDOW, censusConfirmations: CONF, tipHeight: () => c.tip, blockHashAt: c.hashAt,
+      n.scan = createCensusKeyScan({ store: n.store, network: NETWORK, networkId: NET, firstHeight: FIRST, foundingWindow: WINDOW, censusConfirmations: CONF, censusKey0, tipHeight: () => c.tip, blockHashAt: c.hashAt,
         blockAt: c.blockAt, censusEntriesAt: read, verify });
       n.run = createCensusKeyRun({ store: n.store, network: NETWORK, networkId: NET, key: n.key, secret: n.secret, firstHeight: FIRST, foundingWindow: WINDOW, censusConfirmations: CONF,
         tipHeight: () => c.tip, blockHashAt: c.hashAt, censusEntriesAt: read, standing: n.scan.standing, scannedTo: n.scan.scannedTo, plan: n.scan.planAt, reshareList: n.scan.reshareList,
@@ -512,6 +514,64 @@ test('reshare: the census moves under the key, the chain says who is present, an
   // AND THE TRIGGER IS QUIET NOW: the new census holds all of the key's shares
   await jump(w, resharedStart + E);
   assert.equal((await n0.scan.planAt(EPOCH + 2)).reshare, null);
+});
+
+test('key 0 is a key like any other: genesis names its holders, the 80 % trigger reads them, and a reshare moves them on (kanban #1050)', async () => {
+  // THE FOUNDERS' RUN, before any bond: nodes 0..3, one share each. Node 3 never bonds, so three of four are in the census: under 80 %, at the threshold of 3
+  const founders = [0, 1, 2, 3].map(person);
+  const shares0 = censusKey0Shares({ holders: founders.map((f) => f.key), threshold: 3 });
+  const run = founderRun(shares0);
+  const dkgs = founders.map((f) => new CensusDkg({ key: f.key, secret: f.secret, run, curve: feldmanGroup, random: (n) => new Uint8Array(randomBytes(n)) }));
+  const bytes = [];
+  for (const d of dkgs) bytes.push((await d.deal()).bytes);
+  for (const d of dkgs) for (const b of bytes) await d.accept(b);
+  for (const d of dkgs) assert.equal(d.check().ok, true);
+  const said = dkgs.map((d) => d.statement());
+  const done = dkgs.map((d) => d.finish(said));
+  const key = done[0].groupPublicKey.subarray(1);
+  const censusKey0 = { publicKey: key, holders: founders.map((f) => f.key), threshold: 3 };
+  const entries = [0, 1, 2, 4].map((i) => ({ pubkey: person(i).key, bondSats: 2n * BOND, txid: new Uint8Array(32).fill(i + 1), vout: 0, advert: { endpoint: `ws://n${i}`, ...(i === 4 ? {} : named(key)) } }));
+  const w = network([2n, 2n, 2n, 2n, 2n].map((n) => n * BOND), { entries, censusKey0, down: [3] });
+  dkgs.slice(0, 3).forEach((_, i) => w.nodes[i].store.keepHeld({ publicKey: key, epoch: 0, runId: run.runId, record: new Uint8Array(0), negated: done[i].negated, shares: done[i].shares, commitments: done[i].commitments }));
+  const n0 = w.nodes[0];
+  await w.pass(2);
+  assert.deepEqual(n0.scan.standing().map((k) => [k.epoch, k.height]), [[0, 0]], 'key 0 stands from genesis');
+  const plan = await n0.scan.planAt(EPOCH);
+  assert.equal(plan.reshare.key, toHex(key), 'the trigger reads the holders genesis names');
+  assert.deepEqual([plan.reshare.heldNow, plan.reshare.total, plan.reshare.threshold, plan.reshare.generation.epoch], [3, 4, 3, 0]);
+  assert.equal(plan.newKey, true, 'and it is named by bonds, so the first key by weight runs beside it');
+  const rw0 = reshareWindow(EPOCH, NETWORK, WINDOW);
+  while (!n0.scan.reshareList(toHex(key), EPOCH)) { assert.ok(w.c.tip < rw0.midpoint); w.c.mine(); await w.pass(2); }
+  assert.equal(n0.scan.reshareList(toHex(key), EPOCH).present.length, 3, 'three founders cover its threshold');
+  await w.to(rw0.midpoint + 1);
+  await w.pass(3);
+  assert.equal(w.nodes[4].run.status().reshare.state.publicKey, toHex(key), 'a node that never held key 0 now holds shares of it');
+  for (let i = 0; i < CENSUS_KEY_POST_STEP * 5 && n0.scan.generationOf(toHex(key)).epoch !== EPOCH; i++) { w.c.mine(); await w.pass(2); }
+  assert.equal(n0.scan.generationOf(toHex(key)).epoch, EPOCH, 'the record stands');
+  assert.equal(n0.scan.standing().filter((k) => toHex(k.publicKey) === toHex(key)).length, 1, 'and adds no key');
+  await w.pass(2);
+  assert.equal(w.nodes[1].store.held(key, 0), null, 'a founder deletes its old shares once the record stands');
+  const newer = new Map();
+  for (const i of [0, 1, 2, 4]) for (const [x, v] of w.nodes[i].store.held(key, EPOCH).shares) newer.set(x, v);
+  const xs = [...newer.keys()].sort((a, b) => a - b);
+  const lambda = lagrangeOf(xs, xs);
+  const FIELD = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
+  assert.equal(toHex(feldmanGroup.pointFromScalar(xs.reduce((a, x) => (a + lambda.get(x) * newer.get(x)) % FIELD, 0n))).slice(2), toHex(key), 'the new shares open key 0');
+  await jump(w, START + E);
+  assert.equal((await n0.scan.planAt(EPOCH + 1)).reshare, null, 'and the trigger is quiet: from here its holders are its newest record\'s');
+});
+
+test('key 0 with too few founders left is dead, and one no bond names is retired: neither is reshared (kanban #1050)', async () => {
+  const founders = [0, 1, 2, 3].map((i) => person(i).key);
+  const censusKey0 = { publicKey: new Uint8Array(32).fill(0x70), holders: founders, threshold: 3 };
+  const census = (list, advert) => list.map((i) => ({ pubkey: person(i).key, bondSats: 2n * BOND, txid: new Uint8Array(32).fill(i + 1), vout: 0, advert: { endpoint: `ws://n${i}`, ...advert } }));
+  const dead = network([2n, 2n, 2n, 2n, 2n, 2n].map((n) => n * BOND), { entries: census([0, 1, 4, 5], named(censusKey0.publicKey)), censusKey0 });
+  await dead.pass();
+  assert.deepEqual([(await dead.nodes[0].scan.planAt(EPOCH)).reshare, (await dead.nodes[0].scan.planAt(EPOCH)).dead], [null, 1], 'two of four founders, under its threshold');
+  const quiet = network([2n, 2n, 2n, 2n, 2n, 2n].map((n) => n * BOND), { entries: census([0, 1, 2, 4], {}), censusKey0 });
+  await quiet.pass();
+  const plan = await quiet.nodes[0].scan.planAt(EPOCH);
+  assert.deepEqual([plan.reshare, plan.retired, plan.newKey], [null, 1, false], 'named by no bond, so nothing is done for it, and no new key is due');
 });
 
 test('reshare: no anchor, no reshare. A record of a standing key with no list is refused, and so is a list short of the threshold, late, or for a key the plan does not name', async () => {

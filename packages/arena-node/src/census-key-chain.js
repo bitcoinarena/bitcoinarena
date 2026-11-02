@@ -14,7 +14,7 @@
 //   A REORG       the scan keeps the hashes of the last `keepHashes` blocks. The top one is asked each pass; moved, the kept heights are walked down to one still on the chain
 //                 and everything above it is forgotten. Past all of them it starts again from the first height
 import { censusKeyAnchorIn, censusKeyBodyIn, censusKeyRecordDue, censusKeyShares, censusKeyRecordStands, standingCensusKeys, decodeCensusKeyBody, encodeCensusKeyBody,
-  censusKeyDrawHeight, censusKeyPlan, censusHeightOfEpoch, decodeReshareList, encodeReshareList, reshareAnchorIn, reshareListIn, reshareListStands,
+  censusKey0Shares, censusKeyDrawHeight, censusKeyPlan, censusHeightOfEpoch, decodeReshareList, encodeReshareList, reshareAnchorIn, reshareListIn, reshareListStands,
   reshareWindow } from '../../arena-protocol/src/census-key.js';
 import { BOND_TEMPLATE_V3 } from '../../arena-protocol/src/bond-script.js';
 import { splitBlock } from '../../arena-protocol/src/block.js';
@@ -41,9 +41,9 @@ export function censusKeyAnchorsInBlock(raw, height) {
 
 /**
  * `store`: CensusKeyStore. `tipHeight()`; `blockHashAt(height)` the hash bitcoind prints, null above the tip; `blockAt(hash)` the raw block; `censusEntriesAt(height)` the
- * census at a height (censusKeyContract's), which throws or answers null while it cannot be read; `verify(signature, digest, key)`; `genesisKey` mainnet's key 0.
+ * census at a height (censusKeyContract's), which throws or answers null while it cannot be read; `verify(signature, digest, key)`; `censusKey0` genesis' census_key_0 { publicKey, holders, threshold }, mainnet's.
  */
-export function createCensusKeyScan({ store, network, networkId, firstHeight, foundingWindow, censusConfirmations, genesis = null, genesisKey = null, tipHeight, blockHashAt, blockAt,
+export function createCensusKeyScan({ store, network, networkId, firstHeight, foundingWindow, censusConfirmations, genesis = null, censusKey0 = null, tipHeight, blockHashAt, blockAt,
   censusEntriesAt, verify, sharesMax = undefined, maxBlocksPerPass = 64, keepHashes = 288, log = () => {} }) {
   let keys = [];
   let generations = new Map();          // key hex -> [{ epoch, censusHeight, height }] oldest first, the records that named who holds it
@@ -55,11 +55,12 @@ export function createCensusKeyScan({ store, network, networkId, firstHeight, fo
   const refresh = () => {
     const rows = store.anchors().filter((a) => a.stands);
     const fresh = rows.filter((a) => a.kind === 'K');
-    keys = standingCensusKeys({ genesisKey, anchors: fresh, judge: (id) => {
+    keys = standingCensusKeys({ genesisKey: censusKey0 ? censusKey0.publicKey : null, anchors: fresh, judge: (id) => {
       const row = fresh.find((a) => toHex(a.id) === toHex(id));
       return row ? { ok: true, record: decodeCensusKeyBody(row.body).record } : { ok: false };
     } });
-    generations = new Map();
+    // KEY 0'S FIRST GENERATION IS GENESIS, standing in for the record it has no need of: epoch 0, and no census height, since its holders are named there (kanban #1050)
+    generations = new Map(censusKey0 ? [[toHex(censusKey0.publicKey), [{ epoch: 0, censusHeight: null, height: 0 }]]] : []);
     lists = new Map();
     for (const a of rows) {
       if (a.kind === 'R') {
@@ -100,9 +101,7 @@ export function createCensusKeyScan({ store, network, networkId, firstHeight, fo
     const read = [];
     for (const k of keys.filter((x) => x.height <= start)) {
       const generation = generationAt(toHex(k.publicKey), start);
-      // KEY 0 HAS NO RECORD, and genesis names only its public key: no chain reader can say who holds it, so it is never reshared from here
-      if (!generation) { read.push({ ...k, named: named(k), heldNow: 0, totalShares: 0, threshold: 0 }); continue; }
-      const { shares } = await sharesOf(generation.epoch, generation.censusHeight);
+      const shares = generation.censusHeight === null ? censusKey0Shares(censusKey0) : (await sharesOf(generation.epoch, generation.censusHeight)).shares;
       read.push({ ...k, named: named(k), generation, holders: shares.holders, threshold: shares.threshold, totalShares: shares.total,
         heldNow: shares.holders.reduce((n, h) => n + (here.has(h.key) ? h.shares : 0), 0) });
     }
