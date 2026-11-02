@@ -160,6 +160,7 @@ test('the door will not pick the slashing height, and says what the five proofs 
     const contract = decodeRoundContract(new Uint8Array(w.holder.round.get(w.rid).contract));
     const said = await slashOwing({
       proof, offence: REPLAY_CONTRADICTS, contract, roundIdBytes: w.rid, entries,
+      signed: { outcome: 'DELIVERED', score: 1 }, replayed: { outcome: 'DELIVERED', score: 2 },   // lowered: the named player is who it harmed
       slashHeight: contract.censusHeight + 50, tipHeight: contract.censusHeight + 100,
       censusAt: async () => [...seats, ...others],
       bondSatsOf: async () => 100000n,

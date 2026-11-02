@@ -45,6 +45,9 @@ import { splitSlashEvidence, cutSlashEvidence, splitAuditSlashEvidence, cutAudit
 import { auditEligible } from '../../arena-protocol/src/auditor.js';
 import { makeVrf, SUITE_SECP256K1_TAI } from '../../arena-protocol/src/vrf.js';
 import { entryId as entryIdOf } from '../../arena-protocol/src/contracts.js';
+import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
+import { entryForSlash } from '../src/slash-owing.js';
+import { runId } from '../src/verdict.js';
 import { deriveCensus } from '../../arena-protocol/src/census.js';
 import { beaconFromChain, committeeSeedFromBeacon } from '../../arena-protocol/src/beacon.js';
 import { selectCommittee } from '../../arena-protocol/src/sortition.js';
@@ -108,18 +111,22 @@ async function handle(seat, s) {
   const accused = census.entries.find((e) => toHex(e.pubkey) === s.node);
   if (!accused) return { done: true, why: 'the accused is not in the round\'s census' };
   const core = coreForRound(contract, rid, (await import('../src/plugins.js')).hostedPlugins((await loadApps())));
+  // THE ROUND'S ENTRIES AND RESULTS, OFF THE SEAT'S GET /audit-run, checked against their own entry ids: a slash pays whoever the
+  // false result harmed, and that takes the whole field (kanban #975)
+  const run = await get(`${seat}/audit-run?round=${s.round}`);
+  const playerKeys = new Set(), entries = [];
+  for (const e of run.entries || []) {
+    try {
+      const x = decodeEntryContract(fromHex(e.entry));
+      if (toHex(entryIdOf(x)) === e.id) { playerKeys.add(toHex(x.playerPubkey)); entries.push(entryForSlash(x)); }
+    } catch { /* not an entry */ }
+  }
   let verdict;
   if (audit) {
     // WHO COULD AUDIT THE ROUND, FROM THIS ARBITER'S OWN CENSUS (§13A.1): its census less every node drawn for its roles; its players'
-    // keys out of the eligible set and still in W, as a seat's door takes them (the players off the seat's GET /audit-run, checked
-    // against their own entry ids)
-    const run = await get(`${seat}/audit-run?round=${s.round}`);
-    const players = new Set();
-    for (const e of run.entries || []) {
-      try { const x = decodeEntryContract(fromHex(e.entry)); if (toHex(entryIdOf(x)) === e.id) players.add(toHex(x.playerPubkey)); } catch { /* not an entry */ }
-    }
+    // keys out of the eligible set and still in W, as a seat's door takes them
     const set = auditEligible({ entries: census.entries, bondMinSats: BigInt(contract.bondMinSats || 50000n), drawn: committee.map(toHex) });
-    const eligible = new Map([...set.eligible].filter(([key]) => !players.has(key)));
+    const eligible = new Map([...set.eligible].filter(([key]) => !playerKeys.has(key)));
     verdict = await judgeAuditProof({ evidence, bundle, entry, contract, committee, advert: accused.advert,
       bondOutpoint: { txid: accused.txid, vout: accused.vout }, core, roundRandomness: beacon.hash, eligible, total: set.total, vrf: auditVrf });
   } else {
@@ -133,8 +140,15 @@ async function handle(seat, s) {
   const bond = { txid: accused.txid, vout: accused.vout, value: BigInt(Math.round(out.value * 1e8)), script: fromHex(out.scriptPubKey.hex) };
   const at = await censusAt(contract, census.tip);
   if (!at.ok) return { done: false, why: `no census at the slash height: ${at.why}` };
+  // AN AUDIT'S PROOF NAMES A RUN, NOT A SIGNED RESULT: that run's outcome and score come off the seat's results for the entry
+  let signed = verdict.signed;
+  if (audit) {
+    for (const r of (run.entries || []).find((e) => e.id === s.entry)?.results || []) {
+      try { const b = decodePlayerResult(splitSignedResult(fromHex(r)).body); if (toHex(runId(b)) === toHex(verdict.proof.contradictedRunId)) signed = { outcome: b.outcome, score: b.score }; } catch { /* not a result */ }
+    }
+  }
   const slash = buildSlash({ verdict, bond, advert: accused.advert, contract, roundId: rid, slashHeight: census.tip, tipHeight: census.tip,
-    censusNodes: at.entries.map((e) => e.pubkey), seats: contract.nodes || committee, set });
+    censusNodes: at.entries.map((e) => e.pubkey), seats: contract.nodes || committee, entries, signed, set });
   if (!slash.ok) return { done: false, why: slash.why };
   // EACH MEMBER SIGNS ON ITS OWN; k OF THEM ARE ENOUGH, AND THE REST ARE NOT ASKED
   const signatures = set.members.slice(0, set.k).map((m) => ({ key: m.key, sig: memberSign(m, slash.sighash) }));

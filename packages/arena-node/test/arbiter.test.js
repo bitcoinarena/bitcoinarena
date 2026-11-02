@@ -90,9 +90,26 @@ test('a filed proof, re-judged by the arbiter from the seat\'s doors, is signed 
     const advert = w.adverts.get(x.s.node);
     // the census at the slash height: the round's seven seats and three more bonded nodes (seats are never paid from a slash)
     const censusNodes = [...[...w.adverts.values()].map((a) => a.nodePubkey), ...[1, 2, 3].map((i) => schnorr.getPublicKey(new Uint8Array(32).fill(0x40 + i)))];
-    const slash = buildSlash({ verdict, bond: bondOf(advert), advert: { ...advert, bondScriptTemplateVersion: 1 }, contract: x.contract, roundId: x.rid,
-      slashHeight: x.contract.censusHeight + 10, tipHeight: x.contract.censusHeight + 12, censusNodes, seats: x.committee, set });
+    const named = { playerPubkey: x.entry.playerPubkey, netStakeMsat: 1000n, activated: true };
+    const others = [{ playerPubkey: new Uint8Array(32).fill(0xb1), netStakeMsat: 3000n, activated: true }, { playerPubkey: new Uint8Array(32).fill(0xb2), netStakeMsat: 1000n, activated: true }];
+    const entries = [named, ...others];
+    const build = (over = {}) => buildSlash({ verdict, bond: bondOf(advert), advert: { ...advert, bondScriptTemplateVersion: 1 }, contract: x.contract, roundId: x.rid,
+      slashHeight: x.contract.censusHeight + 10, tipHeight: x.contract.censusHeight + 12, censusNodes, seats: x.committee, entries, set, ...over });
+    // WHO IT PAYS (kanban #975): a false result the replay says lowered the player pays that player
+    assert.ok(verdict.signed && verdict.replayed, 'the verdict carries both results');
+    const slash = build({ signed: { outcome: 'FORFEIT', score: 0 }, verdict: { ...verdict, replayed: { outcome: 'DELIVERED', score: 5 } } });
     assert.equal(slash.ok, true, slash.why);
+    assert.deepEqual([...slash.distribution.playerShares.keys()], [toHex(named.playerPubkey)]);
+    // ... and one that raised them pays the others, by net stake, the same players' half in all
+    const raised = build({ signed: { outcome: 'DELIVERED', score: 99 }, verdict: { ...verdict, replayed: { outcome: 'FAILED', score: 1 } } });
+    assert.equal(raised.ok, true, raised.why);
+    assert.deepEqual([...raised.distribution.playerShares.values()], [750_000n, 250_000n]);
+    assert.ok(!raised.distribution.playerShares.has(toHex(named.playerPubkey)), 'the player it favoured gets nothing');
+    assert.equal(raised.built.amounts.players, slash.built.amounts.players);
+    // ... and with no other paying entry that half goes to the nodes and developers: no players' escrow is built
+    const alone = build({ entries: [named], signed: { outcome: 'DELIVERED', score: 99 }, verdict: { ...verdict, replayed: { outcome: 'FAILED', score: 1 } } });
+    assert.equal(alone.ok, true, alone.why);
+    assert.deepEqual(alone.built.tx.outputs.slice(1).map((o) => o.pays), ['nodes\'', 'developers\'']);
     const tx = slash.built.tx;
     assert.equal(tx.locktime, x.contract.censusHeight + 10, 'nLockTime = slash_height');
     const commitment = arbitrationCommitmentIn(tx.outputs);

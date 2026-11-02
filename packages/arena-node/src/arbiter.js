@@ -22,7 +22,7 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { slashHolds, slashProofId, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS,
+import { affectedEntries, playersShares, slashHolds, slashProofId, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS,
   splitAuditSlashEvidence, slashHoldsOnAudit, auditSlashProofId, AUDIT_CONTRADICTED } from '../../arena-protocol/src/slash.js';
 import { windowsOf } from '../../arena-protocol/src/window.js';
 import { splitSignedResult, decodePlayerResult, resultId } from '../../arena-protocol/src/result.js';
@@ -97,7 +97,8 @@ export async function judgeProof({ evidence, bundle, entry, entryId, contract, c
   const held = slashHolds({ proof, signedResult, committee, canonicalTranscriptHash: canonical, replayDiffers: true,
     advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
   if (!held.slashed) return no(held.why);
-  return { slashed: true, offence: held.offence, bond: held.bond, proof, proofId: slashProofId(proof), playerPubkey: proof.playerPubkey, why: held.why };
+  return { slashed: true, offence: held.offence, bond: held.bond, proof, proofId: slashProofId(proof), playerPubkey: proof.playerPubkey,
+    signed: { outcome: body.outcome, score: body.score }, replayed: checked.replayed, why: held.why };
 }
 
 /**
@@ -134,24 +135,34 @@ export async function judgeAuditProof({ evidence, bundle, entry, contract, commi
     windowCloseMs: closeMs, canonicalTranscriptHash: canonical, objectedRunId: objected, replayDiffers: true,
     advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
   if (!held.slashed) return no(held.why);
-  return { slashed: true, offence: held.offence, bond: held.bond, proof, proofId: auditSlashProofId(proof), playerPubkey: proof.playerPubkey, why: held.why };
+  return { slashed: true, offence: held.offence, bond: held.bond, proof, proofId: auditSlashProofId(proof), playerPubkey: proof.playerPubkey,
+    replayed: checked.replayed, why: held.why };
 }
 
 /**
  * THE SLASHING TRANSACTION FOR A JUDGED PROOF, unsigned: its sighash and what its witness needs.
  * `bond` is { txid (internal order), vout, value (BigInt sat), script } as the chain holds it; `advert` the accused's
- * (its template and maturity rebuild the bond's tree); `censusNodes` the census keys at `slashHeight`; `seats` the round's.
+ * (its template and maturity rebuild the bond's tree); `censusNodes` the census keys at `slashHeight`; `seats` the round's;
+ * `entries` the round's, in the shape `entriesForSlash` gives them; `signed` the contradicted run's { outcome, score } (kanban #975).
  */
-export function buildSlash({ verdict, bond, advert, contract, roundId, slashHeight, tipHeight, censusNodes, seats, set, feeSats = 2000n, hint = new TextEncoder().encode('arena') }) {
+export function buildSlash({ verdict, bond, advert, contract, roundId, slashHeight, tipHeight, censusNodes, seats, entries, signed = verdict.signed, set, feeSats = 2000n, hint = new TextEncoder().encode('arena') }) {
   const h = slashHeightIsValid({ slashHeight, censusHeight: contract.censusHeight, tipHeight });
   if (!h.ok) return { ok: false, why: h.why };
   // AS slash-owing.js PAYS IT: the accused out of the census it would be paid from, the round's seats out by the rule
   const accused = toHex(verdict.proof.nodePubkey);
+  const harmed = affectedEntries({ offence: verdict.offence, playerPubkey: verdict.playerPubkey, entries, signed, replayed: verdict.replayed });
+  if (!harmed.ok) return { ok: false, why: harmed.why };
   let distribution;
   try {
-    distribution = slashDistribution({ bondSats: bond.value, roundId, contract, affectedPlayers: [verdict.playerPubkey],
+    distribution = slashDistribution({ bondSats: bond.value, roundId, contract, affectedPlayers: harmed.affected.map((e) => e.playerPubkey),
       censusNodes: censusNodes.filter((k) => toHex(k) !== accused), seats });
   } catch (e) { return { ok: false, why: e.message }; }
+  // PRO RATA BY NET STAKE (§5A.3): `slashDistribution` divides evenly because it does not know the stakes, as slash-owing.js says
+  if (harmed.affected.length) {
+    const byStake = playersShares({ toPlayers: distribution.toPlayers, affected: harmed.affected, roundId });
+    if (!byStake.ok) return { ok: false, why: byStake.why };
+    distribution = { ...distribution, playerShares: byStake.shares };
+  }
   const maturity = bondMaturityOf(advert, { genesisMaturity: genesisFor(set.network).bondMaturity, network: set.network });
   if (!maturity.ok) return { ok: false, why: maturity.why };
   const nodeKey = advert.nodePubkey;
@@ -187,6 +198,7 @@ export function buildEscrowPegin({ escrow, set, toScript, feeSats = 1000n }) {
 // it the same way. Each step is kept (`keep`, the service's state file) before the next, so a restart picks up where it
 // stopped. `bin` is the stake-lock tool, `dir` its client of the round's federation, `rpc` the arbiter's own bitcoind.
 export async function payOutSlash({ proof, v, set, rpc, keep = () => {}, say = () => {}, bin, dir: dataDir, feeSats = 1000n, env: runEnv = process.env }) {
+  if (!v.players.length) return { paid: 0 };   // nobody harmed: that half went to the nodes and the developers, and no escrow exists
   if (!bin || !dataDir) return { why: 'no client of the round\'s federation here (ARENA_STAKE_LOCK_BIN, ARENA_ARBITER_CLIENT_DIR)' };
   const { execFile } = await import('node:child_process');
   const run = (args, timeoutMs = 120000) => new Promise((done) => execFile(bin, args, { timeout: timeoutMs, maxBuffer: 1 << 24, env: runEnv },

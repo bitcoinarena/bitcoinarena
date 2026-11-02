@@ -74,7 +74,7 @@ test('the bond names an outpoint and never a value, so a bond the chain does not
 });
 
 test('a result offence owes one entry and a table offence owes the field, out of the same bond', async () => {
-  const one = await ask({ offence: REPLAY_CONTRADICTS });
+  const one = await ask({ offence: REPLAY_CONTRADICTS, signed: { outcome: 'FAILED', score: 1 }, replayed: { outcome: 'DELIVERED', score: 2 } });
   const all = await ask({ offence: TABLE_IS_NOT_F });
   const facts = {
     replayNames: [...one.owing.players.keys()].map((k) => k.slice(0, 2)),

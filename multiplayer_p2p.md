@@ -20,7 +20,12 @@
 **Version:** Bitcoin Arena protocol v1, draft. Earlier drafts (BLWP) remain in git history.
 **Date:** 2026-10-06
 
-> **A false slash does not pay (2026-11-02, kanban #971, #974).** Bond template
+> **A slash pays who was harmed (2026-11-02, kanban #975).** A false result
+> that raised the player it names no longer pays that player: the other paying
+> entries are paid, so a committee's friend cannot collect the slash for the lie
+> told in their favour. One that lowered them still pays them. §5A.3.
+
+> **A false slash does not pay (2026-11-02, kanban #971, #974). Bond template
 > 3: every round draws two panels of 7 by formula, a bond moves only to a hold
 > output its node signed for that round, and leaving it takes both panels, after
 > 6 blocks. Nothing goes on chain per round. Existing bonds do not move. §5A.2,
@@ -2169,15 +2174,25 @@ minus the round's own seats (the witnesses) and 25% to the donation set of
 
   | Offence (table above) | `affected[]` |
   |---|---|
-  | Two results for one (round, player) | that `playerPubkey` |
-  | A result contradicted by replay | that `playerPubkey` |
+  | Two results for one (round, player) | every other financially activated entry |
+  | A result contradicted by replay | that `playerPubkey` if the signed result lowered them; otherwise every other financially activated entry |
   | A payout table that is not `F(contract, membership, results)` | every financially activated entry |
   | Settlement action without the required signatures | every financially activated entry |
   | A fee share claimed without the availability rule | every financially activated entry - they paid the fee |
   | A withheld settlement signature | every financially activated entry - a stall refunds losers and unpays winners alike |
-  | A contradicted `AUDIT` (§13A.1) | the `playerPubkey` of the entry whose contradicted run the proof names |
+  | A contradicted `AUDIT` (§13A.1) | as a result contradicted by replay, for the entry whose contradicted run the proof names |
   | A release with no valid proof | the node it was taken from, in place of players |
   | A release or escrow payout against its table | the entries of that table |
+
+  **The player a false result favoured is never paid for it (RULED
+  2026-11-02, kanban #975).** The named player is not always the one harmed.
+  Comparing the signed result with the replay's, as a payout reads them - a
+  delivery over a stake handed back over a lost one, then the score - a result
+  that **lowered** them harmed them. One that **raised** them harmed everybody
+  else, and paying them would hand a committee's friend the slash for the lie
+  told in their favour; so do one that moved neither, and a doubled result,
+  which says nothing about which way it went. With no other paying entry nobody
+  was harmed, and that half goes to the pool: 75 % nodes, 25 % developers.
 
   §13A's "the affected player, another player in the round" is the same
   word: the one the offence names first, and the others after. The
