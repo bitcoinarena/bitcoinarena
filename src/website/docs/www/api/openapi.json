@@ -4808,6 +4808,49 @@
     }
    }
   },
+  "/node-facts": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "What nodes run on, and who does not answer",
+    "description": "Each node's last signed record of what it runs on, kept here after it goes offline, and the nodes this seat counts as not answering.\n\nAccess: none\n\nReturns: 200 JSON {node, facts[], unanswered[]}\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_node_facts",
+    "responses": {
+     "200": {
+      "description": "200 JSON {node, facts[], unanswered[]}"
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "Take a node's record",
+    "description": "Takes a node's signed record and hands on what is new.\n\nAccess: signature\n\nReturns: 200 JSON {ok, kept}; 400 not JSON; 409 refused\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "post_node_facts",
+    "responses": {
+     "200": {
+      "description": "200 JSON {ok, kept}; 400 not JSON; 409 refused"
+     }
+    }
+   }
+  },
+  "/node-facts/probe": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "Bandwidth probe",
+    "description": "A fixed download a node times to read its bandwidth.\n\nAccess: none\n\nReturns: 200 1,000,000 zero bytes\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_node_facts_probe",
+    "responses": {
+     "200": {
+      "description": "200 1,000,000 zero bytes"
+     }
+    }
+   }
+  },
   "/nostr-results": {
    "get": {
     "tags": [

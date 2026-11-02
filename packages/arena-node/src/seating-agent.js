@@ -170,9 +170,10 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   const resting = new Map();             // base -> until (ms)
   const failing = new Map();             // base -> requests that failed in a row
   const rests = (base) => { const u = resting.get(base); if (u === undefined) return false; if (nowMs() < u) return true; resting.delete(base); return false; };
-  const unreachable = (base) => { const n = (failing.get(base) || 0) + 1; failing.set(base, n);
+  const failingSince = new Map();        // base -> when its failures in a row began (kanban #984: said at GET /node-facts)
+  const unreachable = (base) => { const n = (failing.get(base) || 0) + 1; failing.set(base, n); if (n === 1) failingSince.set(base, nowMs());
     resting.set(base, nowMs() + Math.min(UNREACHABLE_REST_MS * 2 ** Math.min(n - 1, 10), NO_SEATING_REST_MS)); };
-  const reached = (base) => { if (failing.delete(base)) resting.delete(base); };
+  const reached = (base) => { if (failing.delete(base)) { resting.delete(base); failingSince.delete(base); } };
   // a tunnel whose node behind it is gone answers for it: 502-504, or Cloudflare's 530
   const gone = (r) => (r.status >= 502 && r.status <= 504) || r.status === 530;
   const noDoor = async (base, path, r) => {
@@ -584,6 +585,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   };
   return {
     tick,
+    /** WHO THIS SEAT COUNTS AS NOT ANSWERING (kanban #984): each address, its failed requests in a row and since when, so another node can compare and ask it itself. */
+    unanswered: () => [...failing].filter(([, n]) => n >= UNANSWERED_TRIES).map(([base, tries]) => ({ base, tries, sinceMs: failingSince.get(base) ?? null })),
     /** The certificate pass running beside the tick, if one is (kanban #803): for a caller that needs it finished. */
     settled: () => asking || Promise.resolve(),
     /** For the roster: who the certificate seats (node keys hex), or null while none stands or after equivocation. */
