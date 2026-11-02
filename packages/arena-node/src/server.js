@@ -2480,6 +2480,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let w; try { w = writers.find((x) => toHex(seriesRoundIdOf(x.id, 0)) === hex); } catch { return; }
     if (!w) return;
     wantedTables.add(hex);
+    // the draws kept for the lobby and GET /committee name the seats before this one: a seat answering from them is one a client refuses the round for
+    try { committeeDrawn.clear(); } catch { /* a certificate before the listing was set up: nothing kept yet */ }
     let n = 0, first = null;
     for (const id of w.startingWithin(round.now(), Number.MAX_SAFE_INTEGER - Number(round.now()))) {
       const r = fromHex(id), row = round.get(r);
