@@ -59,3 +59,13 @@ test('confirmed coins are taken before unconfirmed change, however large the cha
   const both = await fundAtRate(wallet(poor).rpc, [op], 1);
   assert.equal(Buffer.from(both.hex.slice(2), 'hex')[4], 2, 'the unconfirmed change joins when the confirmed coin does not pay');
 });
+
+test('an output that pays comes out of the coins too (kanban #972): the change is what is left after it and the fee', async () => {
+  const value = Buffer.alloc(8); value.writeBigUInt64LE(6000n);
+  const paying = Buffer.concat([value, Buffer.from([34, 0x51, 0x20]), Buffer.alloc(32, 2)]);
+  const coin = [{ txid: 'aa'.repeat(32), vout: 1, amount: 0.0001, spendable: true, safe: true }];
+  const got = await fundAtRate(wallet(coin).rpc, [paying], 1);
+  const unsigned = Buffer.from(got.hex.slice(2), 'hex').toString('hex');
+  assert.equal(unsigned, serializeUnsigned([{ txid: 'aa'.repeat(32), vout: 1 }], [paying], { value: 10000n - 6000n - got.fee, script: Buffer.from(CHANGE, 'hex') }));
+  await assert.rejects(fundAtRate(wallet([{ ...coin[0], amount: 0.00006 }]).rpc, [paying], 1), /do not pay/);
+});
