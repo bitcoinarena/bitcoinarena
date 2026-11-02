@@ -9040,6 +9040,227 @@
  },
  {
   "method": "GET",
+  "path": "/census-key",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON { firstHeight, scannedTo, keys, anchors, run, recent, lastWhy }; 404",
+  "purpose": "The census keys standing on this seat's chain, how far its scan read, and the run it is in. A convenience: a key stands by its anchor on the chain alone.",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "Census keys and the current run",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The keys that stand, the anchors read, and the run."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "This seat's network names no first height."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/census-dkg",
+  "params": "?run=<64 hex>",
+  "auth": "none",
+  "returns": "200 JSON { run, epoch, dealers, set, recordId, statements, complaints }; 404",
+  "purpose": "What this node holds of a census key run, all of it public, so a holder can pull what it missed.",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "What a node holds of a census key run",
+  "query": [
+   {
+    "name": "run",
+    "required": true,
+    "type": "string",
+    "description": "The run id, 64 hex."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The dealers held, the set signed, statements and complaints."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "This node is not in that run."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/census-dkg/deal",
+  "params": "body: signed census deal (binary)",
+  "auth": "the dealer's signature in the body",
+  "returns": "201 \"taken\" / 200 \"already\"; 409",
+  "purpose": "Hands over a census key deal, signed by its dealer. The first signed deal per dealer stands, and the deals close at the run's midpoint.",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "Hand over a census key deal",
+  "query": [],
+  "body": {
+   "contentType": "application/octet-stream",
+   "required": true,
+   "description": "The deal, then 64 bytes: its dealer's signature over its id."
+  },
+  "responses": [
+   {
+    "status": "201",
+    "contentType": "text/plain",
+    "description": "\"taken\""
+   },
+   {
+    "status": "200",
+    "contentType": "text/plain",
+    "description": "\"already\""
+   },
+   {
+    "status": "409",
+    "contentType": "text/plain",
+    "description": "Refused, with the reason."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signature",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/census-dkg/deal",
+  "params": "?run=<64 hex>&dealer=<64 hex>",
+  "auth": "none",
+  "returns": "200 binary; 404",
+  "purpose": "Serves a signed deal this node holds, so a holder that missed it asks a peer and not the dealer.",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "Fetch a census key deal",
+  "query": [
+   {
+    "name": "run",
+    "required": true,
+    "type": "string",
+    "description": "The run id, 64 hex."
+   },
+   {
+    "name": "dealer",
+    "required": true,
+    "type": "string",
+    "description": "The dealer's node key, 64 hex."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/octet-stream",
+    "description": "The signed deal."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "This node holds no such deal."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/census-dkg/complaint",
+  "params": "body: census complaint (binary)",
+  "auth": "proves itself against the deal",
+  "returns": "200 \"taken\"; 400; 409",
+  "purpose": "Proves a deal bad, in a form anyone can check, so every honest node drops it before it signs.",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "Prove a census key deal bad",
+  "query": [],
+  "body": {
+   "contentType": "application/octet-stream",
+   "required": true,
+   "description": "The complaint."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "text/plain",
+    "description": "\"taken\""
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a complaint."
+   },
+   {
+    "status": "409",
+    "contentType": "text/plain",
+    "description": "Refused, with the reason."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signature",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/census-dkg/statement",
+  "params": "body: JSON { run, node, recordId, signature }",
+  "auth": "the node's signature in the body",
+  "returns": "200 \"taken\"; 400; 409",
+  "purpose": "A holder's signature on the CensusKeyRecord of the deals it holds. Holders of the threshold on one record make the key.",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "Sign a census key record",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "The run, the node, the record's id and the node's signature on it, in hex."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "text/plain",
+    "description": "\"taken\""
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a statement."
+   },
+   {
+    "status": "409",
+    "contentType": "text/plain",
+    "description": "Refused, with the reason."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signature",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
   "path": "/committee",
   "params": "query round (hex 32), role (game|settlement, default game)",
   "auth": "none",

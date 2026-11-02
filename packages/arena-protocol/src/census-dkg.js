@@ -83,6 +83,20 @@ export function decodeCensusDeal(bytes) {
 
 export const censusDealId = (d) => taggedHash(TAG.censusDeal, encodeCensusDeal(d));
 
+const DEAL_SIGNATURE_BYTES = 64;
+
+/**
+ * A DEAL ON THE WIRE IS SIGNED BY ITS DEALER'S NODE KEY (kanban #972). The proof of knowledge in a deal binds it to the run and to `from` as a number, and
+ * anyone can make one for any `from`: unsigned, a stranger's deal reaching a seat first would stand in for that dealer's, and nodes would hold
+ * different sets. The first signed deal per dealer stands. The signature is outside the deal, so the transcript does not change.
+ */
+export const joinSignedCensusDeal = (bytes, signature) => glue(bytes, signature);
+export function splitSignedCensusDeal(wire) {
+  if (!(wire instanceof Uint8Array) || wire.length <= DEAL_SIGNATURE_BYTES) throw new Error('that is not a signed census deal');
+  const cut = wire.length - DEAL_SIGNATURE_BYTES;
+  return { bytes: wire.subarray(0, cut), signature: wire.subarray(cut) };
+}
+
 /**
  * ONE HOLDER'S DEAL: a polynomial of `needed` coefficients, a share at every x of the census, each sealed to the holder of that x. One ECDH
  * per holder and not per share: the x is in the key and the nonce (seal.js), so two shares of one holder never share either.

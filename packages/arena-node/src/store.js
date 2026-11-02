@@ -703,6 +703,63 @@ export function openStore(path = ':memory:') {
       kept_ms  INTEGER NOT NULL
     );
 
+    -- THE CENSUS KEY'S RUNS (5A.3B, kanban #972, census-key-store.js), beside the claim keys' tables and sharing nothing with them. A deal is the signed
+    -- wire bytes, one per dealer per run, the first standing. census_key_held is this node's shares of a key that stands, the one secret here,
+    -- and it is kept for as long as anything names the key. census_key_anchors and census_key_scan are what the forward scan of "ARN" 'K'
+    -- found and how far it read (kanban #1041 answer 2): kept across restarts, and it has no lookback window.
+    CREATE TABLE IF NOT EXISTS census_key_runs (
+      run_id      BLOB PRIMARY KEY,
+      epoch       INTEGER NOT NULL,
+      state       TEXT NOT NULL,
+      updated_ms  INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS census_key_deals (
+      run_id      BLOB NOT NULL,
+      dealer      BLOB NOT NULL,
+      wire        BLOB NOT NULL,
+      accepted_ms INTEGER NOT NULL,
+      PRIMARY KEY (run_id, dealer)
+    );
+    CREATE TABLE IF NOT EXISTS census_key_complaints (
+      run_id  BLOB NOT NULL,
+      dealer  BLOB NOT NULL,
+      node    BLOB NOT NULL,
+      bytes   BLOB NOT NULL,
+      PRIMARY KEY (run_id, dealer, node)
+    );
+    CREATE TABLE IF NOT EXISTS census_key_statements (
+      run_id     BLOB NOT NULL,
+      node       BLOB NOT NULL,
+      record_id  BLOB NOT NULL,
+      signature  BLOB NOT NULL,
+      PRIMARY KEY (run_id, node, record_id)
+    );
+    CREATE TABLE IF NOT EXISTS census_key_held (
+      public_key   BLOB PRIMARY KEY,
+      epoch        INTEGER NOT NULL,
+      run_id       BLOB NOT NULL,
+      record       BLOB NOT NULL,
+      negated      INTEGER NOT NULL,
+      shares       TEXT NOT NULL,
+      commitments  BLOB NOT NULL,
+      updated_ms   INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS census_key_anchors (
+      height      INTEGER NOT NULL,
+      idx         INTEGER NOT NULL,
+      block_hash  TEXT NOT NULL,
+      txid        TEXT NOT NULL,
+      record_id   BLOB NOT NULL,
+      body        BLOB,
+      stands      INTEGER NOT NULL,
+      why         TEXT,
+      PRIMARY KEY (height, idx)
+    );
+    CREATE TABLE IF NOT EXISTS census_key_scan (
+      height  INTEGER PRIMARY KEY,
+      hash    TEXT NOT NULL
+    );
+
     -- A DONATION OUTPUT THIS SIGNER NODE VERIFIED (2026-10-03, FEDERATION.md "Donations in the federation"): a
     -- payout contract in the player's lock transaction paying one recipient key its share. One output is one entry's.
     -- Indexed by key: what a dev's client asks for (GET /donations?key=).

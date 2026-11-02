@@ -4,8 +4,8 @@
 // which keys stand, and what each epoch has to do about them. No curve and no round of a DKG here: a signature check is injected, as
 // everywhere in this package, and making the key is the seats' work.
 import { Writer, Reader } from './encode.js';
-import { taggedHash, toHex, fromHex, bytesToBigInt } from './hash.js';
-import { TAG } from './constants.js';
+import { taggedHash, toHex, fromHex, bytesToBigInt, sha256 } from './hash.js';
+import { TAG, BOND_SUM_VERSION } from './constants.js';
 import { BOND_TEMPLATE_V3, BOND_MATURITY_OFFSET } from './bond-script.js';
 import { CENSUS_KEY_SHARES_MAX, censusKeyBondMin } from './genesis.js';
 
@@ -138,6 +138,101 @@ export function censusKeyAnchorIn(outputs) {
     if (s && s.length === 38 && s[0] === 0x6a && s[1] === 36 && ANCHOR_MAGIC.every((b, i) => s[2 + i] === b)) return s.slice(6);
   }
   return null;
+}
+
+const RECORD_BYTES = 112, BODY_SIGNATURE_BYTES = 96;
+/** Bitcoin Core holds a tapscript witness item to 80 bytes, so a body travels in pieces, as an advertisement's does (regtest-bond.mjs). */
+export const CENSUS_KEY_BODY_PIECE = 80;
+
+/**
+ * THE BODY OF AN ANCHOR (kanban #1041 answer 3): the record and its signatures, in the witness of the anchor transaction, as an advertisement body is (5A.2, 25.1).
+ * So it is retrievable by anyone with the chain, there is nothing to serve, and a census stays a pure function of the chain. Signers in ascending key.
+ */
+export function encodeCensusKeyBody({ record, signatures }) {
+  const w = new Writer();
+  w.bytes(encodeCensusKeyRecord(record), RECORD_BYTES);
+  w.vec(signatures, (s, ww) => { ww.bytes32(s.key); ww.bytes(s.signature, 64); }, { sortedBy: (a, b) => (toHex(a.key) < toHex(b.key) ? -1 : 1) });
+  return w.finish();
+}
+
+export function decodeCensusKeyBody(bytes) {
+  const r = new Reader(bytes);
+  const record = decodeCensusKeyRecord(r.bytes(RECORD_BYTES));
+  const signatures = r.vec((rr) => ({ key: rr.bytes32(), signature: rr.bytes(64) }));
+  r.end();
+  return { record, signatures };
+}
+
+/** The body in pieces of at most 80 bytes, each one witness item. */
+export function censusKeyBodyPieces(body) {
+  const out = [];
+  for (let at = 0; at < body.length; at += CENSUS_KEY_BODY_PIECE) out.push(body.subarray(at, Math.min(at + CENSUS_KEY_BODY_PIECE, body.length)));
+  return out;
+}
+
+const joinedFrom = (stack, first, length) => {
+  const out = new Uint8Array(length);
+  let at = 0;
+  for (let i = first; i < stack.length && at < length; i++) {
+    const part = stack[i].subarray(0, Math.min(stack[i].length, length - at));
+    out.set(part, at); at += part.length;
+  }
+  return at === length ? out : null;
+};
+
+/**
+ * THE BODY AN ANCHOR'S OWN WITNESS CARRIES, by the id its OP_RETURN names, or null. Not witnessRunsOf: that joins every run of a stack, and a 245-piece body
+ * would be about 30,000 joins per transaction. The record has a fixed size, so its first bytes say where a body starts, and its count says where it ends.
+ */
+export function censusKeyBodyIn(tx, id) {
+  const want = toHex(id);
+  for (const stack of tx.witnesses || []) {
+    for (let i = 0; i < stack.length; i++) {
+      const head = joinedFrom(stack, i, RECORD_BYTES + 2);
+      if (!head || toHex(taggedHash(TAG.censusKeyRecord, head.subarray(0, RECORD_BYTES))) !== want) continue;
+      const length = RECORD_BYTES + 2 + ((head[RECORD_BYTES] << 8) | head[RECORD_BYTES + 1]) * BODY_SIGNATURE_BYTES;
+      const whole = joinedFrom(stack, i, length);
+      if (!whole) continue;
+      try { return decodeCensusKeyBody(whole); } catch { /* not a body after all */ }
+    }
+  }
+  return null;
+}
+
+/**
+ * THE CENSUS A KEY READS (5A.4, before any role filter). A pure function of the chain, so it names no version a build moves: the key's census is read at
+ * BOND_SUM_VERSION, the first whose bonds count as their node's sum, with B as its floor and the network's census_confirmations.
+ */
+export const CENSUS_KEY_CENSUS_VERSION = BOND_SUM_VERSION;
+export const censusKeyContract = ({ networkId, network, height, censusConfirmations, genesis = null }) => ({
+  networkId, censusHeight: height, censusConfirmations, bondMinSats: censusKeyBondMin(network, genesis), protocolVersion: CENSUS_KEY_CENSUS_VERSION,
+});
+
+/**
+ * IS THIS RECORD THE ONE ITS EPOCH CAN HAVE, BEFORE ANY CENSUS IS READ? An epoch at or after the network's first height, the census height that epoch's rule gives, and
+ * an anchor no earlier than the block its draw reads. Cheap, and it comes first: an anchor anyone can post must not buy a census read for nothing.
+ * Answers { ok, censusHeight, drawHeight } or { ok: false, why }.
+ */
+export function censusKeyRecordDue({ record, height, network, firstHeight, censusConfirmations }) {
+  if (firstHeight === null || firstHeight === undefined) return { ok: false, why: `${network} names no first census key height, so it has no census key` };
+  const drawHeight = censusKeyDrawHeight(record.epoch, network);
+  if (drawHeight < firstHeight) return { ok: false, why: `epoch ${record.epoch} starts at ${drawHeight}, before this network's first key height ${firstHeight}` };
+  if (height < drawHeight) return { ok: false, why: `that record was anchored at ${height}, before its epoch's first height ${drawHeight}` };
+  const censusHeight = censusHeightOfEpoch(record.epoch, network, censusConfirmations);
+  if (censusHeight === null || record.censusHeight !== censusHeight) return { ok: false, why: `that record names census height ${record.censusHeight}, and epoch ${record.epoch} reads ${censusHeight}` };
+  return { ok: true, censusHeight, drawHeight };
+}
+
+/**
+ * THE STANDING KEYS AS ONE SHORT NAME, for a cache: a census reads only the keys that stood at or below its own height, so a key anchored later does not move an older
+ * census, and with no key the name is empty and every kept census keeps its old name.
+ */
+export function standingKeysName(standing, height) {
+  const held = (standing || []).filter((k) => k.height <= height);
+  if (!held.length) return '';
+  const w = new Writer();
+  w.vec(held, (k, ww) => { ww.u32(k.epoch); ww.u32(k.height); ww.bytes32(k.publicKey); });
+  return toHex(sha256(w.finish())).slice(0, 16);
 }
 
 /**
