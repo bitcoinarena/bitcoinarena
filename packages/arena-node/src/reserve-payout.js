@@ -107,6 +107,19 @@ export function payoutAmounts({ inputs, contractMsat, fees }) {
 }
 
 /**
+ * THE RESERVES A PAYMENT'S CAP IS READ AGAINST (§27A.9.5 rule 4), in sat: what is held now, with what this payment's own record took out of that put back. A plan marks
+ * its inputs spent the moment it is written, so read without this a payment measures itself against reserves it has just set aside: measured on a devnet 2026-11-02, a
+ * 20-sat payment from one 2 000-sat reserve output read "more than 10 % of the 0 sat reserves" on all seven seats once PLANNED, every seat refused it ("no passed
+ * vote") and it stayed PLANNED. `own` is the payment's record, or nothing: PLANNED its inputs are still in the federation, SENT its change is already held again.
+ */
+export function heldBeforeOwnPayment(heldSats, own) {
+  const held = BigInt(heldSats);
+  if (!own || !own.plan || !(own.state === PAYOUT.PLANNED || own.state === PAYOUT.SENT)) return held;
+  const out = (own.plan.refunds || []).reduce((t, x) => t + BigInt(x.amountMsat), 0n) - (own.state === PAYOUT.SENT ? BigInt(own.plan.changeMsat || 0) : 0n);
+  return held + out / 1000n;
+}
+
+/**
  * THE MOST A MOVE CAN CARRY, in whole sat: the largest invoice whose contract at the gateway's fee, and its federation fee, all the given
  * reserve outputs still cover (a drained federation's reserves move whole, less the fees).
  */
