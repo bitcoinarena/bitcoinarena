@@ -53,10 +53,16 @@ const person = (i) => { const secret = new Uint8Array(32).fill(i + 1); return { 
 const entriesOf = (nodes) => nodes.map((n, i) => ({ pubkey: n.key, bondSats: n.bond, txid: new Uint8Array(32).fill(i + 1), vout: 0, advert: { endpoint: `ws://n${i}`, ...(n.advert || {}) } }));
 
 /** N nodes on one chain, their doors joined by a fetch in memory. */
-function network(bonds, { c = chain(), down = [], canPay = () => true, entries = null, censusAt = null, censusKey0 = null } = {}) {
+function network(bonds, { c = chain(), down = [], canPay = () => true, entries = null, censusAt = null, censusKey0 = null, extraNamed = null } = {}) {
   const nodes = bonds.map((bond, i) => ({ ...person(i), bond, url: `http://n${i}` }));
   const list = entries || entriesOf(nodes);
   const read = (h) => (censusAt ? censusAt(h, list) : list);
+  // the census' namedKeys: here every entry, and `extraNamed(h)` what a real one counts beyond its entries, a bond out of the census or a hold output
+  const readNamed = (h) => {
+    const out = { ...(extraNamed ? extraNamed(h) : {}) };
+    for (const e of read(h)) if (e.advert.censusKey) { const k = toHex(e.advert.censusKey); out[k] = (out[k] || 0) + 1; }
+    return out;
+  };
   const byUrl = new Map();
   const fetchFn = async (url, opts = {}) => {
     const u = new URL(url), n = byUrl.get(`http://${u.host}`);
@@ -80,7 +86,7 @@ function network(bonds, { c = chain(), down = [], canPay = () => true, entries =
     n.posted = [];
     n.build = (extra = {}) => {
       n.scan = createCensusKeyScan({ store: n.store, network: NETWORK, networkId: NET, firstHeight: FIRST, foundingWindow: WINDOW, censusConfirmations: CONF, censusKey0, tipHeight: () => c.tip, blockHashAt: c.hashAt,
-        blockAt: c.blockAt, censusEntriesAt: read, verify });
+        blockAt: c.blockAt, censusEntriesAt: read, censusNamedAt: readNamed, verify });
       n.run = createCensusKeyRun({ store: n.store, network: NETWORK, networkId: NET, key: n.key, secret: n.secret, firstHeight: FIRST, foundingWindow: WINDOW, censusConfirmations: CONF,
         tipHeight: () => c.tip, blockHashAt: c.hashAt, censusEntriesAt: read, standing: n.scan.standing, scannedTo: n.scan.scannedTo, plan: n.scan.planAt, reshareList: n.scan.reshareList,
         generationOf: n.scan.generationOf, fetchFn, work: censusKeyWork,
@@ -607,6 +613,11 @@ test('key 0 with too few founders left is dead, and one no bond names is retired
   await quiet.pass();
   const plan = await quiet.nodes[0].scan.planAt(EPOCH);
   assert.deepEqual([plan.reshare, plan.retired, plan.newKey], [null, 1, false], 'named by no bond, so nothing is done for it, and no new key is due');
+  // ONE HOLD OUTPUT, OR A BOND WHOSE NODE STEPPED OUT, IS ENOUGH (kanban #1050): the census' namedKeys counts them, and a key is not retired under them
+  const held = network([2n, 2n, 2n, 2n, 2n, 2n].map((n) => n * BOND), { entries: census([0, 1, 2, 4], {}), censusKey0, extraNamed: () => ({ [toHex(censusKey0.publicKey)]: 1 }) });
+  await held.pass();
+  const reading = await held.nodes[0].scan.planAt(EPOCH);
+  assert.deepEqual([reading.retired, reading.newKey, reading.reshare.key], [0, true, toHex(censusKey0.publicKey)], 'still named, so still reshared, and a new key is due');
 });
 
 test('reshare: no anchor, no reshare. A record of a standing key with no list is refused, and so is a list short of the threshold, late, or for a key the plan does not name', async () => {

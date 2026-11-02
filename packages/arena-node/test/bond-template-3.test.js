@@ -14,11 +14,11 @@ import {
   holdTapTree, holdOutputKey, holdControlBlock, tapLeafHash, tapBranchHash, tapTweak, rootFromControlBlock, recoveryLeaf, controlBlockFor,
   HOLD_INTERNAL_KEY, BOND_TEMPLATE_V3,
 } from '../../arena-protocol/src/bond-script.js';
-import { tapSighash, scriptPathSigners } from '../../arena-protocol/src/bond-spend.js';
+import { tapSighash, scriptPathSigners, serializeSpend } from '../../arena-protocol/src/bond-spend.js';
 import { genesisFor, SLASH_CLOCKS } from '../../arena-protocol/src/genesis.js';
 import { bondKeyMatches } from '../../arena-protocol/src/chain.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { resolveCensus } from '../../arena-protocol/src/census.js';
+import { resolveCensus, chainFactsAt, holdOfStart } from '../../arena-protocol/src/census.js';
 import { encodeAdvert, decodeAdvert } from '../../arena-protocol/src/advert.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
@@ -238,4 +238,34 @@ test('the census reads a template-3 bond naming the newest standing key, and ref
   const wire = decodeAdvert(encodeAdvert(body(person(70), newest)));
   assert.equal(hexOf(wire.censusKey), hexOf(newest));
   assert.equal(wire.bondMaturityHeight, CONFIRMED + 100);
+});
+
+test('a hold output is still the bond: the census reads a slash start\'s output 0 until it is spent, and no other spend (5A.2, kanban #1050)', () => {
+  const bondKey = '11'.repeat(32) + ':0';
+  const bondScript = fromHex(`5120${'33'.repeat(32)}`), holdScript = fromHex(`5120${'44'.repeat(32)}`);
+  const from = { txid: new Uint8Array(32).fill(0x11), vout: 0, sequence: 0xfffffffd };
+  const fee = { txid: new Uint8Array(32).fill(0x22), vout: 0, sequence: 0xfffffffd };
+  const path = (leaf) => [new Uint8Array(64), new Uint8Array(65), leaf, new Uint8Array(33)];
+  const leafB = slashStartLeaf(nodeKey, censusKey);
+  const start = (over = {}) => serializeSpend({ version: 2, locktime: 0, inputs: [from, fee], outputs: [{ value: 100000n, script: holdScript }], witnesses: [path(leafB), [new Uint8Array(64)]], ...over });
+  const facts = (spend, extra = [], height = 500) => {
+    const f = chainFactsAt([{ height: 400, transactions: [spend] }, ...extra.map((t, i) => ({ height: 401 + i, transactions: [t] }))], height);
+    f.outputAt.set(bondKey, { value: 100000n, script: bondScript });
+    return f;
+  };
+  const raw = start();
+  const txid = hexOf(parseTransaction(raw).txid);
+  assert.deepEqual(holdOfStart(facts(raw), bondKey, nodeKey), { txid, vout: 0, height: 400 });
+  const ended = serializeSpend({ version: 2, locktime: 0, inputs: [{ txid: fromHex(txid), vout: 0, sequence: 24 }], outputs: [{ value: 90000n, script: bondScript }], witnesses: [path(leafB)] });
+  assert.equal(holdOfStart(facts(raw, [ended]), bondKey, nodeKey), null, 'a release, a return or the fallback ends it');
+  assert.deepEqual(holdOfStart(facts(raw, [ended], 400), bondKey, nodeKey), { txid, vout: 0, height: 400 }, 'and a census below that spend still reads the hold');
+  assert.equal(holdOfStart(facts(raw), bondKey, person(9)), null, 'another node\'s path B is not this bond\'s');
+  const refused = {
+    'path A': start({ witnesses: [path(recoveryLeaf(nodeKey, 160000)), [new Uint8Array(64)]] }),
+    'the key path': start({ witnesses: [[new Uint8Array(64)], [new Uint8Array(64)]] }),
+    'less than the whole bond': start({ outputs: [{ value: 99999n, script: holdScript }] }),
+    'output 0 not a taproot output': start({ outputs: [{ value: 100000n, script: fromHex(`0014${'55'.repeat(20)}`) }] }),
+    'the bond on another input': start({ inputs: [fee, from] }),
+  };
+  for (const [what, spend] of Object.entries(refused)) assert.equal(holdOfStart(facts(spend), bondKey, nodeKey), null, what);
 });

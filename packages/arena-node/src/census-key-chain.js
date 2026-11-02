@@ -16,7 +16,6 @@
 import { censusKeyAnchorIn, censusKeyBodyIn, censusKeyRecordDue, censusKeyShares, censusKeyRecordStands, standingCensusKeys, decodeCensusKeyBody, encodeCensusKeyBody,
   censusKey0Shares, censusKeyDrawHeight, censusKeyPlan, censusHeightOfEpoch, decodeReshareList, encodeReshareList, reshareAnchorIn, reshareListIn, reshareListStands,
   reshareWindow } from '../../arena-protocol/src/census-key.js';
-import { BOND_TEMPLATE_V3 } from '../../arena-protocol/src/bond-script.js';
 import { splitBlock } from '../../arena-protocol/src/block.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { merkleBranchOf } from '../../arena-protocol/src/chain.js';
@@ -41,10 +40,11 @@ export function censusKeyAnchorsInBlock(raw, height) {
 
 /**
  * `store`: CensusKeyStore. `tipHeight()`; `blockHashAt(height)` the hash bitcoind prints, null above the tip; `blockAt(hash)` the raw block; `censusEntriesAt(height)` the
- * census at a height (censusKeyContract's), which throws or answers null while it cannot be read; `verify(signature, digest, key)`; `censusKey0` genesis' census_key_0 { publicKey, holders, threshold }, mainnet's.
+ * census at a height (censusKeyContract's), which throws or answers null while it cannot be read; `verify(signature, digest, key)`; `censusKey0` genesis' census_key_0 { publicKey, holders, threshold }, mainnet's;
+ * `censusNamedAt(height)` the same census' namedKeys, the unspent bonds and hold outputs naming each key, whoever is in that census.
  */
 export function createCensusKeyScan({ store, network, networkId, firstHeight, foundingWindow, censusConfirmations, genesis = null, censusKey0 = null, tipHeight, blockHashAt, blockAt,
-  censusEntriesAt, verify, sharesMax = undefined, maxBlocksPerPass = 64, keepHashes = 288, log = () => {} }) {
+  censusEntriesAt, censusNamedAt, verify, sharesMax = undefined, maxBlocksPerPass = 64, keepHashes = 288, log = () => {} }) {
   let keys = [];
   let generations = new Map();          // key hex -> [{ epoch, censusHeight, height }] oldest first, the records that named who holds it
   let lists = new Map();                // `${key hex}:${run}` -> { height, present }
@@ -97,7 +97,10 @@ export function createCensusKeyScan({ store, network, networkId, firstHeight, fo
     const entries = await censusEntriesAt(census);
     if (!entries) throw new Error(`the census at ${census} cannot be read yet`);
     const here = new Set(entries.map((e) => toHex(e.pubkey)));
-    const named = (k) => entries.filter((e) => e.advert && e.advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3 && e.advert.censusKey && toHex(e.advert.censusKey) === toHex(k.publicKey)).length;
+    // A KEY IS NAMED BY EVERY UNSPENT BOND AND HOLD OUTPUT (kanban #1050): the census' own list, which a node stepping out or a floor does not move
+    const namedKeys = await censusNamedAt(census);
+    if (!namedKeys) throw new Error(`the census at ${census} cannot be read yet`);
+    const named = (k) => namedKeys[toHex(k.publicKey)] || 0;
     const read = [];
     for (const k of keys.filter((x) => x.height <= start)) {
       const generation = generationAt(toHex(k.publicKey), start);

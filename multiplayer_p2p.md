@@ -1721,6 +1721,7 @@ being canonical.
 
 ```text
 bond output exists at census_height, unspent, >= census_confirmations deep
+                                               (its hold output stands for it, §5A.3B)
 bond output uses the protocol's bond script template (5A.3B)
 bond_amount >= bond_min(role)
 committed advertisement body retrievable and hash-matching
@@ -2536,7 +2537,8 @@ exact binomial:
 nobody re-bonds (§5A.2), so a key cannot retire while something names it.
 
 - **Retired:** a key with no unspent bond or hold output naming it. Nothing is
-  done for it again.
+  done for it again. This is read before the census' floor, version and `serving`
+  filters: a node left out of a census takes no bond off a key (kanban #1050).
 - **Reshared only when needed:** when nodes of the current census hold under 80 %
   of its shares, at most one key at a time, oldest first. The reshare keeps the
   public key. A stable census costs nothing. A keygen tolerates absence, a reshare
@@ -2902,6 +2904,15 @@ bond with the same weight, until it is spent by a release, a return or the
 fallback. It is not an abandonment by a guardian (§23A.5). So a start with no
 valid proof takes nothing from the node: it stays drawn and earns as before.
 Only a release takes a node out.
+
+The census reads a spend as a start when input 0 is the bond, its leaf is
+`<node_key> CHECKSIGVERIFY <census_key> CHECKSIG` with the bond's own node key, and
+output 0 is a taproot output of the whole bond amount. Any other spend ends the bond.
+The bond keeps its outpoint, its depth and its advertisement in the census, so no
+leaf and no root changes. The census cannot rebuild the hold output itself: its leaves
+name the round's panels, and the panels are drawn from this census. What stands behind
+output 0 is the node's own `slash_presig`, which is why it needs nothing else
+(kanban #1050).
 
 **Panel members** take nothing from a slash. Signing a release with no valid proof slashes the
 signer: the release's witness names them.

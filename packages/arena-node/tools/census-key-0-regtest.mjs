@@ -3,7 +3,8 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // CENSUS KEY 0 THROUGH THE NODE'S OWN CODE (kanban #1050, spec 5A.3B). A private regtest, never testnet4, never a live seat. Four founders run key 0's DKG before any bond, and three of them
 // bond naming it; the fourth never bonds. Real `src/main.js` seats read the holders the genesis stand-in names, the 80 % trigger trips, the old holders post the list, the new census deals,
-// its record stands by its anchor, the old shares go, and the new shares open key 0. The first key by weight runs beside it. One line per question; exits 1 if any differs.
+// its record stands by its anchor, the old shares go, and the new shares open key 0. The first key by weight runs beside it. Then a hold output: a real slash start on a bond naming that first key,
+// its only bond, and the census reads the hold as the same bond with the same weight, a key named only by it is not retired, and the fallback ends it. One line per question; exits 1 if any differs.
 //
 //   node tools/census-key-0-regtest.mjs            (from packages/arena-node; CK_DIR, CK_BASE_PORT, BITCOIN_BIN)
 import { execFileSync, spawn } from 'node:child_process';
@@ -23,8 +24,13 @@ import { founderRun, lagrangeOf } from '../../arena-protocol/src/census-dkg.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { standingKeysFor, BOND_TERMS } from '../../arena-client/src/committee.js';
 import { bondTweakPoint, bondCombine, verify as pageVerify } from '../../arena-client/src/page-curve.js';
-import { BOND_TEMPLATE_V3 } from '../../arena-protocol/src/bond-script.js';
-import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
+import { BOND_TEMPLATE_V3, HOLD_INTERNAL_KEY, TAPLEAF_VERSION, controlBlockFor, holdControlBlock, holdOutputKey, slashStartLeaf, tapLeafHash, tapTweak } from '../../arena-protocol/src/bond-script.js';
+import { tapSighash, scriptPathWitness, serializeSpend } from '../../arena-protocol/src/bond-spend.js';
+import { arbitrationCommitment } from '../../arena-protocol/src/arbitration-tx.js';
+import { SLASH_CLOCKS } from '../../arena-protocol/src/genesis.js';
+import { scalarTo32 } from '../../arena-protocol/src/shares.js';
+import { tweakPoint } from '../src/curve.js';
+import { fromHex, taggedHash, toHex } from '../../arena-protocol/src/hash.js';
 
 const env = process.env;
 const BIN = env.BITCOIN_BIN || '/mnt/bitcoin/bitcoin-31.1/bin';
@@ -112,7 +118,6 @@ try {
   }
   let got = await until('key 0 standing at every seat, from genesis, no anchor', all, (s) => s.keys.length === 1 && s.keys[0].publicKey === key);
   ask('every seat reads key 0 from genesis at height 0, first holders epoch 0', got.every((s) => s.keys[0].height === 0 && s.keys[0].epoch === 0 && s.keys[0].holdersFrom === 0));
-  await until('every seat scanned to 299', all, (s) => s.scannedTo === 299);
 
   const founding = [0, 1, 2];
   rt.mine(1);
@@ -138,7 +143,7 @@ try {
   for (let t = 0; t < 40 && !(await seats(all)).every((s) => s.keys.length === 2 && s.keys[0].holdersFrom === 3); t++) { rt.mine(1); await wait(1000); }
   got = await until('the new holders named on every chain', all, (s) => s.keys[0].holdersFrom === 3 && s.keys.length === 2);
   ask('the record stands by its anchor, and adds no key: key 0 and the first key by weight', got.every((s) => s.keys[0].publicKey === key && s.keys[1].publicKey === first), `epoch ${got[0].keys[1].epoch} key ${first.slice(0, 16)}`);
-  const heldBy = (i) => { const d = new DatabaseSync(stores[i], { readOnly: true }); const rows = d.prepare('SELECT epoch, shares FROM census_key_held WHERE hex(public_key) = ?').all(key.toUpperCase()); d.close(); return rows; };
+  const heldBy = (i, k = key) => { const d = new DatabaseSync(stores[i], { readOnly: true }); const rows = d.prepare('SELECT epoch, shares FROM census_key_held WHERE hex(public_key) = ?').all(k.toUpperCase()); d.close(); return rows; };
   for (let t = 0; t < 20 && heldBy(0).some((r) => r.epoch === 0); t++) await wait(500);
   ask('the founders\' old shares are gone once the record stands', founding.every((i) => !heldBy(i).some((r) => r.epoch === 0)));
   const shares = new Map();
@@ -163,6 +168,65 @@ try {
     bond: { arbitrationKeys: terms.arbitrationKeys, arbitrationK: terms.arbitrationK, bondMaturity: terms.bondMaturity, tweakPoint: bondTweakPoint, combine: bondCombine }, verify: pageVerify,
     genesis: { censusKey0: { publicKey: key0, holders: founders.map((f) => f.key), threshold: 3 } } });
   ask('the page reads key 0 from genesis and checks the first key on bonds naming it', page.ok && page.keys.length === 2 && toHex(page.keys[0].publicKey) === key && toHex(page.keys[1].publicKey) === first && !page.refused.length, `${page.keys ? page.keys.length : 0} keys ${(page.refused || []).join(' ')}`.trim());
+
+  // A HOLD OUTPUT IS STILL THE BOND (5A.2). Seat 3 adds one bond, the only one naming the first key, and the census key starts it to a hold output with no panels
+  const scalarOf = (k, epoch) => {
+    const got = new Map();
+    for (const i of all) { const row = heldBy(i, k).find((r) => r.epoch === epoch); for (const [x, v] of (row ? JSON.parse(row.shares) : [])) got.set(x, BigInt(`0x${v}`)); }
+    const ids = [...got.keys()].sort((a, b) => a - b), l = lagrangeOf(ids, ids);
+    return scalarTo32(ids.reduce((a, x) => (a + l.get(x) * got.get(x)) % N, 0n));
+  };
+  const firstSecret = scalarOf(first, 3);
+  ask('the first key\'s shares open it, to sign as 2/3 of its holders would', toHex(schnorr.getPublicKey(firstSecret)) === first);
+  const started = bond(3, 100000n, { template: BOND_TEMPLATE_V3, censusKey: fromHex(first) });
+  rt.include([started.hex]);
+  rt.mine(1);
+  const value = 100000n, nodeKey = pubOf(keys[3]), firstKey = fromHex(first);
+  const bondScript = fromHex(`5120${toHex(started.built.outputKey)}`), bondIn = { txid: fromHex(started.txid).reverse(), vout: 0, sequence: 0xfffffffd };
+  const C = SLASH_CLOCKS.regtest, clocks = { holdBlocks: C.slashHoldBlocks, returnBlocks: C.slashReturnBlocks, fallbackBlocks: C.slashFallbackBlocks };
+  const hold = holdOutputKey({ nodeKey, censusKey: firstKey, panelA: [], panelB: [], bondMaturity: started.maturity, ...clocks }, { tweakPoint });
+  const leafScript = slashStartLeaf(nodeKey, firstKey), leafHash = tapLeafHash(leafScript);
+  const presig = Uint8Array.from([...schnorr.sign(tapSighash({ version: 2, locktime: 0, inputs: [bondIn], outputs: [{ value, script: hold.script }], prevouts: [{ value, script: bondScript }], inputIndex: 0, leafHash, hashType: 0x83 }), keys[3].secret), 0x83]);
+  // whoever files the slash brings a fee coin and the proof's OP_RETURN
+  const payer = schnorr.utils.randomSecretKey(), feeLeaf = Uint8Array.from([0x20, ...schnorr.getPublicKey(payer), 0xac]);
+  const q = tweakPoint(HOLD_INTERNAL_KEY, tapTweak(HOLD_INTERNAL_KEY, tapLeafHash(feeLeaf)));
+  const feeScript = fromHex(`5120${toHex(q.outputKey)}`), fee = rt.fund(feeScript, '0.001');
+  const feeIn = { txid: fromHex(fee.txid).reverse(), vout: fee.vout, sequence: 0xfffffffd };
+  const tx = { version: 2, locktime: 0, inputs: [bondIn, feeIn], outputs: [{ value, script: hold.script }, arbitrationCommitment(taggedHash('ARENA/v1/SlashProof', new Uint8Array(32).fill(7)), rt.height(), new Uint8Array(0)), { value: fee.value - 5000n, script: rt.payTo() }] };
+  const prevouts = [{ value, script: bondScript }, { value: fee.value, script: feeScript }];
+  const raw = toHex(serializeSpend({ ...tx, witnesses: [
+    scriptPathWitness({ stack: [schnorr.sign(tapSighash({ ...tx, prevouts, inputIndex: 0, leafHash }), firstSecret), presig], script: leafScript, controlBlock: controlBlockFor('slash', started.built).controlBlock }),
+    scriptPathWitness({ stack: [schnorr.sign(tapSighash({ ...tx, prevouts, inputIndex: 1, leafHash: tapLeafHash(feeLeaf) }), payer)], script: feeLeaf, controlBlock: Uint8Array.from([TAPLEAF_VERSION | q.parity, ...HOLD_INTERNAL_KEY]) }),
+  ] }));
+  const startTxid = cli('sendrawtransaction', raw);
+  rt.mine(1);
+  ask('a real slash start, node presig and census key, spends the bond into its hold output', JSON.parse(cli('getrawtransaction', startTxid, '1')).confirmations === 1, `${JSON.parse(cli('getrawtransaction', startTxid, '1')).vsize} vB`);
+  const keptCensus = (height) => {
+    const d = new DatabaseSync(stores[0], { readOnly: true });
+    const row = d.prepare("SELECT body FROM census_kept WHERE key LIKE ?").get(`chain:censuskey:%:${height}:%`);
+    d.close();
+    return row ? JSON.parse(row.body) : null;
+  };
+  rt.mine(500 - 1 - rt.height());
+  await until('every seat scanned to 499', all, (s) => s.scannedTo === 499);
+  rt.mine(1);
+  got = await until('the run of epoch 5', all, (s) => s.run && s.run.epoch === 5);
+  ask('a key named only by a hold output is not retired: its newest-key run came due', got.every((s) => s.run.epoch === 5));
+  ask('the hold output keeps its weight: 6 shares of the founders + 3 + 2 of the started bond', got.every((s) => s.run.total === 11), `${got[0].run.total} shares, threshold ${got[0].run.threshold}`);
+  const before = keptCensus(499);
+  ask('the census at 499 holds the started bond, and it names the first key once', before.entries.length === 5 && before.namedKeys[first] === 1, `${before.entries.length} entries, named ${before.namedKeys[first]}`);
+
+  // THE FALLBACK ENDS IT: the census key alone, slash_fallback_blocks after the start
+  const fbTx = { version: 2, locktime: 0, inputs: [{ txid: fromHex(startTxid).reverse(), vout: 0, sequence: clocks.fallbackBlocks }], outputs: [{ value: value - 2000n, script: rt.payTo() }] };
+  const fbDigest = tapSighash({ ...fbTx, prevouts: [{ value, script: hold.script }], inputIndex: 0, leafHash: hold.leaves.fallback });
+  const fb = cli('sendrawtransaction', toHex(serializeSpend({ ...fbTx, witnesses: [scriptPathWitness({ stack: [schnorr.sign(fbDigest, firstSecret)], script: hold.scripts.fallback, controlBlock: holdControlBlock('fallback', hold).controlBlock })] })));
+  rt.mine(1);
+  ask('the fallback spends the hold output', JSON.parse(cli('getrawtransaction', fb, '1')).confirmations === 1);
+  rt.mine(600 - rt.height());
+  await until('every seat scanned to 600', all, (s) => s.scannedTo >= 600, 180000);
+  let after = null;
+  for (let t = 0; t < 120 && !after; t++) { after = keptCensus(599); if (!after) await wait(500); }
+  ask('the census at 599 has lost that bond, and nothing names the first key', after && after.entries.length === 4 && !after.namedKeys[first], after ? `${after.entries.length} entries` : 'no census');
 } catch (e) { wrong += 1; console.error(`#1050 stopped: ${e.message}`); console.error(`#1050 logs in ${dir}`); env.CK_KEEP = '1'; }
 await stopAll();
 console.log(wrong ? `#1050 ${wrong} wrong` : '#1050 all as expected');

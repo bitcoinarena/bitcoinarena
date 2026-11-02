@@ -30,6 +30,6 @@ test('another network keeps its window; the start of a chain is block 0', () => 
 
 test('both of the node\'s census reads take it', () => {
   const src = readFileSync(new URL('../../arena-node/src/main.js', import.meta.url), 'utf8');
-  assert.equal(src.match(/blocksOver\(call, censusFirstBlock\(/g).length, 2);
+  assert.equal(src.match(/blocksOver\(call, censusFirstBlock\(/g).length, 3, 'the round\'s, the view\'s, and a census key\'s evidence');
   assert.doesNotMatch(src, /CENSUS_LOOKBACK/);
 });

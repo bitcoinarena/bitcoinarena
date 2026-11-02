@@ -37,7 +37,7 @@ import {
   paysBondMarker, paysMarkerProgram,
 } from './chain.js';
 import { decodeAdvert, splitSignedAdvert, advertId, hostsGame } from './advert.js';
-import { maturityStands } from './bond-script.js';
+import { maturityStands, slashStartLeaf } from './bond-script.js';
 import { bondNamesStandingKey } from './census-key.js';
 import { poolOfRole, GAME_VERIFY } from './fee.js';
 import { genesisFor } from './genesis.js';
@@ -638,6 +638,7 @@ export function bestChainView(views) {
 export function chainFactsAt(blocks, censusHeight) {
   const createdAt = new Map();
   const spentAt = new Map();
+  const spentIn = new Map();          // and the transaction that spent it: a slash start does not end a bond (holdOfStart)
   // AND THE OUTPUT ITSELF, for a caller that wants the script without going
   // back to the blocks. RESOLVE does not need it: a resolved transaction is
   // pinned to the entry's txid, and a transaction with that txid cannot have
@@ -658,11 +659,39 @@ export function chainFactsAt(blocks, censusHeight) {
         createdAt.set(key, block.height);
         outputAt.set(key, tx.outputs[vout]);
       }
-      for (const input of tx.inputs)
-        spentAt.set(`${toHex(input.previousTxid)}:${input.previousVout}`, block.height);
+      for (const input of tx.inputs) {
+        const key = `${toHex(input.previousTxid)}:${input.previousVout}`;
+        spentAt.set(key, block.height);
+        spentIn.set(key, tx);
+      }
     }
   }
-  return { createdAt, spentAt, outputAt };
+  return { createdAt, spentAt, spentIn, outputAt };
+}
+
+/**
+ * A HOLD OUTPUT IS STILL THE BOND (5A.2, 5A.3B, kanban #972, ruling #1050): a spend through path B of a template-3 bond is the one spend that does not end it. The census reads its output 0
+ * as the same bond with the same weight until that output is spent, by a release, a return or the fallback. `key` is the bond's outpoint as chainFactsAt names it, `nodeKey` the bond's node.
+ *
+ *   the spend   input 0 the bond, its leaf `<node_key> CHECKSIGVERIFY <census_key> CHECKSIG`. Bitcoin already checked the leaf is in the bond's tree and both signatures, so a leaf that
+ *               reads so with this node's key is path B, and only a template-3 bond has one
+ *   output 0    the whole bond amount, to a taproot output. slash_presig fixes both by SIGHASH_SINGLE. The leaves under that output key are the round's panels, which this census
+ *               decides, so a census cannot rebuild it: what stands behind output 0 is the node's own signature on it
+ *
+ * Answers { txid, vout, height }, the hold output, while it is unspent at the census height. Null for any other spend, and for a hold output already spent.
+ */
+export function holdOfStart(facts, key, nodeKey) {
+  const tx = facts.spentIn.get(key);
+  if (!tx || !(nodeKey instanceof Uint8Array)) return null;
+  const input = tx.inputs[0], stack = tx.witnesses && tx.witnesses[0];
+  if (!input || !stack || `${toHex(input.previousTxid)}:${input.previousVout}` !== key) return null;
+  const items = stack.length > 2 && stack[stack.length - 1][0] === 0x50 ? stack.slice(0, -1) : stack;
+  const leaf = items[items.length - 2];
+  if (!leaf || leaf.length !== 68 || toHex(slashStartLeaf(nodeKey, leaf.slice(35, 67))) !== toHex(leaf)) return null;
+  const hold = tx.outputs[0], bond = facts.outputAt.get(key);
+  if (!hold || !bond || hold.value !== bond.value || hold.script.length !== 34 || hold.script[0] !== 0x51 || hold.script[1] !== 0x20) return null;
+  const txid = txidHexOf(tx);
+  return facts.spentAt.has(`${txid}:0`) ? null : { txid, vout: 0, height: facts.spentAt.get(key) };
 }
 
 /**
@@ -782,7 +811,8 @@ export function scanCensus(view, { contract, candidates }) {
   const blocks = chain.blocks;
   const firstHeight = chain.firstHeight;
 
-  const { createdAt, spentAt } = chainFactsAt(blocks, censusHeight);
+  const facts = chainFactsAt(blocks, censusHeight);
+  const { createdAt, spentAt } = facts;
 
   // GIVEN A LIST, THIS IS WHAT IT ALWAYS WAS. Absent one, the chain is asked -
   // which is what 5A.4 step 1 says a participant does, and what makes the
@@ -834,7 +864,8 @@ export function scanCensus(view, { contract, candidates }) {
       continue;
     }
 
-    const entry = { ...c, height, spent: spentAt.has(key) };
+    const hold = spentAt.has(key) ? holdOfStart(facts, key, c.pubkey) : null;
+    const entry = { ...c, height, spent: spentAt.has(key) && !hold, ...(hold ? { hold } : {}) };
 
     // SCAN APPLIES ITS OWN CONJUNCTS. It used to hand its findings to the
     // commit step and let that do the filtering, which made SCAN a lookup and
@@ -1069,6 +1100,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
 
   let eligible = [];
   const excluded = [];
+  const namedKeys = {};
 
   for (const e of entries) {
     let seen = null;
@@ -1125,7 +1157,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
         });
         continue;
       }
-      if (facts.spentAt.has(key)) {
+      if (facts.spentAt.has(key) && !holdOfStart(facts, key, read.advert.nodePubkey)) {
         excluded.push({
           ...e,
           why: `that bond was spent at height ${facts.spentAt.get(key)}, so nothing is at stake`,
@@ -1157,6 +1189,9 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
     // A TEMPLATE-3 BOND NAMES A KEY NEWEST WITHIN census_confirmations OF ITS CONFIRMATION (5A.3B, kanban #1031). `bond.standingKeys` is the reader's list.
     const named = bondNamesStandingKey(read.advert, confirmed, bond && bond.standingKeys, Number(contract.censusConfirmations ?? 0));
     if (!named.ok) { excluded.push({ ...e, why: named.why }); continue; }
+    // WHO STILL NAMES A KEY (5A.3B "Retired"): an unspent bond or a hold output, whatever the rest of this census makes of its node. A floor, a version or serving = false keeps a node
+    // out of a census and takes no bond off a key. The body read here is the one the bond's own script was built from
+    if (named.epoch !== undefined) { const k = toHex(read.advert.censusKey); namedKeys[k] = (namedKeys[k] || 0) + 1; }
 
     // AND THE AMOUNT IS THE CHAIN'S. This was the entry's own claim, measured:
     // an output worth 60000 sats, an entry claiming 100000000000, accepted -
@@ -1240,6 +1275,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
     ok: true,
     eligible,
     excluded,
+    namedKeys,
     // WHAT IS STILL UNCHECKED SHRINKS WHEN A CALLER BRINGS A CURVE. Reporting
     // the signature as unchecked after checking it would be as wrong as not
     // checking it: the list is what a reader is asked to take on trust.
@@ -1540,6 +1576,7 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
     work: chain.work,
     tipHeight: chain.tipHeight,
     refusedChains: chain.refused || [],
+    namedKeys: resolved.namedKeys,
     excluded: [
       ...scanned.excluded.map((e) => ({ ...e, step: 'scan' })),
       ...resolved.excluded.map((e) => ({ ...e, step: 'resolve' })),

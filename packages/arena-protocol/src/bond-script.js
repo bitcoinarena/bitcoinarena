@@ -541,7 +541,7 @@ export function bondOutputKeyMatches(onChain, inputs, { tweakPoint, combine } = 
  * go without its node is a hold output the node signed for that round.
  *
  * Read through `bondMaturityOf` and `maturityStands` as template 2 is, and rebuilt in chain.js `bondKeyMatches` from the census key its
- * advertisement names. A hold output is not read yet: a started bond leaves the census as any spent one does.
+ * advertisement names. A started bond stays in the census by its hold output, census.js holdOfStart.
  */
 
 /**

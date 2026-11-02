@@ -613,13 +613,15 @@ if (url) {
         negated: zero.held.negated, shares: new Map(zero.held.shares.map(([x, v]) => [x, BigInt(`0x${v}`)])), commitments: zero.held.commitments.map(fromHex) });
       const blockHashAt = async (height) => { try { return String(await call('getblockhash', [height])); } catch { return null; } };
       const tipHeight = async () => Number(await call('getblockcount'));
-      const censusEntriesAt = async (height) => {
+      const keyCensusAt = async (height) => {
         const census = await chainCensusKept('censuskey', toHexMain(networkId), height, censusKeyContract({ networkId, network: net, height, censusConfirmations }), { hold: false });
-        if (!census.ok) { console.error(`[census-key] no census at ${height}: ${census.why}`); return null; }
-        return census.entries;
+        if (!census.ok) console.error(`[census-key] no census at ${height}: ${census.why}`);
+        return census.ok ? census : null;
       };
+      const censusEntriesAt = async (height) => { const census = await keyCensusAt(height); return census ? census.entries : null; };
+      const censusNamedAt = async (height) => { const census = await keyCensusAt(height); return census ? census.namedKeys : null; };
       censusKeyScan = createCensusKeyScan({ store: new CensusKeyStore(db), network: net, networkId, firstHeight: here, foundingWindow, censusConfirmations, censusKey0, tipHeight, blockHashAt,
-        blockAt: async (hash) => fromHex(String(await call('getblock', [hash, 0]))), censusEntriesAt, verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } },
+        blockAt: async (hash) => fromHex(String(await call('getblock', [hash, 0]))), censusEntriesAt, censusNamedAt, verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } },
         log: (l) => console.log(l) });
       const wallets = (name) => bitcoindRpc({ url: `${url.replace(/\/+$/, '')}/wallet/${encodeURIComponent(name)}`, cookiePath });
       // THE CENSUS OF A KEY, AS EVIDENCE A PAGE CHECKS (kanban #1048): each read a whole census' proofs, so the last few are kept, by height and that height's block

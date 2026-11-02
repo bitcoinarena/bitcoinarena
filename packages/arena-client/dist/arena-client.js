@@ -6278,7 +6278,7 @@ function bondOutputKeyMatches(onChain, inputs, { tweakPoint, combine } = {}) {
  * go without its node is a hold output the node signed for that round.
  *
  * Read through `bondMaturityOf` and `maturityStands` as template 2 is, and rebuilt in chain.js `bondKeyMatches` from the census key its
- * advertisement names. A hold output is not read yet: a started bond leaves the census as any spent one does.
+ * advertisement names. A started bond stays in the census by its hold output, census.js holdOfStart.
  */
 
 /**
@@ -7652,6 +7652,22 @@ function censusKeyFirstHeight(network, genesis = null) {
   return Object.prototype.hasOwnProperty.call(CENSUS_KEY_FIRST_HEIGHT, network) ? CENSUS_KEY_FIRST_HEIGHT[network] : null;
 }
 
+/**
+ * CENSUS_KEY_0 { public_key, holders[], threshold } (§5A.3B, kanban #1050): the founders' node keys, one share each, in share order, so holders[i] holds x = i + 1. The threshold is any
+ * key's, floor(2 x shares / 3) + 1, and the founders are at least the census minimum. Answers { ok } or { ok: false, why }.
+ */
+function censusKey0Stands(k0, { minHolders, sharesMax }) {
+  const is32 = (x) => x instanceof Uint8Array && x.length === 32;
+  if (!k0 || !is32(k0.publicKey)) return { ok: false, why: 'census key 0 names its public key' };
+  if (!Array.isArray(k0.holders) || !k0.holders.every(is32)) return { ok: false, why: 'census key 0 names its holders, the founders\' node keys' };
+  if (new Set(k0.holders.map(toHex)).size !== k0.holders.length) return { ok: false, why: 'census key 0 names a holder twice: one share each' };
+  if (k0.holders.length < minHolders) return { ok: false, why: `census key 0 names ${k0.holders.length} holders, under the census minimum of ${minHolders}` };
+  if (k0.holders.length > sharesMax) return { ok: false, why: `census key 0 names ${k0.holders.length} holders, over census_key_shares_max` };
+  const threshold = Math.floor((2 * k0.holders.length) / 3) + 1;
+  if (k0.threshold !== threshold) return { ok: false, why: `census key 0 names threshold ${k0.threshold}, and ${k0.holders.length} shares have ${threshold}` };
+  return { ok: true };
+}
+
 function censusKeyBondMin(network, genesis = null) {
   if (network === 'mainnet') {
     if (!genesis || typeof genesis.censusKeyBondMinSats !== 'bigint') throw new Error('mainnet reads the census key\'s bond floor from its genesis');
@@ -7747,8 +7763,13 @@ function encodeGenesisParameters(p) {
     w.u32(p.censusKeySharesMax);
     if (typeof p.censusKeyBondMinSats !== 'bigint' || p.censusKeyBondMinSats <= 0n) throw new Error('genesis names the census key\'s bond floor');
     w.u64(p.censusKeyBondMinSats);
-    // THE KEY THE GENESIS FOUNDERS MADE BEFORE ANY BOND (§5A.3B): committed here, so it needs no anchor.
-    w.bytes32(p.censusKey0);
+    // THE KEY THE GENESIS FOUNDERS MADE BEFORE ANY BOND (§5A.3B, kanban #1050): committed here, so it needs no anchor. It stands in for key 0's CensusKeyRecord: the holders are written
+    // so the 80 % trigger can read them, and it leaves out network_id, which would be circular.
+    const zero = censusKey0Stands(p.censusKey0, { minHolders: p.censusMinNodes, sharesMax: p.censusKeySharesMax });
+    if (!zero.ok) throw new Error(zero.why);
+    w.bytes32(p.censusKey0.publicKey);
+    w.vec(p.censusKey0.holders, (h, ww) => ww.bytes32(h));
+    w.u32(p.censusKey0.threshold);
     // WHERE MAINNET'S CHAIN SCAN STARTS (§27A.6, kanban #1048): scanning from height 0 is years of nothing.
     if (!Number.isInteger(p.genesisHeight) || p.genesisHeight < 0) throw new Error('genesis names genesis_height');
     w.u32(p.genesisHeight);
@@ -7772,7 +7793,7 @@ function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityPubkey, 
   if (typeof genesisSeriesStartMs !== 'bigint') throw new Error('mainnet genesis names when series 0 starts');
   if (typeof bondMinGuardianSats !== 'bigint' || bondMinGuardianSats <= 0n) throw new Error('mainnet genesis names a guardian\'s bond floor');
   if (typeof censusKeyBondMinSats !== 'bigint' || censusKeyBondMinSats <= 0n) throw new Error('mainnet genesis names the lowest bracket\'s bond_min, the census key\'s B (§5A.3B)');
-  if (!is32(censusKey0)) throw new Error('mainnet genesis needs census key 0: the founders run its DKG before any bond exists (§5A.3B)');
+  if (!censusKey0) throw new Error('mainnet genesis needs census key 0: the founders run its DKG before any bond exists (§5A.3B)');
   if (!Number.isInteger(genesisHeight) || genesisHeight < 0) throw new Error('mainnet genesis names genesis_height, where its chain scan starts (§5A.3B)');
   const genesis = {
     chain: 'bitcoin-mainnet', genesisSeriesStartMs, genesisHeight, censusKey0, censusKeySharesMax: CENSUS_KEY_SHARES_MAX, censusKeyBondMinSats,
@@ -8022,6 +8043,15 @@ function censusKeyShares({ entries, network, genesis = null, blockHash = null, s
   const holders = byKey.filter((h) => idsOf.get(h.key).length).map((h) => ({ key: h.key, shares: idsOf.get(h.key).length, ids: idsOf.get(h.key) }));
   const total = holders.reduce((n, h) => n + h.shares, 0);
   return { drawn, totalSats, total, threshold: Math.floor((2 * total) / 3) + 1, holders };
+}
+
+/**
+ * THE HOLDERS OF CENSUS KEY 0 AS censusKeyShares ANSWERS ANY KEY'S (kanban #1050): one share each, x = the place in genesis' list plus 1, in ascending key as every holder list stands.
+ * From here the key has no other rule.
+ */
+function censusKey0Shares(k0) {
+  const holders = k0.holders.map((h, i) => ({ key: toHex(h), shares: 1, ids: [i + 1] })).sort((a, b) => (a.key < b.key ? -1 : 1));
+  return { drawn: false, total: holders.length, threshold: k0.threshold, holders };
 }
 
 /** CensusKeyRecord (5A.3B): what a key is, in the bytes its holders sign and its anchor hashes. */
@@ -11835,6 +11865,7 @@ function bestChainView(views) {
 function chainFactsAt(blocks, censusHeight) {
   const createdAt = new Map();
   const spentAt = new Map();
+  const spentIn = new Map();          // and the transaction that spent it: a slash start does not end a bond (holdOfStart)
   // AND THE OUTPUT ITSELF, for a caller that wants the script without going
   // back to the blocks. RESOLVE does not need it: a resolved transaction is
   // pinned to the entry's txid, and a transaction with that txid cannot have
@@ -11855,11 +11886,39 @@ function chainFactsAt(blocks, censusHeight) {
         createdAt.set(key, block.height);
         outputAt.set(key, tx.outputs[vout]);
       }
-      for (const input of tx.inputs)
-        spentAt.set(`${toHex(input.previousTxid)}:${input.previousVout}`, block.height);
+      for (const input of tx.inputs) {
+        const key = `${toHex(input.previousTxid)}:${input.previousVout}`;
+        spentAt.set(key, block.height);
+        spentIn.set(key, tx);
+      }
     }
   }
-  return { createdAt, spentAt, outputAt };
+  return { createdAt, spentAt, spentIn, outputAt };
+}
+
+/**
+ * A HOLD OUTPUT IS STILL THE BOND (5A.2, 5A.3B, kanban #972, ruling #1050): a spend through path B of a template-3 bond is the one spend that does not end it. The census reads its output 0
+ * as the same bond with the same weight until that output is spent, by a release, a return or the fallback. `key` is the bond's outpoint as chainFactsAt names it, `nodeKey` the bond's node.
+ *
+ *   the spend   input 0 the bond, its leaf `<node_key> CHECKSIGVERIFY <census_key> CHECKSIG`. Bitcoin already checked the leaf is in the bond's tree and both signatures, so a leaf that
+ *               reads so with this node's key is path B, and only a template-3 bond has one
+ *   output 0    the whole bond amount, to a taproot output. slash_presig fixes both by SIGHASH_SINGLE. The leaves under that output key are the round's panels, which this census
+ *               decides, so a census cannot rebuild it: what stands behind output 0 is the node's own signature on it
+ *
+ * Answers { txid, vout, height }, the hold output, while it is unspent at the census height. Null for any other spend, and for a hold output already spent.
+ */
+function holdOfStart(facts, key, nodeKey) {
+  const tx = facts.spentIn.get(key);
+  if (!tx || !(nodeKey instanceof Uint8Array)) return null;
+  const input = tx.inputs[0], stack = tx.witnesses && tx.witnesses[0];
+  if (!input || !stack || `${toHex(input.previousTxid)}:${input.previousVout}` !== key) return null;
+  const items = stack.length > 2 && stack[stack.length - 1][0] === 0x50 ? stack.slice(0, -1) : stack;
+  const leaf = items[items.length - 2];
+  if (!leaf || leaf.length !== 68 || toHex(slashStartLeaf(nodeKey, leaf.slice(35, 67))) !== toHex(leaf)) return null;
+  const hold = tx.outputs[0], bond = facts.outputAt.get(key);
+  if (!hold || !bond || hold.value !== bond.value || hold.script.length !== 34 || hold.script[0] !== 0x51 || hold.script[1] !== 0x20) return null;
+  const txid = txidHexOf(tx);
+  return facts.spentAt.has(`${txid}:0`) ? null : { txid, vout: 0, height: facts.spentAt.get(key) };
 }
 
 /**
@@ -11979,7 +12038,8 @@ function scanCensus(view, { contract, candidates }) {
   const blocks = chain.blocks;
   const firstHeight = chain.firstHeight;
 
-  const { createdAt, spentAt } = chainFactsAt(blocks, censusHeight);
+  const facts = chainFactsAt(blocks, censusHeight);
+  const { createdAt, spentAt } = facts;
 
   // GIVEN A LIST, THIS IS WHAT IT ALWAYS WAS. Absent one, the chain is asked -
   // which is what 5A.4 step 1 says a participant does, and what makes the
@@ -12031,7 +12091,8 @@ function scanCensus(view, { contract, candidates }) {
       continue;
     }
 
-    const entry = { ...c, height, spent: spentAt.has(key) };
+    const hold = spentAt.has(key) ? holdOfStart(facts, key, c.pubkey) : null;
+    const entry = { ...c, height, spent: spentAt.has(key) && !hold, ...(hold ? { hold } : {}) };
 
     // SCAN APPLIES ITS OWN CONJUNCTS. It used to hand its findings to the
     // commit step and let that do the filtering, which made SCAN a lookup and
@@ -12266,6 +12327,7 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
 
   let eligible = [];
   const excluded = [];
+  const namedKeys = {};
 
   for (const e of entries) {
     let seen = null;
@@ -12322,7 +12384,7 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
         });
         continue;
       }
-      if (facts.spentAt.has(key)) {
+      if (facts.spentAt.has(key) && !holdOfStart(facts, key, read.advert.nodePubkey)) {
         excluded.push({
           ...e,
           why: `that bond was spent at height ${facts.spentAt.get(key)}, so nothing is at stake`,
@@ -12354,6 +12416,9 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
     // A TEMPLATE-3 BOND NAMES A KEY NEWEST WITHIN census_confirmations OF ITS CONFIRMATION (5A.3B, kanban #1031). `bond.standingKeys` is the reader's list.
     const named = bondNamesStandingKey(read.advert, confirmed, bond && bond.standingKeys, Number(contract.censusConfirmations ?? 0));
     if (!named.ok) { excluded.push({ ...e, why: named.why }); continue; }
+    // WHO STILL NAMES A KEY (5A.3B "Retired"): an unspent bond or a hold output, whatever the rest of this census makes of its node. A floor, a version or serving = false keeps a node
+    // out of a census and takes no bond off a key. The body read here is the one the bond's own script was built from
+    if (named.epoch !== undefined) { const k = toHex(read.advert.censusKey); namedKeys[k] = (namedKeys[k] || 0) + 1; }
 
     // AND THE AMOUNT IS THE CHAIN'S. This was the entry's own claim, measured:
     // an output worth 60000 sats, an entry claiming 100000000000, accepted -
@@ -12437,6 +12502,7 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
     ok: true,
     eligible,
     excluded,
+    namedKeys,
     // WHAT IS STILL UNCHECKED SHRINKS WHEN A CALLER BRINGS A CURVE. Reporting
     // the signature as unchecked after checking it would be as wrong as not
     // checking it: the list is what a reader is asked to take on trust.
@@ -12737,6 +12803,7 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
     work: chain.work,
     tipHeight: chain.tipHeight,
     refusedChains: chain.refused || [],
+    namedKeys: resolved.namedKeys,
     excluded: [
       ...scanned.excluded.map((e) => ({ ...e, step: 'scan' })),
       ...resolved.excluded.map((e) => ({ ...e, step: 'resolve' })),
@@ -31282,7 +31349,7 @@ async function standingKeysFor({ contract, nodes, chain, bond, verify, genesis =
   // REGTEST ALONE TAKES A SEAT'S WORD FOR WHERE KEYS BEGIN: a harness names its own, and a network with a page has its height in this build
   const keyFirstHeight = network === 'regtest' ? doorFirst : censusKeyFirstHeight(network, genesis);
   if (keyFirstHeight === null || keyFirstHeight === undefined) return { ok: false, why: `${network} names no first census key height` };
-  const keys = genesis && genesis.censusKey0 ? [{ epoch: 0, publicKey: genesis.censusKey0, height: 0 }] : [];
+  const keys = genesis && genesis.censusKey0 ? [{ epoch: 0, publicKey: genesis.censusKey0.publicKey, height: 0 }] : [];
   const taken = new Set(keys.map((k) => k.epoch));
   for (const { item, from } of [...seen.values()].sort((a, b) => a.item.height - b.item.height || a.item.position - b.item.position)) {
     if (item.height > Number(contract.censusHeight)) continue;
