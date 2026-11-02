@@ -33,6 +33,7 @@ import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../nextblock/plugin/nextb
 import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { CORE_HASH } from './core-hash.mjs';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4 } from '../../arena-protocol/src/test-donation-sets.js';
+import { TEST_DONATION_SET_KEYS_REGTEST } from '../../arena-protocol/src/test-donation-set-keys-regtest.js';
 import { donationSetId as idOfDonationSet } from '../../arena-protocol/src/donation.js';
 import { execFileSync } from 'node:child_process';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -117,6 +118,8 @@ const COMMITTEE_LEAD_MS = process.env.ARENA_COMMITTEE_LEAD_MS ? Math.max(Number(
  */
 export const PUBLISH_AHEAD = process.env.ARENA_PUBLISH_AHEAD === '1';
 export const RUN_82_FROM_MS = BigInt(process.env.ARENA_RUN82_FROM_MS || Date.UTC(2026, 9, 3, 0, 0, 0));
+/** The versions a bond of this run names: 1 up to ARENA_PROTOCOL_VERSION, the version its rounds are written at. */
+const bondVersions = () => (process.env.ARENA_PROTOCOL_VERSION ? Array.from({ length: Number(process.env.ARENA_PROTOCOL_VERSION) }, (_, i) => i + 1) : [1]);
 export const runTicksAt = (startMs) => (BigInt(startMs) >= RUN_82_FROM_MS ? RUN_82_TICKS : BLOCK_TICKS);
 
 export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8081,
@@ -271,7 +274,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // it is built. It comes out of the store, which is where it lives.
   if (network !== 'regtest' && network !== 'testnet4') throw new Error(`no round is stood on ${network}`);
   const NETWORK_ID = network === 'regtest' ? NETWORK_ID_REGTEST : NETWORK_ID_TESTNET4;
-  const DONATION_SET = network === 'regtest' ? TEST_DONATION_SET_REGTEST : TEST_DONATION_SET_TESTNET4;
+  // ON REGTEST THE KEY SET WHEN THE SEATS SERVE IT (ARENA_REGTEST_DONATION_SET=keys, main.js): a round names the set its seats hold, and a protocol-11 entry pays keys
+  const DONATION_SET = network === 'regtest' ? (process.env.ARENA_REGTEST_DONATION_SET === 'keys' ? TEST_DONATION_SET_KEYS_REGTEST : TEST_DONATION_SET_REGTEST) : TEST_DONATION_SET_TESTNET4;
   const pathOf = (name, i) => storePaths[i] || (store === ':memory:' ? ':memory:' : `${store}/${name}.db`);
   const pathA = pathOf('a', 0), pathB = pathOf('b', 1);
   // ATTACHED, NO STORE IS OPENED HERE: each node's store is its own process's.
@@ -337,7 +341,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // are bonded here.
   const bonded = members.map(({ id, port }, at) => {
     const advert = {
-      nodePubkey: id.pubkey, operatorId: '2of2', protocolVersions: [1],
+      nodePubkey: id.pubkey, operatorId: '2of2', protocolVersions: bondVersions(),
       // ALL THREE ROLES, because this network's genesis asks for two nodes in
       // each and there are only two nodes. A 2-of-2 where one signer node is a game
       // node and the other a settlement node is not a 2-of-2, it is two
@@ -490,6 +494,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         endpoint: process.env[`ARENA_WSS_${m.port}`] || `ws://${host}:${m.port}`,
         // THE GAMES IT HOSTS, as its advertisement above names them
         hostedGames: plugins ? plugins.map((p) => p.gameId).sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y))) : [NEXTBLOCK_GAME_ID],
+        // THE VERSIONS IT SPEAKS, as the advertisement above: a round of version v draws only nodes whose bond names v (kanban #397)
+        protocolVersions: bondVersions(),
+        // A LONGER LOCK WHEN ASKED (ARENA_BOND_SLACK_BLOCKS): a bond votes only when it stays locked past the vote (§27A.9.5 rule 1)
+        ...(process.env.ARENA_BOND_SLACK_BLOCKS ? { slackBlocks: Number(process.env.ARENA_BOND_SLACK_BLOCKS) } : {}),
         // AND WHICH FEDERATION THIS SIGNER NODE GUARDS, when the caller named one. Without it
         // `federationIsBonded` counts zero of the federation's threshold and every paying FEDERATION
         // round is refused on a bonded-federation check the bonds could not satisfy. Per node, so

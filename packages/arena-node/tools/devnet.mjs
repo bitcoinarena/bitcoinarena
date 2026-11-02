@@ -8,6 +8,7 @@
 //   BITCOIN_BIN=<dir with bitcoind, bitcoin-cli> FEDIMINT_BIN=<dir with fedimintd, fedimint-cli, arena-stake-lock> \
 //     node packages/arena-node/tools/devnet.mjs up | status | play [--game name] | replay [round entry] | down
 //   node packages/arena-node/tools/devnet.mjs new-game <dir> [name]      (the game template, made a game of your own)
+//   devnet.mjs liquidity    channels, e-cash at the gateways, a payee and an LNURL door (needs LND_BIN): what a paid entry and a payout use
 //
 // NOTHING HERE IS NEW MACHINERY. Each step is the harness that already does it, run as it is run:
 //   the chain        a regtest bitcoind on its own datadir, mined to maturity (as seating-regtest.mjs and the regtest stacks)
@@ -34,14 +35,15 @@
 // OTHER SETTINGS: LOCK_BIN (default $FEDIMINT_BIN/arena-stake-lock), LND_BIN (lnd and lncli for the two gateways a paid round
 // needs; none: free rounds only), DEVNET_APPS (more ARENA_APPS registration modules for the
 // seven nodes - a game of your own, tools/devnet-template), DEVNET_PAID_STAKE_MSAT (default 10 000 000), DEVNET_BLOCK_SECONDS
-// (a block every N s once the rounds are up; default 30, 0 for none), DEVNET_PAGE (the page the printed links open, default
+// (a block every N s once the rounds are up; default 30, 0 for none), DEVNET_KEEPER=0 (no round opened on its own), ARENA_PROTOCOL_VERSION (the
+// version the rounds are written at and the bonds name; 11 and up pays the protocol reserves), ARENA_BOND_SLACK_BLOCKS (a longer bond lock), DEVNET_PAGE (the page the printed links open, default
 // https://testnet.bitcoinarena.io) or DEVNET_PAGE_DIR (a built page served on base + 3, which the links then open).
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, readdirSync, rmSync } from 'node:fs';
 import { createServer as netServer, connect } from 'node:net';
 import { join, resolve, dirname, delimiter } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { devnetPorts, clashes, parseListening, portsOfPart, NODE_COUNT } from './devnet-plan.mjs';
+import { devnetPorts, clashes, parseListening, portsOfPart, NODE_COUNT, lnurlPayRequest, LNURL_METADATA } from './devnet-plan.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const NODE_PKG = resolve(HERE, '..');
@@ -83,7 +85,7 @@ const readPid = (name) => { try { return JSON.parse(readFileSync(pidFile(name), 
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 const groupAlive = (pgid) => { try { process.kill(-pgid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 const running = (name) => { const p = readPid(name); return p && alive(p.pid) ? p : null; };
-const PARTS = ['bitcoind', 'lnd-a', 'lnd-b', 'gateway-a', 'gateway-b', ...PLAN.nodes.map((_, k) => `node-${k + 1}`), 'runner', 'page'];
+const PARTS = ['bitcoind', 'lnd-a', 'lnd-b', 'lnd-c', 'gateway-a', 'gateway-b', ...PLAN.nodes.map((_, k) => `node-${k + 1}`), 'runner', 'page', 'lnurl'];
 const LND = env.LND_BIN || dirOnPath('lnd');
 /** Start a process in a new session (its own process group: `detached`), its output to its log, its pid to its file. */
 function startPart(name, cmd, args, { env: e = env, cwd = NODE_PKG } = {}) {
@@ -151,6 +153,8 @@ function needBins() {
 function fedEnv(extra = {}) {
   return { ...env, PATH: [FED, dirname(process.execPath), env.PATH || ''].join(delimiter), HOME: path('home'),
     ARENA_BITCOIND_URL: RPC_URL, ARENA_BITCOIND_COOKIE: COOKIE(), ARENA_TN4_NETWORK: 'regtest',
+    // FROM PROTOCOL 11 AN ENTRY PAYS THE DEVELOPERS AND THE RESERVES AS KEYS: the seats serve, and the rounds name, the regtest key set
+    ...(Number(env.ARENA_PROTOCOL_VERSION || 1) >= 11 ? { ARENA_REGTEST_DONATION_SET: 'keys' } : {}),
     // EACH GUARDIAN'S ENDPOINT, NAMED: the node's own /guardian door on 127.0.0.1. Derived from Tailscale otherwise
     // (guardian.js readTailscale), which on a machine with a Funnel asks it for every node - and a devnet is local.
     ...Object.fromEntries(PLAN.nodes.map((p) => [`ARENA_GUARDIAN_ENDPOINT_${p}`, `ws://127.0.0.1:${p}/guardian`])),
@@ -251,7 +255,7 @@ async function up() {
   // POST /round "at least two, run by different operators"). Each on an lnd of its own (two node keys), started by
   // tools/testnet4-gateway.sh as the testnet4 and regtest stacks start theirs, joined to the federation and registered at all
   // seven guardians as tn4-tools-regtest.sh registers them (http://localhost:<port>). No channel and no peg-in: a gateway
-  // answers its routing info without either, and a deposit into a paid round needs both (left to the developer: see the docs).
+  // answers its routing info without either, and a deposit into a paid round needs both (`devnet.mjs liquidity` makes them).
   // Without lnd (LND_BIN) or gatewayd the devnet runs free rounds only, and says so.
   const gatewayd = FED && existsSync(join(FED, 'gatewayd')) && existsSync(join(FED, 'gateway-cli'));
   if (LND && existsSync(join(LND, 'lnd')) && gatewayd) await gateways(invite);
@@ -289,17 +293,18 @@ const lncli = (x, ...a) => spawnSync(join(LND, 'lncli'), [`--lnddir=${path(`lnd-
 const gwcli = (x, ...a) => spawnSync(join(FED, 'gateway-cli'), ['--address', `http://127.0.0.1:${PLAN.gateway[x].api}`, '--rpcpassword',
   readFileSync(path(`gateway-${x}`, 'password'), 'utf8').trim(), ...a], { encoding: 'utf8', timeout: 120000, env: fedEnv() });
 
+const lndArgs = (x) => { const l = PLAN.lnd[x]; return [`--lnddir=${path(`lnd-${x}`)}`, '--bitcoin.regtest', '--bitcoin.node=bitcoind',
+  `--bitcoind.rpchost=127.0.0.1:${PLAN.rpc}`, `--bitcoind.rpccookie=${COOKIE()}`,
+  `--bitcoind.zmqpubrawblock=tcp://127.0.0.1:${PLAN.zmqBlock}`, `--bitcoind.zmqpubrawtx=tcp://127.0.0.1:${PLAN.zmqTx}`,
+  `--rpclisten=127.0.0.1:${l.rpc}`, `--listen=127.0.0.1:${l.p2p}`, `--restlisten=127.0.0.1:${l.rest}`,
+  '--noseedbackup', '--nobootstrap', `--alias=devnet-${x}`]; };
+
 async function gateways(invite) {
   const t = Date.now();
   for (const x of ['a', 'b']) {
     if (running(`lnd-${x}`)) continue;
     mkdirSync(path(`lnd-${x}`), { recursive: true });
-    const l = PLAN.lnd[x];
-    startPart(`lnd-${x}`, join(LND, 'lnd'), [`--lnddir=${path(`lnd-${x}`)}`, '--bitcoin.regtest', '--bitcoin.node=bitcoind',
-      `--bitcoind.rpchost=127.0.0.1:${PLAN.rpc}`, `--bitcoind.rpccookie=${COOKIE()}`,
-      `--bitcoind.zmqpubrawblock=tcp://127.0.0.1:${PLAN.zmqBlock}`, `--bitcoind.zmqpubrawtx=tcp://127.0.0.1:${PLAN.zmqTx}`,
-      `--rpclisten=127.0.0.1:${l.rpc}`, `--listen=127.0.0.1:${l.p2p}`, `--restlisten=127.0.0.1:${l.rest}`,
-      '--noseedbackup', '--nobootstrap', `--alias=devnet-${x}`]);
+    startPart(`lnd-${x}`, join(LND, 'lnd'), lndArgs(x));
   }
   for (const x of ['a', 'b']) {
     for (let i = 0; ; i++) {
@@ -344,6 +349,87 @@ async function gateways(invite) {
 }
 
 // =====================================================================================================================
+// liquidity: what a paid round and a payout need beyond the gateways `up` starts, each step skipped when it is done
+// =====================================================================================================================
+/** The chain, a block at a time so an lnd and a gateway see each one. */
+const mine = (n) => cli('generatetoaddress', String(n), cli('getnewaddress'));
+const lnJson = (x, ...a) => { const r = lncli(x, ...a); if (r.status !== 0) throw new Error(`lncli ${x} ${a[0]}: ${String(r.stderr || r.stdout).trim().slice(-200)}`); return JSON.parse(r.stdout); };
+async function until(what, ok, seconds = 120) {
+  for (let i = 0; i < seconds; i++) { if (await ok()) return; await wait(1000); }
+  throw new Error(`${what}: not in ${seconds} s`);
+}
+/**
+ * THE LIGHTNING SIDE OF A DEVNET: lnd B -> lnd A -> lnd C, and e-cash at both gateways. B pays a player's deposit through gateway A; C is the
+ * payee of a payout, on no gateway's lnd, so whichever gateway pays it pays over a channel. Each gateway holds 50 000 000 sat by a real peg-in
+ * (an incoming contract is funded from the gateway's own e-cash). The LNURL door then answers invoices of lnd C.
+ */
+async function liquidity() {
+  const t = Date.now();
+  const { lnurlFor } = await import('../../arena-protocol/src/bech32.js');
+  if (!running('lnd-c')) {
+    mkdirSync(path('lnd-c'), { recursive: true });
+    startPart('lnd-c', join(LND, 'lnd'), lndArgs('c'));
+  }
+  await until('lnd c synced', () => { const r = lncli('c', 'getinfo'); return r.status === 0 && /"synced_to_chain":\s*true/.test(r.stdout); }, 180);
+  const key = (x) => lnJson(x, 'getinfo').identity_pubkey;
+  const balance = (x) => Number(lnJson(x, 'walletbalance').confirmed_balance);
+  for (const x of ['a', 'b']) if (balance(x) < 100000000) cli('sendtoaddress', lnJson(x, 'newaddress', 'p2tr').address, '3');
+  mine(3);
+  await until('the lnds see their coins', () => balance('a') > 0 && balance('b') > 0);
+  // ---- the two channels ----
+  const channel = async (from, to, sats, push) => {
+    const peer = key(to);
+    if (lnJson(from, 'listchannels').channels.some((c) => c.remote_pubkey === peer)) return;
+    lncli(from, 'connect', `${peer}@127.0.0.1:${PLAN.lnd[to].p2p}`);
+    await until(`${from} peers with ${to}`, () => lnJson(from, 'listpeers').peers.some((p) => p.pub_key === peer));
+    lnJson(from, 'openchannel', `--node_key=${peer}`, `--local_amt=${sats}`, `--push_amt=${push}`);
+    mine(1);
+    await until(`${from}'s channel to ${to} leaves pending`, () => { mine(1); return !lnJson(from, 'pendingchannels').pending_open_channels.length; });
+  };
+  await channel('b', 'a', 5000000, 2000000);
+  await channel('a', 'c', 5000000, 0);
+  mine(7);
+  await until('every channel active and announced', () => lnJson('b', 'describegraph').edges.length >= 2 && ['a', 'b', 'c'].every((x) => lnJson(x, 'listchannels').channels.every((c) => c.active)), 120);
+  // ---- e-cash at each gateway, by a real peg-in ----
+  const fed = JSON.parse(gwcli('a', 'info').stdout).federations[0].federation_id;
+  const ecash = (x) => { try { const b = JSON.parse(gwcli(x, 'get-balances').stdout).ecash_balances; return Number(b.length ? b[0].ecash_balance_msats : 0); } catch { return 0; } };
+  for (const x of ['a', 'b']) {
+    if (ecash(x) > 0) continue;
+    const r = gwcli(x, 'ecash', 'pegin', '--federation-id', fed);
+    const address = (String(r.stdout).match(/bcrt1[0-9a-z]+/) || [])[0];
+    if (!address) throw new Error(`gateway ${x} gave no peg-in address: ${String(r.stderr || r.stdout).trim().slice(-200)}`);
+    cli('sendtoaddress', address, '0.5');
+  }
+  mine(14);
+  await until('both gateways hold e-cash', () => { mine(1); return ecash('a') > 0 && ecash('b') > 0; }, 180);
+  if (!running('lnurl')) startPart('lnurl', process.execPath, [fileURLToPath(import.meta.url), 'lnurl'], { env: { ...env, DEVNET_DIR: D } });
+  await until('the LNURL door', () => answers(PLAN.lnurl), 30);
+  say({ step: 'liquidity', channels: { 'b-a': lnJson('b', 'listchannels').channels.length, 'a-c': lnJson('c', 'listchannels').channels.length }, ecashMsat: { a: ecash('a'), b: ecash('b') },
+    lnurl: lnurlFor(`http://127.0.0.1:${PLAN.lnurl}/.well-known/lnurlp/payee`), tip: Number(cli('getblockcount')), seconds: Math.round((Date.now() - t) / 1000) });
+}
+
+// =====================================================================================================================
+// lnurl (started by liquidity): LUD-06 on 127.0.0.1, invoices from lnd C
+// =====================================================================================================================
+async function lnurlDoor() {
+  const { createServer } = await import('node:http');
+  const { createHash } = await import('node:crypto');
+  const descriptionHash = createHash('sha256').update(LNURL_METADATA).digest('hex');
+  createServer((req, res) => {
+    const send = (code, o) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
+    const u = new URL(req.url, 'http://x');
+    if (u.pathname.startsWith('/.well-known/lnurlp/')) return send(200, lnurlPayRequest(PLAN.lnurl));
+    if (u.pathname !== '/invoice') return send(404, { status: 'ERROR', reason: 'no such door' });
+    const msat = u.searchParams.get('amount');
+    if (!/^[0-9]+$/.test(msat || '')) return send(400, { status: 'ERROR', reason: 'amount in msat' });
+    const r = lncli('c', 'addinvoice', `--amt_msat=${msat}`, `--description_hash=${descriptionHash}`, '--expiry=3600');
+    console.log(`[lnurl] ${msat} msat -> ${r.status === 0 ? JSON.parse(r.stdout).payment_request.slice(0, 40) : String(r.stderr).trim().slice(-160)}`);
+    if (r.status !== 0) return send(500, { status: 'ERROR', reason: String(r.stderr).trim().slice(-160) });
+    send(200, { pr: JSON.parse(r.stdout).payment_request, routes: [] });
+  }).listen(PLAN.lnurl, '127.0.0.1');
+}
+
+// =====================================================================================================================
 // runner (started by `up`, in its own process group): the bonds, the rounds, the keeper, the block clock, the control door
 // =====================================================================================================================
 async function runner() {
@@ -380,6 +466,22 @@ async function runner() {
     const invite = inviteForGuardians(fed.federationId, PLAN.nodes.map((port, k) => ({ url: `ws://127.0.0.1:${port}/guardian`, peer: peers[k].id })));
     const cliW = (...a) => cli(...a);
     const rpc = bitcoindRpc({ url: `${RPC_URL}/wallet/${WALLET}`, cookiePath: COOKIE() });
+    // THE CHAIN ITSELF AT /headers: the seats serve this file, and a client that builds a committee on its own, as a paying one does,
+    // proves its bonds into it. It names the chain's genesis as its anchor (ANCHOR_HASH in tools/tn4-live-run.mjs): no compiled-in
+    // anchor names a private chain. Only blocks above the file are read; a reorg is not a case here, the devnet is its only miner.
+    let kept = 0, prior = Buffer.alloc(0), writing = false;
+    const writeHeaders = async () => {
+      const tip = Number(await rpc('getblockcount', []));
+      if (tip + 1 === kept) return;
+      const out = Buffer.alloc((tip + 1) * 80);
+      prior.copy(out, 0, 0, kept * 80);
+      for (let h = kept; h <= tip; h++) Buffer.from(await rpc('getblockheader', [await rpc('getblockhash', [h]), false]), 'hex').copy(out, h * 80);
+      mkdirSync(path('runner', 'proof'), { recursive: true });
+      writeFileSync(path('runner', 'proof', 'headers.bin.tmp'), out);
+      execFileSync('mv', [path('runner', 'proof', 'headers.bin.tmp'), path('runner', 'proof', 'headers.bin')]);
+      prior = out; kept = tip + 1;
+    };
+    setInterval(() => { if (writing) return; writing = true; writeHeaders().catch((e) => console.error(`[headers] ${e.message}`)).finally(() => { writing = false; }); }, 10000);
     const stake = BigInt(env.DEVNET_PAID_STAKE_MSAT || 10000000);
     const [pa, pb, ...more] = PLAN.nodes;
     const regs = await registrations();
@@ -428,8 +530,9 @@ async function runner() {
     console.log(`[devnet] up: free ${round.id} paid ${state.paidRound || '-'} lobby ${round.lobbyUrl}`);
 
     // THE KEEPER: a free and a paid round always open for entries in the lobby
+    // (DEVNET_KEEPER=0: none, for a tool that mines to exact heights and opens what it needs at the control door)
     const kinds = [['free', { stakeMsat: 0n, entryAfterStartMs: FREE_WINDOW_MS }], ...(state.paidRound ? [['paid', { stakeMsat: stake, entryAfterStartMs: PAID_WINDOW_MS }]] : [])];
-    setInterval(() => {
+    if (env.DEVNET_KEEPER !== '0') setInterval(() => {
       for (const [kind, fields] of kinds) {
         if (state.rounds.some((r) => r.kind === kind && r.entryCloseMs > Date.now() + KEEP_LEAD_MS) || state.opening === kind) continue;
         state.opening = kind;
@@ -453,7 +556,13 @@ async function runner() {
           const id = await open('play', { stakeMsat: 0n, entryAfterStartMs: windowMs, fields });
           return send(201, state.rounds.find((r) => r.id === id));
         }
-        send(404, { why: 'GET /state, POST /open-free' });
+        // POST /open-paid?stakeMsat=&windowMs= opens a paid round
+        if (req.method === 'POST' && u.pathname === '/open-paid') {
+          const windowMs = Math.max(60000, Math.min(Number(u.searchParams.get('windowMs') || PAID_WINDOW_MS), 3600000));
+          const id = await open('paid', { stakeMsat: BigInt(u.searchParams.get('stakeMsat') || stake), entryAfterStartMs: windowMs });
+          return send(201, state.rounds.find((r) => r.id === id));
+        }
+        send(404, { why: 'GET /state, POST /open-free, POST /open-paid' });
       } catch (e) { send(500, { why: e.message }); }
     }).listen(PLAN.control, '127.0.0.1');
   } catch (e) {
@@ -498,7 +607,7 @@ async function status() {
   try { const s = JSON.parse(readFileSync(path('runner', 'state.json'), 'utf8')); runnerState = { status: running('runner') ? s.status : `not running (it last said ${s.status})`, freeRound: s.freeRound, paidRound: s.paidRound, paidWhy: s.paidWhy, lobby: s.lobbyUrl, opened: s.rounds.length }; } catch { /* none yet */ }
   const ports = await Promise.all(PLAN.all.map(async (x) => ({ ...x, listening: await answers(x.port) })));
   say({ step: 'status', dir: D, parts, tip, nodes, runner: runnerState,
-    listening: ports.filter((x) => x.listening).map((x) => x.port), notListening: ports.filter((x) => !x.listening && x.what !== 'page' && x.what !== 'bitcoind p2p' && !x.what.endsWith(' iroh')).map((x) => `${x.port} ${x.what}`),
+    listening: ports.filter((x) => x.listening).map((x) => x.port), notListening: ports.filter((x) => !x.listening && x.what !== 'page' && x.what !== 'bitcoind p2p' && !x.what.endsWith(' iroh') && x.what !== 'lnurl door' && !x.what.startsWith('lnd c')).map((x) => `${x.port} ${x.what}`),
     rounds: rounds.slice(-12) });
 }
 
@@ -554,13 +663,21 @@ async function play() {
   const eid = toHex(entryId(entry));
   const took = await Promise.all(NODES.map(async (n) => { const r = await fetch(`${n}/entry`, { method: 'POST', body: encodeEntryContract(entry) }); return { node: n, status: r.status, said: (await r.text()).slice(0, 120) }; }));
   say({ step: 'entry', entry: eid, took: took.filter((x) => x.status < 300).length, refused: took.filter((x) => x.status >= 300) });
-  if (took.filter((x) => x.status < 300).length < receiptsNeeded(c.nodes.length)) throw new Error('fewer seats than needed took the entry');
+  if (took.filter((x) => x.status < 300).length < receiptsNeeded(c.gameVerifySlots)) throw new Error('fewer seats than needed took the entry');
   mkdirSync(path('plays'), { recursive: true });
   writeFileSync(path('plays', `${eid}.json`), JSON.stringify({ round: rid, entry: eid, entryHex: toHex(encodeEntryContract(entry)), at: new Date().toISOString() }) + '\n');
   // ---- THE RUN: the world the round's randomness seeds, played by the round's own core. Nextblock is driven to the gate
   // (window-fixture drivenTape, the truck's closed-loop driver, with the bed's load at tick 0); any other game presses a
   // fixed pattern of first words (0 .. 9), the other four 0 - enough to show its core, its marks and its replay agree ----
-  const seed = await worldSeedFor({ entry, round: rid, nodes: NODES, contract: c });
+  // THE SEATS READ THE BEACON FROM THEIR OWN CHAIN ON THEIR OWN CADENCE: asked again, and on a chain with no block clock a block now and then
+  let seed = null;
+  for (let n = 0; !seed; n++) {
+    try { seed = await worldSeedFor({ entry, round: rid, nodes: NODES, contract: c }); } catch (e) {
+      if (n >= 40) throw e;
+      if (n % 5 === 4 && env.DEVNET_BLOCK_SECONDS === '0') mine(1);
+      await wait(3000);
+    }
+  }
   const reg = (await registrations()).find((g) => toHex(g.gameId) === toHex(c.gameId));
   if (!reg) throw new Error(`round ${rid.slice(0, 16)} is a game this devnet does not host`);
   const truck = reg.name === 'nextblock';
@@ -619,7 +736,7 @@ async function play() {
   const endMs = Number(roundEndMs(c));
   say({ step: 'waiting for the close', roundEnd: new Date(endMs).toISOString(), seconds: Math.max(0, Math.round((endMs - Date.now()) / 1000)) });
   if (endMs > Date.now()) await wait(endMs - Date.now());
-  const needed = receiptsNeeded(c.nodes.length);
+  const needed = receiptsNeeded(c.gameVerifySlots);
   let signed = [];
   for (const until = Date.now() + 10 * 60000; Date.now() < until;) {
     signed = [];
@@ -740,7 +857,7 @@ async function newGame() {
 async function down() {
   const stopped = [];
   // the runner and the page first (they post to the nodes), then the nodes with their guardians, then the chain
-  for (const n of ['runner', 'page', ...PLAN.nodes.map((_, k) => `node-${k + 1}`).reverse(), 'gateway-a', 'gateway-b', 'lnd-a', 'lnd-b', 'bitcoind']) {
+  for (const n of ['runner', 'page', 'lnurl', ...PLAN.nodes.map((_, k) => `node-${k + 1}`).reverse(), 'gateway-a', 'gateway-b', 'lnd-a', 'lnd-b', 'lnd-c', 'bitcoind']) {
     const s = await stopPart(n, n === 'bitcoind' ? 60000 : 20000);
     if (s) stopped.push(s);
   }
@@ -752,6 +869,6 @@ async function down() {
 }
 
 const cmd = process.argv[2];
-const run = { up, runner, page, status, play, replay: replayCmd, down, 'new-game': newGame }[cmd];
-if (!run) { console.error('devnet.mjs up | status | play [round] [--game name] | replay [round entry] | down | new-game <dir> [name]     (DEVNET_DIR, DEVNET_BASE_PORT, BITCOIN_BIN, FEDIMINT_BIN)'); process.exit(2); }
+const run = { up, runner, page, status, play, replay: replayCmd, down, 'new-game': newGame, liquidity, lnurl: lnurlDoor }[cmd];
+if (!run) { console.error('devnet.mjs up | liquidity | status | play [round] [--game name] | replay [round entry] | down | new-game <dir> [name]     (DEVNET_DIR, DEVNET_BASE_PORT, BITCOIN_BIN, FEDIMINT_BIN)'); process.exit(2); }
 run().catch((e) => { console.error(`devnet ${cmd}: ${e.message}`); process.exit(1); });
