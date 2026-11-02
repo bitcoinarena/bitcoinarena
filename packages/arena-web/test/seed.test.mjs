@@ -21,16 +21,19 @@ test('the words, numbered, with why; no wallet says so without Verify', () => {
   assert.match(none, /<div class="seed-grid">no wallet yet<\/div>/); assert.doesNotMatch(none, /Verify seed phrase/);
 });
 
-test('the quiz: four choices with the right one, a wrong tap stays, 24 right taps record the backup, then done', () => {
+test('the check: three of the 24 words, four choices each, a wrong tap stays, three right taps record the backup, then done (kanban #1033)', () => {
   const quiz = [], recorded = [];
   const m = new SeedModal({ words: WORDS, random, onRecord: (w) => { recorded.push(w.length); return { ok: true }; }, onQuiz: (q) => quiz.push(q), onClose() {} });
   m.setState = (u) => Object.assign(m.state, typeof u === 'function' ? u(m.state) : u);
   m.start();
-  assert.equal(m.state.pane, 'verify'); assert.equal(m.state.options.length, 4); assert.ok(m.state.options.includes('w01'));
-  assert.deepEqual([quiz[0].word, quiz[0].right], [1, 'w01']);
-  m.pick(m.state.options.find((w) => w !== 'w01'));
-  assert.deepEqual([m.state.at, m.state.why], [0, 'Not word 1. Try again.']);
-  for (let i = 0; i < 24; i++) m.pick(WORDS[i]);
+  const picks = [...m.state.picks];
+  assert.equal(picks.length, 3); assert.equal(new Set(picks).size, 3); assert.deepEqual(picks, [...picks].sort((a, b) => a - b));
+  assert.equal(m.state.pane, 'verify'); assert.equal(m.state.options.length, 4); assert.ok(m.state.options.includes(WORDS[picks[0]]));
+  assert.deepEqual([quiz[0].word, quiz[0].right], [picks[0] + 1, WORDS[picks[0]]]);
+  m.pick(m.state.options.find((w) => w !== WORDS[picks[0]]));
+  assert.deepEqual([m.state.step, m.state.why], [0, `Not word ${picks[0] + 1}. Try again.`]);
+  assert.match(renderToStaticMarkup(React.createElement(React.Fragment, null, m.render())), /\(1 of 3 to check\)/);
+  for (const at of picks) m.pick(WORDS[at]);
   assert.deepEqual([m.state.pane, recorded, quiz.at(-1)], ['done', [24], { done: true }]);
   assert.match(renderToStaticMarkup(React.createElement(React.Fragment, null, m.render())), /Seed phrase verified/);
 });
