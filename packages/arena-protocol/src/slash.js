@@ -32,6 +32,7 @@ import { parseTransaction } from './tx.js';
 import { tapSighash, scriptPathSigners } from './bond-spend.js';
 import { tapLeafHash, releaseLeaf } from './bond-script.js';
 import { arbitrationCommitmentIn, P2TR_DUST_SATS } from './arbitration-tx.js';
+import { carrierEscrowPegInId } from './census-key.js';
 import { reserveParts } from './slash-reserves.js';
 import {
   PROTOCOL_VERSION, speaksVersion, TYPE_SLASH_PROOF, TYPE_AUDIT_SLASH_PROOF, TYPE_PAYOUT_TABLE, TYPE_SETTLEMENT_RECORD,
@@ -1068,11 +1069,23 @@ export function slashHoldsOnFeeClaim() {
  *   reserves  ascending federation_id: federation_id, msat
  *   outputs   the release's outputs after its OP_RETURN, in order: value_sats, u16 length, script, pays
  *
- * The OP_RETURN is left out because it carries this table's hash. A fallback uses the same table.
+ * The OP_RETURN is left out because it carries this table's hash. A fallback carries a table of this format, with holders as its carriers. reserves[] lists
+ * what the release pays in; the part kept in escrow is the `pays = escrow` output, and the escrow's value past the players is placed by load when spent.
  */
 export const SLASH_TABLE_VERSION = 1;
 export const SLASH_TABLE_PAYS = Object.freeze(['filer', 'player_carrier', 'reserves', 'escrow']);
 const ascendingBy = (field) => (a, b) => { const x = hex(a[field]), y = hex(b[field]); return x < y ? -1 : x > y ? 1 : 0; };
+
+function writeTableOutputs(w, outputs) {
+  let rank = 0;
+  w.vec(outputs, (o, ww) => {
+    const pays = SLASH_TABLE_PAYS.indexOf(o.pays);
+    if (pays < rank) throw new Error(`a table pays in order: ${SLASH_TABLE_PAYS.join(', ')}`);
+    rank = pays;
+    ww.u64(o.value); ww.u16(o.script.length); ww.bytes(o.script, o.script.length); ww.u8(pays);
+  });
+}
+const readTableOutputs = (r) => r.vec((rr) => { const value = rr.u64(); const script = rr.bytes(rr.u16()); const pays = SLASH_TABLE_PAYS[rr.u8()]; if (!pays) throw new Error('unknown pays byte in a slash payout table'); return { value, script, pays }; });
 
 export function encodeSlashPayoutTable(t) {
   const w = new Writer();
@@ -1084,13 +1097,7 @@ export function encodeSlashPayoutTable(t) {
   w.u32(t.bondVout);
   w.vec(t.entries, (e, ww) => { ww.bytes32(e.entryId); ww.bytes32(e.playerPubkey); ww.u64(e.lossMsat); }, { sortedBy: ascendingBy('entryId') });
   w.vec(t.reserves, (f, ww) => { ww.bytes32(f.federationId); ww.u64(f.msat); }, { sortedBy: ascendingBy('federationId') });
-  let rank = 0;
-  w.vec(t.outputs, (o, ww) => {
-    const pays = SLASH_TABLE_PAYS.indexOf(o.pays);
-    if (pays < rank) throw new Error(`a table pays in order: ${SLASH_TABLE_PAYS.join(', ')}`);
-    rank = pays;
-    ww.u64(o.value); ww.u16(o.script.length); ww.bytes(o.script, o.script.length); ww.u8(pays);
-  });
+  writeTableOutputs(w, t.outputs);
   return w.finish();
 }
 
@@ -1101,7 +1108,7 @@ export function decodeSlashPayoutTable(bytes) {
     networkId: r.bytes32(), roundId: r.bytes32(), proofId: r.bytes32(), bondTxid: r.bytes32(), bondVout: r.u32(),
     entries: r.vec((rr) => ({ entryId: rr.bytes32(), playerPubkey: rr.bytes32(), lossMsat: rr.u64() })),
     reserves: r.vec((rr) => ({ federationId: rr.bytes32(), msat: rr.u64() })),
-    outputs: r.vec((rr) => { const value = rr.u64(); const script = rr.bytes(rr.u16()); const pays = SLASH_TABLE_PAYS[rr.u8()]; if (!pays) throw new Error('unknown pays byte in a slash payout table'); return { value, script, pays }; }),
+    outputs: readTableOutputs(r),
   };
   r.end();
   return t;
@@ -1109,6 +1116,44 @@ export function decodeSlashPayoutTable(bytes) {
 
 /** payout_table_id, the third field of a release's OP_RETURN. */
 export const slashPayoutTableId = (t) => taggedHash(TAG.slashPayoutTable, encodeSlashPayoutTable(t));
+
+/**
+ * AN ESCROW SPEND'S OWN outputs[] (5A.3B, kanban #1034 answer 2), in the table's format, after the table's id. Its id goes in the spend's OP_RETURN, beside
+ * payout_table_id. `escrow` is what goes back to the escrow, and comes last.
+ */
+export function encodeSlashEscrowOutputs({ tableId, outputs }) {
+  const w = new Writer();
+  w.u8(SLASH_TABLE_VERSION);
+  w.bytes32(tableId);
+  writeTableOutputs(w, outputs);
+  return w.finish();
+}
+
+export function decodeSlashEscrowOutputs(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== SLASH_TABLE_VERSION) throw new Error('not an escrow spend\'s outputs of version 1');
+  const t = { tableId: r.bytes32(), outputs: readTableOutputs(r) };
+  r.end();
+  return t;
+}
+
+export const slashEscrowOutputsId = (t) => taggedHash(TAG.slashEscrowOutputs, encodeSlashEscrowOutputs(t));
+
+/**
+ * AN ESCROW SPEND OF A TABLE: OP_RETURN payout_table_id || its outputs' id, then those outputs. What it does not pay goes back to the same escrow script. `payees`
+ * are { value, script, pays } with pays player_carrier or reserves, in that order. Signed as `escrowSpend` is. Answers { ok, tx, prevouts, fee, outputs }.
+ */
+export function escrowTableSpend({ escrow, tableId, payees, feeSats }) {
+  const paid = payees.reduce((a, p) => a + p.value, 0n);
+  const back = escrow.value - paid - feeSats;
+  if (back < 0n) return { ok: false, why: `${paid} sat and a ${feeSats} sat fee out of an escrow of ${escrow.value}` };
+  if (back > 0n && back < P2TR_DUST_SATS) return { ok: false, why: `${back} sat left in escrow is below dust` };
+  const paying = [...payees.map((p) => ({ value: p.value, script: p.script, pays: p.pays })), ...(back ? [{ value: back, script: escrow.script, pays: 'escrow' }] : [])];
+  const outputs = { tableId, outputs: paying };
+  const opening = { value: 0n, script: Uint8Array.from([0x6a, 64, ...tableId, ...slashEscrowOutputsId(outputs)]) };
+  return { ok: true, tx: { version: 2, locktime: 0, inputs: [{ txid: escrow.txid, vout: escrow.vout, sequence: 0xfffffffd }], outputs: [opening, ...paying.map((o) => ({ value: o.value, script: o.script }))] },
+    prevouts: [{ value: escrow.value, script: escrow.script }], fee: { sats: feeSats }, outputs };
+}
 
 /**
  * THE TABLE, RECOMPUTED: every panel member runs this, and signs only if its bytes are byte-equal. Outputs + fee = the bond, exactly.
@@ -1122,6 +1167,8 @@ export const slashPayoutTableId = (t) => taggedHash(TAG.slashPayoutTable, encode
  * Players' parts round up and the reserves take the rest, and the fee comes off the reserves, never the players. A carrier's part under
  * dust is raised to dust out of the reserves, and merged into the carrier before it if they cannot cover that: players are never short.
  * What fits no carrier and no federation is the escrow; under dust it joins the largest reserve part. A fallback passes `fallbackCarriers`.
+ * Players owed and no carrier to take it (kanban #1034 answer 6): all of it goes to the escrow, with no player_carrier output and no reserves. This is
+ * not a refusal: the entries stay pending, and the money leaves by an escrow spend when a carrier publishes a signed peg-in.
  */
 export function buildSlashPayoutTable({ networkId, roundId, proofId, bond, entries = [], filer = null, carriers = [], federations = [], retired = [], feeSats, escrowScript = null }) {
   const no = (why) => ({ ok: false, why });
@@ -1130,6 +1177,14 @@ export function buildSlashPayoutTable({ networkId, roundId, proofId, bond, entri
   if (filer && filer.sats > 0n) outputs.push({ value: filer.sats, script: filer.script, pays: 'filer' });
   const owedMsat = entries.reduce((a, e) => a + e.lossMsat, 0n);
   let owed = (owedMsat + 999n) / 1000n;
+  if (owed > 0n && !carriers.some((c) => c.bondSats >= P2TR_DUST_SATS)) {
+    const held = bond.value - feeSats - (filer ? filer.sats : 0n);
+    if (held < owed) return no(`a bond of ${bond.value} sat cannot carry ${owed} sat and a ${feeSats} sat fee: the losses are this bond's share of them`);
+    if (!(escrowScript instanceof Uint8Array)) return no(`${held} sat wait for a carrier and no escrow script was given`);
+    if (held < P2TR_DUST_SATS) return no(`${held} sat is left for an escrow, below dust`);
+    outputs.push({ value: held, script: escrowScript, pays: 'escrow' });
+    return { ok: true, table: { networkId, roundId, proofId, bondTxid: bond.txid, bondVout: bond.vout, entries: [...entries].sort(ascendingBy('entryId')), reserves: [], outputs } };
+  }
   const carried = [];
   for (const c of carriers) {
     if (owed <= 0n) break;
@@ -1246,39 +1301,63 @@ export function slashHoldsOnRelease({ proof, release, prevouts, panels, holdBloc
 }
 
 /**
- * AN ESCROW SPEND ANSWERS TO THE RELEASE'S TABLE (5A.3B, kanban #1031): it has no table of its own. It opens with an OP_RETURN of payout_table_id, may pay
- * only into the table's entries and reserves, and with every earlier escrow spend must not pay more than the release left in escrow.
- * What it pays into is a peg-in, and the table names entries and federations and no scripts, so `payable(script)` is injected, from the public
- * federation records; a script back to the escrow itself is change. `release` carries the table; `earlier` the raw spends before this one.
+ * AN ESCROW SPEND ANSWERS TO THE RELEASE'S TABLE (5A.3B, kanban #1031, #1034 answer 2). It has its own outputs[], and opens with an OP_RETURN of payout_table_id and
+ * that list's id. All money goes through a carrier, the reserves' part too: a payable script is one a carrier's node key signed as its peg-in address for this
+ * table. Amounts are checked by `pays` against what the table left unpaid: player_carrier up to the players' part the release did not carry, reserves up to
+ * the rest of the escrow, counted with every earlier spend.
+ *
+ *   outputs    this spend's encodeSlashEscrowOutputs bytes
+ *   release    the raw release, which carries the table
+ *   earlier    [{ spend, outputs }], the spends before this one
+ *   pegInOf    script -> { key, signature } or null, from the peg-ins carriers have published
+ *   isCarrier  key hex -> true for a carrier of this slash: panel A's members, or on a fallback the census key's holders
  */
-export function slashHoldsOnEscrowSpend({ proof, spend, release, earlier = [], prevouts, table, payable, advert, verify }) {
+export function slashHoldsOnEscrowSpend({ proof, spend, outputs, release, earlier = [], prevouts, table, pegInOf, isCarrier, advert, verify }) {
   const no = (why) => ({ slashed: false, why });
   if (!proof) return no('no proof');
   if (hex(proof.playerPubkey) !== hex(EMPTY)) return no('this row names no player: the table does');
-  if (typeof payable !== 'function') return no('no way to read which peg-ins are payable');
+  if (typeof pegInOf !== 'function' || typeof isCarrier !== 'function') return no('no way to read which peg-ins are payable');
   const signed = signedSpend({ proof, spend, prevouts, verify });
   if (!signed.ok) return no(signed.why);
-  let carrier, t;
+  let carrier, t, spent;
   try { carrier = parseTransaction(release); } catch (e) { return no(`the release attached is not a transaction: ${e.message}`); }
   try { t = decodeSlashPayoutTable(table); } catch (e) { return no(`the evidence is not a slash payout table: ${e.message}`); }
   const id = slashPayoutTableId(t);
   const said = arbitrationCommitmentIn([carrier.outputs[0] || {}]);
   if (!said || hex(said.hint) !== hex(id)) return no('the table attached is not the one the release committed to');
   if (hex(proof.transcriptHash) !== hex(id)) return no('the proof is measured against another table');
-  const escrowOut = t.outputs.findIndex((o) => o.pays === 'escrow');
-  if (escrowOut < 0) return no('that table leaves nothing in escrow');
-  const escrow = t.outputs[escrowOut];
-  const chain = [carrier, ...earlier.map((b) => parseTransaction(b))];
-  const known = (i) => chain.some((c) => hex(i.previousTxid) === hex(c.txid));
+  const escrow = t.outputs.find((o) => o.pays === 'escrow');
+  if (!escrow) return no('that table leaves nothing in escrow');
+  let chain;
+  try {
+    chain = [...earlier.map((e) => ({ tx: parseTransaction(e.spend), outputs: decodeSlashEscrowOutputs(e.outputs).outputs }))];
+    spent = decodeSlashEscrowOutputs(outputs);
+  } catch (e) { return no(`the evidence does not read: ${e.message}`); }
+  const known = (i) => [carrier, ...chain.map((c) => c.tx)].some((c) => hex(i.previousTxid) === hex(c.txid));
   if (!signed.tx.inputs.some(known)) return no('that spend does not spend the release\'s escrow');
 
-  const paidBy = (tx) => tx.outputs.filter((o) => o.script[0] !== 0x6a && hex(o.script) !== hex(escrow.script));
   const opening = signed.tx.outputs[0] && signed.tx.outputs[0].script[0] === 0x6a ? signed.tx.outputs[0].script.subarray(2) : null;
-  const names = opening && opening.length === 32 && hex(opening) === hex(id);
-  const stray = paidBy(signed.tx).find((o) => !payable(o.script));
-  const total = [...chain.slice(1), signed.tx].reduce((a, tx) => a + paidBy(tx).reduce((b, o) => b + o.value, 0n), 0n);
-  const over = total > escrow.value;
-  if (names && !stray && !over) return no('that spend answers to its table');
+  const names = !!opening && opening.length === 64 && hex(opening.subarray(0, 32)) === hex(id);
+  if (names && hex(opening.subarray(32)) !== hex(slashEscrowOutputsId(spent))) return no('the outputs attached are not the ones that spend committed to');
+  const paid = signed.tx.outputs.slice(1);
+  const same = paid.length === spent.outputs.length && paid.every((o, i) => o.value === spent.outputs[i].value && hex(o.script) === hex(spent.outputs[i].script));
+  const payable = (o) => {
+    if (o.pays === 'escrow') return hex(o.script) === hex(escrow.script);
+    if (o.pays !== 'player_carrier' && o.pays !== 'reserves') return false;
+    const peg = pegInOf(o.script);
+    if (!peg || !isCarrier(hex(peg.key))) return false;
+    try { return verify(peg.signature, carrierEscrowPegInId(id, o.script), peg.key) === true; } catch { return false; }
+  };
+  const stray = spent.outputs.find((o) => !payable(o));
+  const owedSats = (t.entries.reduce((a, e) => a + e.lossMsat, 0n) + 999n) / 1000n;
+  const carried = t.outputs.filter((o) => o.pays === 'player_carrier').reduce((a, o) => a + o.value, 0n);
+  const playersLeft = owedSats > carried ? owedSats - carried : 0n;
+  const reservesLeft = escrow.value > playersLeft ? escrow.value - playersLeft : 0n;
+  const all = [...chain.flatMap((c) => c.outputs), ...spent.outputs];
+  const paidAs = (pays) => all.filter((o) => o.pays === pays).reduce((a, o) => a + o.value, 0n);
+  const players = paidAs('player_carrier'), reserves = paidAs('reserves');
+  const over = players > playersLeft || reserves > reservesLeft;
+  if (names && same && !stray && !over) return no('that spend answers to its table');
 
   const elsewhere = ownBond(proof, advert);
   if (elsewhere) return no(elsewhere);
@@ -1287,7 +1366,7 @@ export function slashHoldsOnEscrowSpend({ proof, spend, release, earlier = [], p
     offence: RELEASE_OFF_TABLE,
     bond: { txid: proof.bondTxid, vout: proof.bondVout },
     commitment: slashCommitment(proof),
-    why: !names ? 'the node signed an escrow spend that does not carry payout_table_id' : stray ? 'the node signed an escrow spend into something neither the table\'s entries nor its reserves' : `the node signed escrow spends of ${total} sat where the release left ${escrow.value}`,
+    why: !names ? 'the node signed an escrow spend that does not carry payout_table_id' : !same ? 'the node signed an escrow spend that pays other than its own outputs' : stray ? 'the node signed an escrow spend into a script no carrier signed for this table' : `the node signed escrow spends of ${players} sat to players and ${reserves} sat to reserves where the table left ${playersLeft} and ${reservesLeft}`,
   };
 }
 

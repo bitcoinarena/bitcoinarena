@@ -11,29 +11,32 @@ import { feldmanGroup } from '../src/curve.js';
 import { censusKeyShares, censusKeyRecordStands, censusKeyRecordId } from '../../arena-protocol/src/census-key.js';
 import {
   censusRunId, dealCensusKey, decodeCensusDeal, encodeCensusDeal, acceptCensusDeal, checkDealsBatched, censusComplaintHolds, encodeCensusComplaint, decodeCensusComplaint,
-  makeCensusComplaint, censusSetAgreed, censusStatementId, reshareDealers, reshareConstant, lagrangeOf, censusPublicShare, censusRecordOf,
+  makeCensusComplaint, censusRecordAgreed, reshareDealers, reshareConstant, lagrangeOf, censusPublicShare,
 } from '../../arena-protocol/src/census-dkg.js';
 import { signNodeShare340, verifyNodeShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
 import { sealShare } from '../../arena-protocol/src/seal.js';
 import { scalarFrom32, scalarTo32, FIELD } from '../../arena-protocol/src/shares.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { CENSUS_KEY_BOND_MIN } from '../../arena-protocol/src/genesis.js';
 
 const curve = feldmanGroup;
 const random = (n) => new Uint8Array(randomBytes(n));
 const scalar = () => { for (;;) { const v = scalarFrom32(random(32)); if (v > 0n && v < FIELD) return v; } };
 const NET = new Uint8Array(32).fill(9);
+const BOND = CENSUS_KEY_BOND_MIN.regtest;
 
-function census(bonds) {
+const entriesOf = (nodes) => nodes.map((n, i) => ({ pubkey: n.key, bondSats: n.bond, txid: new Uint8Array(32).fill(i + 1), vout: 0 }));
+const sharesOf = (nodes, over = {}) => censusKeyShares({ entries: entriesOf(nodes), network: 'regtest', ...over });
+function census(bonds, over = {}) {
   const nodes = bonds.map((bond) => { const secret = scalarTo32(scalar()); return { secret, key: schnorr.getPublicKey(secret), bond }; });
-  const shares = censusKeyShares({ entries: nodes.map((n) => ({ pubkey: n.key, bondSats: n.bond })), lowestBondMinSats: 100000n, sharesMax: 1024 });
-  return { nodes, shares };
+  return { nodes, shares: sharesOf(nodes, over) };
 }
-const bonds15 = Array.from({ length: 15 }, (_, i) => BigInt(Math.max(1, Math.floor(10 / (i + 1)))) * 100000n);
+const bonds15 = Array.from({ length: 15 }, (_, i) => BigInt(Math.max(1, Math.floor(10 / (i + 1)))) * BOND);
 
 function runOf({ shares }, extra = {}) {
   const { total, threshold, holders } = shares;
   const runId = censusRunId({ networkId: NET, epoch: 1, censusHeight: 4320, holders, threshold, ...extra });
-  return { runId, holders, threshold, needed: threshold, total };
+  return { runId, networkId: NET, epoch: 1, censusHeight: 4320, holders, threshold, needed: threshold, total };
 }
 
 /** Everyone but `absent` deals, hears every deal, checks, says its set; every present node finishes. */
@@ -79,6 +82,42 @@ test('unit and shares from the census: several shares for one node, all of them 
   console.log(`  FACTS: ${c.shares.total} shares, threshold ${c.shares.threshold}: ${who.length} commitment pairs on the list, not ${[...who].reduce((a, w) => a + w.held.size, 0)}`);
 });
 
+test('a drawn key: S shares scattered by bond, a node holding none deals nothing to itself, and the shares that hold the threshold sign (kanban #1039)', async () => {
+  const blockHash = random(32);
+  const c = census(Array.from({ length: 40 }, (_, i) => BigInt(Math.max(1, Math.floor(30 / (i + 1)))) * BOND), { blockHash, sharesMax: 24 });
+  assert.equal(c.shares.drawn, true);
+  assert.deepEqual([c.shares.total, c.shares.threshold], [24, 17]);
+  const ids = c.shares.holders.flatMap((h) => h.ids).sort((a, b) => a - b);
+  assert.deepEqual(ids, Array.from({ length: 24 }, (_, i) => i + 1), 'each x of 1..S has one holder');
+  assert.ok(c.shares.holders.some((h) => !h.ids.every((x, i) => i === 0 || x === h.ids[i - 1] + 1)), 'a node\'s x are not a run');
+  const c2 = { nodes: c.nodes.filter((n) => c.shares.holders.some((h) => h.key === toHex(n.key))), shares: c.shares };
+  const { done, up, run } = await keygen(c2);
+  const key = done[0].groupPublicKey;
+  for (const f of done) assert.equal(toHex(f.groupPublicKey), toHex(key));
+  const message = random(32);
+  const who = holdersUpTo(done, up, run.holders, run.threshold);
+  const sig = signAs(key, who, message);
+  assert.equal(schnorr.verify(sig.signature, message, sig.publicKey), true);
+  const other = census(c.nodes.map((n) => n.bond), { blockHash, sharesMax: 24 });
+  assert.notEqual(toHex(runOf(other).runId), toHex(run.runId), 'another census is another run');
+  const moved = { ...c.shares, holders: c.shares.holders.map((h, i) => (i ? h : { ...h, ids: h.ids.map((x) => x + 100) })) };
+  assert.notEqual(toHex(runOf({ shares: moved }).runId), toHex(run.runId), 'the x are in the run, not only the counts');
+  console.log(`  FACTS: 40 nodes, ${c.shares.holders.length} hold, ${c.shares.total} drawn shares, threshold ${c.shares.threshold}, ${who.length} nodes signed`);
+});
+
+test('nodes that differ at the midpoint sign different records, no record reaches the threshold, and the key fails by name (kanban #1034 answer 5)', async () => {
+  const c = census(Array.from({ length: 6 }, () => BOND));
+  const run = runOf(c);
+  const live = c.nodes.map((n) => new CensusDkg({ key: n.key, secret: n.secret, run, curve, random }));
+  const bytes = []; for (const d of live) bytes.push((await d.deal()).bytes);
+  live.forEach((d, i) => { d.heard = i < 3 ? bytes : bytes.slice(1); });
+  for (const d of live) for (const b of d.heard) await d.accept(b);
+  for (const d of live) d.check();
+  const statements = live.map((d) => d.statement());
+  assert.notEqual(toHex(statements[0].recordId), toHex(statements[5].recordId));
+  assert.match(live[0].finish(statements).why, /holders of 3 shares signed one record, and the threshold is 5/);
+});
+
 test('a node absent: the key stands on the rest, the absent node\'s shares are unused, and it can still fetch them later', async () => {
   const c = census(bonds15);
   const { done, up, run, statements, bytes } = await keygen(c, { absent: [14] });
@@ -95,7 +134,7 @@ test('a node absent: the key stands on the rest, the absent node\'s shares are u
 });
 
 test('absent nodes holding more than a third stop the key by name, and leave the newest key standing', async () => {
-  const c = census(Array.from({ length: 9 }, () => 100000n));
+  const c = census(Array.from({ length: 9 }, () => BOND));
   const run = runOf(c);
   const live = c.nodes.slice(0, 5).map((n) => new CensusDkg({ key: n.key, secret: n.secret, run, curve, random }));
   const bytes = []; for (const d of live) bytes.push((await d.deal()).bytes);
@@ -103,7 +142,7 @@ test('absent nodes holding more than a third stop the key by name, and leave the
   for (const d of live) d.check();
   const f = live[0].finish(live.map((d) => d.statement()));
   assert.equal(f.ok, false);
-  assert.match(f.why, /holders of 5 shares signed one set of deals, and the threshold is 7/);
+  assert.match(f.why, /holders of 5 shares signed one record, and the threshold is 7/);
 });
 
 /** A deal with one wrong envelope: `shift` moves the share at x. */
@@ -185,13 +224,13 @@ test('a deal is bound to its run and its dealer', async () => {
   assert.match(ask({ ...deal, sealed: deal.sealed.slice(1) }).why, /one share for each x/);
 });
 
-test('a node that signs two sets is named and counted for neither', () => {
-  const c = census(Array.from({ length: 4 }, () => 100000n));
+test('a node that signs two records is named and counted for neither', () => {
+  const c = census(Array.from({ length: 4 }, () => BOND));
   const run = runOf(c);
-  const say = (n, setId) => { const s = { runId: run.runId, node: n.key, setId }; return { ...s, signature: schnorr.sign(censusStatementId(s), n.secret) }; };
+  const say = (n, recordId) => ({ node: n.key, recordId, signature: schnorr.sign(recordId, n.secret) });
   const A = new Uint8Array(32).fill(1), B = new Uint8Array(32).fill(2);
   const [a, b, x] = c.nodes;
-  const r = censusSetAgreed({ runId: run.runId, holders: run.holders, threshold: run.threshold, verify: (s, d, k) => schnorr.verify(s, d, k), statements: [say(a, A), say(b, A), say(x, A), say(x, B)] });
+  const r = censusRecordAgreed({ holders: run.holders, threshold: run.threshold, verify: (s, d, k) => schnorr.verify(s, d, k), statements: [say(a, A), say(b, A), say(x, A), say(x, B)] });
   assert.equal(r.ok, false);
   assert.deepEqual(r.equivocated, [toHex(x.key)]);
 });
@@ -227,7 +266,7 @@ async function reshare(c, made, next, { absent = [] } = {}) {
   const key = done[0].groupPublicKey;
   const base = { ...next.shares };
   const runId = censusRunId({ networkId: NET, epoch: 2, censusHeight: 8640, holders: base.holders, threshold: base.threshold, reshareOf: key.subarray(1), dealers: dealing.dealers.map((h) => h.key) });
-  const newRun = { runId, holders: base.holders, threshold: base.threshold, needed: base.threshold, total: base.total,
+  const newRun = { runId, networkId: NET, epoch: 2, censusHeight: 8640, holders: base.holders, threshold: base.threshold, needed: base.threshold, total: base.total,
     reshare: { dealers: dealing.dealers, oldThreshold: run.threshold, xs: dealing.xs, oldCommitments: done[0].commitments, groupPublicKey: key } };
   const dealers = dealing.dealers.map((h) => {
     const i = up.findIndex((n) => toHex(n.key) === h.key);
@@ -240,9 +279,9 @@ async function reshare(c, made, next, { absent = [] } = {}) {
 test('the reshare keeps the public key: the new census signs for it, an old holder who left deals, a new node receives', async () => {
   const c = census(bonds15);
   const made = await keygen(c);
-  const fresh = census([300000n, 200000n]);
+  const fresh = census([3n * BOND, 2n * BOND]);
   const nodes = [...c.nodes.slice(2, 13), ...fresh.nodes];
-  const next = { nodes, shares: censusKeyShares({ entries: nodes.map((n) => ({ pubkey: n.key, bondSats: n.bond })), lowestBondMinSats: 100000n, sharesMax: 1024 }) };
+  const next = { nodes, shares: sharesOf(nodes) };
   const { newRun, bytes, key } = await reshare(c, made, next);
   const live = next.nodes.map((n) => new CensusDkg({ key: n.key, secret: n.secret, run: newRun, curve, random }));
   for (const d of live) for (const b of bytes) assert.equal((await d.accept(b)).ok, true);
@@ -256,7 +295,8 @@ test('the reshare keeps the public key: the new census signs for it, an old hold
   const who = holdersUpTo(done, next.nodes, newRun.holders, newRun.threshold);
   const sig = signAs(key, who, message);
   assert.equal(schnorr.verify(sig.signature, message, key.subarray(1)), true);
-  const record = censusRecordOf({ networkId: NET, epoch: 2, censusHeight: 8640, runId: newRun.runId, setId: done[0].setId, groupPublicKey: key, total: newRun.total, threshold: newRun.threshold });
+  const record = done[0].record;
+  assert.equal(toHex(censusKeyRecordId(record)), toHex(done[0].recordId), 'the record the holders signed');
   const signatures = next.nodes.map((n) => ({ key: n.key, signature: schnorr.sign(censusKeyRecordId(record), n.secret) }));
   assert.equal(censusKeyRecordStands({ record, signatures, networkId: NET, shares: next.shares, verify: (s, d, k) => schnorr.verify(s, d, k) }).ok, true);
 });

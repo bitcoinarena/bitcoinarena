@@ -15,7 +15,7 @@
 //
 // No curve here, as everywhere in this package: `curve` brings pointFromScalar, combinePoints, ecdhShared, pointX and msm.
 import { Writer, Reader } from './encode.js';
-import { TAG, PROTOCOL_VERSION, speaksVersion, TYPE_CENSUS_DEAL, TYPE_CENSUS_STATEMENT, TYPE_CENSUS_COMPLAINT, VSS_SEALED_BYTES } from './constants.js';
+import { TAG, PROTOCOL_VERSION, speaksVersion, TYPE_CENSUS_DEAL, TYPE_CENSUS_COMPLAINT, VSS_SEALED_BYTES } from './constants.js';
 import { taggedHash, toHex, fromHex, bytesToBigInt } from './hash.js';
 import { FIELD, splitSecret, shareOpensTo, scalarFrom32, scalarTo32 } from './shares.js';
 import { sealShare, openShare } from './seal.js';
@@ -33,7 +33,8 @@ const u32Bytes = (n) => Uint8Array.of(n >>> 24, (n >>> 16) & 255, (n >>> 8) & 25
 const sameBytes = (a, b) => toHex(a) === toHex(b);
 
 /**
- * WHICH RUN THIS IS: the network, the key's epoch, the census height, every holder with its shares, the threshold. A reshare adds the key
+ * WHICH RUN THIS IS: the network, the key's epoch, the census height, every holder with the x of its shares, the threshold. A drawn key's x are
+ * not the count's running sum, so the x themselves are hashed, and they carry h with them. A reshare adds the key
  * it keeps and the old nodes that deal, so an attempt that left one out is another run.
  */
 export function censusRunId({ networkId, epoch, censusHeight, holders, threshold, reshareOf = null, dealers = null }) {
@@ -42,7 +43,7 @@ export function censusRunId({ networkId, epoch, censusHeight, holders, threshold
   w.u32(epoch);
   w.u32(censusHeight);
   w.u32(threshold);
-  w.vec(holders, (h, ww) => { ww.bytes32(fromHex(h.key)); ww.u32(h.shares); });
+  w.vec(holders, (h, ww) => { ww.bytes32(fromHex(h.key)); ww.vec(h.ids, (x, www) => www.u16(x)); });
   w.u8(reshareOf ? 1 : 0);
   if (reshareOf) { w.bytes32(reshareOf); w.vec(dealers, (k, ww) => ww.bytes32(fromHex(k))); }
   return taggedHash(TAG.censusRun, w.finish());
@@ -247,33 +248,25 @@ export function censusSetId(deals) {
   return taggedHash(TAG.censusSet, glue(...lines));
 }
 
-export function encodeCensusStatement(s) {
-  const w = new Writer();
-  w.u8(TYPE_CENSUS_STATEMENT);
-  w.u16(PROTOCOL_VERSION);
-  w.bytes32(s.runId); w.bytes32(s.node); w.bytes32(s.setId);
-  return w.finish();
-}
-
-export const censusStatementId = (s) => taggedHash(TAG.censusStatement, encodeCensusStatement(s));
-
 /**
- * WHICH DEALS MAKE THE KEY: the one set that holders of the threshold signed. Absent nodes count for nothing and stop nothing. Two sets cannot
- * both reach more than 2/3 unless a third of the shares signed both, and a node seen signing two is named and counted for neither.
- * `statements` are { runId, node, setId, signature }; `verify(signature, digest, key)`. Answers { ok, setId, have } or { ok: false, why, have, equivocated }.
+ * WHICH RECORD MAKES THE KEY (kanban #1034 answer 5): the one CensusKeyRecord that holders of the threshold signed, so its transcript hash names the deals.
+ * Absent nodes count for nothing and stop nothing. Two records cannot both reach more than 2/3 unless a third of the shares signed both, and a node seen
+ * signing two is named and counted for neither. Nodes that differ at the midpoint sign different hashes: then none reaches the threshold, the key fails, and
+ * the newest stands. `statements` are { node, recordId, signature } with the signature over recordId; `verify(signature, digest, key)`.
+ * Answers { ok, recordId, have } or { ok: false, why, have, equivocated }.
  */
-export function censusSetAgreed({ runId, holders, threshold, statements, verify }) {
+export function censusRecordAgreed({ holders, threshold, statements, verify }) {
   if (typeof verify !== 'function') return { ok: false, why: 'checking statements needs a verifier, and none was injected' };
   const held = new Map(holders.map((h) => [h.key, h.shares]));
   const said = new Map();
   const equivocated = new Set();
   for (const s of statements || []) {
     const who = toHex(s.node);
-    if (!sameBytes(s.runId, runId) || !held.has(who)) continue;
+    if (!held.has(who)) continue;
     let good = false;
-    try { good = verify(s.signature, censusStatementId(s), s.node) === true; } catch { good = false; }
+    try { good = verify(s.signature, s.recordId, s.node) === true; } catch { good = false; }
     if (!good) continue;
-    const set = toHex(s.setId);
+    const set = toHex(s.recordId);
     if (said.has(who) && said.get(who) !== set) equivocated.add(who);
     said.set(who, set);
   }
@@ -283,8 +276,8 @@ export function censusSetAgreed({ runId, holders, threshold, statements, verify 
   for (const [set, have] of count) if (!best || have > best.have) best = { set, have };
   const out = { equivocated: [...equivocated] };
   if (!best || best.have < threshold)
-    return { ok: false, have: best ? best.have : 0, ...out, why: `holders of ${best ? best.have : 0} shares signed one set of deals, and the threshold is ${threshold}` };
-  return { ok: true, setId: fromHex(best.set), have: best.have, ...out };
+    return { ok: false, have: best ? best.have : 0, ...out, why: `holders of ${best ? best.have : 0} shares signed one record, and the threshold is ${threshold}` };
+  return { ok: true, recordId: fromHex(best.set), have: best.have, ...out };
 }
 
 /**
@@ -338,8 +331,9 @@ export function lagrangeOf(all, mine) {
 }
 
 /**
- * WHO DEALS A RESHARE: old holders, by key order, among those `present`, until they hold the old threshold. A reshare needs every one of them,
- * because each one's part is a Lagrange term over exactly that set, so an absent one is a new run without it (censusRunId names the set).
+ * WHO DEALS A RESHARE: old holders, by key order, among those `present`, until they hold the old threshold. Fixed at its start. A keygen tolerates absence and
+ * a reshare does not: each dealer's part is a Lagrange term over exactly that set, so one who drops out restarts it at the next step with those left, a
+ * new run (censusRunId names the set). Nothing is lost meanwhile, since the old shares still work.
  */
 export function reshareDealers({ holders, threshold, present }) {
   const up = new Set(present);

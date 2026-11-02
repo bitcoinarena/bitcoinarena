@@ -451,7 +451,6 @@ export const TYPE_HEARTBEAT = 0x39;
 export const TYPE_HEARTBEAT_HEARD = 0x3a;
 // MAKING THE CENSUS KEY (5A.3B, census-dkg.js): never read as the claim key's messages, or the other way round.
 export const TYPE_CENSUS_DEAL = 0x3b;
-export const TYPE_CENSUS_STATEMENT = 0x3c;
 export const TYPE_CENSUS_COMPLAINT = 0x3d;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
@@ -518,13 +517,15 @@ export const TAG = {
   // Template 3: a round's two slash panels are drawn on their own seed, a release commits to its table, and a census key is named (5A.3B).
   slashPanel: 'ARENA/v1/SlashPanel',
   slashPayoutTable: 'ARENA/v1/SlashPayoutTable',
+  slashEscrowOutputs: 'ARENA/v1/SlashEscrowOutputs',
+  carrierEscrowPegIn: 'ARENA/v1/CarrierEscrowPegIn',
   censusKeyRecord: 'ARENA/v1/CensusKeyRecord',
+  censusKeyShare: 'ARENA/v1/CensusKeyShare',
   carrierPegIn: 'ARENA/v1/CarrierPegIn',
   censusRun: 'ARENA/v1/CensusRun',
   censusDealer: 'ARENA/v1/CensusDealer',
   censusDeal: 'ARENA/v1/CensusDeal',
   censusSet: 'ARENA/v1/CensusSet',
-  censusStatement: 'ARENA/v1/CensusStatement',
   censusComplaint: 'ARENA/v1/CensusComplaint',
   checkpoint: 'ARENA/v1/Checkpoint',
   checkpointReceipt: 'ARENA/v1/CheckpointReceipt',

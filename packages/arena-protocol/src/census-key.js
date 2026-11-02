@@ -4,9 +4,10 @@
 // which keys stand, and what each epoch has to do about them. No curve and no round of a DKG here: a signature check is injected, as
 // everywhere in this package, and making the key is the seats' work.
 import { Writer, Reader } from './encode.js';
-import { taggedHash, toHex, fromHex } from './hash.js';
+import { taggedHash, toHex, fromHex, bytesToBigInt } from './hash.js';
 import { TAG } from './constants.js';
 import { BOND_TEMPLATE_V3, BOND_MATURITY_OFFSET } from './bond-script.js';
+import { CENSUS_KEY_SHARES_MAX, censusKeyBondMin } from './genesis.js';
 
 /** epoch(h) = floor(h / E), E being BOND_MATURITY_OFFSET for the network (kanban #1031). */
 export function censusKeyEpochOf(height, network) {
@@ -23,35 +24,81 @@ export function censusHeightOfEpoch(epoch, network, censusConfirmations) {
   return height > 0 ? height : null;
 }
 
+/** The height whose block hash a drawn key reads: e x E, the epoch's first, after the census cut, so nobody can bond into a known draw. */
+export function censusKeyDrawHeight(epoch, network) {
+  const length = BOND_MATURITY_OFFSET[network];
+  if (!Number.isInteger(length)) throw new Error(`no epoch length is set for ${network}`);
+  return epoch * length;
+}
+
 /**
- * ONE NUMBER PER EPOCH: unit = max(B, ceil(T / S)), shares(node) = floor(sum of its bonds / unit), threshold = floor(2 x total / 3) + 1.
- * `entries` are the census at the epoch's height, { pubkey, bondSats }; `lowestBondMinSats` is B, the lowest bracket's bond_min in force
- * there; `sharesMax` is S. A node under one unit holds no share: a minimum of one would let many small bonds out-count capital.
- * The census is 5A.4's, before any role filter: a key belongs to the network and not to a role (kanban #1031). B is a network number, never a round's.
- * Holders are numbered in ascending key order, so everyone hands out the same x. Answers { unit, totalSats, total, threshold, holders }.
+ * WHEN A KEY'S RUN HAPPENS (kanban #1034 answer 5): founding_window from the epoch's first height, the deals in its first half and the holders' signatures
+ * on the transcript hash in its second. A node's deal set is every valid deal it holds at the midpoint. Nothing converges by force: nodes that differ
+ * sign different hashes, no hash reaches the threshold, the key fails and the newest stands.
  */
-export function censusKeyShares({ entries, lowestBondMinSats, sharesMax }) {
-  if (typeof lowestBondMinSats !== 'bigint' || lowestBondMinSats <= 0n) throw new Error('the unit reads a positive bond_min in sats');
-  if (!Number.isInteger(sharesMax) || sharesMax < 1) throw new Error('the unit reads census_key_shares_max');
+export function censusKeyWindow(epoch, network, foundingWindow) {
+  if (!Number.isInteger(foundingWindow) || foundingWindow < 2) throw new Error('a census key\'s window reads founding_window, at least 2 blocks');
+  const start = censusKeyDrawHeight(epoch, network);
+  return { start, midpoint: start + Math.floor(foundingWindow / 2), end: start + foundingWindow };
+}
+
+const outpointOf = (e) => {
+  const txid = typeof e.txid === 'string' ? e.txid.toLowerCase() : e.txid instanceof Uint8Array ? toHex(e.txid) : null;
+  return txid === null || !Number.isInteger(e.vout) ? null : { txid, vout: e.vout };
+};
+const outpointBefore = (a, b) => a.txid < b.txid || (a.txid === b.txid && a.vout < b.vout);
+const shareIndexBytes = (i) => Uint8Array.of(i >>> 24, (i >>> 16) & 255, (i >>> 8) & 255, i & 255);
+
+/**
+ * ONE RULE PER EPOCH (kanban #1034, replacing `unit`). `entries` are the census at the epoch's height, { pubkey, bondSats, txid, vout }, a node's bonds one sum.
+ * The census is 5A.4's, before any role filter: a key belongs to the network and not to a role (kanban #1031).
+ *
+ *   exact  when the sum of floor(bond / B) over the census is at most S: shares(node) = floor(bond / B), numbered in ascending key order
+ *   drawn  otherwise S shares, one at a time: x_i = tagged_hash("ARENA/v1/CensusKeyShare", h || i) mod T, share i at x = i + 1 to the node whose stretch
+ *          of T holds x_i, nodes in ascending lowest outpoint, each stretch its summed bond. i is four bytes, big-endian
+ *
+ * `blockHash` is h, the block at censusKeyDrawHeight, in the bytes bitcoind prints; an exact key does not read it. B is the network's (censusKeyBondMin) and no
+ * caller's; S is genesis' census_key_shares_max. No floor, so a drawn key is linear in sats: a small node holds a share less often, and a node may
+ * draw several or none. Holders stand in ascending key order. Answers { drawn, totalSats, total, threshold, holders: [{ key, shares, ids }] },
+ * the threshold floor(2 x total / 3) + 1.
+ */
+export function censusKeyShares({ entries, network, genesis = null, blockHash = null, sharesMax = CENSUS_KEY_SHARES_MAX }) {
+  const B = censusKeyBondMin(network, genesis);
+  if (!Number.isInteger(sharesMax) || sharesMax < 1) throw new Error('the shares read census_key_shares_max');
   const bonded = new Map();
   let totalSats = 0n;
   for (const e of entries || []) {
-    const k = toHex(e.pubkey);
-    bonded.set(k, (bonded.get(k) || 0n) + e.bondSats);
+    const key = toHex(e.pubkey);
+    const held = bonded.get(key) || { key, sats: 0n, lowest: null };
+    const at = outpointOf(e);
+    if (at && (!held.lowest || outpointBefore(at, held.lowest))) held.lowest = at;
+    held.sats += e.bondSats;
+    bonded.set(key, held);
     totalSats += e.bondSats;
   }
-  const S = BigInt(sharesMax);
-  const fair = (totalSats + S - 1n) / S;
-  const unit = fair > lowestBondMinSats ? fair : lowestBondMinSats;
-  const holders = [];
-  let total = 0;
-  for (const key of [...bonded.keys()].sort()) {
-    const shares = Number(bonded.get(key) / unit);
-    if (!shares) continue;
-    holders.push({ key, shares, ids: Array.from({ length: shares }, (_, i) => total + i + 1) });
-    total += shares;
+  const byKey = [...bonded.values()].sort((a, b) => (a.key < b.key ? -1 : 1));
+  const whole = byKey.reduce((n, h) => n + h.sats / B, 0n);
+  const drawn = whole > BigInt(sharesMax);
+  const idsOf = new Map(byKey.map((h) => [h.key, []]));
+  if (drawn) {
+    if (!(blockHash instanceof Uint8Array) || blockHash.length !== 32) throw new Error('a drawn key reads the block hash at the epoch\'s first height');
+    if (byKey.some((h) => !h.lowest)) throw new Error('a drawn key orders its nodes by lowest outpoint, and an entry names none');
+    const order = [...byKey].sort((a, b) => (outpointBefore(a.lowest, b.lowest) ? -1 : 1));
+    let end = 0n;
+    const ends = order.map((h) => (end += h.sats));
+    for (let i = 0; i < sharesMax; i++) {
+      const hit = bytesToBigInt(taggedHash(TAG.censusKeyShare, Uint8Array.from([...blockHash, ...shareIndexBytes(i)]))) % totalSats;
+      let lo = 0, hi = ends.length - 1;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (hit < ends[mid]) hi = mid; else lo = mid + 1; }
+      idsOf.get(order[lo].key).push(i + 1);
+    }
+  } else {
+    let x = 0;
+    for (const h of byKey) for (let n = h.sats / B; n > 0n; n--) idsOf.get(h.key).push(++x);
   }
-  return { unit, totalSats, total, threshold: Math.floor((2 * total) / 3) + 1, holders };
+  const holders = byKey.filter((h) => idsOf.get(h.key).length).map((h) => ({ key: h.key, shares: idsOf.get(h.key).length, ids: idsOf.get(h.key) }));
+  const total = holders.reduce((n, h) => n + h.shares, 0);
+  return { drawn, totalSats, total, threshold: Math.floor((2 * total) / 3) + 1, holders };
 }
 
 /** CensusKeyRecord (5A.3B): what a key is, in the bytes its holders sign and its anchor hashes. */
@@ -158,9 +205,16 @@ export function bondNamesStandingKey(advert, confirmationHeight, standing, censu
 export const carrierPegInId = (networkId, script) => taggedHash(TAG.carrierPegIn, Uint8Array.from([...networkId, ...script]));
 
 /**
+ * What a carrier signs to name its peg-in address for an escrow spend of one table (kanban #1034 answer 2). The table exists by then, so this one names it;
+ * a peg-in is per wallet, so no record lists these. The table id commits to the network.
+ */
+export const carrierEscrowPegInId = (tableId, script) => taggedHash(TAG.carrierEscrowPegIn, Uint8Array.from([...tableId, ...script]));
+
+/**
  * WHO CARRIES THE PLAYERS' SHARE ON A FALLBACK, AND WHERE THERE ARE NO PANELS (kanban #1031): a fallback means the panels did not sign, so panel A
  * cannot be trusted with it. The census key's holders in descending shares, less `excluded` (hex: the accused, the proof's other slashed
- * nodes, the round's seats), each with a peg-in address signed by its node key. A holder with none is passed over.
+ * nodes, the round's seats), each with a peg-in address signed by its node key. A holder with none is passed over. An empty answer is no refusal:
+ * buildSlashPayoutTable then leaves it all in escrow and the players wait for a carrier (kanban #1034 answer 6).
  *
  *   holders   censusKeyShares' list; `bonds` Map hex -> sats; `pegIns` Map hex -> { script, signature }
  *

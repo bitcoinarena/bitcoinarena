@@ -8,7 +8,7 @@
 // One process plays every node, so what is printed per node is that node's own work, timed on its own.
 // --dealers n: only n nodes deal, and the census-wide sums are scaled from them and say so. The key and the signature are still real. The
 // reshare there sums the dealers' polynomials before evaluating them: the same shares, for one core's minutes and not hours.
-// --shares-max: census_key_shares_max. The ruled 1024 is the default; a higher one measures a census past the cap.
+// --shares-max: census_key_shares_max. The ruled 1024 is the default. A census past it draws its shares by bond (kanban #1039).
 import { randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -16,7 +16,7 @@ import { feldmanGroup } from '../src/curve.js';
 import { CENSUS_KEY_SHARES_MAX } from '../../arena-protocol/src/genesis.js';
 import { censusKeyShares } from '../../arena-protocol/src/census-key.js';
 import {
-  censusRunId, dealCensusKey, acceptCensusDeal, openCensusDeal, checkDealsBatched, encodeCensusDeal, encodeCensusStatement, combineCensusKey, reshareDealers,
+  censusRunId, dealCensusKey, acceptCensusDeal, openCensusDeal, checkDealsBatched, encodeCensusDeal, combineCensusKey, reshareDealers,
   reshareConstant, lagrangeOf, checkReshareDeals, censusPublicShare,
 } from '../../arena-protocol/src/census-dkg.js';
 import { shareOpensTo, scalarFrom32, scalarTo32, FIELD } from '../../arena-protocol/src/shares.js';
@@ -34,11 +34,11 @@ const size = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${(n / 1
 const random = (n) => new Uint8Array(randomBytes(n));
 const scalar = () => { for (;;) { const v = scalarFrom32(random(32)); if (v > 0n && v < FIELD) return v; } };
 const mod = (v) => ((v % FIELD) + FIELD) % FIELD;
-const BOND_MIN = 100000n;
+const BOND_MIN = 100000n;     // the skew case of kanban #1034; B itself is regtest's
 const NET = new Uint8Array(32).fill(9);
 
-const censusOf = (weights) => weights.map((w) => { const secret = scalarTo32(scalar()); return { secret, key: schnorr.getPublicKey(secret), bond: BigInt(w) * BOND_MIN }; });
-const sharesOf = (nodes, max) => censusKeyShares({ entries: nodes.map((n) => ({ pubkey: n.key, bondSats: n.bond })), lowestBondMinSats: BOND_MIN, sharesMax: max });
+const censusOf = (weights) => weights.map((w) => { const secret = scalarTo32(scalar()); return { secret, key: schnorr.getPublicKey(secret), bond: BigInt(w) * BOND_MIN, txid: random(32), vout: 0 }; });
+const sharesOf = (nodes, max) => censusKeyShares({ entries: nodes.map((n) => ({ pubkey: n.key, bondSats: n.bond, txid: n.txid, vout: n.vout })), network: 'regtest', blockHash: random(32), sharesMax: max });
 
 /** Sign with one nonce per node, and time one node's share with nothing kept. */
 function sign(key, signers, message) {
@@ -65,12 +65,12 @@ async function main() {
   const weights = Array.from({ length: count }, (_, i) => Math.max(1, Math.floor(top / (i + 1))));
   const nodes = censusOf(weights);
   const shares = sharesOf(nodes, max);
-  const { holders, total, threshold, unit } = shares;
+  const { holders, total, threshold, drawn } = shares;
   const held = (n) => holders.find((h) => h.key === toHex(n.key));
   const inCensus = nodes.filter(held);
   const dealersN = Math.min(opt('dealers', inCensus.length), inCensus.length);
   const sampled = dealersN < inCensus.length;
-  say(`census: ${count} nodes bonded, ${holders.length} hold shares, unit ${unit}, ${total} shares, threshold ${threshold}, top node ${Math.max(...holders.map((h) => h.shares))} shares, cap ${max}`);
+  say(`census: ${count} nodes bonded, ${holders.length} hold shares, ${drawn ? 'drawn' : 'exact'}, ${total} shares, threshold ${threshold}, top node ${Math.max(...holders.map((h) => h.shares))} shares, cap ${max}`);
 
   const up = [...inCensus].sort((a, b) => held(b).shares - held(a).shares);
   const absent = up.slice(up.length - absentN);
@@ -121,10 +121,10 @@ async function main() {
   const named = await clock(() => checkDealsBatched({ opened: crooked, random, curve }));
   say(`a bad share among ${crooked.length} deals: ${named.out.checks} batches, ${s(named.ms)}${sampled ? ' (sampled deals)' : ''}, dealer named: ${toHex(named.out.bad[0].from) === toHex(opened[Math.floor(opened.length / 2)].deal.from)}`);
 
-  const statement = encodeCensusStatement({ runId, node: big.key, setId: runId }).length + 64;
+  const statement = 32 + 32 + 64;        // node, record id, signature
   say(`keygen, bytes per node: sends ${size(dealBytes + statement)}; receives ${size(inCensus.length * (dealBytes + statement))} if all is broadcast, ${size(inCensus.length * (directBytes + statement) + 50 * inCensus.length)} if each dealer sends the polynomial and that node's own share (weight 1)`);
   const verifyAll = await clock(() => { const sig = schnorr.sign(random(32), big.secret); const m = random(32); const signed = schnorr.sign(m, big.secret); for (let i = 0; i < Math.min(50, inCensus.length); i++) schnorr.verify(signed, m, big.key); return sig; });
-  say(`statements: one ${statement} bytes, a set's hash in place of ${inCensus.length} lines; checking all ${s(verifyAll.ms / Math.min(50, inCensus.length) * inCensus.length)}`);
+  say(`statements: one ${statement} bytes, a record's hash in place of ${inCensus.length} lines; checking all ${s(verifyAll.ms / Math.min(50, inCensus.length) * inCensus.length)}`);
 
   // ---- the key, and a signature: present nodes up to the threshold
   const signers = [];

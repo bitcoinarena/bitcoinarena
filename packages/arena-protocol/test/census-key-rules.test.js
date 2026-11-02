@@ -3,39 +3,101 @@
 // THE CENSUS KEY'S RULES (spec 5A.3B, RULED 2026-11-02, kanban #1021, rulings 2, 4 and 5). No curve: these are sums, bytes and an order.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
-  censusKeyShares, censusKeyEpochOf, encodeCensusKeyRecord, decodeCensusKeyRecord, censusKeyRecordId, censusKeyAnchor, censusKeyAnchorIn,
+  censusKeyShares, censusKeyDrawHeight, censusKeyWindow, carrierEscrowPegInId, censusKeyEpochOf, encodeCensusKeyRecord, decodeCensusKeyRecord, censusKeyRecordId, censusKeyAnchor, censusKeyAnchorIn,
   censusKeyRecordStands, standingCensusKeys, bondNamesStandingKey, censusKeyPlan, censusHeightOfEpoch, fallbackCarriers, carrierPegInId,
 } from '../src/census-key.js';
-import { taggedHash, toHex } from '../src/hash.js';
+import { taggedHash, toHex, bytesToBigInt } from '../src/hash.js';
+import { CENSUS_KEY_BOND_MIN, censusKeyBondMin } from '../src/genesis.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const entry = (n, bondSats) => ({ pubkey: b32(n), bondSats });
-const of = (entries, B = 100000n, S = 1024) => censusKeyShares({ entries, lowestBondMinSats: B, sharesMax: S });
+const entry = (n, bondSats, vout = 0) => ({ pubkey: b32(n), bondSats, txid: b32(n), vout });
+const B = CENSUS_KEY_BOND_MIN.regtest;
+const H = taggedHash('ARENA/test/Block', Uint8Array.of(1));
+const of = (entries, over = {}) => censusKeyShares({ entries, network: 'regtest', blockHash: H, ...over });
 
-test('unit = max(B, ceil(T / S)): the floor rules a small census, the cap a large one', () => {
-  const small = of([entry(1, 300000n), entry(2, 100000n), entry(3, 250000n)]);
-  assert.deepEqual([small.unit, small.total, small.threshold], [100000n, 6, 5]);
+test('exact while the sum of floor(bond / B) is at most S: shares by the floor, x in key order, and H is not read (kanban #1034)', () => {
+  const small = of([entry(1, 3n * B), entry(2, B), entry(3, 2n * B + 25000n)], { blockHash: null });
+  assert.deepEqual([small.drawn, small.total, small.threshold], [false, 6, 5]);
   assert.deepEqual(small.holders.map((h) => [h.key.slice(0, 2), h.shares, h.ids]), [['01', 3, [1, 2, 3]], ['02', 1, [4]], ['03', 2, [5, 6]]]);
-  const large = of(Array.from({ length: 300 }, (_, i) => entry(i % 250 + 1, 1000000n * BigInt(1 + i % 7))));
-  assert.equal(large.unit, (large.totalSats + 1023n) / 1024n);
-  assert.ok(large.total <= 1024, `${large.total} shares`);
-  console.log(`  FACTS: 250 nodes, ${large.totalSats} sats: unit ${large.unit}, ${large.total} shares, threshold ${large.threshold}`);
+  const edge = of(Array.from({ length: 8 }, (_, i) => entry(i + 1, 128n * B)), { blockHash: null });
+  assert.deepEqual([edge.drawn, edge.total, edge.threshold], [false, 1024, 683], 'exactly S is still exact');
 });
 
-test('a node under one unit holds no share, never a minimum of one: many small bonds do not out-count capital', () => {
-  const r = of([entry(1, 1000000n), ...Array.from({ length: 50 }, (_, i) => entry(i + 2, 99999n))]);
-  assert.deepEqual([r.total, r.holders.length], [10, 1]);
-  const capped = of([entry(1, 1024000n), entry(2, 999n)], 1n);
-  assert.equal(capped.unit, 1001n);
-  assert.deepEqual(capped.holders.map((h) => h.shares), [1022]);
+test('one unit past S the shares are drawn: S of them, every x once, threshold 683 of 1024', () => {
+  const r = of([...Array.from({ length: 8 }, (_, i) => entry(i + 1, 128n * B)), entry(9, B)]);
+  assert.deepEqual([r.drawn, r.total, r.threshold], [true, 1024, 683]);
+  assert.deepEqual(r.holders.flatMap((h) => h.ids).sort((a, b) => a - b), Array.from({ length: 1024 }, (_, i) => i + 1));
+  assert.deepEqual(r.holders.map((h) => h.key), [...r.holders.map((h) => h.key)].sort(), 'holders in key order');
+  assert.deepEqual(of([...Array.from({ length: 8 }, (_, i) => entry(i + 1, 128n * B)), entry(9, B)].reverse()), r, 'the same on every node, whatever order it reads them in');
+  assert.notDeepEqual(of([...Array.from({ length: 8 }, (_, i) => entry(i + 1, 128n * B)), entry(9, B)], { blockHash: b32(7) }).holders, r.holders, 'another block, another draw');
 });
 
-test('a node\'s bonds are one sum; the threshold is floor(2 x total / 3) + 1', () => {
-  assert.equal(of([entry(1, 60000n), entry(1, 60000n)]).total, 1);
-  assert.deepEqual([3, 15, 32, 1024].map((n) => of([entry(1, BigInt(n) * 100000n)]).threshold), [3, 11, 22, 683]);
-  assert.throws(() => censusKeyShares({ entries: [], lowestBondMinSats: 0n, sharesMax: 1 }), /bond_min/);
-  assert.throws(() => censusKeyShares({ entries: [], lowestBondMinSats: 1n, sharesMax: 0 }), /shares_max/);
+test('the draw, by hand: tagged_hash over h || i (four bytes, big-endian) mod T, stretches in ascending lowest outpoint', () => {
+  const entries = [{ pubkey: b32(1), bondSats: 7n * B, txid: b32(0xc0), vout: 0 }, { pubkey: b32(2), bondSats: 5n * B, txid: b32(0xa0), vout: 1 }, { pubkey: b32(3), bondSats: 3n * B, txid: b32(0xb0), vout: 0 },
+    { pubkey: b32(3), bondSats: B, txid: b32(0xa0), vout: 0 }];
+  const r = of(entries, { sharesMax: 12, blockHash: b32(0x42) });
+  const T = 16n * B;
+  const order = [['03', 4n * B], ['02', 5n * B], ['01', 7n * B]];           // 03 by (a0, 0), 02 by (a0, 1), 01 by (c0, 0)
+  const want = new Map(order.map(([k]) => [k, []]));
+  for (let i = 0; i < 12; i++) {
+    const tag = createHash('sha256').update('ARENA/v1/CensusKeyShare').digest();
+    const hash = createHash('sha256').update(tag).update(tag).update(b32(0x42)).update(Uint8Array.of(0, 0, 0, i)).digest();
+    let x = bytesToBigInt(hash) % T;
+    for (const [k, len] of order) { if (x < len) { want.get(k).push(i + 1); break; } x -= len; }
+  }
+  assert.deepEqual(r.holders.map((h) => [h.key.slice(0, 2), h.ids]), ['01', '02', '03'].map((k) => [k, want.get(k)]).filter(([, v]) => v.length));
+  console.log('  FACTS:', JSON.stringify(r.holders.map((h) => [h.key.slice(0, 2), h.ids])));
+});
+
+test('a drawn key has no floor: a node under B can hold a share, a share is linear in sats, and splitting a bond changes nothing', () => {
+  const large = Array.from({ length: 2000 }, (_, i) => entry((i % 200) + 1, i % 200 === 0 ? 5000n * B : B / 2n + BigInt(i)));
+  const counts = new Map();
+  for (let d = 0; d < 400; d++) for (const h of of(large, { blockHash: taggedHash('ARENA/test/Block', Uint8Array.of(d & 255, d >> 8)) }).holders) counts.set(h.key, (counts.get(h.key) || 0) + h.shares);
+  const sums = new Map();
+  for (const e of large) sums.set(toHex(e.pubkey), (sums.get(toHex(e.pubkey)) || 0n) + e.bondSats);
+  const T = [...sums.values()].reduce((a, v) => a + v, 0n);
+  for (const [k, sats] of sums) {
+    const want = Number(sats) / Number(T) * 400 * 1024, got = counts.get(k) || 0;
+    assert.ok(Math.abs(got - want) < 6 * Math.sqrt(want) + 1, `${k.slice(0, 2)} drew ${got}, ${want.toFixed(0)} expected`);
+  }
+  const tiny = of([entry(1, 2000n * B), entry(2, 1000n)]);
+  const manyDraws = Array.from({ length: 200 }, (_, d) => of([entry(1, 2000n * B), entry(2, B - 1n)], { blockHash: taggedHash('ARENA/test/Block', Uint8Array.of(d)) }));
+  assert.ok(tiny.drawn && manyDraws.some((r) => r.holders.some((h) => h.key.startsWith('02'))), 'a node under B drew a share');
+  const one = of([entry(1, 2000n * B), { ...entry(2, 8000n * B) }]);
+  const split = of([entry(1, 2000n * B), { ...entry(2, 3000n * B), vout: 0 }, { ...entry(2, 5000n * B), vout: 1 }]);
+  assert.deepEqual(split.holders, one.holders, 'one sum, one stretch, at its lowest outpoint');
+});
+
+test('a drawn key names what it reads; bytes and hex name one outpoint; a node\'s bonds are one sum; the threshold is floor(2 x total / 3) + 1', () => {
+  const big = [entry(1, 2000n * B), entry(2, B)];
+  assert.throws(() => of(big, { blockHash: null }), /block hash/);
+  assert.throws(() => of([{ pubkey: b32(1), bondSats: 2000n * B }]), /lowest outpoint/);
+  assert.deepEqual(of(big.map((e) => ({ ...e, txid: toHex(e.txid) }))), of(big));
+  assert.equal(of([entry(1, 30000n), entry(1, 30000n, 1)]).total, 1);
+  assert.deepEqual([3, 15, 32, 1024].map((n) => of([entry(1, BigInt(n) * B)]).threshold), [3, 11, 22, 683]);
+  assert.throws(() => of([], { sharesMax: 0 }), /shares_max/);
+});
+
+test('B is the network\'s and no caller\'s: testnet4 50,000 sat, mainnet from its genesis (kanban #1034 answer 3)', () => {
+  assert.equal(censusKeyBondMin('testnet4'), 50000n);
+  assert.equal(censusKeyBondMin('regtest'), 50000n);
+  assert.equal(censusKeyBondMin('mainnet', { censusKeyBondMinSats: 1000000n }), 1000000n);
+  assert.throws(() => censusKeyBondMin('mainnet'), /genesis/);
+  assert.throws(() => censusKeyBondMin('nowhere'), /no census key bond floor/);
+  const mine = (n) => censusKeyShares({ entries: [entry(1, 3000000n)], network: 'mainnet', genesis: { censusKeyBondMinSats: n } }).total;
+  assert.deepEqual([mine(1000000n), mine(500000n)], [3, 6]);
+  assert.equal(censusKeyShares({ entries: [entry(1, 3000000n)], network: 'testnet4', lowestBondMinSats: 1n }).total, 60, 'a passed B is not read');
+});
+
+test('a draw reads the epoch\'s first block, and its window is founding_window from there, deals then signatures (kanban #1034 answer 5)', () => {
+  assert.equal(censusKeyDrawHeight(2, 'mainnet'), 8640);
+  assert.ok(censusKeyDrawHeight(2, 'mainnet') > censusHeightOfEpoch(2, 'mainnet', 6), 'after the census cut');
+  assert.deepEqual(censusKeyWindow(2, 'mainnet', 432), { start: 8640, midpoint: 8856, end: 9072 });
+  assert.deepEqual(censusKeyWindow(1, 'testnet4', 18), { start: 144, midpoint: 153, end: 162 });
+  assert.throws(() => censusKeyWindow(1, 'mainnet', 1), /founding_window/);
+  assert.throws(() => censusKeyDrawHeight(1, 'nowhere'), /no epoch length/);
 });
 
 test('an epoch is bond_maturity long', () => {
@@ -59,7 +121,7 @@ test('CensusKeyRecord: the ruling\'s fields in order, anchored by "ARN" K and it
 });
 
 test('a record stands only with the census\' own counts and signatures holding its threshold', () => {
-  const shares = of([entry(1, 300000n), entry(2, 100000n), entry(3, 250000n)]);
+  const shares = of([entry(1, 3n * B), entry(2, B), entry(3, 2n * B + 25000n)]);
   const verify = (sig, digest, key) => sig[0] === key[0];
   const sign = (n) => ({ key: b32(n), signature: b32(n) });
   const stands = (signatures, over = {}) => censusKeyRecordStands({ record, signatures, networkId: b32(9), shares, verify, ...over });
@@ -115,6 +177,8 @@ test('on a fallback the holders carry, by descending shares, less those left out
   const got = fallbackCarriers({ holders, bonds, networkId: net, verify, excluded: [toHex(b32(2))], pegIns: new Map([peg(1), peg(2), peg(3), peg(4, false), peg(5)]) });
   assert.deepEqual(got.map((c) => [c.key.slice(0, 2), c.bondSats]), [['03', 5000n], ['05', 3000n], ['01', 2000n]], 'the accused out, a bad signature passed over');
   assert.equal(carrierPegInId(net, Uint8Array.of(1)).length, 32);
+  assert.deepEqual(fallbackCarriers({ holders, bonds, networkId: net, verify, pegIns: new Map() }), [], 'no holder with a peg-in is no refusal: the table waits in escrow');
+  assert.notEqual(toHex(carrierEscrowPegInId(b32(1), Uint8Array.of(1))), toHex(carrierEscrowPegInId(b32(2), Uint8Array.of(1))), 'an escrow peg-in names its table');
 });
 
 test('a template-3 bond counts only naming the newest key standing at its confirmation; other templates are not asked', () => {

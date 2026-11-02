@@ -2391,24 +2391,49 @@ applies. A bond names the newest standing key when it is made. A holder signs a
 slash start only after replaying the proof itself, and does not sign one for a
 proof it cannot fetch.
 
-**One number per epoch, set by the network (RULED 2026-11-02, kanban #1021).**
+**Who holds how many shares (RULED 2026-11-02, kanban #1021, #1034).**
 
 ```text
-B             the lowest bracket's bond_min in force at the epoch's census height
-T             total bonded sats in that census
+B             census_key_bond_min, a per-network constant (§27A.6)
+T             total bonded sats in the census
 S             census_key_shares_max = 1024, a genesis parameter
-unit          max(B, ceil(T / S))
-shares(node)  floor(sum of the node's bonds / unit)
-threshold     floor(2 x total shares / 3) + 1
+exact         sum of floor(bond / B) over the census <= S:
+              shares(node) = floor(sum of the node's bonds / B),
+              x = 1.. in ascending node key
+drawn         otherwise, S shares, one at a time, i = 0 .. S-1:
+              x_i = tagged_hash("ARENA/v1/CensusKeyShare", h || i) mod T
+              i is 4 bytes, big-endian
+              share i, at x = i + 1, goes to the node whose stretch of T holds x_i
+              nodes in ascending lowest outpoint, each stretch its summed bond
+h             the hash of the block at the epoch's first height, e x bond_maturity,
+              in the bytes `getblockhash` prints
+threshold     floor(2 x total shares / 3) + 1, 683 of 1024
 ```
 
 `T` and the shares read the census of §5A.4 before any role filter: every node in
 it, by its sum. A key belongs to the network, not to a role. `serving = false` and
 absent nodes are not in the census, so they hold no share. `B` is a network
-number, never a round's: the lowest bracket's `bond_min` when the code has
-brackets, until then the network's one `bond_min`. `bond_min(role)` per round stays
-what it is for rounds; the key does not read it. A node under one `unit` holds no share, never a minimum of one: that would let
-many small bonds out-count capital, because shares would stop being linear.
+number, never a round's, and no caller passes it: testnet4 uses its live floor,
+50,000 sat, and mainnet takes the lowest bracket's value from genesis.
+`bond_min(role)` per round stays what it is for rounds; the key does not read it.
+
+`h` comes after the census cut, so nobody can bond into a known draw. A drawn key has
+no floor and is linear in sats: splitting a bond changes nothing, and a node can
+draw several shares, or none. A small network stays exact.
+
+The 2/3 line depends on which kind a key is. On an exact key the threshold is 2/3 of
+the shares and of the capital. On a drawn key it is **about 60 % of the bonded
+capital**. The chance that capital share `p`, fixed before `h`, draws the threshold
+of one key, exact binomial:
+
+| Share of bonded capital | Chance of 683 of 1024 |
+|---:|---:|
+| 20 % | 1e-229 |
+| 50 % | 3e-27 |
+| 55 % | 2e-14 |
+| 60 % | 6e-6 |
+| 62 % | 0.1 % |
+| 65 % | 13 % |
 
 **Which keys stand (RULED 2026-11-02, kanban #1021).** A bond stays valid and
 nobody re-bonds (§5A.2), so a key cannot retire while something names it.
@@ -2417,11 +2442,20 @@ nobody re-bonds (§5A.2), so a key cannot retire while something names it.
   done for it again.
 - **Reshared only when needed:** when nodes of the current census hold under 80 %
   of its shares, at most one key at a time, oldest first. The reshare keeps the
-  public key. A stable census costs nothing.
+  public key. A stable census costs nothing. A keygen tolerates absence, a reshare
+  does not: it fixes its dealers at its start, and they must hold the old
+  threshold. If one drops out, it restarts at the next step with those left.
+  Nothing is lost meanwhile, since the old shares still work.
 - **New key:** at an epoch's start, and only if the newest key has been named by a
-  bond. The DKG starts at the epoch's census height, and the key is new once
-  anchored. A DKG that fails leaves the newest key standing, and the next epoch
-  tries again.
+  bond. The DKG starts at the epoch's first height, when `h` is known, and the key
+  is new once anchored. A DKG that fails leaves the newest key standing, and the
+  next epoch tries again.
+- **The window is `founding_window`,** the time a set has to finish its DKG. First
+  half: deals. Second half: holders sign the transcript hash in the
+  `CensusKeyRecord`. The deal set is every valid deal a node holds at the midpoint.
+  Nodes that differ sign different hashes. Without the threshold on one hash the
+  key fails and the newest stands, which is already the failure path. Nothing needs
+  to converge by force.
 - **Never one key for all time:** old shares still combine among their old
   holders, whatever a reshare does, and nobody can prove a deletion. A single key
   would leave the genesis founders able to reach every bond forever.
@@ -2550,8 +2584,11 @@ pays in order: filer, player_carrier, reserves, escrow
 The release's `OP_RETURN` comes first and is left out of the table, because it
 carries the table's hash. `filer` repays the start's fee input. `player_carrier`
 outputs are the peg-ins of panel A's members in score order, none above that
-member's own bond. `reserves` are the parts of §27A.9.2. `escrow` is what does not
-fit, under the round's two panels, or the census key if there are none.
+member's own bond. `reserves` are the parts of §27A.9.2, and `reserves[]` lists what
+the release pays in. `escrow` is what does not fit, under the round's two panels, or
+the census key if there are none. The part kept in escrow is that output, so
+`reserves[]` needs no extra field: the escrow's value past the players is placed by
+load when spent.
 
 In sats the players' parts round up and the reserves take the rest. A carrier's
 part under dust is raised to dust out of the reserves; if they cannot cover the
@@ -2569,11 +2606,28 @@ shares, less the accused, the proof's other slashed nodes and the round's seats,
 none above its own bond. The holders' table names them, and each publishes a peg-in
 address signed by its node key.
 
-**An escrow spend answers to the same table (RULED 2026-11-02, kanban #1031).** It
-gets no table of its own. It carries `payout_table_id` in its `OP_RETURN`, and may pay
-only into the table's `entries` and `reserves`, up to what the release's outputs left
-unpaid. Row 8 of the offences covers that too: the release's outputs plus every
-escrow spend must not exceed the table.
+**When no holder has a signed peg-in (RULED 2026-11-02, kanban #1034).** All of it
+goes to escrow, and the players wait. The table has no `player_carrier` output, and
+the money leaves by an escrow spend when a carrier publishes a signed peg-in.
+Entries stay pending. This is not a refusal.
+
+**An escrow spend answers to the table (RULED 2026-11-02, kanban #1031, #1034).** A
+peg-in address is per wallet, so no record can list them, and all money goes through a
+carrier, including the reserves' part.
+
+```text
+escrow spend  OP_RETURN = payout_table_id ‖ id of its own outputs[] as first output
+outputs[]     the table's format, after the table's id: value_sats, script, pays
+              tagged_hash("ARENA/v1/SlashEscrowOutputs", those bytes)
+payable       a script a carrier's node key signed as its peg-in address for this
+              table: tagged_hash("ARENA/v1/CarrierEscrowPegIn", payout_table_id ‖ script)
+```
+
+What does not go out comes back to the same escrow as a `pays = escrow` output. The
+check is amounts by `pays` against what the table left unpaid, plus those signatures:
+`player_carrier` up to the players' part the release did not carry, `reserves` up to
+the rest of the escrow, counted with every earlier spend. Row 8 of the offences covers
+that too.
 
 **A proof that cannot be fetched (RULED 2026-11-02, kanban #1031).** A holder that
 cannot fetch the proof does not sign a start or a fallback, a panel member does not
@@ -2607,7 +2661,7 @@ release and refill itself from the peg-in; nothing depends on it.
 | a round's panels, both captured | they cannot start without the census key, and a panel reaches only that round's seats, not every bond |
 | one panel blocks a true slash (3 of 7 refuse) | the census key releases at `slash_fallback_blocks`; a mature node can leave first, at `slash_return_blocks`, as under path A |
 | a node buys a slash start to get out before maturity | nothing: the return leaf waits for `bond_maturity` too |
-| 2/3 of the bonded capital | can still take a bond that has not matured. At that size it holds the committees anyway |
+| 2/3 of the bonded capital on an exact key, about 60 % on a drawn one | can still take a bond that has not matured. At that size it holds the committees anyway |
 
 **The fallback is meant (RULED 2026-11-02, kanban #1021).** A mature node can
 leave at `slash_return_blocks`, before the fallback opens. If it does not, the
@@ -7868,6 +7922,7 @@ genesis_parameters {
   slash_return_blocks    template 3: start to the node's return (§5A.3B)
   slash_fallback_blocks  template 3: start to the census key's release (§5A.3B)
   census_key_shares_max  template 3: the cap on a census key's shares (§5A.3B)
+  census_key_bond_min    template 3: B of a census key, the lowest bracket's bond_min (§5A.3B)
   census_key_0           mainnet: the key the genesis founders made (§5A.3B)
   notice_period          for a rise in bond_min (§27A.3)
   bracket_table          the §5A.10 stake ceiling table
@@ -7921,6 +7976,7 @@ a state whose origin nobody can check.
 | `bond_maturity` | ~30 days | ~1 day | **100 blocks** |
 | `slash_hold_blocks` / `slash_return_blocks` / `slash_fallback_blocks` | 6 / 144 / 288 | 1 / 36 / 72 | **1 / 12 / 24** |
 | `census_key_shares_max` | 1024 | 1024 | **1024** |
+| `census_key_bond_min` | the lowest bracket's value, in genesis | 50,000 sat (its live floor) | **50,000 sat** |
 | `notice_period` | ~30 days | ~1 day | **10 blocks** |
 | stake ceiling | §5A.10 table | testnet sats | play money only |
 | beacon | Bitcoin block after `committee_time` | Bitcoin block | **mock, seeded** |
