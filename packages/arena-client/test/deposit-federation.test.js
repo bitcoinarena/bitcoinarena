@@ -6,6 +6,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { depositFederation, withdrawFederation } from '../src/federations.js';
+import { depositOffer } from '../src/page-lock.js';
+import { takesDeposits } from '../../arena-protocol/src/known-federations.js';
+import { fromHex } from '../../arena-protocol/src/hash.js';
 
 const A = 'aa'.repeat(32), B = 'bb'.repeat(32), C = 'cc'.repeat(32);
 const inviteOf = (fid) => `fed1-invite-of-${fid.slice(0, 4)}`;
@@ -77,4 +80,21 @@ test('the page\'s moneyContext hands every deposit B\'s invite, not the lobby ro
   const holding = run([A], 'withdraw', [{ federation: A, sats: 500 }]).ctx;
   assert.equal(Buffer.from(holding.round.federationId).toString('hex'), String(A).toLowerCase());
   assert.equal(holding.invite, inviteOf(A));
+});
+
+// NO NEW DEPOSITS IN B (kanban #807, the owner 2026-11-02): A at load 1338 and B at load 2, measured 11-01; B won every pick
+test('a federation that takes no new deposits is not picked, whatever its load', () => {
+  const REAL_A = '337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e', REAL_B = '4dc88be70830d3619fd8742eaf639ab297774850cc68a203aad5b10a21e1fe98';
+  const statuses = [st(REAL_A, 1337.97), st(REAL_B, 2.0)];
+  for (const lobby of [REAL_A, REAL_B]) {
+    const got = depositFederation({ lobbyInvite: inviteOf(lobby), statuses, held: [], sameFederation });
+    assert.equal(got.federation, REAL_A); assert.equal(got.invite, inviteOf(REAL_A));
+  }
+  const heldB = depositFederation({ lobbyInvite: inviteOf(REAL_B), statuses, held: [REAL_B], sameFederation });
+  assert.equal(heldB.federation, REAL_A, 'a wallet already in B gets its new money in A');
+});
+test('no deposit offer is made for a federation that takes no new deposits, by any path', () => {
+  const b = fromHex('4dc88be70830d3619fd8742eaf639ab297774850cc68a203aad5b10a21e1fe98');
+  assert.equal(takesDeposits(b), false); assert.equal(takesDeposits('337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e'), true);
+  assert.throws(() => depositOffer({ client: {}, stakeMsat: 0n, haveMsat: 0n, federationId: b }), /takes no new deposits/);
 });

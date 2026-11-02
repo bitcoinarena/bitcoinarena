@@ -16752,6 +16752,53 @@ function decodeBolt11(invoice) {
   return { network, amountMsat, timestamp, paymentHash, descriptionHash, description };
 }
 
+// ---- arena-protocol/src/test-federation.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE TEST FEDERATION (M3 W7, 2026-09-15): the one federation id the fixtures and the protocol
+// vectors name for a stake-lock round that runs against a stand-in federation - the test lock port,
+// never a federation that holds money. A round that takes a stake into a FEDERATION must name
+// which one (§23.6); a test round names this one, the id its stand-in federation carries, and not
+// an id typed into the round. It is bonded nowhere: no census lists its guardians, so
+// federationIsBonded refuses it, as it must.
+
+const TEST_FEDERATION_ID = sha256(new TextEncoder().encode('ARENA/v1/TEST_FEDERATION - a stand-in federation for tests and vectors, never one that holds money'));
+
+// ---- arena-protocol/src/known-federations.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE FEDERATIONS THIS CLIENT LETS A PLAYER DEPOSIT AND STAKE INTO WITHOUT ASKING (spec §23.6): "federation_id
+// is on the client's known-good list, or the client shows it and its guardians and requires an explicit confirmation -
+// the same rule as sim_wasm_hash (§5)". By federation id (the hash of its configuration). Adding one is a reviewed code
+// change, like adding a game core to known-games.js - never a setting, a query parameter or a seat's word.
+
+
+const KNOWN_GOOD_FEDERATIONS = Object.freeze({
+  // Bitcoin Arena testnet4: seven guardians, one per seat, 5 of 7 (§23A.1, RULED 2026-09-27); its record 
+  '337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e': Object.freeze({ name: 'Arena testnet4', network: 'testnet4', nominal: 7, threshold: 5 }),
+  // Bitcoin Arena testnet4 B: the second federation, seven guardians on the test host, 5 of 7 (2026-10-13: "2
+  // federations", "always take the federation with less funds"); its record signed by all 7, measured on the live page 22:45Z
+  'b18947f085d40df3ce4bc8ac64df9c45256223e88fe7fdbdebf3eae13fb10b73': Object.freeze({ name: 'Arena testnet4 B', network: 'testnet4', nominal: 7, threshold: 5 }),
+  // B's successor (kanban #326 step 5, 2026-10-20): seven guardians, 5 of 7 (its client config: 7 api endpoints); its record OPEN and signed by
+  // 6 at 157,128 on every seat measured, B's record names it; gw-b holds 98,999 sat of its e-cash. A CRITICAL B's funds move here by themselves
+  // NO NEW DEPOSITS (kanban #807, the owner 2026-11-02): what it holds stays and plays out; new money goes to A.
+  '4dc88be70830d3619fd8742eaf639ab297774850cc68a203aad5b10a21e1fe98': Object.freeze({ name: 'Arena testnet4 B2', network: 'testnet4', nominal: 7, threshold: 5, noNewDeposits: true }),
+  // the regtest stand-in every test and vector uses (test-federation.js) - never one that holds money
+  [toHex(TEST_FEDERATION_ID)]: Object.freeze({ name: 'regtest test federation', network: 'regtest', nominal: 4, threshold: 3 }),
+});
+
+/** Is this federation on the list? `federationId` as 32 bytes or 64 hex. */
+function federationIsKnown(federationId) {
+  const hex = federationId instanceof Uint8Array ? toHex(federationId) : String(federationId || '').toLowerCase();
+  return Object.prototype.hasOwnProperty.call(KNOWN_GOOD_FEDERATIONS, hex);
+}
+/** Does this federation take new deposits? Money and rounds already there are not touched by this. `federationId` as 32 bytes or 64 hex. */
+function takesDeposits(federationId) {
+  const hex = federationId instanceof Uint8Array ? toHex(federationId) : String(federationId || '').toLowerCase();
+  return !(KNOWN_GOOD_FEDERATIONS[hex] && KNOWN_GOOD_FEDERATIONS[hex].noNewDeposits);
+}
+const knownFederation = (hex) => KNOWN_GOOD_FEDERATIONS[String(hex || '').toLowerCase()] || null;
+
 // ---- arena-client/src/page-lock.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -16772,6 +16819,7 @@ function decodeBolt11(invoice) {
 // wallet that holds it; and a lock already made, that no signer node has committed
 // yet, is kept with its stake (`saveLock`), so a reload before the signer node takes
 // the entry uses that lock instead of dealing and paying again.
+
 
 
 
@@ -17692,6 +17740,8 @@ async function playerWithdrawable({ round, invite, seed, LockClient, storage, on
  */
 function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gateways = [], onDeposit = () => {},
   storage = null, federationId = null, restMsat = null, sizeOf = null, choices = null } = {}) {
+  // THE LAST WORD ON WHERE NEW MONEY GOES (kanban #807): whichever path asked, no invoice is made for a federation that takes no new deposits
+  if (federationId && !takesDeposits(federationId)) throw new Error('this federation takes no new deposits');
   let settle; let fail;
   // WHAT CAME OF IT (option 2, 2026-10-01): once a paid deposit is claimed, the round is looked at again -
   // `outcome` resolves { funded: true } or { funded: false, rest } with the offer for exactly the rest
@@ -17850,6 +17900,7 @@ const WALLET_DEPOSIT_SATS = Object.freeze([1000, 5000, 10000, 50000]);
 const walletDepositChoices = () => [...WALLET_DEPOSIT_SATS.map((sat) => ({ key: `sat${sat}`, label: `${sat.toLocaleString('en-US')} sat`, rounds: null, msat: BigInt(sat) * 1000n })),
   { key: 'custom', label: 'Custom', rounds: null, msat: null }];
 async function walletDepositOffer({ federationId, invite, seed, LockClient, storage, gateways = [], onDeposit = () => {}, onClaimed = () => {} } = {}) {
+  if (federationId && !takesDeposits(federationId)) throw new Error('this federation takes no new deposits');   // before a wallet is opened in it (kanban #807)
   const client = await openPlayerWallet({ federationId, invite, seed, LockClient, storage });
   const offer = depositOffer({ client, stakeMsat: 0n, haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit, storage, federationId,
     choices: walletDepositChoices() });
@@ -28877,47 +28928,6 @@ function backupLine(storage, seed) {
 
 
 
-// ---- arena-protocol/src/test-federation.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE TEST FEDERATION (M3 W7, 2026-09-15): the one federation id the fixtures and the protocol
-// vectors name for a stake-lock round that runs against a stand-in federation - the test lock port,
-// never a federation that holds money. A round that takes a stake into a FEDERATION must name
-// which one (§23.6); a test round names this one, the id its stand-in federation carries, and not
-// an id typed into the round. It is bonded nowhere: no census lists its guardians, so
-// federationIsBonded refuses it, as it must.
-
-const TEST_FEDERATION_ID = sha256(new TextEncoder().encode('ARENA/v1/TEST_FEDERATION - a stand-in federation for tests and vectors, never one that holds money'));
-
-// ---- arena-protocol/src/known-federations.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE FEDERATIONS THIS CLIENT LETS A PLAYER DEPOSIT AND STAKE INTO WITHOUT ASKING (spec §23.6): "federation_id
-// is on the client's known-good list, or the client shows it and its guardians and requires an explicit confirmation -
-// the same rule as sim_wasm_hash (§5)". By federation id (the hash of its configuration). Adding one is a reviewed code
-// change, like adding a game core to known-games.js - never a setting, a query parameter or a seat's word.
-
-
-const KNOWN_GOOD_FEDERATIONS = Object.freeze({
-  // Bitcoin Arena testnet4: seven guardians, one per seat, 5 of 7 (§23A.1, RULED 2026-09-27); its record 
-  '337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e': Object.freeze({ name: 'Arena testnet4', network: 'testnet4', nominal: 7, threshold: 5 }),
-  // Bitcoin Arena testnet4 B: the second federation, seven guardians on the test host, 5 of 7 (2026-10-13: "2
-  // federations", "always take the federation with less funds"); its record signed by all 7, measured on the live page 22:45Z
-  'b18947f085d40df3ce4bc8ac64df9c45256223e88fe7fdbdebf3eae13fb10b73': Object.freeze({ name: 'Arena testnet4 B', network: 'testnet4', nominal: 7, threshold: 5 }),
-  // B's successor (kanban #326 step 5, 2026-10-20): seven guardians, 5 of 7 (its client config: 7 api endpoints); its record OPEN and signed by
-  // 6 at 157,128 on every seat measured, B's record names it; gw-b holds 98,999 sat of its e-cash. A CRITICAL B's funds move here by themselves
-  '4dc88be70830d3619fd8742eaf639ab297774850cc68a203aad5b10a21e1fe98': Object.freeze({ name: 'Arena testnet4 B2', network: 'testnet4', nominal: 7, threshold: 5 }),
-  // the regtest stand-in every test and vector uses (test-federation.js) - never one that holds money
-  [toHex(TEST_FEDERATION_ID)]: Object.freeze({ name: 'regtest test federation', network: 'regtest', nominal: 4, threshold: 3 }),
-});
-
-/** Is this federation on the list? `federationId` as 32 bytes or 64 hex. */
-function federationIsKnown(federationId) {
-  const hex = federationId instanceof Uint8Array ? toHex(federationId) : String(federationId || '').toLowerCase();
-  return Object.prototype.hasOwnProperty.call(KNOWN_GOOD_FEDERATIONS, hex);
-}
-const knownFederation = (hex) => KNOWN_GOOD_FEDERATIONS[String(hex || '').toLowerCase()] || null;
-
 // ---- arena-client/src/federations.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -29065,11 +29075,13 @@ function depositFederation({ lobbyInvite, statuses = [], held = [], known = () =
   // it's evened out"): a returning player too - the page sums every federation's wallet (ARENA_SUM_BALANCES), so where the money
   // sits is no longer the player's concern. `always: false` is §23A.3's earlier rule, a returning player staying where it holds.
   if (!always && held && held.length) {
-    const mine = (statuses || []).find((f) => f && f.invite && held.includes(String(f.federation).toLowerCase()));
+    const mine = (statuses || []).find((f) => f && f.invite && takesDeposits(f.federation) && held.includes(String(f.federation).toLowerCase()));
     if (mine && !sameFederation(lobbyInvite, mine.federation)) return { invite: mine.invite, federation: mine.federation, lowest: false, why: 'a returning player stays in the federation it holds' };
     return lobby('a returning player stays in the federation it holds');
   }
-  const pick = pickFederation((statuses || []).filter((f) => f && f.invite), { known });
+  // A FEDERATION THAT TAKES NO NEW DEPOSITS IS NOT PICKED, whatever its load (kanban #807): at load 2 it won every pick from A at load 1338
+  const open = (statuses || []).filter((f) => f && f.invite && takesDeposits(f.federation));
+  const pick = pickFederation(open, { known });
   if (!pick) return lobby('no OPEN, known federation with a signed load');
   if (sameFederation(lobbyInvite, pick.federation)) return { invite: lobbyInvite, federation: pick.federation, lowest: true, why: 'the lobby federation is the lowest-load one' };
   return { invite: pick.invite, federation: pick.federation, lowest: true,
