@@ -196,7 +196,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
         const rec = await pressureFor(fid);
         const holders = candidates.filter((c) => (inc || []).includes(toHex(c.node)));
         const p = rec && holders.length ? pegInPressure({ pegIns: holders.map((c) => ({ node: toHex(c.node), pegInSats: c.provedPegInSats })),
-          reserveSats: rec.reserveSats, exposureCapSats: rec.exposureCapSats, band: rec.band || null, pegInMinSats: (GATEWAY_MINIMUMS[network] || GATEWAY_MINIMUMS.mainnet).pegInSats, seats }) : null;
+          reserveSats: rec.reserveSats, exposureCapSats: rec.exposureCapSats, band: rec.band || null, status: rec.status || null, pegInMinSats: (GATEWAY_MINIMUMS[network] || GATEWAY_MINIMUMS.mainnet).pegInSats, seats }) : null;
         if (p) pegInStarSats = p.targetPegInSats;
       } catch { pegInStarSats = null; }
       const s = seatGateways({ candidates, beacon, epoch: e, incumbents: inc, network, bondMinGuardian, seats, pegInStarSats });

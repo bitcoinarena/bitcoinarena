@@ -73,13 +73,13 @@ test('the plea: the node below B* in a filling federation is told how much to ad
   const v = { federations: [fed('PRESSURE', 0.87, [{ node: 'g1', addSats: '36667' }], [{ node: 'g1', addSats: '12000' }])], network: { band: 'PRESSURE', lowestLoad: 0.87, targetBondSats: '86667' } };
   const p = capacityPlea(v, 'G1');
   assert.deepEqual([p.level, p.band, p.addSats, p.pegInAddSats], ['warn', 'PRESSURE', '36667', '12000']);
-  assert.match(p.says, /^Federation aaaaaaaa holds 87 % of what its bonds cover \(PRESSURE\)\. Increase your bond by 36,667 sat \(Add to bond\) to bring it to 86,667 sat/);
+  assert.match(p.says, /^Federation aaaaaaaa holds 87 % of what its bonds cover \(capacity band PRESSURE\)\. Increase your bond by 36,667 sat \(Add to bond\) to bring it to 86,667 sat/);
   assert.match(p.says, /Raise your gateway's peg-in by 12,000 sat, to 50,000 sat\./);
   const other = capacityPlea(v, 'g9');
   assert.equal(other.addSats, undefined);
   assert.match(other.says, /The network is under capacity pressure \(PRESSURE, the lowest-load federation at 87 %\)\. A bond of at least 86,667 sat/);
   const full = capacityPlea({ federations: [fed('FULL', 1.02, [{ node: 'g1', addSats: '50000' }])], network: { band: 'FULL' } }, 'g1');
-  assert.equal(full.level, 'bad'); assert.match(full.says, /\(FULL: deposits are closed\)/);
+  assert.equal(full.level, 'bad'); assert.match(full.says, /\(capacity band FULL: deposits are closed\)/);
 });
 
 // kanban #553: the owner page names the amount AND the incentive - §23A.3a's own example: 7 guardians at 50,000 sat, B* 86,667 sat
@@ -157,7 +157,8 @@ test('B*_net for a founding: the band the lowest-load OPEN record enters, no hys
 });
 
 test('a record\'s band: what its load enters, kept by the gap from the record before; read as it says; the view and the weights take it (kanban #997)', async () => {
-  const { recordBand, bandOfRecord, capacityView, guardianWeights, gatewayWeights, CAPACITY_BAND_HEIGHT } = await import('../src/capacity.js');
+  const { recordBand, bandOfRecord, capacityView, guardianWeights, gatewayWeights } = await import('../src/capacity.js');
+  const { CAPACITY_BAND_HEIGHT } = await import('../src/federation-record.js');
   const at = (reserveSats, was) => recordBand({ reserveSats, exposureCapSats: 100000n, was });
   assert.deepEqual([at(70000n), at(69999n), at(65000n, 'PRESSURE'), at(59999n, 'PRESSURE'), at(85000n, 'CRITICAL'), at(100000n, 'CRITICAL'), at(99999n, 'FULL')], ['PRESSURE', 'CALM', 'PRESSURE', 'CALM', 'CRITICAL', 'FULL', 'CRITICAL']);
   assert.equal(recordBand({ reserveSats: 5n, exposureCapSats: 0n, was: 'FULL' }), 'CALM', 'no cap, no load');

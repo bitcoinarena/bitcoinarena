@@ -5936,8 +5936,19 @@ B*        = ceil( reserve / (0.5 × (f + 1)) )             the per-guardian bond
 | **CRITICAL** | `load >= 0.90` | `load < 0.80` | deposits close soon; the warnings are urgent |
 | **FULL** | `load >= 1` | `load < 1` | deposits refused (§23A.3) |
 
-The gap between "enters" and "leaves" keeps a federation from flapping at a boundary. The band is part of the federation record from the
-next record on, so every seat reads the same one.
+The gap between "enters" and "leaves" keeps a federation from flapping at a boundary. The band is part of the federation record, so every
+seat reads the same one. A record's band is `capacityBand(its load, the band of the previous record)`. The previous record is the highest
+verified record of that federation below this record's height; at one height, CLOSED first, then the lowest record id. A previous record
+with no band reads as what its own load enters, no hysteresis. With no previous record the band starts from CALM. A repeat at one height
+reads the height below, so it cannot walk the band.
+
+Every guardian must start from the same previous record, or they sign different bytes and neither reaches threshold. Before it signs, a
+guardian asks the federation's other guardians for theirs and verifies them at threshold, as the founding read does. A guardian that hears
+from fewer than a threshold of them, or that cannot check a record because it has not read the census at that record's height, does not
+sign this round, and the next step catches up.
+
+Every record names a band, whatever its status: a band is a fact about load, and a status CRITICAL can come back, so the gap has to survive
+it. Only an OPEN federation's band has any effect. Band CRITICAL and status CRITICAL are different things.
 
 **The network is under pressure** when the OPEN federation with the **lowest** load is in PRESSURE or worse. New deposits go there
 first (§23A.3), so that one federation decides whether the network can still take money in.
@@ -5968,6 +5979,9 @@ share_i = guardians' part × w_i / Σ w
 - **It is what lifts the cap.** The cap is `(f + 1) ×` the smallest bond, so the share is paid exactly for the move that frees capacity:
   every guardian below B\* holds the cap down, and every one at B\* stops doing so.
 - **CALM: even, as today.** Guardians who raised keep their larger bond for the next pressure.
+- **Not OPEN: even, whatever band its record names.** Its cap takes no new deposits, so a bigger bond frees nothing, and the weight pays
+  for exactly that. The same goes for peg-in pressure in part 2. A record naming no band reads as it always did, so a network before
+  `CAPACITY_BAND_HEIGHT` pays the same on every signer of every release.
 
 Rounds settle as before: one payout contract per guardian, sized by these weights. The weights use only the record and census of the
 round's census height, so every signer node builds the same outputs.
@@ -6025,7 +6039,7 @@ P*        = max( peg_in_min, ceil( 0.25 × headroom / gateway_seats ) )
 pegin_pressure  when Σ min(pegin_g, P*) < gateway_seats × P*   (some seated gateway holds less than P*)
 ```
 
-While a federation is in PRESSURE or worse **and** under peg-in pressure, the **gateways' part** of the GUARDIAN pool (its third,
+While an OPEN federation is in PRESSURE or worse **and** under peg-in pressure, the **gateways' part** of the GUARDIAN pool (its third,
 §23A.9) is split
 
 ```text
@@ -6110,8 +6124,11 @@ install_minimum = max( bond_min_guardian, B*_net )        rounded up to 10,000 s
   Rounds of earlier versions pay evenly as before.
 - The founding draw under pressure is **protocol 24**: every seat of a founding must compute the same draw. It changes no round, and
   it applies from `FOUNDING_PRESSURE_HEIGHT`, not from a round's version.
-- The bands in the record, `GET /capacity`, the warnings and the installer minimum need no protocol version. They ship with the seats,
-  the page and the installer.
+- The band in the record changes the record's bytes, so it starts at one height per network, `CAPACITY_BAND_HEIGHT`, named after every seat
+  and installer node runs it and the page is deployed. Mainnet has it from genesis. A record with `height` at or above the point **must**
+  name a band, a record below it **must not**, and anything else is refused by name. An installer node that has not updated past the point
+  stops verifying records, the same cost as the tag switch, which is why the point is named last. `GET /capacity`, the warnings and the
+  installer minimum need no version or height: they ship with the seats, the page and the installer.
 - Tests: the example table above to the msat; flapping at 0.69 / 0.71 / 0.61; `B*` and `P*` at the floors; a guardian above `B*`
   earning no more than at `B*`; a peg-in whose outpoint is not F's earning nothing; the same payout outputs from every signer node.
 
@@ -6141,7 +6158,7 @@ FederationRecord {
   gone[]                       (peer key, since_height, DEPARTED | ABANDONED, proof_ref)
   exposure_cap, reserve        as of height
   height
-  capacity_band                CALM | PRESSURE | CRITICAL | FULL, optional, after height (§23A.3a)
+  capacity_band                CALM | PRESSURE | CRITICAL | FULL, after height, from CAPACITY_BAND_HEIGHT (§23A.3a)
   signatures[]                 >= threshold guardian signatures over all of the above
 }
 ```

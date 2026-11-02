@@ -44,7 +44,8 @@ import { signGatewaySeating, standingSeating, seatingEpochAt, paidSeatsOf, prove
 import { signLiquiditySeating, standingLiquiditySeating, liquiditySeatingFrom } from '../../arena-protocol/src/liquidity-seating.js';
 import { checkLiquidityClaim, provenFreeSats } from '../../arena-protocol/src/liquidity.js';
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
-import { capacityView, capacityPlea, bondIncentive, capacityBandPoint, guardianWeights as capacityGuardianWeights, gatewayWeights as capacityGatewayWeights } from '../../arena-protocol/src/capacity.js';
+import { capacityBandPoint } from '../../arena-protocol/src/federation-record.js';
+import { capacityView, capacityPlea, bondIncentive, pressureOf, guardianWeights as capacityGuardianWeights, gatewayWeights as capacityGatewayWeights } from '../../arena-protocol/src/capacity.js';
 import { GATEWAY_MINIMUMS } from '../../arena-protocol/src/gateway-seats.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
 import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.js';
@@ -2343,7 +2344,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try {
           const rec = fedRecords.recordAt(toHex(contract.federationId), Number(contract.censusHeight));
           if (rec) gatewayWeights = capacityGatewayWeights({ pegIns: gatewaySeating.seats.map((n) => ({ node: n, pegInSats: gatewaySeating.pegIns[n] || 0 })),
-            reserveSats: rec.reserveSats, exposureCapSats: rec.exposureCapSats, band: rec.capacityBand || null, pegInMinSats: (GATEWAY_MINIMUMS[networkOf(contract.networkId)] || GATEWAY_MINIMUMS.mainnet).pegInSats });
+            reserveSats: rec.reserveSats, exposureCapSats: rec.exposureCapSats, ...pressureOf(rec), pegInMinSats: (GATEWAY_MINIMUMS[networkOf(contract.networkId)] || GATEWAY_MINIMUMS.mainnet).pegInSats });
         } catch { gatewayWeights = null; }
       }
       if (Number(contract.protocolVersion) >= PRESSURE_WEIGHT_VERSION && contract.federationId && guardian.length && fedRecords && fedRecords.recordAt) {
@@ -2351,7 +2352,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const rec = fedRecords.recordAt(toHex(contract.federationId), Number(contract.censusHeight));
           const census = roster.censusFor(rid);
           if (rec && census && census.ok) guardianWeights = capacityGuardianWeights({ bonds: guardian.map((k) => ({ node: toHex(k), bondSats: (nodeBondOf(census.entries, k) || { bondSats: 0n }).bondSats })),
-            reserveSats: rec.reserveSats, exposureCapSats: rec.exposureCapSats, nominal: rec.nominal, band: rec.capacityBand || null, bondMinSats: contract.bondMinSats || 50000n });
+            reserveSats: rec.reserveSats, exposureCapSats: rec.exposureCapSats, nominal: rec.nominal, ...pressureOf(rec), bondMinSats: contract.bondMinSats || 50000n });
         } catch { guardianWeights = null; }
       }
       return { gameVerify: game.ok ? game.committee.map((e) => e.pubkey) : contract.nodes,
@@ -5064,7 +5065,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       outpointAt: ballot && typeof ballot.outpointAt === 'function' ? (h, o) => ballot.outpointAt(h, o) : null,
       endpointOf: (e) => addressBook.endpointOf(e),   // its announced address first (kanban #577)
       // the federation's reserve and cap from its record: under peg-in pressure the proved peg-in ranks first (§23A.3a part 2)
-      pressureFor: async (fid) => { const r = fedRecords.recordOf(fid); return r && r.record ? { reserveSats: r.record.reserveSats, exposureCapSats: r.record.exposureCapSats, band: r.record.capacityBand || null } : null; },
+      pressureFor: async (fid) => { const r = fedRecords.recordOf(fid); return r && r.record ? { reserveSats: r.record.reserveSats, exposureCapSats: r.record.exposureCapSats, ...pressureOf(r.record) } : null; },
       // the record's seated guardians; before this seat holds the record, the census's (kanban #552: a restarted seat read none for minutes)
       seated: async (fid) => { const r = fedRecords.seatedGuardians(fid); return r && r.length ? r.map((k) => toHex(k)) : (fedRecords.censusGuardians ? fedRecords.censusGuardians(fid) : []); },
       entries: async () => { if (fedRecords.censusNewest) { const e = fedRecords.censusNewest(); if (e.length) return e; } const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false }; return now.ok ? now.entries : []; },

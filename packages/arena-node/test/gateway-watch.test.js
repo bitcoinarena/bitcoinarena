@@ -339,9 +339,10 @@ test('peg-in pressure reads the band the record names: 65 % kept in PRESSURE ran
     if (seat) return claims[seat[1]] ? { status: 200, json: async () => claims[seat[1]] } : { status: 404, json: async () => ({}) };
     return { status: 200, text: async () => '{"module_public_key":"02' + 'cd'.repeat(32) + '"}' };
   };
-  const view = async (band) => { const w = createGatewayWatch({ federationId: async () => fid, seated: async () => [keys[0].hex, keys[1].hex], entries: async () => entries, tip: async () => 144 * 40 + 5, beaconAt: async () => new Uint8Array(32).fill(7), verify, fetcher,
-    federationCoins: async () => new Map(), seatingFor: async () => [keys[0].hex], pressureFor: async () => ({ reserveSats: 65000n, exposureCapSats: 100000n, ...(band ? { band } : {}) }) });
+  const view = async (band, status = null) => { const w = createGatewayWatch({ federationId: async () => fid, seated: async () => [keys[0].hex, keys[1].hex], entries: async () => entries, tip: async () => 144 * 40 + 5, beaconAt: async () => new Uint8Array(32).fill(7), verify, fetcher,
+    federationCoins: async () => new Map(), seatingFor: async () => [keys[0].hex], pressureFor: async () => ({ reserveSats: 65000n, exposureCapSats: 100000n, ...(band ? { band } : {}), ...(status ? { status } : {}) }) });
     await w.probe(); return w.view(); };
   assert.equal((await view(null)).pegInPressure, undefined, 'no band named: 65 % enters nothing');
   assert.notEqual((await view('PRESSURE')).pegInPressure, undefined, 'as the record says');
+  assert.equal((await view('PRESSURE', 'DRAINING')).pegInPressure, undefined, 'only an OPEN federation\'s band has effect (ruling #1028)');
 });
