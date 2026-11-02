@@ -22,6 +22,7 @@ export function appsFiles(root = ROOT) {
   const apps = {};
   for (const [name, app] of Object.entries(lock.apps)) {
     const dir = join(root, '.apps', name);
+    if (app.optional && !existsSync(join(dir, '.git'))) continue;
     if (!existsSync(join(dir, '.git'))) throw new Error(`no checkout of ${name}: run node tools/fetch-apps.mjs`);
     if (execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim() !== app.commit) throw new Error(`${name} is not checked out at its pin: run node tools/fetch-apps.mjs`);
     if (!existsSync(join(dir, 'app.json'))) continue;
