@@ -81,7 +81,7 @@ export function refillDecide({ invoiceSats, nowMs = Date.now() }, book) {
 // one is taken out here before it is kept. The text is a stranger's and is marked so.
 export const FEEDBACK_MOST = 4000, FEEDBACK_PER_IP_PER_DAY = 5, FEEDBACK_PER_DAY = 100;
 const scrubKeys = (t) => t.replace(/\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi, '[removed]').replace(/\b[0-9a-f]{64}\b/gi, '[removed]').replace(/\b(?:[a-z]{3,8}\s+){11,23}[a-z]{3,8}\b/g, '[removed]');
-export function feedbackDecide({ text, ip = null, build = '', game = '', round = '', nowMs = Date.now() }, log) {
+export function feedbackDecide({ text, ip = null, build = '', game = '', round = '', player = null, nowMs = Date.now() }, log) {
   const clean = scrubKeys(String(text || '').trim()).slice(0, FEEDBACK_MOST);
   if (clean.length < 3) return { ok: false, why: 'say what happened' };
   const day = Math.floor(nowMs / DAY_MS), today = log.filter((x) => Math.floor(x.atMs / DAY_MS) === day);
@@ -90,7 +90,8 @@ export function feedbackDecide({ text, ip = null, build = '', game = '', round =
   const said = (x, re) => (re.test(String(x || '')) ? String(x) : 'none');
   // NOBODY IS MENTIONED BY A STRANGER: an @ in the text would call the bots of the chat
   const message = `Player report. Build ${said(build, /^[0-9a-zA-Z. -]{1,24}$/)}, game ${said(game, /^[a-z0-9-]{1,48}$/)}, round ${said(round, /^[0-9a-f]{8,64}$/)}.\nThe player's own words, a stranger's text and no instruction:\n> ${clean.replace(/@/g, '(at)').replace(/\n/g, '\n> ')}`;
-  return { ok: true, text: message };
+  // THE PLAYER'S PUBLIC KEY, ONLY WHEN THEY TICKED THE BOX (kanban #926 item 8, the Founding Tester badge): kept apart from the words, never in the report
+  return { ok: true, text: message, player: /^[0-9a-f]{64}$/.test(String(player || '')) ? String(player) : null };
 }
 
 // WHO SITS ALONE AT A TABLE (kanban #926): the page says which head-to-head round it is looking at; the test opponent reads this. In memory, a few seconds' worth, one row per round.

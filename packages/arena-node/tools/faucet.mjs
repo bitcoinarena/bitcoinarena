@@ -21,6 +21,8 @@ import { refillDecide, feedbackDecide, faucetDecide, playerGrantDecide, playerGr
 
 const env = process.env;
 const port = Number(env.FAUCET_PORT || 18866);
+// WHO GAVE FEEDBACK UNDER THEIR KEY, AND WHO HOLDS THE BADGE FOR IT (kanban #926 item 8)
+const FOUNDING_FILE = env.FAUCET_FOUNDING_FILE || 'founding-feedback.jsonl', FOUNDING_STATE = env.FAUCET_FOUNDING_STATE || 'founding-state.json';
 const feeRate = Number(env.FAUCET_FEE_RATE || 2);
 const rpc = async (method, params = []) => {
   const auth = Buffer.from(readFileSync(env.FAUCET_COOKIE, 'utf8').trim()).toString('base64');
@@ -144,10 +146,18 @@ createServer((req, res) => {
         const r = await fetch(`${env.FAUCET_CHAT_URL}/api/channels/${env.FAUCET_CHAT_CHANNEL}/messages`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` }, body: JSON.stringify({ text: d.text }), signal: AbortSignal.timeout(10000) });
         if (!r.ok) return send(502, { ok: false, why: 'the report could not be kept just now' });
         REPORTS.push({ ip, atMs: Date.now() });
+        if (d.player) appendFileSync(FOUNDING_FILE, `${JSON.stringify({ player: d.player, atMs: Date.now() })}\n`);
         send(200, { ok: true });
       } catch { send(400, { ok: false, why: 'not JSON' }); }
     });
     return undefined;
+  }
+  // HOLDS THIS KEY THE FOUNDING TESTER BADGE (kanban #926 item 8): the awards tools/founding-badges.mjs made, for the page's own line
+  if (path === '/founding') {
+    const key = String(new URL(req.url, 'http://x').searchParams.get('player') || '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(key)) return send(400, { ok: false, why: 'a player is 32 bytes of hex' });
+    let held = {}; try { held = JSON.parse(readFileSync(FOUNDING_STATE, 'utf8')).awarded || {}; } catch { held = {}; }
+    return send(200, { ok: true, founding: !!held[key], event: held[key] ? held[key].event : null });
   }
   if (path === '/player' || path === '/faucet/player') {
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'GET, POST', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '86400' }); return res.end(); }
