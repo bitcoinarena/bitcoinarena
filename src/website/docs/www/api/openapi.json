@@ -4615,6 +4615,81 @@
     "x-changes-state": true
    }
   },
+  "/held-proof": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "The running epoch's held proof",
+    "description": "The held proof of the running epoch as a gateway needs it: the read window on Bitcoin height, the fixed claim key of a held lock, how many reads count and which seated guardians to ask.\n\nAccess: none\n\nReturns: 200 JSON {ok, federationId, tip, epoch, proofHeight, window:{from,to}, open, claimPk, minBlocksLeft, threshold, guardians:[{node,url}]}; 400, 404 or 503 JSON {ok:false, why}\n\nSource: `packages/arena-node/src/server.js` line 4320.",
+    "operationId": "get_held_proof",
+    "parameters": [
+     {
+      "name": "federation",
+      "in": "query",
+      "required": true,
+      "description": "Federation id, 64 hex.",
+      "schema": {
+       "type": "string"
+      },
+      "example": "337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The window, the claim key, the threshold and the guardians.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "This seat holds no record of that federation.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/held-read": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "A guardian's signed read of a held lock",
+    "description": "A seated guardian reads a gateway's held lock once inside the read window. It recomputes the contract id from the fixed fields and signs a HeldRead if the lock holds with at least 6 blocks left in the guardians' count. A claim's held lock carries the threshold of these reads.\n\nAccess: signed by the gateway node key\n\nReturns: 200 JSON HeldRead {federationId, epoch, gateway, outpoint, contractId, amountMsat, blocksLeft, tipHeight, guardian, signature}; 400, 409, 429 or 503 JSON {ok:false, why}\n\nSource: `packages/arena-node/src/server.js` line 4320.",
+    "operationId": "post_held_read",
+    "requestBody": {
+     "required": true,
+     "description": "The ask, signed by the gateway node key.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "The signed read.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "409": {
+      "description": "Outside the window, not the fixed contract, or too few blocks left.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "429": {
+      "description": "That gateway has asked often enough in this epoch.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
   "/here": {
    "get": {
     "tags": [

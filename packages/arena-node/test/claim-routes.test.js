@@ -63,3 +63,28 @@ test('/gateway-claim with several claim files: ?federation= answers that federat
     await s.d.close(); rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// THE HELD PROOF'S DOORS (§23A.3a, kanban #998): the lock kept beside a claim file is served with the claim, the claim's signature untouched; the two doors answer JSON on a running seat
+test('/gateway-claim carries the held lock kept beside its file; /held-proof and /held-read answer JSON and refuse by name', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'claims3-'));
+  const was = process.env.ARENA_GATEWAY_CLAIM_FILE;
+  const fid = 'b1'.repeat(32), claim = { node: 'aa'.repeat(32), federationId: fid, gatewayUrl: 'https://gw-b.example/' }, held = { federationId: fid, epoch: 40, outpoint: 'cc'.repeat(32) + ':0', reads: [] };
+  writeFileSync(join(dir, 'g.json'), JSON.stringify(claim)); writeFileSync(join(dir, 'g.json.held-lock.json'), JSON.stringify(held));
+  process.env.ARENA_GATEWAY_CLAIM_FILE = join(dir, 'g.json');
+  const s = await joinedWithLock({});
+  try {
+    const base = `http://127.0.0.1:${s.d.port}`;
+    const got = await (await fetch(`${base}/gateway-claim?federation=${fid}`)).json();
+    assert.deepEqual(got, { ...claim, heldLock: held });
+    const bad = await fetch(`${base}/held-proof?federation=nope`);
+    assert.equal(bad.status, 400); assert.match((await bad.json()).why, /hex id/);
+    const unknown = await fetch(`${base}/held-proof?federation=${'ee'.repeat(32)}`);
+    assert.equal(unknown.headers.get('content-type'), 'application/json'); assert.equal((await unknown.json()).ok, false);
+    const post = (body) => fetch(`${base}/held-read`, { method: 'POST', body });
+    const notJson = await post('{'); assert.equal(notJson.status, 400); assert.match((await notJson.json()).why, /is JSON/);
+    const unsigned = await post(JSON.stringify({ federationId: fid })); assert.equal(unsigned.status, 400); assert.match((await unsigned.json()).why, /names a federation/);
+  } finally {
+    if (was === undefined) delete process.env.ARENA_GATEWAY_CLAIM_FILE; else process.env.ARENA_GATEWAY_CLAIM_FILE = was;
+    await s.d.close(); rmSync(dir, { recursive: true, force: true });
+  }
+});
