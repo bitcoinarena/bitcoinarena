@@ -6314,9 +6314,52 @@ splits the gateways' part by `(min(proved, P*))^2` from the seating of its censu
 and `peg_in_min` the network's gateway peg-in minimum (§23A.9 table); CALM, no peg-in pressure, or nothing proved - evenly. An outpoint
 older than `peg_in_max_age`, or at a height that does not hold it, counts for nothing from the rules epoch (kanban #999, 2026-11-02).
 
-**Open.** A peg-in proves money went in, not that the gateway still holds it as e-cash. A balance proof needs a guardian-side check
-of the gateway's notes, which stock Fedimint does not offer. Until there is one, the proved peg-in is the weight, and a seated gateway
-that fails a receive in the epoch (§23A.9's probes, extended with a receive test of `min(P*, 10,000 sat)`) is unseated as before.
+**The held proof.** A peg-in proves money went in, not that the gateway still holds it as e-cash, and stock Fedimint gives a guardian no
+way to read a gateway's notes. It does read a contract. So a gateway that wants peg-in weight in an epoch locks its e-cash in F for a
+moment and shows the guardians' reads of that lock. *(Rulings 2026-11-02, kanban #1029, #1030.)*
+
+```text
+proof_height   the epoch's first height + 72
+the lock       claim_pk       a fixed point nobody holds a key for: 02 || x for the first tagged_hash("ARENA/v1/HeldProofClaimKey", u32 i)
+                              that is a curve point's x
+               payment image  tagged_hash("ARENA/v1/HeldProof", gateway node key || epoch)
+               refund key     the gateway's claim key, its node key
+read window    Bitcoin tip in [proof_height - 3, proof_height]
+holds if       blocks_left >= 6 in the guardians' count, at that read
+HeldRead       { federation_id, epoch, gateway node, outpoint, contract_id, amount, blocks_left, tip_height },
+               signed by a seated guardian's node key
+the claim      held_lock { outpoint, contract_id, amount, reads }: at least the threshold, 2f + 1, of HeldReads
+counted        min(proved, held, P*), floored as proved peg-ins are
+```
+
+- **Only this shape counts.** A guardian recomputes the contract id from those fields, and any other lock counts 0. A lock of this shape
+  cannot be spent before it expires: nobody can sign for its claim key, and a claim on it is refused with or without a preimage (measured).
+  A gateway holding the claim key of its own lock could cancel it at any time, so the rule is said of this shape only.
+- **Two clocks.** Bitcoin height says when to read, the guardians' block count says how long the lock stands: 3 blocks for the window and
+  3 of margin, so a read at the window's start still has 3 left at its end. A count that lags makes a lock last longer. A count that jumps
+  after a lag can cut one short, which at worst lets the same money back two gateways once. Accepted.
+- **Reads are signed, and the claim carries them.** A refunded lock reads as nothing, so a read that vanishes cannot go into a seating signed
+  byte for byte. The gateway asks each seated guardian inside the window, and each reads the lock once and signs if it holds. `blocks_left`
+  differs by read, and each is checked on its own. Fewer reads than the threshold count 0. A guardian that was down verifies the
+  signatures and signs the same amount, so the gateway can refund right after expiry. The reads are judged by the federation record
+  in force at `proof_height`.
+- **What it costs.** The money is tied up until the threshold has read it, about 6 blocks at least, and the lock and refund cost a few
+  hundred msat. While locked it cannot serve deposits. A gateway does this once per epoch, and only if it wants the weight.
+- **With no held proof** the counted peg-in is 0: under peg-in pressure `v_g` is 0, the gateway earns none of the gateways' part and loses its
+  rank before volume. Its seat stays filled. If neither gateway shows a proof, the part is split evenly, as "nothing proved" says. A lock two
+  claims name counts for neither.
+- **From a rules epoch, per network** (`SEATING_RULES_EPOCH`, as for `peg_in_max_age`). Before it a peg-in counts as it did and no lock is read.
+
+**What it does not stop.** A lender can hand a gateway e-cash for an hour around `proof_height`. The same money cannot back two gateways,
+because both proofs span one height, but it can be borrowed from outside, at the cost of the lender's same hour. Accepted. Whether deposits
+through a gateway actually arrive is a routing question this does not test: availability, routed volume in the ranking and a client
+falling over to the other gateway stay as they are.
+
+*Implemented for 2.0 (kanban #998).* A seat answers `GET /held-proof` (the running epoch's window, the claim key, the threshold, whom to
+ask) and `POST /held-read` (an ask signed by the gateway's node key, answered with a signed HeldRead). The gateway runs
+`tools/gateway-held-proof.mjs`: `gateway-cli ecash send`, into a federation client, the lock, the reads, the wait to expiry, the refund,
+`gateway-cli ecash receive`, every step journalled so a stopped run carries on. The proof is kept beside the claim file and served with the claim,
+outside its signature: its reads are signed, and a claim's hourly renewal leaves it alone.
 
 ### 3. The warnings: health page, node dashboard, owner page
 
