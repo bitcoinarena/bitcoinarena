@@ -316,3 +316,12 @@ test('one add-peer that fails does not stall the DKG: the next tick adds only th
   assert.equal(new Set(adds).size, adds.length, 'no code added twice');
   assert.equal(adds.length, 3);
 });
+
+test('capacity pressure orders the seats and alternates of the ceremony; null is the plain draw (§23A.3a, kanban #993)', () => {
+  const bonded = entries.map((e, i) => ({ ...e, bondSats: i === 7 ? 2000000n : 1000000n }));
+  const open = (extra) => createFounding({ seed, triggerHeight: 100, entries: bonded, nominal: 4, bondMinGuardian: 500000n, foundingWindow: 10, ownKey: keys[0].pub, sign: () => new Uint8Array(64), verify, ...extra }).state();
+  const plain = open({}), none = open({ pressureBond: null }), under = open({ pressureBond: 2000000n });
+  assert.deepEqual(none, plain);
+  assert.equal(under.seated[0].node, toHex(keys[7].pub), 'the one at B*_net sits first, and position 0 leads');
+  assert.equal(under.id, plain.id, 'the founding id does not name the pressure: every seat has to read the same value');
+});

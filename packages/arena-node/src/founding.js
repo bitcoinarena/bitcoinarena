@@ -22,6 +22,8 @@
 //               the order given (`seatedFirst`, census entries), and draws only the missing seats (drawGuardians). A seated-first
 //               node is held to the same window and fifth as a drawn one: no code a fifth after the beacon, and the next alternate
 //               takes its position.
+//   PRESSURE    `pressureBond`, B*_net while the network is under capacity pressure, orders the draw (drawGuardians, §23A.3a): every
+//               seat of a founding has to pass the same value, or they draw different sets under one founding id.
 //   TEN ARE ENOUGH (2026-10-22: "we need 10 nodes not 14", "On mainnet we also want 10": as soon as 10 nodes want to found a
 //               federation it is allowed): a late seated node that no alternate can replace keeps its seat and may post its code
 //               until the window's end - only the no-shows an alternate takes over are dropped, and the founding is void only when
@@ -49,9 +51,9 @@ export function setupDigest(id, node, code, tag = TAG_PAIRS.foundingSetup[0]) {
   return taggedHash(tag, Uint8Array.from([...w.finish(), ...c]));
 }
 
-export function createFounding({ seed, triggerHeight, entries, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [], foundingWindow,
+export function createFounding({ seed, triggerHeight, entries, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [], pressureBond = null, foundingWindow,
   ownKey, sign, verify, setup = null, post = async () => {}, name = 'arena', say = () => {} }) {
-  const draw = drawGuardians({ entries, seed, height: triggerHeight, nominal, bondMinGuardian, guardingOpen, seatedFirst });
+  const draw = drawGuardians({ entries, seed, height: triggerHeight, nominal, bondMinGuardian, guardingOpen, seatedFirst, pressureBond });
   const id = foundingId(seed, triggerHeight);
   const own = toHex(ownKey);
   const codes = new Map();                   // node hex -> { code, signature }
