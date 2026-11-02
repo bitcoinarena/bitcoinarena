@@ -80,8 +80,8 @@ test('the key rebuilds with the body\'s height and with no other: a wrong maturi
   // and a template-1 body over a template-2 leaf rebuilds genesis' 100, which is not the leaf either
   const asV1 = { ...bodyFor(k), bondScriptTemplateVersion: 1 }; delete asV1.bondMaturityHeight;
   assert.match(bondKeyMatches(tx.outputs[0].script, asV1, BOND).why, /not the taproot tweak/);
-  assert.match(bondKeyMatches(tx.outputs[0].script, bodyFor(k, { bondScriptTemplateVersion: 3 }), BOND).why,
-    /names bond script template 3, and this code reads templates 1 and 2/);
+  assert.match(bondKeyMatches(tx.outputs[0].script, bodyFor(k, { bondScriptTemplateVersion: 4 }), BOND).why,
+    /names bond script template 4, and this code reads templates 1, 2 and 3/);
 });
 
 test('template 1 is read on regtest and testnet4 and refused on mainnet', () => {

@@ -95,10 +95,12 @@ export function encodeAdvert(a) {
   // TEMPLATE 2 CARRIES ITS OWN MATURITY (5A.3B): the absolute height in its recovery leaf, so a reader can
   // rebuild the output key from the body alone. Only template 2 writes it: a template-1 body is byte for byte what it
   // was, so the bonds already on chain keep their ids.
-  if (a.bondScriptTemplateVersion === 2) {
+  if (a.bondScriptTemplateVersion === 2 || a.bondScriptTemplateVersion === 3) {
     if (!Number.isInteger(a.bondMaturityHeight) || a.bondMaturityHeight < 1 || a.bondMaturityHeight >= 500000000)
-      throw new Error(`a template-2 advertisement names its bond_maturity_height as a block height, not ${a.bondMaturityHeight}`);
+      throw new Error(`a template-${a.bondScriptTemplateVersion} advertisement names its bond_maturity_height as a block height, not ${a.bondMaturityHeight}`);
     w.u32(a.bondMaturityHeight);
+    // TEMPLATE 3 NAMES ITS CENSUS KEY (5A.3B): path B's leaf holds it, so a reader cannot rebuild the output key without it.
+    if (a.bondScriptTemplateVersion === 3) w.bytes32(a.censusKey);
   } else if (a.bondMaturityHeight !== undefined) {
     throw new Error(`template ${a.bondScriptTemplateVersion} carries no bond_maturity_height`);
   }
@@ -197,7 +199,8 @@ export function decodeAdvert(bytes) {
     bondVout: r.u32(),
     bondScriptTemplateVersion: r.u16(),
   };
-  if (a.bondScriptTemplateVersion === 2) a.bondMaturityHeight = r.u32();
+  if (a.bondScriptTemplateVersion === 2 || a.bondScriptTemplateVersion === 3) a.bondMaturityHeight = r.u32();
+  if (a.bondScriptTemplateVersion === 3) a.censusKey = r.bytes32();
   Object.assign(a, {
     payoutPubkey: r.bytes32(),
     guardianOf: r.vec((rr) => ({ federationId: rr.bytes32(), guardianKey: rr.bytes(GUARDIAN_KEY_BYTES) })),

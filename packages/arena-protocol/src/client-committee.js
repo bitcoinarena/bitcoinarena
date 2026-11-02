@@ -24,6 +24,7 @@ import { decodeAncestorAdvert } from './ancestor.js';
 import { acceptAncestorEndpoint } from './ancestor-endpoint.js';
 import { readAdvertUpdate } from './advert-update.js';
 import { maturityStands } from './bond-script.js';
+import { bondNamesStandingKey } from './census-key.js';
 import { censusRootOf, sumsBonds, floorOnSums } from './census.js';
 import { beaconFromChain, committeeSeedFromBeacon } from './beacon.js';
 import { selectCommittee, drawCommittee, slotsForRole, drawAttestors } from './sortition.js';
@@ -124,6 +125,8 @@ export function entryFromEvidence(item, { contract, headers, firstHeight, bond, 
   bondSats = seen.valueSats;
   const matures = maturityStands(advert, height, network);
   if (!matures.ok) return { ok: false, why: matures.why };
+  const named = bondNamesStandingKey(advert, height, bond && bond.standingKeys);
+  if (!named.ok) return { ok: false, why: named.why };
   // RESOLVE's filters, on the body the bond committed to
   // FROM PROTOCOL 19 THE FLOOR IS THE NODE'S SUM (kanban #544), asked over the whole census below - as a seat's census asks it.
   // Asked per output here, a node's 32,000 top-up was refused where every seat counted it, and no paid round could be joined (#543).
@@ -153,7 +156,7 @@ export function entryFromEvidence(item, { contract, headers, firstHeight, bond, 
     if (!roles.length || !(read.advert.protocolVersions || []).includes(contract.protocolVersion))
       return { ok: false, why: 'its newest update declares no role or not this round\'s version' };
     // each output keeps its own maturity and template (census.js ownMaturity)
-    const advertNow = sumsBonds(contract) ? { ...read.advert, bondMaturityHeight: entry.advert.bondMaturityHeight, bondScriptTemplateVersion: entry.advert.bondScriptTemplateVersion } : read.advert;
+    const advertNow = sumsBonds(contract) ? { ...read.advert, bondMaturityHeight: entry.advert.bondMaturityHeight, censusKey: entry.advert.censusKey, bondScriptTemplateVersion: entry.advert.bondScriptTemplateVersion } : read.advert;
     entry = { ...entry, advert: advertNow, advertId: read.advertId, roles, hostedGames: read.advert.hostedGames };
   }
   return { ok: true, entry };

@@ -81,8 +81,8 @@ export function shareMap(weights) {
   return weights.map((w) => { const ids = Array.from({ length: w }, (_, k) => next + k); next += w; return ids; });
 }
 
-/** "Threshold 2/3 of the shares": the smallest count that is at least 2/3 of them. */
-export const thresholdOf = (total) => Math.ceil((2 * total) / 3);
+/** threshold = floor(2 x total shares / 3) + 1 (5A.3B, kanban #1021). */
+export const thresholdOf = (total) => Math.floor((2 * total) / 3) + 1;
 
 const groupFromSum = (first) => groupKeyOf([{ commitments: [first] }], curve);
 

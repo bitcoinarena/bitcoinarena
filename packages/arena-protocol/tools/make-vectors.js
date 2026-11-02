@@ -109,10 +109,15 @@ out.tagged = {
     drawsAttestors: true,
     panelA: drawn.panelA.map((e) => toHex(e.pubkey)),
     panelB: drawn.panelB.map((e) => toHex(e.pubkey)),
+    // SMALLER CENSUSES, two seats a role: n = min(7, floor(|E| / 2)), t = floor(2n / 3) + 1, no panels under n = 3 (kanban #1021)
+    small: [15, 12, 9, 6].map((nodes) => {
+      const few = drawPanels({ entries: entries.slice(0, nodes), contract: { ...contract, gameVerifySlots: 2, settlementSlots: 2 }, committeeSeed: seed });
+      return { nodes, eligible: few.eligible, n: few.n, t: few.t, panelA: few.panelA.map((e) => toHex(e.pubkey)), panelB: few.panelB.map((e) => toHex(e.pubkey)) };
+    }),
     rules: [
       'Tickets are the settlement role\'s, as a drawn attestor\'s are.',
       'Every node drawn for game or settlement, reserves included, its drawn attestors and the listed players\' nodes are out before the order is read.',
-      'Panel A is the first 7 of the order, panel B the next 7. Fewer than 14 left is a refusal, never smaller panels.',
+      'E is what is left. n = min(7, floor(|E| / 2)), t = floor(2n / 3) + 1. Panel A is the first n of the order, panel B the next n. Under n = 3 there are no panels.',
     ],
   };
 }

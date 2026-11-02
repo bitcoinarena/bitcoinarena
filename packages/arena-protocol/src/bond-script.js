@@ -83,6 +83,9 @@ export const BOND_SCRIPT_TEMPLATE_VERSION = 1;
  */
 export const BOND_TEMPLATE_V2 = 2;
 
+/** Template 3 (spec 5A.3B): written out below, beside its leaves. Here because the readers above name it. */
+export const BOND_TEMPLATE_V3 = 3;
+
 /** Blocks from a template-2 bond's confirmation to its maturity: ~30 days, ~1 day, regtest's 100 (5A.3B networks table). */
 export const BOND_MATURITY_OFFSET = Object.freeze({ mainnet: 4320, testnet4: 144, regtest: 100 });
 
@@ -110,13 +113,13 @@ export function bondMaturityOf(advert, { genesisMaturity, network } = {}) {
       return { ok: false, why: 'no bond maturity was given to rebuild the bond with' };
     return { ok: true, maturity: genesisMaturity };
   }
-  if (v === BOND_TEMPLATE_V2) {
+  if (v === BOND_TEMPLATE_V2 || v === BOND_TEMPLATE_V3) {
     const h = advert.bondMaturityHeight;
     if (!Number.isInteger(h) || h < 1 || h >= LOCKTIME_THRESHOLD)
       return { ok: false, why: `that advertisement's bond_maturity_height ${h} is not a block height` };
     return { ok: true, maturity: h };
   }
-  return { ok: false, why: `that advertisement names bond script template ${v}, and this code reads templates 1 and 2` };
+  return { ok: false, why: `that advertisement names bond script template ${v}, and this code reads templates 1, 2 and 3` };
 }
 
 /**
@@ -126,7 +129,7 @@ export function bondMaturityOf(advert, { genesisMaturity, network } = {}) {
  * still read (`bondMaturityOf` refuses it elsewhere).
  */
 export function maturityStands(advert, confirmationHeight, network) {
-  if (!advert || advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V2) return { ok: true };
+  if (!advert || (advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V2 && advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V3)) return { ok: true };
   const offset = BOND_MATURITY_OFFSET[network];
   if (!Number.isInteger(offset)) return { ok: false, why: `no bond maturity offset is set for ${network}` };
   if (!Number.isInteger(confirmationHeight))
@@ -537,10 +540,9 @@ export function bondOutputKeyMatches(onChain, inputs, { tweakPoint, combine } = 
  * path A are templates 1 and 2's, and path B needs the node's advance signature AND the census key, so the only place a bond can
  * go without its node is a hold output the node signed for that round.
  *
- * Nothing above this line reads it: an advertisement naming template 3 is still refused by name in `bondMaturityOf`, until the census
- * knows what a hold output is.
+ * Read through `bondMaturityOf` and `maturityStands` as template 2 is, and rebuilt in chain.js `bondKeyMatches` from the census key its
+ * advertisement names. A hold output is not read yet: a started bond leaves the census as any spent one does.
  */
-export const BOND_TEMPLATE_V3 = 3;
 
 /**
  * THE HOLD OUTPUT'S INTERNAL KEY: BIP-341's own point with no known discrete log, x of the hash of G. The spec says "an unspendable
@@ -548,9 +550,18 @@ export const BOND_TEMPLATE_V3 = 3;
  */
 export const HOLD_INTERNAL_KEY = fromHex('50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0');
 
-/** Two panels of 7, threshold 5 (5A.3B): the numbers the release leaf is written with. */
-export const PANEL_SEATS = 7;
-export const PANEL_THRESHOLD = 5;
+/**
+ * THE PANEL SIZE (5A.3B, RULED 2026-11-02, kanban #1021): a small census gets smaller panels, and no round is refused for it. `eligible` is
+ * |E|, the nodes left in the round's order. Under 3 there are no panels (0), and the hold output has no release leaf.
+ */
+export const PANEL_SEATS_MAX = 7;
+export const PANEL_SEATS_MIN = 3;
+export function panelSeats(eligible) {
+  const n = Math.min(PANEL_SEATS_MAX, Math.floor(eligible / 2));
+  return n < PANEL_SEATS_MIN ? 0 : n;
+}
+/** t = floor(2n / 3) + 1: n 3..7 -> t 3, 3, 4, 5, 5. */
+export const panelThreshold = (n) => Math.floor((2 * n) / 3) + 1;
 
 /** A height a CLTV can compare with a block, or a refusal: a time here would compare with the wrong clock. */
 const blockHeight = (h) => {
@@ -621,19 +632,21 @@ const sortedPanel = (keys) => [...keys].sort((a, b) => {
   return 0;
 });
 
-/** `k` of these keys, BIP-342's counting form, left on the stack for `close` to compare. */
+/** t of these keys, BIP-342's counting form, left on the stack for `close` to compare. */
 function panelCount(keys, close) {
   const [first, ...rest] = sortedPanel(keys);
   return cat(pushKey(first), Uint8Array.from([OP_CHECKSIG]),
     ...rest.map((key) => cat(pushKey(key), Uint8Array.from([OP_CHECKSIGADD]))),
-    smallNumber(PANEL_THRESHOLD), Uint8Array.from([close]));
+    smallNumber(panelThreshold(keys.length)), Uint8Array.from([close]));
 }
 
 function checkPanels(panelA, panelB) {
   for (const panel of [panelA, panelB]) {
-    if (!Array.isArray(panel) || panel.length !== PANEL_SEATS) throw new RangeError(`a panel is ${PANEL_SEATS} keys`);
+    if (!Array.isArray(panel) || panel.length < PANEL_SEATS_MIN || panel.length > PANEL_SEATS_MAX)
+      throw new RangeError(`a panel is ${PANEL_SEATS_MIN} to ${PANEL_SEATS_MAX} keys`);
     for (const key of panel) if (!isKey32(key)) throw new TypeError('a panel key is 32 bytes');
   }
+  if (panelA.length !== panelB.length) throw new RangeError('the two panels of a round are one size');
   const all = [...panelA, ...panelB];
   for (let i = 0; i < all.length; i++)
     for (let j = i + 1; j < all.length; j++)
@@ -641,7 +654,7 @@ function checkPanels(panelA, panelB) {
 }
 
 /**
- * RELEASE: `<slash_hold_blocks> CHECKSEQUENCEVERIFY DROP <5-of-7 panel A> <5-of-7 panel B>`. Each panel's keys sorted, for the reason
+ * RELEASE: `<slash_hold_blocks> CHECKSEQUENCEVERIFY DROP <t-of-n panel A> <t-of-n panel B>`. Each panel's keys sorted, for the reason
  * `slashLeaf` sorts: one set, one leaf. Panel A's count ends in NUMEQUALVERIFY so that B's is what the leaf leaves true.
  */
 export function releaseLeaf({ panelA, panelB, holdBlocks }) {
@@ -662,21 +675,24 @@ export function fallbackLeaf({ censusKey, fallbackBlocks }) {
 /**
  * THE HOLD OUTPUT, AS HASHES, rebuilt by anyone from the bond and the round: `{ nodeKey, censusKey, panelA, panelB, bondMaturity,
  * holdBlocks, returnBlocks, fallbackBlocks }`. The spec names the three leaves and not their shape: the release sits one level
- * down, because it is the spend the design expects, and the two leaves that should never run share the deeper branch.
+ * down, because it is the spend the design expects, and the two leaves that should never run share the deeper branch. A round
+ * with no panels (both empty) has no release leaf, and the tree is those two alone.
  *
  * 5A.3B: "a mature node leaves at slash_return_blocks, before the fallback opens". That is only true with hold < return < fallback.
  */
 export function holdTapTree({ nodeKey, censusKey, panelA, panelB, bondMaturity, holdBlocks, returnBlocks, fallbackBlocks }) {
   if (!(holdBlocks < returnBlocks && returnBlocks < fallbackBlocks))
     throw new RangeError(`the clocks ${holdBlocks} / ${returnBlocks} / ${fallbackBlocks} do not run hold, then return, then fallback`);
+  const noPanels = (panelA || []).length === 0 && (panelB || []).length === 0;
   const scripts = {
-    release: releaseLeaf({ panelA, panelB, holdBlocks }),
+    ...(noPanels ? {} : { release: releaseLeaf({ panelA, panelB, holdBlocks }) }),
     return: returnLeaf({ nodeKey, bondMaturity, returnBlocks }),
     fallback: fallbackLeaf({ censusKey, fallbackBlocks }),
   };
-  const leaves = { release: tapLeafHash(scripts.release), return: tapLeafHash(scripts.return), fallback: tapLeafHash(scripts.fallback) };
+  const leaves = { return: tapLeafHash(scripts.return), fallback: tapLeafHash(scripts.fallback) };
+  if (!noPanels) leaves.release = tapLeafHash(scripts.release);
   const lower = tapBranchHash(leaves.return, leaves.fallback);
-  const merkleRoot = tapBranchHash(leaves.release, lower);
+  const merkleRoot = noPanels ? lower : tapBranchHash(leaves.release, lower);
   return { internalKey: HOLD_INTERNAL_KEY, scripts, leaves, lower, merkleRoot, tweak: tapTweak(HOLD_INTERNAL_KEY, merkleRoot) };
 }
 
@@ -690,12 +706,14 @@ export function holdOutputKey(inputs, { tweakPoint } = {}) {
   return { ...built, script: cat(Uint8Array.from([0x51, 0x20]), built.outputKey) };
 }
 
-/** The control block of one of the three leaves. The release proves one level, the other two prove two. */
+/** The control block of one leaf. With a release leaf it proves one level and the other two prove two; with none, those two prove one. */
 export function holdControlBlock(path, { internalKey, leaves, lower, parity }) {
   if (path !== 'release' && path !== 'return' && path !== 'fallback')
     return { ok: false, why: `a hold output has a release, a return and a fallback, not ${path}` };
   if (parity !== 0 && parity !== 1) return { ok: false, why: 'a control block carries the output key parity, and none was given' };
+  if (path === 'release' && !leaves.release) return { ok: false, why: 'that hold output has no panels, so it has no release leaf' };
+  const above = leaves.release ? [leaves.release] : [];
   const proof = path === 'release' ? [lower]
-    : path === 'return' ? [leaves.fallback, leaves.release] : [leaves.return, leaves.release];
+    : path === 'return' ? [leaves.fallback, ...above] : [leaves.return, ...above];
   return { ok: true, path, controlBlock: cat(Uint8Array.from([TAPLEAF_VERSION | parity]), internalKey, ...proof) };
 }
