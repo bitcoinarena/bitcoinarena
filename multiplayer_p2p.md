@@ -2647,6 +2647,23 @@ Which nodes a seat counts as not answering is public at its `GET /node-facts`, w
 
 **What a node runs on (kanban #984).** Each node measures its cores, its origin (country and nearest Cloudflare data centre, found by the node itself, never its address) and its bandwidth once, reads its operating system, version, RAM and load every hour, signs one small record and hands it to every seat. A seat keeps the newest record of each bonded node, so it stays readable with its age after that node went offline. It is the node's own word: it decides no draw and no seat, and it names no address, path or key.
 
+**A table checks in (RULED 2026-11-02, kanban #1020).** A table is seated by its first
+round and plays all day, so the rule above would seat it only once. The first round of a
+table in each quarter of an hour of UTC time is its **check-in**: the 9 drawn nodes
+exchange PRESENT for it, closing at `start_time - 120 s` as for any round. A seated node
+leaves only if a seat holds no PRESENT of it for the check-in *and* failed to reach it
+(the rule above), so a node that lives keeps its seat even on a build that sends no
+PRESENT for a later round. The rest keep their seats, and the next drawn node that checked
+in and answers takes the place; with no such reserve the table stays as it is. The new
+seats sign `SEATING(check-in round_id, role, seated list)` under every rule below, with
+the signature of every node it seats. That certificate seats the check-in and the rounds
+after it, and the seven make their own claim key. A round that already holds entries keeps
+the seats it took them under. If the seats do not meet, nothing changes and the next
+check-in tries again. A client asks `GET /seating?round=<table's first round>&role=<role>&at=<its round>`,
+which answers `{ cert, index }`; it checks the certificate against the draw and that the
+check-in is a round of the table at or before its own, and of those a seat hands, the
+newest stands. A seating on any other later round of a table is refused.
+
 **The seating certificate.** The seated nodes sign
 `SEATING(round_id, role, seated list)`; a round's seating is valid only with
 the signature of **every** node it seats. Each node signs at most one seating
