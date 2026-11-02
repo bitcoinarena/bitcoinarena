@@ -18,7 +18,8 @@
 // that only knows what it is not will let the next non-input through the
 // moment somebody adds one.
 import {
-  TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, TYPE_ADVERT, TYPE_CENSUS_LEAF,
+  TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, TYPE_ADVERT, TYPE_CENSUS_LEAF, TYPE_CENSUS_COMPLAINT,
+  TYPE_CENSUS_DEAL,
   TYPE_CHECKPOINT, TYPE_RESULT, TYPE_PAYOUT_TABLE, TYPE_INPUT_BATCH,
   TYPE_TRANSCRIPT, TYPE_CHECKPOINT_RECEIPT, TYPE_OBJECTION, TYPE_SLASH_PROOF,
   TYPE_SETTLEMENT_ACK, TYPE_SETTLEMENT_TABLE, TYPE_SETTLEMENT_COMMIT, TYPE_STALL_NOTE, TYPE_FEE_TABLE, TYPE_FEE_PROPOSAL, TYPE_FEE_APPROVAL, TYPE_FUNDING_PROPOSAL, TYPE_FUNDING_SIGNAL, TYPE_LEADERBOARD_PAYOUT, TYPE_FUNDING_COMMENT, TYPE_PLAYER_NAME,
@@ -47,6 +48,8 @@ export const FRAMES = new Map([
   [TYPE_ENTRY_CONTRACT, { name: 'EntryContract', authority: true }],
   [TYPE_ADVERT, { name: 'Advert', authority: true }],
   [TYPE_CENSUS_LEAF, { name: 'CensusLeaf', authority: true }],
+  [TYPE_CENSUS_DEAL, { name: 'CensusDeal', authority: true }],
+  [TYPE_CENSUS_COMPLAINT, { name: 'CensusComplaint', authority: true }],   // it opens a share of a census key's deal, and drops that dealer (kanban #972)
   [TYPE_CHECKPOINT, { name: 'Checkpoint', authority: true }],
   [TYPE_RESULT, { name: 'Result', authority: true }],
   [TYPE_PAYOUT_TABLE, { name: 'PayoutTable', authority: true }],
