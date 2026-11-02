@@ -42,7 +42,7 @@ export function settledOutcomeOf(round, roundIdBytes, entryId) {
       if (toHex(runId(body)) === s.runId) return { decided: true, outcome: body.outcome, score: body.score, state: s.state, why: s.why };
     }
   }
-  return { decided: false, state: s.state || null, why: s.why };
+  return { decided: false, state: s.state || null, why: s.why, ...(s.holdsRound && s.closesAtMs !== undefined ? { holdsUntilMs: BigInt(s.closesAtMs) } : {}) };
 }
 
 /**
@@ -59,15 +59,18 @@ export function standingOf(round, roundIdBytes, entryIdBytes, contract) {
   const all = round.entriesOf(roundIdBytes);
   const entries = [];
   let mine = null;
+  let heldUntil = null;   // AN ENTRY WITH NO QUORUM HOLDS THE ROUND (§13A, §24, RULED 2026-11-02, kanban #1047): the pending line says the later time
   for (const { entryId, entry } of all) {
     // a stake no seat saw committed is not in the round (§23.1 step 5)
     if (round.stakeSeen && !round.stakeSeen(entryId)) continue;
     const o = settledOutcomeOf(round, roundIdBytes, entryId);
     if (toHex(entryId) === toHex(entryIdBytes)) mine = { ...o, pubkey: entry.playerPubkey };
+    if (o.holdsUntilMs !== undefined && (heldUntil === null || o.holdsUntilMs > heldUntil)) heldUntil = o.holdsUntilMs;
     if (!o.decided) continue;
     entries.push({ entryId, pubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat,
       donationMsat: entry.donationMsat, outcome: o.outcome, score: o.score });
   }
+  if (heldUntil !== null) { base.windowCloseMs = String(heldUntil); base.heldByNoQuorum = true; }
   if (!mine) return { ...base, state: null, pendingMsat: null, why: 'this signer node holds no such entry in the round' };
   const counted = all.filter(({ entryId }) => !round.stakeSeen || round.stakeSeen(entryId)).length;
   const standsOn = mine.decided && (mine.state === PROVISIONALLY_FINAL || mine.state === FINAL);

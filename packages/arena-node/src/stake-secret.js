@@ -35,7 +35,7 @@ import { sealShare, openShare } from '../../arena-protocol/src/seal.js';
 
 import { isQualifier } from '../../arena-protocol/src/payout.js';
 import { lockAction, CLAIM } from '../../arena-protocol/src/lock-action.js';
-import { resultFinality, settledResult } from './finality.js';
+import { resultFinality, settledResult, finalRerunResult } from './finality.js';
 import { FINAL } from '../../arena-protocol/src/objection.js';
 import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
@@ -197,7 +197,8 @@ export class StakeSecrets {
     // B went down, "1 of 2 shares" - the hold stayed in flight to expire back.
     if (!held.length && typeof this.round.provenEquivocation === 'function'
       && this.round.provenEquivocation(roundIdBytes, entryIdBytes)) return { ok: true, outcome: 'FORFEIT', proven: true };
-    if (!held.length) return { ok: false, why: 'this node has replayed nothing for that run' };
+    // A SEAT THAT SIGNED ONLY THE RE-RUN (kanban #1038): it was out at the close, and its re-run helped make the entry FINAL
+    if (!held.length && !finalRerunResult(this.round, roundIdBytes, entryIdBytes)) return { ok: false, why: 'this node has replayed nothing for that run' };
 
     // FINAL, NOT MERELY AGREED (M3.3-32): the threshold makes a run
     // PROVISIONALLY_FINAL, and a share handed out inside the objection window

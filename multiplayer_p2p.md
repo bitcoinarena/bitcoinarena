@@ -4068,19 +4068,25 @@ their absence, which it cannot cause without breaking their node.
 The stateful rotation cursor of an earlier draft is gone; see §5A.6. Nothing in this protocol
 requires a canonical assignment log.
 
-## 5A.9 Role separation between committees
+## 5A.9 One set of seats in both roles
 
-Selection runs separately per role, and by default overlap is minimized:
+From protocol 2 a round has **one draw and one set of seats**: the same 7 hold
+both roles, game/verify and settlement (`sortition.js drawRoleOf`; the owner
+2026-10-14, kanban #308, #1045). Measured with the real `selectCommittee`, 200
+rounds on a 40-node census: 1.16 seats of 7 in both roles at protocol 1, 7.00 at
+protocol 2, 22 and 24.
 
-```text
-draw 9 GAME/VERIFY (§5A.7 reserve seats)
-remove those nodes (and their operator_id siblings) from the settlement pool
-draw 9 SETTLEMENT from the remainder
-```
+`overlap_count`, the seats that hold both roles, is published, and the client
+shows it before a paying join (§22, Transparency). From protocol 2 it is the
+whole set by design, so a threshold in one role is the same threshold in the
+other. What that means for a stalled entry is §22's residual (P6).
 
-Fallback if too few remain: overlap is permitted but `overlap_count` is
-published, and the client MUST display material overlap before the player
-commits funds.
+*History, protocol 1 only:* it drew game/verify, removed those nodes and their
+`operator_id` siblings from the settlement pool, and drew settlement from the
+remainder.
+
+Template 3's panels are not affected: they are drawn apart from this set
+(§5A.3B).
 
 ## 5A.10 Minimum census size and stake ceiling
 
@@ -4456,8 +4462,8 @@ participate in threshold Lightning settlement.
 
 These are roles of the same software, not different products. Selected slots
 SHOULD be operated by genuinely independent parties; the same operator may
-technically enable both roles, but §5A.9 minimizes overlap and the client
-displays it.
+technically enable both roles. From protocol 2 one set of 7 holds both
+(§5A.9), and the client displays that.
 
 No single instance is authoritative.
 
@@ -4771,10 +4777,11 @@ WINDOW-10-SPEC).
 - **Results must be in before the window closes.** A result reaches
   `PROVISIONALLY_FINAL` - five matching signatures - inside the window, as
   soon as the committee has replayed the run; one that has not by
-  `window_close` falls to §13C's no-quorum rule (`VOID`, refunded, unless
-  proven equivocation). The pending line still appears the moment the
-  result is `PROVISIONALLY_FINAL` (§24), and every result of a round becomes
-  `FINAL` in the same minute.
+  `window_close` falls to §13C's no-quorum rule: from protocol 22 the
+  re-run window below, then `VOID`, refunded, unless proven equivocation.
+  The pending line still appears the moment the result is
+  `PROVISIONALLY_FINAL` (§24), and every result of a round with no no-quorum
+  entry becomes `FINAL` in the same minute.
 - **What a node refuses.** A Round Contract whose `objection_window_W` is
   not exactly 600000 ms is invalid: a node refuses to open it, list it or
   take an entry for it. A node refuses to sign `FINAL` before its own clock
@@ -4888,11 +4895,32 @@ That is the objection path's length, not a range of the window: the window
 is always 600 seconds. The stake lock's 144 blocks (§23.1) cover it with
 room to spare, and the former rule that a contract's window may not exceed
 6 hours is withdrawn with the field's freedom (WINDOW-10-SPEC).
-The settlement transaction does not wait on an entry that is SUSPENDED:
-the round settles without it, and a suspended entry's lock is settled on
-its own when it ends - forfeited to the player if `VOID` or `DELIVERED`,
-claimed in a second settlement transaction if `FAILED` or `FORFEIT`,
-paying the same payout table's recomputation (§18).
+The settlement transaction does not wait on an entry that is SUSPENDED by an
+objection: the round settles without it, and a suspended entry's lock is
+settled on its own when it ends - forfeited to the player if `VOID` or
+`DELIVERED`, claimed in a second settlement transaction if `FAILED` or
+`FORFEIT`, paying the same payout table's recomputation (§18). A qualifier
+left out that way gets its stake back and no share of the pool.
+
+**The one exception: a round with a no-quorum entry waits for it (RULED
+2026-11-02, kanban #1047; protocol 22).** Such a round does not settle until
+that entry is decided: at most until the re-run window closes and, with a
+quorum in it, until its one objection window closes. That is at most
+`round_end + 1805 s`, plus at most 60 s for the `FINAL` signatures to arrive;
+past that the entry is left out as above. Waiting applies only if at least one
+signed result of the entry is held at `final_after`. An entry nobody signed
+has nothing to wait for, and goes to `VOID` then. The reason is money: `F`
+depends on every result, so a rescued winner left out would be paid nothing,
+and a part-settled round cannot fix that. An entry suspended by an objection
+still does not hold the round. While a round waits, its pending lines say the
+later time (§24).
+
+**After a re-run ends `FINAL` the re-run's result is the entry's result
+(kanban #1049; protocol 22).** A seat that signed the contradicted run reads
+the agreed re-run, not its own `PlayerResult`, wherever money follows: the
+table, the second settlement, the forfeit, the stake secret. Before 22 each seat
+read its own result. Measured: such a seat left a re-run `DELIVERED` as `FAILED`
+in its table, released its stake secret, and on protocol 1 claimed its lock.
 
 **Client duty:** on delivery, the reference client uploads its complete
 transcript to at least two committee nodes and, if configured, to an
@@ -5202,11 +5230,13 @@ that window treats the entry as VOID.
 signatures:
 
 1. If the disagreement is explained by proven player equivocation (§13B) →
-   `FORFEIT`.
-2. Otherwise the fault is on the operator side → the entry becomes `VOID`,
+   `FORFEIT`, at once.
+2. From protocol 22, with at least one signed result held: the entry goes to
+   §13A's re-run window, among the same 7. Below.
+3. Otherwise the fault is on the operator side → the entry becomes `VOID`,
    the stake is refunded by forfeit or by the stake lock's expiry, and the entry is
    excluded from the pool and from the payout table.
-3. Nodes whose signature contradicts a replay of the canonical transcript
+4. Nodes whose signature contradicts a replay of the canonical transcript
    are slashed.
 
 This is deliberately asymmetric: a player cannot manufacture a refund by
@@ -5216,6 +5246,55 @@ the infrastructure's fault and refunds.
 
 > **Why:** An earlier draft had no rule at all. A committee that could not agree left
 > funds in an undefined state with no path forward.
+
+**The re-run window before `VOID` (RULED 2026-11-02, kanban #1037, #1045, #1047;
+protocol 22).** No quorum at `final_after` does not void an entry that has a
+signed result. It gives honestly overloaded seats (#735, #738) ten more minutes,
+and a slow seat can still complete the 5. It does nothing against collusion:
+there is one set of 7 (§5A.9), so 3 silent seats stay silent here too (§22, P6).
+
+- **Who.** The same 7. No result at the threshold by `final_after`, or a
+  threshold in time that is short of its postings: a late posting then cannot
+  void an entry, which would be the overload again.
+- **`FORFEIT` stays first.** Proven equivocation is `FORFEIT` at `final_after`,
+  and is read again at the window's end.
+- **Otherwise `SUSPENDED`.** Each seat carries the receipts first, then signs a
+  `RerunResult` from its replay of the canonical transcript, naming no
+  contradicted run (`contradicted_run_id` all zeros), counted by the same rule
+  as any re-run: signed from `final_after`, held before `round_end + 1205 s`,
+  5 of 7 on one run.
+- **A quorum in the window** takes the re-run path: its one objection window to
+  `round_end + 1800 s`, `FINAL` on the re-run from `+ 1805 s`. A valid objection
+  in that window makes the entry `VOID` at once, and the re-run's signers are
+  slashed as for any re-run. Why it keeps that window: a late quorum nobody can
+  object to is what §13A exists to prevent.
+- **Publication stays a condition of finality**, with the same deadline. The
+  re-run's transcript must be posted by the settlement threshold before
+  `round_end + 1205 s`, or the entry is `VOID`.
+- **No quorum by `round_end + 1205 s`:** `VOID`, or `FORFEIT` on proven
+  equivocation. Written once.
+- **Nobody is slashed for this.** No objection proved anyone wrong, so no slash
+  proof is filed and no audit is contradicted. Silence leaves no artifact.
+- **A seat with no signed result.** `#noQuorum` at the first-mark door still
+  decides at `final_after`: no run was carried, so there is nothing to re-run. A
+  seat that cannot retrieve the transcript (`#unretrievedPastWindow`) holds to the
+  window's end, `FORFEIT` first, while it holds a signed result of the entry, and
+  a seat just back asks the peers for theirs first. Holding none, it decides at
+  `final_after`.
+- **The round waits for it** (§13A). Rounds before protocol 22 decide at
+  `final_after`, byte for byte as before.
+
+Measured on seven real seats at protocol 22, a real federation, a paid round of
+two entries (`tools/no-quorum-devnet.mjs`; a seat stopped with SIGSTOP before the
+round's end). Times are from the round's end.
+
+| Case | Result |
+|---|---|
+| Honest round | `FINAL` by 7 of 7 and settled by + 609 s, no re-run on record |
+| 2 slow (a control: it cannot fail) | `FINAL` by 5 by + 618 s; the two, back at + 707 s, took those signatures and read `FINAL` too |
+| 3 out, one back inside the window | 4 results held: `SUSPENDED` at + 606 s, the pending line at + 1200 s. Seat back at + 807 s, 5 of 5 re-runs by + 1008 s, the pending line at + 1800 s. `FINAL` by 5 at + 1813 s, the winner's share paid from the loser's claimed lock |
+| 3 silent | 4 results held, 4 re-runs: `VOID` at + 1208 s at all seven, the lock left for its player |
+| Nobody signed | `VOID` by + 686 s, no re-run, nothing waited for |
 
 **AS BUILT (2026-10-04).** The result window's deadline
 is `final_after`: the round's end + 600 s + 5 s, in wall-clock ms, on each
@@ -5244,6 +5323,10 @@ Past `final_after` (`finality.js resultFinality`):
 Measured live on the free pair, for a late result, a split and a late
 posting (two test faults, off by default: `ARENA_TEST_DISSENT_FILE` with
 `<entry> first`, and `ARENA_TEST_LATE_POSTING_FILE`).
+
+That is the rule below protocol 22. From 22 the two no-quorum cases above go to
+the re-run window instead of deciding at `final_after`, and the same reasoning
+holds at the window's end.
 
 ---
 
@@ -5635,11 +5718,30 @@ player wallet balance (§24A.1)
        Not caught by the objection window; caught only by capital (§5A.6)
        and by publication (§13A), which forces the chosen fork into the open
 
-3 SETTLEMENT or GAME/VERIFY slots withholding receipts or signatures (P6)
-    -> can void a winner's entry (refund instead of winnings). Griefing,
-       not theft; a withheld settlement signature or receipt leaves no
-       artifact and is not slashable. From protocol 26 a set of nodes that
-       does it again and again leaves the draw (§5A.3, "Stalled in its rounds").
+3 of the 7 seats (P6)
+    -> can stop an entry at its result, or a whole round at its settlement.
+       A winner goes unpaid (griefing). A losing friend gets their stake
+       back, out of the winners' pool, so 3 seats give a friend a free bet.
+       Silence leaves no artifact and is not slashable. Chance of holding
+       3 of 7: 14.8 % at 20 % of capital, 35.3 % at 30 %. Committees are
+       known hours ahead, so a player can choose those rounds. From protocol
+       26 a set of nodes that does it again and again leaves the draw
+       (§5A.3, "Stalled in its rounds").
+
+**P6 is a live exploit shape, not a corner case (RULED 2026-11-02, kanban
+#1045).** Enter only rounds where you hold 3 seats. If you lose, stay silent and
+get the stake back. If you win, let it settle. That is a risk-free bet,
+repeatable up to the stake ceiling until the stall rule takes those nodes out of
+the draw (§5A.3, the owner's choice on #1044). There is one set of 7 since protocol 2 (§5A.9), so the re-run
+window of §13C does nothing against it: it helps honestly overloaded seats, not
+collusion.
+
+**The re-run window's delay is not a new power.** A round with a no-quorum entry
+waits for it (§13A), so 3 seats can delay a whole round's payout by 20 to 30
+minutes. They could already stall a whole round until its locks expire,
+so 20 to 30 minutes is less than they have now. Pay stays per round: a stalled
+round pays nobody, which is the only fee price silence has (the fee table must be
+byte-equal at 5 seats, so paying by signer would put a varying input into it).
 
 The first two require five bonded operators to collude and forfeit five
 bonds, in a round whose committee they could not choose (§5A.5). The federation lines - guardians, halt,
@@ -6137,9 +6239,10 @@ and reconstructing `P`, which requires 5 of the
 7 shares, which the mechanical rule releases only against a `FINAL` result —
 and finality requires 5-of-7 game/verify signatures plus an objection window
 that anyone in the world may use to disprove the result by replay (§13A).
-The two committees are separately selected and overlap-minimized (§5A.9),
-every participant is bonded, and every one of these steps leaves a signed
-artifact.
+From protocol 2 one set of 7 holds both roles and `overlap_count` is published
+(§5A.9), every participant is bonded, and every one of these steps leaves a signed
+artifact. Those seats cannot quietly take a stake. Three of them can still stall
+one: §22, P6.
 
 ## 23.5 No pool wallet
 
@@ -7558,7 +7661,8 @@ and the rules are:
   back, show as **pending the moment the player's result is
   `PROVISIONALLY_FINAL`** (RULED 2026-10-01, WINDOW-10-SPEC) - not
   when the objection window closes and not when the payout table is final -
-  with the amount and what they wait on: the window's close in UTC, the
+  with the amount and what they wait on: the window's close in UTC (or, in a
+  round that waits on a no-quorum entry, the later time it waits to, §13A), the
   settlement signature, the redemption. While other players' results are
   still arriving the amount is the payout table computed over the results
   signed so far, and it updates as they arrive; it is marked as such. **If
@@ -9543,9 +9647,13 @@ A player trusts:
 - for slashing *deterrence only*, the arbitration set (§5A.3B) — it can
   never touch a player stake, and the protocol settles and refunds correctly
   without it;
-- fewer than 5-of-7 selected game/verify slots being malicious **or** at
-  least one honest party holding their receipted transcript;
-- fewer than 5-of-7 selected settlement slots being malicious.
+- fewer than 5-of-7 selected seats being malicious **or** at least one honest
+  party holding their receipted transcript; from protocol 2 one set of 7 holds
+  both roles (§5A.9), so this is one condition, not two independent ones.
+
+For a player to be paid, as distinct from not being robbed, at least 5 of the 7
+must also answer: 3 silent seats stop an entry or a round, and a losing friend
+gets a free bet (§22, P6).
 
 A player does **not** need to trust: one official website; one lobby; one
 authoritative game server; one result server; one payout operator; another
@@ -9587,7 +9695,7 @@ committee nor outcome).
 | **Creator names his own federation** | Round creator | Not considered | A federation is valid only if its threshold of guardians are bonded census nodes, config hash matches, known-good list (§23.6, P3) |
 | **Forged chain view** | Whoever feeds the client its headers/census | "Never funds" — false | Corrected: it is the stake; ≥2 independent header sources mandatory for paying rounds (§5A.4, §25.1, P4) |
 | **Fork selection by a player-run quorum** | 5 game/verify slots | Claimed caught by replay — false, the fork is genuine | Stated residual, priced by capital; publication makes the chosen fork public (§22, P5) |
-| **Receipt withholding** to void a winner | 3 slots | Not considered | Griefing, not theft; unpunishable, stated residual (§22, P6). Repeated, it leaves the draw (§5A.3, protocol 26) |
+| **Withholding** receipts or signatures, to stop an entry or a whole round | 3 of the 7 seats | Not considered | Griefing, and a free bet for a losing friend: the stake comes back out of the winners' pool. Unpunishable: silence leaves no artifact. 14.8 % at 20 % of capital, 35.3 % at 30 %, and committees are known hours ahead, so a player can choose those rounds. Stated residual (§22, P6). Repeated, it leaves the draw (§5A.3, protocol 26) |
 
 ---
 
@@ -9637,7 +9745,7 @@ UNITY WEBGL CLIENT -> deterministic WASM -> committee
 > nothing. The committees are fixed before any stake is committed. Seven selected instances verify results and five
 > matching signatures make a result provisionally final; anyone in the world
 > may overturn it within the objection window by replaying the transcript.
-> Seven separately selected instances hold shares of each stake's preimage
+> The same seven hold shares of each stake's preimage
 > and a threshold wallet, so no single party ever holds player funds, and
 > doing nothing refunds everyone. A fixed 5% infrastructure fee (Bitcoin Arena; 2% under BLWP) goes to the
 > slots that served; the developer donation is the player's choice and may be
