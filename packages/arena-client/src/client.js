@@ -240,6 +240,18 @@ export const MARK_INPUT_WAIT_MS = 10000;
  * send - is byte for byte what it was.
  */
 export const FEED_WINDOW = 32;
+// A SEAT STILL TAKING THE HANDOUT IS ASKED AGAIN (kanban #828, 2026-11-02 04:05:41Z, both players of round a5fc9c2f): postHandout goes on once enough seats
+// took it, the entry goes to one seat, and that seat's handout can still be on its way; its 400 ended the join with the stake already locked. 8 s; any other refusal stands.
+export async function postEntry(url, body, { fetcher = (...a) => fetch(...a), tries = 16, waitMs = 500 } = {}) {
+  for (let n = 0; ; n++) {
+    const r = await fetcher(url, { method: 'POST', body });
+    if (r.status === 201) return r;
+    const said = (await r.text()).trim();
+    if (n + 1 >= tries || !/publish the handout first/.test(said)) throw new Error(`the node refused the entry: ${said}`);
+    await new Promise((res) => setTimeout(res, waitMs));
+  }
+}
+
 /** A peer that refused the entry is asked again after ENTRY_BACKOFF_MS, then twice as long each time, at most ENTRY_BACKOFF_MAX_MS. */
 export const ENTRY_BACKOFF_MS = 2000;
 export const ENTRY_BACKOFF_MAX_MS = 60000;
@@ -598,10 +610,7 @@ export class Client {
    */
   async join(entry) {
     const mine = entryId(entry);
-    const r = await fetch(`${this.base}/entry`, {
-      method: 'POST', body: encodeEntryContract(entry),
-    });
-    if (r.status !== 201) throw new Error(`the node refused the entry: ${(await r.text()).trim()}`);
+    await postEntry(`${this.base}/entry`, encodeEntryContract(entry));
 
     // WHO THIS CLIENT JOINED, kept for the ghost field. A reload keeps the
     // player's key (sessionStorage) and draws a NEW entry, so the signer node this tab
