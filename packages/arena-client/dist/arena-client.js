@@ -31007,16 +31007,18 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
   const anchor = tableAnchorOf(contract);
   const seatId = anchor ? anchor.anchorId : roundId;
   const seatHex = toHex(seatId);
-  for (const role of roles) {
+  // ONE READ OF A ROLE'S SEATING. `every`: wait for every seat, not for a majority and the grace.
+  const askSeating = async (role, every = false) => {
     let spoke = false; const refused = [];
     let found = null;
     // EVERY SEAT ASKED AT ONCE, EACH WITHIN SEATING_ASK_MS (kanban #625, measured 2026-10-24 20:07Z: asked one after the other with no
     // limit, a restarting seat held an order's committee 20 s): read in the seats' order once more than half answered and the grace passed
     const said = new Array(nodes.length).fill(null);
-    await majorityThenGrace(nodes.map(async (u, i) => {
+    const asked = nodes.map(async (u, i) => {
       try { const r = await fetcher(`${baseOf(u)}/seating?round=${seatHex}&role=${role}${anchor ? `&at=${toHex(roundId)}` : ''}`, { signal: AbortSignal.timeout(SEATING_ASK_MS) }); said[i] = { status: r.status, ok: r.ok, body: await r.text() }; }
       catch { said[i] = null; }
-    }), COMPARE_GRACE_MS);
+    });
+    if (every) await Promise.all(asked); else await majorityThenGrace(asked, COMPARE_GRACE_MS);
     for (const [i, u] of nodes.entries()) {
       try {
         const r = said[i];
@@ -31040,8 +31042,19 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
     // A CERTIFICATE THAT DID NOT CHECK IS KEPT BESIDE THE ONE THAT DID (measured 2026-10-16 on live testnet4: guardian-1 handing a
     // seating with another node seated was refused here, and guardian-2's standing certificate dropped that refusal - the lying seat
     // went unnamed); settlementSignerNodesFrom refuses the round on it
-    got.seating[role] = found ? { ...found, refused } : spoke ? { missing: true, refused } : null;
-    if (found) got.committees[role] = found.seated;
+    return { found, spoke, refused, answered: said.some(Boolean) };
+  };
+  const keepSeating = (role, s) => {
+    // NO ANSWER AT ALL IS NOT "NO SEATING" (kanban #1036, the owner's Android 2026-11-02 ~17:05Z: every seat refused, and the client's list held the offline b36828fa; reproduced
+    // with the game role's read failing, 6 of 12 live rounds refused, 0 of 12 with it working): the client's draw stood in for the certificate, an offline node at the top of a
+    // draw is what seating leaves out, so a read that came back empty looked like every seat lying. `unread` says so.
+    got.seating[role] = s.found ? { ...s.found, refused: s.refused } : s.spoke ? { missing: true, refused: s.refused } : s.answered ? null : { unread: true, refused: s.refused };
+    if (s.found) got.committees[role] = s.found.seated;
+  };
+  for (const role of roles) {
+    let s = await askSeating(role);
+    if (!s.found && !s.answered) s = await askSeating(role);
+    keepSeating(role, s);
   }
   // EVERY SEAT'S ANSWER FOR EVERY ROLE, against this client's own (the settlement role alone was compared). A seat agrees
   // when every role it answered is the client's; null when it answered none (a seat that does not hold the round: not a lie)
@@ -31051,29 +31064,51 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
     // every other seat answered in ms): once more than half the seats answered, the rest get COMPARE_GRACE_MS more; one that has not
     // answered by then is named as not answering (agrees null - as a seat that does not hold the round), and a lie it tells later is
     // still no part of the committee this client derived itself
+    const judge = (role, keys) => {
+      const mine = (got.committees[role] || []).map(toHex).sort().join(',');
+      const agrees = keys.join(',') === mine;
+      return { agrees, why: agrees ? null : `names another ${role} committee (${keys.map((k) => k.slice(0, 8)).join(', ') || 'none'}) than the one this client derived (${mine.split(',').map((k) => k.slice(0, 8)).join(', ')})` };
+    };
+    const verdict = (said) => {
+      const answered = Object.values(said).filter((x) => x.agrees !== null);
+      const differ = Object.values(said).filter((x) => x.agrees === false);
+      return { agrees: answered.length ? !differ.length : null, why: differ.length ? differ.map((x) => x.why).join('; ') : answered.length ? null : Object.values(said).map((x) => x.why).join('; ') };
+    };
     const answeredBy = new Set(); let closed = false;
     const each = nodes.map(async (u) => {
       const said = {};
       for (const role of roles) {
-        const mine = (got.committees[role] || []).map(toHex).sort().join(',');
         try {
           const r = await readWithOneRetry(fetcher, `${baseOf(u)}/committee?role=${role}&round=${roundIdHex}`);
           if (!r.ok) { said[role] = { agrees: null, why: `answered ${r.status}` }; continue; }
           const b = new Uint8Array(await r.arrayBuffer());
           const keys = []; for (let i = 0; i + 32 <= b.length; i += 32) keys.push(toHex(b.subarray(i, i + 32)));
-          const agrees = keys.sort().join(',') === mine;
-          said[role] = { agrees, why: agrees ? null : `names another ${role} committee (${keys.map((k) => k.slice(0, 8)).join(', ') || 'none'}) than the one this client derived (${mine.split(',').map((k) => k.slice(0, 8)).join(', ')})` };
+          said[role] = { keys: keys.sort(), ...judge(role, keys) };
         } catch (e) { said[role] = { agrees: null, why: e.message }; }
       }
-      const answered = Object.values(said).filter((x) => x.agrees !== null);
-      const differ = Object.values(said).filter((x) => x.agrees === false);
       if (closed) return;
-      seats.push({ node: u, agrees: answered.length ? !differ.length : null, why: differ.length ? differ.map((x) => x.why).join('; ') : answered.length ? null : Object.values(said).map((x) => x.why).join('; '), roles: said });
+      seats.push({ node: u, ...verdict(said), roles: said });
       answeredBy.add(u);
     });
     await majorityThenGrace(each, COMPARE_GRACE_MS);
     closed = true;
     for (const u of nodes) if (!answeredBy.has(u)) seats.push({ node: u, agrees: null, why: `no committee answer within ${COMPARE_GRACE_MS} ms of the other seats` });
+    // A SEAT THAT DIFFERS IS ASKED ABOUT ONCE MORE BEFORE ANYONE IS CALLED A LIAR (kanban #1036, the owner 2026-11-02: "Eine Runde darf fuer den client nicht fehlschlagen, nur
+    // weil eine Node offline ist"): the certificate may be what this client missed, in a read that came back empty or in the seats that fell outside the grace. Every seat is
+    // waited for now, and the comparison is made again on what they hand.
+    if (seats.some((s) => s.agrees === false)) {
+      for (const role of roles) {
+        const s = await askSeating(role, true);
+        if (s.found || !got.seating[role] || got.seating[role].unread) {
+          if (!s.found || !got.seating[role] || !(got.seating[role].index > s.found.index)) keepSeating(role, s);
+        }
+      }
+      for (const s of seats) {
+        if (!s.roles) continue;
+        for (const [role, x] of Object.entries(s.roles)) if (x.keys) Object.assign(x, judge(role, x.keys));
+        Object.assign(s, verdict(s.roles));
+      }
+    }
   }
   return { ...got, censusRefused, explorer: chain.explorer || null, headers: { from: chain.chain.from, agreed: chain.chain.agreed, firstHeight: chain.firstHeight, count: chain.chain.headers.length },
     seats, ms: { chainAndCensus: t1 - t0, total: Date.now() - t0 } };
@@ -31097,14 +31132,27 @@ function settlementSignerNodesFrom(got) {
     const st = got.seating && got.seating[role];
     if (st && st.missing) throw new Error(`that round has no signer nodes yet: no certificate naming its ${role} signer nodes stands${st.refused.length ? ` (${st.refused[0]})` : ''} - nothing is entered (§5A.7)`);
   }
-  const named = [];
-  for (const s of got.seats || []) if (s.agrees === false) named.push(`${s.node} ${s.why}`);
+  const named = [], who = [];
+  for (const s of got.seats || []) if (s.agrees === false) { named.push(`${s.node} ${s.why}`); who.push(s.node); }
+  // NOT A LIE, AN UNANSWERED READ (kanban #1036): the client has no certificate to hold the seats against, so nobody is named, the round is not closed, and the next try reads again
+  if (who.length && ['game', 'settlement'].some((role) => got.seating && got.seating[role] && got.seating[role].unread)) {
+    console.warn(`[arena] #1036 seating unread: ${named.join('; ')}`);
+    throw new Error('the seats did not answer in time - nothing is sealed, locked or signed. Try again.');
+  }
   for (const role of ['game', 'settlement']) {
     const st = got.seating && got.seating[role];
     for (const why of (st && Array.isArray(st.refused) ? st.refused : [])) named.push(`a ${role} seating certificate that does not match this client's draw - ${why}`);
   }
-  if (named.length)
-    throw new Error(`the round is refused: ${named.join('; ')} - nothing is sealed, locked or signed`);
+  if (named.length) {
+    // ONE LINE ON THE SCREEN (kanban #1036, the owner's phone: nine seats with two lists of seven ids each filled it and could not be read): who, in a few words; the rest on
+    // the error's `detail` and in the console, as "the lobby says which node answered what" asks
+    const detail = named.join('; ');
+    console.warn(`[arena] the round is refused: ${detail}`);
+    const line = who.length === 1 && named.length === 1 ? `${who[0]} names other signer nodes than this client worked out` : who.length ? `${who.length} seat${who.length === 1 ? '' : 's'} name other signer nodes than this client worked out` : 'a seating certificate does not match this client\'s draw';
+    const e = new Error(`the round is refused: ${line} - nothing is sealed, locked or signed`);
+    e.detail = detail;
+    throw e;
+  }
   return { signerNodes: got.committees.settlement, agreed: (got.seats || []).filter((s) => s.agrees).length,
     refused: (got.censusRefused || []).map((x) => `${x.node}: ${x.why}`), derived: got };
 }
