@@ -3326,6 +3326,15 @@
       // seat that did not answer). Before the round's other steps and beside them: the player wallet opened and read; short of the stake,
       // the deposit is shown now, and the round's funding below waits on this same offer (page-lock.js earlyDepositOffer).
       let earlyDeposit = null;
+      // A NEW WALLET'S TEST SATS ON THEIR WAY ARE WAITED FOR, NOT ASKED AS A DEPOSIT (kanban #1042, measured 2026-11-02: PLAY at 47 s, "Not enough sats" with the green line still saying
+      // they are coming, and refused 24 times in 5 min; PLAY at 102 s locked in 1 s)
+      if (pays && window.ARENA_WELCOME_WAIT) {
+        const closes = ARENACLIENT.entryOpenUntilMs ? Number(ARENACLIENT.entryOpenUntilMs(named.round)) : NaN;
+        const left = Number.isFinite(closes) ? closes - Date.now() : 60000;
+        console.log('[arena] join step: waiting for the test sats, at most ' + Math.round(Math.min(left, 60000) / 1000) + ' s');
+        await Promise.race([window.ARENA_WELCOME_WAIT, new Promise((go) => setTimeout(go, Math.max(0, Math.min(left, 60000))))]);
+        if (window.ARENA_READ_BALANCE) await Promise.resolve(window.ARENA_READ_BALANCE()).catch(() => {});
+      }
       // NOT WHEN ANOTHER FEDERATION OF THE PLAYER'S HOLDS THE STAKE (2026-10-20 17:3xZ: 200 sat in 4dc88be7, a 100 sat Up/Down order in
       // 337ae01a asked "Not enough sats ... Deposit with Lightning?" at the press): the swap below moves the shortfall in first; only when
       // it does not, the deposit is asked (fundPlayerWallet's askDeposit)
@@ -3625,6 +3634,7 @@
             askDeposit: (offer) => window.ARENA_ASK_JOIN_DEPOSIT(offer, (o) => { if (!window.ARENA_MONEY_ALERT.room()) { window.ARENA_MONEY_ALERT.needRoom(); throw new Error('this browser\u2019s storage has to be compressed before a deposit'); } return showDepositOffer(o, { message: ARENACLIENT.DEPOSIT_INSUFFICIENT }); }),
             // NOT PAST THE ROUND'S ENTRY (MF 18): the request ends at the round's last entry instant, by name
             entryClosesMs: ARENACLIENT.entryOpenUntilMs ? Number(ARENACLIENT.entryOpenUntilMs(named.round)) : null,
+            onLanded: () => { const el = document.getElementById('arena-deposit'); if (el) { if (el._deposit) { try { el._deposit.unmount(); } catch { /* cleared */ } el._deposit = null; } el.textContent = ''; el.className = ''; } },
             onDeposit: (d) => {
               window.ARENA_DEPOSIT = { invoice: d.invoice, amountMsat: String(d.amountMsat) };
               console.log('[arena] player wallet deposit: ' + String(d.amountMsat) + ' msat, ' + d.invoice);
@@ -5328,16 +5338,19 @@
       let pending = null; try { pending = sessionStorage.getItem('arena.welcome.pending'); } catch { return; }
       if (!pending || !window.ARENA_FAUCET_URL || welcomeRunning) return;
       welcomeRunning = true;
+      // WHAT A PLAY PRESSED MEANWHILE WAITS FOR (kanban #1042): nothing else says sats are on their way, the wallet reads 0 until they land
+      let welcomeLanded = () => {};
+      window.ARENA_WELCOME_WAIT = new Promise((go) => { welcomeLanded = () => { window.ARENA_WELCOME_WAIT = null; go(); }; });
       window.ARENA_MONEY_ALERT.coming(ARENACLIENT.FAUCET_GRANTS.welcome.sats + ' test sats are on their way to your wallet \u2026');
       for (let i = 0; i < 90 && !(window.ARENA_LEDGER_LOBBY && window.ARENA_LEDGER_LOBBY.federation && typeof walletSeed === 'function' && walletSeed()); i++) await new Promise((r) => setTimeout(r, 1000));
       const lob = window.ARENA_LEDGER_LOBBY, seed = typeof walletSeed === 'function' ? walletSeed() : null;
-      if (!lob || !lob.federation || !seed) { welcomeRunning = false; window.ARENA_MONEY_ALERT.notComing(); return; }
+      if (!lob || !lob.federation || !seed) { welcomeRunning = false; welcomeLanded(); window.ARENA_MONEY_ALERT.notComing(); return; }
       try {
         const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
         const into = depositPick(lob.federation).invite || lob.federation;
         const federationId = ARENACLIENT.fromHex(String(wasm.LockClient.federationIdOf(into)));
         const offer = await ARENACLIENT.walletDepositOffer({ federationId, invite: into, seed, LockClient: wasm.LockClient, storage: vault(), gateways: window.ARENA_LEDGER_GATEWAYS || [],
-          onClaimed: (d) => { if (d && d.amountMsat) window.ARENA_MONEY_ALERT.credited(d.amountMsat, true); paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } });
+          onClaimed: (d) => { welcomeLanded(); if (d && d.amountMsat) window.ARENA_MONEY_ALERT.credited(d.amountMsat, true); paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } });
         if (offer.client && window.ARENA_KEEP_WALLET) window.ARENA_KEEP_WALLET(ARENACLIENT.toHex(federationId), offer.client);
         const grant = ARENACLIENT.FAUCET_GRANTS.welcome;
         const d = await offer.invoice(grant.invoiceMsat);
@@ -5345,7 +5358,7 @@
         await ARENACLIENT.askFaucet({ url: window.ARENA_FAUCET_URL, kind: 'welcome', invoice: d.invoice, seed });
         try { sessionStorage.removeItem('arena.welcome.pending'); } catch { /* no storage */ }
         window.ARENA_TRACK('faucet-welcome');
-      } catch (e) { welcomeRunning = false; if (/already has/.test(String(e && e.message))) { try { sessionStorage.removeItem('arena.welcome.pending'); } catch { /* no storage */ } } window.ARENA_MONEY_ALERT.nextWords(null); window.ARENA_MONEY_ALERT.notComing(); console.log('[faucet] no welcome sats: ' + (e && e.message ? e.message : e)); }
+      } catch (e) { welcomeRunning = false; welcomeLanded(); if (/already has/.test(String(e && e.message))) { try { sessionStorage.removeItem('arena.welcome.pending'); } catch { /* no storage */ } } window.ARENA_MONEY_ALERT.nextWords(null); window.ARENA_MONEY_ALERT.notComing(); console.log('[faucet] no welcome sats: ' + (e && e.message ? e.message : e)); }
     }
     // AT THE START (a Nostr login reloads the page with its seed), and at once when the wallet is made in this page
     window.ARENA_WELCOME = welcomeSats;
