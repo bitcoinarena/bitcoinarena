@@ -92,6 +92,22 @@ export async function takeReturnIfOwed({ start, startHeight, bondMaturity, retur
 }
 
 /**
+ * THE BEST EVIDENCE ANY SOURCE HOLDS FOR ONE PROOF. A proof's id commits to the ids of what it names, and a result's id leaves out its signature, so bad bytes can sit under a good id. One seat's copy
+ * settles nothing: the first that holds on `judge` answers, then one that cannot be judged yet, and false only if every copy is. `sources` async functions answering bytes or null. Answers { evidence, verdict } or null.
+ */
+export async function evidenceThatHolds(sources, judge) {
+  let best = null;
+  for (const source of sources) {
+    let evidence = null; try { evidence = await source(); } catch { evidence = null; }
+    if (!evidence) continue;
+    const { verdict } = await judge(evidence);
+    if (verdict === true) return { evidence, verdict };
+    if (!best || (best.verdict === false && verdict === undefined)) best = { evidence, verdict };
+  }
+  return best;
+}
+
+/**
  * THE HOLD OUTPUTS A BOND CAN BE IN (5A.3B): the one its bonding presig names, with no panels, and one for each pair of panels this node signed a presig to. Map of script hex -> hold output.
  * The census cannot rebuild one, since its leaves name panels drawn from that census, and a start does not show them: a hold whose panels were lost could never be returned. So the node
  * keeps every pair it signed for (`panels` [{ a, b }] of key bytes), and only a bond's end lets them go.
@@ -130,11 +146,12 @@ export function createHoldWatch({ clocks, nodeSecret, holdsFor, rawTxAt, tipHeig
     if (tip < opensAt) return { ok: false, why: `the return opens at block ${opensAt}, ${opensAt - tip} from now` };
     return { ok: true, hex: signedReturn({ start, bondMaturity: bond.maturity, returnBlocks: clocks.returnBlocks, toScript, feeSats: fee, nodeSecret }) };
   }
+  const returned = new Set();                    // bonds whose return is out: a second, to a fresh address, would only be a conflict the mempool refuses
   /** One pass over the node's started bonds: the return taken where a proof does not check on this node's replay (5A.3B: "An owner does not have to watch"). A true proof is left to its slash. */
   async function pass(bonds) {
     const done = [];
     for (const bond of bonds) {
-      if (!bond.hold) continue;
+      if (!bond.hold || returned.has(`${bond.txid}:${bond.vout}`)) continue;
       const start = await startOf(bond);
       if (!start) { log(`[hold] the slash started at block ${bond.hold.height} pays no hold output this node signed`); continue; }
       const decided = await decideReturn({ start, startHeight: bond.hold.height, bondMaturity: bond.maturity, returnBlocks: clocks.returnBlocks, tip: await tipHeight(), fetchProof, proofChecks });
@@ -142,7 +159,8 @@ export function createHoldWatch({ clocks, nodeSecret, holdsFor, rawTxAt, tipHeig
         const toScript = await returnScript();
         if (!toScript) { log(`[hold] ${bond.txid.slice(0, 16)} owes a return and this node names no wallet to take it to: the owner's page can`); done.push({ ...decided, bond, sent: null }); continue; }
         const hex = signedReturn({ start, bondMaturity: bond.maturity, returnBlocks: clocks.returnBlocks, toScript, feeSats, nodeSecret });
-        const sent = await broadcast(hex);
+        let sent; try { sent = await broadcast(hex); } catch (e) { log(`[hold] ${bond.txid.slice(0, 16)}: the return was not sent: ${e.message}`); done.push({ ...decided, bond, sent: null }); continue; }
+        returned.add(`${bond.txid}:${bond.vout}`);
         log(`[hold] ${bond.txid.slice(0, 16)}: return taken, ${decided.why}: ${sent}`);
         done.push({ ...decided, bond, sent });
       } else done.push({ ...decided, bond });

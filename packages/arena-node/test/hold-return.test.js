@@ -10,7 +10,7 @@ import { serializeSpend } from '../../arena-protocol/src/bond-spend.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { tweakPoint } from '../src/curve.js';
-import { createHoldWatch, decideReturn, holdsOfOwnBond, readSlashStart, returnOpensAt, signedReturn, takeReturnIfOwed } from '../src/hold-return.js';
+import { createHoldWatch, decideReturn, evidenceThatHolds, holdsOfOwnBond, readSlashStart, returnOpensAt, signedReturn, takeReturnIfOwed } from '../src/hold-return.js';
 
 const secret = taggedHash('ARENA/test/Return', Uint8Array.of(1));
 const nodeKey = schnorr.getPublicKey(secret);
@@ -120,4 +120,25 @@ test('a pass: nothing before the clock; then a false proof returned to the walle
   assert.deepEqual([none[0].action, none[0].sent, sent.length], ['return', null, 0], 'owed, and left to the owner\'s page');
   const done = await pass(500);
   assert.deepEqual([done.length, done[0].sent, sent.length], [1, 'tx', 1], 'an output with no hold is not read');
+});
+
+test('one seat\'s copy of a proof settles nothing: a good id can carry bad bytes', async () => {
+  const bad = Uint8Array.of(1), unread = Uint8Array.of(2), good = Uint8Array.of(3);
+  const judge = async (e) => ({ verdict: e === good ? true : e === bad ? false : undefined });
+  const of = (...list) => list.map((e) => async () => { if (e === 'throws') throw new Error('down'); return e; });
+  assert.deepEqual(await evidenceThatHolds(of(bad, null, 'throws', good), judge), { evidence: good, verdict: true }, 'the first that holds, past a bad copy and a seat that is down');
+  assert.deepEqual(await evidenceThatHolds(of(bad, unread), judge), { evidence: unread, verdict: undefined }, 'a copy that cannot be judged yet waits');
+  assert.deepEqual(await evidenceThatHolds(of(bad), judge), { evidence: bad, verdict: false }, 'false only if every copy is');
+  assert.equal(await evidenceThatHolds(of(null), judge), null);
+});
+
+test('a return that is out is not sent again, and one the mempool refuses is tried again next pass', async () => {
+  const [plain] = holdsFor(bond).values();
+  const sent = [];
+  let refuse = true;
+  const w = watch(startPaying(plain.script), { tipHeight: async () => 500, broadcast: async (h) => { if (refuse) throw new Error('the mempool refuses it'); sent.push(h); return 'tx'; }, fetchProof: async () => proof, proofChecks: async () => false, returnScript: async () => script });
+  assert.equal((await w.pass([bond]))[0].sent, null);
+  refuse = false;
+  assert.equal((await w.pass([bond]))[0].sent, 'tx');
+  assert.deepEqual([(await w.pass([bond])).length, sent.length], [0, 1]);
 });

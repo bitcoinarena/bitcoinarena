@@ -98,7 +98,7 @@ import { isBackupPublication, playedOfWindow, dayMarkersOf, itemTag } from '../.
 import { nextToAsk } from './dup-ask.js';
 import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf, entryFederation } from '../../arena-protocol/src/contracts.js';
 import { revealStands } from '../../arena-protocol/src/head-to-head.js';
-import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex, sha256, taggedHash } from '../../arena-protocol/src/hash.js';
 import { advertInTransaction, nodeBondOf } from '../../arena-protocol/src/census.js';
 
 /**
@@ -172,7 +172,7 @@ import { runSourceOnce, tryExample } from './market-test.js';
 import { MARKET_HOSTS, checkMarketCode, encodeSourceList, hostListProblem, marketHostProblem } from '../../arena-protocol/src/market-check.js';
 import { sourcePlan, payDeposit, depositBlock, signedProposal } from './source-ballot.js';
 import { bondCliFrom } from './add-bond-wallet.js';
-import { createHoldWatch, holdsOfOwnBond } from './hold-return.js';
+import { createHoldWatch, evidenceThatHolds, holdsOfOwnBond } from './hold-return.js';
 import { createSlashStarter } from './slash-start-run.js';
 import { slashHoldsOnDoubleSign } from '../../arena-protocol/src/slash.js';
 import { bondPresigDigest, holdClocksOf } from '../../arena-protocol/src/slash-presig.js';
@@ -185,7 +185,7 @@ import { TYPE_SETTLEMENT_ACK, TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN,
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
-import { TYPE_CHECKPOINT_RECEIPT, PRESENCE_VERSION, noQuorumGoesToRerun } from '../../arena-protocol/src/constants.js';
+import { TAG, TYPE_CHECKPOINT_RECEIPT, PRESENCE_VERSION, noQuorumGoesToRerun } from '../../arena-protocol/src/constants.js';
 import { bearsAuthority } from '../../arena-protocol/src/frames.js';
 import {
   decodeHandout, encodeHandout, handoutId, acceptHandout, openMyShare,
@@ -4137,30 +4137,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // A PROOF FETCHED BY ITS ID, from this seat's relay or any seat of the census: its bytes for the hash the start names, and its evidence for the replay
   const evidenceFetched = new Map();
-  const fetchEvidence = async (idHex) => {
-    const here = round.relayGet(Buffer.from(idHex, 'hex'));
-    if (here) return new Uint8Array(here);
-    if (!censusUrls) await entriesAtTipForStart().catch(() => null);
-    for (const u of (ownCensusUrls() || []).slice(0, 32)) {
-      try { const r = await fetch(`${u}/slash/${idHex}`, { signal: AbortSignal.timeout(8000) }); if (r.ok) return new Uint8Array(await r.arrayBuffer()); } catch { /* the next seat */ }
-    }
-    return null;
-  };
   const proofBytesFetched = async (id) => {
-    const idHex = toHex(id);
-    if (evidenceFetched.has(idHex)) return evidenceFetched.get(idHex).bytes;
-    const evidence = await fetchEvidence(idHex);
-    if (!evidence || evidence.length < SLASH_PROOF_BYTES) { console.log(`[hold] no seat serves proof ${idHex.slice(0, 16)}`); return null; }
-    const bytes = evidence.subarray(0, SLASH_PROOF_BYTES);
-    evidenceFetched.set(idHex, { bytes, evidence });
+    const idHex = toHex(id), kept = evidenceFetched.get(idHex);
+    if (kept && kept.verdict === true) return kept.bytes;
+    if (!censusUrls) await entriesAtTipForStart().catch(() => null);
+    const named = (bytes) => { const e = bytes && new Uint8Array(bytes); return e && e.length >= SLASH_PROOF_BYTES && toHex(taggedHash(TAG.slashProof, e.subarray(0, SLASH_PROOF_BYTES))) === idHex ? e : null; };
+    const sources = [async () => named(round.relayGet(Buffer.from(idHex, 'hex'))), ...(censusUrls || []).slice(0, 32).map((u) => async () => {
+      const r = await fetch(`${u}/slash/${idHex}`, { signal: AbortSignal.timeout(8000) });
+      return r.ok ? named(await r.arrayBuffer()) : null;
+    })];
+    const got = await evidenceThatHolds(sources, (e) => judgeEvidence(e));
+    if (!got) { console.log(`[hold] no seat serves proof ${idHex.slice(0, 16)}`); return null; }
+    const bytes = got.evidence.subarray(0, SLASH_PROOF_BYTES);
+    evidenceFetched.set(idHex, { bytes, verdict: got.verdict });
     return bytes;
   };
   const proofHolds = async (bytes) => {
     const got = [...evidenceFetched.values()].find((x) => toHex(x.bytes) === toHex(bytes));
-    if (!got) return undefined;
-    const j = judgeEvidence(got.evidence);
-    if (j.verdict !== true) console.log(`[hold] proof ${toHex(bytes).slice(0, 16)} on this node's replay: ${j.verdict}, ${j.why}`);
-    return j.verdict;
+    return got ? got.verdict : undefined;
   };
   let censusUrls = null;
   const ownCensusUrls = () => censusUrls;
@@ -11025,12 +11019,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try { ids = pair.signedResults.map((r) => toHex(resultId(decodePlayerResult(splitSignedResult(r).body)))); }
           catch (e) { return text(res, 409, `the evidence is not two signed results: ${e.message}`); }
           if (ids[0] !== toHex(pair.proof.signedResultId) || ids[1] !== toHex(pair.proof.transcriptHash)) return text(res, 409, 'the evidence is not the pair the proof names');
-          round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
-          // ANYONE PUBLISHES A FRAUD PROOF (5A.3B step 1): a pair that holds here, on this seat's own check, is a proof this seat holds, kept as if it had seen both results itself
+          // ANYONE PUBLISHES A FRAUD PROOF (5A.3B step 1): a pair that holds here, on this seat's own check, is a proof this seat holds, kept as if it had seen both results itself. One that fails is not
+          // relayed: a proof's id leaves out the signatures, and the first copy under an id is the one this relay keeps
           if (slashStarter) {
             const u8 = new Uint8Array(bytes), j = round.get(pair.proof.roundId) ? judgeEvidence(u8) : { verdict: undefined };
+            if (j.verdict === false) return text(res, 409, `that pair does not hold here: ${j.why}`);
+            round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
             if (j.verdict === true) { const none = new Uint8Array(32); if (round.putDoubleResult(pair.proof.roundId, none, pair.proof.nodePubkey, pair.signedResults[0], pair.signedResults[1])) round.fileDoubleResult(pair.proof.roundId, none, pair.proof.nodePubkey, fromHex(slashed[1]), u8); }
+            return text(res, 201, 'kept');
           }
+          round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
           return text(res, 201, 'kept');
         }
         let got;
