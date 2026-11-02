@@ -5,17 +5,19 @@
 // The body is built from what every seat of a series reads the same: the census of the newest round it holds (the
 // census nodes whose bond advertisements name the federation in guardian_of[]), at that round's census height - so seats
 // on one series build byte-identical bodies and their signatures add up. A guardian is GONE when its own node says it is
-// leaving (the owner's leave, owner-leave.js), signed with the node key beside its record signature. ABANDONED - 2f + 1
-// absence attestations for abandon_blocks - needs each guardian's per-peer consensus view from the federation client and
-// is not counted yet; the record says nothing it cannot back.
+// leaving (the owner's leave, owner-leave.js), signed with the node key beside its record signature. ABANDONED needs 2f + 1
+// absence attestations for abandon_blocks (absences.js), or a bond the census read as spent; the record says nothing it cannot back.
 //
 // A seat that is a guardian signs the body (GET /federation-record); every seat gathers the guardians' signatures from
 // their endpoints and, at the threshold, keeps the signed record and mirrors it at GET /federations. A record whose status
 // is DRAINING, CRITICAL or CLOSED makes the federation draining at this seat (no new round names it).
+//
+// A GUARDIAN WHO SPENT HIS BOND WHILE SEATED is ABANDONED from that spend (spentGuardians, §23A.5, kanban #1054), read off the census, so no one has to attest it.
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { nodeBonds } from '../../arena-protocol/src/census.js';
-import { abandonmentProof } from '../../arena-protocol/src/absence.js';
+import { abandonmentProof, bondSpentProof } from '../../arena-protocol/src/absence.js';
+import { guardianSlashStands } from '../../arena-protocol/src/federation-slash.js';
 import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDeparture, emergencyHex, readEmergencyHex } from './absences.js';
 import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureId } from '../../arena-protocol/src/emergency.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
@@ -73,6 +75,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // chain (main.js ballot.censusEntriesAt). A seat whose basis is an older census than the record's (node 15: 156388, B's record at
   // 156538, its guardians' current keys in the newer census) checks a mirrored record against the census the record names
   censusAt = null,
+  // WHAT ENDED THE BONDS OF THAT CENSUS (§23A.5, kanban #1054): async (height) -> [{ pubkey, txid, vout, spentBy: { txid, height } }], the census's own exclusions (main.js ballot.censusSpendsAt)
+  spendsAt = null,
   // THE CHAIN'S TIP: async () -> height, for the census a seat that holds no round builds and checks records from
   chainTip = null,
   // THE CHAIN'S CENSUS FIRST: a seat that runs no series - federation T2's relay seats hold 8 old rounds, census 156768
@@ -156,12 +160,18 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // guardians, no gateway seats, ever, on a node that runs no series). The height is shared: the tip less CHAIN_BASIS_LAG, down to a
   // multiple of CHAIN_BASIS_STEP, so a federation's seats name the same one; a gatherer's named height is read too. Read ahead by
   // gatherAll (the census read is async, basis is not) and kept; only when no held round gives a basis, so a seat of a series is as it was.
-  const chainCensus = new Map();             // height -> { entries } once read; null while reading
+  const chainCensus = new Map();             // height -> { entries, spends } once read; null while reading
+  const chainCensusAt = async (h) => {
+    const entries = await censusAt(h);
+    if (!Array.isArray(entries) || !entries.length) return null;
+    let spends = []; if (typeof spendsAt === 'function') { try { spends = (await spendsAt(h)) || []; } catch { spends = []; } }
+    return { entries, spends };
+  };
   let chainHeight = null;
   const readChainCensus = (h) => {
     if (typeof censusAt !== 'function' || !Number.isInteger(h) || h < 0 || chainCensus.has(h)) return;
     chainCensus.set(h, null);
-    Promise.resolve(censusAt(h)).then((e) => { if (Array.isArray(e) && e.length) chainCensus.set(h, { entries: e }); else chainCensus.delete(h); }, () => chainCensus.delete(h));
+    chainCensusAt(h).then((c) => { if (c) chainCensus.set(h, c); else chainCensus.delete(h); }, () => chainCensus.delete(h));
     while (chainCensus.size > 8) chainCensus.delete(chainCensus.keys().next().value);
   };
   async function chainAhead() {
@@ -169,7 +179,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     let t = null; try { t = Number(await chainTip()); } catch { t = null; }
     if (!Number.isFinite(t)) return;
     const h = Math.floor((t - CHAIN_BASIS_LAG) / CHAIN_BASIS_STEP) * CHAIN_BASIS_STEP;
-    if (!chainCensus.get(h)) { try { const e = await censusAt(h); if (Array.isArray(e) && e.length) chainCensus.set(h, { entries: e }); } catch { /* the next pass */ } }
+    if (!chainCensus.get(h)) { try { const c = await chainCensusAt(h); if (c) chainCensus.set(h, c); } catch { /* the next pass */ } }
     if (chainCensus.get(h)) chainHeight = h;
   }
   // A NAMED HEIGHT NOT READ YET IS READ BEFORE THE ANSWER (kanban #549, measured 2026-10-20 07:37Z: right after a restart every guardian
@@ -178,7 +188,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   async function chainReady(atHeight) {
     if (atHeight === null || typeof censusAt !== 'function' || !Number.isInteger(atHeight) || atHeight < 0 || chainCensus.get(atHeight)) return;
     if (roundBasis(atHeight).ok) return;
-    try { const e = await censusAt(atHeight); if (Array.isArray(e) && e.length) chainCensus.set(atHeight, { entries: e }); } catch { /* answered below as before */ }
+    try { const c = await chainCensusAt(atHeight); if (c) chainCensus.set(atHeight, c); } catch { /* answered below as before */ }
     while (chainCensus.size > 8) chainCensus.delete(chainCensus.keys().next().value);
   }
   function chainBasis(atHeight) {
@@ -186,7 +196,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     if (h === null) return null;
     const c = chainCensus.get(h);
     if (!c) { readChainCensus(h); return null; }
-    return { ok: true, census: { ok: true, entries: c.entries }, height: h, networkId, fromChain: true };
+    return { ok: true, census: { ok: true, entries: c.entries, spends: c.spends }, height: h, networkId, fromChain: true };
   }
   function basis(atHeight = null) {
     if (chainFirst) { const cb = chainBasis(atHeight); if (cb) return cb; }
@@ -302,6 +312,36 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     return { ok: true, was: best ? bandOfRecord(best.record) : 'CALM', hex: best ? best.hex || null : null };
   }
 
+  /**
+   * A GUARDIAN WHO SPENT HIS BOND WHILE SEATED (§23A.5, kanban #1054: "the census sees it"). The census at this basis has dropped him, so without this his row would just go: the federation's
+   * nominal would shrink and nobody would be gone, with its cap resting on the bonds left as if he had never sat. The record in force below this height says who sat. A node of it that this
+   * census no longer holds, and whose bond the census read as spent, stays listed and goes ABANDONED from that spend, under its txid: a seat reads the chain's own answer, so nothing is asked
+   * of anyone and every seat on this census writes the same row. Still bonded by another output is still seated: the census says so, and the cap follows the sum. A notice served out first is
+   * no offence: guardianSlashStands says DEPARTED, and his row goes as any departed node's does. A row once ABANDONED this way stays, after the spend has left the census's window too.
+   * Answers [{ row, gone }].
+   */
+  function spentGuardians(b, federationId) {
+    const fid = toHex(federationId);
+    const held = recordAt(fid, b.height - 1);
+    if (!held || recordStatusName(held) === 'CLOSED') return [];
+    const here = new Set(guardiansOf(b.census, federationId).map((g) => toHex(g.nodePubkey)));
+    const spends = b.census.spends || (b.census.excluded || []).filter((x) => x.spentBy);
+    const out = [];
+    for (const g of held.guardians) {
+      if (here.has(toHex(g.nodePubkey))) continue;
+      const row = { ...g, bondSats: 0n };
+      const before = (held.gone || []).find((x) => toHex(x.peerKey) === toHex(g.peerKey));
+      if (before) { if (before.kind === GONE.ABANDONED) out.push({ row, gone: before }); continue; }
+      const mine = spends.filter((x) => x.pubkey && toHex(x.pubkey) === toHex(g.nodePubkey) && x.spentBy).sort((x, y) => y.spentBy.height - x.spentBy.height)[0];
+      if (!mine) continue;
+      const proof = bondSpentProof({ peerKey: g.peerKey, spent: mine.spentBy });
+      const d = absences && Number.isInteger(departureNotice) ? absences.departureFor(held, g.peerKey, departureNotice, b.height) : { ok: false };
+      const stands = guardianSlashStands({ proof, departure: d.ok ? { ok: true, peerKey: g.peerKey, leaveAfterHeight: d.notice.leaveAfterHeight } : null });
+      if (stands.ok && stands.slash) out.push({ row, gone: { peerKey: g.peerKey, sinceHeight: proof.sinceHeight, kind: GONE.ABANDONED, proofRef: proof.id } });
+    }
+    return out;
+  }
+
   /** The body for one federation from a basis, with `gone` - the guardians whose nodes said they are leaving. */
   function bodyFor(b, federationId, gone = [], reserveSats = 0n, eps = null, was = null) {
     const fid = toHex(federationId);
@@ -310,7 +350,9 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const guardians = withConfigEndpoints(guardiansOf(b.census, federationId), eps, toHex);
     if (!guardians.length) return { ok: false, why: 'no census node guards that federation' };
     const succ = successorOf(fid);
-    const r = buildFederationRecord({ federationId, networkId: b.networkId || networkId, invite, nominal: guardians.length, guardians, gone, height: b.height, reserveSats,
+    const spent = spentGuardians(b, federationId);
+    const rows = [...guardians, ...spent.map((x) => x.row)];
+    const r = buildFederationRecord({ federationId, networkId: b.networkId || networkId, invite, nominal: rows.length, guardians: rows, gone: [...gone, ...spent.map((x) => x.gone)], height: b.height, reserveSats,
       ...(succ ? { successorId: fromHex(succ), closed: !!closedOf(fid) } : retiringOf(fid) ? { closed: true } : {}) });   // retiringOf: federation-retire.js
     if (was !== null) r.capacityBand = recordBand({ reserveSats, exposureCapSats: r.exposureCapSats, was });
     return { ok: true, record: r, guardians };
@@ -394,7 +436,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       const em = absences.emergencyFor ? absences.emergencyFor(g.nodePubkey) : null;
       const out = emergencyDeparted(b, g, em, p);
       if (out) { gone.push(out); emergent.push(em); continue; }
-      if (p.ok && (!d.ok || p.sinceHeight < d.sinceHeight)) { gone.push({ peerKey: g.peerKey, sinceHeight: p.sinceHeight, kind: GONE.ABANDONED, proofRef: p.id }); absent.push(...p.attestations); }
+      const stands = p.ok ? guardianSlashStands({ proof: p, departure: d.ok ? { ok: true, peerKey: g.peerKey, leaveAfterHeight: d.sinceHeight } : null }) : null;
+      if (stands && stands.ok && stands.slash) { gone.push({ peerKey: g.peerKey, sinceHeight: p.sinceHeight, kind: GONE.ABANDONED, proofRef: p.id }); absent.push(...p.attestations); }
       else if (d.ok) { gone.push({ peerKey: g.peerKey, sinceHeight: d.sinceHeight, kind: GONE.DEPARTED, proofRef: d.id }); departed.push(d.notice); }
     }
     // THE BODY WITH THEM GONE, and the signatures over exactly it: a guardian's signature counts for the body it signed,

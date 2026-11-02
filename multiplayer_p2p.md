@@ -6857,6 +6857,16 @@ Bitcoin cannot check liveness either.
 | **Emergency departure** (protocol 17) | the node's owner, with the node offline, posts a leave request signed by the node's **emergency key** (§23A.5a) at any seat | a node with no guardian role leaves the seating at once, its bond untouched; a guardian whose request arrives **before** `abandon_blocks` from his last seen height is recorded `DEPARTED` at once, the succession starts at once (§23A.6), and his bond is untouched; a request that arrives later changes nothing: the absence is abandonment |
 | **Abandonment** | absent for `abandon_blocks` (attested, §23A.4); or his bond output spent while seated (the census sees it, §5A.2; a slash start on a template-3 bond is not such a spend, its hold output stays the bond, §5A.3B); or a departure that stops serving before its `leave_after`; or any guardian of a DRAINING federation who stops before CLOSED | recorded `ABANDONED` with the proof; **slashed** through §5A.3B; the federation's reserve counts him gone at once |
 
+**A bond spent while seated (kanban #1054).** The census sees it, so no attestation is
+asked. A guardian of the record in force whom the census no longer holds, and whose bond
+it read as spent, stays listed, and the record has him ABANDONED from the height of the
+spend, `proof_ref` its txid, so `nominal` and the threshold stay and the exposure cap
+counts him gone at once. A node still bonded by another output is still seated, and
+the cap follows what is left. A guardian who served his notice out first and spends at or
+after `leave_after` has committed no offence. A slash start does not count; what ends its
+hold output does, from that spend. With no other output there is nothing left to slash
+on the chain: the record is what stands.
+
 **Leaving is legitimate, and costs nothing (RULED 2026-09-21).**
 Guarding a federation is a term of service, not a life sentence, and leaving
 it is not leaving the network. A guardian who posts his departure notice and

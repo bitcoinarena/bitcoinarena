@@ -7794,7 +7794,7 @@ function settleClaims({ escrowMsat, claims = [], spentNonces = null, haltHeight,
 const hexKey = (k) => (k instanceof Uint8Array ? Array.from(k, (b) => b.toString(16).padStart(2, '0')).join('') : String(k || '')).toLowerCase();
 
 /**
- * MAY A GONE GUARDIAN'S BOND BE SLASHED (§23A.5's table, FEDERATION.md rehearsal 14). `proof`: abandonmentProof's answer for the
+ * MAY A GONE GUARDIAN'S BOND BE SLASHED (§23A.5's table, FEDERATION.md rehearsal 14). `proof`: abandonmentProof's or bondSpentProof's answer for the
  * peer (absence.js); `departure`: departureStands' answer for the same peer's notice, or null. "Leaving is legitimate" (RULED,
  * 2026-09-21): an absence that begins at or after a standing notice's leave_after is the departure - DEPARTED, the bond
  * untouched. "A departure that stops serving before its leave_after" is abandonment, and so is an absence with no notice.
@@ -7815,6 +7815,7 @@ function guardianSlashStands({ proof, departure = null, emergency = null, abando
       return { ok: true, slash: false, kind: 'DEPARTED', why: `gone since ${proof.sinceHeight}, at or after the notice's leave_after ${departure.leaveAfterHeight}: departed with notice, the bond untouched (§23A.5)` };
     return { ok: true, slash: true, kind: 'ABANDONED', why: `stopped at ${proof.sinceHeight}, before the notice's leave_after ${departure.leaveAfterHeight}: a departure that stops serving early is abandonment (§23A.5)` };
   }
+  if (proof.bondSpent) return { ok: true, slash: true, kind: 'ABANDONED', why: `his bond was spent at ${proof.sinceHeight} while seated: abandonment (§23A.5)` };
   return { ok: true, slash: true, kind: 'ABANDONED', why: `absent since ${proof.sinceHeight}, attested by ${proof.signers}: abandonment (§23A.4)` };
 }
 
@@ -12313,6 +12314,16 @@ function startOf(facts, key, nodeKey) {
 }
 
 /**
+ * WHAT ENDED A BOND (5A.2, kanban #1054): { txid (hex), height } of the spend that took it out of the census: the spend of the bond itself, or for a started bond the spend of its hold
+ * output, which is what ends it (5A.3B). A guardian's row in a federation record reads this, so a seat needs no chain read of its own for it.
+ */
+function bondEndOf(facts, key, nodeKey) {
+  const start = startOf(facts, key, nodeKey), at = start ? `${start}:0` : key;
+  const tx = facts.spentIn.get(at);
+  return tx ? { txid: txidHexOf(tx), height: facts.spentAt.get(at) } : null;
+}
+
+/**
  * WHICH ADVERTISEMENT DOES THIS TRANSACTION COMMIT TO?
  *
  * 5A.2: the bond output "commits to H(NodeAdvertisement)... the body itself
@@ -12491,7 +12502,7 @@ function scanCensus(view, { contract, candidates }) {
     // census_height with >= census_confirmations depth" in step 1, so step 1
     // decides it, and says which rule dropped whom.
     if (entry.spent) {
-      excluded.push({ ...entry, why: 'that output was already spent at the census height' });
+      excluded.push({ ...entry, why: 'that output was already spent at the census height', spentBy: bondEndOf(facts, key, c.pubkey) });
       continue;
     }
     // DEPTH IS MEASURED AT THE CENSUS HEIGHT, NOT AT THE TIP.
@@ -12779,6 +12790,7 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
         excluded.push({
           ...e,
           why: `that bond was spent at height ${facts.spentAt.get(key)}, so nothing is at stake`,
+          spentBy: bondEndOf(facts, key, read.advert.nodePubkey),
         });
         continue;
       }
@@ -31490,6 +31502,7 @@ function seriesPublicationOutput(seriesIdBytes) {
 //             (beaconFromChain), its hash the randomness (committeeSeedFromBeacon);
 //   SORTITION selectCommittee over the verified entries, the function a seat's Roster.committeeFor runs.
 // This package carries no curve and no signature scheme: `bond` brings the curve operations, `verify` BIP-340.
+
 
 
 

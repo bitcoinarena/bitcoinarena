@@ -60,7 +60,10 @@ test('a guardian whose bond is started stays in the census, seated, with its bon
   const gone = census([anySpend]);
   assert.equal(gone.entries.length, 0, 'a spend that is no start ends the bond: the node took it back');
   assert.match(gone.excluded[0].why, /was spent at height/);
+  assert.deepEqual(gone.excluded[0].spentBy, { txid: toHex(parseTransaction(anySpend).txid), height: CONFIRMED - 10 }, 'what ended it, for the federation record (kanban #1054)');
 
-  const ended = census([start, serializeSpend({ version: 2, locktime: 0, inputs: [{ txid: startTxid, vout: 0, sequence: 24 }], outputs: [{ value: value - 1000n, script: holdScript }], witnesses: [[new Uint8Array(64)]] })]);
+  const fallback = serializeSpend({ version: 2, locktime: 0, inputs: [{ txid: startTxid, vout: 0, sequence: 24 }], outputs: [{ value: value - 1000n, script: holdScript }], witnesses: [[new Uint8Array(64)]] });
+  const ended = census([start, fallback]);
   assert.equal(ended.entries.length, 0, 'a release, a return or the fallback ends it');
+  assert.deepEqual(ended.excluded[0].spentBy, { txid: toHex(parseTransaction(fallback).txid), height: CONFIRMED - 9 }, 'the spend of the hold output, not the start, is what ended the bond');
 });

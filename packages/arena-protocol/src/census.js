@@ -701,6 +701,16 @@ function startOf(facts, key, nodeKey) {
 }
 
 /**
+ * WHAT ENDED A BOND (5A.2, kanban #1054): { txid (hex), height } of the spend that took it out of the census: the spend of the bond itself, or for a started bond the spend of its hold
+ * output, which is what ends it (5A.3B). A guardian's row in a federation record reads this, so a seat needs no chain read of its own for it.
+ */
+function bondEndOf(facts, key, nodeKey) {
+  const start = startOf(facts, key, nodeKey), at = start ? `${start}:0` : key;
+  const tx = facts.spentIn.get(at);
+  return tx ? { txid: txidHexOf(tx), height: facts.spentAt.get(at) } : null;
+}
+
+/**
  * WHICH ADVERTISEMENT DOES THIS TRANSACTION COMMIT TO?
  *
  * 5A.2: the bond output "commits to H(NodeAdvertisement)... the body itself
@@ -879,7 +889,7 @@ export function scanCensus(view, { contract, candidates }) {
     // census_height with >= census_confirmations depth" in step 1, so step 1
     // decides it, and says which rule dropped whom.
     if (entry.spent) {
-      excluded.push({ ...entry, why: 'that output was already spent at the census height' });
+      excluded.push({ ...entry, why: 'that output was already spent at the census height', spentBy: bondEndOf(facts, key, c.pubkey) });
       continue;
     }
     // DEPTH IS MEASURED AT THE CENSUS HEIGHT, NOT AT THE TIP.
@@ -1167,6 +1177,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
         excluded.push({
           ...e,
           why: `that bond was spent at height ${facts.spentAt.get(key)}, so nothing is at stake`,
+          spentBy: bondEndOf(facts, key, read.advert.nodePubkey),
         });
         continue;
       }

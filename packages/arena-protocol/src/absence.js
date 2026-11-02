@@ -13,7 +13,7 @@
 // NO CURVE: `sign(digest)` and `verify(signature, digest, nodePubkey)` are injected (BIP-340 over node keys). A peer is named
 // by its 33-byte Fedimint peer key, a signer by its node key - both as the federation record lists its guardians.
 import { Writer, Reader } from './encode.js';
-import { taggedHash, toHex } from './hash.js';
+import { taggedHash, toHex, fromHex } from './hash.js';
 import { TAG, PROTOCOL_VERSION, TYPE_ABSENCE_ATTESTATION, TYPE_DEPARTURE_NOTICE } from './constants.js';
 
 const is32 = (b) => b instanceof Uint8Array && b.length === 32;
@@ -100,4 +100,14 @@ export function abandonmentProof(attestations, { record, peerKey, abandonBlocks,
   const sinceHeight = Math.max(...set.map((a) => a.lastSeenHeight));
   const id = taggedHash(TAG.abandonmentProof, Uint8Array.from(set.flatMap((a) => [...absenceId(a)])));
   return { ok: true, peerKey, sinceHeight, signers: set.length, id, attestations: set };
+}
+
+/**
+ * A BOND SPENT WHILE SEATED (§23A.5, kanban #1054): "the census sees it", so this proof is the chain's and needs no attestation. `spent` { txid (hex), height }, the census's own reading of what
+ * ended the bond; a slash start is not such a spend, since its hold output stays the bond. The peer is gone since that height and the proof is that transaction: proof_ref its txid.
+ * Answers what abandonmentProof answers, for guardianSlashStands.
+ */
+export function bondSpentProof({ peerKey, spent }) {
+  if (!spent || !Number.isInteger(spent.height) || !/^[0-9a-f]{64}$/.test(String(spent.txid))) return { ok: false, why: 'no spend of that bond was read' };
+  return { ok: true, peerKey, sinceHeight: spent.height, signers: 0, bondSpent: true, id: fromHex(spent.txid) };
 }
