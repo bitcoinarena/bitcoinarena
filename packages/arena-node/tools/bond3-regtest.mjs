@@ -17,10 +17,13 @@ import {
   HOLD_INTERNAL_KEY, TAPLEAF_VERSION,
 } from '../../arena-protocol/src/bond-script.js';
 import { tapSighash, scriptPathWitness, serializeSpend } from '../../arena-protocol/src/bond-spend.js';
-import { arbitrationCommitment } from '../../arena-protocol/src/arbitration-tx.js';
+import { arbitrationCommitment, holdSlashSpend } from '../../arena-protocol/src/arbitration-tx.js';
+import { buildSlashPayoutTable, slashPayoutTableId } from '../../arena-protocol/src/slash.js';
+import { panelThreshold } from '../../arena-protocol/src/bond-script.js';
 import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
 import { tweakPoint, combine } from '../src/curve.js';
 import { weightedKeygen, weightsFor, signersFor, signByNode } from './census-key-measure.mjs';
+import { readSlashStart, takeReturnIfOwed } from '../src/hold-return.js';
 
 const RT = process.env.RT, PORT = process.env.RPCPORT || '29143', B = process.env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';
 if (!RT) throw new Error('RT=<the private regtest datadir>');
@@ -43,7 +46,7 @@ const CLOCKS = SLASH_CLOCKS.mainnet;
 const clocks = { holdBlocks: CLOCKS.slashHoldBlocks, returnBlocks: CLOCKS.slashReturnBlocks, fallbackBlocks: CLOCKS.slashFallbackBlocks };
 const g = genesisFor('regtest');
 const person = () => { const secret = schnorr.utils.randomSecretKey(); return { secret, key: schnorr.getPublicKey(secret) }; };
-const panel = () => Array.from({ length: 7 }, person);
+const panel = (n = 7) => Array.from({ length: n }, person);
 const keys = (list) => list.map((p) => p.key);
 const compare = (a, b) => { for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
 const sorted = (list) => [...list].sort((a, b) => compare(a.key, b.key));
@@ -199,5 +202,83 @@ ask('path A before maturity', false, recover(bond3.bondMaturity));
 mine(3);
 ask('path A after maturity', true, recover(bond3.bondMaturity));
 
-console.log(`#972 ${asked - wrong} of ${asked} as expected; tip ${tip()}; fallback ${fallback.vsize} vB`);
+// ---- panels of every size the ruling draws: t of n on both, one short refused (kanban #1021)
+const sent = (fee, bond, hold) => { const s = start(bond, fee, { pay: hold.script, nodeSig: presig(bond, hold.script) }); cli('sendrawtransaction', s); return s; };
+for (const n of [3, 4, 5, 6]) {
+  const t = panelThreshold(n);
+  const round = { a: panel(n), b: panel(n) };
+  const bond = fundBond(person(), tip() + 1000);
+  const hold = holdOf(bond, round);
+  const fee = fundFee();
+  const s = sent(fee, bond, hold);
+  mine(clocks.holdBlocks);
+  const leave = (x, y) => spendHold(bond, hold, s, 'release', { sequence: clocks.holdBlocks, sign: panelStack(round, x, y) });
+  ask(`n = ${n}: release, ${t} + ${t - 1}`, false, leave(t, t - 1));
+  ask(`n = ${n}: release, ${t - 1} + ${t}`, false, leave(t - 1, t));
+  ask(`n = ${n}: release, ${t} + ${t}`, true, leave(t, t));
+}
+
+// ---- a round with no panels: the hold output has two leaves
+const none = { a: [], b: [] };
+const node4 = person();
+const bond4 = fundBond(node4, tip() + 3);
+const hold4 = holdOf(bond4, none);
+console.log(`#972 no panels: leaves ${Object.keys(hold4.leaves).sort().join(', ')}`);
+const fee4 = fundFee();
+const start4 = sent(fee4, bond4, hold4);
+mine(clocks.returnBlocks);
+ask('no panels: return at its clock, mature node', true, spendHold(bond4, hold4, start4, 'return', { sequence: clocks.returnBlocks, locktime: tip(), sign: (d) => [schnorr.sign(d, node4.secret)] }));
+ask('no panels: fallback before its clock', false, spendHold(bond4, hold4, start4, 'fallback', { sequence: clocks.fallbackBlocks, sign: (d) => [censusSign(d)] }));
+mine(clocks.fallbackBlocks - clocks.returnBlocks);
+const none4 = ask('no panels: fallback at its clock, FROST census key', true, spendHold(bond4, hold4, start4, 'fallback', { sequence: clocks.fallbackBlocks, sign: (d) => [censusSign(d)] }));
+
+// ---- the table: a release and a fallback carry the same OP_RETURN and the same outputs
+const node5 = person();
+const bond5 = fundBond(node5, tip() + 1000);
+const hold5 = holdOf(bond5, roundA);
+const fee5 = fundFee();
+const start5 = sent(fee5, bond5, hold5);
+const start5Txid = fromHex(JSON.parse(cli('decoderawtransaction', start5)).txid).reverse();
+const reservesScript = walletScript();
+const built = buildSlashPayoutTable({ networkId: new Uint8Array(32).fill(1), roundId: new Uint8Array(32).fill(2), proofId: taggedHash('ARENA/v1/SlashProof', Uint8Array.of(5)),
+  bond: { txid: bond5.txid, vout: bond5.vout, value: bond5.value }, entries: [{ entryId: new Uint8Array(32).fill(3), playerPubkey: new Uint8Array(32).fill(4), lossMsat: 2500000500n }],
+  filer: { script: walletScript(), sats: 5000n }, carriers: [{ script: walletScript(), bondSats: 1000000n }, { script: walletScript(), bondSats: 90000000n }],
+  federations: [{ federation: 'ee'.repeat(32), status: 'OPEN', reserveKey: 'k', reserveSats: 0n, exposureCapSats: 1000000000000n, script: reservesScript }], feeSats: 3000n });
+if (!built.ok) throw new Error(built.why);
+const tableId = slashPayoutTableId(built.table);
+const tableSpend = (path, sign) => {
+  const made = holdSlashSpend({ path, hold: { txid: start5Txid, vout: 0, value: bond5.value, script: hold5.script }, proofId: built.table.proofId, slashHeight: tip(), table: built.table, tableId, clocks });
+  if (!made.ok) throw new Error(made.why);
+  const digest = tapSighash({ ...made.tx, prevouts: made.prevouts, inputIndex: 0, leafHash: hold5.leaves[path] });
+  return toHex(serializeSpend({ ...made.tx, witnesses: [scriptPathWitness({ stack: sign(digest), script: hold5.scripts[path], controlBlock: holdControlBlock(path, hold5).controlBlock })] }));
+};
+mine(clocks.holdBlocks);
+const tableRelease = ask(`release of a table: ${built.table.outputs.map((o) => o.pays).join(', ')}`, true, tableSpend('release', panelStack(roundA, 5, 5)));
+mine(clocks.fallbackBlocks - clocks.holdBlocks);
+const tableFallback = ask('fallback of the same table, FROST census key', true, tableSpend('fallback', (d) => [censusSign(d)]));
+
+// ---- the node takes the return by itself, off the raw start
+const node6 = person();
+const bond6 = fundBond(node6, tip() + 3);
+const hold6 = holdOf(bond6, roundB);
+const fee6 = fundFee();
+const start6Hex = sent(fee6, bond6, hold6);
+mine(1);
+const startHeight = tip();
+const seen = readSlashStart(fromHex(start6Hex), bond6, new Map([[toHex(hold6.script), hold6]]));
+const pass = (over) => takeReturnIfOwed({ start: seen, startHeight, bondMaturity: bond6.bondMaturity, returnBlocks: clocks.returnBlocks, tip: tip(), fetchProof: async () => Uint8Array.of(7),
+  proofChecks: async () => false, toScript: walletScript(), feeSats: 2000n, nodeSecret: node6.secret, broadcast: async (hex) => { cli('sendrawtransaction', hex); return true; }, ...over });
+const earlyPass = await pass();
+console.log(`#972 ${earlyPass.action === 'wait' ? 'as expected' : 'WRONG      '} node, a block after the start: ${earlyPass.action}, ${earlyPass.why}`); asked++; if (earlyPass.action !== 'wait') wrong++;
+mine(clocks.returnBlocks - 1);
+const keptPass = await pass({ fetchProof: async () => Uint8Array.of(7), start: { ...seen, proofId: taggedHash('ARENA/v1/SlashProof', Uint8Array.of(7)) }, proofChecks: async () => true });
+console.log(`#972 ${keptPass.action === 'keep' ? 'as expected' : 'WRONG      '} node, a proof that checks, at the clock: ${keptPass.action}`); asked++; if (keptPass.action !== 'keep') wrong++;
+const lastPass = await pass();
+const onChain = lastPass.action === 'return' && lastPass.sent === true;
+mine(1);
+const confirmed = JSON.parse(cli('gettransaction', JSON.parse(cli('decoderawtransaction', lastPass.hex)).txid)).confirmations;
+asked++; if (!(onChain && confirmed === 1)) wrong++;
+console.log(`#972 ${onChain && confirmed === 1 ? 'as expected' : 'WRONG      '} node took the return at its clock: ${lastPass.why}; mined, ${confirmed} confirmation`);
+
+console.log(`#972 ${asked - wrong} of ${asked} as expected; tip ${tip()}; fallback ${fallback.vsize} vB; no panels fallback ${none4.vsize} vB; table release ${tableRelease.vsize} vB, table fallback ${tableFallback.vsize} vB`);
 process.exit(wrong ? 1 : 0);

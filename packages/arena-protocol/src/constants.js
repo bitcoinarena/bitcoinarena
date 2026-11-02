@@ -449,8 +449,6 @@ export const TYPE_SEATING_SEEN = 0x38;
 export const TYPE_HEARTBEAT = 0x39;
 /** A heartbeat committee member's HEARD: who it held a HEARTBEAT of at the slot's close; a heartbeat certificate carries them (kanban #727). */
 export const TYPE_HEARTBEAT_HEARD = 0x3a;
-// WHAT A TEMPLATE-3 RELEASE COMMITS TO PAY (5A.3B step 4, H(payout_table); slash.js encodeSlashTable).
-export const TYPE_SLASH_TABLE = 0x3b;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 export const TYPE_SPENT_SET = 0x26;
@@ -516,7 +514,6 @@ export const TAG = {
   // Template 3: a round's two slash panels are drawn on their own seed, a release commits to its table, and a census key is named (5A.3B).
   slashPanel: 'ARENA/v1/SlashPanel',
   slashPayoutTable: 'ARENA/v1/SlashPayoutTable',
-  slashTable: 'ARENA/v1/SlashTable',
   censusKeyRecord: 'ARENA/v1/CensusKeyRecord',
   checkpoint: 'ARENA/v1/Checkpoint',
   checkpointReceipt: 'ARENA/v1/CheckpointReceipt',

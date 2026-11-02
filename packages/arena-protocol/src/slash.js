@@ -31,10 +31,11 @@ import { taggedHash, toHex, fromHex } from './hash.js';
 import { parseTransaction } from './tx.js';
 import { tapSighash, scriptPathSigners } from './bond-spend.js';
 import { tapLeafHash, releaseLeaf } from './bond-script.js';
-import { arbitrationCommitmentIn } from './arbitration-tx.js';
+import { arbitrationCommitmentIn, P2TR_DUST_SATS } from './arbitration-tx.js';
+import { reserveParts } from './slash-reserves.js';
 import {
   PROTOCOL_VERSION, speaksVersion, TYPE_SLASH_PROOF, TYPE_AUDIT_SLASH_PROOF, TYPE_PAYOUT_TABLE, TYPE_SETTLEMENT_RECORD,
-  TYPE_RESULT, TYPE_FEE_CLAIM, TYPE_SERVICE_RECORD, TYPE_SLASH_TABLE, ROLES, roleByte,
+  TYPE_RESULT, TYPE_FEE_CLAIM, TYPE_SERVICE_RECORD, ROLES, roleByte,
   SLASH_REMAINDERS, TAG,
 } from './constants.js';
 import { entryId } from './contracts.js';
@@ -118,7 +119,7 @@ export const AUDIT_CONTRADICTED = 'AUDIT_CONTRADICTED';
  */
 export const RELEASE_WITHOUT_PROOF = 'RELEASE_WITHOUT_PROOF';
 
-/** 5A.3, template 3: "Signing a release or an escrow payout that pays other than its payout_table", proof "the release or the payout + the table". */
+/** 5A.3, template 3: "Signing a release or an escrow payout that pays other than its payout_table", proof "the release or the payout + the table". A release only: see slashHoldsOnReleaseTable. */
 export const RELEASE_OFF_TABLE = 'RELEASE_OFF_TABLE';
 
 // In 5A.3's own document order, which is the order they are being written in; §13A.1's AUDIT after them.
@@ -1480,43 +1481,102 @@ export function slashHoldsOnFeeClaim({
 }
 
 /**
- * WHAT A RELEASE COMMITS TO PAY (§5A.3B step 4: OP_RETURN = H(fraud_proof) || slash_height || H(payout_table); "the table names every
- * affected entry and its share"). The spec fixes neither its bytes nor the shape of a release's outputs, and 5A.3's row says the release
- * and the table alone prove the offence, so the table has to say what the transaction pays: `rows` are the entries and their shares,
- * `outputs` every output but the OP_RETURN, reserves and the filer's fee included. Both sorted, so one table has one id.
+ * WHAT A RELEASE PAYS: THE PAYOUT TABLE (§5A.3B, RULED 2026-11-02, kanban #1021). Entries plus every output, these bytes in this order:
  *
- *   type | version | round_id | proof_id | rows: (player_pubkey, amount_msat) | outputs: (value, u16 length, script)
+ *   version 1 | network_id | round_id | proof_id | bond_txid | bond_vout
+ *   entries   ascending entry_id: entry_id, player_pubkey, loss_msat
+ *   reserves  ascending federation_id: federation_id, msat
+ *   outputs   the release's outputs after its OP_RETURN, in order: value_sats, u16 length, script, pays
+ *
+ * The OP_RETURN is left out because it carries this table's hash. A fallback uses the same table.
  */
-const byPlayer = (a, b) => { const x = hex(a.playerPubkey), y = hex(b.playerPubkey); return x < y ? -1 : x > y ? 1 : 0; };
-const outputSortKey = (o) => `${hex(o.script)}:${String(o.value).padStart(20, '0')}`;
-const byOutput = (a, b) => { const x = outputSortKey(a), y = outputSortKey(b); return x < y ? -1 : x > y ? 1 : 0; };
+export const SLASH_TABLE_VERSION = 1;
+export const SLASH_TABLE_PAYS = Object.freeze(['filer', 'player_carrier', 'reserves', 'escrow']);
+const ascendingBy = (field) => (a, b) => { const x = hex(a[field]), y = hex(b[field]); return x < y ? -1 : x > y ? 1 : 0; };
 
-export function encodeSlashTable(t) {
+export function encodeSlashPayoutTable(t) {
   const w = new Writer();
-  w.u8(TYPE_SLASH_TABLE);
-  w.u16(PROTOCOL_VERSION);
+  w.u8(SLASH_TABLE_VERSION);
+  w.bytes32(t.networkId);
   w.bytes32(t.roundId);
   w.bytes32(t.proofId);
-  w.vec([...t.rows].sort(byPlayer), (r, ww) => { ww.bytes32(r.playerPubkey); ww.u64(r.amountMsat); });
-  w.vec([...t.outputs].sort(byOutput), (o, ww) => { ww.u64(o.value); ww.u16(o.script.length); ww.bytes(o.script, o.script.length); });
+  w.bytes32(t.bondTxid);
+  w.u32(t.bondVout);
+  w.vec(t.entries, (e, ww) => { ww.bytes32(e.entryId); ww.bytes32(e.playerPubkey); ww.u64(e.lossMsat); }, { sortedBy: ascendingBy('entryId') });
+  w.vec(t.reserves, (f, ww) => { ww.bytes32(f.federationId); ww.u64(f.msat); }, { sortedBy: ascendingBy('federationId') });
+  let rank = 0;
+  w.vec(t.outputs, (o, ww) => {
+    const pays = SLASH_TABLE_PAYS.indexOf(o.pays);
+    if (pays < rank) throw new Error(`a table pays in order: ${SLASH_TABLE_PAYS.join(', ')}`);
+    rank = pays;
+    ww.u64(o.value); ww.u16(o.script.length); ww.bytes(o.script, o.script.length); ww.u8(pays);
+  });
   return w.finish();
 }
 
-export function decodeSlashTable(bytes) {
+export function decodeSlashPayoutTable(bytes) {
   const r = new Reader(bytes);
-  if (r.u8() !== TYPE_SLASH_TABLE) throw new Error('not a slash payout table');
-  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
+  if (r.u8() !== SLASH_TABLE_VERSION) throw new Error('not a slash payout table of version 1');
   const t = {
-    roundId: r.bytes32(), proofId: r.bytes32(),
-    rows: r.vec((rr) => ({ playerPubkey: rr.bytes32(), amountMsat: rr.u64() })),
-    outputs: r.vec((rr) => { const value = rr.u64(); return { value, script: rr.bytes(rr.u16()) }; }),
+    networkId: r.bytes32(), roundId: r.bytes32(), proofId: r.bytes32(), bondTxid: r.bytes32(), bondVout: r.u32(),
+    entries: r.vec((rr) => ({ entryId: rr.bytes32(), playerPubkey: rr.bytes32(), lossMsat: rr.u64() })),
+    reserves: r.vec((rr) => ({ federationId: rr.bytes32(), msat: rr.u64() })),
+    outputs: r.vec((rr) => { const value = rr.u64(); const script = rr.bytes(rr.u16()); const pays = SLASH_TABLE_PAYS[rr.u8()]; if (!pays) throw new Error('unknown pays byte in a slash payout table'); return { value, script, pays }; }),
   };
   r.end();
   return t;
 }
 
-/** H(payout_table), the third field of a release's OP_RETURN. */
-export const slashTableId = (t) => taggedHash(TAG.slashTable, encodeSlashTable(t));
+/** payout_table_id, the third field of a release's OP_RETURN. */
+export const slashPayoutTableId = (t) => taggedHash(TAG.slashPayoutTable, encodeSlashPayoutTable(t));
+
+/**
+ * THE TABLE, RECOMPUTED: every panel member runs this, and signs only if its bytes are byte-equal. Outputs + fee = the bond, exactly.
+ *
+ *   entries      [{ entryId, playerPubkey, lossMsat }]: what this bond pays each (slashDistribution)
+ *   filer        { script, sats }: repays the start's fee input
+ *   carriers     panel A's members in score order, [{ script, bondSats }]: each peg-in no larger than that member's bond
+ *   federations  as reserveParts takes them, each with its peg-in `script`
+ *   escrowScript under the two panels, or the census key if there are none
+ *
+ * Players' parts round up and the reserves take the rest, and the fee comes off the reserves, never the players. A carrier's part under
+ * dust is raised to dust out of the reserves. What fits no carrier and no federation is the escrow; under dust it joins the largest reserve part.
+ */
+export function buildSlashPayoutTable({ networkId, roundId, proofId, bond, entries = [], filer = null, carriers = [], federations = [], retired = [], feeSats, escrowScript = null }) {
+  const no = (why) => ({ ok: false, why });
+  if (typeof feeSats !== 'bigint' || feeSats < 0n) return no('the fee is BigInt satoshi');
+  const outputs = [];
+  if (filer && filer.sats > 0n) outputs.push({ value: filer.sats, script: filer.script, pays: 'filer' });
+  const owedMsat = entries.reduce((a, e) => a + e.lossMsat, 0n);
+  let owed = (owedMsat + 999n) / 1000n;
+  const carried = [];
+  for (const c of carriers) {
+    if (owed <= 0n) break;
+    if (c.bondSats < P2TR_DUST_SATS) continue;
+    const part = owed > c.bondSats ? c.bondSats : owed;
+    const sats = part < P2TR_DUST_SATS ? P2TR_DUST_SATS : part;
+    carried.push({ value: sats, script: c.script, pays: 'player_carrier' });
+    owed -= part;
+  }
+  outputs.push(...carried);
+  const spent = outputs.reduce((a, o) => a + o.value, 0n);
+  const rest = bond.value - feeSats - spent - owed;
+  if (rest < 0n) return no(`a bond of ${bond.value} sat cannot carry ${spent + owed} sat and a ${feeSats} sat fee: the losses are this bond's share of them`);
+  const { parts, keptSats } = reserveParts({ amountSats: rest, federations, retired, minPartSats: P2TR_DUST_SATS });
+  const scriptOf = new Map(federations.map((f) => [String(f.federation).toLowerCase(), f.script]));
+  let escrow = keptSats + owed;
+  const largest = parts.reduce((a, p) => (!a || p.sats > a.sats ? p : a), null);
+  if (escrow > 0n && escrow < P2TR_DUST_SATS && largest) { largest.sats += escrow; escrow = 0n; }
+  const reserves = parts.map((p) => ({ federationId: fromHex(p.federation), msat: p.sats * 1000n })).sort(ascendingBy('federationId'));
+  for (const p of parts) outputs.push({ value: p.sats, script: scriptOf.get(p.federation), pays: 'reserves' });
+  if (escrow > 0n) {
+    if (!(escrowScript instanceof Uint8Array)) return no(`${escrow} sat fit nothing and no escrow script was given`);
+    if (escrow < P2TR_DUST_SATS) return no(`${escrow} sat is left for an escrow, below dust, and no reserve part can take it`);
+    outputs.push({ value: escrow, script: escrowScript, pays: 'escrow' });
+  }
+  return { ok: true, table: { networkId, roundId, proofId, bondTxid: bond.txid, bondVout: bond.vout,
+    entries: [...entries].sort(ascendingBy('entryId')), reserves, outputs } };
+}
 
 /**
  * DID THE ACCUSED SIGN THIS SPEND? The evidence shared by both template-3 rows. The spend is the accused's only if its own signature
@@ -1600,36 +1660,32 @@ export function slashHoldsOnRelease({ proof, release, prevouts, panels, holdBloc
 }
 
 /**
- * DID THIS NODE SIGN A SPEND THAT PAYS OTHER THAN ITS TABLE? `spend` is the release, or an escrow payout with `release` beside it: the
- * release carries H(payout_table) and the payout must spend it. Nothing is injected but the verifier: the outputs and the table are
- * compared, every output but the OP_RETURN, value and script. `signedResultId` is the spend's txid, `transcriptHash` the table's id.
+ * DID THIS NODE SIGN A RELEASE THAT PAYS OTHER THAN ITS TABLE? Nothing is injected but the verifier: the release's OP_RETURN comes first
+ * and commits to the table, and every output after it is compared with the table's, in order, value and script.
+ * `signedResultId` is the release's txid, `transcriptHash` the table's id.
  *
- * Only a spend whose witness names its signers reaches this. A payout signed by the census key is one FROST signature and names no one.
+ * ONLY A RELEASE. The table lists the release's own outputs, so an escrow payout has no table to be compared with, and a spend signed by
+ * the census key is one FROST signature that names no one.
  */
-export function slashHoldsOnReleaseTable({ proof, spend, release = null, prevouts, table, advert, verify }) {
+export function slashHoldsOnReleaseTable({ proof, spend, prevouts, table, advert, verify }) {
   const no = (why) => ({ slashed: false, why });
   if (!proof) return no('no proof');
   if (hex(proof.playerPubkey) !== hex(EMPTY)) return no('this row names no player: the table does');
   const signed = signedSpend({ proof, spend, prevouts, verify });
   if (!signed.ok) return no(signed.why);
-  let carrier = signed.tx;
-  if (release) {
-    try { carrier = parseTransaction(release); } catch (e) { return no(`the release attached is not a transaction: ${e.message}`); }
-    if (!signed.tx.inputs.some((i) => hex(i.previousTxid) === hex(carrier.txid))) return no('that payout does not spend the release attached');
-  }
-  const said = arbitrationCommitmentIn(carrier.outputs);
-  if (!said || said.hint.length !== 32) return no('that release commits to no table');
+  const [first, ...paid] = signed.tx.outputs;
+  const said = first ? arbitrationCommitmentIn([first]) : null;
+  if (!said || said.hint.length !== 32) return no('that release does not open with the OP_RETURN of its table');
   let t;
-  try { t = decodeSlashTable(table); } catch (e) { return no(`the evidence is not a slash payout table: ${e.message}`); }
-  const id = slashTableId(t);
+  try { t = decodeSlashPayoutTable(table); } catch (e) { return no(`the evidence is not a slash payout table: ${e.message}`); }
+  const id = slashPayoutTableId(t);
   if (hex(id) !== hex(said.hint)) return no('the table attached is not the one the release committed to');
   if (hex(proof.transcriptHash) !== hex(id)) return no('the proof is measured against another table');
   if (hex(t.roundId) !== hex(proof.roundId)) return no('the table attached is for a different round');
   if (hex(t.proofId) !== hex(said.proofId)) return no('the table attached is for a different fraud proof than the release');
 
-  const paid = signed.tx.outputs.filter((o) => o.script[0] !== 0x6a).sort(byOutput).map(outputSortKey);
-  const owed = [...t.outputs].sort(byOutput).map(outputSortKey);
-  if (paid.length === owed.length && paid.every((x, i) => x === owed[i])) return no('the spend pays exactly its table');
+  const same = paid.length === t.outputs.length && paid.every((o, i) => o.value === t.outputs[i].value && hex(o.script) === hex(t.outputs[i].script));
+  if (same) return no('the release pays exactly its table');
 
   const elsewhere = ownBond(proof, advert);
   if (elsewhere) return no(elsewhere);
@@ -1638,7 +1694,7 @@ export function slashHoldsOnReleaseTable({ proof, spend, release = null, prevout
     offence: RELEASE_OFF_TABLE,
     bond: { txid: proof.bondTxid, vout: proof.bondVout },
     commitment: slashCommitment(proof),
-    why: `the node signed a spend of ${paid.length} outputs that is not the ${owed.length} of its table`,
+    why: `the node signed a release of ${paid.length} outputs that is not the ${t.outputs.length} of its table, in order`,
   };
 }
 

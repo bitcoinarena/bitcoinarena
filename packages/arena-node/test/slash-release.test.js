@@ -6,12 +6,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import {
-  slashHoldsOnRelease, slashHoldsOnReleaseTable, encodeSlashTable, decodeSlashTable, slashTableId, slashDistribution, encodeSlashProof, decodeSlashProof,
-  affectedEntries, RELEASE_WITHOUT_PROOF, RELEASE_OFF_TABLE,
+  slashHoldsOnRelease, slashHoldsOnReleaseTable, encodeSlashPayoutTable, decodeSlashPayoutTable, slashPayoutTableId, buildSlashPayoutTable, slashDistribution,
+  encodeSlashProof, decodeSlashProof, affectedEntries, RELEASE_WITHOUT_PROOF, RELEASE_OFF_TABLE,
 } from '../../arena-protocol/src/slash.js';
-import { releaseLeaf, tapLeafHash, slashLeaf } from '../../arena-protocol/src/bond-script.js';
+import { releaseLeaf, tapLeafHash } from '../../arena-protocol/src/bond-script.js';
 import { tapSighash, serializeSpend, scriptPathWitness } from '../../arena-protocol/src/bond-spend.js';
-import { arbitrationCommitment } from '../../arena-protocol/src/arbitration-tx.js';
+import { arbitrationCommitment, holdSlashSpend } from '../../arena-protocol/src/arbitration-tx.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { SLASH_REMAINDERS } from '../../arena-protocol/src/constants.js';
@@ -48,9 +48,10 @@ function signedRelease({ outputs, signers = [...A.slice(0, 5), ...B.slice(0, 5)]
   return serializeSpend({ ...tx, witnesses: [scriptPathWitness({ stack, script: leaf, controlBlock: new Uint8Array(65).fill(0xc0) })] });
 }
 
-const pays = [{ value: 40000000n, script: payee }, { value: 59990000n, script: reserves }];
-const table = { roundId, proofId, rows: [{ playerPubkey: b32(0xa1), amountMsat: 40000000000n }], outputs: pays };
-const commits = (id = proofId, t = table) => arbitrationCommitment(id, 900, slashTableId(t));
+const pays = [{ value: 40000000n, script: payee, pays: 'player_carrier' }, { value: 59990000n, script: reserves, pays: 'reserves' }];
+const table = { networkId: b32(0x10), roundId, proofId, bondTxid: b32(0x66), bondVout: 0,
+  entries: [{ entryId: b32(0xe1), playerPubkey: b32(0xa1), lossMsat: 40000000000n }], reserves: [{ federationId: b32(0xf1), msat: 59990000000n }], outputs: pays };
+const commits = (id = proofId, t = table) => arbitrationCommitment(id, 900, slashPayoutTableId(t));
 const proofOf = (spend, transcriptHash, change = {}) => ({ roundId, playerPubkey: EMPTY, nodePubkey: accused.key, transcriptHash,
   signedResultId: parseTransaction(spend).txid, bondTxid: advert.bondTxid, bondVout: advert.bondVout, ...change });
 
@@ -137,33 +138,39 @@ test('the leaf must be this round\'s, the transaction the one the proof names, t
 
 const onTable = (over = {}) => {
   const spend = over.spend || signedRelease({ outputs: [commits(), ...pays] });
-  return slashHoldsOnReleaseTable({ proof: proofOf(spend, slashTableId(table)), spend, prevouts, table: encodeSlashTable(table), advert, verify, ...over });
+  return slashHoldsOnReleaseTable({ proof: over.proof || proofOf(spend, slashPayoutTableId(table)), spend, prevouts, table: encodeSlashPayoutTable(table), advert, verify, ...over });
 };
 const offTable = (outputs, t = table) => {
   const spend = signedRelease({ outputs: [commits(proofId, t), ...outputs] });
-  return onTable({ spend, proof: proofOf(spend, slashTableId(t)), table: encodeSlashTable(t) });
+  return onTable({ spend, proof: proofOf(spend, slashPayoutTableId(t)), table: encodeSlashPayoutTable(t) });
 };
 
-test('the table has one id whatever order it is written in, and reads back', () => {
-  const swapped = { ...table, outputs: [...pays].reverse() };
-  assert.equal(toHex(slashTableId(swapped)), toHex(slashTableId(table)));
-  const back = decodeSlashTable(encodeSlashTable(table));
-  assert.equal(toHex(encodeSlashTable(back)), toHex(encodeSlashTable(table)));
-  assert.throws(() => decodeSlashTable(Uint8Array.of(0, 0, 0)), /not a slash payout table/);
+test('the PayoutTable\'s bytes are the ruling\'s, field by field, and its id is the tag over them (kanban #1021)', () => {
+  const h = (n, b) => toHex(new Uint8Array(n).fill(b));
+  const want = `01${h(32, 0x10)}${h(32, 0x51)}${toHex(proofId)}${h(32, 0x66)}00000000`
+    + `0001${h(32, 0xe1)}${h(32, 0xa1)}${(40000000000n).toString(16).padStart(16, '0')}`
+    + `0001${h(32, 0xf1)}${(59990000000n).toString(16).padStart(16, '0')}`
+    + `0002${(40000000n).toString(16).padStart(16, '0')}0022${toHex(payee)}01${(59990000n).toString(16).padStart(16, '0')}0022${toHex(reserves)}02`;
+  assert.equal(toHex(encodeSlashPayoutTable(table)), want);
+  assert.equal(toHex(slashPayoutTableId(table)), toHex(taggedHash('ARENA/v1/SlashPayoutTable', fromHex(want))));
+  assert.equal(toHex(encodeSlashPayoutTable(decodeSlashPayoutTable(encodeSlashPayoutTable(table)))), want);
+  assert.throws(() => decodeSlashPayoutTable(Uint8Array.of(2, 0, 0)), /version 1/);
+  assert.throws(() => encodeSlashPayoutTable({ ...table, outputs: [...pays].reverse() }), /pays in order/);
+  assert.throws(() => encodeSlashPayoutTable({ ...table, reserves: [{ federationId: b32(2), msat: 1n }, { federationId: b32(1), msat: 1n }] }), /not sorted/);
 });
 
-test('a release that pays its table exactly, in any output order, is no offence', () => {
+test('a release that pays its table exactly is no offence', () => {
   assert.match(onTable().why, /pays exactly its table/);
-  assert.match(offTable([...pays].reverse()).why, /pays exactly its table/);
 });
 
-test('moved money, an extra output or a missing one slashes the signer, and no replay is needed', () => {
+test('moved money, an extra output, a missing one or another order slashes the signer, and no replay is needed', () => {
   const thief = fromHex(`5120${'99'.repeat(32)}`);
   const cases = {
     'an output to another script': [{ value: 40000000n, script: thief }, pays[1]],
     'a sat moved between outputs': [{ value: 40000001n, script: payee }, { value: 59989999n, script: reserves }],
     'a new output': [...pays, { value: 1000n, script: thief }],
     'an output left out': [pays[1]],
+    'the outputs in another order': [...pays].reverse(),
   };
   for (const [name, outputs] of Object.entries(cases)) {
     const r = offTable(outputs);
@@ -172,36 +179,76 @@ test('moved money, an extra output or a missing one slashes the signer, and no r
   }
 });
 
-test('the table must be the release\'s: its hash in the OP_RETURN, its round, its fraud proof', () => {
-  const other = { ...table, rows: [] };
-  assert.match(onTable({ table: encodeSlashTable(other) }).why, /not the one the release committed to/);
-  assert.match(onTable({ table: Uint8Array.of(1) }).why, /not a slash payout table/);
-  const foreignRound = { ...table, roundId: b32(0x52) };
-  assert.match(offTable(pays, foreignRound).why, /different round/);
-  const foreignProof = { ...table, proofId: b32(0x53) };
-  assert.match(offTable(pays, foreignProof).why, /different fraud proof/);
+test('the table must be the release\'s: its hash in an OP_RETURN that comes first, its round, its fraud proof', () => {
+  const other = { ...table, entries: [] };
+  assert.match(onTable({ table: encodeSlashPayoutTable(other) }).why, /not the one the release committed to/);
+  assert.match(onTable({ table: Uint8Array.of(1) }).why, /not a slash payout table|bytes/);
+  assert.match(offTable(pays, { ...table, roundId: b32(0x52) }).why, /different round/);
+  assert.match(offTable(pays, { ...table, proofId: b32(0x53) }).why, /different fraud proof/);
   const noTable = signedRelease({ outputs: [arbitrationCommitment(proofId, 900), ...pays] });
-  assert.match(onTable({ spend: noTable, proof: proofOf(noTable, slashTableId(table)) }).why, /commits to no table/);
-});
-
-test('an escrow payout: k-of-m signers named, judged against the release it spends', () => {
-  const release = signedRelease({ outputs: [commits(), ...pays] });
-  const set = [...A].sort(compare);
-  const leaf = slashLeaf(set.map((p) => p.key), 5);
-  const input = { txid: parseTransaction(release).txid, vout: 1, sequence: 0xfffffffd };
-  const payout = signedRelease({ outputs: [{ value: 39000000n, script: payee }], signers: set.slice(0, 5), leaf, order: set, input });
-  const ran = (spend, rel = release) => onTable({ spend, release: rel, proof: proofOf(spend, slashTableId(table)) });
-  assert.equal(ran(payout).slashed, true, ran(payout).why);
-  const honest = signedRelease({ outputs: pays, signers: set.slice(0, 5), leaf, order: set, input });
-  assert.match(ran(honest).why, /pays exactly its table/);
-  const elsewhere = signedRelease({ outputs: pays, signers: set.slice(0, 5), leaf, order: set, input: { ...input, txid: b32(3) } });
-  assert.match(ran(elsewhere).why, /does not spend the release/);
+  assert.match(onTable({ spend: noTable, proof: proofOf(noTable, slashPayoutTableId(table)) }).why, /does not open with/);
+  const last = signedRelease({ outputs: [...pays, commits()] });
+  assert.match(onTable({ spend: last, proof: proofOf(last, slashPayoutTableId(table)) }).why, /does not open with/);
 });
 
 test('a spend signed by the census key names no one: a key-path FROST signature reaches no bond', () => {
   const tx = { version: 2, locktime: 0, inputs: [{ txid: b32(0x66), vout: 0, sequence: 0 }], outputs: [commits(), { value: 1n, script: payee }] };
   const spend = serializeSpend({ ...tx, witnesses: [[new Uint8Array(64).fill(1)]] });
-  assert.match(onTable({ spend, proof: proofOf(spend, slashTableId(table)) }).why, /no good signature/);
+  assert.match(onTable({ spend, proof: proofOf(spend, slashPayoutTableId(table)) }).why, /no good signature/);
+});
+
+const fed = (n, reserveSats = 0n) => ({ federation: toHex(b32(n)), status: 'OPEN', reserveKey: 'k', reserveSats, exposureCapSats: 100000000000n, script: fromHex(`5120${toHex(b32(n))}`) });
+const built = (over = {}) => buildSlashPayoutTable({ networkId: b32(0x10), roundId, proofId, bond: { txid: b32(0x77), vout: 1, value: 100000000n },
+  entries: [{ entryId: b32(2), playerPubkey: b32(0xa2), lossMsat: 7000000500n }, { entryId: b32(1), playerPubkey: b32(0xa1), lossMsat: 3000000000n }],
+  filer: { script: fromHex(`5120${'aa'.repeat(32)}`), sats: 5000n }, carriers: [{ script: fromHex(`5120${'c1'.repeat(32)}`), bondSats: 6000000n }, { script: fromHex(`5120${'c2'.repeat(32)}`), bondSats: 90000000n }],
+  federations: [fed(0xf2), fed(0xf1)], feeSats: 1500n, escrowScript: fromHex(`5120${'ee'.repeat(32)}`), ...over });
+const paysOf = (t) => t.outputs.map((o) => [o.pays, o.value]);
+const sum = (t) => t.outputs.reduce((a, o) => a + o.value, 0n);
+
+test('the table recomputed: order filer, carriers, reserves, escrow; carriers in score order to their own bond; outputs + fee = the bond (kanban #1021)', () => {
+  const r = built();
+  assert.equal(r.ok, true, r.why);
+  const facts = paysOf(r.table);
+  console.log('  FACTS:', JSON.stringify(facts.map(([p, v]) => [p, String(v)])));
+  assert.deepEqual(facts.slice(0, 3), [['filer', 5000n], ['player_carrier', 6000000n], ['player_carrier', 4000001n]], 'the first carrier to its bond, the rest to the next, rounded up');
+  assert.deepEqual(facts.slice(3).map((x) => x[0]), ['reserves', 'reserves']);
+  assert.equal(sum(r.table) + 1500n, 100000000n, 'outputs + fee = the bond');
+  assert.deepEqual(r.table.entries.map((e) => e.entryId[0]), [1, 2], 'ascending entry_id');
+  assert.deepEqual(r.table.reserves.map((f) => f.federationId[0]), [0xf1, 0xf2], 'ascending federation_id');
+  assert.equal(toHex(encodeSlashPayoutTable(built().table)), toHex(encodeSlashPayoutTable(r.table)), 'two members recompute one table, byte-equal');
+});
+
+test('the fee comes off the reserves, never the players', () => {
+  const low = built({ feeSats: 1000n }), high = built({ feeSats: 91000n });
+  const carried = (t) => t.outputs.filter((o) => o.pays === 'player_carrier').reduce((a, o) => a + o.value, 0n);
+  const reserved = (t) => t.outputs.filter((o) => o.pays === 'reserves').reduce((a, o) => a + o.value, 0n);
+  assert.equal(carried(low.table), carried(high.table));
+  assert.equal(reserved(low.table) - reserved(high.table), 90000n);
+});
+
+test('what fits no carrier and no federation is the escrow; with no panels, no carrier, the players\' part waits there (kanban #1021)', () => {
+  const none = built({ carriers: [] });
+  assert.equal(none.ok, true, none.why);
+  assert.ok(none.table.outputs.some((o) => o.pays === 'escrow' && o.value === 10000001n));
+  assert.equal(sum(none.table) + 1500n, 100000000n);
+  const noRoom = built({ federations: [] });
+  assert.equal(noRoom.table.outputs[noRoom.table.outputs.length - 1].pays, 'escrow');
+  assert.equal(sum(noRoom.table) + 1500n, 100000000n);
+  assert.match(built({ federations: [], escrowScript: null }).why, /no escrow script/);
+  assert.match(built({ feeSats: 99999999n }).why, /cannot carry/);
+});
+
+test('a fallback carries the same OP_RETURN and the same table as a release; only its wait differs (kanban #1021)', () => {
+  const { table: t } = built();
+  const hold = { txid: b32(0x66), vout: 0, value: 100000000n, script: holdScript };
+  const args = { hold, proofId, slashHeight: 900, table: t, tableId: slashPayoutTableId(t), clocks: { holdBlocks: 6, fallbackBlocks: 288 } };
+  const release = holdSlashSpend({ ...args, path: 'release' }), fallback = holdSlashSpend({ ...args, path: 'fallback' });
+  assert.equal(release.tx.outputs[0].script[0], 0x6a);
+  assert.deepEqual(release.tx.outputs.map((o) => toHex(o.script)), fallback.tx.outputs.map((o) => toHex(o.script)));
+  assert.deepEqual(release.tx.outputs.map((o) => o.value), fallback.tx.outputs.map((o) => o.value));
+  assert.deepEqual([release.tx.inputs[0].sequence, fallback.tx.inputs[0].sequence], [6, 288]);
+  assert.equal(release.fee.sats, 1500n);
+  assert.equal(holdSlashSpend({ ...args, path: 'return' }).ok, false);
 });
 
 test('panel members take nothing from a slash: there is no census share, only each real loss and the reserves (#976)', () => {
