@@ -103,6 +103,11 @@ test('the seat\'s doors: GET /federations lists what it holds, GET /federation-r
     const list = await (await fetch(`${S}/federations`)).json();
     assert.deepEqual(list.federations, []);
     assert.equal((await fetch(`${S}/federation-record?federation=zz`)).status, 400);
+    // what a seat asks the others before a founding draw (kanban #993)
+    const at = await (await fetch(`${S}/federation-records-at?height=188&federations=${toHex(FED)}`)).json();
+    assert.deepEqual([at.height, at.records], [188, []]);
+    assert.equal((await fetch(`${S}/federation-records-at?height=x&federations=${toHex(FED)}`)).status, 400);
+    assert.equal((await fetch(`${S}/federation-records-at?height=188&federations=zz`)).status, 400);
     const none = await fetch(`${S}/federation-record?federation=${toHex(FED)}`);
     assert.equal(none.status, 404);
     assert.match((await none.json()).why, /holds no round/);
@@ -670,4 +675,22 @@ test('how many of a federation\'s guardian seats hold it CLOSED: a retiring guar
   for (const seat of open.seats) await seat.gather(FED, inviteFederationId);
   assert.deepEqual(await ask(open, (i) => (i < 4 ? closed.seats[i].list() : open.seats[i].list())).closedAtGuardians(toHex(FED)), { closed: 3, of: 7 },
     'seats 1-3 closed (seat 0 is this one, holding none): below the threshold of 5');
+});
+
+test('after a restart every stored height still answers: restore keeps the newest alone, recordAt reads the rest (kanban #993)', async () => {
+  const { nodes, census } = seven();
+  const signedAt = (height, reserveSats) => {
+    const b = buildFederationRecord({ federationId: FED, networkId: NET, invite: INVITE, nominal: 7, guardians: guardiansOf(census, FED), height, reserveSats });
+    const id = federationRecordId(b);
+    return toHex(joinSignedRecord(encodeFederationRecord(b), nodes.map((n) => ({ nodePubkey: n.pubkey, signature: schnorr.sign(id, n.secret) }))));
+  };
+  const rows = [{ height: 100, record: signedAt(100, 1n) }, { height: 200, record: signedAt(200, 2n) }];
+  const store = { load: () => [{ federation: toHex(FED), record: rows[1].record }], save: () => {}, saveAt: () => {}, loadAt: () => rows };
+  const seat = federationRecords({ round: { pubkey: nodes[0].pubkey, identity: { secret: nodes[0].secret } }, newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: 156036, networkId: NET } }),
+    roster: { censusFor: () => census }, inviteFor: () => INVITE, networkId: NET, store });
+  assert.equal((await seat.restore(inviteFederationId)).restored, 1);
+  assert.equal(seat.recordAt(toHex(FED), 150).height, 100, 'the height below the newest');
+  assert.equal(seat.recordAt(toHex(FED), 250).height, 200);
+  assert.equal(seat.recordAt(toHex(FED), 50), null);
+  assert.equal(seat.recordAt(toHex(FED), 150).__hex, rows[0].record, 'as signed: what another seat is handed');
 });

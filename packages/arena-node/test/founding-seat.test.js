@@ -585,3 +585,16 @@ test('capacity pressure reaches the probe: a node named only under pressure star
   const [under, log] = tried({ pressureBondAt: async () => 2000000n }); await under.tick();
   assert.deepEqual(log, ['fresh'], 'named under pressure');
 });
+
+test('from the point the count holds to the version too: a cohort does not trigger on nodes it cannot draw (ruling #1023)', async () => {
+  const many = Array.from({ length: 11 }, (_, i) => { const k = key(`v${i}`); return { pubkey: k.pub, txid: taggedHash('TEST/tx-v', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
+    advert: { operatorId: `vop${i}`, guardianCapable: true, guardianEndpoint: `wss://v${i}`, protocolVersions: i < 9 ? [24] : [23], guardianOf: [] } }; });
+  const asOf = (candidateVersionAt) => { const w = { tip: 300 };
+    return createFoundingSeat({ records: () => [{ federation: 'aa'.repeat(32), status: 'OPEN', height: 100 }], entriesAt: async () => many, beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null),
+      tip: async () => w.tip, guardianInSetup: async () => true, setup: { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null }, nominal: 4, bondMinGuardian: 500000n,
+      clocks: { abandonBlocks: 1000, foundingWindow: 5 }, ownKey: many[0].pubkey, sign: () => new Uint8Array(64), verify, ...(candidateVersionAt ? { candidateVersionAt } : {}) }); };
+  const before = asOf(null); const a = await before.tick();
+  assert.equal(a.ok, true, a.why); assert.equal(a.trigger.kind, 'cohort');
+  const after = asOf(() => 24); const b = await after.tick();
+  assert.equal(b.ok, false, 'nine that speak it are not ten');
+});

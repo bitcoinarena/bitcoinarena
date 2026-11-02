@@ -141,7 +141,8 @@ import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departure
 import { emergencyDepartureStands } from '../../arena-protocol/src/emergency.js';
 import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture } from './absence-producer.js';
 import { createFoundingSeat, cliSetup, execCli } from './founding-seat.js';
-import { FOUNDING_WINDOW } from '../../arena-protocol/src/guardian-founding.js';
+import { FOUNDING_WINDOW, foundingPressurePoint, foundingCandidateVersion } from '../../arena-protocol/src/guardian-founding.js';
+import { foundingPressureReader } from './founding-pressure.js';
 import { createEndpointsOf, federationOfDir, configInvite } from './federation-endpoints.js';
 import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
@@ -4954,7 +4955,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       ? cliSetup({ run: runCli, apiPort: guardianNext.apiPort, password: readFileSync(`${guardianNext.dataDir}/admin-password`, 'utf8').trim(), guardianName: toHex(round.pubkey).slice(0, 16),
         codeFile: `${guardianNext.dataDir}/founding-code.json` })
       : null;
+    // THE TRIGGER HEIGHT'S CENSUS AND BEACON FROM THIS SEAT'S OWN CHAIN (measured live 2026-10-15): the newest round's
+    // view ends at that round's beacon, days before a notice - read at the height itself when the launcher hands the chain
+    // (main.js ballot.censusEntriesAt / blockHashAt; the hash in the byte order blockHashOf answers), the round's view otherwise
+    const foundingEntriesAt = async (h) => {
+      if (ballot && typeof ballot.censusEntriesAt === 'function' && chainNetworkId()) return ballot.censusEntriesAt(chainNetworkId(), h);
+      const v = viewOf(); if (!v) return null; const c = roster.censusAtHeight(v.rid, h); return c.ok ? c.entries : null;
+    };
+    // THE POINT THE PRESSURE RULE STARTS AT ON THIS NETWORK (§23A.3a, kanban #993/#1023): not named, B*_net is never read and every candidate stands
+    const pressurePoint = foundingPressurePoint(netName === 'test' ? 'testnet4' : netName);
+    const foundingBondMin = BigInt(process.env.ARENA_BOND_MIN_GUARDIAN || 50000);
     foundingSeat = createFoundingSeat({
+      pressureBondAt: foundingPressureReader({ point: pressurePoint, bondMinGuardian: foundingBondMin, censusAt: foundingEntriesAt, fetcher: fetch, seats: () => everySeat(),
+        held: (fid, h) => { const r = fedRecords.recordAt(fid, h); return r ? r.__hex : null; },
+        inviteFederationId: (inv) => inviteFedId(inv), networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, verify: schnorrVerify }),
+      candidateVersionAt: (h) => foundingCandidateVersion(h, pressurePoint),
       // each held record with its body: a DRAINING one seats its seated guardians first; the notices are read against it
       records: () => (fedRecords.list() || []).map((x) => { const held = fedRecords.recordOf(x.federation);
         return { federation: x.federation, status: x.status, height: x.height, load: typeof x.load === 'number' ? x.load : null, ...(held && held.record ? { record: held.record } : {}) }; }),
@@ -4967,13 +4982,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           .filter((d) => emergencyDepartureStands(d, { advert: (now.entries.find((e) => e && e.pubkey && toHex(e.pubkey) === toHex(d.nodePubkey)) || {}).advert,
             tip: now.height, verify: sv }).ok); },
       next: nextSetup ? { setup: nextSetup, inSetup: async () => nextSetup.inSetup() } : null,
-      // THE TRIGGER HEIGHT'S CENSUS AND BEACON FROM THIS SEAT'S OWN CHAIN (measured live 2026-10-15): the newest round's
-      // view ends at that round's beacon, days before a notice - read at the height itself when the launcher hands the chain
-      // (main.js ballot.censusEntriesAt / blockHashAt; the hash in the byte order blockHashOf answers), the round's view otherwise
-      entriesAt: async (h) => {
-        if (ballot && typeof ballot.censusEntriesAt === 'function' && chainNetworkId()) return ballot.censusEntriesAt(chainNetworkId(), h);
-        const v = viewOf(); if (!v) return null; const c = roster.censusAtHeight(v.rid, h); return c.ok ? c.entries : null;
-      },
+      entriesAt: foundingEntriesAt,
       beaconAt: async (h) => {
         if (ballot && typeof ballot.blockHashAt === 'function') { const x = await ballot.blockHashAt(h); return x ? fromHex(String(x)).reverse() : null; }
         const v = viewOf(); if (!v || !v.view || !Array.isArray(v.view.blocks)) return null; const b = v.view.blocks[h - v.view.firstHeight]; return b ? blockHashOf(b.header) : null;
@@ -4982,7 +4991,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       guardianInSetup: async () => foundingSetup.inSetup(),
       setup: foundingSetup,
       // guardingOpen: by default the census adverts' guardian_of[] naming a federation held OPEN, other than the one succeeded
-      nominal: g && Number.isInteger(g.federationNominal) ? g.federationNominal : 4, bondMinGuardian: BigInt(process.env.ARENA_BOND_MIN_GUARDIAN || 50000),
+      nominal: g && Number.isInteger(g.federationNominal) ? g.federationNominal : 4, bondMinGuardian: foundingBondMin,
       // a founding every 6 blocks on every network (guardian-founding.js FOUNDING_WINDOW); the genesis clock stays in the network id
       clocks: { ...fedClocks, foundingWindow: FOUNDING_WINDOW }, ownKey: round.pubkey, sign: (h) => schnorr.sign(h, round.identity.secret), verify: schnorrVerify,
       post: async (m) => { await Promise.all(networkSeats().map((u) => fetch(`${u}/founding`, { method: 'POST', body: JSON.stringify(m), signal: AbortSignal.timeout(15000) }).catch(() => null))); },
@@ -10435,6 +10444,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const i = bondIncentive({ bonds: f.guardianBonds, targetBondSats: r.targetBondSats, node: pleaFor, pressure: ['PRESSURE', 'CRITICAL', 'FULL'].includes(r.band) });
           return i ? { federation: f.federation, band: r.band, load: r.load, ...i } : null; }).filter(Boolean) : null;
         return claimJson(200, { ok: true, node: toHex(round.pubkey), censusHeight: now.ok ? now.height : null, ...v, ...(pleaFor ? { plea: capacityPlea(v, pleaFor), mine: incentives } : {}) });
+      }
+      // A FEDERATION'S RECORD IN FORCE AT A HEIGHT, as signed (§23A.3a, kanban #993/#1023): what a seat asks the others for before it draws a
+      // founding. The asker checks each at threshold itself; a federation this seat holds nothing of at that height is left out
+      if (req.method === 'GET' && url.pathname === '/federation-records-at') {
+        const height = Number(url.searchParams.get('height'));
+        const fids = String(url.searchParams.get('federations') || '').split(',').filter(Boolean).map((f) => f.toLowerCase());
+        if (!Number.isInteger(height) || height < 0 || fids.length > 64 || !fids.every((f) => /^[0-9a-f]{64}$/.test(f))) return text(res, 400, 'height, and federations as hex ids split by commas, at most 64');
+        const records = fids.flatMap((federation) => { const r = fedRecords && fedRecords.recordAt ? fedRecords.recordAt(federation, height) : null; return r && r.__hex ? [{ federation, height: r.height, record: r.__hex }] : []; });
+        return json(res, 200, { node: toHex(round.pubkey), height, records });
       }
       if (req.method === 'GET' && url.pathname === '/federations') {
         if (url.searchParams.get('fresh') === '1') { try { await fedRecords.gatherAll((inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; }); } catch { /* the kept ones */ } }
