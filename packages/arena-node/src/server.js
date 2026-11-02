@@ -278,7 +278,7 @@ import { createFundingBook } from './funding-book.js';
 import { LB_SCOPE } from '../../arena-protocol/src/leaderboard-payout.js';
 import { leaderboardWindow, leaderboardWinners } from '../../arena-protocol/src/leaderboard-winners.js';
 import { FEES, FEES_TODAY, roundSplitBps, ROUND_TOTAL_MAX_BPS, MARKET_TOTAL_MAX_BPS, ITEM_TOTAL_PCT, encodeFeeApproval, feeApprovalId } from '../../arena-protocol/src/fee-proposal.js';
-import { createReservePayouts, lnurlClient } from './reserve-payout.js';
+import { createReservePayouts, lnurlClient, heldBeforeOwnPayment } from './reserve-payout.js';
 import { askerOrder } from './payout.js';
 import { trancheIdOf } from './funding-book.js';
 import { moveTargets } from './reserve-move.js';
@@ -1800,7 +1800,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const others = recs.filter((r) => r.proposal !== t.id);
         const paidByProposal = others.filter((r) => mine.has(r.proposal)).reduce((a, r) => a + BigInt(r.plan.amountSats), 0n);
         const paidInWindow = others.filter((r) => Number(r.plan.decidableAt) > tip - fundingSchedule.capWindow).reduce((a, r) => a + BigInt(r.plan.amountSats), 0n);
-        const cap = capStands({ proposalSats: t.proposalSats, paymentSats: t.amountSats, reservesSats: held, paidByProposalSats: paidByProposal, paidInWindowSats: paidInWindow });
+        const own = reservePayouts ? reservePayouts.list().find((r) => r.proposal === t.id) : null;
+        const cap = capStands({ proposalSats: t.proposalSats, paymentSats: t.amountSats, reservesSats: heldBeforeOwnPayment(held, own), paidByProposalSats: paidByProposal, paidInWindowSats: paidInWindow });
         if (!cap.ok) { const k = `${t.id}:${cap.why}`; if (!capLogged.has(k)) { capLogged.add(k); console.log(`[funding] ${t.proposal.slice(0, 16)} payment ${t.k + 1}/${t.of} waits: ${cap.why}`); } continue; }
         out.push({ id: t.id, lnurl: t.lnurl, amountSats: BigInt(t.amountSats), decidableAt: t.decidableAt });
       }
