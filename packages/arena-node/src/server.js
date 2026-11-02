@@ -75,7 +75,7 @@ import { randomBytes, createPublicKey, verify as ecdsaVerify } from 'node:crypto
 import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX } from '../../arena-protocol/src/donations-read.js';
 import { WebSocketServer } from 'ws';
-import { createP2pTunnels, carryP2p, carryApi, P2P_TUNNEL_PATHS, GUARDIAN_API_RELAY_PATH } from './p2p-tunnel.js';
+import { createP2pTunnels, carryP2p, carryApi, P2P_TUNNEL_PATHS, GUARDIAN_NEXT_PATH, GUARDIAN_API_RELAY_PATH } from './p2p-tunnel.js';
 import { createAddressBook, announceOwn, pullAnnouncements } from './address-book.js';
 import { reserveKeyCache } from './reserve-key-cache.js';
 import { ownServices } from './own-services.js';
@@ -10314,9 +10314,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // A PEER GUARDIAN'S API, carried to its node's current endpoint (kanban #577, p2p-tunnel.js GUARDIAN_API_RELAY_PATH): only for a
     // census node the tunnel follows, so the seat carries nothing but guardians' own public API
     if (at.startsWith(GUARDIAN_API_RELAY_PATH)) {
-      const root = p2pTunnels ? p2pTunnels.rootOf(at.slice(GUARDIAN_API_RELAY_PATH.length)) : null;
+      const relayed = at.slice(GUARDIAN_API_RELAY_PATH.length);
+      const relayNext = relayed.endsWith(GUARDIAN_NEXT_PATH);       // the node's second federation (kanban #1032)
+      const root = p2pTunnels ? p2pTunnels.rootOf(relayNext ? relayed.slice(0, -GUARDIAN_NEXT_PATH.length) : relayed) : null;
       if (!root) { socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'); return; }
-      p2pWss.handleUpgrade(req, socket, head, (ws) => { carryApi(ws, root); });
+      p2pWss.handleUpgrade(req, socket, head, (ws) => { carryApi(ws, root, relayNext ? { path: GUARDIAN_NEXT_PATH } : {}); });
       return;
     }
     // /guardian-next is the guardian-next's, carried the same way to its own API port
