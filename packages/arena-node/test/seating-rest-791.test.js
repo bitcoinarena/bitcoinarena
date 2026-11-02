@@ -50,7 +50,7 @@ function world({ down = null } = {}) {
     return new Response('none here', { status: 404 });
   };
   const agent = seatingAgent({ round, roster, sign: signer(me), verify: (s, m, k) => schnorr.verify(s, m, k), fetcher, nowMs: () => clock.now });
-  return { agent, asked, clock, rid };
+  return { agent, asked, clock, rid, db };
 }
 
 test('a node with no seating doors is asked in one tick, then rests until NO_SEATING_REST_MS has passed', async () => {
@@ -89,3 +89,30 @@ for (const down of [true, 530]) {
     assert.ok(w.asked.some((a) => a.i === 6), 'asked after 60 s');
   });
 }
+
+// A NODE THAT DOES NOT ANSWER IS NOT SEATED (kanban #979): its PRESENT reached this seat, pushed out from behind it, and nobody reaches its address.
+const closeOn = async (w, down) => {
+  const pushed = ['game', 'settlement'].map((role) => signPresent({ roundId: w.rid, role, nodePubkey: nodes[down].pubkey }, signer(nodes[down])));
+  w.clock.now = Number(START) - 179000;                                  // the PRESENT window opens 60 s before seating_close
+  await w.agent.tick();
+  for (const p of pushed) assert.equal(w.agent.takePresent(p).ok, true);
+  w.clock.now += UNREACHABLE_REST_MS + 1000; await w.agent.tick();     // the second failed request
+  w.clock.now = Number(START) - 119000; await w.agent.tick();            // past seating_close
+};
+const seatedBy = (w) => w.db.prepare('SELECT seated FROM seat_signed WHERE role = ?').get('game');
+for (const down of [true, 530, 502]) test(`a node with a PRESENT that does not answer (${down}) is left out, and the next drawn node takes the seat`, async () => {
+  const w = world({ down });
+  await closeOn(w, 6);
+  const seated = JSON.parse(seatedBy(w).seated);
+  assert.equal(seated.includes(toHex(nodes[6].pubkey)), false, 'not seated');
+  assert.equal(seated.includes(toHex(nodes[7].pubkey)), true, 'the reserve is');
+  assert.equal(seated.length, 7);
+  assert.ok(w.agent.presentsOf(w.rid).some((p) => p.node === toHex(nodes[6].pubkey)), 'its PRESENT stays held, for the ordered rule');
+});
+
+test('a node that answers keeps its seat', async () => {
+  const w = world();
+  await w.agent.tick();
+  w.clock.now = Number(START) - 119000; await w.agent.tick();
+  assert.equal(JSON.parse(seatedBy(w).seated).includes(toHex(nodes[6].pubkey)), true);
+});
