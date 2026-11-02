@@ -12,6 +12,7 @@
 // and the maturity are read straight off genesis, which is where letter 24
 // put them, so nothing here can quietly hold a round against a set of its own.
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
+import { pippenger } from '@noble/curves/abstract/curve.js';
 import { ripemd160 } from '@noble/hashes/legacy.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
@@ -148,4 +149,13 @@ export const ecdhShared = (secret, theirXOnly) => {
 };
 
 /** What `splitSecret` and `shareOpensTo` are handed when a node checks a handout. */
-export const feldmanGroup = { pointFromScalar, combinePoints, ecdhShared, pointX };
+/** Sum of scalar * point over public points and scalars: Pippenger, for the census key's batched checks. The identity is 33 zero bytes, as above. */
+export const msm = (points, scalars) => {
+  const pairs = [];
+  points.forEach((p, i) => { const k = scalars[i] % secp256k1.Point.Fn.ORDER; if (k !== 0n && p.some((b) => b !== 0)) pairs.push([secp256k1.Point.fromBytes(p), k]); });
+  if (!pairs.length) return new Uint8Array(33);
+  const sum = pippenger(secp256k1.Point, pairs.map((x) => x[0]), pairs.map((x) => x[1]));
+  return sum.equals(secp256k1.Point.ZERO) ? new Uint8Array(33) : sum.toBytes(true);
+};
+
+export const feldmanGroup = { pointFromScalar, combinePoints, ecdhShared, pointX, msm };

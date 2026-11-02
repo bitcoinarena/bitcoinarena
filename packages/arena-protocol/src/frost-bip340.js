@@ -186,3 +186,50 @@ export function verifyShare340({ id, share, publicShare, groupPublicKey, message
     return toHex(curve.pointFromScalar(share)) === toHex(rhs);
   } catch { return false; }
 }
+
+/**
+ * ONE NONCE PAIR PER NODE, FOR ITS SEVERAL SHARES (the census key, spec 5A.3B, kanban #972). `signShare340` ties a pair to one x, so a node of
+ * weight 100 would send 100 pairs. Here a participant of the commitment list is a node, with its binding factor; the Lagrange coefficients
+ * are the shares', over every x any signer brought, and z_k = d_k + rho_k * e_k + c * (sum over its x of lambda_x * s_x). The signing list is
+ * as long as the number of nodes, and `aggregate340` and a BIP-340 verifier take the answer as they are.
+ *
+ * `id` the node's number in the list; `held` Map x -> share; `lambda` Map x -> coefficient, from census-dkg.js lagrangeOf over all the x.
+ */
+export function signNodeShare340({ id, held, lambda, groupPublicKey, nonces, message, commitments, curve }) {
+  if (!hasEvenY(groupPublicKey)) throw new Error('that group key has odd y: normalise the secret when it is dealt, not here');
+  const okNonce = (n) => typeof n === 'bigint' && n > 0n && n < FIELD;
+  if (!nonces || !okNonce(nonces.hiding) || !okNonce(nonces.binding))
+    throw new Error('that signer has no usable nonce pair: each nonce is a non-zero scalar, or z gives the signing share away');
+  const factors = bindingFactors({ groupPublicKey, commitments, message, context: TR_CONTEXT });
+  const mine = factors.find((f) => String(f.id) === String(id));
+  if (!mine) throw new Error(`participant ${id} did not commit to this signature`);
+  const commitment = groupCommitment({ commitments, factors, curve });
+  const flip = hasEvenY(commitment) ? 1n : -1n;
+  const c = challenge340(xOnly(commitment), xOnly(groupPublicKey), message);
+  let weighted = 0n;
+  for (const [x, share] of held) weighted = mod(weighted + mod(lambda.get(x) * share));
+  return mod(mod(flip * nonces.hiding) + mod(flip * mod(nonces.binding * mine.factor)) + mod(weighted * c));
+}
+
+/**
+ * IS ONE NODE'S SHARE WHAT ITS PUBLIC SHARES SAY: z_k.G = s.(D_k + rho_k.E_k) + c.(sum of lambda_x.Y_x), so a signature that fails names the
+ * node that broke it, as verifyShare340 does. `publicPart` is the sum of lambda_x.Y_x over that node's x.
+ */
+export function verifyNodeShare340({ id, share, publicPart, groupPublicKey, message, commitments, curve }) {
+  if (typeof share !== 'bigint' || share <= 0n || share >= FIELD || !Array.isArray(commitments)) return false;
+  const factors = bindingFactors({ groupPublicKey, commitments, message, context: TR_CONTEXT });
+  const mine = factors.find((f) => String(f.id) === String(id));
+  const own = commitments.find((x) => String(x.id) === String(id));
+  if (!mine || !own) return false;
+  const R = groupCommitment({ commitments, factors, curve });
+  const sign = hasEvenY(R) ? 1n : FIELD - 1n;
+  const c = challenge340(xOnly(R), xOnly(groupPublicKey), message);
+  try {
+    const rhs = curve.combinePoints([
+      { point: own.hiding, coefficient: sign },
+      { point: own.binding, coefficient: mod(sign * mine.factor) },
+      { point: publicPart, coefficient: c },
+    ]);
+    return toHex(curve.pointFromScalar(share)) === toHex(rhs);
+  } catch { return false; }
+}
