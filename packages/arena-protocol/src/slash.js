@@ -1485,3 +1485,15 @@ function concat(a, b) {
   out.set(b, a.length);
   return out;
 }
+
+/**
+ * A NODE'S OPERATOR, the key its advertisement declares (5A.13): 32 bytes, or null for a declaration that names no key, which conflicts with nobody.
+ * operator-conflict.js reads it (kept when the conflict check left this file, kanban #1040).
+ */
+export function operatorKeyOf(advert) {
+  const said = advert && advert.operatorId;
+  if (typeof said !== 'string' || !/^[0-9a-f]{64}$/.test(said)) return null;
+  const key = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) key[i] = parseInt(said.slice(i * 2, i * 2 + 2), 16);
+  return key;
+}
