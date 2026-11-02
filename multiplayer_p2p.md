@@ -2734,7 +2734,21 @@ seat refuses a seating whose member's `slash_presig` does not verify. The signed
 transaction is normally never published. The hash type leaves everything else
 open: whoever files the slash adds a fee input and the proof's `OP_RETURN`, and
 the release pays their fee back. A slash uses the `slash_presig` of the round
-the offence is in; an offence with no round uses the node's newest. A node
+the offence is in; an offence with no round uses the node's newest.
+
+A seated node signs one per template-3 bond it holds, none for a bond of another
+template or one already started. The seating certificate carries them after its
+justifications, so whoever holds the certificate holds what a slash needs, and a
+seat checks them with it; a seating with no template-3 bond is byte for byte as
+before. A seat counts a member's seating signature only with its presigs, so it
+builds no certificate without them, and refuses one that lacks a presig or carries
+one that does not verify. `GET /slash-presig` serves one with the panels its hold
+output names. A hold output depends on the round only through its panels, so the two
+roles of a round share one presig, and so do all rounds of a table, which share one
+draw: the seating of its first round and of each check-in carries it for the rounds
+it seats. A slash on a table's later round uses that presig (kanban #972).
+
+A node
 also posts one in an advertisement update when it bonds (the bond's txid does
 not exist before), naming panels drawn as below, and a template-3 bond counts only
 with it `census_confirmations` deep.

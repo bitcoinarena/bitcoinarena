@@ -53,6 +53,7 @@ test('unused rounds past their time go with every committee and seating row; use
     CREATE TABLE IF NOT EXISTS seat_sigs (round_id BLOB, role TEXT, seating TEXT, node TEXT, signature BLOB);
     CREATE TABLE IF NOT EXISTS seat_certs (round_id BLOB, role TEXT, cert BLOB);
     CREATE TABLE IF NOT EXISTS seat_signed (round_id BLOB, role TEXT, seated TEXT, signature BLOB);
+    CREATE TABLE IF NOT EXISTS seat_presigs (round_id BLOB, node TEXT, txid TEXT, vout INTEGER, signature BLOB, kept_ms INTEGER);
     CREATE TABLE IF NOT EXISTS seat_equivocations (round_id BLOB, role TEXT, a BLOB, b BLOB);`);
   assert.ok(!usedMarkerTables(db).some((t) => COMMITTEE_TABLES.includes(t)), 'the committee set never marks a round used');
   assert.ok(usedMarkerTables(db).includes('entries') && usedMarkerTables(db).includes('seat_equivocations'));
@@ -63,7 +64,7 @@ test('unused rounds past their time go with every committee and seating row; use
     db.prepare('INSERT INTO rounds (round_id, contract, opened_ms) VALUES (?, ?, 0)').run(id(n), Buffer.from([n]));
     db.prepare('INSERT INTO signer_nodes (round_id, pubkey) VALUES (?, ?)').run(id(n), id(100 + n));
     db.prepare('INSERT INTO round_beacons (round_id, hash, height, time_ms) VALUES (?, ?, 1, 0)').run(id(n), id(200));
-    for (const t of ['seat_presents', 'seat_sigs', 'seat_certs', 'seat_signed']) db.prepare(`INSERT INTO ${t} (round_id) VALUES (?)`).run(id(n));
+    for (const t of ['seat_presents', 'seat_sigs', 'seat_certs', 'seat_signed', 'seat_presigs']) db.prepare(`INSERT INTO ${t} (round_id) VALUES (?)`).run(id(n));
   };
   add(1, 1000);                      // unused, past: goes
   add(2, 1000);                      // used: an entry
@@ -76,7 +77,7 @@ test('unused rounds past their time go with every committee and seating row; use
   const forgot = [];
   const p1 = pruneUnusedRounds({ db, nowMs: 2000, batch: 3, goesAt, onDeleted: (rid) => forgot.push(Buffer.from(rid)[0]) });
   assert.deepEqual([p1.deleted, p1.looked, p1.done], [1, 3, false], 'the first batch of 3: round 1 only');
-  assert.equal(p1.rows, 1 + 1 + 4 + 1, 'its signer node, beacon, four seating rows and the round');
+  assert.equal(p1.rows, 1 + 1 + 5 + 1, 'its signer node, beacon, five seating rows and the round');
   const p2 = pruneUnusedRounds({ db, nowMs: 2000, batch: 3, afterRowid: p1.lastRowid, goesAt, onDeleted: (rid) => forgot.push(Buffer.from(rid)[0]) });
   assert.deepEqual([p2.deleted, p2.looked, p2.done], [1, 2, true], 'then round 5; the table is done');
   assert.deepEqual(forgot, [1, 5], 'each deleted round handed on (the seating agent forgets its certificates)');

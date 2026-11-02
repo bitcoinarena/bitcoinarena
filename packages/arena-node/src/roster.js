@@ -18,6 +18,7 @@
 // that reach the census the same way it counts the files that reach the core.
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { deriveCensus, censusRootOf } from '../../arena-protocol/src/census.js';
+import { presignedBond, roundPresigPlan } from '../../arena-protocol/src/slash-presig.js';
 import { standingKeysName } from '../../arena-protocol/src/census-key.js';
 import { dropsAbsent, withoutAbsent, presenceWindow, censusTimeMs, ABSENT_WHY } from '../../arena-protocol/src/presence.js';
 import { selectCommittee, drawCommittee, slotsForRole, drawAttestors } from '../../arena-protocol/src/sortition.js';
@@ -225,8 +226,9 @@ export function censusEvidenceOf(census, view) {
 }
 
 export class Roster {
-  constructor(round, { chainFor = NO_CHAIN_VIEW, randomnessFor = NO_BEACON, seatedFor = null, absence = null, standingKeys = null } = {}) {
+  constructor(round, { chainFor = NO_CHAIN_VIEW, randomnessFor = NO_BEACON, seatedFor = null, absence = null, standingKeys = null, tweakPoint = null } = {}) {
     this.round = round;
+    this.tweakPoint = tweakPoint;     // the curve a hold output is built with (slash-presig.js)
     // THE CENSUS KEYS THIS NODE'S CHAIN SCAN FOUND (5A.3B, kanban #972): a function, as the list grows. A census is a function of them too, so they name its caches.
     this.standingKeys = standingKeys;
     // THE ABSENT OF A 22 CENSUS (§5A.3, kanban #727): `{ claimFor(rootHex), check(claims, { census, w }) }` - the seat's presence book
@@ -852,6 +854,28 @@ export class Roster {
       closeMs: heartbeatCloseMs(contract, slot), root: census.root };
     this.committees.set(kept, answer);
     if (this.committees.size > this.#perRoundKept()) this.committees.delete(this.committees.keys().next().value);
+    return answer;
+  }
+
+  /**
+   * WHAT A ROUND ASKS OF ITS TEMPLATE-3 BONDS (5A.3B, kanban #972): { ok, plan }, roundPresigPlan over the census and seed its committees are drawn on. A census with none costs a look at its
+   * entries and draws nothing. `drawsAttestors` and `attestorKeys` are the game's: a roster reads no manifest. `tweakPoint` was given at construction.
+   */
+  slashHoldsFor(roundIdBytes, { posted = null, drawsAttestors = false, attestorKeys = [] } = {}) {
+    const contract = this.#held(roundIdBytes) || posted;
+    if (!contract) return { ok: false, why: 'this node holds no such round' };
+    const census = this.censusFor(roundIdBytes, null, this.#held(roundIdBytes) ? {} : { posted });
+    if (!census.ok) return census;
+    if (!census.entries.some(presignedBond)) return { ok: true, plan: new Map() };
+    const seeded = this.seedFor(roundIdBytes, contract);
+    if (!seeded.ok) return { ok: false, why: seeded.why, root: census.root };
+    const kept = `${toHex(roundIdBytes)}:holds:${toHex(census.root)}:${toHex(seeded.seed)}`;
+    if (this.committees.has(kept)) return this.committees.get(kept);
+    const answer = roundPresigPlan({ entries: census.entries, contract, committeeSeed: seeded.seed, drawsAttestors, attestorKeys, tweakPoint: this.tweakPoint });
+    if (answer.ok) {
+      this.committees.set(kept, answer);
+      if (this.committees.size > this.#perRoundKept()) this.committees.delete(this.committees.keys().next().value);
+    }
     return answer;
   }
 

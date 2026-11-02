@@ -7791,6 +7791,56 @@
  },
  {
   "method": "GET",
+  "path": "/slash-presig",
+  "params": "query: txid, vout (a bond as the census lists it), round (optional)",
+  "auth": "none; only when seating is on (ARENA_SEATING=1)",
+  "returns": "200 JSON { round, node, txid, vout, signature, panels } / 400 / 404",
+  "purpose": "A template-3 bond's slash_presig, the one of the round named, or with no round the newest this seat holds, with the panels its hold output names.",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "A bond's slash_presig",
+  "query": [
+   {
+    "name": "txid",
+    "required": true,
+    "description": "The bond's txid, in the bytes the census lists it."
+   },
+   {
+    "name": "vout",
+    "required": true,
+    "description": "Its output."
+   },
+   {
+    "name": "round",
+    "required": false,
+    "description": "The round the offence is in. Left out: an offence with no round."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The 65-byte signature as hex, and the panels, null when this seat no longer holds the round."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Malformed id or request."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "No slash_presig held for that bond, or seating is off."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
   "path": "/seating-batch",
   "params": "query rounds (1-64 round ids, comma list)",
   "auth": "none; only when seating is on (ARENA_SEATING=1)",
