@@ -118,11 +118,26 @@ export const OFFENCES = [
 ];
 
 /**
+ * WHICH WAY A FALSE RESULT WENT, for the player it named (kanban #975): 'RAISED' when the signed result is better for them than
+ * the replay's, 'LOWERED' when worse, 'SAME' when neither outcome nor score moved. Better is what a payout reads: a delivery over
+ * a stake handed back over a lost one, then the score. `signed` and `replayed` are `{ outcome, score }`; null if either is missing.
+ */
+const RESULT_STANDING = Object.freeze({ DELIVERED: 2, VOID: 1, FAILED: 0, FORFEIT: 0 });
+export function resultMoved({ signed, replayed } = {}) {
+  if (!signed || !replayed || !(signed.outcome in RESULT_STANDING) || !(replayed.outcome in RESULT_STANDING)) return null;
+  const by = RESULT_STANDING[signed.outcome] - RESULT_STANDING[replayed.outcome] || signed.score - replayed.score;
+  return by > 0 ? 'RAISED' : by < 0 ? 'LOWERED' : 'SAME';
+}
+
+/**
  * §5A.3 (RULED 2026-09-22): WHO A SLASH HARMED, read off the offence and never judged.
  *
- * Two of the six name ONE entry - the player the contradicted or doubled result was about. The other
- * four harmed the whole paying field, so they name every FINANCIALLY ACTIVATED entry (§22A's fee base),
- * and `OPERATOR_PLAYED` drops the operator's own, which §5A.13 voids.
+ * Three name ONE entry, and it is not always the one harmed (kanban #975). A result that LOWERED that player harmed them. A result
+ * that raised them harmed everybody else, and paying the named player would hand a committee's friend the slash for the lie told
+ * in their favour - so they get nothing and the other FINANCIALLY ACTIVATED entries are named. A doubled result says nothing about
+ * which way it went, so it is read the same way: a player it lowered is shown by the replay's proof, not this one.
+ * The other four harmed the whole paying field, so they name every activated entry (§22A's fee base),
+ * and `OPERATOR_PLAYED` drops the operator's own, which §5A.13 voids. With nobody named, §5A.3's half goes to the pool.
  *
  * `entries` are the round's, each `{ playerPubkey, netStakeMsat, activated, operatorOwn }`. The caller
  * supplies them because only a node holding the round knows which entries paid; this decides nothing
@@ -131,12 +146,16 @@ export const OFFENCES = [
 // A CONTRADICTED AUDIT NAMES ONE ENTRY TOO (kanban #724, #725): the one whose contradicted run its proof names - the auditor
 // vouched for every entry, but only that one's player was harmed by the run it said replays.
 export const NAMES_ONE_ENTRY = [TWO_RESULTS, REPLAY_CONTRADICTS, AUDIT_CONTRADICTED];
-export function affectedEntries({ offence, playerPubkey, entries = [] } = {}) {
+export function affectedEntries({ offence, playerPubkey, entries = [], signed, replayed } = {}) {
   if (!OFFENCES.includes(offence)) return { ok: false, why: `${offence} is not one of the offences` };
   if (NAMES_ONE_ENTRY.includes(offence)) {
     const one = entries.find((e) => e && hex(e.playerPubkey) === hex(playerPubkey));
     if (!one) return { ok: false, why: 'that proof names a player the round has no entry for' };
-    return { ok: true, affected: [one] };
+    const others = entries.filter((e) => e && e.activated && e !== one);
+    if (offence === TWO_RESULTS) return { ok: true, affected: others };
+    const moved = resultMoved({ signed, replayed });
+    if (!moved) return { ok: false, why: 'who a false result harmed needs both the signed result and the replay' };
+    return { ok: true, affected: moved === 'LOWERED' ? [one] : others, moved };
   }
   const paying = entries.filter((e) => e && e.activated);
   const affected = offence === OPERATOR_PLAYED ? paying.filter((e) => !e.operatorOwn) : paying;

@@ -82,9 +82,10 @@ test('valid: the AUDIT vouched for the run a valid objection contradicted - AUDI
   const two = new Uint8Array([...record, ...record]);
   assert.equal(cutAuditSlashEvidence(two).length, 2);
   assert.equal(cutAuditSlashEvidence(two.subarray(0, record.length + 10)).length, 1, 'a record that does not fit ends the stream');
-  // WHO IT HARMED: the one entry its proof names, as for a result contradicted by replay
+  // WHO IT HARMED: the one entry its proof names when the run it vouched for lowered them, as for a result contradicted by replay
   assert.ok(NAMES_ONE_ENTRY.includes(AUDIT_CONTRADICTED));
   const harmed = affectedEntries({ offence: AUDIT_CONTRADICTED, playerPubkey: proof.playerPubkey,
+    signed: { outcome: 'FAILED', score: 1 }, replayed: { outcome: 'DELIVERED', score: 2 },
     entries: [{ playerPubkey: ENTRY.playerPubkey, activated: true }, { playerPubkey: OTHER_ENTRY.playerPubkey, activated: true }] });
   assert.deepEqual(harmed.affected.map((e) => toHex(e.playerPubkey).slice(0, 2)), ['a1']);
 });

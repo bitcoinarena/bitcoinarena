@@ -154,6 +154,7 @@ import { DrawnAttestor } from './drawn-attestor.js';
 import { createAuditDesk, agreedRunsOf, forwardDigest } from './audit-seat.js';
 import { RoundAuditor, auditorNet } from './round-auditor.js';
 import { buildObjectionBundle } from './objection-bundle.js';
+import { decodeObjectionBundle } from '../../arena-protocol/src/objection.js';
 import { runId as runIdOf } from './verdict.js';
 import { auditEligible, vrfSecretFor, decodeAudit, auditId, auditResultsHash } from '../../arena-protocol/src/auditor.js';
 import { makeVrf, SUITE_SECP256K1_TAI } from '../../arena-protocol/src/vrf.js';
@@ -10049,9 +10050,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
         const owing = [];
         for (const p of held) {
-          let proof;
-          try { proof = splitSlashEvidence(p.bytes).proof; }
-          catch (e) { owing.push({ node: toHex(p.nodePubkey), why: `unreadable proof: ${e.message}` }); continue; }
+          // WHICH WAY THE FALSE RESULT WENT DECIDES WHO IT HARMED (kanban #975): the signed result beside the proof, and the replay's
+          // result in the objection that held
+          let proof, signed, replayed;
+          try {
+            const ev = splitSlashEvidence(p.bytes);
+            proof = ev.proof;
+            const b = decodePlayerResult(splitSignedResult(ev.signedResult).body);
+            signed = { outcome: b.outcome, score: b.score };
+            const held = round.objectionBundle(rid, eid);
+            const o = held ? decodeObjectionBundle(new Uint8Array(held)).objection : null;
+            if (o) replayed = { outcome: o.claimedOutcome, score: o.claimedScore };
+          } catch (e) { owing.push({ node: toHex(p.nodePubkey), why: `unreadable proof: ${e.message}` }); continue; }
 
           // THE OFFENCE IS NOT IN THE PROOF'S BYTES, and this node does not guess one. `encodeSlashProof`
           // carries a transcript hash and a signed result id and no offence field, because the offence is
@@ -10060,7 +10070,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // so that is the offence named here. A proof arriving by any other road would need its own
           // verdict carried with it, and until one does, none is invented.
           const said = await slashOwing({
-            proof, offence: REPLAY_CONTRADICTS, contract, roundIdBytes: new Uint8Array(rid), entries,
+            proof, offence: REPLAY_CONTRADICTS, contract, roundIdBytes: new Uint8Array(rid), entries, signed, replayed,
             slashHeight: height, tipHeight: at.tipHeight,
             censusAt: async () => censusKeys,
             bondSatsOf: async () => bondOf(proof.nodePubkey),

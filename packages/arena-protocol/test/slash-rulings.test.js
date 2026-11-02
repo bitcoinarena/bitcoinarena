@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  slashHeightIsValid, affectedEntries, playersShares, NAMES_ONE_ENTRY, OFFENCES,
+  slashHeightIsValid, affectedEntries, playersShares, resultMoved, NAMES_ONE_ENTRY, OFFENCES,
   TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, SETTLED_WITHOUT_AUTHORITY,
   OPERATOR_PLAYED, FEE_WITHOUT_SERVICE, AUDIT_CONTRADICTED,
 } from '../src/slash.js';
@@ -39,15 +39,18 @@ test('the slashing height is one the arbitration set names, between census heigh
   assert.match(at(900101).why, /above the tip/);
 });
 
-test('two offences name one entry and the other four name the paying field; a contradicted AUDIT names one entry (kanban #724, #725)', () => {
+const LOWERED = { signed: { outcome: 'FAILED', score: 10 }, replayed: { outcome: 'DELIVERED', score: 800 } };
+
+test('three offences name one entry and the other four name the paying field (kanban #724, #725, #975)', () => {
   assert.deepEqual(NAMES_ONE_ENTRY, [TWO_RESULTS, REPLAY_CONTRADICTS, AUDIT_CONTRADICTED]);
-  const named = (offence) => affectedEntries({ offence, playerPubkey: ALICE, entries })
+  const named = (offence) => affectedEntries({ offence, playerPubkey: ALICE, entries, ...LOWERED })
     .affected.map((e) => toHex(e.playerPubkey).slice(0, 2));
   const facts = Object.fromEntries(OFFENCES.map((o) => [o, named(o)]));
   console.log('  FACTS (affected by offence):', JSON.stringify(facts));
   assert.deepEqual(facts, {
-    // the one the proof is about
-    [TWO_RESULTS]: ['a1'],
+    // a doubled result says nothing about which way it went, so the named player collects nothing from it
+    [TWO_RESULTS]: ['a2', 'a4'],
+    // a result that lowered the one the proof is about harmed them
     [REPLAY_CONTRADICTS]: ['a1'],
     [AUDIT_CONTRADICTED]: ['a1'],
     // every financially activated entry - Cara never paid, so she is not harmed by a money offence
@@ -57,6 +60,37 @@ test('two offences name one entry and the other four name the paying field; a co
     // ... except the operator's own, which §5A.13 voids
     [OPERATOR_PLAYED]: ['a1', 'a2'],
   });
+});
+
+test('a raised result pays the players it harmed and never the one it favoured (kanban #975)', () => {
+  for (const offence of [REPLAY_CONTRADICTS, AUDIT_CONTRADICTED]) {
+    const said = affectedEntries({ offence, playerPubkey: ALICE, entries, signed: { outcome: 'DELIVERED', score: 900 }, replayed: { outcome: 'DELIVERED', score: 100 } });
+    assert.equal(said.moved, 'RAISED');
+    assert.deepEqual(said.affected.map((e) => toHex(e.playerPubkey).slice(0, 2)), ['a2', 'a4'], offence);
+  }
+  // a run that did not move outcome or score favours nobody: the named player still collects nothing
+  const same = affectedEntries({ offence: REPLAY_CONTRADICTS, playerPubkey: ALICE, entries, signed: { outcome: 'FAILED', score: 7 }, replayed: { outcome: 'FAILED', score: 7 } });
+  assert.deepEqual([same.moved, same.affected.length], ['SAME', 2]);
+  // the only paying entry raised: nobody to pay, and the half goes to the pool (slashDistribution)
+  const alone = affectedEntries({ offence: REPLAY_CONTRADICTS, playerPubkey: ALICE, entries: [entries[0]], signed: { outcome: 'DELIVERED', score: 2 }, replayed: { outcome: 'FAILED', score: 1 } });
+  assert.deepEqual(alone.affected, []);
+});
+
+test('which way a false result went is what a payout reads: delivered, then a stake back, then lost, then the score', () => {
+  const r = (outcome, score = 0) => ({ outcome, score });
+  assert.equal(resultMoved({ signed: r('DELIVERED', 1), replayed: r('FAILED', 999) }), 'RAISED');
+  assert.equal(resultMoved({ signed: r('VOID'), replayed: r('FORFEIT') }), 'RAISED');
+  assert.equal(resultMoved({ signed: r('FAILED', 999), replayed: r('VOID') }), 'LOWERED');
+  assert.equal(resultMoved({ signed: r('FORFEIT'), replayed: r('DELIVERED', 1) }), 'LOWERED');
+  assert.equal(resultMoved({ signed: r('DELIVERED', 5), replayed: r('DELIVERED', 6) }), 'LOWERED');
+  assert.equal(resultMoved({ signed: r('DELIVERED', 5) }), null);
+  assert.equal(resultMoved({ signed: r('WON'), replayed: r('FAILED') }), null);
+});
+
+test('with no replay nobody is named: who a false result harmed is not guessed', () => {
+  const said = affectedEntries({ offence: REPLAY_CONTRADICTS, playerPubkey: ALICE, entries });
+  assert.equal(said.ok, false);
+  assert.match(said.why, /needs both the signed result and the replay/);
 });
 
 test('a proof naming a player the round has no entry for is refused, not silently empty', () => {
@@ -88,7 +122,7 @@ test('with nobody harmed who paid anything, the split says so rather than return
 test('one round with several slashed nodes: each bond pays the players its own proof names', () => {
   // Two proofs against two nodes in one round: a replay contradiction about Alice, and a bad table.
   // Nothing is pooled - each proof's affected[] is a function of its OWN offence.
-  const one = affectedEntries({ offence: REPLAY_CONTRADICTS, playerPubkey: ALICE, entries }).affected;
+  const one = affectedEntries({ offence: REPLAY_CONTRADICTS, playerPubkey: ALICE, entries, ...LOWERED }).affected;
   const two = affectedEntries({ offence: TABLE_IS_NOT_F, entries }).affected;
   const facts = { fromTheReplayProof: one.map((e) => toHex(e.playerPubkey).slice(0, 2)),
     fromTheTableProof: two.map((e) => toHex(e.playerPubkey).slice(0, 2)) };

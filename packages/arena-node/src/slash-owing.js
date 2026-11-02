@@ -33,7 +33,7 @@ import { toHex } from '../../arena-protocol/src/hash.js';
  * @returns {{ ok: true, owing }|{ ok: false, why: string }}
  */
 export async function slashOwing({
-  proof, offence, contract, roundIdBytes, entries = [],
+  proof, offence, contract, roundIdBytes, entries = [], signed, replayed,
   slashHeight, tipHeight, censusAt, bondSatsOf,
 } = {}) {
   if (!proof || !contract) return { ok: false, why: 'a slash owes nothing without its proof and the round' };
@@ -50,7 +50,7 @@ export async function slashOwing({
     return { ok: false, why: `no bond output at ${toHex(proof.bondTxid).slice(0, 16)}:${proof.bondVout}` };
 
   // 3. WHO WAS HARMED - the offence decides, never this.
-  const harmed = affectedEntries({ offence, playerPubkey: proof.playerPubkey, entries });
+  const harmed = affectedEntries({ offence, playerPubkey: proof.playerPubkey, entries, signed, replayed });
   if (!harmed.ok) return { ok: false, why: harmed.why };
 
   // 4. THE CENSUS AT THAT HEIGHT, and the round's own seats taken out of it by `slashDistribution`.
@@ -93,7 +93,10 @@ export async function slashOwing({
 
   // 7. AND THE PLAYERS' HALF PRO RATA BY NET STAKE, which `slashDistribution` divides evenly because it
   //    does not know the stakes. §5A.3 weights it, so the weighted split is what is recorded.
-  const byStake = playersShares({ toPlayers: split.toPlayers, affected: harmed.affected, roundId: roundIdBytes });
+  //    NOBODY HARMED (a raised result in a round with no other paying entry): that half went to the pool in step 6.
+  const byStake = harmed.affected.length
+    ? playersShares({ toPlayers: split.toPlayers, affected: harmed.affected, roundId: roundIdBytes })
+    : { ok: true, shares: new Map() };
   if (!byStake.ok) return { ok: false, why: byStake.why };
 
   return {
@@ -129,14 +132,19 @@ export function entriesForSlash(round, roundIdBytes, { operatorPlayer = null } =
   for (const row of round.entriesOf ? round.entriesOf(roundIdBytes) : []) {
     const c = row.entry;
     if (!c || !(c.playerPubkey instanceof Uint8Array)) continue;
-    out.push({
-      playerPubkey: c.playerPubkey,
-      netStakeMsat: netStakeMsat(c),
-      // §22A's fee base: an entry that paid is activated. A free round's entries owe nothing and are
-      // harmed by no money offence.
-      activated: c.stakeMsat > 0n,
-      operatorOwn: operatorPlayer ? toHex(c.playerPubkey) === toHex(operatorPlayer) : false,
-    });
+    out.push(entryForSlash(c, operatorPlayer));
   }
   return out;
+}
+
+/** One decoded entry contract in that shape: the arbiter reads them off a seat's GET /audit-run, not off a store. */
+export function entryForSlash(c, operatorPlayer = null) {
+  return {
+    playerPubkey: c.playerPubkey,
+    netStakeMsat: netStakeMsat(c),
+    // §22A's fee base: an entry that paid is activated. A free round's entries owe nothing and are
+    // harmed by no money offence.
+    activated: c.stakeMsat > 0n,
+    operatorOwn: operatorPlayer ? toHex(c.playerPubkey) === toHex(operatorPlayer) : false,
+  };
 }

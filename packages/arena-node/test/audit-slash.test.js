@@ -28,6 +28,7 @@ import { bondOutputKey, bondInternalKey } from '../../arena-protocol/src/bond-sc
 import { resultFinality } from '../src/finality.js';
 import { agreedRunsOf } from '../src/audit-seat.js';
 import { arbitrationMembers, judgeAuditProof, buildSlash, memberSign, assemble, coreForRound } from '../src/arbiter.js';
+import { entriesForSlash } from '../src/slash-owing.js';
 import { tweakPoint, combine } from '../src/curve.js';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
@@ -142,7 +143,9 @@ test('a contradicted AUDIT is filed by the seat as AUDIT_CONTRADICTED, listed, s
     const bond = { txid: advert.bondTxid, vout: advert.bondVout, value: 2_000_000n, script: Uint8Array.from([0x51, 0x20, ...k.outputKey]) };
     const censusNodes = [...[...w.adverts.values()].map((x) => x.nodePubkey), ...[1, 2, 3].map((i) => schnorr.getPublicKey(new Uint8Array(32).fill(0x40 + i)))];
     const slash = buildSlash({ verdict, bond, advert: { ...advert, bondScriptTemplateVersion: 1 }, contract, roundId: w.rid,
-      slashHeight: contract.censusHeight + 10, tipHeight: contract.censusHeight + 12, censusNodes, seats: committee, set });
+      slashHeight: contract.censusHeight + 10, tipHeight: contract.censusHeight + 12, censusNodes, seats: committee, set,
+      // the run the AUDIT vouched for lowered its player: a raised one pays the others (kanban #975)
+      entries: entriesForSlash(w.holder.round, w.rid), signed: { outcome: 'FORFEIT', score: 0 } });
     assert.equal(slash.ok, true, slash.why);
     assert.deepEqual(slash.built.tx.outputs.slice(1).map((o) => o.pays), ['players\' escrow', 'nodes\'', 'developers\'']);
     assert.deepEqual([...slash.distribution.playerShares.keys()], [toHex(entry.playerPubkey)], 'the contradicted entry\'s player');
