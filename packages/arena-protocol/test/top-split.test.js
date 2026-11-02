@@ -16,7 +16,7 @@ import {
   PAYOUT_SHARES_MAX, PAYOUT_SHARES_TOTAL,
 } from '../src/payout.js';
 import { lockActions } from '../src/lock-action.js';
-import { slashHoldsOnTable, payoutInputsId, TABLE_IS_NOT_F } from '../src/slash.js';
+import { slashHoldsOnTable } from '../src/slash.js';
 import { TOP_SPLIT_VERSION, speaksVersion } from '../src/constants.js';
 import { toHex, fromHex } from '../src/hash.js';
 import { KNOWN_GOOD_GAMES } from '../src/known-games.js';
@@ -308,29 +308,10 @@ test('lockActions settles a split round by the split table: the losers\' locks a
 
 // ---- F in a slash proof is the game's rule ----
 
-test('slash row 3 recomputes F by the manifest\'s split: the honest split table stands, a curve table for it is slashed, no manifest is refused', () => {
-  const m = signed(SPLIT);
-  const NODE = b32(0x11), BOND = b32(0x55);
-  const committee = [NODE, b32(0x22), b32(0x23), b32(0x24), b32(0x25), b32(0x26), b32(0x27)];
+test('slash row 3 reads no table on unsigned bytes: a curve table for a split round is refused by name (kanban #1035)', () => {
   const es = [...winners(3), ...losers(5)];
-  const contract = { gameId: gameIdOf(m), protocolVersion: 4, minScore: 5 };
-  const S = payoutSharesOf(m);
-  const tableBytes = (shares) => encodePayoutTable({ roundId: ROUND,
-    table: computePayoutTable({ roundId: ROUND, entries: es, minScore: 5, payoutShares: shares }).table });
-  const ask = (bytes, over = {}) => slashHoldsOnTable({
-    proof: { roundId: ROUND, playerPubkey: es[0].pubkey, nodePubkey: NODE, transcriptHash: payoutInputsId({ roundId: ROUND, entries: es, minScore: 5 }),
-      signedResultId: payoutTableId(decodePayoutTable(bytes)), bondTxid: BOND, bondVout: 3 },
-    signedTable: bytes, advert: { nodePubkey: NODE, bondTxid: BOND, bondVout: 3 }, committee, entries: es, contract, manifest: m, ...over });
-  const honest = ask(tableBytes(S));
-  assert.equal(honest.slashed, false, honest.why);
-  assert.match(honest.why, /exactly F/);
-  const curve = ask(tableBytes(null));
-  assert.equal(curve.slashed, true, 'a curve table signed for a split round is not F');
-  assert.equal(curve.offence, TABLE_IS_NOT_F);
-  const blind = ask(tableBytes(S), { manifest: null });
-  assert.equal(blind.slashed, false);
-  assert.match(blind.why, /payout rule cannot be read/);
-  const other = ask(tableBytes(S), { manifest: signed(CURVE) });
-  assert.equal(other.slashed, false);
-  assert.match(other.why, /the manifest handed in is/);
+  const bytes = encodePayoutTable({ roundId: ROUND, table: computePayoutTable({ roundId: ROUND, entries: es, minScore: 5, payoutShares: null }).table });
+  const no = slashHoldsOnTable({ signedTable: bytes, entries: es, contract: { minScore: 5 }, manifest: signed(SPLIT) });
+  assert.equal(no.slashed, false);
+  assert.match(no.why, /refused: row 3/);
 });
