@@ -368,8 +368,6 @@ export class Roster {
       // is no publication transaction to read", because only a round's own publication was looked for).
       // A FREE ROUND IS NOT POSTED ON THE CHAIN IN ADVANCE (2026-10-01 15:25, HARD): it moves no money, so there is
       // no committee worth grinding for; it is still multiplayer - its players join one round, its committee replays it.
-      // AND SOON ENOUGH BEFORE ITS COMMITTEE (§5A.5, kanban #1015): the block's own time, so every node reads the same number
-      const leadOf = (height) => publicationLeadHolds({ committeeTimeMs: contract.committeeTimeMs, publishedAtMs: headerTimeMs(view.blocks[height - view.firstHeight].header), network: networkOf(contract.networkId) });
       if (BigInt(contract.stakeMsat) === 0n) {
         // nothing to find: the free round is checked against the chain as every round is above, its census and beacon
       } else if (contract.seriesId instanceof Uint8Array) {
@@ -377,8 +375,6 @@ export class Roster {
         if (!series) return { ok: false, why: `this node's chain view holds no publication of series ${toHex(contract.seriesId).slice(0, 16)}` };
         if (!(series.height < named.height))
           return { ok: false, why: `series ${toHex(contract.seriesId).slice(0, 16)} was published at ${series.height}, not below its beacon block ${named.height}` };
-        const lead = leadOf(series.height);
-        if (!lead.ok) return lead;
       } else {
         const published = findPublication(view, roundIdBytes);
         const before = publicationIsBeforeBeacon({
@@ -386,7 +382,9 @@ export class Roster {
           txHeight: published ? published.height : undefined, beaconHeight: named.height,
         });
         if (!before.ok) return before;
-        const lead = leadOf(published.height);
+        // AND SOON ENOUGH BEFORE ITS COMMITTEE (§5A.5, kanban #1015): a round its creator published, by the time in the block that holds it. A series stands outside this (#1024):
+        // its first round is hours after its committee time, and one shifted header must not refuse a whole day
+        const lead = publicationLeadHolds({ committeeTimeMs: contract.committeeTimeMs, publishedAtMs: headerTimeMs(view.blocks[published.height - view.firstHeight].header), network: networkOf(contract.networkId) });
         if (!lead.ok) return lead;
       }
       checkedAgainstChain = true;
