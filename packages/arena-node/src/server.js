@@ -18,6 +18,7 @@
 // rather than half-built.
 import { gzipSync } from 'node:zlib';
 import { tableAnchorOf, feeOfKnownGame } from '../../arena-protocol/src/known-game.js';
+import { takesNewRounds } from '../../arena-protocol/src/known-federations.js';
 import { seriesWriter, writeGuarded } from './series-writer.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../arena-protocol/src/old-series.js';
 import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid, findSeriesPublication, seriesPublicationOutput } from '../../arena-protocol/src/series.js';
@@ -6862,6 +6863,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let contract;
         try { contract = decodeRoundContract(await read(req)); }
         catch (e) { return text(res, 400, `that is not a round this signer node opens: ${e.message}`); }
+        // A FEDERATION THAT OPENS NO NEW ROUNDS (kanban #807): refused by name, nothing stored. A round this seat holds, or of a series it holds, is not new:
+        // the page posts those here too (2026-10-16), and they play out where they are.
+        if (contract.federationId instanceof Uint8Array && !takesNewRounds(contract.federationId) && !round.get(roundIdOf(contract))
+          && !(contract.seriesId instanceof Uint8Array && !seriesRefusal(contract)))
+          return text(res, 409, `federation ${toHex(contract.federationId).slice(0, 16)} opens no new rounds: the rounds it holds play out, a new one opens in another federation`);
         // A ROUND THAT NAMES ITS CREATOR COMES WITH THE CREATOR'S SIGNATURE OVER ITS ID (§6), as `?creator=<hex>`:
         // checked before anything else is asked, kept beside the round. A round this seat already holds is not asked again.
         if (contract.creatorPubkey) {
