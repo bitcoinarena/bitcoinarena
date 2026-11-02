@@ -24,7 +24,7 @@
 import { ancestorMarker } from './ancestor.js';
 import { advertId, decodeAdvert, splitSignedAdvert } from './advert.js';
 import {
-  bondInternalKey, bondOutputKeyMatches, bondMaturityOf,
+  bondInternalKey, bondOutputKeyMatches, bondMaturityOf, bond3OutputKeyMatches, BOND_TEMPLATE_V3,
 } from './bond-script.js';
 import {
   hash256, parseTransaction, commitmentsOf, witnessRunsOf,
@@ -358,6 +358,13 @@ export function bondKeyMatches(script, advert, { arbitrationKeys, arbitrationK, 
   const derived = bondInternalKey(
     { nodeKey: advert.nodePubkey, arbitrationKeys }, { combine });
   if (!derived.ok) return derived;
+
+  // TEMPLATE 3: path B holds the census key the advertisement names. Whether that key may be named is the census' question.
+  if (advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3)
+    return bond3OutputKeyMatches(script.subarray(2, 34), {
+      nodeKey: advert.nodePubkey, censusKey: advert.censusKey, arbitrationKeys, bondMaturity: maturity.maturity,
+      internalKey: derived.internalKey,
+    }, { tweakPoint, combine });
 
   return bondOutputKeyMatches(script.subarray(2, 34), {
     nodeKey: advert.nodePubkey, arbitrationKeys, arbitrationK, bondMaturity: maturity.maturity,

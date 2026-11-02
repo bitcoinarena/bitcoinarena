@@ -11,10 +11,10 @@ import {
 
 const message = () => new Uint8Array(randomBytes(32));
 
-test('one share per weight, threshold 2/3 of the shares', () => {
+test('one share per weight, threshold floor(2/3 of the shares) + 1', () => {
   assert.deepEqual(weightsFor(5, 10), [10, 5, 3, 2, 2]);
   assert.deepEqual(shareMap([2, 1, 3]), [[1, 2], [3], [4, 5, 6]]);
-  assert.deepEqual([15, 32, 96, 357, 1000].map(thresholdOf), [10, 22, 64, 238, 667]);
+  assert.deepEqual([15, 32, 96, 357, 1000].map(thresholdOf), [11, 22, 65, 239, 667]);
 });
 
 test('dkg.js as it stands signs at 15 nodes of weight 1, and refuses a key twice: that is the weighted census', async () => {
@@ -46,7 +46,7 @@ test('the reshare keeps the public key: the new census signs for it, at its own 
   const old = await weightedKeygen({ weights: weightsFor(15, 10) });
   const next = reshare(old, [8, 8, 4, 2, 1, 1, 1, 1, 1, 1, 1, 1]);
   assert.equal(Buffer.from(next.groupPublicKey).toString('hex'), Buffer.from(old.groupPublicKey).toString('hex'));
-  assert.deepEqual([next.total, next.needed], [30, 20]);
+  assert.deepEqual([next.total, next.needed], [30, 21]);
   const m = message();
   assert.equal(verifies(signByNode(next, m, signersFor(next)).sig, m, next), true);
   const mixed = { ...next, shares: next.shares.map((v, x) => (x === 1 ? old.shares[1] : v)) };

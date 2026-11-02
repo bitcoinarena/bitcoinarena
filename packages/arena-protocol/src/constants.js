@@ -513,9 +513,11 @@ export const TAG = {
   committeeSeed: 'ARENA/v1/CommitteeSeed',
   // #630: a round's attestors are drawn on their own seed, H(this tag || committee seed) - never the settlement draw's
   attestorDraw: 'ARENA/v1/AttestorDraw',
-  // Template 3: a round's two slash panels are drawn on their own seed (5A.3B), and a release commits to its table by this tag.
+  // Template 3: a round's two slash panels are drawn on their own seed, a release commits to its table, and a census key is named (5A.3B).
   slashPanel: 'ARENA/v1/SlashPanel',
+  slashPayoutTable: 'ARENA/v1/SlashPayoutTable',
   slashTable: 'ARENA/v1/SlashTable',
+  censusKeyRecord: 'ARENA/v1/CensusKeyRecord',
   checkpoint: 'ARENA/v1/Checkpoint',
   checkpointReceipt: 'ARENA/v1/CheckpointReceipt',
   result: 'ARENA/v1/Result',

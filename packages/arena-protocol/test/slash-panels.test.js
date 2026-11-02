@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
 import { drawPanels, panelSeed, drawCommittee, drawAttestors } from '../src/sortition.js';
+import { panelSeats, panelThreshold } from '../src/bond-script.js';
 import { DRAW_FREE_VERSION } from '../src/constants.js';
 import { taggedHash, toHex } from '../src/hash.js';
 
@@ -78,23 +79,31 @@ test('a v2 round draws one list for both roles, so it leaves out 9 and not 18', 
   assert.ok(![...keys(got.panelA), ...keys(got.panelB)].some((k) => out.has(k)));
 });
 
-test('a census that cannot fill both panels is refused by name, never answered with smaller panels', () => {
-  const smallest = (c, extra = {}) => { for (let n = 2; n < 80; n++) if (Array.from({ length: 40 }, (_, s) => drawPanels({ entries: census(n), contract: c, committeeSeed: seed(s), ...extra }).ok).every(Boolean)) return n; return null; };
-  const facts = {
-    'mainnet shape, one draw per role (7 seats)': smallest(contract),
-    'the same, drawn attestors': smallest(contract, { drawsAttestors: true }),
-    'v2 round (7 seats)': smallest({ ...contract, protocolVersion: DRAW_FREE_VERSION }),
-    'v2 round, drawn attestors': smallest({ ...contract, protocolVersion: DRAW_FREE_VERSION }, { drawsAttestors: true }),
-    '2 seats, as testnet4 runs': smallest(small),
-    'v2 round, 2 seats': smallest({ ...small, protocolVersion: DRAW_FREE_VERSION }),
-  };
-  console.log('  FACTS (the smallest census that fills both panels on all of 40 seeds):', JSON.stringify(facts));
-  assert.equal(facts['v2 round (7 seats)'], 23);
-  assert.equal(facts['v2 round, 2 seats'], 17);
-  const fifteen = drawPanels({ entries: census(15), contract: { ...small, protocolVersion: DRAW_FREE_VERSION }, committeeSeed: seed(1) });
-  console.log(`  FACTS: 15 nodes, 2 seats: ${fifteen.why}`);
-  assert.equal(fifteen.ok, false);
-  assert.deepEqual([fifteen.have, fifteen.need], [12, 14]);
-  assert.match(fifteen.why, /two panels are 14/);
-  assert.equal(drawPanels({ entries: census(1), contract, committeeSeed: seed(1) }).ok, false, 'below the census minimum is an answer, not a throw');
+test('n and t by the ruling: n = min(7, floor(|E| / 2)), t = floor(2n / 3) + 1, none under 3 (kanban #1021)', () => {
+  assert.deepEqual([0, 1, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 40].map(panelSeats), [0, 0, 0, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 7]);
+  assert.deepEqual([3, 4, 5, 6, 7].map(panelThreshold), [3, 3, 4, 5, 5]);
+});
+
+test('a small census gets smaller panels and is never refused for it (kanban #1021)', () => {
+  const v2 = { ...small, protocolVersion: DRAW_FREE_VERSION };
+  const rows = [8, 9, 10, 12, 14, 15, 16, 17, 18].map((nodes) => {
+    const got = drawPanels({ entries: census(nodes), contract: v2, committeeSeed: seed(1) });
+    assert.equal(got.ok, true, got.why);
+    assert.equal(got.panelA.length, got.n);
+    assert.equal(got.panelB.length, got.n);
+    assert.equal(new Set(keys(got.order)).size, 2 * got.n);
+    return `${nodes}:${got.n}/${got.t}`;
+  });
+  console.log(`  FACTS (v2 round, 2 seats, nodes:n/t): ${rows.join(' ')}`);
+  assert.deepEqual(rows, ['8:0/0', '9:3/3', '10:3/3', '12:4/3', '14:5/4', '15:6/5', '16:6/5', '17:7/5', '18:7/5']);
+  const fifteen = drawPanels({ entries: census(15), contract: v2, committeeSeed: seed(1) });
+  assert.deepEqual([fifteen.eligible, fifteen.n, fifteen.t], [12, 6, 5], '15 nodes, as testnet4 runs: both panels 5 of 6');
+  const none = drawPanels({ entries: census(8), contract: v2, committeeSeed: seed(1) });
+  assert.deepEqual([none.ok, none.n, none.t, none.panelA, none.panelB], [true, 0, 0, [], []], 'no panels is an answer');
+});
+
+test('a census under the network minimum is a round that cannot be drawn: an answer, not a throw', () => {
+  const got = drawPanels({ entries: census(1), contract, committeeSeed: seed(1) });
+  assert.equal(got.ok, false);
+  assert.match(got.why, /cannot be drawn/);
 });

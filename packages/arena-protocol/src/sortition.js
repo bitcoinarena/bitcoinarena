@@ -8,7 +8,7 @@ import { TAG, roleByte, namesNoDraw } from './constants.js';
 import { compareEntries, meetsCensusMinimum, eligibleFor } from './census.js';
 import { poolOfRole, GAME_VERIFY, SETTLEMENT } from './fee.js';
 import { roleFloorSats } from './rules.js';
-import { PANEL_SEATS } from './bond-script.js';
+import { panelSeats, panelThreshold } from './bond-script.js';
 
 /**
  * HOW MANY SIGNER NODES THIS ROUND GIVES THE POOL A ROLE SERVES IN.
@@ -225,9 +225,9 @@ const PANEL_LEAVES_OUT = ['game', 'settlement'];
 
 /**
  * A ROUND'S TWO SLASH PANELS (5A.3B "Who is responsible for a round"): the 5A.6 selection over the round's census on panel_seed(r), less
- * every node drawn for any role of the round (all 9 per role, 5A.7), its attestors and the nodes of its players; panel A the first 7
- * of that order, panel B the next 7. Pure, and worked out here rather than taken in: nobody hands the draw its own exclusions but what
- * only the round knows.
+ * every node drawn for any role of the round (all 9 per role, 5A.7), its attestors and the nodes of its players. What is left is E;
+ * n = min(7, floor(|E| / 2)), t = floor(2n / 3) + 1, panel A the first n of the order, panel B the next n. Pure, and worked out here rather
+ * than taken in: nobody hands the draw its own exclusions but what only the round knows.
  *
  *   drawsAttestors   the round's game draws its attestors (manifest attestDraw): they are drawn here and left out
  *   attestorKeys     a game's own named attestors, 32-byte keys
@@ -235,8 +235,9 @@ const PANEL_LEAVES_OUT = ['game', 'settlement'];
  *
  * Drawn as `drawAttestors` is, on the settlement ticket: 5A.6 draws per role and the spec names none for a panel.
  *
- * A census that cannot fill both panels is refused by name, and never answered with smaller panels: the release leaf is 5 of 7 twice.
- * Answers { ok: true, panelA, panelB, order } of census entries, or { ok: false, why, have, need }.
+ * A SMALL CENSUS IS NOT A REFUSAL (RULED 2026-11-02, kanban #1021): n shrinks with E, and under 3 the answer is no panels, n = 0: the hold
+ * output then has no release leaf and a slash pays at the fallback. Only a round that cannot be drawn at all answers ok: false.
+ * Answers { ok: true, n, t, panelA, panelB, order, eligible } of census entries, or { ok: false, why }.
  */
 export function drawPanels({ entries, contract, committeeSeed, drawsAttestors = false, attestorKeys = [], playerNodes = [] }) {
   try {
@@ -244,12 +245,9 @@ export function drawPanels({ entries, contract, committeeSeed, drawsAttestors = 
     for (const role of PANEL_LEAVES_OUT)
       for (const e of drawCommittee({ entries, contract, role, committeeSeed })) out.add(toHex(e.pubkey));
     if (drawsAttestors) for (const e of drawAttestors({ entries, contract, committeeSeed })) out.add(toHex(e.pubkey));
-    const need = 2 * PANEL_SEATS;
-    const order = selectCommittee({ entries, contract, role: 'settlement', committeeSeed: panelSeed(committeeSeed), count: need,
+    const rest = selectCommittee({ entries, contract, role: 'settlement', committeeSeed: panelSeed(committeeSeed), count: entries.length,
       exclude: entries.filter((e) => out.has(toHex(e.pubkey))) });
-    if (order.length < need)
-      return { ok: false, have: order.length, need,
-        why: `the round's census leaves ${order.length} nodes after the ${out.size} it leaves out, and two panels are ${need}` };
-    return { ok: true, panelA: order.slice(0, PANEL_SEATS), panelB: order.slice(PANEL_SEATS), order };
+    const n = panelSeats(rest.length);
+    return { ok: true, n, t: n ? panelThreshold(n) : 0, eligible: rest.length, panelA: rest.slice(0, n), panelB: rest.slice(n, 2 * n), order: rest.slice(0, 2 * n) };
   } catch (e) { return { ok: false, why: `the panels cannot be drawn: ${e.message}` }; }
 }

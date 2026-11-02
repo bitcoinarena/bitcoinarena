@@ -10,7 +10,7 @@ import { NETWORK_ID_TESTNET4, NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const hex = (b) => Buffer.from(b).toString('hex');
 const parts = () => ({ bondMarker: b32(1), arbitrationKeys: [2, 3, 4, 5, 6, 7, 8].map(b32), authorityPubkey: b32(9), recoveryPubkey: b32(10),
-  genesisSeriesStartMs: 1800000000000n, bondMinGuardianSats: 1_000_000n });
+  genesisSeriesStartMs: 1800000000000n, bondMinGuardianSats: 1_000_000n, censusKey0: b32(11) });
 
 test('the test networks keep their genesis bytes and network ids: no new series', () => {
   for (const [net, id] of [['testnet4', NETWORK_ID_TESTNET4], ['regtest', NETWORK_ID_REGTEST]]) {
@@ -60,9 +60,19 @@ test('the clocks are in mainnet\'s id, are not in the test networks\', and a wro
   assert.throws(() => encodeGenesisParameters({ ...genesis, slashHoldBlocks: undefined }), /slash clocks/);
 });
 
+test('census_key_shares_max is 1024 and census key 0 is in mainnet\'s id; neither moves the test networks\' bytes (kanban #1021)', () => {
+  const { genesis, networkId } = mainnetGenesis(parts());
+  for (const g of [genesis, genesisFor('testnet4'), genesisFor('regtest')]) assert.equal(g.censusKeySharesMax, 1024);
+  for (const change of [{ censusKeySharesMax: 1023 }, { censusKey0: b32(12) }])
+    assert.notEqual(hex(computeNetworkId({ genesis: { ...genesis, ...change }, authorityPubkey: b32(9), recoveryPubkey: b32(10) })), hex(networkId), Object.keys(change)[0]);
+  for (const net of ['testnet4', 'regtest'])
+    assert.equal(hex(encodeGenesisParameters({ ...genesisFor(net), censusKeySharesMax: 7 })), hex(encodeGenesisParameters(genesisFor(net))), net);
+  assert.throws(() => encodeGenesisParameters({ ...genesis, censusKeySharesMax: 0 }), /census_key_shares_max/);
+});
+
 test('mainnet genesis is built only from what a launch names: no invented marker or keys', () => {
   for (const [k, why] of [['bondMarker', /bond marker/], ['recoveryPubkey', /cold recovery key/], ['arbitrationKeys', /arbitration keys/],
-    ['genesisSeriesStartMs', /series 0/], ['bondMinGuardianSats', /bond floor/]]) {
+    ['genesisSeriesStartMs', /series 0/], ['bondMinGuardianSats', /bond floor/], ['censusKey0', /census key 0/]]) {
     const p = parts(); delete p[k];
     assert.throws(() => mainnetGenesis(p), why, k);
   }

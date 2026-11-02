@@ -43,6 +43,9 @@ export const SLASH_CLOCKS = Object.freeze({
   regtest: Object.freeze({ slashHoldBlocks: 1, slashReturnBlocks: 12, slashFallbackBlocks: 24 }),
 });
 
+/** census_key_shares_max (§27A.6, §5A.3B, RULED 2026-11-02, kanban #1021): hashed as the slash clocks are, and for the same reason not on the test networks. */
+export const CENSUS_KEY_SHARES_MAX = 1024;
+
 export function encodeGenesisParameters(p) {
   const w = new Writer();
   w.str(p.chain);
@@ -124,6 +127,10 @@ export function encodeGenesisParameters(p) {
     w.u32(p.slashHoldBlocks);
     w.u32(p.slashReturnBlocks);
     w.u32(p.slashFallbackBlocks);
+    if (!Number.isInteger(p.censusKeySharesMax) || p.censusKeySharesMax < 1) throw new Error('genesis names census_key_shares_max');
+    w.u32(p.censusKeySharesMax);
+    // THE KEY THE GENESIS FOUNDERS MADE BEFORE ANY BOND (§5A.3B): committed here, so it needs no anchor.
+    w.bytes32(p.censusKey0);
   }
   return w.finish();
 }
@@ -136,15 +143,16 @@ export function encodeGenesisParameters(p) {
  * 6 confirmations; federations of 10 with federation_min 7; the fast clocks the owner set; ~30 days of bond maturity and notice;
  * governance 1008 / 1440 / 2016 (upgrades 2016 / 2016 / 4320, ballot.js).
  */
-export function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityPubkey, recoveryPubkey, genesisSeriesStartMs, bondMinGuardianSats } = {}) {
+export function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityPubkey, recoveryPubkey, genesisSeriesStartMs, bondMinGuardianSats, censusKey0 } = {}) {
   const is32 = (x) => x instanceof Uint8Array && x.length === 32;
   if (!is32(marker)) throw new Error('mainnet genesis needs its bond marker (32 bytes, §25.1): it has not been chosen');
   if (!Array.isArray(arbitrationKeys) || arbitrationKeys.length !== 7 || !arbitrationKeys.every(is32)) throw new Error('mainnet genesis needs its 7 arbitration keys');
   if (!is32(authorityPubkey) || !is32(recoveryPubkey)) throw new Error('mainnet genesis needs the donation authority and the cold recovery key (§27A.4)');
   if (typeof genesisSeriesStartMs !== 'bigint') throw new Error('mainnet genesis names when series 0 starts');
   if (typeof bondMinGuardianSats !== 'bigint' || bondMinGuardianSats <= 0n) throw new Error('mainnet genesis names a guardian\'s bond floor');
+  if (!is32(censusKey0)) throw new Error('mainnet genesis needs census key 0: the founders run its DKG before any bond exists (§5A.3B)');
   const genesis = {
-    chain: 'bitcoin-mainnet', genesisSeriesStartMs,
+    chain: 'bitcoin-mainnet', genesisSeriesStartMs, censusKey0, censusKeySharesMax: CENSUS_KEY_SHARES_MAX,
     federationNominal: 10, federationMin: 7, bondMinGuardianSats,
     abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216,
     gameVerifySlots: 7, gameVerifyThreshold: 5, settlementSlots: 7, settlementThreshold: 5, committeesBind: true,
@@ -205,6 +213,7 @@ export function testnetShape(chain, marker, arbitrationKeys, federation, genesis
     slashHoldBlocks: federation.slashHoldBlocks,
     slashReturnBlocks: federation.slashReturnBlocks,
     slashFallbackBlocks: federation.slashFallbackBlocks,
+    censusKeySharesMax: CENSUS_KEY_SHARES_MAX,
     gameVerifySlots: 2,
     gameVerifyThreshold: 2,
     settlementSlots: 2,

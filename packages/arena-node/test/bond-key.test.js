@@ -450,10 +450,10 @@ test('recognizeBond recomputes the output key and drops it from unchecked', () =
     'a bond that had already matured was recognised');
 
   // AND A BODY NAMING ANOTHER TEMPLATE IS NOT REBUILT AT ALL.
-  const v3 = { ...advert, bondScriptTemplateVersion: 3 };
+  const v3 = { ...advert, bondScriptTemplateVersion: 4 };
   const seen3 = bondKeyMatches(tx.outputs[0].script, v3, bond);
   assert.equal(seen3.ok, false);
-  assert.match(seen3.why, /names bond script template 3, and this code reads templates 1 and 2/);
+  assert.match(seen3.why, /names bond script template 4, and this code reads templates 1, 2 and 3/);
 });
 
 /**

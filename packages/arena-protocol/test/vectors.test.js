@@ -82,6 +82,12 @@ test('a round\'s two slash panels match', () => {
   assert.equal(got.ok, true, got.why);
   assert.deepEqual(got.panelA.map((e) => toHex(e.pubkey)), v.panelA);
   assert.deepEqual(got.panelB.map((e) => toHex(e.pubkey)), v.panelB);
+  for (const c of v.small) {
+    const few = drawPanels({ entries: entries.slice(0, c.nodes), contract: { ...contract, gameVerifySlots: 2, settlementSlots: 2 }, committeeSeed: seed });
+    assert.deepEqual([few.eligible, few.n, few.t], [c.eligible, c.n, c.t], `${c.nodes} nodes`);
+    assert.deepEqual(few.panelA.map((e) => toHex(e.pubkey)), c.panelA);
+    assert.deepEqual(few.panelB.map((e) => toHex(e.pubkey)), c.panelB);
+  }
 });
 
 test('tickets, weights and the chosen committee match', () => {

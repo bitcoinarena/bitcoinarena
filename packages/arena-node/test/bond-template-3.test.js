@@ -1,21 +1,29 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // TEMPLATE 3 (spec 5A.3B, kanban #971, #972, #974). Offline: the bytes, the tree, the refusals. The consensus answers are
-// tools/bond3-regtest.mjs's, against bitcoind 31.1 on a private regtest on mainnet's clocks with a weighted FROST census key, 26 of 26:
+// tools/bond3-regtest.mjs's, against bitcoind 31.1 on a private regtest on mainnet's clocks with a weighted FROST census key, 46 of 46:
 // the start, the release 5 + 5, the return of a mature node, the fallback of an immature bond and path A accepted (314, 464, 135, 134 and
 // 126 vB); money elsewhere, either signature missing, another round's presig or panels, 5 + 4, 4 + 5, one panel alone, each clock
-// a block early, another key on a leaf and a return before maturity refused.
+// a block early, another key on a leaf and a return before maturity refused. Panels of 3 to 6 at t of n (329, 347, 397, 446 vB), a hold
+// output with no panels (return 127, fallback 126 vB), one table by release and by fallback (557, 306 vB), and the node's own return.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import {
-  bondOutputKey, bondInternalKey, bond3OutputKey, bond3OutputKeyMatches, bondMaturityOf, slashStartLeaf, releaseLeaf, returnLeaf, fallbackLeaf,
+  bondOutputKey, bondInternalKey, bond3OutputKey, bond3OutputKeyMatches, bondMaturityOf, maturityStands, slashStartLeaf, releaseLeaf, returnLeaf, fallbackLeaf,
   holdTapTree, holdOutputKey, holdControlBlock, tapLeafHash, tapBranchHash, tapTweak, rootFromControlBlock, recoveryLeaf, controlBlockFor,
   HOLD_INTERNAL_KEY, BOND_TEMPLATE_V3,
 } from '../../arena-protocol/src/bond-script.js';
 import { tapSighash, scriptPathSigners } from '../../arena-protocol/src/bond-spend.js';
 import { genesisFor, SLASH_CLOCKS } from '../../arena-protocol/src/genesis.js';
+import { bondKeyMatches } from '../../arena-protocol/src/chain.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { resolveCensus } from '../../arena-protocol/src/census.js';
+import { encodeAdvert, decodeAdvert } from '../../arena-protocol/src/advert.js';
+import { parseTransaction } from '../../arena-protocol/src/tx.js';
+import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
+import { bondTransaction } from '../../arena-protocol/tools/bond.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 import { tweakPoint, combine } from '../src/curve.js';
 
 const hexOf = toHex;
@@ -87,10 +95,17 @@ test('the bond: key path and path A as before, path B the census key\'s, and the
   assert.notEqual(hexOf(old.outputKey), hexOf(built.outputKey), 'template 3 is a different output from template 2');
 });
 
-test('nothing reads a template-3 advertisement yet: it stays refused by name until the census knows a hold output', () => {
-  const read = bondMaturityOf({ bondScriptTemplateVersion: BOND_TEMPLATE_V3, bondMaturityHeight: 160000 }, { network: 'testnet4' });
-  assert.equal(read.ok, false);
-  assert.match(read.why, /reads templates 1 and 2/);
+test('a template-3 advertisement carries its maturity and its census key; a reader rebuilds the bond from the body alone (kanban #1021)', () => {
+  const advert = { nodePubkey: nodeKey, censusKey, bondScriptTemplateVersion: BOND_TEMPLATE_V3, bondMaturityHeight: 160000 };
+  assert.deepEqual(bondMaturityOf(advert, { network: 'testnet4' }), { ok: true, maturity: 160000 });
+  assert.equal(maturityStands(advert, 159000, 'testnet4').ok, true);
+  assert.match(maturityStands({ ...advert, bondMaturityHeight: 159100 }, 159000, 'testnet4').why, /short of/);
+  const built = bond3OutputKey({ nodeKey, censusKey, arbitrationKeys, bondMaturity: 160000, internalKey }, { tweakPoint, combine });
+  const script = fromHex(`5120${hexOf(built.outputKey)}`);
+  const bond = { arbitrationKeys, arbitrationK: 5, bondMaturity: 100, tweakPoint, combine, network: 'regtest' };
+  assert.equal(bondKeyMatches(script, advert, bond).ok, true);
+  assert.equal(bondKeyMatches(script, { ...advert, censusKey: person(2) }, bond).ok, false, 'another key rebuilds another bond');
+  assert.equal(bondMaturityOf({ bondScriptTemplateVersion: 4 }, {}).ok, false);
 });
 
 test('the hold output: anyone rebuilds it from the bond and the round, each leaf proves its way to the root', () => {
@@ -115,6 +130,29 @@ test('the hold output: anyone rebuilds it from the bond and the round, each leaf
     assert.notEqual(hexOf(holdOutputKey({ ...hold, ...change }, { tweakPoint }).outputKey), hexOf(h.outputKey), Object.keys(change).join());
 });
 
+test('a panel of n is t of n, by the ruling (kanban #1021)', () => {
+  for (const [n, t] of [[3, 3], [4, 3], [5, 4], [6, 5], [7, 5]]) {
+    const a = panelA.slice(0, n), b = panelB.slice(0, n);
+    const leaf = releaseLeaf({ panelA: a, panelB: b, holdBlocks: 6 });
+    const count = (list, close) => { const [f, ...r] = [...list].map(hexOf).sort(); return `20${f}ac${r.map((k) => `20${k}ba`).join('')}${(0x50 + t).toString(16)}${close}`; };
+    assert.equal(hexOf(leaf), `56b275${count(a, '9d')}${count(b, '9c')}`, `n = ${n}`);
+  }
+});
+
+test('a hold output with no panels has no release leaf: the return and the fallback alone (kanban #1021)', () => {
+  const h = holdOutputKey({ ...hold, panelA: [], panelB: [] }, { tweakPoint });
+  assert.equal(h.ok, true, h.why);
+  assert.equal(h.scripts.release, undefined);
+  assert.equal(hexOf(h.merkleRoot), hexOf(tapBranchHash(h.leaves.return, h.leaves.fallback)));
+  assert.match(holdControlBlock('release', h).why, /no release leaf/);
+  for (const path of ['return', 'fallback']) {
+    const c = holdControlBlock(path, h);
+    assert.equal(c.controlBlock.length, 65, path);
+    const r = rootFromControlBlock(h.leaves[path], c.controlBlock);
+    assert.equal(hexOf(tweakPoint(r.internalKey, r.tweak).outputKey), hexOf(h.outputKey), path);
+  }
+});
+
 test('every network\'s clocks build a hold output', () => {
   for (const c of Object.values(SLASH_CLOCKS)) {
     const h = holdOutputKey({ ...hold, holdBlocks: c.slashHoldBlocks, returnBlocks: c.slashReturnBlocks, fallbackBlocks: c.slashFallbackBlocks }, { tweakPoint });
@@ -124,7 +162,9 @@ test('every network\'s clocks build a hold output', () => {
 
 test('what cannot be a hold output is refused by name', () => {
   const why = (change) => holdOutputKey({ ...hold, ...change }, { tweakPoint }).why;
-  assert.match(why({ panelA: panelA.slice(1) }), /a panel is 7 keys/);
+  assert.match(why({ panelA: panelA.slice(1) }), /one size/);
+  assert.match(why({ panelA: panelA.slice(0, 2), panelB: panelB.slice(0, 2) }), /a panel is 3 to 7 keys/);
+  assert.match(why({ panelA: [] }), /a panel is 3 to 7 keys/);
   assert.match(why({ panelB: [panelA[0], ...panelB.slice(1)] }), /sits twice/);
   assert.match(why({ panelA: [panelA[0], panelA[0], ...panelA.slice(2)] }), /sits twice/);
   assert.match(why({ returnBlocks: 288 }), /hold, then return, then fallback/);
@@ -164,4 +204,38 @@ test('a witness names its signers: the keys in the order the leaf checks them, e
   assert.equal(scriptPathSigners([new Uint8Array(64)]).ok, false, 'a key path names no one');
   assert.match(scriptPathSigners([h.scripts.release, Uint8Array.of(0x50, 1)]).why, /annex/);
   assert.match(scriptPathSigners([h.scripts.release, new Uint8Array(65)]).why, /14 keys/);
+});
+
+// THE CENSUS READER, ON REAL BOND TRANSACTIONS (ruling 4, ruling 5): resolveCensus, as a seat runs it
+test('the census reads a template-3 bond naming the newest standing key, and refuses any other by name (kanban #1021)', () => {
+  const contract = { bondMinSats: 50000n, protocolVersion: 1, networkId: NETWORK_ID_REGTEST };
+  const CONFIRMED = 900000;
+  const g = genesisFor('regtest');
+  const old = person(60), newest = person(61), later = person(62);
+  const body = (k, key, over = {}) => ({ nodePubkey: k, operatorId: 'operator', protocolVersions: [1], hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], endpoint: 'ws://node', region: 'eu-west',
+    capacityClass: 1, softwareHash: new Uint8Array(32).fill(2), settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32), bondVout: 0,
+    bondScriptTemplateVersion: 3, bondMaturityHeight: CONFIRMED + 100, censusKey: key, payoutPubkey: new Uint8Array(32).fill(3), guardianOf: [], timestamp: 1788700000000n, ...over });
+  const bondOf = (k, key, over) => {
+    const a = body(k, key, over);
+    const inner = bondInternalKey({ nodeKey: k, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey;
+    const { outputKey } = bond3OutputKey({ nodeKey: k, censusKey: key, arbitrationKeys: g.arbitrationKeys, bondMaturity: a.bondMaturityHeight, internalKey: inner }, { tweakPoint, combine });
+    const transaction = bondTransaction(a, { outputKey, previousTxid: new Uint8Array(32).fill(k[0]) });
+    return { tx: transaction, entry: { txid: parseTransaction(transaction).txid, vout: 0, pubkey: k, bondSats: 60000n, height: CONFIRMED, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false } };
+  };
+  const bonds = [bondOf(person(70), newest), bondOf(person(71), old), bondOf(person(72), later), bondOf(person(73), person(63))];
+  const byTxid = new Map(bonds.map((b) => [hexOf(b.entry.txid), b.tx]));
+  const read = (standingKeys) => resolveCensus(bonds.map((b) => b.entry), { contract, resolve: (e) => ({ transaction: byTxid.get(hexOf(e.txid)) }),
+    bond: { arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity, tweakPoint, combine, standingKeys } });
+  const standing = [{ epoch: 1, publicKey: old, height: 100 }, { epoch: 2, publicKey: newest, height: 899999 }, { epoch: 3, publicKey: later, height: 900001 }];
+  const seen = read(standing);
+  assert.equal(seen.ok, true, seen.why);
+  assert.deepEqual(seen.eligible.map((e) => hexOf(e.pubkey)), [hexOf(person(70))]);
+  assert.equal(seen.excluded.length, 3);
+  for (const x of seen.excluded) assert.match(x.why, /newest standing at its confirmation/);
+  const none = read([]);
+  assert.equal((none.eligible || []).length, 0);
+  for (const x of none.excluded) assert.match(x.why, /cannot take a template-3 bond yet/);
+  const wire = decodeAdvert(encodeAdvert(body(person(70), newest)));
+  assert.equal(hexOf(wire.censusKey), hexOf(newest));
+  assert.equal(wire.bondMaturityHeight, CONFIRMED + 100);
 });

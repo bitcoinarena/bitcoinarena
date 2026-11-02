@@ -38,6 +38,7 @@ import {
 } from './chain.js';
 import { decodeAdvert, splitSignedAdvert, advertId, hostsGame } from './advert.js';
 import { maturityStands } from './bond-script.js';
+import { bondNamesStandingKey } from './census-key.js';
 import { poolOfRole, GAME_VERIFY } from './fee.js';
 import { genesisFor } from './genesis.js';
 import { dropsAbsent, withoutAbsent, ABSENT_WHY } from './presence.js';
@@ -1153,6 +1154,9 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
     const confirmed = chainSays ? chainSays.height : e.height;
     const matures = maturityStands(read.advert, confirmed, network);
     if (!matures.ok) { excluded.push({ ...e, why: matures.why }); continue; }
+    // A TEMPLATE-3 BOND NAMES THE NEWEST KEY STANDING AT ITS CONFIRMATION (5A.3B, kanban #1021). `bond.standingKeys` is the reader's list.
+    const named = bondNamesStandingKey(read.advert, confirmed, bond && bond.standingKeys);
+    if (!named.ok) { excluded.push({ ...e, why: named.why }); continue; }
 
     // AND THE AMOUNT IS THE CHAIN'S. This was the entry's own claim, measured:
     // an output worth 60000 sats, an entry claiming 100000000000, accepted -
@@ -1267,7 +1271,7 @@ const bondHexOf = (x) => (typeof x === 'string' ? x.toLowerCase() : x ? toHex(x)
 /** A node is its key AND its operator: two operators never merge, even under one key. */
 const nodeKeyOf = (e) => `${bondHexOf(e.pubkey || (e.advert && e.advert.nodePubkey))}|${String((e.advert && e.advert.operatorId) || e.operatorId || '')}`;
 /** Another output's advertisement, with this output's own maturity and template (each output keeps its own lock). */
-const ownMaturity = (advert, own) => (own ? { ...advert, bondMaturityHeight: own.bondMaturityHeight, bondScriptTemplateVersion: own.bondScriptTemplateVersion } : advert);
+const ownMaturity = (advert, own) => (own ? { ...advert, bondMaturityHeight: own.bondMaturityHeight, censusKey: own.censusKey, bondScriptTemplateVersion: own.bondScriptTemplateVersion } : advert);
 
 /**
  * A NODE'S BONDS, SUMMED: census entries grouped by node key and operator id into { pubkey (hex), operatorId, bondSats (bigint, their
