@@ -63,7 +63,7 @@ import { censusOfView, censusReplacer, censusReviver, censusEvidenceOf } from '.
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { createCensusKeyScan } from './census-key-chain.js';
 import { CensusKeyStore } from './census-key-store.js';
-import { createCensusKeyPoster } from './census-key-anchor.js';
+import { createCensusKeyPoster, createFeeCoin } from './census-key-anchor.js';
 import { censusKeyContract, standingKeysName } from '../../arena-protocol/src/census-key.js';
 import { censusKeyFirstHeight, genesisFor } from '../../arena-protocol/src/genesis.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
@@ -649,7 +649,7 @@ if (url) {
       };
       options.censusKey = { scan: censusKeyScan, network: net, networkId, firstHeight: here, foundingWindow, censusConfirmations, tipHeight, blockHashAt, censusEntriesAt, censusEvidenceAt,
         rawTxAt: async (height, txid) => fromHex(String(await call('getrawtransaction', [txid, 0, await blockHashAt(height)]))),
-        post: createCensusKeyPoster({ call, walletCall: wallets, env: process.env }), everyMs: Number(process.env.ARENA_CENSUS_KEY_EVERY_MS || 10000) };
+        post: createCensusKeyPoster({ call, walletCall: wallets, env: process.env }), feeCoin: createFeeCoin({ call, walletCall: wallets, env: process.env }), everyMs: Number(process.env.ARENA_CENSUS_KEY_EVERY_MS || 10000) };
     }
   }
   // A HELD SERIES' VIEWS ARE READ AT START (TWO-GAMES-1407, measured on testnet4 2026-09-30 12:37Z): the first paying

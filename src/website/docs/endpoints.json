@@ -9253,6 +9253,82 @@
  },
  {
   "method": "POST",
+  "path": "/census-sign/commit",
+  "params": "body: JSON { evidence, contract, presig, tx, prevouts }",
+  "auth": "none: a holder checks everything itself",
+  "returns": "200 { ok, session, node, xs, hiding, binding } or { ok: false, why }; 400",
+  "purpose": "A filer's request that a census key holder sign a slash start. The holder replays the proof and holds the transaction to its own census and hold outputs before it commits a nonce.",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "Say ready for a reshare",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "The key, the run (the epoch), the node and its signature on ReshareReady, in hex."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "text/plain",
+    "description": "\"taken\""
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a ReshareReady."
+   },
+   {
+    "status": "409",
+    "contentType": "text/plain",
+    "description": "Refused, with the reason."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signature",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/census-sign/share",
+  "params": "body: JSON { session, signers: [{ id, node, xs, hiding, binding }] }",
+  "auth": "none: bound to the session and its checked digest",
+  "returns": "200 { ok, z } or { ok: false, why }; 400",
+  "purpose": "A holder's share of that signature. A nonce is used once: the session ends here whatever comes of it.",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "Say ready for a reshare",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "The key, the run (the epoch), the node and its signature on ReshareReady, in hex."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "text/plain",
+    "description": "\"taken\""
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a ReshareReady."
+   },
+   {
+    "status": "409",
+    "contentType": "text/plain",
+    "description": "Refused, with the reason."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signature",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
   "path": "/census-dkg/ready",
   "params": "body: JSON { key, run, node, signature }",
   "auth": "the node's signature in the body",

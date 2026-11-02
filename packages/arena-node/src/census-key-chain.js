@@ -243,6 +243,12 @@ export function createCensusKeyScan({ store, network, networkId, firstHeight, fo
     scannedTo: () => { const t = store.scanTop(); return t ? t.height : null; },
     /** The newest record of a key on the chain, a reshare's or its own, or null. */
     generationOf: (keyHex) => { const list = generations.get(keyHex) || []; return list[list.length - 1] || null; },
+    /** The shares a key's signature takes, as its newest record or genesis says. Null for a key this node does not read. */
+    thresholdOf: (keyHex) => {
+      const rows = store.anchors().filter((a) => a.stands && a.kind === 'K').map((a) => decodeCensusKeyBody(a.body).record).filter((r) => toHex(r.publicKey) === keyHex);
+      if (rows.length) return rows[rows.length - 1].threshold;
+      return censusKey0 && toHex(censusKey0.publicKey) === keyHex ? censusKey0.threshold : null;
+    },
     /** The first valid list of a run: { height, present }, or null. */
     reshareList: (keyHex, run) => lists.get(`${keyHex}:${run}`) || null,
     status: () => ({ firstHeight, scannedTo: (store.scanTop() || { height: null }).height, failing,
