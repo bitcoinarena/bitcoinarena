@@ -31,6 +31,7 @@ import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { roundLocks, playerFor } from './join.js';
 import { encodeRoundContract, decodeRoundContract, roundId as roundIdOf, custodyFieldsAreValid, entryId } from '../../arena-protocol/src/contracts.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
+import { takesDeposits } from '../../arena-protocol/src/known-federations.js';
 import { splitDonation, donationSetPaysKeys } from '../../arena-protocol/src/donation.js';
 
 const namesNothing = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
@@ -938,6 +939,8 @@ export async function playerWithdrawable({ round, invite, seed, LockClient, stor
  */
 export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gateways = [], onDeposit = () => {},
   storage = null, federationId = null, restMsat = null, sizeOf = null, choices = null } = {}) {
+  // THE LAST WORD ON WHERE NEW MONEY GOES (kanban #807): whichever path asked, no invoice is made for a federation that takes no new deposits
+  if (federationId && !takesDeposits(federationId)) throw new Error('this federation takes no new deposits');
   let settle; let fail;
   // WHAT CAME OF IT (option 2, 2026-10-01): once a paid deposit is claimed, the round is looked at again -
   // `outcome` resolves { funded: true } or { funded: false, rest } with the offer for exactly the rest
@@ -1096,6 +1099,7 @@ export const WALLET_DEPOSIT_SATS = Object.freeze([1000, 5000, 10000, 50000]);
 export const walletDepositChoices = () => [...WALLET_DEPOSIT_SATS.map((sat) => ({ key: `sat${sat}`, label: `${sat.toLocaleString('en-US')} sat`, rounds: null, msat: BigInt(sat) * 1000n })),
   { key: 'custom', label: 'Custom', rounds: null, msat: null }];
 export async function walletDepositOffer({ federationId, invite, seed, LockClient, storage, gateways = [], onDeposit = () => {}, onClaimed = () => {} } = {}) {
+  if (federationId && !takesDeposits(federationId)) throw new Error('this federation takes no new deposits');   // before a wallet is opened in it (kanban #807)
   const client = await openPlayerWallet({ federationId, invite, seed, LockClient, storage });
   const offer = depositOffer({ client, stakeMsat: 0n, haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit, storage, federationId,
     choices: walletDepositChoices() });
