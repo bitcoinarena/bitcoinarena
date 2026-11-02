@@ -38,6 +38,7 @@ import {
 } from './chain.js';
 import { decodeAdvert, splitSignedAdvert, advertId, hostsGame } from './advert.js';
 import { BOND_TEMPLATE_V3, maturityStands, slashStartLeaf } from './bond-script.js';
+import { bondPresigStands } from './slash-presig.js';
 import { bondNamesStandingKey } from './census-key.js';
 import { poolOfRole, GAME_VERIFY } from './fee.js';
 import { genesisFor } from './genesis.js';
@@ -681,6 +682,12 @@ export function chainFactsAt(blocks, censusHeight) {
  * Answers { txid, vout, height }, the hold output, while it is unspent at the census height. Null for any other spend, and for a hold output already spent.
  */
 export function holdOfStart(facts, key, nodeKey) {
+  const txid = startOf(facts, key, nodeKey);
+  return txid && !facts.spentAt.has(`${txid}:0`) ? { txid, vout: 0, height: facts.spentAt.get(key) } : null;
+}
+
+/** The txid (hex) of the slash start that spent this bond, or null. */
+function startOf(facts, key, nodeKey) {
   const tx = facts.spentIn.get(key);
   if (!tx || !(nodeKey instanceof Uint8Array)) return null;
   const input = tx.inputs[0], stack = tx.witnesses && tx.witnesses[0];
@@ -690,8 +697,7 @@ export function holdOfStart(facts, key, nodeKey) {
   if (!leaf || leaf.length !== 68 || toHex(slashStartLeaf(nodeKey, leaf.slice(35, 67))) !== toHex(leaf)) return null;
   const hold = tx.outputs[0], bond = facts.outputAt.get(key);
   if (!hold || !bond || hold.value !== bond.value || hold.script.length !== 34 || hold.script[0] !== 0x51 || hold.script[1] !== 0x20) return null;
-  const txid = txidHexOf(tx);
-  return facts.spentAt.has(`${txid}:0`) ? null : { txid, vout: 0, height: facts.spentAt.get(key) };
+  return txidHexOf(tx);
 }
 
 /**
@@ -1487,8 +1493,31 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
 
   let eligible = carried;
   const updatedOut = [];
+  const presigOut = [];
+  // A TEMPLATE-3 BOND COUNTS ONLY WITH ITS slash_presig census_confirmations DEEP (5A.3B, RULED 2026-11-02, kanban #1053). The earliest update that posted one is taken and any later update
+  // leaves it standing: one signature check over the bond, its advertisement and its census key, no panels and no earlier census. Asked before the newest advertisement is read, so an output
+  // that does not count decides nothing for its node's others. A census with no such bond pays nothing here.
+  const presigs = new Map();
+  const outKey = (e) => `${Array.from(e.txid).join(',')}:${e.vout}`;
+  const wantsPresig = (e) => e.advert && e.advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3;
+  const presigDeep = Math.max(1, Number(contract.censusConfirmations ?? 0));
+  const seenPresig = eligible.some(wantsPresig) ? (e, read, height) => {
+    if (!wantsPresig(e) || !read.advert.slashPresig || presigs.has(outKey(e)) || contract.censusHeight - height + 1 < presigDeep) return;
+    if (!bond || typeof bond.tweakPoint !== 'function' || !e.script) return;
+    if (bondPresigStands({ presig: read.advert.slashPresig, bond: { txid: e.txid, vout: e.vout, value: BigInt(e.bondSats), script: e.script }, advert: e.advert, networkId: contract.networkId, tweakPoint: bond.tweakPoint, verify: verifyUpdate }))
+      presigs.set(outKey(e), { txid: read.txid, height });
+  } : null;
   if (typeof verifyUpdate === 'function') {
-    const updates = newestUpdates(chain, eligible, { atHeight: contract.censusHeight, network: network || 'regtest', verify: verifyUpdate });
+    const updates = newestUpdates(chain, eligible, { atHeight: contract.censusHeight, network: network || 'regtest', verify: verifyUpdate, seen: seenPresig });
+    if (seenPresig) {
+      const kept = [];
+      for (const e of eligible) {
+        if (!wantsPresig(e) || presigs.has(outKey(e))) { kept.push(presigs.has(outKey(e)) ? { ...e, presigBy: presigs.get(outKey(e)) } : e); continue; }
+        presigOut.push({ ...e, why: `that template-3 bond has no slash_presig ${presigDeep} block(s) deep` });
+        updates.delete(outKey(e));
+      }
+      eligible = kept;
+    }
     const deciders = sumsBonds(contract) ? newestPerNode(eligible, updates) : null;
     const before = eligible;
     eligible = [];
@@ -1541,6 +1570,10 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
       eligible.push({ ...e, advert: sumsBonds(contract) ? ownMaturity(u.advert, e.advert) : u.advert, advertId: u.advertId, roles, hostedGames: u.advert.hostedGames,
         updatedBy: { txid: u.txid, height: u.height, position: u.position } });
     }
+  } else if (eligible.some(wantsPresig)) {
+    // no signature check, so no update is read, so no presig was: the bond is named, as an ancestor's is above, and not counted
+    presigOut.push(...eligible.filter(wantsPresig).map((e) => ({ ...e, why: 'a template-3 bond, and no signature check was given to read its slash_presig with' })));
+    eligible = eligible.filter((e) => !wantsPresig(e));
   }
 
   // AND THE FLOOR ON THE SUMS AGAIN (protocol 19): an output the re-affirmation or the update left out no longer counts toward its node
@@ -1583,6 +1616,7 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
       ...scanned.excluded.map((e) => ({ ...e, step: 'scan' })),
       ...resolved.excluded.map((e) => ({ ...e, step: 'resolve' })),
       ...reaffirmOut.map((e) => ({ ...e, step: 'reaffirm' })),
+      ...presigOut.map((e) => ({ ...e, step: 'presig' })),
       ...updatedOut.map((e) => ({ ...e, step: 'update' })),
       ...sumOut.map((e) => ({ ...e, step: 'sum' })),
       ...absentOut.map((e) => ({ ...e, step: 'absent' })),

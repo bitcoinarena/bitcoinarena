@@ -201,7 +201,7 @@ export function createCensusKeyScan({ store, network, networkId, firstHeight, fo
   }
 
   /**
-   * THE EPOCHS IN A ROW THAT FAILED, as the chain reads (5A.3B: "past 2 failed epochs in a row, the owner page and the health page say so"). Closed epochs only, newest first: an epoch's window has
+   * THE EPOCHS IN A ROW THAT FAILED, as the chain reads (5A.3B: "from 2 failed epochs in a row, the owner page and the health page say so"). Closed epochs only, newest first: an epoch's window has
    * to be over before its key can be missing. Its plan, what stood at its first block, says what it asked. Held between passes, since it reads censuses; a census not yet readable leaves the last answer.
    */
   async function readFailing() {

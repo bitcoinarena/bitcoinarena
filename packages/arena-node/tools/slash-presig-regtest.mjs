@@ -27,9 +27,11 @@ import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donatio
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { encodeRoundContract, decodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
 import { decodeSeatingCertificate, encodeSeatingCertificate, seatingCloseMs } from '../../arena-protocol/src/seating.js';
-import { holdClocksOf, slashPresigDigest, slashPresigVerifies, SLASH_START_SEQUENCE } from '../../arena-protocol/src/slash-presig.js';
+import { bondPresigDigest, holdClocksOf, slashPresigDigest, slashPresigVerifies, SLASH_START_SEQUENCE } from '../../arena-protocol/src/slash-presig.js';
 import { BOND_TEMPLATE_V3, HOLD_INTERNAL_KEY, TAPLEAF_VERSION, controlBlockFor, holdControlBlock, holdOutputKey, slashStartLeaf, tapLeafHash, tapTweak } from '../../arena-protocol/src/bond-script.js';
 import { tapSighash, scriptPathWitness, serializeSpend } from '../../arena-protocol/src/bond-spend.js';
+import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
+import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { arbitrationCommitment } from '../../arena-protocol/src/arbitration-tx.js';
 import { scalarTo32 } from '../../arena-protocol/src/shares.js';
 import { fromHex, taggedHash, toHex } from '../../arena-protocol/src/hash.js';
@@ -100,29 +102,40 @@ try {
   const censusSecret = scalarTo32(xs.reduce((a, x) => (a + lambda.get(x) * shares.get(x)) % N, 0n));
   ask('key 0 stands in for the census key, and these shares sign for it', toHex(schnorr.getPublicKey(censusSecret)) === key);
 
+  const base = { networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1, gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK.gameId, simCoreHash: TRUCK_CORE_HASH, randomnessRule: 'bitcoin-block-hash',
+    objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example/presig'],
+    donationSetId: donationSetId(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 0, censusRoot: new Uint8Array(32), stakeMsat: 0n, bondMinSats: 50000n, blockTicks: RUN_82_TICKS, exposureReference: 1000,
+    corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, protocolVersion: CENSUS_KEY_VERSION, nodes: [] };
   // THE BONDS: every second node on template 3, node 0 with two such outputs, the rest on template 2
   const bond = (i, sats, extra = {}) => rt.postBond(ids[i].secret, { endpoint: `ws://127.0.0.1:${ports[i]}`, bondSats: sats, fundBtc: '0.02', hostedGames: [NEXTBLOCK.gameId], protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS], operatorId: `op${i}`, ...extra });
   const t3 = (i) => i % 2 === 0;
   const bonds = new Map();
-  const postOne = (i, extra = {}) => { const p = bond(i, 100000n, t3(i) ? { template: BOND_TEMPLATE_V3, censusKey: key0, ...extra } : extra); rt.include([p.hex]); (bonds.get(i) || bonds.set(i, []).get(i)).push(p); return p; };
+  const postOne = (i, extra = {}, { presig = true } = {}) => { const p = bond(i, 100000n, t3(i) ? { template: BOND_TEMPLATE_V3, censusKey: key0, ...extra } : extra); rt.include([p.hex, ...(t3(i) && presig ? [rt.postBondPresig(ids[i].secret, p).hex] : [])]); (bonds.get(i) || bonds.set(i, []).get(i)).push(p); return p; };
   for (let i = 0; i < NODES; i++) postOne(i);
   postOne(0);
-  rt.mine(30);
+  // A TEMPLATE-3 BOND COUNTS ONLY WITH ITS PRESIG, census_confirmations DEEP (kanban #1053): an output of node 2 with none yet, then with one
+  const late = postOne(2, {}, { presig: false });
+  rt.mine(3);
+  const censusAtNow = () => { const h = rt.height(); return censusOfView(rt.blocksFrom(0, h), decodeRoundContract(encodeRoundContract({ ...base, censusHeight: h, committeeTimeMs: 1n, startTimeMs: 2n, entryCloseMs: 2n })), { network: 'regtest', standingKeys: [{ epoch: 0, publicKey: key0, height: 0 }] }); };
+  const before = censusAtNow(), lateHex = toHex(fromHex(late.txid).reverse());
+  const out = before.excluded.find((x) => toHex(x.txid) === lateHex);
+  ask('a template-3 bond with no presig is not counted, and is named', !!out && out.step === 'presig' && !before.entries.some((x) => toHex(x.txid) === lateHex), out ? out.why : 'not named');
+  rt.include([rt.postBondPresig(ids[2].secret, late).hex]);
+  rt.mine(1);
+  ask('with its presig on chain it counts, by one signature check', censusAtNow().entries.some((x) => toHex(x.txid) === lateHex));
+  rt.mine(26);
   const H = rt.height();
   const anchorHeaders = []; for (let h = 0; h <= H; h++) anchorHeaders.push(cli('getblockheader', cli('getblockhash', String(h)), 'false'));
   writeFileSync(join(dir, 'attach', 'headers.bin'), Buffer.from(anchorHeaders.join(''), 'hex'));
 
-  const base = { networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1, gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK.gameId, simCoreHash: TRUCK_CORE_HASH, randomnessRule: 'bitcoin-block-hash',
-    objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example/presig'],
-    donationSetId: donationSetId(TEST_DONATION_SET_REGTEST.recipients), censusHeight: H, censusRoot: new Uint8Array(32), stakeMsat: 0n, bondMinSats: 50000n, blockTicks: RUN_82_TICKS, exposureReference: 1000,
-    corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, protocolVersion: CENSUS_KEY_VERSION, nodes: [] };
   const now0 = BigInt(Date.now());
+  base.censusHeight = H;
   const shaped = decodeRoundContract(encodeRoundContract({ ...base, committeeTimeMs: now0, startTimeMs: now0 + 200000n, entryCloseMs: now0 + 200000n }));
   const census = censusOfView(rt.blocksFrom(0, H), shaped, { network: 'regtest', standingKeys: [{ epoch: 0, publicKey: key0, height: 0 }] });
   if (!census.ok) throw new Error(`no census at ${H}: ${census.why}`);
   base.censusRoot = census.root;
   const started = census.entries.filter((e) => e.advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3);
-  ask('the census at the round holds every bond, the template-3 ones counted', census.entries.length === NODES + 1 && started.length === NODES / 2 + 1, `${census.entries.length} outputs of ${NODES} nodes, ${started.length} on template 3`);
+  ask('the census at the round holds every bond, the template-3 ones counted', census.entries.length === NODES + 2 && started.length === NODES / 2 + 2, `${census.entries.length} outputs of ${NODES} nodes, ${started.length} on template 3`);
 
   // a block every 2 s from here on: a round's beacon is the first block whose median time past is after its committee time
   mining = true;
@@ -224,6 +237,36 @@ try {
   const relTxid = cli('sendrawtransaction', toHex(serializeSpend({ ...rel, witnesses: [scriptPathWitness({ stack, script: hold.scripts.release, controlBlock: holdControlBlock('release', hold).controlBlock })] })));
   rt.mine(1);
   ask('the door\'s panels release that hold, t of n of each', JSON.parse(cli('getrawtransaction', relTxid, '1')).confirmations === 1, `${JSON.parse(cli('getrawtransaction', relTxid, '1')).vsize} vB`);
+
+  // A BOND'S OWN PRESIG, FOR A NODE THAT WAS NEVER SEATED (RULED 2026-11-02, kanban #1053): no panels, a hold with no release leaf, the census key at the fallback
+  const never = census.entries.find((x) => x.advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3 && !seatsDrawn.includes(keyHex.indexOf(toHex(x.pubkey))));
+  ask('a template-3 node no round drew exists', !!never);
+  const posted2 = bonds.get(keyHex.indexOf(toHex(never.pubkey))).find((p) => toHex(fromHex(p.txid).reverse()) === toHex(never.txid));
+  const own = bondPresigDigest({ bond: { txid: never.txid, vout: never.vout, value: BigInt(never.bondSats), script: never.script }, advert: { ...never.advert, nodePubkey: never.pubkey, censusKey: key0 }, networkId: NETWORK_ID_REGTEST, tweakPoint });
+  const updateRaw = rt.blocksFrom(never.presigBy.height, never.presigBy.height).blocks[0].transactions.find((t) => toHex(parseTransaction(t).txid) === toHex(never.presigBy.txid));
+  const ownPresig = readAdvertUpdate(updateRaw, { network: 'regtest' }).advert.slashPresig;
+  ask('the bond\'s presig is read off its update and verifies over its own hold, no panels', own.ok && slashPresigVerifies(ownPresig, own.digest, never.pubkey, verify) && !own.hold.leaves.release);
+  const fee2 = rt.fund(feeScript, '0.001');
+  rt.mine(1);
+  const tx2 = { version: 2, locktime: 0, inputs: [{ txid: never.txid, vout: never.vout, sequence: SLASH_START_SEQUENCE }, { txid: fromHex(fee2.txid).reverse(), vout: fee2.vout, sequence: SLASH_START_SEQUENCE }],
+    outputs: [{ value: BigInt(never.bondSats), script: own.hold.script }, arbitrationCommitment(taggedHash('ARENA/v1/SlashProof', new Uint8Array(32).fill(8)), rt.height(), new Uint8Array(0)), { value: fee2.value - 5000n, script: rt.payTo() }] };
+  const prev2 = [{ value: BigInt(never.bondSats), script: never.script }, { value: fee2.value, script: feeScript }];
+  const leaf2 = slashStartLeaf(never.pubkey, key0), leaf2Hash = tapLeafHash(leaf2);
+  const start2 = cli('sendrawtransaction', toHex(serializeSpend({ ...tx2, witnesses: [
+    scriptPathWitness({ stack: [schnorr.sign(tapSighash({ ...tx2, prevouts: prev2, inputIndex: 0, leafHash: leaf2Hash }), censusSecret), ownPresig], script: leaf2, controlBlock: controlBlockFor('slash', posted2.built).controlBlock }),
+    scriptPathWitness({ stack: [schnorr.sign(tapSighash({ ...tx2, prevouts: prev2, inputIndex: 1, leafHash: tapLeafHash(feeLeaf) }), payer)], script: feeLeaf, controlBlock: Uint8Array.from([TAPLEAF_VERSION | q.parity, ...HOLD_INTERNAL_KEY]) }),
+  ] })));
+  rt.mine(1);
+  ask('that presig, the census key and a proof\'s OP_RETURN start a real slash', JSON.parse(cli('getrawtransaction', start2, '1')).confirmations === 1, `${JSON.parse(cli('getrawtransaction', start2, '1')).vsize} vB`);
+  ask('its hold output stays the bond in the census', censusAtNow().entries.some((x) => toHex(x.txid) === toHex(never.txid) && x.hold));
+  const fb = { version: 2, locktime: 0, inputs: [{ txid: fromHex(start2).reverse(), vout: 0, sequence: clocks.fallbackBlocks }], outputs: [{ value: BigInt(never.bondSats) - 5000n, script: rt.payTo() }] };
+  const fbSpend = () => toHex(serializeSpend({ ...fb, witnesses: [scriptPathWitness({ stack: [schnorr.sign(tapSighash({ ...fb, prevouts: [{ value: BigInt(never.bondSats), script: own.hold.script }], inputIndex: 0, leafHash: own.hold.leaves.fallback }), censusSecret)], script: own.hold.scripts.fallback, controlBlock: holdControlBlock('fallback', own.hold).controlBlock })] }));
+  rt.mine(clocks.fallbackBlocks - 2);
+  ask('the fallback is not open a block early', JSON.parse(cli('testmempoolaccept', JSON.stringify([fbSpend()])))[0].allowed === false);
+  rt.mine(1);
+  const fbTxid = cli('sendrawtransaction', fbSpend());
+  rt.mine(1);
+  ask('the census key pays it at slash_fallback_blocks', JSON.parse(cli('getrawtransaction', fbTxid, '1')).confirmations === 1, `${clocks.fallbackBlocks} blocks after the start`);
 } catch (e) { wrong += 1; console.error(`#972 stopped: ${e.stack}`); console.error(`#972 logs in ${dir}`); env.SP_KEEP = '1'; }
 await stopAll();
 console.log(wrong ? `#972 ${wrong} wrong` : '#972 all as expected');

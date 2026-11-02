@@ -224,14 +224,10 @@ export function panelSeed(committeeSeed) {
 const PANEL_LEAVES_OUT = ['game', 'settlement'];
 
 /**
- * A ROUND'S TWO SLASH PANELS (5A.3B "Who is responsible for a round"): the 5A.6 selection over the round's census on panel_seed(r), less
- * every node drawn for any role of the round (all 9 per role, 5A.7), its attestors and the nodes of its players. What is left is E;
- * n = min(7, floor(|E| / 2)), t = floor(2n / 3) + 1, panel A the first n of the order, panel B the next n. Pure, and worked out here rather
- * than taken in: nobody hands the draw its own exclusions but what only the round knows.
- *
- *   drawsAttestors   the round's game draws its attestors (manifest attestDraw): they are drawn here and left out
- *   attestorKeys     a game's own named attestors, 32-byte keys
- *   playerNodes      the nodes of the round's players, 32-byte keys. A player declares no operator (5A.13), so the caller says who they are
+ * A ROUND'S TWO SLASH PANELS (5A.3B "Who is responsible for a round"): the 5A.6 selection over the round's census on panel_seed(r), less every node drawn for any role of the round
+ * (all 9 per role, 5A.7). What is left is E; n = min(7, floor(|E| / 2)), t = floor(2n / 3) + 1, panel A the first n of the order, panel B the next n. Pure, and nothing is taken in:
+ * a panel is a function of the chain and the round (RULED 2026-11-02, kanban #1053), so neither a manifest a seat may not hold nor a player who enters later moves it. A player's own
+ * node or an attestor can sit on a panel: a panel only checks a proof, and the census key has already started it.
  *
  * Drawn as `drawAttestors` is, on the settlement ticket: 5A.6 draws per role and the spec names none for a panel.
  *
@@ -239,12 +235,11 @@ const PANEL_LEAVES_OUT = ['game', 'settlement'];
  * output then has no release leaf and a slash pays at the fallback. Only a round that cannot be drawn at all answers ok: false.
  * Answers { ok: true, n, t, panelA, panelB, order, eligible } of census entries, or { ok: false, why }.
  */
-export function drawPanels({ entries, contract, committeeSeed, drawsAttestors = false, attestorKeys = [], playerNodes = [] }) {
+export function drawPanels({ entries, contract, committeeSeed }) {
   try {
-    const out = new Set([...attestorKeys, ...playerNodes].map(toHex));
+    const out = new Set();
     for (const role of PANEL_LEAVES_OUT)
       for (const e of drawCommittee({ entries, contract, role, committeeSeed })) out.add(toHex(e.pubkey));
-    if (drawsAttestors) for (const e of drawAttestors({ entries, contract, committeeSeed })) out.add(toHex(e.pubkey));
     return panelsOf({ entries, contract, seed: panelSeed(committeeSeed), out });
   } catch (e) { return { ok: false, why: `the panels cannot be drawn: ${e.message}` }; }
 }
@@ -254,25 +249,4 @@ function panelsOf({ entries, contract, seed, out }) {
     exclude: entries.filter((e) => out.has(toHex(e.pubkey))) });
   const n = panelSeats(rest.length);
   return { ok: true, n, t: n ? panelThreshold(n) : 0, eligible: rest.length, panelA: rest.slice(0, n), panelB: rest.slice(n, 2 * n), order: rest.slice(0, 2 * n) };
-}
-
-/**
- * THE PANELS OF A BOND'S OWN slash_presig, for an offence with no round (5A.3B, kanban #1031): seed tagged_hash("ARENA/v1/SlashPanel", bond outpoint ||
- * hash of the block that confirmed the bond), the census at that block's height, less the bonding node and its operator's nodes; n and t as
- * for a round. The update's own block cannot be the seed: the signature inside the update depends on it. A bonder can retry for friendly
- * panels at the cost of a bond each time. Accepted: they guard only an offence with no round, and the census key's fallback stands behind them.
- */
-export function bondPanelSeed({ txid, vout }, blockHash) {
-  const w = new Writer();
-  w.bytes32(txid); w.u32(vout); w.bytes32(blockHash);
-  return taggedHash(TAG.slashPanel, w.finish());
-}
-
-export function drawBondPanels({ entries, contract, bond, blockHash, nodeKey, operatorId = null }) {
-  try {
-    const me = toHex(nodeKey);
-    const out = new Set([me]);
-    if (operatorId) for (const e of entries) if (e.advert && e.advert.operatorId === operatorId) out.add(toHex(e.pubkey));
-    return panelsOf({ entries, contract, seed: bondPanelSeed(bond, blockHash), out });
-  } catch (e) { return { ok: false, why: `the panels cannot be drawn: ${e.message}` }; }
 }

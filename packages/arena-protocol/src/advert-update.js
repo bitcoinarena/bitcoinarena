@@ -98,9 +98,10 @@ export async function checkAgainstBond(read, bond, verify) {
 /**
  * THE NEWEST VALID UPDATE PER BOND, from blocks (a chain view: { blocks: [{ transactions }], firstHeight }), at or
  * below `atHeight`, for the census's entries ({ txid, vout, pubkey }). `verify` is synchronous here, as the census is.
- * Answers Map(outpoint key -> { advert, advertId, txid, height, position }).
+ * Answers Map(outpoint key -> { advert, advertId, txid, height, position }). `seen(entry, read, height)`: told of every valid update in chain order, the newest or not: a bond's presig
+ * stays in the update that posted it, whatever came after (one pass over the view).
  */
-export function newestUpdates(view, entries, { atHeight, network = 'regtest', verify } = {}) {
+export function newestUpdates(view, entries, { atHeight, network = 'regtest', verify, seen = null } = {}) {
   const found = new Map();
   // NO LIST OF BONDS, NOTHING TO UPDATE: measured before, a missing list threw on entries.map.
   if (typeof verify !== 'function' || !view || !Array.isArray(view.blocks) || !Array.isArray(entries)) return found;
@@ -120,6 +121,7 @@ export function newestUpdates(view, entries, { atHeight, network = 'regtest', ve
       let signed = false;
       try { signed = !!verify(read.signature, read.advertId, read.nodePubkey); } catch { signed = false; }
       if (!signed) return;
+      if (seen) seen(e, read, height);
       const had = found.get(key);
       if (!had || height > had.height || (height === had.height && position > had.position))
         found.set(key, { advert: read.advert, advertId: read.advertId, txid: read.txid, height, position, raw });

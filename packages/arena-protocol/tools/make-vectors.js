@@ -96,17 +96,15 @@ out.tagged = {
   const entries = Array.from({ length: 40 }, (_, i) => mk(i + 1));
   const contract = { networkId: NETWORK_ID_REGTEST, gameId: b32(0x67), gameVerifySlots: 7, settlementSlots: 7, bondMinSats: 100000n };
   const seed = b32(42);
-  const drawn = drawPanels({ entries, contract, committeeSeed: seed, drawsAttestors: true, playerNodes: [b32(40)] });
+  const drawn = drawPanels({ entries, contract, committeeSeed: seed });
   out.panels = {
-    what: 'A round\'s two slash panels (5A.3B): the selection on tagged_hash("ARENA/v1/SlashPanel", committee_seed), less its draws, attestors and players\' nodes.',
+    what: 'A round\'s two slash panels (5A.3B): the selection on tagged_hash("ARENA/v1/SlashPanel", committee_seed), less its 9 drawn per role.',
     committeeSeed: toHex(seed),
     panelSeed: toHex(panelSeed(seed)),
     bondMin: '100000',
     nodes: 40,
     bonds: 'key n = 32 bytes of n, outpoint (32 bytes of n, 0), 300000 sat where n % 6 = 0, else 100000',
     slots: 7,
-    playerNodes: [toHex(b32(40))],
-    drawsAttestors: true,
     panelA: drawn.panelA.map((e) => toHex(e.pubkey)),
     panelB: drawn.panelB.map((e) => toHex(e.pubkey)),
     // SMALLER CENSUSES, two seats a role: n = min(7, floor(|E| / 2)), t = floor(2n / 3) + 1, no panels under n = 3 (kanban #1021)

@@ -151,6 +151,12 @@ export function encodeAdvert(a) {
     if (!(a.emergencyPubkey instanceof Uint8Array) || a.emergencyPubkey.length !== 32) throw new Error('an emergency key is a 32-byte public key');
     w.u8(EMERGENCY_MARKER); w.bytes32(a.emergencyPubkey);
   }
+  // A TEMPLATE-3 BOND'S slash_presig AT BONDING (5A.3B, RULED 2026-11-02, kanban #1053): 65 bytes after their marker, before serving, in an advertisement update of that bond, since the
+  // body a bond commits to is built before its txid exists. None is no bytes, so every advertisement before this keeps its bytes. The signature stands on its own: no body has to repeat it.
+  if (a.slashPresig !== undefined && a.slashPresig !== null) {
+    if (!(a.slashPresig instanceof Uint8Array) || a.slashPresig.length !== SLASH_PRESIG_BYTES) throw new Error(`a slash_presig is ${SLASH_PRESIG_BYTES} bytes`);
+    w.u8(SLASH_PRESIG_MARKER); w.bytes(a.slashPresig, SLASH_PRESIG_BYTES);
+  }
   if (a.serving !== undefined && a.serving !== true && a.serving !== false) throw new Error('serving is true or false');
   if (a.serving === false) w.u8(NOT_SERVING_MARKER);
   return w.finish();
@@ -160,6 +166,9 @@ export function encodeAdvert(a) {
 export const DECLARES_MARKER = 0x5d;
 /** The byte before the owner's emergency key (§23A.5a, protocol 17), after the declared scalars, before serving. */
 export const EMERGENCY_MARKER = 0x5e;
+/** The byte before a bond's slash_presig (5A.3B, kanban #1053), after the emergency key, before serving. */
+export const SLASH_PRESIG_MARKER = 0x5c;
+export const SLASH_PRESIG_BYTES = 65;
 /** The last byte of an advertisement that steps its node out of the census (serving = false, §5A.3). */
 export const NOT_SERVING_MARKER = 0x5f;
 
@@ -215,11 +224,13 @@ export function decodeAdvert(bytes) {
   for (let i = 1; i < a.hostedGames.length; i++)
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   a.timestamp = r.u64();
-  // the declared scalars (17 bytes), the emergency key (33) and serving = false (1), each only when written, in that order
+  // the declared scalars (17 bytes), the emergency key (33), the slash_presig (66) and serving = false (1), each only when written, in that order
   const left = bytes.length - r.at;
-  if ([17, 18, 50, 51].includes(left) && bytes[r.at] === DECLARES_MARKER) { r.u8(); a.declares = { bondMinSats: r.u64(), proposalDepositSats: r.u64() }; }
+  if ([17, 18, 50, 51, 83, 84, 116, 117].includes(left) && bytes[r.at] === DECLARES_MARKER) { r.u8(); a.declares = { bondMinSats: r.u64(), proposalDepositSats: r.u64() }; }
   const left2 = bytes.length - r.at;
-  if ((left2 === 33 || left2 === 34) && bytes[r.at] === EMERGENCY_MARKER) { r.u8(); a.emergencyPubkey = r.bytes32(); }
+  if ([33, 34, 99, 100].includes(left2) && bytes[r.at] === EMERGENCY_MARKER) { r.u8(); a.emergencyPubkey = r.bytes32(); }
+  const left3 = bytes.length - r.at;
+  if ((left3 === 66 || left3 === 67) && bytes[r.at] === SLASH_PRESIG_MARKER) { r.u8(); a.slashPresig = r.bytes(SLASH_PRESIG_BYTES); }
   // serving = false only when it says so; a serving node's advertisement decodes as it always did (no field)
   if (r.at === bytes.length - 1 && bytes[r.at] === NOT_SERVING_MARKER) { r.u8(); a.serving = false; }
   if (r.at !== bytes.length) throw new Error('trailing bytes after the advertisement');

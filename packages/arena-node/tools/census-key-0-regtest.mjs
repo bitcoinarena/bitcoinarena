@@ -102,9 +102,9 @@ try {
 
   const versions = [1, CENSUS_KEY_VERSION];
   const bond = (i, sats, extra = {}) => rt.postBond(keys[i].secret, { endpoint: `ws://127.0.0.1:${ports[i]}`, bondSats: sats, fundBtc: '0.02', protocolVersions: versions, operatorId: `op${i}`, ...extra });
-  const posted = [0, 1, 2].map((i) => bond(i, 100000n, { template: BOND_TEMPLATE_V3, censusKey: key0 }));
-  posted.push(bond(3, 150000n));
-  rt.include(posted.map((p) => p.hex));
+  const posted = [0, 1, 2].map((i) => bond(i, 100000n, { template: BOND_TEMPLATE_V3, censusKey: key0, slackBlocks: 12 }));      // each carrier funded mines a block
+  posted.push(bond(3, 150000n, { slackBlocks: 12 }));
+  rt.include([...posted.map((p) => p.hex), ...[0, 1, 2].map((i) => rt.postBondPresig(keys[i].secret, posted[i]).hex)]);
   rt.mine(FIRST - 1 - rt.height());
   for (let i = 0; i < SEATS; i++) { startSeat(i); await wait(4000); }
   for (let t = 0; t < 120; t++) {
@@ -175,7 +175,7 @@ try {
   const firstSecret = scalarOf(first, 3);
   ask('the first key\'s shares open it, to sign as 2/3 of its holders would', toHex(schnorr.getPublicKey(firstSecret)) === first);
   const started = bond(3, 100000n, { template: BOND_TEMPLATE_V3, censusKey: fromHex(first) });
-  rt.include([started.hex]);
+  rt.include([started.hex, rt.postBondPresig(keys[3].secret, started).hex]);
   rt.mine(1);
   const value = 100000n, nodeKey = pubOf(keys[3]), firstKey = fromHex(first);
   const bondScript = fromHex(`5120${toHex(started.built.outputKey)}`), bondIn = { txid: fromHex(started.txid).reverse(), vout: 0, sequence: 0xfffffffd };

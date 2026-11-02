@@ -1596,6 +1596,7 @@ NodeAdvertisement {
   bond_script_template_version
   bond_maturity_height         // templates 2 and 3: the height in the recovery leaf (§5A.3B)
   census_key                   // template 3: the key path B names (§5A.3B)
+  slash_presig                 // template 3, in an update only: the bond's own, 65 bytes (§5A.3B)
   payout_pubkey                // where fee shares are paid
   guardian_of[]                // (federation_id, guardian peer key) this operator runs (§23.6)
   guardian_capable             // the third role, opt-in: willing to hold custody as a guardian (§23A.2)
@@ -1723,6 +1724,7 @@ being canonical.
 bond output exists at census_height, unspent, >= census_confirmations deep
                                                (its hold output stands for it, §5A.3B)
 bond output uses the protocol's bond script template (5A.3B)
+template 3: its slash_presig at bonding >= census_confirmations deep (5A.3B)
 bond_amount >= bond_min(role)
 committed advertisement body retrievable and hash-matching
 advertisement signature valid under node_pubkey
@@ -2539,13 +2541,19 @@ round, fixed when its committees are:
 panel_seed(r)  = tagged_hash("ARENA/v1/SlashPanel", committee_seed(r))
 order          the §5A.6 selection over the round's census, on panel_seed(r),
                less every node drawn for any role of the round (all 9 per role,
-               §5A.7), its attestors, and the nodes of its players
+               §5A.7)
 E              the nodes left in that order
 n              min(7, floor(|E| / 2))
 t              floor(2n / 3) + 1        n 3..7 -> t 3, 3, 4, 5, 5
 panel A        the first n of that order
 panel B        the next n
 ```
+
+A panel is a function of the chain and the round (RULED 2026-11-02, kanban #1053).
+Which rounds have attestors depends on a manifest a seat may not hold, and panels are
+fixed before any player enters, so neither is left out: an attestor or a player's own
+node can sit on a panel of that round. A panel only checks a proof, and the census key
+has already started it.
 
 **A small census gets smaller panels (RULED 2026-11-02, kanban #1021).** The
 census minimum stays, and no round is refused for this. A panel is a check on a
@@ -2618,7 +2626,7 @@ which are bonds made while it was newest, and among those the immature ones afte
 most a buyer can win is one epoch's new bonds, and a new key at each epoch's start
 keeps it there. A hidden holder set, a higher threshold and a draw with less variance
 were each refused. A DKG failing epoch after epoch is the thing to watch, because a
-key then gathers more live immature bonds: past 2 failed epochs in a row, the owner
+key then gathers more live immature bonds: from 2 failed epochs in a row (an epoch that asked nothing ends the count), the owner
 page and the health page say so. Every node reads that from its chain, so all say the
 same: a closed epoch failed if the plan at its first block asked a new key or a reshare
 and no record of that epoch stands; an epoch that asked nothing ends the count, since a
@@ -2801,7 +2809,7 @@ run           the epoch whose founding_window it runs in
   cover the old threshold, so one old holder cannot block every epoch. The transcript
   holds no verifying shares of the old key, so a new holder cannot check a name: for it
   a bad sum fails the run and names nobody. Adding them is a format change, which was
-  left out, so repeated failed reshares are the warning already ruled for keys: past 2
+  left out, so repeated failed reshares are the warning already ruled for keys: from 2
   failed epochs in a row, the owner page and the health page say so.
 
 **What a client reads (RULED 2026-11-02, kanban #1048).** A client that cannot count a
@@ -2835,12 +2843,14 @@ input 0       the bond, sequence 0xfffffffd
 output 0      the whole bond amount, to hold(bond, round)
 ```
 
-It is 65 bytes, stays with the round's seats and is checked with the seating; a
+It is 65 bytes, travels in the certificate and is checked with the seating; it is
+not secret and a client need not read it. A
 seat refuses a seating whose member's `slash_presig` does not verify. The signed
 transaction is normally never published. The hash type leaves everything else
 open: whoever files the slash adds a fee input and the proof's `OP_RETURN`, and
 the release pays their fee back. A slash uses the `slash_presig` of the round
-the offence is in; an offence with no round uses the node's newest.
+the offence is in; an offence with no round uses the node's newest, or the one at
+bonding (below) if the node was never seated.
 
 A seated node signs one per template-3 bond it holds, none for a bond of another
 template or one already started. The seating certificate carries them after its
@@ -2854,23 +2864,23 @@ roles of a round share one presig, and so do all rounds of a table, which share 
 draw: the seating of its first round and of each check-in carries it for the rounds
 it seats. A slash on a table's later round uses that presig (kanban #972).
 
-A node
-also posts one in an advertisement update when it bonds (the bond's txid does
-not exist before), naming panels drawn as below, and a template-3 bond counts only
-with it `census_confirmations` deep.
+**The advance signature at bonding (RULED 2026-11-02, kanban #1053).** A node also
+posts one in an advertisement update when it bonds (the bond's txid does not exist
+before), as `slash_presig` in that body. It moves the bond to a hold output with no
+release leaf, only the return and the fallback, the shape a round with no panels already
+has. Its script is built from the bond, its advertisement and its census key alone.
+A template-3 bond counts only with it `census_confirmations` deep.
 
-```text
-seed     tagged_hash("ARENA/v1/SlashPanel", bond outpoint ‖ hash of the block
-         that confirmed the bond)
-census   at that block's height
-less     the bonding node and its operator's nodes
-n, t     as for a round
-```
+A reader, the page included, checks it with one signature check over those fields: no
+panels, no draw, no census, and nothing recursive. The earliest update carrying one
+that verifies counts, later updates need not repeat it, and a seat hands that update
+with the bond's evidence.
 
-The update's own block cannot be the seed: the signature inside the update depends
-on it. A bonder can retry for friendly panels at the cost of a bond each time. They
-would guard only an offence with no round, and the census key's fallback stands
-behind them.
+A slash on this presig pays at `slash_fallback_blocks`, by the census key, and a mature
+node can leave first. It is the slowest path, for a rare case. It covers an offence
+with no round, and a node with no round presig because it was never seated: a
+guardian, an auditor with a contradicted `AUDIT`, a panel member with a false release. A
+seat's round presig stays the normal path.
 
 **The hold output.** A P2TR output with an unspendable internal key, rebuilt by
 anyone from the bond and the round:
@@ -2879,7 +2889,8 @@ anyone from the bond and the round:
 release       <slash_hold_blocks> CHECKSEQUENCEVERIFY DROP
               <t-of-n panel A>  <t-of-n panel B>
               -> §5A.3: each real loss, then the rest to the reserves;
-                 no such leaf when the round has no panels
+                 no such leaf when the round has no panels, or for the
+                 presig at bonding
 
 return        <slash_return_blocks> CHECKSEQUENCEVERIFY DROP
               <bond_maturity> CHECKLOCKTIMEVERIFY DROP

@@ -12,6 +12,7 @@ import { encodeRoundContract, roundId as roundIdOf } from '../../arena-protocol/
 import { checkSeatingPresigs, decodeSeatingCertificate, encodeSeatingCertificate, seatingId, signSeen, verifySeating, signSeatingBound } from '../../arena-protocol/src/seating.js';
 import { holdClocksOf, presignedBond, roundPresigPlan, signSlashPresig, slashPresigVerifies, SLASH_PRESIG_HASH_TYPE } from '../../arena-protocol/src/slash-presig.js';
 import { BOND_TEMPLATE_V3 } from '../../arena-protocol/src/bond-script.js';
+import { drawPanels } from '../../arena-protocol/src/sortition.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { contractFor } from './window-fixture.js';
@@ -26,36 +27,37 @@ const entry = (n, i, template3) => ({ pubkey: n.pubkey, txid: new Uint8Array(32)
   advert: { nodePubkey: n.pubkey, roles: ['game', 'settlement'], ...(template3 ? { bondScriptTemplateVersion: BOND_TEMPLATE_V3, censusKey, bondMaturityHeight: 5000 } : { bondScriptTemplateVersion: 1 }) },
   ...(template3 ? { script: bondScript(i) } : {}) });
 const seed = new Uint8Array(32).fill(0x33);
+const plan4 = ({ entries, contract: c, committeeSeed, tweakPoint: t }) => roundPresigPlan({ entries, contract: c, panels: drawPanels({ entries, contract: c, committeeSeed }), tweakPoint: t });
 
 test('the plan: one digest per template-3 bond, none for the others, none for a started bond, and a census with none draws nothing', () => {
   const entries = nodes.map((n, i) => entry(n, i, i < 3));
-  const got = roundPresigPlan({ entries, contract, committeeSeed: seed, tweakPoint });
+  const got = plan4({ entries, contract, committeeSeed: seed, tweakPoint });
   assert.equal(got.why, undefined);
   const { plan, panels } = got;
   assert.equal(plan.size, 3);
   assert.equal(plan.get(toHex(nodes[0].pubkey)).length, 1);
   assert.ok(panels.n >= 3, 'this census has panels');
-  const noneAtAll = roundPresigPlan({ entries: nodes.map((n, i) => entry(n, i, false)), contract, committeeSeed: seed, tweakPoint });
+  const noneAtAll = plan4({ entries: nodes.map((n, i) => entry(n, i, false)), contract, committeeSeed: seed, tweakPoint });
   assert.equal(noneAtAll.plan.size, 0);
   assert.equal(noneAtAll.panels, undefined, 'no panels were drawn');
   const started = { ...entries[0], hold: { txid: 'aa', vout: 0, height: 120 } };
   assert.equal(presignedBond(started), false);
   // the hold is the round's: another seed, other panels, another digest
-  const other = roundPresigPlan({ entries, contract, committeeSeed: new Uint8Array(32).fill(0x44), tweakPoint });
+  const other = plan4({ entries, contract, committeeSeed: new Uint8Array(32).fill(0x44), tweakPoint });
   assert.notEqual(toHex(other.plan.get(toHex(nodes[0].pubkey))[0].digest), toHex(plan.get(toHex(nodes[0].pubkey))[0].digest));
 });
 
 test('a hold depends on a round only through its panels: rounds of one draw, so a table\'s, and the two roles of a round share one presig', () => {
   const entries = nodes.map((n, i) => entry(n, i, i < 2));
-  const one = roundPresigPlan({ entries, contract, committeeSeed: seed, tweakPoint });
-  const later = roundPresigPlan({ entries, contract: { ...contract, roundIndex: 40, startTimeMs: contract.startTimeMs + 320000n }, committeeSeed: seed, tweakPoint });
+  const one = plan4({ entries, contract, committeeSeed: seed, tweakPoint });
+  const later = plan4({ entries, contract: { ...contract, roundIndex: 40, startTimeMs: contract.startTimeMs + 320000n }, committeeSeed: seed, tweakPoint });
   const [a] = one.plan.get(toHex(nodes[0].pubkey)), [b] = later.plan.get(toHex(nodes[0].pubkey));
   assert.equal(toHex(a.digest), toHex(b.digest));
 });
 
 test('a presig is 65 bytes, ends in 0x83, and verifies only over its own digest under its own key', () => {
   const entries = nodes.map((n, i) => entry(n, i, i < 2));
-  const { plan } = roundPresigPlan({ entries, contract, committeeSeed: seed, tweakPoint });
+  const { plan } = plan4({ entries, contract, committeeSeed: seed, tweakPoint });
   const [a] = plan.get(toHex(nodes[0].pubkey)), [b] = plan.get(toHex(nodes[1].pubkey));
   const sig = signSlashPresig(a.digest, (d) => schnorr.sign(d, nodes[0].secret));
   assert.equal(sig.length, 65);
@@ -79,7 +81,7 @@ test('the certificate: no presigs is the old bytes; presigs read back with no ju
   const base = certBase(), plain = encodeSeatingCertificate(base);
   assert.equal(toHex(encodeSeatingCertificate({ ...base, presigs: [] })), toHex(plain), 'a seating with no template-3 bond is byte for byte as before');
   const entries = nodes.map((n, i) => entry(n, i, i < 2));
-  const { plan } = roundPresigPlan({ entries, contract, committeeSeed: seed, tweakPoint });
+  const { plan } = plan4({ entries, contract, committeeSeed: seed, tweakPoint });
   const presigs = [0, 1].map((i) => { const [b] = plan.get(toHex(nodes[i].pubkey)); return { nodePubkey: nodes[i].pubkey, txid: fromHex(b.txid), vout: b.vout, signature: signSlashPresig(b.digest, (d) => schnorr.sign(d, nodes[i].secret)) }; });
   const bytes = encodeSeatingCertificate({ ...base, presigs });
   const c = decodeSeatingCertificate(bytes);
@@ -121,7 +123,7 @@ test('through the agent: each seated node hands its presig with its signature, t
   const c = { ...contract, gameVerifySlots: 2, settlementSlots: 2 };
   Object.assign(contract, c);
   const entries = nodes.map((n, i) => entry(n, i, i < 2));
-  const { plan } = roundPresigPlan({ entries, contract, committeeSeed: seed, tweakPoint });
+  const { plan } = plan4({ entries, contract, committeeSeed: seed, tweakPoint });
   const drawn = few.map((n) => ({ pubkey: n.pubkey, advert: { endpoint: n.endpoint } }));
   for (const tamper of [null, (j) => { for (const r of Object.values(j.rounds)) r.cert = {}; for (const r of Object.values(j.rounds)) for (const sig of Object.values(r.sig)) if (sig && sig.presigs) sig.presigs[0].signature = sig.presigs[0].signature.replace(/^../, '00'); return j; }]) {
     const peers = new Map();

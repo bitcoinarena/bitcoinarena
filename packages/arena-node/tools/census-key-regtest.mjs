@@ -126,7 +126,7 @@ try {
   const stranger = schnorr.utils.randomSecretKey();
   const good = bond(4, 150000n, { template: BOND_TEMPLATE_V3, censusKey: fromHex(key) });
   const bad = rt.postBond(stranger, { endpoint: 'ws://127.0.0.1:1', bondSats: 900000n, fundBtc: '0.02', protocolVersions: versions, operatorId: 'stranger', template: BOND_TEMPLATE_V3, censusKey: new Uint8Array(32).fill(0x77) });
-  rt.include([good.hex, bad.hex]);
+  rt.include([good.hex, bad.hex, rt.postBondPresig(keys[4].secret, good).hex]);
   rt.mine(1);
 
   // A RESTART: what the scan found is kept, and the kept census of epoch 4 is read under the key

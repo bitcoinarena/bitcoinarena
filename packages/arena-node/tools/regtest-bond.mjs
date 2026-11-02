@@ -19,6 +19,8 @@ import { reaffirmationMessage, reaffirmationPayload } from '../../arena-protocol
 import { execFileSync } from 'node:child_process';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
+import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
+import { bondPresigDigest, signSlashPresig } from '../../arena-protocol/src/slash-presig.js';
 import {
   bondOutputKey, bondInternalKey, tapLeafHash, TAPLEAF_VERSION, bondMaturityOf, maturityHeightFor, BOND_TEMPLATE_V2, BOND_TEMPLATE_V3, bond3OutputKey,
   recoveryLeaf, controlBlockFor,
@@ -432,6 +434,18 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
   }
 
   // `hostedGames`: the games the node's advertisement hosts (§0A.4) - sorted 32-byte ids; nextblock's unless given.
+  /**
+   * A TEMPLATE-3 BOND'S slash_presig AT BONDING (5A.3B, RULED 2026-11-02, kanban #1053): the update that makes the bond count, posted beside it, since its txid is what the signature names.
+   * `posted` is postBond's answer. The hold output has no release leaf: its script is built from the bond, its advertisement and its census key alone. Answers postAdvertUpdate's.
+   */
+  function postBondPresig(nodeSecret, posted, options = {}) {
+    const bond = { txid: fromHex(posted.txid).reverse(), vout: 0, value: posted.bondSats, script: fromHex('5120' + toHex(posted.built.outputKey)) };
+    const built = bondPresigDigest({ bond, advert: posted.advert, networkId: network === 'testnet4' ? NETWORK_ID_TESTNET4 : NETWORK_ID_REGTEST, tweakPoint });
+    if (!built.ok) throw new Error(built.why);
+    const slashPresig = signSlashPresig(built.digest, (d) => schnorr.sign(d, nodeSecret));
+    return postAdvertUpdate(prepareAdvertUpdate(nodeSecret, { ...posted.advert, slashPresig, timestamp: BigInt(Date.now()) }), { txid: posted.txid, vout: 0 }, options);
+  }
+
   // Measured: with none named every bond this posted was refused by the advertisement's own encoder.
   function postBond(nodeSecret, { endpoint, roles = ['game', 'verify', 'settlement'],
     bondSats = 50000000n, guardianOf = [], guardianCapable = false, guardianEndpoint = '', fundBtc, hostedGames = [NEXTBLOCK_GAME_ID],
@@ -451,7 +465,7 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
     // new bond's template, height and timestamp: a second output beside the node's first, saying what the node says now.
     // `utxo` - a carrier output funded already (not broadcast yet, for a testmempoolaccept dry run) - in place of `fund`.
     if (givenAdvert && toHex(givenAdvert.nodePubkey) !== toHex(nodeKey)) throw new Error('an added bond names the node key that signs it');
-    const advert = givenAdvert ? { ...givenAdvert, bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: template,
+    const advert = givenAdvert ? { ...givenAdvert, slashPresig: undefined, bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: template,
       ...(dated ? { bondMaturityHeight: maturity } : {}), ...(censusKey ? { censusKey } : {}), timestamp: BigInt(Date.now()) } : {
       // the operator and the protocol versions it speaks: '2of2' and [1] unless the caller names them (a node of
       // its own operator, drawable beside the 14 '2of2' nodes; it speaks what its build speaks)
@@ -508,6 +522,6 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
     return { blocks, firstHeight: from };
   }
 
-  return { height, mine, bury, minable, waitForHeight, include, postBond, findBond, bondsOf, keyAt, carrierFor, chunksOf, fund, payTo, prepareAdvertUpdate, postAdvertUpdate,
+  return { height, mine, bury, minable, waitForHeight, include, postBond, findBond, bondsOf, keyAt, carrierFor, chunksOf, fund, payTo, prepareAdvertUpdate, postAdvertUpdate, postBondPresig,
     prepareReaffirmation, postReaffirmation, prepareRebond, postRebond, newestUpdateOf, blocksFrom, genesis: g };
 }
