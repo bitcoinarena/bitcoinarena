@@ -333,6 +333,7 @@ out.tagged = {
   const drawCase = (what, { guardingOpen = [], seatedFirst = [], ...rest } = {}) => {
     const d = drawGuardians({ entries, seed, height, nominal, bondMinGuardian, guardingOpen: new Set(guardingOpen), seatedFirst: seatedFirst.map((n) => entries.find((e) => e.pubkey[0] === n)), ...rest });
     return { what, guardingOpen, seatedFirst: seatedFirst.map((n) => toHex(b32(n))),
+      ...(rest.pressureBond ? { pressureBond: String(rest.pressureBond), atPressureBond: d.atPressureBond } : {}),
       eligible: d.eligible, seatedFirstCount: d.seatedFirst, drawn: d.drawn.map(hex), alternates: d.alternates.map(hex), why: d.why };
   };
   out.founding = {
@@ -341,6 +342,11 @@ out.tagged = {
     cases: [
       drawCase('The plain draw: bond-weighted tickets over the eligible operators, one ticket per operator.', { guardingOpen: ['busy'] }),
       drawCase('A succession: the old guardians seated first in the order given, the missing seats drawn.', { guardingOpen: ['busy'], seatedFirst: [1, 6, 9] }),
+      drawCase('Under pressure with too few at B*_net: op2 (two nodes summed), op3, op5, op7, op10 first; op4 at one sat below is not; the other two seats by ticket.', { guardingOpen: ['busy'], pressureBond: 86667n }),
+      drawCase('Under pressure with more at B*_net than seats: ticket order among them, and the eighth is the first alternate.', { guardingOpen: ['busy'], pressureBond: 55000n }),
+      drawCase('Under pressure with B*_net at the floor: everyone qualifies, the plain draw.', { guardingOpen: ['busy'], pressureBond: 50000n }),
+      drawCase('Under pressure with nobody at B*_net: the plain draw.', { guardingOpen: ['busy'], pressureBond: 1000000n }),
+      drawCase('Under pressure in a succession: the old guardians stay first whatever their bonds, the rule orders the missing seats.', { guardingOpen: ['busy'], seatedFirst: [1, 6, 9], pressureBond: 86667n }),
     ],
   };
 }

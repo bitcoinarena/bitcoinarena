@@ -35,10 +35,18 @@ export function guardianTicket(seed, entry, height) {
  * rule among them (they keep the operators they had). The missing seats are drawn from the pool minus their operators (and minus
  * their nodes), minus `guardingOpen`; then three alternates. `drawn` is the whole seated list, seated-first and drawn alike - the
  * no-show rule (replaceNoShows) applies to every position.
+ *
+ * UNDER CAPACITY PRESSURE (§23A.3a "The founding draw under pressure", kanban #993): `pressureBond` is the network's B*_net while the
+ * network is under pressure, null otherwise. Operators whose summed bond is at least that take the drawn places before every other
+ * operator, in ticket order among themselves; the rest follow in ticket order, so too few of them leaves the other seats drawn as
+ * always, and the alternates carry on down the same list. It orders the pool and nothing else: who is eligible, the weights, and a
+ * succession's seated first (who are not candidates) do not change. With null the draw is the plain one, byte for byte, and the
+ * answer gains `atPressureBond` only when it is set. Every seat of a founding has to pass the same value: the caller reads it.
  */
-export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [] }) {
+export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [], pressureBond = null }) {
   if (!(seed instanceof Uint8Array) || seed.length !== 32) return { ok: false, why: 'a founding is drawn on the beacon after its trigger height' };
   if (typeof bondMinGuardian !== 'bigint' || bondMinGuardian <= 0n) return { ok: false, why: 'bond_min_guardian is a positive floor' };
+  if (pressureBond !== null && (typeof pressureBond !== 'bigint' || pressureBond <= 0n)) return { ok: false, why: 'B*_net under pressure is a positive amount, or null when the network is not under pressure' };
   const opOf = (e) => String((e.advert && e.advert.operatorId) || toHex(e.pubkey));
   const f = Math.floor((nominal - 1) / 3);
   const offered = seatedFirst || [];
@@ -62,11 +70,13 @@ export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian,
     return { ok: false, eligible: pool.length, seatedFirst: first.length, why: first.length
       ? `${first.length} seated first, and ${pool.length} other guardian-capable operators hold bond_min_guardian and guard no OPEN federation: the ${missing} missing seats of ${nominal} are not filled, a federation is not founded with fewer`
       : `${pool.length} guardian-capable operators hold bond_min_guardian and none guards an OPEN federation: a federation of ${nominal} is not founded with fewer${allDrawn}` };
-  const scored = pool.map((x) => ({ entry: x.entry, ticket: guardianTicket(seed, x.entry, height), weight: weightOf(x.bondSats, bondMinGuardian) }))
-    .sort((a, b) => { const l = a.ticket * b.weight, r = b.ticket * a.weight; return l < r ? -1 : l > r ? 1 : outpointOrder(a.entry, b.entry); });
-  return { ok: true, eligible: pool.length, seatedFirst: first.length, drawn: [...first, ...scored.slice(0, missing).map((s) => s.entry)],
+  const scored = pool.map((x) => ({ entry: x.entry, ticket: guardianTicket(seed, x.entry, height), weight: weightOf(x.bondSats, bondMinGuardian),
+    ahead: pressureBond !== null && x.bondSats >= pressureBond }))
+    .sort((a, b) => { if (a.ahead !== b.ahead) return a.ahead ? -1 : 1; const l = a.ticket * b.weight, r = b.ticket * a.weight; return l < r ? -1 : l > r ? 1 : outpointOrder(a.entry, b.entry); });
+  const ahead = scored.filter((s) => s.ahead).length;
+  return { ok: true, eligible: pool.length, seatedFirst: first.length, ...(pressureBond !== null ? { atPressureBond: ahead } : {}), drawn: [...first, ...scored.slice(0, missing).map((s) => s.entry)],
     alternates: scored.slice(missing, missing + ALTERNATES).map((s) => s.entry),
-    why: `${first.length ? `${first.length} seated first, ` : ''}${missing} drawn of ${pool.length} eligible operators, ${Math.min(ALTERNATES, pool.length - missing)} alternates in order${allDrawn}` };
+    why: `${first.length ? `${first.length} seated first, ` : ''}${missing} drawn of ${pool.length} eligible operators, ${Math.min(ALTERNATES, pool.length - missing)} alternates in order${allDrawn}${pressureBond !== null ? `, under pressure ${ahead} at or above B*_net ${pressureBond} go ahead of the rest` : ''}` };
 }
 
 /**
