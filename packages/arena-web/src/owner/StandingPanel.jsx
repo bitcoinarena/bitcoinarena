@@ -9,7 +9,7 @@ import { RoundPosting } from './RoundPosting.jsx';
 
 /** Each warning kind in the owner's words. */
 export const KIND = Object.freeze({ 'missed seatings': 'Missed draws', 'losing brackets': 'Bond below the minimum', 'near the floor': 'Bond at the minimum',
-  'falling share': 'Your share is shrinking', 'address changed': 'Address changed' });
+  'falling share': 'Your share is shrinking', 'address changed': 'Address changed', 'census key': 'Census key failing' });
 const n = (x) => Number(x).toLocaleString('en-US');
 const pct = (x) => (typeof x === 'number' ? `${(x * 100).toFixed(1)} %` : '-');
 /** The seat's missed-draw warning first, then the standing's. */

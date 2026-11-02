@@ -8,6 +8,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../src/store.js';
 import { CensusKeyStore } from '../src/census-key-store.js';
 import { createCensusKeyScan, censusKeyAnchorsInBlock } from '../src/census-key-chain.js';
+import { censusKeyFailing, censusKeyFailingWarning } from '../../arena-protocol/src/census-key.js';
 import { createCensusKeyRun, censusKeyPostOrder, censusKeySigners, CENSUS_KEY_POST_STEP, RESHARE_POST_STEP } from '../src/census-key-run.js';
 import { censusKeyWork } from '../src/census-key-work.js';
 import { censusKeyCarrier, censusKeyAnchorSpend } from '../src/census-key-anchor.js';
@@ -686,4 +687,38 @@ test('reshare: a dealer that drops out fails the run, nothing is lost, and the n
   for (let i = 0; i < CENSUS_KEY_POST_STEP * 4 && n0.scan.generationOf(K).epoch !== EPOCH + 2; i++) { w.c.mine(); await w.pass(2); }
   assert.equal(n0.scan.generationOf(K).epoch, EPOCH + 2);
   assert.equal(RESHARE_POST_STEP, 1);
+});
+
+test('the owner hears of a key that fails: closed epochs a key was due and none stands, counted from the chain; an epoch that asked nothing ends the count (5A.3B, kanban #1041)', async () => {
+  const nodes = [person(0), person(1), person(2)].map((n) => ({ ...n, bond: BOND }));
+  const entries = entriesOf(nodes);
+  const c = chain(START);
+  const scan = createCensusKeyScan({ store: new CensusKeyStore(openStore(':memory:')), network: NETWORK, networkId: NET, firstHeight: FIRST, foundingWindow: WINDOW, censusConfirmations: CONF, tipHeight: () => c.tip,
+    blockHashAt: c.hashAt, blockAt: c.blockAt, censusEntriesAt: () => entries, censusNamedAt: () => ({}), verify, maxBlocksPerPass: 4096, log: () => {} });
+  const to = async (h) => { c.mine(h - c.tip); await scan.pass(); return scan.failing(); };
+  assert.deepEqual(await to(START + WINDOW - 1), { epochs: 0, since: null, keygen: 0, reshare: 0, warn: false }, 'the window is still open');
+  assert.deepEqual(await to(START + WINDOW), { epochs: 1, since: EPOCH, keygen: 1, reshare: 0, warn: false }, 'one failed epoch says nothing yet');
+  assert.deepEqual(await to(START + E + WINDOW), { epochs: 2, since: EPOCH, keygen: 2, reshare: 0, warn: true }, 'two in a row do');
+  assert.equal(scan.status().failing.epochs, 2);
+  const w = censusKeyFailingWarning(scan.failing());
+  assert.equal(w.kind, 'census key');
+  assert.equal(w.urgent, true);
+  assert.match(w.says, /failed 2 epochs in a row, since epoch 3: no new key was made/);
+  assert.equal(censusKeyFailingWarning(censusKeyFailing([{ epoch: 9, keygen: true, madeKey: false }])), null);
+
+  // a key stands at epoch 5: the count ends there
+  const shares = censusKeyShares({ entries, network: NETWORK });
+  const record = fixedRecord({ epoch: 5, censusHeight: 5 * E - CONF, totalShares: shares.total, threshold: shares.threshold });
+  c.mine(5 * E + 1 - c.tip);
+  c.mempool = [anchorTx(record, signaturesOf(nodes, record))];
+  c.mine();
+  assert.equal((await to(5 * E + WINDOW)).epochs, 0);
+  // and an epoch with a key standing that no bond named asks nothing, so nothing failed
+  assert.equal((await to(6 * E + WINDOW)).epochs, 0);
+});
+
+test('censusKeyFailing: a reshare that did not finish counts as a key that was not made; a key made ends the count', () => {
+  const failed = censusKeyFailing([{ epoch: 8, keygen: false, reshare: true, madeReshare: false }, { epoch: 7, keygen: true, madeKey: false, reshare: true, madeReshare: true }, { epoch: 6, keygen: true, madeKey: true }]);
+  assert.deepEqual(failed, { epochs: 2, since: 7, keygen: 1, reshare: 1, warn: true });
+  assert.match(censusKeyFailingWarning(failed).says, /no new key was made and a reshare did not finish/);
 });

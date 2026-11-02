@@ -60,11 +60,15 @@ export const replay = (snap) => async (base, path) => {
 
 // A KEPT COPY'S ANSWERS, SMALL (kanban #686): only what the cards use - a node's dashboard without its rounds, days and dev clients (40 to
 // 75 kB each, measured 2026-10-26), its newest settlement only; an answer a read did not use (`spare`) kept as not used, with its time
+/** The census key's card: [label, text, tone], from GET /census-key `failing`. */
+export const censusKeyFact = (f) => ['Census key', f.epochs ? `${f.epochs} failed epoch${f.epochs === 1 ? '' : 's'} in a row, since ${f.since}` : 'no failed epoch', f.warn ? 'bad' : f.epochs ? 'warn' : 'ok'];
+
 export function keepable(answers, spare = new Set()) {
   const out = {};
   for (const [k, a] of Object.entries(answers)) {
     if (spare.has(k)) { out[k] = { ok: false, status: 0, why: 'another seat answered more', ms: a.ms, atMs: a.atMs }; continue; }
-    if (a.ok && a.body && /\/dashboard\.json$/.test(k)) {
+    if (a.ok && a.body && k.endsWith('/census-key')) out[k] = { ...a, body: { failing: a.body.failing } };
+    else if (a.ok && a.body && /\/dashboard\.json$/.test(k)) {
       const d = a.body, last = Math.max(0, ...(d.settlements || []).map((x) => Number(x.madeMs) || 0));
       out[k] = { ...a, body: { node: d.node, totals: d.totals, byGame: d.byGame, hosts: d.hosts, settlements: last ? [{ madeMs: last }] : [] } };
     } else if (a.ok && a.body && k.endsWith(NOW_ROUNDS)) {
@@ -644,8 +648,10 @@ export function makeHealth({ H, $, window = {} }) {
       // only the tip is waited for before the nodes' rows
       // the network's answers from the seat that holds the most: the newest tip, every federation record, every reserve entry (seats hold
       // different parts of the reserve ledger - measured 112,000 / 102,000 / 10,000 msat at once), the most proposals
-      const [feesP, fedsP, gamesP, reservesP, fundingP, capP] = [['/fees', (b) => [Number(b.tip) || 0]], ['/federations', (b) => [(b.federations || []).length, Math.max(0, ...(b.federations || []).map((f) => Number(f.height) || 0))]],
-        ['/network-games', (b) => [(b.games || []).length, (b.seats || []).length]], ['/reserves', (b) => [Number(b.entries) || 0, Number(b.totalMsat) || 0]], ['/funding', (b) => [(b.proposals || []).length]], ['/capacity', (b) => [(b.federations || []).length]]]
+      const [feesP, fedsP, gamesP, reservesP, fundingP, capP, keyP] = [['/fees', (b) => [Number(b.tip) || 0]], ['/federations', (b) => [(b.federations || []).length, Math.max(0, ...(b.federations || []).map((f) => Number(f.height) || 0))]],
+        ['/network-games', (b) => [(b.games || []).length, (b.seats || []).length]], ['/reserves', (b) => [Number(b.entries) || 0, Number(b.totalMsat) || 0]], ['/funding', (b) => [(b.proposals || []).length]], ['/capacity', (b) => [(b.federations || []).length]],
+        // THE CENSUS KEY (5A.3B, kanban #972): only a seat on a network with a first height answers. It reads the chain, so the seat that read furthest says most
+        ['/census-key', (b) => [Number(b.failing && b.failing.epochs) || 0]]]
         .map(([p, score]) => (score ? best(seats, p, score) : first(seats, p)));
       // ACTIVE IN THE LAST 24 HOURS (2026-10-20: "mark it as active in the last 24 hours and inactive"): the census nodes that signed a
       // round result in that window, from every seat's GET /served (each holds its own results, so they are merged)
@@ -672,7 +678,7 @@ export function makeHealth({ H, $, window = {} }) {
       [feds, reserves, funding] = await Promise.all([fedsP, reservesP, fundingP]);
       READ_AT = how.atMs || Date.now();
       UNAVAILABLE = unavailableFederations(reserves && reserves.body, { expected: (daily.testnet && daily.testnet.reserveExpected) || {}, tip: Number(tip) || 0, nowMs: READ_AT });
-      paintNetwork({ tip, nodes, seats, roles, feds, reserves, funding });
+      paintNetwork({ tip, nodes, seats, roles, feds, reserves, funding, censusKey: await keyP });
       paintNodes(nodes, tip);
       const fedList = feds ? feds.body.federations : [];
       numberFeds(fedList); paintNodes(nodes, tip);
@@ -721,7 +727,7 @@ export function makeHealth({ H, $, window = {} }) {
     finally { reading = false; transport = live; }
   }
 
-  function paintNetwork({ tip, nodes, seats, roles, feds, reserves, funding }) {
+  function paintNetwork({ tip, nodes, seats, roles, feds, reserves, funding, censusKey = null }) {
     const up = nodes.filter((n) => n.version && n.version.ok).length;
     const protos = new Map(); for (const n of nodes) if (n.version && n.version.ok) { const p = Math.max(...(n.version.body.protocols || [0])); protos.set(p, (protos.get(p) || 0) + 1); }
     // every census node's bond: its own answer, else the census's (a node that does not answer still has a bond)
@@ -741,6 +747,8 @@ export function makeHealth({ H, $, window = {} }) {
         const h = (Date.now() - last) / 3600000;
         return [['Last settlement (any node)', h < 1 ? Math.round(h * 60) + ' min ago' : Math.round(h) + ' h ago', h > 26 ? 'warn' : 'ok']]; })(),
       ['Funding proposals', funding ? String(funding.body.proposals.length) + (funding.body.leaderboards.length ? ' · ' + funding.body.leaderboards.length + ' leaderboard payouts' : '') : '-', ''],
+      // past 2 failed epochs in a row the page says so (5A.3B, kanban #1041): a key then gathers more live immature bonds
+      ...(censusKey && censusKey.body.failing ? [censusKeyFact(censusKey.body.failing)] : []),
     ];
     H.draw($('network'), 'facts', { items: facts });
   }
