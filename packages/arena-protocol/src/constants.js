@@ -214,6 +214,9 @@ export const MIN_PLAYERS_PER_ROUND = 2;
  */
 export const MIN_ENTRY_WINDOW_MS = 60000n;
 
+/** min_publication_lead, 5A.5's other number: how long before a round's committee forms its publication must already be in a block (kanban #1015). */
+export const MIN_PUBLICATION_LEAD_MS = 300000n;
+
 /**
  * THE START DEADLINE A ROUND GETS WHEN IT NAMES NONE (§16), in ticks after a
  * player's join tick. A first mark signed at a tick after join_tick + this is
