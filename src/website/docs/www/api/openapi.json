@@ -1714,7 +1714,7 @@
      "Nodes"
     ],
     "summary": "Census keys and the current run",
-    "description": "The census keys standing on this seat's chain, how far its scan read, and the runs it is in, a keygen and a reshare. A convenience: a key stands by its anchor on the chain alone.\n\nAccess: none\n\nReturns: 200 JSON { firstHeight, scannedTo, keys, anchors, run, reshare, recent, lastWhy }; 404\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "description": "The census keys standing on this seat's chain, how far its scan read, the closed epochs in a row a key was due and did not come (`failing`), and the runs it is in, a keygen and a reshare. A convenience: a key stands by its anchor on the chain alone.\n\nAccess: none\n\nReturns: 200 JSON { firstHeight, scannedTo, failing, keys, anchors, run, reshare, recent, lastWhy }; 404\n\nSource: `packages/arena-node/src/server.js` line 0.",
     "operationId": "get_census_key",
     "responses": {
      "200": {
@@ -13532,6 +13532,65 @@
      },
      "409": {
       "description": "Height out of range or census unreadable.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/slash-presig": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "A bond's slash_presig",
+    "description": "A template-3 bond's slash_presig, the one of the round named, or with no round the newest this seat holds, with the panels its hold output names.\n\nAccess: none; only when seating is on (ARENA_SEATING=1)\n\nReturns: 200 JSON { round, node, txid, vout, signature, panels } / 400 / 404\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_slash_presig",
+    "parameters": [
+     {
+      "name": "txid",
+      "in": "query",
+      "required": true,
+      "description": "The bond's txid, in the bytes the census lists it.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "vout",
+      "in": "query",
+      "required": true,
+      "description": "Its output.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "round",
+      "in": "query",
+      "required": false,
+      "description": "The round the offence is in. Left out: an offence with no round.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The 65-byte signature as hex, and the panels, null when this seat no longer holds the round.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Malformed id or request.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "404": {
+      "description": "No slash_presig held for that bond, or seating is off.",
       "content": {
        "text/plain": {}
       }
