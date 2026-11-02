@@ -2183,6 +2183,11 @@
       <span id="arena-backup-notice"></span>
       <button id="arena-backup-cta" type="button">Back up now</button>
     </div>
+    <script>
+      // FROM THE LOADING SCREEN'S FIRST FRAME (kanban #1033): the client that can read the wallet comes ~2 s later, so a wallet not known to be backed up says it now, in the
+      // same words, and the first paint corrects it. `arena.backup.quiet` is what that paint found last time, nothing more: it is not the backup's record.
+      try { if (localStorage.getItem('arena.backup.quiet') !== '1') { document.getElementById('arena-backup-notice').textContent = 'This wallet has no backup. Lose this browser and the money in it is gone - write your 24 words down now.'; document.getElementById('arena-backup-warn').style.display = 'flex'; } } catch (e) { /* no storage: the first paint says it */ }
+    </script>
     <div class="build-line" id="boot-build">UI {{{ UI_VERSION }}}</div>
     <div id="arena-deposit"></div>
     <div id="err"></div>
@@ -4699,11 +4704,57 @@
     };
     /** Driving hides the money entirely - §24B: never in the game. */
     const drivingNow = () => !!(window.ARENA_ROUND && window.ARENA_STARTED);
+    // THE BACKUP NOTICE ON ITS OWN (kanban #1033, the owner 2026-11-02 on Android: "der Backup seed Hinweis nicht immer im deposit und withdrawal angezeigt", "den seed Hinweis in
+    // jedem loading screen anzeigen"; measured on a Pixel 7 profile: up to 1 s late in both popups, 2-3 s missing from every loading screen, and never in a popup opened during
+    // a round, because paintMoney returned before reaching them). The line is read here, the loading screen and the popups are painted here, and paintMoney is no longer what they wait for.
+    const backupLineNow = () => {
+      if (typeof ARENACLIENT === 'undefined') return '';
+      const st = backupStore(); const seed = walletSeed();
+      // A WALLET THE PLAYER BROUGHT IN IS BACKED UP (2026-10-16 20:34, screenshot: "i have a backup and the
+      // reminder is still there"). Measured on live UI 178: a seed restored from its 24 words or opened from a Nostr account
+      // ('imported') still showed "This wallet has no backup" - only a phrase typed back in Settings counted. Whoever typed the
+      // words or holds the Nostr key has the backup.
+      return (st && seed) ? (seedBroughtIn() ? '' : ARENACLIENT.backupLine(st, seed)) : ARENACLIENT.NO_BACKUP_LINE;
+    };
+    function paintBackupNotice(line = backupLineNow()) {
+      // A PHONE GETS THE SHORT WORDS (measured at 360 px: the ten-line warning covered the game's title); the button
+      // beside it and Settings say the rest, the full sentence is its title
+      const notice = document.getElementById('arena-backup-notice');
+      if (notice && window.ArenaText) { window.ArenaText.say(notice, line); notice.title = line || ''; }
+      // IN THE LOADING SCREEN, ALWAYS, NOT OVER THE LOBBY: the box sits in #boot, so it goes with the loading screen
+      const warn = document.getElementById('arena-backup-warn');
+      if (warn) warn.style.display = line ? 'flex' : 'none';
+      try { localStorage.setItem('arena.backup.quiet', line ? '0' : '1'); } catch { /* the next loading screen waits for the client */ }
+      if (!window.ArenaBits) return;
+      // AND AGAIN IN THE DEPOSIT AND THE WITHDRAW POPUP (2026-10-19: "When doing a deposit the popup in there shows the
+      // warning again", "Withdrawal screen also gets the warning"): a wallet with no backup is lost with this browser; its button closes the
+      // popup (nothing was paid or sent) and opens the 24 words
+      const popups = [[document.getElementById('arena-deposit'), (el) => el.classList.contains('deposit-modal') && el.childElementCount > 0, '.dep-title', '.dep-close'],
+        [document.getElementById('arena-withdraw'), (el) => el.classList.contains('show'), '.wd-head', '.wd-close']];
+      for (const [el, open, after, close] of popups) {
+        if (!el || !open(el)) continue;
+        let box = el.querySelector('.dep-backup');
+        if (line && !box) {
+          box = document.createElement('div'); box.className = 'dep-backup';
+          window.ArenaBits.backup(box, { line, onBackup: () => { const c = el.querySelector(close); if (c) c.click(); else if (el.id === 'arena-deposit') { el.textContent = ''; el.className = ''; }
+            const cta = document.getElementById('arena-backup-cta'); if (cta) cta.click(); } });
+          const slot = el.querySelector('.dep-backup-host'), head = el.querySelector(after);
+          if (slot) slot.append(box); else if (head && head.nextSibling) el.insertBefore(box, head.nextSibling); else el.prepend(box);
+        } else if (!line && box) box.remove();
+      }
+    }
+    // AS SOON AS A POPUP OPENS, NOT ON THE NEXT SECOND'S PAINT, and during a round too
+    for (const id of ['arena-deposit', 'arena-withdraw']) {
+      const el = document.getElementById(id);
+      if (el) new MutationObserver(() => { try { paintBackupNotice(); } catch { /* the next pass paints it */ } }).observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+    }
+    // AND FROM THE FIRST MOMENT OF A LOADING SCREEN: every quarter second until the words can be read, then the second's paint keeps it
+    { const first = setInterval(() => { try { if (typeof ARENACLIENT !== 'undefined' && window.ArenaText) { paintBackupNotice(); clearInterval(first); } } catch { /* the next pass */ } }, 250); }
     function paintMoney() {
       const money = document.getElementById('arena-money');
       const settings = document.getElementById('arena-settings');
       if (!money) return;
-      if (drivingNow()) { money.style.display = 'none'; if (settings) settings.style.display = 'none'; return; }
+      if (drivingNow()) { money.style.display = 'none'; if (settings) settings.style.display = 'none'; paintBackupNotice(); return; }
       // THE GEAR FROM THE FIRST PAINT: the strip is up over the loading screen, Unity's title and the lobby,
       // and gone over a round's own screens (the cargo panel, the drive) - Unity says when it leaves the lobby
       // (ARENA_UNITY_LOBBY.showing false). THE BALANCE AND THE BACKUP WARNING ONLY OVER THE LOBBY, as before.
@@ -4719,22 +4770,8 @@
         Object.assign(balEl.style, { display: 'flex', left: `${c.left + row[0] * kx}px`, top: `${c.top + row[1] * ky}px`,
           width: `${row[2] * kx}px`, height: `${row[3] * ky}px` });
       } else if (balEl) balEl.style.display = 'none';
-      const st = backupStore(); const seed = walletSeed();
-      // A WALLET THE PLAYER BROUGHT IN IS BACKED UP (2026-10-16 20:34, screenshot: "i have a backup and the
-      // reminder is still there"). Measured on live UI 178: a seed restored from its 24 words or opened from a Nostr account
-      // ('imported') still showed "This wallet has no backup" - only a phrase typed back in Settings counted. Whoever typed the
-      // words or holds the Nostr key has the backup.
-      const line = (st && seed) ? (seedBroughtIn() ? '' : ARENACLIENT.backupLine(st, seed)) : ARENACLIENT.NO_BACKUP_LINE;
-      // A PHONE GETS THE SHORT WORDS (measured at 360 px: the ten-line warning covered the game's title); the button
-      // beside it and Settings say the rest, the full sentence is its title
-      const notice = document.getElementById('arena-backup-notice');
-      if (notice) { window.ArenaText.say(notice, line); notice.title = line || ''; }
-      // IN THE LOADING SCREEN, ALWAYS, NOT OVER THE LOBBY: the box sits in #boot, so it goes with the loading screen
-      const warn = document.getElementById('arena-backup-warn');
-      if (warn) warn.style.display = line ? 'flex' : 'none';
-      // AND AGAIN IN THE DEPOSIT AND THE WITHDRAW POPUP (2026-10-19: "When doing a deposit the popup in there shows the
-      // warning again", "Withdrawal screen also gets the warning"): a wallet with no backup is lost with this browser; its button closes the
-      // popup (nothing was paid or sent) and opens the 24 words
+      const line = backupLineNow();
+      paintBackupNotice(line);
       const popups = [[document.getElementById('arena-deposit'), (el) => el.classList.contains('deposit-modal') && el.childElementCount > 0, '.dep-title', '.dep-close'],
         [document.getElementById('arena-withdraw'), (el) => el.classList.contains('show'), '.wd-head', '.wd-close']];
       for (const [el, open, after, close] of popups) {
@@ -5712,6 +5749,7 @@
         onQuiz: (q) => { window.ARENA_VERIFY = q; if (q.done) paintMoney(); },
         onClose: () => { seedModal.style.display = 'none'; window.ARENA_VERIFY = null; setTimeout(() => window.ArenaSeed.close(host), 0); paintMoney(); } });
     };
+    window.ARENA_SHOW_SEED = showPhrase;
     // THE SEED CARD (kanban #564: drawn by React, window.ArenaSettings): the backup line paintMoney reads, Show, and the restore that
     // replaces this tab's seed (ARENA_RESTORE_SEED)
     let backupLine = '';
@@ -9227,9 +9265,7 @@
       box.style.display = 'flex';
       window.ARENA_WALLET_BUSY = () => ({ text: $('ws-busy').textContent, ring: !!$('ws-busy').querySelector('.ws-spin') });
       const done = () => { box.style.display = 'none'; window.ARENA_WALLET_SCREEN.done = true; };
-      // CREATE: the seed made here, and straight into the game (2026-10-11: "showing the seed and forcing a
-      // check interrupts the flow. Put the seed display and the mandatory check in settings, as a backup") - its 24 words and
-      // their check are in Settings (Seed phrase), and the lobby's backup line leads there
+      // CREATE: the seed made here, and its 24 words shown at once (below)
       const create = () => {
         try { ARENACLIENT.tabSeed({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)) }); } catch (e) { return { ok: false, why: 'This browser cannot keep a wallet: ' + e.message }; }
         if (window.ARENA_SEED_KEEPER) window.ARENA_SEED_KEEPER.beat();
@@ -9238,6 +9274,9 @@
         window.ARENA_NEW_WALLET = true; window.ARENA_BALANCE_TRIED = true; try { sessionStorage.setItem('arena.welcome.pending', '1'); } catch { /* no storage, no welcome */ }
         setTimeout(() => { if (window.ARENA_WELCOME) window.ARENA_WELCOME(); }, 300);
         done();
+        // THE SEED AT ONCE (kanban #1033, the owner 2026-11-02: "Beim neuen wallet nach create new wallet muss der seed direkt angezeigt werden und auch 3 Woerter verifiziere
+        // werden"; this replaces 2026-10-11, which left the words to Settings): the 24 words, then three of them checked
+        setTimeout(() => { if (window.ARENA_SHOW_SEED) window.ARENA_SHOW_SEED(); }, 0);
         return { ok: true };
       };
       // NOSTR: its bundle only now
