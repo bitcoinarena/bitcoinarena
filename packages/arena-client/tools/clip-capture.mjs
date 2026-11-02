@@ -36,7 +36,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const c = CLIPS[clip], url = clipUrl(env.URL || 'https://testnet.bitcoinarena.io/', clip), out = env.OUT || '.', seconds = Number(env.RECORD_S || c.seconds);
   if (c.wallet && !env.STORAGE) { console.error('this clip needs a wallet with test sats: STORAGE=<json of localStorage>'); process.exit(2); }
   mkdirSync(out, { recursive: true });
-  const browser = await chromium.launch({ headless: !env.HEADED, executablePath: env.CHROME, args: c.world ? ['--use-angle=gl', '--enable-gpu-rasterization', '--ignore-gpu-blocklist'] : [] });
+  const browser = await chromium.launch({ headless: !env.HEADED, executablePath: env.CHROME, args: c.world ? [process.platform === 'darwin' ? '--use-angle=metal' : '--use-angle=gl', '--enable-gpu-rasterization', '--ignore-gpu-blocklist'] : [] });
   const size = { width: 1280, height: 720 };
   const context = await browser.newContext({ viewport: size, recordVideo: { dir: out, size } });
   if (env.STORAGE) { const kept = JSON.parse(readFileSync(env.STORAGE, 'utf8')); await context.addInitScript((k) => { for (const [a, b] of Object.entries(k)) localStorage.setItem(a, b); }, kept); }
@@ -46,7 +46,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   let did = 'recorded';
   try {
     if (clip === 'login') { await tap(/nostr/i, 30000); await page.waitForTimeout(2500); }
-    else if (c.world) { await tap(/watch|spectate/i, 60000); }
+    else if (c.world) {
+      // A FRESH BROWSER MAKES A WALLET FIRST, AND A NEW WALLET SHOWS ITS WORDS (kanban #1033). SPECTATE is drawn on the game's canvas, not a page button: its place on the title screen at 1280x720
+      await tap(/create a new wallet/i, 40000); await tap(/^close$/i, 20000);
+      await page.waitForTimeout(Number(env.TITLE_S || 40) * 1000);
+      await page.mouse.click(838, 620);
+      await page.waitForTimeout(5000);
+    }
     else if (clip === 'rps') { await tap(/join|play/i, 60000); await tap(/rock/i, 60000); }
   } catch (e) { did = `the script stopped: ${String(e.message).split('\n')[0]}`; }
   await page.waitForTimeout(seconds * 1000);

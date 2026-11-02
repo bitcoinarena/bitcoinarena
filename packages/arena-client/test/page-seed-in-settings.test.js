@@ -14,13 +14,13 @@ const HTML = readFileSync(PAGE, 'utf8');
 const SEED = readFileSync(new URL('../../arena-web/src/arena/SeedModal.jsx', import.meta.url), 'utf8');
 const slice = (from, to) => { const a = HTML.indexOf(from); assert.ok(a > 0, from.slice(0, 50)); return HTML.slice(a, HTML.indexOf(to, a) + to.length); };
 
-test('Create makes the wallet and goes straight on: no 24-word dialog is opened', () => {
+test('Create makes the wallet and shows its 24 words at once (kanban #1033)', async () => {
   // the page's create rule (the wallet screen's panes are React's, kanban #564: arena-web WalletStart)
   const CREATE = slice("      const create = () => {", '\n      };\n');
   const els = {}; const clicked = [];
   const $ = (id) => (els[id] = els[id] || { id, style: {}, click: () => clicked.push(id) });
   const box = $('arena-wallet-start'); box.style.display = 'flex';
-  const window = { ARENA_WALLET_SCREEN: { shown: true }, sessionStorage: {}, ARENA_SEED_KEEPER: { beat: () => clicked.push('beat') } };
+  const window = { ARENA_WALLET_SCREEN: { shown: true }, sessionStorage: {}, ARENA_SEED_KEEPER: { beat: () => clicked.push('beat') }, ARENA_TRACK: () => {}, ARENA_SHOW_SEED: () => clicked.push('words') };
   let minted = 0;
   const ARENACLIENT = { tabSeed: () => { minted++; return new Uint8Array(32); } };
   const done = () => { box.style.display = 'none'; window.ARENA_WALLET_SCREEN.done = true; };
@@ -28,8 +28,9 @@ test('Create makes the wallet and goes straight on: no 24-word dialog is opened'
   assert.deepEqual(create(), { ok: true });
   assert.equal(minted, 1, 'the wallet is made');
   assert.equal(box.style.display, 'none', 'the start screen is done');
-  assert.deepEqual(clicked, ['beat'], 'and no seed dialog is opened');
-  assert.match(readFileSync(new URL('../../arena-web/src/arena/WalletStart.jsx', import.meta.url), 'utf8'), /Create a new wallet<small>Ready at once - back up its 24 words any time in Settings<\/small>/);
+  await new Promise((go) => setTimeout(go, 5));
+  assert.deepEqual(clicked, ['beat', 'words'], 'and the words are shown');
+  assert.match(readFileSync(new URL('../../arena-web/src/arena/WalletStart.jsx', import.meta.url), 'utf8'), /Create a new wallet<small>Ready at once - write its 24 words down when they show<\/small>/);
   assert.match(HTML, /window\.ArenaWalletStart\.open\(box, \{\n\s+create,/);
 });
 
