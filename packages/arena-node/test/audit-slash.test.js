@@ -86,6 +86,10 @@ test('a contradicted AUDIT is filed by the seat as AUDIT_CONTRADICTED, listed, s
     const base = `http://127.0.0.1:${w.holder.port}`;
     const list = await (await fetch(`${base}/slashes`)).json();
     const served = new Uint8Array(await (await fetch(`${base}/audit-slash-proofs?round=${toHex(w.rid)}`)).arrayBuffer());
+    // AND WHAT IT OWES, at the door the signers' proofs use (kanban #1000)
+    const owed = await (await fetch(`${base}/slash-owing?round=${toHex(w.rid)}&entry=${toHex(eid)}&height=${w.contract.censusHeight}`)).json().catch(() => ({ owing: [] }));
+    // this harness's census holds no bond for the auditor, so the door reaches the auditor's proof and stops at its bond, as it says
+    assert.match(String(owed.owing.find((o) => o.node === box.key)?.why), /no bond output/, 'the auditor\'s proof is answered at the door');
     const id = got ? toHex(auditSlashProofId(got.proof)) : '';
     const relayed = got ? await fetch(`${base}/slash/${id}`) : null;
     const relayedBytes = relayed && relayed.status === 200 ? new Uint8Array(await relayed.arrayBuffer()) : new Uint8Array(0);

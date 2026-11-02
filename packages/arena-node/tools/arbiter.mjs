@@ -298,7 +298,8 @@ async function pass() {
   for (const { seat, s } of [...found.values()].sort((a, b) => (a.s.proof < b.s.proof ? -1 : 1))) {
     let r; try { r = await handle(seat, s); } catch (e) { r = { done: false, why: e.message }; }
     say({ seat, proof: s.proof.slice(0, 16), node: s.node.slice(0, 16), ...r });
-    if (r.done) { state.handled[s.proof] = { at: Date.now(), ...r }; keep(); }
+    // the offence the published event names (kanban #1000): the table a proof came from holds one kind
+    if (r.done) { state.handled[s.proof] = { at: Date.now(), offence: s.kind === 'audit' ? 'AUDIT_CONTRADICTED' : 'REPLAY_CONTRADICTS', ...r }; keep(); }
   }
   for (const [proof, v] of Object.entries(state.handled)) {
     if (!v.posted || !v.escrowSats || v.settled) continue;

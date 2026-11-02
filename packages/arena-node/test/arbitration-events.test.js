@@ -153,3 +153,9 @@ test('T2\'s state completed once from the payees rebuilt at the payment\'s heigh
   assert.deepEqual(completeLiquidation(s, T2.federation, got, { escrowSats: '1' }), [], 'only what the state lacks: run twice, nothing more');
   assert.throws(() => completeLiquidation(raw(), T2.federation, { payees: got.payees.slice(1) }), /payees come to 15708990 msat, and the remainder paid was 15994608/);
 });
+
+test('a slash event names its offence once the arbiter kept it; one kept before says nothing rather than a guess (kanban #1000)', async () => {
+  const { slashEvent } = await import('../src/arbitration-events.js');
+  assert.equal(slashEvent({ network: 'regtest', proof: 'ab'.repeat(32), v: { offence: 'AUDIT_CONTRADICTED' } }).offence, 'AUDIT_CONTRADICTED');
+  assert.equal('offence' in slashEvent({ network: 'regtest', proof: 'ab'.repeat(32), v: {} }), false);
+});
