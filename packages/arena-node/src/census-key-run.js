@@ -20,6 +20,9 @@
 //                  The first valid anchor of a run is `present`, and the dealers are fixed from it (reshareDealers). No anchor, no reshare
 //   DEALS ON       the rest of the window as a keygen, the old holders dealing their parts to the new census. A dealer that is gone fails the run: each part is a term over exactly that
 //                  set. Nothing is lost, the old shares stand, and the next epoch's window starts again
+//   A BAD DEALER   an old holder holds the old polynomial, so it reads each dealer's part off it, names a dealer whose constant term differs and drops its deal (#1050 reading 6). That fails
+//                  the run too, and the name is kept: the next list this node posts leaves that dealer out where the others still cover the old threshold. A new holder has
+//                  no old polynomial and nothing to check a name against, so it names nobody; a run it cannot read just fails
 //   THE RECORD     as a keygen's, by the new census. Its 'K' anchor names the same public key, and when it stands the new shares are the key's and the old go
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { censusHeightOfEpoch, censusKeyAnchor, censusKeyDrawHeight, censusKeyEpochOf, censusKeyRecordId, censusKeyShares, censusKeyWindow, decodeCensusKeyRecord,
@@ -268,7 +271,7 @@ export function createCensusKeyRun({ store, network, networkId, key, secret, fir
   async function checkOnce(r) {
     const seen = await job(r, 'check', { deals: plainDeals(r) });
     setState(r, { checked: true, bad: seen.bad, ...(seen.why ? { why: seen.why } : {}) });
-    log(`[census-key] epoch ${r.run.epoch}: checked ${store.dealers(r.run.runId).length} deals, ${seen.bad.length} bad`);
+    log(`[census-key] epoch ${r.run.epoch}: checked ${store.dealers(r.run.runId).length} deals, ${seen.bad.length} bad${r.target && seen.bad.length ? `, named: ${seen.bad.map((d) => d.slice(0, 16)).join(' ')}` : ''}`);
     for (const c of seen.complaints) {
       const decoded = decodeCensusComplaint(c);
       store.keepComplaint(r.run.runId, decoded.dealer, decoded.node, c);
@@ -331,6 +334,11 @@ export function createCensusKeyRun({ store, network, networkId, key, secret, fir
     for (const m of runs.keys()) if (Number(m.split(':')[0]) < epoch) runs.delete(m);
   }
 
+  /** A reshare's runs over one generation of a key share what they named. */
+  const generationName = (t) => `${t.key}:${t.generation.epoch}`;
+  /** Who this run's checks named: this node's own reading of each part and share, and the complaints it heard, each one proven. */
+  const namedIn = (r) => [...new Set([...(r.state.bad || []), ...store.complaints(r.run.runId).map((c) => c.dealer)])];
+
   /** One run's steps, a keygen's or a reshare's: deals to the midpoint, the check there, the statement a block later, the record and its anchor. */
   async function step(r, tip) {
     const w = r.window;
@@ -346,7 +354,7 @@ export function createCensusKeyRun({ store, network, networkId, key, secret, fir
     if (!r.state.complete) await finishOnce(r, tip);
     if (r.state.complete) await anchorIfDue(r, tip);
     else if (tip >= w.end && !r.state.failed) {
-      setState(r, { failed: true });
+      setState(r, { failed: true, ...(r.target ? { reshareOf: generationName(r.target), named: namedIn(r) } : {}) });
       log(`[census-key] epoch ${r.run.epoch}: no record reached the threshold by ${w.end}. ${r.target ? 'The old shares stand and the next epoch\'s window starts again' : 'The newest key stands and the next epoch tries again'}`);
     }
     return r.state.complete ? 'complete' : r.state.failed ? 'failed' : 'statements';
@@ -371,7 +379,10 @@ export function createCensusKeyRun({ store, network, networkId, key, secret, fir
     const due = w.ready + ready.order.indexOf(me) * RESHARE_POST_STEP;
     if (tip < due || tip >= w.midpoint || !post || ready.triedAt === tip || ready.posted) return;
     ready.triedAt = tip;
-    const signatures = censusKeySigners({ holders: t.holders, threshold: t.threshold, statements: store.statements(id), recordId: id });
+    // A DEALER THIS NODE NAMED LAST TIME STAYS OFF THE LIST, unless the threshold needs it: a list naming it can still hold, and none cannot (#1050 reading 6)
+    const heard = store.statements(id), named = store.namedDealers(generationName(t));
+    const signatures = censusKeySigners({ holders: t.holders, threshold: t.threshold, statements: heard.filter((s) => !named.has(toHex(s.node))), recordId: id })
+      || censusKeySigners({ holders: t.holders, threshold: t.threshold, statements: heard, recordId: id });
     if (!signatures) { lastWhy = `the ReshareReady signatures of ${t.key.slice(0, 16)} do not cover its threshold of ${t.threshold} at ${tip}`; return; }
     const body = encodeReshareList({ networkId, key: t.publicKey, run: ready.epoch, signatures });
     const sent = await post({ body, output: reshareAnchor(body) });
@@ -462,7 +473,7 @@ export function createCensusKeyRun({ store, network, networkId, key, secret, fir
       return { run: keygen ? runStatus(keygen) : null,
         reshare: ready ? { key: ready.target.key, run: ready.epoch, window: ready.window, signed: store.statements(ready.id).length, list: reshareList(ready.target.key, ready.epoch), posted: ready.posted || null,
           ...(reshare ? { dealers: reshare.run.reshare.dealers.length, ...runStatus(reshare) } : {}) } : null,
-        recent: store.runsNewestFirst(4).map((x) => ({ epoch: x.epoch, complete: x.complete ?? null, failed: !!x.failed, anchored: x.anchored ?? null })), lastWhy };
+        recent: store.runsNewestFirst(4).map((x) => ({ epoch: x.epoch, complete: x.complete ?? null, failed: !!x.failed, anchored: x.anchored ?? null, ...(x.reshareOf ? { reshareOf: x.reshareOf, named: x.named } : {}) })), lastWhy };
     },
   };
 }

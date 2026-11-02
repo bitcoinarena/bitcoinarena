@@ -450,13 +450,13 @@ test('the signers of an anchor are the fewest that reach the threshold, largest 
 
 // A RESHARE (kanban #1048 answer 1): the census changes under a key, and the chain decides the rest
 const named = (key) => ({ bondScriptTemplateVersion: BOND_TEMPLATE_V3, censusKey: key });
-function fourThenMoved() {
+function fourThenMoved(options = {}) {
   // 2 + 2 + 3 + 4 shares, threshold 8. Node 2 leaves the census: 8 of 11 held, under 80 %, still over the threshold. Node 4 comes in naming the key
   const shape = [2n, 2n, 3n, 4n, 3n].map((n) => n * BOND);
   const everyone = shape.map((bond, i) => ({ ...person(i), bond }));
   let key = null;
   const first = entriesOf(everyone.slice(0, 4));
-  const w = network(shape, { entries: first, censusAt: (h) => {
+  const w = network(shape, { ...options, entries: first, censusAt: (h) => {
     if (h < START + E - CONF || !key) return first;
     const later = entriesOf([0, 1, 3, 4].map((i) => ({ ...everyone[i], advert: i === 4 ? named(key) : {} })));
     for (const e of later) e.advert.endpoint = e.advert.endpoint.replace(/ws:\/\/n(\d)/, (_, x) => `http://n${[0, 1, 3, 4][Number(x)]}`);
@@ -559,6 +559,41 @@ test('key 0 is a key like any other: genesis names its holders, the 80 % trigger
   assert.equal(toHex(feldmanGroup.pointFromScalar(xs.reduce((a, x) => (a + lambda.get(x) * newer.get(x)) % FIELD, 0n))).slice(2), toHex(key), 'the new shares open key 0');
   await jump(w, START + E);
   assert.equal((await n0.scan.planAt(EPOCH + 1)).reshare, null, 'and the trigger is quiet: from here its holders are its newest record\'s');
+});
+
+test('reshare: a dealer whose part is not its own is named and its deal dropped, the run fails, and the next list leaves it out (kanban #1050 reading 6)', async () => {
+  const w = fourThenMoved({ canPay: (i) => i !== 2 });
+  const cheat = w.nodes[2], cheater = toHex(cheat.key);
+  cheat.build({ work: (job) => censusKeyWork(job.kind === 'deal' && job.part !== null ? { ...job, part: job.part + 1n } : job) });
+  const key = await firstKey(w);
+  const K = toHex(key), n0 = w.nodes[0], stranger = w.nodes[4];
+  await jump(w, resharedStart);
+  while (!n0.scan.reshareList(K, EPOCH + 1)) { assert.ok(w.c.tip < rw.midpoint); w.c.mine(); await w.pass(2); }
+  assert.ok(n0.scan.reshareList(K, EPOCH + 1).present.includes(cheater), 'the largest first: it is one of the dealers');
+  await w.to(rw.midpoint + 1);
+  await w.pass(2);
+  assert.deepEqual(n0.run.status().reshare.state.bad, [cheater], 'an old holder reads the part off the old polynomial and names its dealer');
+  assert.deepEqual(stranger.run.status().reshare.state.bad, [], 'a new holder has nothing to check a name against');
+  assert.match(stranger.run.status().reshare.state.why, /do not add up to the key/);
+  await w.to(rw.end);
+  await w.pass(2);
+  assert.ok(n0.run.status().reshare.state.failed, 'the run fails: each part is a term over exactly that set');
+  assert.ok(stranger.run.status().reshare.state.failed, 'and the new holder fails it naming nobody');
+  assert.equal(n0.scan.generationOf(K).epoch, EPOCH, 'no record: the old shares stand');
+  assert.deepEqual(n0.run.status().recent.filter((x) => x.reshareOf).map((x) => x.named), [[cheater]], 'GET /census-key shows who was named');
+  assert.deepEqual([...stranger.store.namedDealers(`${K}:${EPOCH}`)], []);
+  // THE NEXT WINDOW: the others hold 2 + 2 + 4 = 8 of the old threshold of 8
+  const rw2 = reshareWindow(EPOCH + 2, NETWORK, WINDOW);
+  await jump(w, resharedStart + E);
+  while (!n0.scan.reshareList(K, EPOCH + 2)) { assert.ok(w.c.tip < rw2.midpoint); w.c.mine(); await w.pass(2); }
+  const list = n0.scan.reshareList(K, EPOCH + 2);
+  assert.ok(!list.present.includes(cheater), 'the poster left it off the list');
+  assert.equal(list.present.length, 3);
+  await w.to(rw2.midpoint + 1);
+  await w.pass(3);
+  assert.equal(n0.run.status().reshare.state.publicKey, K, 'and the run holds without it');
+  for (let i = 0; i < CENSUS_KEY_POST_STEP * 4 && n0.scan.generationOf(K).epoch !== EPOCH + 2; i++) { w.c.mine(); await w.pass(2); }
+  assert.equal(n0.scan.generationOf(K).epoch, EPOCH + 2, 'its record stands: one old holder did not block the reshare');
 });
 
 test('key 0 with too few founders left is dead, and one no bond names is retired: neither is reshared (kanban #1050)', async () => {

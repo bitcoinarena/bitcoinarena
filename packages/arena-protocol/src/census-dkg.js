@@ -386,8 +386,9 @@ export function reshareConstant({ xs, shares }) {
  */
 export function checkReshareDeals({ deals, xs, oldCommitments, groupPublicKey, random, curve, complete = true }) {
   const sum = curve.combinePoints(deals.map((d) => ({ point: d.deal.commitments[0], coefficient: 1n })));
-  // A NEW HOLDER HAS NOT THE OLD POLYNOMIAL, and nothing on the chain proves one a peer hands it. It needs only the sum: the shares it keeps are of the key if the parts add up to the
-  // key, however they were split. Who cheated is for the old holders to name
+  // A NEW HOLDER HAS NOT THE OLD POLYNOMIAL, and nothing on the chain proves one a peer hands it: the transcript holds no verifying shares of the old key, and putting them there is a
+  // format change (#1050 reading 6). It needs only the sum: the shares it keeps are of the key if the parts add up to the key, however they were split. Who cheated is for the old holders
+  // to name, and a bad sum at a new holder fails the run and names nobody
   const bad = [];
   if (oldCommitments) {
     const lambda = lagrangeOf(xs, xs);
