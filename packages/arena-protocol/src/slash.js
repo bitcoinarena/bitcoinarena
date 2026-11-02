@@ -28,9 +28,13 @@
 import { SIGNED_RERUN_BYTES, splitSignedRerun, decodeRerunResult, rerunResultId, runOf, signedRerunBytesOf } from './rerun.js';
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex, fromHex } from './hash.js';
+import { parseTransaction } from './tx.js';
+import { tapSighash, scriptPathSigners } from './bond-spend.js';
+import { tapLeafHash, releaseLeaf } from './bond-script.js';
+import { arbitrationCommitmentIn } from './arbitration-tx.js';
 import {
   PROTOCOL_VERSION, speaksVersion, TYPE_SLASH_PROOF, TYPE_AUDIT_SLASH_PROOF, TYPE_PAYOUT_TABLE, TYPE_SETTLEMENT_RECORD,
-  TYPE_RESULT, TYPE_FEE_CLAIM, TYPE_SERVICE_RECORD, ROLES, roleByte,
+  TYPE_RESULT, TYPE_FEE_CLAIM, TYPE_SERVICE_RECORD, TYPE_SLASH_TABLE, ROLES, roleByte,
   SLASH_REMAINDERS, TAG,
 } from './constants.js';
 import { entryId } from './contracts.js';
@@ -108,10 +112,19 @@ export const FEE_WITHOUT_SERVICE = 'FEE_WITHOUT_SERVICE';
  */
 export const AUDIT_CONTRADICTED = 'AUDIT_CONTRADICTED';
 
+/**
+ * 5A.3, template 3 (kanban #971): "Signing a release with no valid proof", proof "the release, whose witness names the signers + the bytes
+ * that hash to its OP_RETURN and do not check".
+ */
+export const RELEASE_WITHOUT_PROOF = 'RELEASE_WITHOUT_PROOF';
+
+/** 5A.3, template 3: "Signing a release or an escrow payout that pays other than its payout_table", proof "the release or the payout + the table". */
+export const RELEASE_OFF_TABLE = 'RELEASE_OFF_TABLE';
+
 // In 5A.3's own document order, which is the order they are being written in; §13A.1's AUDIT after them.
 export const OFFENCES = [
   TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, SETTLED_WITHOUT_AUTHORITY,
-  OPERATOR_PLAYED, FEE_WITHOUT_SERVICE, AUDIT_CONTRADICTED,
+  OPERATOR_PLAYED, FEE_WITHOUT_SERVICE, RELEASE_WITHOUT_PROOF, RELEASE_OFF_TABLE, AUDIT_CONTRADICTED,
 ];
 
 /**
@@ -144,8 +157,11 @@ export function resultMoved({ signed, replayed } = {}) {
 // A CONTRADICTED AUDIT NAMES ONE ENTRY TOO (kanban #724, #725): the one whose contradicted run its proof names - the auditor
 // vouched for every entry, but only that one's player was harmed by the run it said replays.
 export const NAMES_ONE_ENTRY = [TWO_RESULTS, REPLAY_CONTRADICTS, AUDIT_CONTRADICTED];
+// A RELEASE WITH NO VALID PROOF HARMED A NODE, NOT A PLAYER: it names no entry, and all of the signer's bond goes to the reserves (§5A.3).
+export const NAMES_NO_ENTRY = [RELEASE_WITHOUT_PROOF];
 export function affectedEntries({ offence, playerPubkey, entries = [], signed, replayed } = {}) {
   if (!OFFENCES.includes(offence)) return { ok: false, why: `${offence} is not one of the offences` };
+  if (NAMES_NO_ENTRY.includes(offence)) return { ok: true, affected: [] };
   if (NAMES_ONE_ENTRY.includes(offence)) {
     const one = entries.find((e) => e && hex(e.playerPubkey) === hex(playerPubkey));
     if (!one) return { ok: false, why: 'that proof names a player the round has no entry for' };
@@ -1460,6 +1476,169 @@ export function slashHoldsOnFeeClaim({
       : overClaimed
         ? `it claimed ${claim.amountMsat} where 22A owes it ${owed}`
         : `it claimed a ${claim.role} share having served ${record.served} of ${minimumServed}`,
+  };
+}
+
+/**
+ * WHAT A RELEASE COMMITS TO PAY (§5A.3B step 4: OP_RETURN = H(fraud_proof) || slash_height || H(payout_table); "the table names every
+ * affected entry and its share"). The spec fixes neither its bytes nor the shape of a release's outputs, and 5A.3's row says the release
+ * and the table alone prove the offence, so the table has to say what the transaction pays: `rows` are the entries and their shares,
+ * `outputs` every output but the OP_RETURN, reserves and the filer's fee included. Both sorted, so one table has one id.
+ *
+ *   type | version | round_id | proof_id | rows: (player_pubkey, amount_msat) | outputs: (value, u16 length, script)
+ */
+const byPlayer = (a, b) => { const x = hex(a.playerPubkey), y = hex(b.playerPubkey); return x < y ? -1 : x > y ? 1 : 0; };
+const outputSortKey = (o) => `${hex(o.script)}:${String(o.value).padStart(20, '0')}`;
+const byOutput = (a, b) => { const x = outputSortKey(a), y = outputSortKey(b); return x < y ? -1 : x > y ? 1 : 0; };
+
+export function encodeSlashTable(t) {
+  const w = new Writer();
+  w.u8(TYPE_SLASH_TABLE);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(t.roundId);
+  w.bytes32(t.proofId);
+  w.vec([...t.rows].sort(byPlayer), (r, ww) => { ww.bytes32(r.playerPubkey); ww.u64(r.amountMsat); });
+  w.vec([...t.outputs].sort(byOutput), (o, ww) => { ww.u64(o.value); ww.u16(o.script.length); ww.bytes(o.script, o.script.length); });
+  return w.finish();
+}
+
+export function decodeSlashTable(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_SLASH_TABLE) throw new Error('not a slash payout table');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
+  const t = {
+    roundId: r.bytes32(), proofId: r.bytes32(),
+    rows: r.vec((rr) => ({ playerPubkey: rr.bytes32(), amountMsat: rr.u64() })),
+    outputs: r.vec((rr) => { const value = rr.u64(); return { value, script: rr.bytes(rr.u16()) }; }),
+  };
+  r.end();
+  return t;
+}
+
+/** H(payout_table), the third field of a release's OP_RETURN. */
+export const slashTableId = (t) => taggedHash(TAG.slashTable, encodeSlashTable(t));
+
+/**
+ * DID THE ACCUSED SIGN THIS SPEND? The evidence shared by both template-3 rows. The spend is the accused's only if its own signature
+ * verifies over BIP-341's sighash of this very transaction: a key sitting in a leaf proves nothing, and an empty slot is a member
+ * who refused. `prevouts` are the outputs every input spends. A signature of 65 bytes carries its hash type, so choosing
+ * an explicit 0x01 over the default does not hide a signer. `verify(signature, digest, key)` is injected.
+ */
+function signedSpend({ proof, spend, prevouts, verify }) {
+  if (typeof verify !== 'function') return { ok: false, why: 'checking a witness needs a verifier, and none was injected' };
+  let tx;
+  try { tx = parseTransaction(spend); } catch (e) { return { ok: false, why: `the evidence is not a transaction: ${e.message}` }; }
+  if (hex(tx.txid) !== hex(proof.signedResultId)) return { ok: false, why: 'the transaction attached is not the one this proof names' };
+  if (!Array.isArray(prevouts) || prevouts.length !== tx.inputs.length) return { ok: false, why: 'every input needs the output it spends' };
+  const inputs = tx.inputs.map((i) => ({ txid: i.previousTxid, vout: i.previousVout, sequence: i.sequence }));
+  for (let inputIndex = 0; inputIndex < tx.inputs.length; inputIndex++) {
+    const read = scriptPathSigners(tx.witnesses[inputIndex]);
+    if (!read.ok) continue;
+    const mine = read.signers.find((x) => hex(x.key) === hex(proof.nodePubkey));
+    if (!mine || !mine.signature.length) continue;
+    const { signature } = mine;
+    if (signature.length !== 64 && signature.length !== 65) continue;
+    const hashType = signature.length === 65 ? signature[64] : 0x00;
+    let good = false;
+    try {
+      const digest = tapSighash({ version: tx.version, locktime: tx.locktime, inputs, outputs: tx.outputs, prevouts, inputIndex,
+        leafHash: tapLeafHash(read.script), hashType });
+      good = verify(signature.subarray(0, 64), digest, proof.nodePubkey) === true;
+    } catch { good = false; }
+    if (good) return { ok: true, tx, inputIndex, script: read.script };
+  }
+  return { ok: false, why: `the witness of that transaction carries no good signature by ${hex(proof.nodePubkey)}` };
+}
+
+const ownBond = (proof, advert) => {
+  if (!advert || hex(advert.nodePubkey) !== hex(proof.nodePubkey)) return 'no advertisement from the accused node to name its bond';
+  if (hex(advert.bondTxid) !== hex(proof.bondTxid) || advert.bondVout !== proof.bondVout)
+    return `the proof names bond ${hex(proof.bondTxid)}:${proof.bondVout} and the node advertised ${hex(advert.bondTxid)}:${advert.bondVout}`;
+  return null;
+};
+
+/**
+ * DID THIS PANEL MEMBER SIGN A RELEASE WITH NO VALID PROOF? (§5A.3B: "Signing a release with no valid proof slashes the signer: the release's
+ * witness names them.") `panels` are the round's, { panelA, panelB } of keys, redrawn by the caller and never read off the accuser;
+ * `holdBlocks` the network's. The proof body is the ordinary one: `signedResultId` the release's txid, `transcriptHash` the id its
+ * OP_RETURN commits to, player empty. `fraudProof` the bytes that hash to that id, `proofChecks` the verdict of whoever replayed them,
+ * handed in as `replayDiffers` is: anything but an explicit false leaves the bond alone.
+ *
+ * A release that commits to no proof at all has no valid proof by its own bytes: it needs no verdict, and the proof's id is empty.
+ * A commitment whose bytes nobody can produce slashes nobody: an accusation with nothing to check is not a portable artifact.
+ */
+export function slashHoldsOnRelease({ proof, release, prevouts, panels, holdBlocks, fraudProof, proofChecks, advert, verify }) {
+  const no = (why) => ({ slashed: false, why });
+  if (!proof) return no('no proof');
+  if (!panels || !Array.isArray(panels.panelA) || !Array.isArray(panels.panelB)) return no('no panels, so nobody was responsible for this round');
+  if (![...panels.panelA, ...panels.panelB].some((k) => hex(k) === hex(proof.nodePubkey)))
+    return no(`${hex(proof.nodePubkey)} is on neither panel of this round, so it owed this round no release`);
+  if (hex(proof.playerPubkey) !== hex(EMPTY)) return no('this row names no player: a release is about a bond');
+  const signed = signedSpend({ proof, spend: release, prevouts, verify });
+  if (!signed.ok) return no(signed.why);
+  let wanted;
+  try { wanted = releaseLeaf({ ...panels, holdBlocks }); } catch (e) { return no(`those panels write no release leaf: ${e.message}`); }
+  if (hex(signed.script) !== hex(wanted)) return no('what the accused signed is not this round\'s release leaf');
+
+  const said = arbitrationCommitmentIn(signed.tx.outputs);
+  if (said) {
+    if (hex(proof.transcriptHash) !== hex(said.proofId)) return no('the proof is measured against another commitment than the release\'s');
+    if (!(fraudProof instanceof Uint8Array) || !fraudProof.length) return no('no bytes attached to show what the release committed to');
+    if (hex(taggedHash(TAG.slashProof, fraudProof)) !== hex(said.proofId)) return no('the bytes attached do not hash to the release\'s OP_RETURN');
+    if (proofChecks !== false) return no('nobody has replayed those bytes and found they do not check');
+  } else if (hex(proof.transcriptHash) !== hex(EMPTY)) return no('that release commits to nothing, and the proof names a commitment');
+
+  const elsewhere = ownBond(proof, advert);
+  if (elsewhere) return no(elsewhere);
+  return {
+    slashed: true,
+    offence: RELEASE_WITHOUT_PROOF,
+    bond: { txid: proof.bondTxid, vout: proof.bondVout },
+    commitment: slashCommitment(proof),
+    why: said ? 'the panel member signed a release whose committed proof does not check' : 'the panel member signed a release that commits to no proof',
+  };
+}
+
+/**
+ * DID THIS NODE SIGN A SPEND THAT PAYS OTHER THAN ITS TABLE? `spend` is the release, or an escrow payout with `release` beside it: the
+ * release carries H(payout_table) and the payout must spend it. Nothing is injected but the verifier: the outputs and the table are
+ * compared, every output but the OP_RETURN, value and script. `signedResultId` is the spend's txid, `transcriptHash` the table's id.
+ *
+ * Only a spend whose witness names its signers reaches this. A payout signed by the census key is one FROST signature and names no one.
+ */
+export function slashHoldsOnReleaseTable({ proof, spend, release = null, prevouts, table, advert, verify }) {
+  const no = (why) => ({ slashed: false, why });
+  if (!proof) return no('no proof');
+  if (hex(proof.playerPubkey) !== hex(EMPTY)) return no('this row names no player: the table does');
+  const signed = signedSpend({ proof, spend, prevouts, verify });
+  if (!signed.ok) return no(signed.why);
+  let carrier = signed.tx;
+  if (release) {
+    try { carrier = parseTransaction(release); } catch (e) { return no(`the release attached is not a transaction: ${e.message}`); }
+    if (!signed.tx.inputs.some((i) => hex(i.previousTxid) === hex(carrier.txid))) return no('that payout does not spend the release attached');
+  }
+  const said = arbitrationCommitmentIn(carrier.outputs);
+  if (!said || said.hint.length !== 32) return no('that release commits to no table');
+  let t;
+  try { t = decodeSlashTable(table); } catch (e) { return no(`the evidence is not a slash payout table: ${e.message}`); }
+  const id = slashTableId(t);
+  if (hex(id) !== hex(said.hint)) return no('the table attached is not the one the release committed to');
+  if (hex(proof.transcriptHash) !== hex(id)) return no('the proof is measured against another table');
+  if (hex(t.roundId) !== hex(proof.roundId)) return no('the table attached is for a different round');
+  if (hex(t.proofId) !== hex(said.proofId)) return no('the table attached is for a different fraud proof than the release');
+
+  const paid = signed.tx.outputs.filter((o) => o.script[0] !== 0x6a).sort(byOutput).map(outputSortKey);
+  const owed = [...t.outputs].sort(byOutput).map(outputSortKey);
+  if (paid.length === owed.length && paid.every((x, i) => x === owed[i])) return no('the spend pays exactly its table');
+
+  const elsewhere = ownBond(proof, advert);
+  if (elsewhere) return no(elsewhere);
+  return {
+    slashed: true,
+    offence: RELEASE_OFF_TABLE,
+    bond: { txid: proof.bondTxid, vout: proof.bondVout },
+    commitment: slashCommitment(proof),
+    why: `the node signed a spend of ${paid.length} outputs that is not the ${owed.length} of its table`,
   };
 }
 
