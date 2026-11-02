@@ -98,7 +98,9 @@ export function parseTransaction(raw) {
       | (raw[at + 34] << 16) | (raw[at + 35] << 24)) >>> 0;
     const script = readSlice(raw, end, 'input script');
     at = need(raw, script.next, 4, 'sequence');
-    inputs.push({ previousTxid, previousVout, script: script.bytes });
+    const sequence = (raw[script.next] | (raw[script.next + 1] << 8)
+      | (raw[script.next + 2] << 16) | (raw[script.next + 3] << 24)) >>> 0;
+    inputs.push({ previousTxid, previousVout, script: script.bytes, sequence });
   }
 
   const outs = readVarint(raw, at);

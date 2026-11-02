@@ -47,29 +47,35 @@ const scriptWithLength = (script) => cat(compactSize(script.length), script);
 const outputBytes = (o) => cat(u64(o.value), scriptWithLength(o.script));
 
 /**
- * THE TAPROOT SIGHASH, BIP-341, for a SCRIPT-PATH spend with hash type
- * DEFAULT.
+ * THE TAPROOT SIGHASH, BIP-341, for a key-path or script-path spend.
  *
  * The message commits to every input's AMOUNT and SCRIPT, not only its
  * outpoint - that is the change taproot made, and it is why a signer cannot be
  * lied to about what it is spending. Getting one of those hashes wrong
  * produces a signature that verifies against nothing, so each is named here
  * rather than folded into one loop.
+ *
+ * `hashType` is DEFAULT unless named. Template 3's advance signature is
+ * SIGHASH_SINGLE|ANYONECANPAY (0x83, spec 5A.3B), and a slash has to read a
+ * witness whatever type its signer chose: a panel member who signed with an
+ * explicit 0x01 must not walk away because this file only knew 0x00. With
+ * ANYONECANPAY only `prevouts[inputIndex]` is read.
  */
 export function tapSighash({
-  version = 2, locktime = 0, inputs, prevouts, outputs, inputIndex, leafHash = null,
+  version = 2, locktime = 0, inputs, prevouts, outputs, inputIndex, leafHash = null, hashType = 0x00,
 }) {
   if (!Array.isArray(inputs) || !inputs.length) throw new Error('a spend has inputs');
   if (!Array.isArray(prevouts) || prevouts.length !== inputs.length)
     throw new Error('every input needs the output it spends');
   if (!Number.isInteger(inputIndex) || inputIndex >= inputs.length)
     throw new Error('that input index is not in this transaction');
+  if (![0x00, 0x01, 0x02, 0x03, 0x81, 0x82, 0x83].includes(hashType))
+    throw new Error(`${hashType} is not a taproot hash type`);
 
-  const shaPrevouts = sha256bytes(cat(...inputs.map(outpointOf)));
-  const shaAmounts = sha256bytes(cat(...prevouts.map((p) => u64(p.value))));
-  const shaScripts = sha256bytes(cat(...prevouts.map((p) => scriptWithLength(p.script))));
-  const shaSequences = sha256bytes(cat(...inputs.map((i) => u32(i.sequence))));
-  const shaOutputs = sha256bytes(cat(...outputs.map(outputBytes)));
+  const anyoneCanPay = (hashType & 0x80) !== 0;
+  const outputType = hashType === 0x00 ? 0x01 : hashType & 0x03;
+  if (outputType === 0x03 && inputIndex >= outputs.length)
+    throw new Error('SIGHASH_SINGLE needs the output at its own input\'s index');
 
   // spend_type = ext_flag * 2 + annex_present. This builder writes no annex, so
   // a script path is 2 and a KEY PATH is 0 - and the key path also drops the
@@ -79,12 +85,22 @@ export function tapSighash({
   const keyPath = leafHash === null || leafHash === undefined;
   const spendType = Uint8Array.from([keyPath ? 0 : 2]);
 
+  const own = inputs[inputIndex];
   const message = cat(
-    Uint8Array.from([0x00]),                 // hash_type: DEFAULT
+    Uint8Array.from([hashType]),
     u32(version), u32(locktime),
-    shaPrevouts, shaAmounts, shaScripts, shaSequences,
-    shaOutputs,
-    spendType, u32(inputIndex),
+    ...(anyoneCanPay ? [] : [
+      sha256bytes(cat(...inputs.map(outpointOf))),
+      sha256bytes(cat(...prevouts.map((p) => u64(p.value)))),
+      sha256bytes(cat(...prevouts.map((p) => scriptWithLength(p.script)))),
+      sha256bytes(cat(...inputs.map((i) => u32(i.sequence)))),
+    ]),
+    ...(outputType === 0x01 ? [sha256bytes(cat(...outputs.map(outputBytes)))] : []),
+    spendType,
+    ...(anyoneCanPay
+      ? [outpointOf(own), u64(prevouts[inputIndex].value), scriptWithLength(prevouts[inputIndex].script), u32(own.sequence)]
+      : [u32(inputIndex)]),
+    ...(outputType === 0x03 ? [sha256bytes(outputBytes(outputs[inputIndex]))] : []),
     ...(keyPath ? [] : [
       leafHash,
       Uint8Array.from([0x00]),               // key_version
@@ -109,6 +125,29 @@ export function tapSighash({
 export function scriptPathWitness({ stack, script, controlBlock }) {
   if (!Array.isArray(stack)) throw new Error('a witness has a stack, even an empty one');
   return [...stack, script, controlBlock];
+}
+
+/**
+ * WHO A SCRIPT-PATH WITNESS NAMES (spec 5A.3: "the release, whose witness names the signers"): the keys of the leaf in the order
+ * it checks them, each with the signature on the stack for it, empty where that key did not sign. A leaf is read only as far as its
+ * 32-byte pushes followed by CHECKSIG, CHECKSIGVERIFY or CHECKSIGADD; whether a signature is good is for the verifier to say.
+ * An annex is refused by name: tapSighash writes none, so no signature beside one could be checked here.
+ */
+export function scriptPathSigners(witness) {
+  if (!Array.isArray(witness) || witness.length < 2) return { ok: false, why: 'that is not a script-path witness' };
+  if (witness[witness.length - 1][0] === 0x50) return { ok: false, why: 'that witness carries an annex' };
+  const controlBlock = witness[witness.length - 1];
+  const script = witness[witness.length - 2];
+  const stack = witness.slice(0, -2);
+  const keys = [];
+  for (let at = 0; at < script.length;) {
+    const op = script[at];
+    if (op === 0x20 && [0xac, 0xad, 0xba].includes(script[at + 33])) { keys.push(script.subarray(at + 1, at + 33)); at += 34; continue; }
+    at += op >= 0x01 && op <= 0x4b ? op + 1 : 1;
+  }
+  if (keys.length !== stack.length) return { ok: false, why: `that leaf checks ${keys.length} keys and the witness carries ${stack.length} items` };
+  // bottom-first on the wire, so the first key checked is the last item
+  return { ok: true, script, controlBlock, signers: keys.map((key, i) => ({ key, signature: stack[stack.length - 1 - i] })) };
 }
 
 /** A transaction with its witnesses, as a node takes it. */
