@@ -22,12 +22,12 @@ test('every bundle in dist/ and every copy beside its page is the build of this 
   try {
     execFileSync(process.execPath, [join(root, 'tools/build.mjs')], { cwd: root, env: { ...process.env, ARENA_WEB_OUT: out }, stdio: 'pipe' });
     const built = readdirSync(out).sort();
-    for (const f of ['arena.css', 'arena.js', 'dashboard.js', 'emergency.js', 'health.js', 'owner.js', 'proposals.js', 'rounds.js', 'wizard.js'])
+    for (const f of ['arena.css', 'arena.js', 'dashboard.js', 'emergency.js', 'health.js', 'owner-page.html', 'owner.js', 'proposals.js', 'rounds.js', 'wizard.js'])
       assert.ok(built.includes(f), `the build makes ${f}`);
     const stale = [];
     const same = (shipped, f) => { if (!read(shipped).equals(read(join(out, f)))) stale.push(`${shipped.slice(repo.length + 1)} (${f})`); };
     // what the node and its release read from dist/ (tracked there)
-    for (const f of ['arena.css', 'dashboard.js', 'emergency.js', 'health.js', 'owner.js', 'proposals.js', 'rounds.js']) same(join(root, 'dist', f), f);
+    for (const f of ['arena.css', 'dashboard.js', 'emergency.js', 'health.js', 'owner-page.html', 'owner.js', 'proposals.js', 'rounds.js']) same(join(root, 'dist', f), f);
     // the copies each page carries beside itself
     same(join(repo, 'src/arena-ui/arena-react.js'), 'arena.js');
     same(join(repo, 'src/arena-ui/health/react.js'), 'health.js');

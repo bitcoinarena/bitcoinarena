@@ -409,7 +409,7 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
     the two were still paused; a third down halted the sessions at 1017 for 10 min and all seven resumed together
     (1018-1020); after the paid run both rejoined at once (1106-1108 on all seven). A PHONE OPENS EVERY ENDPOINT (2026-10-15 16:53Z, `phonews.mjs`): headless Chrome
     as an Android phone (Pixel 7 UA, 412x915, touch, 4G: 150 ms round trip, 9/1.5 Mbit/s) on the live page's origin
-    testnet.bitcoin-arena.io opened all 14 guardian sockets, A g1-g7 (`wss://tn4.bitcoin-arena.io/guardian-N/guardian`) and
+    testnet.bitcoinarena.io opened all 14 guardian sockets, A g1-g7 (`wss://tn4.bitcoin-arena.io/guardian-N/guardian`) and
     B g1-g7 (`.../fed2-N/guardian`), and each answered `session_count`: A 5391 from all seven (opened in 181-834 ms,
     answered in 248-947 ms), B 1484 from all seven (opened 1234-3039 ms, answered 1610-5330 ms; Chrome opens one socket
     per host at a time, so the later ones wait for the earlier). OPEN: the succession to seven on testnet (measured

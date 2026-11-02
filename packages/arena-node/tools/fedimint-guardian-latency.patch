@@ -79,7 +79,7 @@ index 5e3a32944f4..13427fa5786 100644
  
 +        // BLWP kanban #178: the transaction goes to consensus BEFORE the session's accepted items are counted. That count
 +        // walks every item accepted so far in the session (it grows through a 3600-round session) and, measured on the
-+        // test host at a 10 ms round delay, held each lock ~15-20 ms before it reached the next unit. The session index is
++        // macOS at a 10 ms round delay, held each lock ~15-20 ms before it reached the next unit. The session index is
 +        // still read first (one key), so the session-boundary resubmit below is unchanged.
          let _ = self
              .submission_sender

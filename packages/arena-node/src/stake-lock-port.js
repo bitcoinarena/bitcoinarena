@@ -15,7 +15,7 @@
 // crates in would be a daemon in Rust.
 import { execFile, spawn } from 'node:child_process';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { existsSync, cpSync } from 'node:fs';
+import { existsSync, cpSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 
 export const STAKE_LOCK_SETTINGS = ['ARENA_STAKE_LOCK_BIN', 'ARENA_FEDERATION_CLIENT_DIR'];
@@ -70,6 +70,8 @@ export function stakeLockServer({ bin, dataDir, timeoutMs = 10000, spawnFn = spa
       const c = spawnFn(bin, ['--mode', 'serve', '--data-dir', dataDir], { stdio: ['pipe', 'pipe', 'ignore'] });
       child = c;
       c.on('error', (e) => { if (!up) reject(e); fail(e.message); });
+      // A SERVER ENDED WHILE AN ASK WAS BEING WRITTEN (11-01 23:16Z, fed2 seat 1): the pipe's EPIPE had no listener and took the whole seat down.
+      c.stdin.on('error', (e) => { if (child === c) fail(`the stake-lock server's pipe: ${e.message}`); });
       c.on('exit', (code) => { if (!up) reject(new Error(`the stake-lock server exited (${code}) - an older binary has no serve mode`)); fail(`the stake-lock server exited (${code})`); });
       c.stdout.setEncoding('utf8');
       c.stdout.on('data', (d) => {
@@ -123,13 +125,19 @@ export function contractArgs(f) {
 // the federation's fee rule, guardians and gateways are its config, and the paid entry door waited on a fresh read of the
 // fee rule whenever the minute had run out - POST /entry 0.29-0.90 s at seat 1, 0 ms of it on the loop. Only the first
 // read ever waits; a failed re-read keeps the answer held.
-export const keptFor = (ms, fn, now = () => Date.now()) => {
+// AND THE LAST GOOD ANSWER OUTLIVES A RESTART (kanban #830, 2026-10-31: "Das musst du auch lösen dass das nicht wieder passiert"): a
+// join was refused because a restarted seat had nothing held and its first gateway read timed out after 60 s. `held` gives what the last run kept on disk;
+// only a node with nothing there waits for its first read.
+const READ_TIMEOUT_MS = 20000;            // a read asked the old way, past the server's 10 s: a join waits on it
+const HELD_MAX_MS = 6 * 3600000;          // a federation's config changes in days, its gateways in hours
+export const keptFor = (ms, fn, now = () => Date.now(), held = () => null) => {
   let at = 0, v = null, p = null;
   const read = () => {
     if (!p) p = Promise.resolve().then(fn).then((r) => { v = r; at = now(); return r; }).finally(() => { p = null; });
     return p;
   };
   return () => {
+    if (!v) { try { v = held(); } catch { /* nothing kept */ } }
     if (v && now() - at < ms) return Promise.resolve(v);
     if (v) { read().catch(() => { /* the held answer stands */ }); return Promise.resolve(v); }
     return read();
@@ -154,8 +162,18 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
   const server = serve && readDataDir !== dataDir ? stakeLockServer({ bin, dataDir: readDataDir, timeoutMs: Math.min(timeoutMs, 10000), spawnFn, now }) : null;
   const read = async (flags) => {
     if (server) { try { return await server.ask(flags[1], argsOf(flags.slice(2).filter((x, i, a) => !(x === '--data-dir' || a[i - 1] === '--data-dir')))); } catch { /* the old way below */ } }
-    return run(bin, flags, timeoutMs);
+    return run(bin, flags, Math.min(timeoutMs, READ_TIMEOUT_MS));
   };
+  // A CONFIG READ IS KEPT ON DISK BESIDE THE CLIENT: the raw answer, so a restart shapes it as the read does
+  const heldFile = (mode) => join(readDataDir, `held-${mode}.json`);
+  const keep = (mode, j) => { try { writeFileSync(heldFile(mode), JSON.stringify({ atMs: now(), j })); } catch { /* the next read tries again */ } return j; };
+  const heldAnswer = (mode, shape) => () => {
+    const h = JSON.parse(readFileSync(heldFile(mode), 'utf8'));
+    return now() - h.atMs < HELD_MAX_MS ? shape(h.j) : null;
+  };
+  const shapeGuardians = (j) => ({ federationId: fromHex(String(j.federation_id)), guardians: Number(j.guardians), threshold: Number(j.threshold),
+    keys: (j.keys || []).map((k) => fromHex(String(k.key))) });
+  const shapeFees = (j) => ({ ppm: BigInt(j.fee_ppm), baseMsat: BigInt(j.fee_base_msat) });
   const port = {
     close() { if (server) server.close(); },
     async status(outpoint) {
@@ -177,9 +195,7 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
     // POST /round - each player's PLAY - ran the stock client for the guardian set, ~0.5 s a round open; it changes in days.
     guardians() { return guardiansKept(); },
     async guardiansRead() {
-      const j = await read(['--mode', 'guardians', '--data-dir', readDataDir]);
-      return { federationId: fromHex(String(j.federation_id)), guardians: Number(j.guardians), threshold: Number(j.threshold),
-        keys: (j.keys || []).map((k) => fromHex(String(k.key))) };
+      return shapeGuardians(keep('guardians', await read(['--mode', 'guardians', '--data-dir', readDataDir])));
     },
     /**
      * THE FEDERATION'S GATEWAYS (§23.6): every name its guardians registered, and whether each answered
@@ -188,7 +204,9 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
      */
     gateways() { return gatewaysKept(); },
     async gatewaysRead() {
-      const j = await read(['--mode', 'gateways', '--data-dir', readDataDir]);
+      return shapeGateways(keep('gateways', await read(['--mode', 'gateways', '--data-dir', readDataDir])));
+    },
+    shapeGateways(j) {
       return { federationId: fromHex(String(j.federation_id)),
         height: j.block_count === undefined ? null : Number(j.block_count),
         gateways: (j.gateways || []).map((g) => ({ url: String(g.url), live: g.live === true,
@@ -251,8 +269,7 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
     /** The guardians' own LNv2 fee rule, off the federation's config (W4). */
     fees() { return feesKept(); },
     async feesRead() {
-      const j = await read(['--mode', 'fees', '--data-dir', readDataDir]);
-      return { ppm: BigInt(j.fee_ppm), baseMsat: BigInt(j.fee_base_msat) };
+      return shapeFees(keep('fees', await read(['--mode', 'fees', '--data-dir', readDataDir])));
     },
     /**
      * THE ROUND'S ONE SETTLEMENT (W4): every claimed lock in as Claim(P), the
@@ -277,9 +294,10 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
         unspentMsat: j.unspent_msat === undefined ? null : BigInt(j.unspent_msat) };
     },
   };
-  const gatewaysKept = keptFor(keepMs, () => port.gatewaysRead(), now);
-  const guardiansKept = keptFor(keepMs, () => port.guardiansRead(), now);
-  const feesKept = keptFor(keepMs, () => port.feesRead(), now);
+  const shapeGateways = (j) => port.shapeGateways(j);
+  const gatewaysKept = keptFor(keepMs, () => port.gatewaysRead(), now, heldAnswer('gateways', shapeGateways));
+  const guardiansKept = keptFor(keepMs, () => port.guardiansRead(), now, heldAnswer('guardians', shapeGuardians));
+  const feesKept = keptFor(keepMs, () => port.feesRead(), now, heldAnswer('fees', shapeFees));
   return port;
 }
 
@@ -303,7 +321,7 @@ export function federationPorts({ home, bin, baseDir, inviteOf = () => null, mak
   copyDir = (from, to) => cpSync(from, to, { recursive: true, filter: (src) => !/client\.db\.lock$/.test(src) }) }) {
   // A READ COPY OF ITS OWN FOR EVERY OTHER FEDERATION (kanban #586, measured 2026-10-23 15:53Z under 20 market bots: the test host seats'
   // locks in federation 4dc88be7 were checked one run per question - `arena-stake-lock --mode status` at 30-85 % CPU each, the
-  // test host at load 128): the joined directory is copied once beside it, `<dir>.read`, and its read-only questions (status,
+  // macOS at load 128): the joined directory is copied once beside it, `<dir>.read`, and its read-only questions (status,
   // guardians, gateways, fees) go through one long-lived server there, as the home federation's do; send and settle stay on the
   // joined directory. No copy (a full disk, a test): every question the old way, as before.
   const readCopyOf = (dir) => {

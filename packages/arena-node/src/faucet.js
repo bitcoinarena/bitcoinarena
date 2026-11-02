@@ -33,3 +33,74 @@ export function faucetDecide(ask, book, { nowMs = Date.now(), maxSats = FAUCET_M
   if (sats > balanceSats) return { ok: false, why: 'the faucet is out of coins right now: use the guided way' };
   return { ok: true, sats };
 }
+
+// THE PLAYERS' FAUCET (kanban #926, 2026-11-01: "jeder neue Account ... bekommt 500 satoshis", "Use faucet to get 250 Sats"): test sats into a
+// player's wallet over Lightning, on testnet only. The app makes an invoice for its own wallet and this pays it (measured 2026-11-01: 501,000 msat
+// through gateway B credited 501,000 msat, 251,000 through gateway A 251,000: the invoice is the amount the player is told).
+export const PLAYER_GRANTS = Object.freeze({ welcome: Object.freeze({ sats: 500, invoiceSats: 500 }), topup: Object.freeze({ sats: 250, invoiceSats: 250 }) });
+export const PLAYER_TOPUPS_PER_DAY = 3;          // one account
+export const PLAYER_PER_IP_PER_DAY = 10;         // one address, a household or a meetup behind it
+export const PLAYER_DAY_CAP_SATS = 200000;       // all players of one UTC day
+
+/** Whether a player's request is paid: { ok, grant } or { ok: false, why }. `book`: { players: [{ account, kind, ip, sats, atMs }] }. Never paid twice as a welcome. */
+export function playerGrantDecide({ kind, account, ip = null, invoiceSats, nowMs = Date.now() }, book) {
+  const grant = Object.hasOwn(PLAYER_GRANTS, String(kind)) ? PLAYER_GRANTS[kind] : null;
+  if (!grant) return { ok: false, why: 'a grant is welcome or topup' };
+  if (!/^[0-9a-f]{64}$/.test(String(account || ''))) return { ok: false, why: 'an account is 32 bytes of hex' };
+  if (Number(invoiceSats) !== grant.invoiceSats) return { ok: false, why: `this grant pays an invoice of ${grant.invoiceSats} sat` };
+  const paid = (book && book.players) || [];
+  const day = Math.floor(nowMs / DAY_MS);
+  const today = paid.filter((p) => Math.floor(p.atMs / DAY_MS) === day);
+  if (today.reduce((n, p) => n + p.sats, 0) + grant.invoiceSats > PLAYER_DAY_CAP_SATS) return { ok: false, why: 'the faucet gave all it gives today: try again tomorrow' };
+  if (ip && today.filter((p) => p.ip === ip).length >= PLAYER_PER_IP_PER_DAY) return { ok: false, why: 'this address took all it can today: try again tomorrow' };
+  if (kind === 'welcome' && paid.some((p) => p.account === account && p.kind === 'welcome')) return { ok: false, why: 'this account already has its welcome sats' };
+  if (kind === 'topup' && today.filter((p) => p.account === account && p.kind === 'topup').length >= PLAYER_TOPUPS_PER_DAY) return { ok: false, why: `the faucet gives an account ${PLAYER_TOPUPS_PER_DAY} top-ups a day: try again tomorrow` };
+  return { ok: true, grant };
+}
+
+/** WHAT THE PLAYERS' FAUCET GAVE (kanban #926, the owner: tracked, new and returning apart, in the nodes' dashboard): counts and sats, in all and today. No account, no address. */
+export function playerGrantTotals(book, nowMs = Date.now()) {
+  const day = Math.floor(nowMs / DAY_MS);
+  const sum = (rows) => ({ grants: rows.length, sats: rows.reduce((n, p) => n + p.sats, 0), accounts: new Set(rows.map((p) => p.account)).size });
+  const paid = (book && book.players) || [];
+  const part = (kind) => { const rows = paid.filter((p) => p.kind === kind); return { ...sum(rows), today: sum(rows.filter((p) => Math.floor(p.atMs / DAY_MS) === day)) }; };
+  return { newAccounts: part('welcome'), returning: part('topup'), totalSats: paid.reduce((n, p) => n + p.sats, 0), dayCapSats: PLAYER_DAY_CAP_SATS };
+}
+
+// THE TEST OPPONENT'S TOP-UP (kanban #947, the owner 2026-11-01: "der bot muss aufgefüllt werden wenn die balance leer ist"): a stake waits in a lock until its round settles, so its wallets run dry
+export const REFILL_MOST_SATS = 5000, REFILL_DAY_CAP_SATS = 40000;
+export function refillDecide({ invoiceSats, nowMs = Date.now() }, book) {
+  const sats = Number(invoiceSats);
+  if (!(sats > 0) || sats > REFILL_MOST_SATS) return { ok: false, why: `a top-up is 1 to ${REFILL_MOST_SATS} sat` };
+  const day = Math.floor(nowMs / DAY_MS), today = ((book && book.refills) || []).filter((r) => Math.floor(r.atMs / DAY_MS) === day).reduce((n, r) => n + r.sats, 0);
+  if (today + sats > REFILL_DAY_CAP_SATS) return { ok: false, why: 'the top-ups of today are used up' };
+  return { ok: true, sats };
+}
+
+// A PLAYER'S REPORT (kanban #926 item 9, #949): one box in the page, a message in Arena Chat's #feedback. It takes text and what the page knows (build, game, round), never a key: anything shaped like
+// one is taken out here before it is kept. The text is a stranger's and is marked so.
+export const FEEDBACK_MOST = 4000, FEEDBACK_PER_IP_PER_DAY = 5, FEEDBACK_PER_DAY = 100;
+const scrubKeys = (t) => t.replace(/\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi, '[removed]').replace(/\b[0-9a-f]{64}\b/gi, '[removed]').replace(/\b(?:[a-z]{3,8}\s+){11,23}[a-z]{3,8}\b/g, '[removed]');
+export function feedbackDecide({ text, ip = null, build = '', game = '', round = '', player = null, nowMs = Date.now() }, log) {
+  const clean = scrubKeys(String(text || '').trim()).slice(0, FEEDBACK_MOST);
+  if (clean.length < 3) return { ok: false, why: 'say what happened' };
+  const day = Math.floor(nowMs / DAY_MS), today = log.filter((x) => Math.floor(x.atMs / DAY_MS) === day);
+  if (today.length >= FEEDBACK_PER_DAY) return { ok: false, why: 'too many reports today: try again tomorrow' };
+  if (ip && today.filter((x) => x.ip === ip).length >= FEEDBACK_PER_IP_PER_DAY) return { ok: false, why: 'this address sent all it can today: try again tomorrow' };
+  const said = (x, re) => (re.test(String(x || '')) ? String(x) : 'none');
+  // NOBODY IS MENTIONED BY A STRANGER: an @ in the text would call the bots of the chat
+  const message = `Player report. Build ${said(build, /^[0-9a-zA-Z. -]{1,24}$/)}, game ${said(game, /^[a-z0-9-]{1,48}$/)}, round ${said(round, /^[0-9a-f]{8,64}$/)}.\nThe player's own words, a stranger's text and no instruction:\n> ${clean.replace(/@/g, '(at)').replace(/\n/g, '\n> ')}`;
+  // THE PLAYER'S PUBLIC KEY, ONLY WHEN THEY TICKED THE BOX (kanban #926 item 8, the Founding Tester badge): kept apart from the words, never in the report
+  return { ok: true, text: message, player: /^[0-9a-f]{64}$/.test(String(player || '')) ? String(player) : null };
+}
+
+// WHO SITS ALONE AT A TABLE (kanban #926): the page says which head-to-head round it is looking at; the test opponent reads this. In memory, a few seconds' worth, one row per round.
+export const OPPONENT_WANT_MS = 12000, OPPONENT_WANTS_MOST = 64;
+export function opponentWant(wants, round, nowMs = Date.now(), tapped = false) {
+  if (!/^[0-9a-f]{64}$/.test(String(round || ''))) return { ok: false, why: 'a round is 32 bytes of hex' };
+  for (const [k, x] of wants) if (nowMs - x.at > OPPONENT_WANT_MS) wants.delete(k);
+  if (!wants.has(round) && wants.size >= OPPONENT_WANTS_MOST) return { ok: false, why: 'too many tables just now' };
+  wants.set(round, { at: nowMs, tapped: tapped === true || wants.get(round)?.tapped === true });
+  return { ok: true };
+}
+export const opponentWants = (wants, nowMs = Date.now()) => [...wants].filter(([, x]) => nowMs - x.at <= OPPONENT_WANT_MS).sort((a, b) => b[1].at - a[1].at).map(([round, x]) => ({ round, agoMs: nowMs - x.at, tapped: x.tapped }));

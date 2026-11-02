@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// WHICH GRID SERIES' POSTING TO LOOK FOR NEXT, AND WHEN TO LOOK AGAIN (kanban #742, the owner 2026-10-29 ~23:10Z: "Löse das im Code dass sowas
+// WHICH GRID SERIES' POSTING TO LOOK FOR NEXT, AND WHEN TO LOOK AGAIN (kanban #742, 2026-10-29 ~23:10Z: "Löse das im Code dass sowas
 // verworfen wird in Zukunft"). Measured that night: emergency postings of 10-30 at 158103, after the day's lead emergency at 158082, were
 // dropped by the test host seats within minutes, but second-host seat 1 still held three of them 30 min later and an hour before the day - under a
 // load of 130-180 its chain view for them was still being read, the pass took that for "no posting" and looked again only after 10 min

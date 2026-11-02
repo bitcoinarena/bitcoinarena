@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE PRICE SOURCES AN ATTESTOR READS (2026-10-09: "A on the test host (Coinbase, Kraken, Bitstamp); B on the
-// test host (Coinbase, Kraken, Bitstamp); C on the test host (Gemini, Coinbase, Kraken)"): public BTC/USD tickers, each read to
+// macOS (Coinbase, Kraken, Bitstamp); C on the test host (Gemini, Coinbase, Kraken)"): public BTC/USD tickers, each read to
 // whole cents - a decimal string cut at the cent, never a float.
 export const SOURCES = Object.freeze({
   coinbase: { url: 'https://api.coinbase.com/v2/prices/BTC-USD/spot', price: (j) => j && j.data && j.data.amount },

@@ -60,7 +60,7 @@ test('a release without its apps gets all three from GitHub at the pins, byte fo
     for (const p of a.exec) assert.ok(statSync(join(r, a.copy, p)).mode & 0o100, `${p} is executable`);
   }
   assert.equal(g.calls.length, appPins(r).reduce((n, a) => n + Object.keys(a.files).length, 0), 'one request a file');
-  assert.ok(g.calls.every((u) => u.startsWith('https://raw.githubusercontent.com/bitcoin-arena/arena-app-')), 'only the apps\' own repositories');
+  assert.ok(g.calls.every((u) => u.startsWith('https://raw.githubusercontent.com/bitcoinarena/arena-app-')), 'only the apps\' own repositories');
   // the same release again: nothing to do; a new release beside it with the same pins: from the cache, no request
   assert.deepEqual(await ensureApps({ release: r, home: h, fetcher: g.fetcher }), { ok: true, fetched: [], kept: ['arena-app-next-block', 'arena-app-rock-paper-scissors', 'arena-app-up-or-down'] });
   const r2 = release(), before = g.calls.length;
@@ -72,7 +72,7 @@ test('one wrong byte places nothing of that app; a file GitHub does not have sto
   const r = release(), g = github({ tamper: 'plugin/rock-paper-scissors.js' });
   const out = await ensureApps({ release: r, home: home(), fetcher: g.fetcher });
   assert.equal(out.ok, false);
-  assert.match(out.why, /plugin\/rock-paper-scissors\.js has SHA-256 [0-9a-f]{16}\.\.\., not the pinned [0-9a-f]{16}\.\.\.: refused \(from github.com\/bitcoin-arena\/arena-app-rock-paper-scissors\)/);
+  assert.match(out.why, /plugin\/rock-paper-scissors\.js has SHA-256 [0-9a-f]{16}\.\.\., not the pinned [0-9a-f]{16}\.\.\.: refused \(from github.com\/bitcoinarena\/arena-app-rock-paper-scissors\)/);
   assert.ok(!existsSync(join(r, 'packages/rock-paper-scissors')) && !existsSync(join(r, 'packages/rock-paper-scissors.fetching')), 'nothing placed');
   const m = await ensureApps({ release: release(), home: home(), fetcher: github({ missing: 'app.json' }).fetcher });
   assert.equal(m.ok, false);
@@ -88,7 +88,7 @@ test('a folder the release carries itself is left alone; a pin that moved is fet
   assert.equal(readFileSync(join(r, 'packages/nextblock/own.txt'), 'utf8'), 'bundled');
   // the release's pin for Up or Down moves: its folder, placed for the old pin, is replaced
   const marker = join(r, 'packages/btc-updown/.arena-app.json');
-  writeFileSync(marker, JSON.stringify({ repo: 'bitcoin-arena/arena-app-up-or-down', commit: '0'.repeat(40), files: 1 }));
+  writeFileSync(marker, JSON.stringify({ repo: 'bitcoinarena/arena-app-up-or-down', commit: '0'.repeat(40), files: 1 }));
   writeFileSync(join(r, 'packages/btc-updown/stale.js'), 'old');
   assert.deepEqual((await ensureApps({ release: r, home: h, fetcher: g.fetcher })).fetched, ['arena-app-up-or-down']);
   assert.ok(!existsSync(join(r, 'packages/btc-updown/stale.js')), 'the old pin\'s files are gone');

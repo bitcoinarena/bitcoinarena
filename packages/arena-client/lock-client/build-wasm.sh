@@ -34,6 +34,9 @@ patch -p1 < $HERE/fedimint-lnv2-send-expiry.patch
 # 1 SAT = 1 SAT: the client issues and spends notes from 1 msat (the federation signs 0..41 already)
 patch -p1 < $HERE/fedimint-mintv2-whole-msat.patch
 patch -p1 < $HERE/fedimint-lnv2-testnet4-invoices.patch
+# LOST DEPOSITS (kanban #883): the receive scan the client already runs for LNURL, for this client's own key
+awk -v f=$HERE/lnv2-scan-receive.rs '/Receive an incoming contract locked to a public key derived from our/ && !d { while ((getline l < f) > 0) print l; d = 1 } { print }' modules/fedimint-lnv2-client/src/lib.rs > /tmp/lnv2-lib.rs && cp /tmp/lnv2-lib.rs modules/fedimint-lnv2-client/src/lib.rs
+grep -q "fn scan_receives" modules/fedimint-lnv2-client/src/lib.rs
 # RECOVERY IN THE BROWSER (2026-10-04: "patch Fedimint's recovery so it runs in the browser"): mintv2's
 # recovery-slice fetch timed out on tokio's clock, whose std::time::Instant panics on wasm32
 patch -p1 < $HERE/fedimint-mintv2-recovery-wasm-clock.patch
@@ -77,6 +80,11 @@ grep -q "fn blwp_pending_outputs" modules/fedimint-mintv2-client/src/lib.rs || c
 # NOTES IN ISSUANCE: what the wallet's pending output state machines are being issued - a recovery's re-issue, a
 # deposit's notes, a payment's change - which the balance does not count until each finishes
 grep -q "fn blwp_issuing_msat" modules/fedimint-mintv2-client/src/lib.rs || cat $HERE/mintv2-issuing.rs >> modules/fedimint-mintv2-client/src/lib.rs
+grep -q "fn blwp_issuing_detail" modules/fedimint-mintv2-client/src/lib.rs || cat $HERE/mintv2-issuing-detail.rs >> modules/fedimint-mintv2-client/src/lib.rs
+# STUCK OUTPUTS (kanban #910): a machine whose transaction state was lost can be asked at the federation and ended, and what the seed was issued comes back
+grep -q "fn blwp_recover_stuck" modules/fedimint-mintv2-client/src/lib.rs || cat $HERE/mintv2-recover-stuck.rs >> modules/fedimint-mintv2-client/src/lib.rs
+grep -q "BLWP_GIVEN_UP" modules/fedimint-mintv2-client/src/output.rs || perl -0pi -e 'BEGIN { open F, "<", shift @ARGV; local $/; $r = <F>; } s/global_context\s*\.await_tx_accepted\(range\.txid\)\s*\.await\?;/$r/' $HERE/mintv2-stuck-output.txt modules/fedimint-mintv2-client/src/output.rs
+grep -q "BLWP_GIVEN_UP" modules/fedimint-mintv2-client/src/output.rs
 ln -sfn $HERE blwp-lock-client
 grep -q '"blwp-lock-client"' Cargo.toml || perl -0pi -e 's/^members = \[/members = [\n  "blwp-lock-client",/m' Cargo.toml
 export CC_wasm32_unknown_unknown=$B/wasi-sdk/bin/clang AR_wasm32_unknown_unknown=$B/wasi-sdk/bin/llvm-ar

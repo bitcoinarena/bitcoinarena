@@ -36,7 +36,7 @@ holds() { [ -f "$1/state.json" ] || [ -f "$1/arena.conf" ]; }
 H="$HOME/.bitcoinarena"
 if ! holds "$H" && holds "$HOME/.arena-node"; then H="$HOME/.arena-node"; fi
 # the node's command carries its instance (arena.conf instance=4: bitcoinarena-4), as the installer names it - the bare name only without one
-# (playtest 2026-10-25: a fourth node on the test host, the app looked for arenanode, "No such file or directory", and Go did nothing)
+# (playtest 2026-10-25: a fourth node on a macOS, the app looked for arenanode, "No such file or directory", and Go did nothing)
 INST=$(sed -n 's/^instance=//p' "$H/arena.conf" 2>/dev/null | head -1)
 CMD="$H/bin/bitcoinarena${INST:+-$INST}"
 [ -x "$CMD" ] || [ ! -x "$H/bin/arenanode${INST:+-$INST}" ] || CMD="$H/bin/arenanode${INST:+-$INST}"

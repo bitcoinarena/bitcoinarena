@@ -45,7 +45,7 @@ test('a second node\'s wizard reads its own quick tunnel\'s name, not the first 
 });
 
 // THE DEFAULT SERVICE NAME TAKEN BY ANOTHER NODE (kanban #635, 2026-10-25: a new install in ~/.arena-node wrote io.bitcoin-arena.node over
-// the agent of mactest12, another node on that test host): a new node takes the first free name, io.bitcoin-arena.node--2, and its own ports
+// the agent of mactest12, another node on that macOS): a new node takes the first free name, io.bitcoin-arena.node--2, and its own ports
 test('a new node whose default service name belongs to another node folder takes --2 (and ports 100 up); its own name stays its own', async () => {
   const { freeInstance } = await import('../src/instance.js');
   const mine = '/Users/d/.arena-node', other = '<string>/Users/d/blwp-offload/mactest12/home/arena.conf</string>';

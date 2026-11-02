@@ -10,15 +10,15 @@ const me = 'ab'.repeat(32);
 const byId = (rows) => Object.fromEntries(rows.map((r) => [r.id, r]));
 
 test('a node set up by hand, all up: the seat, the chain at its block, the guardian\'s API, the gateway, its public address from outside, the tunnel, its announcement', async () => {
-  const rows = byId(await ownServices({ port: 6511, chainTip: async () => 157190, guardian: { apiPort: 7511, endpoint: 'ws://198.51.100.7:6511/guardian' }, gatewayPort: 6476,
-    publicEndpoint: 'ws://198.51.100.7:6511', p2pTunnels: { state: () => [{ state: 'listening' }, { state: 'shared' }] },
-    addressBook: { list: () => [{ node: me, endpoint: 'ws://198.51.100.7:6511', atMs: 1000 }] }, ownKey: me,
-    fetcher: async (u) => ({ ok: u === 'http://198.51.100.7:6511/identity', status: 200 }), tcp: async () => true, nowMs: () => 1000 + 3 * 60000,
+  const rows = byId(await ownServices({ port: 6511, chainTip: async () => 157190, guardian: { apiPort: 7511, endpoint: 'ws://198.51.100.106:6511/guardian' }, gatewayPort: 6476,
+    publicEndpoint: 'ws://198.51.100.106:6511', p2pTunnels: { state: () => [{ state: 'listening' }, { state: 'shared' }] },
+    addressBook: { list: () => [{ node: me, endpoint: 'ws://198.51.100.106:6511', atMs: 1000 }] }, ownKey: me,
+    fetcher: async (u) => ({ ok: u === 'http://198.51.100.106:6511/identity', status: 200 }), tcp: async () => true, nowMs: () => 1000 + 3 * 60000,
     guardianCheck: async ({ apiPort }) => ({ ok: true, ours: true, says: `its API answers on port ${apiPort}` }) }));
   assert.deepEqual(Object.keys(rows), ['node', 'chain', 'guardian', 'gateway', 'address', 'p2p-tunnel', 'announcements']);
   assert.equal(rows.chain.probe.says, 'at block 157,190');
   assert.deepEqual([rows.guardian.running, rows.guardian.inside], [true, true]);
-  assert.match(rows.address.probe.says, /reached at ws:\/\/100\.85\.86\.106:6511/);
+  assert.match(rows.address.probe.says, /reached at ws:\/\/198\.51\.100\.106:6511/);
   assert.equal(rows['p2p-tunnel'].detail, '2 of 2 guardian port(s) carried');
   assert.match(rows.announcements.probe.says, /announced 3 min ago/);
   assert.ok(Object.values(rows).every((r) => !r.probe || r.probe.ok));

@@ -3,7 +3,7 @@
 // THE PAYMENTS OUT OF THE RESERVES ON THE ARENA PAGE (§27A.9.32026-10-17: "Build the Payments out list and its
 // 5 tests as named in comment 2647"): a payout is shown only once five nodes list it and hold its proposal's vote as passed; a passed
 // vote without a payout is pending; a drained federation's move needs no vote. (The games screen's list was taken out again,
-// 2026-10-17: "remove ... the reserve accordion"; the reserves are shown on bitcoin-arena.io - home-reserves.test.js.)
+// 2026-10-17: "remove ... the reserve accordion"; the reserves are shown on bitcoinarena.io - home-reserves.test.js.)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reservesPaymentsOut, fetchReservesPaymentsOut, paymentOutLine } from '../src/reserves-page.js';

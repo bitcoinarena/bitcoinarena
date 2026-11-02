@@ -132,6 +132,15 @@ export function cancelCarryDue(carried, key, nowMs, entries, everyMs = CANCEL_CA
   return true;
 }
 
+// A PLAN THAT CANNOT REACH ITS SIGNATURES (kanban #970): seats that hold no such series refuse for as long as the series is gone, and a
+// round of a dropped posting was offered 120 times a restart, on every seat (24,271 lines in one seat's log). A seat just restarted
+// may still be reading the series, so a few offers stay: 16 are about 11 minutes. A restart asks again, so no round is given up for good.
+export const PLAN_OUT_OF_REACH_OFFERS = 16;
+export function planOutOfReach({ agreed, needed, refused = [] }) {
+  const gone = refused.filter((r) => /holds no such series/.test(String(r))).length;
+  return gone > 0 && agreed + refused.length - gone < needed;
+}
+
 export class LockSettlement {
   /**
    * `dkg` holds this signer node's share of the round's claim key; `port` is the
@@ -1299,7 +1308,7 @@ export class LockSettlement {
       if (!planned.ok) {
         // A PEER NOT YET READY FOR THE PLAN IS OFFERED IT AGAIN, a second later, a bounded number of times. Measured:
         // a peer whose run was not yet final refused it, then became final and waited for a plan nobody offered again.
-        if (planned.peerRefused) this.retryPlan(roundIdBytes);
+        if (planned.peerRefused) this.retryPlan(roundIdBytes, planned.outOfReach ? { most: PLAN_OUT_OF_REACH_OFFERS } : {});
         return planned;
       }
       this.planRetries.delete(toHex(roundIdBytes));
@@ -1634,7 +1643,7 @@ export class LockSettlement {
       agreed = await this.planAgreed(roundIdBytes, null, body, got.contract, peers, toHex(roundIdBytes));
     }
     if (!agreed.final)
-      return { ...refuse(`${agreed.agreed} of the ${agreed.needed} seats the settlement needs signed the send plan, so nothing is settled: ${agreed.refused.join('; ')}`), peerRefused: true };
+      return { ...refuse(`${agreed.agreed} of the ${agreed.needed} seats the settlement needs signed the send plan, so nothing is settled: ${agreed.refused.join('; ')}`), peerRefused: true, outOfReach: planOutOfReach(agreed) };
     console.log(`[winnings] ${toHex(roundIdBytes).slice(0, 16)} ${agreed.agreed} of ${got.contract.nodes.length} seats signed send plan ${toHex(agreed.planId).slice(0, 16)} (${agreed.needed} needed)${agreed.refused.length ? `; did not count: ${agreed.refused.join('; ')}` : ''}`);
     this.built.delete(toHex(roundIdBytes));
     return { ok: true, rows: proposed.rows };

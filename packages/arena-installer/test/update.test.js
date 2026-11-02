@@ -219,7 +219,7 @@ test('Windows: the launchers that run the old release move to the new one; stopp
   const { releaseOfLauncher } = await import('../src/update.js');
   const root = mkdtempSync(join(tmpdir(), 'arena-update-win-'));
   const home = join(root, 'home'); mkdirSync(home, { recursive: true });
-  const v1 = 'C:\\Users\\owner\\arena\\arena-node-0.1.0-rc.12-windows-x64', v2 = 'C:\\Users\\owner\\arena\\home\\releases\\arena-node-0.1.0-rc.13-windows-x64';
+  const v1 = 'C:\\Users\\arena\\arena\\arena-node-0.1.0-rc.12-windows-x64', v2 = 'C:\\Users\\arena\\arena\\home\\releases\\arena-node-0.1.0-rc.13-windows-x64';
   writeFileSync(join(home, 'node.env'), 'ARENA_ROLES=verify\r\n');
   writeFileSync(join(home, 'state.json'), JSON.stringify({ network: 'testnet4', roles: ['verify'], done: { service: 1 } }));
   writeFileSync(join(home, 'arena-node.cmd'), windowsLauncher({ node: `${v1}\\runtime\\node.exe`, release: v1, home, port: 8470 }));
@@ -502,8 +502,8 @@ test('the new release\'s apps are fetched first: one that cannot be fetched leav
   const calls = [], asked = [];
   const sh = async (cmd, args) => { calls.push([cmd, ...args].join(' ')); return { ok: true, out: '', err: '' }; };
   const r = await updateNode({ home, newRelease: v2, port: 1, env, sh, nowMs: () => 0, platform: 'linux',
-    fetchApps: async (o) => { asked.push(o.release); return { ok: false, why: 'plugin/x.js answered 404 (from github.com/bitcoin-arena/arena-app-up-or-down)' }; } });
-  assert.deepEqual(r, { ok: false, why: 'the new release\'s apps: plugin/x.js answered 404 (from github.com/bitcoin-arena/arena-app-up-or-down)' });
+    fetchApps: async (o) => { asked.push(o.release); return { ok: false, why: 'plugin/x.js answered 404 (from github.com/bitcoinarena/arena-app-up-or-down)' }; } });
+  assert.deepEqual(r, { ok: false, why: 'the new release\'s apps: plugin/x.js answered 404 (from github.com/bitcoinarena/arena-app-up-or-down)' });
   assert.deepEqual(asked, [v2], 'the new release\'s apps, into the new release');
   assert.ok(!calls.some((c) => / stop /.test(c)), 'nothing stopped');
 });

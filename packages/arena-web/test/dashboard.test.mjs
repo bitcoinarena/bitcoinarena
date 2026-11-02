@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { DashboardPage, Players, Liquidity, sat, short, earningsOf, signedSat, score, keep, ownerHref, bondHref } from '../dist/test/dashboard.mjs';
+import { FaucetGrants, DashboardPage, Players, Liquidity, sat, short, earningsOf, signedSat, score, keep, ownerHref, bondHref } from '../dist/test/dashboard.mjs';
 
 const NOW = Date.UTC(2026, 9, 21, 11, 0);
 const zero = { gameVerifyMsat: '0', settlementMsat: '0', guardianMsat: '0', otherMsat: '0', lightningCostMsat: '0', gatewayCostMsat: '0', profitMsat: '0' };
@@ -41,7 +41,7 @@ test('the page: the period switch, earned / owed / profit as stat cards, the dev
   // THE RELEASE BESIDE THE TITLE (kanban #674: "include version in node dashboard and owner dashboard"); none from a checkout
   assert.match(renderToStaticMarkup(React.createElement(DashboardPage, { data: { ...D, release: { version: '2026.1.9.3', commit: 'a55f40bd0f81' } } })),
     /<h1>Node dashboard<span class="ver" id="release">2026\.1\.9\.3<\/span><\/h1>/);
-  assert.match(h, /<button type="button" role="tab" aria-selected="true" class="on">Today<\/button>/);
+  assert.match(h, /<button type="button" role="tab" id="earn-tab-day" aria-controls="earn-panel" aria-selected="true" tabindex="0" class="on">Today<\/button>/);
   assert.match(h, /<span>Earned · today<\/span><b>0 sat<\/b><small>nothing settled yet in this period<\/small>/);
   assert.match(h, /<span>Owed<\/span><b>2.857 sat<\/b>/);
   assert.match(h, /<h3>Dev client · dev b<\/h3>/);
@@ -135,8 +135,8 @@ test('the dev client card: its last recovery', () => {
 // this node's own page on 127.0.0.1, which never holds the key the site's page keeps
 test('the Owner area link: the site\'s owner page for this node, with the local address when the dashboard is the node\'s own', () => {
   const key = 'ab'.repeat(32);
-  assert.equal(ownerHref(key, { hostname: '127.0.0.1', origin: 'http://127.0.0.1:8770' }), `https://testnet.bitcoin-arena.io/owner/#node=${key}&local=http%3A%2F%2F127.0.0.1%3A8770`);
-  assert.equal(ownerHref(key, { hostname: 'x.trycloudflare.com', origin: 'https://x.trycloudflare.com' }), `https://testnet.bitcoin-arena.io/owner/#node=${key}`);
+  assert.equal(ownerHref(key, { hostname: '127.0.0.1', origin: 'http://127.0.0.1:8770' }), `https://testnet.bitcoinarena.io/owner/#node=${key}&local=http%3A%2F%2F127.0.0.1%3A8770`);
+  assert.equal(ownerHref(key, { hostname: 'x.trycloudflare.com', origin: 'https://x.trycloudflare.com' }), `https://testnet.bitcoinarena.io/owner/#node=${key}`);
   assert.equal(ownerHref('not a key', null), 'Dashboard/owner');
 });
 
@@ -144,13 +144,27 @@ test('the Owner area link: the site\'s owner page for this node, with the local 
 // the top with "Set up the bond" to the owner area's Bond section; no Federation card, no "3/10"
 test('no bond: the red card first, linking to the Bond section; no founding shown', () => {
   const key = 'ab'.repeat(32);
-  assert.equal(bondHref(key, { hostname: '127.0.0.1', origin: 'http://127.0.0.1:8770' }), `https://testnet.bitcoin-arena.io/owner/#node=${key}&local=http%3A%2F%2F127.0.0.1%3A8770&section=bond`);
+  assert.equal(bondHref(key, { hostname: '127.0.0.1', origin: 'http://127.0.0.1:8770' }), `https://testnet.bitcoinarena.io/owner/#node=${key}&local=http%3A%2F%2F127.0.0.1%3A8770&section=bond`);
   assert.equal(bondHref('not a key', null), 'Dashboard/owner#bond');
   const setup = { ok: true, bond: null, gateway: { ok: true, federations: 0 }, founding: { waiting: true, ready: 3, needed: 10 } };
   const html = renderToStaticMarkup(React.createElement(DashboardPage, { data: { ...D, setup } }));
-  assert.match(html, /<header class="dash-head">[\s\S]*?<\/header><section><div class="card no-bond" id="no-bond"[\s\S]*?<h3>No bond<\/h3>[\s\S]*?href="https:\/\/testnet\.bitcoin-arena\.io\/owner\/#node=4003758bc189[0-9a-f]*&amp;section=bond">Set up the bond<\/a>/);
+  assert.match(html, /<header class="dash-head">[\s\S]*?<\/header><section><div class="card no-bond" id="no-bond"[\s\S]*?<h3>No bond<\/h3>[\s\S]*?href="https:\/\/testnet\.bitcoin-?arena\.io\/owner\/#node=4003758bc189[0-9a-f]*&amp;section=bond">Set up the bond<\/a>/);
   assert.doesNotMatch(html, /founding-wait|nodes ready for the next federation|3\/10/);
   const bonded = renderToStaticMarkup(React.createElement(DashboardPage, { data: { ...D, setup: { ...setup, bond: { txid: 'b0'.repeat(32), sats: '50000', seen: true, confirmations: 9, needed: 6 } } } }));
   assert.doesNotMatch(bonded, /id="no-bond"/);
   assert.match(bonded, /<span class="founding-n">3\/10<\/span>/, 'with a bond the founding shows as before');
+});
+
+test('the faucet\'s card: new and returning accounts apart, with what they got in all and today; no answer, no card (kanban #926)', async () => {
+  const part = (accounts, grants, sats, today) => ({ accounts, grants, sats, today: { accounts: 1, grants: 1, sats: today } });
+  const t = { ok: true, newAccounts: part(3, 3, 1500, 500), returning: part(2, 4, 1000, 250), totalSats: 2500 };
+  const c = new FaucetGrants({});
+  assert.equal(c.render(), null);
+  c.state = { t };
+  const h = renderToStaticMarkup(c.render());
+  assert.match(h, /New accounts/);
+  assert.match(h, /Returning/);
+  assert.match(h, /1,500 sat/);
+  assert.match(h, /2,500 sat in all/);
+  assert.equal(new FaucetGrants({}).state.t, null);
 });

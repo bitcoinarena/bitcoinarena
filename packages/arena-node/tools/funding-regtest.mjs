@@ -65,11 +65,13 @@ const env = process.env;
 const B = env.BITCOIN_BIN, WORK = env.WORK;
 if (!B || !WORK) throw new Error('BITCOIN_BIN=<bin dir> WORK=<dir>');
 const SCHEDULE_NAME = env.FUNDING === 'spec' ? 'spec' : 'short';
+const SIGNALS = Number(env.SIGNALS || 3);   // how many seats signal: the 15 % threshold read with fewer than all
 const S = FUNDING_SCHEDULES[SCHEDULE_NAME];
 const W = S.week;
 const RPC = Number(env.RPCPORT || 29511), P2P = RPC + 1;
-const PORTS = [0, 1, 2].map((i) => Number(env.SEAT_PORT || 29521) + 10 * i);
-const BONDS = [50000000n, 30000000n, 20000000n];
+const SEATS = Number(env.SEATS || 3);       // 7 reads the 15 % threshold from below: one signal of seven is 14.3 %
+const PORTS = Array.from({ length: SEATS }, (_, i) => Number(env.SEAT_PORT || 29521) + 10 * i);
+const BONDS = SEATS === 3 ? [50000000n, 30000000n, 20000000n] : Array(SEATS).fill(20000000n);
 const ENTRY_WINDOW_MS = 60000n;
 const say = (o) => console.log(JSON.stringify({ t: '#397', at: new Date().toISOString().slice(11, 19), ...o }, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -111,8 +113,9 @@ const procs = PORTS.map((port, i) => {
   return p;
 });
 const URLS = PORTS.map((p) => `http://127.0.0.1:${p}`);
-const http = (i, path, init) => fetch(`${URLS[i]}${path}`, init);
-for (let i = 0; i < 3; i++) { for (let n = 0; n < 120; n++) { try { if ((await http(i, '/identity')).ok) break; } catch { /* not yet */ } await wait(500); } }
+// ONCE MORE ON A CONNECTION ERROR (run 5, 10-31: a keep-alive socket the seat had closed answered "fetch failed" right after the third round)
+const http = async (i, path, init) => { try { return await fetch(`${URLS[i]}${path}`, init); } catch { await wait(1000); return fetch(`${URLS[i]}${path}`, init); } };
+for (let i = 0; i < SEATS; i++) { for (let n = 0; n < 120; n++) { try { if ((await http(i, '/identity')).ok) break; } catch { /* not yet */ } await wait(500); } }
 const keys = ids.map((id) => toHex(id.pubkey));
 say({ step: 'seats', ports: PORTS, pids: procs.map((p) => p.pid), keys: keys.map(short) });
 let stopped = false;
@@ -146,7 +149,7 @@ try {
 
   // ---- a free nextblock round, published on this chain, played to FINAL
   const nodes = [...ids.map((id) => id.pubkey)].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
-  const base = { networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1, gameVerifySlots: 3, settlementSlots: 3, gameId: NEXTBLOCK.gameId,
+  const base = { networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1, gameVerifySlots: SEATS, settlementSlots: SEATS, gameId: NEXTBLOCK.gameId,
     simCoreHash: TRUCK_CORE_HASH, randomnessRule: 'bitcoin-block-hash', objectionWindowMs: OBJECTION_WINDOW_MS, custody: 'FEDERATION', slashMinimumServed: 20,
     slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, donationSetId: donationSetId(KEYS.recipients), censusRoot: new Uint8Array(32),
     stakeMsat: 0n, bondMinSats: 50000n, blockTicks: RUN_82_TICKS, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30,
@@ -199,7 +202,7 @@ try {
     const took = await Promise.all(URLS.map(async (_, i) => { const r = await http(i, '/round', { method: 'POST', body: encodeRoundContract(c) }).catch((e) => ({ status: `error ${e.message}`, text: async () => '' }));
       return { status: r.status, said: (await r.text()).slice(0, 200) }; }));
     say({ step: 'round', k, round: short(rid), censusHeight: c.censusHeight, publishedAt: pub.publishedAt, beacon: pub.beacon, posted: took.map((x) => x.status), said: took.find((x) => !(x.status < 300))?.said });
-    if (took.filter((x) => x.status < 300).length < 2) throw new Error(`round ${k} not taken: ${took.map((x) => `${x.status} ${x.said}`).join(' | ')}`);
+    if (took.filter((x) => x.status < 300).length < receiptsNeeded(SEATS)) throw new Error(`round ${k} not taken: ${took.map((x) => `${x.status} ${x.said}`).join(' | ')}`);
     // ---- the entry: free, a fresh player and session key
     let sk; do { sk = secp256k1.utils.randomSecretKey(); } while (secp256k1.getPublicKey(sk, true)[0] !== 0x02);
     const session = ed25519.utils.randomSecretKey();
@@ -212,11 +215,11 @@ try {
     let entered = [];
     for (let n = 0; n < 20; n++) {
       entered = await Promise.all(URLS.map(async (u) => { try { const r = await fetch(`${u}/entry`, { method: 'POST', body: encodeEntryContract(entry) }); return { status: r.status, said: (await r.text()).slice(0, 160) }; } catch (e) { return { status: 'error', said: e.message }; } }));
-      if (entered.filter((x) => x.status < 300).length >= receiptsNeeded(3)) break;
+      if (entered.filter((x) => x.status < 300).length >= receiptsNeeded(SEATS)) break;
       await wait(3000);
     }
     say({ step: 'entry', k, entry: short(eid), took: entered.map((x) => x.status), said: entered.find((x) => !(x.status < 300))?.said });
-    if (entered.filter((x) => x.status < 300).length < receiptsNeeded(3)) throw new Error(`round ${k}: the entry was not taken`);
+    if (entered.filter((x) => x.status < 300).length < receiptsNeeded(SEATS)) throw new Error(`round ${k}: the entry was not taken`);
     // ---- the run, driven to the gate by the truck's closed-loop driver, its batches and marks over /play
     // the seats read the beacon from their own chain on their own cadence: asked again, a block now and then
     let seed = null;
@@ -280,10 +283,10 @@ try {
         bySigner.set(toHex(x.signerPubkey), Number(x.signedAtMs));
       }
       finals = [...bySigner.entries()].map(([key, at]) => ({ key, at }));
-      if (finals.length >= 3 || (finals.length >= receiptsNeeded(3) && Date.now() > finalAfter + 60000)) break;
+      if (finals.length >= SEATS || (finals.length >= receiptsNeeded(SEATS) && Date.now() > finalAfter + 60000)) break;
     }
-    say({ step: 'FINAL', k, round: short(rid), entry: short(eid), signers: finals.length, needed: receiptsNeeded(3), signedAt: finals.map((f) => `${short(f.key).slice(0, 8)}@${iso(f.at)}`), tip: tip(), tipMtp: iso(mtpMs(tip())), minutes: Math.round((Date.now() - t0) / 6000) / 10 });
-    if (finals.length < receiptsNeeded(3)) throw new Error(`round ${k} reached no FINAL`);
+    say({ step: 'FINAL', k, round: short(rid), entry: short(eid), signers: finals.length, needed: receiptsNeeded(SEATS), signedAt: finals.map((f) => `${short(f.key).slice(0, 8)}@${iso(f.at)}`), tip: tip(), tipMtp: iso(mtpMs(tip())), minutes: Math.round((Date.now() - t0) / 6000) / 10 });
+    if (finals.length < receiptsNeeded(SEATS)) throw new Error(`round ${k} reached no FINAL`);
     rounds.push({ k, rid, height: c.censusHeight, finals });
     // the next blocks come after the FINALs on the chain's clock: the wall clock past the last one
     const last = Math.max(...finals.map((f) => f.at));
@@ -302,7 +305,7 @@ try {
     proposalId = toHex(pid);
     say({ step: 'proposal', id: proposalId, publishedHeight: P, tip: tip(), amountSats: p.amountSats, status: a.map((x) => x.status), why: a.find((x) => x.status >= 300)?.body?.why });
     const sigs = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < SIGNALS; i++) {
       const s = { proposalId: pid, node: ids[i].pubkey, atHeight: P };
       const shex = toHex(Uint8Array.from([...encodeFundingSignal(s), ...schnorr.sign(fundingSignalId(s), ids[i].secret)]));
       const got = await postFunding('signal', shex);
@@ -328,18 +331,39 @@ try {
   const t1 = Date.now();
   let views = [];
   for (let n = 0; n < 60; n++) {
-    views = await Promise.all([0, 1, 2].map(async (i) => { const f = await fundingAt(i); return { tip: f.tip, p: (f.proposals || []).find((x) => x.id === proposalId) }; }));
+    views = await Promise.all(PORTS.map(async (_, i) => { const f = await fundingAt(i); return { tip: f.tip, p: (f.proposals || []).find((x) => x.id === proposalId) }; }));
     if (views.every((v) => v.p && v.p.signal && v.p.signal.state !== 'signalling' && v.p.vote && v.p.vote.censusHeight !== null)) break;
     await wait(10000);
   }
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < SEATS; i++) {
     const v = views[i];
     say({ step: 'GET /funding', seat: i + 1, tip: v.tip, proposal: v.p && short(v.p.id), signal: v.p && v.p.signal, vote: v.p && v.p.vote && { from: v.p.vote.from, until: v.p.vote.until, last: v.p.vote.last, decidableAt: v.p.vote.decidableAt, censusHeight: v.p.vote.censusHeight, readTo: v.p.vote.readTo, state: v.p.vote.state,
       count: v.p.vote.count && { votersEligible: v.p.vote.count.votersEligible, bondsInCensus: v.p.vote.count.bondsInCensus, totalSats: v.p.vote.count.totalSats, bondsVoted: v.p.vote.count.bondsVoted } },
       signalsHeld: v.p && v.p.signals.length });
   }
   say({ step: 'decided', seconds: Math.round((Date.now() - t1) / 1000), sameAtEverySeat: views.every((v) => JSON.stringify(v.p && v.p.signal) === JSON.stringify(views[0].p && views[0].p.signal)) });
-  for (let i = 0; i < 3; i++) say({ step: `seat ${i + 1} log`, funding: (readFileSync(join(WORK, `node-${i + 1}.log`), 'utf8').match(/\[funding\][^\n]*/g) || []).slice(-4) });
+  // ---- the bond-weighted vote: seats 1 and 2 YES, seat 3 NO, each from its operator door and this wallet, then the count once it is deep enough
+  const open = views[0].p && views[0].p.vote;
+  if (open && open.from !== null && open.from !== undefined) {
+    const tokens = stores.map((s) => readFileSync(`${s}.operator-pairing`, 'utf8').trim().split('#')[1]);
+    mineTo(open.from);
+    for (const [i, choice] of [[0, 'YES'], [1, 'YES'], [2, 'NO']]) {
+      const r = await (await http(i, '/operator/vote', { method: 'POST', headers: { authorization: `Bearer ${tokens[i]}` }, body: JSON.stringify({ proposalId, choice }) })).json();
+      if (!r.ok) { say({ step: 'vote', seat: i + 1, why: r.why }); continue; }
+      const txid = JSON.parse(wcli('-named', 'send', `outputs=${JSON.stringify([{ data: r.opReturn }])}`, 'fee_rate=2')).txid;
+      say({ step: 'vote', seat: i + 1, choice, txid: short(txid) });
+    }
+    mineTo(tip() + 1);
+    mineTo(open.until + 7);
+    let seen = [];
+    for (let n = 0; n < 40; n++) {
+      seen = await Promise.all(PORTS.map(async (_, i) => ((await fundingAt(i)).proposals || []).find((x) => x.id === proposalId)));
+      if (seen.every((p) => p && p.vote && p.vote.decided)) break;
+      await wait(10000);
+    }
+    for (let i = 0; i < SEATS; i++) say({ step: 'vote counted', seat: i + 1, tip: tip(), vote: seen[i] && seen[i].vote, payout: seen[i] && seen[i].payout });
+  }
+  for (let i = 0; i < SEATS; i++) say({ step: `seat ${i + 1} log`, funding: (readFileSync(join(WORK, `node-${i + 1}.log`), 'utf8').match(/\[funding\][^\n]*/g) || []).slice(-4) });
   say({ step: 'mined', blocks: tip(), note: 'every block of this chain, from its genesis' });
 } catch (e) {
   failed = e;

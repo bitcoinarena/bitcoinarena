@@ -1,0 +1,10 @@
+name = "arena-release-channel"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+workers_dev = false
+routes = [
+  { pattern = "testnet.bitcoin-arena.io/owner*", zone_name = "bitcoin-arena.io" },
+  { pattern = "testnet.bitcoin-arena.io/release/*", zone_name = "bitcoin-arena.io" },
+  { pattern = "testnet.bitcoinarena.io/owner*", zone_name = "bitcoinarena.io" },
+  { pattern = "testnet.bitcoinarena.io/release/*", zone_name = "bitcoinarena.io" },
+]

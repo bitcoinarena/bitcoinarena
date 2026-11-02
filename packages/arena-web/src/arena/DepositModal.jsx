@@ -54,7 +54,7 @@ export class DepositModal extends React.Component {
     return (d, final) => {
       if (o !== this.active || d.invoice !== this.state.invoice) return;
       const again = o.restMsat === null ? ' Pick an amount to get a new one.' : '';
-      if (final === 'Claimed') this.status(3, `Payment received! ${sats(d.amountMsat)} are now in your wallet.`, 'ok');
+      if (final === 'Claimed') this.status(3, this.fromFaucet ? `${this.props.faucet.sats} sats from the faucet are now in your wallet.` : `Payment received! ${sats(d.amountMsat)} are now in your wallet.`, 'ok');
       else if (final === 'Expired') this.status(3, 'This invoice has expired and nothing was charged.' + again, 'fail');
       else this.status(3, `The deposit did not go through (${final}), and nothing was charged.` + again, 'fail');
     };
@@ -74,6 +74,23 @@ export class DepositModal extends React.Component {
   }
   takeRest(o) { this.active = o; this.bind(o); this.set({ rest: o, why: '', tab: null }); this.show(restPay(o)); }
 
+  // THE FAUCET (kanban #926, 2026-11-01: "Use faucet to get 250 Sats als button"): this offer's invoice, paid by the faucet; the offer's own watch says when it landed
+  async useFaucet() {
+    const f = this.props.faucet, mine = ++this.token;
+    this.fromFaucet = true;
+    this.set({ faucetBusy: true, qr: null, hold: 'Asking the faucet …', amount: `${f.sats} test sats from the faucet.`, invoice: null, invoiceText: '', want: null });
+    this.status(1, `Asking the faucet for ${f.sats} sats …`, 'busy');
+    try {
+      const d = await this.active.invoice(f.invoiceMsat);
+      if (mine !== this.token || this.gone) return;
+      this.set({ invoice: d.invoice, invoiceText: d.invoice, want: BigInt(d.amountMsat) });
+      await f.ask(d.invoice);
+      if (mine === this.token) this.status(2, `The faucet paid. Your ${f.sats} sats arrive in a few seconds …`, 'busy');
+    } catch (e) {
+      this.fromFaucet = false;
+      if (mine === this.token) { this.set({ faucetBusy: false }); this.status(3, e && e.message ? e.message : String(e), 'fail'); }
+    }
+  }
   due(msat) { return this.props.due ? this.props.due(msat) : BigInt(msat); }
   async show(msat) {
     const mine = ++this.token;
@@ -213,6 +230,7 @@ export class DepositModal extends React.Component {
         <button type="button" className="dep-close" title="Close" onClick={() => this.close()}>{'×'}</button>
         <div className="dep-title">{s.rest ? restWords(s.rest) : message || title}</div>
         <div className="dep-backup-host" style={{ display: 'contents' }} />
+        {this.props.faucet && !s.rest ? <button type="button" className="dep-faucet" disabled={!!s.faucetBusy} onClick={() => this.useFaucet()}>Use faucet to get {this.props.faucet.sats} sats</button> : null}
         <div className="dep-tabs" style={s.rest ? { visibility: 'hidden' } : undefined}>
           {offer.choices.map((c) => <button key={c.key} type="button" data-key={c.key} className={s.tab === c.key ? 'on' : undefined} onClick={() => this.choose(c)}>{c.label}</button>)}
         </div>

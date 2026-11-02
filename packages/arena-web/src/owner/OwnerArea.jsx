@@ -51,7 +51,7 @@ export class OwnerArea extends React.Component {
         <nav className="side" id="side">{SECTIONS.filter(([id]) => id !== 'money' || p.hasDevs).map(([id, t]) => <a key={id} href={'#' + id} data-s={id} className={on === id ? 'on' : undefined}>{t}<span className={'dot' + (dots.has(id) ? ' d-' + dots.get(id) : '')} id={'dot-' + id} /></a>)}
           {/* THE PUBLIC DASHBOARD AS AN ENTRY OF THE MENU (kanban #733, the owner: "make the link to the public dashboard a regular button in the
             navigation, would look nicer and not jump around"): it stood under the page and moved down as each panel loaded */}
-          {p.publicLink ? <a href={p.publicLink} className="out" id="side-public" target="_blank" rel="noopener noreferrer">Public dashboard <span aria-hidden="true">↗</span></a> : null}</nav>
+          {p.publicLink ? <a href={p.publicLink} className="out" id="side-public" target="_blank" rel="noopener noreferrer">Node dashboard <span aria-hidden="true">↗</span></a> : null}</nav>
         <main>
           <Place id="setup-banner-place" className={null} />
           {sec('overview', <><h2>Overview</h2>
@@ -98,7 +98,7 @@ export class OwnerArea extends React.Component {
             <Place id="gamedevs" className={null} /></>)}
           {sec('emergency', <><h2>Emergency code</h2><div className="card" id="emergency">
             <p>Going offline for more than two days (12 blocks on testnet4)? Take your node out first with this code and you keep your bond.
-              Type it at <a href="https://testnet.bitcoin-arena.io/offline/" target="_blank" rel="noopener"><b>testnet.bitcoin-arena.io/offline</b></a> on any device.</p>
+              Type it at <a href="https://testnet.bitcoinarena.io/offline/" target="_blank" rel="noopener"><b>testnet.bitcoinarena.io/offline</b></a> on any device.</p>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px', margin: '6px 0 10px' }}><tbody>
               <tr><th style={{ textAlign: 'left' }}>Your node</th><th style={{ textAlign: 'left' }}>What happens</th><th style={{ textAlign: 'left' }}>Your bond</th></tr>
               <tr><td>no custody</td><td>it is out of every draw at once</td><td>kept</td></tr>
@@ -127,11 +127,11 @@ export class OwnerArea extends React.Component {
               <label>The signed manifest (hex)</label><textarea id="mhex" rows={5} readOnly value={s.signed.hex} ref={(x) => { this.hex = x; }} />
               <button type="button" id="copy" onClick={() => this.copy()}>{s.copied ? 'Copied ✓' : 'Copy'}</button></> : null}</div></div></>)}
           {sec('login', <><h2>Your login</h2>
-            {p.how === 'words' ? <div className="card"><p>Your 24 words are kept in this browser only.</p>
+            {p.how === 'words' ? <div className="card"><p>Your 24 words are kept in this browser's local storage on this device, unencrypted, until you sign out. They are never sent anywhere. Anyone who can read this browser's data, or run a script on this page, can read them.</p>
               <button type="button" id="show" onClick={() => this.setState({ words: p.onShowWords() })}>Show them</button>
               <button type="button" id="forget" onClick={p.onForget}>Forget them on this browser</button>
               <div id="shown">{s.words ? <div className="words">{s.words.map((w, i) => <span key={i}>{w}</span>)}</div> : null}</div></div>
-              : <div className="card"><p>This browser keeps your login{p.how === 'nsec' ? ' and your nsec' : ''}. Your key stays with your {p.how === 'nsec' ? 'nsec - keep it written down' : 'signer'}.</p>
+              : <div className="card"><p>{p.how === 'nsec' ? 'This browser keeps your login and your nsec in its local storage on this device, unencrypted, until you sign out. Anyone who can read this browser\'s data, or run a script on this page, can read it. Keep your nsec written down.' : 'This browser keeps your login, not your key. Your key stays with your signer.'}</p>
                 <button type="button" id="forget" onClick={p.onForget}>Sign out on this browser</button></div>}</>)}
         </main>
       </div>);

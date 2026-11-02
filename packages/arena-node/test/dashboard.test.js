@@ -247,3 +247,11 @@ test('a paying round with this node\'s results: an ACCEPTED settlement earns its
     assert.ok(no.d.days.every((x) => x.gameVerifyMsat === '0' && x.settlementMsat === '0'), `${state}: nothing on the chart`);
   }
 });
+
+// NO PAGE-LEVEL SIDEWAYS SCROLL AT 320 PX (kanban #836, measured in WebKit: 336 px wide before): no grid track may ask for more than its screen
+test('every grid track of the page shrinks with its screen', () => {
+  const css = dashboardHtml().match(/<style>([\s\S]*?)<\/style>/)[1];
+  const fixed = [...css.matchAll(/([.\w-]+)\{[^{}]*?grid-template-columns:repeat\(auto-fi[a-z]+,minmax\((\d+)px/g)].filter(([, , px]) => Number(px) > 200).map(([, sel]) => sel);
+  assert.deepEqual(fixed, [], 'a track with a fixed minimum wider than 200 px');
+  assert.match(css, /\.two>\*\{min-width:0\}/, 'a table in a column scrolls in its card, it does not widen the column');
+});

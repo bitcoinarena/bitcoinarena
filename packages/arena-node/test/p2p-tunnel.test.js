@@ -44,7 +44,7 @@ test('the port a guardian names is the same on every node, inside its range, and
   assert.notEqual(p2pTunnelPort(k, 'next'), p);
   assert.notEqual(p2pTunnelPort('cd'.repeat(32)), p);
   assert.equal(tunnelRoot('https://a.example/'), 'wss://a.example');
-  assert.equal(tunnelRoot('ws://198.51.100.7:6511'), 'ws://198.51.100.7:6511');
+  assert.equal(tunnelRoot('ws://198.51.100.106:6511'), 'ws://198.51.100.106:6511');
 });
 
 test('a guardian names that port as its P2P URL; the bind stays local (Fedimint reads the URL at the ceremony only)', () => {
@@ -109,13 +109,13 @@ test('an idle tunnel is pinged from both ends, well inside a proxy\'s 100 s idle
 // tunnel; once those were gone, six guardians that fell one session behind could not fetch it from any peer and the federation halted)
 test('a guardian is started with each peer\'s config address sent to its seat\'s relay, its own to its local API, and other overrides kept', () => {
   const apiEndpoints = { 0: { url: 'wss://old-a.trycloudflare.com/guardian', name: 'aaaaaaaaaaaaaaaa' }, 1: { url: 'wss://old-b.trycloudflare.com/guardian/', name: 'BBBBBBBBBBBBBBBB' },
-    2: { url: 'ws://198.51.100.7:6571/guardian', name: 'cccccccccccccccc' } };
+    2: { url: 'ws://198.51.100.106:6571/guardian', name: 'cccccccccccccccc' } };
   const v = guardianApiOverrides({ apiEndpoints, ownName: 'cccccccccccccccc', seatRoot: 'ws://127.0.0.1:8470', ownApiPort: 9471, existing: 'wss://other.example/x=ws://127.0.0.1:1/,wss://old-a.trycloudflare.com/guardian=wss://stale' });
   const m = new Map(v.split(',').map((x) => [x.slice(0, x.indexOf('=')), x.slice(x.indexOf('=') + 1)]));
   assert.equal(m.get('wss://old-a.trycloudflare.com/guardian'), `ws://127.0.0.1:8470${GUARDIAN_API_RELAY_PATH}aaaaaaaaaaaaaaaa`);
   assert.equal(m.get('wss://old-a.trycloudflare.com/guardian/'), `ws://127.0.0.1:8470${GUARDIAN_API_RELAY_PATH}aaaaaaaaaaaaaaaa`, 'with and without the trailing slash');
   assert.equal(m.get('wss://old-b.trycloudflare.com/guardian'), `ws://127.0.0.1:8470${GUARDIAN_API_RELAY_PATH}bbbbbbbbbbbbbbbb`);
-  assert.equal(m.get('ws://198.51.100.7:6571/guardian'), 'ws://127.0.0.1:9471/', 'its own: the local API port');
+  assert.equal(m.get('ws://198.51.100.106:6571/guardian'), 'ws://127.0.0.1:9471/', 'its own: the local API port');
   assert.equal(m.get('wss://other.example/x'), 'ws://127.0.0.1:1/', 'an override for another address is kept');
   assert.equal([...m.keys()].filter((k) => k.startsWith('wss://old-a')).length, 2, 'the stale one for a peer\'s address is replaced');
   const env = guardianEnv({ nodePort: 8470, dataDir: '/x', network: 'testnet4', bitcoindUrl: 'http://b', cookieSecret: 'c', password: 'p', endpoint: 'ws://e', apiOverrides: v });

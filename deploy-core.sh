@@ -14,8 +14,8 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 # /tmp - the copy of the last deployed page kept on persistent disk (ARENA_BUILD_DIR).
 BUILD="${ARENA_BUILD_DIR:?name the Unity WebGL build: the app arena-app-next-block builds it, kanban 569}"
 PROJECT="${1:-bitcoin-arena-site}"
-# the old project is never deployed to again, in no form (2026-10-25): testnet.bitcoin-arena.io serves bitcoin-arena-site
-case "$PROJECT" in *btc-logistics-core*) echo "refused: $PROJECT is retired - testnet.bitcoin-arena.io serves bitcoin-arena-site" >&2; exit 1 ;; esac
+# the old project is never deployed to again, in no form (2026-10-25): testnet.bitcoinarena.io serves bitcoin-arena-site
+case "$PROJECT" in *btc-logistics-core*) echo "refused: $PROJECT is retired - testnet.bitcoinarena.io serves bitcoin-arena-site" >&2; exit 1 ;; esac
 
 if [ "$PROJECT" = "btc-logistics-war" ]; then
   echo "refusing: btc-logistics-war holds the last single-player version." >&2
@@ -96,7 +96,7 @@ const [daily, testnet] = process.argv.slice(2).map((f) => JSON.parse(fs.readFile
     const u = new URL(`${n}/rounds?next=1`);   // not the whole list: a bare /rounds held seat 1's loop 7-17 s
     try {
       const code = execFileSync('curl', ['-s', '-o', '/dev/null', '-w', '%{http_code}', '-m', '60',
-        '--resolve', `${u.hostname}:443:${process.env.ARENA_TAILNET_IP || '198.51.100.7'}`, u.toString()]).toString();
+        '--resolve', `${u.hostname}:443:${process.env.ARENA_TAILNET_IP || '198.51.100.98'}`, u.toString()]).toString();
       if (code === '200') { ok++; break; }
     } catch {}
   }

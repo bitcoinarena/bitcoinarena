@@ -1,0 +1,17 @@
+{
+  "label": "2026.1.9.23",
+  "commit": "fd38d0948",
+  "plays": 10,
+  "seconds": 2239.36,
+  "cpuSeconds": 1777.73,
+  "cpuPerPlay": 177.77,
+  "cores": 0.79,
+  "cpuByProgram": {
+    "fedimintd": 1195.02,
+    "node": 574.07,
+    "bitcoind": 8.64
+  },
+  "rssMaxMb": 4773.39,
+  "diskGrowthMb": 174.74,
+  "diskPerPlayMb": 17.47
+}

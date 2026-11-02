@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE LATEST RELEASE, FROM ONE PLACE (kanban #753, a tester 2026-10-28: "Link always latest release and mention the latest build
-// number"). No page carries a release number. Every link to a release is https://github.com/bitcoin-arena/bitcoin-arena/releases/latest in
+// number"). No page carries a release number. Every link to a release is https://github.com/bitcoinarena/bitcoinarena/releases/latest in
 // the HTML; this script reads the number from the update channel the release scripts publish with every release
-// (https://testnet.bitcoin-arena.io/release/latest.json, written by tools/release/latest.mjs, CORS *) and writes it where a page asks:
+// (https://testnet.bitcoinarena.io/release/latest.json, written by tools/release/latest.mjs, CORS *) and writes it where a page asks:
 //
 //     <span data-arena-release-version></span>          the version, as latest.json names it
 //     <a data-arena-release-asset="bitcoin-arena-node-setup-{v}-windows-x64.exe" href="…/releases/latest">   the file of that release
 //                                                       ({v} is the version; the href stays the releases page until it is read)
 //
 // Until it is read, or if it cannot be, the version spans stay empty (a page hides what depends on them with :empty) and the links keep
-// pointing at the latest release on GitHub. Loaded by bitcoin-arena.io (js/release-latest.js) and the docs (from bitcoin-arena.io).
+// pointing at the latest release on GitHub. Loaded by bitcoinarena.io (js/release-latest.js) and the docs (from bitcoinarena.io).
 (function () {
-  var CHANNEL = 'https://testnet.bitcoin-arena.io/release/latest.json';
-  var REPO = 'https://github.com/bitcoin-arena/bitcoin-arena';
+  var CHANNEL = 'https://testnet.bitcoinarena.io/release/latest.json';
+  var REPO = 'https://github.com/bitcoinarena/bitcoinarena';
 
   /** The version of a latest.json, or null when it is not one: four or three dot-separated numbers, the tag v + version. */
   function versionOf(latest) {

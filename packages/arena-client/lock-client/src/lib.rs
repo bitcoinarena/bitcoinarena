@@ -737,6 +737,16 @@ impl LockClient {
         .to_owned())
     }
 
+    /// A BATCH OF THE SCAN FOR LOST DEPOSITS (kanban #883), from `start`: JSON { next, done, found: [{ operation, msat }] }. The caller waits on each
+    /// found operation with awaitReceive; the federation answers at once while there is more, and holds a read at its end, so the page bounds the call.
+    #[wasm_bindgen(js_name = scanDeposits)]
+    pub async fn scan_deposits(&self, start: String) -> Result<String, JsError> {
+        let ln = self.client.get_first_module::<LightningClientModule>().map_err(js)?;
+        let (next, done, found) = ln.scan_receives(start.parse().map_err(js)?, 128).await;
+        let found: Vec<_> = found.iter().map(|(op, a)| serde_json::json!({ "operation": op.fmt_full().to_string(), "msat": a.msats.to_string() })).collect();
+        Ok(serde_json::json!({ "next": next.to_string(), "done": done, "found": found }).to_string())
+    }
+
     /// THE FEDERATION'S OWN LNv2 FEE RULE, off its config - `base + amount *
     /// ppm / 1e6` on every input and every output (lnv2-common config.rs) - as
     /// JSON { fee_ppm, fee_base_msat }. The page's fee-lock gate reads it here,
@@ -829,6 +839,25 @@ impl LockClient {
         Ok(serde_json::Value::Array(pending.into_iter().map(|(nonce, amount, request)| serde_json::json!({
             "nonce": nonce.to_string(), "amount_msat": amount.msats, "request": request,
         })).collect()).to_string())
+    }
+
+    /// WHAT THE ARRIVING MONEY WAITS FOR (kanban #908): each output still being issued, its transaction, and whether the federation
+    /// has accepted that transaction, asked now. Answers [{"txid", "msat", "accepted"}]; a restore's re-issue has no txid.
+    #[wasm_bindgen(js_name = issuingDetail)]
+    pub async fn issuing_detail(&self) -> Result<String, JsError> {
+        let mint = self.client.get_first_module::<fedimint_mintv2_client::MintClientModule>().map_err(js)?;
+        Ok(serde_json::Value::Array(mint.blwp_issuing_detail().await.into_iter().map(|(txid, msat, accepted)| serde_json::json!({
+            "txid": txid, "msat": msat.msats, "accepted": accepted,
+        })).collect()).to_string())
+    }
+
+    /// STUCK MONEY BACK (kanban #910): ends the output machines stuck on a transaction and re-issues what this seed was issued and neither
+    /// holds nor has spent. Answers {"ended", "reissuingMsat"}.
+    #[wasm_bindgen(js_name = recoverStuck)]
+    pub async fn recover_stuck(&self) -> Result<String, JsError> {
+        let mint = self.client.get_first_module::<fedimint_mintv2_client::MintClientModule>().map_err(js)?;
+        let (ended, amount) = mint.blwp_recover_stuck().await.map_err(js)?;
+        Ok(serde_json::json!({ "ended": ended, "reissuingMsat": amount.msats }).to_string())
     }
 
     /// E-CASH IN: reissued into this wallet; answers once the federation has reissued it - {"state": "Success" |

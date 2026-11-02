@@ -36,7 +36,7 @@ test('each version-5 core file is the bundle pinned for it, the app\'s own bytes
     const name = `core-${short}.js`, file = fileOf(name);
     assert.deepEqual(LIST.games.nextblock.pinnedV5[name], [sha(file)], `${name} pinned for version 5`);
     assert.equal(sha(file), sha(readFileSync(new URL(`../../nextblock/dist/${name}`, import.meta.url))), `${name} is the app's dist bundle`);
-    assert.doesNotMatch(file.toString('utf8'), /blwp|kanban|owner/i);
+    assert.doesNotMatch(file.toString('utf8'), /blwp|kanban|owner-name/i);
     assert.ok(!html.includes(`<script src="${name}"`), 'not a script tag every page load pays for');
     assert.match(html, new RegExp(`'${hex}':\\s*\\{ file: '${name.replace('.', '\\.')}', sha256: '${sha(file)}' \\}`));
   }

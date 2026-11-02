@@ -45,7 +45,7 @@ test('a node whose advertisement names another address than it answers at says s
   const w = endpointWarning({ advertised: 'https://keeps-ahead-employ-thomas.trycloudflare.com', serving: 'https://cottage-usually-pete-path.trycloudflare.com' });
   assert.equal(w.kind, 'address changed'); assert.equal(w.urgent, true);
   assert.match(w.says, /answers at https:\/\/cottage-usually-pete-path.*names https:\/\/keeps-ahead-employ-thomas/);
-  assert.equal(endpointWarning({ advertised: 'ws://198.51.100.7:6511', serving: 'http://198.51.100.7:6511/' }), null, 'ws and http, a trailing slash: the same address');
+  assert.equal(endpointWarning({ advertised: 'ws://198.51.100.106:6511', serving: 'http://198.51.100.106:6511/' }), null, 'ws and http, a trailing slash: the same address');
   assert.equal(endpointWarning({ advertised: 'wss://Node.Example', serving: 'https://node.example' }), null, 'case in the host');
   assert.equal(endpointWarning({ advertised: null, serving: 'https://a.example' }), null, 'not in the census yet: nothing to compare');
   assert.equal(endpointWarning({ advertised: 'https://a.example', serving: null }), null, 'no public address configured');

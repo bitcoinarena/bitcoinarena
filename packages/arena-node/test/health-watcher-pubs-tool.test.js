@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE HEALTH WATCHER'S ROUND PUBLICATIONS (kanban #759, the owner 2026-10-28: "make sure that all of our rounds always get confirmed", "public
+// THE HEALTH WATCHER'S ROUND PUBLICATIONS (kanban #759, 2026-10-28: "make sure that all of our rounds always get confirmed", "public
 // testnet4", "Also increase the fees for the unconfirmed transactions"): tools/health-watcher.mjs + health-watcher-pubs.mjs against two fake
 // bitcoinds - our branch and the public chain. Today's case: the 3 emergency grids confirmed on our branch, on the public chain only in its
 // mempool - alerted in the short format, bumped by CPFP (never RBF), rechecked; a tx a chain lacks is sent to it, parents first; one in our
@@ -83,7 +83,7 @@ test('today: 3 grids confirmed on our branch, only in the public mempool - alert
   w.ops = [{ txid: UD, game: 'updownGrid', atMs: NOW - 30 * 60000 }];
   let { r, st } = await go(w, {});
   assert.equal(pubAlerts(w).length, 1);
-  assert.equal(pubAlerts(w)[0], ['[health-watcher] #759 @owner @a tester PROBLEM: round publication not confirmed',
+  assert.equal(pubAlerts(w)[0], ['[health-watcher] #759 @owner PROBLEM: round publication not confirmed',
     '• Up/Down 71eac027: ours confirmed (4), public mempool, 30 min',
     '• RPS dd9a81ca: ours confirmed (4), public mempool, 0 min',
     '• Next Block fde7abcc: ours confirmed (3), public mempool, 0 min',

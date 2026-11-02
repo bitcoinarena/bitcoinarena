@@ -115,8 +115,8 @@ test('Bitcoin Core goes to the chosen folder and syncs in the background: the wi
   assert.deepEqual([midway.running, midway.stages[0].state, midway.stages[0].part, midway.stages[0].text], [true, 'now', 0.5, '25 of 50 MB'], 'the download by its bytes');
   const after = (await c.get('/api/core/progress')).json;
   assert.deepEqual([after.running, after.stages.map((x) => x.state)], [false, ['done', 'done', 'done', 'done', 'done']]);
-  assert.deepEqual(r.interim, { host: 'seat.example.com', port: 443 }, 'the first server that passed: ours (kanban #656)');
-  assert.deepEqual([tested.find((c) => c.host === 'seat.example.com').ws, tested.find((c) => c.host === 'seat.example.com').path], [true, '/electrum'], 'over its websocket');
+  assert.deepEqual(r.interim, { host: 'tn4.bitcoinarena.io', port: 443 }, 'the first server that passed: ours (kanban #656)');
+  assert.deepEqual([tested.find((c) => c.host === 'tn4.bitcoinarena.io').ws, tested.find((c) => c.host === 'tn4.bitcoinarena.io').path], [true, '/electrum'], 'over its websocket');
   const st = (await c.get('/api/state')).json;
   assert.equal(st.step, 'roles', 'the wizard goes on while Core syncs');
   assert.deepEqual(st.build, { version: null, commit: null }, 'the release for the footer (kanban #662): none in this test release');
@@ -165,7 +165,7 @@ test('the used setup link in a browser that holds its session goes to the setup 
   assert.equal((await stranger.get(`/?t=${token}`)).status, 403, 'another browser with the used link: refused');
 });
 
-// A PORT ANOTHER PROGRAM HOLDS (kanban #635, the owner's playtest 2026-10-25: his test host's own testnet4 Core held 48342, the installer's Core
+// A PORT ANOTHER PROGRAM HOLDS (kanban #635, the owner's playtest 2026-10-25: his macOS's own testnet4 Core held 48342, the installer's Core
 // exited 26 times - "Binding RPC on address 127.0.0.1 port 48342 failed" - and the page said "bitcoind is starting (no cookie yet)")
 test('free ports are chosen, a Core whose port is taken says so, and the status moves it to free ports and starts it again', async (t) => {
   const { freeCorePorts, coreFailure } = await import('../src/bitcoind.js');

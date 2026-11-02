@@ -18,7 +18,7 @@ test('missed seatings count in a row from the newest, skip rounds not drawn for,
 
 test('a reserve that was present missed nothing: it ends the count, and 28 present reserve sits warn of nothing (testnet4 2026-10-14)', () => {
   const r = (atMs, drawn, seated, present) => ({ atMs, drawn, seated, present });
-  assert.equal(missedInARow(Array.from({ length: 28 }, (_, i) => r(i, true, false, true))), 0, 'test host node 5: present every time, a reserve every time');
+  assert.equal(missedInARow(Array.from({ length: 28 }, (_, i) => r(i, true, false, true))), 0, 'macOS node 5: present every time, a reserve every time');
   assert.equal(seatingWarning(missedInARow(Array.from({ length: 28 }, (_, i) => r(i, true, false, true)))), null);
   // absent three times since it was last present: warned
   assert.equal(missedInARow([r(1, true, false, true), r(2, true, false, false), r(3, true, false, false), r(4, true, false, false)]), 3);

@@ -3,9 +3,11 @@
 // THE BUILD (kanban #564): the owner dashboard's React screens bundled for the browser (dist/owner.js, React included, minified) and the
 // stylesheet beside it; and the components compiled to plain modules for the tests (dist/test/), which import React from node_modules.
 import { build } from 'esbuild';
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+
+import { withoutNotes } from './page-notes.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 // THE RELEASE'S CHECK (kanban #564, 2026-10-21: "pack the release"): ARENA_WEB_OUT builds every bundle into that folder and
@@ -23,7 +25,7 @@ await build({ entryPoints: [join(root, 'src/owner/main.jsx')], bundle: true, for
 await build({ entryPoints: [join(root, 'src/arena/main.jsx')], bundle: true, format: 'iife', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
   define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(dist, 'arena.js'), legalComments: 'none' });
 copy(join(dist, 'arena.js'), join(root, '../../src/arena-ui/arena-react.js'));
-// THE EXPLORER (kanban #624, explorer.bitcoin-arena.io): one classic script beside its page in src/website/explorer/www
+// THE EXPLORER (kanban #624, explorer.bitcoinarena.io): one classic script beside its page in src/website/explorer/www
 await build({ entryPoints: [join(root, 'src/explorer/main.jsx')], bundle: true, format: 'iife', minify: true, jsx: 'automatic', target: ['es2020', 'safari15'],
   define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(dist, 'explorer.js'), legalComments: 'none' });
 copy(join(dist, 'explorer.js'), join(root, '../../src/website/explorer/www/explorer.js'));
@@ -55,8 +57,10 @@ await build({ entryPoints: [join(root, 'src/proposals/main.jsx')], bundle: true,
   define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(dist, 'proposals.js'), legalComments: 'none' });
 copy(join(dist, 'proposals.js'), join(root, '../../src/arena-ui/proposals/react.js'));
 copyFileSync(join(root, 'src/design/arena.css'), join(dist, 'arena.css'));
+// THE OWNER PAGE AS IT LEAVES THE REPO (kanban #838): pages/owner.html keeps its notes; a node serves this copy and the site's owner/index.html is this copy
+writeFileSync(join(dist, 'owner-page.html'), await withoutNotes(readFileSync(join(root, '../arena-node/pages/owner.html'), 'utf8')));
 if (ALONE) { console.log(`built the served bundles into ${ALONE}`); process.exit(0); }
 for (const [name, entry] of [['roles', 'src/owner/RolesPanel.jsx'], ['keyswitch', 'src/owner/KeySwitchPanel.jsx'], ['setup-status', 'src/dashboard/SetupStatus.jsx'], ['owner-start', 'src/owner/OwnerStart.jsx'], ['market-creator', 'src/owner/MarketCreator.jsx'], ['market-draft', 'src/owner/marketDraft.js'], ['market-sources', '../arena-protocol/src/market-sources.js'], ['source-proposal', 'src/owner/SourceProposal.jsx'], ['code-editor', 'src/owner/CodeEditor.jsx'], ['owner-area', 'src/owner/OwnerArea.jsx'], ['bond-offer', 'src/owner/BondOffer.jsx'], ['leave', 'src/owner/LeavePanel.jsx'], ['donations', 'src/owner/DonationsPanels.jsx'], ['ballots', 'src/owner/BallotsPanel.jsx'], ['services', 'src/owner/ServicesPanel.jsx'], ['address', 'src/owner/AddressPanel.jsx'], ['bond', 'src/owner/BondPanel.jsx'], ['custody', 'src/owner/CustodyPanels.jsx'], ['standing', 'src/owner/StandingPanel.jsx'], ['release', 'src/owner/ReleasePanel.jsx'], ['apps', 'src/owner/AppsPanel.jsx'], ['gamedevs', 'src/owner/GameDevsPanel.jsx'], ['network-apps', 'src/owner/NetworkAppsPanel.jsx'], ['network', 'src/owner/NetworkPanel.jsx'], ['needs', 'src/owner/NeedsPanel.jsx'], ['market', 'src/market/MarketViews.jsx'], ['games', 'src/arena/GameTiles.jsx'], ['season', 'src/arena/SeasonRows.jsx'], ['zap', 'src/arena/ZapCard.jsx'], ['chips', 'src/arena/ChipList.jsx'], ['balance', 'src/arena/BalanceSplit.jsx'], ['confirm', 'src/arena/ConfirmCard.jsx'], ['wallet', 'src/arena/WalletHistory.jsx'], ['custody-card', 'src/arena/CustodyCard.jsx'], ['seed', 'src/arena/SeedModal.jsx'], ['walletstart', 'src/arena/WalletStart.jsx'], ['deposit', 'src/arena/DepositModal.jsx'], ['withdraw', 'src/arena/WithdrawPanel.jsx'], ['move', 'src/arena/MovePanel.jsx'], ['shop', 'src/arena/ShopItems.jsx'], ['donate', 'src/arena/DonateBox.jsx'], ['others', 'src/arena/OtherWallets.jsx'], ['bits', 'src/arena/PageBits.jsx'], ['site', 'src/site/SitePages.jsx'], ['settings', 'src/arena/SettingsCards.jsx'], ['rps', '../rock-paper-scissors/view/RpsView.jsx'], ['rps-chrome', '../rock-paper-scissors/view/RpsChrome.jsx'], ['updown', '../btc-updown/view/UpDownView.jsx'], ['nextblock', '../nextblock/view/NextBlockParts.jsx'], ['dashboard', 'src/dashboard/DashboardPage.jsx'], ['rounds', 'src/rounds/RoundsPage.jsx'], ['emergency', 'src/emergency/EmergencyPage.jsx'], ['health', 'src/health/HealthViews.jsx'], ['proposals', 'src/proposals/ForumViews.jsx'], ['wizard', 'src/installer/WizardSteps.jsx'], ['setup', 'src/installer/SetupSteps.jsx'], ['finish', 'src/installer/FinishSteps.jsx'], ['components', 'src/design/components.jsx'], ['explorer', 'src/explorer/main.jsx'], ['referrer', 'src/owner/ReferrerPanel.jsx'], ['round-posting', 'src/owner/RoundPosting.jsx'], ['owner-rounds', 'src/owner/RoundsPanel.jsx'], ['uptime', 'src/dashboard/Uptime.jsx']])
   await build({ entryPoints: [join(root, entry)], bundle: true, format: 'esm', jsx: 'automatic', platform: 'node', external: ['react', 'react-dom', 'react/jsx-runtime'],
     outfile: join(root, `dist/test/${name}.mjs`) });
-console.log('built dist/owner.js, dist/arena.js, dist/wizard.js, dist/dashboard.js, dist/rounds.js, dist/emergency.js, dist/health.js, dist/proposals.js, dist/arena.css, dist/test/');
+console.log('built dist/owner.js, dist/owner-page.html, dist/arena.js, dist/wizard.js, dist/dashboard.js, dist/rounds.js, dist/emergency.js, dist/health.js, dist/proposals.js, dist/arena.css, dist/test/');

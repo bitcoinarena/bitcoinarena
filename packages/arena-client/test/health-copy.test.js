@@ -133,11 +133,11 @@ test('the subrequest limit reached: nothing more asked that run, and no door los
 
 test('GET /api/health: the kept copy, readable from any page (CORS); none yet is a 404 that says so; its own cron', async () => {
   const EXPLORER = kv();
-  const none = await explorer.fetch(new Request('https://explorer.bitcoin-arena.io/api/health'), { EXPLORER }, {});
+  const none = await explorer.fetch(new Request('https://explorer.bitcoinarena.io/api/health'), { EXPLORER }, {});
   assert.equal(none.status, 404);
   assert.match((await none.json()).why, /no copy/);
   EXPLORER.m.set('health', JSON.stringify({ atMs: 5, daily: DAILY, answers: {} }));
-  const r = await explorer.fetch(new Request('https://explorer.bitcoin-arena.io/api/health'), { EXPLORER }, {});
+  const r = await explorer.fetch(new Request('https://explorer.bitcoinarena.io/api/health'), { EXPLORER }, {});
   assert.equal(r.status, 200);
   assert.equal(r.headers.get('access-control-allow-origin'), '*');
   assert.equal((await r.json()).atMs, 5);

@@ -7,9 +7,9 @@ import assert from 'node:assert/strict';
 import { parseRoutes, routed, cappedFetch } from '../src/fetch-routes.js';
 
 test('a public URL is fetched at its direct address, the longest prefix first, at a path boundary only', () => {
-  const r = parseRoutes('https://b.ts.net/guardian-1=http://127.0.0.1:31221, https://b.ts.net/fed2-1=http://198.51.100.7:6221/,https://b.ts.net/guardian-1x=http://x');
+  const r = parseRoutes('https://b.ts.net/guardian-1=http://127.0.0.1:31221, https://b.ts.net/fed2-1=http://198.51.100.106:6221/,https://b.ts.net/guardian-1x=http://x');
   assert.equal(routed('https://b.ts.net/guardian-1/rounds?next=2', r), 'http://127.0.0.1:31221/rounds?next=2');
-  assert.equal(routed('https://b.ts.net/fed2-1/identity', r), 'http://198.51.100.7:6221/identity');
+  assert.equal(routed('https://b.ts.net/fed2-1/identity', r), 'http://198.51.100.106:6221/identity');
   assert.equal(routed('https://b.ts.net/guardian-1x/a', r), 'http://x/a', 'the longest prefix');
   assert.equal(routed('https://b.ts.net/guardian-12/a', r), 'https://b.ts.net/guardian-12/a', 'not a path boundary: unrouted');
   assert.equal(routed('https://other.example/a', r), 'https://other.example/a');
@@ -32,7 +32,7 @@ test('at most N requests in flight per origin; the rest wait; another origin is 
 });
 
 // ONE LANE PER SEAT, AND A WAITING CALL KEEPS ITS DEADLINE (measured 2026-10-13 ~20:45Z: seven seats behind one host shared
-// 8 slots, and a 5 s call queued behind 30 s ones without bound - a test host seat's seating agent stopped signing PRESENTs)
+// 8 slots, and a 5 s call queued behind 30 s ones without bound - a second-host seat's seating agent stopped signing PRESENTs)
 test('seats behind one host have a lane each; a queued call is aborted by its own signal while it waits', async () => {
   const pending = [];
   const inner = (url, opts) => new Promise((ok, no) => { pending.push({ url, ok }); if (opts && opts.signal) opts.signal.addEventListener('abort', () => no(new Error('aborted in flight')), { once: true }); });

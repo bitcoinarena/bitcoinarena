@@ -21,7 +21,7 @@
  *           - old pending txids missing from miner C's list: appended, the miner stopped so its loop restarts it with them (ops/minerc-727.sh)
  *           - a next hour no one can join, or a day without posting: NOT fixed - an emergency grid posted by a machine crashed every seat on
  *             10-25. The alert carries the runbook command; emergencyGrid() is the hook to automate it later.
- *   ALERT   Arena Chat #code, a plain channel message as bot claude, "[health-watcher] #<ticket> @owner @a tester ...": what is wrong,
+ *   ALERT   Arena Chat #code, a plain channel message as bot claude, "[health-watcher] #<ticket> @owner ...": what is wrong,
  *           the numbers, what was tried, what is needed. The same problem again at most once an hour while it lasts, and once "resolved".
  *
  *   node tools/health-watcher.mjs [--dry] [--once]       (env HW_DRY=1, HW_ONCE=1; the rest below in CONFIG)
@@ -71,7 +71,7 @@ export function config(env = process.env, argv = []) {
     tomorrowByHour: n('HW_TOMORROW_BY_HOUR', 18),       // tomorrow unposted after this UTC hour is a problem (rounds need ~4.5 h)
     minerc: { host: env.HW_MINERC_HOST || 'arena@192.0.2.68', dir: env.HW_MINERC_DIR || 'arena-minerC' },
     chat: { url: env.HW_CHAT_URL || 'https://seat.example.com/arenachat/api/channels/1/messages', tokenFile: env.HW_CHAT_TOKEN_FILE || `${H}/.config/blwp/arenachat-token`,
-      mention: env.HW_MENTION || '@owner @a tester' },
+      mention: env.HW_MENTION || '@owner' },
     probeCensus: env.HW_PROBE_CENSUS !== '0',
     pubs: pubsConfig(env, H),                           // f. the round publications on both chains (./health-watcher-pubs.mjs)
   };

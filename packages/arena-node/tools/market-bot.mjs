@@ -165,7 +165,7 @@ async function openWindows() {
         // NOT A BACKUP ROUND (kanban #804, measured 2026-10-30 08:39Z, federation B: each order on the 08:30 window's backup round
         // 28a49f3e was paid and locked, then refused by every seat - "this window is played on its primary grid, whose committee is
         // drawn (the backup rule, §5A.5)" - its stake left in the lock until the refund)
-        .filter((r) => !r.backup);
+        .filter((r) => !r.backup || r.played);
       // A SEATED ROUND OVER ONE THAT NEVER WILL BE (2026-10-27 22:04Z: the bots quoted the day's v23 rounds - drawn 9, onto stopped nodes,
       // never seated - and never reached the seated v24 emergency round of the same window): once any round of a window is seated, only those
       const seated = rows.filter((r) => r.committee && r.committee.seated && r.committee.seated.game);
