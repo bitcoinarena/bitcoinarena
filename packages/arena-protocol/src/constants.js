@@ -519,6 +519,7 @@ export const TAG = {
   slashPanel: 'ARENA/v1/SlashPanel',
   slashPayoutTable: 'ARENA/v1/SlashPayoutTable',
   censusKeyRecord: 'ARENA/v1/CensusKeyRecord',
+  carrierPegIn: 'ARENA/v1/CarrierPegIn',
   censusRun: 'ARENA/v1/CensusRun',
   censusDealer: 'ARENA/v1/CensusDealer',
   censusDeal: 'ARENA/v1/CensusDeal',

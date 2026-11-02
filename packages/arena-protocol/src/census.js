@@ -1154,8 +1154,8 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
     const confirmed = chainSays ? chainSays.height : e.height;
     const matures = maturityStands(read.advert, confirmed, network);
     if (!matures.ok) { excluded.push({ ...e, why: matures.why }); continue; }
-    // A TEMPLATE-3 BOND NAMES THE NEWEST KEY STANDING AT ITS CONFIRMATION (5A.3B, kanban #1021). `bond.standingKeys` is the reader's list.
-    const named = bondNamesStandingKey(read.advert, confirmed, bond && bond.standingKeys);
+    // A TEMPLATE-3 BOND NAMES A KEY NEWEST WITHIN census_confirmations OF ITS CONFIRMATION (5A.3B, kanban #1031). `bond.standingKeys` is the reader's list.
+    const named = bondNamesStandingKey(read.advert, confirmed, bond && bond.standingKeys, Number(contract.censusConfirmations ?? 0));
     if (!named.ok) { excluded.push({ ...e, why: named.why }); continue; }
 
     // AND THE AMOUNT IS THE CHAIN'S. This was the entry's own claim, measured:

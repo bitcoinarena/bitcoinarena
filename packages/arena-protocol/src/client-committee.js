@@ -125,7 +125,7 @@ export function entryFromEvidence(item, { contract, headers, firstHeight, bond, 
   bondSats = seen.valueSats;
   const matures = maturityStands(advert, height, network);
   if (!matures.ok) return { ok: false, why: matures.why };
-  const named = bondNamesStandingKey(advert, height, bond && bond.standingKeys);
+  const named = bondNamesStandingKey(advert, height, bond && bond.standingKeys, Number(contract.censusConfirmations ?? 0));
   if (!named.ok) return { ok: false, why: named.why };
   // RESOLVE's filters, on the body the bond committed to
   // FROM PROTOCOL 19 THE FLOOR IS THE NODE'S SUM (kanban #544), asked over the whole census below - as a seat's census asks it.

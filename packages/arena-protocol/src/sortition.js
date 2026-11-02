@@ -245,9 +245,34 @@ export function drawPanels({ entries, contract, committeeSeed, drawsAttestors = 
     for (const role of PANEL_LEAVES_OUT)
       for (const e of drawCommittee({ entries, contract, role, committeeSeed })) out.add(toHex(e.pubkey));
     if (drawsAttestors) for (const e of drawAttestors({ entries, contract, committeeSeed })) out.add(toHex(e.pubkey));
-    const rest = selectCommittee({ entries, contract, role: 'settlement', committeeSeed: panelSeed(committeeSeed), count: entries.length,
-      exclude: entries.filter((e) => out.has(toHex(e.pubkey))) });
-    const n = panelSeats(rest.length);
-    return { ok: true, n, t: n ? panelThreshold(n) : 0, eligible: rest.length, panelA: rest.slice(0, n), panelB: rest.slice(n, 2 * n), order: rest.slice(0, 2 * n) };
+    return panelsOf({ entries, contract, seed: panelSeed(committeeSeed), out });
+  } catch (e) { return { ok: false, why: `the panels cannot be drawn: ${e.message}` }; }
+}
+
+function panelsOf({ entries, contract, seed, out }) {
+  const rest = selectCommittee({ entries, contract, role: 'settlement', committeeSeed: seed, count: entries.length,
+    exclude: entries.filter((e) => out.has(toHex(e.pubkey))) });
+  const n = panelSeats(rest.length);
+  return { ok: true, n, t: n ? panelThreshold(n) : 0, eligible: rest.length, panelA: rest.slice(0, n), panelB: rest.slice(n, 2 * n), order: rest.slice(0, 2 * n) };
+}
+
+/**
+ * THE PANELS OF A BOND'S OWN slash_presig, for an offence with no round (5A.3B, kanban #1031): seed tagged_hash("ARENA/v1/SlashPanel", bond outpoint ||
+ * hash of the block that confirmed the bond), the census at that block's height, less the bonding node and its operator's nodes; n and t as
+ * for a round. The update's own block cannot be the seed: the signature inside the update depends on it. A bonder can retry for friendly
+ * panels at the cost of a bond each time. Accepted: they guard only an offence with no round, and the census key's fallback stands behind them.
+ */
+export function bondPanelSeed({ txid, vout }, blockHash) {
+  const w = new Writer();
+  w.bytes32(txid); w.u32(vout); w.bytes32(blockHash);
+  return taggedHash(TAG.slashPanel, w.finish());
+}
+
+export function drawBondPanels({ entries, contract, bond, blockHash, nodeKey, operatorId = null }) {
+  try {
+    const me = toHex(nodeKey);
+    const out = new Set([me]);
+    if (operatorId) for (const e of entries) if (e.advert && e.advert.operatorId === operatorId) out.add(toHex(e.pubkey));
+    return panelsOf({ entries, contract, seed: bondPanelSeed(bond, blockHash), out });
   } catch (e) { return { ok: false, why: `the panels cannot be drawn: ${e.message}` }; }
 }

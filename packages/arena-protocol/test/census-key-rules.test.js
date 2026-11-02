@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   censusKeyShares, censusKeyEpochOf, encodeCensusKeyRecord, decodeCensusKeyRecord, censusKeyRecordId, censusKeyAnchor, censusKeyAnchorIn,
-  censusKeyRecordStands, standingCensusKeys, bondNamesStandingKey, censusKeyPlan,
+  censusKeyRecordStands, standingCensusKeys, bondNamesStandingKey, censusKeyPlan, censusHeightOfEpoch, fallbackCarriers, carrierPegInId,
 } from '../src/census-key.js';
 import { taggedHash, toHex } from '../src/hash.js';
 
@@ -87,6 +87,34 @@ test('the census reads the first valid record per epoch, in chain order, and mai
   const got = standingCensusKeys({ genesisKey: K(0x70), anchors, judge: table });
   assert.deepEqual(got.map((k) => [k.epoch, k.publicKey[0], k.height]), [[0, 0x70, 0], [1, 0xa1, 100], [2, 0xb1, 200]]);
   assert.equal(standingCensusKeys({ anchors: [], judge: table }).length, 0);
+});
+
+test('a template-3 bond counts naming a key newest within census_confirmations of its confirmation (kanban #1031)', () => {
+  const standing = [{ epoch: 1, publicKey: K(0xa1), height: 100 }, { epoch: 2, publicKey: K(0xb1), height: 200 }, { epoch: 3, publicKey: K(0xc1), height: 400 }];
+  const advert = (key) => ({ bondScriptTemplateVersion: 3, censusKey: key });
+  assert.equal(bondNamesStandingKey(advert(K(0xa1)), 205, standing, 6).ok, true, 'it lost the race with an anchor 5 blocks ago');
+  assert.equal(bondNamesStandingKey(advert(K(0xa1)), 206, standing, 6).ok, false, 'at the window\'s edge the newer key has stood 6 blocks');
+  assert.equal(bondNamesStandingKey(advert(K(0xb1)), 206, standing, 6).ok, true);
+  assert.equal(bondNamesStandingKey(advert(K(0xa1)), 402, standing, 6).ok, false, 'an older key, out of reach');
+  assert.equal(bondNamesStandingKey(advert(K(0xc1)), 399, standing, 6).ok, false, 'a key not anchored yet');
+});
+
+test('the census height of an epoch is e x E - census_confirmations; before that the first key applies (kanban #1031)', () => {
+  assert.equal(censusHeightOfEpoch(2, 'mainnet', 6), 8634);
+  assert.equal(censusHeightOfEpoch(1, 'testnet4', 2), 142);
+  assert.equal(censusHeightOfEpoch(0, 'mainnet', 6), null);
+  assert.throws(() => censusHeightOfEpoch(1, 'nowhere', 1), /no epoch length/);
+});
+
+test('on a fallback the holders carry, by descending shares, less those left out, each with a signed peg-in (kanban #1031)', () => {
+  const net = b32(9);
+  const holders = [{ key: toHex(b32(1)), shares: 2 }, { key: toHex(b32(2)), shares: 9 }, { key: toHex(b32(3)), shares: 5 }, { key: toHex(b32(4)), shares: 7 }, { key: toHex(b32(5)), shares: 3 }];
+  const peg = (n, ok = true) => [toHex(b32(n)), { script: Uint8Array.of(0x51, n), signature: ok ? Uint8Array.of(n) : Uint8Array.of(0) }];
+  const bonds = new Map(holders.map((h) => [h.key, BigInt(h.shares) * 1000n]));
+  const verify = (sig, digest, key) => sig[0] === key[0] && digest.length === 32;
+  const got = fallbackCarriers({ holders, bonds, networkId: net, verify, excluded: [toHex(b32(2))], pegIns: new Map([peg(1), peg(2), peg(3), peg(4, false), peg(5)]) });
+  assert.deepEqual(got.map((c) => [c.key.slice(0, 2), c.bondSats]), [['03', 5000n], ['05', 3000n], ['01', 2000n]], 'the accused out, a bad signature passed over');
+  assert.equal(carrierPegInId(net, Uint8Array.of(1)).length, 32);
 });
 
 test('a template-3 bond counts only naming the newest key standing at its confirmation; other templates are not asked', () => {

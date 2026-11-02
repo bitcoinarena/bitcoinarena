@@ -159,6 +159,19 @@ export function holdReturnSpend({ hold, bondMaturity, returnBlocks, toScript, fe
   return { ok: true, tx, prevouts: [{ value: hold.value, script: hold.script }], fee: { sats: feeSats } };
 }
 
+/**
+ * AN ESCROW SPEND OF A TABLE (5A.3B, kanban #1031): it opens with an OP_RETURN of payout_table_id, then the payees, and what it does not pay goes back
+ * to the same escrow script. Signed as `escrowSpend` is.
+ */
+export function escrowTableSpend({ escrow, tableId, payees, feeSats }) {
+  const paid = payees.reduce((a, p) => a + p.value, 0n);
+  const back = escrow.value - paid - feeSats;
+  if (back < 0n) return { ok: false, why: `${paid} sat and a ${feeSats} sat fee out of an escrow of ${escrow.value}` };
+  if (back > 0n && back < P2TR_DUST_SATS) return { ok: false, why: `${back} sat left in escrow is below dust` };
+  const outputs = [{ value: 0n, script: cat(Uint8Array.from([0x6a, 32]), tableId) }, ...payees.map((p) => ({ value: p.value, script: p.script })), ...(back ? [{ value: back, script: escrow.script }] : [])];
+  return { ok: true, tx: { version: 2, locktime: 0, inputs: [{ txid: escrow.txid, vout: escrow.vout, sequence: 0xfffffffd }], outputs }, prevouts: [{ value: escrow.value, script: escrow.script }], fee: { sats: feeSats } };
+}
+
 /** What each arbitration key signs: the BIP-341 script-path sighash of the spend's one input under the slash leaf. */
 export function arbitrationSighash(built, leaf) {
   return tapSighash({ ...built.tx, prevouts: built.prevouts, inputIndex: 0, leafHash: leaf });
