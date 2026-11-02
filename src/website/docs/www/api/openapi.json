@@ -9872,7 +9872,7 @@
      "Nodes"
     ],
     "summary": "Seating certificate of a round",
-    "description": "The seating certificate held for a round and role.\n\nAccess: none; only when seating is on (ARENA_SEATING=1)\n\nReturns: 200 JSON {cert}; 400/404\n\nSource: `packages/arena-node/src/server.js` line 6080.",
+    "description": "The seating certificate held for a round and role.\n\nAccess: none; only when seating is on (ARENA_SEATING=1)\n\nReturns: 200 JSON {cert, index}; 400/404\n\nSource: `packages/arena-node/src/server.js` line 6080.",
     "operationId": "get_seating",
     "parameters": [
      {
@@ -9893,11 +9893,20 @@
        "type": "string"
       },
       "example": "game"
+     },
+     {
+      "name": "at",
+      "in": "query",
+      "required": false,
+      "description": "A round of the table named by round: answers the seating that seats that round.",
+      "schema": {
+       "type": "string"
+      }
      }
     ],
     "responses": {
      "200": {
-      "description": "{cert}.",
+      "description": "{cert, index}: index is the table round the certificate is on, 0 for its first.",
       "content": {
        "application/json": {}
       }
