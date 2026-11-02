@@ -630,7 +630,8 @@ function tableWorld({ now }) {
   const asked = [];
   const fetcher = async (url, init = {}) => {
     const u = new URL(url);
-    asked.push(`${init.method || 'GET'} ${u.pathname}${u.pathname === '/seating' ? `?${u.searchParams.get('role')}` : ''}`);
+    // a read naming `at` asks for a newer seating of a table (kanban #1020), not for its first certificate
+    asked.push(`${init.method || 'GET'} ${u.pathname}${u.pathname === '/seating' ? `?${u.searchParams.get('role')}` : ''}${u.searchParams.get('at') ? ' at' : ''}`);
     if (u.pathname === '/seating' && u.searchParams.get('round') === toHex(rid0)) return new Response(JSON.stringify({ cert: toHex(certFor(rid0, u.searchParams.get('role'))) }), { status: 200 });
     if (u.pathname === '/seating-batch') return new Response(JSON.stringify({ rounds: {} }), { status: 200 });
     return new Response('{}', { status: 200 });
@@ -651,7 +652,7 @@ test('kanban #765: a seat that holds a table\'s first round but was down at its 
   w.asked.length = 0;
   w.clock.now += 120000;
   await w.agent.tick();
-  assert.equal(w.asked.filter((a) => a.startsWith('GET /seating?')).length, 0, 'held now: not asked again');
+  assert.equal(w.asked.filter((a) => a.startsWith('GET /seating?') && !a.endsWith(' at')).length, 0, 'held now: not asked again');
 });
 
 test('kanban #765: a held first round whose seating is still open is not asked for a certificate - its own exchange seats it', async () => {
