@@ -13539,11 +13539,11 @@
      "Nodes"
     ],
     "summary": "Slash proofs this node filed",
-    "description": "Every slash proof this node filed, for the arbitration set to fetch.\n\nAccess: none\n\nReturns: 200 JSON {node, slashes:[{round, entry, node, proof, seenMs, objection}], auditSlashes:[...], doubleSlashes:[{round, entry, node, proof, seenMs}]}\n\nSource: `packages/arena-node/src/server.js` line 5986.",
+    "description": "Every slash proof this node filed, for the arbitration set to fetch.\n\nAccess: none\n\nReturns: 200 JSON {node, slashes:[{round, entry, node, proof, seenMs, objection}], auditSlashes:[...], doubleSlashes:[{round, entry, node, proof, seenMs}], tableSlashes:[{round, entry (zeros), node, proof, seenMs}]}\n\nSource: `packages/arena-node/src/server.js` line 5986.",
     "operationId": "get_slashes",
     "responses": {
      "200": {
-      "description": "{node, slashes:[{round, entry, node, proof, seenMs, objection}], auditSlashes:[...], doubleSlashes:[{round, entry, node, proof, seenMs}]}.",
+      "description": "{node, slashes:[{round, entry, node, proof, seenMs, objection}], auditSlashes:[...], doubleSlashes:[{round, entry, node, proof, seenMs}], tableSlashes:[{round, entry (zeros), node, proof, seenMs}]}.",
       "content": {
        "application/json": {}
       }
@@ -13717,6 +13717,46 @@
      },
      "404": {
       "description": "No FORFEIT held.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/table-slash-proofs": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "A round's proofs of false tables",
+    "description": "A round's fraud proofs of false tables (\u00a75A.3 table row): a seat's SettlementAck over a table that is false or a transaction that does not rebuild from it, as published: each proof with the ack, the threshold of acks, the table, the Entry Contracts, each stake lock's P and the FINAL records, concatenated. The arbitration service reads these; a seat files one only after checking it holds.\n\nAccess: none\n\nReturns: 200 octet-stream: the proofs one after another, header x-slash-proofs = count; 400\n\nHeaders: `x-slash-proofs`\n\nSource: `packages/arena-node/src/server.js` line 9547.",
+    "operationId": "get_table_slash_proofs",
+    "parameters": [
+     {
+      "name": "round",
+      "in": "query",
+      "required": true,
+      "description": "The round id, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The proofs' bytes, one after another.",
+      "content": {
+       "application/octet-stream": {
+        "schema": {
+         "type": "string",
+         "format": "binary"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Not a round id.",
       "content": {
        "text/plain": {}
       }

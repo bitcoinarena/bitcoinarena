@@ -142,7 +142,8 @@
 > loser cannot escape by dealing shares of something else (§7, §23.1). It
 > also added the committee's attested claim key, mandatory lock-field
 > verification, a separate fee preimage, seed-derived refund keys (§24) and
-> a slashing offence for withheld settlement signatures (§5A.3).
+> a slashing offence for withheld settlement signatures (§5A.3; removed
+> 2026-11-02, kanban #1043: silence is not signed bytes).
 >
 > The pass over the whole protocol (P1–P8, §35A) found two holes that were
 > free to exploit and two false claims. Free: **round grinding by mass
@@ -2147,8 +2148,7 @@ a transaction is §5A.3B.
 |---|---|
 | Signing two different results for the same (round, player, transcript_hash) | The two signed results |
 | Signing a result contradicted by replay of the canonical transcript | Transcript + receipts + replay |
-| Acknowledging a payout table that does not equal `F(contract, membership, results)` | The seat's `SettlementAck` + the threshold of acks + the table + for each entry that differs, its result with the threshold of `FINAL` signatures, or its Entry Contract |
-| Withholding a settlement signature: a seat that acknowledged the round's settlement transaction and did not sign it before the locks expired | The `SettlementAck` + the transaction + the expiry — a stall refunds losers and unpays winners, so it is an offence and not only a delay |
+| Acknowledging a payout table that does not equal `F(contract, membership, results)`, or a `settlement_txid` that does not rebuild from the acknowledged table, the contract and the round's locks | The seat's `SettlementAck` + the threshold of acks + the table + those inputs; for an entry the table is false on, its result with the threshold of `FINAL` signatures, or its Entry Contract. A pair that does not rebuild needs no `FINAL` signature: what the seat signed is false by itself |
 | Signing a release with no valid proof (template 3, §5A.3B, kanban #971) | The release, whose witness names the signers + the bytes that hash to its `OP_RETURN` and do not check |
 | Signing a release or an escrow payout that pays other than its `payout_table` (template 3, §5A.3B) | The release or the payout + the table |
 | Signing an `AUDIT` (§13A.1) over a result a valid objection contradicts (kanban #724, #725) | The `AUDIT` + its signature + the rows it vouched for + transcript + receipts + replay of the objection that held |
@@ -2175,9 +2175,23 @@ signature names nobody, so it is never the proof.
   settlement (`GET /settlement-acks`). A round of protocol 22 and later settles
   this way. The cost is one signature per seat per settlement, off chain.
 - *The table.* A settlement table's rows name their entry: `entry_id`,
-  `player_pubkey`, `amount_msat`, and the table names the late entry a second
-  settlement is for. So what a seat said about each entry is its own word, and
-  nobody filing a proof can choose which of a player's entries a row meant.
+  `player_pubkey`, `amount_msat`, with the outcome and score the seat held for
+  it, and the table names the late entry a second settlement is for. So what a
+  seat said about each entry is its own word, and nobody filing a proof can
+  choose which of a player's entries a row meant. It also lists what the
+  transaction is made of (RULED 2026-11-02, kanban #1043): the locks claimed,
+  each with the entry that names it, the payouts in order, and the nonce. The
+  txid hashes these and the `P` of each stake lock, and the fee lock's `F` from
+  its Entry Contract.
+- *The rebuild.* Seats already rebuild the transaction and agree its txid, so a
+  pair either rebuilds or is false by itself. A filer shows each stake lock's
+  `P`, which must open the stake point its Entry Contract names, so nobody can
+  feed in a `P` that makes an honest pair look false. The hash is the stock
+  client's. Where no `P` can be shown, the txid is not read and the rest of the
+  row still is. A table that moves no money
+  rebuilds to no transaction, so the txid gives it away. A table marked late may
+  claim only its own entry's locks, as the Entry Contract names them, and is
+  false if the accused also acked a round's own table that claimed that lock.
 - *What the table row reads.* A table no threshold of seats acked moved nothing
   and proves nothing. `F` is read only on entries with a threshold of `FINAL`
   signatures: a §13C outcome is decided on one seat's clock, so an entry
@@ -2187,7 +2201,23 @@ signature names nobody, so it is never the proof.
   is read: a proved non-qualifier is owed nothing, a proved qualifier at least
   its net stake. An entry with a signed `FINAL` and no row is not read, since
   it can be a late entry left to a second settlement. A late loser's table and
-  a market's are not made by `F`, and the row does not read them.
+  a market's are not made by `F`: their amounts stay unread, and the rebuild, the
+  claims and the ceiling below still bind them.
+- *What else the row reads, with no `FINAL`.* Every claim against the Entry
+  Contract it names, and that the payouts and the guardians' fees fit in what is
+  claimed. In a played round's own table, every row names an entry and an
+  outcome, its amounts are `F` of those outcomes, and its stake claims and each
+  qualifier's payout are exactly what those rows make under the federation's fee
+  rule. A fee lock's split among the nodes is not read: it turns on seatings and
+  `AUDIT`s a seat holds, it is no player's money, and its ceiling is the fee
+  locks. Nobody qualifying leaves the remainder split unread, since it needs the
+  signed donation set and its sends. A reading that cannot be made is left out and
+  never counts against a seat.
+- *Filing.* A seat asked to ack or commit to a pair other than the one it rebuilt
+  reads the round's acks from the other seats for 6 hours, and files a proof
+  against each seat that acked a false pair (`GET /table-slash-proofs`, `tableSlashes`
+  at `GET /slashes`). The arbitration set judges the record with its own client of
+  the federation, and a proof it has no client to read waits.
 - *What is gone.* "Settlement action without the required signatures" merged
   into the table row: the FROST key needs its threshold anyway, and paying an
   entry with no signed `FINAL` is a table that differs from `F`. "Claiming a fee
@@ -2197,12 +2227,11 @@ signature names nobody, so it is never the proof.
 - *What is left unslashable.* An entry settled wrongly on a §13C decision. A
   `VOID` or `FORFEIT` is one seat's clock and cannot be proved false from signed
   bytes; §13C's own rule, that only proven equivocation forfeits, is the guard.
-- *Open (kanban #1040).* The withheld-signature row has its bytes and its check
-  still refuses: an ack, a transaction and an expiry do not show which seat did
-  not sign. A FROST signature names nobody, so a stall reads the same for a seat
-  that gave its share as for one that held it back, and for a federation that
-  was down. And an ack names a table and a transaction, and nothing yet shows
-  the transaction pays what the table says.
+- *What went (RULED 2026-11-02, kanban #1043).* "Withholding a settlement
+  signature" is not an offence. Every stall is silence, and a row stands only on
+  bytes the accused signed: an ack says a seat agreed, not that it then refused.
+  Making a seat show a commit or a share to clear itself would be proof by
+  non-response, and with three seats silent the others never reach a share.
 
 **Where a slashed bond goes (RULED 2026-11-02, kanban #976).** Each affected
 player gets their **real loss**, once, and nothing more. **The rest of the bond
@@ -2255,7 +2284,6 @@ Two words in that rule are defined here:
   | Two results for one (round, player, transcript_hash) | every other financially activated entry |
   | A result contradicted by replay | that `playerPubkey` if the signed result lowered them; otherwise every other financially activated entry |
   | A payout table that is not `F(contract, membership, results)` | every financially activated entry |
-  | A withheld settlement signature | every financially activated entry - a stall refunds losers and unpays winners alike |
   | A contradicted `AUDIT` (§13A.1) | as a result contradicted by replay, for the entry whose contradicted run the proof names |
   | A release with no valid proof | the node it was taken from, in place of players |
   | A release or escrow payout against its table | the entries of that table |
@@ -2370,8 +2398,9 @@ serve hands its accusers the evidence itself.
 
 ```text
 1. Anyone publishes a fraud proof: the two contradicting signatures, or the
-   transcript + receipts + replay, or the SettlementAck + the table + the
-   FINAL signatures of the entries it is false on.
+   transcript + receipts + replay, or the SettlementAck + the threshold of acks
+   + the table + what it rebuilds from, and the FINAL signatures of the entries
+   it is false on.
 2. The proof is mechanically checkable — every offence in the table above is
    either a signature comparison or a deterministic replay. No judgement.
 3. k-of-m arbitration keys sign a slashing transaction spending path B,
@@ -5293,7 +5322,8 @@ PayoutTable = F(RoundContract, Membership, FinalResults)
 Deterministic. Seats sign the table's id in their `SettlementAck` (§5A.3), and
 a seat joins the settlement's signing only with **5-of-7 matching acks**. A seat
 acknowledging a table that does not equal `F(...)` is slashable, on the entries
-with signed `FINAL` results.
+with signed `FINAL` results, and so is one acknowledging a transaction that does
+not rebuild from its table.
 
 ---
 
@@ -5359,8 +5389,8 @@ player wallet balance (§24A.1)
 
 3 SETTLEMENT or GAME/VERIFY slots withholding receipts or signatures (P6)
     -> can void a winner's entry (refund instead of winnings). Griefing,
-       not theft; a withheld settlement signature is slashable (§5A.3),
-       a withheld receipt leaves no artifact and is not
+       not theft; a withheld settlement signature or receipt leaves no
+       artifact and is not
 
 The first two require five bonded operators to collude and forfeit five
 bonds, in a round whose committee they could not choose (§5A.5). The federation lines - guardians, halt,
@@ -9279,7 +9309,7 @@ committee nor outcome).
 | **Lying client sets the refund or payout key** | Compromised web host | Refund went to the paying wallet by construction | Key from the player's seed with a visible fingerprint; known-good client hash for paying rounds; NWC budget (§24) |
 | **A seat serves its own key as `claim_pk`** | One settlement seat | Not considered | `claim_pk` valid only with ≥5 seats' signatures (§23.1 step 0) |
 | **Player builds a lock with a short expiry or wrong fields** | Any player | Not considered | STAKE_COMMITTED only after ≥5 seats verified every field via the contract id (§23.1 step 5) |
-| **Three seats stall settlement** so losers are refunded | 3 settlement seats | Listed as delay only | Withholding an acknowledged settlement signature is a slashing offence (§5A.3) |
+| **Three seats stall settlement** so losers are refunded | 3 settlement seats | Listed as delay only | Not slashable: silence is not signed bytes (§5A.3). Open, kanban #1044 |
 | Compromised web host sets a huge donation | Serve a lying client | Uncapped | Capped at 100%, second confirmation above 5% (§22A) |
 | Round with a backdoored simulation core | Publish a round | Player trusts the hash blindly | Client refuses unknown `sim_wasm_hash` for real money (§5) |
 | **Census divergence** — participants disagree on who is eligible | Selective gossip, withheld advertisements | Committee disputes, ungrounded rounds | Census is chain state at `census_height`; subjective criteria removed; outpoint ordering is unmineable (§5A.2–5A.4) |

@@ -23,7 +23,9 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { affectedEntries, realLosses, slashHolds, slashProofId, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS, TWO_RESULTS,
-  splitAuditSlashEvidence, slashHoldsOnAudit, auditSlashProofId, AUDIT_CONTRADICTED, splitDoubleSlashEvidence, slashHoldsOnDoubleSign } from '../../arena-protocol/src/slash.js';
+  splitAuditSlashEvidence, slashHoldsOnAudit, auditSlashProofId, AUDIT_CONTRADICTED, splitDoubleSlashEvidence, slashHoldsOnDoubleSign, splitTableSlashEvidence, slashHoldsOnTable } from '../../arena-protocol/src/slash.js';
+import { decodeSettlementTable } from '../../arena-protocol/src/settlement-ack.js';
+import { tableBuild } from '../../arena-protocol/src/settlement-rebuild.js';
 import { planEscrowSpend } from '../../arena-protocol/src/slash-reserves.js';
 import { finalSigned, splitSignedFinalSig, decodeFinalSig } from '../../arena-protocol/src/final-sig.js';
 import { splitSignedRerun, decodeRerunResult } from '../../arena-protocol/src/rerun.js';
@@ -39,7 +41,7 @@ import { checkObjectionBundle } from './objection-check.js';
 import { runId, verifiedFinal } from './verdict.js';
 import { entryForSlash } from './slash-owing.js';
 import { REMAINDER_FEE_MARGIN_MSAT } from './liquidation-claims.js';
-import { tweakPoint, combine } from './curve.js';
+import { tweakPoint, combine, pointFromScalar } from './curve.js';
 import { nonceGen, bondSigningContext, bondPartialSign, MusigError } from './musig2.js';
 import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
 
@@ -161,6 +163,25 @@ export function judgeDoubleProof({ evidence, roundIdBytes, committee, advert, bo
   if (toHex(got.proof.roundId) !== toHex(roundIdBytes)) return no('that pair is about another round');
   const held = slashHoldsOnDoubleSign({ proof: got.proof, signedResults: got.signedResults, committee, verify: verifySchnorr,
     advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
+  if (!held.slashed) return no(held.why);
+  return { slashed: true, offence: held.offence, bond: held.bond, proof: got.proof, proofId: slashProofId(got.proof), playerPubkey: got.proof.playerPubkey, why: held.why };
+}
+
+/**
+ * THE JUDGEMENT OF A FALSE TABLE (§5A.3 table row, kanban #1040, #1043). No replay and no objection. The record carries the accused's ack, the threshold of acks, the table, the Entry
+ * Contracts, each P and the FINAL records; the committee, the bond, the guardians' fee rule and the hash are this set's own. `txidOf(table, build)` is the stock client's hash, this set's
+ * client of that federation, and `feesOf(federation hex)` its fee rule: no seat's word enters. Where the record shows no P the txid is not read, and the rest still is.
+ */
+export async function judgeTableProof({ evidence, roundIdBytes, contract, manifest = null, committee, advert, bondOutpoint, txidOf, feesOf = () => null }) {
+  const no = (why) => ({ slashed: false, why });
+  let got, table;
+  try { got = splitTableSlashEvidence(evidence); table = decodeSettlementTable(got.table); } catch (e) { return no(`not a proof of a false table: ${e.message}`); }
+  if (toHex(got.proof.roundId) !== toHex(roundIdBytes)) return no('that table is about another round');
+  const shown = [...got.entries, ...got.finals.map((f) => f.entry)];
+  const built = tableBuild({ table, entries: new Map(shown.map((e) => [toHex(entryIdOf(e)), e])), preimages: new Map(got.preimages.map((p) => [toHex(p.entryId), p.preimage])), pointOf: pointFromScalar });
+  const rebuiltTxid = built.ok ? await txidOf(table, built.build) : null;
+  const held = slashHoldsOnTable({ proof: got.proof, signedAck: got.signedAck, acks: got.acks, table: got.table, entries: got.entries, finals: got.finals, contract, manifest, committee, verify: verifySchnorr,
+    rebuiltTxid, feesOf, own: got.own, advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
   if (!held.slashed) return no(held.why);
   return { slashed: true, offence: held.offence, bond: held.bond, proof: got.proof, proofId: slashProofId(got.proof), playerPubkey: got.proof.playerPubkey, why: held.why };
 }

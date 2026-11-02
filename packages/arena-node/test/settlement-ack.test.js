@@ -14,14 +14,15 @@ import { Round } from '../src/round.js';
 import { trustedDealerSplit } from '../../arena-protocol/src/frost.js';
 import { evenGroupSecret } from '../../arena-protocol/src/frost-bip340.js';
 import { encodeCommitments, decodeCommitments, encodeShare } from '../src/pool-wire.js';
-import { DELIVERED, FAILED } from '../../arena-protocol/src/payout.js';
+import { DELIVERED, FAILED, computePayoutTable } from '../../arena-protocol/src/payout.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
-import { toHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { encodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donation-sets.js';
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
+import { tableFalse } from '../../arena-protocol/src/settlement-rebuild.js';
 import { joinAcks, splitAcks, splitSignedAck, decodeSettlementTable, settlementTableId, countAcks, signSettlementAck } from '../../arena-protocol/src/settlement-ack.js';
 
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
@@ -35,6 +36,8 @@ const entry = (n, outcome, score) => ({ pubkey: pk(n), stakeMsat: STAKE, feeMsat
 const W1 = entry(1, DELIVERED, 5), L1 = entry(3, FAILED, 0), L2 = entry(4, FAILED, 0);
 const fedOfPlayer = new Map([[1, A], [3, A], [4, B]]);
 const locks = new Map([W1, L1, L2].map((e) => [toHex(e.pubkey), { outpoint: { txid: b32(0x40 + Number(e.pubkey[0])), outIdx: BigInt(e.pubkey[0]) }, amountMsat: STAKE - FEE, refundPk: refund(e.pubkey[0]) }]));
+const F = computePayoutTable({ roundId: RID, entries: [W1, L1, L2], minScore: 1 });
+const F_ROWS = F.activated.map((e, i) => ({ entryId: e.entryId, pubkey: e.pubkey, amountMsat: F.table[i].amountMsat, outcome: e.outcome, score: e.score }));
 const PLAN = federationPlans({ roundId: RID, entries: [W1, L1, L2], minScore: 1, locks, feeLocks: new Map() },
   { federationOf: (o) => fedOfPlayer.get(Number(o.outIdx)), feesOf: (f) => (f === A ? { ppm: 0n, baseMsat: 1000n } : { ppm: 0n, baseMsat: 0n }) });
 
@@ -73,7 +76,7 @@ function world({ protocolVersion, rows = () => null, door = null }) {
     const ls = new LockSettlement(round, { dkg: {}, port: router, curve, random: (n) => crypto.getRandomValues(new Uint8Array(n)),
       stakeSecrets: { open: async () => ({ ok: true, preimage: b32(0x99) }) }, peersFor: () => (i === 0 ? ['http://peer2'] : []) });
     ls.planOf = async () => ({ ok: true, anyFed: true, plan: PLAN.plan, split: PLAN.split, contract, claimPk: deal.groupPublicKey,
-      held: { signerNode: deal.shares[i] }, lockEntry: new Map([W1, L1, L2].map((e) => [toHex(e.pubkey), e.entryId])), ackRows: rows(i) || [W1, L1, L2].map((e) => ({ entryId: e.entryId, pubkey: e.pubkey, amountMsat: 1n })) });
+      held: { signerNode: deal.shares[i] }, lockEntry: new Map([W1, L1, L2].map((e) => [toHex(e.pubkey), e.entryId])), ackRows: rows(i) || F_ROWS });
     round.get = (rid) => (toHex(rid) === toHex(RID) ? { contract: V3 } : null);
     return ls;
   });
@@ -110,6 +113,15 @@ test('a round of version 22 settles on a threshold of acks, and both seats keep 
       const c = countAcks({ acks, seats: w.contract.nodes, slots: 2, roundId: RID, payoutTableId: row.tableId, settlementTxid: splitSignedAck(acks[0]).ack.settlementTxid, verify });
       assert.deepEqual([c.agreed, c.needed, c.final], [2, 2, true], 'a stranger checks them from the bytes alone');
       assert.equal(toHex(splitSignedAck(acks[0]).ack.settlementTxid), row.txid);
+      // EACH FEDERATION'S TABLE IS ITS OWN (kanban #1043): its claims, its payouts and its nonce, read against the rows the way the seats split them, and it stands
+      assert.equal(toHex(table.federationId), row.scope);
+      assert.deepEqual(table.claims.map((c) => toHex(c.entryId)).sort(), (row.scope === A ? [L1] : [L2]).map((e) => toHex(e.entryId)));
+      const shown = new Map([W1, L1, L2].map((e) => [toHex(e.entryId), { roundId: RID, playerPubkey: e.pubkey, stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat,
+        federationId: fromHex(fedOfPlayer.get(Number(e.pubkey[0]))), stakeLockOutpoint: locks.get(toHex(e.pubkey)).outpoint, feeLockOutpoint: { txid: b32(0x60), outIdx: 0n } }]));
+      const rate = { [A]: { ppm: 0n, baseMsat: 1000n }, [B]: { ppm: 0n, baseMsat: 0n } };
+      const read = (t) => tableFalse({ table: t, contract: { ...w.contract, minScore: 1, federationId: new Uint8Array(32) }, entries: shown, feesOf: (f) => rate[f] });
+      assert.deepEqual(read(table), [], 'an honest federation\'s table is false on nothing');
+      assert.match(read({ ...table, payouts: table.payouts.map((p) => ({ ...p, msat: p.msat - 1n })) }).join('; '), /the transaction does not/);
     }
   }
   close(w);

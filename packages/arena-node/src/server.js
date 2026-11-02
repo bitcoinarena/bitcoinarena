@@ -175,7 +175,7 @@ import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
-import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, TYPE_AUDIT_SLASH_PROOF, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION, seatingRulesEpochOf } from '../../arena-protocol/src/constants.js';
+import { TYPE_SETTLEMENT_ACK, TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, TYPE_AUDIT_SLASH_PROOF, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION, seatingRulesEpochOf } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
@@ -263,7 +263,8 @@ import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { createDonationBallots } from './donation-ballots.js';
 import { decodeDonationProposal, donationProposalId, donationApprovalDigest, encodeDonationProposal, encodeDonationApproval } from '../../arena-protocol/src/donation-vote.js';
 
-import { SLASH_PROOF_BYTES, splitSlashEvidence, AUDIT_CONTRADICTED, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES, splitAuditSlashEvidence, auditSlashProofId, TWO_RESULTS, splitDoubleSlashEvidence, doubleSlashEvidenceBytesOf } from '../../arena-protocol/src/slash.js';
+import { TABLE_IS_NOT_F, splitTableSlashEvidence, SLASH_PROOF_BYTES, splitSlashEvidence, AUDIT_CONTRADICTED, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES, splitAuditSlashEvidence, auditSlashProofId, TWO_RESULTS, splitDoubleSlashEvidence, doubleSlashEvidenceBytesOf } from '../../arena-protocol/src/slash.js';
+import { splitSignedAck, settlementAckId, settlementTableId, decodeSettlementTable } from '../../arena-protocol/src/settlement-ack.js';
 import { slashOwing, entriesForSlash } from './slash-owing.js';
 import os from 'node:os';
 import { createNodeFactsBook, measureFacts, measureBandwidth, measureOrigin, signFacts, FACTS_EVERY_MS, PROBE_BYTES } from './node-facts.js';
@@ -2866,6 +2867,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       (e) => console.log(`[slash] ${e.message}`));
   }, Number(finality.doubleFileMs ?? 60000));
   if (doubleFilesTimer.unref) doubleFilesTimer.unref();
+  // A FALSE TABLE (§5A.3 table row, kanban #1040): a round a seat was asked about another pair than it rebuilt is read for 6 h, each new pair once; a seat that acked a false
+  // table is filed against as soon as its advertisement is held
+  const tableFilesTimer = setInterval(() => {
+    let waiting = [];
+    try { waiting = round.settlementSuspects(Date.now() - 6 * 3600000); } catch { return; }
+    for (const rid of waiting) {
+      let adverts = null;
+      try { adverts = verifier.advertsFor ? verifier.advertsFor(rid) : null; } catch { adverts = null; }
+      let relays = [];
+      try { relays = relayTargets(decodeRoundContract(new Uint8Array(round.get(rid).contract)).publicationRelays, verifier.peersOf(rid)); } catch { relays = []; }
+      settlements.fileTableProofs(rid, { advertOf: (k) => (adverts instanceof Map ? adverts.get(k) : null), relays })
+        .then((f) => { for (const why of f.refused) console.log(`[slash] ${toHex(rid).slice(0, 16)} table: ${why}`); }, (e) => console.log(`[slash] ${e.message}`));
+    }
+  }, Number(finality.tableFileMs ?? 300000));
+  if (tableFilesTimer.unref) tableFilesTimer.unref();
   async function contradictAudits(rid, eid, why) {
     for (const who of auditDesk.contradict(new Uint8Array(rid), `entry ${toHex(eid)}: ${why}`))
       console.log(`[audit] ${toHex(rid).slice(0, 16)}: the AUDIT of ${who.slice(0, 16)} vouched for the result of ${toHex(eid).slice(0, 16)} a valid objection contradicts - held as the fraud proof against it, paid nothing`);
@@ -10223,7 +10239,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // AND THE PROOFS AGAINST CONTRADICTED AUDITS OF THAT ENTRY (kanban #1000): the auditor's bond owes as the signer's does
         // AND THE PROOFS OF TWO RESULTS OF THAT ENTRY (kanban #986)
         const held = [...round.slashProofs(rid, eid), ...round.auditSlashProofs(new Uint8Array(rid)).filter((r) => toHex(r.entryId) === toHex(eid)).map((r) => ({ ...r, audit: true })),
-          ...round.doubleSlashProofs(new Uint8Array(rid)).filter((r) => toHex(r.entryId) === toHex(eid)).map((r) => ({ ...r, double: true }))];
+          ...round.doubleSlashProofs(new Uint8Array(rid)).filter((r) => toHex(r.entryId) === toHex(eid)).map((r) => ({ ...r, double: true })),
+          // AND THE PROOFS OF FALSE TABLES (kanban #1040): they harm the whole paying field, so they are owed under any of its entries
+          ...round.tableSlashProofs(new Uint8Array(rid)).map((r) => ({ ...r, table: true }))];
         if (!held.length) return text(res, 404, 'this node filed no slash proof for that run');
 
         // AND THE HEIGHT IS BOUNDED BEFORE ANY CENSUS IS DERIVED AT IT.
@@ -10259,7 +10277,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // result in the objection that held
           let proof, signed, replayed;
           // TWO RESULTS SAY NOTHING ABOUT WHICH WAY THEY WENT (§5A.3): they name no replay, and a player either harmed is paid through the replay's proof
-          if (p.double) { try { proof = splitDoubleSlashEvidence(p.bytes).proof; } catch (e) { owing.push({ node: toHex(p.nodePubkey), why: `unreadable proof: ${e.message}` }); continue; } }
+          if (p.table) { try { proof = splitTableSlashEvidence(p.bytes).proof; } catch (e) { owing.push({ node: toHex(p.nodePubkey), why: `unreadable proof: ${e.message}` }); continue; } }
+          else if (p.double) { try { proof = splitDoubleSlashEvidence(p.bytes).proof; } catch (e) { owing.push({ node: toHex(p.nodePubkey), why: `unreadable proof: ${e.message}` }); continue; } }
           else try {
             // an AUDIT's proof names a run, not a signed result: that run's outcome and score come off the entry's results
             const ev = p.audit ? splitAuditSlashEvidence(p.bytes) : splitSlashEvidence(p.bytes);
@@ -10280,7 +10299,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // so that is the offence named here. A proof arriving by any other road would need its own
           // verdict carried with it, and until one does, none is invented. The AUDIT table holds one kind too (kanban #1000).
           const said = await slashOwing({
-            proof, offence: p.double ? TWO_RESULTS : p.audit ? AUDIT_CONTRADICTED : REPLAY_CONTRADICTS, contract, roundIdBytes: new Uint8Array(rid), entries, signed, replayed, settledOnFalse, paid,
+            proof, offence: p.table ? TABLE_IS_NOT_F : p.double ? TWO_RESULTS : p.audit ? AUDIT_CONTRADICTED : REPLAY_CONTRADICTS, contract, roundIdBytes: new Uint8Array(rid), entries, signed, replayed, settledOnFalse, paid,
             payoutShares: rule.ok ? rule.payoutShares : null, slashHeight: height, tipHeight: at.tipHeight,
             bondSatsOf: async () => bondOf(proof.nodePubkey),
           });
@@ -10308,8 +10327,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           proof: toHex(r.proofId), seenMs: r.seenMs, objection: !!round.objectionBundle(r.roundId, r.entryId) }));
         // AND THE PROOFS OF TWO RESULTS (kanban #986), under theirs: nothing to replay, so no objection is asked after
         const doubleRows = round.doubleSlashProofs().map((r) => ({ round: toHex(r.roundId), entry: toHex(r.entryId), node: toHex(r.nodePubkey), proof: toHex(r.proofId), seenMs: r.seenMs }));
+        // AND THE PROOFS OF FALSE TABLES (§5A.3 table row, kanban #1040): they accuse a settlement, not an entry
+        const tableRows = round.tableSlashProofs().map((r) => ({ round: toHex(r.roundId), entry: '00'.repeat(32), node: toHex(r.nodePubkey), proof: toHex(r.proofId), seenMs: r.seenMs }));
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), slashes: rows, auditSlashes: auditRows, doubleSlashes: doubleRows }));
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), slashes: rows, auditSlashes: auditRows, doubleSlashes: doubleRows, tableSlashes: tableRows }));
+      }
+      // A ROUND'S PROOFS OF FALSE TABLES, as published (proof, ack, the rest), one after another (kanban #1040)
+      if (req.method === 'GET' && url.pathname === '/table-slash-proofs') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'a round id is 32 bytes');
+        const filed = round.tableSlashProofs(rid);
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-slash-proofs': String(filed.length), ...CORS });
+        return res.end(Buffer.concat(filed.map((p) => Buffer.from(p.bytes))));
       }
       // A ROUND'S PROOFS OF TWO RESULTS, as published (proof, both signed results), one after another (kanban #986)
       if (req.method === 'GET' && url.pathname === '/double-slash-proofs') {
@@ -10675,6 +10704,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try { rerunNamed = toHex(rerunResultId(decodeRerunResult(splitSignedRerun(rr.signedRerun).body))); }
           catch (e) { return text(res, 409, `the evidence is not a signed re-run result: ${e.message}`); }
           if (rerunNamed !== toHex(rr.proof.signedResultId)) return text(res, 409, 'the evidence is not the re-run the proof names');
+          round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
+          return text(res, 201, 'kept');
+        }
+        // A PROOF OF A FALSE TABLE (kanban #1040) travels with the ack and the table it names: kept only when they are the ones the proof names
+        if (bytes.length > SLASH_PROOF_BYTES && bytes[SLASH_PROOF_BYTES] === TYPE_SETTLEMENT_ACK) {
+          let t;
+          try { t = splitTableSlashEvidence(new Uint8Array(bytes)); } catch (e) { return text(res, 400, e.message); }
+          if (toHex(slashProofId(t.proof)) !== slashed[1]) return text(res, 409, 'that is not the proof that id names');
+          let ack, tableId;
+          try { ack = splitSignedAck(t.signedAck).ack; tableId = settlementTableId(decodeSettlementTable(t.table)); }
+          catch (e) { return text(res, 409, `the evidence is not an ack and a table: ${e.message}`); }
+          if (toHex(settlementAckId(ack)) !== toHex(t.proof.signedResultId) || toHex(tableId) !== toHex(t.proof.transcriptHash) || toHex(ack.payoutTableId) !== toHex(tableId))
+            return text(res, 409, 'the evidence is not the ack and the table the proof names');
           round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
           return text(res, 201, 'kept');
         }

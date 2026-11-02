@@ -20,7 +20,6 @@ import { testNow } from './test-clock.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { arbitrationCommitmentIn } from '../../arena-protocol/src/arbitration-tx.js';
-import { chainOf } from '../../arena-protocol/tools/chainview.js';
 import { deriveCensus } from '../../arena-protocol/src/census.js';
 import { bondSetFor } from '../src/curve.js';
 import { decodePlayerResult, splitSignedResult, encodePlayerResult, joinSignedResult, resultId } from '../../arena-protocol/src/result.js';
@@ -31,6 +30,7 @@ import { arbitrationMembers, judgeDoubleProof, buildSlash, memberSign, assemble 
 import { entriesForSlash } from '../src/slash-owing.js';
 import { tweakPoint, combine } from '../src/curve.js';
 import { eventStands } from '../src/arbitration-events.js';
+import { stubBitcoind } from './stub-bitcoind.js';
 
 const set = arbitrationMembers('regtest');
 const signed = (r, secret) => joinSignedResult(encodePlayerResult(r), schnorr.sign(resultId(r), secret));
@@ -217,33 +217,6 @@ test('a pair kept before the signer\'s advertisement is, is filed once it is, by
     assert.equal(toHex(splitDoubleSlashEvidence(w.holder.round.doubleSlashProofs(w.rid)[0].bytes).proof.bondTxid), toHex(advert.bondTxid));
   });
 });
-
-/** A bitcoind that answers what the service asks, off the fixture's own chain; its tip is the census height, so a LOOKBACK of 20 stays on that chain. */
-async function stubBitcoind(seen, tip, committeeSec) {
-  // THE SAME BLOCKS, EACH WITH THE COINBASE A REAL ONE HAS: the fixture's are bare, and a block read off a bitcoind is refused without one
-  const coinbase = fromHex(`01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0151ffffffff0100000000000000000151${'00'.repeat(4)}`);
-  const view = chainOf(seen.blocks.map((b) => ({ transactions: [coinbase, ...b.transactions] })), seen.firstHeight, { timeOf: (at) => committeeSec + Math.max(0, at - 10) });
-  const compact = (n) => (n < 0xfd ? [n] : [0xfd, n & 255, n >> 8]);
-  const hashAt = (h) => h.toString(16).padStart(64, '0');
-  const outputs = new Map();
-  for (const b of view.blocks) for (const raw of b.transactions) { const t = parseTransaction(raw); outputs.set(toHex([...t.txid].reverse()), t); }
-  const sent = [];
-  const answers = {
-    getblockcount: () => tip,
-    getbestblockhash: () => hashAt(tip),
-    getblockhash: ([h]) => hashAt(h),
-    getblock: ([hash]) => { const b = view.blocks[parseInt(hash, 16) - view.firstHeight]; return toHex(Uint8Array.from([...b.header, ...compact(b.transactions.length), ...b.transactions.flatMap((t) => [...t])])); },
-    gettxout: ([txid, vout]) => { const o = outputs.get(txid).outputs[vout]; return { value: Number(o.value) / 1e8, scriptPubKey: { hex: toHex(o.script) } }; },
-    testmempoolaccept: () => [{ allowed: true }],
-    sendrawtransaction: ([hex]) => { sent.push(hex); return 'cd'.repeat(32); },
-  };
-  const server = createServer((req, res) => {
-    let body = ''; req.on('data', (d) => { body += d; });
-    req.on('end', () => { const { method, params, id } = JSON.parse(body); res.end(JSON.stringify({ id, result: answers[method](params), error: null })); });
-  });
-  await new Promise((r) => server.listen(0, '127.0.0.1', r));
-  return { url: `http://127.0.0.1:${server.address().port}`, sent, close: () => new Promise((r) => server.close(r)) };
-}
 
 test('the arbitration service, run whole: a true pair is judged, posted and published as TWO_RESULTS; a false filing the seat lists is refused, and nothing is posted for it', { timeout: 170000 }, async () => {
   await withPeer(async ({ w, eid, held, say, base, peer }) => {

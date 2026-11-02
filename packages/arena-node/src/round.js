@@ -2279,6 +2279,29 @@ export class Round {
       proofId: new Uint8Array(r.proof_id), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
   }
 
+  /** A proof of a false table (§5A.3, kanban #1040): kept once by its id, so two passes publish it once. */
+  fileTableProof(roundIdBytes, nodePubkey, proofId, bytes) {
+    return this.db.prepare('INSERT OR IGNORE INTO table_slash_proofs (proof_id, round_id, node_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?, ?)')
+      .run(proofId, roundIdBytes, nodePubkey, bytes, this.now()).changes;
+  }
+
+  /** Every proof of a false table this node filed for a round, or all of them (newest first) for GET /slashes. */
+  tableSlashProofs(roundIdBytes = null, { limit = 500 } = {}) {
+    const rows = roundIdBytes
+      ? this.db.prepare('SELECT round_id, node_pubkey, proof_id, bytes, seen_ms FROM table_slash_proofs WHERE round_id = ? ORDER BY node_pubkey').all(roundIdBytes)
+      : this.db.prepare('SELECT round_id, node_pubkey, proof_id, bytes, seen_ms FROM table_slash_proofs ORDER BY seen_ms DESC LIMIT ?').all(limit);
+    return rows.map((r) => ({ roundId: new Uint8Array(r.round_id), nodePubkey: new Uint8Array(r.node_pubkey), proofId: new Uint8Array(r.proof_id), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
+  }
+
+  markSettlementSuspect(roundIdBytes) {
+    this.db.prepare('INSERT OR IGNORE INTO settlement_suspects (round_id, seen_ms) VALUES (?, ?)').run(Buffer.from(roundIdBytes), this.now());
+  }
+
+  /** The rounds marked since `sinceMs`. */
+  settlementSuspects(sinceMs) {
+    return this.db.prepare('SELECT round_id FROM settlement_suspects WHERE seen_ms >= ?').all(sinceMs).map((r) => new Uint8Array(r.round_id));
+  }
+
   /** Every handout this signer node accepted for one round: its id and bytes. */
   handoutsOf(roundIdBytes) {
     return this.db.prepare('SELECT handout_id, bytes FROM handouts WHERE round_id = ?').all(Buffer.from(roundIdBytes))

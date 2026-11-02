@@ -19,7 +19,11 @@ import { seatsAndAuditor, winnerUnder, heldAt, owedTable, WEBSITE, key, str } fr
 import { roundSplit } from '../../arena-protocol/src/reserves.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { splitAcks, splitSignedAck, settlementAckId, countAcks, decodeSettlementTable } from '../../arena-protocol/src/settlement-ack.js';
-import { slashHoldsOnTable } from '../../arena-protocol/src/slash.js';
+import { slashHoldsOnTable, slashProofId, splitTableSlashEvidence, cutTableSlashEvidence, TABLE_IS_NOT_F } from '../../arena-protocol/src/slash.js';
+import { signSettlementAck, joinAcks, settlementTableId, encodeSettlementTable } from '../../arena-protocol/src/settlement-ack.js';
+import { tableBuild } from '../../arena-protocol/src/settlement-rebuild.js';
+import { judgeTableProof } from '../src/arbiter.js';
+import { pointFromScalar } from '../src/curve.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
 import { runOf } from '../../arena-protocol/src/rerun.js';
@@ -123,6 +127,64 @@ test('a paid protocol-22 round on seven seats with an auditor: the reserve key k
       return slashHoldsOnTable({ proof: { roundId: w.rid, playerPubkey: new Uint8Array(32), nodePubkey: a.nodePubkey, transcriptHash: a.ack.payoutTableId, signedResultId: settlementAckId(a.ack), bondTxid: b32(1), bondVout: 0 },
         signedAck: ack, acks, table: tableBytes, finals, contract, manifest: plugin.plugin.manifest, committee: ackSeats, verify, advert: { nodePubkey: a.nodePubkey, bondTxid: b32(1), bondVout: 0 } }); };
     for (const ack of acks) { const honest = asked(ack, fromHex(published.table)); assert.equal(honest.slashed, false, honest.why); assert.match(honest.why, /exactly F/); }
+    // THE PAIR REBUILDS (§5A.3, kanban #1043), on the real plan with its fee part, its auditor and its website: the table's claims and payouts, the loser's real P and the fixture's hash give
+    // exactly the settled txid, and each honest seat stands under the arbiter's own judgement; every read is made and none of them finds anything false
+    const shownEntries = finals.map((f) => f.entry);
+    const P = new Map(w.port.settlements[0].claims.filter((c) => c.kind !== 'fee').map((c) => [toHex(lost.eid), c.preimage]));
+    const built = tableBuild({ table, entries: new Map([won, lost].map((p, i) => [toHex(p.eid), shownEntries[i]])), preimages: P, pointOf: pointFromScalar });
+    assert.equal(built.ok, true, built.why);
+    assert.equal((await w.port.settle(built.build)).txid, published.txid, 'the settled transaction rebuilds from its table');
+    assert.equal(table.claims.length, 3, 'the loser\'s stake and both fee locks');
+    assert.equal(table.payouts.length, paid.length);
+    const feesOf = () => w.port.feeRule;
+    const asJudged = (ack, list, tableBytes, txid) => { const a = splitSignedAck(ack); return { a, verdict: slashHoldsOnTable({ proof: { roundId: w.rid, playerPubkey: new Uint8Array(32), nodePubkey: a.nodePubkey, transcriptHash: a.ack.payoutTableId, signedResultId: settlementAckId(a.ack), bondTxid: b32(1), bondVout: 0 },
+      signedAck: ack, acks: list, table: tableBytes, entries: shownEntries, finals, contract, manifest: plugin.plugin.manifest, committee: ackSeats, verify, rebuiltTxid: txid, feesOf, advert: { nodePubkey: a.nodePubkey, bondTxid: b32(1), bondVout: 0 } }) }; };
+    for (const ack of acks) { const { verdict } = asJudged(ack, acks, fromHex(published.table), fromHex(published.txid)); assert.equal(verdict.slashed, false, verdict.why); }
+
+    // FIVE SEATS ACK THE HONEST TABLE OVER ANOTHER TRANSACTION, the honest seat is asked about it, reads it at their door, and files: listed, served, relayed and judged from the bytes
+    const five = w.nodes.slice(0, 5), honestSeat = w.nodes[6];
+    const off = b32(0xfa);
+    const falseAcks = five.map((d) => signSettlementAck({ roundId: w.rid, payoutTableId: fromHex(published.payoutTableId), settlementTxid: off }, d.round.pubkey, (m) => schnorr.sign(m, d.round.identity.secret)));
+    const askedOff = await honestSeat.settlements.ack(w.rid, { txid: toHex(off) });
+    assert.match(askedOff.why, /it commits to no other bytes/);
+    assert.deepEqual(honestSeat.round.settlementSuspects(0).map(toHex), [toHex(w.rid)], 'the ask marked the round');
+    const realFetch = honestSeat.settlements.fetcher;
+    honestSeat.settlements.fetcher = async (url, o) => (String(url).includes('/settlement-acks') ? { ok: true, json: async () => ({ settlements: [{ scope: '', txid: toHex(off), payoutTableId: published.payoutTableId, table: published.table, acks: toHex(joinAcks(falseAcks)) }] }) } : realFetch(url, o));
+    honestSeat.settlements.stakeSecrets = { open: async () => ({ ok: true, preimage: P.get(toHex(lost.eid)) }) };
+    const adverts = new Map(five.map((d) => [toHex(d.round.pubkey), { nodePubkey: d.round.pubkey, bondTxid: b32(0x60 + five.indexOf(d)), bondVout: 1 }]));
+    const relay = `http://127.0.0.1:${w.nodes[5].port}`;
+    const report = await honestSeat.settlements.fileTableProofs(w.rid, { advertOf: (k) => adverts.get(k), relays: [relay] });
+    console.log('  FILED:', JSON.stringify({ filed: report.filed.length, published: report.published, refused: report.refused }));
+    assert.equal(report.filed.length, 5, `five seats acked it: ${report.refused.join('; ')}`);
+    assert.equal(report.published, 5, 'each proof kept by the relay');
+    const again = await honestSeat.settlements.fileTableProofs(w.rid, { advertOf: (k) => adverts.get(k) });
+    assert.equal(again.filed.length, 0, 'filed once');
+    const base = `http://127.0.0.1:${honestSeat.port}`;
+    const listed = (await (await fetch(`${base}/slashes`)).json()).tableSlashes;
+    assert.deepEqual(listed.map((x) => x.node).sort(), five.map((d) => toHex(d.round.pubkey)).sort());
+    const served = cutTableSlashEvidence(new Uint8Array(await (await fetch(`${base}/table-slash-proofs?round=${toHex(w.rid)}`)).arrayBuffer()));
+    assert.equal(served.length, 5);
+    assert.equal((await fetch(`${base}/table-slash-proofs?round=zz`)).status, 400);
+    const relayed = await fetch(`${relay}/slash/${listed[0].proof}`);
+    assert.equal(relayed.status, 200, 'the relay keeps it under its id');
+    assert.equal((await fetch(`${relay}/slash/${'00'.repeat(32)}`, { method: 'PUT', body: served[0] })).status, 409, 'and only under its own');
+    for (const record of served) {
+      const got = splitTableSlashEvidence(record);
+      const advert = adverts.get(toHex(got.proof.nodePubkey));
+      const verdict = await judgeTableProof({ evidence: record, roundIdBytes: w.rid, contract, manifest: plugin.plugin.manifest, committee: ackSeats, advert, bondOutpoint: { txid: advert.bondTxid, vout: advert.bondVout }, feesOf,
+        txidOf: async (_t, b) => fromHex((await w.port.settle(b)).txid) });
+      assert.equal(verdict.slashed, true, verdict.why);
+      assert.equal(verdict.offence, TABLE_IS_NOT_F);
+      assert.equal(toHex(verdict.proofId), toHex(slashProofId(got.proof)));
+      assert.match(verdict.why, /does not rebuild from the table/);
+    }
+    // AN HONEST PAIR, THE SAME FILING: nothing is filed, and a false ack by one seat is not a table anything stood on
+    const honestRound = await w.nodes[5].settlements.fileTableProofs(w.rid, { advertOf: (k) => adverts.get(k) });
+    assert.equal(honestRound.filed.length, 0, 'the honest pair files nothing');
+    const lone = asJudged(falseAcks[0], falseAcks.slice(0, 1), fromHex(published.table), fromHex(published.txid));
+    assert.match(lone.verdict.why, /1 of the 5 seats acked/);
+    assert.equal(toHex(settlementTableId(table)), published.payoutTableId, 'the table reads back to its own id');
+    assert.equal(toHex(encodeSettlementTable(table)), published.table, 'and to its own bytes');
     console.log(`  ACKS: ${counted.agreed} of ${counted.needed} over table ${published.payoutTableId.slice(0, 16)}, settlement ${published.txid.slice(0, 16)}; every ack's table is F of the FINAL results`);
 
     // THE WINNER COLLECTS: its payout contract, refunded under its own key (page-lock.js redeemPayout: Refund under the player's
