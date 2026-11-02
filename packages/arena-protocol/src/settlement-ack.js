@@ -9,7 +9,7 @@
 // and it joins only holding acks from at least the threshold over the same three. The acks are published with the settlement.
 // `payout_table_id` is the id of the table the seat computed: rows name their entry, so what a seat said about each entry is its own word
 // and nobody filing a proof can choose which of a player's entries a row meant. No curve lives in this package: `verify` and `sign` are injected.
-import { PROTOCOL_VERSION, speaksVersion, TYPE_SETTLEMENT_ACK, TYPE_SETTLEMENT_TABLE, TAG } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_SETTLEMENT_ACK, TYPE_SETTLEMENT_TABLE, TYPE_SETTLEMENT_COMMIT, TAG } from './constants.js';
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex, fromHex } from './hash.js';
 import { compareBytes } from './payout.js';
@@ -74,6 +74,41 @@ export function checkAck(bytes, { seats, roundId, payoutTableId, settlementTxid,
   try { good = verify(got.signature, settlementAckId(got.ack), got.nodePubkey) === true; } catch { good = false; }
   if (!good) return { ok: false, why: `${who.slice(0, 16)}'s signature over the ack does not verify` };
   return { ok: true, who, nodePubkey: got.nodePubkey };
+}
+
+/**
+ * A SEAT'S SIGNED SETTLEMENT COMMIT (§5A.3 "Stalled in its rounds", RULED 2026-11-02, kanban #1052): from protocol 26 a seat answers a settlement's commit with this beside its
+ * nonce commitment, signed by its node key, one signature per seat per settlement as the ack is. It names the transaction and hashes the two nonce points, so the seat that
+ * asked holds that seat's word that it committed, and only a seat that did is left off a StallNote.
+ */
+export const SETTLEMENT_COMMIT_BYTES = 1 + 2 + 32 + 32 + 32;
+export const SIGNED_SETTLEMENT_COMMIT_BYTES = SETTLEMENT_COMMIT_BYTES + 32 + 64;
+export function settlementCommitBody({ roundId, settlementTxid, hiding, binding }) {
+  const nonces = new Uint8Array(hiding.length + binding.length);
+  nonces.set(hiding, 0); nonces.set(binding, hiding.length);
+  const w = new Writer();
+  w.u8(TYPE_SETTLEMENT_COMMIT); w.u16(PROTOCOL_VERSION);
+  w.bytes32(roundId); w.bytes32(settlementTxid); w.bytes32(taggedHash(TAG.settlementCommit, nonces));
+  return w.finish();
+}
+/** The commit as it travels: its body, the seat's node key, the seat's BIP-340 signature over the tagged body. `sign(digest)` -> 64 bytes. */
+export function signSettlementCommit(commit, nodePubkey, sign) {
+  const body = settlementCommitBody(commit);
+  const out = new Uint8Array(SIGNED_SETTLEMENT_COMMIT_BYTES);
+  out.set(body, 0);
+  out.set(nodePubkey, SETTLEMENT_COMMIT_BYTES);
+  out.set(sign(taggedHash(TAG.settlementCommit, body)), SETTLEMENT_COMMIT_BYTES + 32);
+  return out;
+}
+/** One seat's signed commit, against what it was asked: { ok, who } or { ok: false, why }. */
+export function checkSettlementCommit(bytes, { seats, commit, verify }) {
+  if (!(bytes instanceof Uint8Array) || bytes.length !== SIGNED_SETTLEMENT_COMMIT_BYTES) return { ok: false, why: `a signed settlement commit is ${SIGNED_SETTLEMENT_COMMIT_BYTES} bytes` };
+  const body = bytes.slice(0, SETTLEMENT_COMMIT_BYTES), nodePubkey = bytes.slice(SETTLEMENT_COMMIT_BYTES, SETTLEMENT_COMMIT_BYTES + 32), who = toHex(nodePubkey);
+  if (!seats.some((k) => toHex(k) === who)) return { ok: false, why: `signed by ${who.slice(0, 16)}, which is not one of the round's seats` };
+  if (toHex(body) !== toHex(settlementCommitBody(commit))) return { ok: false, why: `${who.slice(0, 16)} committed to other bytes` };
+  let good = false;
+  try { good = verify(bytes.slice(SETTLEMENT_COMMIT_BYTES + 32), taggedHash(TAG.settlementCommit, body), nodePubkey) === true; } catch { good = false; }
+  return good ? { ok: true, who } : { ok: false, why: `${who.slice(0, 16)}'s signature over its commit does not verify` };
 }
 
 /**

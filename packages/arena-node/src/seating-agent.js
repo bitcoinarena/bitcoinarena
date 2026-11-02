@@ -1012,6 +1012,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       return r ? { round: toHex(new Uint8Array(r.round_id)), node: r.node, txid, vout, signature: toHex(new Uint8Array(r.signature)) } : null;
     },
     takePresent, presentsOf, mySignature, certOf: (rid, role, at = rid) => certOf(seatRoundOf(at, role), role), keepCert, equivocationOf, takePresents, batchOf,
+    /** The round whose certificate seats `rid`: itself, its table's first, or a later check-in (kanban #1020). */
+    seatRoundOf: (rid, role = 'settlement') => seatRoundOf(rid, role),
     /** The table round a door's certificate is on, and its index (kanban #1020): 0 for the table's first. */
     certRoundOf: (at, role) => { const r = toHex(seatRoundOf(at, role)); const e = (reseats.get(`${toHex(seatOf(at))}:${role}`) || []).find((x) => toHex(x.rid) === r); return e ? e.index : 0; },
     /** A round deleted from the store (transcript-prune.js, unused and past its windows): its certificates leave memory too. */

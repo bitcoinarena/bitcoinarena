@@ -401,8 +401,21 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
       if (!HEX64.test(rid || '') || !PROOF_ROLES.includes(role) || !/^([0-9a-f]{2})+$/.test(String(v)) || String(v).length > 200000) return { ok: false, why: 'certificates are by round id and role, hex' };
       certs[`${rid}:${role}`] = String(v).toLowerCase();
     }
-    db.prepare('INSERT OR REPLACE INTO absent_claims (root, claim, kept_ms) VALUES (?, ?, ?)').run(root, JSON.stringify({ claims: clean, certs }), Date.now());
-    return { ok: true, root, nodes: clean.length, certs: Object.keys(certs).length };
+    // THE STALLED BESIDE THE ABSENT (§5A.3 "Stalled in its rounds", protocol 26, kanban #1052): the same path, its own proofs. Below 26 no claim carries the field
+    const stalled = [];
+    const named = claim && claim.stalled;
+    if (named !== undefined && (!Array.isArray(named) || named.length > 4096)) return { ok: false, why: 'a stalled list is a list of nodes with their proofs' };
+    for (const c of named || []) {
+      const node = String((c && c.node) || '').toLowerCase();
+      if (!HEX64.test(node)) return { ok: false, why: 'a stalled node is its key, 32 bytes hex' };
+      const proofs = (Array.isArray(c.proofs) ? c.proofs : []).slice(0, 16).map((p) => ({ roundId: String((p && p.roundId) || '').toLowerCase(), seatRound: String((p && p.seatRound) || '').toLowerCase(),
+        notes: (Array.isArray(p && p.notes) ? p.notes : []).slice(0, 16).map((n) => String(n).toLowerCase()) }));
+      if (!proofs.every((p) => HEX64.test(p.roundId) && HEX64.test(p.seatRound) && p.notes.every((n) => /^([0-9a-f]{2})+$/.test(n) && n.length <= 4096)))
+        return { ok: false, why: 'a stalled proof names a round, its seating and the notes, hex' };
+      stalled.push({ node, proofs });
+    }
+    db.prepare('INSERT OR REPLACE INTO absent_claims (root, claim, kept_ms) VALUES (?, ?, ?)').run(root, JSON.stringify(stalled.length ? { claims: clean, certs, stalled } : { claims: clean, certs }), Date.now());
+    return { ok: true, root, nodes: clean.length, certs: Object.keys(certs).length, ...(stalled.length ? { stalled: stalled.length } : {}) };
   }
 
   /** A SEAT'S CHECK of a claim ({ claims, certs }): every proof (presence.js checkAbsenceProof), and nothing it holds against it. */
@@ -426,6 +439,6 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
     return out;
   }
 
-  return { seatingsIn, seenIn, presentsIn, proofsOf, certsOf, takeProof, takeCert, absentForPosting, claimFor, keepClaim, check, drawOf, dutyOf,
+  return { seatingsIn, seenIn, presentsIn, proofsOf, certsOf, takeProof, takeCert, absentForPosting, claimFor, keepClaim, check, drawOf, dutyOf, heldCert,
     publicationProofOf, creatorSignatureOf, roundsToReturn };
 }

@@ -1142,6 +1142,17 @@ export function openStore(path = ':memory:') {
       at_ms       INTEGER NOT NULL
     );
 
+    -- HOW THIS SEAT'S LAST SETTLEMENT PASS OF A ROUND STOPPED (§5A.3 "Stalled in its rounds", protocol 26, kanban #1052): the step it stopped at and the seats that gave it no
+    -- signed word at that step. Only a seat that asked knows, and each seat asks in its turn. One row per round and federation; a pass that goes on replaces it.
+    CREATE TABLE IF NOT EXISTS settle_passes (
+      round_id    BLOB NOT NULL,
+      scope       TEXT NOT NULL,
+      step        TEXT NOT NULL,
+      silent      TEXT NOT NULL,
+      made_ms     INTEGER NOT NULL,
+      PRIMARY KEY (round_id, scope)
+    );
+
     -- §13C'S NO-QUORUM OUTCOME, decided here once the result window passed with
     -- no result at the threshold: VOID (the operator side's fault - nothing is
     -- signed or moved, the lock returns at its expiry) or FORFEIT (proven

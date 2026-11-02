@@ -74,7 +74,7 @@ test('one type carries no authority, and it is the ghost', () => {
   // 56 since a seated node's SEEN (§5A.3, kanban #727: it proves a node absent, and so leaves it out of a census) - an authority.
   // 58 since the heartbeat (§5A.3, kanban #727): a node's HEARTBEAT keeps it in a census, a member's HEARD in a certificate proves a
   // node missed at a slot - both authorities.
-  assert.equal(FRAMES.size, 58, 'a type was added without saying what it decides');
+  assert.equal(FRAMES.size, 60, 'a type was added without saying what it decides');
 });
 
 /**

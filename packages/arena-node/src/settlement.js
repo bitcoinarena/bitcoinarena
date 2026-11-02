@@ -29,7 +29,8 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { decodeRoundContract, decodeEntryContract, entryFederation, entryId as entryIdOf } from '../../arena-protocol/src/contracts.js';
 import { takesAnyFederation, acksSettlement } from '../../arena-protocol/src/constants.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
-import { signSettlementAck, settlementAckId, countAcks, joinAcks, splitAcks, splitSignedAck, encodeSettlementTable, decodeSettlementTable, settlementTableId, planTableRows, planTableBuild } from '../../arena-protocol/src/settlement-ack.js';
+import { stallsOut, silentSeats } from '../../arena-protocol/src/stall.js';
+import { signSettlementCommit, checkSettlementCommit, signSettlementAck, settlementAckId, countAcks, joinAcks, splitAcks, splitSignedAck, encodeSettlementTable, decodeSettlementTable, settlementTableId, planTableRows, planTableBuild } from '../../arena-protocol/src/settlement-ack.js';
 import { tableBuild } from '../../arena-protocol/src/settlement-rebuild.js';
 import { slashHoldsOnTable, slashProofId, encodeSlashProof, joinTableSlashEvidence } from '../../arena-protocol/src/slash.js';
 import { splitByFederation } from '../../arena-protocol/src/federation-settlement.js';
@@ -52,7 +53,7 @@ import { resultFinality, settledResult } from './finality.js';
 import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
 import { sendPlanToJson, planKey } from './winnings-send.js';
 import { askerOrder, eligibleAsker } from './payout.js';
-import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate } from './plan-taken.js';
+import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate, splitPlanTaken } from './plan-taken.js';
 // the payouts of an accepted settlement kept as rows (GET /donations, GET /reserves): a walk-away's donation keys and a market's reserve
 // AND THE WEBSITE THAT BROUGHT AN ENTRY (kanban #676: "total referrer fees accumulated" on the explorer's metrics): its 'frontend' payout is a row
 // under the website's payout key, listed as 'website', so the seats can say what each website earned (GET /referral-fees)
@@ -1088,6 +1089,24 @@ export class LockSettlement {
     return m;
   }
 
+  /**
+   * WHERE THIS SEAT'S SETTLEMENT PASS STOPPED (§5A.3 "Stalled in its rounds", protocol 26, kanban #1052): the seats that gave it no signed word at that step, kept for its StallNote.
+   * The step counts, not the commit alone: a pass that stopped at the plan or the acks asks no seat to commit, so a list of commits would name the honest seats beside the silent ones.
+   */
+  #stoppedAt(roundIdBytes, contract, scope, step, answered) {
+    if (!stallsOut(contract) || !this.round.putSettlePass) return;
+    this.round.putSettlePass({ roundId: roundIdBytes, scope, step, silent: silentSeats({ seats: contract.nodes, answered: [...answered, this.round.pubkey], me: this.round.pubkey }) });
+  }
+  /** Who answered a commit with its signed word, from protocol 26: its node key, or null. */
+  #commitWord(roundIdBytes, m, r, commitment) {
+    if (!stallsOut(m.contract)) return null;
+    const h = r.headers && r.headers.get ? r.headers.get('x-settlement-commit') : null;
+    if (!h) return null;
+    let bytes; try { bytes = fromHex(h); } catch { return null; }
+    const c = checkSettlementCommit(bytes, { seats: m.contract.nodes, commit: { roundId: roundIdBytes, settlementTxid: fromHex(m.txid), hiding: commitment.hiding, binding: commitment.binding }, verify: verifyAck });
+    return c.ok ? c.who : null;
+  }
+
   /** A seat asked about another transaction or another table than it rebuilt: the round is read again for a false table (fileTableProofs). */
   #suspect(roundIdBytes) { if (this.round.markSettlementSuspect) this.round.markSettlementSuspect(roundIdBytes); }
 
@@ -1115,7 +1134,7 @@ export class LockSettlement {
    * of verified acks by the round's seats over this table and this transaction goes on. The acks travel with the commit, each seat checks
    * them for itself (`commit`) and each keeps them, so they are published with the settlement. No acks for an older round.
    */
-  async #gatherAcks(roundIdBytes, m, query) {
+  async #gatherAcks(roundIdBytes, m, query, scope = null) {
     if (!acksSettlement(m.contract)) return { ok: true };
     const acks = [this.#ownAck(roundIdBytes, m)];
     const refused = [];
@@ -1127,7 +1146,10 @@ export class LockSettlement {
       } catch (e) { refused.push(`${base}: ${e.message}`); }
     }
     const counted = this.#countAcks(roundIdBytes, m, acks);
-    if (!counted.final) return { ...refuse(`${counted.agreed} of the ${counted.needed} signer nodes the settlement needs acked it: ${[...refused, ...counted.refused].join('; ')}`), refused };
+    if (!counted.final) {
+      if (scope !== null) this.#stoppedAt(roundIdBytes, m.contract, scope, 'ack', counted.kept.map((k) => splitSignedAck(k).nodePubkey));
+      return { ...refuse(`${counted.agreed} of the ${counted.needed} signer nodes the settlement needs acked it: ${[...refused, ...counted.refused].join('; ')}`), refused };
+    }
     return { ok: true, acks: joinAcks(counted.kept) };
   }
 
@@ -1253,6 +1275,11 @@ export class LockSettlement {
       pair = { message: m.message, hiding, binding, list: null, share: null,
         commitment: { id: m.signerNode.id, hiding: this.curve.pointFromScalar(hiding), binding: this.curve.pointFromScalar(binding) } };
       this.pairs.set(key, pair);
+    }
+    if (stallsOut(m.contract)) {
+      const word = signSettlementCommit({ roundId: roundIdBytes, settlementTxid: fromHex(m.txid), hiding: pair.commitment.hiding, binding: pair.commitment.binding },
+        this.round.pubkey, (digest) => schnorr.sign(digest, this.round.identity.secret));
+      return { ok: true, commitment: pair.commitment, word };
     }
     return { ok: true, commitment: pair.commitment };
   }
@@ -1496,7 +1523,7 @@ export class LockSettlement {
     let signature = kept && kept.signature && kept.txid === m.txid ? kept.signature : null;
     if (!signature) {
       const q = `round=${toHex(roundIdBytes)}`;
-      const held = await this.#gatherAcks(roundIdBytes, m, q);
+      const held = await this.#gatherAcks(roundIdBytes, m, q, '');
       if (!held.ok) {
         if ((held.refused || []).some((x) => /rebuilt settlement/.test(x))) await this.bookResync(roundIdBytes);
         return held;
@@ -1504,15 +1531,18 @@ export class LockSettlement {
       const own = await this.commit(roundIdBytes, { acks: held.acks });
       if (!own.ok) return own;
       const signers = [{ base: null, commitment: own.commitment }];
-      const refused = [];
+      const refused = [], committed = [];
       for (const base of this.peersFor(roundIdBytes)) {
         try {
           const r = await this.fetcher(`${base}/settle-commit?${q}&txid=${m.txid}`, { method: 'POST', ...(held.acks ? { body: held.acks } : {}) });
           if (!r.ok) { refused.push(`${base}: ${(await r.text()).trim()}`); continue; }
-          signers.push({ base, commitment: decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0] });
+          const commitment = decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0];
+          signers.push({ base, commitment });
+          const who = this.#commitWord(roundIdBytes, m, r, commitment); if (who) committed.push(who);
         } catch (e) { refused.push(`${base}: ${e.message}`); }
       }
       if (signers.length < m.needed) {
+        this.#stoppedAt(roundIdBytes, m.contract, '', 'commit', committed);
         // THE ASKER ITSELF HELD THE BOOK SHORT (kanban #740): peers that rebuilt another settlement have it read the batches again,
         // and the next pass builds anew
         if (refused.some((x) => /rebuilt settlement/.test(x))) await this.bookResync(roundIdBytes);
@@ -1598,20 +1628,22 @@ export class LockSettlement {
       let signature = kept && kept.signature && kept.txid === m.txid ? kept.signature : null;
       if (!signature) {
         const q = `round=${toHex(roundIdBytes)}&federation=${fid}`;
-        const held = await this.#gatherAcks(roundIdBytes, m, q);
+        const held = await this.#gatherAcks(roundIdBytes, m, q, fid);
         if (!held.ok) { results.push({ federation: fid, ok: false, why: held.why }); continue; }
         const own = await this.commit(roundIdBytes, { federation: fid, acks: held.acks });
         if (!own.ok) { results.push({ federation: fid, ok: false, why: own.why }); continue; }
         const signers = [{ base: null, commitment: own.commitment }];
-        const refused = [];
+        const refused = [], committed = [];
         for (const base of this.peersFor(roundIdBytes)) {
           try {
             const r = await this.fetcher(`${base}/settle-commit?${q}&txid=${m.txid}`, { method: 'POST', ...(held.acks ? { body: held.acks } : {}) });
             if (!r.ok) { refused.push(`${base}: ${(await r.text()).trim()}`); continue; }
-            signers.push({ base, commitment: decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0] });
+            const commitment = decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0];
+            signers.push({ base, commitment });
+            const who = this.#commitWord(roundIdBytes, m, r, commitment); if (who) committed.push(who);
           } catch (e) { refused.push(`${base}: ${e.message}`); }
         }
-        if (signers.length < m.needed) { results.push({ federation: fid, ok: false, why: `${signers.length} of the ${m.needed} signer nodes committed: ${refused.join('; ')}` }); continue; }
+        if (signers.length < m.needed) { this.#stoppedAt(roundIdBytes, m.contract, fid, 'commit', committed); results.push({ federation: fid, ok: false, why: `${signers.length} of the ${m.needed} signer nodes committed: ${refused.join('; ')}` }); continue; }
         const commitments = signers.map((x) => x.commitment).sort((a, b) => a.id - b.id);
         const shares = [];
         let failed = null;
@@ -1826,8 +1858,10 @@ export class LockSettlement {
       body = JSON.stringify(proposed.rows.map(sendPlanToJson));
       agreed = await this.planAgreed(roundIdBytes, null, body, got.contract, peers, toHex(roundIdBytes));
     }
-    if (!agreed.final)
+    if (!agreed.final) {
+      this.#stoppedAt(roundIdBytes, got.contract, '', 'plan', agreed.certificate.map((b) => splitPlanTaken(b).nodePubkey));
       return { ...refuse(`${agreed.agreed} of the ${agreed.needed} seats the settlement needs signed the send plan, so nothing is settled: ${agreed.refused.join('; ')}`), peerRefused: true, outOfReach: planOutOfReach(agreed) };
+    }
     console.log(`[winnings] ${toHex(roundIdBytes).slice(0, 16)} ${agreed.agreed} of ${got.contract.nodes.length} seats signed send plan ${toHex(agreed.planId).slice(0, 16)} (${agreed.needed} needed)${agreed.refused.length ? `; did not count: ${agreed.refused.join('; ')}` : ''}`);
     this.built.delete(toHex(roundIdBytes));
     return { ok: true, rows: proposed.rows };

@@ -172,7 +172,7 @@
      "Nodes"
     ],
     "summary": "Absent claim of a census",
-    "description": "The absent claim of a protocol-22 census root: each node its posting node left out, with the 3 seatings (3 different closes in the 24 h) whose threshold-signed certificates show it drawn, or left out already, and present at none; the certificates; and the contracts of those rounds, so a client draws each itself (\u00a75A.3, kanban #727). Every seat and the client check the proofs; a wrong one makes the census invalid.\n\nAccess: none\n\nReturns: 200 JSON {root, claims:[{node, proofs}], certs, contracts}; 400; 404\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "description": "The absent claim of a protocol-22 census root: each node its posting node left out, with the 3 seatings (3 different closes in the 24 h) whose threshold-signed certificates show it drawn, or left out already, and present at none; the certificates; and the contracts of those rounds, so a client draws each itself (\u00a75A.3, kanban #727). Every seat and the client check the proofs; a wrong one makes the census invalid. From protocol 26 the claim also carries `stalled`: each node left out with the 3 rounds whose seats named it, the notes and the certificates of those rounds' seatings (\u00a75A.3 \"Stalled in its rounds\", kanban #1052).\n\nAccess: none\n\nReturns: 200 JSON {root, claims:[{node, proofs}], certs, stalled?, contracts}; 400; 404\n\nSource: `packages/arena-node/src/server.js` line 0.",
     "operationId": "get_absent",
     "parameters": [
      {
@@ -12814,7 +12814,7 @@
      "Nodes"
     ],
     "summary": "Settlement signing, round one",
-    "description": "Round one of signing the round's settlement of losers' locks. From protocol 22 a seat joins only with acks from at least the threshold in the body.\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none; node answers only for the txid it rebuilt\n\nReturns: 200 octet-stream nonce commitment; 400/409\n\nSource: `packages/arena-node/src/server.js` line 5459.",
+    "description": "Round one of signing the round's settlement of losers' locks. From protocol 22 a seat joins only with acks from at least the threshold in the body.\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none; node answers only for the txid it rebuilt\n\nReturns: 200 octet-stream nonce commitment, from protocol 26 with the seat's signed commit in the x-settlement-commit header (hex); 400/409\n\nSource: `packages/arena-node/src/server.js` line 5459.",
     "operationId": "post_settle_commit",
     "parameters": [
      {
@@ -13781,6 +13781,76 @@
       }
      }
     }
+   }
+  },
+  "/stall-notes": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Stall notes of a window",
+    "description": "The StallNotes this seat holds of rounds whose final_after lies in (from, to], and the seating certificates of those rounds it holds (\u00a75A.3 \"Stalled in its rounds\", protocol 26, kanban #1052). A duty node asks every seat before it posts a census: a node named by 4 seats of 3 duty rounds in the 72 h leaves the census as stalled.\n\nAccess: none\n\nReturns: 200 JSON {node, notes:[hex], certs:[hex]}; 400\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_stall_notes",
+    "parameters": [
+     {
+      "name": "from",
+      "in": "query",
+      "required": true,
+      "description": "Start of the window in ms, exclusive.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "to",
+      "in": "query",
+      "required": true,
+      "description": "End of the window in ms, inclusive: the census block's median time past.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{node, notes:[StallNote hex], certs:[seating certificate hex]}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "No from or to.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Hand over stall notes",
+    "description": "StallNotes handed over: each kept when signed by the seat it names, listing other seats, for a protocol-26 round this seat holds (\u00a75A.3 \"Stalled in its rounds\", kanban #1052).\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none\n\nReturns: 201 JSON {took, of}\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "post_stall_notes",
+    "requestBody": {
+     "required": true,
+     "description": "StallNotes in hex, one per line (at most 4096).",
+     "content": {
+      "text/plain": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "{took, of}.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
    }
   },
   "/standing": {
