@@ -10,6 +10,9 @@
 //       --out <claim file> [--lightning-addr host:port] [--members <seat url>,...]
 //       [--peg-in <sat> | --gateway-cli <path> --gateway-addr <url> --gateway-password <file>]
 //       [--peg-in-pending <txid>:<vout>,... --bitcoin-rpc <url> --bitcoin-cookie <file>]
+//       [--network <testnet4|regtest|mainnet> --bitcoin-rpc <url> --bitcoin-cookie <file>]   each outpoint's height, once the network has a
+//                                                 seating rules epoch (§23A.3a): read from the gateway's own chain. Without them an
+//                                                 outpoint names none and counts nothing from that epoch on
 //       [--peg-in-outpoints <txid>:<vout>,...]   the gateway's peg-ins into this federation, signed in the claim: the guardians count
 //                                                 each that is one of the federation's own coins as its proved peg-in (§23A.3a);
 //                                                 without it, with --gateway-cli, the gateway's own confirmed deposits (payment-log)
@@ -29,7 +32,7 @@ import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import https from 'node:https';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { signGatewayClaim, checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
+import { signGatewayClaim, checkGatewayClaim, pegInItemsWithHeights } from '../../arena-protocol/src/gateway-claim.js';
 
 const arg = (k, d = null) => { const i = process.argv.indexOf(`--${k}`); return i > 0 ? process.argv[i + 1] : d; };
 const need = (k) => { const v = arg(k); if (!v) { console.error(`--${k} is required`); process.exit(2); } return v; };
@@ -75,6 +78,17 @@ if (!pegInOutpoints.length && arg('gateway-cli')) {
     pegInOutpoints = [...new Set(log.filter((e) => e && e.payload && /^[0-9a-f]{64}$/.test(String(e.payload.txid)) && Number.isInteger(e.payload.out_idx))
       .map((e) => `${String(e.payload.txid).toLowerCase()}:${e.payload.out_idx}`))];
   } catch { pegInOutpoints = []; }   // a gatewayd without the log: the claim names none (nothing proved)
+}
+// ITS HEIGHTS, once the network has a rules epoch (kanban #999/#1026): each coin is unspent, so gettxout needs no index
+if (pegInOutpoints.length) {
+  const net = arg('network', 'testnet4');
+  const rpcOf = arg('bitcoin-rpc') && arg('bitcoin-cookie') ? async (method, params) => {
+    const cookie = readFileSync(arg('bitcoin-cookie'), 'utf8').trim();
+    return (await (await fetch(arg('bitcoin-rpc'), { method: 'POST', headers: { authorization: 'Basic ' + Buffer.from(cookie).toString('base64') },
+      body: JSON.stringify({ jsonrpc: '1.0', id: 'arena', method, params }), signal: AbortSignal.timeout(15000) })).json()).result; } : null;
+  let tip = null; try { tip = rpcOf ? Number(await rpcOf('getblockcount', [])) : null; } catch { tip = null; }
+  pegInOutpoints = await pegInItemsWithHeights({ items: pegInOutpoints, network: net, tip, confirmationsOf: rpcOf
+    ? async (o) => { const [txid, vout] = o.split(':'); const u = await rpcOf('gettxout', [txid, Number(vout), true]); return u ? Number(u.confirmations) : null; } : null });
 }
 const pegIns = [];
 if (arg('peg-in-pending')) {

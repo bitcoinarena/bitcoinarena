@@ -13,6 +13,7 @@
 import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
 import { tagAt, tagsAccepted, TAG_PAIRS } from './tag-switch.js';
+import { seatingRulesEpochOf } from './constants.js';
 
 export const GATEWAY_CLAIM_TAG = TAG_PAIRS.gatewayClaim[0];   // the tag before the switch (tag-switch.js, kanban #525)
 
@@ -30,10 +31,42 @@ export function gatewayClaimHash(c, tag = tagAt('gatewayClaim', { ms: c.atMs }))
   return taggedHash(tag, w.finish());
 }
 
-/** A claim's peg-in outpoints, `txid:vout` as an explorer prints them, sorted and once each ([] when it names none). */
+/**
+ * A claim's peg-in outpoints as the claim names them, sorted and once each ([] when it names none): `txid:vout` as an explorer prints them,
+ * from the rules epoch `txid:vout@height` (§23A.3a, kanban #999/#1026). The items are signed as they stand, so a claim naming no heights
+ * hashes as before. A seat of a release before heights refuses a claim that names one, so a gateway names them only once its network has
+ * a rules epoch (pegInItemsWithHeights).
+ */
 export function pegInOutpointsOf(c) {
   const list = Array.isArray(c && c.pegInOutpoints) ? c.pegInOutpoints.map((x) => String(x).toLowerCase()) : [];
-  return [...new Set(list.filter((x) => /^[0-9a-f]{64}:\d{1,6}$/.test(x)))].sort();
+  return [...new Set(list.filter((x) => /^[0-9a-f]{64}:\d{1,6}(@\d{1,8})?$/.test(x)))].sort();
+}
+
+/** One claimed item apart: { outpoint: 'txid:vout', height: a number, or null when it names none }. */
+export function pegInItem(item) {
+  const [outpoint, at] = String(item).split('@');
+  return { outpoint, height: at === undefined ? null : Number(at) };
+}
+
+/** Whether a peg-in confirmed at `height` is at most `maxAge` blocks old at `epochStart`, the first height of the epoch being seated. */
+export const pegInAgeStands = ({ height, epochStart, maxAge }) => Number.isInteger(height) && Number.isInteger(maxAge) && epochStart - height <= maxAge;
+
+/**
+ * THE ITEMS A GATEWAY SIGNS, on `network`: with no rules epoch named there, bare outpoints (a seat of an older release refuses any other
+ * form, and the whole claim with it). Once one is named, each with its height, read from its confirmations in the gateway's own chain view
+ * (`confirmationsOf(outpoint)` -> a number, or null for one it cannot read): an unspent coin needs no index. An outpoint it cannot read
+ * stays bare, and counts nothing.
+ */
+export async function pegInItemsWithHeights({ items, network, tip, confirmationsOf }) {
+  const parts = items.map(pegInItem);
+  if (seatingRulesEpochOf(network) === null) return parts.map((p) => p.outpoint);
+  const out = [];
+  for (const p of parts) {
+    if (p.height !== null) { out.push(`${p.outpoint}@${p.height}`); continue; }
+    let conf = null; try { conf = confirmationsOf ? await confirmationsOf(p.outpoint) : null; } catch { conf = null; }
+    out.push(Number.isInteger(conf) && conf > 0 && Number.isInteger(tip) ? `${p.outpoint}@${tip - conf + 1}` : p.outpoint);
+  }
+  return out;
 }
 
 /** A claim, signed with `sign(hash32) -> signature64` by the node key `node` (hex). */
@@ -52,8 +85,9 @@ export function checkGatewayClaim(c, verify) {
   if (!/^0[23][0-9a-f]{64}$/.test(c.lightningPubkey || '')) return { ok: false, why: 'a claim names its Lightning node key' };
   if (!/^(|([a-z0-9-]+\.)*[a-z0-9-]+:\d{1,5}|\[[0-9a-f:]+\]:\d{1,5})$/i.test(String(c.lightningAddr ?? ''))) return { ok: false, why: 'a claim\'s Lightning address is host:port, or empty' };
   for (const k of ['capacitySats', 'pegInSats', 'atMs', 'inboundSats', 'outboundSats', 'outsideInboundSats']) if (!/^\d+$/.test(String(c[k] || ''))) return { ok: false, why: `a claim's ${k} is a whole number` };
-  if (c.pegInOutpoints !== undefined && (!Array.isArray(c.pegInOutpoints) || pegInOutpointsOf(c).length !== c.pegInOutpoints.length))
-    return { ok: false, why: 'a claim\'s peg-in outpoints are txid:vout, each once' };
+  if (c.pegInOutpoints !== undefined && (!Array.isArray(c.pegInOutpoints) || pegInOutpointsOf(c).length !== c.pegInOutpoints.length
+    || new Set(pegInOutpointsOf(c).map((x) => pegInItem(x).outpoint)).size !== c.pegInOutpoints.length))
+    return { ok: false, why: 'a claim\'s peg-in outpoints are txid:vout or txid:vout@height, each outpoint once' };
   if (!/^[0-9a-f]{128}$/.test(c.signature || '')) return { ok: false, why: 'a claim is signed' };
   let good = false;
   try { good = tagsAccepted('gatewayClaim', { ms: c.atMs }).some((t) => verify(fromHex(c.signature), gatewayClaimHash(c, t), fromHex(c.node))); } catch { good = false; }

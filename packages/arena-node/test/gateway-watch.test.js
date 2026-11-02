@@ -267,3 +267,66 @@ test('a gateway whose tunnel took a new name is said at its new address, though 
   assert.equal(v.gateways[keys[0].hex].url, 'https://after-reboot.example/');
   assert.equal(v.gateways[keys[1].hex].url, 'https://other.example/');
 });
+
+// THE AGE OF A PEG-IN (§23A.3a, kanban #999/#1026): from the rules epoch an outpoint counts only at a height its block confirms, at most
+// peg_in_max_age old at the epoch's first height. Epoch 40 starts at 5760, so 100 blocks old is height 5660
+function aged({ claim0, claim1 = {}, rulesEpoch = 0, tipAt = 144 * 40 + 5, inBlock = () => true, network = 'regtest', coins }) {
+  const claims = { 0: claimOf(0, claim0), 1: claimOf(1, claim1) };
+  const entries = keys.map((k, i) => ({ pubkey: Uint8Array.from(Buffer.from(k.hex, 'hex')), bondSats: 50000n, advert: { endpoint: `https://seat${i}.example`, operatorId: `op${i}` } }));
+  const fetcher = async (url) => {
+    const seat = /^https:\/\/seat(\d)\.example\/gateway-claim\?federation=[0-9a-f]{64}$/.exec(url);
+    if (seat) return claims[seat[1]] ? { status: 200, json: async () => claims[seat[1]] } : { status: 404, json: async () => ({}) };
+    return { status: 200, text: async () => '{"module_public_key":"02' + 'cd'.repeat(32) + '"}' };
+  };
+  const asked = [], w = { tip: tipAt };
+  const watch = createGatewayWatch({ federationId: async () => fid, seated: async () => [keys[0].hex, keys[1].hex], entries: async () => entries, tip: async () => w.tip, beaconAt: async () => new Uint8Array(32).fill(7),
+    verify, fetcher, federationCoins: async () => coins, rulesNetwork: network, ...(rulesEpoch === 'network' ? {} : { rulesEpoch }), outpointAt: async (h, o) => { asked.push([h, o]); return inBlock(h, o); } });
+  return { watch, asked, w };
+}
+const pa = 'aa'.repeat(32) + ':1', pb = 'bb'.repeat(32) + ':0', pc = 'cc'.repeat(32) + ':2';
+const coinsOf = new Map([[pa, 60_000n], [pb, 25_000n], [pc, 15_000n]]);
+const provedOf = async (x, node = 0) => { await x.watch.probe(); return (await x.watch.view()).gateways[keys[node].hex].provedPegInSats; };
+
+test('from the rules epoch a peg-in counts at most peg_in_max_age old at the epoch\'s first height; one a block older does not', async () => {
+  assert.equal(await provedOf(aged({ claim0: { pegInOutpoints: [`${pa}@5660`, `${pb}@5659`, `${pc}@5764`] }, coins: coinsOf })), '75000', 'exactly 100 old, and one younger than the epoch; not 101');
+});
+
+test('an outpoint with no height counts nothing from the rules epoch, and a claim with heights reads as now before it', async () => {
+  assert.equal(await provedOf(aged({ claim0: { pegInOutpoints: [pa] }, coins: coinsOf })), '0');
+  const before = aged({ claim0: { pegInOutpoints: [pa, `${pb}@1`] }, rulesEpoch: 41, coins: coinsOf });
+  assert.equal(await provedOf(before), '85000', 'age not asked, the height ignored');
+  assert.deepEqual(before.asked, [], 'no block read');
+  assert.equal(await provedOf(aged({ claim0: { pegInOutpoints: [pa] }, rulesEpoch: null, coins: coinsOf })), '60000', 'no rules epoch named: as now');
+  const live = aged({ claim0: { pegInOutpoints: [pa] }, rulesEpoch: 'network', network: 'testnet4', coins: coinsOf });
+  assert.equal(await provedOf(live), '60000', 'testnet4 today');
+  const defaults = aged({ claim0: { pegInOutpoints: [pa] }, rulesEpoch: 'network', network: 'regtest', coins: coinsOf });
+  assert.equal(await provedOf(defaults), '0', 'regtest\'s entry is 0');
+});
+
+test('a wrong height counts nothing, an unread block counts nothing for now, and only that one block is read', async () => {
+  const wrong = aged({ claim0: { pegInOutpoints: [`${pa}@5700`] }, coins: coinsOf, inBlock: () => false });
+  assert.equal(await provedOf(wrong), '0');
+  assert.deepEqual(wrong.asked.at(-1), [5700, pa]);
+  assert.equal(await provedOf(aged({ claim0: { pegInOutpoints: [`${pa}@5700`] }, coins: coinsOf, inBlock: () => null })), '0');
+  assert.equal(await provedOf(aged({ claim0: { pegInOutpoints: [`${pa}@5700`] }, coins: coinsOf, inBlock: () => { throw new Error('rpc down'); } })), '0');
+  const old = aged({ claim0: { pegInOutpoints: [`${pa}@1`] }, coins: coinsOf });
+  assert.equal(await provedOf(old), '0');
+  assert.deepEqual(old.asked, [], 'too old: no block read');
+});
+
+test('one height for everyone: the same amount at any tip in the epoch, and a deep block is read once', async () => {
+  const x = aged({ claim0: { pegInOutpoints: [`${pa}@5660`] }, coins: coinsOf });
+  assert.equal(await provedOf(x), '60000');
+  x.w.tip = 144 * 40 + 140;
+  assert.equal((await x.watch.view()).gateways[keys[0].hex].provedPegInSats, '60000', 'age read at the epoch\'s start, not this guardian\'s tip');
+  assert.equal(x.asked.length, 1, 'kept: it is buried');
+  const near = aged({ claim0: { pegInOutpoints: [`${pa}@5764`] }, coins: coinsOf });
+  await provedOf(near); await near.watch.view();
+  assert.ok(near.asked.length >= 2, 'a block near the tip can still move: read again');
+});
+
+test('an outpoint two claims name counts for neither, whatever heights they give, and a coin the federation does not hold counts nothing', async () => {
+  const both = aged({ claim0: { pegInOutpoints: [`${pa}@5700`] }, claim1: { pegInOutpoints: [`${pa}@5701`] }, coins: coinsOf });
+  assert.deepEqual([await provedOf(both, 0), await provedOf(both, 1)], ['0', '0']);
+  assert.equal(await provedOf(aged({ claim0: { pegInOutpoints: [`${'dd'.repeat(32)}:0@5700`] }, coins: coinsOf })), '0');
+});

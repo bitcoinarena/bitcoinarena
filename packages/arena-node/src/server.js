@@ -5058,6 +5058,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     for (const r of round.db.prepare('SELECT federation, epoch, kind, body FROM gateway_seatings').all()) ({ own: ownSeatings, liquidity: liquiditySeatings, 'liquidity-own': ownLiquiditySeatings }[r.kind] || gatewaySeatings).set(`${r.federation}:${r.epoch}`, JSON.parse(r.body));
   } catch { /* none kept */ }
   const watchFor = (g) => createGatewayWatch({ federationId: async () => federationOfDir(g.dataDir),
+      // the peg-in age rule by this seat's own chain, and the one block a claimed height names (§23A.3a, kanban #999/#1026)
+      rulesNetwork: chainNetworkId() ? networkOf(fromHex(chainNetworkId())) : null,
+      outpointAt: ballot && typeof ballot.outpointAt === 'function' ? (h, o) => ballot.outpointAt(h, o) : null,
       endpointOf: (e) => addressBook.endpointOf(e),   // its announced address first (kanban #577)
       // the federation's reserve and cap from its record: under peg-in pressure the proved peg-in ranks first (§23A.3a part 2)
       pressureFor: async (fid) => { const r = fedRecords.recordOf(fid); return r && r.record ? { reserveSats: r.record.reserveSats, exposureCapSats: r.record.exposureCapSats } : null; },
