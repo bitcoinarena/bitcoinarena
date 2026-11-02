@@ -1554,6 +1554,22 @@ test('a deposit that never arrives ends at the round\'s entry close, with the re
     askDeposit: () => {} }), /the round's entry closed at .* UTC before the deposit arrived: nothing was taken for this round/);
 });
 
+// kanban #1042: sats that come another way while the invoice stands, as a new wallet's faucet grant does
+test('a wallet that gets the stake while a deposit waits goes on, and the invoice is left', async () => {
+  const { LockClient } = noteClient();
+  let client = null, shown = null, landed = 0;
+  class Opened extends LockClient {
+    static async join(...a) { client = await super.join(...a); return client; }
+    static async open(...a) { client = await super.open(...a); return client; }
+  }
+  const going = fundPlayerWallet({ round, invite: INVITE, seed: b32(0x56), LockClient: Opened, storage: tabStorage(), entryClosesMs: Date.now() + 15000,
+    askDeposit: (offer) => { shown = offer; }, onLanded: () => { landed += 1; } });
+  while (!shown) await new Promise((r) => setTimeout(r, 20));
+  client.balance = 10_000_000n;
+  await going;
+  assert.equal(landed, 1, 'the deposit window is told to go');
+});
+
 test('the pending line: the window\'s close, then paying out for 10 min, then not paid yet and the block the lock comes back from', () => {
   const close = Date.UTC(2026, 9, 16, 5, 43, 33);
   assert.equal(pendingWindowLine({ closeMs: close, provisional: true, nowMs: close - 1000 }), 'window closes 05:43:33 UTC \u00b7 provisional');
