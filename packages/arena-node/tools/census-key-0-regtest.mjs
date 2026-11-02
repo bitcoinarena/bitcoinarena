@@ -8,19 +8,17 @@
 //
 //   node tools/census-key-0-regtest.mjs            (from packages/arena-node; CK_DIR, CK_BASE_PORT, BITCOIN_BIN)
 import { execFileSync, spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, openSync, rmSync, writeFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { regtest } from './regtest-bond.mjs';
+import { plan as foundersPlan, deal as foundersDeal, sign as foundersSign, finish as foundersFinish } from './founders-dkg.mjs';
 import { openStore, nodeIdentity } from '../src/store.js';
 import { bitcoindRpc } from '../src/chain-rpc.js';
-import { CensusDkg } from '../src/dkg.js';
 import { feldmanGroup } from '../src/curve.js';
-import { censusKey0Shares } from '../../arena-protocol/src/census-key.js';
 import { CENSUS_KEY_VERSION } from '../../arena-protocol/src/constants.js';
-import { founderRun, lagrangeOf } from '../../arena-protocol/src/census-dkg.js';
+import { lagrangeOf } from '../../arena-protocol/src/census-dkg.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { standingKeysFor, BOND_TERMS } from '../../arena-client/src/committee.js';
 import { bondTweakPoint, bondCombine, verify as pageVerify } from '../../arena-client/src/page-curve.js';
@@ -86,23 +84,21 @@ try {
   const pubOf = (id) => schnorr.getPublicKey(id.secret);
 
   // THE FOUNDERS' RUN, BEFORE ANY BOND: seats 0, 1, 2 and one founder who never bonds. One share each, threshold 3
-  const goneSecret = schnorr.utils.randomSecretKey();
-  const founders = [{ secret: keys[0].secret, key: pubOf(keys[0]) }, { secret: keys[1].secret, key: pubOf(keys[1]) }, { secret: keys[2].secret, key: pubOf(keys[2]) }, { secret: goneSecret, key: schnorr.getPublicKey(goneSecret) }];
-  const shares0 = censusKey0Shares({ holders: founders.map((f) => f.key), threshold: 3 });
-  const run = founderRun(shares0);
-  const dkgs = founders.map((f) => new CensusDkg({ key: f.key, secret: f.secret, run, curve: feldmanGroup, random: (n) => new Uint8Array(randomBytes(n)) }));
-  const deals = [];
-  for (const d of dkgs) deals.push((await d.deal()).bytes);
-  for (const d of dkgs) for (const b of deals) await d.accept(b);
-  for (const d of dkgs) d.check();
-  const said = dkgs.map((d) => d.statement());
-  const made = dkgs.map((d) => d.finish(said));
-  const key0 = made[0].groupPublicKey.subarray(1), key = toHex(key0);
-  ask('the founders made key 0 before any bond: one key at all four', made.every((m) => toHex(m.groupPublicKey.subarray(1)) === key), `key ${key.slice(0, 16)}, 4 holders, threshold 3`);
+  // through the founders' own tool, each on its store and a shared folder (tools/founders-dkg.mjs), as they would on their own machines
+  const goneStore = join(dir, 'founder-gone.db');
+  { const db = openStore(goneStore); nodeIdentity(db); db.close(); }
+  const goneId = (() => { const db = openStore(goneStore), id = nodeIdentity(db); db.close(); return id; })();
+  const founders = [{ store: stores[0], key: pubOf(keys[0]) }, { store: stores[1], key: pubOf(keys[1]) }, { store: stores[2], key: pubOf(keys[2]) }, { store: goneStore, key: pubOf(goneId) }];
+  const shared = join(dir, 'founders');
+  foundersPlan({ founders: founders.map((f) => toHex(f.key)), network: 'regtest', dir: shared });
+  for (const f of founders) await foundersDeal({ store: f.store, dir: shared });
+  for (const f of founders) await foundersSign({ store: f.store, dir: shared });
+  const made = [];
+  for (const f of founders) made.push(await foundersFinish({ store: f.store, dir: shared }));
+  const key = made[0].publicKey, key0 = fromHex(key);
+  ask('the founders made key 0 before any bond, by the tool: one key at all four', made.every((m) => m.publicKey === key), `key ${key.slice(0, 16)}, 4 holders, threshold 3`);
   const genesis = { publicKey: key, holders: founders.map((f) => toHex(f.key)), threshold: 3 };
-  for (let i = 0; i < SEATS; i++) {
-    writeFileSync(join(dir, `key0-${i}.json`), JSON.stringify({ ...genesis, ...(i < 3 ? { held: { runId: toHex(run.runId), negated: made[i].negated, shares: [...made[i].shares].map(([x, v]) => [x, v.toString(16)]), commitments: made[i].commitments.map(toHex) } } : {}) }));
-  }
+  for (let i = 0; i < SEATS; i++) writeFileSync(join(dir, `key0-${i}.json`), JSON.stringify(genesis));
 
   const versions = [1, CENSUS_KEY_VERSION];
   const bond = (i, sats, extra = {}) => rt.postBond(keys[i].secret, { endpoint: `ws://127.0.0.1:${ports[i]}`, bondSats: sats, fundBtc: '0.02', protocolVersions: versions, operatorId: `op${i}`, ...extra });
