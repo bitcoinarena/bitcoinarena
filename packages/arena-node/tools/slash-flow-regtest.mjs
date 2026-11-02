@@ -170,9 +170,8 @@ try {
 
   // WHO SIGNS WHAT: a holder's own refusals, asked directly
   const forged = pairOf(result(10), result(20, ids[accused === 4 ? 5 : 4].secret));
-  await put(seats.find((i) => i !== accused), forged);
-  await wait(800);
-  ask('a pair one of whose signatures is not the accused\'s is relayed and filed by nobody', !(await seen(seats.find((i) => i !== accused))).includes(toHex(forged.id)));
+  const forgedAt = await put(seats.find((i) => i !== accused), forged);
+  ask('a pair one of whose signatures is not the accused\'s is refused, not relayed, filed by nobody', forgedAt.status === 409 && !(await seen(seats.find((i) => i !== accused))).includes(toHex(forged.id)), (await forgedAt.text()).slice(0, 70));
   const pair = pairOf(result(10), result(20));
   const e3 = { txid: entry.txid, vout: entry.vout, value: BigInt(entry.bondSats), script: entry.script };
   const own = bondPresigDigest({ bond: e3, advert: { ...entry.advert, nodePubkey: entry.pubkey, censusKey: key0 }, networkId: NETWORK_ID_REGTEST, tweakPoint });

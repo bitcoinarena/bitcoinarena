@@ -130,9 +130,9 @@ try {
   got = await until('every deal of the run at the new holders', all, (s) => s.reshare && s.reshare.deals === s.reshare.dealers, 60000);
   ask('the founders deal to the new census, a seat that never held key 0 among it', got[3].reshare.dealers === 3 && got[3].reshare.holders === 4, `${got[3].reshare.dealers} dealers, ${got[3].reshare.total} shares, threshold ${got[3].reshare.threshold}`);
   rt.mine(305 - rt.height());
-  await until('the first key\'s check', all, (s) => s.run.state.checked === true);
+  await until('the first key\'s check', all, (s) => !!s.run && s.run.state.checked === true);
   rt.mine(1);
-  await until('the reshare\'s check', all, (s) => s.reshare.state.checked === true);
+  await until('the reshare\'s check', all, (s) => !!s.reshare && s.reshare.state.checked === true);
   rt.mine(1);
   got = await until('the reshare\'s record, complete at the new holders', all, (s) => Number.isInteger(s.reshare.state.complete) && Number.isInteger(s.run.state.complete));
   ask('the reshare keeps key 0\'s public key, the first key by weight is another', got.every((s) => s.reshare.state.publicKey === key && s.run.state.publicKey !== key));
