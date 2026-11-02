@@ -75,7 +75,7 @@ export class WalletStart extends React.Component {
         <p className="ws-sub">It holds what you play with and what you win, in this browser. Keep its 24 words - or your Nostr key - to open it anywhere.</p>
         {pane === 'main' ? (
           <div id="ws-main">
-            <button type="button" className="primary" onClick={() => this.create()}>Create a new wallet<small>Ready at once - back up its 24 words any time in Settings</small></button>
+            <button type="button" className="primary" onClick={() => this.create()}>Create a new wallet<small>Ready at once - write its 24 words down when they show</small></button>
             <button type="button" onClick={() => this.pane('restore')}>Restore a wallet<small>Your 24 words, or your seed</small></button>
             <button type="button" className="nostr" onClick={() => this.openNostr()}>Login with Nostr<small>Your Nostr account is your wallet: extension, phone signer or nsec</small></button>
           </div>) : null}

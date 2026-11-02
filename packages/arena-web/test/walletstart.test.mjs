@@ -16,7 +16,7 @@ const noNostr = { load: async () => ({}) };
 test('the three ways in, and Create: straight on, or why it cannot on the busy line', () => {
   const h = renderToStaticMarkup(React.createElement(WalletStart, { create: () => ({ ok: true }), restore: () => ({ ok: true }), nostr: noNostr }));
   assert.match(h, /<h2 id="ws-title">Your wallet<\/h2>/);
-  assert.match(h, /<button type="button" class="primary">Create a new wallet<small>Ready at once - back up its 24 words any time in Settings<\/small><\/button>/);
+  assert.match(h, /<button type="button" class="primary">Create a new wallet<small>Ready at once - write its 24 words down when they show<\/small><\/button>/);
   assert.match(h, />Restore a wallet<small>Your 24 words, or your seed<\/small>/);
   assert.match(h, /class="nostr">Login with Nostr</);
   assert.match(h, /<div id="ws-busy" class="ws-note" style="display:none"><\/div>/);
