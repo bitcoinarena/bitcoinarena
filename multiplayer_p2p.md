@@ -2679,11 +2679,22 @@ run           the epoch whose founding_window it runs in
   stands is a reshare's, and it stands only after its run's list. It adds no key and
   makes no key newer: it says who holds that key from then on. A node keeps its new
   shares beside the old until that anchor stands, since only the chain says the run
-  held, and then deletes the old.
+  held. Then it deletes the old: a duty nobody can check.
 - **A new holder has not the old polynomial,** and nothing on the chain proves one a
   peer could hand it. It needs only that the parts add up to the key, so that is what
-  it checks. An old holder also checks each part, and refuses to sign if one is not its
-  dealer's.
+  it checks. That is enough for safety: if the parts add up, and each share checks
+  against its dealer's commitments, the key is safe, and two dealers offsetting each
+  other change nothing.
+- **Naming a bad dealer (RULED 2026-11-02, kanban #1050).** An old holder compares each
+  dealer's constant term with that dealer's own part, read off the old polynomial,
+  names a dealer whose term differs, drops its deal and signs no record of that set.
+  The run then fails like a drop-out, since each part is a term over exactly the set.
+  The poster of the next list leaves out a dealer it named, as long as the others still
+  cover the old threshold, so one old holder cannot block every epoch. The transcript
+  holds no verifying shares of the old key, so a new holder cannot check a name: for it
+  a bad sum fails the run and names nobody. Adding them is a format change, which was
+  left out, so repeated failed reshares are the warning already ruled for keys: past 2
+  failed epochs in a row, the owner page and the health page say so.
 
 **What a client reads (RULED 2026-11-02, kanban #1048).** A client that cannot count a
 bond cannot check a draw, so a census holding a template-3 bond is read with the

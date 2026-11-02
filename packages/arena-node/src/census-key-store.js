@@ -102,6 +102,11 @@ export class CensusKeyStore {
     return this.db.prepare('SELECT epoch, state FROM census_key_runs ORDER BY epoch DESC, updated_ms DESC').all().map((r) => ({ epoch: r.epoch, ...JSON.parse(r.state) })).filter((r) => !r.ready).slice(0, limit);
   }
 
+  /** The dealers this node named in the failed reshares of one generation of a key, `key hex:epoch`. Only its own reading: nobody else's list moves by it. */
+  namedDealers(generation) {
+    return new Set(this.runsNewestFirst(Infinity).filter((r) => r.reshareOf === generation).flatMap((r) => r.named || []));
+  }
+
   // THE CHAIN SCAN
 
   /** The highest height the scan finished, { height, hash }, or null. */
