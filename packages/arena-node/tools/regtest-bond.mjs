@@ -20,7 +20,7 @@ import { execFileSync } from 'node:child_process';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import {
-  bondOutputKey, bondInternalKey, tapLeafHash, TAPLEAF_VERSION, bondMaturityOf, maturityHeightFor, BOND_TEMPLATE_V2,
+  bondOutputKey, bondInternalKey, tapLeafHash, TAPLEAF_VERSION, bondMaturityOf, maturityHeightFor, BOND_TEMPLATE_V2, BOND_TEMPLATE_V3, bond3OutputKey,
   recoveryLeaf, controlBlockFor,
 } from '../../arena-protocol/src/bond-script.js';
 import { tapSighash, scriptPathWitness, serializeSpend } from '../../arena-protocol/src/bond-spend.js';
@@ -435,21 +435,24 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
   // Measured: with none named every bond this posted was refused by the advertisement's own encoder.
   function postBond(nodeSecret, { endpoint, roles = ['game', 'verify', 'settlement'],
     bondSats = 50000000n, guardianOf = [], guardianCapable = false, guardianEndpoint = '', fundBtc, hostedGames = [NEXTBLOCK_GAME_ID],
-    template = BOND_TEMPLATE_V2, operatorId = '2of2', protocolVersions = [1], advert: givenAdvert = null, utxo: givenUtxo = null, slackBlocks = 6 } = {}) {
+    template = BOND_TEMPLATE_V2, operatorId = '2of2', protocolVersions = [1], advert: givenAdvert = null, utxo: givenUtxo = null, slackBlocks = 6, censusKey = null } = {}) {
     const nodeKey = schnorr.getPublicKey(nodeSecret);
     // A NEW BOND IS TEMPLATE 2: its maturity is the next block, a few of slack and this network's offset
     // - the census counts it once it confirms no later than that slack allows. `template: 1` posts genesis' fixed height.
     // `slackBlocks` (kanban #495, 2026-10-20: the n495 bonds and their first re-bonds confirmed past their slack - 23 and 3 blocks
     // short of confirmation + 144 - and never counted): how many blocks the bond may wait for a miner
-    const maturity = template === BOND_TEMPLATE_V2 ? maturityHeightFor(height(), network, { slackBlocks }) : g.bondMaturity;
-    const built = keyAt(nodeKey, maturity);
+    // `template: 3` names `censusKey`, the census key the bond's path B needs beside the node key (5A.3B).
+    const dated = template === BOND_TEMPLATE_V2 || template === BOND_TEMPLATE_V3;
+    const maturity = dated ? maturityHeightFor(height(), network, { slackBlocks }) : g.bondMaturity;
+    const built = template === BOND_TEMPLATE_V3 ? bond3OutputKey({ nodeKey, censusKey, arbitrationKeys: g.arbitrationKeys, bondMaturity: maturity,
+      internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey }, { tweakPoint, combine }) : keyAt(nodeKey, maturity);
 
     // ADD TO BOND (kanban #544): `advert` - a node's own newest advertisement (bondsOf) - posted as this bond's body, with the
     // new bond's template, height and timestamp: a second output beside the node's first, saying what the node says now.
     // `utxo` - a carrier output funded already (not broadcast yet, for a testmempoolaccept dry run) - in place of `fund`.
     if (givenAdvert && toHex(givenAdvert.nodePubkey) !== toHex(nodeKey)) throw new Error('an added bond names the node key that signs it');
     const advert = givenAdvert ? { ...givenAdvert, bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: template,
-      ...(template === BOND_TEMPLATE_V2 ? { bondMaturityHeight: maturity } : {}), timestamp: BigInt(Date.now()) } : {
+      ...(dated ? { bondMaturityHeight: maturity } : {}), ...(censusKey ? { censusKey } : {}), timestamp: BigInt(Date.now()) } : {
       // the operator and the protocol versions it speaks: '2of2' and [1] unless the caller names them (a node of
       // its own operator, drawable beside the 14 '2of2' nodes; it speaks what its build speaks)
       nodePubkey: nodeKey, operatorId, protocolVersions, roles, hostedGames,
@@ -457,7 +460,7 @@ export function regtest(cli, { wallet = 'arena', network = 'regtest', scan = nul
       softwareHash: new Uint8Array(32).fill(2),
       settlementCapabilities: 0, lightningCapabilities: 0,
       bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: template,
-      ...(template === BOND_TEMPLATE_V2 ? { bondMaturityHeight: maturity } : {}),
+      ...(dated ? { bondMaturityHeight: maturity } : {}), ...(censusKey ? { censusKey } : {}),
       payoutPubkey: new Uint8Array(32).fill(3), guardianOf,
       // NOT A GUARDIAN unless the caller passes what the node answered (§5A.1 v4.6.4)
       guardianCapable, guardianEndpoint, timestamp: 1788700000000n,

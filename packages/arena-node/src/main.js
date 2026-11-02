@@ -60,6 +60,14 @@ import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { votesInBlock, outpointInBlock } from '../../arena-protocol/src/ballot-chain.js';
 import { PROTOCOL_VERSION, networkOf } from '../../arena-protocol/src/constants.js';
 import { censusOfView, censusReplacer, censusReviver } from './roster.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { createCensusKeyScan } from './census-key-chain.js';
+import { CensusKeyStore } from './census-key-store.js';
+import { createCensusKeyPoster } from './census-key-anchor.js';
+import { censusKeyContract, standingKeysName } from '../../arena-protocol/src/census-key.js';
+import { censusKeyFirstHeight, genesisFor } from '../../arena-protocol/src/genesis.js';
+import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
+import { clocksFor } from '../../arena-protocol/src/federation-slash.js';
 import { censusFirstBlock } from '../../arena-protocol/src/census.js';
 import { readSeriesLines } from './series-line.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../arena-protocol/src/test-donation-sets.js';
@@ -325,6 +333,7 @@ if (url) {
   // roster keeps a round's), keyed by the network, the height and that block's hash - another block at the height is another key, never
   // a stale answer, at any depth. Three days kept; one derivation in flight per key.
   const chainCensusInFlight = new Map();
+  let censusKeyScan = null;                    // this node's forward scan of "ARN" 'K', set below on a network that names a first height
   // A BLOCK READ THAT FAILED HOLDS EVERY CENSUS READ FOR A MINUTE, as it holds the round's view (below): the records' first gathering
   // 45 s after start read the whole census window from a bitcoind whose block reads had just failed (main-process (c), since f554a896)
   let blocksFailedAtMs = 0;
@@ -334,14 +343,18 @@ if (url) {
   const chainCensusKept = async (kind, networkIdHex, height, contract, { hold = true } = {}) => {
     const hash = String(await call('getblockhash', [height]));
     // the first block in the key (kanban #820): a census kept from the old window is not this one
-    const key = `chain:${kind}:${networkIdHex}:${height}:${hash}:from${censusFirstBlock(height, networkOf(contract.networkId))}`;
+    // AND THE CENSUS KEYS IT READS (kanban #1041 answer 4): a census kept before a key's anchor was read holds that key's bonds out. A key at or below this height is
+    // another census, and with none the key is as it was
+    const standingKeys = censusKeyScan ? censusKeyScan.standing() : null;
+    const keysName = standingKeysName(standingKeys, height);
+    const key = `chain:${kind}:${networkIdHex}:${height}:${hash}:from${censusFirstBlock(height, networkOf(contract.networkId))}${keysName ? `:keys${keysName}` : ''}`;
     try { const row = db.prepare('SELECT body FROM census_kept WHERE key = ?').get(key); if (row) return JSON.parse(row.body, censusReviver); } catch { /* derived below */ }
     if (chainCensusInFlight.has(key)) return chainCensusInFlight.get(key);
     if (hold && Date.now() - blocksFailedAtMs < 60000) return { ok: false, why: 'a block read failed less than a minute ago: read again after it' };
     const p = (async () => {
       // a kept hash from a branch the chain left is dropped and the view read once more (censusWithFreshHashes, kanban #495)
       const read = async () => { try { return await blocksOver(call, censusFirstBlock(height, networkOf(contract.networkId)), height, { cache: blocksKept }); } catch (e) { blocksFailedAtMs = Date.now(); throw e; } };
-      const census = await censusWithFreshHashes({ read, derive: (view) => censusOfView(view, contract), cache: blocksKept });
+      const census = await censusWithFreshHashes({ read, derive: (view) => censusOfView(view, contract, { standingKeys }), cache: blocksKept });
       if (census.ok) {
         try {
           db.prepare('INSERT OR REPLACE INTO census_kept (key, body, kept_ms) VALUES (?, ?, ?)').run(key, JSON.stringify(census, censusReplacer), Date.now());
@@ -583,6 +596,30 @@ if (url) {
       // A ROUND'S CENSUS, AS THE SEATS DERIVE IT: kept per its depth, floor and protocol (each changes who is in it)
       dutyCensus: (c) => chainCensusKept(`duty:${c.censusConfirmations}:${c.bondMinSats}:${c.protocolVersion}`, toHexMain(c.networkId), Number(c.censusHeight), c, { hold: false }),
       chainBlocks: (from, to) => blocksOver(call, from, to, { cache: blocksKept }), dir: `${path}.duty`, env: process.env, nodeSecret: nodeIdentity(db).secret });
+  }
+  // THE CENSUS KEY ON THIS NODE'S OWN CHAIN (5A.3B, kanban #972, #1041): the forward scan of "ARN" 'K' and what a run reads. Nothing runs on a network that names no first height,
+  // and no template-3 bond counts there. ARENA_CENSUS_KEY_FIRST_HEIGHT is regtest's alone: a harness names its own, a live network's is the release's.
+  {
+    const net = process.env.ARENA_DONATION_NETWORK;
+    const here = net === 'regtest' && process.env.ARENA_CENSUS_KEY_FIRST_HEIGHT ? Number(process.env.ARENA_CENSUS_KEY_FIRST_HEIGHT) : net ? censusKeyFirstHeight(net) : null;
+    if (Number.isInteger(here)) {
+      const networkId = net === 'testnet4' ? NETWORK_ID_TESTNET4 : NETWORK_ID_REGTEST;
+      const { censusConfirmations } = genesisFor(net);
+      const { foundingWindow } = clocksFor(net).clocks;
+      const blockHashAt = async (height) => { try { return String(await call('getblockhash', [height])); } catch { return null; } };
+      const tipHeight = async () => Number(await call('getblockcount'));
+      const censusEntriesAt = async (height) => {
+        const census = await chainCensusKept('censuskey', toHexMain(networkId), height, censusKeyContract({ networkId, network: net, height, censusConfirmations }), { hold: false });
+        if (!census.ok) { console.error(`[census-key] no census at ${height}: ${census.why}`); return null; }
+        return census.entries;
+      };
+      censusKeyScan = createCensusKeyScan({ store: new CensusKeyStore(db), network: net, networkId, firstHeight: here, censusConfirmations, tipHeight, blockHashAt,
+        blockAt: async (hash) => fromHex(String(await call('getblock', [hash, 0]))), censusEntriesAt, verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } },
+        log: (l) => console.log(l) });
+      const wallets = (name) => bitcoindRpc({ url: `${url.replace(/\/+$/, '')}/wallet/${encodeURIComponent(name)}`, cookiePath });
+      options.censusKey = { scan: censusKeyScan, network: net, networkId, firstHeight: here, foundingWindow, censusConfirmations, tipHeight, blockHashAt, censusEntriesAt,
+        post: createCensusKeyPoster({ call, walletCall: wallets, env: process.env }), everyMs: Number(process.env.ARENA_CENSUS_KEY_EVERY_MS || 10000) };
+    }
   }
   // A HELD SERIES' VIEWS ARE READ AT START (TWO-GAMES-1407, measured on testnet4 2026-09-30 12:37Z): the first paying
   // POST /round after a restart was refused by every node - "this node has no chain view for that round, so it cannot
