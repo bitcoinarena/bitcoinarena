@@ -1038,6 +1038,10 @@ const TYPE_SEATING_SEEN = 0x38;
 const TYPE_HEARTBEAT = 0x39;
 /** A heartbeat committee member's HEARD: who it held a HEARTBEAT of at the slot's close; a heartbeat certificate carries them (kanban #727). */
 const TYPE_HEARTBEAT_HEARD = 0x3a;
+// MAKING THE CENSUS KEY (5A.3B, census-dkg.js): never read as the claim key's messages, or the other way round.
+const TYPE_CENSUS_DEAL = 0x3b;
+const TYPE_CENSUS_STATEMENT = 0x3c;
+const TYPE_CENSUS_COMPLAINT = 0x3d;
 // A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1); 0x23 is the
 // ballot's, 0x24 and 0x25 absence and departure
 const TYPE_SPENT_SET = 0x26;
@@ -1104,6 +1108,13 @@ const TAG = {
   slashPanel: 'ARENA/v1/SlashPanel',
   slashPayoutTable: 'ARENA/v1/SlashPayoutTable',
   censusKeyRecord: 'ARENA/v1/CensusKeyRecord',
+  carrierPegIn: 'ARENA/v1/CarrierPegIn',
+  censusRun: 'ARENA/v1/CensusRun',
+  censusDealer: 'ARENA/v1/CensusDealer',
+  censusDeal: 'ARENA/v1/CensusDeal',
+  censusSet: 'ARENA/v1/CensusSet',
+  censusStatement: 'ARENA/v1/CensusStatement',
+  censusComplaint: 'ARENA/v1/CensusComplaint',
   checkpoint: 'ARENA/v1/Checkpoint',
   checkpointReceipt: 'ARENA/v1/CheckpointReceipt',
   result: 'ARENA/v1/Result',
@@ -7303,17 +7314,26 @@ function readProtocolVersionName(name) {
 
 
 
-/** An epoch is `bond_maturity` long. Counted from height 0: the spec names its length and no origin. */
+/** epoch(h) = floor(h / E), E being BOND_MATURITY_OFFSET for the network (kanban #1031). */
 function censusKeyEpochOf(height, network) {
   const length = BOND_MATURITY_OFFSET[network];
   if (!Number.isInteger(length)) throw new Error(`no epoch length is set for ${network}`);
   return Math.floor(height / length);
 }
 
+/** The census height of epoch e: e x E - census_confirmations. Null before that is a positive height: the network's first key applies. */
+function censusHeightOfEpoch(epoch, network, censusConfirmations) {
+  const length = BOND_MATURITY_OFFSET[network];
+  if (!Number.isInteger(length)) throw new Error(`no epoch length is set for ${network}`);
+  const height = epoch * length - censusConfirmations;
+  return height > 0 ? height : null;
+}
+
 /**
  * ONE NUMBER PER EPOCH: unit = max(B, ceil(T / S)), shares(node) = floor(sum of its bonds / unit), threshold = floor(2 x total / 3) + 1.
  * `entries` are the census at the epoch's height, { pubkey, bondSats }; `lowestBondMinSats` is B, the lowest bracket's bond_min in force
  * there; `sharesMax` is S. A node under one unit holds no share: a minimum of one would let many small bonds out-count capital.
+ * The census is 5A.4's, before any role filter: a key belongs to the network and not to a role (kanban #1031). B is a network number, never a round's.
  * Holders are numbered in ascending key order, so everyone hands out the same x. Answers { unit, totalSats, total, threshold, holders }.
  */
 function censusKeyShares({ entries, lowestBondMinSats, sharesMax }) {
@@ -7421,17 +7441,46 @@ function standingCensusKeys({ genesisKey = null, anchors = [], judge }) {
 }
 
 /**
- * THE CENSUS' RULE FOR A TEMPLATE-3 BOND: it names the newest key standing at its confirmation. A record anchored in the bond's own
- * block stands for it. An older key is not enough: a node free to name one could pick a dead key and be unslashable. Other templates answer ok.
+ * THE CENSUS' RULE FOR A TEMPLATE-3 BOND: it names a key that was newest at some height of [confirmation - census_confirmations, confirmation]
+ * (kanban #1031). A record anchored in the bond's own block stands for it, and a bond does not fail for a race with an anchor. An older
+ * key is not enough: a node free to name one could pick a dead key and be unslashable. Other templates answer ok.
  */
-function bondNamesStandingKey(advert, confirmationHeight, standing) {
+function bondNamesStandingKey(advert, confirmationHeight, standing, censusConfirmations = 0) {
   if (!advert || advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V3) return { ok: true };
   const known = (standing || []).filter((k) => k.height <= confirmationHeight);
   if (!known.length) return { ok: false, why: 'no census key stands at that bond\'s confirmation, so this network cannot take a template-3 bond yet' };
-  const newest = known[known.length - 1];
-  if (toHex(newest.publicKey) !== toHex(advert.censusKey))
+  const from = confirmationHeight - censusConfirmations;
+  const atStart = known.filter((k) => k.height <= from);
+  const window = [...atStart.slice(-1), ...known.filter((k) => k.height > from)];
+  const named = window.find((k) => toHex(k.publicKey) === toHex(advert.censusKey));
+  if (!named) {
+    const newest = known[known.length - 1];
     return { ok: false, why: `that bond names census key ${toHex(advert.censusKey).slice(0, 16)}, and the newest standing at its confirmation is ${toHex(newest.publicKey).slice(0, 16)}` };
-  return { ok: true, epoch: newest.epoch };
+  }
+  return { ok: true, epoch: named.epoch };
+}
+
+/** What a holder signs to name its peg-in address, for the carrying of a fallback: `carrier_peg_in(network, script)`. */
+const carrierPegInId = (networkId, script) => taggedHash(TAG.carrierPegIn, Uint8Array.from([...networkId, ...script]));
+
+/**
+ * WHO CARRIES THE PLAYERS' SHARE ON A FALLBACK, AND WHERE THERE ARE NO PANELS (kanban #1031): a fallback means the panels did not sign, so panel A
+ * cannot be trusted with it. The census key's holders in descending shares, less `excluded` (hex: the accused, the proof's other slashed
+ * nodes, the round's seats), each with a peg-in address signed by its node key. A holder with none is passed over.
+ *
+ *   holders   censusKeyShares' list; `bonds` Map hex -> sats; `pegIns` Map hex -> { script, signature }
+ *
+ * Answers [{ key, script, bondSats }], the `carriers` of buildSlashPayoutTable.
+ */
+function fallbackCarriers({ holders, bonds, excluded = [], pegIns, networkId, verify }) {
+  const out = new Set(excluded);
+  return [...holders].sort((a, b) => b.shares - a.shares || (a.key < b.key ? -1 : 1)).flatMap((h) => {
+    const peg = pegIns.get(h.key);
+    if (out.has(h.key) || !peg) return [];
+    let good = false;
+    try { good = verify(peg.signature, carrierPegInId(networkId, peg.script), fromHex(h.key)) === true; } catch { good = false; }
+    return good ? [{ key: h.key, script: peg.script, bondSats: bonds.get(h.key) || 0n }] : [];
+  });
 }
 
 const RESHARE_BELOW_PERCENT = 80;
@@ -9688,10 +9737,35 @@ function drawPanels({ entries, contract, committeeSeed, drawsAttestors = false, 
     for (const role of PANEL_LEAVES_OUT)
       for (const e of drawCommittee({ entries, contract, role, committeeSeed })) out.add(toHex(e.pubkey));
     if (drawsAttestors) for (const e of drawAttestors({ entries, contract, committeeSeed })) out.add(toHex(e.pubkey));
-    const rest = selectCommittee({ entries, contract, role: 'settlement', committeeSeed: panelSeed(committeeSeed), count: entries.length,
-      exclude: entries.filter((e) => out.has(toHex(e.pubkey))) });
-    const n = panelSeats(rest.length);
-    return { ok: true, n, t: n ? panelThreshold(n) : 0, eligible: rest.length, panelA: rest.slice(0, n), panelB: rest.slice(n, 2 * n), order: rest.slice(0, 2 * n) };
+    return panelsOf({ entries, contract, seed: panelSeed(committeeSeed), out });
+  } catch (e) { return { ok: false, why: `the panels cannot be drawn: ${e.message}` }; }
+}
+
+function panelsOf({ entries, contract, seed, out }) {
+  const rest = selectCommittee({ entries, contract, role: 'settlement', committeeSeed: seed, count: entries.length,
+    exclude: entries.filter((e) => out.has(toHex(e.pubkey))) });
+  const n = panelSeats(rest.length);
+  return { ok: true, n, t: n ? panelThreshold(n) : 0, eligible: rest.length, panelA: rest.slice(0, n), panelB: rest.slice(n, 2 * n), order: rest.slice(0, 2 * n) };
+}
+
+/**
+ * THE PANELS OF A BOND'S OWN slash_presig, for an offence with no round (5A.3B, kanban #1031): seed tagged_hash("ARENA/v1/SlashPanel", bond outpoint ||
+ * hash of the block that confirmed the bond), the census at that block's height, less the bonding node and its operator's nodes; n and t as
+ * for a round. The update's own block cannot be the seed: the signature inside the update depends on it. A bonder can retry for friendly
+ * panels at the cost of a bond each time. Accepted: they guard only an offence with no round, and the census key's fallback stands behind them.
+ */
+function bondPanelSeed({ txid, vout }, blockHash) {
+  const w = new Writer();
+  w.bytes32(txid); w.u32(vout); w.bytes32(blockHash);
+  return taggedHash(TAG.slashPanel, w.finish());
+}
+
+function drawBondPanels({ entries, contract, bond, blockHash, nodeKey, operatorId = null }) {
+  try {
+    const me = toHex(nodeKey);
+    const out = new Set([me]);
+    if (operatorId) for (const e of entries) if (e.advert && e.advert.operatorId === operatorId) out.add(toHex(e.pubkey));
+    return panelsOf({ entries, contract, seed: bondPanelSeed(bond, blockHash), out });
   } catch (e) { return { ok: false, why: `the panels cannot be drawn: ${e.message}` }; }
 }
 
@@ -11986,8 +12060,8 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
     const confirmed = chainSays ? chainSays.height : e.height;
     const matures = maturityStands(read.advert, confirmed, network);
     if (!matures.ok) { excluded.push({ ...e, why: matures.why }); continue; }
-    // A TEMPLATE-3 BOND NAMES THE NEWEST KEY STANDING AT ITS CONFIRMATION (5A.3B, kanban #1021). `bond.standingKeys` is the reader's list.
-    const named = bondNamesStandingKey(read.advert, confirmed, bond && bond.standingKeys);
+    // A TEMPLATE-3 BOND NAMES A KEY NEWEST WITHIN census_confirmations OF ITS CONFIRMATION (5A.3B, kanban #1031). `bond.standingKeys` is the reader's list.
+    const named = bondNamesStandingKey(read.advert, confirmed, bond && bond.standingKeys, Number(contract.censusConfirmations ?? 0));
     if (!named.ok) { excluded.push({ ...e, why: named.why }); continue; }
 
     // AND THE AMOUNT IS THE CHAIN'S. This was the entry's own claim, measured:
@@ -30483,7 +30557,7 @@ function entryFromEvidence(item, { contract, headers, firstHeight, bond, verify 
   bondSats = seen.valueSats;
   const matures = maturityStands(advert, height, network);
   if (!matures.ok) return { ok: false, why: matures.why };
-  const named = bondNamesStandingKey(advert, height, bond && bond.standingKeys);
+  const named = bondNamesStandingKey(advert, height, bond && bond.standingKeys, Number(contract.censusConfirmations ?? 0));
   if (!named.ok) return { ok: false, why: named.why };
   // RESOLVE's filters, on the body the bond committed to
   // FROM PROTOCOL 19 THE FLOOR IS THE NODE'S SUM (kanban #544), asked over the whole census below - as a seat's census asks it.
