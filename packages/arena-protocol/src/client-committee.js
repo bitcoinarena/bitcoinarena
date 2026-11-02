@@ -19,12 +19,13 @@
 import { tableAnchorOf } from './known-game.js';
 import { parseTransaction, commitmentsOf, witnessRunsOf } from './tx.js';
 import { splitSignedAdvert, decodeAdvert, advertId } from './advert.js';
-import { provesTransaction, recognizeBond, merkleRootFromProof } from './chain.js';
+import { blockHashOf, provesTransaction, recognizeBond, merkleRootFromProof } from './chain.js';
 import { decodeAncestorAdvert } from './ancestor.js';
 import { acceptAncestorEndpoint } from './ancestor-endpoint.js';
 import { readAdvertUpdate } from './advert-update.js';
 import { maturityStands } from './bond-script.js';
-import { bondNamesStandingKey } from './census-key.js';
+import { bondNamesStandingKey, censusKeyAnchorIn, censusKeyBodyIn, censusKeyContract, censusKeyDrawHeight, censusKeyRecordDue, censusKeyRecordStands, censusKeyShares } from './census-key.js';
+import { BOND_TEMPLATE_V3 } from './bond-script.js';
 import { censusRootOf, sumsBonds, floorOnSums } from './census.js';
 import { beaconFromChain, committeeSeedFromBeacon } from './beacon.js';
 import { selectCommittee, drawCommittee, slotsForRole, drawAttestors } from './sortition.js';
@@ -160,6 +161,49 @@ export function entryFromEvidence(item, { contract, headers, firstHeight, bond, 
     entry = { ...entry, advert: advertNow, advertId: read.advertId, roles, hostedGames: read.advert.hostedGames };
   }
   return { ok: true, entry };
+}
+
+/** Does any bond of this evidence name a census key? Only then has a client any standing key to read, and a census without one costs it nothing. */
+export function evidenceNamesCensusKey(evidence) {
+  return (evidence || []).some((item) => {
+    const b = proofOf(item);
+    if (!b || !b.transaction || item.reaffirm) return false;
+    try { const c = committedSigned(parseTransaction(b.transaction)); return !!c && c.advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3; } catch { return false; }
+  });
+}
+
+/**
+ * ONE STANDING KEY, CHECKED BY THE CLIENT (5A.3B, kanban #1048): "a client that cannot count a bond cannot check a draw". A seat hands the anchor with its merkle branch and the census the
+ * record names; here the anchor is proved into the agreed headers, the body read from the leaf it spends, the record held to its epoch's rule, every census entry rebuilt as a round's
+ * is, and its signatures counted against the shares of that census. So a seat can withhold a key and cannot make one up. Keys are read in chain order: a record's census reads the keys
+ * standing below it, in `bond.standingKeys`. `firstHeight` is the network's, `keyFirstHeight` where its keys begin. Answers { ok, key: { epoch, publicKey, height } } or { ok: false, why }.
+ */
+export function censusKeyRecordFromEvidence({ item, evidence, networkId, network, genesis = null, keyFirstHeight, censusConfirmations, headers, firstHeight, bond, verify, sharesMax = undefined }) {
+  const b = proofOf(item);
+  if (!b || !b.transaction) return { ok: false, why: 'no anchor transaction' };
+  let tx; try { tx = parseTransaction(b.transaction); } catch (e) { return { ok: false, why: `the anchor is not a transaction: ${e.message}` }; }
+  const height = provenAt(headers, firstHeight, tx.txid, b);
+  if (height === null) return { ok: false, why: 'that anchor is not in any block of the agreed headers' };
+  const id = censusKeyAnchorIn(tx.outputs);
+  const body = id ? censusKeyBodyIn(tx, id) : null;
+  if (!body) return { ok: false, why: 'that transaction is no anchor with its body' };
+  const { record, signatures } = body;
+  if (!sameCC(record.networkId, networkId)) return { ok: false, why: 'that record is for another network' };
+  const due = censusKeyRecordDue({ record, height, network, firstHeight: keyFirstHeight, censusConfirmations });
+  if (!due.ok) return due;
+  const contract = censusKeyContract({ networkId, network, height: due.censusHeight, censusConfirmations, genesis });
+  const entries = [];
+  for (const piece of evidence || []) {
+    const got = entryFromEvidence(piece, { contract, headers, firstHeight, bond, verify });
+    if (!got.ok) return { ok: false, why: `that census holds an entry that does not stand: ${got.why}` };
+    entries.push(got.entry);
+  }
+  const counted = floorOnSums(entries, contract);
+  const draw = headers[censusKeyDrawHeight(record.epoch, network) - firstHeight];
+  if (!draw) return { ok: false, why: 'the agreed headers do not reach that key\'s draw' };
+  const shares = censusKeyShares({ entries: counted.kept, network, genesis, blockHash: Uint8Array.from(blockHashOf(draw)).reverse(), ...(sharesMax ? { sharesMax } : {}) });
+  const stands = censusKeyRecordStands({ record, signatures, networkId, shares, verify });
+  return stands.ok ? { ok: true, key: { epoch: record.epoch, publicKey: record.publicKey, height } } : stands;
 }
 
 /**

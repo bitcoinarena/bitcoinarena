@@ -5,7 +5,7 @@
 // everywhere in this package, and making the key is the seats' work.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex, fromHex, bytesToBigInt, sha256 } from './hash.js';
-import { TAG, BOND_SUM_VERSION } from './constants.js';
+import { TAG, CENSUS_KEY_VERSION } from './constants.js';
 import { BOND_TEMPLATE_V3, BOND_MATURITY_OFFSET } from './bond-script.js';
 import { CENSUS_KEY_SHARES_MAX, censusKeyBondMin } from './genesis.js';
 
@@ -125,27 +125,100 @@ export function decodeCensusKeyRecord(bytes) {
 export const censusKeyRecordId = (r) => taggedHash(TAG.censusKeyRecord, encodeCensusKeyRecord(r));
 
 const ANCHOR_MAGIC = [0x41, 0x52, 0x4e, 0x4b];         // "ARN" 'K'
+const RESHARE_MAGIC = [0x41, 0x52, 0x4e, 0x52];        // "ARN" 'R'
+const censusKeyJoin = (parts) => { const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let at = 0; for (const p of parts) { out.set(p, at); at += p.length; } return out; };
+const censusKeyU32 = (n) => Uint8Array.of(n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255);
 
 /** The anchor: OP_RETURN "ARN" 'K' H(record). */
 export function censusKeyAnchor(record) {
   return { value: 0n, script: Uint8Array.from([0x6a, 36, ...ANCHOR_MAGIC, ...censusKeyRecordId(record)]) };
 }
 
-/** And the reading of one: the record's id, or null. */
-export function censusKeyAnchorIn(outputs) {
+const hashPushIn = (outputs, magic) => {
   for (const o of outputs || []) {
     const s = o.script;
-    if (s && s.length === 38 && s[0] === 0x6a && s[1] === 36 && ANCHOR_MAGIC.every((b, i) => s[2 + i] === b)) return s.slice(6);
+    if (s && s.length === 38 && s[0] === 0x6a && s[1] === 36 && magic.every((b, i) => s[2 + i] === b)) return s.slice(6);
+  }
+  return null;
+};
+
+/** And the reading of one: the record's id, or null. */
+export const censusKeyAnchorIn = (outputs) => hashPushIn(outputs, ANCHOR_MAGIC);
+
+/**
+ * WHO IS PRESENT AT A RESHARE (kanban #1048 answer 1): the chain says, so every node has one set. Old holders sign ReshareReady { key, run } in the first quarter of founding_window, and
+ * the first holder in duty order with signatures covering the old threshold anchors them, the list in its leaf, OP_RETURN "ARN" 'R' H(list). The first valid anchor of a run IS
+ * `present`. A key's run is the epoch whose window it runs in, so a run that fails is followed by the next epoch's.
+ */
+export const reshareReadyId = ({ networkId, key, run }) => taggedHash(TAG.reshareReady, censusKeyJoin([networkId, key, censusKeyU32(run)]));
+
+export function encodeReshareList({ networkId, key, run, signatures }) {
+  const w = new Writer();
+  w.bytes32(networkId);
+  w.bytes32(key);
+  w.u32(run);
+  w.vec(signatures, (s, ww) => { ww.bytes32(s.key); ww.bytes(s.signature, 64); }, { sortedBy: (a, b) => (toHex(a.key) < toHex(b.key) ? -1 : 1) });
+  return w.finish();
+}
+
+export function decodeReshareList(bytes) {
+  const r = new Reader(bytes);
+  const out = { networkId: r.bytes32(), key: r.bytes32(), run: r.u32(), signatures: r.vec((rr) => ({ key: rr.bytes32(), signature: rr.bytes(64) })) };
+  r.end();
+  return out;
+}
+
+export const reshareListId = (bytes) => taggedHash(TAG.reshareList, bytes);
+export const reshareAnchor = (bytes) => ({ value: 0n, script: Uint8Array.from([0x6a, 36, ...RESHARE_MAGIC, ...reshareListId(bytes)]) });
+export const reshareAnchorIn = (outputs) => hashPushIn(outputs, RESHARE_MAGIC);
+
+/** The list an 'R' anchor's own transaction carries, by the id its OP_RETURN names, or null. */
+export function reshareListIn(tx, id) {
+  const want = toHex(id);
+  for (const body of envelopesIn(tx)) {
+    if (toHex(reshareListId(body)) !== want) continue;
+    try { return decodeReshareList(body); } catch { /* not a list after all */ }
   }
   return null;
 }
 
-const RECORD_BYTES = 112, BODY_SIGNATURE_BYTES = 96;
-/** Bitcoin Core holds a tapscript witness item to 80 bytes, so a body travels in pieces, as an advertisement's does (regtest-bond.mjs). */
-export const CENSUS_KEY_BODY_PIECE = 80;
+/**
+ * A RESHARE'S WINDOW: the epoch's founding_window, as a keygen's. Its first quarter is for ReshareReady, and the deals run in the rest as in a keygen: the rest's first half deals, its
+ * second half signatures. An anchor counts from the window's first block until the midpoint, so at least one block of deals follows it.
+ */
+export function reshareWindow(epoch, network, foundingWindow) {
+  const { start, end } = censusKeyWindow(epoch, network, foundingWindow);
+  const ready = start + Math.floor(foundingWindow / 4);
+  return { start, ready, midpoint: ready + Math.floor((end - ready) / 2), end };
+}
 
 /**
- * THE BODY OF AN ANCHOR (kanban #1041 answer 3): the record and its signatures, in the witness of the anchor transaction, as an advertisement body is (5A.2, 25.1).
+ * IS THIS LIST `present`? This network's, and every signer an old holder whose signature on ReshareReady verifies, together holding the old threshold. `holders` and `threshold` are the
+ * key's as its newest record stands. Answers { ok, present: [hex], have } or { ok: false, why }.
+ */
+export function reshareListStands({ list, networkId, holders, threshold, verify }) {
+  if (typeof verify !== 'function') return { ok: false, why: 'checking a list needs a verifier, and none was injected' };
+  if (toHex(list.networkId) !== toHex(networkId)) return { ok: false, why: 'that list is for another network' };
+  const held = new Map(holders.map((h) => [h.key, h.shares]));
+  const digest = reshareReadyId(list);
+  const present = new Set();
+  let have = 0;
+  for (const s of list.signatures) {
+    const k = toHex(s.key);
+    if (!held.has(k)) return { ok: false, why: `${k.slice(0, 16)} holds no share of that key` };
+    let good = false;
+    try { good = verify(s.signature, digest, s.key) === true; } catch { good = false; }
+    if (!good) return { ok: false, why: `${k.slice(0, 16)}'s ReshareReady does not verify` };
+    if (!present.has(k)) { present.add(k); have += held.get(k); }
+  }
+  if (have < threshold) return { ok: false, why: `holders of ${have} shares signed that list, and the key's threshold is ${threshold}` };
+  return { ok: true, present: [...present], have };
+}
+
+const RECORD_BYTES = 112;
+
+/**
+ * THE BODY OF AN ANCHOR (kanban #1041 answer 3): the record and its signatures, on the chain with the anchor transaction, as an advertisement body is (5A.2, 25.1).
  * So it is retrievable by anyone with the chain, there is nothing to serve, and a census stays a pure function of the chain. Signers in ascending key.
  */
 export function encodeCensusKeyBody({ record, signatures }) {
@@ -163,49 +236,69 @@ export function decodeCensusKeyBody(bytes) {
   return { record, signatures };
 }
 
-/** The body in pieces of at most 80 bytes, each one witness item. */
-export function censusKeyBodyPieces(body) {
+const ENVELOPE_PIECE = 520;     // the most one push may hold
+
+/**
+ * AN ANCHOR'S BODY LIVES IN THE LEAF ITS TRANSACTION SPENDS (kanban #1048): `<key> CHECKSIG OP_0 OP_IF <pushes> OP_ENDIF`. The funded output commits to the leaf, so no relay can take the
+ * body off a spend, and the signatures are as safe as the record. It costs nothing: a piece of 520 bytes takes 3 bytes of script where 80 bytes on the stack took 2.
+ */
+export function censusKeyEnvelope(body) {
+  const parts = [Uint8Array.of(0x00, 0x63)];
+  for (let at = 0; at < body.length; at += ENVELOPE_PIECE) {
+    const piece = body.subarray(at, Math.min(at + ENVELOPE_PIECE, body.length));
+    parts.push(piece.length < 76 ? Uint8Array.of(piece.length) : piece.length < 256 ? Uint8Array.of(0x4c, piece.length) : Uint8Array.of(0x4d, piece.length & 255, piece.length >> 8), piece);
+  }
+  parts.push(Uint8Array.of(0x68));
+  return censusKeyJoin(parts);
+}
+
+/** The pushes of an envelope at `at`, joined, or null where the script is not one to its last byte. */
+function envelopeBody(script, at) {
+  if (script[at] !== 0x00 || script[at + 1] !== 0x63) return null;
+  const parts = [];
+  let i = at + 2;
+  while (i < script.length && script[i] !== 0x68) {
+    const op = script[i];
+    const wide = op === 0x4d ? 3 : op === 0x4c ? 2 : op >= 1 && op < 76 ? 1 : 0;
+    if (!wide || i + wide > script.length) return null;
+    const length = op === 0x4d ? script[i + 1] | (script[i + 2] << 8) : op === 0x4c ? script[i + 1] : op;
+    i += wide;
+    if (i + length > script.length) return null;
+    parts.push(script.subarray(i, i + length));
+    i += length;
+  }
+  return i === script.length - 1 ? censusKeyJoin(parts) : null;
+}
+
+/** Every envelope a transaction's inputs reveal: the leaf is the last witness item but the control block, an annex aside. */
+function envelopesIn(tx) {
   const out = [];
-  for (let at = 0; at < body.length; at += CENSUS_KEY_BODY_PIECE) out.push(body.subarray(at, Math.min(at + CENSUS_KEY_BODY_PIECE, body.length)));
+  for (const stack of tx.witnesses || []) {
+    const items = stack.length > 2 && stack[stack.length - 1][0] === 0x50 ? stack.slice(0, -1) : stack;
+    const script = items[items.length - 2];
+    if (!script || script.length < 37 || script[0] !== 0x20 || script[33] !== 0xac) continue;
+    const body = envelopeBody(script, 34);
+    if (body) out.push(body);
+  }
   return out;
 }
 
-const joinedFrom = (stack, first, length) => {
-  const out = new Uint8Array(length);
-  let at = 0;
-  for (let i = first; i < stack.length && at < length; i++) {
-    const part = stack[i].subarray(0, Math.min(stack[i].length, length - at));
-    out.set(part, at); at += part.length;
-  }
-  return at === length ? out : null;
-};
-
-/**
- * THE BODY AN ANCHOR'S OWN WITNESS CARRIES, by the id its OP_RETURN names, or null. Not witnessRunsOf: that joins every run of a stack, and a 245-piece body
- * would be about 30,000 joins per transaction. The record has a fixed size, so its first bytes say where a body starts, and its count says where it ends.
- */
+/** THE BODY AN ANCHOR'S OWN TRANSACTION CARRIES, by the id its OP_RETURN names, or null. */
 export function censusKeyBodyIn(tx, id) {
   const want = toHex(id);
-  for (const stack of tx.witnesses || []) {
-    for (let i = 0; i < stack.length; i++) {
-      const head = joinedFrom(stack, i, RECORD_BYTES + 2);
-      if (!head || toHex(taggedHash(TAG.censusKeyRecord, head.subarray(0, RECORD_BYTES))) !== want) continue;
-      const length = RECORD_BYTES + 2 + ((head[RECORD_BYTES] << 8) | head[RECORD_BYTES + 1]) * BODY_SIGNATURE_BYTES;
-      const whole = joinedFrom(stack, i, length);
-      if (!whole) continue;
-      try { return decodeCensusKeyBody(whole); } catch { /* not a body after all */ }
-    }
+  for (const body of envelopesIn(tx)) {
+    if (body.length < RECORD_BYTES || toHex(taggedHash(TAG.censusKeyRecord, body.subarray(0, RECORD_BYTES))) !== want) continue;
+    try { return decodeCensusKeyBody(body); } catch { /* not a body after all */ }
   }
   return null;
 }
 
 /**
  * THE CENSUS A KEY READS (5A.4, before any role filter). A pure function of the chain, so it names no version a build moves: the key's census is read at
- * BOND_SUM_VERSION, the first whose bonds count as their node's sum, with B as its floor and the network's census_confirmations.
+ * CENSUS_KEY_VERSION, the version that runs the daemon, with B as its floor and the network's census_confirmations (kanban #1048 answer 2).
  */
-export const CENSUS_KEY_CENSUS_VERSION = BOND_SUM_VERSION;
 export const censusKeyContract = ({ networkId, network, height, censusConfirmations, genesis = null }) => ({
-  networkId, censusHeight: height, censusConfirmations, bondMinSats: censusKeyBondMin(network, genesis), protocolVersion: CENSUS_KEY_CENSUS_VERSION,
+  networkId, censusHeight: height, censusConfirmations, bondMinSats: censusKeyBondMin(network, genesis), protocolVersion: CENSUS_KEY_VERSION,
 });
 
 /**

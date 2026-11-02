@@ -735,14 +735,15 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (run_id, node, record_id)
     );
     CREATE TABLE IF NOT EXISTS census_key_held (
-      public_key   BLOB PRIMARY KEY,
+      public_key   BLOB NOT NULL,
       epoch        INTEGER NOT NULL,
       run_id       BLOB NOT NULL,
       record       BLOB NOT NULL,
       negated      INTEGER NOT NULL,
       shares       TEXT NOT NULL,
       commitments  BLOB NOT NULL,
-      updated_ms   INTEGER NOT NULL
+      updated_ms   INTEGER NOT NULL,
+      PRIMARY KEY (public_key, epoch)
     );
     CREATE TABLE IF NOT EXISTS census_key_anchors (
       height      INTEGER NOT NULL,
@@ -750,6 +751,7 @@ export function openStore(path = ':memory:') {
       block_hash  TEXT NOT NULL,
       txid        TEXT NOT NULL,
       record_id   BLOB NOT NULL,
+      kind        TEXT NOT NULL,
       body        BLOB,
       stands      INTEGER NOT NULL,
       why         TEXT,

@@ -25,7 +25,13 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25]);
+/**
+ * THE VERSION THAT RUNS THE CENSUS KEY'S DAEMON (5A.3B, RULED 2026-11-02, kanban #1048 answer 2). A node that does not speak it cannot deal or sign, so a share given to it counts against
+ * the threshold and nobody can use it: a node whose advertisement does not list this version is out of the key's census, in T and the shares alike. It is above BOND_SUM_VERSION, so
+ * bonds sum. No round runs it, and a build that lists it changes no round.
+ */
+export const CENSUS_KEY_VERSION = 25;
 /** EVERY BONDED NODE HOSTS A MARKET WITH A SOURCE (kanban #920): its rounds say so in their question (`event.allBonded`), so no node's advertisement has to name each new market. */
 export const SOURCE_HOSTS_VERSION = 23;
 /** THE FOUNDING DRAW UNDER PRESSURE (kanban #993, §23A.3a): no round's layout changes; from FOUNDING_PRESSURE_HEIGHT only a node that advertises this version is a candidate. */
@@ -528,6 +534,8 @@ export const TAG = {
   carrierEscrowPegIn: 'ARENA/v1/CarrierEscrowPegIn',
   censusKeyRecord: 'ARENA/v1/CensusKeyRecord',
   censusKeyShare: 'ARENA/v1/CensusKeyShare',
+  reshareReady: 'ARENA/v1/ReshareReady',
+  reshareList: 'ARENA/v1/ReshareList',
   carrierPegIn: 'ARENA/v1/CarrierPegIn',
   censusRun: 'ARENA/v1/CensusRun',
   censusDealer: 'ARENA/v1/CensusDealer',

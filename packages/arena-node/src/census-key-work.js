@@ -13,14 +13,14 @@ import { encodeCensusKeyRecord } from '../../arena-protocol/src/census-key.js';
 const random = (n) => new Uint8Array(randomBytes(n));
 
 /**
- * `job`: { kind, key, secret, run, deals, statements }. `deals` is the plain bytes of the deals to read, dropped ones left out by the caller.
+ * `job`: { kind, key, secret, run, part, deals, statements }. `deals` is the plain bytes of the deals to read, dropped ones left out by the caller. `part` is a reshare dealer's part of the key.
  *   deal     this node's one deal
  *   check    answers each bad deal's complaint and every dealer it refuses
  *   sign     this node's signature on the record of the deals handed in
  *   finish   this node's shares, once `statements` show the threshold on the record of those deals
  */
-export async function censusKeyWork({ kind, key, secret, run, deals = [], statements = [] }) {
-  const dkg = new CensusDkg({ key, secret, run, curve: feldmanGroup, random });
+export async function censusKeyWork({ kind, key, secret, run, part = null, deals = [], statements = [] }) {
+  const dkg = new CensusDkg({ key, secret, run, part, curve: feldmanGroup, random });
   if (kind === 'deal') return dkg.deal();
   const refused = [];
   for (const bytes of deals) {
@@ -29,9 +29,10 @@ export async function censusKeyWork({ kind, key, secret, run, deals = [], statem
   }
   if (kind === 'check') {
     const seen = dkg.check();
-    return { ok: true, complaints: seen.complaints.map(encodeCensusComplaint), bad: [...dkg.bad.keys()], refused };
+    return { ok: true, complaints: seen.complaints.map(encodeCensusComplaint), bad: [...dkg.bad.keys()], refused, ...(run.reshare && !seen.ok && seen.why ? { why: seen.why } : {}) };
   }
   if (kind === 'sign') {
+    if (run.reshare) { const whole = dkg.reshareHolds(); if (!whole.ok) return whole; }
     const said = dkg.statement();
     if (!said) return { ok: false, why: 'this node holds no deal to sign a record of' };
     return { ok: true, ...said, record: encodeCensusKeyRecord(dkg.record()), set: [...dkg.deals.keys()] };

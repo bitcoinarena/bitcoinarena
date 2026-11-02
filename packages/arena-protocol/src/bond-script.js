@@ -244,9 +244,9 @@ export function slashLeaf(arbitrationKeys, k) {
 
 /** BIP-341: tagged_hash("TapLeaf", version || compact_size(script) || script). */
 export function tapLeafHash(script, version = TAPLEAF_VERSION) {
-  if (script.length > 0xffff) throw new RangeError('no template writes a script that long');
-  // Template 3's release leaf holds 14 keys, over the 252 bytes one length byte can say. Every shorter leaf hashes as it always did.
-  const size = script.length <= 252 ? [script.length] : [0xfd, script.length & 255, script.length >>> 8];
+  // Template 3's release leaf holds 14 keys, over the 252 bytes one length byte can say, and a census key's anchor at most 683 signers, over two bytes. Every shorter leaf hashes as it always did.
+  const n = script.length;
+  const size = n <= 252 ? [n] : n <= 0xffff ? [0xfd, n & 255, n >>> 8] : [0xfe, n & 255, (n >>> 8) & 255, (n >>> 16) & 255, n >>> 24];
   return taggedHash('TapLeaf', cat(Uint8Array.from([version, ...size]), script));
 }
 

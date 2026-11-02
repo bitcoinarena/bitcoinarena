@@ -3442,7 +3442,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE CENSUS KEY (5A.3B, kanban #972): the chain scan, then this node's side of a run, one pass at a time. Off on a network that names no first height (census-key-chain.js).
   const censusKeyRun = censusKey ? createCensusKeyRun({ store: new CensusKeyStore(round.db), network: censusKey.network, networkId: censusKey.networkId, key: round.identity.pubkey,
     secret: round.identity.secret, firstHeight: censusKey.firstHeight, foundingWindow: censusKey.foundingWindow, censusConfirmations: censusKey.censusConfirmations, tipHeight: censusKey.tipHeight,
-    blockHashAt: censusKey.blockHashAt, censusEntriesAt: censusKey.censusEntriesAt, standing: censusKey.scan.standing, scannedTo: censusKey.scan.scannedTo, post: censusKey.post,
+    blockHashAt: censusKey.blockHashAt, censusEntriesAt: censusKey.censusEntriesAt, standing: censusKey.scan.standing, scannedTo: censusKey.scan.scannedTo, plan: censusKey.scan.planAt,
+    reshareList: censusKey.scan.reshareList, generationOf: censusKey.scan.generationOf, post: censusKey.post,
     log: (l) => console.log(l) }) : null;
   const censusKeyTimer = censusKey ? setInterval(() => {
     if (shuttingDown) return;
@@ -11055,6 +11056,33 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!censusKey) return text(res, 404, 'this seat runs no census key: its network names no first height');
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(JSON.stringify({ ...censusKey.scan.status(), ...censusKeyRun.status() }));
+      }
+      // WHAT A PAGE READS THE STANDING KEYS FROM (kanban #1048): each anchor with what proves it into the chain the page agreed, and the census its signers are held to. It checks all of it
+      // itself (client-committee.js censusKeyRecordFromEvidence), so a seat can withhold a key and cannot make one up.
+      if (req.method === 'GET' && url.pathname === '/census-key/records') {
+        if (!censusKey) return text(res, 404, 'this seat runs no census key: its network names no first height');
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify({ firstHeight: censusKey.firstHeight, records: await censusKey.scan.recordProofs() }));
+      }
+      if (req.method === 'GET' && url.pathname === '/census-key/census') {
+        if (!censusKey) return text(res, 404, 'this seat runs no census key: its network names no first height');
+        const height = Number(url.searchParams.get('height'));
+        if (!(await censusKey.scan.recordProofs()).some((r) => r.censusHeight === height)) return text(res, 404, 'no key on this chain reads the census at that height');
+        const got = await censusKey.censusEvidenceAt(height);
+        if (!got.ok) return text(res, 503, got.why);
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify({ height, entries: got.entries }));
+      }
+      if (censusKeyRun && req.method === 'POST' && url.pathname === '/census-dkg/ready') {
+        let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'that is not JSON'); }
+        const took = censusKeyRun.takeReady(body);
+        return took.ok ? text(res, 200, 'taken') : text(res, took.status || 409, took.why);
+      }
+      if (censusKeyRun && req.method === 'GET' && url.pathname === '/census-dkg/ready') {
+        const held = censusKeyRun.readyHeld(String(url.searchParams.get('key') || '').toLowerCase(), url.searchParams.get('run'));
+        if (!held) return text(res, 404, 'this node is not reading that reshare');
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify(held));
       }
       if (censusKeyRun && req.method === 'POST' && url.pathname === '/census-dkg/deal') {
         const took = await censusKeyRun.takeDeal(await read(req));

@@ -55,11 +55,14 @@ export const CENSUS_KEY_BOND_MIN = Object.freeze({ testnet4: 50000n, regtest: 50
 /**
  * WHERE A NETWORK'S CENSUS KEYS BEGIN (kanban #1041 answer 2, #1021 ruling 5): the chain scan for "ARN" 'K' runs forward from this height and keeps what it
  * found across restarts, with no lookback window (a key is named by bonds for years, and #820 is what a window does). A run belongs to the epochs that
- * start at or after it, so the first key is that epoch's. Null is not named: no key and no template-3 bond on that network. Mainnet scans from genesis, key 0
- * being in genesis_parameters. Named per network by the release, as FOUNDING_PRESSURE_HEIGHT is.
+ * start at or after it, so the first key is that epoch's. Null is not named: no key and no template-3 bond on that network. Named per network by the release, as
+ * FOUNDING_PRESSURE_HEIGHT is, and only after the network runs CENSUS_KEY_VERSION. Mainnet has none here: it scans from genesis_height, which its genesis commits (kanban #1048).
  */
-export const CENSUS_KEY_FIRST_HEIGHT = Object.freeze({ mainnet: 0, testnet4: null, regtest: null });
-export const censusKeyFirstHeight = (network) => (Object.prototype.hasOwnProperty.call(CENSUS_KEY_FIRST_HEIGHT, network) ? CENSUS_KEY_FIRST_HEIGHT[network] : null);
+export const CENSUS_KEY_FIRST_HEIGHT = Object.freeze({ testnet4: null, regtest: null });
+export function censusKeyFirstHeight(network, genesis = null) {
+  if (network === 'mainnet') return genesis && Number.isInteger(genesis.genesisHeight) ? genesis.genesisHeight : null;
+  return Object.prototype.hasOwnProperty.call(CENSUS_KEY_FIRST_HEIGHT, network) ? CENSUS_KEY_FIRST_HEIGHT[network] : null;
+}
 
 export function censusKeyBondMin(network, genesis = null) {
   if (network === 'mainnet') {
@@ -158,6 +161,9 @@ export function encodeGenesisParameters(p) {
     w.u64(p.censusKeyBondMinSats);
     // THE KEY THE GENESIS FOUNDERS MADE BEFORE ANY BOND (§5A.3B): committed here, so it needs no anchor.
     w.bytes32(p.censusKey0);
+    // WHERE MAINNET'S CHAIN SCAN STARTS (§27A.6, kanban #1048): scanning from height 0 is years of nothing.
+    if (!Number.isInteger(p.genesisHeight) || p.genesisHeight < 0) throw new Error('genesis names genesis_height');
+    w.u32(p.genesisHeight);
   }
   return w.finish();
 }
@@ -170,7 +176,7 @@ export function encodeGenesisParameters(p) {
  * 6 confirmations; federations of 10 with federation_min 7; the fast clocks the owner set; ~30 days of bond maturity and notice;
  * governance 1008 / 1440 / 2016 (upgrades 2016 / 2016 / 4320, ballot.js).
  */
-export function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityPubkey, recoveryPubkey, genesisSeriesStartMs, bondMinGuardianSats, censusKey0, censusKeyBondMinSats } = {}) {
+export function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityPubkey, recoveryPubkey, genesisSeriesStartMs, bondMinGuardianSats, censusKey0, censusKeyBondMinSats, genesisHeight } = {}) {
   const is32 = (x) => x instanceof Uint8Array && x.length === 32;
   if (!is32(marker)) throw new Error('mainnet genesis needs its bond marker (32 bytes, §25.1): it has not been chosen');
   if (!Array.isArray(arbitrationKeys) || arbitrationKeys.length !== 7 || !arbitrationKeys.every(is32)) throw new Error('mainnet genesis needs its 7 arbitration keys');
@@ -179,8 +185,9 @@ export function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityP
   if (typeof bondMinGuardianSats !== 'bigint' || bondMinGuardianSats <= 0n) throw new Error('mainnet genesis names a guardian\'s bond floor');
   if (typeof censusKeyBondMinSats !== 'bigint' || censusKeyBondMinSats <= 0n) throw new Error('mainnet genesis names the lowest bracket\'s bond_min, the census key\'s B (§5A.3B)');
   if (!is32(censusKey0)) throw new Error('mainnet genesis needs census key 0: the founders run its DKG before any bond exists (§5A.3B)');
+  if (!Number.isInteger(genesisHeight) || genesisHeight < 0) throw new Error('mainnet genesis names genesis_height, where its chain scan starts (§5A.3B)');
   const genesis = {
-    chain: 'bitcoin-mainnet', genesisSeriesStartMs, censusKey0, censusKeySharesMax: CENSUS_KEY_SHARES_MAX, censusKeyBondMinSats,
+    chain: 'bitcoin-mainnet', genesisSeriesStartMs, genesisHeight, censusKey0, censusKeySharesMax: CENSUS_KEY_SHARES_MAX, censusKeyBondMinSats,
     federationNominal: 10, federationMin: 7, bondMinGuardianSats,
     abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216,
     gameVerifySlots: 7, gameVerifyThreshold: 5, settlementSlots: 7, settlementThreshold: 5, committeesBind: true,
