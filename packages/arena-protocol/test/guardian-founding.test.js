@@ -4,7 +4,8 @@
 // OPEN federation left out, bond_min_guardian held; nominal drawn and three alternates in order; a no-show replaced by the next.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { drawGuardians, replaceNoShows, FOUNDING_WINDOW, foundingTrigger } from '../src/guardian-founding.js';
+import { drawGuardians, replaceNoShows, FOUNDING_WINDOW, foundingTrigger, FOUNDING_PRESSURE_HEIGHT, foundingPressurePoint, foundingRecordHeight, foundingCandidateVersion } from '../src/guardian-founding.js';
+import { FOUNDING_PRESSURE_VERSION } from '../src/constants.js';
 import { toHex } from '../src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -202,18 +203,48 @@ test('pressure with more at B*_net than seats: only they are drawn, and the next
   assert.deepEqual(ids(d.alternates).map((k) => rich.has(k)), [true, true, false], 'nine of them: seven drawn, two alternates, then the rest');
 });
 
-test('ties at the boundary: exactly B*_net counts, a sat below does not, an operator counts its summed bond, equal bonds fall to the ticket', () => {
-  const at = node(1, 'at', { bond: 100000n }), below = node(2, 'below', { bond: 99999n }), two = [node(3, 'two', { bond: 60000n }), node(4, 'two', { bond: 40000n })];
+test('ties at the boundary: exactly B*_net counts, a sat below does not, equal bonds fall to the ticket', () => {
+  const at = node(1, 'at', { bond: 100000n }), below = node(2, 'below', { bond: 99999n });
   const others = Array.from({ length: 8 }, (_, i) => node(i + 10, `op${i + 10}`, { bond: 50000n }));
-  const entries = [at, below, ...two, ...others];
-  const d = drawGuardians({ ...base, entries, pressureBond: 100000n });
-  assert.equal(d.atPressureBond, 2, 'at, and two by its sum: not below');
-  const ahead = ids([at, two[0]]);
-  assert.deepEqual([...ids(d.drawn).slice(0, 2)].sort(), [...ahead].sort(), 'the operator of two nodes holds one ticket, its lowest outpoint');
+  const d = drawGuardians({ ...base, entries: [at, below, ...others], pressureBond: 100000n });
+  assert.equal(d.atPressureBond, 1); assert.equal(toHex(d.drawn[0].pubkey), toHex(at.pubkey));
   // equal bonds: the plain draw between the same two is the order, so the rule adds no tie of its own
   const pair = drawGuardians({ ...base, nominal: 1, entries: [at, node(5, 'peer', { bond: 100000n })], pressureBond: 100000n });
   const same = drawGuardians({ ...base, nominal: 1, entries: [at, node(5, 'peer', { bond: 100000n })] });
   assert.deepEqual([ids(pair.drawn), ids(pair.alternates)], [ids(same.drawn), ids(same.alternates)]);
+});
+
+test('the test reads the seated node, not the operator: two small nodes summing to B*_net are not ahead, one node\'s two outputs are (ruling #1023)', () => {
+  const two = [node(3, 'two', { bond: 60000n }), node(4, 'two', { bond: 40000n })];
+  const output = { ...node(2, 'added', { bond: 40000n }), txid: b32(0x7f) };
+  const others = Array.from({ length: 8 }, (_, i) => node(i + 10, `op${i + 10}`, { bond: 50000n }));
+  const d = drawGuardians({ ...base, entries: [node(2, 'added', { bond: 60000n }), output, ...two, ...others], pressureBond: 100000n });
+  assert.equal(d.atPressureBond, 1, 'the node with two outputs; not the operator with two nodes');
+  assert.equal(toHex(d.drawn[0].pubkey), toHex(b32(2)));
+  // the operator's sum still decides who may sit and the weight: 60,000 + 40,000 stays one ticket of 100,000
+  assert.equal(d.eligible, 10);
+  // the seated node is the one its ticket names, the lowest outpoint: a larger second node does not lift it
+  const big = [node(5, 'split', { bond: 50000n }), node(6, 'split', { bond: 100000n })];
+  assert.equal(drawGuardians({ ...base, entries: [...big, ...others], pressureBond: 100000n }).atPressureBond, 0);
+});
+
+test('from the point a node that does not advertise the version is no candidate; before it nothing is asked', () => {
+  const listing = (n, op, list) => { const e = node(n, op); e.advert.protocolVersions = list; return e; };
+  const entries = [...Array.from({ length: 8 }, (_, i) => listing(i + 1, `op${i + 1}`, [23, 24])), listing(9, 'old', [23]), node(10, 'none')];
+  assert.equal(drawGuardians({ ...base, entries, candidateVersion: 24 }).eligible, 8);
+  assert.equal(drawGuardians({ ...base, entries }).eligible, 10);
+  const op = 'two', parts = [listing(11, op, [23]), listing(12, op, [23, 24])];
+  assert.equal(drawGuardians({ ...base, nominal: 1, entries: parts, candidateVersion: 24 }).drawn[0].pubkey[0], 12, 'a lagging node of an operator is out, its other node stands');
+  assert.equal(drawGuardians({ ...base, entries: entries.slice(0, 6), candidateVersion: 24 }).ok, false, 'too few left founds nothing');
+});
+
+test('the point decides by the trigger: below it plain forever, not named plain everywhere, under 12 blocks no records', () => {
+  assert.equal(FOUNDING_PRESSURE_VERSION, 24);
+  assert.deepEqual({ ...FOUNDING_PRESSURE_HEIGHT }, { mainnet: 0, testnet4: null, regtest: null }, 'nothing moves on a live network until a release names a height');
+  assert.deepEqual([foundingPressurePoint('testnet4'), foundingPressurePoint('mainnet'), foundingPressurePoint('nowhere')], [null, 0, null]);
+  assert.deepEqual([foundingRecordHeight(1000, 1000), foundingRecordHeight(999, 1000), foundingRecordHeight(1000, null)], [988, null, null]);
+  assert.deepEqual([foundingRecordHeight(11, 0), foundingRecordHeight(12, 0)], [null, 0]);
+  assert.deepEqual([foundingCandidateVersion(1000, 1000), foundingCandidateVersion(999, 1000), foundingCandidateVersion(1000, null), foundingCandidateVersion(5, 0)], [24, null, null, 24]);
 });
 
 test('pressure leaves a succession alone: the old guardians first whatever their bonds, the rule orders the missing seats', () => {

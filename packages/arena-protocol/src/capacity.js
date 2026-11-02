@@ -88,6 +88,24 @@ export function capacityView({ federations, bondMinSats, pegInMinSats, was = {},
 }
 
 /**
+ * B*_NET FOR A FOUNDING DRAW (§23A.3a, kanban #993/#1023): the amount while the network is under pressure, null otherwise. `federations`
+ * [{ federation, status, nominal, reserveSats, exposureCapSats, band }], every one from its record in force at trigger_height - 12. The
+ * network is under pressure when the OPEN federation with the lowest load is in PRESSURE or worse: the band its record names, else the
+ * band its own load enters (no hysteresis). Never capacityBand's `was` or capacityView's network.band: those are one seat's memory, for
+ * the warnings. The lowest load is compared exactly, and a tie of loads goes to the lowest federation id.
+ */
+export function foundingPressureBond({ federations, bondMinSats }) {
+  const open = (federations || []).filter((x) => x && x.status === 'OPEN' && BigInt(x.exposureCapSats || 0) > 0n);
+  if (!open.length) return null;
+  const lower = (a, b) => { const l = BigInt(a.reserveSats || 0) * BigInt(b.exposureCapSats), r = BigInt(b.reserveSats || 0) * BigInt(a.exposureCapSats);
+    return l !== r ? l < r : String(a.federation) < String(b.federation); };
+  const lowest = open.reduce((a, b) => (lower(b, a) ? b : a));
+  const load = Number(BigInt(lowest.reserveSats || 0) * 1000000n / BigInt(lowest.exposureCapSats)) / 1000000;
+  const band = lowest.band || capacityBand(load, 'CALM');
+  return ['PRESSURE', 'CRITICAL', 'FULL'].includes(band) ? networkTargetBond(federations, bondMinSats) : null;
+}
+
+/**
  * THE PLEA TO ONE NODE (§23A.3a "Warnings ... a plea to increase the bond", kanban #543): what the node dashboard and the owner page
  * say to node `node` (hex) from a capacityView - null while every federation it is below target in is CALM and the network is CALM.
  * { level: 'warn' | 'bad', band, says, addSats?, pegInAddSats?, federation? }. The amount is what to ADD (Add to bond, #544).

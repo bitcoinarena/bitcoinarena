@@ -9,11 +9,40 @@
 // operator not guarding an OPEN federation; one ticket per operator (its lowest outpoint, its bonds summed into its weight).
 import { Writer } from './encode.js';
 import { taggedHash, bytesToBigInt, toHex } from './hash.js';
-import { TAG } from './constants.js';
+import { TAG, FOUNDING_PRESSURE_VERSION } from './constants.js';
 import { weightOf } from './sortition.js';
 import { tagAt } from './tag-switch.js';
 
 export const ALTERNATES = 3;
+
+/**
+ * WHEN THE PRESSURE RULE APPLIES (§23A.3a, kanban #993/#1023): one point per network, named by the release after every seat of the
+ * network runs it; null is not named, and the draw is plain everywhere. The trigger's own height decides: a trigger below the point draws
+ * plain forever, on any seat of any release, so a founding already drawn cannot change.
+ */
+export const FOUNDING_PRESSURE_HEIGHT = Object.freeze({
+  mainnet: 0,
+  testnet4: null,
+  regtest: null,
+});
+/** The records a founding reads are in force this many blocks behind its trigger: they step every 6 and come from a census 6 deep. */
+export const FOUNDING_RECORD_LAG = 12;
+export const foundingPressurePoint = (network) => (Object.prototype.hasOwnProperty.call(FOUNDING_PRESSURE_HEIGHT, network) ? FOUNDING_PRESSURE_HEIGHT[network] : null);
+const reached = (height, point) => Number.isInteger(point) && Number.isInteger(height) && height >= point;
+/** The height a founding at `height` reads records at, or null: before the point, or under FOUNDING_RECORD_LAG, nothing is under pressure. */
+export const foundingRecordHeight = (height, point) => (reached(height, point) && height >= FOUNDING_RECORD_LAG ? height - FOUNDING_RECORD_LAG : null);
+/** The version a candidate of a founding at `height` has to advertise, or null before the point. */
+export const foundingCandidateVersion = (height, point) => (reached(height, point) ? FOUNDING_PRESSURE_VERSION : null);
+
+/**
+ * The founding's id: H(founding tag, seed || trigger_height), with `pressureBond` set H(tag, seed || trigger_height || pressure_bond) -
+ * the tag by the trigger height (kanban #525). Seats that read another B*_net name another founding, so they cannot meet in one ceremony.
+ */
+export function foundingId(seed, triggerHeight, pressureBond = null) {
+  const w = new Writer(); w.bytes32(seed); w.u32(triggerHeight);
+  if (pressureBond !== null) w.u64(pressureBond);
+  return taggedHash(tagAt('founding', { height: triggerHeight }), w.finish());
+}
 
 const outpointOrder = (a, b) => { const x = toHex(a.txid) + ':' + a.vout, y = toHex(b.txid) + ':' + b.vout; return x < y ? -1 : x > y ? 1 : 0; };
 
@@ -36,14 +65,18 @@ export function guardianTicket(seed, entry, height) {
  * their nodes), minus `guardingOpen`; then three alternates. `drawn` is the whole seated list, seated-first and drawn alike - the
  * no-show rule (replaceNoShows) applies to every position.
  *
- * UNDER CAPACITY PRESSURE (§23A.3a "The founding draw under pressure", kanban #993): `pressureBond` is the network's B*_net while the
- * network is under pressure, null otherwise. Operators whose summed bond is at least that take the drawn places before every other
- * operator, in ticket order among themselves; the rest follow in ticket order, so too few of them leaves the other seats drawn as
- * always, and the alternates carry on down the same list. It orders the pool and nothing else: who is eligible, the weights, and a
- * succession's seated first (who are not candidates) do not change. With null the draw is the plain one, byte for byte, and the
- * answer gains `atPressureBond` only when it is set. Every seat of a founding has to pass the same value: the caller reads it.
+ * UNDER CAPACITY PRESSURE (§23A.3a "The founding draw under pressure", kanban #993/#1023): `pressureBond` is the network's B*_net while
+ * the network is under pressure, null otherwise. An operator whose seated node - the one its ticket names - holds a bond of at least that
+ * takes a drawn place before every other operator, in ticket order among themselves; the rest follow in ticket order, so too few of
+ * them leaves the other seats drawn as always, and the alternates carry on down the same list. The test reads that node's sum of
+ * outputs, never the operator's: exposure_cap is (f + 1) times the smallest seated bond, so two small nodes summing to B*_net lift
+ * nothing. It orders the pool and nothing else: who is eligible, the weights, and a succession's seated first (who are not candidates)
+ * do not change. With null the draw is the plain one, byte for byte, and the answer gains `atPressureBond` only when it is set.
+ *
+ * `candidateVersion`: from the point (foundingCandidateVersion), a node whose advertisement does not list it is no candidate - it would
+ * compute another draw, miss the ceremony and burn an alternate. Null leaves everyone in.
  */
-export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [], pressureBond = null }) {
+export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [], pressureBond = null, candidateVersion = null }) {
   if (!(seed instanceof Uint8Array) || seed.length !== 32) return { ok: false, why: 'a founding is drawn on the beacon after its trigger height' };
   if (typeof bondMinGuardian !== 'bigint' || bondMinGuardian <= 0n) return { ok: false, why: 'bond_min_guardian is a positive floor' };
   if (pressureBond !== null && (typeof pressureBond !== 'bigint' || pressureBond <= 0n)) return { ok: false, why: 'B*_net under pressure is a positive amount, or null when the network is not under pressure' };
@@ -52,18 +85,21 @@ export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian,
   const offered = seatedFirst || [];
   const first = offered.length >= f + 1 ? offered.slice(0, nominal) : [];
   const firstOps = new Set(first.map(opOf)), firstNodes = new Set(first.map((e) => toHex(e.pubkey)));
-  const byOp = new Map();
+  const byOp = new Map(), nodeSats = new Map();
+  const nodeKey = (op, e) => `${op}|${toHex(e.pubkey)}`;
   for (const e of entries || []) {
     const a = e && e.advert;
     if (!a || a.guardianCapable !== true || !a.guardianEndpoint) continue;
+    if (candidateVersion !== null && !(a.protocolVersions || []).includes(candidateVersion)) continue;
     const op = String(a.operatorId || toHex(e.pubkey));
     if (guardingOpen.has(op) || firstOps.has(op) || firstNodes.has(toHex(e.pubkey))) continue;
+    nodeSats.set(nodeKey(op, e), (nodeSats.get(nodeKey(op, e)) || 0n) + BigInt(e.bondSats));
     const had = byOp.get(op);
     if (!had) { byOp.set(op, { entry: e, bondSats: BigInt(e.bondSats) }); continue; }
     had.bondSats += BigInt(e.bondSats);
     if (outpointOrder(e, had.entry) < 0) had.entry = e;
   }
-  const pool = [...byOp.values()].filter((x) => x.bondSats >= bondMinGuardian);
+  const pool = [...byOp].filter(([, x]) => x.bondSats >= bondMinGuardian).map(([op, x]) => ({ ...x, op }));
   const missing = nominal - first.length;
   const allDrawn = offered.length && !first.length ? `, everything drawn: ${offered.length} seated first is fewer than f + 1 = ${f + 1}` : '';
   if (pool.length < missing)
@@ -71,7 +107,7 @@ export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian,
       ? `${first.length} seated first, and ${pool.length} other guardian-capable operators hold bond_min_guardian and guard no OPEN federation: the ${missing} missing seats of ${nominal} are not filled, a federation is not founded with fewer`
       : `${pool.length} guardian-capable operators hold bond_min_guardian and none guards an OPEN federation: a federation of ${nominal} is not founded with fewer${allDrawn}` };
   const scored = pool.map((x) => ({ entry: x.entry, ticket: guardianTicket(seed, x.entry, height), weight: weightOf(x.bondSats, bondMinGuardian),
-    ahead: pressureBond !== null && x.bondSats >= pressureBond }))
+    ahead: pressureBond !== null && nodeSats.get(nodeKey(x.op, x.entry)) >= pressureBond }))
     .sort((a, b) => { if (a.ahead !== b.ahead) return a.ahead ? -1 : 1; const l = a.ticket * b.weight, r = b.ticket * a.weight; return l < r ? -1 : l > r ? 1 : outpointOrder(a.entry, b.entry); });
   const ahead = scored.filter((s) => s.ahead).length;
   return { ok: true, eligible: pool.length, seatedFirst: first.length, ...(pressureBond !== null ? { atPressureBond: ahead } : {}), drawn: [...first, ...scored.slice(0, missing).map((s) => s.entry)],

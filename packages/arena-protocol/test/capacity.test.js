@@ -133,3 +133,25 @@ test('gateway weights: (min(proved peg-in, P*))^2 under PRESSURE and peg-in pres
   assert.equal(gatewayWeights({ ...base, reserveSats: 300_000n, pegIns: [{ node: A, pegInSats: 50_000n }, { node: B, pegInSats: 0n }] }), null, 'CALM: evenly');
   assert.equal(gatewayWeights({ ...base, pegIns: [{ node: A, pegInSats: 0n }, { node: B, pegInSats: 0n }] }), null, 'nothing proved: evenly');
 });
+
+test('B*_net for a founding: the band the lowest-load OPEN record enters, no hysteresis, never a seat\'s memory (§23A.3a, kanban #993/#1023)', async () => {
+  const { foundingPressureBond } = await import('../src/capacity.js');
+  const fed = (federation, reserveSats, exposureCapSats, status = 'OPEN', extra = {}) => ({ federation, status, nominal: 7, reserveSats, exposureCapSats, ...extra });
+  const bondMinSats = 50000n;
+  assert.equal(foundingPressureBond({ federations: [fed('a', 130000n, 150000n)], bondMinSats }), 86667n, 'the spec\'s example, load 0.87');
+  assert.equal(foundingPressureBond({ federations: [fed('a', 104999n, 150000n)], bondMinSats }), null, 'load 0.6999: below the entry, and no hysteresis keeps it in');
+  assert.equal(foundingPressureBond({ federations: [fed('a', 105000n, 150000n)], bondMinSats }), 70000n, 'exactly 70 % enters');
+  // the lowest-load one decides, and B*_net is over every OPEN one
+  assert.equal(foundingPressureBond({ federations: [fed('a', 140000n, 150000n), fed('b', 50000n, 150000n)], bondMinSats }), null, 'b has room');
+  assert.equal(foundingPressureBond({ federations: [fed('a', 140000n, 150000n), fed('b', 120000n, 150000n)], bondMinSats }), 86667n, '260,000 over 2 x 3 at 0.5');
+  // a draining or empty federation is not the lowest
+  assert.equal(foundingPressureBond({ federations: [fed('a', 140000n, 150000n), fed('b', 0n, 150000n, 'DRAINING')], bondMinSats }), 93334n);
+  assert.equal(foundingPressureBond({ federations: [fed('a', 140000n, 150000n), fed('b', 0n, 0n)], bondMinSats }), 46667n > bondMinSats ? 46667n : bondMinSats, 'no cap, no load; its f + 1 still counts in B*_net');
+  assert.equal(foundingPressureBond({ federations: [], bondMinSats }), null);
+  assert.equal(foundingPressureBond({ federations: [fed('a', 0n, 150000n, 'DRAINING')], bondMinSats }), null);
+  // a record that names its band is read as it says; a tie of loads goes to the lowest id, whatever the order
+  assert.equal(foundingPressureBond({ federations: [fed('a', 50000n, 150000n, 'OPEN', { band: 'PRESSURE' })], bondMinSats }), 50000n);
+  const tied = [fed('b', 75000n, 150000n, 'OPEN', { band: 'CALM' }), fed('a', 150000n, 300000n, 'OPEN', { band: 'CRITICAL' })];
+  assert.equal(foundingPressureBond({ federations: tied, bondMinSats }), foundingPressureBond({ federations: [...tied].reverse(), bondMinSats }));
+  assert.notEqual(foundingPressureBond({ federations: tied, bondMinSats }), null, 'a, the lower id');
+});

@@ -23,7 +23,8 @@
 //               node is held to the same window and fifth as a drawn one: no code a fifth after the beacon, and the next alternate
 //               takes its position.
 //   PRESSURE    `pressureBond`, B*_net while the network is under capacity pressure, orders the draw (drawGuardians, §23A.3a): every
-//               seat of a founding has to pass the same value, or they draw different sets under one founding id.
+//               seat of a founding has to pass the same value. The founding's id covers it, so seats that read another one name
+//               another founding and cannot meet in one ceremony: it goes void and draws again.
 //   TEN ARE ENOUGH (2026-10-22: "we need 10 nodes not 14", "On mainnet we also want 10": as soon as 10 nodes want to found a
 //               federation it is allowed): a late seated node that no alternate can replace keeps its seat and may post its code
 //               until the window's end - only the no-shows an alternate takes over are dropped, and the founding is void only when
@@ -34,16 +35,12 @@
 //
 // `setup` is injected - { localParams({ leader, name, size }), addPeer(code), startDkg(), invite(), done() } - so a test runs it in memory
 // and a rehearsal against real fedimintd (tools/rehearsal-20.mjs). Nothing here moves money.
-import { drawGuardians, replaceNoShows } from '../../arena-protocol/src/guardian-founding.js';
+import { drawGuardians, replaceNoShows, foundingId } from '../../arena-protocol/src/guardian-founding.js';
 import { Writer } from '../../arena-protocol/src/encode.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { tagAt, tagsAccepted, TAG_PAIRS } from '../../arena-protocol/src/tag-switch.js';
 
-/** The founding's id: H(founding tag, seed || trigger_height) - one per beacon and trigger; the tag by the trigger height (kanban #525). */
-export function foundingId(seed, triggerHeight) {
-  const w = new Writer(); w.bytes32(seed); w.u32(triggerHeight);
-  return taggedHash(tagAt('founding', { height: triggerHeight }), w.finish());
-}
+export { foundingId };
 /** What a setup code's signature covers: H(setup tag, id || node || code) - under the tag of the founding's trigger height, or `tag`. */
 export function setupDigest(id, node, code, tag = TAG_PAIRS.foundingSetup[0]) {
   const c = new TextEncoder().encode(String(code));
@@ -51,10 +48,10 @@ export function setupDigest(id, node, code, tag = TAG_PAIRS.foundingSetup[0]) {
   return taggedHash(tag, Uint8Array.from([...w.finish(), ...c]));
 }
 
-export function createFounding({ seed, triggerHeight, entries, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [], pressureBond = null, foundingWindow,
+export function createFounding({ seed, triggerHeight, entries, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [], pressureBond = null, candidateVersion = null, foundingWindow,
   ownKey, sign, verify, setup = null, post = async () => {}, name = 'arena', say = () => {} }) {
-  const draw = drawGuardians({ entries, seed, height: triggerHeight, nominal, bondMinGuardian, guardingOpen, seatedFirst, pressureBond });
-  const id = foundingId(seed, triggerHeight);
+  const draw = drawGuardians({ entries, seed, height: triggerHeight, nominal, bondMinGuardian, guardingOpen, seatedFirst, pressureBond, candidateVersion });
+  const id = foundingId(seed, triggerHeight, draw.ok ? pressureBond : null);
   const own = toHex(ownKey);
   const codes = new Map();                   // node hex -> { code, signature }
   const noShows = new Set();
