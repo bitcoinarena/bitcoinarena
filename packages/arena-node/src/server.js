@@ -1654,10 +1654,26 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // handed to; every 2 min this seat reads the others' rows and keeps each its own federation port confirms (reserve-book.js)
   const RESERVE_PEER_CHECKS = Number(process.env.ARENA_RESERVE_PEER_CHECKS || 200);
   // (a test hands in the guardians, the key and the port; a seat reads its census and its own ports)
-  const reservePeerRound = async ({ guardians = reserveGuardians(), keyFor = reserveKeyFor, portOf = (f) => portOfFederation(fromHex(f)) } = {}) => {
+  // A ROW NOT KEPT IS ASKED AGAIN LATER, NOT EVERY PASS (kanban #1079, measured 2026-11-03 on the second test host's seat 2: 127,844
+  // [reserves] lines, 127,619 of them "not kept ... status timed out" - the same up-to-200 rows, one status read each, every 2 min, and
+  // a pass of timeouts ran longer than the 2 min between passes, so passes piled on each other on one read directory). A row that
+  // was not kept waits RESERVE_RETRY_FIRST_MS (4 min, two passes) before it is asked again, twice as long after each further miss, at
+  // most RESERVE_RETRY_MAX_MS (1 h); kept, it is forgotten here. At most RESERVE_RETRY_ROWS rows are remembered (the oldest
+  // miss is dropped first). And one pass at a time: a pass still running when the next is due lets that one go.
+  const RESERVE_RETRY_FIRST_MS = Number(process.env.ARENA_RESERVE_RETRY_FIRST_MS || 240000);
+  const RESERVE_RETRY_MAX_MS = Number(process.env.ARENA_RESERVE_RETRY_MAX_MS || 3600000);
+  const RESERVE_RETRY_ROWS = 10000;
+  const reserveMissed = new Map();   // federation hex + outpoint -> { misses, nextAt }
+  let reservePeerBusy = false;
+  const reservePeerRound = async (o = {}) => {
+    if (reservePeerBusy) return { skipped: true };
+    reservePeerBusy = true;
+    try { return await reservePeerPass(o); } finally { reservePeerBusy = false; }
+  };
+  const reservePeerPass = async ({ guardians = reserveGuardians(), keyFor = reserveKeyFor, portOf = (f) => portOfFederation(fromHex(f)), now = () => Date.now() } = {}) => {
     const g = guardians;
     const seats = [...new Set(Object.values(g).flatMap((x) => x.peers))];
-    let checks = 0;
+    let checks = 0, kept = 0, later = 0;
     for (const fedHex of Object.keys(g)) {
       const key = await keyFor(fedHex);
       const port = key ? await portOf(fedHex) : null;
@@ -1683,13 +1699,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           seen.add(row.outpoint);
           const [tx, idx] = String(row.outpoint).split(':');
           try { if (round.donationOutputAt({ txid: fromHex(tx), outIdx: idx })) continue; } catch { continue; }
+          const missKey = `${fedHex}/${row.outpoint}`;
+          const missed = reserveMissed.get(missKey);
+          if (missed && now() < missed.nextAt) { later++; continue; }
           checks++;
           const v = await verifyPeerReserveRow({ row, port, reserveKey: key, federationId: fromHex(fedHex) }).catch((e) => ({ ok: false, why: e.message }));
-          if (v.ok) { round.putDonationOutputs([v.row]); console.log(`[reserves] ${fedHex.slice(0, 8)}: kept ${row.amountMsat} msat at ${row.outpoint.slice(0, 16)}… from ${u}`); }
-          else console.log(`[reserves] ${fedHex.slice(0, 8)}: not kept ${String(row.outpoint).slice(0, 16)}… from ${u}: ${v.why}`);
+          if (v.ok) { reserveMissed.delete(missKey); kept++; round.putDonationOutputs([v.row]); console.log(`[reserves] ${fedHex.slice(0, 8)}: kept ${row.amountMsat} msat at ${row.outpoint.slice(0, 16)}… from ${u}`); }
+          else {
+            const misses = (missed ? missed.misses : 0) + 1;
+            const waitMs = Math.min(RESERVE_RETRY_FIRST_MS * 2 ** (misses - 1), RESERVE_RETRY_MAX_MS);
+            reserveMissed.delete(missKey); reserveMissed.set(missKey, { misses, nextAt: now() + waitMs });
+            while (reserveMissed.size > RESERVE_RETRY_ROWS) reserveMissed.delete(reserveMissed.keys().next().value);
+            console.log(`[reserves] ${fedHex.slice(0, 8)}: not kept ${String(row.outpoint).slice(0, 16)}… from ${u}: ${v.why} (asked again in ${Math.round(waitMs / 60000)} min)`);
+          }
         }
       }
     }
+    return { checks, kept, later };
   };
   if (process.env.ARENA_RESERVE_DKG !== '0') { const t = setInterval(() => { reservePeerRound().catch(() => {}); }, RESERVE_DKG_MS); if (t.unref) t.unref(); setTimeout(() => reservePeerRound().catch(() => {}), 45000).unref?.(); }
 
