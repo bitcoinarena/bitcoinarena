@@ -8,7 +8,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { walletOf, payoutKeyOf, taprootAddress, addressScript, scriptHash } from '../src/wallet.js';
-import { buildBond, lockOf, advertRoles, bondKeyAt, BOND_MIN_SATS, BOND_SLACK_BLOCKS, bondCounts, censusKeyOfNode } from '../src/bond.js';
+import { buildBond, lockOf, advertRoles, bondKeyAt, BOND_MIN_SATS, BOND_SLACK_BLOCKS, bondCounts, censusKeyOfNode, bondNetworkOf, NETWORK } from '../src/bond.js';
+import { readsTemplate3Only } from '../../arena-protocol/src/genesis.js';
 import { recognizeBond } from '../../arena-protocol/src/chain.js';
 import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
 import { bondPresigStands } from '../../arena-protocol/src/slash-presig.js';
@@ -97,6 +98,19 @@ test('a template-3 bond (5A.3B, kanban #1053): it names the census key, and its 
     verify: (s, m, k) => schnorr.verify(s, m, k) }), 'the one signature a reader checks');
   assert.equal(funding.outputs[1].value, update.outputs[0].value + built.fees.presig - 330n, 'all that carrier held is the marker and its fee');
   assert.equal(built.censusKey, toHex(censusKey));
+});
+
+test('a network that reads template 3 only never falls back: no key read, no bond, refused by name (ruling #1065)', async () => {
+  const seed = new Uint8Array(32).fill(9), w = walletOf(seed), nodeSecret = new Uint8Array(32).fill(3);
+  const common = { wallet: w, nodeSecret, coins: [{ txid: 'aa'.repeat(32), vout: 0, sats: 2_000_000 }], tip: 156900, operatorId: 'op', roles: ['verify'], endpoint: 'wss://x.example', payoutPubkey: new Uint8Array(32).fill(1) };
+  assert.throws(() => buildBond({ ...common, network: 'mainnet' }), /^Error: no census key read yet$/);
+  assert.throws(() => buildBond({ ...common, network: 'mainnet', censusKey: null }), /no census key read yet/);
+  assert.ok(buildBond({ ...common }).bondSats > 0n, 'testnet4 keeps template 2 where no key stands');
+  assert.equal(bondNetworkOf({ network: 'mainnet' }), 'mainnet');
+  assert.equal(bondNetworkOf({}), NETWORK);
+  assert.deepEqual(['mainnet', 'testnet4', 'regtest'].map(readsTemplate3Only), [true, false, false]);
+  const { addBondFromWallet } = await import('../../arena-node/src/add-bond-wallet.js');
+  assert.deepEqual(await addBondFromWallet({ cli: () => { throw new Error('nothing is read'); }, network: 'mainnet', addSats: 100000 }), { ok: false, why: 'no census key read yet' }, 'nor from a bond wallet');
 });
 
 test('with no census key a bond stays template 2, and the seat that says so answers none', async () => {

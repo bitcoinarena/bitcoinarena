@@ -1103,6 +1103,8 @@ const TYPE_AUDIT = 0x36;
 const TYPE_AUDIT_SLASH_PROOF = 0x37;
 /** A complete fraud proof (5A.3B, kanban #1065): the evidence and what a checker needs beside it. H(fraud_proof) is of these bytes. */
 const TYPE_FRAUD_PROOF = 0x43;
+/** The byte after the proof body in a record against a release (5A.3B, kanban #1065). */
+const TYPE_RELEASE_EVIDENCE = 0x44;
 /** A seated node's word on who was present at a 22 seating (§5A.7, protocol 22, kanban #727): carried in the seating certificate. */
 const TYPE_SEATING_SEEN = 0x38;
 /** A node's HEARTBEAT for one heartbeat slot of a 22 round (§5A.3, protocol 22, kanban #727): its word that it is up, to that slot's committee. */
@@ -7949,6 +7951,13 @@ function censusKeyFirstHeight(network, genesis = null) {
   if (network === 'mainnet') return genesis && Number.isInteger(genesis.genesisHeight) ? genesis.genesisHeight : null;
   return Object.prototype.hasOwnProperty.call(CENSUS_KEY_FIRST_HEIGHT, network) ? CENSUS_KEY_FIRST_HEIGHT[network] : null;
 }
+
+/**
+ * WHERE A BOND IS TEMPLATE 3 OR NOTHING (5A.3B, RULED 2026-11-03, kanban #1065): template 2 counts for nothing there, so a node never falls back to it. With no census key read it posts no bond and
+ * says why, by this name: that is real money locked in a bond that does not count. Every other network keeps template 2 where no key stands.
+ */
+const NO_CENSUS_KEY_READ = 'no census key read yet';
+const readsTemplate3Only = (network) => network === 'mainnet';
 
 /**
  * CENSUS_KEY_0 { public_key, holders[], threshold } (§5A.3B, kanban #1050): the founders' node keys, one share each, in share order, so holders[i] holds x = i + 1. The threshold is any

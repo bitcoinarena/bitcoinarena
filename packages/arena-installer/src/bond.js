@@ -11,7 +11,7 @@
 //               height, the arbitration keys), the network's marker, the commitment to the advertisement and the change.
 // The carrier's key comes from the wallet key and the advertisement's id, so coins stuck in a carrier are recovered from the 24 words.
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
-import { genesisFor } from '../../arena-protocol/src/genesis.js';
+import { genesisFor, NO_CENSUS_KEY_READ, readsTemplate3Only } from '../../arena-protocol/src/genesis.js';
 import { bondOutputKey, bond3OutputKey, bondInternalKey, tapLeafHash, TAPLEAF_VERSION, maturityHeightFor, BOND_TEMPLATE_V2, BOND_TEMPLATE_V3, BOND_MATURITY_OFFSET, recoveryLeaf, controlBlockFor } from '../../arena-protocol/src/bond-script.js';
 import { tapSighash, scriptPathWitness, serializeSpend } from '../../arena-protocol/src/bond-spend.js';
 import { encodeAdvert, advertId, joinSignedAdvert } from '../../arena-protocol/src/advert.js';
@@ -88,7 +88,7 @@ export const EMERGENCY_IN_ADVERT = process.env.ARENA_EMERGENCY_ADVERT !== '0';
 
 /**
  * THE KEY A NEW BOND NAMES (5A.3B): the newest standing census key, as this node's own seat reads it off its chain, as bytes. Null where its network runs no census key (the seat answers 404) or
- * the seat does not answer: a bond is then template 2, as on testnet4 today. `s` the installer's state.
+ * the seat does not answer: a bond is then template 2, as on testnet4 today, and on a network that reads template 3 only buildBond refuses it by name. `s` the installer's state.
  */
 export async function censusKeyOfNode(s, fetcher = fetch) {
   const port = (s.reach || {}).port;
@@ -100,6 +100,9 @@ export async function censusKeyOfNode(s, fetcher = fetch) {
     return keys.length ? fromHex(keys[keys.length - 1].publicKey) : null;
   } catch { return null; }
 }
+
+/** The network a bond is built for: the state's where it says mainnet, this build's otherwise. */
+export const bondNetworkOf = (s) => (s && s.network === 'mainnet' ? 'mainnet' : NETWORK);
 
 /** The node's advertisement, unsigned. */
 /** The games an advertisement names: the node's hosted game ids (state.hostedGames, apps.js hostedGameIdsOf), sorted and once each;
@@ -158,6 +161,8 @@ const txidOf = (hex) => toHex(Uint8Array.from(parseTransaction(fromHex(hex)).txi
  */
 export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_SATS, operatorId, roles, endpoint, payoutPubkey,
   softwareHash = new Uint8Array(32), feeRate = 2, nowMs = Date.now(), oldBond = null, guardianEndpoint = null, emergencyPubkey = null, guardianOf = [], hostedGames = null, censusKey = null, network = NETWORK }) {
+  // A NETWORK THAT READS TEMPLATE 3 ONLY NEVER FALLS BACK (5A.3B, kanban #1065): every bond a node posts is built here, so nothing below can lock money in a bond that does not count
+  if (!censusKey && readsTemplate3Only(network)) throw new Error(NO_CENSUS_KEY_READ);
   // A LARGER BOND, IN ONE STEP ("increasing the bond size"; a template-2 bond cannot be topped up in place):
   // `oldBond` { txid, vout, sats, maturity } - from its maturity on - is the funding's first input, spent on its recovery leaf by the
   // node's key (the transaction's locktime is that maturity), and the wallet's coins add the rest; the new bond is built as any

@@ -2975,6 +2975,11 @@ the release, the outputs it spent, and the bytes or the table it committed to, a
 A seat lists what the rows it holds left, and files an output on template 3 as any proof it holds.
 An escrow payout is not judged by this path yet.
 
+**A network that reads template 3 only (RULED 2026-11-03, kanban #1065).** A node there never
+falls back to template 2: that is real money locked in a bond that does not count. With no
+key read it posts nothing and refuses by name, "no census key read yet", and tries again.
+Every other network keeps template 2 where no key stands. Mainnet is such a network.
+
 **The payout table (RULED 2026-11-02, kanban #1021).**
 
 ```text

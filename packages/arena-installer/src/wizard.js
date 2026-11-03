@@ -31,7 +31,7 @@ import { createHash } from 'node:crypto';
 import * as reachKit from './reach.js';
 import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
-import { buildBond, buildAdvertUpdate, buildSend, advertFor, lockOf, censusKeyOfNode, BOND_MIN_SATS, EMERGENCY_IN_ADVERT } from './bond.js';
+import { buildBond, buildAdvertUpdate, buildSend, advertFor, lockOf, censusKeyOfNode, bondNetworkOf, BOND_MIN_SATS, EMERGENCY_IN_ADVERT } from './bond.js';
 import { installMinimum } from './install-minimum.js';
 import { writeLaunchers, installUpdater } from './launchers.js';
 import { setUpOwnLnd, lndReady } from './lnd-setup.js';
@@ -991,7 +991,7 @@ const serviceRun = async (b) => {
       const censusKey = await censusKeyOfNode(s);
       let built;
       try {
-        built = buildBond({ hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
+        built = buildBond({ network: bondNetworkOf(s), hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
           endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash: commitOf(), feeRate: 2, censusKey,
           guardianEndpoint: (guardianSetupOf(s, { release }) || {}).endpoint || null,
           emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
