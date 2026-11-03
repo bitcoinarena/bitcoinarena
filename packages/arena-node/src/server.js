@@ -199,6 +199,7 @@ import { readReserve } from './federation-reserve.js';
 import { thresholdOf as thresholdOfFederation } from '../../arena-protocol/src/federation-record.js';
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY, findSeriesPublication as findSeriesPublicationIndexed } from './roster.js';
 import { createSeriesPull, PULL_EVERY_MS } from './series-pull.js';
+import { createEntryRelay, RELAY_HEADER } from './entry-relay.js';
 import { seatingAgent } from './seating-agent.js';
 import { decodeSeatingCertificate, encodeSeatingCertificate } from '../../arena-protocol/src/seating.js';
 import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../../arena-protocol/src/genesis.js';
@@ -298,6 +299,7 @@ const bytes = (res, code, body) => {
   res.end(Buffer.from(body));
 };
 const text = (res, code, msg) => {
+  if (code >= 400) res.arenaWhy = msg;                 // the door's refusal, for its [steps] line (kanban #1068)
   res.writeHead(code, { 'content-type': 'text/plain', ...CORS });
   res.end(msg + '\n');
 };
@@ -3998,6 +4000,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     try { return await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
     catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}` }; }
   };
+  // WHAT A SEAT HANDS ON OF A HEAD-TO-HEAD ENTRY (kanban #1068, entry-relay.js)
+  const headToHeadRound = (rid) => {
+    const row = round.get(rid);
+    if (!row) return null;
+    const c = decodeRoundContract(new Uint8Array(row.contract));
+    const g = pluginForRound(c, hosted);
+    return g.ok && g.headToHead ? c : null;
+  };
+  const entryRelay = createEntryRelay({
+    peersOf: (rid) => verifier.peersOf(rid),
+    entryOf: (hex) => { const e = round.entry(fromHex(hex)); return e ? new Uint8Array(e) : null; },
+    handoutOf: (hex) => { const e = round.entry(fromHex(hex)); const ref = e ? decodeEntryContract(e).vssSharesRef : null;
+      if (!ref || ref.every((b) => b === 0)) return null; const h = round.handout(ref); return h ? h.bytes : null; },
+    locksOf: (hex) => { const fieldsOf = (row) => (row ? (typeof row.fields === 'string' ? JSON.parse(row.fields) : row.fields) : null), eid = fromHex(hex);
+      return { stake: fieldsOf(round.stakeLock(eid)), fee: fieldsOf(round.feeLock ? round.feeLock(eid) : null) }; },
+  });
   // A STAKE'S HANDOUT, CHECKED AND KEPT: what POST /handout does, and what a seat does for the handout of an order a certified batch names
   // that never reached it (replayOrder). The round's threshold, not the player's (M3.3-26); one polynomial; this seat's own share opens.
   // Answers { ok, id, signerNode } or { ok: false, status, why }.
@@ -7908,6 +7926,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         steps.at('checked');
         const joined = round.enter(contract);
         steps.named(toHex(joined)).at('stored');
+        // A CLIENT'S COPY GOES ON TO THE SEATS IT DID NOT REACH (kanban #1068, entry-relay.js)
+        if (!req.headers[RELAY_HEADER]) { const c = headToHeadRound(contract.roundId); if (c) entryRelay.entryTaken(contract.roundId, toHex(joined), c.entryCloseMs); }
         // NO HOLD IS ISSUED HERE ANY MORE. This door used to ask the signer node's Lightning for a hold
         // invoice on the entry's payment hash, and said how that went in `x-hold`. That was the withdrawn Lightning custody's
         // stake-in, which does not exist (§23.6, RULED 2026-09-22 22:59); a lock round's stake is locked by
@@ -8858,6 +8878,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const got = await takeStakeLock(eid, fields, timing);
         lockTimed(got.ok ? 'verified' : got.why.slice(0, 60));
         if (!got.ok) return text(res, 409, got.why);
+        if (!req.headers[RELAY_HEADER] && headToHeadRound(decodeEntryContract(stored).roundId)) entryRelay.lockTaken(decodeEntryContract(stored).roundId, toHex(eid));
         // AN ORDER (comment 1127): tradable here once both its locks are verified
         if (decodeEntryContract(stored).limitPrice !== undefined) orderBook.noteTradable(decodeEntryContract(stored).roundId);
         return text(res, 201, `stake lock verified: contract ${got.contractId} holds ${got.paidMsat} msat`
