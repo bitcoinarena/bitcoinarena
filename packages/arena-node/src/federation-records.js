@@ -41,6 +41,7 @@ export function guardiansOf(census, federationId) {
     const e = n.entry, g = e.advert.guardianOf.find((x) => toHex(x.federationId) === fid);
     out.push({ peerKey: g.guardianKey, nodePubkey: e.pubkey, operatorId: (e.advert && e.advert.operatorId) || '', bondTxid: e.txid, bondVout: e.vout,
       endpoint: (e.advert && e.advert.guardianEndpoint) || '', bondSats: typeof e.bondSats === 'bigint' ? n.bondSats : String(n.bondSats),
+      outputs: n.outputs.map((o) => ({ bondSats: BigInt(o.bondSats), maturity: o.maturity })),   // each output's maturity: the lock (kanban #1093 part 7)
       advertEndpoint: (e.advert && e.advert.endpoint) || '' });
   }
   return out;
@@ -104,7 +105,10 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // AN ABANDONMENT'S PROOF KEPT BY ITS HASH (§23A.5, kanban #1062): (id, bytes) kept, and (id) -> the bytes or null. A row leaves the listing once its output is spent, and the proof must outlive that
   keepProof = null, proofOf = null,
   // THE FIRST since_height A ROW MOVES MONEY FROM (constants.js ABANDONED_SLASH_HEIGHT); a harness names its own
-  abandonedFrom = networkId ? abandonedSlashPoint(networkOf(networkId)) : null }) {
+  abandonedFrom = networkId ? abandonedSlashPoint(networkOf(networkId)) : null,
+  // A GUARDIAN'S BOND STAYS LOCKED WHILE IT SERVES (kanban #1093 part 7, ruling #1104): { from, drainBlocks, bondMinGuardian } - a body at or
+  // above `from` counts in its cap only bonds maturing past its height + drain_blocks (federation-record.js BOND_LOCK_HEIGHT); null: never
+  bondLock = null }) {
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
   const draining = new Map();                // federation id hex -> status name
   // THE HALT A LIQUIDATION COUNTS FROM (§23A.5): the lowest-height signed HALTED record of the run of HALTED records
@@ -431,7 +435,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const succ = successorOf(fid);
     const spent = spentGuardians(b, federationId);
     const rows = [...guardians, ...spent.map((x) => x.row)];
-    const r = buildFederationRecord({ federationId, networkId: b.networkId || networkId, invite, nominal: rows.length, guardians: rows, gone: [...gone, ...spent.map((x) => x.gone)], height: b.height, reserveSats,
+    const lock = bondLock && Number.isInteger(bondLock.from) && b.height >= bondLock.from ? { drainBlocks: bondLock.drainBlocks, bondMinGuardian: bondLock.bondMinGuardian } : null;
+    const r = buildFederationRecord({ federationId, networkId: b.networkId || networkId, invite, nominal: rows.length, guardians: rows, gone: [...gone, ...spent.map((x) => x.gone)], height: b.height, reserveSats, bondLock: lock,
       ...(succ ? { successorId: fromHex(succ), closed: !!closedOf(fid) } : retiringOf(fid) ? { closed: true } : {}) });   // retiringOf: federation-retire.js
     if (was !== null) r.capacityBand = recordBand({ reserveSats, exposureCapSats: r.exposureCapSats, was });
     return { ok: true, record: r, guardians };

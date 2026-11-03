@@ -46,7 +46,7 @@ import { signGatewaySeating, standingSeating, seatingEpochAt, paidSeatsOf, prove
 import { signLiquiditySeating, standingLiquiditySeating, liquiditySeatingFrom } from '../../arena-protocol/src/liquidity-seating.js';
 import { checkLiquidityClaim, provenFreeSats } from '../../arena-protocol/src/liquidity.js';
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
-import { capacityBandPoint } from '../../arena-protocol/src/federation-record.js';
+import { capacityBandPoint, bondLockPoint } from '../../arena-protocol/src/federation-record.js';
 import { capacityView, capacityPlea, bondIncentive, pressureOf, guardianWeights as capacityGuardianWeights, gatewayWeights as capacityGatewayWeights } from '../../arena-protocol/src/capacity.js';
 import { GATEWAY_MINIMUMS, GATEWAY_EPOCH_BLOCKS, pegInPastCap } from '../../arena-protocol/src/gateway-seats.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
@@ -5409,6 +5409,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const retireBook = createRetireBook(db && db.arenaPath ? `${db.arenaPath}.retire.json` : null);
   fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf,
     bandFrom: capacityBandPoint(chainNetworkId() ? networkOf(fromHex(chainNetworkId())) : null), endpointsOf: fedEndpointsOf,
+    // a guardian's bond counts in the cap only while it is locked past the drain (kanban #1093 part 7): from BOND_LOCK_HEIGHT, or on regtest ARENA_BOND_LOCK_HEIGHT
+    bondLock: (() => { const net = chainNetworkId() ? networkOf(fromHex(chainNetworkId())) : null; const env = process.env.ARENA_BOND_LOCK_HEIGHT;
+      const from = env !== undefined && env !== '' && (net === 'regtest' || net === 'devnet') ? Number(env) : bondLockPoint(net);   // a harness's own height, never a live network's
+      if (!Number.isInteger(from)) return null;
+      const clocks = FEDERATION_CLOCKS[net === 'testnet' ? 'testnet4' : net] || FEDERATION_CLOCKS.mainnet;
+      return { from, drainBlocks: clocks.drainBlocks, bondMinGuardian: guardianFloor() }; })(),
     // a mirrored record checked against the census at its own height, read off this seat's chain
     censusAt: ballot && typeof ballot.censusEntriesAt === 'function' ? (h) => (chainNetworkId() ? ballot.censusEntriesAt(chainNetworkId(), h) : null) : null,
     // what ended the bonds that census dropped: a seated guardian's spent bond is his abandonment (§23A.5, kanban #1054)
