@@ -1521,7 +1521,9 @@
       let tries = 0; const wait = setInterval(() => { if (send() || ++tries > 60) clearInterval(wait); }, 1000);
       // EVERY EVENT SAYS WHO PLAYED (the owner 2026-10-31: "Bei jedem event Nostr / normalen Usern")
       const kind = () => { try { return window.localStorage.getItem('arena.nostr') ? 'nostr' : 'normal'; } catch { return 'normal'; } };
-      return (name, data) => { held.push([name, { ...(data || {}), user: kind() }]); if (held.length > MOST) held.shift(); keep(); send(); };
+      // NOTHING FROM ADMIN PLAY (kanban #1110, the owner 2026-11-03: Umami's events must match the explorer's played rounds, admin and bot rounds left
+      // out): a browser with the admin flag sends no event; the played rounds themselves are told to Umami by the explorer, from its own rows
+      return (name, data) => { if (window.ARENA_ADMIN === true) return; held.push([name, { ...(data || {}), user: kind() }]); if (held.length > MOST) held.shift(); keep(); send(); };
     })();
     window.ARENA_TRACK_SIZE = (sat) => { const n = Number(sat); return n < 1000 ? 'under 1k' : n < 10000 ? '1k-10k' : n < 100000 ? '10k-100k' : 'over 100k'; };
     // THE PAGE'S BUTTONS THAT LEAD SOMEWHERE
