@@ -52,7 +52,7 @@ export const fallbackRank = (proofId, keys, me) => [...keys].sort((a, b) => (toH
  * `federations()` the reserves' view, [{ federation, status, reserveKey, reserveSats, exposureCapSats }]; `retired` hex; `portFor(fid hex)` a stake-lock port or null; `scriptOf(address)`;
  * `reserveKeyOf(fid hex)` 33 bytes or null; `keepReserveRow(row)`.
  * `urlOf(key hex)`; `heldKey(publicKey)` CensusKeyStore's; `thresholdOf(key hex)`; `holdersOf(key hex, height)` -> [{ key, shares }]; `signer()` this node's census signer or null.
- * `send(hex)`.
+ * `send(hex)`. `claimsOf(fid hex)` the one claims ledger of a liquidating federation, for a slash with no round (liquidation-escrow-run.js).
  */
 export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPoint, tipHeight, entriesAtTip, rawTx, unspent, fetchProof, judge, panelsOf, seatsOf = () => [], lossesFor,
   federations = async () => [], retired = [], portFor = async () => null, scriptOf, reserveKeyOf = () => null, keepReserveRow = () => {}, urlOf = () => null, heldKey = () => null,
