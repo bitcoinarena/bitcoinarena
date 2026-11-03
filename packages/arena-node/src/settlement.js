@@ -32,7 +32,7 @@ import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/
 import { stallsOut, silentSeats } from '../../arena-protocol/src/stall.js';
 import { signSettlementCommit, checkSettlementCommit, signSettlementAck, settlementAckId, countAcks, joinAcks, splitAcks, splitSignedAck, encodeSettlementTable, decodeSettlementTable, settlementTableId, planTableRows, planTableBuild } from '../../arena-protocol/src/settlement-ack.js';
 import { tableBuild } from '../../arena-protocol/src/settlement-rebuild.js';
-import { slashHoldsOnTable, slashProofId, encodeSlashProof, joinTableSlashEvidence } from '../../arena-protocol/src/slash.js';
+import { slashHoldsOnTable, encodeSlashProof, joinTableSlashEvidence } from '../../arena-protocol/src/slash.js';
 import { splitByFederation } from '../../arena-protocol/src/federation-settlement.js';
 import { pluginForRound, payoutRuleOfRound } from './plugins.js';
 import { heldOutcomes, marketVoidOf, attestedTable } from './game-market.js';
@@ -1239,14 +1239,14 @@ export class LockSettlement {
           bondTxid: advert.bondTxid, bondVout: advert.bondVout };
         const check = slashHoldsOnTable({ proof, signedAck, acks, table: pair.table, entries, finals, contract, manifest, advert, committee, verify: verifyAck, rebuiltTxid, feesOf: (f) => fees.get(f) || null, own: ownTable });
         if (!check.slashed) { report.refused.push(`${who.slice(0, 16)}: ${check.why}`); continue; }
-        const id = slashProofId(proof);
         const record = joinTableSlashEvidence(encodeSlashProof(proof), { signedAck, acks, table: pair.table, entries, preimages, finals, own: ownTable });
+        const { id, bytes: complete } = this.round.fraudProof(roundIdBytes, null, record);
         if (!this.round.fileTableProof(roundIdBytes, got.nodePubkey, id, record)) continue;
         report.filed.push(who);
         console.log(`[slash] ${toHex(roundIdBytes).slice(0, 16)} filed TABLE_IS_NOT_F against ${who.slice(0, 16)}: ${check.why}`);
         for (const relay of relays) {
           try {
-            const put = await this.fetcher(`${String(relay).replace(/\/+$/, '')}/slash/${toHex(id)}`, { method: 'PUT', body: record });
+            const put = await this.fetcher(`${String(relay).replace(/\/+$/, '')}/slash/${toHex(id)}`, { method: 'PUT', body: complete });
             if (put.ok) report.published += 1;
             else report.refused.push(`${relay}: kept no proof (${put.status})`);
           } catch (e) { report.refused.push(`${relay}: ${e.message}`); }

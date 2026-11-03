@@ -28,7 +28,7 @@ import { Forfeit } from '../src/forfeit.js';
 import { objectionIntake } from '../src/server.js';
 import * as serverModule from '../src/server.js';
 import { Verifier } from '../src/verify.js';
-import { slashHoldsOnRerun, splitRerunSlashEvidence, slashProofId, REPLAY_CONTRADICTS, slashHolds, splitSlashEvidence } from '../../arena-protocol/src/slash.js';
+import { slashHoldsOnRerun, splitRerunSlashEvidence, decodeFraudProof, REPLAY_CONTRADICTS, slashHolds, splitSlashEvidence } from '../../arena-protocol/src/slash.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { decodePlayerResult, splitSignedResult, resultId, joinSignedResult, encodePlayerResult } from '../../arena-protocol/src/result.js';
 import { runOf, decodeRerunResult, splitSignedRerun } from '../../arena-protocol/src/rerun.js';
@@ -372,8 +372,8 @@ test('the second objection\'s 201 files one slash proof per agreeing re-run sign
     });
     const relayed = [];
     for (const p of filed) {
-      const r = await fetch(`http://127.0.0.1:${w.holder.port}/slash/${toHex(slashProofId(splitRerunSlashEvidence(p.bytes).proof))}`);
-      relayed.push(r.status === 200 && toHex(new Uint8Array(await r.arrayBuffer())) === toHex(p.bytes));
+      const r = await fetch(`http://127.0.0.1:${w.holder.port}/slash/${toHex(p.proofId)}`);
+      relayed.push(r.status === 200 && toHex(decodeFraudProof(new Uint8Array(await r.arrayBuffer())).evidence) === toHex(p.bytes));
     }
     const facts = {
       accusedAreTheAgreeing: filed.map((p) => toHex(p.nodePubkey)).sort().join() === agreeingRerunSigners(w, s.eid, agreedRun).join(),

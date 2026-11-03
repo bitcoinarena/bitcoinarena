@@ -18,7 +18,7 @@ import { toHex } from '../src/hash.js';
 import { encodePlayerResult, resultId, joinSignedResult } from '../src/result.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import {
-  slashHoldsOnDoubleSign as holds, orderedResultIds, slashCommitment, TWO_RESULTS, encodeSlashProof, SLASH_PROOF_BYTES,
+  slashHoldsOnDoubleSign as holds, orderedResultIds, TWO_RESULTS, encodeSlashProof, SLASH_PROOF_BYTES,
   joinDoubleSlashEvidence, splitDoubleSlashEvidence, cutDoubleSlashEvidence, doubleSlashEvidenceBytesOf,
 } from '../src/slash.js';
 
@@ -70,7 +70,6 @@ test('two different results for one player slash the named bond', () => {
   assert.equal(after.offence, TWO_RESULTS);
   assert.equal(toHex(after.bond.txid), toHex(BOND));
   assert.equal(after.bond.vout, 3);
-  assert.equal(toHex(after.commitment), toHex(slashCommitment(proofFor(DELIVERED, FAILED))));
 });
 
 /**
@@ -85,8 +84,6 @@ test('the pair is named in one order, so one offence cannot be minted twice', ()
   const backwards = ask(FAILED, DELIVERED);
   assert.equal(forwards.slashed, true);
   assert.equal(backwards.slashed, true, 'the order the evidence arrives in is not the offence');
-  assert.equal(toHex(forwards.commitment), toHex(backwards.commitment),
-    'one offence must have exactly one commitment');
 
   // and a proof that names them the other way round is refused rather than
   // being a second valid proof of the same thing

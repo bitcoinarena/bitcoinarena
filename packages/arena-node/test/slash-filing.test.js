@@ -23,7 +23,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { resultFinality } from '../src/finality.js';
-import { splitSlashEvidence, slashHolds, slashProofId, REPLAY_CONTRADICTS, SLASH_EVIDENCE_BYTES } from '../../arena-protocol/src/slash.js';
+import { splitSlashEvidence, slashHolds, decodeFraudProof, REPLAY_CONTRADICTS, SLASH_EVIDENCE_BYTES } from '../../arena-protocol/src/slash.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { wait, sevenSignerNodes, object, b32, WINDOW_MS } from './window-fixture.js';
@@ -75,8 +75,8 @@ test('the re-run makes the result FINAL, and the node files and publishes a REPL
     // THE ROUND'S RELAY - here the holder's own door - keeps each under its id.
     const relayed = [];
     for (const p of filed) {
-      const r = await fetch(`http://127.0.0.1:${w.holder.port}/slash/${toHex(slashProofId(splitSlashEvidence(p.bytes).proof))}`);
-      relayed.push(r.status === 200 && toHex(new Uint8Array(await r.arrayBuffer())) === toHex(p.bytes));
+      const r = await fetch(`http://127.0.0.1:${w.holder.port}/slash/${toHex(p.proofId)}`);
+      relayed.push(r.status === 200 && toHex(decodeFraudProof(new Uint8Array(await r.arrayBuffer())).evidence) === toHex(p.bytes));
     }
     const facts = {
       state,

@@ -35,7 +35,7 @@ import { arbitrationCommitmentIn, P2TR_DUST_SATS } from './arbitration-tx.js';
 import { carrierEscrowPegInId } from './census-key.js';
 import { reserveParts } from './slash-reserves.js';
 import {
-  PROTOCOL_VERSION, speaksVersion, TYPE_SLASH_PROOF, TYPE_AUDIT_SLASH_PROOF, TYPE_SETTLEMENT_ACK,
+  PROTOCOL_VERSION, speaksVersion, TYPE_SLASH_PROOF, TYPE_AUDIT_SLASH_PROOF, TYPE_SETTLEMENT_ACK, TYPE_FRAUD_PROOF, TYPE_RERUN_RESULT,
   SLASH_REMAINDERS, TAG,
 } from './constants.js';
 import { entryId, roundId as roundIdOf, encodeEntryContract, decodeEntryContract } from './contracts.js';
@@ -153,9 +153,7 @@ export function affectedEntries({ offence, playerPubkey, entries = [], signed, r
 }
 
 /**
- * The proof body. The signed result it accuses travels BESIDE it, like every
- * other signature in this protocol, so the proof's own id does not move when
- * the evidence is attached.
+ * The proof body: what a proof names. It has no hash of its own: H(fraud_proof) is of the complete proof (encodeFraudProof, kanban #1065).
  *
  * `bondTxid`/`bondVout` are the outpoint the accused node's own advertisement
  * committed to - the bond is named by the node, not chosen by the accuser.
@@ -195,8 +193,6 @@ export function decodeSlashProof(bytes) {
   if (r.at !== bytes.length) throw new Error('trailing bytes after the slash proof');
   return p;
 }
-
-export const slashProofId = (p) => taggedHash(TAG.slashProof, encodeSlashProof(p));
 
 /** 1 type + 2 version + six 32-byte fields + a 4-byte vout. */
 export const SLASH_PROOF_BYTES = 199;
@@ -265,21 +261,54 @@ export function splitRerunSlashEvidence(bytes) {
 }
 
 /**
- * WHAT THE SLASHING TRANSACTION HAS TO CARRY, 5A.3B step 4:
- * `OP_RETURN = H(fraud_proof) ‖ retrieval hint`.
+ * THE COMPLETE PROOF, AND WHAT A SLASH COMMITS TO (5A.3B, RULED 2026-11-03, kanban #1065): "H(fraud_proof) is the hash of the complete proof: everything a checker needs, signatures included. The
+ * bytes under that hash are the proof. Bytes that do not hash to it are not a copy of anything."
  *
- * The same 32 bytes as the id, and named separately because the two say
- * different things: an id addresses a proof, and this is the commitment a
- * spend makes to one. "Because the slashing transaction commits to the proof,
- * every slash is permanently auditable... A slash whose committed proof does
- * not retrieve, or does not check, is itself public evidence against the
- * arbitration set."
+ *   evidence   the published record of its offence: the proof body and every signature, as each join below writes it
+ *   contract   the round's contract: its id is the proof's round
+ *   entry      the entry's contract, for a replay or an AUDIT
+ *   bundle     the objection that held: the transcript, the receipts and the replay's inputs, for a replay or an AUDIT
  *
- * The retrieval hint is NOT here. It is where to fetch the proof - a URL, a
- * torrent, an IPFS root - and the spec does not fix its shape; inventing one
- * would be inventing a second protocol. What is fixed is the hash it follows.
+ * So a checker fetches by hash from anyone and holds one thing to judge. If it does not check, the start really was false. Two seats may build two valid proofs of one offence, under two sets of
+ * signatures or two objections: that is two hashes, one bond has one start, and the holders who signed it hold the bytes of the one that landed. An ABANDONED row's proof needs no round, and
+ * carries its record itself (abandoned-slash.js).
+ *
+ * The retrieval hint is not here. It is where to fetch the proof, and the spec does not fix its shape. What is fixed is the hash it follows.
  */
-export const slashCommitment = (p) => slashProofId(p);
+const NO_PART = new Uint8Array(0);
+export function encodeFraudProof({ evidence, contract = NO_PART, entry = NO_PART, bundle = NO_PART }) {
+  const w = new Writer();
+  w.u8(TYPE_FRAUD_PROOF);
+  w.u16(PROTOCOL_VERSION);
+  for (const part of [evidence, contract, entry, bundle]) { w.u32(part.length); w.bytes(part, part.length); }
+  return w.finish();
+}
+
+export function decodeFraudProof(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_FRAUD_PROOF) throw new Error('not a fraud proof');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
+  const part = () => r.bytes(r.u32());
+  const p = { evidence: part(), contract: part(), entry: part(), bundle: part() };
+  r.end();
+  return p;
+}
+
+/** H(fraud_proof): the 32 bytes a slash's OP_RETURN commits to, of the complete proof's bytes. */
+export const fraudProofHash = (bytes) => taggedHash(TAG.slashProof, bytes);
+
+/** Whether `bytes` is a complete proof of a round's offence: a reader of proofs of every kind asks this first. */
+export const isFraudProof = (bytes) => bytes instanceof Uint8Array && bytes[0] === TYPE_FRAUD_PROOF;
+
+/** WHICH OFFENCE'S RECORD THIS IS, cut: { kind: 'audit' | 'rerun' | 'table' | 'double' | 'result', proof, ...its parts }. Throws on anything else. */
+export function readEvidence(evidence) {
+  if (evidence[0] === TYPE_AUDIT_SLASH_PROOF) return { kind: 'audit', ...splitAuditSlashEvidence(evidence) };
+  if (evidence[SLASH_PROOF_BYTES] === TYPE_RERUN_RESULT) return { kind: 'rerun', ...splitRerunSlashEvidence(evidence) };
+  if (evidence[SLASH_PROOF_BYTES] === TYPE_SETTLEMENT_ACK) return { kind: 'table', ...splitTableSlashEvidence(evidence) };
+  let doubled = -1; try { doubled = doubleSlashEvidenceBytesOf(evidence); } catch { doubled = -1; }
+  if (doubled === evidence.length) return { kind: 'double', ...splitDoubleSlashEvidence(evidence) };
+  return { kind: 'result', ...splitSlashEvidence(evidence) };
+}
 
 /**
  * DOES THIS PROOF SLASH THIS BOND?
@@ -292,8 +321,7 @@ export const slashCommitment = (p) => slashProofId(p);
  * this package. What it is for is the BOND, so that an accuser cannot name an
  * outpoint of their choosing and have a stranger take it on their word.
  *
- * Returns `{ slashed: false, why }` or `{ slashed: true, offence, bond,
- * commitment, why }`.
+ * Returns `{ slashed: false, why }` or `{ slashed: true, offence, bond, why }`.
  */
 export function slashHolds({
   proof, signedResult, advert, committee, canonicalTranscriptHash, replayDiffers,
@@ -367,7 +395,6 @@ export function slashHolds({
     slashed: true,
     offence: REPLAY_CONTRADICTS,
     bond: { txid: proof.bondTxid, vout: proof.bondVout },
-    commitment: slashCommitment(proof),
     why: 'the node signed a result the canonical transcript does not replay to',
   };
 }
@@ -426,7 +453,6 @@ export function slashHoldsOnRerun({
     slashed: true,
     offence: REPLAY_CONTRADICTS,
     bond: { txid: proof.bondTxid, vout: proof.bondVout },
-    commitment: slashCommitment(proof),
     why: 'the node signed a re-run the canonical transcript does not replay to, and a second valid objection proved it',
   };
 }
@@ -482,7 +508,6 @@ export function decodeAuditSlashProof(bytes) {
 }
 
 /** Its id, under the slash-proof tag: the 32 bytes a slashing transaction's OP_RETURN commits to. */
-export const auditSlashProofId = (p) => taggedHash(TAG.slashProof, encodeAuditSlashProof(p));
 
 /** The published size of the proof starting at `at`: its body, the AUDIT, the signature and its rows. */
 export function auditSlashEvidenceBytesOf(bytes, at = 0) {
@@ -542,7 +567,7 @@ export function cutAuditSlashEvidence(body) {
  *   the bond       is the one the auditor's own advertisement names.
  *
  * `vrf` and `verify` are injected (no curve lives in this package). Returns `{ slashed: false, why }` or `{ slashed: true, offence,
- * bond, commitment, why }`.
+ * bond, why }`.
  */
 export function slashHoldsOnAudit({
   proof, audit, signature, rows, entry, advert, eligible, total, vrf, verify, windowCloseMs,
@@ -598,7 +623,6 @@ export function slashHoldsOnAudit({
     slashed: true,
     offence: AUDIT_CONTRADICTED,
     bond: { txid: proof.bondTxid, vout: proof.bondVout },
-    commitment: auditSlashProofId(proof),
     why: 'the auditor signed that a run replays, and a valid objection replayed the canonical transcript to another result',
   };
 }
@@ -758,7 +782,7 @@ export function slashHoldsOnTable({
   if (hex(advert.bondTxid) !== hex(proof.bondTxid) || advert.bondVout !== proof.bondVout)
     return no(`the proof names bond ${hex(proof.bondTxid)}:${proof.bondVout} and the node advertised ${hex(advert.bondTxid)}:${advert.bondVout}`);
   return {
-    slashed: true, offence: TABLE_IS_NOT_F, bond: { txid: proof.bondTxid, vout: proof.bondVout }, commitment: slashCommitment(proof), differs, complete,
+    slashed: true, offence: TABLE_IS_NOT_F, bond: { txid: proof.bondTxid, vout: proof.bondVout }, differs, complete,
     why: `the node acked a false table: ${differs[0]}`,
   };
 }
@@ -958,7 +982,6 @@ export function slashHoldsOnDoubleSign({ proof, signedResults, advert, committee
     slashed: true,
     offence: TWO_RESULTS,
     bond: { txid: proof.bondTxid, vout: proof.bondVout },
-    commitment: slashCommitment(proof),
     ids: { named, other },
     why: 'the node signed two different results for one run of one player',
   };
@@ -1254,7 +1277,7 @@ export function slashHoldsOnRelease({ proof, release, prevouts, panels, holdBloc
   if (said) {
     if (hex(proof.transcriptHash) !== hex(said.proofId)) return no('the proof is measured against another commitment than the release\'s');
     if (!(fraudProof instanceof Uint8Array) || !fraudProof.length) return no('no bytes attached to show what the release committed to');
-    if (hex(taggedHash(TAG.slashProof, fraudProof)) !== hex(said.proofId)) return no('the bytes attached do not hash to the release\'s OP_RETURN');
+    if (hex(fraudProofHash(fraudProof)) !== hex(said.proofId)) return no('the bytes attached do not hash to the release\'s OP_RETURN');
     if (proofChecks !== false) return no('nobody has replayed those bytes and found they do not check');
   } else if (hex(proof.transcriptHash) !== hex(EMPTY)) return no('that release commits to nothing, and the proof names a commitment');
 
@@ -1264,7 +1287,6 @@ export function slashHoldsOnRelease({ proof, release, prevouts, panels, holdBloc
     slashed: true,
     offence: RELEASE_WITHOUT_PROOF,
     bond: { txid: proof.bondTxid, vout: proof.bondVout },
-    commitment: slashCommitment(proof),
     why: said ? 'the panel member signed a release whose committed proof does not check' : 'the panel member signed a release that commits to no proof',
   };
 }
@@ -1334,7 +1356,6 @@ export function slashHoldsOnEscrowSpend({ proof, spend, outputs, release, earlie
     slashed: true,
     offence: RELEASE_OFF_TABLE,
     bond: { txid: proof.bondTxid, vout: proof.bondVout },
-    commitment: slashCommitment(proof),
     why: !names ? 'the node signed an escrow spend that does not carry payout_table_id' : !same ? 'the node signed an escrow spend that pays other than its own outputs' : stray ? 'the node signed an escrow spend into a script no carrier signed for this table' : `the node signed escrow spends of ${players} sat to players and ${reserves} sat to reserves where the table left ${playersLeft} and ${reservesLeft}`,
   };
 }
@@ -1372,7 +1393,6 @@ export function slashHoldsOnReleaseTable({ proof, spend, prevouts, table, advert
     slashed: true,
     offence: RELEASE_OFF_TABLE,
     bond: { txid: proof.bondTxid, vout: proof.bondVout },
-    commitment: slashCommitment(proof),
     why: `the node signed a release of ${paid.length} outputs that is not the ${t.outputs.length} of its table, in order`,
   };
 }

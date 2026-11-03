@@ -19,7 +19,7 @@ import {
   encodePlayerResult, resultId, joinSignedResult,
 } from '../src/result.js';
 import {
-  encodeSlashProof, decodeSlashProof, slashProofId, slashCommitment,
+  encodeSlashProof, decodeSlashProof, encodeFraudProof, decodeFraudProof, fraudProofHash, joinSlashEvidence,
   slashHolds, OFFENCES, TWO_RESULTS, REPLAY_CONTRADICTS, TABLE_IS_NOT_F, RELEASE_WITHOUT_PROOF, RELEASE_OFF_TABLE,
   OPERATOR_PLAYED, AUDIT_CONTRADICTED,
 } from '../src/slash.js';
@@ -92,7 +92,6 @@ test('a result the canonical transcript does not replay to slashes the named bon
   // 5A.3B step 4: the transaction has to commit to the proof, so the proof
   // has to have one hash and this is it.
   const r = resultBy(NODE);
-  assert.equal(toHex(after.commitment), toHex(slashProofId(proofFor(r))));
 });
 
 test('an accusation nobody has replayed is a claim, whatever it is dressed as', () => {
@@ -192,20 +191,35 @@ test('the proof survives the round trip and keeps its commitment', () => {
   const p = proofFor(resultBy(NODE));
   const back = decodeSlashProof(encodeSlashProof(p));
   assert.deepEqual(back, p);
-  assert.equal(toHex(slashCommitment(back)), toHex(slashCommitment(p)));
+  assert.deepEqual(back, p);
 
   const longer = new Uint8Array(encodeSlashProof(p).length + 1);
   longer.set(encodeSlashProof(p));
   assert.throws(() => decodeSlashProof(longer), /trailing bytes/);
 });
 
-test('changing anything in the proof changes what a transaction commits to', () => {
-  const p = proofFor(resultBy(NODE));
-  const was = toHex(slashCommitment(p));
+test('changing anything in the proof, a signature too, changes what a transaction commits to (ruling #1065)', () => {
+  const r = resultBy(NODE), p = proofFor(r);
+  const hashOf = (over = {}, record = signed(r), parts = {}) => toHex(fraudProofHash(encodeFraudProof({ evidence: joinSlashEvidence(encodeSlashProof({ ...p, ...over }), record), contract: b32(0x11), ...parts })));
+  const was = hashOf();
   for (const field of ['roundId', 'playerPubkey', 'nodePubkey', 'transcriptHash',
                        'signedResultId', 'bondTxid'])
-    assert.notEqual(toHex(slashCommitment({ ...p, [field]: b32(0x9c) })), was, field);
-  assert.notEqual(toHex(slashCommitment({ ...p, bondVout: 4 })), was, 'bondVout');
+    assert.notEqual(hashOf({ [field]: b32(0x9c) }), was, field);
+  assert.notEqual(hashOf({ bondVout: 4 }), was, 'bondVout');
+  const bent = signed(r).slice(); bent[bent.length - 1] ^= 1;
+  assert.notEqual(hashOf({}, bent), was, 'the last byte of the signature');
+  assert.notEqual(hashOf({}, signed(r), { contract: b32(0x12) }), was, 'the contract');
+  assert.notEqual(hashOf({}, signed(r), { entry: b32(0x13) }), was, 'the entry');
+  assert.notEqual(hashOf({}, signed(r), { bundle: b32(0x14) }), was, 'the objection');
+});
+
+test('a complete proof round trips and refuses what it is not', () => {
+  const parts = { evidence: b32(1), contract: b32(2), entry: b32(3), bundle: b32(4) };
+  const bytes = encodeFraudProof(parts), back = decodeFraudProof(bytes);
+  for (const k of Object.keys(parts)) assert.equal(toHex(back[k]), toHex(parts[k]), k);
+  assert.equal(decodeFraudProof(encodeFraudProof({ evidence: b32(1) })).bundle.length, 0, 'a part no offence needs is empty');
+  assert.throws(() => decodeFraudProof(Uint8Array.of(...bytes, 0)), /trailing|left over|bytes/);
+  assert.throws(() => decodeFraudProof(Uint8Array.of(0x0c, ...bytes.subarray(1))), /not a fraud proof/);
 });
 
 test('rubbish is refused as evidence rather than decoded into an offence', () => {

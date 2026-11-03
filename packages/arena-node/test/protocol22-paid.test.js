@@ -19,7 +19,7 @@ import { seatsAndAuditor, winnerUnder, heldAt, owedTable, WEBSITE, key, str } fr
 import { roundSplit } from '../../arena-protocol/src/reserves.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { splitAcks, splitSignedAck, settlementAckId, countAcks, decodeSettlementTable } from '../../arena-protocol/src/settlement-ack.js';
-import { slashHoldsOnTable, slashProofId, splitTableSlashEvidence, cutTableSlashEvidence, TABLE_IS_NOT_F } from '../../arena-protocol/src/slash.js';
+import { slashHoldsOnTable, splitTableSlashEvidence, cutTableSlashEvidence, TABLE_IS_NOT_F } from '../../arena-protocol/src/slash.js';
 import { signSettlementAck, joinAcks, settlementTableId, encodeSettlementTable } from '../../arena-protocol/src/settlement-ack.js';
 import { tableBuild } from '../../arena-protocol/src/settlement-rebuild.js';
 import { judgeTableProof } from '../src/arbiter.js';
@@ -175,7 +175,6 @@ test('a paid protocol-22 round on seven seats with an auditor: the reserve key k
         txidOf: async (_t, b) => fromHex((await w.port.settle(b)).txid) });
       assert.equal(verdict.slashed, true, verdict.why);
       assert.equal(verdict.offence, TABLE_IS_NOT_F);
-      assert.equal(toHex(verdict.proofId), toHex(slashProofId(got.proof)));
       assert.match(verdict.why, /does not rebuild from the table/);
     }
     // AN HONEST PAIR, THE SAME FILING: nothing is filed, and a false ack by one seat is not a table anything stood on

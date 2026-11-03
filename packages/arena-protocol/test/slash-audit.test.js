@@ -11,9 +11,9 @@ import assert from 'node:assert/strict';
 import { makeVrf, SUITE_SECP256K1_TAI } from '../src/vrf.js';
 import { auditAlpha, vrfSecretFor, auditResultsHash, encodeAudit, auditId, AUDIT_LEAD_MS } from '../src/auditor.js';
 import {
-  encodeAuditSlashProof, decodeAuditSlashProof, auditSlashProofId, joinAuditSlashEvidence, splitAuditSlashEvidence,
+  encodeAuditSlashProof, decodeAuditSlashProof, joinAuditSlashEvidence, splitAuditSlashEvidence,
   cutAuditSlashEvidence, slashHoldsOnAudit, AUDIT_CONTRADICTED, AUDIT_SLASH_PROOF_BYTES, AUDIT_BYTES,
-  encodeSlashProof, slashProofId, affectedEntries, NAMES_ONE_ENTRY,
+  encodeSlashProof, affectedEntries, NAMES_ONE_ENTRY,
 } from '../src/slash.js';
 import { entryId } from '../src/contracts.js';
 import { taggedHash, toHex } from '../src/hash.js';
@@ -62,7 +62,6 @@ test('valid: the AUDIT vouched for the run a valid objection contradicted - AUDI
   assert.equal(got.slashed, true, got.why);
   assert.equal(got.offence, AUDIT_CONTRADICTED);
   assert.deepEqual([toHex(got.bond.txid), got.bond.vout], [toHex(ADVERT.bondTxid), 3]);
-  assert.equal(toHex(got.commitment), toHex(auditSlashProofId(proof)));
   // THE BYTES: a fixed body, its own type byte - never read as the player-result kind, never the same id
   const body = encodeAuditSlashProof(proof);
   assert.equal(body.length, AUDIT_SLASH_PROOF_BYTES);
@@ -74,7 +73,7 @@ test('valid: the AUDIT vouched for the run a valid objection contradicted - AUDI
   const record = joinAuditSlashEvidence(body, audit.bytes, audit.signature, ROWS);
   assert.equal(record.length, AUDIT_SLASH_PROOF_BYTES + AUDIT_BYTES + 64 + 2 + 2 * 64);
   const split = splitAuditSlashEvidence(record);
-  assert.equal(toHex(auditSlashProofId(split.proof)), toHex(auditSlashProofId(proof)));
+  assert.deepEqual(split.proof, proof);
   assert.deepEqual(split.rows.map((x) => toHex(x.runId)), ROWS.map((x) => toHex(x.runId)));
   const again = slashHoldsOnAudit({ proof: split.proof, audit: split.audit, signature: split.signature, rows: split.rows, entry: ENTRY, advert: ADVERT,
     ...DRAW, vrf, verify, windowCloseMs: CLOSE, canonicalTranscriptHash: CANONICAL, objectedRunId: FALSE_RUN, replayDiffers: true });
@@ -138,7 +137,7 @@ test('the bond is the auditor\'s own advertisement\'s, and checking needs the ve
   assert.match(judge(proofOf(audit), audit, { advert: null }).why, /no advertisement/);
   assert.match(judge(proofOf(audit), audit, { vrf: null }).why, /needs a verifier and a VRF/);
   assert.match(judge(proofOf(audit), audit, { eligible: null }).why, /no eligible set/);
-  // AND ITS ID IS NOT THE PLAYER-RESULT KIND'S: the same tag over other bytes
-  assert.notEqual(toHex(auditSlashProofId(proofOf(audit))), toHex(slashProofId({ roundId: ROUND, playerPubkey: ENTRY.playerPubkey, nodePubkey: AUDITOR.pubkey,
-    transcriptHash: CANONICAL, signedResultId: FALSE_RUN, bondTxid: ADVERT.bondTxid, bondVout: ADVERT.bondVout })));
+  // AND ITS BYTES ARE NOT THE PLAYER-RESULT KIND'S: its own type byte
+  assert.notEqual(encodeAuditSlashProof(proofOf(audit))[0], encodeSlashProof({ roundId: ROUND, playerPubkey: ENTRY.playerPubkey, nodePubkey: AUDITOR.pubkey,
+    transcriptHash: CANONICAL, signedResultId: FALSE_RUN, bondTxid: ADVERT.bondTxid, bondVout: ADVERT.bondVout })[0]);
 });

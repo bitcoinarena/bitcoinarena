@@ -45,6 +45,7 @@ import { OPEN, CLOSED, nodeIdentity } from './store.js';
 import { receiptsNeeded } from '../../arena-protocol/src/genesis.js';
 import { decodeHandout } from '../../arena-protocol/src/handout.js';
 import { stakePointIsTheHandouts } from '../../arena-protocol/src/contracts.js';
+import { encodeFraudProof, fraudProofHash } from '../../arena-protocol/src/slash.js';
 import { firstMarkOutcome, startDeadlineOf, roundEndMs } from '../../arena-protocol/src/first-mark.js';
 import { H2H_REVEAL_MIN_MS, marketOfRound } from '../../arena-protocol/src/manifest.js';
 import { marketWindowOf } from '../../arena-protocol/src/attested.js';
@@ -3302,6 +3303,18 @@ export class Round {
     const r = this.db.prepare('SELECT entry_id FROM stake_locks WHERE outpoint = ?')
       .get(`${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`);
     return r ? { entryId: new Uint8Array(r.entry_id) } : null;
+  }
+
+  /**
+   * THE COMPLETE PROOF OF A FILED RECORD (5A.3B, kanban #1065), kept here under H(fraud_proof) as a relay keeps one: the record, the round's contract and, where `entryIdBytes` names an entry, its contract
+   * and the objection that held (`bundle`, by default the one against the first run). A row from before bundles were kept has none, and no checker can judge it. Answers { id, bytes }.
+   */
+  fraudProof(roundIdBytes, entryIdBytes, evidence, bundle = entryIdBytes ? this.objectionBundle(roundIdBytes, entryIdBytes) : null) {
+    const row = this.get(roundIdBytes);
+    const bytes = encodeFraudProof({ evidence, contract: new Uint8Array(row.contract), ...(entryIdBytes ? { entry: this.entry(entryIdBytes) || undefined } : {}), ...(bundle ? { bundle } : {}) });
+    const id = fraudProofHash(bytes);
+    this.relayPut(id, bytes);
+    return { id, bytes };
   }
 
   /** A transcript kept as a relay, under the hash its bytes have (checked by the door). */

@@ -24,8 +24,8 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { affectedEntries, realLosses, slashHolds, slashProofId, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS, TWO_RESULTS,
-  splitAuditSlashEvidence, slashHoldsOnAudit, auditSlashProofId, AUDIT_CONTRADICTED, splitDoubleSlashEvidence, slashHoldsOnDoubleSign, splitTableSlashEvidence, slashHoldsOnTable } from '../../arena-protocol/src/slash.js';
+import { affectedEntries, realLosses, slashHolds, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS, TWO_RESULTS,
+  splitAuditSlashEvidence, slashHoldsOnAudit, AUDIT_CONTRADICTED, splitDoubleSlashEvidence, slashHoldsOnDoubleSign, splitTableSlashEvidence, slashHoldsOnTable } from '../../arena-protocol/src/slash.js';
 import { abandonedSlashStands, abandonedProofId, decodeAbandonedProof } from '../../arena-protocol/src/abandoned-slash.js';
 import { verifyFederationRecord } from '../../arena-protocol/src/federation-record.js';
 import { abandonedSlashPoint, networkOf } from '../../arena-protocol/src/constants.js';
@@ -80,7 +80,7 @@ export function arbitrationMembers(network) {
  * THE JUDGEMENT. `evidence` is a seat's slash-proof record (proof || the accused's signed result); `bundle` the objection
  * that held against that result; `entry` its signed entry contract (decoded), `contract` the round's, `committee` its
  * signer nodes, `advert` the accused's census advertisement with `bond` its census outpoint, `core` the round's core,
- * `roundRandomness` the beacon hash. Answers { slashed, offence, bond, proof, proofId, playerPubkey, why }.
+ * `roundRandomness` the beacon hash. Answers { slashed, offence, bond, proof, playerPubkey, why }, and whoever holds the complete proof adds its hash as `proofId` for buildSlash.
  */
 export async function judgeProof({ evidence, bundle, entry, entryId, contract, committee, advert, bondOutpoint, core, roundRandomness, replayRun }) {
   const no = (why) => ({ slashed: false, why });
@@ -110,7 +110,7 @@ export async function judgeProof({ evidence, bundle, entry, entryId, contract, c
   const held = slashHolds({ proof, signedResult, committee, canonicalTranscriptHash: canonical, replayDiffers: true,
     advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
   if (!held.slashed) return no(held.why);
-  return { slashed: true, offence: held.offence, bond: held.bond, proof, proofId: slashProofId(proof), playerPubkey: proof.playerPubkey,
+  return { slashed: true, offence: held.offence, bond: held.bond, proof, playerPubkey: proof.playerPubkey,
     signed: { outcome: body.outcome, score: body.score }, replayed: checked.replayed, contradictedRunId: toHex(objected), why: held.why };
 }
 
@@ -148,7 +148,7 @@ export async function judgeAuditProof({ evidence, bundle, entry, contract, commi
     windowCloseMs: closeMs, canonicalTranscriptHash: canonical, objectedRunId: objected, replayDiffers: true,
     advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
   if (!held.slashed) return no(held.why);
-  return { slashed: true, offence: held.offence, bond: held.bond, proof, proofId: auditSlashProofId(proof), playerPubkey: proof.playerPubkey,
+  return { slashed: true, offence: held.offence, bond: held.bond, proof, playerPubkey: proof.playerPubkey,
     replayed: checked.replayed, contradictedRunId: toHex(objected), why: held.why };
 }
 
@@ -169,7 +169,7 @@ export function judgeDoubleProof({ evidence, roundIdBytes, committee, advert, bo
   const held = slashHoldsOnDoubleSign({ proof: got.proof, signedResults: got.signedResults, committee, verify: verifySchnorr,
     advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
   if (!held.slashed) return no(held.why);
-  return { slashed: true, offence: held.offence, bond: held.bond, proof: got.proof, proofId: slashProofId(got.proof), playerPubkey: got.proof.playerPubkey, why: held.why };
+  return { slashed: true, offence: held.offence, bond: held.bond, proof: got.proof, playerPubkey: got.proof.playerPubkey, why: held.why };
 }
 
 /**
@@ -188,7 +188,7 @@ export async function judgeTableProof({ evidence, roundIdBytes, contract, manife
   const held = slashHoldsOnTable({ proof: got.proof, signedAck: got.signedAck, acks: got.acks, table: got.table, entries: got.entries, finals: got.finals, contract, manifest, committee, verify: verifySchnorr,
     rebuiltTxid, feesOf, own: got.own, advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
   if (!held.slashed) return no(held.why);
-  return { slashed: true, offence: held.offence, bond: held.bond, proof: got.proof, proofId: slashProofId(got.proof), playerPubkey: got.proof.playerPubkey, why: held.why };
+  return { slashed: true, offence: held.offence, bond: held.bond, proof: got.proof, playerPubkey: got.proof.playerPubkey, why: held.why };
 }
 
 /**
@@ -266,16 +266,16 @@ function pathBSpend({ bond, advert, proofId, slashHeight, hint, set, feeSats }) 
 }
 
 /**
- * THE JUDGEMENT OF AN ABANDONMENT'S PROOF (§23A.5, RULED 2026-11-02, kanban #1058, #1059, #1062, #1064). `proofBytes` and `evidence`, any standing copy of the signed record, are what a seat
- * handed over, believed for nothing: the record is held to its threshold of bonded guardians against `census`, this reader's own entries at the record's height, it must be the proof's federation's,
+ * THE JUDGEMENT OF AN ABANDONMENT'S PROOF (§23A.5, RULED 2026-11-02, kanban #1058, #1059, #1062, #1065). `proofBytes`, the proof with the signed record in it, are what a seat handed over, believed
+ * for nothing: the record is held to its threshold of bonded guardians against `census`, this reader's own entries at the record's height, it must be the proof's federation's,
  * and the row it holds must name the proof's node and proof_ref. Then abandonedSlashStands over
  * `bonds`, this reader's own census, with the network's ABANDONED_SLASH_HEIGHT or `from`. Answers { slashed, offence, proofId (the hash a slash commits to), proofRef, federation, node, output,
  * bondSpent, why }; a template-3 output comes back judged, for the census key's holders: path B is not this set's on such a bond.
  */
-export function judgeAbandoned({ proofBytes, evidence, census, bonds, networkId, inviteFederationId, from = abandonedSlashPoint(networkOf(networkId)) }) {
+export function judgeAbandoned({ proofBytes, census, bonds, networkId, inviteFederationId, from = abandonedSlashPoint(networkOf(networkId)) }) {
   const no = (why) => ({ slashed: false, why });
   let p; try { p = decodeAbandonedProof(proofBytes); } catch (e) { return no(`that is no proof of an abandonment: ${e.message}`); }
-  const v = verifyFederationRecord(evidence, { census, verify: verifySchnorr, inviteFederationId, networkId });
+  const v = verifyFederationRecord(p.record, { census, verify: verifySchnorr, inviteFederationId, networkId });
   if (!v.ok) return no(`that record does not stand: ${v.why}`);
   if (toHex(v.record.federationId) !== toHex(p.federationId)) return no('that record is another federation\'s');
   const stands = abandonedSlashStands({ record: v.record, nodePubkey: p.nodePubkey, proofRef: p.proofRef, bonds, txid: toHex(p.txid), vout: p.vout, from });

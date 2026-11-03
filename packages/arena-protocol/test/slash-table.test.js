@@ -22,7 +22,7 @@ import {
   signSettlementAck, settlementAckId, encodeSettlementTable, decodeSettlementTable, settlementTableId, splitSignedAck, countAcks, checkAck,
   joinAcks, splitAcks, encodeSettlementAck, decodeSettlementAck, planTableRows, planTableBuild,
 } from '../src/settlement-ack.js';
-import { slashHoldsOnTable, slashHoldsOnWithheld, slashCommitment, TABLE_IS_NOT_F, encodeSlashProof, slashProofId, joinTableSlashEvidence, splitTableSlashEvidence, cutTableSlashEvidence, tableSlashEvidenceBytesOf } from '../src/slash.js';
+import { slashHoldsOnTable, slashHoldsOnWithheld, TABLE_IS_NOT_F, encodeSlashProof, joinTableSlashEvidence, splitTableSlashEvidence, cutTableSlashEvidence, tableSlashEvidenceBytesOf } from '../src/slash.js';
 import { lockSettlement, lateSettlementNonce, settlementNonce } from '../src/lock-settlement.js';
 import { federationSettlementNonce } from '../src/federation-settlement.js';
 import { tableBuild } from '../src/settlement-rebuild.js';
@@ -128,9 +128,6 @@ test('an honest table stands, one millisatoshi off it slashes the bond that acke
   assert.equal(after.bond.vout, 3);
   assert.equal(after.complete, true);
   assert.ok(after.differs.some((d) => /and F pays/.test(d)), after.differs.join('; '));
-  const { ack } = splitSignedAck(ackBy(NODE, t));
-  assert.equal(toHex(after.commitment), toHex(slashCommitment({ roundId: ROUND, playerPubkey: new Uint8Array(32), nodePubkey: NODE.pubkey,
-    transcriptHash: ack.payoutTableId, signedResultId: settlementAckId(ack), bondTxid: BOND, bondVout: 3 })));
 });
 
 test('the ack has to be the accused\'s own signature: an unsigned one, or another key\'s, slashes nobody', () => {
@@ -319,7 +316,7 @@ test('a false table travels as one record: proof, ack, the rest, cut from a stre
   assert.equal(cutTableSlashEvidence(stream).length, 2);
   assert.equal(cutTableSlashEvidence(stream.subarray(0, a.length + 9)).length, 1);
   const got = splitTableSlashEvidence(a);
-  assert.equal(toHex(slashProofId(got.proof)), toHex(slashProofId(proof)));
+  assert.deepEqual(got.proof, proof);
   assert.equal(toHex(got.signedAck), toHex(signedAck));
   assert.equal(got.acks.length, 4);
   assert.equal(toHex(got.table), toHex(rest.table));

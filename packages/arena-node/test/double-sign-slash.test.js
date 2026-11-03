@@ -23,7 +23,7 @@ import { arbitrationCommitmentIn } from '../../arena-protocol/src/arbitration-tx
 import { deriveCensus } from '../../arena-protocol/src/census.js';
 import { bondSetFor } from '../src/curve.js';
 import { decodePlayerResult, splitSignedResult, encodePlayerResult, joinSignedResult, resultId } from '../../arena-protocol/src/result.js';
-import { encodeSlashProof, orderedResultIds, joinDoubleSlashEvidence, splitDoubleSlashEvidence, cutDoubleSlashEvidence, slashProofId, TWO_RESULTS } from '../../arena-protocol/src/slash.js';
+import { encodeSlashProof, orderedResultIds, joinDoubleSlashEvidence, splitDoubleSlashEvidence, cutDoubleSlashEvidence, encodeFraudProof, decodeFraudProof, fraudProofHash, TWO_RESULTS } from '../../arena-protocol/src/slash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { bondOutputKey, bondInternalKey } from '../../arena-protocol/src/bond-script.js';
 import { arbitrationMembers, judgeDoubleProof, buildSlash, memberSign, assemble } from '../src/arbiter.js';
@@ -73,7 +73,7 @@ test('a second result about one run is noticed in the gather, filed as TWO_RESUL
     const got = splitDoubleSlashEvidence(filed[0].bytes);
     const { named, other } = orderedResultIds(resultId(first), resultId(second));
     const advert = w.adverts.get(toHex(first.nodePubkey));
-    const id = toHex(slashProofId(got.proof));
+    const id = toHex(filed[0].proofId);
     assert.equal(toHex(got.proof.nodePubkey), toHex(first.nodePubkey));
     assert.equal(toHex(got.proof.signedResultId), toHex(named));
     assert.equal(toHex(got.proof.transcriptHash), toHex(other));
@@ -89,7 +89,9 @@ test('a second result about one run is noticed in the gather, filed as TWO_RESUL
     const served = new Uint8Array(await (await fetch(`${base}/double-slash-proofs?round=${toHex(w.rid)}`)).arrayBuffer());
     assert.equal(toHex(cutDoubleSlashEvidence(served)[0]), toHex(filed[0].bytes));
     const relayed = new Uint8Array(await (await fetch(`${base}/slash/${id}`)).arrayBuffer());
-    assert.equal(toHex(relayed), toHex(filed[0].bytes), 'the round\'s relay keeps it under its id');
+    assert.equal(toHex(decodeFraudProof(relayed).evidence), toHex(filed[0].bytes), 'the round\'s relay keeps the complete proof under its hash');
+    assert.equal(toHex(fraudProofHash(relayed)), id);
+    assert.equal(toHex(decodeFraudProof(relayed).contract), toHex(new Uint8Array(w.holder.round.get(w.rid).contract)), 'and the round\'s contract is in those bytes');
     assert.equal((await fetch(`${base}/double-slash-proofs?round=zz`)).status, 400);
 
     const contract = decodeRoundContract(new Uint8Array(w.holder.round.get(w.rid).contract));
@@ -112,10 +114,9 @@ test('a second result about one run is noticed in the gather, filed as TWO_RESUL
     const committee = w.holder.round.signerNodes(w.rid);
     const bondOutpoint = { txid: advert.bondTxid, vout: advert.bondVout };
     const judged = (over = {}) => judgeDoubleProof({ evidence: filed[0].bytes, roundIdBytes: w.rid, committee, advert, bondOutpoint, ...over });
-    const verdict = judged();
+    const verdict = { ...judged(), proofId: fromHex(id) };
     assert.equal(verdict.slashed, true, verdict.why);
     assert.equal(verdict.offence, TWO_RESULTS);
-    assert.equal(toHex(verdict.proofId), id);
 
     // REFUSED: another round, a committee without the accused, a bond its advertisement does not name, no advertisement, rubbish, a pair by the wrong signer
     assert.match(judged({ roundIdBytes: b32(0xee) }).why, /another round/);
@@ -189,13 +190,15 @@ test('what must slash nobody: two entries of one key, a repeat, a stranger, a fo
     const invented = pairOf(honest, { ...honest, score: honest.score + 1 }, stranger);
     assert.match(judge(invented, key).why, /is not the accused node's/);
 
-    // AND THE RELAY KEEPS ONLY THE PAIR THE PROOF NAMES
-    const proofId = toHex(slashProofId(splitDoubleSlashEvidence(invented).proof));
-    assert.equal((await fetch(`${base}/slash/${'00'.repeat(32)}`, { method: 'PUT', body: invented })).status, 409);
+    // THE BYTES UNDER A HASH ARE THE PROOF (kanban #1065): a seat takes bytes only under the hash they have, and those are all it can serve under it
+    const contractBytes = new Uint8Array(w.holder.round.get(w.rid).contract);
+    const complete = encodeFraudProof({ evidence: invented, contract: contractBytes }), proofId = toHex(fraudProofHash(complete));
+    assert.equal((await fetch(`${base}/slash/${'00'.repeat(32)}`, { method: 'PUT', body: complete })).status, 409);
     const swapped = invented.slice();
     const { signedResults } = splitDoubleSlashEvidence(invented);
     swapped.set(signedResults[1], 199); swapped.set(signedResults[0], 199 + signedResults[1].length);
-    assert.equal((await fetch(`${base}/slash/${proofId}`, { method: 'PUT', body: swapped })).status, 409);
+    assert.equal((await fetch(`${base}/slash/${proofId}`, { method: 'PUT', body: encodeFraudProof({ evidence: swapped, contract: contractBytes }) })).status, 409, 'other signatures, other bytes: no copy of that proof');
+    assert.equal((await fetch(`${base}/slash/${toHex(fraudProofHash(new Uint8Array(40)))}`, { method: 'PUT', body: new Uint8Array(40) })).status, 400, 'bytes that read as no proof are not kept');
   });
 });
 
@@ -241,8 +244,10 @@ test('the arbitration service, run whole: a true pair is judged, posted and publ
     const proof = { roundId: w.rid, playerPubkey: clean.playerPubkey, nodePubkey: clean.nodePubkey, transcriptHash: other, signedResultId: named, bondTxid: advert.bondTxid, bondVout: advert.bondVout };
     const lower = toHex(resultId(clean)) === toHex(named) ? clean : secondEntry, higher = lower === clean ? secondEntry : clean;
     w.holder.round.putDoubleResult(w.rid, eid, clean.nodePubkey, signed(clean, honest), signed(secondEntry, honest));
-    assert.equal(w.holder.round.fileDoubleResult(w.rid, eid, clean.nodePubkey, slashProofId(proof), joinDoubleSlashEvidence(encodeSlashProof(proof), signed(lower, honest), signed(higher, honest))), 1);
-    const falseProof = toHex(slashProofId(proof));
+    const falseRecord = joinDoubleSlashEvidence(encodeSlashProof(proof), signed(lower, honest), signed(higher, honest));
+    const falseFiled = w.holder.round.fraudProof(w.rid, null, falseRecord);
+    assert.equal(w.holder.round.fileDoubleResult(w.rid, eid, clean.nodePubkey, falseFiled.id, falseRecord), 1);
+    const falseProof = toHex(falseFiled.id);
 
     const chain = await stubBitcoind(view, view.firstHeight + 20, Math.floor(Number(contract.committeeTimeMs) / 1000));
     const dir = mkdtempSync(join(tmpdir(), 'arbiter-986-'));
