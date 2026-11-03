@@ -28,7 +28,7 @@ export class Changes20 extends React.Component {
                   {meet ? <p className="ch20-meet">{where === 'installer' ? 'Here: ' : 'On this page: '}{meet}</p> : null}
                   {c.confirm && where === 'installer' && onConfirm ? (
                     <label className="ch20-yes"><input type="checkbox" checked={!!confirmed} onChange={(e) => onConfirm(e.target.checked)} />{' '}
-                      Yes: my guardian bond pays the players if my federation is robbed, my own share included, and it does not come back.</label>
+                      Yes: if my federation is robbed, my guardian bond helps pay the players back, even if my own node was the one hacked. What is left after 3 months goes to the protocol reserves, not back to me.</label>
                   ) : null}
                 </div>
               );
