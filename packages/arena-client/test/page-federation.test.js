@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { pageFunction } from './page-script.js';
-import { federationStatus, federationStatuses, federationSays, loadSays, loadRefusesDeposit, moveOffer, moveSays, FEDERATION_ALLOWS } from '../src/federations.js';
+import { federationStatus, federationStatuses, federationSays, loadSays, alarmSays, loadRefusesDeposit, moveOffer, moveSays, FEDERATION_ALLOWS } from '../src/federations.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord } from '../../arena-protocol/src/federation-record.js';
 import { inviteForGuardians } from '../../arena-node/src/invite.js';
@@ -31,9 +31,9 @@ function page(status, extra = {}) {
   // the wallet's own federation (its chip) holds the round's status unless a test names another
   const st = status ? { status, allows: FEDERATION_ALLOWS[status], ...fields } : undefined;
   const mine = wallet || (st ? st.federation || 'f'.repeat(64) : undefined);
-  const window = { ArenaText, ArenaBits, ARENA_FED_STATUS: st, ARENA_FED_MOVE: move, ARENA_LEDGER_FEDERATION: mine, ARENA_FED_LOADS: new Map(st && !wallet ? [[mine, st]] : []) };
+  const window = { ArenaText, ArenaBits, ARENA_TRACK: () => {}, ARENA_MONEY_ALERT: { room: () => true, needRoom: () => {} }, ARENA_FED_STATUS: st, ARENA_FED_MOVE: move, ARENA_LEDGER_FEDERATION: mine, ARENA_FED_LOADS: new Map(st && !wallet ? [[mine, st]] : []) };
   const did = [];
-  const ARENACLIENT = { federationSays, loadSays, moveSays, depositDonationMsat: () => 0n, marketForRound: () => null, settingsDepositOffer: async () => { did.push('offer'); return {}; } };
+  const ARENACLIENT = { federationSays, loadSays, alarmSays, moveSays, depositDonationMsat: () => 0n, marketForRound: () => null, settingsDepositOffer: async () => { did.push('offer'); return {}; } };
   const fn = pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'moneyContext', 'openWithdraw', 'showDepositOffer', 'depositWait', 'donationBps', 'vault'],
     [PAINT, OPEN], 'return { paint: window.ARENA_PAINT_FEDERATION, openMoney };');
   const api = fn(document, window, ARENACLIENT, () => ({ ok: true, round: { stakeMsat: 1n }, invite: 'fed1', seed: 's', gateways: [] }),

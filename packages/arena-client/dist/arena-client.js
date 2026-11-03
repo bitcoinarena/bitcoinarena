@@ -7725,6 +7725,32 @@ function exposureCap({ bonds, f }) {
   return { ok: true, cap: BigInt(haltsAt(f)) * smallest, smallest, halts: haltsAt(f) };
 }
 
+/**
+ * A GUARDIAN'S BOND STAYS LOCKED WHILE IT SERVES (kanban #1093 part 7, ruling #1104, 2026-11-03). Only a bond that cannot leave before a
+ * drain could finish covers anything:
+ *   qualifying  a guardian whose outputs maturing after record height + drain_blocks sum to at least bond_min_guardian
+ *   k           the seated guardians that are not qualifying (they stay seated and sign; they only cover nothing)
+ *   cap         max(0, f + 1 - k) x the smallest qualifying bond (its outputs past the line)
+ * One lapsing guardian lowers the cap by one share; f + 1 of them make it 0. All qualifying bonds sum to at least (n - k) x the smallest,
+ * more than the cap for every k, so the theft cover holds. `guardians` [{ outputs: [{ bondSats, maturity }] }] or, with no outputs
+ * listed, { bondSats, maturity }.
+ */
+function lockedExposureCap({ guardians, f, height, drainBlocks, bondMinGuardian }) {
+  if (!Array.isArray(guardians) || !guardians.length) return { ok: false, why: 'a federation has seated guardians' };
+  if (!Number.isInteger(f) || f < 0) return { ok: false, why: 'f is how many faults the threshold tolerates' };
+  if (!Number.isInteger(height) || !Number.isInteger(drainBlocks) || drainBlocks < 0) return { ok: false, why: 'the lock is judged at a record height against drain_blocks' };
+  const floor = BigInt(bondMinGuardian || 0);
+  const line = height + drainBlocks;
+  const locked = guardians.map((g) => (Array.isArray(g.outputs) && g.outputs.length ? g.outputs : [{ bondSats: g.bondSats, maturity: g.maturity }])
+    .filter((o) => Number.isInteger(Number(o.maturity)) && o.maturity !== null && Number(o.maturity) > line)
+    .reduce((a, o) => a + BigInt(o.bondSats || 0), 0n));
+  const qualifying = locked.filter((x) => x > 0n && x >= floor);
+  const lapsing = guardians.length - qualifying.length;
+  const places = Math.max(0, haltsAt(f) - lapsing);
+  const smallest = qualifying.length ? qualifying.reduce((a, b) => (b < a ? b : a)) : 0n;
+  return { ok: true, cap: BigInt(places) * smallest, smallest, places, lapsing, qualifying: qualifying.length, line };
+}
+
 /** Is a reserve within what the bonds actually cover? */
 function reserveFits({ reserve, bonds, f }) {
   const capped = exposureCap({ bonds, f });
@@ -18594,6 +18620,10 @@ const CAPACITY_BAND = Object.freeze({ CALM: 1, PRESSURE: 2, CRITICAL: 3, FULL: 4
  * name a band, one below it must not, anything else is refused by name. Null: not named, and no record may name one.
  */
 const CAPACITY_BAND_HEIGHT = Object.freeze({ mainnet: 0, testnet4: null, regtest: null, devnet: null });
+// THE HEIGHT FROM WHICH A RECORD'S CAP COUNTS ONLY LOCKED GUARDIAN BONDS (kanban #1093 part 7, ruling #1104): mainnet from genesis; testnet4
+// from a height the 2.0 release names once every seat that signs its records runs 2.0 (null until then); regtest and devnet name their own
+const BOND_LOCK_HEIGHT = Object.freeze({ mainnet: 0, testnet4: null, regtest: null, devnet: null });
+const bondLockPoint = (network) => { const n = network === 'testnet' ? 'testnet4' : network; return Object.prototype.hasOwnProperty.call(BOND_LOCK_HEIGHT, n) ? BOND_LOCK_HEIGHT[n] : null; };
 const capacityBandPoint = (network) => { const n = network === 'testnet' ? 'testnet4' : network; return Object.prototype.hasOwnProperty.call(CAPACITY_BAND_HEIGHT, n) ? CAPACITY_BAND_HEIGHT[n] : null; };
 const nameOf = (table, v) => Object.keys(table).find((k) => table[k] === v);
 /** A record's status by name, whether it was decoded or kept. */
@@ -18664,11 +18694,15 @@ const federationRecordId = (r) => taggedHash(TAG.federationRecord, encodeFederat
  * THE BODY A GUARDIAN SEAT BUILDS, from what every seat reads the same: the census nodes guarding the federation (their
  * adverts' guardian_of[]), the guardians gone, the height. `bondsSats` is each guardian's bond, by node key hex.
  */
-function buildFederationRecord({ federationId, networkId, invite, nominal, guardians, gone = [], successorId = null, closed = false, reserveSats = 0n, height }) {
+// `bondLock` { drainBlocks, bondMinGuardian }: from BOND_LOCK_HEIGHT on, the cap counts only bonds locked past the drain (lockedExposureCap);
+// each guardian row then carries its `outputs` [{ bondSats, maturity }]
+function buildFederationRecord({ federationId, networkId, invite, nominal, guardians, gone = [], successorId = null, closed = false, reserveSats = 0n, height, bondLock = null }) {
   const goneKeys = new Set(gone.map((g) => toHex(g.peerKey)));
   const seatedGuardians = guardians.filter((g) => !goneKeys.has(toHex(g.peerKey)));
   const band = statusFor({ nominal, seated: Math.min(nominal, seatedGuardians.length), closed });
-  const cap = seatedGuardians.length ? exposureCap({ bonds: seatedGuardians.map((g) => BigInt(g.bondSats)), f: band.f }) : { ok: false };
+  const cap = !seatedGuardians.length ? { ok: false }
+    : bondLock ? lockedExposureCap({ guardians: seatedGuardians, f: band.f, height, drainBlocks: bondLock.drainBlocks, bondMinGuardian: bondLock.bondMinGuardian })
+      : exposureCap({ bonds: seatedGuardians.map((g) => BigInt(g.bondSats)), f: band.f });
   return {
     federationId, networkId, invite, nominal, threshold: band.threshold,
     guardians: guardians.map(({ peerKey, nodePubkey, operatorId, bondTxid, bondVout, endpoint }) => ({ peerKey, nodePubkey, operatorId, bondTxid, bondVout, endpoint }))
@@ -33189,7 +33223,7 @@ const STATUS_ASK_MS = 6000;
  * id hex -> status with `federation`; `only` keeps one. `.why` says why none stood when the map is empty.
  */
 async function federationStatuses({ nodes, census, verify, fetcher = fetch, only = null }) {
-  const verified = new Map(), refused = new Map(), failed = [];
+  const verified = new Map(), refused = new Map(), failed = [], alarms = new Map();
   const add = (m, k, v) => { if (!m.has(k)) m.set(k, []); m.get(k).push(v); };
   // NOT HELD FOR THE SLOWEST SEAT, NOR FOR A HUNG ONE (kanban #625: asked with no limit, a restarting seat held an order 26 s a read): each
   // seat within STATUS_ASK_MS, and once more than half answered the rest get COMPARE_GRACE_MS - the records are signed, the newest that stands is taken
@@ -33203,6 +33237,9 @@ async function federationStatuses({ nodes, census, verify, fetcher = fetch, only
       for (const f of j.federations || []) {
         const fid = String(f.federation).toLowerCase();
         if (only && fid !== only) continue;
+        // A RESERVE ALARM (kanban #1093 part 5): a seat that saw a mark of theft in the federation's signed history names it; one seat is
+        // enough to stop deposits - stopping is the safe side, and the mark carries its own proof for anyone who acts on it
+        if (f.alarm && typeof f.alarm === 'object' && !alarms.has(fid)) alarms.set(fid, { ...f.alarm, from: u });
         noteRecordInvite(f.record);   // its guardians, for a join one guardian cannot serve (guardian-invites.js) - verified or not
         const v = verifyFederationRecord(hexToBytes(f.record), { census, verify, inviteFederationId });
         if (v.ok) add(verified, fid, { ...v, from: u }); else add(refused, fid, `${u}: ${v.why}`);
@@ -33214,8 +33251,9 @@ async function federationStatuses({ nodes, census, verify, fetcher = fetch, only
   for (const fid of new Set([...verified.keys(), ...refused.keys()])) {
     const best = newestRecord(verified.get(fid) || []);
     const why = (refused.get(fid) || failed)[0];
-    out.set(fid, best ? { ...statusOfRecord(best), federation: fid }
-      : { status: 'unverified', allows: FEDERATION_ALLOWS.unverified, federation: fid, why: why ? `no record stands: ${why}` : 'no node holds a record of this federation' });
+    const st = best ? { ...statusOfRecord(best), federation: fid }
+      : { status: 'unverified', allows: FEDERATION_ALLOWS.unverified, federation: fid, why: why ? `no record stands: ${why}` : 'no node holds a record of this federation' };
+    out.set(fid, alarms.has(fid) ? { ...st, alarm: alarms.get(fid), allows: { ...st.allows, deposit: false } } : st);
   }
   if (!out.size && failed.length) out.why = `no record stands: ${failed[0]}`;
   return out;
@@ -33254,7 +33292,8 @@ function loadRefusesDeposit({ load, networkId }) {
  * one that says it. Null when none is OPEN.
  */
 function pickFederation(statuses, { known = () => true } = {}) {
-  const open = (statuses || []).filter((f) => f && f.status === 'OPEN' && known(f.federation));
+  // a federation whose deposits are stopped (an alarm, or its load on mainnet) is not picked (kanban #1093 part 5, #807)
+  const open = (statuses || []).filter((f) => f && f.status === 'OPEN' && known(f.federation) && !f.alarm && !(f.allows && f.allows.deposit === false));
   if (!open.length) return null;
   const loadOf = (f) => (typeof f.load === 'number' ? f.load : Infinity);
   return [...open].sort((a, b) => loadOf(a) - loadOf(b) || (b.height || 0) - (a.height || 0))[0];
@@ -33369,6 +33408,14 @@ function moveSays(offer) {
   if (!offer) return '';
   const pct = (x) => `${Math.round(x * 100)} %`;
   return `This federation is at ${pct(offer.fromLoad)} load; federation ${String(offer.to).slice(0, 16)} is at ${pct(offer.toLoad)}. Move is offered: your money can go there.`;
+}
+
+/** The sentence a page shows for a federation with a reserve alarm (kanban #1093 part 5), else ''. */
+function alarmSays(fed) {
+  if (!fed || !fed.alarm) return '';
+  const what = fed.alarm.kind === 'inflation' ? 'more e-cash was redeemed than was ever issued'
+    : fed.alarm.kind === 'unbacked-spend' ? 'its reserve was spent on the chain with no peg-out its guardians signed' : 'a mark of theft was seen';
+  return `Deposits into this federation are stopped: in its own signed history, ${what}. Your notes in it are covered by its guardians' bonds; Withdraw and Move stay open while they work.`;
 }
 
 /** The sentence a page shows for a status that holds something back. */
@@ -39510,7 +39557,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          fetchGames: fetchGames, oneTilePerGame: oneTilePerGame, checkedGameInfoOfTile: checkedGameInfoOfTile, checkedGameInfo: checkedGameInfo, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          censusEndpoints: censusEndpoints, mergeNodes: mergeNodes,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, roundAttestors: roundAttestors, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, withdrawFederation: withdrawFederation, safeFederation: safeFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, evacuatePlayerWallet: evacuatePlayerWallet, movePlayerWallet: movePlayerWallet, moveCanMsat: moveCanMsat, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, rememberedInvite: rememberedInvite, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyRowOffered: lobbyRowOffered, lobbyRowNotOffered: lobbyRowNotOffered, unplayableWindowLine: unplayableWindowLine, fetchKeylessFederations: fetchKeylessFederations, keylessFundsLine: keylessFundsLine, gatewayUrlsOfView: gatewayUrlsOfView, settledWords: settledWords, onStorageFull: onStorageFull, inactiveFederations: inactiveFederations, nextRoundLine: nextRoundLine, inHoursMinutes: inHoursMinutes, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, roundAttestors: roundAttestors, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, withdrawFederation: withdrawFederation, safeFederation: safeFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, evacuatePlayerWallet: evacuatePlayerWallet, movePlayerWallet: movePlayerWallet, moveCanMsat: moveCanMsat, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, rememberedInvite: rememberedInvite, federationSays: federationSays, loadSays: loadSays, alarmSays: alarmSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyRowOffered: lobbyRowOffered, lobbyRowNotOffered: lobbyRowNotOffered, unplayableWindowLine: unplayableWindowLine, fetchKeylessFederations: fetchKeylessFederations, keylessFundsLine: keylessFundsLine, gatewayUrlsOfView: gatewayUrlsOfView, settledWords: settledWords, onStorageFull: onStorageFull, inactiveFederations: inactiveFederations, nextRoundLine: nextRoundLine, inHoursMinutes: inHoursMinutes, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          presentNotes: presentNotes, liquidationKeyFor: liquidationKeyFor, collectLiquidationPayouts: collectLiquidationPayouts, roundVerdict: roundVerdict, secureTranscript: secureTranscript,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,

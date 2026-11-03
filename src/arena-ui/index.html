@@ -5110,7 +5110,8 @@
       const own = window.ARENA_LEDGER_FEDERATION && window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.get ? window.ARENA_FED_LOADS.get(window.ARENA_LEDGER_FEDERATION) : null;
       const mine = own ? { ...own, federation: window.ARENA_LEDGER_FEDERATION } : null;
       // AND ITS LOAD (§23A.3): said when the federation holds more than its guardians' bonds cover - shown, not refused
-      const said = mine ? [ARENACLIENT.federationSays(mine.status), ARENACLIENT.loadSays ? ARENACLIENT.loadSays(mine) : '',
+      // AN ALARM FIRST (kanban #1093 part 5): a seat saw a mark of theft in the federation's signed history - deposits are stopped
+      const said = mine ? [ARENACLIENT.alarmSays ? ARENACLIENT.alarmSays(mine) : '', ARENACLIENT.federationSays(mine.status), ARENACLIENT.loadSays ? ARENACLIENT.loadSays(mine) : '',
         ARENACLIENT.moveSays && window.ARENA_FED_MOVE && window.ARENA_FED_MOVE.from === mine.federation ? ARENACLIENT.moveSays(window.ARENA_FED_MOVE) : ''].filter(Boolean).join(' ') : '';
       const says = said ? 'Federation ' + mine.federation.slice(0, 8) + ' · ' + said : '';   // named, as on the chip
       if (note) { if (note.textContent !== says) window.ArenaText.say(note, says); note.style.display = says ? '' : 'none'; }
@@ -5166,7 +5167,7 @@
       const fed = window.ARENA_FED_STATUS;
       if (fed && fed.allows && !fed.allows[which === 'withdraw' ? 'withdraw' : which === 'move' ? 'move' : 'deposit']) {
         // the status says why, or - an OPEN federation over its cover on mainnet (§23A.3, ruled A) - its load does
-        const why = ARENACLIENT.federationSays(fed.status) || (ARENACLIENT.loadSays ? ARENACLIENT.loadSays(fed) : ''); say(why); return Promise.resolve({ ok: false, why });
+        const why = (ARENACLIENT.alarmSays ? ARENACLIENT.alarmSays(fed) : '') || ARENACLIENT.federationSays(fed.status) || (ARENACLIENT.loadSays ? ARENACLIENT.loadSays(fed) : ''); say(why); return Promise.resolve({ ok: false, why });
       }
       // THE NO-ROUND DEPOSIT: plain amounts into the same player wallet, opened from the lobby's federation (walletDepositOffer)
       if (noRound) {

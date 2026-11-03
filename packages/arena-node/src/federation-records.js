@@ -108,7 +108,10 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   abandonedFrom = networkId ? abandonedSlashPoint(networkOf(networkId)) : null,
   // A GUARDIAN'S BOND STAYS LOCKED WHILE IT SERVES (kanban #1093 part 7, ruling #1104): { from, drainBlocks, bondMinGuardian } - a body at or
   // above `from` counts in its cap only bonds maturing past its height + drain_blocks (federation-record.js BOND_LOCK_HEIGHT); null: never
-  bondLock = null }) {
+  bondLock = null,
+  // A RESERVE ALARM (kanban #1093 part 5, ruling #1106): (fid hex) -> { kind: 'inflation' | 'unbacked-spend', session?, txid?, height, ... } | null,
+  // a mark of theft this seat saw in the federation's signed history; listed with the record, so every client stops depositing at once
+  alarmOf = () => null }) {
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
   const draining = new Map();                // federation id hex -> status name
   // THE HALT A LIQUIDATION COUNTS FROM (§23A.5): the lowest-height signed HALTED record of the run of HALTED records
@@ -734,6 +737,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       return out;
     },
     list: () => [...kept.entries()].map(([federation, k]) => ({ federation, status: k.status, height: k.height, signers: k.signers, record: toHex(k.bytes),
+      ...((() => { let a = null; try { a = alarmOf(federation); } catch { a = null; } return a ? { alarm: a } : {}; })()),
       // THE LOAD (§23A.3): the signed record's reserve over its signed exposure cap
       ...(k.record ? { reserveSats: String(k.record.reserveSats), exposureCapSats: String(k.record.exposureCapSats),
         load: k.record.exposureCapSats > 0n ? Number((k.record.reserveSats * 10000n) / k.record.exposureCapSats) / 10000 : null } : {}),
