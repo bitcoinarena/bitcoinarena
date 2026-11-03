@@ -10984,12 +10984,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           return text(res, r.status, r.ok ? 'kept' : r.why);
         }
         if (toHex(fraudProofHash(u8)) !== slashed[1]) return text(res, 409, 'those bytes are not the proof that hash names');
-        let got; try { got = readEvidence(decodeFraudProof(u8).evidence); } catch (e) { return text(res, 400, e.message); }
+        let evidence, got; try { ({ evidence } = decodeFraudProof(u8)); got = readEvidence(evidence); } catch (e) { return text(res, 400, e.message); }
         round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
         // ANYONE PUBLISHES A FRAUD PROOF (5A.3B step 1): a pair that holds here, on this seat's own check, is a proof this seat holds, kept as if it had seen both results itself
         if (slashStarter && got.kind === 'double') {
           const none = new Uint8Array(32);
-          if ((await judgeProofBytes(u8)).verdict === true && round.get(got.proof.roundId) && round.putDoubleResult(got.proof.roundId, none, got.proof.nodePubkey, got.signedResults[0], got.signedResults[1])) round.fileDoubleResult(got.proof.roundId, none, got.proof.nodePubkey, fromHex(slashed[1]), got.evidence);
+          if ((await judgeProofBytes(u8)).verdict === true && round.get(got.proof.roundId) && round.putDoubleResult(got.proof.roundId, none, got.proof.nodePubkey, got.signedResults[0], got.signedResults[1])) round.fileDoubleResult(got.proof.roundId, none, got.proof.nodePubkey, fromHex(slashed[1]), evidence);
         } else if (slashStarter) slashStarter.handed(fromHex(slashed[1]));
         return text(res, 201, 'kept');
       }
