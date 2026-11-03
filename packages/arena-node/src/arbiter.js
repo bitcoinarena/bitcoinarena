@@ -25,7 +25,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { affectedEntries, realLosses, slashHolds, slashHoldsOnRerun, splitRerunSlashEvidence, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS, TWO_RESULTS,
-  splitAuditSlashEvidence, slashHoldsOnAudit, AUDIT_CONTRADICTED, splitDoubleSlashEvidence, slashHoldsOnDoubleSign, splitTableSlashEvidence, slashHoldsOnTable } from '../../arena-protocol/src/slash.js';
+  splitAuditSlashEvidence, slashHoldsOnAudit, AUDIT_CONTRADICTED, splitDoubleSlashEvidence, slashHoldsOnDoubleSign, splitTableSlashEvidence, slashHoldsOnTable, splitReleaseSlashEvidence, slashHoldsOnRelease, slashHoldsOnReleaseTable } from '../../arena-protocol/src/slash.js';
 import { abandonedSlashStands, abandonedProofId, decodeAbandonedProof } from '../../arena-protocol/src/abandoned-slash.js';
 import { verifyFederationRecord } from '../../arena-protocol/src/federation-record.js';
 import { abandonedSlashPoint, networkOf } from '../../arena-protocol/src/constants.js';
@@ -213,6 +213,22 @@ export async function judgeTableProof({ evidence, roundIdBytes, contract, manife
     rebuiltTxid, feesOf, own: got.own, advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
   if (!held.slashed) return no(held.why);
   return { slashed: true, offence: held.offence, bond: held.bond, proof: got.proof, playerPubkey: got.proof.playerPubkey, why: held.why };
+}
+
+/**
+ * THE JUDGEMENT OF A RELEASE (5A.3 template-3 rows, kanban #1065). The record names one row: with a table, a release that pays other than it; without, a release with no valid proof, `proofChecks` being
+ * this reader's own word on the bytes the release committed to, as `replayDiffers` is for a replay. `panels` { panelA, panelB } of keys, redrawn by the reader and never read off the accuser; `holdBlocks` the network's.
+ */
+export function judgeReleaseProof({ evidence, panels, holdBlocks, proofChecks, advert, bondOutpoint }) {
+  const no = (why) => ({ slashed: false, why });
+  let got;
+  try { got = splitReleaseSlashEvidence(evidence); } catch (e) { return no(`not a proof against a release: ${e.message}`); }
+  const own = advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null;
+  const held = got.table.length
+    ? slashHoldsOnReleaseTable({ proof: got.proof, spend: got.release, prevouts: got.prevouts, table: got.table, advert: own, verify: verifySchnorr })
+    : slashHoldsOnRelease({ proof: got.proof, release: got.release, prevouts: got.prevouts, panels, holdBlocks, fraudProof: got.fraudProof, proofChecks, advert: own, verify: verifySchnorr });
+  if (!held.slashed) return no(held.why);
+  return { slashed: true, offence: held.offence, bond: held.bond, proof: got.proof, why: held.why };
 }
 
 /**

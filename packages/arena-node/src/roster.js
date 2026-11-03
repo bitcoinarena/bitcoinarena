@@ -885,6 +885,18 @@ export class Roster {
     return answer;
   }
 
+  /** THE ROUND'S TWO PANELS, redrawn from this node's census and the round's seed (5A.3B): { ok, panelA, panelB } of keys. Whoever judges a release reads them here, and never off the accuser. */
+  slashPanelsFor(roundIdBytes, { posted = null } = {}) {
+    const contract = this.#held(roundIdBytes) || posted;
+    if (!contract) return { ok: false, why: 'this node holds no such round' };
+    const census = this.censusFor(roundIdBytes, null, this.#held(roundIdBytes) ? {} : { posted });
+    if (!census.ok) return census;
+    const seeded = this.seedFor(roundIdBytes, contract);
+    if (!seeded.ok) return { ok: false, why: seeded.why };
+    const panels = drawPanels({ entries: census.entries, contract, committeeSeed: seeded.seed });
+    return panels.ok === false ? panels : { ok: true, panelA: panels.panelA.map((e) => e.pubkey), panelB: panels.panelB.map((e) => e.pubkey) };
+  }
+
   attestorsFor(roundIdBytes) {
     const contract = this.#held(roundIdBytes);
     if (!contract) return { ok: false, why: 'this node holds no such round' };

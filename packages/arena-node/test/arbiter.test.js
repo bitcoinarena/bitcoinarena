@@ -186,7 +186,7 @@ test('a filed proof, re-judged by the arbiter from the seat\'s doors, is signed 
     assert.equal((await seat(rebuilt({ entry: new Uint8Array(0) }))).verdict, false, 'nor one with no entry');
     assert.match((await seat(rebuilt({ contract: new Uint8Array(0) }))).why, /no contract/);
     assert.match((await seat(rebuilt({ evidence: joinSlashEvidence(x.evidence.subarray(0, x.evidence.length - signedResult.length), forgedSig) }))).why, /not signed by the node it names/);
-    assert.match((await seat(rebuilt({ evidence: joinSlashEvidence(x.evidence.subarray(0, x.evidence.length - signedResult.length), honestRecord.bytes) }))).why, /does not contradict/);
+    assert.match((await seat(rebuilt({ evidence: joinSlashEvidence(x.evidence.subarray(0, x.evidence.length - signedResult.length), honestRecord.bytes) }))).why, /another run/);
     assert.equal((await judgeOf({ coreOf: () => null })(complete)).verdict, undefined, 'a seat that does not host the game cannot say, and signs nothing');
     assert.equal((await judgeOf({ beaconOf: () => ({ ok: false, why: 'no block' }) })(complete)).verdict, undefined);
     assert.equal((await judgeOf({ censusOf: () => ({ ok: false, why: 'not read' }) })(complete)).verdict, undefined);
