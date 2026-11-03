@@ -59,7 +59,8 @@ async function until(what, list, test, ms = 90000) {
   const stop = Date.now() + ms;
   for (;;) {
     const got = await seats(list);
-    if (got.every((s) => s && test(s))) return got;
+    // a seat's status has no run for a moment between two of them: not yet, whatever the test reads
+    if (got.every((s) => { try { return s && test(s); } catch { return false; } })) return got;
     if (Date.now() > stop) { ask(`in time: ${what}`, false, JSON.stringify(got.map((s) => (s ? { to: s.scannedTo, reshare: s.reshare && { ...s.reshare, window: undefined }, why: s.lastWhy } : null))).slice(0, 900)); throw new Error(`no ${what}`); }
     await wait(500);
   }
