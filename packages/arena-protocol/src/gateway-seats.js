@@ -33,6 +33,18 @@ export const GATEWAY_MINIMUMS = Object.freeze({
 });
 
 const floorTo = (x, step) => (BigInt(x) / step) * step;
+
+/**
+ * GATEWAYS KEEP THE CAP TOO (kanban #1093 part 6, the owner 2026-11-03): "A gateway refuses a peg-in into a federation at load >= 1, as a
+ * client does. A seated gateway that pegs in past it breaks the cap, and that is a gateway-seat offence: it is unseated." As a client does:
+ * the load is reserve / exposure cap of the federation's record, and like the client's refusal (§23A.3, ruled 2026-10-12, option A) it is
+ * judged on mainnet only - a test network shows the load and warns. Answers whether a peg-in at that load breaks the cap.
+ */
+export function pegInPastCap({ reserveSats, exposureCapSats, network }) {
+  if (network === 'regtest' || network === 'testnet4' || network === 'testnet') return false;
+  const cap = BigInt(exposureCapSats ?? 0);
+  return cap > 0n && BigInt(reserveSats ?? 0) >= cap;
+}
 export function gatewayTicket(beacon, nodeKey, epoch) {
   const w = new Writer(); w.bytes32(beacon); w.bytes32(nodeKey);
   return bytesToBigInt(taggedHash(tagAt('gatewayTicket', { epoch }), w.finish()));
@@ -41,6 +53,8 @@ export function gatewayTicket(beacon, nodeKey, epoch) {
 /** Why a candidate may not stand, or null. `c` { seatedGuardian, registered, inboundSats, outboundSats, pegInSats, availabilityPct, bondSats }. */
 export function ineligibleWhy(c, { minimums, bondMinGuardian }) {
   if (!c.seatedGuardian) return 'not a seated guardian of the federation';
+  // a gateway-seat offence (part 6 above): never seated while it stands, not even as the federation's last gateway
+  if (c.pegInPastCap) return `pegged in past the cap: ${c.pegInPastCap} went in at load >= 1, a gateway-seat offence (unseated)`;
   if (!c.registered) return 'its gateway is not registered with the federation';
   // inbound from OUTSIDE the federation: a payer on the wider Lightning network reaches the gateway only through it (the ring's channels
   // move money between the federation's own gateways)
@@ -74,7 +88,7 @@ export function seatGateways({ candidates = [], beacon, epoch, incumbents = [], 
     const why = ineligibleWhy(c, { minimums, bondMinGuardian });
     if (why) {
       ineligible.push({ node: toHex(c.node), why });
-      if (c.seatedGuardian && c.registered && BigInt(c.pegInSats || 0) > 0n) serving.push(rankable(c));
+      if (c.seatedGuardian && c.registered && !c.pegInPastCap && BigInt(c.pegInSats || 0) > 0n) serving.push(rankable(c));
       continue;
     }
     eligible.push(rankable(c));

@@ -41,7 +41,10 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
   seatsFor = async () => GATEWAY_SEATS,
   // THE FEDERATION'S RESERVE AND CAP from its record (§23A.3a part 2): async (fid) -> { reserveSats, exposureCapSats } | null; with them,
   // under peg-in pressure the proved peg-in ranks before volume
-  pressureFor = async () => null }) {
+  pressureFor = async () => null,
+  // A PEG-IN PAST THE CAP (kanban #1093 part 6): async (fid, height) -> true when a peg-in confirmed at that height went into the federation at
+  // load >= 1 (gateway-seats.js pegInPastCap over the record in force before it); a candidate with one is not seated
+  pastCapAt = async () => false }) {
   const epochs = new Map();          // epoch -> Map(node hex -> { probes, up, claim, modulePk })
   const volumes = new Map();         // epoch -> Map(gateway module key -> msat)
   let cursor = null;
@@ -193,12 +196,13 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
       const lockNamed = new Map();
       for (const [, r] of rows) { const o = r.claim.heldLock && String(r.claim.heldLock.outpoint || '').toLowerCase(); if (o) lockNamed.set(o, (lockNamed.get(o) || 0) + 1); }
       const heldOf = (node, r) => { const h = r.claim.heldLock; return h && lockNamed.get(String(h.outpoint || '').toLowerCase()) === 1 ? heldSatsOf(fid, e, node, h, heldSet) : 0n; };
-      const proved = new Map();
+      const proved = new Map(), pastCap = new Map();
       for (const [node, r] of rows) {
         if (!coins) { proved.set(node, null); continue; }
         let sum = 0n;
         for (const { outpoint, height } of itemsOf(r)) {
           if (!coins.has(outpoint) || named.get(outpoint).length !== 1) continue;
+          if (!pastCap.has(node)) { let past = false; try { past = await pastCapAt(fid, height); } catch { past = false; } if (past) pastCap.set(node, outpoint); }
           if (aged && !(pegInAgeStands({ height, epochStart, maxAge }) && await holds(outpoint, height, tipNow))) continue;
           sum += coins.get(outpoint);
         }
@@ -208,7 +212,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
       const provedOf = (node) => proved.get(node);
       const beacon = await beaconAt(e * epochBlocks);
       if (!beacon) return { ok: false, why: `the epoch's first block ${e * epochBlocks} is not in this seat's chain` };
-      for (const c of candidates) { const v = provedOf(toHex(c.node)); c.provedPegInSats = v === null ? 0n : v; }
+      for (const c of candidates) { const v = provedOf(toHex(c.node)); c.provedPegInSats = v === null ? 0n : v; if (pastCap.has(toHex(c.node))) c.pegInPastCap = pastCap.get(toHex(c.node)); }
       // PEG-IN PRESSURE, judged on the gateways holding the seats now (the epoch before's): their proved peg-ins against P*
       let pegInStarSats = null;
       try {

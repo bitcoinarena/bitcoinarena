@@ -97,3 +97,14 @@ test('peg-in pressure: the proved peg-in (up to P*) ranks before volume; without
   assert.equal(pegInPressure({ ...base, pegIns: [{ node: 'a', pegInSats: 50_000n }, { node: 'b', pegInSats: 60_000n }] }), null);
   assert.equal(pegInPressure({ ...base, reserveSats: 300_000n, pegIns: [{ node: 'a', pegInSats: 0n }] }), null);
 });
+
+test('gateways keep the cap (kanban #1093 part 6): a peg-in at load >= 1 is past it on mainnet; a gateway with one is never seated, not even as the last', async () => {
+  const { pegInPastCap } = await import('../src/gateway-seats.js');
+  assert.equal(pegInPastCap({ reserveSats: 1000n, exposureCapSats: 1000n, network: 'mainnet' }), true, 'load 1');
+  assert.equal(pegInPastCap({ reserveSats: 999n, exposureCapSats: 1000n, network: 'mainnet' }), false);
+  assert.equal(pegInPastCap({ reserveSats: 5000n, exposureCapSats: 1000n, network: 'testnet4' }), false, 'a test network warns, as the client does (ruling A)');
+  assert.equal(pegInPastCap({ reserveSats: 5000n, exposureCapSats: 0n, network: 'mainnet' }), false, 'no cap said: no judgement');
+  assert.match(ineligibleWhy(ok(1, { pegInPastCap: 'ab:0' }), { minimums: GATEWAY_MINIMUMS.testnet4, bondMinGuardian: 50_000n }), /pegged in past the cap: ab:0/);
+  const s = seat([ok(1, { pegInPastCap: 'ab:0' })]);
+  assert.deepEqual([s.seated, s.belowMinimums], [[], []], 'the at-least-one rule does not seat an offender');
+});

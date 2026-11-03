@@ -48,7 +48,7 @@ import { checkLiquidityClaim, provenFreeSats } from '../../arena-protocol/src/li
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
 import { capacityBandPoint } from '../../arena-protocol/src/federation-record.js';
 import { capacityView, capacityPlea, bondIncentive, pressureOf, guardianWeights as capacityGuardianWeights, gatewayWeights as capacityGatewayWeights } from '../../arena-protocol/src/capacity.js';
-import { GATEWAY_MINIMUMS, GATEWAY_EPOCH_BLOCKS } from '../../arena-protocol/src/gateway-seats.js';
+import { GATEWAY_MINIMUMS, GATEWAY_EPOCH_BLOCKS, pegInPastCap } from '../../arena-protocol/src/gateway-seats.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
 import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.js';
 import { BADGES } from '../../arena-protocol/src/badges.js';
@@ -5642,6 +5642,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       endpointOf: (e) => addressBook.endpointOf(e),   // its announced address first (kanban #577)
       // the federation's reserve and cap from its record: under peg-in pressure the proved peg-in ranks first (§23A.3a part 2)
       pressureFor: async (fid) => { const r = fedRecords.recordOf(fid); return r && r.record ? { reserveSats: r.record.reserveSats, exposureCapSats: r.record.exposureCapSats, ...pressureOf(r.record) } : null; },
+      // a peg-in confirmed at `height` into a federation whose record before it says load >= 1: the gateway is unseated (kanban #1093 part 6)
+      pastCapAt: async (fid, height) => { const rec = fedRecords.recordAt ? fedRecords.recordAt(fid, Number(height) - 1) : null;
+        return !!rec && pegInPastCap({ reserveSats: rec.reserveSats, exposureCapSats: rec.exposureCapSats, network: networkOf(rec.networkId) }); },
       // the record's seated guardians; before this seat holds the record, the census's (kanban #552: a restarted seat read none for minutes)
       seated: async (fid) => { const r = fedRecords.seatedGuardians(fid); return r && r.length ? r.map((k) => toHex(k)) : (fedRecords.censusGuardians ? fedRecords.censusGuardians(fid) : []); },
       entries: async () => { if (fedRecords.censusNewest) { const e = fedRecords.censusNewest(); if (e.length) return e; } const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false }; return now.ok ? now.entries : []; },
