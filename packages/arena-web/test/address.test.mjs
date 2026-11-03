@@ -45,3 +45,32 @@ test('what it does: the switch asked with the mode\'s token, the progress read u
   c.componentWillUnmount();
   assert.deepEqual(argsOf('permanent', { hostname: ' Node.example.com ' }), { mode: 'permanent', hostname: 'Node.example.com' });
 });
+
+// THE FIRST LOGIN (kanban #956: "after first log in, the public address block is always marked as error and only a page reload shows the
+// correct info"): a read that fails is asked again while it is still reading, and the address shows without a reload; a node set up by hand
+// is said at once, and a read that keeps failing says why after its tries
+test('a failed first read is asked again: the address shows without a reload', async () => {
+  let n = 0;
+  const api = { signed: async () => ({}), post: async () => (++n === 1 ? { ok: false, why: 'this request is not signed by the owner' } : quick) };
+  const c = new AddressPanel({ api, retryMs: 5 }); c.setState = (u) => { Object.assign(c.state, typeof u === 'function' ? u(c.state) : u); };
+  await c.read();
+  assert.equal(c.state.loaded, false, 'still reading after the failed first read - no error shown');
+  assert.match(renderToStaticMarkup(c.render()), /reading how this node is reached/);
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(n, 2);
+  assert.equal(c.state.answer.ok, true);
+  assert.match(renderToStaticMarkup(c.render()), /cottage-usually-pete-path/);
+  clearTimeout(c.timer);
+  // set up by hand: said at once, not asked again
+  let m = 0;
+  const hand = new AddressPanel({ api: { signed: async () => ({}), post: async () => { m++; return { ok: false, why: 'this node was not installed by the Arena installer' }; } }, retryMs: 5 });
+  hand.setState = c.setState.bind(hand); hand.setState = (u) => { Object.assign(hand.state, typeof u === 'function' ? u(hand.state) : u); };
+  await hand.read(); await new Promise((r) => setTimeout(r, 30));
+  assert.equal(m, 1); assert.match(renderToStaticMarkup(hand.render()), /set up by hand/);
+  // always failing: the reason after its tries
+  let k = 0;
+  const bad = new AddressPanel({ api: { signed: async () => ({}), post: async () => { k++; return { ok: false, why: 'the node did not answer' }; } }, retryMs: 2, retries: 3 });
+  bad.setState = (u) => { Object.assign(bad.state, typeof u === 'function' ? u(bad.state) : u); };
+  await bad.read(); await new Promise((r) => setTimeout(r, 60));
+  assert.equal(k, 3); assert.match(renderToStaticMarkup(bad.render()), /the node did not answer/);
+});
