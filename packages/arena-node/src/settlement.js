@@ -39,7 +39,7 @@ import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
 import { isScalar, marketOfRound } from '../../arena-protocol/src/manifest.js';
 import { outcomeFinality } from '../../arena-protocol/src/attested.js';
 import { FORFEIT, VOID, ENTRY_VOID, isQualifier } from '../../arena-protocol/src/payout.js';
-import { signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
+import { signShare340, aggregate340, nonceGenerate340, verifyShare340 } from '../../arena-protocol/src/frost-bip340.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { lockFieldsFromJson } from '../../arena-protocol/src/stake-lock.js';
 import { scalarFrom32, FIELD } from '../../arena-protocol/src/shares.js';
@@ -758,22 +758,10 @@ export class LockSettlement {
       }
       if (signers.length < m.needed)
         return refuse(`${signers.length} of the ${m.needed} signer nodes the late settlement needs committed to it: ${refused.join('; ')}`);
-      const commitments = signers.map((x) => x.commitment).sort((a, b) => a.id - b.id);
-      const shares = [];
-      for (const x of signers) {
-        if (x.base === null) {
-          const mine = await this.share(roundIdBytes, commitments, { entry: entryIdBytes });
-          if (!mine.ok) return mine;
-          shares.push(mine.share);
-          continue;
-        }
-        const r = await this.fetcher(`${x.base}/settle-share?${q}`, { method: 'POST', body: encodeCommitments(commitments) });
-        if (!r.ok) return refuse(`${x.base} gave no share: ${(await r.text()).trim()}`);
-        shares.push(decodeShare(new Uint8Array(await r.arrayBuffer())));
-      }
-      ({ signature } = aggregate340({ commitments, message: m.message, groupPublicKey: m.claimPk, shares, curve: this.curve }));
-      if (!schnorr.verify(signature, m.message, m.claimPk.subarray(1)))
-        return refuse('the combined late settlement signature does not verify under the round\'s claim key', 500);
+      const listed = this.#listed(q, signers, m.needed);
+      const combined = await this.#gatherShares(roundIdBytes, m, q, listed, { entry: entryIdBytes });
+      if (!combined.ok) return this.#leaveOut(q, combined, listed, m.needed) ? this.settleLate(roundIdBytes, entryIdBytes) : combined;
+      ({ signature } = combined);
       for (const x of signers) {
         if (x.base === null) continue;
         try { await this.fetcher(`${x.base}/settle-signature?${q}`, { method: 'POST', body: signature }); } catch { /* it asks again */ }
@@ -1054,6 +1042,60 @@ export class LockSettlement {
   }
   #resyncedAt = new Map();   // round id hex -> when its book was last read again on a mismatch (bookResync)
 
+  /**
+   * THE SEATS THAT SIGN THIS LIST (kanban #1070): those that committed, less any that gave this asker no share for this settlement while enough others remain. Every seat that
+   * commits goes on the list and every seat on a list must give its share, so a seat that commits and withholds would be listed again on every pass. `key` the settlement's query.
+   */
+  #listed(key, signers, needed) {
+    const out = this.#withheld.get(key);
+    if (!out) return signers;
+    const kept = signers.filter((s) => !out.has(s.base));
+    return kept.length >= needed ? kept : signers;
+  }
+
+  /**
+   * A LIST THAT FAILED AT A SEAT (kanban #1070): true when that seat is now left out and enough others remain, and the settlement asks again at once, each seat on a new nonce
+   * pair. It grows by a seat each time, so it ends; short of the threshold the seats are forgotten and the pass ends, and the next pass lists whoever commits then.
+   */
+  #leaveOut(key, failed, listed, needed) {
+    const out = this.#withheld.get(key) || new Set();
+    const fresh = (failed.withheld || []).filter((base) => !out.has(base));
+    for (const base of fresh) out.add(base);
+    if (!fresh.length || listed.filter((s) => !out.has(s.base)).length < needed) { this.#withheld.delete(key); return false; }
+    this.#withheld.set(key, out);
+    if (this.#withheld.size > 4096) this.#withheld.delete(this.#withheld.keys().next().value);
+    return true;
+  }
+  #withheld = new Map();   // a settlement's query -> the peers that gave this asker no share for it
+
+  /**
+   * ROUND TWO, AND THE COMBINED SIGNATURE: every seat on the list gives its share over it. Answers { ok, signature }, or a refusal, with `withheld` the doors at fault: the seat
+   * that gave none, or by their public shares (dkg.publicSharesFor) those whose share does not stand. `own` the settlement's scope.
+   */
+  async #gatherShares(roundIdBytes, m, q, signers, own) {
+    const commitments = signers.map((s) => s.commitment).sort((a, b) => a.id - b.id);
+    const shares = [];
+    for (const s of signers) {
+      if (s.base === null) {
+        const mine = await this.share(roundIdBytes, commitments, own);
+        if (!mine.ok) return mine;
+        shares.push(mine.share);
+        continue;
+      }
+      try {
+        const r = await this.fetcher(`${s.base}/settle-share?${q}`, { method: 'POST', body: encodeCommitments(commitments) });
+        if (!r.ok) return { ...refuse(`${s.base} gave no share: ${(await r.text()).trim()}`), withheld: [s.base] };
+        shares.push(decodeShare(new Uint8Array(await r.arrayBuffer())));
+      } catch (e) { return { ...refuse(`${s.base} gave no share: ${e.message}`), withheld: [s.base] }; }
+    }
+    const { signature } = aggregate340({ commitments, message: m.message, groupPublicKey: m.claimPk, shares, curve: this.curve });
+    if (schnorr.verify(signature, m.message, m.claimPk.subarray(1))) return { ok: true, signature };
+    const held = this.dkg && this.dkg.publicSharesFor ? this.dkg.publicSharesFor(m.contract.nodes) : null;
+    const spoilt = held && held.ok ? signers.filter((s, i) => s.base !== null && !verifyShare340({ id: s.commitment.id, share: shares[i],
+      publicShare: held.shares.get(String(s.commitment.id)), groupPublicKey: m.claimPk, message: m.message, commitments, curve: this.curve })) : [];
+    return { ...refuse('the combined settlement signature does not verify under the round\'s claim key', 500), withheld: spoilt.map((s) => s.base) };
+  }
+
   /** ROUND ONE: this signer node's nonce commitment for the settlement it would sign. */
   async commit(roundIdBytes, { txid = null, entry = null, federation = null } = {}) {
     const build = () => (federation ? this.fedMessage(roundIdBytes, federation) : entry ? this.lateMessage(roundIdBytes, entry) : this.message(roundIdBytes));
@@ -1070,7 +1112,9 @@ export class LockSettlement {
       return refuse(`this signer node rebuilt settlement ${String(m.txid).slice(0, 16)}, not ${String(txid).slice(0, 16)}: it commits to no other bytes`, 409);
     const key = federation ? `${toHex(roundIdBytes)}:fed:${String(federation).toLowerCase()}` : entry ? `${toHex(roundIdBytes)}:${toHex(entry)}` : toHex(roundIdBytes);
     let pair = this.pairs.get(key);
-    if (!pair || toHex(pair.message) !== toHex(m.message)) {
+    // A PAIR THAT SIGNED A LIST IS SPENT, and a new pair signs the next one (kanban #1070; a reserve payout's rule too: "a nonce pair signs one list once"): a list that never
+    // completed - one seat on it gave no share - otherwise left every seat that signed it refusing any other until it restarted. A list from anyone at the door did the same.
+    if (!pair || toHex(pair.message) !== toHex(m.message) || pair.list) {
       const hiding = nonceGenerate340(this.random(32), m.signerNode.share);
       const binding = nonceGenerate340(this.random(32), m.signerNode.share);
       pair = { message: m.message, hiding, binding, list: null, share: null,
@@ -1206,8 +1250,8 @@ export class LockSettlement {
    * other bytes than the asker, the asker's one settle ended there, and no other path reaches a round with every run FINAL, no send
    * plan row and no settlement row. Minutes later all six seats built the same bytes; the round sat at NONE until its locks
    * would have run out. Every closed lock round of the last day, once a quarter of an hour has passed, is asked every 5 minutes.
-   * PAST THE TAKEOVER HEIGHT EVERY SEAT IS ON TURN, and two seats combining at once split the peers' one list for good ("keeps no second
-   * pair"), so each takes its own slot of the clock: place k of n asks only in the k-th of n windows of `everyMs`.
+   * PAST THE TAKEOVER HEIGHT EVERY SEAT IS ON TURN, and two seats combining at once split the peers' one list ("keeps no second pair"),
+   * so each takes its own slot of the clock: place k of n asks only in the k-th of n windows of `everyMs`.
    */
   async retryUnsettled({ ageMs = 900000, windowMs = 86400000, everyMs = 300000 } = {}) {
     if (this.#retrying) return [];
@@ -1336,22 +1380,10 @@ export class LockSettlement {
         if (refused.some((x) => /rebuilt settlement/.test(x))) await this.bookResync(roundIdBytes);
         return refuse(`${signers.length} of the ${m.needed} signer nodes the settlement needs committed to it: ${refused.join('; ')}`);
       }
-      const commitments = signers.map((s) => s.commitment).sort((a, b) => a.id - b.id);
-      const shares = [];
-      for (const s of signers) {
-        if (s.base === null) {
-          const mine = await this.share(roundIdBytes, commitments);
-          if (!mine.ok) return mine;
-          shares.push(mine.share);
-          continue;
-        }
-        const r = await this.fetcher(`${s.base}/settle-share?${q}`, { method: 'POST', body: encodeCommitments(commitments) });
-        if (!r.ok) return refuse(`${s.base} gave no share: ${(await r.text()).trim()}`);
-        shares.push(decodeShare(new Uint8Array(await r.arrayBuffer())));
-      }
-      ({ signature } = aggregate340({ commitments, message: m.message, groupPublicKey: m.claimPk, shares, curve: this.curve }));
-      if (!schnorr.verify(signature, m.message, m.claimPk.subarray(1)))
-        return refuse('the combined settlement signature does not verify under the round\'s claim key', 500);
+      const listed = this.#listed(q, signers, m.needed);
+      const combined = await this.#gatherShares(roundIdBytes, m, q, listed, {});
+      if (!combined.ok) return this.#leaveOut(q, combined, listed, m.needed) ? this.#settleOnce(roundIdBytes) : combined;
+      ({ signature } = combined);
       for (const s of signers) {
         if (s.base === null) continue;
         try { await this.fetcher(`${s.base}/settle-signature?${q}`, { method: 'POST', body: signature }); } catch { /* it asks again */ }
@@ -1407,7 +1439,8 @@ export class LockSettlement {
     }
     this.keepFederationMoves(roundIdBytes, got);
     const results = [];
-    for (const s of got.split.settlements) {
+    for (let i = 0; i < got.split.settlements.length; i++) {
+      const s = got.split.settlements[i];
       const fid = s.federation;
       const kept = this.round.fedLockSettlement(roundIdBytes, fid);
       if (kept && kept.state === ACCEPTED) { results.push({ federation: fid, state: ACCEPTED, txid: kept.txid, kept: true }); continue; }
@@ -1428,18 +1461,14 @@ export class LockSettlement {
           } catch (e) { refused.push(`${base}: ${e.message}`); }
         }
         if (signers.length < m.needed) { results.push({ federation: fid, ok: false, why: `${signers.length} of the ${m.needed} signer nodes committed: ${refused.join('; ')}` }); continue; }
-        const commitments = signers.map((x) => x.commitment).sort((a, b) => a.id - b.id);
-        const shares = [];
-        let failed = null;
-        for (const x of signers) {
-          if (x.base === null) { const mine = await this.share(roundIdBytes, commitments, { federation: fid }); if (!mine.ok) { failed = mine.why; break; } shares.push(mine.share); continue; }
-          const r = await this.fetcher(`${x.base}/settle-share?${q}`, { method: 'POST', body: encodeCommitments(commitments) });
-          if (!r.ok) { failed = `${x.base} gave no share: ${(await r.text()).trim()}`; break; }
-          shares.push(decodeShare(new Uint8Array(await r.arrayBuffer())));
+        const listed = this.#listed(q, signers, m.needed);
+        const combined = await this.#gatherShares(roundIdBytes, m, q, listed, { federation: fid });
+        if (!combined.ok) {
+          if (this.#leaveOut(q, combined, listed, m.needed)) { i--; continue; }
+          results.push({ federation: fid, ok: false, why: combined.why });
+          continue;
         }
-        if (failed) { results.push({ federation: fid, ok: false, why: failed }); continue; }
-        ({ signature } = aggregate340({ commitments, message: m.message, groupPublicKey: m.claimPk, shares, curve: this.curve }));
-        if (!schnorr.verify(signature, m.message, m.claimPk.subarray(1))) { results.push({ federation: fid, ok: false, why: 'the combined signature does not verify under the round\'s claim key' }); continue; }
+        ({ signature } = combined);
         for (const x of signers) { if (x.base === null) continue; try { await this.fetcher(`${x.base}/settle-signature?${q}`, { method: 'POST', body: signature }); } catch { /* it asks again */ } }
       }
       this.round.putFedLockSettlement({ roundId: roundIdBytes, federation: fid, txid: m.txid, message: m.message, signature, state: SUBMITTING,
