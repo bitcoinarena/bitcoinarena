@@ -522,11 +522,16 @@ export class Round {
   /** How many rounds the store held open at the last read of the open list (what per-round caches are bounded by). */
   get openCount() { return this.openList.ids.length; }
 
-  /** Takes an entry. Refused after the round is closed, and refused twice. */
-  enter(contract) {
+  /**
+   * Takes an entry. Refused after the round is closed, and refused twice.
+   * `accepted`: AN ENTRY THE ROUND HAS ACCEPTED (§17, kanban #1071), brought from a peer by entry-relay.js once the threshold of seats signed results naming
+   * it. What only a door decides goes - the round being open, entry close, a table this seat thinks is full - and everything about the entry itself stays:
+   * the stake, the fee, the handout, the commitment, every item's owner signature.
+   */
+  enter(contract, { accepted = false } = {}) {
     const round = this.get(contract.roundId);
     if (!round) throw new Error('no such round');
-    if (round.state !== OPEN) throw new Error('the round is closed');
+    if (round.state !== OPEN && !accepted) throw new Error('the round is closed');
 
     // AND NOT BEFORE THE COMMITTEE EXISTS. `entry_open_time == committee_time`
     // is 5A.5's own equality, and it is not a preference: 23.1 encrypts the
@@ -564,7 +569,7 @@ export class Round {
     if (!windows.ok && /objection window/.test(windows.why)) throw new Error(windows.why);
     const opensAt = asks.committeeTimeMs;
     const now = BigInt(this.now());
-    if (now < opensAt)
+    if (now < opensAt && !accepted)
       throw new Error(
         `that round's committee forms at ${opensAt} and it is ${now}: entry opens then`);
     // AND NOT WHEN 45 s OR LESS OF THE ROUND'S RUN REMAIN (2026-10-04 14:30: "Join closes when 45 s
@@ -578,7 +583,7 @@ export class Round {
     // A late-join series closes entry exactly LATE_JOIN_MS after its start (series.js); a grid series names its
     // own window and keeps the old door, as its rounds had it when each was published alone.
     const lateJoin = asks.seriesId instanceof Uint8Array && typeof asks.entryCloseMs === 'bigint' && asks.entryCloseMs - asks.startTimeMs === LATE_JOIN_MS;
-    if (lateJoin && !this.db.prepare('SELECT 1 FROM entries WHERE entry_id = ?').get(Buffer.from(entryId(contract)))) {
+    if (lateJoin && !accepted && !this.db.prepare('SELECT 1 FROM entries WHERE entry_id = ?').get(Buffer.from(entryId(contract)))) {
       const lastEntry = asks.startTimeMs + LATE_JOIN_LAST_ENTRY_MS;
       if (now >= lastEntry)
         throw new Error(`that round's entry closed at ${lastEntry} (start + ${LATE_JOIN_LAST_ENTRY_MS} ms: 45 s or less of its run left) and it is ${now}`);
@@ -649,10 +654,10 @@ export class Round {
       if (game.ok && game.headToHead) {
         const m = game.plugin.manifest;
         if (!hidden) throw new Error(`an entry into a round of head-to-head game "${m.gameName}" hides its move: it carries no commitment`);
-        if (typeof asks.entryCloseMs === 'bigint' && BigInt(this.now()) >= asks.entryCloseMs)
+        if (!accepted && typeof asks.entryCloseMs === 'bigint' && BigInt(this.now()) >= asks.entryCloseMs)
           throw new Error(`that round's entries closed at ${new Date(Number(asks.entryCloseMs)).toISOString()}: a head-to-head round takes no entry after it - the moves are being revealed`);
         const seated = this.entriesOf(contract.roundId).filter((x) => !same(x.entry.sessionPubkey, contract.sessionPubkey)).length;
-        if (seated >= m.players) throw new Error(`that round already seats game "${m.gameName}"'s ${m.players} players`);
+        if (seated >= m.players && !accepted) throw new Error(`that round already seats game "${m.gameName}"'s ${m.players} players`);
       } else if (hidden) throw new Error('that entry hides a move, and its round is not a head-to-head game\'s');
     }
 
@@ -2410,16 +2415,16 @@ export class Round {
    * no page open. Measured before this: the address lived only in the tab's sessionStorage, the probe's
    * Chrome closed at DELIVERED, and the round reached FINAL owing 98000 msat with nobody left to ask.
    */
-  putPayoutAddress({ entryId, roundId, address }) {
-    this.db.prepare('INSERT INTO payout_address (entry_id, round_id, address, named_ms) VALUES (?, ?, ?, ?) '
+  putPayoutAddress({ entryId, roundId, address, signature = null }) {
+    this.db.prepare('INSERT INTO payout_address (entry_id, round_id, address, named_ms, signature) VALUES (?, ?, ?, ?, ?) '
       + 'ON CONFLICT(entry_id) DO NOTHING')   // the first address stands
-      .run(Buffer.from(entryId), Buffer.from(roundId), String(address), this.now());
+      .run(Buffer.from(entryId), Buffer.from(roundId), String(address), this.now(), signature ? Buffer.from(signature) : null);
   }
 
   payoutAddress(entryIdBytes) {
     const r = this.db.prepare('SELECT * FROM payout_address WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
     return r ? { entryId: new Uint8Array(r.entry_id), roundId: new Uint8Array(r.round_id),
-      address: r.address, namedMs: Number(r.named_ms) } : null;
+      address: r.address, namedMs: Number(r.named_ms), signature: r.signature ? new Uint8Array(r.signature) : null } : null;
   }
 
   /**

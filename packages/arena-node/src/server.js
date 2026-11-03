@@ -67,7 +67,7 @@ import { pruneTranscripts, pruneUnusedRounds, PRUNE_EVERY_MS } from './transcrip
 import { maxPlayersPerRound } from '../../arena-protocol/src/replay-budget.js';
 import { bondWeightedMedian } from '../../arena-protocol/src/census-median.js';
 import { publicationFee, publisherPayoutMsat, publisherRoundIndex } from '../../arena-protocol/src/publisher-payout.js';
-import { seriesRoundIdOf, stakePointIsTheHandouts } from '../../arena-protocol/src/contracts.js';
+import { seriesRoundIdOf, stakePointIsTheHandouts, entryId as idOfEntry } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
 import { createAdvertSelf, firstCheckDelayMs } from './advert-self.js';
@@ -228,7 +228,7 @@ import { readReserve } from './federation-reserve.js';
 import { thresholdOf as thresholdOfFederation } from '../../arena-protocol/src/federation-record.js';
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY, findSeriesPublication as findSeriesPublicationIndexed } from './roster.js';
 import { createSeriesPull, PULL_EVERY_MS } from './series-pull.js';
-import { createEntryRelay, RELAY_HEADER } from './entry-relay.js';
+import { createEntryRelay, RELAY_HEADER, lookAtMembers, seatView } from './entry-relay.js';
 import { seatingAgent } from './seating-agent.js';
 import { heartbeatAgent } from './heartbeat-agent.js';
 import { HEARTBEAT_SLOTS_PER_ROUND } from '../../arena-protocol/src/heartbeat.js';
@@ -3768,8 +3768,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (decideOutage(roundIdBytes, entryId, { evidenceKind: 'closed' })) await forwardFirstMark(f);
       }
     })().catch((e) => console.error(`[entry-void] ${e.message}`));
-    stakes = timed(`close ${toHex(roundIdBytes).slice(0, 8)} settleRound`, () => verifier.settleRound(roundIdBytes))
+    // A HEAD-TO-HEAD SEAT FIRST LEARNS WHO IS IN THE ROUND (kanban #1071), and with a wait that ran out it signs nothing
+    const h2h = headToHeadRound(roundIdBytes);
+    stakes = (h2h ? membersKnown(roundIdBytes, h2h).catch((e) => { console.error(`[entry] ${e.message}`); return true; }) : Promise.resolve(true))
+      .then((known) => (known ? timed(`close ${toHex(roundIdBytes).slice(0, 8)} settleRound`, () => verifier.settleRound(roundIdBytes)) : null))
       .then(async (closed) => {
+        if (!closed) return { ok: false, why: 'this seat could not learn who is in the round: it signs nothing for it' };
         // A daemon taken away while it replayed acts on nothing afterwards.
         if (shuttingDown) return { ok: false, why: 'this node was shut down before its close logic ran' };
         const money = await timed(`close ${toHex(roundIdBytes).slice(0, 8)} settleTheStakes`,
@@ -4667,17 +4671,113 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     locksOf: (hex) => { const fieldsOf = (row) => (row ? (typeof row.fields === 'string' ? JSON.parse(row.fields) : row.fields) : null), eid = fromHex(hex);
       return { stake: fieldsOf(round.stakeLock(eid)), fee: fieldsOf(round.feeLock ? round.feeLock(eid) : null) }; },
   });
+  // AN ENTRY THE ROUND ACCEPTED, FROM A PEER AND PAST THIS SEAT'S DOOR (kanban #1071, entry-relay.js, §17): the threshold's signed results named it, so none of the door's
+  // refusals apply. Everything about the entry itself is still checked. Answers { ok } or { ok: false, why }: not yet.
+  const peerGet = (url) => fetch(url, { signal: AbortSignal.timeout(4000) });
+  const takeAcceptedEntry = async (rid, entryHex, from) => {
+    const eid = fromHex(entryHex), needed = roundThreshold(decodeRoundContract(new Uint8Array(round.get(rid).contract)).settlementSlots);
+    for (const base of from) {
+      let entry;
+      try {
+        const r = await peerGet(`${base}/entry?id=${entryHex}`);
+        if (!r.ok) continue;
+        entry = decodeEntryContract(new Uint8Array(await r.arrayBuffer()));
+      } catch { continue; }
+      if (toHex(idOfEntry(entry)) !== entryHex || toHex(entry.roundId) !== toHex(rid)) continue;   // the bytes hash to the id, of this round
+      const signers = await verifier.signersNaming(rid, eid, entry.playerPubkey);
+      if (signers.size < needed) return { ok: false, why: `${signers.size} of ${needed} seats signed a result naming it` };
+      const ref = entry.vssSharesRef;
+      if (ref && !ref.every((b) => b === 0) && !round.handout(ref)) {
+        const h = await peerGet(`${base}/handout?id=${toHex(ref)}`);
+        if (!h.ok) return { ok: false, why: `${base} answered ${h.status} for its handout` };
+        const bytes = new Uint8Array(await h.arrayBuffer());
+        const same = stakePointIsTheHandouts(entry, decodeHandout(bytes));
+        if (!same.ok) return { ok: false, why: `its handout: ${same.why}` };
+        const took = await takeHandout(bytes, { accepted: true });
+        if (!took.ok) return { ok: false, why: `its handout: ${took.why}` };
+      }
+      try { round.enter(entry, { accepted: true }); } catch (e) { return { ok: false, why: e.message }; }
+      console.log(`[entry] ${entryHex.slice(0, 16)} taken from ${base} past the door: ${signers.size} seats signed results naming it (§17)`);
+      return { ok: true };
+    }
+    return { ok: false, why: 'no peer that holds it handed the entry over' };
+  };
+  // AND WHAT GOES WITH AN ENTRY OF A PAYING ROUND: its locks, checked with the federation, and the winner's address under the entry's own session key. Every seat's plan
+  // reads its own rows, so a seat without them would rebuild another plan and refuse the one the others sign. Answers why it must wait, or null.
+  const takeEntryParts = async (rid, entryHex, from) => {
+    const eid = fromHex(entryHex), entry = decodeEntryContract(round.entry(eid));
+    if (entry.stakeMsat === 0n) return null;
+    const ofPeers = async (path, read) => (await Promise.all(from.map(async (base) => {
+      try { const r = await peerGet(`${base}${path}`); return r.ok ? await read(r) : null; } catch { return null; }
+    }))).filter(Boolean);
+    let why = null;
+    if (!round.stakeLock(eid) || (round.feeLock && !round.feeLock(eid))) {
+      for (const locks of await ofPeers(`/order-locks?entry=${entryHex}`, (r) => r.json())) {
+        why = null;
+        try {
+          if (locks.stake && !round.stakeLock(eid)) { const g = await takeStakeLock(eid, lockFieldsFromJson(locks.stake)); if (!g.ok) why = `its stake lock: ${g.why}`; }
+          if (locks.fee && round.feeLock && !round.feeLock(eid)) { const g = await takeFeeLock(eid, lockFieldsFromJson(locks.fee)); if (!g.ok) why = `its fee lock: ${g.why}`; }
+        } catch (e) { why = e.message; }
+        if (!why) break;
+      }
+    }
+    if (!round.payoutAddress(eid)) {
+      for (const named of await ofPeers(`/payout-address?entry=${entryHex}`, (r) => r.json())) {
+        try {
+          const signed = new TextEncoder().encode(String(named.signed)), sig = fromHex(String(named.signature));
+          if (!ed25519.verify(sig, signed, entry.sessionPubkey)) continue;
+          const address = Buffer.from(signed).toString('utf8').trim();
+          if (!lightningAddressEndpoint(address).ok) continue;
+          round.putPayoutAddress({ entryId: eid, roundId: entry.roundId, address, signature: Buffer.concat([Buffer.from(signed), Buffer.from(sig)]) });
+          break;
+        } catch { /* the next peer's copy may stand */ }
+      }
+    }
+    return why;
+  };
+  // A SEAT SIGNS FOR A HEAD-TO-HEAD ROUND ONLY ONCE IT KNOWS WHO IS IN IT (kanban #1071): false when the wait ran out at the result window, and this seat stays silent
+  const asksPeers = seatView((...a) => globalThis.fetch(...a));
+  const membersKnown = async (rid, c) => {
+    const held = () => new Set(round.entriesOf(rid).map(({ entryId: e }) => toHex(e)));
+    // A FREE ROUND THIS SEAT HOLDS NOTHING OF: no backup rule refuses a free entry, and nothing of it is signed here
+    if (c.stakeMsat === 0n && !held().size) return true;
+    if (!round.signerNodes(rid).some((s) => toHex(s) === toHex(round.pubkey))) return true;
+    if (held().size && round.entriesOf(rid).every(({ entryId: e }) => round.hasResult(rid, e, round.pubkey) || round.entryVoid(e))) return true;
+    const found = pluginForRound(c, hosted), peers = verifier.peersOf(rid).map((p) => String(p).replace(/\/+$/, ''));
+    const lastMs = BigInt(windowsOf(c).finalAfterMs);
+    let every = finality.everyMs ?? 2000;
+    for (;;) {
+      const look = await lookAtMembers({ roundId: rid, roundHex: toHex(rid), peers, slots: c.settlementSlots, needed: roundThreshold(c.settlementSlots),
+        players: found.plugin.manifest.players, held: held(), viewOf: asksPeers,
+        take: takeAcceptedEntry,
+        voidEntry: (r, e) => { const why = 'fewer seats than the round\'s threshold took this entry, so it is no member (§17)';
+          round.putEntryVoid({ entryId: fromHex(e), roundId: r, firstMark: new Uint8Array(0), evidenceKind: 'below-threshold', why });
+          console.log(`[entry] ${e.slice(0, 16)} ENTRY_VOID: ${why}`); } });
+      let wait = look.wait;
+      // WHAT GOES WITH EVERY ENTRY THAT STANDS HERE, however it came: an entry a peer handed on came ahead of these too
+      for (const { entryId: e } of round.entriesOf(rid)) {
+        if (round.entryVoid(e)) continue;
+        const why = await takeEntryParts(rid, toHex(e), peers);
+        if (why) wait = wait || `${toHex(e).slice(0, 16)}: ${why}`;
+      }
+      if (!wait) return true;
+      if (shuttingDown) return false;
+      if (BigInt(round.now()) >= lastMs) { console.log(`[entry] ${toHex(rid).slice(0, 16)} past its result window and still short: this seat signs nothing for it - ${wait.slice(0, 160)}`); return false; }
+      await new Promise((go) => { const t = setTimeout(go, every); if (t.unref) t.unref(); });
+      every = Math.min(every * 2, 15000);
+    }
+  };
   // A STAKE'S HANDOUT, CHECKED AND KEPT: what POST /handout does, and what a seat does for the handout of an order a certified batch names
   // that never reached it (replayOrder). The round's threshold, not the player's (M3.3-26); one polynomial; this seat's own share opens.
   // Answers { ok, id, signerNode } or { ok: false, status, why }.
-  const takeHandout = async (bytes) => {
+  const takeHandout = async (bytes, { accepted = false } = {}) => {
     let handout;
     try { handout = decodeHandout(bytes); } catch (e) { return { ok: false, status: 400, why: 'that is not a handout: ' + e.message }; }
     const forRound = round.get(handout.roundId);
     if (!forRound) return { ok: false, status: 404, why: 'this node holds no such round, so it cannot say what its stakes open at' };
     const roundContract = decodeRoundContract(new Uint8Array(forRound.contract));
     // NO STAKE IS DEALT FOR A ROUND THIS NODE REFUSES: nothing may be locked for it
-    { const why = offerRefusal(roundContract); if (why) return { ok: false, status: 409, why: `handout refused: ${why}` }; }
+    { const why = accepted ? null : offerRefusal(roundContract); if (why) return { ok: false, status: 409, why: `handout refused: ${why}` }; }
     let threshold;
     try { threshold = roundThreshold(roundContract.settlementSlots); } catch (e) { return { ok: false, status: 409, why: e.message }; }
     if (handout.needed !== threshold)
@@ -8284,8 +8384,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             } catch { /* not a result */ }
           }
           const onRerun = finalRerunResult(round, new Uint8Array(rid), new Uint8Array(entryId));   // FINAL on an agreed re-run (kanban #1049): the run that stands
-          const best = onRerun ? { outcome: onRerun.outcome, score: onRerun.score, signers: round.reruns(new Uint8Array(rid), new Uint8Array(entryId)).length }
+          let best = onRerun ? { outcome: onRerun.outcome, score: onRerun.score, signers: round.reruns(new Uint8Array(rid), new Uint8Array(entryId)).length }
             : [...tally.values()].sort((a, b) => b.signers - a.signers)[0] || null;
+          // AN ENTRY BELOW THE ROUND'S THRESHOLD (§17, kanban #1071): not taken, nobody signs for it
+          { const v = round.entryVoid(entryId); if (v && v.evidenceKind === 'below-threshold') best = { outcome: ENTRY_VOID, score: 0, signers: 0 }; }
           const won = round.winnings(entryId);
           const player = toHex(entry.playerPubkey);
           return { entry: toHex(entryId), player, name: names.get(player) || `${displayNameFromKey(entry.playerPubkey)} (no lobby name)`, stakeMsat: String(entry.stakeMsat),
@@ -8842,12 +8944,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!stored) return text(res, 404, 'this node holds no such entry');
         const entry = decodeEntryContract(stored);
         const standing = resultFinality(round, entry.roundId, new Uint8Array(eid));
+        const voided = round.entryVoid(eid), notTaken = voided && voided.evidenceKind === 'below-threshold' ? voided : null;
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({
           entry: eid.toString('hex'),
           stake: entry.stakeMsat === 0n ? 'FREE' : (round.stakeSeen(eid) ? 'SEEN' : 'UNSEEN'),
-          finality: standing.state,
-          finalityWhy: standing.why || null,
+          // AN ENTRY BELOW THE ROUND'S THRESHOLD (§17, kanban #1071) was not taken: the client says so
+          finality: notTaken ? ENTRY_VOID : standing.state,
+          finalityWhy: notTaken ? notTaken.why : standing.why || null,
           windowClosesAtMs: standing.closesAtMs === undefined ? null : String(standing.closesAtMs),
         }) + '\n');
       }
@@ -9906,6 +10010,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return got.ok ? text(res, 201, 'settlement signature kept') : text(res, got.status || 409, got.why);
       }
 
+      // THE ADDRESS AN ENTRY NAMED, WITH ITS SIGNATURE (kanban #1071): for a seat that took the entry past its door, which checks it under the entry's own session key
+      if (req.method === 'GET' && url.pathname === '/payout-address') {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, 'an address is asked for by entry id');
+        const held = round.payoutAddress(new Uint8Array(eid));
+        if (!held || !held.signature) return text(res, 404, 'this node holds no signed address for that entry');
+        const s = Buffer.from(held.signature);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ signed: s.subarray(0, s.length - 64).toString('utf8'), signature: toHex(s.subarray(s.length - 64)) }));
+      }
       // WHERE A WINNING GOES, NAMED ONCE (2026-09-21: "winnings are always sent. There is no Collect").
       // The body is the Lightning address and a 64-byte signature over it by the entry's session key: a standing
       // instruction kept before anything is owed, so the settlement can send with no page open.
@@ -9929,7 +10043,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const held = round.payoutAddress(new Uint8Array(eid));
         if (held && held.address !== address)
           return text(res, 409, 'this entry already named its Lightning address, and the first one stands');
-        if (!held) round.putPayoutAddress({ entryId: new Uint8Array(eid), roundId: entry.roundId, address });
+        if (!held) round.putPayoutAddress({ entryId: new Uint8Array(eid), roundId: entry.roundId, address, signature: all });
         res.writeHead(201, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ entry: eid.toString('hex'), address, state: 'NAMED',
           why: 'the winning is sent here when the round settles; nothing more is asked of the player' }) + '\n');

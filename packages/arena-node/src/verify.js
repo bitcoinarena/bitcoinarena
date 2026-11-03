@@ -675,7 +675,8 @@ export class Verifier {
    * reveal (32 zero bytes for none), its core the round's decide adapter. One promise per entry, as a replayed close.
    */
   #headToHeadClose(roundIdBytes, contract, found) {
-    const entries = this.round.entriesOf(roundIdBytes);
+    // AN ENTRY BELOW THE ROUND'S THRESHOLD IS NO MEMBER (§17, kanban #1071): it is not decided, played against or signed for
+    const entries = this.round.entriesOf(roundIdBytes).filter(({ entryId }) => !this.round.entryVoid(entryId));
     const decided = (async () => {
       await this.carryReveals(roundIdBytes, entries, found.plugin.manifest.moveCount);
       const held = new Map(this.round.revealsOf(roundIdBytes).map((r) => [hex(r.entryId), r]));
@@ -704,6 +705,34 @@ export class Verifier {
    */
   #revealRecord(entryIdBytes, reveal) {
     return reveal ? Uint8Array.of(...entryIdBytes, reveal.move, ...reveal.salt) : Uint8Array.of(...entryIdBytes, 0xff);
+  }
+
+  /**
+   * WHICH SEATS OF THE ROUND SIGNED A RESULT NAMING THIS ENTRY (§17, kanban #1071): the keys of the committee's members, each proven by its own signature on a
+   * result about this round and this entry's player, read from the peers' GET /results. What a seat short of an entry needs before it takes it past its
+   * door, so no record is believed for who sent it. A FINAL signature stands on these results, so counting them counts every FINAL too.
+   */
+  async signersNaming(roundIdBytes, entryIdBytes, playerPubkey) {
+    const committee = new Set(this.round.signerNodes(roundIdBytes).map(hex)), signers = new Set();
+    await Promise.all(this.peersOf(roundIdBytes).map(async (peer) => {
+      let body;
+      try {
+        const answer = await fetch(`${peer}/results?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
+        if (!answer.ok) return;
+        body = new Uint8Array(await answer.arrayBuffer());
+      } catch { return; }
+      let records = [];
+      try { records = cutSignedResults(body); } catch { return; }
+      for (const record of records) {
+        try {
+          const { signature, body: signedBody } = splitSignedResult(record);
+          const result = decodePlayerResult(signedBody);
+          if (hex(result.roundId) !== hex(roundIdBytes) || hex(result.playerPubkey) !== hex(playerPubkey) || !committee.has(hex(result.nodePubkey))) continue;
+          if (schnorr.verify(signature, resultId(result), result.nodePubkey)) signers.add(hex(result.nodePubkey));
+        } catch { /* a record that does not read proves nothing */ }
+      }
+    }));
+    return signers;
   }
 
   /**
