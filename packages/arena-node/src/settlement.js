@@ -30,7 +30,7 @@ import { decodeRoundContract, decodeEntryContract, entryFederation, entryId as e
 import { takesAnyFederation, acksSettlement } from '../../arena-protocol/src/constants.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { stallsOut, silentSeats } from '../../arena-protocol/src/stall.js';
-import { signSettlementCommit, checkSettlementCommit, signSettlementAck, settlementAckId, countAcks, joinAcks, splitAcks, splitSignedAck, encodeSettlementTable, decodeSettlementTable, settlementTableId, planTableRows, planTableBuild } from '../../arena-protocol/src/settlement-ack.js';
+import { signSettlementCommit, checkSettlementCommit, signSettlementAsk, checkSettlementAsk, asksBySeat, ASK_COMMIT, ASK_SHARE, signSettlementAck, settlementAckId, countAcks, joinAcks, splitAcks, splitSignedAck, encodeSettlementTable, decodeSettlementTable, settlementTableId, planTableRows, planTableBuild } from '../../arena-protocol/src/settlement-ack.js';
 import { tableBuild } from '../../arena-protocol/src/settlement-rebuild.js';
 import { slashHoldsOnTable, encodeSlashProof, joinTableSlashEvidence } from '../../arena-protocol/src/slash.js';
 import { splitByFederation } from '../../arena-protocol/src/federation-settlement.js';
@@ -166,8 +166,10 @@ export class LockSettlement {
   constructor(round, { dkg, port, curve, random, stakeSecrets, peersFor = () => [], fetcher = (u, o) => fetch(u, o),
     signerNodesFor = (rid, contract) => ({ gameVerify: contract.nodes, settlement: contract.nodes }), winnings = null,
     turnClock = null, donationSetFor = null, donationTargetFor = null, orderBook = null, now = () => Date.now(), conflictsFor = null,
-    reserveKeyFor = null, feesFor = null, peerKeyOf = () => null, peerAskMs = PEER_ASK_MS, peerReadMs = PEER_READ_MS, peerGraceMs = PEER_GRACE_MS, finalityOf = resultFinality } = {}) {
+    reserveKeyFor = null, feesFor = null, peerKeyOf = () => null, peerAskMs = PEER_ASK_MS, peerReadMs = PEER_READ_MS, peerGraceMs = PEER_GRACE_MS, askPointOf = undefined, finalityOf = resultFinality } = {}) {
     this.round = round;
+    // WHERE A NETWORK'S SETTLEMENT_ASK_HEIGHT LIES (kanban #1075): constants.js settlementAskPoint; a harness's own to read a round below it
+    this.askPointOf = askPointOf;
     // HOW LONG A SEAT IS WAITED FOR (peer-ask.js, kanban #1061)
     this.peerAskMs = peerAskMs;
     this.peerReadMs = peerReadMs;
@@ -1106,8 +1108,9 @@ export class LockSettlement {
    * and `refusedBy`, the doors that refused by name.
    */
   async #peerCommitments(roundIdBytes, own, query, m, acks) {
+    const ask = this.#askHeaders(roundIdBytes, m, query, ASK_COMMIT, acks);
     const asked = await askPeers(this.peersFor(roundIdBytes), async (base, signal) => {
-      const r = await this.fetcher(`${base}/settle-commit?${query}&txid=${m.txid}`, { method: 'POST', signal, ...(acks ? { body: acks } : {}) });
+      const r = await this.fetcher(`${base}/settle-commit?${query}&txid=${m.txid}`, { method: 'POST', signal, ...(acks ? { body: acks } : {}), ...ask });
       if (!r.ok) return { why: (await r.text()).trim(), byName: refusedByName(r) };
       const commitment = decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0];
       return { commitment, who: this.#commitWord(roundIdBytes, m, r, commitment), leftOut: !!(this.#withheld.get(query) || new Set()).has(base) };
@@ -1149,9 +1152,10 @@ export class LockSettlement {
     // EVERY PEER ON THE LIST AT ONCE, WITHIN THE BOUND (kanban #1061): there is no threshold here, the binding factors are over the whole list, and each share is over the one list,
     // whichever answers first. `shares` keeps the list's order, this seat first: `stands` below reads it by index.
     const body = encodeCommitments(commitments);
+    const ask = this.#askHeaders(roundIdBytes, m, q, ASK_SHARE, body);
     const peers = signers.filter((s) => s.base !== null);
     const asked = await askPeers(peers.map((s) => s.base), async (base, signal) => {
-      const r = await this.fetcher(`${base}/settle-share?${q}`, { method: 'POST', body, signal });
+      const r = await this.fetcher(`${base}/settle-share?${q}`, { method: 'POST', body, signal, ...ask });
       if (!r.ok) return { why: (await r.text()).trim(), byName: refusedByName(r) };
       return { share: decodeShare(new Uint8Array(await r.arrayBuffer())) };
     }, { boundMs: this.peerAskMs });
@@ -1172,6 +1176,29 @@ export class LockSettlement {
       if (named && scope !== null) this.#stoppedAt(roundIdBytes, m.contract, scope, 'share', signers.filter((s, i) => s.who && stands(s, i)).map((s) => s.who), refusers);
     }
     return { ...refuse('the combined settlement signature does not verify under the round\'s claim key', 500), withheld };
+  }
+
+  /**
+   * THIS SEAT'S SIGNED ASK, AS A HEADER (§5A.3, kanban #1075): from SETTLEMENT_ASK_HEIGHT a commit or share door answers only a seat of the round, so the ask names the step,
+   * the settlement (the query's late entry or federation), the txid and the body sent, signed by this seat's node key. Below the height: nothing, the request is as it was.
+   */
+  #askHeaders(roundIdBytes, m, query, step, payload) {
+    if (!asksBySeat(m.contract, this.askPointOf)) return {};
+    const p = new URLSearchParams(query);
+    const entry = p.get('entry') ? fromHex(p.get('entry')) : null;
+    const ask = signSettlementAsk({ step, roundId: roundIdBytes, entry, federation: p.get('federation'), settlementTxid: fromHex(m.txid), payload },
+      this.round.pubkey, (digest) => schnorr.sign(digest, this.round.identity.secret));
+    return { headers: { 'x-settlement-ask': toHex(ask) } };
+  }
+
+  /**
+   * AN ASK AT THE DOOR (kanban #1075): null when the door answers it, else the refusal. `door` is set by server.js only: this seat's own commit and share are not asked
+   * through it. At or above the height an ask must be signed by a seat of this round's seating over this settlement and the very body sent; below it, nothing is read.
+   */
+  #askRefusal(roundIdBytes, m, { door = false, ask = null, entry = null, federation = null, step, payload }) {
+    if (!door || !asksBySeat(m.contract, this.askPointOf)) return null;
+    const c = checkSettlementAsk(ask, { seats: m.contract.nodes, ask: { step, roundId: roundIdBytes, entry, federation, settlementTxid: fromHex(m.txid), payload }, verify: verifyAck });
+    return c.ok ? null : refuse(`this signer node ${step === ASK_COMMIT ? 'commits' : 'gives a share'} only to a seat of the round: ${c.why}`, 403);
   }
 
   /**
@@ -1355,9 +1382,12 @@ export class LockSettlement {
   #pairsRead = new Set();
 
   /** ROUND ONE: this signer node's nonce commitment for the settlement it would sign; from version 22, only with a threshold of acks. */
-  async commit(roundIdBytes, { txid = null, entry = null, federation = null, acks = null } = {}) {
+  async commit(roundIdBytes, { txid = null, entry = null, federation = null, acks = null, door = false, ask = null } = {}) {
     const m = await this.#askedMessage(roundIdBytes, { txid, entry, federation });
     if (!m.ok) return m;
+    // ONLY A SEAT OF THE ROUND ASKS (kanban #1075), before anything is kept or drawn
+    const stranger = this.#askRefusal(roundIdBytes, m, { door, ask, entry, federation, step: ASK_COMMIT, payload: acks && acks.length ? acks : null });
+    if (stranger) return stranger;
     if (acksSettlement(m.contract)) {
       const counted = this.#countAcks(roundIdBytes, m, splitAcks(acks));
       if (counted.refused.length) this.#suspect(roundIdBytes);
@@ -1387,9 +1417,12 @@ export class LockSettlement {
   }
 
   /** ROUND TWO: this signer node's signature share over the txid it rebuilt, for ONE commitment list. */
-  async share(roundIdBytes, commitments, { entry = null, federation = null } = {}) {
+  async share(roundIdBytes, commitments, { entry = null, federation = null, door = false, ask = null } = {}) {
     const m = federation ? await this.fedMessage(roundIdBytes, federation) : entry ? await this.lateMessage(roundIdBytes, entry) : await this.message(roundIdBytes);
     if (!m.ok) return m;
+    // ONLY A SEAT OF THE ROUND ASKS (kanban #1075): a share spends this seat's nonce pair for the pass, so a stranger's list never reaches it
+    const stranger = this.#askRefusal(roundIdBytes, m, { door, ask, entry, federation, step: ASK_SHARE, payload: encodeCommitments(commitments) });
+    if (stranger) return stranger;
     const pair = this.pairs.get(federation ? `${toHex(roundIdBytes)}:fed:${String(federation).toLowerCase()}` : entry ? `${toHex(roundIdBytes)}:${toHex(entry)}` : toHex(roundIdBytes));
     if (!pair || toHex(pair.message) !== toHex(m.message)) return refuse('this signer node committed to no settlement of that round');
     const own = commitments.find((c) => String(c.id) === String(pair.commitment.id));

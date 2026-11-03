@@ -278,6 +278,19 @@ export const stallSettlementPoint = (network) => {
   const n = network === 'testnet' ? 'testnet4' : String(network || '');
   return Object.prototype.hasOwnProperty.call(STALL_SETTLEMENT_HEIGHT, n) ? STALL_SETTLEMENT_HEIGHT[n] : null;
 };
+/**
+ * THE FIRST CENSUS HEIGHT AT WHICH ONLY A ROUND'S OWN SEATS MAY ASK FOR A SETTLEMENT'S COMMIT OR SHARE (§5A.3, RULED 2026-11-03, kanban #1075). A share request spends the asked
+ * seat's nonce pair for that pass, so anyone who reached the door could spoil pass after pass with a made-up list (#1070). From this height a commit or share request carries a
+ * SettlementAsk signed by the asking seat's node key (settlement-ack.js), and the asked seat answers only a seat of that round's seating. The ack door stays open: acks are public
+ * evidence. A seat of an older release would refuse signed asks or send unsigned ones, so ONE CONSTANT PER NETWORK, as above, named after every seat of the network runs it; a
+ * network not named here, or null: never. Mainnet from genesis; testnet4 null; 0 on a regtest and a devnet so the code stays run. The 1.9 line has none of this.
+ */
+export const SETTLEMENT_ASK_HEIGHT = Object.freeze({ mainnet: 0, testnet4: null, regtest: 0, devnet: 0 });
+/** The point of `network` (networkOf's name; 'testnet' is testnet4, as networkAnchor reads it), null on a network that names none. */
+export const settlementAskPoint = (network) => {
+  const n = network === 'testnet' ? 'testnet4' : String(network || '');
+  return Object.prototype.hasOwnProperty.call(SETTLEMENT_ASK_HEIGHT, n) ? SETTLEMENT_ASK_HEIGHT[n] : null;
+};
 /** The owner's emergency key (§23A.5a): the advert names it, a request it signs takes an offline node out without losing its bond. */
 export const EMERGENCY_VERSION = 17;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
@@ -390,6 +403,8 @@ export const TYPE_SETTLEMENT_TABLE = 0x3f;
 /** A seat's signed settlement commit (§5A.3, kanban #1052): settlement-ack.js. A seat's word on who was silent in a failed round: stall.js. */
 export const TYPE_SETTLEMENT_COMMIT = 0x40;
 export const TYPE_STALL_NOTE = 0x41;
+/** A seat's signed request for another seat's settlement commit or share (§5A.3, kanban #1075): settlement-ack.js. */
+export const TYPE_SETTLEMENT_ASK = 0x45;
 /** The proof an abandonment's slash commits to (§23A.5, kanban #1062): the signed record holding the row, the node, the row's proof_ref and the output. */
 export const TYPE_ABANDONED_PROOF = 0x42;
 
@@ -627,6 +642,7 @@ export const TAG = {
   payoutInputs: 'ARENA/v1/PayoutInputs',
   settlementAck: 'ARENA/v1/SettlementAck',
   settlementCommit: 'ARENA/v1/SettlementCommit',
+  settlementAsk: 'ARENA/v1/SettlementAsk',
   stallNote: 'ARENA/v1/StallNote',
   settlementTable: 'ARENA/v1/SettlementTable',
   // One signer node's deal in a committee's key generation, and the id of the epoch

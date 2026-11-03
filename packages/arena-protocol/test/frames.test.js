@@ -75,7 +75,8 @@ test('one type carries no authority, and it is the ghost', () => {
   // 58 since the heartbeat (§5A.3, kanban #727): a node's HEARTBEAT keeps it in a census, a member's HEARD in a certificate proves a
   // node missed at a slot - both authorities.
   // 63 since the census key's deal and complaint (kanban #972): a share, and the proof a dealer lied about it
-  assert.equal(FRAMES.size, 63, 'a type was added without saying what it decides');
+  // 64 since a seat's signed ask for a settlement's commit or share (kanban #1075): it decides whom a seat's nonce pair is spent for
+  assert.equal(FRAMES.size, 64, 'a type was added without saying what it decides');
 });
 
 /**

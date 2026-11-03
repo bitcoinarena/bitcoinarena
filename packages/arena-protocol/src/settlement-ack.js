@@ -9,7 +9,7 @@
 // and it joins only holding acks from at least the threshold over the same three. The acks are published with the settlement.
 // `payout_table_id` is the id of the table the seat computed: rows name their entry, so what a seat said about each entry is its own word
 // and nobody filing a proof can choose which of a player's entries a row meant. No curve lives in this package: `verify` and `sign` are injected.
-import { PROTOCOL_VERSION, speaksVersion, TYPE_SETTLEMENT_ACK, TYPE_SETTLEMENT_TABLE, TYPE_SETTLEMENT_COMMIT, TAG } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_SETTLEMENT_ACK, TYPE_SETTLEMENT_TABLE, TYPE_SETTLEMENT_COMMIT, TYPE_SETTLEMENT_ASK, TAG, acksSettlement, networkOf, settlementAskPoint } from './constants.js';
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex, fromHex } from './hash.js';
 import { compareBytes } from './payout.js';
@@ -109,6 +109,58 @@ export function checkSettlementCommit(bytes, { seats, commit, verify }) {
   let good = false;
   try { good = verify(bytes.slice(SETTLEMENT_COMMIT_BYTES + 32), taggedHash(TAG.settlementCommit, body), nodePubkey) === true; } catch { good = false; }
   return good ? { ok: true, who } : { ok: false, why: `${who.slice(0, 16)}'s signature over its commit does not verify` };
+}
+
+/**
+ * A SEAT'S SIGNED ASK FOR ANOTHER SEAT'S COMMIT OR SHARE (§5A.3, RULED 2026-11-03, kanban #1075). A share request spends the asked seat's nonce pair for that pass, so a door open
+ * to anyone let a stranger with the round's public acks spoil pass after pass with a made-up list (#1070). From SETTLEMENT_ASK_HEIGHT the asker signs, with its node key,
+ *
+ *   SettlementAsk { step, round_id, scope, settlement_txid, payload_hash }
+ *
+ * step 1 a commit, 2 a share; scope the late entry's id, the federation's id or zeros for the round's own settlement, after a byte saying which; payload_hash the tagged hash of
+ * the body it sends (the acks for a commit, the commitment list for a share). The asked seat answers only an ask signed by a seat of the round's seating, over the settlement it
+ * rebuilt itself and the very body it was sent, so a signed ask spends nothing a seat did not mean to spend. The ack door is not asked through this: acks are public evidence.
+ */
+export const ASK_COMMIT = 1;
+export const ASK_SHARE = 2;
+export const SETTLEMENT_ASK_BYTES = 1 + 2 + 1 + 32 + 1 + 32 + 32 + 32;
+export const SIGNED_SETTLEMENT_ASK_BYTES = SETTLEMENT_ASK_BYTES + 32 + 64;
+/** Do this round's commit and share doors answer only its own seats? From protocol 22's acks, at or above the network's SETTLEMENT_ASK_HEIGHT, read at the round's census height. `pointOf` a harness's own. */
+export function asksBySeat(contract, pointOf = settlementAskPoint) {
+  if (!acksSettlement(contract)) return false;
+  let net; try { net = networkOf(contract.networkId); } catch { return false; }
+  if (!net) return false;
+  const point = pointOf(net);
+  return Number.isInteger(point) && Number(contract.censusHeight) >= point;
+}
+const scopeOf = ({ entry = null, federation = null }) => (federation ? [2, fromHex(String(federation).toLowerCase())] : entry ? [1, entry] : [0, ZERO]);
+export function settlementAskBody({ step, roundId, entry = null, federation = null, settlementTxid, payload }) {
+  const [kind, scope] = scopeOf({ entry, federation });
+  if (step !== ASK_COMMIT && step !== ASK_SHARE) throw new Error('a settlement ask is a commit or a share');
+  if (!is32(roundId) || !is32(scope) || !is32(settlementTxid)) throw new Error('a settlement ask names a 32-byte round, scope and txid');
+  const w = new Writer();
+  w.u8(TYPE_SETTLEMENT_ASK); w.u16(PROTOCOL_VERSION); w.u8(step);
+  w.bytes32(roundId); w.u8(kind); w.bytes32(scope); w.bytes32(settlementTxid); w.bytes32(taggedHash(TAG.settlementAsk, payload || new Uint8Array(0)));
+  return w.finish();
+}
+/** The ask as it travels: its body, the asking seat's node key, its BIP-340 signature over the tagged body. `sign(digest)` -> 64 bytes. */
+export function signSettlementAsk(ask, nodePubkey, sign) {
+  const body = settlementAskBody(ask);
+  const out = new Uint8Array(SIGNED_SETTLEMENT_ASK_BYTES);
+  out.set(body, 0);
+  out.set(nodePubkey, SETTLEMENT_ASK_BYTES);
+  out.set(sign(taggedHash(TAG.settlementAsk, body)), SETTLEMENT_ASK_BYTES + 32);
+  return out;
+}
+/** An ask against what the asked seat rebuilt and was sent: { ok, who } or { ok: false, why }. `seats` the round's seating. */
+export function checkSettlementAsk(bytes, { seats, ask, verify }) {
+  if (!(bytes instanceof Uint8Array) || bytes.length !== SIGNED_SETTLEMENT_ASK_BYTES) return { ok: false, why: `a signed settlement ask is ${SIGNED_SETTLEMENT_ASK_BYTES} bytes, signed by a seat of the round` };
+  const body = bytes.slice(0, SETTLEMENT_ASK_BYTES), nodePubkey = bytes.slice(SETTLEMENT_ASK_BYTES, SETTLEMENT_ASK_BYTES + 32), who = toHex(nodePubkey);
+  if (!seats.some((k) => toHex(k) === who)) return { ok: false, why: `asked by ${who.slice(0, 16)}, which is not one of the round's seats` };
+  if (toHex(body) !== toHex(settlementAskBody(ask))) return { ok: false, why: `${who.slice(0, 16)} signed an ask for other bytes` };
+  let good = false;
+  try { good = verify(bytes.slice(SETTLEMENT_ASK_BYTES + 32), taggedHash(TAG.settlementAsk, body), nodePubkey) === true; } catch { good = false; }
+  return good ? { ok: true, who } : { ok: false, why: `${who.slice(0, 16)}'s signature over its ask does not verify` };
 }
 
 /**
