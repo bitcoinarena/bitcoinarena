@@ -381,7 +381,8 @@ function filterSql(q, now = Date.now()) {
   const since = Number(q.get('since'));
   if (Number.isFinite(since) && since > 0) { where.push('stored_ms >= ?'); binds.push(now - since * 1000); }
   const part = String(q.get('q') || '').toLowerCase();
-  if (/^[0-9a-f]{1,64}$/.test(part)) { where.push('(id LIKE ? OR round LIKE ? OR fed_txid LIKE ?)'); binds.push(`%${part}%`, `%${part}%`, `%${part}%`); }
+  // instr, not LIKE: D1 refuses a LIKE pattern over 50 bytes, so a whole 64-hex id ("%" + 64 + "%") answered 500 (kanban #1107, 2026-11-03)
+  if (/^[0-9a-f]{1,64}$/.test(part)) { where.push('(instr(id, ?) > 0 OR instr(round, ?) > 0 OR instr(fed_txid, ?) > 0)'); binds.push(part, part, part); }
   // OUR BOTS' AND THE OWNER'S TRANSACTIONS LEFT OUT (kanban #1107, the owner 2026-11-03: "bot Transaktionen und admin tx standardmäßig ausblenden, es
   // gibt ein flag um es einzublenden"): an order whose entry id or player key is marked (POST /api/mark), and every other transaction of a round
   // whose orders are all marked; ?marked=1 shows them
