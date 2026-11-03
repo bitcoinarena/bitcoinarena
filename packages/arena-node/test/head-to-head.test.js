@@ -101,6 +101,37 @@ test('a player who never reveals forfeits at both nodes, and the one who reveale
   assert.equal(r.state, 'ACCEPTED', r.why);
 });
 
+test('an entry and its locks that reached one seat reach the other, so both decide the two players and the round settles (kanban #1068)', async () => {
+  const w = await lockRound({ serveOpts: { plugins: [NEXTBLOCK, RPS] }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 4000 });
+  try {
+    skipTo(Number(w.c.committeeTimeMs) + 20);
+    const saltA = new Uint8Array(randomBytes(32)), saltB = new Uint8Array(randomBytes(32));
+    const A = { name: 'rock', key: b32(0x51), worldSecret: new Uint8Array(32), ticks: 0, words: () => [0, 0, 0, 0, 0] };
+    const B = { name: 'scissors', key: b32(0x52), worldSecret: new Uint8Array(32), ticks: 0, words: () => [0, 0, 0, 0, 0] };
+    const a = await lockAndPlay(w, A, { hidden: { move: ROCK, salt: saltA }, noMarks: true, address: true });
+    // B'S POSTS NEVER REACH THE SECOND SEAT (measured: 59dc6d68, seat 4 held one of two entries, decided VOID and refused the plan)
+    const b = await lockAndPlay(w, B, { hidden: { move: SCISSORS, salt: saltB }, noMarks: true, address: true, unreached: [1] });
+    const seat = w.nodes[1];
+    for (const until = Date.now() + 15000; Date.now() < until && !(seat.round.entry(b.eid) && seat.round.stakeLock(b.eid) && seat.round.feeLock(b.eid));)
+      await new Promise((r) => setTimeout(r, 100));
+    assert.ok(seat.round.entry(b.eid), 'the seat the client did not reach holds no entry');
+    assert.ok(seat.round.stakeLock(b.eid), 'it holds no stake lock of it');
+    assert.ok(seat.round.feeLock(b.eid), 'it holds no fee lock of it');
+    skipTo(Number(w.c.entryCloseMs) + 500);
+    await reveal(w, a, ROCK, saltA);
+    await reveal(w, b, SCISSORS, saltB);
+    await closeRound(w);
+    const settled = await untilSettled(w);
+    const got = { a: results(w, a.eid), b: results(w, b.eid) };
+    for (const [k, per, want] of [['rock', got.a, { outcome: 'DELIVERED', score: 2 }], ['scissors', got.b, { outcome: 'FAILED', score: 0 }]])
+      for (const [i, held] of per.entries()) {
+        assert.ok(held.length >= 1, `${k}: node ${i} holds no signed result`);
+        for (const x of held) assert.deepEqual(x, { ...want, core: RPS_CORE.hash }, `${k} at node ${i}`);
+      }
+    assert.equal(settled.state, 'ACCEPTED', settled.why);
+  } finally { await w.close(); }
+});
+
 test('one player alone is not played (2026-10-09: "there must be 2 before the game starts"): VOID at both nodes, the stake back', async () => {
   const w = await lockRound({ serveOpts: { plugins: [NEXTBLOCK, RPS] }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 4000 });
   try {

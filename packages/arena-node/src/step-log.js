@@ -25,11 +25,11 @@ export function stepLog(kind, id, { log = console.log, now = () => Date.now(), k
       if (said) return; said = true;
       const ms = now() - t0;
       log(`[steps] ${kind} ${name.slice(0, 16)} at ${new Date(t0).toISOString()}: ${steps.map(([k, v]) => `${k} ${typeof v === 'number' ? '+' + v : v}`).join(', ') || '-'}`
-        + ` -> ${status} in ${ms} ms${why ? ` (${String(why).slice(0, 80)})` : ''}`);
+        + ` -> ${status} in ${ms} ms${why ? ` (${String(why).trim().slice(0, 120)})` : ''}`);
       if (typeof keep === 'function') keep({ kind, id: name, t0, steps: steps.map(([k, v]) => ({ step: k, ms: v })), status, ms });
     },
-    /** Said when this response is sent, whatever path sent it. */
-    on(res) { if (res && typeof res.once === 'function') res.once('finish', () => s.done(res.statusCode)); return s; },
+    /** Said when this response is sent, whatever path sent it, with the door's refusal if it refused (kanban #1068: the lines said 409, not why). */
+    on(res) { if (res && typeof res.once === 'function') res.once('finish', () => s.done(res.statusCode, res.arenaWhy || '')); return s; },
   };
   return s;
 }
