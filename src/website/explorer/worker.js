@@ -272,7 +272,7 @@ const weekOf = (ms) => { const d = new Date(Math.floor(ms / DAY_MS) * DAY_MS); c
 // ('played-round'), at the time it was played (a round at its first order's time, as /api/played dates it), from 2026-11-01. An order is
 // told only an hour after it was stored, so the bots' marking (every 10 min) and the owner's have come first. UMAMI_SEND=off stops it.
 const UMAMI_SEND_URL = 'https://stats.bitcoinarena.io/api/send', UMAMI_SITE = '024ff09e-c3a6-4dfd-bede-3163eb8be36a', UMAMI_HOST = 'testnet.bitcoinarena.io';
-const UMAMI_DELAY_MS = 3600000, UMAMI_PER_RUN = 60;
+const UMAMI_DELAY_MS = 3600000, UMAMI_PER_RUN = 25;
 async function sendPlayed(env, now = Date.now(), post = fetch) {
   if (env.UMAMI_SEND === 'off') return { sent: 0, off: true };
   const rows = ((await env.DB.prepare(`SELECT t.id, t.round, t.app, t.stored_ms AS ms,
@@ -289,17 +289,19 @@ async function sendPlayed(env, now = Date.now(), post = fetch) {
     if (!r.ok) throw new Error(`umami ${r.status}`);
     sent++;
   };
+  // EACH ONE CLAIMED BEFORE IT IS SENT (measured 2026-11-03: a run of 60 took longer than the minute, the next run read the same rows and
+  // 11-02 got 15 rounds twice): the row is written first, and a run that finds it written skips it; a send that fails takes it back
+  const claim = async (key) => { const r = (await env.DB.prepare('INSERT INTO umami_sent (key, at_ms) VALUES (?, ?) ON CONFLICT(key) DO NOTHING').bind(key, now).run()) || {};
+    return Number(r.meta ? r.meta.changes : r.changes) > 0; };
+  const unclaim = (key) => env.DB.prepare('DELETE FROM umami_sent WHERE key = ?').bind(key).run();
   for (const x of rows) {
     const game = x.app || 'unknown';
-    try {
-      if (!Number(x.round_sent) && !roundsNow.has(x.round)) {
-        await tell('played-round', game, x.round_ms ?? x.ms);
-        await env.DB.prepare('INSERT INTO umami_sent (key, at_ms) VALUES (?, ?) ON CONFLICT(key) DO NOTHING').bind('r:' + x.round, now).run();
-        roundsNow.add(x.round);
-      }
-      await tell('played-entry', game, x.ms);
-      await env.DB.prepare('INSERT INTO umami_sent (key, at_ms) VALUES (?, ?) ON CONFLICT(key) DO NOTHING').bind('e:' + x.id, now).run();
-    } catch (e) { return { sent, why: e.message }; }
+    if (!Number(x.round_sent) && !roundsNow.has(x.round) && await claim('r:' + x.round)) {
+      roundsNow.add(x.round);
+      try { await tell('played-round', game, x.round_ms ?? x.ms); } catch (e) { await unclaim('r:' + x.round); return { sent, why: e.message }; }
+    }
+    if (!(await claim('e:' + x.id))) continue;
+    try { await tell('played-entry', game, x.ms); } catch (e) { await unclaim('e:' + x.id); return { sent, why: e.message }; }
   }
   return { sent, rows: rows.length };
 }
