@@ -419,7 +419,8 @@ export function openStore(path = ':memory:') {
       entry_id  BLOB PRIMARY KEY REFERENCES entries(entry_id),
       round_id  BLOB NOT NULL,
       address   TEXT NOT NULL,
-      named_ms  INTEGER NOT NULL
+      named_ms  INTEGER NOT NULL,
+      signature BLOB                       -- the entry's session key over the address (kanban #1071): a seat short of the entry checks it
     );
 
     CREATE TABLE IF NOT EXISTS stake_seen_tick (
@@ -1331,6 +1332,9 @@ export function openStore(path = ':memory:') {
   // it already holds was decided on its own record.
   if (!db.prepare('PRAGMA table_info(entry_voids)').all().some((c) => c.name === 'learned'))
     db.exec("ALTER TABLE entry_voids ADD COLUMN learned TEXT NOT NULL DEFAULT 'own'");
+  // AND THE SIGNATURE OVER A NAMED ADDRESS (kanban #1071): a store from before keeps its rows, which cannot be handed on
+  if (!db.prepare('PRAGMA table_info(payout_address)').all().some((c) => c.name === 'signature'))
+    db.exec('ALTER TABLE payout_address ADD COLUMN signature BLOB');
   return db;
 }
 
