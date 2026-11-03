@@ -14094,5 +14094,64 @@
   "headers": [],
   "changesState": true,
   "needsAuth": "none"
+ },
+ {
+  "method": "GET",
+  "path": "/release",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {node, version, commit, startedAtMs, guardian, healthy}",
+  "purpose": "The release this node runs, since when, and whether its guardian answers: what a fellow guardian's seat reads before its updater takes a new release (staged updates).",
+  "audience": "node-to-node",
+  "line": 6686,
+  "summary": "The release this node runs",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{node, version, commit, startedAtMs, guardian, healthy}."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/update-stage",
+  "params": "version (query)",
+  "auth": "none",
+  "returns": "200 JSON {go, why, onTrial, f, waitingBefore, federation, members, answered}",
+  "purpose": "Whether this guardian may take a release now: at most f guardians of one federation run a new release without a healthy hour; the updater asks before it fetches.",
+  "audience": "operator/monitoring",
+  "line": 6697,
+  "summary": "May this guardian update now",
+  "query": [
+   {
+    "name": "version",
+    "required": true,
+    "description": "The release to take."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{go, why, onTrial, f, waitingBefore, federation, members, answered}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "No version asked for."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
  }
 ]

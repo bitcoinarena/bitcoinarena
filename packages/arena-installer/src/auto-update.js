@@ -31,6 +31,17 @@ export const assetNameFor = (version, platform = process.platform, arch = proces
   `${prefix}-${version}-${platform === 'win32' ? 'windows' : platform}-${arch}${platform === 'win32' ? '.zip' : '.tar.gz'}`;
 
 /** auto_update in arena.conf: on unless 0 / off / no / false. */
+/** A node that guards a federation: custody among the roles in arena.conf (kanban #1093 part 3). */
+export const isGuardian = (node) => String((node && node.conf && node.conf.values && node.conf.values.roles) || '').split(/[\s,]+/).includes('custody');
+/** Its own seat's answer: may this guardian take release `version` now (GET /update-stage). */
+export async function stageOf(node, version, fetcher = fetch) {
+  if (!node || !node.port) return { go: false, why: 'this guardian\'s seat port is not known, so its turn cannot be asked' };
+  try {
+    const r = await fetcher(`http://127.0.0.1:${node.port}/update-stage?version=${encodeURIComponent(version)}`, { signal: AbortSignal.timeout(30000), cache: 'no-store' });
+    const j = await r.json();
+    return r.ok && j && typeof j.go === 'boolean' ? j : { go: false, why: `its seat answered ${r.status}` };
+  } catch (e) { return { go: false, why: `its seat did not answer the stage: ${e.message}` }; }
+}
 export const autoUpdateOn = (values) => !['0', 'off', 'no', 'false'].includes(String(values.auto_update ?? '1').trim().toLowerCase());
 
 const record = (home, r) => { try { writeFileSync(join(home, 'auto-update.json'), JSON.stringify({ atMs: Date.now(), ...r }, null, 2) + '\n', { mode: 0o600 }); } catch { /* the log has it */ } };
@@ -69,6 +80,14 @@ async function updateOnce({ home, latest, fetcher = fetch, platform = process.pl
   if (!l.latest) return { ok: false, why: l.why || 'the newest release could not be read' };
   if (!l.newer) return { ok: true, upToDate: true, version: node.version, latest: l.latest.version };
   const v = l.latest.version;
+  // STAGED PER FEDERATION (kanban #1093 part 3: "An update reaches at most f guardians of one federation at a time"): a guardian asks its own
+  // seat (GET /update-stage) before it fetches; while f of its fellows run the new release without a healthy hour it waits and asks again at the
+  // next check. A seat that does not answer is not a yes. An update asked for by hand runs either way.
+  if (!force && isGuardian(node)) {
+    const st = await stageOf(node, v, fetcher);
+    trace.verbose(`staged update: ${st.why}`);
+    if (!st.go) { log(`release ${v} is out; this guardian waits its turn: ${st.why}`); return { ok: true, waiting: st.why, version: node.version, latest: v }; }
+  }
   // the new name first; a release that still carries the old one (its update channel, for nodes before 2026.1.8) under that
   const name = [assetNameFor(v, platform, arch), assetNameFor(v, platform, arch, LEGACY_ASSET_PREFIX)].find((n) => (l.latest.assets || {})[n]) || assetNameFor(v, platform, arch);
   trace.debug(`this system's asset: ${name} (${platform}-${arch}; ${name.startsWith(`${ASSET_PREFIX}-`) ? 'the new name' : 'the release carries only the name before 2026.1.8'}); the release names ${Object.keys(l.latest.assets || {}).length} asset(s)`);

@@ -156,6 +156,7 @@ import { createArbitrationEvents } from './arbitration-events.js';
 import { startsByCensusKey, isAbandonedProof } from '../../arena-protocol/src/abandoned-slash.js';
 import { createHalts, wsSessionCount } from './halts.js';
 import { reserveMembersOf } from './reserve-members.js';
+import { stageDecision } from './update-stage.js';
 import { createSettleBackoff, REFUSED_FOR_GOOD } from './settle-backoff.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
 import { verifySchnorrKept, verifyEd25519Kept } from './verified.js';
@@ -4531,6 +4532,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE RELEASE THIS NODE RUNS (kanban #674): the release's VERSION and COMMIT files (tools/release/build-release.sh writes them at its
   // root), read once; a node run from a checkout has neither
   let releaseHereKept = null;
+  const SEAT_STARTED_AT_MS = Date.now();   // since when this seat runs the release it runs (GET /release, kanban #1093 part 3)
   const releaseHere = () => {
     if (releaseHereKept) return releaseHereKept;
     const read = (f) => { try { return readFileSync(new URL(`../../../${f}`, import.meta.url), 'utf8').trim(); } catch { return null; } };
@@ -6679,6 +6681,32 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end(); }
 
       // WHETHER THIS NODE IS A GUARDIAN, and the endpoint a phone opens for it (its own public address).
+      // THE RELEASE THIS NODE RUNS, SINCE WHEN, AND WHETHER ITS GUARDIAN ANSWERS (kanban #1093 part 3, staged updates): what a fellow guardian's
+      // seat reads before its updater takes a new release. Healthy: this node guards nothing, or its guardian answers on its API port.
+      if (req.method === 'GET' && url.pathname === '/release') {
+        let healthy = true;
+        if (guardian && guardian.apiPort) {
+          try { await fetch(`http://127.0.0.1:${guardian.apiPort}/`, { signal: AbortSignal.timeout(3000) }); } catch { healthy = false; }
+        }
+        const r = releaseHere();
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), version: r.version, commit: r.commit, startedAtMs: SEAT_STARTED_AT_MS, guardian: !!guardian, healthy }));
+      }
+      // MAY THIS GUARDIAN TAKE RELEASE ?version= NOW (kanban #1093 part 3): its updater asks before it fetches. Its federation's guardians are the
+      // ones the census names (reserveGuardians); each fellow's GET /release says what it runs; update-stage.js decides: at most f on trial.
+      if (req.method === 'GET' && url.pathname === '/update-stage') {
+        const version = String(url.searchParams.get('version') || '').trim();
+        const answer = (body) => { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
+        if (!version) return text(res, 400, 'the stage is asked for a release: ?version=');
+        const own = ownGuardianSeat();
+        if (!own) return answer({ go: true, why: 'this node guards no federation: nothing to stage' });
+        const fed = reserveGuardians()[own.federation];
+        if (!fed || !fed.members || !fed.members.length) return answer({ go: false, why: 'this guardian\'s federation names no guardians in the census yet: wait' });
+        const reads = await Promise.all((fed.peers || []).map((u) => fetch(`${u}/release`, { signal: AbortSignal.timeout(8000) }).then((r) => (r.ok ? r.json() : null), () => null)));
+        const answers = new Map(fed.members.map((k) => [toHex(k), null]));
+        for (const a of reads) if (a && typeof a.node === 'string' && answers.has(a.node.toLowerCase())) answers.set(a.node.toLowerCase(), a);
+        return answer({ federation: own.federation, members: fed.members.length, answered: reads.filter(Boolean).length, ...stageDecision({ version, self: round.pubkey, members: fed.members, answers }) });
+      }
       if (req.method === 'GET' && url.pathname === '/guardian') {
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(guardian ? { guardian: true, endpoint: guardian.endpoint, ...(guardianNext ? { next: guardianNext.endpoint } : {}) } : { guardian: false }));
