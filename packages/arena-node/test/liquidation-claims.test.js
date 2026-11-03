@@ -16,7 +16,7 @@ const P1 = '02' + '11'.repeat(32), P2 = '02' + '22'.repeat(32);
 const NOTES = { e1: [{ nonce: '02' + 'a1'.repeat(32), amountMsat: 512000n }, { nonce: '02' + 'a2'.repeat(32), amountMsat: 256000n }],
   e2: [{ nonce: '02' + 'b1'.repeat(32), amountMsat: 1024000n }], e3: [{ nonce: '02' + 'a1'.repeat(32), amountMsat: 512000n }],
   e4: [{ nonce: '02' + 'c1'.repeat(32), amountMsat: 128000n }] };
-const LIQ = { federation: FED, haltHeight: 1000, liquidatesAt: 1010, claimWindowCloses: 1020, lateClaimsUntil: 1100, spentNonces: ['02' + 'c1'.repeat(32)] };
+const LIQ = { federation: FED, haltHeight: 1000, liquidatesAt: 1010, claimWindowCloses: 1100, lateClaimsUntil: 1100, spentNonces: ['02' + 'c1'.repeat(32)] };
 
 function book({ escrowMsat = 10_000_000n } = {}) {
   let tip = 1005; const saved = [];
@@ -38,22 +38,23 @@ test('a claim is taken only in the window, only with notes that stand, never twi
   assert.match((await b.claims.offer({ federation: 'cd'.repeat(32), ecash: 'e2', payoutPk: P2 })).why, /not being liquidated/);
   b.at(1050);
   const late = await b.claims.offer({ federation: FED, ecash: 'e2', payoutPk: P2 });
-  assert.deepEqual([late.ok, late.inWindow], [true, false], 'a late note is still taken until drain_blocks');
+  assert.deepEqual([late.ok, late.inWindow], [true, true], 'the window runs 3 months from the halt (regtest 100 blocks): 1050 is in it');
   b.at(1101);
-  assert.match((await b.claims.offer({ federation: FED, ecash: 'e2', payoutPk: P1 })).why, /claims close at 1100/);
+  assert.match((await b.claims.offer({ federation: FED, ecash: 'e2', payoutPk: P1 })).why, /claims closed at 1100/);
   assert.equal(b.saved.at(-1).length, 3, 'the book is kept');
 });
 
-test('the table: every valid note at face value from a large escrow; pro rata from a short one; the remainder split only after drain_blocks', async () => {
+test('the table: every valid note at face value; a short escrow pays in the order claimed, never pro rata; the remainder split only after the window', async () => {
   const big = book(); big.at(1012);
   await big.claims.offer({ federation: FED, ecash: 'e1', payoutPk: P1 }); await big.claims.offer({ federation: FED, ecash: 'e2', payoutPk: P2 });
   const p = await big.claims.plan(FED);
   assert.deepEqual([p.ok, p.proRata, p.payouts.find((x) => x.payoutPk === P1).msat, p.payouts.find((x) => x.payoutPk === P2).msat, p.split], [true, false, '768000', '1024000', null]);
-  big.at(1100); assert.equal((await big.claims.plan(FED)).split.reserves, String(10_000_000n - 1_792_000n));
+  big.at(1100); assert.equal((await big.claims.plan(FED)).split, null, 'not while a player may still claim');
+  big.at(1101); assert.equal((await big.claims.plan(FED)).split.reserves, String(10_000_000n - 1_792_000n));
   const short = book({ escrowMsat: 896_000n }); short.at(1012);
   await short.claims.offer({ federation: FED, ecash: 'e1', payoutPk: P1 }); await short.claims.offer({ federation: FED, ecash: 'e2', payoutPk: P2 });
   const q = await short.claims.plan(FED);
-  assert.deepEqual([q.proRata, q.rate, q.payouts.find((x) => x.payoutPk === P2).msat], [true, 0.5, '512000']);
+  assert.deepEqual([q.proRata, q.short, q.payouts.find((x) => x.payoutPk === P1).msat, q.payouts.find((x) => x.payoutPk === P2).msat], [false, true, '768000', '128000'], 'the first claim at face, the second gets what is left');
 });
 
 test('the arbitration set\'s doors: POST and GET /liquidation-claims', async () => {
@@ -110,7 +111,7 @@ test('the client presents its whole wallet once, keeps the e-cash until it is ta
   assert.match((await presentNotes({ liquidations: liq, held: [FED], walletFor, payoutPk: P1, height: 1005, storage, fetcher }))[0].why, /claims open at 1010/);
 });
 
-test('the table paid: nothing before the window closes; then the escrow into the safe federation, every note once, a late one by a later pass', async () => {
+test('the table paid when claimed (kanban #1093 part 8): nothing before the window opens; then the escrow into the safe federation, every note once, a late one by a later pass', async () => {
   const b = book(); b.at(1012);
   await b.claims.offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
   const runs = []; const v = {}; let spent = 0;
@@ -121,18 +122,18 @@ test('the table paid: nothing before the window closes; then the escrow into the
     return {}; };
   const spendEscrow = async (addr) => { spent++; return { txid: 'escrow-into-safe', addr }; };
   const pass = () => payOutLiquidation({ fid: FED, v, claims: b.claims, height: async () => tip(), run, spendEscrow });
-  let h = 1015; const tip = () => h;
-  assert.match((await pass()).why, /claim window closes at 1020/);
-  h = 1021;
+  let h = 1005; const tip = () => h;
+  assert.match((await pass()).why, /claim window opens at 1010/);
+  h = 1012;
   const first = await pass();
   assert.deepEqual([first.paid, spent, v.escrowTxid, v.claimedMsat, v.payouts.map((x) => [x.payoutPk, x.msat])], [2, 1, 'escrow-into-safe', '9000000', [[P1, '768000']]]);
   assert.deepEqual((await pass()), { paid: 0, notes: 2 }, 'nothing paid twice');
   b.at(1050); await b.claims.offer({ federation: FED, ecash: 'e2', payoutPk: P2 });
   const late = await pass();
-  assert.deepEqual([late.paid, spent, v.payouts.at(-1).payoutPk, v.payouts.at(-1).msat], [1, 1, P2, '1024000'], 'the late note from what is left, the escrow spent once');
+  assert.deepEqual([late.paid, spent, v.payouts.at(-1).payoutPk, v.payouts.at(-1).msat], [1, 1, P2, '1024000'], 'a later claim paid at its own pass, the escrow spent once');
 });
 
-test('after drain_blocks the remainder is paid once to its payees, never before every note is', async () => {
+test('after the claim window the remainder is paid once to its payees, never before every note is', async () => {
   const b = book(); b.at(1012);
   await b.claims.offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
   const pays = []; const v = {};
@@ -147,8 +148,10 @@ test('after drain_blocks the remainder is paid once to its payees, never before 
   const pass = () => payOutLiquidation({ fid: FED, v, claims: b.claims, height: async () => h, run, spendEscrow: async () => ({ txid: 'x' }), remainderPayees });
   await pass();
   assert.equal(pays.length, 1, 'the notes first');
-  assert.deepEqual(await pass(), { paid: 0, notes: 2 }, 'no remainder before drain_blocks');
+  assert.deepEqual(await pass(), { paid: 0, notes: 2 }, 'no remainder while the window runs');
   b.at(1100); h = 1100;
+  assert.deepEqual(await pass(), { paid: 0, notes: 2 }, 'nor at its last block');
+  b.at(1101); h = 1101;
   const r = await pass();
   assert.deepEqual([r.remainder, pays.length, pays[1]], ['1232000', 2, `${'aa'.repeat(32)}:1232000`]);
   await pass(); assert.equal(pays.length, 2, 'once');
@@ -168,7 +171,7 @@ test('the remainder is paid from what the paying client holds, less a margin for
   const remainderPayees = async (_fid, msat) => [{ key: 'aa'.repeat(32), msat }];
   const pass = () => payOutLiquidation({ fid: FED, v, claims: b.claims, height: async () => h, run, spendEscrow: async () => ({ txid: 'x' }), remainderPayees });
   await pass();
-  b.at(1100); h = 1100;
+  b.at(1101); h = 1101;
   const r = await pass();
   assert.deepEqual([r.remainder, pays[1]], ['990000', `${'aa'.repeat(32)}:990000`], 'the table says 1232000; the client holds 1000000');
   held = 5_000; delete v.remainderTxid; pays.length = 1;

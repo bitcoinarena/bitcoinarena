@@ -4,7 +4,8 @@
 // 2026-09-21): "The arbitration set opens a claim window of claim_blocks ... The client ... presents each unspent
 // note it holds for that federation, as it would present them to the federation itself ... A claim is valid if the note carries
 // the federation's signature, its nonce is not in the published spent set, and it has not been claimed before. Valid claims are
-// paid at face value from the escrow ... A note presented late is still paid from what is left, until drain_blocks".
+// paid at face value from the escrow". Since kanban #1093 part 8 (the owner 2026-11-03): a claim is paid when it is made, the window
+// runs 3 months from the halt (liquidationClaimBlocks), and only after it does the rest go to the protocol reserves.
 //
 // A CLAIM IS A SALE OF NOTES TO THE ESCROW: the client hands over its notes as out-of-band e-cash (the stock mint's send, the
 // lock client's sendAllEcash) with the key it is paid to; the arbitration set holds them from then on. Should the federation
@@ -14,7 +15,7 @@
 // signature against that federation's mint keys and the spend keys, offline (fedimint-cli module mint validate), and answers
 // { ok, amountMsat, notes: [{ nonce, amountMsat }] } or why not. `liquidationOf(federationHex)` is a seat's GET /liquidations
 // entry for it (halt height, clocks, the newest spent set's nonces); `height()` the arbitration set's chain tip;
-// `escrowMsatOf(federationHex)` what the escrow holds. Nothing here pays: `plan` is the table the window's end pays out.
+// `escrowMsatOf(federationHex)` what the escrow holds. Nothing here pays: `plan` is the table payOutLiquidation pays, pass by pass.
 import { settleClaims } from '../../arena-protocol/src/federation-slash.js';
 
 const isHex = (s, n) => typeof s === 'string' && new RegExp(`^[0-9a-f]{${n}}$`).test(s);
@@ -43,7 +44,7 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
     if (!liq) return { ok: false, status: 409, why: 'that federation is not being liquidated: no seat holds it HALTED' };
     const at = await height();
     if (at < liq.liquidatesAt) return { ok: false, status: 409, why: `the claim window opens at ${liq.liquidatesAt} (halted at ${liq.haltHeight} + abandon_blocks); the tip is ${at}` };
-    if (at > liq.lateClaimsUntil) return { ok: false, status: 409, why: `claims close at ${liq.lateClaimsUntil}, drain_blocks after the halt: notes presented later are the holder's loss` };
+    if (at > liq.lateClaimsUntil) return { ok: false, status: 409, why: `claims closed at ${liq.lateClaimsUntil}, the end of the claim window after the halt: notes presented later are the holder's loss` };
     const v = await validate(fid, body.ecash);
     if (!v || !v.ok) return { ok: false, status: 422, why: `those notes do not stand: ${v && v.why ? v.why : 'not validated'}` };
     const mine = claims.get(fid) || new Map(); claims.set(fid, mine);
@@ -112,7 +113,8 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
     const payTo = new Map(mine.map((c) => [c.nonce, c.payoutPk]));
     const byKey = new Map();
     for (const p of got.paid) byKey.set(payTo.get(p.nonce), (byKey.get(payTo.get(p.nonce)) || 0n) + p.msat);
-    return { ok: true, federation: fid, escrowMsat: String(escrowMsat), notes: mine.length, proRata: got.proRata, rate: got.rate,
+    return { ok: true, federation: fid, escrowMsat: String(escrowMsat), notes: mine.length, proRata: got.proRata, rate: got.rate, short: got.short,
+      claimWindowOpens: liq.liquidatesAt,
       paidNotes: got.paid.map((p) => ({ nonce: p.nonce, msat: String(p.msat), late: p.late, payoutPk: payTo.get(p.nonce) })),
       claimWindowCloses: liq.claimWindowCloses, lateClaimsUntil: liq.lateClaimsUntil,
       spentSetPublished: got.spentSetPublished, payouts: [...byKey.entries()].map(([payoutPk, msat]) => ({ payoutPk, msat: String(msat) })),
@@ -127,19 +129,19 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
 
 /**
  * PAYING THE TABLE (§23A.5 step 4), one pass at a time, every step kept (`v`, the service's state for this
- * federation) before the next, as payOutSlash does for a slash (§5A.3B):
- *   1. from the claim window's close: the whole escrow is spent by k of the set to a peg-in address of its own client of a SAFE
+ * federation) before the next, as payOutSlash does for a slash (§5A.3B). A claim is paid when it is made (kanban #1093 part 8):
+ *   1. from the claim window's opening (the liquidation): the whole escrow is spent by k of the set to a peg-in address of its own client of a SAFE
  *      federation (`run` the stake-lock tool over that client), and claimed there;
  *   2. the table (`claims.plan`, over what that federation credited) is paid note by note: every note not paid yet, summed per
  *      payout key, locked to that key (the tool's `pay`) - so a late note is paid by a later pass from what is left, never twice;
- *   3. after drain_blocks, the remainder - what no note claimed - to the protocol reserves (§5A.3, RULED 2026-11-02, kanban #976), as
+ *   3. after the claim window (3 months from the halt), the remainder - what no note claimed - to the protocol reserves (§5A.3, RULED 2026-11-02, kanban #976), as
  *      `remainderPayees(fid, msat)` names them ([{ key, msat }]: the reserve key of the federation it was paid into).
  * `spendEscrow(toScript)` builds, signs and posts the escrow's spend (buildEscrowPegin + assemble + post) and answers { txid } or why.
  */
 export async function payOutLiquidation({ fid, v, claims, height, run, spendEscrow, remainderPayees = null, keep = () => {}, say = () => {} }) {
   const p0 = await claims.plan(fid);
   if (!p0.ok) return { why: p0.why };
-  if ((await height()) <= p0.claimWindowCloses) return { why: `the claim window closes at ${p0.claimWindowCloses}` };
+  if (Number.isInteger(p0.claimWindowOpens) && (await height()) < p0.claimWindowOpens) return { why: `the claim window opens at ${p0.claimWindowOpens}` };
   // WHAT THE PAYING CLIENT HELD BEFORE THE ESCROW CAME (kanban #326, rehearsal 17 live 10-26): a claim that went through outside a recorded
   // pass - by hand, or one ending right at the tool's timeout - left the balance risen before the next pass's pegin-claim began, which then
   // saw no rise and the service waited for good. The rise over this mark stands for the claim, never more than the escrow carried.
@@ -176,7 +178,7 @@ export async function payOutLiquidation({ fid, v, claims, height, run, spendEscr
   const done = new Set(v.paidNonces || []);
   const due = p.paidNotes.filter((n) => !done.has(n.nonce) && BigInt(n.msat) > 0n);
   if (!due.length) {
-    // THE REMAINDER, once: only after drain_blocks (settleClaims names a split only then), every note's payout made first
+    // THE REMAINDER, once: only after the claim window (settleClaims names a split only then), every note's payout made first
     if (!p.split || v.remainderTxid || !remainderPayees) return { paid: 0, notes: done.size, ...(p.split && !remainderPayees ? { why: 'the remainder waits for its payees' } : {}) };
     // WHAT THE CLIENT CAN STILL PAY (kanban #326 rehearsal 17, 2026-10-26): the table's remainder is the claim less the notes paid,
     // but every pay costs the safe federation's fees (352 msat for one payout, measured), so the client holds less than that and a

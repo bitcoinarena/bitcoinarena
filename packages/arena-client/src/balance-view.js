@@ -56,12 +56,15 @@ export function reimbursementOf({ status, tip, network = 'mainnet', secondsPerBl
   const c = clocksFor(network);
   const s = liquidationSchedule({ haltHeight, clocks: c.ok ? c.clocks : MAINNET_CLOCKS });
   if (!s.ok) return { ok: false, why: s.why };
-  const paysAt = Number(s.claimWindowCloses);
+  // A CLAIM IS PAID WHEN IT IS MADE (kanban #1093 part 8): from the window's opening, until it closes 3 months after the halt
+  const paysAt = Number(s.claimWindowOpens), closes = Number(s.claimWindowCloses);
   const blocks = Math.max(0, paysAt - Number(tip));
   const seconds = blocks * secondsPerBlock;
-  return { ok: true, paysAt, blocks, seconds,
-    line: blocks === 0 ? `Paid back now: the claim window closed at block ${paysAt.toLocaleString('en-US')}.`
-      : `Paid back in about ${blocks.toLocaleString('en-US')} blocks (~${humanDuration(seconds)}), at block ${paysAt.toLocaleString('en-US')}.` };
+  const until = `Claims stay open until block ${closes.toLocaleString('en-US')}.`;
+  if (Number(tip) > closes) return { ok: true, paysAt, closes, blocks: 0, seconds: 0, closed: true, line: `The claim window closed at block ${closes.toLocaleString('en-US')}.` };
+  return { ok: true, paysAt, closes, blocks, seconds,
+    line: blocks === 0 ? `Paid back now, when your notes are claimed. ${until}`
+      : `Paid back from block ${paysAt.toLocaleString('en-US')}, in about ${blocks.toLocaleString('en-US')} blocks (~${humanDuration(seconds)}). ${until}` };
 }
 
 /** A federation's capacity for the debug rows: its signed reserve and exposure cap, the room left, and the load. */
