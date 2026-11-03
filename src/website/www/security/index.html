@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security · Bitcoin Arena</title>
+<meta name="description" content="How your money is protected in Bitcoin Arena: the worst cases, what stops each one, and what is left.">
+<meta property="og:title" content="Security · Bitcoin Arena">
+<meta property="og:description" content="The worst cases, what stops each one, and what we cannot promise.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://docs.bitcoinarena.io/security/">
+<meta property="og:image" content="https://testnet.bitcoinarena.io/arena-og.png">
+<link rel="icon" href="/favicon.ico">
+<style>
+  :root { --bg: #07090d; --panel: #0e131b; --text: #e8edf3; --dim: #8d99a8; --line: #1d2633; --btc: #f7931a; --ok: #3fb950; --wait: #d29922; --plan: #8d99a8; --risk: #ff6b6b; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 400 16px/1.6 Inter, system-ui, -apple-system, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 40px 16px 64px; }
+  h1 { font: 700 clamp(30px, 6vw, 42px)/1.1 system-ui; margin: 0 0 12px; letter-spacing: -0.02em; }
+  h2 { font: 600 22px/1.3 system-ui; margin: 40px 0 10px; }
+  h3 { font: 600 18px/1.35 system-ui; margin: 0; }
+  a { color: var(--btc); }
+  .lead { color: var(--dim); font-size: 18px; }
+  .note { border: 1px solid var(--line); border-left: 3px solid var(--btc); border-radius: 10px; padding: 10px 14px; background: var(--panel); margin: 18px 0; }
+  .flow { display: grid; grid-template-columns: 1fr; gap: 10px; margin: 18px 0 6px; }
+  @media (min-width: 640px) { .flow { grid-template-columns: repeat(3, 1fr); } }
+  .stage { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+  .stage svg { display: block; margin: 0 auto 8px; }
+  .stage b { display: block; font-size: 16px; }
+  .stage span { color: var(--dim); font-size: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin: 14px 0; }
+  .head { display: flex; gap: 14px; align-items: flex-start; }
+  .head svg { flex: none; }
+  .pill { display: inline-block; font: 600 12px system-ui; border-radius: 999px; padding: 2px 10px; margin-top: 6px; border: 1px solid currentColor; }
+  .pill.live { color: var(--ok); } .pill.soon { color: var(--wait); } .pill.plan { color: var(--plan); }
+  dl { display: grid; grid-template-columns: 1fr; gap: 2px 0; margin: 12px 0 0; }
+  @media (min-width: 640px) { dl { grid-template-columns: 150px 1fr; gap: 6px 14px; } }
+  dt { color: var(--dim); font-size: 14px; } dd { margin: 0 0 8px; }
+  details { margin-top: 10px; color: var(--dim); font-size: 14px; } summary { cursor: pointer; color: var(--text); }
+  .left { color: var(--text); }
+  ul.cant li { margin-bottom: 8px; }
+  table.odds { width: 100%; border-collapse: collapse; margin: 8px 0; font-variant-numeric: tabular-nums; } table.odds th, table.odds td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--line); } table.odds th:first-child, table.odds td:first-child { text-align: left; } table.odds th { color: var(--dim); font-weight: 600; font-size: 13px; }
+  .src { color: var(--dim); font-size: 14px; }
+  footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--dim); font-size: 14px; }
+  svg .i { fill: none; stroke: var(--text); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  svg .g { fill: none; stroke: var(--ok); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  svg .r { fill: none; stroke: var(--risk); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  svg .b { fill: var(--btc); } svg .f { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
+</style>
+</head>
+<body>
+<main>
+  <h1>How your money is protected</h1>
+  <p class="lead">The worst things that could happen, how likely each one is, what stops it, and what is left. Worst case first, in plain words.</p>
+  <div class="note"><b>Mainnet is not live.</b> Bitcoin Arena runs on testnet today, with test coins that have no value. Each card says whether its protection is live on testnet now, comes with version 2.0, or is planned.</div>
+
+  <h2>Where your money is, and who guards it</h2>
+  <div class="flow" role="img" aria-label="Three stages: in your wallet, locked in a round, paid out">
+    <div class="stage">
+      <svg width="64" height="64" viewBox="0 0 64 64" aria-hidden="true"><rect class="f" x="6" y="16" width="52" height="36" rx="8"/><circle class="b" cx="44" cy="34" r="6"/><path class="i" d="M6 26h52"/></svg>
+      <b>1. In your wallet</b>
+      <span>E-cash in a federation: a group of guardians that hold the bitcoin together. No single guardian can spend it. Their bonds stand behind it.</span>
+    </div>
+    <div class="stage">
+      <svg width="64" height="64" viewBox="0 0 64 64" aria-hidden="true"><rect class="f" x="14" y="28" width="36" height="26" rx="5"/><path class="i" d="M22 28v-8a10 10 0 0 1 20 0v8"/><circle class="b" cx="32" cy="41" r="5"/></svg>
+      <b>2. Locked in a round</b>
+      <span>Your stake waits in a lock that only the round's signers can pay out, and only by the result anyone can replay. If the round fails, the lock comes back to you within about a day.</span>
+    </div>
+    <div class="stage">
+      <svg width="64" height="64" viewBox="0 0 64 64" aria-hidden="true"><path class="g" d="M14 34l12 12 24-26"/><circle class="b" cx="48" cy="48" r="5"/></svg>
+      <b>3. Paid out</b>
+      <span>Winnings land in your wallet as e-cash again. The 24 words you wrote down restore it on any device.</span>
+    </div>
+  </div>
+
+  <h2>The worst cases</h2>
+
+  <div class="card"><div class="head">
+    <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="20"/><path class="r" d="M14 16l16 12M30 16L14 28"/><path class="g" d="M12 34h20"/></svg>
+    <div><h3>A round's signers lie about the result</h3><span class="pill live">live on testnet</span> <span class="pill soon">slash: comes with 2.0</span></div></div>
+    <dl><dt>What could happen</dt><dd>The signers of a round sign a result that the game did not produce, to pay the wrong player.</dd>
+    <dt>How likely</dt><dd>Low. It needs most of a randomly drawn group to agree to cheat, each with a bond at stake.</dd>
+    <dt>What stops it</dt><dd>Every round can be replayed by anyone. Auditors replay it, there is a window to object, a disputed round is run again, and the signers who lied lose their bond.</dd>
+    <dt class="left">What is left</dt><dd>If 5 of the 7 signers lie and nobody objects within 10 minutes, the wrong result stands. A proof later still costs them their bonds.</dd></dl>
+    <details><summary>Details</summary>Replay and objection: spec §13A, §13A.1. The slash for a false result: §5A.3, in 2.0.</details>
+  </div>
+
+  <div class="card"><div class="head">
+    <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="20"/><path class="i" d="M14 22h16"/><path class="r" d="M16 14l12 16"/></svg>
+    <div><h3>A few seats stay silent to stop or void a round</h3><span class="pill soon">comes with 2.0</span></div></div>
+    <dl><dt>What could happen</dt><dd>Some seats stop answering so a round cannot finish, again and again.</dd>
+    <dt>How likely</dt><dd>Medium. A seat only has to go quiet.</dd>
+    <dt>What stops it</dt><dd>A round waits and is run again by its seats. A seat named silent in 3 failed rounds within 72 hours is left out of the draw for up to 72 hours. Your stake comes back if the round cannot finish.</dd>
+    <dt class="left">What is left</dt><dd>Three seats working together can still stop a round. A losing player then gets the stake back and the winner gets nothing extra. The stall rule takes repeaters out, but it does not yet cover the payout step.</dd></dl>
+    <details><summary>Details</summary>Re-run window: §13C, #1038, in 2.0. The stall rule: #1044, #1052, in 2.0. The free bet: #1044, #1045.</details>
+  </div>
+
+  <div class="card"><div class="head">
+    <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="20"/><path class="i" d="M12 14h20v16H12z"/><path class="r" d="M16 22h12"/></svg>
+    <div><h3>Settlement seats sign a different payout</h3><span class="pill soon">comes with 2.0</span></div></div>
+    <dl><dt>What could happen</dt><dd>The seats that pay a round out sign a payout that differs from the result.</dd>
+    <dt>How likely</dt><dd>Low. It needs a threshold of seats, each with a bond.</dd>
+    <dt>What stops it</dt><dd>Every seat acknowledges the payout table it signs, and a false table is a proof that slashes those seats. The players get their real loss from the slashed bonds.</dd>
+    <dt class="left">What is left</dt><dd>Five seats that acknowledge one payout and then sign another cannot be named, so no bond answers for that. It needs 5 of the 7, and a cap on what a round can hold keeps it small. This is still being decided.</dd></dl>
+    <details><summary>Details</summary>Acknowledgements and table proofs: §5A.3.</details>
+  </div>
+
+  <div class="card"><div class="head">
+    <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="20"/><circle class="i" cx="15" cy="18" r="4"/><circle class="i" cx="29" cy="18" r="4"/><circle class="i" cx="22" cy="29" r="4"/><path class="r" d="M10 34l24-24"/></svg>
+    <div><h3>Guardians are hacked or work together to steal</h3><span class="pill plan">planned for 2.0</span></div></div>
+    <dl><dt>What could happen</dt><dd>Enough guardians of a federation sign together and take the bitcoin it holds.</dd>
+    <dt>How likely</dt><dd>Low. It needs a majority of a federation's guardians. Today on testnet most guardians are run by the project; spreading them over different machines and providers comes with 2.0.</dd>
+    <dt>What stops it</dt><dd>A federation may only hold as much as its guardians' bonds can cover. A theft leaves a mark in the federation's own signed history: more e-cash paid out than was ever issued, or a reserve spent with no signed withdrawal. Any seat that sees it stops deposits at once, and every note is paid at face value from the bonds of all its guardians. Updates reach only a few guardians of a federation at a time.</dd>
+    <dt class="left">What is left</dt><dd>Your claim: you have 3 months to present your notes, and they are paid at once. Deposits made outside our apps and gateways past the cap may not be covered.</dd></dl>
+    <details><summary>Details</summary>Exposure cap, ReserveAlarm, guardian bonds as insurance, staged updates, spread guardians: #1093.</details>
+  </div>
+
+  <div class="card"><div class="head">
+    <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="20"/><rect class="i" x="15" y="15" width="14" height="14" rx="2"/><path class="r" d="M12 32l20-20"/></svg>
+    <div><h3>A federation stops working</h3><span class="pill plan">planned for 2.0</span></div></div>
+    <dl><dt>What could happen</dt><dd>A federation halts, is robbed, or its guardians leave.</dd>
+    <dt>How likely</dt><dd>Low to medium over years.</dd>
+    <dt>What stops it</dt><dd>The federation is wound up: every note presented is paid at face value, from the federation's escrow and its guardians' bonds. Your wallet claims for you automatically.</dd>
+    <dt class="left">What is left</dt><dd>You have 3 months to claim. After that, what is left goes to the protocol reserves.</dd></dl>
+    <details><summary>Details</summary>Liquidation and claims: §23A.5, #1093 (claim window 3 months).</details>
+  </div>
+
+  <div class="card"><div class="head">
+    <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="20"/><rect class="i" x="12" y="14" width="20" height="14" rx="2"/><path class="i" d="M18 32h8"/><path class="r" d="M20 18l4 6"/></svg>
+    <div><h3>A node is hacked</h3><span class="pill plan">planned for 2.0</span></div></div>
+    <dl><dt>What could happen</dt><dd>Someone takes over the machine a node runs on.</dd>
+    <dt>How likely</dt><dd>Medium: machines get hacked.</dd>
+    <dt>What stops it</dt><dd>A node never holds a player's money, and its bond can only be taken back with its owner's 24 words, which are kept off the machine. A hacked node can sign no more than its own share of a round.</dd>
+    <dt class="left">What is left</dt><dd>The node owner can lose the bond if the hacked node is slashed. Players lose nothing. If the node is a guardian and its federation is robbed, its bond pays the players.</dd></dl>
+    <details><summary>Details</summary>Owner key for bonds: #1093 part 1.</details>
+  </div>
+
+  <div class="card"><div class="head">
+    <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="20"/><path class="i" d="M22 12v12"/><circle class="b" cx="22" cy="30" r="3"/></svg>
+    <div><h3>Someone slashes a node falsely</h3><span class="pill soon">comes with 2.0</span></div></div>
+    <dl><dt>What could happen</dt><dd>Someone tries to take a node's bond without a real offence.</dd>
+    <dt>How likely</dt><dd>Low.</dd>
+    <dt>What stops it</dt><dd>A slash first moves the bond to a hold where it still counts. Two independent panels must release it with a valid proof, and signing a release without one is itself slashable. If the proof does not hold up, the node takes its bond back by itself after about a day, never before its maturity.</dd>
+    <dt class="left">What is left</dt><dd>The holders of most of the network's bonded capital, acting together, could take a bond that has not matured yet.</dd></dl>
+    <details><summary>Details</summary>Hold, panels, census key, return: §5A.3B.</details>
+  </div>
+
+  <div class="card"><div class="head">
+    <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="20"/><path class="i" d="M12 22h8l4-8 4 16 4-8h0"/></svg>
+    <div><h3>A Lightning gateway misbehaves</h3><span class="pill live">live on testnet</span></div></div>
+    <dl><dt>What could happen</dt><dd>A gateway that moves money in and out over Lightning takes a payment and does not deliver it.</dd>
+    <dt>How likely</dt><dd>Low.</dd>
+    <dt>What stops it</dt><dd>Lightning payments are all or nothing: either the money arrives or it never leaves. Every federation has at least two gateways, and your wallet uses the other one.</dd>
+    <dt class="left">What is left</dt><dd>A payment may fail and need to be tried again.</dd></dl>
+  </div>
+
+  <div class="card"><div class="head">
+    <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="20"/><rect class="i" x="11" y="13" width="22" height="18" rx="2"/><path class="i" d="M11 18h22"/><path class="r" d="M17 25h10"/></svg>
+    <div><h3>The website is changed</h3><span class="pill live">live on testnet</span> <span class="pill plan">known-good list: planned</span></div></div>
+    <dl><dt>What could happen</dt><dd>Someone changes the game page to steal from the wallet in your browser.</dd>
+    <dt>How likely</dt><dd>Low to medium.</dd>
+    <dt>What stops it</dt><dd>The page loads each game only if its files match the published hashes, and asks you before money leaves your wallet. The code is public. A list of known-good builds is planned.</dd>
+    <dt class="left">What is left</dt><dd>A changed page you open before anyone notices.</dd></dl>
+  </div>
+
+  <div class="card"><div class="head">
+    <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="20"/><path class="i" d="M14 30l8-16 8 16z"/></svg>
+    <div><h3>Someone tries to pick a round's signers</h3><span class="pill live">live on testnet</span></div></div>
+    <dl><dt>What could happen</dt><dd>Someone tries to choose which nodes sign a round, to get their own nodes in.</dd>
+    <dt>How likely</dt><dd>Low.</dd>
+    <dt>What stops it</dt><dd>The signers are drawn from a Bitcoin block hash that comes after the round was published, so nobody knows it in advance. A cap on how much a round can hold keeps what a captured round could take small.</dd>
+    <dt class="left">What is left</dt><dd>An owner with a large share of all bonds is drawn more often, in proportion.</dd></dl>
+    <details><summary>Details</summary>Beacon after publication and stake ceiling: §5A.5, §5A.10.</details>
+  </div>
+
+  <div class="card"><div class="head">
+    <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="20"/><rect class="i" x="16" y="11" width="12" height="22" rx="3"/><path class="g" d="M19 27h6"/></svg>
+    <div><h3>You lose your phone or computer</h3><span class="pill live">live on testnet</span></div></div>
+    <dl><dt>What could happen</dt><dd>The device with your wallet is lost or broken.</dd>
+    <dt>How likely</dt><dd>Medium: it happens to everyone.</dd>
+    <dt>What stops it</dt><dd>Your 24 words restore your wallet and your notes on any device. A Nostr login does the same.</dd>
+    <dt class="left">What is left</dt><dd>If you lose the device and the 24 words, that money is gone.</dd></dl>
+  </div>
+
+  <div class="card"><div class="head">
+    <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle class="f" cx="22" cy="22" r="20"/><path class="i" d="M16 16l12 12M28 16L16 28"/></svg>
+    <div><h3>A bug in the software</h3><span class="pill live">live on testnet</span> <span class="pill plan">staged updates: planned</span></div></div>
+    <dl><dt>What could happen</dt><dd>A mistake in the code loses or locks money.</dd>
+    <dt>How likely</dt><dd>Medium: all software has bugs.</dd>
+    <dt>What stops it</dt><dd>Everything runs on testnet first, with test coins. The code is public. Updates will reach only a few guardians of a federation at a time, so a faulty release shows before it can do harm.</dd>
+    <dt class="left">What is left</dt><dd>A bug nobody finds before mainnet.</dd></dl>
+  </div>
+
+  <h2>What we cannot promise</h2>
+  <ul class="cant">
+    <li>If every guardian of a federation were hacked at once, nobody would hand out its signed history, and a theft would show only when withdrawals fail.</li>
+    <li>Three seats working together can stop a round, and give a losing friend the stake back.</li>
+    <li>Five seats that sign a different payout than they acknowledged cannot be named yet.</li>
+    <li>If you are away for more than 3 months after a federation stops, and you have lost your 24 words, that money is lost.</li>
+    <li>An owner with a large share of all bonds is drawn into more rounds. The more of the bonded capital one owner holds, the higher the chance that their nodes sign a round together.</li>
+    <li>Software can have bugs we have not found yet.</li>
+  </ul>
+  <p>How often one owner's nodes would sit together in a round, per round, assuming one owner holds that share of all bonded capital:</p>
+  <table class="odds"><thead><tr><th>One owner's share of all bonded capital</th><th>Their nodes hold 5 of a round's 7 seats</th><th>They hold 3 of 7, enough to stall</th></tr></thead>
+  <tbody><tr><td>20 %</td><td>0.5 % of rounds</td><td>14.8 %</td></tr><tr><td>30 %</td><td>2.9 %</td><td>35.3 %</td></tr><tr><td>40 %</td><td>9.6 %</td><td>58.0 %</td></tr></tbody></table>
+  <p class="src">Sources: the 5 of 7 column is §5A.10's table, the 3 of 7 column the same binomial (#1045).</p>
+
+  <footer><a href="https://bitcoinarena.io/">Bitcoin Arena</a> · <a href="/">Docs</a> · <a href="https://testnet.bitcoinarena.io/">Play on testnet</a></footer>
+</main>
+</body>
+</html>
