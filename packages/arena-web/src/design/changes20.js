@@ -11,7 +11,7 @@
 
 export const CHANGES_20 = [
   { n: 1, role: 'node', status: 'planned', title: 'Your bond is withdrawn with your 24 words, not by the node',
-    lines: ['Taking your bond back, and taking it back after a slash that does not hold up, are signed with your owner key, which comes from your 24 words. A hacked node cannot take your bond, and neither can the node itself.'],
+    lines: ['Taking your bond back, after its maturity or after a slash that does not hold up, is signed with your owner key from your 24 words. A hacked node cannot take your bond, and neither can the node itself.'],
     installer: 'Your owner key comes from your 24 words, which are shown once. Write them down and keep them off this machine. A node without them posts no 2.0 bond.',
     dashboard: '"Withdraw" asks for your owner key.' },
   { n: 2, role: 'node', status: '2.0', title: 'Bonding takes 3 transactions',
@@ -19,10 +19,10 @@ export const CHANGES_20 = [
       'On mainnet the node posts nothing while it cannot yet read a census key, rather than a bond that would not count.'],
     installer: 'The fees of all three are shown before the bond step.', dashboard: 'Each of the three transactions with its state.' },
   { n: 3, role: 'node', status: '2.0', title: 'What a slash does now',
-    lines: ['A slash first moves your bond to a hold. It still counts in the census while it is held.',
-      'Two panels release it after about 1 hour: the players get their real loss, the rest goes to the protocol reserves. Nothing comes back to your node.',
-      'If the proof does not hold up, your node takes the bond back by itself after about 1 day, never before the bond\'s maturity. If the proof is true and the panels do not sign, the census key releases it after about 2 days.'],
-    dashboard: 'A started slash shows its start, its proof, and each way out with its block height.' },
+    lines: ['A slash first moves your bond to a hold. It still counts in the census while it is held, and your node is still drawn and paid.',
+      'Two panels release it after about 1 hour if the proof is valid: the players get their real loss, the rest goes to the protocol reserves, and nothing comes back.',
+      'If the proof does not hold up, you can take your bond back with your 24 words after about 1 day, never before its maturity. The dashboard shows when, and prepares it for you.'],
+    dashboard: 'A started slash shows its start, its proof, and each way out with its block height; a return you can sign is prepared for you.' },
   { n: 4, role: 'node', status: '2.0', title: 'Panels',
     lines: ['Your node may be drawn for a round\'s panel. That is no work unless a slash comes.', 'Signing a release without a valid proof is itself slashable.'] },
   { n: 5, role: 'node', status: '2.0', title: 'The census key',
