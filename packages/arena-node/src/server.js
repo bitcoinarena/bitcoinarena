@@ -5443,6 +5443,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // view): asked again after SERIES_MISS_MS
   const seriesMiss = new Map();                   // series id hex -> when it was last looked for in vain
   const SERIES_MISS_MS = 60000;
+  const seriesPublicationIn = (view, sidBytes) => {
+    const at = findSeriesPublicationIndexed(view, sidBytes);
+    return at ? findSeriesPublication({ firstHeight: at.height, blocks: [view.blocks[at.height - view.firstHeight]] }, sidBytes) : null;
+  };
   const isBackupRound = (rid, c) => {
     if (!(c.seriesId instanceof Uint8Array) || c.stakeMsat === 0n) return false;
     const sid = toHex(c.seriesId);
@@ -5450,7 +5454,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (Date.now() - (seriesMiss.get(sid) || 0) < SERIES_MISS_MS) return null;
     let view; try { view = chainFor ? chainFor({ contract: c, roundIdBytes: rid }) : undefined; } catch { view = undefined; }
     if (!view) return null;                       // not read yet: not a backup, asked again
-    const pub = findSeriesPublication(view, c.seriesId);
+    // LOOKED FOR IN EACH BLOCK'S COMMITMENTS, READ ONCE PER BLOCK (kanban #1087, a live seat's 30 s profile: isBackupRound 7.5 % of the
+    // main thread - a series whose publication is not on the view yet, the next day's grids, parsed and hashed every transaction of the
+    // whole view again each minute): roster.js finds the same lowest block from each block's commitments kept beside it; only that
+    // block's transactions are read for the publication itself - the first that carries it, as series.js findSeriesPublication answers
+    const pub = seriesPublicationIn(view, c.seriesId);
     if (!pub) { if (seriesMiss.size > 20000) seriesMiss.clear(); seriesMiss.set(sid, Date.now()); return null; }
     const b = isBackupPublication(pub.tx);
     seriesRole.set(sid, b);
@@ -5462,43 +5470,72 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!windowRounds.has(k)) windowRounds.set(k, new Set());
     windowRounds.get(k).add(toHex(rid));
   };
-  /** Is this paid round played here now (playedOfWindow over the window's rounds this seat holds)? -> { played, backup, why } */
-  const playedHere = (rid, c) => {
+  // WHETHER THIS SEAT STILL HOLDS A ROUND'S SERIES, KEPT PER ROUND WHILE THE SERIES HELD STAND (kanban #1087, measured: seriesRefusal was
+  // a third of the window's reads - each round's series derived again and its contract encoded twice, per window and listing): a function
+  // of the round's contract, never changed, and of the series held, whose every change bumps seriesVersion
+  const seriesRefusedKept = new Map();            // round id hex -> { version, refused }
+  const seriesRefusedHere = (id, cc) => {
+    const was = seriesRefusedKept.get(id);
+    if (was && was.version === seriesVersion) return was.refused;
+    const refused = !!seriesRefusal(cc);
+    if (seriesRefusedKept.size > 20000) seriesRefusedKept.clear();
+    seriesRefusedKept.set(id, { version: seriesVersion, refused });
+    return refused;
+  };
+  // `kept` (the listing's, playedListed): what each round of the window is - its contract, whether this seat still holds its series, and
+  // { backup, drawn, entries } - read once for every round of the window that asks; none: read now, as the entry and live checks ask
+  const playedOf = (rid, c, kept = null) => {
     if (c.stakeMsat === 0n) return { played: true, backup: false };
     noteWindow(rid, c);
     // ALONE IN ITS WINDOW (the most of them): played, nothing else read
     if (windowRounds.get(windowKeyOf(c)).size < 2) return { played: true, backup: isBackupRound(rid, c) };
+    const self = toHex(rid);
     const rows = [];
     for (const id of windowRounds.get(windowKeyOf(c))) {
-      const r = fromHex(id);
-      const cc = id === toHex(rid) ? c : round.contractOf(r);
+      let f = kept && kept.get(id);
+      if (!f) { f = { r: fromHex(id) }; if (kept) kept.set(id, f); }
+      const r = f.r;
+      const cc = id === self ? c : ('cc' in f ? f.cc : (f.cc = round.contractOf(r)));
       if (!cc) continue;
       // A SERIES THIS SEAT NO LONGER HOLDS HAS NO SAY IN THE WINDOW (kanban #828, 11-02 00:00-01:25Z): the dropped primary efe4963f still counted as drawn, so all 14 seats
       // refused every backup round of the day's first 85 minutes and no Next Block round could be played.
-      if (id !== toHex(rid) && seriesRefusal(cc)) continue;
-      rows.push({ id, backup: isBackupRound(r, cc), drawn: !!committeeOf(r).drawn, entries: round.entriesOf(r).length });   // an object where the seats seat (kanban #781)
+      if (id !== self && ('refused' in f ? f.refused : (f.refused = seriesRefusedHere(id, cc)))) continue;
+      // an object where the seats seat (kanban #781)
+      if (!f.row) f.row = { id, backup: isBackupRound(r, cc), drawn: !!committeeOf(r).drawn, entries: round.entriesOf(r).length };
+      rows.push(f.row);
     }
-    const me = rows.find((x) => x.id === toHex(rid));
-    const played = playedOfWindow(rows).has(toHex(rid));
+    const me = rows.find((x) => x.id === self);
+    const played = playedOfWindow(rows).has(self);
     return { played, backup: me ? me.backup : null,
       why: played ? null : me && me.backup ? 'this window is played on its primary grid, whose committee is drawn (the backup rule, §5A.5)'
         : 'this window\'s backup round already holds entries on this seat (the backup rule, §5A.5)' };
   };
+  /** Is this paid round played here now (playedOfWindow over the window's rounds this seat holds)? -> { played, backup, why } */
+  const playedHere = (rid, c) => playedOf(rid, c);
   // THE LISTING'S ANSWER, KEPT FOR A SECOND (kanban #786, profiled 2026-10-29 19:1xZ on test host seat 1: GET /rounds took 16 % of the
   // seat's CPU, 10.5 % in playedHere - every listing asked each paid row's window again, each round of it drawn through committeeOf).
   // Only the listing reads it: the entry and the live check ask playedHere itself, so a window that turns is refused at once.
   // 30 s (measured 2026-10-29 on seat 1: kept 1 s the answer was read again almost always - a row is listed less than once a second -
   // and the listing stayed at 19.8 %; kept 30 s it fell to 6.6 %): a lobby may show a window's turn up to 30 s late, never take its entry
+  // KEPT PER WINDOW, EACH ROUND OF IT READ ONCE (kanban #1087, a live seat's 30 s profile: playedListed 16.7 % of the main thread, committeeFor
+  // 7.8 %): it was kept per round, and every round of a window read every round of it again - a primary and a backup grid read each other's
+  // contract, series, backup, draw and entries twice a listing's rebuild. Now the window keeps them, so each is read once, and each round's
+  // answer is made from them; a window whose rounds this seat holds changes in number is read again, and none is kept past PLAYED_KEPT_MS
   const PLAYED_KEPT_MS = Number(process.env.ARENA_PLAYED_KEPT_MS || 30000);
-  const playedKept = new Map();                   // round id hex -> { at, size (of its window), answer }
+  const playedKept = new Map();                   // window key -> { at, size (its rounds), kept (id hex -> what it is), answers (id hex -> answer) }
   const playedListed = (rid, c) => {
-    const k = toHex(rid), now = Date.now();
-    const was = playedKept.get(k);
-    const size = (windowRounds.get(windowKeyOf(c)) || { size: 0 }).size;
-    if (was && now - was.at < PLAYED_KEPT_MS && was.size === size) return was.answer;
-    const answer = playedHere(rid, c);
-    if (playedKept.size > 20000) playedKept.clear();
-    playedKept.set(k, { at: now, size: (windowRounds.get(windowKeyOf(c)) || { size: 0 }).size, answer });
+    if (c.stakeMsat === 0n) return playedOf(rid, c);
+    noteWindow(rid, c);
+    const wk = windowKeyOf(c), k = toHex(rid), now = Date.now();
+    const size = windowRounds.get(wk).size;
+    let w = playedKept.get(wk);
+    if (!w || !(now - w.at < PLAYED_KEPT_MS) || w.size !== size) {
+      if (playedKept.size > 20000) playedKept.clear();
+      w = { at: now, size, kept: new Map(), answers: new Map() };
+      playedKept.set(wk, w);
+    }
+    let answer = w.answers.get(k);
+    if (!answer) { answer = playedOf(rid, c, w.kept); w.answers.set(k, answer); }
     return answer;
   };
   // A DRAW NOT YET SEATED, KEPT WHILE WHAT IT IS MADE OF STANDS (kanban #742: with reserve seats a round 3 h ahead is drawn but not seated,
