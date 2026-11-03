@@ -22,7 +22,9 @@
 // THE NONCES LIVE IN MEMORY, ONE PAIR PER MESSAGE, and a pair signs ONE
 // commitment list: the same nonce over two lists is two signatures over two
 // messages, which publishes the share. A second asker with the same list gets
-// the same share back; with another list, nothing.
+// the same share back; with another list, nothing. A PAIR THAT SIGNED A LIST IS
+// SPENT, and the next commit draws a new one (kanban #1074, as the settlement's
+// #1070): a list one seat on it never completed binds nobody.
 import { outcomeFinality } from '../../arena-protocol/src/attested.js';
 import { heldOutcomes, marketVoidOf } from './game-market.js';
 import { isScalar } from '../../arena-protocol/src/manifest.js';
@@ -31,7 +33,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { isQualifier, FORFEIT as FORFEIT_OUTCOME } from '../../arena-protocol/src/payout.js';
-import { signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
+import { signShare340, aggregate340, nonceGenerate340, verifyShare340 } from '../../arena-protocol/src/frost-bip340.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { lockFieldsFromJson } from '../../arena-protocol/src/stake-lock.js';
 import { FINAL, SUSPENDED, PROVISIONALLY_FINAL } from '../../arena-protocol/src/objection.js';
@@ -40,6 +42,7 @@ import { resultFinality, settledResult } from './finality.js';
 import { stateOf } from './settlement-state.js';
 import { pluginForRound } from './plugins.js';
 import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
+import { askPeers, PEER_ASK_MS, PEER_GRACE_MS } from './peer-ask.js';
 
 // A FEE LOCK'S RETURN (2026-10-09: "orders can be cancelled at no cost"): kept under its own key beside
 // the stake lock's, so an entry's two returns never stand in each other's place
@@ -56,8 +59,12 @@ export class Forfeit {
    * federation (it hashes a contract the way the guardians do); `peersFor(rid)`
    * names the other settlement signer nodes' bases.
    */
-  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null, pullProof = null, refusedNow = null, bookStanding = null } = {}) {
+  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null, pullProof = null, refusedNow = null, bookStanding = null,
+    peerAskMs = PEER_ASK_MS, peerGraceMs = PEER_GRACE_MS } = {}) {
     this.round = round;
+    // HOW LONG A SEAT IS WAITED FOR (peer-ask.js, kanban #1074 as #1061)
+    this.peerAskMs = peerAskMs;
+    this.peerGraceMs = peerGraceMs;
     // AN ORDER OF AN ORDER BOOK (comment 1127): the book's word on it - filled, cancelled, in a batch not decided
     this.bookStanding = bookStanding;
     // §23.2 REFUSED: rid -> why this node refuses the round, or null while it offers it
@@ -76,6 +83,7 @@ export class Forfeit {
     // forfeited: a signer node that was down records the Void only when shown it.
     this.onVoid = onVoid;
     this.pairs = new Map();          // contract id hex -> { hiding, binding, commitment, list, share }
+    this.withheld = new Map();       // a forfeit's query -> the peers that gave this asker no share for it (kanban #1074)
   }
 
   /** WHAT THIS SIGNER NODE WILL SIGN, rebuilt from its own store - or the refusal. */
@@ -207,7 +215,7 @@ export class Forfeit {
     const port = this.port && typeof this.port.forFederation === 'function' ? ((await this.port.forFederation(toHex(contract.federationId))) || this.port) : this.port;
     const id = String(await port.contractId(fields));
     if (id !== String(lock.contractId)) return refuse('the contract rebuilt from this signer node\'s record is not the one it verified');
-    return { ok: true, message: fromHex(id), claimPk, signerNode: held.signerNode, needed: receiptsNeeded(contract.gameVerifySlots) };
+    return { ok: true, message: fromHex(id), claimPk, signerNode: held.signerNode, needed: receiptsNeeded(contract.gameVerifySlots), nodes: contract.nodes };
   }
 
   /**
@@ -286,7 +294,7 @@ export class Forfeit {
     if (!m.ok) return m;
     const key = toHex(m.message);
     let pair = this.pairs.get(key);
-    if (!pair) {
+    if (!pair || pair.list) {
       const hiding = nonceGenerate340(this.random(32), m.signerNode.share);
       const binding = nonceGenerate340(this.random(32), m.signerNode.share);
       pair = { hiding, binding, list: null, share: null,
@@ -341,41 +349,80 @@ export class Forfeit {
       try { await this.onVoid(roundIdBytes, entryIdBytes); } catch { /* each signer node still signs only on its own record */ }
     }
     const q = `round=${toHex(roundIdBytes)}&entry=${toHex(entryIdBytes)}${kind === 'fee' ? '&lock=fee' : ''}`;
-    const own = await this.commit(roundIdBytes, entryIdBytes, kind);
-    if (!own.ok) return own;
-    const signers = [{ base: null, commitment: own.commitment }];
-    const refused = [];
-    for (const base of this.peersFor(roundIdBytes)) {
-      try {
-        const r = await this.fetcher(`${base}/forfeit-commit?${q}`, { method: 'POST' });
-        if (!r.ok) { refused.push(`${base}: ${(await r.text()).trim()}`); continue; }
-        signers.push({ base, commitment: decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0] });
-      } catch (e) { refused.push(`${base}: ${e.message}`); }
-    }
-    if (signers.length < m.needed)
-      return refuse(`${signers.length} of the ${m.needed} signer nodes the forfeit needs committed to it: ${refused.join('; ')}`);
-    const commitments = signers.map((s) => s.commitment).sort((a, b) => a.id - b.id);
-    const shares = [];
-    for (const s of signers) {
-      if (s.base === null) {
-        const mine = await this.share(roundIdBytes, entryIdBytes, commitments, kind);
-        if (!mine.ok) return mine;
-        shares.push(mine.share);
-        continue;
+    let signature;
+    for (;;) {
+      const own = await this.commit(roundIdBytes, entryIdBytes, kind);
+      if (!own.ok) return own;
+      // EVERY PEER AT ONCE, WITHIN A BOUND (kanban #1074 as #1061): the list needs the threshold, so a hung seat costs the grace, not the forfeit
+      const asked = await askPeers(this.peersFor(roundIdBytes), async (base, signal) => {
+        const r = await this.fetcher(`${base}/forfeit-commit?${q}`, { method: 'POST', signal });
+        if (!r.ok) return { why: (await r.text()).trim() };
+        return { commitment: decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0] };
+      }, { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: m.needed - 1, counts: (x) => !!x.commitment });
+      const signers = [{ base: null, commitment: own.commitment }];
+      const refused = [];
+      for (const { peer: base, value, error } of asked) {
+        if (value && value.commitment) signers.push({ base, commitment: value.commitment });
+        else refused.push(`${base}: ${value ? value.why : error.message}`);
       }
-      const r = await this.fetcher(`${s.base}/forfeit-share?${q}`, { method: 'POST', body: encodeCommitments(commitments) });
-      if (!r.ok) return refuse(`${s.base} gave no share: ${(await r.text()).trim()}`);
-      shares.push(decodeShare(new Uint8Array(await r.arrayBuffer())));
+      if (signers.length < m.needed)
+        return refuse(`${signers.length} of the ${m.needed} signer nodes the forfeit needs committed to it: ${refused.join('; ')}`);
+      const listed = this.#listed(q, signers, m.needed);
+      const combined = await this.#gatherShares(roundIdBytes, entryIdBytes, kind, m, q, listed);
+      if (combined.ok) { ({ signature } = combined); this.withheld.delete(q); break; }
+      // A SEAT THAT GAVE NO SHARE, OR ONE THAT DOES NOT STAND, is left off the next list while the threshold remains, and the forfeit is asked again at once
+      if (!this.#leaveOut(q, combined, listed, m.needed)) return combined;
     }
-    const { signature } = aggregate340({ commitments, message: m.message, groupPublicKey: m.claimPk, shares, curve: this.curve });
-    if (!schnorr.verify(signature, m.message, m.claimPk.subarray(1)))
-      return refuse('the combined forfeit does not verify under the round\'s claim key', 500);
     this.round.putForfeit({ entryId: keptUnder(entryIdBytes, kind), roundId: roundIdBytes, message: m.message, signature, claimPk: m.claimPk });
-    for (const s of signers) {
-      if (s.base === null) continue;
-      try { await this.fetcher(`${s.base}/forfeit-signature?${q}`, { method: 'POST', body: signature }); } catch { /* it asks again */ }
-    }
+    // HANDED TO EVERY PEER, a slow one left off the list too: it keeps it only if it verifies over what it rebuilt. One that misses it asks again.
+    await askPeers(this.peersFor(roundIdBytes), (base, signal) => this.fetcher(`${base}/forfeit-signature?${q}`, { method: 'POST', body: signature, signal }),
+      { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: m.needed - 1 });
     return { ok: true, message: m.message, signature, claimPk: m.claimPk };
+  }
+
+  /** THE SEATS THAT SIGN THIS LIST (kanban #1074, settlement.js #listed): those that committed, less any that gave this asker no share for it while enough others remain. */
+  #listed(key, signers, needed) {
+    const out = this.withheld.get(key);
+    if (!out) return signers;
+    const kept = signers.filter((s) => !out.has(s.base));
+    return kept.length >= needed ? kept : signers;
+  }
+
+  /** A LIST THAT FAILED AT A SEAT: true when that seat is now left out and enough others remain; it grows by a seat each time, so it ends. */
+  #leaveOut(key, failed, listed, needed) {
+    const out = this.withheld.get(key) || new Set();
+    const fresh = (failed.withheld || []).filter((base) => !out.has(base));
+    for (const base of fresh) out.add(base);
+    if (!fresh.length || listed.filter((s) => !out.has(s.base)).length < needed) { this.withheld.delete(key); return false; }
+    this.withheld.set(key, out);
+    if (this.withheld.size > 4096) this.withheld.delete(this.withheld.keys().next().value);
+    return true;
+  }
+
+  /**
+   * ROUND TWO, AND THE COMBINED FORFEIT: every seat on the list gives its share over it, all asked at once within the bound. Answers { ok, signature }, or a
+   * refusal with `withheld` the seats at fault: those that gave none, or by their public shares those whose share does not stand.
+   */
+  async #gatherShares(roundIdBytes, entryIdBytes, kind, m, q, signers) {
+    const commitments = signers.map((s) => s.commitment).sort((a, b) => a.id - b.id);
+    const mine = await this.share(roundIdBytes, entryIdBytes, commitments, kind);
+    if (!mine.ok) return mine;
+    const body = encodeCommitments(commitments);
+    const peers = signers.filter((s) => s.base !== null);
+    const asked = await askPeers(peers.map((s) => s.base), async (base, signal) => {
+      const r = await this.fetcher(`${base}/forfeit-share?${q}`, { method: 'POST', body, signal });
+      if (!r.ok) return { why: (await r.text()).trim() };
+      return { share: decodeShare(new Uint8Array(await r.arrayBuffer())) };
+    }, { boundMs: this.peerAskMs });
+    const none = asked.filter((x) => !x.value || !('share' in x.value));
+    if (none.length) return { ...refuse(`${none[0].peer} gave no share: ${none[0].value ? none[0].value.why : none[0].error.message}`), withheld: none.map((x) => x.peer) };
+    const shares = [mine.share, ...asked.map((x) => x.value.share)];
+    const { signature } = aggregate340({ commitments, message: m.message, groupPublicKey: m.claimPk, shares, curve: this.curve });
+    if (schnorr.verify(signature, m.message, m.claimPk.subarray(1))) return { ok: true, signature };
+    const held = this.dkg && this.dkg.publicSharesFor ? this.dkg.publicSharesFor(m.nodes) : null;
+    const spoilt = held && held.ok ? peers.filter((s, i) => !verifyShare340({ id: s.commitment.id, share: asked[i].value.share,
+      publicShare: held.shares.get(String(s.commitment.id)), groupPublicKey: m.claimPk, message: m.message, commitments, curve: this.curve })) : [];
+    return { ...refuse('the combined forfeit does not verify under the round\'s claim key', 500), withheld: spoilt.map((s) => s.base) };
   }
 }
 

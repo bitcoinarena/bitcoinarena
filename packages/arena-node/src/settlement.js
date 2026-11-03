@@ -805,7 +805,8 @@ export class LockSettlement {
     if (!w) {
       const o = this.winnings;
       w = new o.constructor({ round: this.round.lateSendScope(entryIdBytes), port: o.port, curve: o.curve, random: o.random,
-        peersFor: o.peersFor, fetcher: o.fetcher, lnurlFetch: o.lnurlFetch, network: o.network, scopeParam: `&late=${toHex(entryIdBytes)}` });
+        peersFor: o.peersFor, fetcher: o.fetcher, lnurlFetch: o.lnurlFetch, network: o.network, scopeParam: `&late=${toHex(entryIdBytes)}`,
+        dkg: o.dkg, peerAskMs: o.peerAskMs, peerGraceMs: o.peerGraceMs, lnurlMs: o.lnurlMs });
       this.lateSenders.set(key, w);
     }
     return w;
