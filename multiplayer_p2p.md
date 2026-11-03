@@ -2412,7 +2412,9 @@ played          one grid per window: a round of a backup series (its publication
                 entries, only while no round of the same app, federation and start from another series is drawn on that seat - the
                 primary while its committee is drawable, otherwise the backup. A seat that holds an entry in a window's backup round
                 takes none in its other rounds of that window. Seats say it per row (GET /rounds `backup`, `played`); pages offer
-                a row most seats play (lobbyRowOffered); a backup under a drawn primary is no live round (GET /games)
+                a row most seats play (lobbyRowOffered); a backup under a drawn primary is no live round (GET /games). This is a rule
+                of the door: "on that seat" is the seat's own read of its own chain, and seats may differ on it. It decides only whether
+                this seat takes a new entry now, never who is in a round (§17, RULED 2026-11-03, kanban #1071)
 posted by       every grid names the posting node's key as its creator and signs each series id with it: who posted a day is the
                 creator of the series its marked transaction publishes - checkable by anyone, shown on GET /duty and the Health page
 missed          a primary nobody posts falls to rank 2 and 3 as above; a backup nobody posts leaves the day to its primary
@@ -3810,6 +3812,39 @@ attack.
 After `entry_close_time`, membership is the set of players holding ≥5 valid
 EntryReceipts issued before the cutoff, minus entries voided under §13C or
 §5A.13. The list is deterministic; no central database decides it.
+
+**One seat's door does not decide it (RULED 2026-11-03, kanban #1071).** A door
+is a seat's own: it says whether this seat takes a new entry now, and the
+backup rule (§5A.5) reads this seat's own view of its chain. An entry the round
+has accepted is in, whatever one seat's door said:
+
+- **Accepted** means 5 seats' EntryReceipts. Until those exist (kanban #1009) it
+  means 5 seats' signed results or FINALs naming the entry. A FINAL stands on
+  those results, so a seat counts the results.
+- **A seat short of an accepted entry takes it from a peer.** No refusal of the
+  door applies, the backup rule included. Every part of it is still checked as a
+  client's copy is: the bytes to the entry's id, the shares to its stake point,
+  the locks with the federation, the Lightning address and each item by their
+  signatures, and each result counted by its own signature from a seat of the
+  round's committee.
+- **A seat short of an entry never decides for it alone.** It signs no VOID for
+  it and refuses no plan for it. If it cannot get the entry it signs nothing
+  about it, which is ordinary silence: the round goes on with the other seats.
+- **Below 5 an entry is no member: `ENTRY_VOID`.** Once more seats lack it than
+  the threshold leaves room for (3 of 7, 1 of 2), it can never reach 5. Where it
+  is held it is `ENTRY_VOID`, no result is signed for it, and its stake comes
+  back; nobody played it, so an entry left without an opponent is `VOID`. A
+  disagreement at the door costs a refund, not a stuck round. The seats answer
+  `ENTRY_VOID` at `GET /settlement` and the client shows the entry as not taken.
+
+As built on head-to-head rounds, the only games whose result depends on another
+entry: before a seat signs for such a round it reads the entries its peers hold
+(`GET /api/round-result`). That reading is a hint: it says where to look, and
+what a seat takes rests on the signatures above. Seats that lack an entry are
+counted only when they answer, so a seat that is down lacks nothing. Three seats
+that lie about lacking an entry gain nothing they did not have: three seats
+withholding their signatures already keep it from 5. A market carries its orders
+in certified batches (`order-batch.js`).
 
 ---
 

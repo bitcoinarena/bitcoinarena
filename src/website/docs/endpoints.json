@@ -5681,6 +5681,16 @@
   "pathParams": []
  },
  {
+  "method": "GET",
+  "path": "/payout-address",
+  "params": "query entry (hex 32)",
+  "auth": "none; the reader checks the signature under the entry's session key",
+  "returns": "200 JSON {signed, signature}; 404 when no signed address is held",
+  "purpose": "The Lightning address an entry named, as signed, for a seat that took the entry from a peer (kanban #1071).",
+  "audience": "node-to-node",
+  "line": 0
+ },
+ {
   "method": "POST",
   "path": "/payout-address",
   "params": "query entry (hex 32); body: Lightning address UTF-8 + 64-byte signature",
