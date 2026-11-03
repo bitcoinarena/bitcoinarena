@@ -4,7 +4,7 @@
 // state clears the wait; rounds no longer waiting drop out.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSettleBackoff } from '../src/settle-backoff.js';
+import { createSettleBackoff, REFUSED_FOR_GOOD } from '../src/settle-backoff.js';
 
 test('a refused round waits 10, 20, 40, then 60 s at most; a round never refused is always due', () => {
   let t = 0;
@@ -52,4 +52,15 @@ test("a refusal that cannot change waits up to its own cap: 10, 20, 40, 80 s ...
   const from = t;
   while (!b.due("y")) t += 1000;
   assert.equal(t - from, 60000, "without a cap of its own a round waits 60 s at most");
+});
+
+test('the refusals that cannot change take the long wait, and one that can change does not (#1067)', () => {
+  for (const why of ['an attested round with no counted entry: nothing is claimed',
+    'no lock is claimed: no order filled: nothing is claimed - every lock comes back whole',
+    "not this signer node's turn to combine: this node is not one of the round's signer nodes",
+    "not this signer node's turn to combine: that round joined nobody, so nobody asks for it"]) assert.ok(REFUSED_FOR_GOOD.test(why), why);
+  for (const why of ['nothing is claimed while a run is not final with its window closed: 00d30064d5b9a6dd is PROVISIONALLY_FINAL',
+    "not yet: reading the other seats' batches - 1 of the 5 seats' certified batches heard here",
+    'no lock is claimed: batch 3 of the book is not decided at this seat',
+    "not this signer node's turn to combine: seat 2 may take over at height 158700"]) assert.equal(REFUSED_FOR_GOOD.test(why), false, why);
 });
