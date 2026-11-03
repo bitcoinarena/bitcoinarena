@@ -8,14 +8,14 @@
 import { decodeFraudProof, fraudProofHash, readEvidence } from '../../arena-protocol/src/slash.js';
 import { decodeEntryContract, decodeRoundContract, entryId as entryIdOf, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
-import { judgeDoubleProof, judgeProof, judgeRerunProof } from './arbiter.js';
+import { judgeAuditProof, judgeDoubleProof, judgeProof, judgeRerunProof } from './arbiter.js';
 
 /**
  * `committeeOf(contract, rid)` -> { ok, committee[] of keys } or { ok: false, why }, its signer nodes; `censusOf(contract, rid)` -> { ok, entries } or { ok: false, why }; `coreOf(contract, rid)` the round's core, or
- * null where this seat does not host it; `beaconOf(contract, rid, entry, eid)` -> { ok, hash } or { ok: false, why }; `replayRunOf(rid, eid, core)` this seat's replay in its worker pool.
+ * null where this seat does not host it; `beaconOf(contract, rid, entry, eid)` -> { ok, hash } or { ok: false, why }; `replayRunOf(rid, eid, core)` this seat's replay in its worker pool; `auditSetOf(contract, rid)` { eligible, total } who could audit the round, or null; `vrf` the secp256k1 ECVRF.
  * Answers `judge(bytes)` -> { verdict, why }, and `judge.read(bytes)`, the cheap part, with no replay: { ok, kind, bond: { txid, vout }, roundId, contract, floorHeight, nodePubkey } or { ok: false, why }.
  */
-export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, replayRunOf, waiting = 32, kept = 256 }) {
+export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, replayRunOf, auditSetOf = () => null, vrf = null, waiting = 32, kept = 256 }) {
   /** Everything that needs no chain: the bytes read as a proof, and the contract in them is the round the proof names. */
   function read(bytes) {
     let complete, got, contract;
@@ -53,6 +53,13 @@ export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, repl
       if (inputs.verdict !== undefined || !inputs.entry) return inputs;
       const given = { evidence, bundle, entry: inputs.entry, entryId: inputs.eid, contract: r.contract, core: inputs.core, roundRandomness: inputs.roundRandomness, replayRun: inputs.replayRun, ...on };
       held = await (r.kind === 'rerun' ? judgeRerunProof(given) : judgeProof(given));
+    } else if (r.kind === 'audit') {
+      const inputs = replayInputs(r);
+      if (inputs.verdict !== undefined || !inputs.entry) return inputs;
+      if (toHex(inputs.eid) !== toHex(r.got.proof.entryId)) return { verdict: false, why: 'the entry in that proof is not the one it names' };
+      const set = auditSetOf(r.contract, r.roundId);
+      if (!set) return { verdict: undefined, why: 'this seat cannot read who could audit that round yet' };
+      held = await judgeAuditProof({ evidence, bundle, entry: inputs.entry, contract: r.contract, core: inputs.core, roundRandomness: inputs.roundRandomness, replayRun: inputs.replayRun, eligible: set.eligible, total: set.total, vrf, ...on });
     } else return { verdict: undefined, why: 'this seat cannot judge that kind of proof yet' };
     return { verdict: !!held.slashed, why: held.why };
   }
