@@ -2859,8 +2859,8 @@ with an anchor.
   epoch that starts at or after it, by the epoch's own census height and draw. A
   height is named only after the network runs `CENSUS_KEY_VERSION`. **Named in 2.0 (the owner's
   decision on #1083, 2026-11-03):** regtest and a devnet `0`; testnet4 `160,128`
-  (= 1112 x 144, an epoch's first block), PROPOSED and confirmed by the owner before 2.0
-  is deployed; mainnet none here, it scans from `genesis_height`.
+  (= 1112 x 144, an epoch's first block), confirmed by the owner on 2026-11-03;
+  mainnet none here, it scans from `genesis_height`.
 - A network with no key yet cannot take a template-3 bond. That is the only
   refusal.
 
