@@ -70,7 +70,7 @@ export function roundPresigPlan({ entries, contract, panels, tweakPoint }) {
   if (!panels || !panels.ok) return panels || { ok: false, why: 'no panels were drawn for that round' };
   const panelA = panels.panelA.map((e) => e.pubkey), panelB = panels.panelB.map((e) => e.pubkey), clocks = holdClocksOf(contract.networkId);
   for (const e of bonds) {
-    const hold = holdOutputKey({ nodeKey: e.pubkey, censusKey: e.advert.censusKey, panelA, panelB, bondMaturity: e.advert.bondMaturityHeight, ...clocks }, { tweakPoint });
+    const hold = holdOutputKey({ ownerKey: e.advert.ownerPubkey, censusKey: e.advert.censusKey, panelA, panelB, bondMaturity: e.advert.bondMaturityHeight, ...clocks }, { tweakPoint });
     if (!hold.ok) return { ok: false, why: `the hold output of a bond cannot be built: ${hold.why}` };
     const bond = { txid: e.txid, vout: e.vout, value: BigInt(e.bondSats), script: e.script };
     const node = toHex(e.pubkey);
@@ -85,7 +85,7 @@ export function roundPresigPlan({ entries, contract, panels, tweakPoint }) {
  * and its maturity build the hold output, panels empty, so it has the return and the fallback leaves only. `tweakPoint` is the caller's curve.
  */
 export function bondPresigDigest({ bond, advert, networkId, tweakPoint }) {
-  const hold = holdOutputKey({ nodeKey: advert.nodePubkey, censusKey: advert.censusKey, panelA: [], panelB: [], bondMaturity: advert.bondMaturityHeight, ...holdClocksOf(networkId) }, { tweakPoint });
+  const hold = holdOutputKey({ ownerKey: advert.ownerPubkey, censusKey: advert.censusKey, panelA: [], panelB: [], bondMaturity: advert.bondMaturityHeight, ...holdClocksOf(networkId) }, { tweakPoint });
   if (!hold.ok) return { ok: false, why: `the hold output of a bond cannot be built: ${hold.why}` };
   return { ok: true, hold, digest: slashPresigDigest({ bond, nodeKey: advert.nodePubkey, censusKey: advert.censusKey, holdScript: hold.script }) };
 }

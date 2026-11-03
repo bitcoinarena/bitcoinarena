@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A START WITH NO GOOD PROOF, AND THE NODE LEAVES BY ITSELF (spec 5A.3B, RULED 2026-11-02, kanban #1021): "the reference node takes the return
-// leaf itself, as soon as it opens, when a start names a proof that does not check on its own replay. An owner does not have to watch."
+// A START WITH NO GOOD PROOF, AND THE OWNER TAKES THE BOND BACK (spec 5A.3B, kanban #1021; changed by kanban #1093 part 1, ruling #1103,
+// 2026-11-03: "the return leaf: owner key only. The owner signs it; there is no automatic return ... What the node does instead: it builds
+// the return transaction when the leaf opens and the proof doesn't check on its replay, shows it on the dashboard, and notifies the owner.
+// The owner signs with the 24 words."). The node holds no key that can move the bond: it prepares, the owner's page signs, the node sends.
 //
 // The chain, the replay and the proof's bytes are the caller's. A start that names a true proof is left alone: this is not a way out of a slash.
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -70,22 +72,32 @@ export async function abandonedProofChecks({ bytes, nodePubkey, bond, bonds, cen
 /** One check for a start of any kind: an abandonment's proof by `abandoned(bytes)`, every other by `replay(bytes)`. */
 export const proofChecksOf = ({ replay, abandoned }) => (bytes) => (isAbandonedProof(bytes) ? abandoned(bytes) : replay(bytes));
 
-/** The signed return, as hex: the whole hold less `feeSats` to `toScript`, by the node's key on the return leaf. */
-export function signedReturn({ start, bondMaturity, returnBlocks, toScript, feeSats, nodeSecret }) {
+/**
+ * THE RETURN TO SIGN: the whole hold less `feeSats` to `toScript`, on the return leaf, with the digest the owner key signs (BIP-341 script path).
+ * Answers { digest (hex), txHex (unsigned), leafHash, ...what withOwnerSignature needs }.
+ */
+export function returnToSign({ start, bondMaturity, returnBlocks, toScript, feeSats }) {
   const { hold } = start;
   const built = holdReturnSpend({ hold: { txid: start.txid, vout: 0, value: start.value, script: hold.script }, bondMaturity, returnBlocks, toScript, feeSats });
   if (!built.ok) throw new Error(built.why);
   const digest = tapSighash({ ...built.tx, prevouts: built.prevouts, inputIndex: 0, leafHash: hold.leaves.return });
-  const witness = scriptPathWitness({ stack: [schnorr.sign(digest, nodeSecret)], script: hold.scripts.return, controlBlock: holdControlBlock('return', hold).controlBlock });
-  return toHex(serializeSpend({ ...built.tx, witnesses: [witness] }));
+  return { digest: toHex(digest), tx: built.tx, script: hold.scripts.return, controlBlock: holdControlBlock('return', hold).controlBlock, feeSats: String(feeSats) };
 }
 
-/** One pass over one start: decide, and broadcast the return if that is the answer. `broadcast(hex)` is the caller's. */
-export async function takeReturnIfOwed({ start, startHeight, bondMaturity, returnBlocks, tip, fetchProof, proofChecks, toScript, feeSats, nodeSecret, broadcast }) {
+/** The return with the owner's signature in its witness, as hex: refused unless the signature verifies under `ownerKey` over the prepared digest. */
+export function withOwnerSignature(prepared, signatureHex, ownerKey) {
+  const sig = fromHex(String(signatureHex || ''));
+  if (sig.length !== 64) throw new Error('an owner\'s signature is 64 bytes (BIP-340)');
+  if (!schnorr.verify(sig, fromHex(prepared.digest), ownerKey)) throw new Error('that signature is not the owner key\'s over this return');
+  const witness = scriptPathWitness({ stack: [sig], script: prepared.script, controlBlock: prepared.controlBlock });
+  return toHex(serializeSpend({ ...prepared.tx, witnesses: [witness] }));
+}
+
+/** One pass over one start: decide, and when the return is owed, prepare it for the owner to sign. Nothing is signed or sent here. */
+export async function prepareReturnIfOwed({ start, startHeight, bondMaturity, returnBlocks, tip, fetchProof, proofChecks, toScript, feeSats }) {
   const decided = await decideReturn({ start, startHeight, bondMaturity, returnBlocks, tip, fetchProof, proofChecks });
-  if (decided.action !== 'return') return decided;
-  const hex = signedReturn({ start, bondMaturity, returnBlocks, toScript, feeSats, nodeSecret });
-  return { ...decided, hex, sent: await broadcast(hex) };
+  if (decided.action !== 'return' || !toScript) return decided;
+  return { ...decided, prepared: returnToSign({ start, bondMaturity, returnBlocks, toScript, feeSats }) };
 }
 
 /**
@@ -93,60 +105,69 @@ export async function takeReturnIfOwed({ start, startHeight, bondMaturity, retur
  * The census cannot rebuild one, since its leaves name panels drawn from that census, and a start does not show them: a hold whose panels were lost could never be returned. So the node
  * keeps every pair it signed for (`panels` [{ a, b }] of key bytes), and only a bond's end lets them go.
  */
-export function holdsOfOwnBond({ nodeKey, censusKey, bondMaturity, panels = [], clocks, tweakPoint }) {
+export function holdsOfOwnBond({ ownerKey, censusKey, bondMaturity, panels = [], clocks, tweakPoint }) {
   const holds = new Map();
   for (const p of [{ a: [], b: [] }, ...panels]) {
-    const hold = holdOutputKey({ nodeKey, censusKey, panelA: p.a, panelB: p.b, bondMaturity, ...clocks }, { tweakPoint });
+    const hold = holdOutputKey({ ownerKey, censusKey, panelA: p.a, panelB: p.b, bondMaturity, ...clocks }, { tweakPoint });
     if (hold.ok) holds.set(toHex(hold.script), hold);
   }
   return holds;
 }
 
 /**
- * THE NODE READS ITS OWN STARTED BOND, AND LEAVES WHEN IT MAY. `bond` as bond-withdraw.js ownOutput answers it, with `hold`. `rawTxAt(height, txid)` a transaction's bytes off that block, `holdsFor(bond)` holdsOfOwnBond's
- * map, `clocks` the network's. Pure of the seat: the caller says what the census says.
+ * THE NODE READS ITS OWN STARTED BOND, AND PREPARES ITS OWNER'S RETURN WHEN ONE IS OWED. `bond` as bond-withdraw.js ownOutput answers it, with
+ * `hold` and `ownerKey`. `rawTxAt(height, txid)` a transaction's bytes off that block, `holdsFor(bond)` holdsOfOwnBond's map, `clocks` the
+ * network's. Pure of the seat: the caller says what the census says. No secret here: the owner signs (kanban #1093 part 1).
  */
-export function createHoldWatch({ clocks, nodeSecret, holdsFor, rawTxAt, tipHeight, broadcast, fetchProof = async () => null, proofChecks = async () => undefined, returnScript = async () => null, feeSats = 1000n, log = () => {} }) {
+export function createHoldWatch({ clocks, holdsFor, rawTxAt, tipHeight, broadcast, fetchProof = async () => null, proofChecks = async () => undefined, returnScript = async () => null, feeSats = 1000n, notify = () => {}, log = (l) => console.log(l) }) {
   const startOf = async (bond) => {
     const raw = await rawTxAt(bond.hold.height, bond.hold.txid);
     return readSlashStart(raw, { txid: fromHex(bond.txid).reverse(), vout: bond.vout }, holdsFor(bond));
   };
-  /** What an owner is told: when each way out opens, in heights, and whether this node knows the hold at all. */
+  const owed = new Map();                        // bond -> { why, opensAt, prepared? }: what the dashboard shows and the owner signs
+  /** What an owner is told: when each way out opens, in heights, whether this node knows the hold, and a return owed to sign. */
   async function read(bond) {
     const startHeight = bond.hold.height;
     const start = await startOf(bond);
     const out = { startTxid: bond.hold.txid, startHeight, known: !!start, returnOpensAt: returnOpensAt({ startHeight, returnBlocks: clocks.returnBlocks, bondMaturity: bond.maturity }),
-      fallbackOpensAt: startHeight + clocks.fallbackBlocks - 1, proofId: start && start.proofId ? toHex(start.proofId) : null };
+      fallbackOpensAt: startHeight + clocks.fallbackBlocks - 1, proofId: start && start.proofId ? toHex(start.proofId) : null,
+      returnOwed: owed.get(`${bond.txid}:${bond.vout}`) || null };
     return start && start.hold.leaves.release ? { ...out, releaseOpensAt: startHeight + clocks.holdBlocks - 1 } : out;
   }
-  /** The signed return to `toScript`, once its clocks read true: { hex } or { ok: false, why }. An owner's own choice: nothing here looks at the proof. */
+  /** The return to `toScript`, prepared for the owner to sign once its clocks read true: { ok, prepared } or { ok: false, why }. The owner's choice. */
   async function returnTo(bond, toScript, fee = feeSats) {
     const start = await startOf(bond);
     if (!start) return { ok: false, why: `the slash started at block ${bond.hold.height} pays no hold output this node signed` };
     const opensAt = returnOpensAt({ startHeight: bond.hold.height, returnBlocks: clocks.returnBlocks, bondMaturity: bond.maturity }), tip = await tipHeight();
     if (tip < opensAt) return { ok: false, why: `the return opens at block ${opensAt}, ${opensAt - tip} from now` };
-    return { ok: true, hex: signedReturn({ start, bondMaturity: bond.maturity, returnBlocks: clocks.returnBlocks, toScript, feeSats: fee, nodeSecret }) };
+    return { ok: true, prepared: returnToSign({ start, bondMaturity: bond.maturity, returnBlocks: clocks.returnBlocks, toScript, feeSats: fee }) };
   }
-  const returned = new Set();                    // bonds whose return is out: a second, to a fresh address, would only be a conflict the mempool refuses
-  /** One pass over the node's started bonds: the return taken where a proof does not check on this node's replay (5A.3B: "An owner does not have to watch"). A true proof is left to its slash. */
+  /** The owner's signature over a prepared return: checked against the bond's owner key, then sent. */
+  async function submit(bond, prepared, signatureHex) {
+    let hex; try { hex = withOwnerSignature(prepared, signatureHex, bond.ownerKey); } catch (e) { return { ok: false, why: e.message }; }
+    let sent; try { sent = await broadcast(hex); } catch (e) { return { ok: false, why: `the return was not sent: ${e.message}` }; }
+    owed.delete(`${bond.txid}:${bond.vout}`);
+    log(`[hold] ${bond.txid.slice(0, 16)}: the owner's return sent: ${sent}`);
+    return { ok: true, sent, hex };
+  }
+  /** One pass over the node's started bonds: where a proof does not check on this node's replay, the return is prepared and the owner told. A true proof is left to its slash. */
   async function pass(bonds) {
     const done = [];
     for (const bond of bonds) {
-      if (!bond.hold || returned.has(`${bond.txid}:${bond.vout}`)) continue;
+      if (!bond.hold) continue;
+      const key = `${bond.txid}:${bond.vout}`;
       const start = await startOf(bond);
       if (!start) { log(`[hold] the slash started at block ${bond.hold.height} pays no hold output this node signed`); continue; }
-      const decided = await decideReturn({ start, startHeight: bond.hold.height, bondMaturity: bond.maturity, returnBlocks: clocks.returnBlocks, tip: await tipHeight(), fetchProof, proofChecks });
+      const decided = await prepareReturnIfOwed({ start, startHeight: bond.hold.height, bondMaturity: bond.maturity, returnBlocks: clocks.returnBlocks, tip: await tipHeight(),
+        fetchProof, proofChecks, toScript: await returnScript(), feeSats });
       if (decided.action === 'return') {
-        const toScript = await returnScript();
-        if (!toScript) { log(`[hold] ${bond.txid.slice(0, 16)} owes a return and this node names no wallet to take it to: the owner's page can`); done.push({ ...decided, bond, sent: null }); continue; }
-        const hex = signedReturn({ start, bondMaturity: bond.maturity, returnBlocks: clocks.returnBlocks, toScript, feeSats, nodeSecret });
-        let sent; try { sent = await broadcast(hex); } catch (e) { log(`[hold] ${bond.txid.slice(0, 16)}: the return was not sent: ${e.message}`); done.push({ ...decided, bond, sent: null }); continue; }
-        returned.add(`${bond.txid}:${bond.vout}`);
-        log(`[hold] ${bond.txid.slice(0, 16)}: return taken, ${decided.why}: ${sent}`);
-        done.push({ ...decided, bond, sent });
-      } else done.push({ ...decided, bond });
+        const first = !owed.has(key);
+        owed.set(key, { why: decided.why, opensAt: decided.opensAt, prepared: decided.prepared || null });
+        if (first) { log(`[hold] ${bond.txid.slice(0, 16)} owes its owner a return (${decided.why}): prepared, waiting for the owner's signature`); try { notify({ bond, why: decided.why }); } catch { /* told on the dashboard */ } }
+      }
+      done.push({ ...decided, bond });
     }
     return done;
   }
-  return { read, returnTo, pass };
+  return { read, returnTo, submit, pass };
 }
