@@ -55,7 +55,16 @@
 //!   arena-stake-lock --mode fees --data-dir D
 //!   arena-stake-lock --mode guardians --data-dir D
 //!   arena-stake-lock --mode session-audit --data-dir D [--from N] [--to N] [--peer ID] [--parallel N]
-//!     [--max-sessions N] [--carry-issued-msat N --carry-redeemed-msat N] [--tamper false]
+//!     [--max-sessions N] [--carry-issued-msat N --carry-redeemed-msat N] [--cursor FILE] [--follow SECONDS]
+//!     [--sessions-dir DIR | --replay-dir DIR] [--bitcoind URL [--depth 6]] [--proof-out FILE] [--tamper false]
+//!   arena-stake-lock --mode session-proof-verify --proof FILE|- [--keys JSON|@FILE]
+//!   arena-stake-lock --mode theft-verify < {federationId, config, firstSession, sessions, spendTxid?, reserve?}
+//!   arena-stake-lock --mode session-export --data-dir D --from N --to M --out F
+//!   arena-stake-lock --mode pegout --data-dir D --address ADDR --sats N
+//!   (src/audit.rs; the regtest rehearsal modes are in src/rehearsal.rs)
+//!
+//! A CLIENT WITH NO ESPLORA (regtest): ARENA_CLIENT_BITCOIND=http://user:pass@host:port gives the wallet client a
+//! bitcoind to watch peg-in addresses with, instead of the federation's default Bitcoin API.
 //!
 //! W4 (2026-09-14): a loser loses the stake - the seats' settlement names
 //! every payout exactly with --payouts (their rule, arena-node settlement.js),
@@ -63,6 +72,9 @@
 //! --mode fees prints that fee rule, which the seats read before sizing them.
 #![recursion_limit = "256"] // the session-audit report is one json! object
 use std::collections::HashMap;
+
+mod audit;
+mod rehearsal;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
@@ -154,6 +166,20 @@ async fn join(data_dir: PathBuf, invite: &str) -> anyhow::Result<ClientHandle> {
     Ok(builder.preview(endpoints, &invite).await?.join(db, root).await?)
 }
 
+/// ARENA_CLIENT_BITCOIND: a bitcoind for the wallet client (regtest has no esplora); the watch-only wallet it creates there
+/// is named after this process's data dir.
+fn with_client_bitcoind(builder: fedimint_client::ClientBuilder) -> anyhow::Result<fedimint_client::ClientBuilder> {
+    let Ok(url) = std::env::var("ARENA_CLIENT_BITCOIND") else { return Ok(builder) };
+    let u = fedimint_core::util::SafeUrl::parse(&url)?;
+    let (user, pass) = (u.username().to_owned(), u.password().unwrap_or("").to_owned());
+    let network = match std::env::var("ARENA_CLIENT_BITCOIND_NETWORK").as_deref() { Ok("testnet4") => fedimint_core::bitcoin::Network::Testnet4, _ => fedimint_core::bitcoin::Network::Regtest };
+    let wallet = std::env::var("ARENA_CLIENT_BITCOIND_WALLET").unwrap_or_else(|_| "arena-client".into());
+    Ok(builder.with_bitcoind_rpc(move |_chain| async move {
+        let c = fedimint_bitcoind::bitcoincore::BitcoindClient::new(&u, user, pass, &wallet, network).ok()?;
+        Some(std::sync::Arc::new(c) as fedimint_bitcoind::DynBitcoindRpc)
+    }))
+}
+
 async fn client_builder() -> anyhow::Result<fedimint_client::ClientBuilder> {
     let mut modules = ClientModuleInitRegistry::new();
     modules.attach(fedimint_ln_client::LightningClientInit::default());
@@ -165,6 +191,7 @@ async fn client_builder() -> anyhow::Result<fedimint_client::ClientBuilder> {
     modules.attach(fedimint_walletv2_client::WalletClientInit);
     let mut builder = Client::builder().await?;
     builder.with_module_inits(modules);
+    let builder = with_client_bitcoind(builder)?;
     Ok(builder)
 }
 
@@ -181,6 +208,7 @@ async fn open(data_dir: PathBuf) -> anyhow::Result<ClientHandle> {
     modules.attach(fedimint_walletv2_client::WalletClientInit);
     let mut builder = Client::builder().await?;
     builder.with_module_inits(modules);
+    let builder = with_client_bitcoind(builder)?;
     let db: Database = fedimint_rocksdb::RocksDb::build(data_dir.join("client.db"))
         .open()
         .await
@@ -259,9 +287,22 @@ async fn main() -> anyhow::Result<()> {
         println!("{}", serde_json::json!({ "mode": "join", "federation_id": client.federation_id().to_string() }));
         return Ok(());
     }
+    // THE THEFT JUDGE'S CHECK (ruling #1109): proof bytes verified offline - no client, no guardian, no bitcoind
+    if mode == "session-proof-verify" { return audit::proof_verify(&a); }
+    // the seats' theft-slash judge (packages/arena-protocol/src/theft-slash.js, SESSION VERIFIER): stdin in, one line out
+    if mode == "theft-verify" { return audit::theft_verify(); }
     let client = open(PathBuf::from(need(&a, "data-dir")?)).await?;
     // THE FEDERATION'S SIGNED HISTORY, READ BY THE SEAT ITSELF (kanban #1093 part 2, ruling #1106): needs no lnv2 module
-    if mode == "session-audit" { return session_audit(&a, &client).await; }
+    match mode.as_str() {
+        "session-audit" => return audit::session_audit(&a, &client).await,
+        "session-export" => return audit::session_export(&a, &client).await,
+        // regtest only: what a colluding threshold can do outside consensus, for the audit to mark (kanban #1108)
+        "rehearsal-forge" => return rehearsal::forge(&a, &client).await,
+        "rehearsal-resign" => return rehearsal::resign(&a, &client).await,
+        "rehearsal-rogue-spend" => return rehearsal::rogue_spend(&a, &client).await,
+        "pegout" => return pegout(&a, &client).await,
+        _ => {}
+    }
     let lnv2 = client.get_first_instance(&KIND).context("this federation has no lnv2 module")?;
     let api = client.api().with_module(lnv2);
     match mode.as_str() {
@@ -1100,263 +1141,26 @@ async fn claim_incoming(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId,
     Ok(())
 }
 
-/// THE FEDERATION'S SIGNED HISTORY, READ AND CHECKED BY A SEAT (kanban #1093 part 2, ruling #1106): every session
-/// from --from to --to (default: the last finished one) as one guardian's API serves it (`await_signed_session_outcome`,
-/// asked of --peer, or of each guardian in turn until one answers), decoded with the client's own module decoders and
-/// verified against the config's broadcast keys (`SignedSessionOutcome::verify` - a threshold of the guardians' Schnorr
-/// signatures over the session's index and the merkle root of its items). One guardian is enough: a session it signs
-/// with the others cannot be forged by it alone. Each accepted transaction is summed by module: e-cash issued (mint
-/// outputs) and redeemed (mint inputs), peg-ins (wallet inputs) and peg-outs (wallet outputs, with the recipient), and
-/// the bitcoin txids the guardians signed as peg-outs (wallet `PegOutSignature` items) - a reserve UTXO spent on chain
-/// by a txid outside that set is a spend no signed peg-out asked for. From session 0, redeemed > issued at any prefix
-/// is inflation, and the session where it first happens is named. Read-only: nothing is posted to the guardians.
-/// Stock client crates only (no fedimint change); the tamper check (--tamper, default on) is in-process.
-async fn session_audit(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
-    use std::collections::{BTreeMap, BTreeSet};
-    use fedimint_api_client::api::DynGlobalApi;
-    use fedimint_core::PeerId;
-    use fedimint_core::encoding::Decodable;
-    use fedimint_core::endpoint_constants::AWAIT_SIGNED_SESSION_OUTCOME_ENDPOINT;
-    use fedimint_core::epoch::ConsensusItem;
-    use fedimint_core::module::registry::ModuleDecoderRegistry;
-    use fedimint_core::session_outcome::SignedSessionOutcome;
-
-    let config = client.config().await;
-    let keys = client.get_guardian_public_keys_blocking().await;
-    let kinds: BTreeMap<ModuleInstanceId, String> = config.modules.iter().map(|(id, m)| (*id, m.kind.to_string())).collect();
-    let peers: Vec<PeerId> = match a.get("peer") {
-        Some(p) => vec![PeerId::from(p.parse::<u16>()?)],
-        None => keys.keys().copied().collect(),
-    };
-    let from: u64 = a.get("from").map_or(Ok(0), |v| v.parse::<u64>())?;
-    // --max-sessions N: at most N sessions from --from, and never past the last finished one (await_signed_session_outcome
-    // waits for a session that does not exist yet). None: nothing to read yet - the line still prints, with sessions 0.
-    let max_sessions: Option<u64> = a.get("max-sessions").map(|v| v.parse::<u64>()).transpose()?;
-    let explicit_to: Option<u64> = a.get("to").map(|v| v.parse::<u64>()).transpose()?;
-    let to: Option<u64> = if explicit_to.is_some() && max_sessions.is_none() {
-        explicit_to
-    } else {
-        let count = client.fetch_session_count().await.map_err(|e| anyhow!("no session count: {e}"))?;
-        let mut last = count.checked_sub(1);
-        if let Some(t) = explicit_to { last = last.map(|l| l.min(t)); }
-        if let Some(n) = max_sessions { last = if n == 0 { None } else { last.map(|l| l.min(from.saturating_add(n - 1))) }; }
-        last.filter(|l| *l >= from)
-    };
-    if let (Some(t), None) = (explicit_to, max_sessions) { if t < from { bail!("--to {t} is before --from {from}") } }
-    let parallel: u64 = a.get("parallel").map_or(Ok(8), |v| v.parse::<u64>())?.max(1);
-    let tamper = a.get("tamper").is_none_or(|v| v != "false");
-    // A SEAT READS THE HISTORY IN STEPS: the totals of every session before --from, so the prefix check spans all of it
-    let carry_issued: u64 = a.get("carry-issued-msat").map_or(Ok(0), |v| v.parse::<u64>())?;
-    let carry_redeemed: u64 = a.get("carry-redeemed-msat").map_or(Ok(0), |v| v.parse::<u64>())?;
-
-    // One session from the first guardian (of `peers`, in order) that answers within 30 s: the raw bytes and who sent them.
-    async fn fetch(api: DynGlobalApi, peers: Vec<PeerId>, idx: u64) -> (u64, Result<(PeerId, Vec<u8>), String>) {
-        let mut errors = Vec::new();
-        for peer in peers {
-            let said = tokio::time::timeout(
-                Duration::from_secs(30),
-                api.request_raw(peer, AWAIT_SIGNED_SESSION_OUTCOME_ENDPOINT, &ApiRequestErased::new(idx)),
-            ).await;
-            let value = match said {
-                Err(_) => { errors.push(format!("peer {peer}: no answer in 30 s")); continue; }
-                Ok(Err(e)) => { errors.push(format!("peer {peer}: {e}")); continue; }
-                Ok(Ok(v)) => v,
-            };
-            // SerdeModuleEncoding<T> is a one-field tuple struct: `["<hex>"]` on the wire (a bare string accepted too), and
-            // its field is serialized as_hex - the consensus encoding of the Vec<u8>, so a BigSize length comes first
-            let text = value.as_str().or_else(|| value.get(0).and_then(|v| v.as_str())).map(str::to_owned);
-            let inner = |t: &str| -> anyhow::Result<Vec<u8>> {
-                Ok(Vec::<u8>::consensus_decode_whole(&hex_bytes(t)?, &ModuleDecoderRegistry::default())?)
-            };
-            match text.map(|t| inner(&t)) {
-                Some(Ok(bytes)) => return (idx, Ok((peer, bytes))),
-                Some(Err(e)) => errors.push(format!("peer {peer}: not hex: {e}")),
-                None => errors.push(format!("peer {peer}: not an encoding: {}", value.to_string().chars().take(120).collect::<String>())),
+/// A PEG-OUT (kanban #1108 rehearsal: the honest history's withdrawal): --sats to --address through the stock wallet client,
+/// at the fee the guardians quote. Prints the bitcoin txid the federation signed.
+async fn pegout(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
+    use futures::StreamExt as _;
+    let w = client.get_first_module::<fedimint_wallet_client::WalletClientModule>()?;
+    let address = fedimint_core::bitcoin::Address::from_str(need(a, "address")?)?.assume_checked();
+    let amount = fedimint_core::bitcoin::Amount::from_sat(need(a, "sats")?.parse()?);
+    let fees = w.get_withdraw_fees(&address, amount).await?;
+    let fee_sats = fees.amount().to_sat();
+    let op = w.withdraw(&address, amount, fees, ()).await?;
+    let mut updates = w.subscribe_withdraw_updates(op).await?.into_stream();
+    while let Some(u) = updates.next().await {
+        match u {
+            fedimint_wallet_client::WithdrawState::Succeeded(txid) => {
+                println!("{}", serde_json::json!({ "mode": "pegout", "txid": txid.to_string(), "sats": amount.to_sat(), "feeSats": fee_sats }));
+                return Ok(());
             }
-        }
-        (idx, Err(errors.join("; ")))
-    }
-    let decode = |bytes: &[u8], decoders: &ModuleDecoderRegistry| SignedSessionOutcome::consensus_decode_whole(bytes, decoders);
-
-    let decoders = client.decoders().clone();
-    let api = client.api_clone();
-    let started = std::time::Instant::now();
-    let (mut issued, mut redeemed, mut peg_ins_sats, mut peg_outs_sats, mut peg_out_fees_sats) = (0u64, 0u64, 0u64, 0u64, 0u64);
-    let (mut lnv2_funded_msat, mut fees_known_msat, mut txs, mut txs_all_known) = (0u64, 0i128, 0u64, 0u64);
-    let (mut sessions, mut verified, mut bytes_total) = (0u64, 0u64, 0u64);
-    let mut unverified: Vec<u64> = Vec::new();
-    let mut failed: Vec<serde_json::Value> = Vec::new();
-    let mut items_by_kind: BTreeMap<String, u64> = BTreeMap::new();
-    let mut answered_by: BTreeMap<String, u64> = BTreeMap::new();
-    let mut peg_ins: Vec<serde_json::Value> = Vec::new();
-    let mut peg_outs: Vec<serde_json::Value> = Vec::new();
-    let (mut peg_in_count, mut peg_out_count) = (0u64, 0u64);
-    let mut signed_peg_out_txids: BTreeSet<String> = BTreeSet::new();
-    let mut peg_out_txids: Vec<serde_json::Value> = Vec::new(); // every peg-out the signed history names
-    let mut last_session: Option<u64> = from.checked_sub(1);
-    let mut inflation_at: Option<u64> = None;
-    let mut min_headroom: Option<(i128, u64)> = None; // smallest issued - redeemed after a session, and where
-    let mut tamper_report = serde_json::Value::Null;
-
-    let mut next = from;
-    while let Some(to) = to.filter(|t| next <= *t) {
-        let end = (next + parallel - 1).min(to);
-        let mut set = tokio::task::JoinSet::new();
-        for idx in next..=end { set.spawn(fetch(api.clone(), peers.clone(), idx)); }
-        let mut got: BTreeMap<u64, Result<(PeerId, Vec<u8>), String>> = BTreeMap::new();
-        while let Some(r) = set.join_next().await { let (idx, r) = r?; got.insert(idx, r); }
-        next = end + 1;
-        for (idx, r) in got {
-            sessions += 1;
-            let (peer, bytes) = match r { Ok(x) => x, Err(e) => { unverified.push(idx); failed.push(serde_json::json!({ "session": idx, "error": e })); continue; } };
-            bytes_total += bytes.len() as u64;
-            *answered_by.entry(peer.to_string()).or_default() += 1;
-            let sso = match decode(&bytes, &decoders) { Ok(s) => s, Err(e) => {
-                unverified.push(idx); failed.push(serde_json::json!({ "session": idx, "error": format!("decode: {e}") })); continue; } };
-            if !sso.verify(&keys, idx) { unverified.push(idx); failed.push(serde_json::json!({ "session": idx, "error": "signatures do not verify" })); continue; }
-            verified += 1;
-            // THE SAME SESSION, CHANGED IN MEMORY: each change must fail the check
-            if tamper && tamper_report.is_null() && !sso.session_outcome.items.is_empty() {
-                let mut fewer = sso.clone();
-                let first = *fewer.signatures.keys().next().expect("a verified session has signatures");
-                fewer.signatures.remove(&first);
-                let mut flipped = bytes.clone();
-                let last = flipped.len() - 1;
-                flipped[last] ^= 1; // the last byte of the last signature
-                let flipped_verifies = decode(&flipped, &decoders).map(|s| s.verify(&keys, idx));
-                let mut dropped = sso.clone();
-                dropped.session_outcome.items.pop();
-                tamper_report = serde_json::json!({
-                    "session": idx, "items": sso.session_outcome.items.len(), "signatures": sso.signatures.len(),
-                    "original": sso.verify(&keys, idx),
-                    "oneSignatureRemoved": fewer.verify(&keys, idx),
-                    "wrongIndex": sso.verify(&keys, idx + 1),
-                    "signatureByteFlipped": match flipped_verifies { Ok(v) => serde_json::json!(v), Err(e) => serde_json::json!(format!("decode: {e}")) },
-                    "lastItemDropped": dropped.verify(&keys, idx),
-                });
-            }
-            for item in &sso.session_outcome.items {
-                match &item.item {
-                    ConsensusItem::Transaction(tx) => {
-                        txs += 1;
-                        *items_by_kind.entry("transaction".into()).or_default() += 1;
-                        let txid = tx.tx_hash().to_string();
-                        let (mut tx_in, mut tx_out, mut known) = (0u64, 0u64, true);
-                        for input in &tx.inputs {
-                            let kind = kinds.get(&input.module_instance_id()).cloned().unwrap_or_else(|| "unknown".into());
-                            *items_by_kind.entry(format!("input:{kind}")).or_default() += 1;
-                            let any = input.as_any();
-                            if let Some(i) = any.downcast_ref::<fedimint_mintv2_client::common::MintInput>() {
-                                match i { fedimint_mintv2_client::common::MintInput::V0(v) => { let m = v.note.amount().msats; redeemed += m; tx_in += m; } _ => known = false }
-                            } else if let Some(i) = any.downcast_ref::<fedimint_mint_client::MintInput>() {
-                                match i { fedimint_mint_client::MintInput::V0(v) => { let m = v.amount.msats; redeemed += m; tx_in += m; } _ => known = false }
-                            } else if let Some(i) = any.downcast_ref::<fedimint_wallet_client::WalletInput>() {
-                                let got = match i {
-                                    fedimint_wallet_client::WalletInput::V0(p) => Some((p.0.tx_output().value.to_sat(), p.0.outpoint())),
-                                    fedimint_wallet_client::WalletInput::V1(v) => Some((v.tx_out.value.to_sat(), v.outpoint)),
-                                    _ => None,
-                                };
-                                match got {
-                                    Some((sats, op)) => {
-                                        peg_ins_sats += sats; peg_in_count += 1; tx_in += sats * 1000;
-                                        if peg_ins.len() < 5 { peg_ins.push(serde_json::json!({ "session": idx, "txid": txid, "outpoint": op.to_string(), "sats": sats })); }
-                                    }
-                                    None => known = false,
-                                }
-                            } else if any.downcast_ref::<fedimint_walletv2_client::common::WalletInput>().is_some() {
-                                peg_in_count += 1; known = false; // walletv2 names an output index; its value is the module's own state
-                            } else {
-                                known = false; // lnv2 spends a contract whose amount an earlier output carried
-                            }
-                        }
-                        for output in &tx.outputs {
-                            let kind = kinds.get(&output.module_instance_id()).cloned().unwrap_or_else(|| "unknown".into());
-                            *items_by_kind.entry(format!("output:{kind}")).or_default() += 1;
-                            let any = output.as_any();
-                            if let Some(o) = any.downcast_ref::<fedimint_mintv2_client::common::MintOutput>() {
-                                match o { fedimint_mintv2_client::common::MintOutput::V0(v) => { let m = v.amount().msats; issued += m; tx_out += m; } _ => known = false }
-                            } else if let Some(o) = any.downcast_ref::<fedimint_mint_client::MintOutput>() {
-                                match o { fedimint_mint_client::MintOutput::V0(v) => { let m = v.amount.msats; issued += m; tx_out += m; } _ => known = false }
-                            } else if let Some(o) = any.downcast_ref::<fedimint_wallet_client::WalletOutput>() {
-                                match o {
-                                    fedimint_wallet_client::WalletOutput::V0(fedimint_wallet_client::WalletOutputV0::PegOut(p)) => {
-                                        let (sats, fee) = (p.amount.to_sat(), p.fees.amount().to_sat());
-                                        peg_outs_sats += sats; peg_out_fees_sats += fee; peg_out_count += 1; tx_out += (sats + fee) * 1000;
-                                        peg_out_txids.push(serde_json::json!({ "session": idx, "txid": txid, "kind": "wallet",
-                                            "recipient": p.recipient.assume_checked_ref().to_string(), "sats": sats }));
-                                        if peg_outs.len() < 5 { peg_outs.push(serde_json::json!({ "session": idx, "txid": txid,
-                                            "recipient": p.recipient.assume_checked_ref().to_string(), "sats": sats, "feeSats": fee })); }
-                                    }
-                                    fedimint_wallet_client::WalletOutput::V0(fedimint_wallet_client::WalletOutputV0::Rbf(r)) => {
-                                        let fee = r.fees.amount().to_sat(); peg_out_fees_sats += fee; tx_out += fee * 1000;
-                                    }
-                                    _ => known = false,
-                                }
-                            } else if let Some(o) = any.downcast_ref::<fedimint_walletv2_client::common::WalletOutput>() {
-                                match o {
-                                    fedimint_walletv2_client::common::WalletOutput::V0(v) => {
-                                        let (sats, fee) = (v.value.to_sat(), v.fee.to_sat());
-                                        peg_outs_sats += sats; peg_out_fees_sats += fee; peg_out_count += 1; tx_out += (sats + fee) * 1000;
-                                        peg_out_txids.push(serde_json::json!({ "session": idx, "txid": txid, "kind": "walletv2",
-                                            "destination": format!("{:?}", v.destination), "sats": sats }));
-                                        if peg_outs.len() < 5 { peg_outs.push(serde_json::json!({ "session": idx, "txid": txid,
-                                            "destination": format!("{:?}", v.destination), "sats": sats, "feeSats": fee })); }
-                                    }
-                                    _ => known = false,
-                                }
-                            } else if let Some(o) = any.downcast_ref::<LightningOutput>() {
-                                match o {
-                                    LightningOutput::V0(LightningOutputV0::Outgoing(c)) => { lnv2_funded_msat += c.amount.msats; tx_out += c.amount.msats; }
-                                    LightningOutput::V0(LightningOutputV0::Incoming(c)) => { lnv2_funded_msat += c.commitment.amount.msats; tx_out += c.commitment.amount.msats; }
-                                    _ => known = false,
-                                }
-                            } else {
-                                known = false;
-                            }
-                        }
-                        if known { txs_all_known += 1; fees_known_msat += i128::from(tx_in) - i128::from(tx_out); }
-                    }
-                    ConsensusItem::Module(m) => {
-                        let kind = kinds.get(&m.module_instance_id()).cloned().unwrap_or_else(|| "unknown".into());
-                        *items_by_kind.entry(format!("module:{kind}")).or_default() += 1;
-                        if let Some(fedimint_wallet_client::WalletConsensusItem::PegOutSignature(s)) =
-                            m.as_any().downcast_ref::<fedimint_wallet_client::WalletConsensusItem>()
-                        {
-                            signed_peg_out_txids.insert(s.txid.to_string());
-                        }
-                    }
-                    ConsensusItem::Default { variant, .. } => { *items_by_kind.entry(format!("default:{variant}")).or_default() += 1; }
-                }
-            }
-            last_session = Some(idx);
-            let headroom = i128::from(carry_issued) + i128::from(issued) - i128::from(carry_redeemed) - i128::from(redeemed);
-            if min_headroom.is_none_or(|(h, _)| headroom < h) { min_headroom = Some((headroom, idx)); }
-            if headroom < 0 && inflation_at.is_none() { inflation_at = Some(idx); }
+            fedimint_wallet_client::WithdrawState::Failed(e) => bail!("the peg-out failed: {e}"),
+            fedimint_wallet_client::WithdrawState::Created => {}
         }
     }
-    let elapsed = started.elapsed();
-    println!("{}", serde_json::json!({
-        "mode": "session-audit",
-        "federation": client.federation_id().to_string(),
-        "from": from, "to": to, "peers": peers.iter().map(ToString::to_string).collect::<Vec<_>>(), "parallel": parallel,
-        "sessions": sessions, "verified": verified, "unverified": unverified, "failed": failed.into_iter().take(10).collect::<Vec<_>>(),
-        "answeredBy": answered_by,
-        "issuedMsat": issued, "redeemedMsat": redeemed, "outstandingMsat": issued as i64 - redeemed as i64,
-        "inflation": inflation_at.is_some(), "inflationAt": inflation_at, "firstInflationSession": inflation_at,
-        "prefixFromGenesis": from == 0, "carryIssuedMsat": carry_issued, "carryRedeemedMsat": carry_redeemed,
-        "cumulativeIssuedMsat": carry_issued + issued, "cumulativeRedeemedMsat": carry_redeemed + redeemed, "lastSession": last_session,
-        "minHeadroom": min_headroom.map(|(h, at)| serde_json::json!({ "msat": h as i64, "afterSession": at })),
-        "pegInsSats": peg_ins_sats, "pegIns": peg_in_count, "pegInsFirst": peg_ins,
-        "pegOutsSats": peg_outs_sats, "pegOutFeesSats": peg_out_fees_sats, "pegOuts": peg_out_count, "pegOutsFirst": peg_outs,
-        "signedPegOutTxids": signed_peg_out_txids.iter().collect::<Vec<_>>(), "signedPegOutTxidCount": signed_peg_out_txids.len(),
-        // the fedimint txid of each peg-out (the bitcoin txids the guardians then signed are signedPegOutTxids)
-        "pegOutTxids": peg_out_txids,
-        "lnv2FundedMsat": lnv2_funded_msat,
-        "transactions": txs, "transactionsAllAmountsKnown": txs_all_known, "feesOfKnownTxMsat": fees_known_msat as i64,
-        "itemsByKind": items_by_kind,
-        "tamper": tamper_report,
-        "ms": elapsed.as_millis() as u64, "msPerSession": if sessions > 0 { elapsed.as_secs_f64() * 1000.0 / sessions as f64 } else { 0.0 },
-        "bytes": bytes_total,
-    }));
-    Ok(())
+    bail!("the peg-out's updates ended without an outcome")
 }
