@@ -793,46 +793,55 @@ function committedAdvertInFresh(tx) {
  * can audit into a silence nobody can: the entry is FOUND here and refused by
  * name later.
  */
-function candidatesIn(blocks, censusHeight, network) {
+export function candidatesIn(blocks, censusHeight, network) {
   const found = [];
   for (const block of blocks) {
     if (block.height > censusHeight) continue;
     for (const raw of block.transactions) {
       let tx;
       try { tx = parsedTx(raw); } catch { continue; }
-      // THIS NETWORK'S BONDS BY ITS MARKER, AND THE ANCESTOR'S BY ITS OWN (spec 0A.9): a bond the BLWP
-      // network's operators posted is found, read by the ancestor's layout and id, and counts here only once its
-      // operator re-affirmed it for this network (deriveCensus)
-      let ancestor = false;
-      if (!paysBondMarker(tx, network)) {
-        if (!paysMarkerProgram(tx, ancestorMarker(network))) continue;
-        ancestor = true;
-      }
-
-      const advert = ancestor ? committedAncestorAdvertIn(tx) : committedAdvertIn(tx);
-      if (!advert) continue;
-      // THE BODY NAMES THE OUTPOINT, and a body that names an output this
-      // transaction does not have has named no outpoint at all - there is
-      // nothing for RESOLVE to read and nothing to exclude by name.
-      if (!tx.outputs[advert.bondVout]) continue;
-
-      // NO AMOUNT. The scan used to copy the output's value in beside the
-      // outpoint, and measured, nothing ever read it: RESOLVE takes
-      // `output.valueSats` off the funding transaction itself and overwrites
-      // the field before the floor is applied or a leaf is hashed. A number
-      // carried along that no rule consults is one a later caller can start
-      // trusting, so the scan stops writing one.
-      found.push({
-        txid: tx.txid,
-        vout: advert.bondVout,
-        pubkey: advert.nodePubkey,
-        roles: advert.roles,
-        hostedGames: advert.hostedGames,
-        ...(ancestor ? { ancestor: true } : {}),
-      });
+      const bond = bondCandidateOf(tx, network);
+      if (bond) found.push(bond);
     }
   }
   return found;
+}
+
+/**
+ * ONE TRANSACTION, AS SCAN READS IT (candidatesIn, and the seat's index - arena-index.js, kanban #925 - which keeps every
+ * transaction this answers for): the bond candidate it carries, { txid, vout, pubkey, roles, hostedGames[, ancestor] }, or null.
+ */
+export function bondCandidateOf(tx, network) {
+  // THIS NETWORK'S BONDS BY ITS MARKER, AND THE ANCESTOR'S BY ITS OWN (spec 0A.9): a bond the BLWP
+  // network's operators posted is found, read by the ancestor's layout and id, and counts here only once its
+  // operator re-affirmed it for this network (deriveCensus)
+  let ancestor = false;
+  if (!paysBondMarker(tx, network)) {
+    if (!paysMarkerProgram(tx, ancestorMarker(network))) return null;
+    ancestor = true;
+  }
+
+  const advert = ancestor ? committedAncestorAdvertIn(tx) : committedAdvertIn(tx);
+  if (!advert) return null;
+  // THE BODY NAMES THE OUTPOINT, and a body that names an output this
+  // transaction does not have has named no outpoint at all - there is
+  // nothing for RESOLVE to read and nothing to exclude by name.
+  if (!tx.outputs[advert.bondVout]) return null;
+
+  // NO AMOUNT. The scan used to copy the output's value in beside the
+  // outpoint, and measured, nothing ever read it: RESOLVE takes
+  // `output.valueSats` off the funding transaction itself and overwrites
+  // the field before the floor is applied or a leaf is hashed. A number
+  // carried along that no rule consults is one a later caller can start
+  // trusting, so the scan stops writing one.
+  return {
+    txid: tx.txid,
+    vout: advert.bondVout,
+    pubkey: advert.nodePubkey,
+    roles: advert.roles,
+    hostedGames: advert.hostedGames,
+    ...(ancestor ? { ancestor: true } : {}),
+  };
 }
 
 export function scanCensus(view, { contract, candidates }) {
