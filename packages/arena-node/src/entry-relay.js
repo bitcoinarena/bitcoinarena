@@ -14,6 +14,50 @@ const AFTER_MS = 700, SPREAD_MS = 500;      // after the client's own posts have
 const LOCK_AFTER_MS = 1500;                 // and a lock after the entry it needs
 const CLOSE_MARGIN_MS = 300;                // an entry taken just before entry close goes at once: the seats' doors shut there
 const WAIT_MS = 4000, TRIES = 3, AGAIN_MS = 2000, KEPT = 2048;
+const VIEW_WAIT_MS = 3000;                  // a dead peer may not hold a seat's close for longer than this
+
+// AND THE DOOR DECIDES NOTHING ABOUT WHO IS IN THE ROUND (kanban #1071, §17). A seat's door is its own: the backup rule, and every other refusal, says whether this
+// seat takes a new entry now. Handing an entry on cannot help a door that refused it, so before a head-to-head seat signs anything it looks at the entries its peers
+// hold (GET /api/round-result, which every build serves; a hint and nothing more):
+//   an entry too many seats lack    `slots - needed` seats may lack an entry and it can still reach the threshold; one seat more and it never can. It is no member:
+//                                   ENTRY_VOID where it is held. This changes no outcome a quorum could have reached: such an entry can gather no threshold.
+//   an entry this seat lacks        waits for the threshold of signed results naming it, each checked (verify.js signersNaming). Then it is in, whatever this
+//                                   seat's door said: the entry, its handout, its locks and the winner's address come from the peers, past the door, and every one
+//                                   of them is checked as a client's copy is: the bytes to the id, the shares to the stake point, the locks with the federation, the
+//                                   address and each item by their signatures. This seat then signs what the others signed.
+//   nothing else in sight           too few seats answered to rule out an entry: this seat waits too. It never decides the round alone.
+// Until the wait ends this seat signs nothing for the round. A wait that runs out at the result window leaves it silent, which a round survives.
+
+/** ONE LOOK AT A ROUND'S MEMBERS. Answers { wait: why | null, took: [hex], voided: [hex], view } */
+export async function lookAtMembers({ roundId, roundHex, peers, slots, needed, players, held, viewOf, take, voidEntry }) {
+  const views = await Promise.all(peers.map((base) => viewOf(base, roundHex).catch(() => null)));
+  const answered = views.filter(Boolean);
+  const room = slots - needed;                             // how many seats may lack an entry that can still reach the threshold
+  const lacking = (e) => (held.has(e) ? 0 : 1) + answered.filter((v) => !v.has(e)).length;
+  const seen = new Set(held);
+  for (const v of answered) for (const e of v) seen.add(e);
+  const voided = [], took = [], waits = [];
+  let members = 0;
+  for (const e of seen) {
+    if (lacking(e) > room) { if (held.has(e)) { await voidEntry(roundId, e); voided.push(e); } continue; }
+    if (held.has(e)) { members++; continue; }
+    const from = peers.filter((_, i) => views[i] && views[i].has(e));
+    const got = await take(roundId, e, from);
+    if (got.ok) { took.push(e); members++; } else waits.push(`${e.slice(0, 16)}: ${got.why}`);
+  }
+  // NOTHING IN SIGHT, AND SEATS ENOUGH SAID SO: an entry no seat that answered holds is lacked by all of them
+  if (!waits.length && held.size && members < players && answered.length + 1 <= room) waits.push(`only ${answered.length + 1} of ${slots} seats answered`);
+  return { wait: waits.length ? waits.join('; ') : null, took, voided, answered: answered.length };
+}
+
+/** A SEAT'S VIEW OF A ROUND: the entries it holds, as a Set of hex, or throws if it did not answer. */
+export const seatView = (fetcher) => async (base, roundHex) => {
+  const r = await fetcher(`${base}/api/round-result?round=${roundHex}`, { signal: AbortSignal.timeout(VIEW_WAIT_MS) });
+  if (r.status === 404) return new Set();                  // it holds no such round, so it holds no entry of it
+  if (!r.ok) throw new Error(`${r.status}`);
+  const j = await r.json();
+  return new Set((j.players || []).map((p) => String(p.entry)));
+};
 
 export function createEntryRelay({ peersOf, entryOf, handoutOf, locksOf, fetcher = (...a) => globalThis.fetch(...a), log = console.log, nowMs = () => Date.now(),
   afterMs = AFTER_MS, spreadMs = SPREAD_MS, lockAfterMs = LOCK_AFTER_MS, againMs = AGAIN_MS } = {}) {
