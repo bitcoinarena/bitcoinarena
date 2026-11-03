@@ -63,3 +63,32 @@ test('the bots\' files give only their entry ids: market-bot orders.json and rps
   assert.deepEqual(entryIdsOf(JSON.stringify([{ round: hex(1), entry: hex(2), order: 0 }, { entry: 'short' }, { entry: hex(2) }])), [hex(2)]);
   assert.deepEqual(entryIdsOf(`{"round":"${hex(1)}","entry":"${hex(3)}","secret":"${hex(9)}"}\n{"entry":"${hex(4)}"}\nnot json\n`), [hex(3), hex(4)]);
 });
+
+test('the reserve over time, rebuilt from the payments in (kanban #1095): per federation the longest list of the three seats asked, held at each day\'s end', async () => {
+  const { env } = store();
+  const day = (d, h = 12) => new Date(Date.UTC(2026, 9, d, h)).toISOString();
+  const real = globalThis.fetch;
+  const asked = [];
+  globalThis.fetch = async (url) => {
+    const u = new URL(url);
+    const ok = (b) => new Response(JSON.stringify(b), { headers: { 'content-type': 'application/json' } });
+    if (u.pathname.endsWith('/reserves') && u.searchParams.get('all') === '1') {
+      asked.push(u.pathname.split('/')[1]);
+      // guardian-1 holds A's whole list; guardian-2 one payment short of it; fed2-1 holds B
+      const a = [{ at: day(28), amountMsat: '1000' }, { at: day(28, 20), amountMsat: '500' }, { at: day(30), amountMsat: '2000' }];
+      if (u.pathname.startsWith('/guardian-1')) return ok({ federations: [{ federationId: 'aa', paidIn: a }] });
+      if (u.pathname.startsWith('/guardian-2')) return ok({ federations: [{ federationId: 'aa', paidIn: a.slice(0, 2) }] });
+      return ok({ federations: [{ federationId: 'bb', paidIn: [{ at: day(29), amountMsat: '7000' }] }] });
+    }
+    if (u.pathname.endsWith('/txs')) return ok({ txs: [] });
+    return ok({});
+  };
+  try { let done; await worker.scheduled({}, env, { waitUntil: (p) => { done = p; } }); await done; } finally { globalThis.fetch = real; }
+  assert.deepEqual(asked.sort(), ['fed2-1', 'guardian-1', 'guardian-2']);
+  const m = await (await call(env, '/api/metrics')).json();
+  assert.equal(m.reserveHistory.federations, 2);
+  assert.deepEqual(m.reserveHistory.days.slice(0, 4), [
+    { day: '2026-10-28', inMsat: '1500', heldMsat: '1500' }, { day: '2026-10-29', inMsat: '7000', heldMsat: '8500' },
+    { day: '2026-10-30', inMsat: '2000', heldMsat: '10500' }, { day: '2026-10-31', inMsat: '0', heldMsat: '10500' }]);
+  assert.equal(m.reserveHistory.days.at(-1).day, new Date().toISOString().slice(0, 10), 'every day to today');
+});
