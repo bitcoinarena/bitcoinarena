@@ -2220,6 +2220,12 @@ export class Round {
       .run(roundIdBytes, entryIdBytes, nodePubkey, proofId, bytes, this.now()).changes;
   }
 
+  /** EVERY proof this node filed against a re-run's signers, newest first. */
+  allRerunSlashProofs({ limit = 500 } = {}) {
+    return this.db.prepare('SELECT proof_id, seen_ms FROM rerun_slash_proofs ORDER BY seen_ms DESC LIMIT ?').all(limit)
+      .map((r) => ({ proofId: new Uint8Array(r.proof_id), seenMs: Number(r.seen_ms) }));
+  }
+
   /** Every slash proof this node filed against the signers of a run's agreed re-run. */
   rerunSlashProofs(roundIdBytes, entryIdBytes) {
     return this.db.prepare(
