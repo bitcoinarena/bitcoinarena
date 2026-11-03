@@ -4,11 +4,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
+import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../src/genesis-ids.js';
 import { toHex, fromHex } from '../src/hash.js';
-import { STALL_VERSION, STALL_NOTE_QUORUM, STALL_PROOF_ROUNDS, STALL_WINDOW_MS, SUPPORTED_PROTOCOL_VERSIONS, CENSUS_KEY_VERSION, speaksVersion, ABSENCE_PROOF_SPACING_MS } from '../src/constants.js';
+import { STALL_VERSION, STALL_NOTE_QUORUM, STALL_PROOF_ROUNDS, STALL_WINDOW_MS, SUPPORTED_PROTOCOL_VERSIONS, CENSUS_KEY_VERSION, speaksVersion, ABSENCE_PROOF_SPACING_MS, stallSettlementPoint } from '../src/constants.js';
 import { signSeatingBound, signSeen, seatingId, encodeSeatingCertificate } from '../src/seating.js';
-import { signStallNote, decodeStallNote, verifyStallNote, stallNoteId, namedBy, silentSeats, stallsOut, stallWindow, stalledFrom, checkStallProof, stallCapKept, stallCloseMs, STALL_STAGE, STALL_HEIGHT } from '../src/stall.js';
+import { signStallNote, decodeStallNote, verifyStallNote, stallNoteId, namedBy, silentSeats, stallsOut, stallWindow, stalledFrom, checkStallProof, stallCapKept, stallCloseMs, settlementNotesCount, stallNoteCounts, STALL_SETTLEMENT_HEIGHT, STALL_STAGE, STALL_HEIGHT } from '../src/stall.js';
 import { signSettlementCommit, checkSettlementCommit, SIGNED_SETTLEMENT_COMMIT_BYTES } from '../src/settlement-ack.js';
 import { withoutAbsent } from '../src/presence.js';
 
@@ -185,6 +185,44 @@ test('a seat\'s settlement commit is signed by its node key, names the transacti
   assert.match(checkSettlementCommit(signed, { seats: [key(2)], commit, verify }).why, /not one of the round's seats/);
   assert.match(checkSettlementCommit(signed, { seats, commit: { ...commit, settlementTxid: b32(8) }, verify }).why, /other bytes/);
   assert.match(checkSettlementCommit(signSettlementCommit(commit, key(1), signBy(2)), { seats, commit, verify }).why, /does not verify/);
+});
+
+test('a SETTLEMENT note counts only from its own height, off on mainnet and testnet4 until the replay (#1069); RESULT and FINAL do not wait for it', () => {
+  assert.deepEqual({ ...STALL_SETTLEMENT_HEIGHT }, { mainnet: null, testnet4: null, regtest: 0, devnet: 0 });
+  assert.equal(stallSettlementPoint('mainnet'), null);
+  assert.equal(stallSettlementPoint('testnet'), null);
+  assert.equal(stallSettlementPoint('elsewhere'), null);
+  assert.equal(settlementNotesCount(contractAt({ networkId: NETWORK_ID_TESTNET4 })), false);
+  assert.equal(settlementNotesCount(contractAt()), true, 'a regtest runs the code');
+  const off = () => null, named = () => 100;
+  assert.equal(settlementNotesCount(contractAt(), off), false);
+  assert.equal(settlementNotesCount(contractAt(), named), true, 'at the height, once one is named');
+  assert.equal(settlementNotesCount(contractAt({ censusHeight: 99 }), named), false, 'the round\'s census height decides');
+  for (const stage of [STALL_STAGE.RESULT, STALL_STAGE.FINAL]) assert.equal(stallNoteCounts({ stage }, contractAt(), off), true);
+  assert.equal(stallNoteCounts({ stage: STALL_STAGE.SETTLEMENT }, contractAt(), off), false);
+  assert.equal(stallNoteCounts({ stage: STALL_STAGE.SETTLEMENT }, contractAt()), true);
+  assert.equal(stallNoteCounts({ stage: STALL_STAGE.SETTLEMENT }, null), false);
+});
+
+test('a claim that rests on SETTLEMENT notes makes the census invalid below that height, and one of RESULT and FINAL notes stands', () => {
+  const each = (stage) => [failed(1, { stage }), failed(2, { stage }), failed(3, { stage })];
+  const claimsOf = (rounds) => stalledFrom({ rounds, census, window: w, weightOf, baseWeight: WEIGHT, dutyOf: () => ({ ok: true }) });
+  const off = { settlementPointOf: () => null };
+  const settlement = each(STALL_STAGE.SETTLEMENT);
+  assert.equal(checkStallProof(claimsOf(settlement), checker(settlement, { keptWeight: WEIGHT - 300n })).ok, true, 'it stands where the height is passed');
+  const refused = checkStallProof(claimsOf(settlement), checker(settlement, { keptWeight: WEIGHT - 300n, ...off }));
+  assert.equal(refused.ok, false);
+  assert.equal(refused.proof, 'note');
+  assert.match(refused.why, /0 seats of round/);
+  for (const stage of [STALL_STAGE.RESULT, STALL_STAGE.FINAL]) {
+    const rounds = each(stage);
+    assert.equal(checkStallProof(claimsOf(rounds), checker(rounds, { keptWeight: WEIGHT - 300n, ...off })).ok, true, `stage ${stage}`);
+  }
+  // A NOTE OF EACH STAGE IN ONE ROUND: the SETTLEMENT notes are not counted, and the 2 of RESULT left are short of 4
+  const mixed = [1, 2, 3].map((n) => { const a = failed(n, { signers: [1, 2] }), b = failed(n, { signers: [3, 4], stage: STALL_STAGE.SETTLEMENT }); return { ...a, notes: [...a.notes, ...b.notes] }; });
+  const short = checkStallProof(claimsOf(mixed), checker(mixed, { keptWeight: WEIGHT - 300n, ...off }));
+  assert.equal(short.ok, false);
+  assert.match(short.why, /2 seats of round/);
 });
 
 test('the spacing is absence\'s hour', () => { assert.equal(ABSENCE_PROOF_SPACING_MS, HOUR); });

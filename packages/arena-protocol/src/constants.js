@@ -267,6 +267,17 @@ export const chainCensusSumPoint = (network) => {
   const n = network === 'testnet' ? 'testnet4' : String(network || '');
   return Object.prototype.hasOwnProperty.call(CHAIN_CENSUS_SUM_HEIGHT, n) ? CHAIN_CENSUS_SUM_HEIGHT[n] : null;
 };
+/**
+ * THE FIRST CENSUS HEIGHT A SETTLEMENT StallNote COUNTS AT (§5A.3 "Stalled in its rounds", RULED 2026-11-03, kanban #1069). RESULT and FINAL go on with the stall rule at STALL_HEIGHT (stall.js); at a
+ * settlement the replay still benches one honest seat for a bug, #1068, so that stage stays off: the code stays, no seat signs such a note and no check counts one. ONE CONSTANT PER NETWORK, as
+ * above; a network not named here, or null: never. Mainnet and testnet4: null, named only once #1068 is live and a replay of at least 8 days of new logs benches nobody at the ruled values.
+ */
+export const STALL_SETTLEMENT_HEIGHT = Object.freeze({ mainnet: null, testnet4: null, regtest: 0, devnet: 0 });
+/** The point of `network` (networkOf's name; 'testnet' is testnet4, as networkAnchor reads it), null on a network that names none. */
+export const stallSettlementPoint = (network) => {
+  const n = network === 'testnet' ? 'testnet4' : String(network || '');
+  return Object.prototype.hasOwnProperty.call(STALL_SETTLEMENT_HEIGHT, n) ? STALL_SETTLEMENT_HEIGHT[n] : null;
+};
 /** The owner's emergency key (§23A.5a): the advert names it, a request it signs takes an offline node out without losing its bond. */
 export const EMERGENCY_VERSION = 17;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);

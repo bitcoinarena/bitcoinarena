@@ -370,6 +370,45 @@ test('a seat notes who gave its last settlement pass nothing, 2 h after final_af
   assert.deepEqual(W2.stall.noteRound(f.rid, f.contract, windowsOf(f.contract).finalAfterMs + 7200000n), []);
 });
 
+test('below STALL_SETTLEMENT_HEIGHT a seat signs no settlement note, takes none and counts none; its RESULT notes go on (#1069)', () => {
+  const W = world();
+  const me = toHex(W.round.pubkey);
+  const others = W.seatings[0].seated.slice(0, 6);
+  const { rid, contract } = failedRound(W, { seats: [me, ...others], results: [[me, 1]] });
+  const sign = (m) => schnorr.sign(m, W.round.identity.secret);
+  const off = stallBook({ round: W.round, presence: W.presence, verify, sign, settlementPointOf: () => null });
+  W.round.putSettlePass({ roundId: rid, scope: '', step: 'commit', silent: [others[0], others[1], others[2]] });
+  const at = windowsOf(contract).finalAfterMs + 7200000n;
+  const stages = (made) => made.map((b) => verifyStallNote(b, { verify }).note.stage);
+  assert.deepEqual(stages(off.noteRound(rid, contract, at)), [STALL_STAGE.RESULT], 'the RESULT note and no settlement note');
+  assert.equal(W.round.db.prepare('SELECT 1 FROM stall_noted WHERE round_id = ? AND stage = ?').get(rid, STALL_STAGE.SETTLEMENT), undefined, 'and none marked done');
+});
+
+test('below STALL_SETTLEMENT_HEIGHT no settlement note is taken, read for a posting or counted in a claim, on the seats\' real notes and certificates (#1069)', async () => {
+  const W = world();
+  const [node] = W.targets;
+  const settlementNotes = (x, nodes, signers = x.seated.filter((h) => !nodes.includes(h)).slice(0, 4)) =>
+    signers.map((h) => toHex(signStallNote({ roundId: fromHex(x.roundId), stage: STALL_STAGE.SETTLEMENT, silent: nodes }, fromHex(h), signBy(h))));
+  const claim = claimOf(W, [node], { notes: settlementNotes });
+  const notes = claim.stalled[0].proofs.flatMap((p) => p.notes);
+  const certs = Object.values(claim.certs);
+  const census = W.roster.censusFor(W.rid, null, { asRoundsOwn: false });
+  const t = W.w.toMs;
+  const off = stallBook({ round: W.round, presence: W.presence, verify, sign: (m) => schnorr.sign(m, W.round.identity.secret), settlementPointOf: () => null });
+  const before = await off.forPosting({ entries: census.entries, t, ask: async () => ({ notes, certs }) });
+  assert.deepEqual(before.stalled, [], 'not taken, so nobody named');
+  assert.match(off.take(fromHex(notes[0])).why, /STALL_SETTLEMENT_HEIGHT/);
+  // WHERE THE HEIGHT IS PASSED THE SAME NOTES NAME THE NODE: and a book off it reads none of those it holds
+  const on = await W.stall.forPosting({ entries: census.entries, t, ask: async () => ({ notes, certs }) });
+  assert.deepEqual(on.stalled.map((c) => c.node), [node]);
+  assert.deepEqual((await off.forPosting({ entries: census.entries, t })).stalled, [], 'notes held are not read');
+  const held = { claims: [], certs: on.certs, stalled: on.stalled };
+  assert.equal(seatCheck(W, held).ok, true, seatCheck(W, held).why);
+  const refused = off.check(held, { census: census.entries.map((e) => toHex(e.pubkey)), w: W.w, entries: census.entries, keptEntries: census.entries.filter((e) => toHex(e.pubkey) !== node) });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.proof, 'note', refused.why);
+});
+
 test('a seat notes who did not sign FINAL once entries are due, once; a round at its threshold, an entry not at PROVISIONALLY_FINAL, or a seat that did not sign itself notes nothing', () => {
   const W = world();
   const me = toHex(W.round.pubkey);
