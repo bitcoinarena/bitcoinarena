@@ -4542,7 +4542,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const releaseHere = () => {
     if (releaseHereKept) return releaseHereKept;
     const read = (f) => { try { return readFileSync(new URL(`../../../${f}`, import.meta.url), 'utf8').trim(); } catch { return null; } };
-    return (releaseHereKept = { version: read('VERSION'), commit: read('COMMIT') });
+    // A HARNESS'S OWN VERSION (kanban #1093 part 3, tools/stage-regtest.mjs): on regtest only, ARENA_RELEASE_VERSION stands in for the tree's
+    // VERSION, so a devnet can measure a staged update with one source tree; a live network always says its tree's
+    const harness = process.env.ARENA_RELEASE_VERSION && String(chain || process.env.ARENA_TN4_NETWORK || '').replace(/^bitcoin-/, '') === 'regtest' ? process.env.ARENA_RELEASE_VERSION : null;
+    return (releaseHereKept = { version: harness || read('VERSION'), commit: read('COMMIT') });
   };   // /setup-status, kept 60 s (kanban #635)
   // WHAT THE MARKETS PAID THIS SEAT (kanban #600): each ACCEPTED settlement of a market round read once, a few plans every 5 min
   const marketEarnings = createMarketEarnings({ db: round.db, ownPayoutHex: toHex(refundKeyOf(round.pubkey)),
