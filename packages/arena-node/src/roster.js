@@ -26,7 +26,8 @@ import { selectCommittee, drawCommittee, drawPanels, slotsForRole, drawAttestors
 import { drawHeartbeat, hasHeartbeats, heartbeatCloseMs } from '../../arena-protocol/src/heartbeat.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
-import { merkleBranchOf, blockHashOf } from '../../arena-protocol/src/chain.js';
+import { blockHashOf } from '../../arena-protocol/src/chain.js';
+import { positionIn, branchIn } from '../../arena-protocol/src/partial-view.js';
 import { networkOf, namesNoDraw, SEATED_GUARDIAN_VERSION } from '../../arena-protocol/src/constants.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { guardianPayoutKeyOf } from '../../arena-protocol/src/guardian-payout.js';
@@ -202,19 +203,26 @@ export function censusOfView(view, contract, { network = networkOf(contract.netw
 }
 
 /** Each entry of a census as evidence off the view it was read from: { ok, entries }, what Roster.censusEvidenceFor hands a client, and GET /census-key/census for a key's census. */
-export function censusEvidenceOf(census, view) {
+// WHERE EACH TRANSACTION OF A VIEW STANDS, ONCE PER VIEW: txid hex -> { block, i, txids }. A partial block (the seat's index, kanban #925)
+// answers its kept positions and branches (partial-view.js positionIn / branchIn); a whole block its index and a branch from all its txids.
+function whereIn(view) {
   let where = view && typeof view === 'object' ? whereOf.get(view) : null;
   if (!where) {
     where = new Map();
     for (const block of (view && Array.isArray(view.blocks) ? view.blocks : [])) {
       let txids;
       try { txids = (block.transactions || []).map((raw) => parseTransaction(raw).txid); } catch { continue; }
-      txids.forEach((t, position) => where.set(toHex(t), { block, txids, position }));
+      txids.forEach((t, i) => where.set(toHex(t), { block, txids, i }));
     }
     if (view && typeof view === 'object') whereOf.set(view, where);
   }
-  const proof = (txid) => { const at = txid ? where.get(toHex(txid)) : null; return at ? { transaction: toHex(at.block.transactions[at.position]),
-    position: at.position, branch: merkleBranchOf(at.txids, at.position).map(toHex) } : null; };
+  return where;
+}
+const proofAt = (at) => ({ transaction: toHex(at.block.transactions[at.i]), position: positionIn(at.block, at.i), branch: branchIn(at.block, at.i, at.txids).map(toHex) });
+
+export function censusEvidenceOf(census, view) {
+  const where = whereIn(view);
+  const proof = (txid) => { const at = txid ? where.get(toHex(txid)) : null; return at ? proofAt(at) : null; };
   const entries = [];
   for (const e of census.entries) {
     const bond = proof(e.txid);
@@ -666,16 +674,7 @@ export class Roster {
     const view = this.chainFor({ contract, roundIdBytes });
 
     // ONE INDEX PER VIEW (the rounds of a series share their view): built once, not on every ask.
-    let where = view && typeof view === 'object' ? whereOf.get(view) : null;
-    if (!where) {
-      where = new Map();
-      for (const block of (view && Array.isArray(view.blocks) ? view.blocks : [])) {
-        let txids;
-        try { txids = (block.transactions || []).map((raw) => parseTransaction(raw).txid); } catch { continue; }
-        txids.forEach((t, position) => where.set(toHex(t), { block, txids, position }));
-      }
-      if (view && typeof view === 'object') whereOf.set(view, where);
-    }
+    const where = whereIn(view);
     const bonds = [];
     for (const e of census.entries) {
       if (!((e.advert && e.advert.guardianOf) || []).some((g) => toHex(g.federationId) === fid)) continue;
@@ -684,12 +683,10 @@ export class Roster {
       // AND ITS NEWEST ADVERTISEMENT UPDATE, where the census applied one (§5A.2): the page proves it into its own headers
       // and reads the guardian keys from it, not from the bond's first advertisement
       const up = e.updatedBy ? where.get(toHex(e.updatedBy.txid)) : null;
+      const bond = proofAt(at);
       bonds.push({
-        nodePubkey: toHex(e.pubkey), position: at.position,
-        transaction: toHex(at.block.transactions[at.position]),
-        branch: merkleBranchOf(at.txids, at.position).map(toHex),
-        ...(up ? { update: { transaction: toHex(up.block.transactions[up.position]), position: up.position,
-          branch: merkleBranchOf(up.txids, up.position).map(toHex) } } : {}),
+        nodePubkey: toHex(e.pubkey), position: bond.position, transaction: bond.transaction, branch: bond.branch,
+        ...(up ? { update: proofAt(up) } : {}),
       });
     }
     return { ok: true, federationId: fid, bonds };

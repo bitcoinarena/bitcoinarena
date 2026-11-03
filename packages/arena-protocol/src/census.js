@@ -34,7 +34,7 @@ function txidHexOf(tx) {
 }
 import {
   recognizeBond, isTaprootOutput, BOND_UNCHECKED, chainWork, merkleRootOf, blockHashOf,
-  paysBondMarker, paysMarkerProgram,
+  paysBondMarker, paysMarkerProgram, provesTransaction,
 } from './chain.js';
 import { decodeAdvert, splitSignedAdvert, advertId, hostsGame } from './advert.js';
 import { BOND_TEMPLATE_V3, maturityStands, slashStartLeaf } from './bond-script.js';
@@ -43,6 +43,8 @@ import { bondNamesStandingKey } from './census-key.js';
 import { poolOfRole, GAME_VERIFY } from './fee.js';
 import { genesisFor } from './genesis.js';
 import { dropsAbsent, withoutAbsent, ABSENT_WHY } from './presence.js';
+import { isPartialBlock, markPartial } from './partial-view.js';
+export { isPartialBlock, positionIn, txCountOf, branchIn, partialViewOf } from './partial-view.js';
 
 /**
  * One census entry, encoded.
@@ -507,6 +509,15 @@ export function chainViewOf(view) {
   const blocks = [];
   for (let i = 0; i < view.blocks.length; i++) {
     const height = view.firstHeight + i;
+    // A PARTIAL BLOCK (kanban #925): its kept transactions, each proved into this header by its own branch, instead of the whole list
+    if (isPartialBlock(view.blocks[i])) {
+      const proved = partialBlockProved(view.blocks[i], height);
+      if (!proved.ok) return proved;
+      blocks.push(proved.block);
+      continue;
+    }
+    if (view.blocks[i].positions !== undefined)
+      return { ok: false, why: `block ${height} is offered as part of a block, and only a seat's own index (partialViewOf) makes one` };
     let ids;
     try { ids = view.blocks[i].transactions.map((raw) => parsedTx(raw).txid); }
     catch (e) { return { ok: false, why: `block ${height} carries something that is not a transaction: ${e.message}` }; }
@@ -546,6 +557,43 @@ export function chainViewOf(view) {
   };
   checked[VERIFIED] = stampOf(checked);
   return checked;
+}
+
+/**
+ * A PROVEN PARTIAL VIEW (kanban #925 part 2 step 2, spec ruling #1101 A). A seat's Arena index (arena-node/src/arena-index.js) keeps
+ * every header and, of each block, only the transactions that carry a Bitcoin Arena output or spend a bond it watches - each with its
+ * position and its merkle branch. A view built from it carries every header (so it is checked mined and linked exactly as a whole view
+ * is) and, per block, those transactions: `{ header, transactions, positions, branches, txCount }`. In place of the whole-list merkle
+ * root, every transaction it carries is proved into its own header (chain.js provesTransaction) at its position, with a branch as long
+ * as a tree of txCount leaves is deep.
+ *
+ * A BRANCH PROVES INCLUSION, NOT COMPLETENESS. It says a transaction is in that block at that position; it cannot say the block holds no
+ * other transaction a reader would have wanted. §25.1: "a list provider can then OMIT but not FORGE" - and here the list provider is
+ * the seat itself: the index was filled from this seat's own bitcoind, block by block, by the same recognisers the readers use, and its
+ * completeness rests on that, not on anything in the view. So a partial block is taken only from a view this module built itself
+ * (partialViewOf, which registers each block object it makes); a block handed in from anywhere else that says it is partial is refused,
+ * as a whole view that omits a transaction always was. Readers that want a transaction's position or branch ask positionIn / branchIn,
+ * which answer the same for a whole block.
+ */
+function partialBlockProved(block, height) {
+  const { transactions, positions, branches, txCount } = block;
+  if (!Array.isArray(transactions) || !Array.isArray(positions) || !Array.isArray(branches)
+      || transactions.length !== positions.length || transactions.length !== branches.length)
+    return { ok: false, why: `block ${height} is offered in part, and its transactions, positions and branches do not pair up` };
+  if (!Number.isInteger(txCount) || txCount < 1) return { ok: false, why: `block ${height} is offered in part with no transaction count` };
+  let depth = 0; while ((1 << depth) < txCount) depth++;
+  for (let k = 0; k < transactions.length; k++) {
+    const p = positions[k];
+    if (!Number.isInteger(p) || p < 0 || p >= txCount || (k && p <= positions[k - 1]))
+      return { ok: false, why: `block ${height} offers a transaction at position ${p}, out of order or outside its ${txCount}` };
+    let tx;
+    try { tx = parsedTx(transactions[k]); }
+    catch (e) { return { ok: false, why: `block ${height} carries something that is not a transaction: ${e.message}` }; }
+    if (!Array.isArray(branches[k]) || branches[k].length !== depth || !provesTransaction(block.header, tx.txid, branches[k], p))
+      return { ok: false, why: `block ${height} does not contain the transaction offered at position ${p}` };
+  }
+  const out = markPartial({ height, header: block.header, transactions, positions, branches, txCount });
+  return { ok: true, block: out };
 }
 
 /**

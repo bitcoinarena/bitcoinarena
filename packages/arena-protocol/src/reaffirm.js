@@ -20,6 +20,7 @@ import { Writer } from './encode.js';
 import { taggedHash } from './hash.js';
 import { TAG } from './constants.js';
 import { parseTransaction, commitmentsOf } from './tx.js';
+import { positionIn } from './partial-view.js';
 
 export const REAFFIRM_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e, 0x46]);     // "ARN" 'F'
 export const REAFFIRM_BYTES = 4 + 8 + 64;
@@ -68,7 +69,8 @@ export function reaffirmedBonds(view, entries, { atHeight, networkId, verify } =
   view.blocks.forEach((block, i) => {
     const height = view.firstHeight + i;
     if (height > atHeight) return;
-    (block.transactions || []).forEach((raw, position) => {
+    (block.transactions || []).forEach((raw, i) => {
+      const position = positionIn(block, i);   // a partial block's kept position (partial-view.js)
       let tx;
       try { tx = parseTransaction(raw); } catch { return; }
       for (const c of commitmentsOf(tx)) {

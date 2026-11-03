@@ -38,6 +38,9 @@ test('a network with no row derives no census: no fallback to a window', () => {
 
 test('both of the node\'s census reads take it', () => {
   const src = readFileSync(new URL('../../arena-node/src/main.js', import.meta.url), 'utf8');
-  assert.equal(src.match(/blocksOver\(call, censusFirstBlock\(/g).length, 3, 'the round\'s, the view\'s, and a census key\'s evidence');
+  // EVERY ONE THROUGH censusBlocks (kanban #925 step 3), which starts at censusFirstBlock - from the index's view or from whole blocks
+  assert.equal(src.match(/censusBlocks\([^)]*\)/g).filter((c) => !/networkId, censusHeight, to/.test(c)).length, 3, 'the round\'s, the view\'s, and a census key\'s evidence');
+  assert.match(src, /const from = censusFirstBlock\(censusHeight, net\);/);
+  assert.match(src, /return blocksOver\(call, from, to, \{ cache: blocksKept \}\);/);
   assert.doesNotMatch(src, /CENSUS_LOOKBACK/);
 });

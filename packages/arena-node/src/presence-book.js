@@ -32,7 +32,7 @@ import { TAG_SWITCH } from '../../arena-protocol/src/tag-switch.js';
 import { parseTransaction, commitmentsOf } from '../../arena-protocol/src/tx.js';
 import { seriesPublicationPayload } from '../../arena-protocol/src/series.js';
 import { publicationPayload } from '../../arena-protocol/src/publication.js';
-import { merkleBranchOf } from '../../arena-protocol/src/chain.js';
+import { positionIn, branchIn } from '../../arena-protocol/src/partial-view.js';
 
 // ONLY THE DUTY POSTINGS' ROUNDS PROVE (kanban #727, duty.js): a block's duty-marked transactions, read once per block object (the
 // blocks are shared objects, main.js blockCache) - their txids, markers and OP_RETURN payloads - and every block's txids for a merkle branch
@@ -42,11 +42,11 @@ function blockIndexOf(block) {
   if (got) return got;
   const txids = [], marked = [];
   try {
-    (block.transactions || []).forEach((raw, position) => {
+    (block.transactions || []).forEach((raw, i) => {
       const tx = parseTransaction(raw);
       txids.push(tx.txid);
       const marker = dutyMarkerOf(tx);
-      if (marker) marked.push({ position, txid: toHex(tx.txid), marker, payloads: new Set(commitmentsOf(tx).map((p) => toHex(p))) });
+      if (marker) marked.push({ i, position: positionIn(block, i), txid: toHex(tx.txid), marker, payloads: new Set(commitmentsOf(tx).map((p) => toHex(p))) });
     });
     got = { txids, marked };
   } catch { got = { txids: null, marked: [] }; }
@@ -214,10 +214,11 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
     for (const block of view.blocks) {
       const ix = blockIndexOf(block);
       if (!ix.txids) continue;
-      let position = (ix.marked.find((x) => x.payloads.has(want)) || { position: -1 }).position;
-      if (position < 0) position = (block.transactions || []).findIndex((raw) => { try { return commitmentsOf(parseTransaction(raw)).some((p) => toHex(p) === want); } catch { return false; } });
-      if (position < 0) continue;
-      return { transaction: toHex(block.transactions[position]), position, branch: merkleBranchOf(ix.txids, position).map(toHex) };
+      let i = (ix.marked.find((x) => x.payloads.has(want)) || { i: -1 }).i;
+      if (i < 0) i = (block.transactions || []).findIndex((raw) => { try { return commitmentsOf(parseTransaction(raw)).some((p) => toHex(p) === want); } catch { return false; } });
+      if (i < 0) continue;
+      // a partial block (the seat's index, kanban #925) answers its kept position and branch
+      return { transaction: toHex(block.transactions[i]), position: positionIn(block, i), branch: branchIn(block, i, ix.txids).map(toHex) };
     }
     return null;
   };

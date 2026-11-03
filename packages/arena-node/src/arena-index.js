@@ -14,8 +14,9 @@
 //            of a transaction that spends one - a template-3 slash start's hold output, which is still the bond (census.js
 //            holdOfStart) until it is spent in turn
 //
-// NO READER IS SWITCHED BY THIS FILE (step 1). The proven partial view (step 2) builds from range(); the census reads it from a
-// height (step 3).
+// WHAT READS IT: viewOf(from, to) is the proven partial view (census.js partialViewOf, step 2), and main.js reads a census from it
+// from the height indexServesCensus names, with ARENA_ARENA_INDEX=1 (step 3); below that height, and with the switch off, a census
+// reads whole blocks as before.
 //
 // REORG-SAFE. A block is added only on the one before it: its header names the hash this index holds for the height below, or
 // addBlock answers `reorg` and adds nothing. syncArenaIndex asks bitcoind for the hash of the highest height held before each
@@ -31,7 +32,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { parseTransaction, blockMerkleRoot } from '../../arena-protocol/src/tx.js';
 import { blockHashOf, previousHashOf, merkleRootOf, merkleBranchOf, provesTransaction, meetsTarget } from '../../arena-protocol/src/chain.js';
-import { CENSUS_WHOLE } from '../../arena-protocol/src/census.js';
+import { CENSUS_WHOLE, partialViewOf } from '../../arena-protocol/src/census.js';
 import { arenaKindsOf } from '../../arena-protocol/src/arena-kinds.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { blocksOver } from './chain-rpc.js';
@@ -53,6 +54,16 @@ export function indexFirstHeight(network, { genesisHeight = null } = {}) {
   if (whole.firstBlock !== 'genesis') return whole.firstBlock;
   if (!Number.isInteger(genesisHeight) || genesisHeight < 0) throw new Error(`the ${network} index starts at genesis_height, and none was given`);
   return genesisHeight;
+}
+
+/**
+ * DOES A CENSUS AT THIS HEIGHT READ THE INDEX (kanban #925 step 3)? From the height its network's whole-census rule starts at
+ * (census.js CENSUS_WHOLE: testnet4 158,226, regtest and mainnet from their first block); below it, a census reads a window of whole
+ * blocks as before.
+ */
+export function indexServesCensus(network, censusHeight) {
+  const whole = Object.hasOwn(CENSUS_WHOLE, String(network)) ? CENSUS_WHOLE[network] : null;
+  return !!whole && Number.isInteger(censusHeight) && censusHeight >= whole.fromHeight;
 }
 
 /**
@@ -90,7 +101,8 @@ export function openArenaIndex({ db = null, path = ':memory:', network, firstHei
 
   let inTx = false;
   const atomically = (fn) => {
-    if (inTx) return fn();
+    // inside a transaction the store already holds open, the rows go with it
+    if (inTx || db.isTransaction) return fn();
     db.exec('BEGIN IMMEDIATE');
     inTx = true;
     try { const out = fn(); db.exec('COMMIT'); return out; }
@@ -213,6 +225,17 @@ export function openArenaIndex({ db = null, path = ':memory:', network, firstHei
     return out;
   }
 
+  /**
+   * THE PROVEN PARTIAL VIEW OF HEIGHTS `from`..`to` (census.js partialViewOf, kanban #925 step 2): every header, and of each block the
+   * kept transactions with their positions and branches - checked here first (range), then by chainViewOf like any view. Throws for
+   * heights the index does not hold or rows that do not prove (the index is then marked for a rebuild).
+   */
+  function viewOf(from, to) {
+    const r = range(from, to);
+    if (!r.ok) throw new Error(`the index cannot give ${from}-${to}: ${r.why}`);
+    return partialViewOf(r);
+  }
+
   /** The kept transaction with that txid (hashing order), or null. */
   function transaction(txid) {
     const r = db.prepare('SELECT height, position, txid, raw, kinds, branch FROM arena_index_txs WHERE txid = ? ORDER BY height LIMIT 1').get(txid);
@@ -227,7 +250,7 @@ export function openArenaIndex({ db = null, path = ':memory:', network, firstHei
 
   return {
     network, firstHeight: first, db,
-    top, next, headerAt, addBlock, rollback, rebuild, range, transaction, counts,
+    top, next, headerAt, addBlock, rollback, rebuild, range, viewOf, transaction, counts,
     needsRebuild: () => getMeta('rebuild') === '1',
     markForRebuild: () => setMeta('rebuild', 1),
     watchedKind: (txid, vout) => watched.get(keyOf(txid, vout)) || null,

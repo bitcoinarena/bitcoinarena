@@ -268,6 +268,30 @@ async function onAChain() {
   } finally { child.kill('SIGKILL'); await btc.close(); }
 }
 
+// (f) THE SAME CHAIN WITH THE ARENA INDEX ON (kanban #925 part 2 step 3): ARENA_ARENA_INDEX=1 reads every block once into the store's
+// index, and the round's census is read from the index's proven partial view - the root the round names (derived from whole blocks
+// above) is the one it gives, so POST /round is taken, and the beacon is the same block.
+async function onAChainIndexed() {
+  const f = chainFixture('main-index-');
+  const view = f.build();
+  const btc = await fakeBitcoind(view, '__cookie__:s3cret');
+  const child = startMain(f.store, { ...f.env(btc), ARENA_ARENA_INDEX: '1', ARENA_ARENA_INDEX_EVERY_MS: '500' });
+  try {
+    const port = await child.up;
+    await until('the index read the chain', 20000, async () => /\[index\] \d+ block\(s\) read, to 60 of 60/.test(child.out));
+    const posted = await until('POST /round answers 201', 30000, async () => { const p = await postRound(port, f.contract); return p.status === 201 && p; });
+    assert.equal(posted.status, 201);
+    assert.match(child.out, /\[index\] the census at 40 read from the index: 0-\d+, 3 transaction\(s\) kept/);
+    // every block was read once, by the index; the census read none again
+    const reads = heightsRead(btc, view, 0);
+    assert.equal(reads.length, new Set(reads).size, `a block read twice: ${reads.join(',')}`);
+    const r = await randomness(port, f.rid);
+    assert.deepEqual([r.status, r.height, r.hash], [200, '36', toHex(f.named(view).hash)]);
+    child.kill('SIGTERM');
+    assert.equal((await child.exited).code, 0);
+  } finally { child.kill('SIGKILL'); await btc.close(); }
+}
+
 // (a) A VIEW READ SHORT OF ITS BEACON IS READ ON AS THE CHAIN GROWS (main.js:206-232): posted at tip 33, before beacon 36 -
 // 202, stored and waiting, no randomness; the chain grows to 61 and within ~15 s the node reads only the new blocks, its
 // roster assigns the round, and /randomness names block 36.
@@ -455,6 +479,7 @@ test('main.js as the units run it', { concurrency: true }, async (t) => {
     t.test('(c) a view that did not read: one "did not read" line, no read within 60 s, then a good read and the round taken', async () => { const x = await failedReads(); took.fail = x.tookMs; took.failBy = x.assignedBy; }),
     t.test('(d) a re-read that fails partway: the node up, nothing assigned from the half read, read on and assigned at the next look', async () => { took.reread = (await reReadFails()).tookMs; }),
     t.test('(e) a beacon refresh that fails: /randomness 409 "no randomness yet", the node up; healed, block 36 named', refreshFails),
+    t.test('(f) with ARENA_ARENA_INDEX=1: every block read once into the index, the census read from it, POST /round 201, block 36 named', onAChainIndexed),
   ]);
   t.diagnostic(`grow: the beacon named ${took.grow} ms after the chain grew; failed read: the next read ${took.fail} ms after the failure, then assigned by ${took.failBy}; failed re-read: assigned ${took.reread} ms after it`);
 });
