@@ -158,3 +158,12 @@ test('Umami is told each real entry and each real round once, at its time, an ho
   assert.deepEqual(told.map((x) => x.name), ['played-round', 'played-entry'], 'the late one, an hour after it was stored');
   assert.deepEqual((await sendPlayed({ ...env, UMAMI_SEND: 'off' }, T + 9e9, post)).off, true);
 });
+
+test('two runs at once tell Umami each entry and round only once (kanban #1110: a long run overlapped the next minute\'s)', async () => {
+  const { db, env } = store();
+  const T = Date.UTC(2026, 10, 2, 12), put = db.prepare(`INSERT INTO txs (id, round, app, federation, stored_ms, kind, settled, hash, json, updated_ms) VALUES (?, ?, 'nextblock', 'fe', ?, 'order', NULL, 'h', '{}', 0)`);
+  for (let i = 0; i < 10; i++) put.run(hex(300 + i), hex(400 + (i % 4)), T + i * 1000);
+  const told = []; const post = async (url, o) => { await new Promise((r) => setTimeout(r, 2)); told.push(JSON.parse(o.body).payload.name); return { ok: true }; };
+  await Promise.all([sendPlayed(env, T + 7200000, post), sendPlayed(env, T + 7200000, post)]);
+  assert.deepEqual([told.filter((n) => n === 'played-round').length, told.filter((n) => n === 'played-entry').length], [4, 10]);
+});
