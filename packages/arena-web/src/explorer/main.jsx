@@ -4,7 +4,7 @@
 // and have it collapsed by default"): the newest transactions with their filters, and one transaction as its history - the node side
 // summed up, then each group of what happened (placement, lock, attestation, settlement, and the page's own steps where it handed them),
 // collapsed until opened. The Worker builds what its store holds into the page (window.EXPLORER_DATA), so nothing waits on a node.
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 const kept = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
@@ -330,7 +330,13 @@ export function Metrics({ data = null }) {
         <small>{m.referral ? m.referral.sites.length + (m.referral.sites.length === 1 ? ' program' : ' programs') : 'not read yet'}</small></div>
     </div>
     <Played />
+    <h2>Protocol reserve over time <span className="dim">held at the end of each UTC day, every federation</span></h2>
+    <div className="card">{m.reserveHistory && m.reserveHistory.days.length ? <LineChart name="Protocol reserve per day" color={RESERVE_COLOR} fmt={satFmt}
+      points={m.reserveHistory.days.map((d) => ({ label: d.day, short: shortDay(d.day), value: satOf(d.heldMsat), lines: [amount(d.heldMsat) + ' held', '+' + amount(d.inMsat) + ' paid in that day'] }))} />
+      : <p className="dim">The reserve's history is read once an hour.</p>}</div>
     <h2>Volume per day <span className="dim">stakes of every transaction, UTC days</span></h2>
+    <div className="card">{(m.volume || []).length ? <StackedBars name="Volume per day" series={[{ key: 'v', label: 'Volume', color: VOLUME_COLOR }]} fmt={satFmt} tipFmt={(n) => Math.round(n).toLocaleString('en-US') + ' sat'}
+      rows={m.volume.slice().reverse().map((d) => ({ label: d.day, short: shortDay(d.day), values: { v: satOf(d.msat) } }))} /> : null}</div>
     <div className="card">{(m.volume || []).length ? (<table className="rows"><thead><tr><th>Day</th><th>Transactions</th><th>Volume</th><th /></tr></thead><tbody>
       {m.volume.map((d) => <tr key={d.day}><td className="nw">{d.day}</td><td>{d.txs.toLocaleString('en-US')}</td><td className="nw"><b>{amount(d.msat)}</b></td>
         <td className="barcell"><i className="vbar" style={{ width: Math.max(1, Number((BigInt(d.msat) * 100n) / most)) + '%' }} /></td></tr>)}</tbody></table>) : <p className="dim">No transactions yet.</p>}</div>
@@ -339,6 +345,105 @@ export function Metrics({ data = null }) {
     {m.readAt ? <p className="dim">Reserve and referral fees read from {m.seats ? m.seats.reserves + ' of ' + m.seats.of : 'the'} nodes {ago(Date.parse(m.readAt))}.</p> : null}
   </>);
 }
+
+// ---- the charts (kanban #1095, the owner 2026-11-03: "Gespielte Runden auf Explorer auch grafisch darstellen, auch Volume, und Reserven") ----
+// SVG drawn here, no library: thin bars with 4 px rounded ends at the top, a 2 px gap between stacked parts, a recessive grid on one axis, a
+// tooltip on hover, a legend for more than one series. Colours (checked on the page's dark panel #1a1218, all pairs): the games in a fixed
+// order - Up/Down blue, Next Block orange, Rock Paper Scissors aqua; volume violet; the reserve yellow. The tables below stay as the text view.
+const GAME_COLOR = { 'btc-updown-15m': '#3987e5', nextblock: '#d95926', 'rock-paper-scissors': '#199e70' };
+const MORE_COLORS = ['#9085e9', '#d55181', '#008300', '#e66767'];
+export const gameColor = (g, i = 0) => GAME_COLOR[g] || MORE_COLORS[i % MORE_COLORS.length];
+const VOLUME_COLOR = '#9085e9', RESERVE_COLOR = '#c98500';
+/** A round top for the grid: 1, 1.5, 2, 2.5, 3, 4, 5, 6 or 8 times a power of ten, at or above `max`. */
+export function niceMax(max) {
+  if (!(max > 0)) return 1;
+  const p = 10 ** Math.floor(Math.log10(max));
+  for (const m of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (m * p >= max) return m * p;
+  return 10 * p;
+}
+const topRounded = (x, y, w, h, r) => { r = Math.max(0, Math.min(r, w / 2, h)); return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`; };
+function Legend({ series }) {
+  return series.length > 1 ? <p className="legend">{series.map((s) => <span key={s.key}><i style={{ background: s.color }} />{s.label}</span>)}</p> : null;
+}
+function Tip({ tip }) {
+  return tip ? <div className="ctip" style={{ left: tip.left + '%', top: tip.top + '%' }}>{tip.lines.map((l, i) => <div key={i} className={i ? undefined : 'h'}>{l}</div>)}</div> : null;
+}
+const PL = 52, PR = 8, PT = 10, PB = 24;
+/** THE CHART AS WIDE AS ITS CARD (a phone drew a 720-wide picture at half size, its ticks 5 px): the drawing's own width, measured. */
+function useWidth() {
+  const ref = useRef(null);
+  const [w, setW] = useState(720);
+  useEffect(() => {
+    const el = ref.current; if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(() => { const x = Math.round(el.clientWidth); if (x > 0) setW(Math.max(280, Math.min(1100, x))); });
+    ro.observe(el); return () => ro.disconnect();
+  }, []);
+  return [w, ref];
+}
+function axis(max, fmt, H, W) {
+  const top = niceMax(max), ticks = [0, top / 2, top];
+  return { top, el: ticks.map((t) => { const y = H - PB - ((H - PB - PT) * t) / top; return (<g key={t}><line x1={PL} x2={W - PR} y1={y} y2={y} className="grid" /><text x={PL - 6} y={y + 4} textAnchor="end" className="tick">{fmt(t)}</text></g>); }) };
+}
+const xLabelsEvery = (n, W = 720) => Math.max(1, Math.ceil(n / Math.max(3, Math.floor(W / 90))));
+/** Stacked bars: `rows` oldest first, [{ label, values: { key: n } }]; `series` [{ key, label, color }]. */
+export function StackedBars({ rows, series, fmt = (n) => Math.round(n).toLocaleString('en-US'), tipFmt = null, name, H = 210 }) {
+  const tf = tipFmt || fmt;
+  const [tip, setTip] = useState(null);
+  const [W, ref] = useWidth();
+  const total = (r) => series.reduce((t, s) => t + (r.values[s.key] || 0), 0);
+  const { top, el } = axis(Math.max(0, ...rows.map(total)), fmt, H, W);
+  const col = (W - PL - PR) / Math.max(1, rows.length), bw = Math.max(3, Math.min(34, col * 0.68)), every = xLabelsEvery(rows.length, W);
+  const yOf = (v) => H - PB - ((H - PB - PT) * v) / top;
+  return (<div className="chart" ref={ref} onMouseLeave={() => setTip(null)}>
+    <Legend series={series} />
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={name}>
+      {el}
+      {rows.map((r, i) => {
+        const x = PL + i * col + (col - bw) / 2; let base = 0;
+        const shown = series.filter((s) => (r.values[s.key] || 0) > 0);
+        return (<g key={r.label}>
+          {shown.map((s, j) => {
+            const v = r.values[s.key], y0 = yOf(base), y1 = yOf(base + v); base += v;
+            const h = Math.max(1, y0 - y1 - (j ? 2 : 0));
+            return j === shown.length - 1 ? <path key={s.key} d={topRounded(x, y0 - (j ? 2 : 0) - h, bw, h, 4)} fill={s.color} /> : <rect key={s.key} x={x} y={y0 - (j ? 2 : 0) - h} width={bw} height={h} fill={s.color} />;
+          })}
+          {i % every === 0 ? <text x={x + bw / 2} y={H - 6} textAnchor="middle" className="tick">{r.short || r.label}</text> : null}
+          <rect x={PL + i * col} y={PT} width={col} height={H - PT - PB} fill="transparent"
+            onMouseMove={() => setTip({ left: ((PL + i * col + col / 2) / W) * 100, top: (yOf(total(r)) / H) * 100,
+              lines: [r.label, ...series.filter((s) => r.values[s.key]).map((s) => `${s.label}: ${tf(r.values[s.key])}`), ...(shown.length > 1 ? [`All: ${tf(total(r))}`] : [])] })} />
+        </g>);
+      })}
+      <line x1={PL} x2={W - PR} y1={H - PB} y2={H - PB} className="base" />
+    </svg>
+    <Tip tip={tip} />
+  </div>);
+}
+/** One line over time: `points` oldest first, [{ label, value }]. */
+export function LineChart({ points, color, fmt, name, H = 210 }) {
+  const [tip, setTip] = useState(null);
+  const [W, ref] = useWidth();
+  const { top, el } = axis(Math.max(0, ...points.map((p) => p.value)), fmt, H, W);
+  const step = (W - PL - PR) / Math.max(1, points.length - 1), every = xLabelsEvery(points.length, W);
+  const xOf = (i) => (points.length === 1 ? PL + (W - PL - PR) / 2 : PL + i * step), yOf = (v) => H - PB - ((H - PB - PT) * v) / top;
+  const d = points.map((p, i) => `${i ? 'L' : 'M'}${xOf(i)},${yOf(p.value)}`).join('');
+  const at = tip ? tip.i : null;
+  return (<div className="chart" ref={ref} onMouseLeave={() => setTip(null)}>
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={name}>
+      {el}
+      {points.length ? <path d={`${d}L${xOf(points.length - 1)},${H - PB}L${xOf(0)},${H - PB}Z`} fill={color} opacity="0.14" /> : null}
+      <path d={d} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" />
+      {points.map((p, i) => (i % every === 0 ? <text key={p.label} x={xOf(i)} y={H - 6} textAnchor="middle" className="tick">{p.short || p.label}</text> : null))}
+      {at !== null ? <><line x1={xOf(at)} x2={xOf(at)} y1={PT} y2={H - PB} className="cross" /><circle cx={xOf(at)} cy={yOf(points[at].value)} r="4.5" fill={color} stroke="#1a1218" strokeWidth="2" /></> : null}
+      {points.map((p, i) => <rect key={'h' + p.label} x={xOf(i) - step / 2} y={PT} width={Math.max(step, 6)} height={H - PT - PB} fill="transparent"
+        onMouseMove={() => setTip({ i, left: (xOf(i) / W) * 100, top: (yOf(p.value) / H) * 100, lines: [p.label, ...(p.lines || [fmt(p.value)])] })} />)}
+      <line x1={PL} x2={W - PR} y1={H - PB} y2={H - PB} className="base" />
+    </svg>
+    <Tip tip={tip} />
+  </div>);
+}
+const shortDay = (d) => d.slice(5);
+const satOf = (msat) => Number(BigInt(msat || 0) / 1000n);
+const satFmt = (n) => (n >= 1e6 ? (n / 1e8).toFixed(3).replace(/0+$/, '').replace(/\.$/, '') + ' BTC' : n >= 10000 ? Math.round(n / 1000) + 'k' : Math.round(n).toLocaleString('en-US'));
 
 // PLAYED ROUNDS (kanban #1090, the owner 2026-11-03: "Played rounds mit Tages / Wochen / Monats Anzeige", "Auch rueckwirkend seit 1.11",
 // "Wieviel Runden insgesamt und pro Spiel, tu da meine Runden RAUS NEHMEN"): /api/played - real players' rounds by default; the owner's (the
@@ -365,6 +470,8 @@ export function Played({ data = null }) {
         <label style={{ marginLeft: 12 }}><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> include the owner's and our bots' rounds</label>
       </p>
       <p><b>{total.toLocaleString('en-US')}</b> {all ? 'rounds in all' : 'rounds with real players'} since {p.from}</p>
+      {rows.length ? <StackedBars name={'Played rounds per ' + by} series={games.map((g, i) => ({ key: g, label: gameName(g), color: gameColor(g, i) }))}
+        rows={rows.slice().reverse().map((r) => ({ label: (by === 'week' ? 'Week from ' : '') + r.period, short: by === 'month' ? r.period : shortDay(r.period), values: Object.fromEntries(games.map((g) => [g, n(r.games[g])])) }))} /> : null}
       {rows.length ? (<table className="rows"><thead><tr><th>{label}</th><th>All games</th>{games.map((g) => <th key={g}>{gameName(g)}</th>)}<th>Players</th><th className="dim">Left out</th></tr></thead><tbody>
         {rows.map((r) => <tr key={r.period}><td className="nw">{r.period}</td><td><b>{n(r.all).toLocaleString('en-US')}</b></td>
           {games.map((g) => <td key={g}>{n(r.games[g]).toLocaleString('en-US')}</td>)}
