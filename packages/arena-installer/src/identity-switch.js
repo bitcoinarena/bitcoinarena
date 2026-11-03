@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
-import { buildBond, lockOf, censusKeyOfNode, EMERGENCY_IN_ADVERT } from './bond.js';
+import { buildBond, lockOf, censusKeyOfNode, bondNetworkOf, EMERGENCY_IN_ADVERT } from './bond.js';
 import { emergencyOf, nodeKeyOf } from './seed.js';
 import { nodeState, bondsOf } from './state.js';
 import { fromHex, toHex, sha256 } from '../../arena-protocol/src/hash.js';
@@ -44,7 +44,7 @@ export async function switchToSeedKey({ home, release, post = false, chainKit = 
     const censusKey = await censusKeyOfNode(s);
     let built;
     try {
-      built = buildBond({ hostedGames: s.hostedGames, wallet: w, nodeSecret: next, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`,
+      built = buildBond({ network: bondNetworkOf(s), hostedGames: s.hostedGames, wallet: w, nodeSecret: next, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`,
         roles: s.roles, endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, nowMs, censusKey,
         emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
     } catch (e) { return { ok: false, why: `${e.message} - the new bond needs ${bondSats} sat plus fees in the node's wallet (${w.address})` }; }

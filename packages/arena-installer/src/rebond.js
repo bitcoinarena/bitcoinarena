@@ -7,7 +7,7 @@
 // 402 sat, 302 vB at 768 sat), never broadcast.
 import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
-import { buildBond, lockOf, censusKeyOfNode, BOND_MIN_SATS } from './bond.js';
+import { buildBond, lockOf, censusKeyOfNode, bondNetworkOf, BOND_MIN_SATS } from './bond.js';
 import { bondsOf } from './state.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
 
@@ -31,7 +31,7 @@ export async function rebond({ state, bondSats, post = false, chainKit = { coins
   const censusKey = await censusKeyOfNode(s);
   let built;
   try {
-    built = buildBond({ hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats: want, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
+    built = buildBond({ network: bondNetworkOf(s), hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats: want, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
       endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate, guardianEndpoint, censusKey,
       oldBond: { txid: old.txid, vout: old.vout || 0, sats: old.sats, maturity: old.maturity, ...(old.censusKey ? { censusKey: old.censusKey } : {}) } });
   } catch (e) { return { ok: false, why: e.message }; }

@@ -9254,7 +9254,7 @@
  {
   "method": "POST",
   "path": "/census-sign/commit",
-  "params": "body: JSON { evidence, contract, presig, tx, prevouts }",
+  "params": "body: JSON { proof, presig, tx, prevouts }",
   "auth": "none: a holder checks everything itself",
   "returns": "200 { ok, session, node, xs, hiding, binding } or { ok: false, why }; 400",
   "purpose": "A filer's request that a census key holder sign a slash start. The holder replays the proof and holds the transaction to its own census and hold outputs before it commits a nonce.",

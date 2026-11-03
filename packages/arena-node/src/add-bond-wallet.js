@@ -16,6 +16,7 @@ import { advertInTransaction } from '../../arena-protocol/src/census.js';
 import { recognizeBond } from '../../arena-protocol/src/chain.js';
 import { SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.js';
 import { BOND_TEMPLATE_V2, BOND_TEMPLATE_V3 } from '../../arena-protocol/src/bond-script.js';
+import { NO_CENSUS_KEY_READ, readsTemplate3Only } from '../../arena-protocol/src/genesis.js';
 import { bondSetFor } from './curve.js';
 
 const CARRIER_FEE = 3000n;
@@ -42,6 +43,8 @@ export function bondCliFrom(env = process.env) {
  * such a bond counts only with that presig. The funding transaction pays both carriers, so the two are one step.
  */
 export async function addBondFromWallet({ cli, wallet, network = 'testnet4', secret, pubkey, addSats, post = false, blockMs = 600000, now = Date.now(), censusKey = null }) {
+  // A NETWORK THAT READS TEMPLATE 3 ONLY NEVER FALLS BACK (5A.3B, kanban #1065): no key read, no bond
+  if (!censusKey && readsTemplate3Only(network)) return { ok: false, why: NO_CENSUS_KEY_READ };
   let add; try { add = BigInt(String(addSats)); } catch { return { ok: false, why: 'name the sat to add as a whole number' }; }
   if (add < MIN_ADD) return { ok: false, why: `add at least ${MIN_ADD} sat` };
   const { regtest } = await import('../tools/regtest-bond.mjs');

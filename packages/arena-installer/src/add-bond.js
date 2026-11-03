@@ -8,7 +8,7 @@
 // maturity); with --yes / the confirm it is posted and recorded in the state's `bonds`.
 import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
-import { buildBond, lockOf, censusKeyOfNode, MARKER_SATS, EMERGENCY_IN_ADVERT } from './bond.js';
+import { buildBond, lockOf, censusKeyOfNode, bondNetworkOf, MARKER_SATS, EMERGENCY_IN_ADVERT } from './bond.js';
 import { bondsOf } from './state.js';
 import { emergencyOf } from './seed.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
@@ -38,7 +38,7 @@ export async function addBond({ state, addSats, post = false, chainKit = { coins
   const named = censusKey === undefined ? await censusKeyOfNode(s) : censusKey;
   let built;
   try {
-    built = buildBond({ hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats: add, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
+    built = buildBond({ network: bondNetworkOf(s), hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats: add, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
       endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate, guardianEndpoint, nowMs, guardianOf, censusKey: named,
       emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
   } catch (e) { return { ok: false, why: e.message }; }
@@ -125,7 +125,7 @@ export async function firstBond({ state, post = false, chainKit = { coinsOf, bro
   try { nodeSecret = new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
   let built;
   try {
-    built = buildBond({ hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
+    built = buildBond({ network: bondNetworkOf(s), hostedGames: s.hostedGames, wallet: w, nodeSecret, coins, tip, bondSats, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
       endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate, guardianEndpoint, nowMs, censusKey: censusKey === undefined ? await censusKeyOfNode(s) : censusKey,
       emergencyPubkey: EMERGENCY_IN_ADVERT ? fromHex(emergencyOf(seed).pubkey) : null });
   } catch (e) { return { ok: false, why: e.message, plan }; }
