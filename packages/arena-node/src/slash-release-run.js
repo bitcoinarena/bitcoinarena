@@ -28,6 +28,8 @@ import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { fromHex, taggedHash, toHex } from '../../arena-protocol/src/hash.js';
 import { gatherCensusSignature } from './census-sign.js';
 import { createSlashEscrow } from './slash-escrow-run.js';
+import { createLiquidationEscrow } from './liquidation-escrow-run.js';
+import { roundlessTableInputs } from '../../arena-protocol/src/liquidation-escrow.js';
 
 const verifySig = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const display = (internalHex) => toHex(fromHex(internalHex).reverse());
@@ -54,7 +56,7 @@ export const fallbackRank = (proofId, keys, me) => [...keys].sort((a, b) => (toH
  */
 export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPoint, tipHeight, entriesAtTip, rawTx, unspent, fetchProof, judge, panelsOf, seatsOf = () => [], lossesFor,
   federations = async () => [], retired = [], portFor = async () => null, scriptOf, reserveKeyOf = () => null, keepReserveRow = () => {}, urlOf = () => null, heldKey = () => null,
-  thresholdOf = () => null, holdersOf = async () => [], signer = () => null, send, stepMs = 600000, fetchFn = fetch, now = Date.now, log = () => {},
+  thresholdOf = () => null, holdersOf = async () => [], signer = () => null, send, claimsOf = async () => null, stepMs = 600000, fetchFn = fetch, now = Date.now, log = () => {},
   txOut = async (txid, vout) => ((await unspent(txid, vout)) ? { confirmations: 1 } : null), federationsAt = async () => federations(), carrierMarginMsat = carrierMarginOf(networkId) }) {
   const me = toHex(key);
   db.exec(`CREATE TABLE IF NOT EXISTS slash_holds (start TEXT PRIMARY KEY, height INTEGER NOT NULL, round_id TEXT, proof_id TEXT, node TEXT NOT NULL, bond TEXT NOT NULL, seen_ms INTEGER NOT NULL);
@@ -100,13 +102,14 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
       const bytes = await fetchProof(info.proofId);
       if (bytes && same(fraudProofHash(bytes), info.proofId)) {
         const read = judge.read(bytes);
-        if (read.ok && read.roundId) Object.assign(info, { bytes, read });
+        // A ROUND'S PROOF, OR ONE WITH NO ROUND: a theft's or an abandonment's (kanban #1093 part 2, ruling #1111)
+        if (read.ok && (read.roundId || read.kind === 'theft' || read.kind === 'abandoned')) Object.assign(info, { bytes, read });
       }
     }
     starts.set(start, info);
     db.prepare('INSERT OR IGNORE INTO slash_holds (start, height, round_id, proof_id, node, bond, seen_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(start, e.hold.height, info.read ? toHex(info.read.roundId) : null, info.proofId ? toHex(info.proofId) : null, toHex(e.pubkey), `${toHex(e.txid)}:${e.vout}`, now());
-    if (info.read && !db.prepare('SELECT round_id FROM slash_holds WHERE start = ?').get(start).round_id) db.prepare('UPDATE slash_holds SET round_id = ?, proof_id = ? WHERE start = ?').run(toHex(info.read.roundId), toHex(info.proofId), start);
+      .run(start, e.hold.height, info.read && info.read.roundId ? toHex(info.read.roundId) : null, info.proofId ? toHex(info.proofId) : null, toHex(e.pubkey), `${toHex(e.txid)}:${e.vout}`, now());
+    if (info.read && info.read.roundId && !db.prepare('SELECT round_id FROM slash_holds WHERE start = ?').get(start).round_id) db.prepare('UPDATE slash_holds SET round_id = ?, proof_id = ? WHERE start = ?').run(toHex(info.read.roundId), toHex(info.proofId), start);
     db.prepare('UPDATE slash_holds SET census_key = ?, rate = ?, hold_value = ?, hold_script = ?, slash_height = ? WHERE start = ?')
       .run(toHex(e.advert.censusKey), Number(info.rate), Number(tx.outputs[0].value), tx.outputs[0].script, info.slashHeight, start);
     return info;
@@ -115,7 +118,8 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
   /** The hold the start paid: the round's, with its panels, or the bond's own, with none. Null for a hold this seat cannot rebuild. */
   function holdOf(e, info) {
     const base = { ownerKey: e.advert.ownerPubkey, censusKey: e.advert.censusKey, bondMaturity: e.advert.bondMaturityHeight, ...clocks };
-    const panels = panelsOf(info.read.contract, info.read.roundId);
+    // A SLASH WITH NO ROUND starts on the bonding presig, whose hold has no release leaf (#1053): only the bare hold
+    const panels = info.read.roundId ? panelsOf(info.read.contract, info.read.roundId) : { ok: false };
     if (panels.ok && panels.panelA.length) {
       const h = holdOutputKey({ ...base, panelA: panels.panelA, panelB: panels.panelB }, { tweakPoint });
       if (h.ok && same(h.script, info.holdScript)) return { hold: h, panels };
@@ -258,8 +262,21 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
     return { ok: true, txid: sent, tableId: toHex(b.tableId), signers: { a, b: z, t }, feeSats: b.feeSats, vsize: b.vsize };
   }
 
+  /**
+   * A SLASH WITH NO ROUND (kanban #1093 part 2, ruling #1111): the same PayoutTable, round_id 32 zero bytes, no entries, its outputs the filer and ONE census-key escrow output per bond
+   * (slashEscrowOutput with no panels), the whole hold less the fee. That escrow pays the liquidation's claims (liquidation-escrow-run.js).
+   */
+  function buildRoundless({ e, info, hold }) {
+    const escrow = slashEscrowOutput({ censusKey: e.advert.censusKey, fallbackBlocks: clocks.fallbackBlocks }, { tweakPoint });
+    const outpoint = { txid: fromHex(e.hold.txid), vout: 0, value: BigInt(e.bondSats) };
+    const built = slashHoldSpend({ path: 'fallback', hold, outpoint, panels: null, proofId: info.proofId, slashHeight: info.slashHeight, rate: info.rate, clocks,
+      table: roundlessTableInputs({ networkId, bond: { txid: e.txid, vout: e.vout }, filer: info.filer, escrowScript: escrow.script, marginMsat: carrierMarginMsat }) });
+    return built.ok ? { ...built, carriers: [], outpoint } : built;
+  }
+
   // ---- THE FALLBACK: the census key, with its holders as carriers ----
   async function fallbackBuild({ e, info, hold, verdict, entries }) {
+    if (!info.read.roundId) return buildRoundless({ e, info, hold });
     const keyHex = toHex(e.advert.censusKey);
     const holders = await holdersOf(keyHex, info.height);
     if (!holders.length) return { ok: false, why: `no holders of key ${keyHex.slice(0, 16)} are read here`, wait: true };
@@ -468,6 +485,7 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
       }
     }
     done.push(...await escrow.carry());
+    done.push(...await liquidation.carry().catch((x) => { log(`[liquidation] carrying waits: ${x.message}`); return []; }));
     return done;
   }
 
@@ -475,6 +493,9 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
   let passing = false;
   let peers = [];                                 // the census' node keys at the last pass: whom an earlier table is asked of
   // WHAT A SLASH LEFT IN ESCROW (RULED 2026-11-03, kanban #1085): slash-escrow-run.js, on this run's reads
+  // WHAT A SLASH WITH NO ROUND LEFT IN ESCROW pays the liquidation's claims (kanban #1093 part 2, ruling #1111): liquidation-escrow-run.js, on this run's reads
+  const liquidation = createLiquidationEscrow({ secret, me, networkId, clocks, db, tweakPoint, tipHeight, entriesAtTip, txOut, fetchProof, judge, holdersOf, heldKey, thresholdOf, signer, urlOf,
+    fetchFn, send, portFor, scriptOf, federationsAt, reserveKeyOf, claimsOf, now, stepMs, log, confirmedOf, fallbackRank, getJson, marginMsat: carrierMarginMsat });
   const escrow = createSlashEscrow({ secret, me, clocks, db, tweakPoint, tipHeight, entriesAtTip, txOut, fetchProof, judge, panelsOf, seatsOf, holdersOf, heldKey, thresholdOf, signer, urlOf,
     fetchFn, send, portFor, scriptOf, federationsAt, retired, now, stepMs, log, confirmedOf, peers: () => peers, fallbackRank, getJson, payOn });
   async function pass() {
@@ -510,6 +531,7 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
         }
       }
       done.push(...await escrow.pass().catch((x) => { log(`[slash] the escrow pass did not run: ${x.message}`); return []; }));
+      done.push(...await liquidation.pass().catch((x) => { log(`[liquidation] the escrow pass did not run: ${x.message}`); return []; }));
     } finally { passing = false; }
     return done;
   }
@@ -527,13 +549,17 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
     out.carried = db.prepare('SELECT path, out_index, state FROM slash_carried WHERE start = ?').all(start).map((r) => ({ path: r.path, index: r.out_index, ...JSON.parse(r.state) }));
     const esc = escrow.served(start);
     if (esc) out.escrow = esc;
+    const liq = liquidation.served(start);
+    if (liq) out.liquidation = liq;
     return out;
   }
   const tableById = (id) => { const r = db.prepare('SELECT bytes FROM slash_tables WHERE table_id = ?').get(String(id).toLowerCase()); return r ? new Uint8Array(r.bytes) : null; };
   const list = () => db.prepare('SELECT start, height, round_id, proof_id, node, bond FROM slash_holds ORDER BY height DESC LIMIT 64').all().map((r) => ({ ...r, ...served(r.start) }));
 
   /** A census key ask that is not a start: a fallback of a hold, or an escrow spend (kind `escrow`). */
-  const checkOther = (request) => (request && request.kind === 'escrow' ? escrow.checkEscrow(request) : checkFallback(request));
-  return { pass, carry, checkFallback, checkEscrow: escrow.checkEscrow, checkOther, served, tableById, list, ownPegIn, confirmedOf,
-    takeCarrierPegIn: escrow.takeCarrierPegIn, servedCarriers: escrow.servedCarriers };
+  const checkOther = (request) => (request && request.kind === 'escrow' ? escrow.checkEscrow(request) : request && request.kind === 'liquidation-escrow' ? liquidation.checkLiquidationEscrow(request) : checkFallback(request));
+  // A CarrierPegIn names a table: a round's escrow's, or a roundless one's (the liquidation's)
+  const takeCarrierPegIn = async (tableId, rec) => { const r = await escrow.takeCarrierPegIn(tableId, rec); return r.ok || r.status !== 503 ? r : liquidation.takeCarrierPegIn(tableId, rec); };
+  const servedCarriers = (tableId) => { const a = escrow.servedCarriers(tableId); return a.carriers.length ? a : liquidation.servedCarriers(tableId); };
+  return { pass, carry, checkFallback, checkEscrow: escrow.checkEscrow, checkOther, served, tableById, list, ownPegIn, confirmedOf, takeCarrierPegIn, servedCarriers, liquidation };
 }

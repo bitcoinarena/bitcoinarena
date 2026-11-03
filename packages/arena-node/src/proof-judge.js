@@ -24,7 +24,7 @@ export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, repl
   /** Everything that needs no chain: the bytes read as a proof, and the contract in them is the round the proof names. */
   function read(bytes) {
     if (isAbandonedProof(bytes)) {
-      try { const p = decodeAbandonedProof(bytes); return { ok: true, kind: 'abandoned', roundId: null, contract: null, nodePubkey: p.nodePubkey, bond: { txid: p.txid, vout: p.vout }, floorHeight: splitSignedRecord(p.record).record.height }; }
+      try { const p = decodeAbandonedProof(bytes); return { ok: true, kind: 'abandoned', roundId: null, contract: null, federationId: p.federationId, nodePubkey: p.nodePubkey, bond: { txid: p.txid, vout: p.vout }, floorHeight: splitSignedRecord(p.record).record.height }; }
       catch (e) { return { ok: false, why: `those bytes are no proof: ${e.message}` }; }
     }
     // A THEFT (kanban #1093 part 2): no round either; the guardian's bond output, and the record's height is the floor a start's slash height stands on

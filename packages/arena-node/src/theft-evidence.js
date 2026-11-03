@@ -4,7 +4,7 @@
 //
 // The proof carries every signed session it stands on, as consensus bytes, and the federation's client config they verify against (theft-slash.js). Two tool modes do the Fedimint side,
 // with the stock client crates and no fork:
-//   --mode session-export --data-dir D --from N --to M --out F   writes F, one JSON object { mode: 'session-export', federation, config (hex, the client config's consensus bytes),
+//   --mode session-export --data-dir D --from N --to M --out F   writes F, one JSON object { federationId, config (hex, the client config's consensus bytes),
 //                                                                firstSession, sessions: [hex, each SignedSessionOutcome's consensus bytes, verified as session-audit verifies it] }
 //   --mode theft-verify  (stdin: theft-slash.js theftVerifyInput)   answers the line THE SESSION VERIFIER names in theft-slash.js; reads no guardian and needs no client directory
 // A tool without a mode answers no such line: a theft's proof is then not built (null) and not judged (undefined), never false.
@@ -56,7 +56,7 @@ export function theftTools({ bin, dirOf = () => null, spawn = spawnDefault, log 
     const got = await runTool(['--mode', 'session-export', '--data-dir', dir, '--from', '0', '--to', String(alarm.session), '--out', file]);
     let ex = null;
     try { ex = JSON.parse(readFileSync(file, 'utf8')); } catch { ex = null; } finally { try { unlinkSync(file); } catch { /* none written */ } }
-    if (!ex || ex.mode !== 'session-export' || !Array.isArray(ex.sessions) || ex.firstSession !== 0 || ex.sessions.length !== alarm.session + 1) {
+    if (!ex || !Array.isArray(ex.sessions) || typeof ex.config !== 'string' || ex.firstSession !== 0 || ex.sessions.length !== alarm.session + 1) {
       once(`export:${fid}`, `[theft] ${String(fid).slice(0, 16)}: the sessions were not exported: ${(got && got.error) || 'no session-export file'}`);
       return null;
     }

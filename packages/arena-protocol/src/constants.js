@@ -623,6 +623,9 @@ export const TAG = {
   slashPayoutTable: 'ARENA/v1/SlashPayoutTable',
   slashEscrowOutputs: 'ARENA/v1/SlashEscrowOutputs',
   carrierEscrowPegIn: 'ARENA/v1/CarrierEscrowPegIn',
+  // A LIQUIDATION ESCROW SPEND (kanban #1093 part 2, ruling #1111): the accepted claims it pays (claims_id), and its own outputs[] beside them
+  liquidationClaims: 'ARENA/v1/LiquidationClaims',
+  liquidationEscrowOutputs: 'ARENA/v1/LiquidationEscrowOutputs',
   censusKeyRecord: 'ARENA/v1/CensusKeyRecord',
   censusKeyShare: 'ARENA/v1/CensusKeyShare',
   reshareReady: 'ARENA/v1/ReshareReady',

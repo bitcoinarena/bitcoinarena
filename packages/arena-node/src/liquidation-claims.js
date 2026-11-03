@@ -114,6 +114,8 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
     const byKey = new Map();
     for (const p of got.paid) byKey.set(payTo.get(p.nonce), (byKey.get(payTo.get(p.nonce)) || 0n) + p.msat);
     return { ok: true, federation: fid, escrowMsat: String(escrowMsat), notes: mine.length, proRata: got.proRata, rate: got.rate, short: got.short,
+      // THE ONE LEDGER (kanban #1093 part 2, ruling #1111): every claim accepted, at face, so a census-key liquidation escrow pays what this escrow's paidNotes leave
+      accepted: claimed(fid),
       claimWindowOpens: liq.liquidatesAt,
       paidNotes: got.paid.map((p) => ({ nonce: p.nonce, msat: String(p.msat), late: p.late, payoutPk: payTo.get(p.nonce) })),
       claimWindowCloses: liq.claimWindowCloses, lateClaimsUntil: liq.lateClaimsUntil,
