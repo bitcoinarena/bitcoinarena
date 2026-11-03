@@ -307,6 +307,25 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
       const j = await run(bin, ['--mode', 'balance', '--data-dir', dataDir], timeoutMs);
       return BigInt(j.msat);
     },
+    /**
+     * A CARRIER OF A SLASH (spec 5A.3B, kanban #972): a peg-in address of this client, the release or the fallback paying into it; the deposit claimed once the federation takes it;
+     * and payout contracts, each to a key for an amount, as the arbitration set's payOutSlash pays (arbiter.js). `payouts` [{ key (33 bytes hex), msat }].
+     */
+    async peginAddress() {
+      const j = await run(bin, ['--mode', 'pegin-address', '--data-dir', dataDir], timeoutMs);
+      if (!j.address) throw new Error(`no peg-in address: ${j.error || JSON.stringify(j).slice(0, 160)}`);
+      return String(j.address);
+    },
+    async peginClaim(address, waitS = 840) {
+      const j = await run(bin, ['--mode', 'pegin-claim', '--data-dir', dataDir, '--address', String(address), '--timeout-s', String(waitS)], (waitS + 60) * 1000);
+      if (!(j.balance_after_msat > j.balance_before_msat)) throw new Error(`the peg-in is not claimed yet: ${j.error || JSON.stringify(j).slice(0, 160)}`);
+      return { claimedMsat: BigInt(j.balance_after_msat) - BigInt(j.balance_before_msat) };
+    },
+    async payouts(list) {
+      const j = await run(bin, ['--mode', 'pay', '--data-dir', dataDir, '--payouts', list.map((p) => `${p.key}:${p.msat}`).join(',')], timeoutMs * 5);
+      if (!j.txid) throw new Error(`no payout transaction: ${j.error || JSON.stringify(j).slice(0, 160)}`);
+      return { txid: String(j.txid), payouts: (j.payouts || []).map((y) => ({ refundPk: String(y.refund_pk).toLowerCase(), outIdx: y.out_idx, contractId: y.contract_id })) };
+    },
     /** E-cash reissued into the seat's client here: { state: 'Success' | 'Rejected' | 'AlreadyReceived', msat } (kanban #614). */
     async ecashReceive(ecash) {
       const j = await run(bin, ['--mode', 'ecash-receive', '--data-dir', dataDir, '--ecash', String(ecash)], timeoutMs);

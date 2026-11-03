@@ -20,7 +20,7 @@ import { BOND_TEMPLATE_V3 } from '../../arena-protocol/src/bond-script.js';
 import { feldmanGroup } from '../src/curve.js';
 import { CensusDkg } from '../src/dkg.js';
 import { randomBytes } from 'node:crypto';
-import { CENSUS_KEY_BOND_MIN, CENSUS_KEY_FIRST_HEIGHT, censusKeyFirstHeight } from '../../arena-protocol/src/genesis.js';
+import { CENSUS_KEY_BOND_MIN, CENSUS_KEY_FIRST_HEIGHT, TESTNET4_CENSUS_KEY_FIRST_HEIGHT_PROPOSED, censusKeyFirstHeight } from '../../arena-protocol/src/genesis.js';
 import { decodeCensusDeal, joinSignedCensusDeal, splitSignedCensusDeal, censusDealId, encodeCensusDeal, censusRunId, founderRun } from '../../arena-protocol/src/census-dkg.js';
 import { BOND_MATURITY_OFFSET } from '../../arena-protocol/src/bond-script.js';
 import { clocksFor } from '../../arena-protocol/src/federation-slash.js';
@@ -281,8 +281,10 @@ test('no run where none is due: before the first height, without a named newest 
   await small.pass(1);
   assert.equal(await small.nodes[2].run.pass().then((p) => p.idle), 'this node holds no share of this run');
 
-  assert.equal(CENSUS_KEY_FIRST_HEIGHT.testnet4, null, 'testnet4 stays off until a release names it');
-  assert.equal(censusKeyFirstHeight('testnet4'), null);
+  // NAMED IN 2.0 (decision #1083): regtest from its first block, testnet4 at an epoch's first block the owner confirms before deploy
+  assert.equal(CENSUS_KEY_FIRST_HEIGHT.regtest, 0, 'a private chain runs the key from its first epoch');
+  assert.equal(censusKeyFirstHeight('testnet4'), TESTNET4_CENSUS_KEY_FIRST_HEIGHT_PROPOSED);
+  assert.equal(TESTNET4_CENSUS_KEY_FIRST_HEIGHT_PROPOSED % 144, 0, 'testnet4\'s first height is an epoch\'s first block');
   assert.equal(censusKeyFirstHeight('mainnet'), null, 'mainnet reads its genesis');
   assert.equal(censusKeyFirstHeight('mainnet', { genesisHeight: 900000 }), 900000, 'and scans from genesis_height, not from 0');
   assert.equal(censusKeyFirstHeight('nowhere'), null);

@@ -175,7 +175,8 @@ import { bondCliFrom } from './add-bond-wallet.js';
 import { createHoldWatch, holdsOfOwnBond } from './hold-return.js';
 import { createSlashStarter } from './slash-start-run.js';
 import { createProofJudge } from './proof-judge.js';
-import { coreForRound } from './arbiter.js';
+import { coreForRound, settledEntries, slashLosses } from './arbiter.js';
+import { createSlashRelease } from './slash-release-run.js';
 import { slashHoldsOnDoubleSign } from '../../arena-protocol/src/slash.js';
 import { bondPresigDigest, holdClocksOf } from '../../arena-protocol/src/slash-presig.js';
 import { SOURCE_ENTRIES } from '../../arena-protocol/src/market-sources.js';
@@ -4179,6 +4180,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE KEY A NEW BOND NAMES (5A.3B: "A bond names the newest standing key when it is made"): on a network with a census key a new bond is template 3, on any other it stays template 2
   const newestCensusKey = () => { const keys = censusKey ? censusKey.scan.standing() : []; return keys.length ? keys[keys.length - 1].publicKey : null; };
   // A STARTED BOND OF THIS NODE (5A.3B): what it reads of its hold output, and its way out
+  let slashRelease = null;                       // slash-release-run.js, made below: a fallback a holder is asked to sign goes to it
   const holdWatch = censusKey && censusKey.rawTxAt ? createHoldWatch({ clocks: holdClocksOf(censusKey.networkId), nodeSecret: round.identity.secret, tipHeight: censusKey.tipHeight, rawTxAt: censusKey.rawTxAt,
     broadcast: (hex) => chainSend(hex), log: (l) => console.log(l), fetchProof: (id) => proofBytesFetched(id), proofChecks: async (bytes, at) => (await judgeProofBytes(bytes, at)).verdict, returnScript: () => ownReturnScript(), holdsFor: (b) => holdsOfOwnBond({ nodeKey: round.pubkey, censusKey: fromHex(b.censusKey), bondMaturity: b.maturity, clocks: holdClocksOf(censusKey.networkId), tweakPoint,
       panels: seating ? seating.ownHoldPanels({ txid: toHex(fromHex(b.txid).reverse()), vout: b.vout }) : [] }) }) : null;
@@ -4203,6 +4205,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (ownCensus) { const all = ownBondsOf(ownCensus.entries, toHex(round.pubkey)); if (all) await holdWatch.pass(all.outputs); }
       await censusKey.scan.readDead().catch((e) => console.error(`[census-key] the keys under their threshold were not read: ${e.message}`));
       if (slashStarter) await slashStarter.pass();
+      if (slashRelease) await slashRelease.pass().catch((e) => console.error(`[slash] the release pass did not run: ${e.message}`));
     } finally { ownPassing = false; }
   };
   // A PROOF FETCHED BY ITS HASH, from this seat's relay or any seat of the census: the bytes that hash to it are the proof, so the first that do are all there is to read (kanban #1065)
@@ -4268,7 +4271,85 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const slashStarter = holdWatch && censusKey.feeCoin ? createSlashStarter({ key: round.pubkey, network: censusKey.network, db: round.db, store: new CensusKeyStore(round.db), thresholdOf: censusKey.scan.thresholdOf, tipHeight: censusKey.tipHeight, entriesAtTip: entriesAtTipForStart,
     heldProofs: async () => [...round.allSlashProofs(), ...round.allRerunSlashProofs(), ...round.auditSlashProofs(), ...round.doubleSlashProofs(), ...round.tableSlashProofs(), ...(await abandonedHeld())].flatMap((p) => { const bytes = round.relayGet(Buffer.from(p.proofId)); return bytes ? [{ proofId: p.proofId, bytes, seenMs: p.seenMs }] : []; }), bytesOf: (id) => round.relayGet(Buffer.from(id)), judge: judgeProofBytes, holdsFor: holdsForStart, feeCoin: censusKey.feeCoin, send: (hex) => chainSend(hex), urlsOf: () => censusUrls || [],
-    stepMs: Number(process.env.ARENA_SLASH_FILE_STEP_MS || 600000), log: (l) => console.log(l) }) : null;
+    stepMs: Number(process.env.ARENA_SLASH_FILE_STEP_MS || 600000), log: (l) => console.log(l),
+    checkOther: (request) => (slashRelease ? slashRelease.checkFallback(request) : { ok: false, why: 'this seat runs no release or fallback' }),
+    feeSecret: (proofId) => taggedHash('ARENA/v1/SlashFeeKey', Uint8Array.from([...round.identity.secret, ...proofId])) }) : null;
+  // A STARTED BOND IS RELEASED BY BOTH PANELS OR TAKEN BY THE FALLBACK, AND ITS CARRIERS PAY (5A.3B steps 4 and 5, kanban #972, decision #1083): slash-release-run.js. Everything a signer
+  // reads is its own: its census at the tip, the round's seats for how the round settled, the carriers' signed peg-ins, its own federation records for the reserves' load
+  const urlOfKey = new Map();
+  const slashEntriesAtTip = async () => {
+    const entries = await entriesAtTipForStart();
+    if (entries) for (const e of entries) if (e.advert && e.advert.endpoint) urlOfKey.set(toHex(e.pubkey), e.advert.endpoint.replace(/^ws/, 'http').replace(/\/+$/, ''));
+    return entries;
+  };
+  const roundSeatKeys = (contract, rid) => {
+    const keys = new Set();
+    for (const role of ['game', 'settlement']) { const chosen = roster.committeeFor(rid, role, { posted: contract }); if (chosen.ok) for (const c of chosen.drawn || chosen.committee) keys.add(toHex(c.pubkey || c)); }
+    return [...keys];
+  };
+  /** HOW THE ROUND SETTLED, read from every one of its seats that answers (GET /audit-run), each entry and signature checked by settledEntries: the union, so a seat can hold back and cannot add */
+  const settledRunOf = async (contract, rid) => {
+    const ridHex = toHex(rid), byEntry = new Map();
+    const take = (run) => { for (const e of (run && run.entries) || []) {
+      const had = byEntry.get(e.id) || { id: e.id, entry: e.entry, results: [], reruns: [], finals: [] };
+      for (const k of ['results', 'reruns', 'finals']) for (const x of e[k] || []) if (!had[k].includes(x)) had[k].push(x);
+      byEntry.set(e.id, had);
+    } };
+    await Promise.all(roundSeatKeys(contract, rid).map(async (k) => {
+      if (k === toHex(round.pubkey)) return;
+      const u = urlOfKey.get(k);
+      if (!u) return;
+      try { const r = await fetch(`${u}/audit-run?round=${ridHex}`, { signal: AbortSignal.timeout(15000) }); if (r.ok) take(await r.json()); } catch { /* a seat that does not answer adds nothing */ }
+    }));
+    if (round.get(Buffer.from(rid))) take({ entries: auditEntries(new Uint8Array(rid)).map((e) => ({ id: toHex(e.entryId), entry: toHex(new Uint8Array(round.entry(e.entryId))),
+      results: round.results(Buffer.from(rid), e.entryId).map((r) => toHex(new Uint8Array(r.bytes))), reruns: round.reruns(Buffer.from(rid), e.entryId).map((r) => toHex(new Uint8Array(r.bytes))),
+      finals: round.entryFinalSigs(Buffer.from(rid), e.entryId).map((r) => toHex(r)) })) });
+    return { round: ridHex, entries: [...byEntry.values()].sort((a, b) => (a.id < b.id ? -1 : 1)) };
+  };
+  const slashLossesFor = async ({ contract, rid, held }) => {
+    if (!held || !held.offence) return { ok: true, losses: new Map(), entryIds: new Map() };
+    const committee = roundSeatKeys(contract, rid).map(fromHex);
+    const run = await settledRunOf(contract, rid);
+    if (!run.entries.length) return { ok: false, why: 'no seat of that round answers how it settled' };
+    let entries; try { entries = settledEntries({ run, roundId: rid, contract, committee, finalAfterMs: windowsOf(contract).finalAfterMs }); } catch (e) { return { ok: false, why: e.message }; }
+    // AN AUDIT'S PROOF NAMES A RUN, NOT A SIGNED RESULT: that run's outcome and score come off the round's results for the entry, as the arbitration set reads them
+    let signed = held.signed;
+    if (held.offence === AUDIT_CONTRADICTED && held.proof && held.proof.entryId) {
+      const row = run.entries.find((e) => e.id === toHex(held.proof.entryId));
+      for (const r of (row && row.results) || []) { try { const b = decodePlayerResult(splitSignedResult(fromHex(r)).body); if (toHex(runIdOf(b)) === held.contradictedRunId) signed = { outcome: b.outcome, score: b.score }; } catch { /* not a result */ } }
+    }
+    const rule = payoutRuleOfRound(contract, hosted);
+    if (!rule.ok) return { ok: false, why: rule.why };
+    const owed = slashLosses({ verdict: held, entries, contract, roundId: rid, signed, payoutShares: rule.payoutShares });
+    if (!owed.ok) return owed;
+    return { ok: true, losses: owed.losses, entryIds: new Map(entries.map((e) => [toHex(e.playerPubkey), fromHex(e.entryId)])) };
+  };
+  const slashFederations = async () => {
+    const out = [];
+    for (const f of (fedRecords && typeof fedRecords.list === 'function' ? fedRecords.list() : [])) {
+      let k = null; try { k = await reserveKeyFor(f.federation); } catch { k = null; }
+      out.push({ federation: f.federation, status: String(f.status), reserveKey: k ? toHex(k) : null, reserveSats: String(f.reserveSats || 0), exposureCapSats: String(f.exposureCapSats || 0) });
+    }
+    return out;
+  };
+  /** A transaction off this seat's chain: the node's index or mempool first, else the blocks from `near` down, a few at most (no txindex needed) */
+  const slashRawTx = async (txid, near) => {
+    try { if (typeof chainRawTx === 'function') return await chainRawTx(txid); } catch { /* no index: the blocks */ }
+    for (let h = near; h >= Math.max(0, near - 12); h--) { try { return await censusKey.rawTxAt(h, txid); } catch { /* not in that block */ } }
+    return null;
+  };
+  slashRelease = holdWatch ? createSlashRelease({ key: round.pubkey, secret: round.identity.secret, networkId: censusKey.networkId, clocks: holdClocksOf(censusKey.networkId), db: round.db, tweakPoint,
+    tipHeight: censusKey.tipHeight, entriesAtTip: slashEntriesAtTip, rawTx: slashRawTx, unspent: async (txid, vout) => (typeof chainTxOut === 'function' ? !!(await chainTxOut(txid, vout).catch(() => null)) : false),
+    fetchProof: (id) => proofBytesFetched(id), judge: judgeProofBytes, panelsOf: (contract, rid) => roster.slashPanelsFor(rid, { posted: contract }), seatsOf: async (contract, rid) => roundSeatKeys(contract, rid),
+    lossesFor: slashLossesFor, federations: slashFederations, retired: String(process.env.ARENA_ARBITER_RETIRED || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean),
+    portFor: (fid) => portOfFederation(fromHex(fid)), scriptOf: (address) => addressScript(address, HRP_OF[censusKey.network] || 'tb'),
+    reserveKeyOf: (fid) => reserveKeyFor(fid), keepReserveRow: (row) => round.putDonationOutputs([row]), urlOf: (k) => urlOfKey.get(k) || null,
+    heldKey: (k) => new CensusKeyStore(round.db).held(k), thresholdOf: censusKey.scan.thresholdOf, holdersOf: (k, h) => censusKey.scan.holdersAt(k, h), signer: () => (slashStarter ? slashStarter.signer : null),
+    send: (hex) => chainSend(hex), stepMs: Number(process.env.ARENA_SLASH_FILE_STEP_MS || 600000), log: (l) => console.log(l) }) : null;
+  // THE CARRIERS ON THEIR OWN LOOP: a claim waits for the federation's own depth, minutes, and the pass above must not wait on it
+  let carrying = false;
+  const carryTimer = slashRelease ? setInterval(() => { if (shuttingDown || carrying) return; carrying = true; slashRelease.carry().catch((e) => console.error(`[slash] the carriers did not run: ${e.message}`)).finally(() => { carrying = false; }); }, 15000) : null;
+  if (carryTimer && carryTimer.unref) carryTimer.unref();
   const ownTimer = holdWatch ? setInterval(() => { if (!shuttingDown) ownPass().catch((e) => console.error(`[hold] the pass did not run: ${e.message}`)); }, Number(censusKey.everyMs) > 0 ? Number(censusKey.everyMs) : 10000) : null;
   if (ownTimer && ownTimer.unref) ownTimer.unref();
   /** Each started output of this node with what it reads of it, none where nothing was started. */
@@ -11527,6 +11608,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { await entriesAtTipForStart(); return json(res, 200, url.pathname.endsWith('commit') ? await slashStarter.takeCommit(body) : await slashStarter.takeShare(body)); }
         catch (e) { return json(res, 200, { ok: false, why: e.message }); }
       }
+      // A STARTED BOND'S RELEASE, FALLBACK AND CARRIERS (5A.3B, kanban #972, decision #1083): what this seat built for one start, its own signature on the release and the others it holds,
+      // and what it carried; every start it has read; a table by its id ("Any seat serves the table by its id"); and this node's peg-in as a carrier, signed by its node key
+      if (slashRelease && req.method === 'GET' && url.pathname === '/slash-release') {
+        const start = String(url.searchParams.get('start') || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(start)) return text(res, 400, 'name a start: ?start=<its txid>');
+        return json(res, 200, slashRelease.served(start));
+      }
+      if (slashRelease && req.method === 'GET' && url.pathname === '/slash-releases') return json(res, 200, { node: toHex(round.pubkey), starts: slashRelease.list() });
+      if (slashRelease && req.method === 'GET' && url.pathname.startsWith('/slash-table/')) {
+        const t = slashRelease.tableById(url.pathname.slice('/slash-table/'.length));
+        if (!t) return text(res, 404, 'no such table here');
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(t));
+      }
+      if (slashRelease && req.method === 'GET' && url.pathname === '/slash-pegin') {
+        const start = String(url.searchParams.get('start') || '').toLowerCase(), fid = String(url.searchParams.get('federation') || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(start) || !/^[0-9a-f]{64}$/.test(fid)) return text(res, 400, 'name a start and a federation: ?start=<txid>&federation=<id>');
+        // ONLY FOR A START THIS SEAT HAS READ: a peg-in address is a client's, and the door is anyone's
+        if (!round.db.prepare('SELECT 1 FROM slash_holds WHERE start = ?').get(start)) return text(res, 404, 'this seat has read no such start');
+        try { return json(res, 200, await slashRelease.ownPegIn(start, fid, url.searchParams.get('use') || 'players')); } catch (e) { return text(res, 409, e.message); }
+      }
       if (censusKeyRun && req.method === 'POST' && url.pathname === '/census-dkg/ready') {
         let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'that is not JSON'); }
         const took = censusKeyRun.takeReady(body);
@@ -12123,6 +12225,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (ballotTimer) clearInterval(ballotTimer);
         if (censusKeyTimer) clearInterval(censusKeyTimer);
         if (ownTimer) clearInterval(ownTimer);
+        if (carryTimer) clearInterval(carryTimer);
         for (const t of finalityTimers) clearTimeout(t);
         finalityTimers.clear();
         for (const t of rerunTimers) clearTimeout(t);

@@ -96,7 +96,8 @@ export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, repl
       }
       held = judgeReleaseProof({ evidence, panels, holdBlocks: holdBlocksOf(r.contract), proofChecks, advert: on.advert, bondOutpoint: on.bondOutpoint });
     } else return { verdict: undefined, why: 'this seat cannot judge that kind of proof yet' };
-    return { verdict: !!held.slashed, why: held.why };
+    // AND WHAT IT HELD: the offence, the player and the runs, which a release's table reads its losses from (slash-release-run.js)
+    return { verdict: !!held.slashed, why: held.why, ...(held.slashed ? { held } : {}) };
   }
 
   const verdicts = new Map();

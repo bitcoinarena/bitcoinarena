@@ -2857,7 +2857,10 @@ with an anchor.
   bonds, and anchors the record. No genesis change, no re-bond. That height is
   `CENSUS_KEY_FIRST_HEIGHT`, a constant beside genesis, and the first key is the
   epoch that starts at or after it, by the epoch's own census height and draw. A
-  height is named only after the network runs `CENSUS_KEY_VERSION`.
+  height is named only after the network runs `CENSUS_KEY_VERSION`. **Named in 2.0 (the owner's
+  decision on #1083, 2026-11-03):** regtest and a devnet `0`; testnet4 `160,128`
+  (= 1112 x 144, an epoch's first block), PROPOSED and confirmed by the owner before 2.0
+  is deployed; mainnet none here, it scans from `genesis_height`.
 - A network with no key yet cannot take a template-3 bond. That is the only
   refusal.
 
@@ -3122,6 +3125,44 @@ bond, exactly. A panel member signs only if its own recomputed table is
 byte-equal. Any seat serves the table by its id. A fallback carries the same
 `OP_RETURN` fields and a table of this format, and census key holders sign one only
 after replaying the proof.
+
+**How a signer builds a release or a fallback (kanban #972, decision #1083, 2026-11-03).** Everything a signer
+reads it reads itself, so two signers that read the same build the same bytes, and two that do not sign
+different bytes and nothing adds up: the fallback is the way out. *These are readings of the text above, for
+review; the owner did not rule them one by one.*
+
+- **The fee** is the start's own rate: what the start's inputs hold past its outputs (the fee input's value, read
+  off the chain), over the start's vsize, rounded up, never under 1 sat/vB, times the release's or fallback's
+  exact vsize with its witness (t signatures of each panel, or one). The table is built again with each fee asked
+  until the one it was built with is enough; the fee only goes up, so every signer ends on the same bytes. The
+  filer chose that rate, so a mainnet filer's estimate carries into both and no signer guesses at a mempool.
+- **`filer`** repays the start's fee input, its value to its own script. A seat derives that coin's key from its
+  node key and the proof's hash, so the repaid output is its own to spend.
+- **The escrow** is a P2TR output with the hold's unspendable internal key and one leaf: the round's release leaf
+  (t of n of each panel after `slash_hold_blocks`), or `<census_key> CHECKSIG` where there are no panels and on
+  every fallback.
+- **The losses** are read from every seat of the round that answers `GET /audit-run`, the union of what they hand,
+  each entry checked against its id and each FINAL against the committee, then §5A.3's real loss: a seat can hold
+  back and cannot add. A later slash of the same round, in chain order and then proof id, pays only what the
+  earlier ones' tables leave owed; a start whose hold was returned paid nothing.
+- **The players' federation** is the round's (`federation_id`).
+- **A carrier's peg-in** is per start, federation and use, made once by its own client and signed by its node key
+  (`carrier_peg_in`), `GET /slash-pegin`: the players' part and a reserves' part are two outputs of one release, so
+  two addresses, each deposit claimed on its own.
+- **A reserves' part** of a federation goes to the first carrier, in carrying order, with a reserves peg-in of that
+  federation. The text caps `player_carrier` outputs by the carrier's bond and says nothing of reserves; this
+  build does not cap a reserves' part.
+- **The load** is each federation's newest signed record this seat holds and the reserve key its guardian seats
+  name, read when the table is built.
+- **The release goes out** from any panel member holding t signatures of each panel over its own bytes. Each serves
+  its own and those it has checked at `GET /slash-release?start=`, and the others read them there. A
+  (t + 1)th signature of one panel would fail the leaf, so exactly t of each go in.
+- **The fallback is filed** by one holder at a time, in a turn by a hash of the proof and its key. Every holder
+  builds the fallback and keeps it, so a holder the table names as a carrier knows to carry, and signs a share
+  only when its own table's id is the one asked for. `excluded` is the accused and every node drawn for the round.
+- **A carrier pays** each slice of a loss it carries to `refund_key(player)`, in the table's entry order across the
+  carriers in their order, and the rest of what it claimed, less 10,000 msat for its own payout's fee, to that
+  federation's reserve key, kept as a reserve row of kind `slash` that every seat checks against its own port.
 
 **The carriers of a fallback (RULED 2026-11-02, kanban #1031).** With no panels, and
 on every fallback, because a fallback means the panels did not sign and panel A

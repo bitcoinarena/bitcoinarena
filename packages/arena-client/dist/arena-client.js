@@ -7973,7 +7973,12 @@ const CENSUS_KEY_BOND_MIN = Object.freeze({ testnet4: 50000n, regtest: 50000n })
  * start at or after it, so the first key is that epoch's. Null is not named: no key and no template-3 bond on that network. Named per network by the release, as
  * FOUNDING_PRESSURE_HEIGHT is, and only after the network runs CENSUS_KEY_VERSION. Mainnet has none here: it scans from genesis_height, which its genesis commits (kanban #1048).
  */
-const CENSUS_KEY_FIRST_HEIGHT = Object.freeze({ testnet4: null, regtest: null });
+// NAMED IN 2.0 (the owner's decision on #1083, 2026-11-03: release, fallback, payout table and panel signing are in 2.0, and the height is named for the networks the key goes
+// live on). Regtest and a devnet: 0, so a private chain runs the key from its first epoch. Testnet4: the height below is PROPOSED, not confirmed - the owner confirms it
+// before 2.0 is deployed (kanban #972). 160,128 = 1112 x 144 is an epoch's first block, about 9 days past the tip of 2026-11-03 (158,701): room for 2.0 on every seat, outside
+// nodes on CENSUS_KEY_VERSION and #724's rehearsal bond. A key's run starts at that epoch's first block. Mainnet: none here, it scans from genesis_height.
+const TESTNET4_CENSUS_KEY_FIRST_HEIGHT_PROPOSED = 160128;
+const CENSUS_KEY_FIRST_HEIGHT = Object.freeze({ testnet4: TESTNET4_CENSUS_KEY_FIRST_HEIGHT_PROPOSED, regtest: 0 });
 function censusKeyFirstHeight(network, genesis = null) {
   if (network === 'mainnet') return genesis && Number.isInteger(genesis.genesisHeight) ? genesis.genesisHeight : null;
   return Object.prototype.hasOwnProperty.call(CENSUS_KEY_FIRST_HEIGHT, network) ? CENSUS_KEY_FIRST_HEIGHT[network] : null;
