@@ -2958,13 +2958,14 @@ output it rebuilt, a presig that verifies, the proof named. A nonce is used once
 filer checks the signature before it sends anything, and whatever it claims, Bitcoin takes
 the result or refuses it. Seats holding one proof wait their turn by a hash of the proof
 and the node key. A seat judges a proof from its own bytes, its own census and chain: two
-signed results by their signatures, a result or a re-run contradicted by replay by replaying
-the objection in the proof under the round's core and beacon. Three answers: it holds, it does
+signed results by their signatures, a result, a re-run or an `AUDIT` contradicted by replay by
+replaying the objection in the proof under the round's core and beacon, and for an `AUDIT` the
+draw on its own census, less the round's players where it holds the round. Three answers: it holds, it does
 not, or this seat cannot say yet, having no census there, no core or no beacon. A holder signs
 nothing it cannot judge, and a node with a start on such a proof waits. A seat that holds no
 share or does not host the game is one of those. A proof handed to a seat at `PUT /slash/<hash>` is
-judged on its next pass, one at a time, and a seat keeps a verdict by the hash. An AUDIT, a
-table, a release and an abandonment are not judged by this path yet.
+judged on its next pass, one at a time, and a seat keeps a verdict by the hash. A table, a
+release and an abandonment are not judged by this path yet.
 
 **The payout table (RULED 2026-11-02, kanban #1021).**
 

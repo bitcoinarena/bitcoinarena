@@ -28,6 +28,7 @@ import { bondOutputKey, bondInternalKey } from '../../arena-protocol/src/bond-sc
 import { resultFinality } from '../src/finality.js';
 import { agreedRunsOf } from '../src/audit-seat.js';
 import { arbitrationMembers, judgeAuditProof, buildSlash, memberSign, assemble, coreForRound } from '../src/arbiter.js';
+import { createProofJudge } from '../src/proof-judge.js';
 import { entriesForSlash } from '../src/slash-owing.js';
 import { tweakPoint, combine } from '../src/curve.js';
 import { openStore } from '../src/store.js';
@@ -139,6 +140,16 @@ test('a contradicted AUDIT is filed by the seat as AUDIT_CONTRADICTED, listed, s
     // AND REFUSED: the objection of another entry (the honest one has none: an empty bundle), a node outside the eligible set
     assert.match((await judged({ bundle: new Uint8Array(0) })).why, /no objection bundle/);
     assert.match((await judged({ eligible: new Map() })).why, /may not audit this round/);
+    // A SEAT'S OWN WORD (kanban #1065), off the complete proof: the replay, the VRF and the draw on this reader's set
+    const complete = new Uint8Array(await (await fetch(`${base}/slash/${id}`)).arrayBuffer());
+    const census = [{ pubkey: advert.nodePubkey, txid: advert.bondTxid, vout: advert.bondVout, advert }];
+    const seat = (over = {}) => createProofJudge({ committeeOf: () => ({ ok: true, committee }), censusOf: () => ({ ok: true, entries: census }), coreOf: (c, r) => coreForRound(c, r, HOSTED), beaconOf: () => ({ ok: true, hash: beacon.hash }), replayRunOf: () => undefined,
+      auditSetOf: () => ({ eligible: new Map([[box.key, 1n]]), total: 1n }), vrf, ...over });
+    const said = await seat()(complete);
+    assert.equal(said.verdict, true, said.why);
+    assert.equal(seat().read(complete).kind, 'audit');
+    assert.equal((await seat({ auditSetOf: () => ({ eligible: new Map(), total: 1n }) })(complete)).verdict, false, 'a node outside the set');
+    assert.equal((await seat({ auditSetOf: () => null })(complete)).verdict, undefined, 'no set read yet: this seat cannot say');
 
     // PATH B ON THE AUDITOR'S BOND, PAID AS EVERY SLASH (§5A.3): one escrow; the round settled on the run the AUDIT vouched for, so the contradicted
     // entry's player has the real loss, read off the round's entries
