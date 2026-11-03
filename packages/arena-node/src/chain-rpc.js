@@ -156,6 +156,37 @@ export async function blocksOver(call, from, to, { cache = null } = {}) {
 }
 
 /**
+ * ONE BLOCK BY ITS HASH, THROUGH THE SAME CACHE AND THE SAME READ IN FLIGHT AS blocksOver (kanban #925 part 2): a reader that walks the
+ * chain by hash - the census-key scan (census-key-chain.js) - takes the views' copy of a block, and a block it reads first is the views'
+ * copy after it. Before this it read every block again from bitcoind beside the views' reads (main-process.test.js (a), (c), (d)).
+ */
+export async function blockOfHash(call, hash, { cache = null } = {}) {
+  const had = cache ? cache.get(hash) : undefined;
+  if (had) return had;
+  const read = () => call('getblock', [hash, 0]).then((answer) => {
+    const block = timed('chain block read', () => splitBlock(fromHex(answer)), { over: 20 });
+    if (cache) cache.put(hash, block);
+    return block;
+  });
+  if (!cache || !cache.inFlight) return read();
+  let p = cache.inFlight.get(hash);
+  if (!p) { p = read(); cache.inFlight.set(hash, p); p.then(() => cache.inFlight.delete(hash), () => cache.inFlight.delete(hash)); }
+  return p;
+}
+
+/** A split block's bytes as bitcoind serves them: the header, the transaction count, the transactions back to back. */
+export function blockBytesOf(block) {
+  const n = block.transactions.length;
+  const count = n < 0xfd ? [n] : n <= 0xffff ? [0xfd, n & 255, n >> 8] : [0xfe, n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >>> 24) & 255];
+  const size = 80 + count.length + block.transactions.reduce((t, x) => t + x.length, 0);
+  const out = new Uint8Array(size);
+  out.set(block.header, 0); out.set(count, 80);
+  let at = 80 + count.length;
+  for (const t of block.transactions) { out.set(t, at); at += t.length; }
+  return out;
+}
+
+/**
  * ONE COPY OF A BLOCK, HOWEVER MANY VIEWS HOLD IT (2026-10-02: "Continue with 1" - the free pair's two nodes held
  * 3.8 GB each). Every free round names its own committee_time, so every round got its own ~2,000-block view, read from
  * bitcoind and kept: 2,511 rounds, 2,511 view keys over 19 census heights - the same blocks, parsed again, once per round,

@@ -260,7 +260,8 @@ test('a census that is not a chain is read once more with the kept hashes droppe
   assert.deepEqual([other.ok, reads], [false, 1]);
   // and the seat's chain census uses it
   const main = (await import('node:fs')).readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-  assert.match(main, /censusWithFreshHashes\(\{ read, derive: \(view\) => censusOfView\(view, contract\), cache: blocksKept \}\)/);
+  // the census keys it reads ride along since e2c28a68c (kanban #972): the same derivation, read once more the same way
+  assert.match(main, /censusWithFreshHashes\(\{ read, derive: \(view\) => censusOfView\(view, contract, \{ standingKeys \}\), cache: blocksKept \}\)/);
 });
 
 // A ROUND'S VIEW FROM A KEPT HASH OF A BRANCH THE CHAIN LEFT (kanban #576, measured 2026-10-21 ~22:00Z on node-15: every round's view
@@ -287,7 +288,9 @@ test('a round view that does not link is read once more with the kept hashes dro
   assert.deepEqual([once === good, reads, cache.hashes.size], [true, 1, 1]);
   // and the seat reads its rounds' views through it
   const main = (await import('node:fs')).readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-  assert.match(main, /viewWithFreshHashes\(\{ read: \(\) => blocksOver\(call, censusFirstBlock\(contract\.censusHeight, networkOf\(contract\.networkId\)\), to, \{ cache: blocksKept \}\), cache: blocksKept \}\)/);
+  // through censusBlocks since kanban #925 step 3: the index's view where it serves, else blocksOver from censusFirstBlock with the same cache
+  assert.match(main, /viewWithFreshHashes\(\{ read: \(\) => censusBlocks\(contract\.networkId, contract\.censusHeight, to\), cache: blocksKept \}\)/);
+  assert.match(main, /return blocksOver\(call, from, to, \{ cache: blocksKept \}\);/);
 });
 
 // THE SERIES WRITER BACKS OFF A REFUSED ASSIGNMENT (kanban #576): a refusal that cost a census waits a minute; a view not read yet,

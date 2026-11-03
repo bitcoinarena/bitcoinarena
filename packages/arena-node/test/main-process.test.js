@@ -364,7 +364,11 @@ async function failedReads() {
   const view = f.build();
   const btc = await fakeBitcoind(view, '__cookie__:s3cret');
   btc.failBlocks = true;
-  const child = startMain(f.store, f.env(btc));
+  // THE READERS THIS CASE IS ABOUT: the round's view, the census reads and the waiting list, which rest a minute after a failed block
+  // read. Two readers read census past that minute by rule, so they are off here: the day duty (hold: false since 2830fb8ee, #702
+  // 2026-10-26, measured: held by old views' failed reads, the day's anchor census was never read) and the census key (its censuses
+  // read the same way since e2c28a68c, and on regtest from block 0 since 645f4f62a - its own pass read 60 blocks inside the minute here)
+  const child = startMain(f.store, { ...f.env(btc), ARENA_DUTY_POST: 'off', ARENA_CENSUS_KEY_FIRST_HEIGHT: 'off' });
   try {
     const port = await child.up;
     await postRound(port, f.contract);
