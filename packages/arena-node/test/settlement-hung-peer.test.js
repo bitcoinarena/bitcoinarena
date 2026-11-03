@@ -153,19 +153,12 @@ test('a peer whose answer starts and whose body never comes is bound as well', a
   assert.equal(got.value.state, 'ACCEPTED', got.value.why);
 });
 
-test('a seat that hangs between its commitment and its share is left out of the next list: the others are not stuck on the list it was in', async () => {
-  let hung = true;
-  const w = seven({ hungAt: (k, path) => k === 3 && (hung ? path === '/settle-share' : true) });
-  const first = await within(w.seats[0].settle(RID), 3000);
-  console.log(`  FACTS: first pass ${first.stuck ? 'still waiting' : first.value.why} after ${first.ms} ms`);
-  assert.ok(!first.stuck, `the share stage still waited after ${first.ms} ms`);
-  assert.equal(first.value.ok, false);
-  assert.match(first.value.why, /seat3/);
-  hung = false;
-  const second = await within(w.seats[0].settle(RID), 3000);
-  console.log(`  FACTS: next pass ${second.stuck ? 'still waiting' : `${second.value.state || 'refused'}: ${second.value.why}`} after ${second.ms} ms`);
-  assert.ok(!second.stuck);
-  assert.equal(second.value.state, 'ACCEPTED', second.value.why);
+test('a seat that hangs between its commitment and its share is left off the next list once the bound has passed, and the same pass settles', async () => {
+  const w = seven({ hungAt: (k, path) => k === 3 && path === '/settle-share' });
+  const got = await within(w.seats[0].settle(RID), 5000);
+  console.log(`  FACTS: hung at the share: ${got.stuck ? 'still waiting' : got.value.state} after ${got.ms} ms`);
+  assert.ok(!got.stuck, `the share stage still waited after ${got.ms} ms`);
+  assert.equal(got.value.state, 'ACCEPTED', got.value.why);
   assert.equal(schnorr.verify(w.port.settled[0].signature, MSG, DEAL.groupPublicKey.subarray(1)), true);
 });
 
