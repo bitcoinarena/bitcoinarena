@@ -8,6 +8,10 @@
 // A REFUSAL THAT CANNOT CHANGE WAITS LONGER (measured 2026-10-23, 2,350 attested rounds a seat with 20 market bots: a closed,
 // attested round with no counted entry - every round of the federation the bots do not pay through - was asked every 60 s for
 // good): `refused(k, { maxMs })` lets the caller cap that one round's wait higher.
+// AND A REFUSAL THAT WILL NOT CHANGE IS NOT ONLY THE ONE ABOVE (kanban #1067, measured 2026-11-03: a seat restarted 5 h earlier asked about 2,265 rounds it holds no
+// seat in, 510 that nobody joined and 126 where no order filled, each every 60 s, for good): no ACCEPTED row ever ends these, so the sweep keeps them.
+export const REFUSED_FOR_GOOD = /^an attested round with no counted entry|no order filled: nothing is claimed|this node is not one of the round's signer nodes|that round joined nobody/;
+
 export function createSettleBackoff({ now = () => Date.now(), firstMs = 5000, maxMs = 60000 } = {}) {
   const waits = new Map();                   // round hex -> { at, tries }
   return {
