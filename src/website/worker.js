@@ -46,6 +46,15 @@ const CHANNEL_LINKS = {
   '/reddit': 'utm_source=reddit&utm_medium=community&utm_content=post',
   '/community': 'utm_source=community&utm_medium=community&utm_content=post',
 };
+// TESTNET NIGHT'S LIVE COUNT (kanban #926 item 7): players joined in the rounds still open or playing, and the rounds playing, kept 30 s at the edge
+async function nightCount() {
+  const headers = { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=30' };
+  try {
+    const rows = await Promise.any(SEASON_SEATS.map(async (s) => { const r = await fetch(`${s}/rounds?next=1`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(String(r.status)); return (await r.json()).rounds || []; }));
+    const live = rows.filter((r) => r.phase === 'open' || Number(r.playing) > 0);
+    return new Response(JSON.stringify({ ok: true, at: Date.now(), joined: live.reduce((n, r) => n + (Number(r.joined) || 0), 0), playing: rows.reduce((n, r) => n + (Number(r.playing) || 0), 0), rounds: live.length }), { headers });
+  } catch { return new Response('{"ok":false,"why":"no seat answered"}', { status: 503, headers }); }
+}
 // THE PUBLIC TESTNET REPORT'S NUMBERS (kanban #926 item 11): the kept 7-day boards, each player once, as tools/weekly-testers.mjs counts them; team keys and the test opponent left out
 async function testers(env) {
   const team = new Set(JSON.parse(await env.CHAIN.get('team-keys') || '[]'));
@@ -83,8 +92,12 @@ async fetch(request, env, ctx) {
   if (url.pathname === '/games' || url.pathname === '/games/') return Response.redirect(`${url.origin}/#games`, 301);   // kanban #948: the page is gone, a link to it lands on the home page's games
   if (url.pathname === '/api/season') return seasonSnapshot(url, env, ctx);
   if (url.pathname === '/api/testers') return testers(env);
+  // TESTNET NIGHT'S LIVE COUNT (kanban #926 item 7, ruling #1081): how many have joined the rounds open or playing now, from the first seat that answers
+  if (url.pathname === '/api/night') return nightCount();
   // A SHORT LINK PER CHANNEL (kanban #943): a profile shows bitcoinarena.io/x, the visit still arrives with its campaign, and the referrer stays
-  { const utm = CHANNEL_LINKS[url.pathname.replace(/\/$/, '')]; if (utm) return Response.redirect(`${url.origin}/?${utm}`, 302); }
+  // /night lands on the Testnet Night page (kanban #926 item 7), the others on the home page; a visit already carrying its campaign is served, not sent round again
+  { const path = url.pathname.replace(/\/$/, ''); const utm = CHANNEL_LINKS[path];
+    if (utm && !url.searchParams.has('utm_source')) return Response.redirect(`${url.origin}${path === '/night' ? '/night/' : '/'}?${utm}`, 302); }
   // THE PLAYERS' FAUCET AND THE TABLE WANTS (kanban #926): passed on to the faucet service, whose address is a secret of this Worker (FAUCET_ORIGIN), with the caller's address for its limits
   if (url.pathname === '/api/faucet/player' || url.pathname === '/api/faucet/opponent' || url.pathname === '/api/faucet/feedback' || url.pathname === '/api/faucet/founding' || url.pathname === '/api/faucet/refill') {
     if (!env.FAUCET_ORIGIN) return new Response('{"ok":false,"why":"the faucet is off"}', { status: 503, headers: { 'content-type': 'application/json' } });

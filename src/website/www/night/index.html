@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bitcoin Arena: Testnet Night</title>
+<meta name="description" content="Every Thursday, 18:00 to 20:00 UTC: play Bitcoin Arena's games on testnet together, with the team there.">
+<meta property="og:title" content="Bitcoin Arena: Testnet Night">
+<meta property="og:description" content="Every Thursday, 18:00 to 20:00 UTC: play Bitcoin Arena's games on testnet together, with the team there.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://bitcoinarena.io/night/">
+<meta property="og:image" content="https://testnet.bitcoinarena.io/arena-og.png">
+<meta name="twitter:card" content="summary_large_image">
+<script>/* kanban #943: a visit from X arrives through t.co with no campaign in its link: named here, before the stats script reads the address */if(/^https?:\/\/t\.co(\/|$)/.test(document.referrer)&&!/[?&]utm_/.test(location.search))history.replaceState(null,'',location.pathname+(location.search?location.search+'&':'?')+'utm_source=x&utm_medium=social&utm_content=tco'+location.hash);</script>
+  <script defer src="https://stats.bitcoinarena.io/script.js" data-website-id="4f00ff2b-032e-4683-890c-63458e0b178e" data-domains="bitcoinarena.io,www.bitcoinarena.io"></script>
+<style>
+  :root { --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --dim: #8b949e; --btc: #f7931a; --live: #3fb950; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, sans-serif; padding: 32px 16px 56px; }
+  main { max-width: 640px; margin: 0 auto; }
+  a { color: var(--btc); } h1 { font-size: 30px; margin: 0 0 6px; } p { color: var(--dim); margin: 0 0 18px; }
+  .go { display: inline-block; margin: 8px 10px 8px 0; padding: 12px 22px; border-radius: 10px; background: var(--btc); color: #1a1000; font-weight: 700; text-decoration: none; }
+  .ghost { background: transparent; color: var(--btc); border: 1px solid var(--btc); }
+  ul { color: var(--dim); padding-left: 20px; } li { margin-bottom: 8px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin: 18px 0; }
+  .when { font: 700 22px/1.3 system-ui, sans-serif; color: var(--text); }
+  .count { font: 700 44px/1.1 system-ui, sans-serif; color: var(--btc); font-variant-numeric: tabular-nums; margin: 6px 0; }
+  .live { color: var(--live); font-weight: 700; }
+</style>
+</head>
+<body>
+<main>
+  <p><a href="/">Bitcoin Arena</a></p>
+  <h1>Testnet Night</h1>
+  <p>Every Thursday, 18:00 to 20:00 UTC. Play the games on testnet together, ask the team anything, and help us find what breaks.</p>
+
+  <div class="card">
+    <div id="state">Next Testnet Night</div>
+    <div class="when" id="when">Thursday, 18:00 UTC</div>
+    <div class="count" id="count"></div>
+    <div id="live"></div>
+    <a class="go" href="https://testnet.bitcoinarena.io/?utm_source=night&amp;utm_medium=community&amp;utm_content=night-page">Play now</a>
+    <a class="go ghost" id="ics" href="#" download="bitcoin-arena-testnet-night.ics">Add to calendar</a>
+  </div>
+
+  <ul>
+    <li><b>Test sats only.</b> They have no value. The game page gives you some when you start.</li>
+    <li><b>The normal rounds,</b> every game, so there is always a table to join.</li>
+    <li><b>The team is there</b> to watch, answer and fix.</li>
+    <li>The time is fixed in UTC and shown here in your own time. If it ever moves, this page says so two weeks before.</li>
+  </ul>
+</main>
+<script>
+(function () {
+  // THURSDAYS 18:00-20:00 UTC (spec ruling #1081, kanban #926 item 7): the next start, or the one running now
+  var DAY = 4, START = 18, END = 20;
+  function next(now) {
+    var d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), START));
+    d.setUTCDate(d.getUTCDate() + ((DAY - d.getUTCDay() + 7) % 7));
+    if (d.getTime() + (END - START) * 3600e3 <= now.getTime()) d.setUTCDate(d.getUTCDate() + 7);
+    return d;
+  }
+  var fmt = function (d) { return d.toLocaleString(undefined, { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }); };
+  var two = function (n) { return (n < 10 ? '0' : '') + n; };
+  function tick() {
+    var now = new Date(), s = next(now), e = new Date(s.getTime() + (END - START) * 3600e3);
+    var on = now >= s && now < e;
+    document.getElementById('state').innerHTML = on ? '<span class="live">On now</span>, until ' + e.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : 'Next Testnet Night';
+    document.getElementById('when').textContent = fmt(s) + ' (your time)';
+    if (on) { document.getElementById('count').textContent = ''; return; }
+    var left = Math.max(0, Math.floor((s - now) / 1000));
+    var days = Math.floor(left / 86400);
+    document.getElementById('count').textContent = (days ? days + 'd ' : '') + two(Math.floor(left % 86400 / 3600)) + ':' + two(Math.floor(left % 3600 / 60)) + ':' + two(left % 60);
+  }
+  // WHILE IT RUNS: how many have joined the rounds open now, so nobody meets an empty lobby (/api/night, from the seats)
+  function count() {
+    var now = new Date(), s = next(now);
+    if (now < s) { document.getElementById('live').textContent = ''; return; }
+    fetch('/api/night').then(function (r) { return r.json(); }).then(function (n) {
+      if (!n.ok) return;
+      document.getElementById('live').textContent = n.joined + (n.joined === 1 ? ' player' : ' players') + ' in the open rounds right now';
+    }).catch(function () {});
+  }
+  // ADD TO CALENDAR: one weekly event in UTC, so a calendar shows it in its own time
+  var s0 = next(new Date()), z = function (d) { return d.toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z'; };
+  var ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Bitcoin Arena//Testnet Night//EN', 'BEGIN:VEVENT',
+    'UID:testnet-night@bitcoinarena.io', 'DTSTAMP:' + z(new Date()), 'DTSTART:' + z(s0), 'DTEND:' + z(new Date(s0.getTime() + (END - START) * 3600e3)),
+    'RRULE:FREQ=WEEKLY;BYDAY=TH', 'SUMMARY:Bitcoin Arena Testnet Night', 'URL:https://bitcoinarena.io/night/',
+    'DESCRIPTION:Play Bitcoin Arena on testnet with the team. https://testnet.bitcoinarena.io/', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+  document.getElementById('ics').href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }));
+  tick(); setInterval(tick, 1000); count(); setInterval(count, 30000);
+})();
+</script>
+</body>
+</html>
