@@ -5412,6 +5412,18 @@
     async function welcomeSats() {
       let pending = null; try { pending = sessionStorage.getItem('arena.welcome.pending'); } catch { return; }
       if (!pending || !window.ARENA_FAUCET_URL || welcomeRunning) return;
+      // A BROWSER THAT ALREADY HOLDS A WALLET GETS NO WELCOME (kanban #1091, the owner's playtest 2026-11-03 15:33Z: "die Meldung ueber 500 sat
+      // kommt obwohl ich sie schon habe" - a new tab with no phrase made a new wallet beside the one with 1,600 sat, and said 500 sat were coming):
+      // any phrase this browser keeps with a wallet entry (money or history) means the player is not new - no grant, no green line
+      try {
+        const S = window.localStorage, mine = typeof walletSeed === 'function' && walletSeed() ? ARENACLIENT.toHex(walletSeed()) : null;
+        let kept = []; try { kept = JSON.parse(S.getItem('arena.seeds') || '[]'); } catch { kept = []; }
+        if (ARENACLIENT.phraseWalletEntries && Array.isArray(kept) && kept.some((x) => x && x.hex && x.hex !== mine && ARENACLIENT.phraseWalletEntries(S, x.hex) > 0)) {
+          try { sessionStorage.removeItem('arena.welcome.pending'); } catch { /* no storage */ }
+          console.log('[faucet] no welcome sats: this browser already holds a wallet');
+          return;
+        }
+      } catch { /* the check could not read the browser's wallets: the faucet still pays one welcome per account */ }
       welcomeRunning = true;
       // WHAT A PLAY PRESSED MEANWHILE WAITS FOR (kanban #1042): nothing else says sats are on their way, the wallet reads 0 until they land
       let welcomeLanded = () => {};
