@@ -144,7 +144,7 @@ test('the stake-lock tool: theft-verify gets the proof on stdin; a tool without 
     seen.push(args);
     if (args[1] === 'theft-verify') return JSON.stringify(answer(JSON.parse(input)));
     const out = args[args.indexOf('--out') + 1];
-    writeFileSync(out, JSON.stringify({ mode: 'session-export', federation: toHex(FED), config: '0707', firstSession: 0, sessions: sessions.map(toHex) }));
+    writeFileSync(out, JSON.stringify({ federationId: toHex(FED), config: '0707', firstSession: 0, sessions: sessions.map(toHex) }));
     return JSON.stringify({ mode: 'session-export', sessions: 5 });
   }) });
   const ev = await tools.theftEvidenceOf(toHex(FED), ALARM);

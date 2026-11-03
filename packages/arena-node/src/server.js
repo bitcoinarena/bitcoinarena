@@ -4374,6 +4374,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     for (let h = near; h >= Math.max(0, near - 12); h--) { try { return await censusKey.rawTxAt(h, txid); } catch { /* not in that block */ } }
     return null;
   };
+  // THE ONE CLAIMS LEDGER OF A LIQUIDATING FEDERATION (kanban #1093 part 2, ruling #1111): the claims door's plan (ARENA_LIQUIDATION_CLAIMS) - every claim accepted, at face, and what
+  // the arbitration set's escrow pays each, so a census-key escrow pays the rest (template 1 and 2 first)
+  const liquidationLedger = async (fid) => {
+    const door = String(process.env.ARENA_LIQUIDATION_CLAIMS || '').replace(/\/+$/, '');
+    if (!door) return null;
+    try {
+      const r = await fetch(`${door}/liquidation-claims?federation=${String(fid).toLowerCase()}`, { signal: AbortSignal.timeout(15000) });
+      const p = r.ok ? await r.json() : null;
+      if (!p || !p.ok || !Array.isArray(p.accepted)) return null;
+      return { accepted: p.accepted, coveredMsat: new Map((p.paidNotes || []).map((n) => [String(n.nonce).toLowerCase(), BigInt(n.msat)])), afterWindow: !!p.split };
+    } catch { return null; }
+  };
   slashRelease = holdWatch ? createSlashRelease({ key: round.pubkey, secret: round.identity.secret, networkId: censusKey.networkId, clocks: holdClocksOf(censusKey.networkId), db: round.db, tweakPoint,
     tipHeight: censusKey.tipHeight, entriesAtTip: slashEntriesAtTip, rawTx: slashRawTx, unspent: async (txid, vout) => (typeof chainTxOut === 'function' ? !!(await chainTxOut(txid, vout).catch(() => null)) : false),
     fetchProof: (id) => proofBytesFetched(id), judge: judgeProofBytes, panelsOf: (contract, rid) => roster.slashPanelsFor(rid, { posted: contract }), seatsOf: async (contract, rid) => roundSeatKeys(contract, rid),
@@ -4381,7 +4393,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     portFor: (fid) => portOfFederation(fromHex(fid)), scriptOf: (address) => addressScript(address, HRP_OF[censusKey.network] || 'tb'),
     reserveKeyOf: (fid) => reserveKeyFor(fid), keepReserveRow: (row) => round.putDonationOutputs([row]), urlOf: (k) => urlOfKey.get(k) || null,
     heldKey: (k) => new CensusKeyStore(round.db).held(k), thresholdOf: censusKey.scan.thresholdOf, holdersOf: (k, h) => censusKey.scan.holdersAt(k, h), signer: () => (slashStarter ? slashStarter.signer : null),
-    send: (hex) => chainSend(hex), stepMs: Number(process.env.ARENA_SLASH_FILE_STEP_MS || 600000), log: (l) => console.log(l), federationsAt: slashFederationsAt,
+    send: (hex) => chainSend(hex), stepMs: Number(process.env.ARENA_SLASH_FILE_STEP_MS || 600000), log: (l) => console.log(l), federationsAt: slashFederationsAt, claimsOf: liquidationLedger,
     txOut: async (txid, vout) => { if (typeof chainTxOut !== 'function') return null; const o = await chainTxOut(txid, vout).catch(() => null); return o ? { sats: o.sats, script: String(o.script).toLowerCase(), confirmations: o.confirmations } : null; } }) : null;
   // THE CARRIERS ON THEIR OWN LOOP: a claim waits for the federation's own depth, minutes, and the pass above must not wait on it
   let carrying = false;

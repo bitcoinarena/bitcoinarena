@@ -63,6 +63,8 @@ export function createSlashEscrow({ secret, me, clocks, db, tweakPoint, tipHeigh
     const bytes = await fetchProof(fromHex(h.proof_id));
     const read = bytes ? judge.read(bytes) : null;
     if (!read || !read.ok) return null;
+    // A SLASH WITH NO ROUND: its escrow pays a liquidation's claims (liquidation-escrow-run.js), not a round's entries
+    if (!read.roundId) { contexts.set(start, null); return null; }
     const censusKey = fromHex(h.census_key);
     const panels = panelsOf(read.contract, read.roundId);
     const escrowOut = conf.table.outputs[at];
