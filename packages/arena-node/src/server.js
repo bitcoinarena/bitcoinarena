@@ -532,7 +532,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // this node verifies no stake lock.
   stakeLocks = null,
   // HOW A WINNER'S LIGHTNING ADDRESS IS FETCHED (winnings-send.js), and the round network its invoices are for.
-  lnurlFetch = (u) => fetch(u),
+  lnurlFetch = (u, o) => fetch(u, o),
   // HOW A NETWORK SEASON ASKS THE OTHER SEATS FOR THEIR ROUNDS (GET /season?scope=network): the process's fetch -
   // routed and capped per seat by fetch-routes.js - unless a test hands in its own seats.
   seasonFetch = (u, o) => fetch(u, o),
@@ -2181,7 +2181,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const winningsPeers = (rid) => committeePeers(rid, 'settlement', { orElse: dkg.peers || [] }).peers;
   const winnings = stakeLocks ? new WinningsSend({ round, port: stakeLocks, curve: poolCurve,
     random: (n) => new Uint8Array(randomBytes(n)), peersFor: winningsPeers, fetcher: (u, o) => fetch(u, o),
-    lnurlFetch, network: winningsNetwork }) : null;
+    lnurlFetch, network: winningsNetwork, dkg }) : null;
   // EVERY ORDER'S TRANSACTION, KEPT HERE (kanban #624, tx-record.js): each door's steps per transaction id, and the page's signed timing
   const txRecord = createTxRecord({ db: round.db });
   // THE MARKET ORDER BOOK: orders taken here, each batch's set agreed with the round's other seats
