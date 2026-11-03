@@ -14453,7 +14453,7 @@ async function stakeSeenBy({ entryId, signerNodes, nodes, contract, fetcher = fe
  * answers a hold (§23.6) - measured before, the watch ended on `hold` only and so never ended, polling every 5 s until the tab
  * closed.
  */
-const DECIDED = ['FINAL', 'VOID', 'FORFEIT'];
+const DECIDED = ['FINAL', 'VOID', 'FORFEIT', 'ENTRY_VOID'];
 function settlementDecided(s) {
   const said = s && Array.isArray(s.per) ? s.per.filter((p) => p && p.key && ('finality' in p || 'stake' in p)) : [];
   if (!s || !s.answered || !said.length) return false;
@@ -14503,6 +14503,8 @@ async function settlementBy({ entryId, signerNodes, nodes, fetcher = fetch } = {
     of: want.size,
     answered: answered.size,
     finality: states.includes('SUSPENDED') ? 'SUSPENDED'
+      // AN ENTRY BELOW THE ROUND'S THRESHOLD WAS NOT TAKEN (§17, kanban #1071): the seats that hold it say so, its stake goes back
+      : states.includes('ENTRY_VOID') ? 'ENTRY_VOID'
       : (all.length && states.every((f) => f === 'FINAL')) ? 'FINAL'
         : states.some((f) => f === 'PROVISIONALLY_FINAL' || f === 'FINAL') ? 'PROVISIONALLY_FINAL' : null,
     windowClosesAtMs: ends.length ? Math.max(...ends) : null,

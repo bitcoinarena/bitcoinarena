@@ -82,6 +82,7 @@ test('rule (a): decided when all say FINAL, or a decided outcome (VOID or FORFEI
   const per = (list) => ({ answered: list.length, per: list.map((x, i) => ({ node: URLS[i], key: hex(KEYS[i]), ...x })) });
   assert.equal(settlementDecided(per([{ finality: 'FINAL' }, { finality: 'FINAL' }])), true);
   assert.equal(settlementDecided(per([{ finality: 'FINAL' }, { finality: 'PROVISIONALLY_FINAL' }])), false);
+  assert.equal(settlementDecided(per([{ finality: 'ENTRY_VOID' }, { finality: 'ENTRY_VOID' }])), true, 'an entry below the round\'s threshold ends the watch (kanban #1071)');
   assert.equal(settlementDecided(per([{ stake: 'FREE', finality: null }])), true);
   assert.equal(settlementDecided({ answered: 0, per: [{ node: URLS[0], why: 'down' }] }), false);
   assert.equal(settlementDecided(null), false);

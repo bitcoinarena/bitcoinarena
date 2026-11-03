@@ -3,7 +3,7 @@
 // WHAT A SEAT HANDS ON, AND TO WHOM (kanban #1068).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createEntryRelay, RELAY_HEADER } from '../src/entry-relay.js';
+import { createEntryRelay, RELAY_HEADER, lookAtMembers, seatView } from '../src/entry-relay.js';
 
 const stub = (doors) => {
   const asked = [];
@@ -56,4 +56,46 @@ test('a seat that does not answer costs nothing: no throw, the other seat is sti
   relay(fetcher).entryTaken(new Uint8Array(32), '12'.repeat(32), Date.now() + 60000);
   await settle();
   assert.ok(asked.some((x) => x.key === 'POST http://b/entry'));
+});
+
+// WHO IS IN THE ROUND (kanban #1071, §17): seven seats, this one and six peers, 5 of 7
+const E = 'e1'.repeat(32), F = 'f2'.repeat(32);
+const look = (views, { held = [], take = async () => ({ ok: true }), players = 2 } = {}) => {
+  const voided = [], asked = [];
+  return lookAtMembers({ roundId: new Uint8Array(32), roundHex: '00'.repeat(32), peers: views.map((_, i) => `http://p${i}`), slots: 7, needed: 5, players, held: new Set(held),
+    viewOf: async (base) => { const v = views[Number(base.slice(8))]; if (!v) throw new Error('down'); return new Set(v); },
+    take: async (r, e, from) => { asked.push({ e, from }); return take(r, e, from); }, voidEntry: async (r, e) => { voided.push(e); } }).then((got) => ({ ...got, voidedHere: voided, asked }));
+};
+
+test('a seat short of an entry asks only the peers that hold it, and waits until it is taken', async () => {
+  const got = await look([[E, F], [E, F], [E, F], [E, F], [E, F], null], { held: [E], take: async () => ({ ok: false, why: '4 of 5 seats signed a result naming it' }) });
+  assert.match(got.wait, /4 of 5/);
+  assert.deepEqual(got.asked, [{ e: F, from: ['http://p0', 'http://p1', 'http://p2', 'http://p3', 'http://p4'] }]);
+  assert.deepEqual(got.voidedHere, []);
+  assert.equal((await look([[E, F], [E, F], [E, F], [E, F], [E, F], null], { held: [E] })).wait, null);
+});
+
+test('an entry three seats lack can never reach five: void where held, not taken where lacked, and silent seats do not count as lacking', async () => {
+  const lacks = await look([[E, F], [E, F], [E, F], [E], [E], [E]], { held: [E, F] });
+  assert.deepEqual(lacks.voidedHere, [F]);
+  assert.equal(lacks.wait, null);
+  const short = await look([[E, F], [E, F], [E, F], [E, F], [E], [E]], { held: [E] });
+  assert.deepEqual(short.asked, []);
+  assert.equal(short.wait, null);
+  const silent = await look([[E, F], [E, F], [E], null, null, null], { held: [E, F] });
+  assert.deepEqual(silent.voidedHere, []);
+});
+
+test('a seat alone with an entry signs nothing while too few seats answered to rule another out; three answers rule it out', async () => {
+  assert.match((await look([[E], null, null, null, null, null], { held: [E] })).wait, /2 of 7 seats answered/);
+  assert.equal((await look([[E], [E], null, null, null, null], { held: [E] })).wait, null);
+  assert.equal((await look([null, null, null, null, null, null], { held: [] })).wait, null, 'a seat holding nothing has nothing to wait for');
+});
+
+test('a peer\'s view is a list of entries; a peer that holds no such round holds none of it, and one that fails did not answer', async () => {
+  const fetcher = async (url) => (url.includes('//gone') ? { status: 404, ok: false } : url.includes('//bad') ? { status: 503, ok: false } : { status: 200, ok: true, json: async () => ({ players: [{ entry: E }] }) });
+  const view = seatView(fetcher);
+  assert.deepEqual([...(await view('http://here', 'ab'))], [E]);
+  assert.equal((await view('http://gone', 'ab')).size, 0);
+  await assert.rejects(view('http://bad', 'ab'));
 });
