@@ -5,6 +5,7 @@
 // `deriveaddresses tr(key)`; a funding + bond package from a 5,000 sat deposit accepted by testmempoolaccept (111 vB at 232 sat,
 // 346 vB at 702 sat; never broadcast).
 import { test } from 'node:test';
+import { ownerKeysOf } from '../src/seed.js';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { walletOf, payoutKeyOf, taprootAddress, addressScript, scriptHash } from '../src/wallet.js';
@@ -80,11 +81,13 @@ test('a template-3 bond (5A.3B, kanban #1053): it names the census key, and its 
   const seed = new Uint8Array(32).fill(9), w = walletOf(seed), nodeSecret = new Uint8Array(32).fill(3);
   const censusKey = schnorr.getPublicKey(new Uint8Array(32).fill(8));
   const built = buildBond({ wallet: w, nodeSecret, coins: [{ txid: '11'.repeat(32), vout: 0, sats: 200000 }], tip: 156900, operatorId: 'op-test', roles: ['verify', 'settlement'], endpoint: 'wss://node.example.com',
-    payoutPubkey: payoutKeyOf(seed), softwareHash: new Uint8Array(32).fill(1), censusKey, network: 'regtest' });
+    payoutPubkey: payoutKeyOf(seed), softwareHash: new Uint8Array(32).fill(1), censusKey, network: 'regtest', ownerPubkey: ownerKeysOf(seed).pubkey });
   const funding = parseTransaction(fromHex(built.funding.hex)), bond = parseTransaction(fromHex(built.bond.hex)), update = parseTransaction(fromHex(built.presigUpdate.hex));
   const a = advertInTransaction(fromHex(built.bond.hex));
   assert.equal(a.bondScriptTemplateVersion, 3);
   assert.equal(toHex(a.censusKey), toHex(censusKey));
+  // path A is the owner key's from the 24 words (kanban #1093 part 1): the advert names it
+  assert.equal(toHex(a.ownerPubkey), toHex(ownerKeysOf(seed).pubkey));
   assert.ok(recognizeBond(bond, 0, a, { network: 'regtest', bond: bondSetFor('regtest') }).ok, 'the census reads it as that node\'s template-3 bond');
   assert.equal(toHex(bond.inputs[0].previousTxid), toHex(funding.txid));
   assert.deepEqual([bond.inputs[0].previousVout, update.inputs[0].previousVout], [0, 1], 'both carriers are the one funding\'s');
