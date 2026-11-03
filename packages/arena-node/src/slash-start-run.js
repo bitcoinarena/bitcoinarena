@@ -26,7 +26,7 @@ const bondOf = (e) => ({ txid: e.txid, vout: e.vout, value: BigInt(e.bondSats), 
 export const filerRank = (proofId, keys, me) => [...keys].sort((a, b) => (toHex(taggedHash('ARENA/v1/SlashFiler', Uint8Array.from([...proofId, ...fromHex(a)]))) < toHex(taggedHash('ARENA/v1/SlashFiler', Uint8Array.from([...proofId, ...fromHex(b)]))) ? -1 : 1)).indexOf(me);
 
 /**
- * `key`; `db`; `store` CensusKeyStore; `thresholdOf(keyHex)`; `tipHeight()`; `entriesAtTip()` the census at the tip; `heldProofs()` [{ proofId, bytes, seenMs }] of the proofs this seat filed; `bytesOf(id)` what its relay keeps under a hash; `judge(bytes)` this seat's own
+ * `key`; `db`; `store` CensusKeyStore; `thresholdOf(keyHex)`; `tipHeight()`; `entriesAtTip()` the census at the tip; `heldProofs()` [{ proofId, bytes, seenMs }] of the proofs this seat filed and the abandoned outputs it lists; `bytesOf(id)` what its relay keeps under a hash; `judge(bytes)` this seat's own
  * word on a complete proof (proof-judge.js): { verdict: true | false | undefined, why }, with `judge.read`; `holdsFor(entry, roundId, contract)` -> { holds: [{ script }], presig?(bytes), holdScript? } by this seat's own reckoning, `presig`/`holdScript` naming the one a filer uses;
  * `feeCoin(spk, value)`, `send(hex)`, `urlsOf(entries)`.
  */
@@ -106,7 +106,7 @@ export function createSlashStarter({ key, network, db, store, thresholdOf, tipHe
   /** One pass over the proofs this seat holds: nothing is replayed for a bond that is no template-3 unstarted bond of this census, or before this seat's turn. Only a proof this seat's own judge holds to is filed. */
   async function pass() {
     const done = [];
-    const proofs = [...new Map([...heldProofs(), ...handedProofs()].map((p) => [toHex(p.proofId), p])).values()].filter((p) => !filed(p.proofId));
+    const proofs = [...new Map([...(await heldProofs()), ...handedProofs()].map((p) => [toHex(p.proofId), p])).values()].filter((p) => !filed(p.proofId));
     if (!proofs.length) return done;
     const entries = await entriesAtTip();
     if (!entries) return done;

@@ -35,7 +35,7 @@ export function readSlashStart(raw, bond, holds) {
 
 /**
  * WHAT TO DO ABOUT A START, at `tip`. Before the leaf opens: wait, and nothing is fetched. Once open, `fetchProof(proofId)` brings the bytes and
- * `proofChecks(bytes)` this node's own replay: true leaves the bond to its slash, false takes the return, anything else waits for a
+ * `proofChecks(bytes, { startHeight })` this node's own replay: true leaves the bond to its slash, false takes the return, anything else waits for a
  * replay that answers. A start naming no proof, or one whose bytes nobody can produce by then, has nothing that checks (5A.3B: "does not retrieve,
  * or does not check").
  */
@@ -46,7 +46,7 @@ export async function decideReturn({ start, startHeight, bondMaturity, returnBlo
   const bytes = await fetchProof(start.proofId);
   if (!(bytes instanceof Uint8Array) || !same(taggedHash(TAG.slashProof, bytes), start.proofId))
     return { action: 'return', opensAt, why: 'the proof the start names cannot be fetched' };
-  const verdict = await proofChecks(bytes);
+  const verdict = await proofChecks(bytes, { startHeight });
   if (verdict === true) return { action: 'keep', opensAt, why: 'the proof checks on this node\'s replay' };
   if (verdict === false) return { action: 'return', opensAt, why: 'the proof does not check on this node\'s replay' };
   return { action: 'wait', opensAt, why: 'this node has no replay of that proof yet' };

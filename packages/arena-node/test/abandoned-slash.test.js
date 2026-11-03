@@ -12,6 +12,7 @@ import { slashEvent } from '../src/arbitration-events.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, GONE } from '../../arena-protocol/src/federation-record.js';
 import { startsByCensusKey, encodeAbandonedProof, abandonedProofId } from '../../arena-protocol/src/abandoned-slash.js';
 import { decideReturn, abandonedProofChecks, proofChecksOf } from '../src/hold-return.js';
+import { createProofJudge } from '../src/proof-judge.js';
 import { arbitrationCommitmentIn, escrowOutput } from '../../arena-protocol/src/arbitration-tx.js';
 import { bondOutputKey, bondInternalKey } from '../../arena-protocol/src/bond-script.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
@@ -168,6 +169,25 @@ test('the hash covers the signatures: one record under two signature sets is two
   assert.equal(judge({ record: otherSigners }).slashed, true);
   assert.equal(toHex(judge({ record: otherSigners }).proofId), toHex(abandonedProofId(proofOf({ record: otherSigners }))), 'each judged under its own hash');
   assert.notEqual(toHex(abandonedProofId(proofOf({ record: signed({ signers: nodes.slice(0, 2) }) }))), toHex(abandonedProofId(proofOf())), 'a record cut under its threshold has its own hash');
+});
+
+test('a seat judges an abandonment\'s proof on its own chain, and a started output at the block before its start (ruling #1065)', async () => {
+  let at = null;
+  const s = seat({ bonds: async (h) => { at = h; return h < 339 ? [...seated, SPENT, LEFT] : [...seated, SPENT]; } });
+  await s.restore(inviteFederationId);
+  const judgeSeat = createProofJudge({ committeeOf: () => ({ ok: false, why: 'no round' }), censusOf: () => ({ ok: false, why: 'no round' }), coreOf: () => null, beaconOf: () => ({ ok: false }), replayRunOf: () => undefined, abandoned: (bytes, before) => s.abandonedVerdict(bytes, inviteFederationId, before) });
+  const bytes = proofOf(), read = judgeSeat.read(bytes);
+  assert.deepEqual([read.ok, read.kind, read.roundId, read.floorHeight, toHex(read.bond.txid), read.bond.vout], [true, 'abandoned', null, HEIGHT, toHex(LEFT.txid), 1]);
+  const atTip = await judgeSeat(bytes);
+  assert.equal(at, 340);
+  assert.deepEqual([atTip.verdict, /no output of that node left/.test(atTip.why)], [false, true], 'the output is gone at the tip');
+  const started = await judgeSeat(bytes, { startHeight: 339 });
+  assert.equal(at, 338, 'a node reading its own hold looks before the start');
+  assert.equal(started.verdict, true, started.why);
+  assert.equal((await judgeSeat(proofOf({ record: signed({ signers: nodes.slice(0, 2) }) }), { startHeight: 339 })).verdict, false, 'a record short of its threshold');
+  assert.equal((await judgeSeat(Uint8Array.of(0x42, 1, 2))).verdict, false, 'bytes that are no proof');
+  const noChain = seat({ chainTip: null });
+  assert.equal((await noChain.abandonedVerdict(bytes, inviteFederationId)).verdict, undefined, 'a seat with no chain read cannot say');
 });
 
 test('decideReturn takes an abandonment\'s proof as any slash proof: a true one keeps the slash, a false one takes the return (ruling #1062)', async () => {

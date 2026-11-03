@@ -2963,14 +2963,17 @@ replaying the objection in the proof under the round's core and beacon, and for 
 draw on its own census, less the round's players where it holds the round, and a false table
 by rebuilding it with its own client of each federation it names, on that federation's fee
 rule, and a release by the panels it redraws and, for a release with no valid proof, its own
-word on the bytes under the release's `OP_RETURN`. Three answers: it holds, it does
+word on the bytes under the release's `OP_RETURN`. An abandonment is read as §23A.5 says, on
+its chain as it stands, and a node reading a start on its own bond reads its output at the block
+before that start. Three answers: it holds, it does
 not, or this seat cannot say yet, having no census there, no core, no beacon or no client. A holder signs
 nothing it cannot judge, and a node with a start on such a proof waits. A seat that holds no
 share or does not host the game is one of those. A proof handed to a seat at `PUT /slash/<hash>` is
 judged on its next pass, one at a time, and a seat keeps a verdict by the hash. A seat files
 what it can see from what it holds. A release is on the chain and anyone's to file: a record of
 the release, the outputs it spent, and the bytes or the table it committed to, at `PUT /slash/<hash>`.
-An escrow payout and an abandonment are not judged by this path yet.
+A seat lists what the rows it holds left, and files an output on template 3 as any proof it holds.
+An escrow payout is not judged by this path yet.
 
 **The payout table (RULED 2026-11-02, kanban #1021).**
 
