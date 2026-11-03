@@ -3177,6 +3177,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       for (const r of p.refused || []) console.log(`[publish] ${toHex(eid).slice(0, 16)} ${r}`);
       now = resultFinality(round, rid, eid);
     }
+    // A SEAT THAT WAS OUT reads VOID on its clock alone: the re-runs of the seats that stayed are asked for first, and if five agreed it takes their FINAL signatures (kanban #1060)
+    if (now.noQuorumRerun && now.noQuorum && !round.noQuorum(eid)) {
+      await verifier.gatherReruns(rid, eid);
+      now = resultFinality(round, rid, eid);
+      if (now.askFinalOn) { await gatherFinal(rid, eid); now = resultFinality(round, rid, eid); }
+    }
     if (now.noQuorum && now.holdsRound) {
       try { await verifier.pullEvidence(rid, eid); } catch { /* a peer that cannot answer shows nothing */ }
       now = resultFinality(round, rid, eid);
@@ -3431,7 +3437,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!f.signable && !f.askFinalOn) return false;
     const gk = toHex(rid) + toHex(eid);
     const g = gatherWait.get(gk);
-    if (g && Date.now() < g.nextMs) return false;
+    // THE MOMENT THIS SEAT MAY SIGN IS NOT A PASS TO BACK OFF FROM (kanban #1060, measured on seven seats): a seat out at final_after asks on an unposted run from then on, so the wait had
+    // grown to 300 s by + 1805 s, FINAL came at + 1903 s, past the round's bound, and the round settled with its loser left out: 0 claimed, the winner paid 0 msat.
+    const turnedSignable = !!f.signable && !!g && !g.signable;
+    if (g && !turnedSignable && Date.now() < g.nextMs) return false;
     const heldBefore = (f.finalSigs && f.finalSigs.signed) || 0;
     const ownHex = toHex(round.pubkey);
     const signedHere = round.finalSigs(rid, eid, f.signable ? f.signable.runId : f.askFinalOn).some((r) => toHex(r.signerPubkey) === ownHex);
@@ -3476,8 +3485,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     f = resultFinality(round, rid, eid);
     {
       const held = (f.finalSigs && f.finalSigs.signed) || 0;
-      const waitMs = held > heldBefore || !g ? 5000 : Math.min(g.waitMs * 2, 300000);
-      gatherWait.set(gk, { nextMs: Date.now() + waitMs, held, waitMs });
+      const waitMs = held > heldBefore || !g || turnedSignable ? 5000 : Math.min(g.waitMs * 2, f.holdsRound ? 10000 : 300000);
+      gatherWait.set(gk, { nextMs: Date.now() + waitMs, held, waitMs, signable: !!f.signable });
       if (gatherWait.size > 8192) gatherWait.delete(gatherWait.keys().next().value);
     }
     // STILL SHORT, THE DKG PEERS TOO (ORDER-2116, measured on the free pair): the addresses a round's census gives are its

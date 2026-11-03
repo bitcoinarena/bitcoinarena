@@ -353,12 +353,14 @@ try {
     // deadline - 900 ticks + 5 s from the stake seen - two seats signed FORFEIT at the door and the entry went VOID), as the page
     // sends it a second into the run; the rest after every seat holds the entry
     const early = [];
-    if (Date.now() >= Number(c.startTimeMs)) for (const [m, kind] of msgs.slice(0, 2)) { let got; try { got = await sayAt(n, m); } catch (e) { got = `error ${e.message}`; } early.push(`${kind}: ${saidOf(got)}`); }
+    if (!env.NO_MARKS && Date.now() >= Number(c.startTimeMs)) for (const [m, kind] of msgs.slice(0, 2)) { let got; try { got = await sayAt(n, m); } catch (e) { got = `error ${e.message}`; } early.push(`${kind}: ${saidOf(got)}`); }
     signerNodes.push({ node: n, handout: h.status, entry: en.status, ...(en.status >= 300 ? { entryWhy: enWhy } : {}),
       lock: l.status, lockSaid: (await l.text()).trim().slice(0, 160), ...(early.length ? { early } : {}) });
   }
   log({ step: 'handed over', entry: toHex(eid).slice(0, 16), signerNodes });
   if (signerNodes.filter((x) => x.lock >= 200 && x.lock < 300).length < needed) throw new Error('fewer seats than needed took the lock');
+  // NO_MARKS=1: IN THE ROUND AND NEVER PLAYED: not one mark is sent (tools/no-quorum-devnet.mjs)
+  if (env.NO_MARKS) { log({ step: 'no marks sent' }); process.exit(0); }
 
 
   // after the round's start, as a player's inputs are
