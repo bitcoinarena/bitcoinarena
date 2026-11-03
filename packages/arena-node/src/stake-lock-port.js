@@ -46,8 +46,10 @@ export const endTool = (c, graceMs = KILL_GRACE_MS) => {
 /** The tools this process started that have not exited yet (a test's view of what a timeout leaves behind). */
 export const liveToolCount = () => liveTools.size;
 
-const run = (bin, args, timeoutMs, { spawnFn = spawn, graceMs = KILL_GRACE_MS } = {}) => new Promise((done, fail) => {
-  let stdout = '', stderr = '', settled = false, timer = null;
+// (`onGone` is called once the tool has exited - after its answer, and after a timeout's kill too)
+const run = (bin, args, timeoutMs, { spawnFn = spawn, graceMs = KILL_GRACE_MS, onGone = () => {} } = {}) => new Promise((done, fail) => {
+  let stdout = '', stderr = '', settled = false, timer = null, wentAway = false;
+  const away = () => { if (!wentAway) { wentAway = true; onGone(); } };
   const answer = (timedOut, err) => {
     if (settled) return;
     settled = true;
@@ -63,15 +65,51 @@ const run = (bin, args, timeoutMs, { spawnFn = spawn, graceMs = KILL_GRACE_MS } 
     try { done(JSON.parse(line)); } catch { fail(new Error(`arena-stake-lock answered no JSON: ${stdout.slice(0, 200)}`)); }
   };
   let c;
-  try { c = spawnFn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] }); } catch (e) { answer(false, e); return; }
+  try { c = spawnFn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] }); } catch (e) { answer(false, e); away(); return; }
   killOnExit(c);
   timer = setTimeout(() => { endTool(c, graceMs); answer(true, null); }, timeoutMs);
   c.stdout.setEncoding('utf8'); c.stderr.setEncoding('utf8');
   c.stdout.on('data', (d) => { if (stdout.length < (1 << 20)) stdout += d; });
   c.stderr.on('data', (d) => { if (stderr.length < (1 << 20)) stderr += d; });
-  c.on('error', (e) => answer(false, e));
-  c.on('close', (code, signal) => answer(false, code === 0 ? null : new Error(`Command failed (${signal || code}): ${bin} ${args.join(' ')}`)));
+  c.on('error', (e) => { answer(false, e); if (c.pid === undefined) away(); });
+  c.on('close', (code, signal) => { answer(false, code === 0 ? null : new Error(`Command failed (${signal || code}): ${bin} ${args.join(' ')}`)); away(); });
 });
+
+// ONE FALLBACK RUN AT A TIME PER READ DIRECTORY (kanban #1079, measured 2026-11-03 on the second test host's seat 2: 26 one-shot
+// status, gateways and fees runs at once on one federation's read directory, one holding client.db/LOCK and every other waiting on
+// client.db.lock - each wait counted against its own timeout, so they timed out one after another while the server could not
+// open the db past them). A read asked the old way now waits its turn on its directory: one run there at a time, the same
+// question already running there is answered by that run, and a question still waiting at its timeout is refused without a run.
+const lanes = new Map();   // read directory -> { busy, queue: [{ key, start }], same: Map(key -> Promise) }
+const laneOf = (dir) => { let l = lanes.get(dir); if (!l) { l = { busy: false, queue: [], same: new Map() }; lanes.set(dir, l); } return l; };
+const nextInLane = (dir, l) => {
+  if (l.busy) return;
+  const w = l.queue.shift();
+  if (!w) { if (!l.same.size) lanes.delete(dir); return; }
+  l.busy = true;
+  w.start().finally(() => { l.busy = false; nextInLane(dir, l); });
+};
+const runInLane = (dir, bin, flags, timeoutMs) => {
+  const l = laneOf(dir);
+  const key = flags.join('\u0000');
+  if (l.same.has(key)) return l.same.get(key);
+  const t0 = Date.now();
+  const p = new Promise((done, fail) => {
+    // the turn ends when the tool has EXITED, not when it answered: a run killed at its timeout holds the lock until it is gone
+    const w = { key, start: () => new Promise((free) => { clearTimeout(w.timer); const left = timeoutMs - (Date.now() - t0);
+      if (left <= 0) { fail(new Error(`arena-stake-lock ${flags[1] || ''} timed out after ${timeoutMs} ms`)); free(); return; }
+      run(bin, flags, left, { onGone: free }).then(done, fail); }) };
+    w.timer = setTimeout(() => { const i = l.queue.indexOf(w); if (i < 0) return; l.queue.splice(i, 1);
+      fail(new Error(`arena-stake-lock ${flags[1] || ''} timed out after ${timeoutMs} ms (waiting its turn on the read directory)`)); }, timeoutMs);
+    w.timer.unref?.();
+    l.queue.push(w);
+  }).finally(() => { if (l.same.get(key) === p) l.same.delete(key); if (!l.busy && !l.queue.length && !l.same.size) lanes.delete(dir); });
+  l.same.set(key, p);
+  nextInLane(dir, l);
+  return p;
+};
+/** Fallback runs running or waiting on a read directory (a test's view of the lane). */
+export const laneDepth = (dir) => { const l = lanes.get(dir); return l ? l.queue.length + (l.busy ? 1 : 0) : 0; };
 
 const outpointArg = (o) => `${toHex(o.txid)}:${o.outIdx}`;
 
@@ -202,7 +240,9 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
   const server = serve && readDataDir !== dataDir ? stakeLockServer({ bin, dataDir: readDataDir, timeoutMs: Math.min(timeoutMs, 10000), spawnFn, now }) : null;
   const read = async (flags) => {
     if (server) { try { return await server.ask(flags[1], argsOf(flags.slice(2).filter((x, i, a) => !(x === '--data-dir' || a[i - 1] === '--data-dir')))); } catch { /* the old way below */ } }
-    return run(bin, flags, Math.min(timeoutMs, READ_TIMEOUT_MS));
+    // (a question that opens no client - the contract id - needs no turn)
+    if (!flags.includes('--data-dir')) return run(bin, flags, Math.min(timeoutMs, READ_TIMEOUT_MS));
+    return runInLane(readDataDir, bin, flags, Math.min(timeoutMs, READ_TIMEOUT_MS));
   };
   // A CONFIG READ IS KEPT ON DISK BESIDE THE CLIENT: the raw answer, so a restart shapes it as the read does
   const heldFile = (mode) => join(readDataDir, `held-${mode}.json`);
