@@ -25,6 +25,18 @@ export class AddressPanel extends React.Component {
   componentWillUnmount() { clearTimeout(this.timer); }
   async read() {
     let r; try { r = await this.props.api.post('/owner/reach', await this.props.api.signed('reach')); } catch (e) { r = { ok: false, why: e.message }; }
+    // A FAILED READ IS ASKED AGAIN, NOT SHOWN FOR GOOD (kanban #956: "after first log in, the public address block is always marked as error
+    // and only a page reload shows the correct info"): the first login opens every panel at once, each with a signed request, and one that
+    // fails left its error until a reload. While tries are left the panel keeps saying it is reading; a node set up by hand is said at once.
+    const byHand = !!(r && !r.ok && /not installed by the Arena installer/.test(r.why || ''));
+    const tries = (this.tries || 0) + 1;
+    if (r && !r.ok && !byHand && tries < (this.props.retries || 6) && !this.state.answer?.ok) {
+      this.tries = tries;
+      clearTimeout(this.timer);
+      this.timer = setTimeout(this.read, (this.props.retryMs || 2000) * tries);
+      return;
+    }
+    this.tries = 0;
     this.setState((s) => ({ loaded: true, answer: r, mode: s.mode || (r && r.mode) || null, busy: false }));
     clearTimeout(this.timer);
     if (r && r.ok && running(r.progress)) this.timer = setTimeout(this.read, this.props.pollMs || 5000);
