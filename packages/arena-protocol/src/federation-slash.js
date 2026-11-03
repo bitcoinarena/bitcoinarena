@@ -66,6 +66,24 @@ export function lockedExposureCap({ guardians, f, height, drainBlocks, bondMinGu
   return { ok: true, cap: BigInt(places) * smallest, smallest, places, lapsing, qualifying: qualifying.length, line };
 }
 
+/**
+ * WHEN A GUARDIAN'S BOND STOPS COVERING (kanban #1093 part 7, ruling #1104: "the dashboard warns drain_blocks ahead of the moment, with
+ * Add to bond"). It qualifies at height h while its outputs maturing after h + drain_blocks sum to at least bond_min_guardian, so it lapses
+ * at m* - drain_blocks, m* the maturity at which the latest outputs first reach the floor. Answers { qualifying, lapsesAt, blocksLeft, warn }:
+ * `warn` from drain_blocks before the lapse; lapsesAt null when no outputs reach the floor at all.
+ */
+export function bondLapseOf({ outputs, drainBlocks, bondMinGuardian, tip }) {
+  const floor = BigInt(bondMinGuardian || 0);
+  const outs = (outputs || []).filter((o) => o && Number.isInteger(Number(o.maturity)) && o.maturity !== null)
+    .map((o) => ({ sats: BigInt(o.bondSats ?? o.sats ?? 0), maturity: Number(o.maturity) })).sort((a, b) => b.maturity - a.maturity);
+  let sum = 0n, mStar = null;
+  for (const o of outs) { sum += o.sats; if (sum >= floor && sum > 0n) { mStar = o.maturity; break; } }
+  if (mStar === null) return { qualifying: false, lapsesAt: null, blocksLeft: 0, warn: true };
+  const lapsesAt = mStar - drainBlocks;
+  const blocksLeft = Math.max(0, lapsesAt - Number(tip));
+  return { qualifying: Number(tip) < lapsesAt, lapsesAt, blocksLeft, warn: blocksLeft <= drainBlocks };
+}
+
 /** Is a reserve within what the bonds actually cover? */
 export function reserveFits({ reserve, bonds, f }) {
   const capped = exposureCap({ bonds, f });

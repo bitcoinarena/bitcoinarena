@@ -182,7 +182,7 @@ import { createSlashRelease } from './slash-release-run.js';
 import { slashHoldsOnDoubleSign } from '../../arena-protocol/src/slash.js';
 import { bondPresigDigest, holdClocksOf } from '../../arena-protocol/src/slash-presig.js';
 import { SOURCE_ENTRIES } from '../../arena-protocol/src/market-sources.js';
-import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
+import { CLOCKS as FEDERATION_CLOCKS, bondLapseOf } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
@@ -7045,6 +7045,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // every output of this node and their sum (kanban #544), each with its own lock
             total: found.all ? found.all.sats : found.bond.sats, outputs: (found.all ? found.all.outputs : [found.bond]).map((o) => ({ ...o, lock: tip === null ? null : lockAt(o, tip) })),
             addBond: !!process.env.ARENA_HOME || !!process.env.ARENA_BOND_CLI,   // kanban #553: a seat set up by hand adds from its bond wallet
+            // A GUARDIAN'S BOND STAYS LOCKED WHILE IT SERVES (kanban #1093 part 7, ruling #1104): when it stops covering, warned drain_blocks ahead
+            ...((() => { try {
+              if (tip === null || !(ownAdvert && Array.isArray(ownAdvert.guardianOf) && ownAdvert.guardianOf.length)) return {};
+              const net = String(found.network || chain || '').replace(/^bitcoin-/, ''); const clocks = FEDERATION_CLOCKS[net === 'test' ? 'testnet4' : net] || FEDERATION_CLOCKS.mainnet;
+              const outs = (found.all ? found.all.outputs : [found.bond]).map((o) => ({ bondSats: o.sats, maturity: o.maturity }));
+              return { guardianLock: { drainBlocks: clocks.drainBlocks, bondMinGuardianSats: String(guardianFloor()), ...bondLapseOf({ outputs: outs, drainBlocks: clocks.drainBlocks, bondMinGuardian: guardianFloor(), tip }) } };
+            } catch { return {}; } })()),
             ...(await (async () => { if (process.env.ARENA_HOME || !process.env.ARENA_BOND_CLI) return {};
               try { const { bondCliFrom, walletOf, ADD_OVERHEAD_SATS } = await import('./add-bond-wallet.js'); const w = walletOf(bondCliFrom().cli);
                 return { wallet: { spendableSats: String(w.spendableSats), confirmingSats: String(w.confirmingSats), addOverheadSats: String(ADD_OVERHEAD_SATS) } }; } catch (e) { return { wallet: { why: e.message.split('\n')[0] } }; } })()),
