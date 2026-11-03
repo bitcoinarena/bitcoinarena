@@ -48,6 +48,7 @@ import { checkLiquidityClaim, provenFreeSats } from '../../arena-protocol/src/li
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
 import { capacityBandPoint, bondLockPoint } from '../../arena-protocol/src/federation-record.js';
 import { createReserveAlarms } from './reserve-alarms.js';
+import { createReserveAudit } from './reserve-audit.js';
 import { capacityView, capacityPlea, bondIncentive, pressureOf, guardianWeights as capacityGuardianWeights, gatewayWeights as capacityGatewayWeights } from '../../arena-protocol/src/capacity.js';
 import { GATEWAY_MINIMUMS, GATEWAY_EPOCH_BLOCKS, pegInPastCap } from '../../arena-protocol/src/gateway-seats.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
@@ -5416,6 +5417,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   round.db.exec('CREATE TABLE IF NOT EXISTS reserve_alarms (federation TEXT PRIMARY KEY, alarm TEXT NOT NULL)');
   reserveAlarms = createReserveAlarms({ load: () => round.db.prepare('SELECT alarm FROM reserve_alarms').all().map((r) => JSON.parse(r.alarm)),
     save: (all) => { for (const a of all) round.db.prepare('INSERT INTO reserve_alarms (federation, alarm) VALUES (?, ?) ON CONFLICT(federation) DO NOTHING').run(a.federation, JSON.stringify(a)); } });
+  // THE FEDERATIONS' SIGNED HISTORY, AUDITED (kanban #1093 part 2, ruling #1106): off until measured; ARENA_RESERVE_AUDIT=<fid hex>:<client dir>,...
+  // names the federations whose clients this seat holds. Every ARENA_RESERVE_AUDIT_MS (10 min) the stake-lock tool reads the sessions since the
+  // last pass and an inflation raises the federation's alarm (deposits stop)
+  if (process.env.ARENA_RESERVE_AUDIT && process.env.ARENA_STAKE_LOCK_BIN) {
+    round.db.exec('CREATE TABLE IF NOT EXISTS reserve_audit (federation TEXT PRIMARY KEY, row TEXT NOT NULL)');
+    const auditFeds = String(process.env.ARENA_RESERVE_AUDIT).split(',').map((x) => x.trim().split(':')).filter((x) => /^[0-9a-f]{64}$/i.test(x[0] || '') && x[1])
+      .map(([federation, ...d]) => ({ federation: federation.toLowerCase(), dataDir: d.join(':') }));
+    const audit = createReserveAudit({ federations: async () => auditFeds,
+      run: (args) => new Promise((done, fail) => execFileCb(process.env.ARENA_STAKE_LOCK_BIN, args, { timeout: 900000, maxBuffer: 64 << 20 }, (e, out) => {
+        if (e) return fail(e); const line = String(out).trim().split('\n').reverse().find((l) => l.startsWith('{')); try { done(JSON.parse(line)); } catch { fail(new Error('no JSON line')); } })),
+      load: (fid) => { const r = round.db.prepare('SELECT row FROM reserve_audit WHERE federation = ?').get(fid); return r ? JSON.parse(r.row) : null; },
+      save: (fid, row) => round.db.prepare('INSERT INTO reserve_audit (federation, row) VALUES (?, ?) ON CONFLICT(federation) DO UPDATE SET row = excluded.row').run(fid, JSON.stringify(row)),
+      alarms: reserveAlarms, height: async () => { try { return typeof chainTip === 'function' ? Number(await chainTip()) : 0; } catch { return 0; } },
+      say: (o) => console.log(`[reserve-audit] ${JSON.stringify(o)}`) });
+    const tick = () => audit.pass().then((r) => { for (const x of r) if (x.why) console.log(`[reserve-audit] ${x.federation.slice(0, 16)}: ${x.why}`); }).catch((e) => console.log(`[reserve-audit] ${e.message}`));
+    setTimeout(tick, 60_000).unref?.(); setInterval(tick, Number(process.env.ARENA_RESERVE_AUDIT_MS || 600_000)).unref?.();
+  }
   fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf,
     alarmOf: (fid) => reserveAlarms.of(fid),
     bandFrom: capacityBandPoint(chainNetworkId() ? networkOf(fromHex(chainNetworkId())) : null), endpointsOf: fedEndpointsOf,
