@@ -47,6 +47,7 @@ import { signLiquiditySeating, standingLiquiditySeating, liquiditySeatingFrom } 
 import { checkLiquidityClaim, provenFreeSats } from '../../arena-protocol/src/liquidity.js';
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
 import { capacityBandPoint, bondLockPoint } from '../../arena-protocol/src/federation-record.js';
+import { createReserveAlarms } from './reserve-alarms.js';
 import { capacityView, capacityPlea, bondIncentive, pressureOf, guardianWeights as capacityGuardianWeights, gatewayWeights as capacityGatewayWeights } from '../../arena-protocol/src/capacity.js';
 import { GATEWAY_MINIMUMS, GATEWAY_EPOCH_BLOCKS, pegInPastCap } from '../../arena-protocol/src/gateway-seats.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
@@ -626,6 +627,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE NODE'S OPEN MUSIG2 SESSIONS: session id -> its message, tweak and secret nonce, each signed once
   const musigNodeSessions = new Map();
   let fedRecords = null;                       // federation-records.js, set once the roster and the invites are known
+  let reserveAlarms = null;                    // reserve-alarms.js: the marks of theft this seat saw (kanban #1093 part 5)
   // ABSENCE ATTESTATIONS (§23A.4): taken at POST /absence, and what proves a guardian ABANDONED in the record
   // HELD ACROSS A RESTART: beside the store, as the other per-seat files are
   const absencesFile = db && db.arenaPath ? `${db.arenaPath}.held-absences.json` : null;
@@ -5407,7 +5409,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   // THE OWNERS' CONSENTS TO RETIRE A FEDERATION (kanban #577), kept beside the store
   const retireBook = createRetireBook(db && db.arenaPath ? `${db.arenaPath}.retire.json` : null);
+  // THE RESERVE ALARMS THIS SEAT SAW (kanban #1093 parts 2 and 5): kept in its database, listed with each record so clients stop depositing
+  round.db.exec('CREATE TABLE IF NOT EXISTS reserve_alarms (federation TEXT PRIMARY KEY, alarm TEXT NOT NULL)');
+  reserveAlarms = createReserveAlarms({ load: () => round.db.prepare('SELECT alarm FROM reserve_alarms').all().map((r) => JSON.parse(r.alarm)),
+    save: (all) => { for (const a of all) round.db.prepare('INSERT INTO reserve_alarms (federation, alarm) VALUES (?, ?) ON CONFLICT(federation) DO NOTHING').run(a.federation, JSON.stringify(a)); } });
   fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf,
+    alarmOf: (fid) => reserveAlarms.of(fid),
     bandFrom: capacityBandPoint(chainNetworkId() ? networkOf(fromHex(chainNetworkId())) : null), endpointsOf: fedEndpointsOf,
     // a guardian's bond counts in the cap only while it is locked past the drain (kanban #1093 part 7): from BOND_LOCK_HEIGHT, or on regtest ARENA_BOND_LOCK_HEIGHT
     bondLock: (() => { const net = chainNetworkId() ? networkOf(fromHex(chainNetworkId())) : null; const env = process.env.ARENA_BOND_LOCK_HEIGHT;
@@ -11316,6 +11323,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const records = fids.flatMap((federation) => { const r = fedRecords && fedRecords.recordAt ? fedRecords.recordAt(federation, height) : null; return r && r.__hex ? [{ federation, height: r.height, record: r.__hex }] : []; });
         return json(res, 200, { node: toHex(round.pubkey), height, records });
       }
+      // THE RESERVE ALARMS THIS SEAT HOLDS (kanban #1093 part 5): the marks of theft it saw, each with what shows it
+      if (req.method === 'GET' && url.pathname === '/reserve-alarms') return json(res, 200, { node: toHex(round.pubkey), alarms: reserveAlarms ? reserveAlarms.list() : [] });
       if (req.method === 'GET' && url.pathname === '/federations') {
         if (url.searchParams.get('fresh') === '1') { try { await fedRecords.gatherAll((inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; }); } catch { /* the kept ones */ } }
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });

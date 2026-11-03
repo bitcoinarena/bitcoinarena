@@ -55,7 +55,7 @@ const STATUS_ASK_MS = 6000;
  * id hex -> status with `federation`; `only` keeps one. `.why` says why none stood when the map is empty.
  */
 export async function federationStatuses({ nodes, census, verify, fetcher = fetch, only = null }) {
-  const verified = new Map(), refused = new Map(), failed = [];
+  const verified = new Map(), refused = new Map(), failed = [], alarms = new Map();
   const add = (m, k, v) => { if (!m.has(k)) m.set(k, []); m.get(k).push(v); };
   // NOT HELD FOR THE SLOWEST SEAT, NOR FOR A HUNG ONE (kanban #625: asked with no limit, a restarting seat held an order 26 s a read): each
   // seat within STATUS_ASK_MS, and once more than half answered the rest get COMPARE_GRACE_MS - the records are signed, the newest that stands is taken
@@ -69,6 +69,9 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
       for (const f of j.federations || []) {
         const fid = String(f.federation).toLowerCase();
         if (only && fid !== only) continue;
+        // A RESERVE ALARM (kanban #1093 part 5): a seat that saw a mark of theft in the federation's signed history names it; one seat is
+        // enough to stop deposits - stopping is the safe side, and the mark carries its own proof for anyone who acts on it
+        if (f.alarm && typeof f.alarm === 'object' && !alarms.has(fid)) alarms.set(fid, { ...f.alarm, from: u });
         noteRecordInvite(f.record);   // its guardians, for a join one guardian cannot serve (guardian-invites.js) - verified or not
         const v = verifyFederationRecord(hexToBytes(f.record), { census, verify, inviteFederationId });
         if (v.ok) add(verified, fid, { ...v, from: u }); else add(refused, fid, `${u}: ${v.why}`);
@@ -80,8 +83,9 @@ export async function federationStatuses({ nodes, census, verify, fetcher = fetc
   for (const fid of new Set([...verified.keys(), ...refused.keys()])) {
     const best = newestRecord(verified.get(fid) || []);
     const why = (refused.get(fid) || failed)[0];
-    out.set(fid, best ? { ...statusOfRecord(best), federation: fid }
-      : { status: 'unverified', allows: FEDERATION_ALLOWS.unverified, federation: fid, why: why ? `no record stands: ${why}` : 'no node holds a record of this federation' });
+    const st = best ? { ...statusOfRecord(best), federation: fid }
+      : { status: 'unverified', allows: FEDERATION_ALLOWS.unverified, federation: fid, why: why ? `no record stands: ${why}` : 'no node holds a record of this federation' };
+    out.set(fid, alarms.has(fid) ? { ...st, alarm: alarms.get(fid), allows: { ...st.allows, deposit: false } } : st);
   }
   if (!out.size && failed.length) out.why = `no record stands: ${failed[0]}`;
   return out;
@@ -120,7 +124,8 @@ export function loadRefusesDeposit({ load, networkId }) {
  * one that says it. Null when none is OPEN.
  */
 export function pickFederation(statuses, { known = () => true } = {}) {
-  const open = (statuses || []).filter((f) => f && f.status === 'OPEN' && known(f.federation));
+  // a federation whose deposits are stopped (an alarm, or its load on mainnet) is not picked (kanban #1093 part 5, #807)
+  const open = (statuses || []).filter((f) => f && f.status === 'OPEN' && known(f.federation) && !f.alarm && !(f.allows && f.allows.deposit === false));
   if (!open.length) return null;
   const loadOf = (f) => (typeof f.load === 'number' ? f.load : Infinity);
   return [...open].sort((a, b) => loadOf(a) - loadOf(b) || (b.height || 0) - (a.height || 0))[0];
@@ -235,6 +240,14 @@ export function moveSays(offer) {
   if (!offer) return '';
   const pct = (x) => `${Math.round(x * 100)} %`;
   return `This federation is at ${pct(offer.fromLoad)} load; federation ${String(offer.to).slice(0, 16)} is at ${pct(offer.toLoad)}. Move is offered: your money can go there.`;
+}
+
+/** The sentence a page shows for a federation with a reserve alarm (kanban #1093 part 5), else ''. */
+export function alarmSays(fed) {
+  if (!fed || !fed.alarm) return '';
+  const what = fed.alarm.kind === 'inflation' ? 'more e-cash was redeemed than was ever issued'
+    : fed.alarm.kind === 'unbacked-spend' ? 'its reserve was spent on the chain with no peg-out its guardians signed' : 'a mark of theft was seen';
+  return `Deposits into this federation are stopped: in its own signed history, ${what}. Your notes in it are covered by its guardians' bonds; Withdraw and Move stay open while they work.`;
 }
 
 /** The sentence a page shows for a status that holds something back. */
