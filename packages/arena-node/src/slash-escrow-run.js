@@ -431,11 +431,11 @@ export function createSlashEscrow({ secret, me, clocks, db, tweakPoint, tipHeigh
         const mine = db.prepare('SELECT federation, address, script FROM slash_pegins WHERE start = ?').all(`escrow:${r.escrow_in}`);
         if (!mine.length) continue;
         const outs = decodeSlashEscrowOutputs(new Uint8Array(r.outputs)).outputs;
-        for (const [i, o] of outs.entries()) {
-          if (o.pays !== 'player_carrier' && o.pays !== 'reserves') continue;
-          const peg = mine.find((p) => same(new Uint8Array(p.script), o.script));
-          if (!peg) continue;
-          const got = await payOn({ name: { start: `escrow:${r.escrow_in}`, path: 'escrow', index: i }, startHex: r.start, txid: r.txid, vout: i + 1, o, peg, slices: (sliced[seq].find((x) => x.index === i) || { slices: [] }).slices });
+        // EVERY OUTPUT THIS CARRIER CARRIES IN THE SPEND: a players' output's margin comes off a reserves' part it carries too (payOn)
+        const siblings = outs.map((o, i) => ({ name: { start: `escrow:${r.escrow_in}`, path: 'escrow', index: i }, txid: r.txid, vout: i + 1, o,
+          peg: o.pays === 'player_carrier' || o.pays === 'reserves' ? mine.find((p) => same(new Uint8Array(p.script), o.script)) : null })).filter((x) => x.peg);
+        for (const x of siblings) {
+          const got = await payOn({ ...x, startHex: r.start, slices: (sliced[seq].find((y) => y.index === x.name.index) || { slices: [] }).slices, siblings });
           if (got) done.push(got);
         }
       }
