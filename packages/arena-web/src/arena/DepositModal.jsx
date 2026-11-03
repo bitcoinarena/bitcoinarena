@@ -42,6 +42,8 @@ export class DepositModal extends React.Component {
   componentDidMount() {
     this.bind(this.active);
     if (this.state.nwcUri) this.readBalance();
+    // THE FOOT'S "Get 300 sats" (kanban #1088): the window opens on the faucet's button pressed - the same top-up, no first tab's invoice made beside it
+    if (this.props.faucetNow && this.props.faucet && !this.state.rest) { this.useFaucet(); return; }
     // the first tab, as the page always did - an offer that opens on a rest keeps its tabs unseen under the rest's words
     this.choose(this.active.choices[0]);
   }
@@ -74,7 +76,7 @@ export class DepositModal extends React.Component {
   }
   takeRest(o) { this.active = o; this.bind(o); this.set({ rest: o, why: '', tab: null }); this.show(restPay(o)); }
 
-  // THE FAUCET (kanban #926, the owner 2026-11-01: "Use faucet to get 250 Sats als button"): this offer's invoice, paid by the faucet; the offer's own watch says when it landed
+  // THE FAUCET (kanban #926, the owner 2026-11-01: "Use faucet to get 250 Sats als button"; 300 since kanban #1088): this offer's invoice, paid by the faucet; the offer's own watch says when it landed
   async useFaucet() {
     const f = this.props.faucet, mine = ++this.token;
     this.fromFaucet = true;
