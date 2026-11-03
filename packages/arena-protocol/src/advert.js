@@ -144,6 +144,13 @@ export function encodeAdvert(a) {
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   w.vec(a.hostedGames, (g, ww) => ww.bytes32(g));
   w.u64(a.timestamp);
+  // WHERE THE NODE RUNS (kanban #1093 part 4, "Guardians spread": "a new optional advert field, the machine or provider, self-declared"): the
+  // hash of the name its owner gives (hostGroupOf), so no provider name is on the chain; first of the optional fields, 32 bytes after their
+  // marker. None is no bytes, so every advertisement before this keeps its bytes. The founding draw seats at most f guardians of one group.
+  if (a.hostGroup !== undefined && a.hostGroup !== null) {
+    if (!(a.hostGroup instanceof Uint8Array) || a.hostGroup.length !== 32) throw new Error('a host_group is 32 bytes (hostGroupOf of the machine or provider name)');
+    w.u8(HOST_GROUP_MARKER); w.bytes32(a.hostGroup);
+  }
   // STEPPING OUT WITHOUT UNBONDING (§5A.3, RULED 2026-09-28): `serving = false`, published as an advertisement
   // update, takes the node out of every census from that update's block on - its bond untouched. Written only when false, one
   // marker byte last: "serving" is no bytes, so every advertisement before this keeps its bytes and the hash its bond committed to.
@@ -175,6 +182,10 @@ export function encodeAdvert(a) {
 
 /** The byte before a node's declared scalars (§27A.2), before serving. */
 export const DECLARES_MARKER = 0x5d;
+/** The byte before a node's host_group (kanban #1093 part 4), first of the optional fields. */
+export const HOST_GROUP_MARKER = 0x5b;
+/** A host_group from the machine or provider name its owner gives: case and spaces do not make another group. */
+export const hostGroupOf = (name) => taggedHash('ARENA/v1/HostGroup', new TextEncoder().encode(String(name || '').trim().toLowerCase().replace(/\s+/g, ' ')));
 /** The byte before the owner's emergency key (§23A.5a, protocol 17), after the declared scalars, before serving. */
 export const EMERGENCY_MARKER = 0x5e;
 /** The byte before a bond's slash_presig (5A.3B, kanban #1053), after the emergency key, before serving. */
@@ -235,6 +246,10 @@ export function decodeAdvert(bytes) {
   for (let i = 1; i < a.hostedGames.length; i++)
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   a.timestamp = r.u64();
+  // the host_group (33), first, only when written (kanban #1093 part 4); then as before
+  const OPTIONAL_TAILS = [0, 1, 17, 18, 33, 34, 50, 51, 66, 67, 83, 84, 99, 100, 116, 117];
+  const left0 = bytes.length - r.at;
+  if (OPTIONAL_TAILS.map((x) => x + 33).includes(left0) && bytes[r.at] === HOST_GROUP_MARKER) { r.u8(); a.hostGroup = r.bytes32(); }
   // the declared scalars (17 bytes), the emergency key (33), the slash_presig (66) and serving = false (1), each only when written, in that order
   const left = bytes.length - r.at;
   if ([17, 18, 50, 51, 83, 84, 116, 117].includes(left) && bytes[r.at] === DECLARES_MARKER) { r.u8(); a.declares = { bondMinSats: r.u64(), proposalDepositSats: r.u64() }; }
