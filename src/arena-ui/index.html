@@ -1771,6 +1771,51 @@
     window.ARENA_OPPONENT_URL = window.ARENA_FAUCET_URL ? window.ARENA_FAUCET_URL.replace(/\/player$/, '/opponent') : '';
     // LET BOTS JOIN THE GAMES (kanban #926): on unless a player turned it off, kept in this browser; off, the page names no table to the test opponent
     window.ARENA_BOTS_ON = () => { try { return localStorage.getItem('arena.bots') !== 'off'; } catch { return true; } };
+    // THE ADMIN FLAG (kanban #1092, the owner 2026-11-03: "Practice nur dann anzeigen wenn es ein bestaetigter Admin ist ueber das Frontend Flag"):
+    // opened once with ?admin=<code>, the code is checked against its SHA-256 here and kept in this browser; ?admin=off takes it back. Unity
+    // asks window.ARENA_ADMIN (arena.jslib ArenaIsAdmin) and shows PRACTICE only to an admin. The code itself is never in the page.
+    window.ARENA_ADMIN_SHA256 = '18fcacfac3164c5a5dc71e71d053c9061fea37403e63056eb9d11e602ab1bc79';
+    window.ARENA_ADMIN = false;
+    (async () => {
+      const hex = async (t) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t))), (b) => b.toString(16).padStart(2, '0')).join('');
+      const store = (() => { try { return window.localStorage; } catch { return null; } })();
+      try {
+        const u = new URL(location.href), asked = u.searchParams.get('admin');
+        if (asked !== null) {
+          u.searchParams.delete('admin'); history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+          if (asked === 'off' || asked === '0') { if (store) store.removeItem('arena.admin.code'); }
+          else if (await hex(asked.trim()) === window.ARENA_ADMIN_SHA256 && store) store.setItem('arena.admin.code', asked.trim());
+          else console.log('[admin] that admin code is not this site\'s');
+        }
+        const kept = store && store.getItem('arena.admin.code');
+        window.ARENA_ADMIN = !!kept && await hex(kept) === window.ARENA_ADMIN_SHA256;
+      } catch (e) { window.ARENA_ADMIN = false; }
+      if (window.ARENA_ADMIN) {
+        const mark = () => { const b = document.getElementById('arena-build'); if (b && !/admin/.test(b.textContent)) b.textContent += ' \u00b7 admin'; };
+        if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', mark); else mark();
+        // THE OWNER'S ROUNDS LEFT OUT OF THE COUNTS (kanban #1090: "tu da meine Runden RAUS NEHMEN. Indem es ein Flag im Frontend gibt"): every
+        // entry this browser's wallet history holds (a stake row's entry - its transaction id in the explorer), told to the explorer once, with
+        // the admin code; again each minute for the rounds joined since
+        const report = async () => {
+          const S = (window.ARENA_BROWSER_STORE && window.ARENA_BROWSER_STORE()) || store;
+          const ids = new Set();
+          for (let i = 0; i < S.length; i++) {
+            const k = S.key(i);
+            if (!k || !k.startsWith('arena.ledger.') || k.startsWith('arena.ledger.read.')) continue;
+            try { for (const r of JSON.parse(S.getItem(k) || '[]')) if (r && /^[0-9a-f]{64}$/i.test(String(r.entry || ''))) ids.add(String(r.entry).toLowerCase()); } catch { /* not a list */ }
+          }
+          let sent = []; try { sent = JSON.parse(store.getItem('arena.admin.marked') || '[]'); } catch { sent = []; }
+          const fresh = [...ids].filter((x) => !sent.includes(x)).slice(0, 500);
+          if (!fresh.length) return;
+          try {
+            const r = await fetch('https://explorer.bitcoinarena.io/api/mark', { method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ kind: 'owner', keys: fresh, code: store.getItem('arena.admin.code') }) });
+            if (r.ok) store.setItem('arena.admin.marked', JSON.stringify(sent.concat(fresh).slice(-5000)));
+          } catch { /* the next minute asks again */ }
+        };
+        setTimeout(report, 5000); setInterval(report, 60000);
+      }
+    })();
     window.addEventListener('DOMContentLoaded', () => {
       const box = document.querySelector('#arena-games .box');
       if (!box || !window.ARENA_OPPONENT_URL) return;
