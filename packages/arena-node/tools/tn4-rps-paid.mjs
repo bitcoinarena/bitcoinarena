@@ -172,6 +172,9 @@ async function paidEntry(c, rid, roundHex, move, who) {
     // EVERY SEAT AT ONCE (2026.1.9.12 release check, 2026-10-29: locked at 11:29:32Z, handed to the 14 seats one after another until
     // 11:32:43Z - 35 s past the entry close; every signer node said "the round is closed")
     const signerNodes = await Promise.all(nodes.map(async (n) => {
+      // SKIP_ENTRY=<port or host> (kanban #1068): P2's entry, handout and locks are not handed to that seat, as a client that
+      // never reached it; the seats that took it hand it on (entry-relay.js), and the run reads whether the skipped seat holds it
+      if (who === 'P2' && env.SKIP_ENTRY && n.includes(env.SKIP_ENTRY)) return { node: n, skipped: true };
       const h = await fetch(`${n}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
       const en = await fetch(`${n}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
       const enWhy = (await en.text()).trim().slice(0, 140);
@@ -218,7 +221,8 @@ try {
     // ONLY A ROUND OF A SEATED TABLE (kanban #803, seated-table-pick.mjs); FEDERATION=<hex prefix>: only a table of the federation this
     // payer's wallet pays into - both grids list together; PROTOCOL=<n> (kanban #543, 2026-10-21): only a round of that protocol version
     {
-      const got = await pickSeatedTableRound(rows.map((r) => r.id), {
+      // a backup grid's round takes no entry while its window's primary committee is drawn (§5A.5; kanban #1068's first run paid a lock into one)
+      const got = await pickSeatedTableRound(rows.filter((r) => !r.backup).map((r) => r.id), {
         contractOf: async (id) => new Uint8Array(await (await fetch(`${nodes[0]}/round?id=${id}`)).arrayBuffer()),
         // a seat not drawn for the table holds no certificate of it (404): every seat is asked, any one holding it is enough
         seated: async (anchor, role) => (await Promise.all(nodes.map((n) => fetch(`${n}/seating?round=${anchor}&role=${role}`, { signal: AbortSignal.timeout(10000) }).then((r) => r.ok, () => false)))).some(Boolean),
@@ -243,6 +247,16 @@ try {
     catch (e) { if (!/no certificate/.test(e.message) || Date.now() > Number(c.entryCloseMs) - 150000) throw e; log({ step: 'certificate not yet', why: e.message.slice(0, 120) }); await new Promise((r) => setTimeout(r, 5000)); }
   }
   log({ step: 'seated', signerNodes: seated.signerNodes.length, agreed: seated.agreed });
+  // SKIP_ENTRY=auto (kanban #1068): the seat P2 skips is the first of PORTS that sits on the round's settlement
+  if (env.SKIP_ENTRY === 'auto') {
+    const keys = new Set(seated.signerNodes.map((k) => (typeof k === 'string' ? k : toHex(k)).toLowerCase()));
+    for (const n of nodes.filter((u) => /127\.0\.0\.1:312/.test(u))) {
+      const k = toHex(new Uint8Array(await (await fetch(`${n}/identity`)).arrayBuffer())).slice(0, 64);
+      if (keys.has(k)) { env.SKIP_ENTRY = n; break; }
+    }
+    log({ step: 'P2 skips', seat: env.SKIP_ENTRY });
+    if (env.SKIP_ENTRY === 'auto') throw new Error('no seated seat among PORTS to skip');
+  }
   // THE SIGNER NODES OUTSIDE NODES (kanban #804, signer-addresses.mjs): asked for the claim key and handed the entries at their own addresses
   { const st = (seated.derived && seated.derived.seating) || {};
     const out = await addressBook([...nodes]).outside([...c.nodes, ...(st.game && st.game.seated) || [], ...(st.settlement && st.settlement.seated) || []]);
