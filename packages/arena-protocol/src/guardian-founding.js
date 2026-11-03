@@ -124,9 +124,24 @@ export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian,
     ahead: pressureBond !== null && nodeSats.get(nodeKey(x.op, x.entry)) >= pressureBond }))
     .sort((a, b) => { if (a.ahead !== b.ahead) return a.ahead ? -1 : 1; const l = a.ticket * b.weight, r = b.ticket * a.weight; return l < r ? -1 : l > r ? 1 : outpointOrder(a.entry, b.entry); });
   const ahead = scored.filter((s) => s.ahead).length;
-  return { ok: true, eligible: pool.length, seatedFirst: first.length, ...(pressureBond !== null ? { atPressureBond: ahead } : {}), drawn: [...first, ...scored.slice(0, missing).map((s) => s.entry)],
-    alternates: scored.slice(missing, missing + ALTERNATES).map((s) => s.entry),
-    why: `${first.length ? `${first.length} seated first, ` : ''}${missing} drawn of ${pool.length} eligible operators, ${Math.min(ALTERNATES, pool.length - missing)} alternates in order${allDrawn}${pressureBond !== null ? `, under pressure ${ahead} at or above B*_net ${pressureBond} go ahead of the rest` : ''}` };
+  // GUARDIANS SPREAD (kanban #1093 part 4: "The founding draw seats at most f guardians that share an operator, or that name the same host_group"): in ticket
+  // order, a candidate whose host_group already holds f drawn seats is passed over; one ticket per operator already keeps an operator to one seat. A node
+  // that names no host_group is a group of its own. The alternates are the next in order that keep the cap beside the drawn.
+  const groupOf = (e) => (e.advert && e.advert.hostGroup instanceof Uint8Array ? toHex(e.advert.hostGroup) : `node:${toHex(e.pubkey)}`);
+  const inGroup = new Map();
+  for (const e of first) inGroup.set(groupOf(e), (inGroup.get(groupOf(e)) || 0) + 1);
+  const fits = (e) => (inGroup.get(groupOf(e)) || 0) < Math.max(1, f);
+  const picked = [], rest = [];
+  for (const s of scored) {
+    if (picked.length < missing && fits(s.entry)) { picked.push(s.entry); inGroup.set(groupOf(s.entry), (inGroup.get(groupOf(s.entry)) || 0) + 1); }
+    else rest.push(s.entry);
+  }
+  if (picked.length < missing)
+    return { ok: false, eligible: pool.length, seatedFirst: first.length, why: `the ${missing} seats to draw cannot be filled with at most ${Math.max(1, f)} guardians per host_group: ${picked.length} fit` };
+  const alternates = rest.filter(fits).slice(0, ALTERNATES);
+  return { ok: true, eligible: pool.length, seatedFirst: first.length, ...(pressureBond !== null ? { atPressureBond: ahead } : {}), drawn: [...first, ...picked],
+    alternates,
+    why: `${first.length ? `${first.length} seated first, ` : ''}${missing} drawn of ${pool.length} eligible operators, ${alternates.length} alternates in order${allDrawn}${pressureBond !== null ? `, under pressure ${ahead} at or above B*_net ${pressureBond} go ahead of the rest` : ''}` };
 }
 
 /**
@@ -136,12 +151,19 @@ export function drawGuardians({ entries, seed, height, nominal, bondMinGuardian,
 export function replaceNoShows({ drawn, alternates, noShows }) {
   const out = new Set((noShows || []).map((k) => String(k).toLowerCase()));
   const queue = (alternates || []).filter((e) => !out.has(toHex(e.pubkey)));
+  // AT MOST f OF ONE host_group STILL (kanban #1093 part 4): an alternate whose group would go past f is passed over for the next
+  const f = Math.max(1, Math.floor(((drawn || []).length - 1) / 3));
+  const groupOf = (e) => (e.advert && e.advert.hostGroup instanceof Uint8Array ? toHex(e.advert.hostGroup) : `node:${toHex(e.pubkey)}`);
+  const inGroup = new Map();
+  for (const e of drawn || []) if (!out.has(toHex(e.pubkey))) inGroup.set(groupOf(e), (inGroup.get(groupOf(e)) || 0) + 1);
   const seated = [];
   let used = 0;
   for (const e of drawn) {
     if (!out.has(toHex(e.pubkey))) { seated.push(e); continue; }
-    const next = queue.shift();
-    if (!next) return { ok: false, seated, used, why: 'more no-shows than alternates: the founding is drawn again at the next trigger' };
+    const at = queue.findIndex((x) => (inGroup.get(groupOf(x)) || 0) < f);
+    const next = at < 0 ? null : queue.splice(at, 1)[0];
+    if (!next) return { ok: false, seated, used, why: 'more no-shows than alternates that keep at most f guardians per host_group: the founding is drawn again at the next trigger' };
+    inGroup.set(groupOf(next), (inGroup.get(groupOf(next)) || 0) + 1);
     seated.push(next); used++;
   }
   return { ok: true, seated, used, why: used ? `${used} no-show${used === 1 ? '' : 's'} replaced by the alternates in order` : 'every drawn guardian took part' };
