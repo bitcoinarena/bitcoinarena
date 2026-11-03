@@ -31,16 +31,17 @@ test('the bands are §23A.1\'s table: 10, 7 and 4 guardians', () => {
 });
 
 /** Seven seats on one census: node keys, guardian keys, 50 000-sat bonds; `leaving` the ones whose owners left. */
-function seven({ leaving = [], successor = null, closed = false, retiring = [], reserves = null, absencesOf = null, abandonBlocks = null, departureNotice = null, emergencyKeys = {}, heightOf = () => 156036, censusNow = null } = {}) {
+function seven({ leaving = [], successor = null, closed = false, retiring = [], reserves = null, absencesOf = null, abandonBlocks = null, departureNotice = null, emergencyKeys = {}, heightOf = () => 156036, censusNow = null, bondLock = null, maturities = null } = {}) {
   const nodes = Array.from({ length: 7 }, (_, i) => ({ secret: new Uint8Array(32).fill(i + 1) }));
   for (const [i, n] of nodes.entries()) { n.pubkey = schnorr.getPublicKey(n.secret); n.guardianKey = Uint8Array.from([2, ...new Uint8Array(32).fill(0x60 + i)]); n.endpoint = `wss://seat-${i}.example`; }
   const census = { ok: true, entries: nodes.map((n, i) => ({ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xa0 + i), vout: 0, bondSats: 50000n,
     advert: { operatorId: `op${i}`, endpoint: n.endpoint, guardianEndpoint: `wss://g${i}.example`, guardianOf: [{ federationId: FED, guardianKey: n.guardianKey }],
+      ...(maturities ? { bondMaturityHeight: maturities[i] } : {}),
       ...(emergencyKeys[i] ? { emergencyPubkey: emergencyKeys[i] } : {}) } })) };
   const seats = nodes.map((n, i) => federationRecords({
     round: { pubkey: n.pubkey, identity: { secret: n.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: heightOf(), networkId: NET } }),
     roster: { censusFor: () => (censusNow ? censusNow(census) : census) }, inviteFor: () => INVITE, networkId: NET, leavingAtMs: () => (leaving.includes(i) ? 1 : null),
-    successorOf: () => successor, closedOf: () => closed, retiringOf: () => retiring.includes(i),
+    successorOf: () => successor, closedOf: () => closed, retiringOf: () => retiring.includes(i), ...(bondLock ? { bondLock } : {}),
     ...(absencesOf ? { absences: absencesOf(i), abandonBlocks, departureNotice } : {}),
     ...(reserves ? { reserveOf: async () => (reserves[i] === null ? { ok: false, why: 'no answer' } : { ok: true, reserveSats: BigInt(reserves[i]) }) } : {}),
     fetcher: async (url) => {
@@ -821,4 +822,17 @@ test('a signed record splits with or without a band; an unknown band and a secon
   assert.throws(() => decodeFederationRecord(Uint8Array.from([...body, 9])), /not a capacity band/);
   assert.throws(() => decodeFederationRecord(Uint8Array.from([...body, 2, 2])), /trailing bytes/);
   assert.throws(() => encodeFederationRecord({ ...bare(), capacityBand: 'NOT_OPEN' }), /capacity band NOT_OPEN/);
+});
+
+test('a guardian\'s bond stays locked while it serves (kanban #1093 part 7): one maturing within drain_blocks takes one place out of the cap, all seven sign it, it stays seated', async () => {
+  const maturities = [160000, 160000, 160000, 156100, 160000, 160000, 160000];   // the line is 156036 + 100
+  const s = seven({ maturities, bondLock: { from: 0, drainBlocks: 100, bondMinGuardian: 50000n } });
+  const got = await s.seats[0].gather(FED, inviteFederationId);
+  assert.deepEqual([got.ok, got.status, got.signers], [true, 'OPEN', 7], got.why);
+  const v = verifyFederationRecord(fromHex(s.seats[0].list()[0].record), { census: s.census.entries, verify, inviteFederationId });
+  assert.equal(v.ok, true, v.why);
+  assert.deepEqual([v.record.exposureCapSats, v.record.gone.length], [2n * 50000n, 0], 'max(0, f + 1 - 1) x 50 000, nobody gone');
+  const before = seven({ maturities, bondLock: { from: 200000, drainBlocks: 100, bondMinGuardian: 50000n } });
+  await before.seats[0].gather(FED, inviteFederationId);
+  assert.equal(verifyFederationRecord(fromHex(before.seats[0].list()[0].record), { census: before.census.entries, verify, inviteFederationId }).record.exposureCapSats, 3n * 50000n, 'below the lock height: as before');
 });

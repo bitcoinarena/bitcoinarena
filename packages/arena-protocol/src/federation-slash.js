@@ -40,6 +40,32 @@ export function exposureCap({ bonds, f }) {
   return { ok: true, cap: BigInt(haltsAt(f)) * smallest, smallest, halts: haltsAt(f) };
 }
 
+/**
+ * A GUARDIAN'S BOND STAYS LOCKED WHILE IT SERVES (kanban #1093 part 7, ruling #1104, 2026-11-03). Only a bond that cannot leave before a
+ * drain could finish covers anything:
+ *   qualifying  a guardian whose outputs maturing after record height + drain_blocks sum to at least bond_min_guardian
+ *   k           the seated guardians that are not qualifying (they stay seated and sign; they only cover nothing)
+ *   cap         max(0, f + 1 - k) x the smallest qualifying bond (its outputs past the line)
+ * One lapsing guardian lowers the cap by one share; f + 1 of them make it 0. All qualifying bonds sum to at least (n - k) x the smallest,
+ * more than the cap for every k, so the theft cover holds. `guardians` [{ outputs: [{ bondSats, maturity }] }] or, with no outputs
+ * listed, { bondSats, maturity }.
+ */
+export function lockedExposureCap({ guardians, f, height, drainBlocks, bondMinGuardian }) {
+  if (!Array.isArray(guardians) || !guardians.length) return { ok: false, why: 'a federation has seated guardians' };
+  if (!Number.isInteger(f) || f < 0) return { ok: false, why: 'f is how many faults the threshold tolerates' };
+  if (!Number.isInteger(height) || !Number.isInteger(drainBlocks) || drainBlocks < 0) return { ok: false, why: 'the lock is judged at a record height against drain_blocks' };
+  const floor = BigInt(bondMinGuardian || 0);
+  const line = height + drainBlocks;
+  const locked = guardians.map((g) => (Array.isArray(g.outputs) && g.outputs.length ? g.outputs : [{ bondSats: g.bondSats, maturity: g.maturity }])
+    .filter((o) => Number.isInteger(Number(o.maturity)) && o.maturity !== null && Number(o.maturity) > line)
+    .reduce((a, o) => a + BigInt(o.bondSats || 0), 0n));
+  const qualifying = locked.filter((x) => x > 0n && x >= floor);
+  const lapsing = guardians.length - qualifying.length;
+  const places = Math.max(0, haltsAt(f) - lapsing);
+  const smallest = qualifying.length ? qualifying.reduce((a, b) => (b < a ? b : a)) : 0n;
+  return { ok: true, cap: BigInt(places) * smallest, smallest, places, lapsing, qualifying: qualifying.length, line };
+}
+
 /** Is a reserve within what the bonds actually cover? */
 export function reserveFits({ reserve, bonds, f }) {
   const capped = exposureCap({ bonds, f });

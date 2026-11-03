@@ -17,7 +17,7 @@
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { TAG, TYPE_FEDERATION_RECORD, PROTOCOL_VERSION, speaksVersion, networkOf } from './constants.js';
-import { exposureCap } from './federation-slash.js';
+import { exposureCap, lockedExposureCap } from './federation-slash.js';
 
 export const FEDERATION_STATUS = Object.freeze({ OPEN: 1, DRAINING: 2, CRITICAL: 3, CLOSED: 4, HALTED: 5 });
 export const GONE = Object.freeze({ DEPARTED: 1, ABANDONED: 2 });
@@ -29,6 +29,10 @@ export const CAPACITY_BAND = Object.freeze({ CALM: 1, PRESSURE: 2, CRITICAL: 3, 
  * name a band, one below it must not, anything else is refused by name. Null: not named, and no record may name one.
  */
 export const CAPACITY_BAND_HEIGHT = Object.freeze({ mainnet: 0, testnet4: null, regtest: null, devnet: null });
+// THE HEIGHT FROM WHICH A RECORD'S CAP COUNTS ONLY LOCKED GUARDIAN BONDS (kanban #1093 part 7, ruling #1104): mainnet from genesis; testnet4
+// from a height the 2.0 release names once every seat that signs its records runs 2.0 (null until then); regtest and devnet name their own
+export const BOND_LOCK_HEIGHT = Object.freeze({ mainnet: 0, testnet4: null, regtest: null, devnet: null });
+export const bondLockPoint = (network) => { const n = network === 'testnet' ? 'testnet4' : network; return Object.prototype.hasOwnProperty.call(BOND_LOCK_HEIGHT, n) ? BOND_LOCK_HEIGHT[n] : null; };
 export const capacityBandPoint = (network) => { const n = network === 'testnet' ? 'testnet4' : network; return Object.prototype.hasOwnProperty.call(CAPACITY_BAND_HEIGHT, n) ? CAPACITY_BAND_HEIGHT[n] : null; };
 const nameOf = (table, v) => Object.keys(table).find((k) => table[k] === v);
 /** A record's status by name, whether it was decoded or kept. */
@@ -99,11 +103,15 @@ export const federationRecordId = (r) => taggedHash(TAG.federationRecord, encode
  * THE BODY A GUARDIAN SEAT BUILDS, from what every seat reads the same: the census nodes guarding the federation (their
  * adverts' guardian_of[]), the guardians gone, the height. `bondsSats` is each guardian's bond, by node key hex.
  */
-export function buildFederationRecord({ federationId, networkId, invite, nominal, guardians, gone = [], successorId = null, closed = false, reserveSats = 0n, height }) {
+// `bondLock` { drainBlocks, bondMinGuardian }: from BOND_LOCK_HEIGHT on, the cap counts only bonds locked past the drain (lockedExposureCap);
+// each guardian row then carries its `outputs` [{ bondSats, maturity }]
+export function buildFederationRecord({ federationId, networkId, invite, nominal, guardians, gone = [], successorId = null, closed = false, reserveSats = 0n, height, bondLock = null }) {
   const goneKeys = new Set(gone.map((g) => toHex(g.peerKey)));
   const seatedGuardians = guardians.filter((g) => !goneKeys.has(toHex(g.peerKey)));
   const band = statusFor({ nominal, seated: Math.min(nominal, seatedGuardians.length), closed });
-  const cap = seatedGuardians.length ? exposureCap({ bonds: seatedGuardians.map((g) => BigInt(g.bondSats)), f: band.f }) : { ok: false };
+  const cap = !seatedGuardians.length ? { ok: false }
+    : bondLock ? lockedExposureCap({ guardians: seatedGuardians, f: band.f, height, drainBlocks: bondLock.drainBlocks, bondMinGuardian: bondLock.bondMinGuardian })
+      : exposureCap({ bonds: seatedGuardians.map((g) => BigInt(g.bondSats)), f: band.f });
   return {
     federationId, networkId, invite, nominal, threshold: band.threshold,
     guardians: guardians.map(({ peerKey, nodePubkey, operatorId, bondTxid, bondVout, endpoint }) => ({ peerKey, nodePubkey, operatorId, bondTxid, bondVout, endpoint }))
