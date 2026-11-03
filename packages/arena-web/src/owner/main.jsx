@@ -51,9 +51,9 @@ export function mountAddress(element, { api, initial } = {}) {
 }
 // THE SETUP CARD ON THE OVERVIEW (playtest 2026-10-25: the dashboard's card "auch in der owners area")
 export function mountSetup(element, { api, initial, banner } = {}) { const root = createRoot(element); root.render(<SetupCard api={api} initial={initial} banner={banner} everyMs={banner ? 15000 : 30000} />); return root; }
-export function mountBond(element, { api, initial, qr, onNeed } = {}) {
+export function mountBond(element, { api, initial, qr, onNeed, ownerSign } = {}) {
   const root = createRoot(element);
-  root.render(<BondPanel api={api} initial={initial} qr={qr} onNeed={onNeed} />);
+  root.render(<BondPanel api={api} initial={initial} qr={qr} onNeed={onNeed} ownerSign={ownerSign} />);
   return root;
 }
 export function mountCustody(element, { api, initial } = {}) { const root = createRoot(element); root.render(<CustodyPanel api={api} initial={initial} />); return root; }

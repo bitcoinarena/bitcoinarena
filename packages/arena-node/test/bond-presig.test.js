@@ -30,12 +30,12 @@ const bondSet = () => ({ ...bondSetFor('regtest'), standingKeys: [{ epoch: 0, pu
 
 const advertOf = (n) => ({ nodePubkey: schnorr.getPublicKey(secretOf(n)), operatorId: `op${n}`, protocolVersions: [BOND_SUM_VERSION], hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game', 'settlement'], endpoint: `ws://node${n}`,
   region: 'eu-west', capacityClass: 1, softwareHash: new Uint8Array(32).fill(2), settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 3,
-  bondMaturityHeight: BONDED + 200, censusKey, payoutPubkey: new Uint8Array(32).fill(3), guardianOf: [], timestamp: 1788700000000n });
+  bondMaturityHeight: BONDED + 200, censusKey, ownerPubkey: schnorr.getPublicKey(secretOf(n)), payoutPubkey: new Uint8Array(32).fill(3), guardianOf: [], timestamp: 1788700000000n });
 
 function bondOf(n, previous = 0x31) {
   const advert = advertOf(n), node = advert.nodePubkey;
   const inner = bondInternalKey({ nodeKey: node, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey;
-  const { outputKey } = bond3OutputKey({ nodeKey: node, censusKey, arbitrationKeys: g.arbitrationKeys, bondMaturity: advert.bondMaturityHeight, internalKey: inner }, { tweakPoint, combine });
+  const { outputKey } = bond3OutputKey({ nodeKey: node, ownerKey: node, censusKey, bondMaturity: advert.bondMaturityHeight }, { tweakPoint });
   const raw = bondTransaction(advert, { outputKey, previousTxid: new Uint8Array(32).fill(previous + n) });
   const tx = parseTransaction(raw), o = tx.outputs[0];
   return { n, advert, raw, txid: tx.txid, bond: { txid: tx.txid, vout: 0, value: o.value, script: o.script } };
@@ -59,8 +59,9 @@ test('the field: 65 bytes after a marker, only when written, every advertisement
   assert.deepEqual(encodeAdvert({ ...plain, slashPresig: undefined }), bytes);
   const presig = new Uint8Array(SLASH_PRESIG_BYTES).fill(7);
   assert.equal(encodeAdvert({ ...plain, slashPresig: presig }).length, bytes.length + 66);
-  for (const more of [{}, { serving: false }, { emergencyPubkey: new Uint8Array(32).fill(5) }, { declares: { bondMinSats: 1n, proposalDepositSats: 2n } },
-    { declares: { bondMinSats: 1n, proposalDepositSats: 2n }, emergencyPubkey: new Uint8Array(32).fill(5), serving: false }]) {
+  // a template-3 advert's emergency key is its owner key (kanban #1093 part 1, ruling #1103): the same 32 bytes when named
+  for (const more of [{}, { serving: false }, { emergencyPubkey: plain.ownerPubkey }, { declares: { bondMinSats: 1n, proposalDepositSats: 2n } },
+    { declares: { bondMinSats: 1n, proposalDepositSats: 2n }, emergencyPubkey: plain.ownerPubkey, serving: false }]) {
     const back = decodeAdvert(encodeAdvert({ ...plain, ...more, slashPresig: presig }));
     assert.deepEqual(back.slashPresig, presig);
     if (more.serving === false) assert.equal(back.serving, false);
