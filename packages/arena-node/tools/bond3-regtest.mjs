@@ -23,7 +23,7 @@ import { panelThreshold } from '../../arena-protocol/src/bond-script.js';
 import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
 import { tweakPoint, combine } from '../src/curve.js';
 import { weightedKeygen, weightsFor, signersFor, signByNode } from './census-key-measure.mjs';
-import { readSlashStart, takeReturnIfOwed } from '../src/hold-return.js';
+import { readSlashStart, prepareReturnIfOwed, withOwnerSignature } from '../src/hold-return.js';
 
 const RT = process.env.RT, PORT = process.env.RPCPORT || '29143', B = process.env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';
 if (!RT) throw new Error('RT=<the private regtest datadir>');
@@ -62,9 +62,9 @@ const roundA = { a: panel(), b: panel() }, roundB = { a: panel(), b: panel() };
 
 /** A template-3 bond, funded here. */
 function fundBond(node, bondMaturity) {
-  const arbitrationKeys = g.arbitrationKeys;
-  const internalKey = bondInternalKey({ nodeKey: node.key, arbitrationKeys }, { combine }).internalKey;
-  const built = bond3OutputKey({ nodeKey: node.key, censusKey, arbitrationKeys, bondMaturity, internalKey }, { tweakPoint, combine });
+  // path A and the hold's return are the owner key's (kanban #1093 part 1, ruling #1103): each node here has an owner of its own
+  if (!node.owner) node.owner = person();
+  const built = bond3OutputKey({ nodeKey: node.key, ownerKey: node.owner.key, censusKey, bondMaturity }, { tweakPoint });
   if (!built.ok) throw new Error(built.why);
   const script = fromHex(`5120${toHex(built.outputKey)}`);
   const txid = cli('sendtoaddress', JSON.parse(cli('decodescript', toHex(script))).address, '1.0');
@@ -87,7 +87,7 @@ function fundFee() {
 }
 
 const holdOf = (bond, round) => {
-  const h = holdOutputKey({ nodeKey: bond.node.key, censusKey, panelA: keys(round.a), panelB: keys(round.b), bondMaturity: bond.bondMaturity, ...clocks }, { tweakPoint });
+  const h = holdOutputKey({ ownerKey: bond.node.owner.key, censusKey, panelA: keys(round.a), panelB: keys(round.b), bondMaturity: bond.bondMaturity, ...clocks }, { tweakPoint });
   if (!h.ok) throw new Error(h.why);
   return h;
 };
@@ -184,19 +184,20 @@ const fee2 = fundFee();
 const start2 = start(bond2, fee2, { pay: hold2.script, nodeSig: presig(bond2, hold2.script) });
 cli('sendrawtransaction', start2); mine(clocks.returnBlocks - 1);
 const returnBy = (who, sequence = clocks.returnBlocks) => spendHold(bond2, hold2, start2, 'return', { sequence, locktime: tip(), sign: (d) => [schnorr.sign(d, who.secret)] });
-ask(`return at ${clocks.returnBlocks - 1} confirmations`, false, returnBy(node2));
+ask(`return at ${clocks.returnBlocks - 1} confirmations`, false, returnBy(node2.owner));
 mine(1);
 ask(`return at ${clocks.returnBlocks}, another key`, false, returnBy(person()));
-ask(`return at ${clocks.returnBlocks}, mature node`, true, returnBy(node2));
+ask(`return at ${clocks.returnBlocks}, the node key`, false, returnBy(node2));
+ask(`return at ${clocks.returnBlocks}, the owner key`, true, returnBy(node2.owner));
 
 // ---- bond 3: path A is the same leaf as before, after maturity
 const node3 = person();
 const bond3 = fundBond(node3, tip() + 2);
 const recover = (locktime) => {
   const tx = { version: 2, locktime, inputs: [{ txid: bond3.txid, vout: bond3.vout, sequence: 0xfffffffe }], outputs: [{ value: bond3.value - 2000n, script: walletScript() }] };
-  const script = recoveryLeaf(node3.key, bond3.bondMaturity);
+  const script = recoveryLeaf(node3.owner.key, bond3.bondMaturity);
   const digest = tapSighash({ ...tx, prevouts: [{ value: bond3.value, script: bond3.script }], inputIndex: 0, leafHash: tapLeafHash(script) });
-  return toHex(serializeSpend({ ...tx, witnesses: [scriptPathWitness({ stack: [schnorr.sign(digest, node3.secret)], script, controlBlock: controlBlockFor('recovery', bond3.built).controlBlock })] }));
+  return toHex(serializeSpend({ ...tx, witnesses: [scriptPathWitness({ stack: [schnorr.sign(digest, node3.owner.secret)], script, controlBlock: controlBlockFor('recovery', bond3.built).controlBlock })] }));
 };
 ask('path A before maturity', false, recover(bond3.bondMaturity));
 mine(3);
@@ -227,7 +228,7 @@ console.log(`#972 no panels: leaves ${Object.keys(hold4.leaves).sort().join(', '
 const fee4 = fundFee();
 const start4 = sent(fee4, bond4, hold4);
 mine(clocks.returnBlocks);
-ask('no panels: return at its clock, mature node', true, spendHold(bond4, hold4, start4, 'return', { sequence: clocks.returnBlocks, locktime: tip(), sign: (d) => [schnorr.sign(d, node4.secret)] }));
+ask('no panels: return at its clock, the owner key', true, spendHold(bond4, hold4, start4, 'return', { sequence: clocks.returnBlocks, locktime: tip(), sign: (d) => [schnorr.sign(d, node4.owner.secret)] }));
 ask('no panels: fallback before its clock', false, spendHold(bond4, hold4, start4, 'fallback', { sequence: clocks.fallbackBlocks, sign: (d) => [censusSign(d)] }));
 mine(clocks.fallbackBlocks - clocks.returnBlocks);
 const none4 = ask('no panels: fallback at its clock, FROST census key', true, spendHold(bond4, hold4, start4, 'fallback', { sequence: clocks.fallbackBlocks, sign: (d) => [censusSign(d)] }));
@@ -257,7 +258,7 @@ const tableRelease = ask(`release of a table: ${built.table.outputs.map((o) => o
 mine(clocks.fallbackBlocks - clocks.holdBlocks);
 const tableFallback = ask('fallback of the same table, FROST census key', true, tableSpend('fallback', (d) => [censusSign(d)]));
 
-// ---- the node takes the return by itself, off the raw start
+// ---- the node prepares the return off the raw start; only the owner's signature sends it (kanban #1093 part 1, ruling #1103)
 const node6 = person();
 const bond6 = fundBond(node6, tip() + 3);
 const hold6 = holdOf(bond6, roundB);
@@ -266,19 +267,25 @@ const start6Hex = sent(fee6, bond6, hold6);
 mine(1);
 const startHeight = tip();
 const seen = readSlashStart(fromHex(start6Hex), bond6, new Map([[toHex(hold6.script), hold6]]));
-const pass = (over) => takeReturnIfOwed({ start: seen, startHeight, bondMaturity: bond6.bondMaturity, returnBlocks: clocks.returnBlocks, tip: tip(), fetchProof: async () => Uint8Array.of(7),
-  proofChecks: async () => false, toScript: walletScript(), feeSats: 2000n, nodeSecret: node6.secret, broadcast: async (hex) => { cli('sendrawtransaction', hex); return true; }, ...over });
+const pass = (over) => prepareReturnIfOwed({ start: seen, startHeight, bondMaturity: bond6.bondMaturity, returnBlocks: clocks.returnBlocks, tip: tip(), fetchProof: async () => Uint8Array.of(7),
+  proofChecks: async () => false, toScript: walletScript(), feeSats: 2000n, ...over });
 const earlyPass = await pass();
 console.log(`#972 ${earlyPass.action === 'wait' ? 'as expected' : 'WRONG      '} node, a block after the start: ${earlyPass.action}, ${earlyPass.why}`); asked++; if (earlyPass.action !== 'wait') wrong++;
 mine(clocks.returnBlocks - 1);
 const keptPass = await pass({ fetchProof: async () => Uint8Array.of(7), start: { ...seen, proofId: taggedHash('ARENA/v1/SlashProof', Uint8Array.of(7)) }, proofChecks: async () => true });
 console.log(`#972 ${keptPass.action === 'keep' ? 'as expected' : 'WRONG      '} node, a proof that checks, at the clock: ${keptPass.action}`); asked++; if (keptPass.action !== 'keep') wrong++;
 const lastPass = await pass();
-const onChain = lastPass.action === 'return' && lastPass.sent === true;
+let nodeSigned = null;
+try { withOwnerSignature(lastPass.prepared, toHex(schnorr.sign(fromHex(lastPass.prepared.digest), node6.secret)), node6.owner.key); } catch (e) { nodeSigned = e.message; }
+asked++; if (!nodeSigned) wrong++;
+console.log(`#972 ${nodeSigned ? 'as expected' : 'WRONG      '} the node key's signature on the return: ${nodeSigned || 'taken'}`);
+const signedHex = withOwnerSignature(lastPass.prepared, toHex(schnorr.sign(fromHex(lastPass.prepared.digest), node6.owner.secret)), node6.owner.key);
+let onChain = false;
+if (lastPass.action === 'return') { cli('sendrawtransaction', signedHex); onChain = true; }
 mine(1);
-const confirmed = JSON.parse(cli('gettransaction', JSON.parse(cli('decoderawtransaction', lastPass.hex)).txid)).confirmations;
+const confirmed = JSON.parse(cli('gettransaction', JSON.parse(cli('decoderawtransaction', signedHex)).txid)).confirmations;
 asked++; if (!(onChain && confirmed === 1)) wrong++;
-console.log(`#972 ${onChain && confirmed === 1 ? 'as expected' : 'WRONG      '} node took the return at its clock: ${lastPass.why}; mined, ${confirmed} confirmation`);
+console.log(`#972 ${onChain && confirmed === 1 ? 'as expected' : 'WRONG      '} the owner signed the return the node prepared at its clock: ${lastPass.why}; mined, ${confirmed} confirmation`);
 
 console.log(`#972 ${asked - wrong} of ${asked} as expected; tip ${tip()}; fallback ${fallback.vsize} vB; no panels fallback ${none4.vsize} vB; table release ${tableRelease.vsize} vB, table fallback ${tableFallback.vsize} vB`);
 process.exit(wrong ? 1 : 0);
