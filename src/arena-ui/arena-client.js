@@ -17919,7 +17919,8 @@ async function walletDepositOffer({ federationId, invite, seed, LockClient, stor
  * TEST SATS FROM THE FAUCET (kanban #926): the invoice `offer` makes for this wallet, paid by the faucet; `offer.claimed` says when it landed. `account` is a
  * hash of the seed, so the faucet can pay a welcome once and learns no key. Throws naming why it gave nothing.
  */
-const FAUCET_GRANTS = Object.freeze({ welcome: { sats: 500, invoiceMsat: 500000n }, topup: { sats: 250, invoiceMsat: 250000n } });
+// THE TOP-UP IS 300 (kanban #1088, the owner 2026-11-03: "Get 300 sats, aus dem faucet. Im deposit auch 300. Bis zu 5x faucet am Tag"): the faucet pays it up to 5 times a day per account
+const FAUCET_GRANTS = Object.freeze({ welcome: { sats: 500, invoiceMsat: 500000n }, topup: { sats: 300, invoiceMsat: 300000n } });
 const faucetAccountOf = (seed) => toHex(taggedHash('arena/faucet/account/v1', seed instanceof Uint8Array ? seed : fromHex(String(seed))));
 async function askFaucet({ url, kind, invoice, seed, fetcher = fetch } = {}) {
   const r = await fetcher(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind, account: faucetAccountOf(seed), invoice }), signal: AbortSignal.timeout(45000) });
