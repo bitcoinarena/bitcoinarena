@@ -171,7 +171,7 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
 // until it resolves), a game's the network's - as the page pays it
 const gameFeeBps = (w) => { const f = pluginForRound(w.c, (w.a || w.nodes[0]).round.plugins); return f.ok ? entryFeeBpsOf(f.plugin.manifest) : undefined; };
 // `order`: { price (PRICE_SCALE units), expiryMs } - a market order: the entry buys `pick` at that limit
-export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, expirySpan = null, frontendPk = null } = {}) {
+export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, unreached = [], expirySpan = null, frontendPk = null } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -252,6 +252,8 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
     inputChainHash: batchId(input), previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(session) };
   const signedMark = joinSigned(encodeCheckpoint(mark), ed25519.sign(checkpointId(mark), session));
   for (const d of w.nodes || [w.a, w.b]) {
+    // `unreached`: the seats (by index) this client's posts never reach
+    if (unreached.includes((w.nodes || [w.a, w.b]).indexOf(d))) continue;
     const base = `http://127.0.0.1:${d.port}`;
     assert.equal((await fetch(`${base}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) })).status, 201);
     const joined = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
@@ -341,7 +343,7 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
   }
   // `late`: the run's batch and first mark, for a test that sends them after the start deadline (§15's same door)
   const played = { eid, entry, fields, outpoint, feeOutpoint, session, late: [encodeInputBatch(input), signedMark], forked, donated };
-  if (address) await nameAddress(w.nodes || [w.a, w.b], played, address === true ? ADDRESS : address);
+  if (address) await nameAddress((w.nodes || [w.a, w.b]).filter((_, i) => !unreached.includes(i)), played, address === true ? ADDRESS : address);
   return played;
 }
 
