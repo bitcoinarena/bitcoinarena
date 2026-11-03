@@ -26,9 +26,9 @@ const CONFIRMED = 900000 + 20, node = person(1), censusKey = person(2), federati
 const contract = { bondMinSats: 50000n, protocolVersion: 25, networkId: NETWORK_ID_REGTEST, federationId, censusHeight: CONFIRMED + 30, censusConfirmations: 1 };
 const advert = { nodePubkey: node, operatorId: 'operator', protocolVersions: [25], hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game', 'settlement'], endpoint: 'ws://node', region: 'eu-west', capacityClass: 1,
   softwareHash: new Uint8Array(32).fill(2), settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 3, bondMaturityHeight: CONFIRMED + 100,
-  censusKey, payoutPubkey: new Uint8Array(32).fill(3), guardianOf: [{ federationId, guardianKey: new Uint8Array(33).fill(2) }], timestamp: 1788700000000n };
+  censusKey, ownerPubkey: node, payoutPubkey: new Uint8Array(32).fill(3), guardianOf: [{ federationId, guardianKey: new Uint8Array(33).fill(2) }], timestamp: 1788700000000n };
 const inner = bondInternalKey({ nodeKey: node, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey;
-const { outputKey } = bond3OutputKey({ nodeKey: node, censusKey, arbitrationKeys: g.arbitrationKeys, bondMaturity: advert.bondMaturityHeight, internalKey: inner }, { tweakPoint, combine });
+const { outputKey } = bond3OutputKey({ nodeKey: node, ownerKey: node, censusKey, bondMaturity: advert.bondMaturityHeight }, { tweakPoint });
 const bondTx = bondTransaction(advert, { outputKey, previousTxid: new Uint8Array(32).fill(0x31) });
 const parsed = parseTransaction(bondTx), value = parsed.outputs[0].value;
 const from = { txid: parsed.txid, vout: 0, sequence: 0xfffffffd };

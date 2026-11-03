@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { ownBondOf, lockAt, withdrawSpend, bondKeyOf } from '../src/bond-withdraw.js';
+import { ownBondOf, lockAt, withdrawSpend, bondKeyOf, withdrawToSign, withdrawWithOwnerSignature } from '../src/bond-withdraw.js';
 import { buildBond } from '../../arena-installer/src/bond.js';
 import { walletOf, payoutKeyOf } from '../../arena-installer/src/wallet.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -51,20 +51,26 @@ test('the node\'s bond from a census entry, its lock said plainly, and its recov
   assert.throws(() => withdrawSpend({ bond: { ...bond, sats: '400' }, nodeSecret, network: 'testnet4', script: to }), /leaves nothing after a fee/);
 });
 
-test('a template-3 bond leaves by the same recovery leaf, under its census key; a started one says so', () => {
+test('a template-3 bond leaves by path A with the owner key: the node prepares it and cannot sign it; a started one says so (kanban #1093 part 1)', () => {
   const secret = new Uint8Array(32).fill(5), nodeKey = schnorr.getPublicKey(secret), censusKey = schnorr.getPublicKey(new Uint8Array(32).fill(6));
-  const entry = { pubkey: nodeKey, txid: new Uint8Array(32).fill(1), vout: 0, bondSats: 50000n, height: 100, advert: { bondMaturityHeight: 300, bondScriptTemplateVersion: 3, censusKey, operatorId: 'op' } };
+  const ownerSecret = new Uint8Array(32).fill(7), ownerKey = schnorr.getPublicKey(ownerSecret);
+  const entry = { pubkey: nodeKey, txid: new Uint8Array(32).fill(1), vout: 0, bondSats: 50000n, height: 100, advert: { bondMaturityHeight: 300, bondScriptTemplateVersion: 3, censusKey, ownerPubkey: ownerKey, operatorId: 'op' } };
   const bond = ownBondOf([entry], toHex(nodeKey));
-  assert.deepEqual([bond.template, bond.censusKey, bond.hold], [3, toHex(censusKey), undefined]);
-  const w = withdrawSpend({ bond, nodeSecret: secret, network: 'regtest', script: fromHex(`5120${'77'.repeat(32)}`) });
-  const spend = parseTransaction(fromHex(w.hex));
-  const built = bondKeyOf(nodeKey, 300, 'regtest', censusKey);
+  assert.deepEqual([bond.template, bond.censusKey, bond.ownerKey, bond.hold], [3, toHex(censusKey), toHex(ownerKey), undefined]);
+  const to = fromHex(`5120${'77'.repeat(32)}`);
+  assert.throws(() => withdrawSpend({ bond, nodeSecret: secret, network: 'regtest', script: to }), /owner key from the 24 words, not by the node/);
+  const prepared = withdrawToSign({ bond, nodeKey, network: 'regtest', script: to });
+  assert.throws(() => withdrawWithOwnerSignature(prepared, toHex(schnorr.sign(fromHex(prepared.digest), secret))), /not the owner key/, 'a hacked node cannot move its bond');
+  const out = withdrawWithOwnerSignature(prepared, toHex(schnorr.sign(fromHex(prepared.digest), ownerSecret)));
+  const spend = parseTransaction(fromHex(out.hex));
+  const built = bondKeyOf(nodeKey, 300, 'regtest', censusKey, ownerKey);
   assert.notEqual(toHex(built.outputKey), toHex(bondKeyOf(nodeKey, 300, 'regtest').outputKey), 'its own output key');
-  const leaf = recoveryLeaf(nodeKey, 300);
+  const leaf = recoveryLeaf(ownerKey, 300);
   const digest = tapSighash({ version: 2, locktime: 300, inputs: [{ txid: spend.inputs[0].previousTxid, vout: 0, sequence: 0xfffffffe }], outputs: spend.outputs, prevouts: [{ value: 50000n, script: fromHex(`5120${toHex(built.outputKey)}`) }], inputIndex: 0, leafHash: tapLeafHash(leaf) });
-  assert.ok(schnorr.verify(spend.witnesses[0][0], digest, nodeKey), 'signed against that output');
+  assert.ok(schnorr.verify(spend.witnesses[0][0], digest, ownerKey), 'signed by the owner key against that output');
+  assert.equal(toHex(spend.witnesses[0][1]), toHex(leaf), 'path A, the owner key\'s leaf');
   const started = ownBondOf([{ ...entry, hold: { txid: '0a'.repeat(32), vout: 0, height: 150 } }], toHex(nodeKey));
   assert.deepEqual(started.hold, { txid: '0a'.repeat(32), vout: 0, height: 150 });
-  assert.throws(() => withdrawSpend({ bond: started, nodeSecret: secret, network: 'regtest', script: fromHex(`5120${'77'.repeat(32)}`) }), /a slash was started on this bond at block 150/);
-  assert.throws(() => withdrawSpend({ bond: { ...bond, censusKey: undefined }, nodeSecret: secret, network: 'regtest', script: fromHex(`5120${'77'.repeat(32)}`) }), /names none/);
+  assert.throws(() => withdrawToSign({ bond: started, nodeKey, network: 'regtest', script: to }), /a slash was started on this bond at block 150/);
+  assert.throws(() => withdrawToSign({ bond: { ...bond, ownerKey: undefined }, nodeKey, network: 'regtest', script: to }), /lacks one/);
 });

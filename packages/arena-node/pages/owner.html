@@ -570,7 +570,22 @@ function setupPanel() {
   mount('setup-banner-place', 'mountSetup', { api: { get: getOrNull }, banner: true });   // the setup screen over the whole owner area until it is done
 }
 // THE FIRST BOND SET UP HERE (kanban #728): the node wallet's address as a QR too
-function bondPanel() { mount('bond', 'mountBond', { api: { get: getOk, post, signed }, qr: (t) => C.textQrSvg(t), onNeed: (level, text) => need('bond-state', level, text, 'bond') }); }
+// THE OWNER KEY SIGNS A 2.0 BOND'S WAY OUT (kanban #1093 part 1, ruling #1103): from the 24 words this browser holds, or the emergency code typed here
+// (the same key, §23A.5a); it must be the key the bond names. Only the signature leaves the page.
+async function ownerSign(digestHex, ownerKeyHex) {
+  const keyOf = (secret) => C.toHex(C.pubkeyOf(secret));
+  let secret = null;
+  const seed = readSeed();
+  if (seed) secret = C.emergencySecret(C.emergencyCodeBytes(seed));
+  if (!secret || (ownerKeyHex && keyOf(secret) !== ownerKeyHex)) {
+    const typed = prompt('Your owner key signs this. Type your emergency code (ARN-...), from when you wrote down your 24 words:');
+    if (!typed) throw new Error('Not signed: no emergency code typed.');
+    secret = C.emergencySecret(C.parseEmergencyCode(typed));
+  }
+  if (ownerKeyHex && keyOf(secret) !== ownerKeyHex) throw new Error('That is not the owner key this bond names: check the emergency code.');
+  return C.toHex(C.sign(C.fromHex(digestHex), secret));
+}
+function bondPanel() { mount('bond', 'mountBond', { api: { get: getOk, post, signed }, ownerSign, qr: (t) => C.textQrSvg(t), onNeed: (level, text) => need('bond-state', level, text, 'bond') }); }
 
 // THE CAPACITY PLEA (§23A.3a, kanban #543): when a federation this node guards fills up, or the network does, the seat says how much
 // to add (GET /capacity?node=me: capacity.js capacityPlea); nothing while all is CALM - drawn by React (kanban #564, CapacityPlea)

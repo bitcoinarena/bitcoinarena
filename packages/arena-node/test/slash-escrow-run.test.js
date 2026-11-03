@@ -57,7 +57,7 @@ const fed = (id, reserve) => ({ federation: id, status: 'OPEN', reserveKey: toHe
 const ROOMY = [fed(fedA, 100000), fed(fedB, 500000)], FULL = [fed(fedA, 800000), fed(fedB, 800000)];
 const contract = { federationId: fromHex(fedA), slashRemainder: 'SPLIT', minScore: 1, censusHeight: 300 };
 const LOSS = 300_000_000n;
-const advert = { bondScriptTemplateVersion: 3, censusKey: census.key, bondMaturityHeight: MATURITY };
+const advert = { bondScriptTemplateVersion: 3, censusKey: census.key, ownerPubkey: accused.key, bondMaturityHeight: MATURITY };
 /** What one federation payout costs the paying client (one payout's measured 352 msat): under the carrier's margin. */
 const PAYOUT_FEE_MSAT = 352n;
 /** The carrier payout margin regtest's tables name (kanban #1086): every players' output holds it past the loss, out of the reserves' share. */
@@ -173,7 +173,7 @@ function world({ who, holders = [], hold, tip, ports = () => true, federationsNo
   return { c, seats, paid, kept, start, live, passAll, run: (p) => seats.get(p.hex).run, clients: (p, fid) => seats.get(p.hex).clients(fid) };
 }
 
-const releaseHold = holdOutputKey({ nodeKey: accused.key, censusKey: census.key, ...panels, bondMaturity: MATURITY, ...clocks }, { tweakPoint });
+const releaseHold = holdOutputKey({ ownerKey: accused.key, censusKey: census.key, ...panels, bondMaturity: MATURITY, ...clocks }, { tweakPoint });
 const panelWho = [...A, ...B].map((p) => ({ p }));
 
 /** The release, made with no carrier able to take anything: its table holds it all in the escrow. Answers the world after the release is mined, its table and escrow. */
