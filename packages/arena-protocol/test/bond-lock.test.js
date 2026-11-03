@@ -52,3 +52,14 @@ test('the record: from the lock on the cap counts only locked bonds; the height 
   assert.equal(buildFederationRecord({ ...base, bondLock: { drainBlocks: DRAIN, bondMinGuardian: MIN } }).exposureCapSats, 100_000n, 'one lapsing: one place');
   assert.equal(buildFederationRecord({ ...base, bondLock: { drainBlocks: DRAIN, bondMinGuardian: MIN } }).seated, 4, 'still seated');
 });
+
+test('the dashboard\'s warning: a guardian bond lapses at m* - drain_blocks and is warned drain_blocks before', async () => {
+  const { bondLapseOf } = await import('../src/federation-slash.js');
+  const outs = [{ bondSats: 30_000n, maturity: 3000 }, { bondSats: 40_000n, maturity: 2000 }];
+  assert.deepEqual(bondLapseOf({ outputs: outs, drainBlocks: 100, bondMinGuardian: 50_000n, tip: 1000 }), { qualifying: true, lapsesAt: 1900, blocksLeft: 900, warn: false },
+    'the two outputs reach the floor only together: the earlier maturity, 2000, decides');
+  assert.equal(bondLapseOf({ outputs: outs, drainBlocks: 100, bondMinGuardian: 50_000n, tip: 1800 }).warn, true, 'drain_blocks before');
+  assert.equal(bondLapseOf({ outputs: outs, drainBlocks: 100, bondMinGuardian: 50_000n, tip: 1900 }).qualifying, false);
+  assert.equal(bondLapseOf({ outputs: outs, drainBlocks: 100, bondMinGuardian: 30_000n, tip: 1900 }).lapsesAt, 2900, 'the later output alone meets a lower floor');
+  assert.deepEqual(bondLapseOf({ outputs: [{ bondSats: 10n, maturity: 9000 }], drainBlocks: 100, bondMinGuardian: 50_000n, tip: 1 }).qualifying, false);
+});

@@ -34,6 +34,18 @@ export function bondStateOf(b, setupBond = null) {
   return { tone: 'bad', text: 'No bond: this node is not drawn for rounds' };
 }
 const TONE = { ok: '#3fb950', wait: '#d29922', bad: '#f85149' };
+/**
+ * A GUARDIAN'S BOND MUST STAY LOCKED WHILE IT SERVES (kanban #1093 part 7, ruling #1104): warned drain_blocks before it stops covering -
+ * it stays a guardian, but its federation's deposit limit drops by one share until it adds to its bond. '' when nothing is due.
+ */
+export function guardianLockSays(l) {
+  if (!l || !l.warn) return '';
+  if (!l.qualifying) return l.lapsesAt === null
+    ? `Your bond is below the guardian minimum of ${n(l.bondMinGuardianSats)} sat: it covers nothing for your federation, and the federation takes fewer deposits. Add to your bond.`
+    : `Your bond is no longer locked long enough to cover your federation (it must stay locked ${n(l.drainBlocks)} blocks ahead). You are still a guardian, but your federation takes fewer deposits until you add to your bond.`;
+  return `Your bond stops covering your federation at block ${n(l.lapsesAt)}, in ${n(l.blocksLeft)} blocks: a guardian's bond must stay locked ${n(l.drainBlocks)} blocks ahead. Add to your bond with a later lock before then, or your federation takes fewer deposits.`;
+}
+const GuardianLock = ({ lock }) => { const t = guardianLockSays(lock); return t ? <p className="warn" id="guardian-lock-warn">{t}</p> : null; };
 /** The coloured line at the top of the Bond section. */
 export const BondState = ({ state: st }) => (
   <p className={`bond-state ${st.tone}`} id="bond-state" style={{ color: TONE[st.tone], fontWeight: 600, fontSize: '17px', margin: '0 0 12px' }}>
@@ -152,6 +164,7 @@ export class BondPanel extends React.Component {
     return (
       <div>
         <BondState state={bondStateOf(b)} />
+        <GuardianLock lock={b.guardianLock} />
         {/* THE BOND AT A GLANCE (kanban #565): the amount, the lock, the wallet - one stat card each, as the overview */}
         <div className="stats">
           <div className="stat"><span>Bond</span><b>{n(b.total || b.bond.sats)} sat</b><small>{outs ? `in ${outs.length} parts on the chain` : 'one output on the chain'}</small></div>

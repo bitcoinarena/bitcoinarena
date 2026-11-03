@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { BondPanel, daysHours, lockText } from '../dist/test/bond.mjs';
+import { BondPanel, daysHours, lockText, guardianLockSays } from '../dist/test/bond.mjs';
 
 const T = 1_800_000_000_000;
 const locked = { network: 'testnet4', total: '100000', bond: { txid: 'aa'.repeat(32), vout: 0, sats: '50000' }, outputs: [{ txid: 'aa'.repeat(32), vout: 0, sats: '50000' }, { txid: 'bb'.repeat(32), vout: 1, sats: '50000' }],
@@ -145,4 +145,14 @@ test('kanban #734: the Overview hears where the bond stands - no bond red, poste
   assert.equal(level, 'warn');
   assert.match(text, /^Bond 50,000 sat posted, 2 of 6 confirmations\.$/);
   assert.deepEqual(await run({ ok: true, bond: { sats: '50000' }, total: '50000' }, null), [[null, '']], 'a bond that counts: nothing to do');
+});
+
+// A GUARDIAN'S BOND STAYS LOCKED WHILE IT SERVES (kanban #1093 part 7, ruling #1104): warned drain_blocks ahead, with Add to bond
+test('a guardian is warned drain_blocks before its bond stops covering; nothing before; after it, said plainly', () => {
+  const at = (over) => renderToStaticMarkup(React.createElement(BondPanel, { nowMs: () => T, initial: { loaded: true, bond: { ...locked, guardianLock: { drainBlocks: 144, bondMinGuardianSats: '50000', qualifying: true, lapsesAt: 160000, blocksLeft: 100, warn: true, ...over } } } }));
+  assert.match(at({}), /<p class="warn" id="guardian-lock-warn">Your bond stops covering your federation at block 160,000, in 100 blocks: a guardian&#x27;s bond must stay locked 144 blocks ahead\. Add to your bond with a later lock before then/);
+  assert.doesNotMatch(at({ blocksLeft: 500, warn: false }), /guardian-lock-warn/);
+  assert.match(at({ qualifying: false, blocksLeft: 0 }), /You are still a guardian, but your federation takes fewer deposits until you add to your bond/);
+  assert.match(guardianLockSays({ warn: true, qualifying: false, lapsesAt: null, bondMinGuardianSats: '50000', drainBlocks: 144 }), /below the guardian minimum of 50,000 sat/);
+  assert.equal(guardianLockSays(null), '');
 });
