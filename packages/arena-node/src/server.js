@@ -3239,6 +3239,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    * One function, because a close and a start that picks up a closed round
    * (M3.3-33) are the same work and must not become two paths.
    */
+  // WHICH ROUND IS HEAD-TO-HEAD (kanban #1068, #1071): declared here, filled in below. A close sweep can fire while the server is still being set up
+  // (measured 2026-11-03 on a restarted seat: "Cannot access 'headToHeadRound' before initialization" from afterClose, and the seat exited); until then a round is
+  // closed as before #1071, without first learning who is in it.
+  let headToHeadRound = () => null, headToHeadReady = false;
   function afterClose(roundIdBytes) {
     // §16 AT THE CLOSE: an entry whose on-time first mark is still short of the
     // threshold, the signer nodes it is short of offered it and silent, is ENTRY_VOID
@@ -3251,7 +3255,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
     })().catch((e) => console.error(`[entry-void] ${e.message}`));
     // A HEAD-TO-HEAD SEAT FIRST LEARNS WHO IS IN THE ROUND (kanban #1071), and with a wait that ran out it signs nothing
-    const h2h = headToHeadRound(roundIdBytes);
+    const h2h = headToHeadReady ? headToHeadRound(roundIdBytes) : null;
     stakes = (h2h ? membersKnown(roundIdBytes, h2h).catch((e) => { console.error(`[entry] ${e.message}`); return true; }) : Promise.resolve(true))
       .then((known) => (known ? timed(`close ${toHex(roundIdBytes).slice(0, 8)} settleRound`, () => verifier.settleRound(roundIdBytes)) : null))
       .then(async (closed) => {
@@ -4005,7 +4009,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     catch (e) { return { ok: false, why: `the federation could not be asked: ${e.message}` }; }
   };
   // WHAT A SEAT HANDS ON OF A HEAD-TO-HEAD ENTRY (kanban #1068, entry-relay.js)
-  const headToHeadRound = (rid) => {
+  headToHeadRound = (rid) => {
     const row = round.get(rid);
     if (!row) return null;
     const c = decodeRoundContract(new Uint8Array(row.contract));
@@ -4116,6 +4120,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       every = Math.min(every * 2, 15000);
     }
   };
+  headToHeadReady = true;   // both headToHeadRound and membersKnown stand from here (kanban #1068)
   // A STAKE'S HANDOUT, CHECKED AND KEPT: what POST /handout does, and what a seat does for the handout of an order a certified batch names
   // that never reached it (replayOrder). The round's threshold, not the player's (M3.3-26); one polynomial; this seat's own share opens.
   // Answers { ok, id, signerNode } or { ok: false, status, why }.
