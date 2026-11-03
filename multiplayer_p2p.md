@@ -3164,6 +3164,16 @@ review; the owner did not rule them one by one.*
   carriers in their order, and the rest of what it claimed, less 10,000 msat for its own payout's fee, to that
   federation's reserve key, kept as a reserve row of kind `slash` that every seat checks against its own port.
   It pays on the table that confirmed, whichever that is (RULED 2026-11-03, kanban #1085, below).
+- **The carrier's 10,000 msat comes off the reserves' part of what it carries, never out of a loss** (decision
+  #1083: each real loss paid to the player's key; as #1085 rules for an escrow spend's fee). A players' output
+  keeps it back off what it claimed past its slices; for what that leaves short, off a reserves output the same
+  carrier carries in the same release, fallback or escrow spend (the players' federation's first, else any other),
+  which then keeps that much more back. The players are paid whole and the payout's fee comes out of the carrier's
+  client of the players' federation: a reserves' part of that federation is claimed first, so it is there; one of
+  another federation counts only when that client already holds the 10,000 msat past the slices. Only with no
+  reserves' part to take it is it taken pro rata out of what the output pays on. An escrow spend gives a carrier
+  one peg-in per federation, so its players' output never sits beside a reserves' part of the players' federation
+  there: only another federation's part, or the pro-rata rule.
 
 **The carriers of a fallback (RULED 2026-11-02, kanban #1031).** With no panels, and
 on every fallback, because a fallback means the panels did not sign and panel A

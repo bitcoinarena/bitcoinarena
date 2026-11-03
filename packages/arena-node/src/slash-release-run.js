@@ -366,32 +366,79 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
 
   // ---- THE CARRIERS PAY ----
   const carrying = new Set();
+  const tagOf = (name) => `${name.start}:${name.path}:${name.index}`;
+  const stateOf = (name) => { const row = db.prepare('SELECT state FROM slash_carried WHERE start = ? AND path = ? AND out_index = ?').get(name.start, name.path, name.index); return row ? JSON.parse(row.state) : {}; };
+  const keepState = (name, state) => db.prepare('INSERT OR REPLACE INTO slash_carried (start, path, out_index, state) VALUES (?, ?, ?, ?)').run(name.start, name.path, name.index, JSON.stringify(state));
+  /** The output's peg-in claimed, once: the chain holds that output, to this carrier's script, for exactly the table's value, and the claim is kept. Null while it is not there. */
+  async function claimOnce({ name, txid, vout, o, peg }, port, state) {
+    if (state.claimedMsat) return state;
+    const got = await txOut(txid, vout).catch(() => null);
+    if (!got || (got.script !== undefined && got.script !== toHex(o.script)) || (got.sats !== undefined && BigInt(got.sats) !== o.value)) return null;
+    const c = await port.peginClaim(peg.address);
+    state.claimedMsat = String(c.claimedMsat);
+    keepState(name, state);
+    return state;
+  }
+  /**
+   * WHERE A CARRIER'S PAYOUT MARGIN COMES FROM (kanban #972, decision #1083, ruling #1085): off the reserves' part of what it carries, never out of a player's loss. A players' output
+   * keeps its margin back off its own reserves' part (what it claimed past its slices) and, for what that leaves short, off a reserves output this carrier carries in the same spend
+   * (`fund`: the first of the players' federation, else the first of any), which keeps that much more back when it is paid. The players are then paid whole, the payout's fee out of
+   * the carrier's client: a fund of the players' federation is claimed first, so it is there; one of another federation only when the client already holds the margin past the
+   * slices. Only with no reserves' part to take it does the margin come pro rata out of what the output pays on, as an escrow spend's fee (#1085).
+   * `siblings` are every output this carrier carries in that spend: [{ name, txid, vout, o, peg }].
+   */
+  const fundOf = (x, siblings) => {
+    if (x.o.pays !== 'player_carrier') return null;
+    const res = siblings.filter((y) => y.o.pays === 'reserves');
+    return res.find((y) => y.peg.federation === x.peg.federation) || res[0] || null;
+  };
   /**
    * ONE OUTPUT A CARRIER WAS PAID, PAID ON: claim the peg-in, each player's slice to refund_key(player), the rest less the fee margin to that federation's reserve key, kept as a
-   * reserve row of kind `slash`. `name` { start (where its state is kept), path, index } and `startHex` the hold's start, for the reserve row; `slices` this output's.
+   * reserve row of kind `slash`. `name` { start (where its state is kept), path, index } and `startHex` the hold's start, for the reserve row; `slices` this output's; `siblings`
+   * every output this carrier carries in the same spend, this one included (fundOf).
    */
-  async function payOn({ name, startHex, txid, vout, o, peg, slices }) {
-    const tag = `${name.start}:${name.path}:${name.index}`;
-    const row = db.prepare('SELECT state FROM slash_carried WHERE start = ? AND path = ? AND out_index = ?').get(name.start, name.path, name.index);
-    const state = row ? JSON.parse(row.state) : {};
+  async function payOn({ name, startHex, txid, vout, o, peg, slices, siblings = [] }) {
+    const tag = tagOf(name);
+    const state = stateOf(name);
     if (state.paidTxid || carrying.has(tag)) return null;
+    const me_ = { name, txid, vout, o, peg };
     // THE PEG-IN RECEIVED THE SLICE: the chain holds that output, to this carrier's script, for exactly the table's value
     if (!state.claimedMsat) {
       const got = await txOut(txid, vout).catch(() => null);
       if (!got || (got.script !== undefined && got.script !== toHex(o.script)) || (got.sats !== undefined && BigInt(got.sats) !== o.value)) return null;
     }
+    const fund = fundOf(me_, siblings);
+    // A RESERVES OUTPUT THAT CARRIES PLAYERS' MARGINS waits until each players' output it covers is paid, then keeps their shortfall back too
+    const covers = o.pays === 'reserves' ? siblings.filter((y) => { const f = fundOf(y, siblings); return f && tagOf(f.name) === tag; }) : [];
+    let shifted = 0n;
+    for (const y of covers) {
+      const st = stateOf(y.name);
+      if (!st.paidTxid) return { start: startHex, index: name.index, why: `the players' output ${y.name.index} it covers is not paid yet` };
+      shifted += BigInt(st.marginOff || 0);
+    }
+    if (fund && carrying.has(tagOf(fund.name))) return null;
     carrying.add(tag);
     try {
       const port = await portFor(peg.federation);
       if (!port) return { start: startHex, why: `no client of ${peg.federation.slice(0, 16)}` };
-      if (!state.claimedMsat) {
-        const c = await port.peginClaim(peg.address);
-        state.claimedMsat = String(c.claimedMsat);
-        db.prepare('INSERT OR REPLACE INTO slash_carried (start, path, out_index, state) VALUES (?, ?, ?, ?)').run(name.start, name.path, name.index, JSON.stringify(state));
-      }
-      const claimed = BigInt(state.claimedMsat) - CARRIER_FEE_MARGIN_MSAT;
+      await claimOnce(me_, port, state);
+      if (!state.claimedMsat) return null;
       const players = o.pays === 'player_carrier' ? slices : [];
       const playersMsat = players.reduce((a, x) => a + x.msat, 0n);
+      const claimedAll = BigInt(state.claimedMsat);
+      let margin = CARRIER_FEE_MARGIN_MSAT + shifted;
+      const own = claimedAll > playersMsat ? claimedAll - playersMsat : 0n;
+      if (fund && players.length && own < margin && !state.marginOff) {
+        // THE RESERVES' PART THIS CARRIER CARRIES TAKES IT: one of this federation claimed first, so the margin is in the client before the players are paid whole
+        if (fund.peg.federation === peg.federation && !(await claimOnce(fund, port, stateOf(fund.name)))) {
+          return { start: startHex, index: name.index, why: `the reserves' output ${fund.name.index} that takes its margin is not claimed yet` };
+        }
+        const held = typeof port.ecashBalance === 'function' ? await port.ecashBalance().catch(() => null) : null;
+        if (held !== null && BigInt(held) >= playersMsat + CARRIER_FEE_MARGIN_MSAT) state.marginOff = String(margin - own);
+        else log(`[slash] carrying ${startHex.slice(0, 16)} output ${name.index}: the client holds ${held ?? '?'} msat, not the margin past the slices: the margin comes pro rata`);
+      }
+      if (state.marginOff) margin -= BigInt(state.marginOff);
+      const claimed = claimedAll - margin;
       const pays = players.map((x) => ({ key: toHex(refundKeyOf(x.playerPubkey)), msat: claimed >= playersMsat ? x.msat : (x.msat * (claimed > 0n ? claimed : 0n)) / playersMsat, entryId: toHex(x.entryId) }));
       const rest = claimed - pays.reduce((a, x) => a + x.msat, 0n);
       const reserveKey = reserveKeyOf(peg.federation);
@@ -409,8 +456,8 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
             federationId: peg.federation, recipientPk: reserveKey, amountMsat: r.msat, contractId: (paid.payouts.find((y) => y.refundPk === r.key) || {}).contractId || 'slash', senderOnContract: false, image: null, item: 'slash' });
         }
       }
-      db.prepare('INSERT OR REPLACE INTO slash_carried (start, path, out_index, state) VALUES (?, ?, ?, ?)').run(name.start, name.path, name.index, JSON.stringify(state));
-      log(`[slash] carried ${name.path} ${startHex.slice(0, 16)} output ${name.index}: claimed ${state.claimedMsat} msat, ${(state.players || []).length} player(s) paid${state.reserves ? `, ${state.reserves.msat} msat to the reserves` : ''}: ${state.paidTxid}`);
+      keepState(name, state);
+      log(`[slash] carried ${name.path} ${startHex.slice(0, 16)} output ${name.index}: claimed ${state.claimedMsat} msat, ${(state.players || []).length} player(s) paid${state.reserves ? `, ${state.reserves.msat} msat to the reserves` : ''}${state.marginOff ? `, margin ${state.marginOff} msat off output ${fund.name.index}` : ''}: ${state.paidTxid}`);
       return { start: startHex, path: name.path, index: name.index, ...state };
     } catch (x) { log(`[slash] carrying ${startHex.slice(0, 16)} output ${name.index} waits: ${x.message}`); return { start: startHex, index: name.index, why: x.message }; }
     finally { carrying.delete(tag); }
@@ -428,11 +475,10 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
       if (!c) continue;
       const mine = db.prepare('SELECT federation, address, script FROM slash_pegins WHERE start = ?').all(h.start);
       const slices = carrierSlices(c.table);
-      for (const [i, o] of c.table.outputs.entries()) {
-        if (o.pays !== 'player_carrier' && o.pays !== 'reserves') continue;
-        const peg = mine.find((p) => same(new Uint8Array(p.script), o.script));
-        if (!peg) continue;
-        const r = await payOn({ name: { start: h.start, path: c.path, index: i }, startHex: h.start, txid: c.txid, vout: i + 1, o, peg, slices: (slices.find((x) => x.index === i) || { slices: [] }).slices });
+      const siblings = c.table.outputs.map((o, i) => ({ name: { start: h.start, path: c.path, index: i }, txid: c.txid, vout: i + 1, o,
+        peg: o.pays === 'player_carrier' || o.pays === 'reserves' ? mine.find((p) => same(new Uint8Array(p.script), o.script)) : null })).filter((x) => x.peg);
+      for (const x of siblings) {
+        const r = await payOn({ ...x, startHex: h.start, slices: (slices.find((y) => y.index === x.name.index) || { slices: [] }).slices, siblings });
         if (r) done.push(r);
       }
     }
