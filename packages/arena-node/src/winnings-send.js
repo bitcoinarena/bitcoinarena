@@ -26,13 +26,17 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { lightningAddressEndpoint, payRequestStands, callbackFor, invoiceAnswersPayRequest } from '../../arena-protocol/src/lnurl-pay.js';
 import { sendableInvoiceMsat, lowestLiveGateway, sendPlanStands, proposedExpiration } from '../../arena-protocol/src/winnings-send.js';
-import { signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
+import { signShare340, aggregate340, nonceGenerate340, verifyShare340 } from '../../arena-protocol/src/frost-bip340.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { encodeCommitments, decodeCommitments, decodeShare } from './pool-wire.js';
 import { largestPayoutMsat, lnv2FeeMsat } from '../../arena-protocol/src/lock-settlement.js';
 import { urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { stateOf } from './settlement-state.js';
+import { askPeers, askWithin, PEER_ASK_MS, PEER_GRACE_MS } from './peer-ask.js';
+
+/** How long an address's LNURL endpoint is waited for, at its pay request and at its callback each (kanban #1074): it is no seat, and fetch alone waits 300 s. */
+export const LNURL_ASK_MS = 15000;
 
 /** Where an address's pay request is: a Lightning address (LUD-16), or a donation recipient's LNURL (LUD-01). */
 function payRequestUrl(address) {
@@ -56,11 +60,14 @@ export class WinningsSend {
    * @param lnurlFetch how an address's LNURL endpoint is fetched (a test hands its own)
    * @param peersFor   (roundIdBytes) => [base URL] - the round's other settlement signer nodes
    */
-  constructor({ round, port, curve, random, peersFor, fetcher, lnurlFetch = fetch, network = 'regtest', scopeParam = '' }) {
+  constructor({ round, port, curve, random, peersFor, fetcher, lnurlFetch = fetch, network = 'regtest', scopeParam = '', dkg = null,
+    peerAskMs = PEER_ASK_MS, peerGraceMs = PEER_GRACE_MS, lnurlMs = LNURL_ASK_MS }) {
     // `scopeParam`: A LATE SETTLEMENT'S SENDS (slice C3b-2a) - `&late=<entry>` on every signing and paid call to a peer,
     // so the peer answers from that late settlement's rows; empty for the round's own sends.
-    Object.assign(this, { round, port, curve, random, peersFor, fetcher, lnurlFetch, network, scopeParam });
+    // `dkg`: the public shares that name a seat whose share does not stand (kanban #1074); the bounds: how long a seat, and an LNURL endpoint, is waited for
+    Object.assign(this, { round, port, curve, random, peersFor, fetcher, lnurlFetch, network, scopeParam, dkg, peerAskMs, peerGraceMs, lnurlMs });
     this.pairs = new Map();      // `${round}:${entry}:${attempt}` -> nonce pair for the auth signature
+    this.withheld = new Map();   // a signing's query -> the peers that gave this asker no share for it (kanban #1074)
     this.rebuilt = new Map();    // an unsigned re-send transaction, by everything it is built from
   }
 
@@ -82,7 +89,7 @@ export class WinningsSend {
     const ep = payRequestUrl(address);
     if (!ep.ok) return refuse(ep.why);
     let said;
-    try { said = await (await this.lnurlFetch(ep.url)).json(); } catch (e) { return refuse(`${ep.url} did not answer: ${e.message}`); }
+    try { said = await askWithin(async (signal) => (await this.lnurlFetch(ep.url, { signal })).json(), this.lnurlMs); } catch (e) { return refuse(`${ep.url} did not answer: ${e.message}`); }
     const pr = payRequestStands(said, amountMsat);
     return pr.ok ? { ok: true, ...pr } : refuse(pr.why);
   }
@@ -92,7 +99,7 @@ export class WinningsSend {
     const pr = await this.payRequest(address, amountMsat);
     if (!pr.ok) return pr;
     let said;
-    try { said = await (await this.lnurlFetch(callbackFor({ callback: pr.callback, amountMsat }))).json(); }
+    try { said = await askWithin(async (signal) => (await this.lnurlFetch(callbackFor({ callback: pr.callback, amountMsat }), { signal })).json(), this.lnurlMs); }
     catch (e) { return refuse(`the address's callback did not answer: ${e.message}`); }
     const inv = invoiceAnswersPayRequest({ invoice: said && said.pr, amountMsat, metadata: pr.metadata, network: this.network });
     if (!inv.ok) return refuse(inv.why);
@@ -361,14 +368,13 @@ export class WinningsSend {
    * not yet reach - takes the same attempt once it can, instead of the re-send waiting on a row it never kept.
    */
   async offerResend(roundIdBytes, row) {
-    const refused = [];
-    for (const base of this.peersFor(roundIdBytes)) {
-      try {
-        const r = await this.fetcher(`${base}/resend-sends?round=${toHex(roundIdBytes)}${this.scopeParam}`, { method: 'POST', body: JSON.stringify(plain(row)) });
-        if (!r.ok) refused.push(`${base}: ${(await r.text()).trim()}`);
-      } catch (e) { refused.push(`${base}: ${e.message}`); }
-    }
-    return refused;
+    // EVERY PEER AT ONCE, WITHIN THE BOUND (kanban #1074): each must take it, so there is no threshold; a hung one is named as one that refused
+    const body = JSON.stringify(plain(row));
+    const asked = await askPeers(this.peersFor(roundIdBytes), async (base, signal) => {
+      const r = await this.fetcher(`${base}/resend-sends?round=${toHex(roundIdBytes)}${this.scopeParam}`, { method: 'POST', body, signal });
+      return r.ok ? null : (await r.text()).trim();
+    }, { boundMs: this.peerAskMs });
+    return asked.filter((x) => !('value' in x) || x.value !== null).map((x) => `${x.peer}: ${'value' in x ? x.value : x.error.message}`);
   }
 
   /** A PEER'S CHECK of a re-send: the previous attempt expired here, the gateway is the next live key here, the invoice stands. */
@@ -419,7 +425,8 @@ export class WinningsSend {
     if (!message) return refuse('this signer node cannot rebuild that message');
     const key = `${kind}:${toHex(roundIdBytes)}:${entryHex}:${row.attempt}`;
     let pair = this.pairs.get(key);
-    if (!pair || toHex(pair.message) !== toHex(message)) {
+    // A PAIR THAT SIGNED A LIST IS SPENT (kanban #1074, the settlement's #1070): the next commit draws a new one, so a list one seat never completed binds nobody
+    if (!pair || toHex(pair.message) !== toHex(message) || pair.list) {
       const hiding = nonceGenerate340(this.random(32), built.signerNode.share);
       const binding = nonceGenerate340(this.random(32), built.signerNode.share);
       pair = { message, hiding, binding, list: null, share: null,
@@ -450,32 +457,71 @@ export class WinningsSend {
     return { ok: true, share: pair.share };
   }
 
-  /** The committee's signature of `kind` over one attempt, made here with the peers. */
+  /**
+   * The committee's signature of `kind` over one attempt, made here with the peers: every peer asked at once within a bound (kanban #1074 as #1061), and a
+   * seat that gave no share, or one that does not stand, left off the next list while the threshold remains (as #1070), asked again at once.
+   */
   async sign(roundIdBytes, row, built, kind) {
     const entryHex = toHex(row.entryId);
     const q = `round=${toHex(roundIdBytes)}&entry=${entryHex}&kind=${kind}&attempt=${row.attempt}&hash=${row.paymentHash}${this.scopeParam}`;
-    const own = await this.commit(roundIdBytes, entryHex, built, kind, row.attempt);
-    if (!own.ok) return own;
-    const signers = [{ base: null, commitment: own.commitment }];
-    for (const base of this.peersFor(roundIdBytes)) {
-      try {
-        const r = await this.fetcher(`${base}/send-commit?${q}`, { method: 'POST' });
-        if (r.ok) signers.push({ base, commitment: decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0] });
-      } catch { /* a peer down: the threshold decides */ }
+    for (;;) {
+      const own = await this.commit(roundIdBytes, entryHex, built, kind, row.attempt);
+      if (!own.ok) return own;
+      const message = this.pairs.get(`${kind}:${toHex(roundIdBytes)}:${entryHex}:${row.attempt}`).message;
+      const asked = await askPeers(this.peersFor(roundIdBytes), async (base, signal) => {
+        const r = await this.fetcher(`${base}/send-commit?${q}`, { method: 'POST', signal });
+        return r.ok ? { commitment: decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0] } : null;
+      }, { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: built.needed - 1, counts: (x) => !!(x && x.commitment) });
+      const signers = [{ base: null, commitment: own.commitment }];
+      for (const { peer: base, value } of asked) if (value && value.commitment) signers.push({ base, commitment: value.commitment });
+      if (signers.length < built.needed) return refuse(`${signers.length} of ${built.needed} signer nodes committed to the ${kind}`);
+      const listed = this.#listed(q, signers, built.needed);
+      const combined = await this.#gatherShares(roundIdBytes, entryHex, built, kind, row.attempt, q, message, listed);
+      if (combined.ok) { this.withheld.delete(q); return combined; }
+      if (!this.#leaveOut(q, combined, listed, built.needed)) return combined;
     }
-    if (signers.length < built.needed) return refuse(`${signers.length} of ${built.needed} signer nodes committed to the ${kind}`);
+  }
+
+  /** THE SEATS THAT SIGN THIS LIST (settlement.js #listed): those that committed, less any that gave this asker no share for it while enough others remain. */
+  #listed(key, signers, needed) {
+    const out = this.withheld.get(key);
+    if (!out) return signers;
+    const kept = signers.filter((s) => !out.has(s.base));
+    return kept.length >= needed ? kept : signers;
+  }
+
+  /** A LIST THAT FAILED AT A SEAT: true when that seat is now left out and enough others remain; it grows by a seat each time, so it ends. */
+  #leaveOut(key, failed, listed, needed) {
+    const out = this.withheld.get(key) || new Set();
+    const fresh = (failed.withheld || []).filter((base) => !out.has(base));
+    for (const base of fresh) out.add(base);
+    if (!fresh.length || listed.filter((s) => !out.has(s.base)).length < needed) { this.withheld.delete(key); return false; }
+    this.withheld.set(key, out);
+    if (this.withheld.size > 4096) this.withheld.delete(this.withheld.keys().next().value);
+    return true;
+  }
+
+  /** ROUND TWO: every seat on the list gives its share, all at once within the bound; a refusal names in `withheld` the seats that gave none or whose share does not stand. */
+  async #gatherShares(roundIdBytes, entryHex, built, kind, attempt, q, message, signers) {
     const commitments = signers.map((x) => x.commitment).sort((x, y) => x.id - y.id);
-    const shares = [];
-    for (const x of signers) {
-      if (x.base === null) { const mine = await this.share(roundIdBytes, entryHex, built, commitments, kind, row.attempt); if (!mine.ok) return mine; shares.push(mine.share); continue; }
-      const r = await this.fetcher(`${x.base}/send-share?${q}`, { method: 'POST', body: encodeCommitments(commitments) });
-      if (!r.ok) return refuse(`${x.base} gave no ${kind} share: ${(await r.text()).trim()}`);
-      shares.push(decodeShare(new Uint8Array(await r.arrayBuffer())));
-    }
-    const message = this.pairs.get(`${kind}:${toHex(roundIdBytes)}:${entryHex}:${row.attempt}`).message;
+    const mine = await this.share(roundIdBytes, entryHex, built, commitments, kind, attempt);
+    if (!mine.ok) return mine;
+    const body = encodeCommitments(commitments);
+    const peers = signers.filter((x) => x.base !== null);
+    const asked = await askPeers(peers.map((x) => x.base), async (base, signal) => {
+      const r = await this.fetcher(`${base}/send-share?${q}`, { method: 'POST', body, signal });
+      if (!r.ok) return { why: (await r.text()).trim() };
+      return { share: decodeShare(new Uint8Array(await r.arrayBuffer())) };
+    }, { boundMs: this.peerAskMs });
+    const none = asked.filter((x) => !x.value || !('share' in x.value));
+    if (none.length) return { ...refuse(`${none[0].peer} gave no ${kind} share: ${none[0].value ? none[0].value.why : none[0].error.message}`), withheld: none.map((x) => x.peer) };
+    const shares = [mine.share, ...asked.map((x) => x.value.share)];
     const { signature } = aggregate340({ commitments, message, groupPublicKey: built.claimPk, shares, curve: this.curve });
-    if (!schnorr.verify(signature, message, built.claimPk.subarray(1))) return refuse(`the ${kind} signature does not verify under the claim key`);
-    return { ok: true, signature };
+    if (schnorr.verify(signature, message, built.claimPk.subarray(1))) return { ok: true, signature };
+    const held = this.dkg && this.dkg.publicSharesFor && built.contract ? this.dkg.publicSharesFor(built.contract.nodes) : null;
+    const spoilt = held && held.ok ? peers.filter((x, i) => !verifyShare340({ id: x.commitment.id, share: asked[i].value.share,
+      publicShare: held.shares.get(String(x.commitment.id)), groupPublicKey: built.claimPk, message, commitments, curve: this.curve })) : [];
+    return { ...refuse(`the ${kind} signature does not verify under the claim key`), withheld: spoilt.map((x) => x.base) };
   }
 
   /** A preimage a peer reports: kept only if it is the invoice's own (sha256 of it is the payment hash). */
@@ -537,9 +583,9 @@ export class WinningsSend {
         expiration: row.expiration, claimPk: row.gatewayPk, refundPk: built.claimPk, invoice: row.invoice, auth: a.signature });
       if (said.sent && said.preimage && toHex(sha256(said.preimage)) === row.paymentHash) {
         this.keepPaid(row, said.preimage, `the gateway at ${row.gatewayUrl} paid the winner's invoice; its preimage checked`);
-        for (const base of this.peersFor(roundIdBytes)) {
-          try { await this.fetcher(`${base}/winnings-paid?round=${toHex(roundIdBytes)}&entry=${entryHex}${this.scopeParam}`, { method: 'POST', body: said.preimage }); } catch { /* it asks again */ }
-        }
+        // EVERY PEER AT ONCE, WITHIN THE BOUND (kanban #1074): a peer that misses it asks again
+        await askPeers(this.peersFor(roundIdBytes), (base, signal) => this.fetcher(`${base}/winnings-paid?round=${toHex(roundIdBytes)}&entry=${entryHex}${this.scopeParam}`,
+          { method: 'POST', body: said.preimage, signal }), { boundMs: this.peerAskMs, graceMs: this.peerGraceMs, enough: 0 });
         out.push({ entry: entryHex, attempt: row.attempt, ok: true, state: PAID, preimage: toHex(said.preimage), gateway: row.gatewayUrl });
         continue;
       }
