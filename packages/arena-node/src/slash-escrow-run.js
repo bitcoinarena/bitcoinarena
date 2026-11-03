@@ -16,7 +16,8 @@
 //
 // Who carries is the release's rule read again at the spend: panel A's members in score order for the panels' leaf, the census key's holders in descending shares (less the accused
 // and the round's seats) for the fallback leaf, none above its own bond, a member that has left the census skipped. The fee is the start's own rate, off the reserves' part, and
-// off each player's part pro rata to its loss only when there is no reserves' part (slash-release.js escrowSlices).
+// off each player's part pro rata to its loss only when there is no reserves' part (slash-release.js escrowSlices). Each players' output holds the table's carrier margin past
+// its part, out of the reserves' share, and outputs[] says when there is no such share and the players bear it (kanban #1086).
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { panelThreshold } from '../../arena-protocol/src/bond-script.js';
 import { carrierEscrowPegInId } from '../../arena-protocol/src/census-key.js';
@@ -78,7 +79,7 @@ export function createSlashEscrow({ secret, me, clocks, db, tweakPoint, tipHeigh
 
   // ---- THE ESCROW'S SPENDS ON THE CHAIN, IN ORDER ----
   const chainOf = (tableId) => db.prepare('SELECT * FROM slash_escrow_chain WHERE table_id = ? ORDER BY seq').all(tableId);
-  const spendsOf = (rows) => rows.map((r) => ({ value: BigInt(r.value), outputs: decodeSlashEscrowOutputs(new Uint8Array(r.outputs)).outputs }));
+  const spendsOf = (rows) => rows.map((r) => { const d = decodeSlashEscrowOutputs(new Uint8Array(r.outputs)); return { value: BigInt(r.value), outputs: d.outputs, marginMsat: d.marginMsat, marginOff: d.marginOff }; });
 
   /** The transaction an escrow spend's outputs[] make, by `path` from the escrow `inName` of `value`: what every signer rebuilds, and what the txid checks. */
   function txOfOutputs(ctx, inName, value, path, bytes) {
@@ -87,7 +88,7 @@ export function createSlashEscrow({ secret, me, clocks, db, tweakPoint, tipHeigh
     const payees = o.outputs.filter((x) => x.pays !== 'escrow');
     const fee = value - o.outputs.reduce((a, x) => a + x.value, 0n);
     if (fee < 0n) return null;
-    const built = escrowTableSpend({ escrow: { ...outpointOf(inName), value, script: ctx.output.script }, tableId: o.tableId, loadHeight: o.loadHeight, payees, feeSats: fee,
+    const built = escrowTableSpend({ escrow: { ...outpointOf(inName), value, script: ctx.output.script }, tableId: o.tableId, loadHeight: o.loadHeight, marginMsat: o.marginMsat, marginOff: o.marginOff, payees, feeSats: fee,
       sequence: path === 'release' ? 0xfffffffd : clocks.fallbackBlocks });
     if (!built.ok) return null;
     return { ...built, txid: display(toHex(parseTransaction(serializeSpend({ ...built.tx, witnesses: [[new Uint8Array(64)]] })).txid)), decoded: o };
@@ -430,12 +431,14 @@ export function createSlashEscrow({ secret, me, clocks, db, tweakPoint, tipHeigh
       for (const [seq, r] of rows.entries()) {
         const mine = db.prepare('SELECT federation, address, script FROM slash_pegins WHERE start = ?').all(`escrow:${r.escrow_in}`);
         if (!mine.length) continue;
-        const outs = decodeSlashEscrowOutputs(new Uint8Array(r.outputs)).outputs;
-        // EVERY OUTPUT THIS CARRIER CARRIES IN THE SPEND: a players' output's margin comes off a reserves' part it carries too (payOn)
-        const siblings = outs.map((o, i) => ({ name: { start: `escrow:${r.escrow_in}`, path: 'escrow', index: i }, txid: r.txid, vout: i + 1, o,
-          peg: o.pays === 'player_carrier' || o.pays === 'reserves' ? mine.find((p) => same(new Uint8Array(p.script), o.script)) : null })).filter((x) => x.peg);
-        for (const x of siblings) {
-          const got = await payOn({ ...x, startHex: r.start, slices: (sliced[seq].find((y) => y.index === x.name.index) || { slices: [] }).slices, siblings });
+        const d = decodeSlashEscrowOutputs(new Uint8Array(r.outputs));
+        // EACH OUTPUT THIS CARRIER CARRIES, with the margin the spend names (kanban #1086): a players' output holds it past its slices, or the players bear it pro rata
+        for (const [i, o] of d.outputs.entries()) {
+          if (o.pays !== 'player_carrier' && o.pays !== 'reserves') continue;
+          const peg = mine.find((p) => same(new Uint8Array(p.script), o.script));
+          if (!peg) continue;
+          const got = await payOn({ name: { start: `escrow:${r.escrow_in}`, path: 'escrow', index: i }, startHex: r.start, txid: r.txid, vout: i + 1, o, peg, marginMsat: d.marginMsat,
+            slices: (sliced[seq].find((y) => y.index === i) || { slices: [] }).slices });
           if (got) done.push(got);
         }
       }

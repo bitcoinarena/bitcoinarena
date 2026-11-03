@@ -14,6 +14,7 @@ import { decodeSlashPayoutTable, slashPayoutTableId } from '../../arena-protocol
 import { holdSpendDigest } from '../../arena-protocol/src/slash-release.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
+import { CARRIER_PAYOUT_MARGIN_MSAT } from '../../arena-protocol/src/genesis.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { tweakPoint } from '../src/curve.js';
 import { createCensusSigner } from '../src/census-sign.js';
@@ -161,7 +162,8 @@ test('every holder answers: one fallback goes out, signed by the key over the ta
   const firstCarrier = [...others].sort((a, b) => (a.hex < b.hex ? -1 : 1))[0];
   const players = t.outputs.find((o) => o.pays === 'player_carrier');
   assert.equal(toHex(players.script), (await w.seats.get(firstCarrier.hex).run.ownPegIn(startHex, fedA, 'players')).script);
-  assert.equal(players.value, LOSS / 1000n);
+  assert.equal(players.value * 1000n, LOSS + CARRIER_PAYOUT_MARGIN_MSAT.regtest, 'the loss plus the carrier margin the fallback\'s table names too (kanban #1086)');
+  assert.deepEqual([t.marginMsat, t.marginOff], [CARRIER_PAYOUT_MARGIN_MSAT.regtest, 'reserves']);
 });
 
 test('exactly t shares answer (the accused and the seat down): the fallback goes out with the four of them', async () => {

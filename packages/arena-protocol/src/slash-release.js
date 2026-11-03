@@ -14,7 +14,7 @@
 import { HOLD_INTERNAL_KEY, TAPLEAF_VERSION, escrowReleaseLeaf, fallbackLeaf, holdControlBlock, panelThreshold, tapBranchHash, tapLeafHash, tapTweak } from './bond-script.js';
 import { holdSlashSpend, arbitrationCommitmentIn, P2TR_DUST_SATS } from './arbitration-tx.js';
 import { compactSize, scriptPathWitness, serializeSpend, tapSighash } from './bond-spend.js';
-import { buildSlashPayoutTable, slashPayoutTableId, encodeSlashPayoutTable, encodeSlashEscrowOutputs, escrowTableSpend, slashEscrowOutputsId } from './slash.js';
+import { buildSlashPayoutTable, slashPayoutTableId, encodeSlashPayoutTable, encodeSlashEscrowOutputs, escrowTableSpend, slashEscrowOutputsId, outputMarginMsat } from './slash.js';
 import { reserveParts } from './slash-reserves.js';
 import { parseTransaction } from './tx.js';
 import { toHex } from './hash.js';
@@ -132,7 +132,7 @@ export const holdSpendDigest = ({ spend, hold, path }) => tapSighash({ ...spend.
  *   proofId      H(fraud_proof), `slashHeight` the start's OP_RETURN's
  *   rate         startFeeRate's answer, sat/vB
  *   clocks       { holdBlocks, fallbackBlocks }
- *   table        buildSlashPayoutTable's inputs less `feeSats`: { networkId, roundId, bond { txid, vout }, filer, carriers, federations, retired, escrowScript },
+ *   table        buildSlashPayoutTable's inputs less `feeSats`: { networkId, roundId, bond { txid, vout }, filer, carriers, federations, retired, escrowScript, marginMsat },
  *                and `entriesFor(escrowSats)` -> [{ entryId, playerPubkey, lossMsat }]: what this bond pays each player when it has that much (slashDistribution's share)
  *
  * The fee is the rate times the spend's own size, and the size depends on the table, so the table is built again with each fee asked until the one it was built with is
@@ -167,12 +167,14 @@ export function signedHoldSpend({ spend, witness }) {
 
 /**
  * WHO A CARRIER PAYS (5A.3B step 5: "Panel A's members bring the players' share into the federation and pay the table, in score order, none holding more than its own bond"): the
- * table's losses, in its entry order, cut across its player_carrier outputs in their order, each carrying up to its own output. A loss may be split between two carriers. A carrier
- * pays its slices whole and the rest of what it claimed to the reserves of that federation. Answers [{ index (in the table's outputs), script, value, slices: [{ entryId,
- * playerPubkey, msat }] }].
+ * table's losses, in its entry order, cut across its player_carrier outputs in their order, each carrying up to its own output less the carrier margin it holds (kanban #1086).
+ * A loss may be split between two carriers. A carrier pays its slices whole and the rest of what it claimed, less its payout's fee, to the reserves of that federation.
+ * Answers [{ index (in the table's outputs), script, value, slices: [{ entryId, playerPubkey, msat }] }].
  */
+const roomOf = (value, margin) => (value * 1000n > margin ? value * 1000n - margin : 0n);
 export function carrierSlices(table) {
-  const carriers = table.outputs.map((o, index) => ({ ...o, index })).filter((o) => o.pays === 'player_carrier').map((o) => ({ index: o.index, script: o.script, value: o.value, slices: [], room: o.value * 1000n }));
+  const margin = outputMarginMsat(table);
+  const carriers = table.outputs.map((o, index) => ({ ...o, index })).filter((o) => o.pays === 'player_carrier').map((o) => ({ index: o.index, script: o.script, value: o.value, slices: [], room: roomOf(o.value, margin) }));
   let at = 0;
   for (const e of table.entries) {
     let owed = e.lossMsat;
@@ -197,9 +199,10 @@ export function holdSpendNames(raw) {
 
 /**
  * WHAT THE PLAYERS ARE STILL OWED, AND WHO CARRIED WHAT, along an escrow's spends. `table` the confirmed table; `spends` [{ value (the escrow it spent), outputs: [{ value, script,
- * pays }] }] in chain order. Each entry starts at its loss less what the table's carriers took of it (carrierSlices); each spend cuts what is left across its player_carrier
- * outputs in their order, as a table does. When a spend holds less than the players are owed once its fee is off (no reserves' part left to bear it), every entry's part is
- * scaled to what there is, pro rata to what it is owed, the odd msat one each in entry order: the fee comes off each player's part pro rata to its loss.
+ * pays }], marginMsat, marginOff }] in chain order (decodeSlashEscrowOutputs' fields). Each entry starts at its loss less what the table's carriers took of it (carrierSlices); each
+ * spend cuts what is left across its player_carrier outputs in their order, each up to its value less the margin it holds, as a table does. When a spend holds less than the
+ * players are owed once its fee is off (no reserves' part left to bear it), every entry's part is scaled to what there is, pro rata to what it is owed, the odd msat one each in
+ * entry order: the fee comes off each player's part pro rata to its loss.
  * Answers { spends: [[{ index, script, value, slices: [{ entryId, playerPubkey, msat }] }]], remaining: [{ entryId, playerPubkey, msat }] }.
  */
 export function escrowSlices({ table, spends = [] }) {
@@ -207,8 +210,9 @@ export function escrowSlices({ table, spends = [] }) {
   for (const c of carrierSlices(table)) for (const x of c.slices) left.get(toHex(x.entryId)).msat -= x.msat;
   const out = [];
   for (const sp of spends) {
+    const margin = outputMarginMsat(sp);
     const fee = sp.value - sp.outputs.reduce((a, o) => a + o.value, 0n);
-    const room = (sp.value - fee) * 1000n;
+    const room = (sp.value - fee) * 1000n - sp.outputs.filter((o) => o.pays === 'player_carrier').reduce((a, o) => a + o.value * 1000n - roomOf(o.value, margin), 0n);
     const owed = [...left.values()].filter((e) => e.msat > 0n);
     const total = owed.reduce((a, e) => a + e.msat, 0n);
     let due = owed.map((e) => ({ ...e }));
@@ -217,7 +221,7 @@ export function escrowSlices({ table, spends = [] }) {
       let odd = room - due.reduce((a, e) => a + e.msat, 0n);
       for (const e of due) { if (odd <= 0n) break; e.msat += 1n; odd -= 1n; }
     }
-    const carriers = sp.outputs.map((o, index) => ({ ...o, index })).filter((o) => o.pays === 'player_carrier').map((o) => ({ index: o.index, script: o.script, value: o.value, slices: [], room: o.value * 1000n }));
+    const carriers = sp.outputs.map((o, index) => ({ ...o, index })).filter((o) => o.pays === 'player_carrier').map((o) => ({ index: o.index, script: o.script, value: o.value, slices: [], room: roomOf(o.value, margin) }));
     let at = 0;
     for (const e of due) {
       let owe = e.msat;
@@ -250,7 +254,9 @@ function sizedEscrowWitness(path, output, panels) {
  *   carriers     [{ key, federation, script, bondSats }] in carrying order: each a CarrierPegIn for this escrow outpoint, one output each
  *   rate         sat/vB (the start's own, startFeeRate)
  *
- * The players' part goes first, to carriers with a peg-in of the players' federation, in their order, none above its own bond. The rest of the escrow is the reserves' part:
+ * The players' part goes first, to carriers with a peg-in of the players' federation, in their order, none above its own bond. Each players' output holds its part plus the
+ * carrier margin the table names (RULED 2026-11-03, kanban #1086), taken from the reserves' share of this spend; when that share cannot take every margin (the escrow holds
+ * only players' money, as with no reserve key yet), the outputs hold the parts alone and outputs[] names `marginOff: players`. The rest of the escrow is the reserves' part:
  * spread by §27A.9.2 over the federations at `loadHeight`, each part to the first carrier in order with an unused peg-in of that federation; a part with no such carrier, and
  * whatever finds no room, goes back to the escrow. The fee comes off the reserves' part; only when there is none is it taken off the players' pro rata (escrowSlices). Under
  * dust, what goes back joins the largest reserves output, or the fee. Answers { ok, spend, outputs, bytes, outputsId, digest, feeSats, vsize, short } or { ok: false, due, why }:
@@ -261,28 +267,44 @@ export function slashEscrowSpend({ path, escrow, output, table, tableId, spends 
   if (path === 'release' && !(output.leaves.release && panels)) return { ok: false, why: 'that escrow has no panels\' leaf' };
   if (!Number.isInteger(loadHeight) || loadHeight < 0) return { ok: false, why: 'an escrow spend names the height of the records it reads' };
   const owedSats = (escrowSlices({ table, spends }).remaining.reduce((a, e) => a + e.msat, 0n) + 999n) / 1000n;
+  const marginMsat = table.marginMsat ?? 0n, marginSats = (marginMsat + 999n) / 1000n;
   const pf = String(playersFederation || '').toLowerCase();
   const sequence = path === 'release' ? 0xfffffffd : fallbackBlocks;
+  /** The players' outputs with `margin` sat each past its part, out of `spendable`: { players, used, avail (the reserves' share left) }, or null when that share cannot take the margins. */
+  const placePlayers = (spendable, margin) => {
+    const short = spendable < owedSats;
+    if (short && margin > 0n) return null;
+    let left = short ? spendable : owedSats, avail = short ? 0n : spendable - owedSats;
+    const used = new Set(), players = [];
+    for (const c of carriers) {
+      if (left <= 0n) break;
+      if (String(c.federation).toLowerCase() !== pf || c.bondSats < P2TR_DUST_SATS || c.bondSats <= margin || used.has(toHex(c.script))) continue;
+      const cap = c.bondSats - margin;
+      const part = left > cap ? cap : left;
+      const raise = part + margin < P2TR_DUST_SATS ? P2TR_DUST_SATS - part - margin : 0n;
+      if (avail >= margin + raise) {
+        avail -= margin + raise;
+        players.push({ value: part + margin + raise, script: c.script, pays: 'player_carrier' });
+        used.add(toHex(c.script));
+        left -= part;
+        continue;
+      }
+      if (raise > 0n && players.length) { players[players.length - 1].value += part; left -= part; continue; }
+      if (margin > 0n) return null;
+      break;
+    }
+    return { players, used, avail };
+  };
   let fee = 0n;
   for (let round = 0; round < FEE_ROUNDS; round++) {
     const spendable = escrow.value - fee;
     if (spendable < P2TR_DUST_SATS) return { ok: false, due: false, why: `an escrow of ${escrow.value} sat less a ${fee} sat fee is below dust` };
     const short = spendable < owedSats;
-    let left = short ? spendable : owedSats, reservesAvail = short ? 0n : spendable - owedSats;
-    const used = new Set(), players = [], reserves = [];
-    for (const c of carriers) {
-      if (left <= 0n) break;
-      if (String(c.federation).toLowerCase() !== pf || c.bondSats < P2TR_DUST_SATS || used.has(toHex(c.script))) continue;
-      const part = left > c.bondSats ? c.bondSats : left;
-      let sats = part;
-      if (part < P2TR_DUST_SATS) {
-        const raise = P2TR_DUST_SATS - part;
-        if (reservesAvail >= raise) { reservesAvail -= raise; sats = P2TR_DUST_SATS; } else if (players.length) { players[players.length - 1].value += part; left -= part; continue; } else break;
-      }
-      players.push({ value: sats, script: c.script, pays: 'player_carrier' });
-      used.add(toHex(c.script));
-      left -= part;
-    }
+    let placed = placePlayers(spendable, marginSats), marginOff = 'reserves';
+    if (!placed) { placed = placePlayers(spendable, 0n); marginOff = 'players'; }
+    const { players, used } = placed;
+    const reservesAvail = placed.avail;
+    const reserves = [];
     if (reservesAvail > 0n) {
       const { parts } = reserveParts({ amountSats: reservesAvail, federations, retired, minPartSats: P2TR_DUST_SATS });
       for (const p of parts) {
@@ -302,13 +324,13 @@ export function slashEscrowSpend({ path, escrow, output, table, tableId, spends 
       const big = reserves.reduce((a, o) => (!a || o.value > a.value ? o : a), null);
       if (big) big.value += back; else extra = back;
     }
-    const built = escrowTableSpend({ escrow: { ...escrow, script: output.script }, tableId, loadHeight, payees: [...players, ...reserves], feeSats: fee + extra, sequence });
+    const built = escrowTableSpend({ escrow: { ...escrow, script: output.script }, tableId, loadHeight, marginMsat, marginOff, payees: [...players, ...reserves], feeSats: fee + extra, sequence });
     if (!built.ok) return built;
     const vsize = vsizeOfSpend({ ...built.tx, witnesses: [sizedEscrowWitness(path, output, panels)] });
     const want = rate * BigInt(vsize);
     if (want <= fee) {
       return { ok: true, spend: built, outputs: built.outputs, bytes: encodeSlashEscrowOutputs(built.outputs), outputsId: slashEscrowOutputsId(built.outputs),
-        digest: tapSighash({ ...built.tx, prevouts: built.prevouts, inputIndex: 0, leafHash: output.leaves[path] }), feeSats: built.fee.sats, vsize, short };
+        digest: tapSighash({ ...built.tx, prevouts: built.prevouts, inputIndex: 0, leafHash: output.leaves[path] }), feeSats: built.fee.sats, vsize, short, marginOff };
     }
     fee = want;
   }
