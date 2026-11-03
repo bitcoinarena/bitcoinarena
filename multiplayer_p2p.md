@@ -3112,8 +3112,8 @@ The release's `OP_RETURN` comes first and is left out of the table, because it
 carries the table's hash. `filer` repays the start's fee input. `player_carrier`
 outputs are the peg-ins of panel A's members in score order, none above that
 member's own bond. `reserves` are the parts of §27A.9.2, and `reserves[]` lists what
-the release pays in. `escrow` is what does not fit, under the round's two panels, or
-the census key if there are none. The part kept in escrow is that output, so
+the release pays in. `escrow` is what does not fit, under the hold's release leaf
+without its wait and its fallback leaf (RULED 2026-11-03, kanban #1085, below). The part kept in escrow is that output, so
 `reserves[]` needs no extra field: the escrow's value past the players is placed by
 load when spent.
 
@@ -3138,9 +3138,9 @@ review; the owner did not rule them one by one.*
   filer chose that rate, so a mainnet filer's estimate carries into both and no signer guesses at a mempool.
 - **`filer`** repays the start's fee input, its value to its own script. A seat derives that coin's key from its
   node key and the proof's hash, so the repaid output is its own to spend.
-- **The escrow** is a P2TR output with the hold's unspendable internal key and one leaf: the round's release leaf
-  (t of n of each panel after `slash_hold_blocks`), or `<census_key> CHECKSIG` where there are no panels and on
-  every fallback.
+- **The escrow** is a P2TR output with the hold's unspendable internal key and the leaves ruled for it (#1085,
+  "The escrow spend" below): the panels' leaf with no wait and the fallback leaf, or the fallback leaf alone where
+  there are no panels and on every fallback.
 - **The losses** are read from every seat of the round that answers `GET /audit-run`, the union of what they hand,
   each entry checked against its id and each FINAL against the committee, then §5A.3's real loss: a seat can hold
   back and cannot add. A later slash of the same round, in chain order and then proof id, pays only what the
@@ -3163,6 +3163,7 @@ review; the owner did not rule them one by one.*
 - **A carrier pays** each slice of a loss it carries to `refund_key(player)`, in the table's entry order across the
   carriers in their order, and the rest of what it claimed, less 10,000 msat for its own payout's fee, to that
   federation's reserve key, kept as a reserve row of kind `slash` that every seat checks against its own port.
+  It pays on the table that confirmed, whichever that is (RULED 2026-11-03, kanban #1085, below).
 
 **The carriers of a fallback (RULED 2026-11-02, kanban #1031).** With no panels, and
 on every fallback, because a fallback means the panels did not sign and panel A
@@ -3182,10 +3183,13 @@ carrier, including the reserves' part.
 
 ```text
 escrow spend  OP_RETURN = payout_table_id ‖ id of its own outputs[] as first output
-outputs[]     the table's format, after the table's id: value_sats, script, pays
+outputs[]     version 1, payout_table_id, load_height (u32), then the table's format:
+              value_sats, script, pays
               tagged_hash("ARENA/v1/SlashEscrowOutputs", those bytes)
-payable       a script a carrier's node key signed as its peg-in address for this
-              table: tagged_hash("ARENA/v1/CarrierEscrowPegIn", payout_table_id ‖ script)
+payable       a script a carrier's node key signed as its peg-in for this table and
+              the escrow outpoint the spend spends (a CarrierPegIn, #1085):
+              tagged_hash("ARENA/v1/CarrierEscrowPegIn", payout_table_id ‖ escrow txid
+              ‖ escrow vout (u32) ‖ federation_id ‖ script)
 ```
 
 What does not go out comes back to the same escrow as a `pays = escrow` output. The
@@ -3193,6 +3197,99 @@ check is amounts by `pays` against what the table left unpaid, plus those signat
 `player_carrier` up to the players' part the release did not carry, `reserves` up to
 the rest of the escrow, counted with every earlier spend. Row 8 of the offences covers
 that too.
+
+**The escrow spend (RULED 2026-11-03, kanban #1085).** A table can leave money in its
+escrow: players owed with no carrier yet, a reserves' part no federation had room for, or a
+network with no reserve key (§27A.9.2). Nobody may hold that money without a rule, so each
+answer reuses what the release already does.
+
+The escrow output gets the hold output's two spending leaves, without the return:
+
+```text
+release    t-of-n panel A + t-of-n panel B          no wait
+fallback   <slash_fallback_blocks> CSV, census key   if the panels don't sign
+```
+
+With no panels, only the fallback leaf. There is no return leaf: this money is owed to players
+and the reserves, never the node's again.
+
+- **Who signs and files, and when.** The same signers as the release that made it: panels A and B,
+  t of n each, or on the fallback leaf the census key. The filer's turn is the start's rule, a
+  hash of the proof and the key. A spend is **due** when a carrier has published a signed peg-in
+  for it (§5A.3B "When no holder has a signed peg-in", the players' part), or a federation has room
+  for the reserves' part. Every seat checks its escrows every 6 blocks, and there is no other wait.
+  If the panels haven't signed by `slash_fallback_blocks` after the escrow confirmed, the census
+  key may.
+- **What "has room" means.** As for the release: §27A.9.2's spread, on the federation records in
+  force at a height the spend **names** in its `outputs[]` (`load_height`). That height is at or
+  below the tip when it is signed and at or above the escrow's confirmation, the same idea as
+  `slash_height`. Signers check the spend against their own records at that height, so every
+  signer builds the same bytes.
+- **Who carries it.** The release's rule, read again at the spend: on the panels' leaf panel A's
+  members in score order, none above its own bond; on the fallback leaf the census key's holders
+  in descending shares, less the accused, the proof's other slashed nodes and the round's seats.
+  Only members that have published a signed peg-in for this escrow count. A member that has left
+  the census is skipped.
+- **Where a carrier publishes.**
+
+  ```text
+  CarrierPegIn { payout_table_id, escrow outpoint, federation_id, peg-in script }
+               signed by the carrier's node key
+  ```
+
+  Seats take it and hand it on, at `POST` / `GET /slash/<payout_table_id>/carriers`, checked
+  against the carrier rule before they keep it. It is the same thing the release reads as "a
+  payable script is one a carrier signed".
+- **The fee.** The node's estimate with a floor on mainnet; the fixed amount stays on testnet, as
+  #1065 said for the return. It comes off the reserves' part, never the players', as for the
+  release. If the escrow holds only players' money (no reserve key yet), the fee comes off each
+  player's part pro rata to its loss. That is unavoidable and small.
+- **A carrier pays on for the table that confirmed.** Once a release is mined its table is a fact:
+  the hash is on chain, and the money on a carrier's peg-in belongs to the players and the
+  reserves that table names. `carry()` runs on the table whose hash the confirmed release
+  carries, after the carrier checks that the bytes hash to it, that its own slice is named, and
+  that its own peg-in received that slice. It does not re-judge the table: the panels' threshold
+  did that. A carrier that doesn't pay on is the residual already named, "none above its own
+  bond", so its own bond answers for it at most.
+
+**As built (kanban #972, on the 2.0 line).** `slash-release.js` (arena-protocol) builds the escrow
+output (`slashEscrowOutput`, `escrowReleaseLeaf` in `bond-script.js`), the spend (`slashEscrowSpend`)
+and what each carrier carries along the escrow's spends (`escrowSlices`); `slash-escrow-run.js`
+(arena-node) runs it. A seat reads the release or fallback the chain holds (`confirmedOf`): its own,
+or a peer's whose transaction, rebuilt from the table, has the txid whose outputs the chain holds
+confirmed. It follows the escrow along its spends, publishes its CarrierPegIns where it may carry,
+reads the others' at their doors, and once per 6-block window builds at the window's first height (or
+the escrow's confirmation, if later). A panel member serves its proposal and signature at `GET
+/slash-release?start=` (`escrow`), signs every other member's proposal it rebuilds byte for byte at
+the height it names, and sends one at t of each panel. A holder files the fallback leaf in its turn
+through `POST /census-sign/commit` with kind `escrow`, and each holder signs only its own `outputs[]`
+at the height asked. A carrier pays on each spend once it is mined, as for a release.
+
+*My readings of #1085 where it leaves a detail open, for review (not ruled one by one):*
+
+- **The escrow of a fallback** has the fallback leaf alone, as a round with no panels: a fallback
+  means the panels did not sign, and its table already names the holders as carriers. So its census
+  key waits `slash_fallback_blocks` from the escrow's confirmation like any other.
+- **The fee rate** is the start's own (`startFeeRate`), as for the release: every signer must build the
+  same bytes and none can read another's estimate. On mainnet that is the filer's estimate with the
+  1 sat/vB floor; on testnet the start's fixed fee sets it.
+- **The named height** is the first height of the 6-block window a signer builds in, or the escrow's
+  confirmation if that is later. A signer takes any height from the escrow's confirmation to its tip.
+- **One output per peg-in.** A CarrierPegIn is one per carrier, escrow outpoint and federation, and
+  carries one output. The players' part goes first, to carriers with a peg-in of the round's
+  federation in their order, none above its bond. Then each federation's reserves' part goes to the
+  first carrier in order with an unused peg-in of that federation. A part with no such carrier, and
+  whatever finds no room, goes back to the escrow, for the next spend's fresh peg-ins.
+- **Pro rata** applies whenever a spend holds less than the players are still owed once its fee is
+  off: each entry's part is scaled to what there is, the odd msat one each in entry order, then cut
+  across the carriers as a table is. Under dust, what would go back to the escrow joins the largest
+  reserves output, or the fee.
+- **A carrier's bond** is its bond at the tip, summed over its outputs, as the release reads it.
+- **"The proof's other slashed nodes"** are not excluded yet, by the fallback's carriers or the
+  escrow's: the release's build leaves them out today, and the escrow follows it.
+- **A CarrierPegIn is kept** only for a table a seat reads confirmed, an escrow outpoint of that
+  table, a node of panel A or the holders less the accused and the round's seats, and a good
+  signature. A new one is handed on to the escrow's signers once.
 
 **A proof that cannot be fetched (RULED 2026-11-02, kanban #1031).** A holder that
 cannot fetch the proof does not sign a start or a fallback, a panel member does not
@@ -9616,7 +9713,8 @@ a 100 sat entry pays nodes 4,000, protocol devs 2,000, game devs 2,000, reserves
     one's, then both together, and so on, none past 80 %. With loads of 20, 40 and 70 %, the first takes it up to 40,
     the first two up to 70, then all three up to 80.
   - Every seat computes the same parts from the federation records at the release's height. One escrow spend pays
-    them, one peg-in each. A part too small to peg in joins the largest.
+    them, one peg-in each. A part too small to peg in joins the largest. An escrow spend reads the records in force
+    at the height it names in its `outputs[]` (RULED 2026-11-03, kanban #1085, §5A.3B "The escrow spend").
   - What does not fit stays in its escrow and enters when a federation has room. A slash never closes a federation
     to deposits.
   - A network with no reserve key yet keeps it in the escrow until there is one.

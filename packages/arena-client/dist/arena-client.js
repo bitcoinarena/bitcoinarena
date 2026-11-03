@@ -6499,6 +6499,15 @@ function releaseLeaf({ panelA, panelB, holdBlocks }) {
   return cat(relativeLock(holdBlocks), panelCount(panelA, OP_NUMEQUALVERIFY), panelCount(panelB, OP_NUMEQUAL));
 }
 
+/**
+ * AN ESCROW'S RELEASE (RULED 2026-11-03, kanban #1085): `<t-of-n panel A> <t-of-n panel B>`, the hold's release with no wait. Money a slash left in escrow is
+ * already owed to players and the reserves, so the panels that made it spend it as soon as there is somewhere to pay.
+ */
+function escrowReleaseLeaf({ panelA, panelB }) {
+  checkPanels(panelA, panelB);
+  return cat(panelCount(panelA, OP_NUMEQUALVERIFY), panelCount(panelB, OP_NUMEQUAL));
+}
+
 /** RETURN: `<slash_return_blocks> CHECKSEQUENCEVERIFY DROP <bond_maturity> CHECKLOCKTIMEVERIFY DROP <node_key> CHECKSIG`. */
 function returnLeaf({ nodeKey, bondMaturity, returnBlocks }) {
   return cat(relativeLock(returnBlocks), recoveryLeaf(nodeKey, blockHeight(bondMaturity)));
@@ -8791,10 +8800,17 @@ function bondNamesStandingKey(advert, confirmationHeight, standing, censusConfir
 const carrierPegInId = (networkId, script) => taggedHash(TAG.carrierPegIn, Uint8Array.from([...networkId, ...script]));
 
 /**
- * What a carrier signs to name its peg-in address for an escrow spend of one table (kanban #1034 answer 2). The table exists by then, so this one names it;
- * a peg-in is per wallet, so no record lists these. The table id commits to the network.
+ * WHAT A CARRIER SIGNS TO NAME ITS PEG-IN FOR AN ESCROW SPEND (kanban #1034 answer 2, RULED 2026-11-03 #1085: `CarrierPegIn { payout_table_id, escrow outpoint,
+ * federation_id, peg-in script }` signed by the carrier's node key). The table exists by then, so this one names it, and the escrow outpoint it is for: each
+ * escrow spend leaves a new one, so a peg-in carries one output of one spend. A peg-in is per wallet, so no record lists these. The table id commits to the network.
+ *
+ *   tagged_hash("ARENA/v1/CarrierEscrowPegIn", payout_table_id ‖ escrow txid (internal order) ‖ escrow vout (u32 big-endian) ‖ federation_id ‖ script)
  */
-const carrierEscrowPegInId = (tableId, script) => taggedHash(TAG.carrierEscrowPegIn, Uint8Array.from([...tableId, ...script]));
+function carrierEscrowPegInId({ tableId, outpoint, federationId, script }) {
+  const w = new Writer();
+  w.bytes32(tableId); w.bytes32(outpoint.txid); w.u32(outpoint.vout); w.bytes32(federationId); w.bytes(script, script.length);
+  return taggedHash(TAG.carrierEscrowPegIn, w.finish());
+}
 
 /**
  * WHO CARRIES THE PLAYERS' SHARE ON A FALLBACK, AND WHERE THERE ARE NO PANELS (kanban #1031): a fallback means the panels did not sign, so panel A

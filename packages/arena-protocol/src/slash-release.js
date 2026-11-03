@@ -7,14 +7,15 @@
 //
 //   the fee      the start's own fee rate, read off the chain (its fee input, its size), never below 1 sat/vB, times the spend's exact size. The fee comes off the reserves
 //   the table    buildSlashPayoutTable (slash.js) with that fee, run again until the fee it needs is the fee it was built with
-//   the escrow   a P2TR output under the round's two panels, or the census key where there are none (the start's own hold with no release leaf, or a fallback)
+//   the escrow   a P2TR output with the hold's release leaf (no wait) and its fallback leaf; the fallback leaf alone where there are no panels and on a fallback (#1085)
 //   the witness  exactly t signatures of each panel, in the order the leaf checks them (its NUMEQUAL counts them), or one BIP-340 signature of the census key
 //
 // Pure: the chain, the curve and the signatures are the caller's.
-import { HOLD_INTERNAL_KEY, TAPLEAF_VERSION, holdControlBlock, panelThreshold, releaseLeaf, tapLeafHash, tapTweak } from './bond-script.js';
+import { HOLD_INTERNAL_KEY, TAPLEAF_VERSION, escrowReleaseLeaf, fallbackLeaf, holdControlBlock, panelThreshold, tapBranchHash, tapLeafHash, tapTweak } from './bond-script.js';
 import { holdSlashSpend, arbitrationCommitmentIn, P2TR_DUST_SATS } from './arbitration-tx.js';
 import { compactSize, scriptPathWitness, serializeSpend, tapSighash } from './bond-spend.js';
-import { buildSlashPayoutTable, slashPayoutTableId, encodeSlashPayoutTable } from './slash.js';
+import { buildSlashPayoutTable, slashPayoutTableId, encodeSlashPayoutTable, encodeSlashEscrowOutputs, escrowTableSpend, slashEscrowOutputsId } from './slash.js';
+import { reserveParts } from './slash-reserves.js';
 import { parseTransaction } from './tx.js';
 import { toHex } from './hash.js';
 
@@ -22,7 +23,6 @@ import { toHex } from './hash.js';
 export const SLASH_SPEND_FEE_RATE_FLOOR = 1n;
 /** How often a table is built again for its fee before the highest fee asked is taken. */
 const FEE_ROUNDS = 8;
-const OP_CHECKSIG = 0xac;
 
 const cat = (...parts) => {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
@@ -57,24 +57,32 @@ export function startFeeRate({ startRaw, prevouts }) {
 }
 
 /**
- * THE ESCROW OF A SLASH (5A.3B: "escrow is what does not fit, under the round's two panels, or the census key if there are none"): a P2TR output with the hold's unspendable internal
- * key and one leaf: the release leaf of those panels (t of n of each, after slash_hold_blocks), or `<census_key> CHECKSIG`. An escrow spend answers to its table (slash.js
- * slashHoldsOnEscrowSpend) whoever signs it. `tweakPoint` the caller's curve. Answers { script, leafScript, leafHash, controlBlock, outputKey }.
+ * THE ESCROW OF A SLASH (5A.3B; RULED 2026-11-03, kanban #1085): a P2TR output with the hold's unspendable internal key and the hold output's two spending leaves, without the return:
+ *
+ *   release    t-of-n panel A + t-of-n panel B          no wait          (escrowReleaseLeaf)
+ *   fallback   <slash_fallback_blocks> CSV, census key   if the panels don't sign
+ *
+ * With no panels (a round without them, and every fallback: the panels did not sign), only the fallback leaf. There is no return leaf: this money is owed to players and the
+ * reserves, never the node's again. `tweakPoint` the caller's curve. Answers { script, outputKey, parity, scripts, leaves, panels, controlBlock(path) }.
  */
-export function slashEscrowOutput({ panelA = [], panelB = [], holdBlocks, censusKey = null }, { tweakPoint }) {
+export function slashEscrowOutput({ panelA = [], panelB = [], censusKey = null, fallbackBlocks }, { tweakPoint }) {
   const panels = panelA.length > 0 && panelB.length > 0;
-  if (!panels && !(censusKey instanceof Uint8Array && censusKey.length === 32)) throw new Error('an escrow with no panels is under the census key, and none was given');
-  const leafScript = panels ? releaseLeaf({ panelA, panelB, holdBlocks }) : cat(Uint8Array.of(0x20), censusKey, Uint8Array.of(OP_CHECKSIG));
-  const leafHash = tapLeafHash(leafScript);
-  const q = tweakPoint(HOLD_INTERNAL_KEY, tapTweak(HOLD_INTERNAL_KEY, leafHash));
-  return { script: cat(Uint8Array.of(0x51, 0x20), q.outputKey), leafScript, leafHash, outputKey: q.outputKey, controlBlock: cat(Uint8Array.of(TAPLEAF_VERSION | q.parity), HOLD_INTERNAL_KEY) };
+  if (!(censusKey instanceof Uint8Array && censusKey.length === 32)) throw new Error('an escrow\'s fallback leaf is under the census key, and none was given');
+  if (!Number.isInteger(fallbackBlocks) || fallbackBlocks < 1) throw new Error('an escrow\'s fallback leaf waits slash_fallback_blocks, and none was given');
+  const scripts = { fallback: fallbackLeaf({ censusKey, fallbackBlocks }), ...(panels ? { release: escrowReleaseLeaf({ panelA, panelB }) } : {}) };
+  const leaves = { fallback: tapLeafHash(scripts.fallback), ...(panels ? { release: tapLeafHash(scripts.release) } : {}) };
+  const root = panels ? tapBranchHash(leaves.release, leaves.fallback) : leaves.fallback;
+  const q = tweakPoint(HOLD_INTERNAL_KEY, tapTweak(HOLD_INTERNAL_KEY, root));
+  const controlBlock = (path) => {
+    if (!leaves[path]) throw new Error(`that escrow has no ${path} leaf`);
+    const proof = !panels ? [] : path === 'release' ? [leaves.fallback] : [leaves.release];
+    return cat(Uint8Array.of(TAPLEAF_VERSION | q.parity), HOLD_INTERNAL_KEY, ...proof);
+  };
+  return { script: cat(Uint8Array.of(0x51, 0x20), q.outputKey), outputKey: q.outputKey, parity: q.parity, scripts, leaves, panels, controlBlock };
 }
 
-/**
- * THE WITNESS OF A RELEASE: exactly t signatures of each panel, the first t in the order the leaf checks them (each panel's keys sorted), every other slot empty. The leaf ends each
- * panel's count in NUMEQUAL, so a (t + 1)th signature would fail it. `signatures` Map of key hex -> 64 bytes, each already checked by the caller. Throws when a panel is short.
- */
-export function releaseWitness({ hold, panelA, panelB, signatures }) {
+/** Exactly t signatures of each panel, in the order a panels' leaf checks them (each panel's keys sorted), every other slot empty, bottom-first. Throws when a panel is short. */
+function panelStack({ panelA, panelB, signatures }) {
   const t = panelThreshold(panelA.length);
   const line = (panel, name) => {
     let left = t;
@@ -82,8 +90,21 @@ export function releaseWitness({ hold, panelA, panelB, signatures }) {
     if (left > 0) throw new Error(`${t - left} of the ${t} signatures panel ${name} must give`);
     return items;
   };
-  const stack = [...line(panelA, 'A'), ...line(panelB, 'B')].reverse();
-  return scriptPathWitness({ stack, script: hold.scripts.release, controlBlock: holdControlBlock('release', hold).controlBlock });
+  return [...line(panelA, 'A'), ...line(panelB, 'B')].reverse();
+}
+
+/**
+ * THE WITNESS OF A RELEASE: exactly t signatures of each panel, the first t in the order the leaf checks them (each panel's keys sorted), every other slot empty. The leaf ends each
+ * panel's count in NUMEQUAL, so a (t + 1)th signature would fail it. `signatures` Map of key hex -> 64 bytes, each already checked by the caller. Throws when a panel is short.
+ */
+export function releaseWitness({ hold, panelA, panelB, signatures }) {
+  return scriptPathWitness({ stack: panelStack({ panelA, panelB, signatures }), script: hold.scripts.release, controlBlock: holdControlBlock('release', hold).controlBlock });
+}
+
+/** THE WITNESS OF AN ESCROW SPEND: t of each panel on its release leaf, or one census key signature on its fallback leaf. `escrow` slashEscrowOutput's answer. */
+export function escrowWitness({ escrow, path, panelA, panelB, signatures, signature }) {
+  if (path === 'release') return scriptPathWitness({ stack: panelStack({ panelA, panelB, signatures }), script: escrow.scripts.release, controlBlock: escrow.controlBlock('release') });
+  return scriptPathWitness({ stack: [signature], script: escrow.scripts.fallback, controlBlock: escrow.controlBlock('fallback') });
 }
 
 /** THE WITNESS OF A FALLBACK: one BIP-340 signature of the census key on the fallback leaf. */
@@ -170,6 +191,128 @@ export function holdSpendNames(raw) {
   const tx = parseTransaction(raw);
   const said = tx.outputs[0] ? arbitrationCommitmentIn([tx.outputs[0]]) : null;
   return said && said.hint.length === 32 ? { proofId: said.proofId, slashHeight: said.slashHeight, tableId: said.hint } : null;
+}
+
+// ---- THE ESCROW SPEND (RULED 2026-11-03, kanban #1085) ----
+
+/**
+ * WHAT THE PLAYERS ARE STILL OWED, AND WHO CARRIED WHAT, along an escrow's spends. `table` the confirmed table; `spends` [{ value (the escrow it spent), outputs: [{ value, script,
+ * pays }] }] in chain order. Each entry starts at its loss less what the table's carriers took of it (carrierSlices); each spend cuts what is left across its player_carrier
+ * outputs in their order, as a table does. When a spend holds less than the players are owed once its fee is off (no reserves' part left to bear it), every entry's part is
+ * scaled to what there is, pro rata to what it is owed, the odd msat one each in entry order: the fee comes off each player's part pro rata to its loss.
+ * Answers { spends: [[{ index, script, value, slices: [{ entryId, playerPubkey, msat }] }]], remaining: [{ entryId, playerPubkey, msat }] }.
+ */
+export function escrowSlices({ table, spends = [] }) {
+  const left = new Map(table.entries.map((e) => [toHex(e.entryId), { entryId: e.entryId, playerPubkey: e.playerPubkey, msat: e.lossMsat }]));
+  for (const c of carrierSlices(table)) for (const x of c.slices) left.get(toHex(x.entryId)).msat -= x.msat;
+  const out = [];
+  for (const sp of spends) {
+    const fee = sp.value - sp.outputs.reduce((a, o) => a + o.value, 0n);
+    const room = (sp.value - fee) * 1000n;
+    const owed = [...left.values()].filter((e) => e.msat > 0n);
+    const total = owed.reduce((a, e) => a + e.msat, 0n);
+    let due = owed.map((e) => ({ ...e }));
+    if (total > 0n && room < total) {
+      due = owed.map((e) => ({ ...e, msat: (e.msat * room) / total }));
+      let odd = room - due.reduce((a, e) => a + e.msat, 0n);
+      for (const e of due) { if (odd <= 0n) break; e.msat += 1n; odd -= 1n; }
+    }
+    const carriers = sp.outputs.map((o, index) => ({ ...o, index })).filter((o) => o.pays === 'player_carrier').map((o) => ({ index: o.index, script: o.script, value: o.value, slices: [], room: o.value * 1000n }));
+    let at = 0;
+    for (const e of due) {
+      let owe = e.msat;
+      while (owe > 0n && at < carriers.length) {
+        const c = carriers[at];
+        const part = owe < c.room ? owe : c.room;
+        if (part > 0n) { c.slices.push({ entryId: e.entryId, playerPubkey: e.playerPubkey, msat: part }); c.room -= part; owe -= part; left.get(toHex(e.entryId)).msat -= part; }
+        if (c.room === 0n) at += 1;
+      }
+    }
+    out.push(carriers.map(({ room: _, ...c }) => c));
+  }
+  return { spends: out, remaining: [...left.values()].filter((e) => e.msat > 0n) };
+}
+
+/** A witness of the right shape and size for an escrow spend by `path`, with no real signature in it: what its fee is reckoned on. */
+function sizedEscrowWitness(path, output, panels) {
+  const sig = new Uint8Array(64);
+  if (path === 'fallback') return escrowWitness({ escrow: output, path, signature: sig });
+  return escrowWitness({ escrow: output, path, panelA: panels.panelA, panelB: panels.panelB, signatures: new Map([...panels.panelA, ...panels.panelB].map((k) => [toHex(k), sig])) });
+}
+
+/**
+ * AN ESCROW SPEND, AS EVERY SIGNER BUILDS IT (RULED 2026-11-03, kanban #1085). Pure: everything it reads, the signer read itself.
+ *
+ *   path         'release' (panels A and B, t of n each, no wait) or 'fallback' (the census key, slash_fallback_blocks after the escrow confirmed)
+ *   escrow       { txid (internal order), vout, value } of the escrow output now; `output` slashEscrowOutput's answer for it; `panels` { panelA, panelB } for a release
+ *   table        the confirmed table (decoded), `tableId` its id; `spends` the escrow spends before this one, as escrowSlices takes them
+ *   loadHeight   the height whose federation records `federations` are ([{ federation, status, reserveKey, reserveSats, exposureCapSats }], §27A.9.2), named in outputs[]
+ *   carriers     [{ key, federation, script, bondSats }] in carrying order: each a CarrierPegIn for this escrow outpoint, one output each
+ *   rate         sat/vB (the start's own, startFeeRate)
+ *
+ * The players' part goes first, to carriers with a peg-in of the players' federation, in their order, none above its own bond. The rest of the escrow is the reserves' part:
+ * spread by §27A.9.2 over the federations at `loadHeight`, each part to the first carrier in order with an unused peg-in of that federation; a part with no such carrier, and
+ * whatever finds no room, goes back to the escrow. The fee comes off the reserves' part; only when there is none is it taken off the players' pro rata (escrowSlices). Under
+ * dust, what goes back joins the largest reserves output, or the fee. Answers { ok, spend, outputs, bytes, outputsId, digest, feeSats, vsize, short } or { ok: false, due, why }:
+ * `due: false` when nothing is payable yet, which is no refusal.
+ */
+export function slashEscrowSpend({ path, escrow, output, table, tableId, spends = [], loadHeight, carriers = [], playersFederation, federations = [], retired = [], rate, panels = null, fallbackBlocks }) {
+  if (path !== 'release' && path !== 'fallback') return { ok: false, why: `an escrow is spent by its panels or its census key, not ${path}` };
+  if (path === 'release' && !(output.leaves.release && panels)) return { ok: false, why: 'that escrow has no panels\' leaf' };
+  if (!Number.isInteger(loadHeight) || loadHeight < 0) return { ok: false, why: 'an escrow spend names the height of the records it reads' };
+  const owedSats = (escrowSlices({ table, spends }).remaining.reduce((a, e) => a + e.msat, 0n) + 999n) / 1000n;
+  const pf = String(playersFederation || '').toLowerCase();
+  const sequence = path === 'release' ? 0xfffffffd : fallbackBlocks;
+  let fee = 0n;
+  for (let round = 0; round < FEE_ROUNDS; round++) {
+    const spendable = escrow.value - fee;
+    if (spendable < P2TR_DUST_SATS) return { ok: false, due: false, why: `an escrow of ${escrow.value} sat less a ${fee} sat fee is below dust` };
+    const short = spendable < owedSats;
+    let left = short ? spendable : owedSats, reservesAvail = short ? 0n : spendable - owedSats;
+    const used = new Set(), players = [], reserves = [];
+    for (const c of carriers) {
+      if (left <= 0n) break;
+      if (String(c.federation).toLowerCase() !== pf || c.bondSats < P2TR_DUST_SATS || used.has(toHex(c.script))) continue;
+      const part = left > c.bondSats ? c.bondSats : left;
+      let sats = part;
+      if (part < P2TR_DUST_SATS) {
+        const raise = P2TR_DUST_SATS - part;
+        if (reservesAvail >= raise) { reservesAvail -= raise; sats = P2TR_DUST_SATS; } else if (players.length) { players[players.length - 1].value += part; left -= part; continue; } else break;
+      }
+      players.push({ value: sats, script: c.script, pays: 'player_carrier' });
+      used.add(toHex(c.script));
+      left -= part;
+    }
+    if (reservesAvail > 0n) {
+      const { parts } = reserveParts({ amountSats: reservesAvail, federations, retired, minPartSats: P2TR_DUST_SATS });
+      for (const p of parts) {
+        const c = carriers.find((x) => String(x.federation).toLowerCase() === p.federation && !used.has(toHex(x.script)));
+        if (!c) continue;
+        used.add(toHex(c.script));
+        reserves.push({ value: p.sats, script: c.script, pays: 'reserves' });
+      }
+    }
+    if (!players.length && !reserves.length) {
+      return { ok: false, due: false, why: owedSats > 0n && !carriers.some((c) => String(c.federation).toLowerCase() === pf) ? 'no carrier has published a peg-in of the players\' federation for this escrow'
+        : 'no federation has room at that height, or no carrier a peg-in of one that has' };
+    }
+    let extra = 0n;
+    const back = escrow.value - fee - [...players, ...reserves].reduce((a, o) => a + o.value, 0n);
+    if (back > 0n && back < P2TR_DUST_SATS) {
+      const big = reserves.reduce((a, o) => (!a || o.value > a.value ? o : a), null);
+      if (big) big.value += back; else extra = back;
+    }
+    const built = escrowTableSpend({ escrow: { ...escrow, script: output.script }, tableId, loadHeight, payees: [...players, ...reserves], feeSats: fee + extra, sequence });
+    if (!built.ok) return built;
+    const vsize = vsizeOfSpend({ ...built.tx, witnesses: [sizedEscrowWitness(path, output, panels)] });
+    const want = rate * BigInt(vsize);
+    if (want <= fee) {
+      return { ok: true, spend: built, outputs: built.outputs, bytes: encodeSlashEscrowOutputs(built.outputs), outputsId: slashEscrowOutputsId(built.outputs),
+        digest: tapSighash({ ...built.tx, prevouts: built.prevouts, inputIndex: 0, leafHash: output.leaves[path] }), feeSats: built.fee.sats, vsize, short };
+    }
+    fee = want;
+  }
+  return { ok: false, why: `the fee of that escrow spend did not settle in ${FEE_ROUNDS} builds` };
 }
 
 export { sameBytes };

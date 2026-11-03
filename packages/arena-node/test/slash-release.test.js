@@ -282,7 +282,9 @@ test('an escrow spend answers to the release\'s table: both ids, peg-ins a carri
   const set = [...A].sort(compare);
   const leaf = slashLeaf(set.map((p) => p.key), 5);
   const input = { txid: parseTransaction(release).txid, vout: 2, sequence: 0xfffffffd };
-  const signedBy = (who, tableId, script) => ({ key: who.key, signature: schnorr.sign(carrierEscrowPegInId(tableId, script), who.secret) });
+  // A CarrierPegIn (RULED 2026-11-03, kanban #1085): the table, the escrow outpoint it is for, the federation and the script, signed by the carrier's node key
+  const fed = b32(0xfe), at = { txid: input.txid, vout: input.vout };
+  const signedBy = (who, tableId, script, outpoint = at) => ({ key: who.key, outpoint, federationId: fed, signature: schnorr.sign(carrierEscrowPegInId({ tableId, outpoint, federationId: fed, script }), who.secret) });
   const carrier = A[3], stranger = person(40);
   const pegs = new Map([[toHex(pegIn), signedBy(carrier, id, pegIn)], [toHex(fedIn), signedBy(carrier, id, fedIn)], [toHex(thief), signedBy(stranger, id, thief)]]);
   const pegInOf = (script) => pegs.get(toHex(script)) || null;
@@ -314,6 +316,8 @@ test('an escrow spend answers to the release\'s table: both ids, peg-ins a carri
   assert.match(ask(sendOf([player(1000n)]), { pegInOf: () => null }).why, /no carrier signed/, 'a script nobody signed');
   pegs.set(toHex(pegIn), signedBy(carrier, b32(0x31), pegIn));
   assert.match(ask(sendOf([player(1000n)])).why, /no carrier signed/, 'a peg-in signed for another table');
+  pegs.set(toHex(pegIn), signedBy(carrier, id, pegIn, { ...at, vout: 3 }));
+  assert.match(ask(sendOf([player(1000n)])).why, /no carrier signed/, 'a peg-in signed for another escrow outpoint of the table');
   pegs.set(toHex(pegIn), signedBy(carrier, id, pegIn));
   assert.match(ask(sendOf([{ value: 1000n, script: thief, pays: 'escrow' }])).why, /no carrier signed/, 'escrow change goes back to the escrow');
   assert.match(ask(sendOf([player(5000001n)])).why, /where the table left 5000000 and 54990000/, 'past the players\' part');

@@ -1111,13 +1111,17 @@ export function decodeSlashPayoutTable(bytes) {
 export const slashPayoutTableId = (t) => taggedHash(TAG.slashPayoutTable, encodeSlashPayoutTable(t));
 
 /**
- * AN ESCROW SPEND'S OWN outputs[] (5A.3B, kanban #1034 answer 2), in the table's format, after the table's id. Its id goes in the spend's OP_RETURN, beside
+ * AN ESCROW SPEND'S OWN outputs[] (5A.3B, kanban #1034 answer 2), in the table's format, after the table's id and the height whose federation records it
+ * placed the reserves by (`load_height`, RULED 2026-11-03 #1085: "a height the spend names in its outputs[]"). Its id goes in the spend's OP_RETURN, beside
  * payout_table_id. `escrow` is what goes back to the escrow, and comes last.
+ *
+ *   version 1 | payout_table_id | load_height u32 | outputs
  */
-export function encodeSlashEscrowOutputs({ tableId, outputs }) {
+export function encodeSlashEscrowOutputs({ tableId, loadHeight = 0, outputs }) {
   const w = new Writer();
   w.u8(SLASH_TABLE_VERSION);
   w.bytes32(tableId);
+  w.u32(loadHeight);
   writeTableOutputs(w, outputs);
   return w.finish();
 }
@@ -1125,7 +1129,7 @@ export function encodeSlashEscrowOutputs({ tableId, outputs }) {
 export function decodeSlashEscrowOutputs(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== SLASH_TABLE_VERSION) throw new Error('not an escrow spend\'s outputs of version 1');
-  const t = { tableId: r.bytes32(), outputs: readTableOutputs(r) };
+  const t = { tableId: r.bytes32(), loadHeight: r.u32(), outputs: readTableOutputs(r) };
   r.end();
   return t;
 }
@@ -1134,17 +1138,18 @@ export const slashEscrowOutputsId = (t) => taggedHash(TAG.slashEscrowOutputs, en
 
 /**
  * AN ESCROW SPEND OF A TABLE: OP_RETURN payout_table_id || its outputs' id, then those outputs. What it does not pay goes back to the same escrow script. `payees`
- * are { value, script, pays } with pays player_carrier or reserves, in that order. Signed as `escrowSpend` is. Answers { ok, tx, prevouts, fee, outputs }.
+ * are { value, script, pays } with pays player_carrier or reserves, in that order; `loadHeight` the height its reserves were placed at; `sequence` the leaf's
+ * wait (none for the panels' leaf, slash_fallback_blocks for the census key's). Answers { ok, tx, prevouts, fee, outputs }.
  */
-export function escrowTableSpend({ escrow, tableId, payees, feeSats }) {
+export function escrowTableSpend({ escrow, tableId, loadHeight = 0, payees, feeSats, sequence = 0xfffffffd }) {
   const paid = payees.reduce((a, p) => a + p.value, 0n);
   const back = escrow.value - paid - feeSats;
   if (back < 0n) return { ok: false, why: `${paid} sat and a ${feeSats} sat fee out of an escrow of ${escrow.value}` };
   if (back > 0n && back < P2TR_DUST_SATS) return { ok: false, why: `${back} sat left in escrow is below dust` };
   const paying = [...payees.map((p) => ({ value: p.value, script: p.script, pays: p.pays })), ...(back ? [{ value: back, script: escrow.script, pays: 'escrow' }] : [])];
-  const outputs = { tableId, outputs: paying };
+  const outputs = { tableId, loadHeight, outputs: paying };
   const opening = { value: 0n, script: Uint8Array.from([0x6a, 64, ...tableId, ...slashEscrowOutputsId(outputs)]) };
-  return { ok: true, tx: { version: 2, locktime: 0, inputs: [{ txid: escrow.txid, vout: escrow.vout, sequence: 0xfffffffd }], outputs: [opening, ...paying.map((o) => ({ value: o.value, script: o.script }))] },
+  return { ok: true, tx: { version: 2, locktime: 0, inputs: [{ txid: escrow.txid, vout: escrow.vout, sequence }], outputs: [opening, ...paying.map((o) => ({ value: o.value, script: o.script }))] },
     prevouts: [{ value: escrow.value, script: escrow.script }], fee: { sats: feeSats }, outputs };
 }
 
@@ -1328,7 +1333,7 @@ export function slashHoldsOnRelease({ proof, release, prevouts, panels, holdBloc
  *   outputs    this spend's encodeSlashEscrowOutputs bytes
  *   release    the raw release, which carries the table
  *   earlier    [{ spend, outputs }], the spends before this one
- *   pegInOf    script -> { key, signature } or null, from the peg-ins carriers have published
+ *   pegInOf    script -> { key, signature, outpoint, federationId } or null, the CarrierPegIn carriers have published for it (outpoint: the escrow it was for)
  *   isCarrier  key hex -> true for a carrier of this slash: panel A's members, or on a fallback the census key's holders
  */
 export function slashHoldsOnEscrowSpend({ proof, spend, outputs, release, earlier = [], prevouts, table, pegInOf, isCarrier, advert, verify }) {
@@ -1365,7 +1370,8 @@ export function slashHoldsOnEscrowSpend({ proof, spend, outputs, release, earlie
     if (o.pays !== 'player_carrier' && o.pays !== 'reserves') return false;
     const peg = pegInOf(o.script);
     if (!peg || !isCarrier(hex(peg.key))) return false;
-    try { return verify(peg.signature, carrierEscrowPegInId(id, o.script), peg.key) === true; } catch { return false; }
+    if (!peg.outpoint || !signed.tx.inputs.some((i) => hex(i.previousTxid) === hex(peg.outpoint.txid) && i.previousVout === peg.outpoint.vout)) return false;
+    try { return verify(peg.signature, carrierEscrowPegInId({ tableId: id, outpoint: peg.outpoint, federationId: peg.federationId, script: o.script }), peg.key) === true; } catch { return false; }
   };
   const stray = spent.outputs.find((o) => !payable(o));
   const owedSats = (t.entries.reduce((a, e) => a + e.lossMsat, 0n) + 999n) / 1000n;

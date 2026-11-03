@@ -17,15 +17,16 @@
 // signers that read the same build the same bytes. Two that do not sign different bytes, nothing adds up, and the fallback is the way out.
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { BOND_TEMPLATE_V3, holdOutputKey, panelThreshold } from '../../arena-protocol/src/bond-script.js';
-import { arbitrationCommitmentIn } from '../../arena-protocol/src/arbitration-tx.js';
+import { arbitrationCommitmentIn, holdSlashSpend } from '../../arena-protocol/src/arbitration-tx.js';
 import { carrierPegInId, fallbackCarriers } from '../../arena-protocol/src/census-key.js';
-import { decodeSlashPayoutTable, fraudProofHash, slashDistribution } from '../../arena-protocol/src/slash.js';
+import { decodeSlashPayoutTable, fraudProofHash, slashDistribution, slashPayoutTableId } from '../../arena-protocol/src/slash.js';
 import { carrierSlices, fallbackWitness, releaseWitness, signedHoldSpend, slashEscrowOutput, slashHoldSpend, startFeeRate } from '../../arena-protocol/src/slash-release.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { serializeSpend } from '../../arena-protocol/src/bond-spend.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { fromHex, taggedHash, toHex } from '../../arena-protocol/src/hash.js';
 import { gatherCensusSignature } from './census-sign.js';
+import { createSlashEscrow } from './slash-escrow-run.js';
 
 const verifySig = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const display = (internalHex) => toHex(fromHex(internalHex).reverse());
@@ -41,7 +42,9 @@ export const fallbackRank = (proofId, keys, me) => [...keys].sort((a, b) => (toH
 
 /**
  * `key`, `secret` this node's; `networkId`, `clocks` { holdBlocks, returnBlocks, fallbackBlocks }; `db`; `tweakPoint` the curve.
- * `tipHeight()`; `entriesAtTip()` the census at the tip, started bonds with their `hold`; `rawTx(txid display hex, nearHeight)` a transaction's bytes or null; `unspent(txid display, vout)`.
+ * `tipHeight()`; `entriesAtTip()` the census at the tip, started bonds with their `hold`; `rawTx(txid display hex, nearHeight)` a transaction's bytes or null; `unspent(txid display, vout)`;
+ * `txOut(txid display, vout)` -> { sats, script hex, confirmations } of a confirmed unspent output, or null (gettxout without the mempool); by default read from `unspent`.
+ * `federationsAt(height)` the reserves' view on the federation records in force at that height, as `federations()` answers it (an escrow spend's named height, #1085).
  * `fetchProof(id)` the bytes under a proof's hash or null; `judge(bytes, { startHeight })` -> { verdict, why, held } with `judge.read`; `panelsOf(contract, rid)`; `seatsOf(contract, rid)`
  * the round's drawn keys (hex); `lossesFor({ contract, rid, held })` -> { ok, losses: Map key hex -> msat, entryIds: Map key hex -> bytes } or { ok: false, why }.
  * `federations()` the reserves' view, [{ federation, status, reserveKey, reserveSats, exposureCapSats }]; `retired` hex; `portFor(fid hex)` a stake-lock port or null; `scriptOf(address)`;
@@ -51,7 +54,8 @@ export const fallbackRank = (proofId, keys, me) => [...keys].sort((a, b) => (toH
  */
 export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPoint, tipHeight, entriesAtTip, rawTx, unspent, fetchProof, judge, panelsOf, seatsOf = () => [], lossesFor,
   federations = async () => [], retired = [], portFor = async () => null, scriptOf, reserveKeyOf = () => null, keepReserveRow = () => {}, urlOf = () => null, heldKey = () => null,
-  thresholdOf = () => null, holdersOf = async () => [], signer = () => null, send, stepMs = 600000, fetchFn = fetch, now = Date.now, log = () => {} }) {
+  thresholdOf = () => null, holdersOf = async () => [], signer = () => null, send, stepMs = 600000, fetchFn = fetch, now = Date.now, log = () => {},
+  txOut = async (txid, vout) => ((await unspent(txid, vout)) ? { confirmations: 1 } : null), federationsAt = async () => federations() }) {
   const me = toHex(key);
   db.exec(`CREATE TABLE IF NOT EXISTS slash_holds (start TEXT PRIMARY KEY, height INTEGER NOT NULL, round_id TEXT, proof_id TEXT, node TEXT NOT NULL, bond TEXT NOT NULL, seen_ms INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS slash_spends (start TEXT NOT NULL, path TEXT NOT NULL, table_id TEXT NOT NULL, tbl BLOB NOT NULL, txid TEXT NOT NULL, fee INTEGER NOT NULL, signature BLOB,
@@ -59,7 +63,10 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
     CREATE TABLE IF NOT EXISTS slash_spend_sigs (start TEXT NOT NULL, table_id TEXT NOT NULL, node TEXT NOT NULL, signature BLOB NOT NULL, PRIMARY KEY (start, table_id, node));
     CREATE TABLE IF NOT EXISTS slash_pegins (start TEXT NOT NULL, federation TEXT NOT NULL, use TEXT NOT NULL, address TEXT NOT NULL, script BLOB NOT NULL, PRIMARY KEY (start, federation, use));
     CREATE TABLE IF NOT EXISTS slash_carried (start TEXT NOT NULL, path TEXT NOT NULL, out_index INTEGER NOT NULL, state TEXT NOT NULL, PRIMARY KEY (start, path, out_index));
-    CREATE TABLE IF NOT EXISTS slash_tables (table_id TEXT PRIMARY KEY, bytes BLOB NOT NULL)`);
+    CREATE TABLE IF NOT EXISTS slash_tables (table_id TEXT PRIMARY KEY, bytes BLOB NOT NULL);
+    CREATE TABLE IF NOT EXISTS slash_confirmed (start TEXT PRIMARY KEY, path TEXT NOT NULL, table_id TEXT NOT NULL, txid TEXT NOT NULL, height INTEGER NOT NULL)`);
+  // THE ESCROW READS THE START WITHOUT THE CENSUS: once the hold is spent the bond is gone from it, so its census key and fee rate are kept with the start (#1085)
+  for (const col of ['census_key TEXT', 'rate INTEGER', 'hold_value INTEGER', 'hold_script BLOB', 'slash_height INTEGER']) { try { db.exec(`ALTER TABLE slash_holds ADD COLUMN ${col}`); } catch { /* there already */ } }
   const spendOf = (start, path) => db.prepare('SELECT * FROM slash_spends WHERE start = ? AND path = ?').get(start, path) || null;
   const keepSpend = (start, path, b, signature) => {
     const txid = display(toHex(parseTransaction(serializeSpend({ ...b.spend.tx, witnesses: [[new Uint8Array(64)]] })).txid));
@@ -99,6 +106,8 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
     db.prepare('INSERT OR IGNORE INTO slash_holds (start, height, round_id, proof_id, node, bond, seen_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(start, e.hold.height, info.read ? toHex(info.read.roundId) : null, info.proofId ? toHex(info.proofId) : null, toHex(e.pubkey), `${toHex(e.txid)}:${e.vout}`, now());
     if (info.read && !db.prepare('SELECT round_id FROM slash_holds WHERE start = ?').get(start).round_id) db.prepare('UPDATE slash_holds SET round_id = ?, proof_id = ? WHERE start = ?').run(toHex(info.read.roundId), toHex(info.proofId), start);
+    db.prepare('UPDATE slash_holds SET census_key = ?, rate = ?, hold_value = ?, hold_script = ?, slash_height = ? WHERE start = ?')
+      .run(toHex(e.advert.censusKey), Number(info.rate), Number(tx.outputs[0].value), tx.outputs[0].script, info.slashHeight, start);
     return info;
   }
 
@@ -196,7 +205,7 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
       }
     }
     const feds = view.filter((f) => reserveScripts.has(f.federation)).map((f) => ({ ...f, script: reserveScripts.get(f.federation) }));
-    const escrow = slashEscrowOutput(path === 'release' ? { panelA: panels.panelA, panelB: panels.panelB, holdBlocks: clocks.holdBlocks } : { censusKey: e.advert.censusKey }, { tweakPoint });
+    const escrow = slashEscrowOutput({ ...(path === 'release' ? { panelA: panels.panelA, panelB: panels.panelB } : {}), censusKey: e.advert.censusKey, fallbackBlocks: clocks.fallbackBlocks }, { tweakPoint });
     const entriesFor = (escrowSats) => {
       const d = slashDistribution({ escrowSats, roundId, contract, losses: owed.losses, paid });
       return [...d.players].filter(([, msat]) => msat > 0n).map(([k, msat]) => ({ entryId: owed.entryIds.get(k) || new Uint8Array(32), playerPubkey: fromHex(k), lossMsat: msat }));
@@ -312,67 +321,131 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
     return { ok: true, digest: b.digest, publicKey: e.advert.censusKey };
   }
 
+  // ---- WHICH SPEND OF A HOLD CONFIRMED (RULED 2026-11-03, kanban #1085: "a carrier pays on for whichever table confirmed") ----
+  /**
+   * The release or fallback the chain holds for a start, read once and kept: this node's own when the chain holds it, else one a peer built, taken only when the transaction its
+   * table makes (the hold's one input, the OP_RETURN naming H(proof), slash_height and that table's id, then its outputs) has the txid whose outputs the chain holds, confirmed.
+   * So the bytes hash to the table the chain carries; nothing is judged again, the panels' threshold or the census key did that. Answers { path, txid, tableId, table, bytes, height } or null.
+   */
+  const confirmedSeen = new Map();
+  async function confirmedOf(start) {
+    const kept = db.prepare('SELECT c.*, t.bytes FROM slash_confirmed c JOIN slash_tables t ON t.table_id = c.table_id WHERE c.start = ?').get(start);
+    if (kept) { const bytes = new Uint8Array(kept.bytes); return { path: kept.path, txid: kept.txid, tableId: kept.table_id, table: decodeSlashPayoutTable(bytes), bytes, height: kept.height }; }
+    const h = db.prepare('SELECT * FROM slash_holds WHERE start = ?').get(start);
+    if (!h || !h.hold_script || !h.proof_id || h.slash_height === null || h.slash_height === undefined) return null;
+    const tip = await tipHeight();
+    const atChain = async (path, bytes) => {
+      let table; try { table = decodeSlashPayoutTable(bytes); } catch { return null; }
+      const tableId = slashPayoutTableId(table);
+      if (toHex(table.proofId) !== h.proof_id) return null;
+      const built = holdSlashSpend({ path, hold: { txid: fromHex(start).reverse(), vout: 0, value: BigInt(h.hold_value), script: new Uint8Array(h.hold_script) }, proofId: fromHex(h.proof_id), slashHeight: h.slash_height, table, tableId, clocks });
+      if (!built.ok) return null;
+      const txid = display(toHex(parseTransaction(serializeSpend({ ...built.tx, witnesses: [[new Uint8Array(64)]] })).txid));
+      for (const [i, o] of table.outputs.entries()) {
+        const got = await txOut(txid, i + 1).catch(() => null);
+        if (got && got.confirmations > 0 && (got.script === undefined || got.script === toHex(o.script)) && (got.sats === undefined || BigInt(got.sats) === o.value)) return { path, txid, tableId: toHex(tableId), table, bytes, height: tip - got.confirmations + 1 };
+      }
+      return null;
+    };
+    let found = null;
+    for (const path of ['release', 'fallback']) { const s = spendOf(start, path); if (!found && s) found = await atChain(path, new Uint8Array(s.tbl)); }
+    // A PEER'S TABLE, ONCE THE HOLD IS GONE AND NONE OF THIS NODE'S OWN IS WHAT SPENT IT: a member whose own reading differed still carries the one that went out
+    if (!found && !(await txOut(start, 0).catch(() => null)) && (confirmedSeen.get(start) || 0) < tip) {
+      confirmedSeen.set(start, tip);
+      for (const k of peers.filter((x) => x !== me).slice(0, 32)) {
+        let s; try { s = await getJson(`${urlOf(k)}/slash-release?start=${start}`); } catch { continue; }
+        for (const path of ['release', 'fallback']) if (!found && s[path] && s[path].table) found = await atChain(path, fromHex(s[path].table));
+        if (found) break;
+      }
+    }
+    if (!found) return null;
+    db.prepare('INSERT OR IGNORE INTO slash_tables (table_id, bytes) VALUES (?, ?)').run(found.tableId, found.bytes);
+    db.prepare('INSERT OR IGNORE INTO slash_confirmed (start, path, table_id, txid, height) VALUES (?, ?, ?, ?, ?)').run(start, found.path, found.tableId, found.txid, found.height);
+    return found;
+  }
+
   // ---- THE CARRIERS PAY ----
   const carrying = new Set();
+  /**
+   * ONE OUTPUT A CARRIER WAS PAID, PAID ON: claim the peg-in, each player's slice to refund_key(player), the rest less the fee margin to that federation's reserve key, kept as a
+   * reserve row of kind `slash`. `name` { start (where its state is kept), path, index } and `startHex` the hold's start, for the reserve row; `slices` this output's.
+   */
+  async function payOn({ name, startHex, txid, vout, o, peg, slices }) {
+    const tag = `${name.start}:${name.path}:${name.index}`;
+    const row = db.prepare('SELECT state FROM slash_carried WHERE start = ? AND path = ? AND out_index = ?').get(name.start, name.path, name.index);
+    const state = row ? JSON.parse(row.state) : {};
+    if (state.paidTxid || carrying.has(tag)) return null;
+    // THE PEG-IN RECEIVED THE SLICE: the chain holds that output, to this carrier's script, for exactly the table's value
+    if (!state.claimedMsat) {
+      const got = await txOut(txid, vout).catch(() => null);
+      if (!got || (got.script !== undefined && got.script !== toHex(o.script)) || (got.sats !== undefined && BigInt(got.sats) !== o.value)) return null;
+    }
+    carrying.add(tag);
+    try {
+      const port = await portFor(peg.federation);
+      if (!port) return { start: startHex, why: `no client of ${peg.federation.slice(0, 16)}` };
+      if (!state.claimedMsat) {
+        const c = await port.peginClaim(peg.address);
+        state.claimedMsat = String(c.claimedMsat);
+        db.prepare('INSERT OR REPLACE INTO slash_carried (start, path, out_index, state) VALUES (?, ?, ?, ?)').run(name.start, name.path, name.index, JSON.stringify(state));
+      }
+      const claimed = BigInt(state.claimedMsat) - CARRIER_FEE_MARGIN_MSAT;
+      const players = o.pays === 'player_carrier' ? slices : [];
+      const playersMsat = players.reduce((a, x) => a + x.msat, 0n);
+      const pays = players.map((x) => ({ key: toHex(refundKeyOf(x.playerPubkey)), msat: claimed >= playersMsat ? x.msat : (x.msat * (claimed > 0n ? claimed : 0n)) / playersMsat, entryId: toHex(x.entryId) }));
+      const rest = claimed - pays.reduce((a, x) => a + x.msat, 0n);
+      const reserveKey = reserveKeyOf(peg.federation);
+      const list = [...pays, ...(reserveKey && rest > 0n ? [{ key: toHex(reserveKey), msat: rest, reserves: true }] : [])].filter((x) => x.msat > 0n);
+      if (!list.length) { state.paidTxid = 'nothing'; } else {
+        const paid = await port.payouts(list.map((x) => ({ key: x.key, msat: x.msat })));
+        const outIdxOf = (k) => (paid.payouts.find((y) => y.refundPk === k) || {}).outIdx ?? null;
+        state.paidTxid = paid.txid;
+        state.players = pays.map((x) => ({ key: x.key, entry: x.entryId, msat: String(x.msat), outIdx: outIdxOf(x.key) }));
+        const r = list.find((x) => x.reserves);
+        if (r) {
+          state.reserves = { key: r.key, msat: String(r.msat), outIdx: outIdxOf(r.key) };
+          const roundId = (db.prepare('SELECT round_id FROM slash_holds WHERE start = ?').get(startHex) || {}).round_id;
+          if (state.reserves.outIdx !== null && roundId) keepReserveRow({ outpoint: { txid: fromHex(paid.txid), outIdx: BigInt(state.reserves.outIdx) }, entryId: fromHex(startHex), roundId: fromHex(roundId),
+            federationId: peg.federation, recipientPk: reserveKey, amountMsat: r.msat, contractId: (paid.payouts.find((y) => y.refundPk === r.key) || {}).contractId || 'slash', senderOnContract: false, image: null, item: 'slash' });
+        }
+      }
+      db.prepare('INSERT OR REPLACE INTO slash_carried (start, path, out_index, state) VALUES (?, ?, ?, ?)').run(name.start, name.path, name.index, JSON.stringify(state));
+      log(`[slash] carried ${name.path} ${startHex.slice(0, 16)} output ${name.index}: claimed ${state.claimedMsat} msat, ${(state.players || []).length} player(s) paid${state.reserves ? `, ${state.reserves.msat} msat to the reserves` : ''}: ${state.paidTxid}`);
+      return { start: startHex, path: name.path, index: name.index, ...state };
+    } catch (x) { log(`[slash] carrying ${startHex.slice(0, 16)} output ${name.index} waits: ${x.message}`); return { start: startHex, index: name.index, why: x.message }; }
+    finally { carrying.delete(tag); }
+  }
+
+  /**
+   * THE CARRIERS PAY ON, for whichever table confirmed (RULED 2026-11-03, kanban #1085): once a release or fallback is mined its table is a fact, and the money on a carrier's peg-in
+   * belongs to the players and the reserves that table names. A carrier whose own table differed carries the confirmed one after checking it hashes to what the chain carries
+   * (confirmedOf), that it names this carrier's peg-in, and that the peg-in received exactly that (payOn). It does not judge the table again. Then each escrow spend on the chain.
+   */
   async function carry() {
     const done = [];
-    for (const s of db.prepare('SELECT * FROM slash_spends').all()) {
-      const mine = db.prepare('SELECT federation, address, script FROM slash_pegins WHERE start = ?').all(s.start);
-      if (!mine.length) continue;
-      const t = decodeSlashPayoutTable(new Uint8Array(s.tbl));
-      const slices = carrierSlices(t);
-      for (const [i, o] of t.outputs.entries()) {
+    for (const h of db.prepare('SELECT DISTINCT start FROM slash_pegins WHERE start NOT LIKE \'escrow:%\'').all()) {
+      const c = await confirmedOf(h.start).catch(() => null);
+      if (!c) continue;
+      const mine = db.prepare('SELECT federation, address, script FROM slash_pegins WHERE start = ?').all(h.start);
+      const slices = carrierSlices(c.table);
+      for (const [i, o] of c.table.outputs.entries()) {
         if (o.pays !== 'player_carrier' && o.pays !== 'reserves') continue;
         const peg = mine.find((p) => same(new Uint8Array(p.script), o.script));
         if (!peg) continue;
-        const name = `${s.start}:${s.path}:${i}`;
-        const row = db.prepare('SELECT state FROM slash_carried WHERE start = ? AND path = ? AND out_index = ?').get(s.start, s.path, i);
-        const state = row ? JSON.parse(row.state) : {};
-        if (state.paidTxid || carrying.has(name)) continue;
-        // THE SPEND IS OUT ONLY IF THE CHAIN HOLDS ITS OUTPUT: a release and a fallback of one hold have different txids, and one of them never lands
-        if (!state.claimedMsat && !(await unspent(s.txid, i + 1))) continue;
-        carrying.add(name);
-        try {
-          const port = await portFor(peg.federation);
-          if (!port) { done.push({ start: s.start, why: `no client of ${peg.federation.slice(0, 16)}` }); continue; }
-          if (!state.claimedMsat) {
-            const c = await port.peginClaim(peg.address);
-            state.claimedMsat = String(c.claimedMsat);
-            db.prepare('INSERT OR REPLACE INTO slash_carried (start, path, out_index, state) VALUES (?, ?, ?, ?)').run(s.start, s.path, i, JSON.stringify(state));
-          }
-          const claimed = BigInt(state.claimedMsat) - CARRIER_FEE_MARGIN_MSAT;
-          const players = o.pays === 'player_carrier' ? (slices.find((x) => x.index === i) || { slices: [] }).slices : [];
-          const playersMsat = players.reduce((a, x) => a + x.msat, 0n);
-          const pays = players.map((x) => ({ key: toHex(refundKeyOf(x.playerPubkey)), msat: claimed >= playersMsat ? x.msat : (x.msat * (claimed > 0n ? claimed : 0n)) / playersMsat, entryId: toHex(x.entryId) }));
-          const rest = claimed - pays.reduce((a, x) => a + x.msat, 0n);
-          const reserveKey = reserveKeyOf(peg.federation);
-          const list = [...pays, ...(reserveKey && rest > 0n ? [{ key: toHex(reserveKey), msat: rest, reserves: true }] : [])].filter((x) => x.msat > 0n);
-          if (!list.length) { state.paidTxid = 'nothing'; } else {
-            const paid = await port.payouts(list.map((x) => ({ key: x.key, msat: x.msat })));
-            const outIdxOf = (k) => (paid.payouts.find((y) => y.refundPk === k) || {}).outIdx ?? null;
-            state.paidTxid = paid.txid;
-            state.players = pays.map((x) => ({ key: x.key, entry: x.entryId, msat: String(x.msat), outIdx: outIdxOf(x.key) }));
-            const r = list.find((x) => x.reserves);
-            if (r) {
-              state.reserves = { key: r.key, msat: String(r.msat), outIdx: outIdxOf(r.key) };
-              const roundId = (db.prepare('SELECT round_id FROM slash_holds WHERE start = ?').get(s.start) || {}).round_id;
-              if (state.reserves.outIdx !== null && roundId) keepReserveRow({ outpoint: { txid: fromHex(paid.txid), outIdx: BigInt(state.reserves.outIdx) }, entryId: fromHex(s.start), roundId: fromHex(roundId),
-                federationId: peg.federation, recipientPk: reserveKey, amountMsat: r.msat, contractId: (paid.payouts.find((y) => y.refundPk === r.key) || {}).contractId || 'slash', senderOnContract: false, image: null, item: 'slash' });
-            }
-          }
-          db.prepare('INSERT OR REPLACE INTO slash_carried (start, path, out_index, state) VALUES (?, ?, ?, ?)').run(s.start, s.path, i, JSON.stringify(state));
-          log(`[slash] carried ${s.path} ${s.start.slice(0, 16)} output ${i}: claimed ${state.claimedMsat} msat, ${(state.players || []).length} player(s) paid${state.reserves ? `, ${state.reserves.msat} msat to the reserves` : ''}: ${state.paidTxid}`);
-          done.push({ start: s.start, path: s.path, index: i, ...state });
-        } catch (x) { log(`[slash] carrying ${s.start.slice(0, 16)} output ${i} waits: ${x.message}`); done.push({ start: s.start, index: i, why: x.message }); }
-        finally { carrying.delete(name); }
+        const r = await payOn({ name: { start: h.start, path: c.path, index: i }, startHex: h.start, txid: c.txid, vout: i + 1, o, peg, slices: (slices.find((x) => x.index === i) || { slices: [] }).slices });
+        if (r) done.push(r);
       }
     }
+    done.push(...await escrow.carry());
     return done;
   }
 
   // ---- ONE PASS ----
   let passing = false;
   let peers = [];                                 // the census' node keys at the last pass: whom an earlier table is asked of
+  // WHAT A SLASH LEFT IN ESCROW (RULED 2026-11-03, kanban #1085): slash-escrow-run.js, on this run's reads
+  const escrow = createSlashEscrow({ secret, me, clocks, db, tweakPoint, tipHeight, entriesAtTip, txOut, fetchProof, judge, panelsOf, seatsOf, holdersOf, heldKey, thresholdOf, signer, urlOf,
+    fetchFn, send, portFor, scriptOf, federationsAt, retired, now, stepMs, log, confirmedOf, peers: () => peers, fallbackRank, getJson, payOn });
   async function pass() {
     if (passing) return [];
     passing = true;
@@ -405,6 +478,7 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
           if (r) { done.push({ start: info.start, path: 'fallback', ...r }); if (!r.quiet) log(r.ok ? `[slash] fallback of ${info.start.slice(0, 16)} sent: ${r.txid}, table ${r.tableId.slice(0, 16)}` : `[slash] fallback of ${info.start.slice(0, 16)} waits: ${r.why}`); }
         }
       }
+      done.push(...await escrow.pass().catch((x) => { log(`[slash] the escrow pass did not run: ${x.message}`); return []; }));
     } finally { passing = false; }
     return done;
   }
@@ -420,10 +494,15 @@ export function createSlashRelease({ key, secret, networkId, clocks, db, tweakPo
         signatures: db.prepare('SELECT node, signature FROM slash_spend_sigs WHERE start = ? AND table_id = ?').all(start, s.table_id).map((r) => ({ node: r.node, signature: toHex(new Uint8Array(r.signature)) })) };
     }
     out.carried = db.prepare('SELECT path, out_index, state FROM slash_carried WHERE start = ?').all(start).map((r) => ({ path: r.path, index: r.out_index, ...JSON.parse(r.state) }));
+    const esc = escrow.served(start);
+    if (esc) out.escrow = esc;
     return out;
   }
   const tableById = (id) => { const r = db.prepare('SELECT bytes FROM slash_tables WHERE table_id = ?').get(String(id).toLowerCase()); return r ? new Uint8Array(r.bytes) : null; };
   const list = () => db.prepare('SELECT start, height, round_id, proof_id, node, bond FROM slash_holds ORDER BY height DESC LIMIT 64').all().map((r) => ({ ...r, ...served(r.start) }));
 
-  return { pass, carry, checkFallback, served, tableById, list, ownPegIn };
+  /** A census key ask that is not a start: a fallback of a hold, or an escrow spend (kind `escrow`). */
+  const checkOther = (request) => (request && request.kind === 'escrow' ? escrow.checkEscrow(request) : checkFallback(request));
+  return { pass, carry, checkFallback, checkEscrow: escrow.checkEscrow, checkOther, served, tableById, list, ownPegIn, confirmedOf,
+    takeCarrierPegIn: escrow.takeCarrierPegIn, servedCarriers: escrow.servedCarriers };
 }

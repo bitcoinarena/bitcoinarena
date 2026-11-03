@@ -178,7 +178,10 @@ test('on a fallback the holders carry, by descending shares, less those left out
   assert.deepEqual(got.map((c) => [c.key.slice(0, 2), c.bondSats]), [['03', 5000n], ['05', 3000n], ['01', 2000n]], 'the accused out, a bad signature passed over');
   assert.equal(carrierPegInId(net, Uint8Array.of(1)).length, 32);
   assert.deepEqual(fallbackCarriers({ holders, bonds, networkId: net, verify, pegIns: new Map() }), [], 'no holder with a peg-in is no refusal: the table waits in escrow');
-  assert.notEqual(toHex(carrierEscrowPegInId(b32(1), Uint8Array.of(1))), toHex(carrierEscrowPegInId(b32(2), Uint8Array.of(1))), 'an escrow peg-in names its table');
+  const pegIn = (over = {}) => toHex(carrierEscrowPegInId({ tableId: b32(1), outpoint: { txid: b32(3), vout: 1 }, federationId: b32(4), script: Uint8Array.of(1), ...over }));
+  assert.notEqual(pegIn(), pegIn({ tableId: b32(2) }), 'an escrow peg-in names its table');
+  assert.notEqual(pegIn(), pegIn({ outpoint: { txid: b32(3), vout: 2 } }), 'and the escrow outpoint it is for');
+  assert.notEqual(pegIn(), pegIn({ federationId: b32(5) }), 'and its federation');
 });
 
 test('a template-3 bond counts only naming the newest key standing at its confirmation; other templates are not asked', () => {

@@ -61,7 +61,7 @@ test('the start\'s fee rate is its fee over its size, rounded up, never under 1 
 
 const tableInputs = (carriers, over = {}) => ({ networkId: NETWORK_ID_REGTEST, roundId, bond, filer: { script: feeCoin.script, sats: feeCoin.value },
   carriers, federations: federations.map((f) => ({ ...f, script: scriptOfKey(carriers[0] ? carriers[0].key : A[0].hex, f.federation) })), retired: [],
-  escrowScript: slashEscrowOutput({ ...panels, holdBlocks: clocks.holdBlocks }, { tweakPoint }).script,
+  escrowScript: slashEscrowOutput({ ...panels, censusKey: census.key, fallbackBlocks: clocks.fallbackBlocks }, { tweakPoint }).script,
   entriesFor: (left) => [{ entryId: b32(0x31), playerPubkey: player.key, lossMsat: LOSS < left * 1000n ? LOSS : left * 1000n }], ...over });
 const outpoint = { txid: startTxid, vout: 0, value: BOND };
 const releaseOf = (carriers, rate = 3n, over = {}) => slashHoldSpend({ path: 'release', hold, outpoint, panels, proofId, slashHeight: SLASH_HEIGHT, rate, clocks, table: tableInputs(carriers, over) });
@@ -116,7 +116,7 @@ test('a carrier carries no more than its own bond, and a loss is cut across carr
 
 test('a fallback carries the same OP_RETURN fields and a table of the same format, signed by one key', () => {
   const f = slashHoldSpend({ path: 'fallback', hold, outpoint, proofId, slashHeight: SLASH_HEIGHT, rate: 3n, clocks,
-    table: { ...tableInputs(carriersOf([BOND, BOND, BOND, BOND])), escrowScript: slashEscrowOutput({ censusKey: census.key }, { tweakPoint }).script } });
+    table: { ...tableInputs(carriersOf([BOND, BOND, BOND, BOND])), escrowScript: slashEscrowOutput({ censusKey: census.key, fallbackBlocks: clocks.fallbackBlocks }, { tweakPoint }).script } });
   assert.ok(f.ok, f.why);
   assert.equal(f.spend.tx.inputs[0].sequence, clocks.fallbackBlocks);
   assert.equal(toHex(f.digest), toHex(holdSpendDigest({ spend: f.spend, hold, path: 'fallback' })));
