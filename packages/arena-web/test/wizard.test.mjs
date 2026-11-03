@@ -158,3 +158,28 @@ test('roles: a role\'s "more" box has no height limit and no scrollbar, in the s
   const html = renderToStaticMarkup(React.createElement(RolesStep, { st: { roleInfo, roles: [] }, post: async () => ({ ok: true }) }));
   assert.match(html, /<details class="more"><summary>more<\/summary><div class="more-pop"><p>[^<]*<\/p><p>Holds the players&#x27; bitcoin\.<\/p><\/div><\/details>/);
 });
+
+// WHAT IS NEW IN 2.0, BEFORE THE BOND (kanban #1096): every node's points, a guardian's too when custody is chosen, and a guardian answers
+// point 10 (its bond is the players' insurance) before Continue
+test('promise: the 2.0 points for the roles chosen; custody needs the yes to point 10', async () => {
+  const posts = [];
+  const plain = driven(PromiseStep, { st: { roles: ['verify', 'settlement'] }, post: async (p, b) => { posts.push([p, b]); return { ok: true }; }, reload() {} });
+  let html = renderToStaticMarkup(plain.render());
+  assert.match(html, /New in 2\.0 for your node/);
+  assert.match(html, /1\. Your bond is withdrawn with your 24 words, not by the node/);
+  assert.match(html, /9\. Abandonment/);
+  assert.doesNotMatch(html, /players&#x27; insurance|Gateways keep the load cap/, 'no guardian or gateway point for a node without custody');
+  assert.match(html, /planned for 2\.0/); assert.match(html, /comes with 2\.0/);
+  const guard = driven(PromiseStep, { st: { roles: ['verify', 'custody'] }, post: async (p, b) => { posts.push([p, b]); return { ok: true }; }, reload() {} });
+  html = renderToStaticMarkup(guard.render());
+  assert.match(html, /10\. A guardian&#x27;s bond is the players&#x27; insurance/);
+  assert.match(html, /16\. The held proof/);
+  guard.setState({ text: 'I UNDERSTAND' });
+  assert.match(renderToStaticMarkup(guard.render()), /<button type="button" disabled="">Continue<\/button>/, 'typed, but point 10 not answered');
+  await guard.save();
+  assert.equal(posts.length, 0, 'nothing posted without the yes');
+  guard.setState({ yes: true });
+  assert.match(renderToStaticMarkup(guard.render()), /<button type="button">Continue<\/button>/);
+  await guard.save();
+  assert.deepEqual(posts, [['/api/promise', { text: 'I UNDERSTAND' }]]);
+});

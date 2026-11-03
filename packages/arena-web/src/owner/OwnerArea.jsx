@@ -10,10 +10,11 @@
 import React from 'react';
 import { NeedsPanel, ordered } from './NeedsPanel.jsx';
 import { CopyButton } from '../design/components.jsx';
+import { Changes20, CHANGES20_CSS } from '../design/Changes20.jsx';
 import { MarketCreator } from './MarketCreator.jsx';
 import { SourceProposal, SourceVotes } from './SourceProposal.jsx';
 
-export const SECTIONS = [['overview', 'Overview'], ['roles', 'Roles'], ['rounds', 'Rounds'], ['bond', 'Bond'], ['services', 'Services'], ['apps', 'Apps'], ['release', 'Updates'],
+export const SECTIONS = [['overview', 'Overview'], ['new20', 'New in 2.0'], ['roles', 'Roles'], ['rounds', 'Rounds'], ['bond', 'Bond'], ['services', 'Services'], ['apps', 'Apps'], ['release', 'Updates'],
   ['money', 'Donations'], ['referrer', 'Referrer'], ['emergency', 'Emergency code'], ['leave', 'Leave'], ['markets', 'Create a market'], ['developer', 'Developer'], ['login', 'Your login']];
 const HOW = { words: 'your 24 words', nsec: 'Nostr (nsec)', extension: 'Nostr (extension)', bunker: 'Nostr (remote signer)' };
 /** a place a panel is drawn into: React draws it empty and never touches what the page puts in it */
@@ -72,6 +73,8 @@ export class OwnerArea extends React.Component {
             </div>
             {/* ITS UPTIME (kanban #756): drawn by UptimePanel from GET /uptime */}
             <h3 className="sh">Uptime</h3><Place id="uptime" /></>)}
+          {/* WHAT IS NEW IN 2.0 FOR THIS NODE (kanban #1096): every point for its roles, with where it shows on this page */}
+          {sec('new20', <><h2>New in 2.0</h2><style>{CHANGES20_CSS}</style><div className="card"><Changes20 where="dashboard" custody={!!p.guardian} /></div></>)}
           {sec('roles', <><h2>Roles</h2>
             <Place id="roles" />
             <h3 className="sh">Custody (guardian)</h3><Place id="custody" />
