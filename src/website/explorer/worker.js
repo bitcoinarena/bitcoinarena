@@ -13,6 +13,8 @@
 //   GET /api/metrics      the Metrics page's figures (kanban #676): volume per day from D1, the protocol reserve and the websites' fees
 //   /metrics              that page, its figures built in
 //   GET /api/health       the Network health page's kept copy (kanban #686): every door that page asks, asked every minute (its own cron)
+//   GET /api/played       played rounds per day, week and month, per game, real players apart from the owner and our bots (kanban #1090)
+//   POST /api/mark        entry keys that are the owner's or a bot's, with the admin code (kanban #1090)
 import { readHealth, HEALTH_CRON } from './health.js';
 
 const SEATS = [1, 2, 3, 4, 5, 6, 7].map((i) => `https://tn4.bitcoin-arena.io/guardian-${i}`)
@@ -211,6 +213,63 @@ async function metrics(env) {
   return { volume, reserve: kept ? kept.reserve : null, referral: kept ? kept.referral : null, readAt: kept ? kept.readAt : null, seats: kept ? kept.seats : null };
 }
 
+// PLAYED ROUNDS (kanban #1090, the owner 2026-11-03: "Played rounds mit Tages / Wochen / Monats Anzeige", "Auch rueckwirkend seit 1.11",
+// "Wieviel Runden insgesamt und pro Spiel, tu da meine Runden RAUS NEHMEN", "nicht CH pauschal ausblenden"): every paid entry the explorer
+// keeps (txs, kind order) since 2026-11-01, by its round. An entry is the OWNER's or a BOT's when its key was marked (POST /api/mark, with the
+// admin code the page's flag holds, kanban #1092); every other entry is a real player's - no country, no guess. A round is a real players'
+// round when at least one of its entries is. Counted per UTC day, ISO week (from Monday) and month, per game.
+const ADMIN_SHA256 = '18fcacfac3164c5a5dc71e71d053c9061fea37403e63056eb9d11e602ab1bc79';
+const PLAYED_FROM_MS = Date.UTC(2026, 10, 1);
+const sha256Hex = async (t) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(t))))].map((b) => b.toString(16).padStart(2, '0')).join('');
+async function mark(env, request) {
+  let b; try { b = await request.json(); } catch { return json({ ok: false, why: 'a mark is JSON: { keys, kind, code }' }, { status: 400 }); }
+  if (!b || typeof b.code !== 'string' || await sha256Hex(b.code.trim()) !== (env.ADMIN_SHA256 || ADMIN_SHA256)) return json({ ok: false, why: 'not the admin code' }, { status: 403 });
+  if (!['owner', 'bot'].includes(b.kind)) return json({ ok: false, why: 'kind is owner or bot' }, { status: 400 });
+  // entry ids (transaction ids) or player keys, 64 hex each
+  const keys = [...new Set((Array.isArray(b.keys) ? b.keys : []).map((k) => String(k).toLowerCase()).filter((k) => hex64.test(k)))].slice(0, 500);
+  const at = Date.now();
+  for (let i = 0; i < keys.length; i += 50)
+    await env.DB.batch(keys.slice(i, i + 50).map((k) => env.DB.prepare('INSERT INTO marked (key, kind, at_ms) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET kind = excluded.kind, at_ms = excluded.at_ms').bind(k, b.kind, at)));
+  return json({ ok: true, marked: keys.length, kind: b.kind });
+}
+const weekOf = (ms) => { const d = new Date(Math.floor(ms / DAY_MS) * DAY_MS); const back = (d.getUTCDay() + 6) % 7; return new Date(d.getTime() - back * DAY_MS).toISOString().slice(0, 10); };
+async function played(env) {
+  const [rows, marks] = await Promise.all([
+    env.DB.prepare(`SELECT id, round, app, stored_ms AS ms, settled, json_extract(json, '$.entry.player') AS p FROM txs WHERE kind = 'order' AND stored_ms >= ? AND round IS NOT NULL`).bind(PLAYED_FROM_MS).all(),
+    env.DB.prepare('SELECT key, kind FROM marked').all()]);
+  const kindOf = new Map((marks.results || []).map((m) => [m.key, m.kind]));
+  // each round once: its game, its first entry's time, its entries' kinds, whether it settled
+  const rounds = new Map();
+  for (const r of rows.results || []) {
+    // marked by its entry id (a transaction's id: what our bots keep of each order) or by its player key
+    const k = String(r.p || '').toLowerCase(), who = kindOf.get(String(r.id)) || kindOf.get(k) || 'real';
+    const x = rounds.get(r.round) || { app: r.app || 'unknown', ms: Number(r.ms), settled: false, entries: { real: 0, owner: 0, bot: 0 }, players: new Set() };
+    x.ms = Math.min(x.ms, Number(r.ms)); x.entries[who] += 1; if (who === 'real') x.players.add(k);
+    if (r.settled === 'ACCEPTED') x.settled = true;
+    rounds.set(r.round, x);
+  }
+  const out = { day: new Map(), week: new Map(), month: new Map() };
+  const add = (map, period, x) => {
+    const row = map.get(period) || { period, all: { rounds: 0, real: 0, settled: 0, entries: 0, realEntries: 0, owner: 0, bot: 0, players: new Set() }, games: new Map() };
+    for (const t of [row.all, row.games.get(x.app) || (row.games.set(x.app, { rounds: 0, real: 0, settled: 0, entries: 0, realEntries: 0, owner: 0, bot: 0, players: new Set() }), row.games.get(x.app))]) {
+      t.rounds += 1; if (x.entries.real) t.real += 1; if (x.settled) t.settled += 1;
+      t.entries += x.entries.real + x.entries.owner + x.entries.bot; t.realEntries += x.entries.real; t.owner += x.entries.owner; t.bot += x.entries.bot;
+      for (const p of x.players) t.players.add(p);
+    }
+    map.set(period, row);
+  };
+  for (const x of rounds.values()) {
+    add(out.day, new Date(x.ms).toISOString().slice(0, 10), x);
+    add(out.week, weekOf(x.ms), x);
+    add(out.month, new Date(x.ms).toISOString().slice(0, 7), x);
+  }
+  const flat = (t) => ({ rounds: t.rounds, real: t.real, settled: t.settled, entries: t.entries, realEntries: t.realEntries, owner: t.owner, bot: t.bot, realPlayers: t.players.size });
+  const list = (map) => [...map.values()].sort((a, b) => (a.period < b.period ? 1 : -1))
+    .map((r) => ({ period: r.period, all: flat(r.all), games: Object.fromEntries([...r.games].map(([g, t]) => [g, flat(t)])) }));
+  const marked = { owner: 0, bot: 0 }; for (const k of kindOf.values()) marked[k] = (marked[k] || 0) + 1;
+  return { from: new Date(PLAYED_FROM_MS).toISOString().slice(0, 10), readAt: new Date().toISOString(), marked, day: list(out.day), week: list(out.week), month: list(out.month) };
+}
+
 async function poll(env) {
   const n = await readWindow(env, Date.now() - READ_BACK_MS, 500, null);
   const pay = await readPayments(env, Date.now() - READ_BACK_MS, 500).catch((e) => ({ error: String(e && e.message ? e.message : e) }));
@@ -347,12 +406,15 @@ export default {
     if (url.pathname === '/robots.txt') return new Response('User-agent: *\nAllow: /\n', { headers: { 'content-type': 'text/plain' } });
     if (url.pathname === '/api/recent') return json(await recent(env, url.searchParams), { maxAge: 10 });
     if (url.pathname === '/api/metrics') return json(await metrics(env), { maxAge: 30 });
+    if (url.pathname === '/api/played') return json(await played(env), { maxAge: 60 });
+    if (url.pathname === '/api/mark' && request.method === 'OPTIONS') return new Response(null, { headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'content-type' } });
+    if (url.pathname === '/api/mark' && request.method === 'POST') return mark(env, request);
     if (url.pathname === '/api/health') {
       const kept = await env.EXPLORER.get('health');
       return kept ? new Response(kept, { headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=20' } })
         : json({ why: 'no copy read yet' }, { status: 404 });
     }
-    if (url.pathname === '/metrics' || url.pathname === '/metrics/') return inline(env, request, { metrics: await metrics(env) });
+    if (url.pathname === '/metrics' || url.pathname === '/metrics/') return inline(env, request, { metrics: await metrics(env), played: await played(env).catch(() => null) });
     const m = /^\/api\/tx\/([0-9a-f]{64})$/.exec(url.pathname);
     if (m) {
       const tx = url.searchParams.has('fresh') ? await readTx(m[1]) : await txOf(env, ctx, m[1]);
