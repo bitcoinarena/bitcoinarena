@@ -100,3 +100,26 @@ test('the gifts, zaps and items bought are rows of their own kind, each found by
   assert.deepEqual(m.volume, [], 'gifts and items are no stakes: the day\'s volume is the orders\'');
   assert.deepEqual(page.facets.kinds.map((k) => k.kind).sort(), ['donation', 'item', 'zap']);
 });
+
+// OUR BOTS' AND THE OWNER'S TRANSACTIONS (kanban #1107): left out of the list by default - a marked order, and the rest of a round whose orders
+// are all marked; a round with one real player stays whole; ?marked=1 shows everything
+test('the list leaves out bot and admin transactions unless ?marked=1', async () => {
+  const { db, env } = store();
+  const put = db.prepare(`INSERT INTO txs (id, round, app, federation, stored_ms, kind, settled, hash, json, updated_ms) VALUES (?, ?, 'nextblock', ?, ?, ?, NULL, 'h', ?, 0)`);
+  const P = (n) => '02' + String(n).repeat(64).slice(0, 64);
+  // round R1: two bot orders and its settlement; round R2: a bot order and a real player's, and its settlement; an owner's order by player key
+  put.run(hex(1), hex(101), 'fe'.repeat(32), 1_800_000_000_001, 'order', JSON.stringify({ entry: { player: P(1), stakeMsat: '1000' } }));
+  put.run(hex(2), hex(101), 'fe'.repeat(32), 1_800_000_000_002, 'order', JSON.stringify({ entry: { player: P(2), stakeMsat: '1000' } }));
+  put.run(hex(3), hex(101), 'fe'.repeat(32), 1_800_000_000_003, 'settlement', JSON.stringify({}));
+  put.run(hex(4), hex(102), 'fe'.repeat(32), 1_800_000_000_004, 'order', JSON.stringify({ entry: { player: P(3), stakeMsat: '1000' } }));
+  put.run(hex(5), hex(102), 'fe'.repeat(32), 1_800_000_000_005, 'order', JSON.stringify({ entry: { player: P(4), stakeMsat: '1000' } }));
+  put.run(hex(6), hex(102), 'fe'.repeat(32), 1_800_000_000_006, 'settlement', JSON.stringify({}));
+  put.run(hex(7), hex(103), 'fe'.repeat(32), 1_800_000_000_007, 'order', JSON.stringify({ entry: { player: P(5), stakeMsat: '1000' } }));
+  const mark = db.prepare('INSERT INTO marked (key, kind, at_ms) VALUES (?, ?, 0)');
+  mark.run(hex(1), 'bot'); mark.run(hex(2), 'bot'); mark.run(hex(4), 'bot'); mark.run(P(5), 'owner');
+  const ids = (r) => r.txs.map((t) => t.id).sort();
+  const shown = await ask(env, '/api/recent');
+  assert.deepEqual(ids(shown), [hex(5), hex(6)], 'the real player\'s order and its round\'s settlement; the bots\' round and the owner\'s order gone');
+  assert.equal(shown.total, 2, 'the count says what is shown');
+  assert.equal((await ask(env, '/api/recent?marked=1')).txs.length, 7);
+});

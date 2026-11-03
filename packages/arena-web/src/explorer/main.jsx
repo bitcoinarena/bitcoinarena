@@ -51,7 +51,7 @@ const resultCls = (r) => (r && r.state === 'won' ? 'ok' : r && r.state === 'lost
 // A PAGE AT A TIME, FILTERED IN THE STORE (kanban #683, 2026-10-26: "I don't see other apps in the explorer. Add paging to the explorer to
 // display more than a 1000"): the Worker answers the page the filters and the cursor ask for - newest first, Older and Newer from a row -
 // and every app, kind and federation it holds with its count, so an app below the newest rows is one choice away
-const FILTER_KEYS = ['app', 'kind', 'fed', 'since', 'q'];
+const FILTER_KEYS = ['app', 'kind', 'fed', 'since', 'q', 'marked'];
 const PAGE_KEYS = ['before', 'after'];
 const PERIODS = [['', 'Any time'], ['900', 'Last 15 min'], ['3600', 'Last hour'], ['86400', 'Last 24 h'], ['604800', 'Last 7 days']];
 const paramsOf = (search) => { const u = new URLSearchParams(search); return Object.fromEntries([...FILTER_KEYS, ...PAGE_KEYS].map((k) => [k, u.get(k) || ''])); };
@@ -107,6 +107,8 @@ export function List({ data = null }) {
         {feds.map(([x, c]) => <option key={x} value={x}>Federation {x.slice(0, 8)}{n(c)}</option>)}</select>
       <select value={p.since} onChange={(e) => set('since', e.target.value)}>{PERIODS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
       <input placeholder="part of an id or round" value={q} onChange={(e) => setQ(e.target.value.trim().toLowerCase())} autoComplete="off" />
+      {/* OUR BOTS' AND THE OWNER'S OWN TRANSACTIONS (kanban #1107): left out unless this is ticked */}
+      <label className="dim" id="show-marked"><input type="checkbox" checked={p.marked === '1'} onChange={(e) => set('marked', e.target.checked ? '1' : '')} /> Show bot and admin transactions</label>
       <span className="dim">{busy ? 'Loading…' : count(txs.length) + (page.total !== null && page.total !== undefined ? ' of ' + count(page.total) : '')}</span>
     </div>
     <div className="card"><table className="rows"><thead><tr><th>Transaction</th><th>App</th><th>Kind</th><th className="n">Amount</th><th>Result</th><th>Federation</th><th>Round</th><th>Stored</th></tr></thead><tbody>
