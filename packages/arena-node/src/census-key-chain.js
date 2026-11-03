@@ -252,6 +252,13 @@ export function createCensusKeyScan({ store, network, networkId, firstHeight, fo
     scannedTo: () => { const t = store.scanTop(); return t ? t.height : null; },
     /** The newest record of a key on the chain, a reshare's or its own, or null. */
     generationOf: (keyHex) => { const list = generations.get(keyHex) || []; return list[list.length - 1] || null; },
+    /** Who held a key at a height, as its newest record there names them, or genesis: [{ key, shares }] in descending shares, the carriers of a fallback (5A.3B, kanban #1031). Empty for a key not read here. */
+    holdersAt: async (keyHex, height) => {
+      const g = generationAt(keyHex, height);
+      if (!g) return [];
+      const shares = g.censusHeight === null ? censusKey0Shares(censusKey0) : (await sharesOf(g.epoch, g.censusHeight)).shares;
+      return [...shares.holders].sort((a, b) => b.shares - a.shares || (a.key < b.key ? -1 : 1)).map((h) => ({ key: h.key, shares: h.shares }));
+    },
     /** The shares a key's signature takes, as its newest record or genesis says. Null for a key this node does not read. */
     thresholdOf: (keyHex) => {
       const rows = store.anchors().filter((a) => a.stands && a.kind === 'K').map((a) => decodeCensusKeyBody(a.body).record).filter((r) => toHex(r.publicKey) === keyHex);

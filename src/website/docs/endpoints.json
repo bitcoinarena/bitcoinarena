@@ -9264,13 +9264,13 @@
  {
   "method": "POST",
   "path": "/census-sign/commit",
-  "params": "body: JSON { proof, presig, tx, prevouts }",
+  "params": "body: JSON { proof, presig, tx, prevouts } for a start, or { kind: \"fallback\", start, proof, tableId } for a fallback",
   "auth": "none: a holder checks everything itself",
   "returns": "200 { ok, session, node, xs, hiding, binding } or { ok: false, why }; 400",
-  "purpose": "A filer's request that a census key holder sign a slash start. The holder replays the proof and holds the transaction to its own census and hold outputs before it commits a nonce.",
+  "purpose": "A filer's request that a census key holder sign a slash start, or a fallback (spec 5A.3B). For a start the holder replays the proof and holds the transaction to its own census and hold outputs; for a fallback it rebuilds the fallback and its payout table itself and signs only if its own table id is the one named. Only then does it commit a nonce.",
   "audience": "node-to-node",
   "line": 0,
-  "summary": "Say ready for a reshare",
+  "summary": "Ask a census key holder to sign",
   "query": [],
   "body": {
    "contentType": "application/json",
@@ -9308,7 +9308,7 @@
   "purpose": "A holder's share of that signature. A nonce is used once: the session ends here whatever comes of it.",
   "audience": "node-to-node",
   "line": 0,
-  "summary": "Say ready for a reshare",
+  "summary": "A census key holder's signature share",
   "query": [],
   "body": {
    "contentType": "application/json",
@@ -13902,5 +13902,143 @@
   "audience": "operator/monitoring",
   "line": 0,
   "summary": "Take a node's record"
+ },
+ {
+  "method": "GET",
+  "path": "/slash-release",
+  "params": "query start (the start's txid, 64 hex)",
+  "auth": "none",
+  "returns": "200 JSON { node, start, release?: { tableId, table, txid, feeSats, sent, own: { node, signature }, signatures[] }, fallback?: {...}, carried[] }; 400",
+  "purpose": "What this seat built for one started template-3 bond (spec 5A.3B): the payout table and spend of its release and of its fallback, its own signature on the release and the other panel members' signatures it holds over the same bytes, and what it carried as a carrier. Panel members read each other's signatures here.",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "A started bond's release and fallback",
+  "query": [
+   {
+    "name": "start",
+    "required": true,
+    "type": "string",
+    "description": "The slash start's txid, 64 hex, as bitcoind prints it."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "What this seat built and holds for that start."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "No start named."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none"
+ },
+ {
+  "method": "GET",
+  "path": "/slash-releases",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON { node, starts: [{ start, height, round_id, proof_id, node, bond, release?, fallback?, carried[] }] }",
+  "purpose": "Every slash start this seat has read (the newest 64), each with what /slash-release answers for it.",
+  "audience": "operator/monitoring",
+  "line": 0,
+  "summary": "Every start this seat has read",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The starts."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none"
+ },
+ {
+  "method": "GET",
+  "path": "/slash-table/{tableId 64 hex}",
+  "params": "path: the payout table's id",
+  "auth": "none",
+  "returns": "200 octet-stream the PayoutTable; 404",
+  "purpose": "A slash payout table by its id, payout_table_id = tagged_hash(\"ARENA/v1/SlashPayoutTable\", its bytes) (spec 5A.3B: \"Any seat serves the table by its id\").",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "A slash payout table by its id",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/octet-stream",
+    "description": "The table's bytes."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "No such table here."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none"
+ },
+ {
+  "method": "GET",
+  "path": "/slash-pegin",
+  "params": "query start (64 hex), federation (64 hex), use (players | reserves, default players)",
+  "auth": "none; only for a start this seat has read",
+  "returns": "200 JSON { node, federation, use, address, script, signature }; 400/404/409",
+  "purpose": "This node's peg-in address into a federation for carrying one slash (spec 5A.3B: panel A's members on a release, the census key's holders on a fallback), made once by its own client and signed by its node key over carrier_peg_in(network_id, script). 409 where it holds no client of that federation.",
+  "audience": "node-to-node",
+  "line": 0,
+  "summary": "This node's peg-in as a slash carrier",
+  "query": [
+   {
+    "name": "start",
+    "required": true,
+    "type": "string",
+    "description": "The slash start's txid, 64 hex."
+   },
+   {
+    "name": "federation",
+    "required": true,
+    "type": "string",
+    "description": "The federation id, 64 hex."
+   },
+   {
+    "name": "use",
+    "required": false,
+    "type": "string",
+    "description": "players (the players' part) or reserves (a reserves' part): two outputs of one release are two addresses."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The signed peg-in."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "No such start read here."
+   },
+   {
+    "status": "409",
+    "contentType": "text/plain",
+    "description": "No client of that federation."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none"
  }
 ]

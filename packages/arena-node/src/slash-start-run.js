@@ -30,7 +30,7 @@ export const filerRank = (proofId, keys, me) => [...keys].sort((a, b) => (toHex(
  * word on a complete proof (proof-judge.js): { verdict: true | false | undefined, why }, with `judge.read`; `holdsFor(entry, roundId, contract)` -> { holds: [{ script }], presig?(bytes), holdScript? } by this seat's own reckoning, `presig`/`holdScript` naming the one a filer uses;
  * `feeCoin(spk, value)`, `send(hex)`, `urlsOf(entries)`.
  */
-export function createSlashStarter({ key, network, db, store, thresholdOf, tipHeight, entriesAtTip, heldProofs, bytesOf, judge, holdsFor, feeCoin, send, urlsOf, stepMs = 600000, feeSats = 700n, fetchFn = fetch, now = Date.now, log = () => {} }) {
+export function createSlashStarter({ key, network, db, store, thresholdOf, tipHeight, entriesAtTip, heldProofs, bytesOf, judge, holdsFor, feeCoin, send, urlsOf, checkOther = null, feeSecret = () => schnorr.utils.randomSecretKey(), stepMs = 600000, feeSats = 700n, fetchFn = fetch, now = Date.now, log = () => {} }) {
   const me = toHex(key);
   db.exec(`CREATE TABLE IF NOT EXISTS slash_starts (proof_id BLOB PRIMARY KEY, bond TEXT NOT NULL, txid TEXT NOT NULL, kept_ms INTEGER NOT NULL)`);
   db.exec(`CREATE TABLE IF NOT EXISTS slash_handed (proof_id BLOB PRIMARY KEY, seen_ms INTEGER NOT NULL)`);
@@ -57,12 +57,15 @@ export function createSlashStarter({ key, network, db, store, thresholdOf, tipHe
     if (j.verdict !== true) return { ok: false, why: j.why };
     return { ok: true, digest: c.digest, publicKey: entry.advert.censusKey };
   }
-  const signer = createCensusSigner({ key, check, held: (publicKey) => store.held(publicKey) });
+  // ONE SIGNER FOR EVERY ASK OF THIS NODE'S SHARES: a start here, a fallback (slash-release-run.js checkFallback) by its `kind`
+  const signer = createCensusSigner({ key, held: (publicKey) => store.held(publicKey),
+    check: (request) => (request && request.kind && request.kind !== 'start' ? (checkOther ? checkOther(request) : { ok: false, why: `this seat signs no ${request.kind} yet` }) : check(request)) });
 
   const feeHeld = new Map();                     // proof id hex -> the coin funded for it, so a start tried again pays once
   async function feeFor(idHex) {
     if (feeHeld.has(idHex)) return feeHeld.get(idHex);
-    const secret = schnorr.utils.randomSecretKey(), leaf = Uint8Array.from([0x20, ...schnorr.getPublicKey(secret), 0xac]), leafHash = tapLeafHash(leaf);
+    // THE FEE COIN'S KEY, FROM THE NODE'S OWN AND THE PROOF: the release repays this coin to the very script it came from (5A.3B, pays = filer), so the filer can still spend it
+    const secret = feeSecret(fromHex(idHex)), leaf = Uint8Array.from([0x20, ...schnorr.getPublicKey(secret), 0xac]), leafHash = tapLeafHash(leaf);
     const q = tweakPoint(HOLD_INTERNAL_KEY, tapTweak(HOLD_INTERNAL_KEY, leafHash)), script = fromHex(`5120${toHex(q.outputKey)}`);
     const got = await feeCoin(script, feeSats);
     if (!got.ok) return got;
@@ -124,5 +127,5 @@ export function createSlashStarter({ key, network, db, store, thresholdOf, tipHe
     }
     return done;
   }
-  return { pass, file, handed, takeCommit: signer.takeCommit, takeShare: signer.takeShare, check };
+  return { pass, file, handed, takeCommit: signer.takeCommit, takeShare: signer.takeShare, check, signer };
 }

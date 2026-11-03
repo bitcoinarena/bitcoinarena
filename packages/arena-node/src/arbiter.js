@@ -275,18 +275,27 @@ export function settledEntries({ run, roundId, contract, committee, finalAfterMs
 export function buildSlash({ verdict, bond, advert, contract, roundId, slashHeight, tipHeight, entries, signed = verdict.signed, truth = [], paid = new Map(), payoutShares = null, set, feeSats = 2000n, hint = new TextEncoder().encode('arena') }) {
   const h = slashHeightIsValid({ slashHeight, censusHeight: contract.censusHeight, tipHeight });
   if (!h.ok) return { ok: false, why: h.why };
+  const owed = slashLosses({ verdict, entries, contract, roundId, signed, truth, payoutShares });
+  if (!owed.ok) return owed;
+  let distribution;
+  try { distribution = slashDistribution({ escrowSats: bond.value - feeSats, roundId, contract, losses: owed.losses, paid }); } catch (e) { return { ok: false, why: e.message }; }
+  const spend = pathBSpend({ bond, advert, proofId: verdict.proofId, slashHeight, hint, set, feeSats });
+  return spend.ok ? { ...spend, distribution, truth: owed.truth } : spend;
+}
+
+/**
+ * WHO A JUDGED PROOF HARMED, AND BY HOW MUCH (§5A.3 real loss): the entries the offence names, against the round as it settled, with the truth the replay gave where the round
+ * settled on the false run. Shared by path B here and a template-3 release or fallback (slash-release-run.js), so both pay one loss the same way. Answers { ok, losses (Map key hex ->
+ * msat), truth } or { ok: false, why }. Only a run proven FINAL can have cost anybody: after an objection in time the result was corrected before any money moved.
+ */
+export function slashLosses({ verdict, entries, contract, roundId, signed = verdict.signed, truth = [], payoutShares = null }) {
   const harmed = affectedEntries({ offence: verdict.offence, playerPubkey: verdict.playerPubkey, entries, signed, replayed: verdict.replayed });
   if (!harmed.ok) return { ok: false, why: harmed.why };
   const named = entries.find((e) => toHex(e.playerPubkey) === toHex(verdict.playerPubkey));
   const settledOnFalse = !!(named && named.finalProven && named.runId === verdict.contradictedRunId && verdict.offence !== TWO_RESULTS && verdict.replayed);
   const correct = [...truth.filter((t) => toHex(t.pubkey) !== toHex(verdict.playerPubkey)), ...(settledOnFalse ? [{ pubkey: verdict.playerPubkey, outcome: verdict.replayed.outcome, score: verdict.replayed.score }] : [])];
-  let distribution;
-  try {
-    const losses = realLosses({ roundId, entries, truth: correct, affected: harmed.affected, minScore: contract.minScore, payoutShares });
-    distribution = slashDistribution({ escrowSats: bond.value - feeSats, roundId, contract, losses, paid });
-  } catch (e) { return { ok: false, why: e.message }; }
-  const spend = pathBSpend({ bond, advert, proofId: verdict.proofId, slashHeight, hint, set, feeSats });
-  return spend.ok ? { ...spend, distribution, truth: correct } : spend;
+  try { return { ok: true, losses: realLosses({ roundId, entries, truth: correct, affected: harmed.affected, minScore: contract.minScore, payoutShares }), truth: correct }; }
+  catch (e) { return { ok: false, why: e.message }; }
 }
 
 /** PATH B OF A BOND INTO THE ESCROW (5A.3B step 4): the output rebuilt from the node's advertisement and held to it, and the unsigned spend committing to `proofId`. */
