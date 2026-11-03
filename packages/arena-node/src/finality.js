@@ -62,12 +62,24 @@ function secondObjectionOf({ round, roundIdBytes, entryIdBytes, rerun, committee
 
 /**
  * A NO-QUORUM ENTRY IN THE RE-RUN WINDOW (§13A, §13C, RULED 2026-11-02, kanban #1038, #1047): no in-time quorum at final_after, or an in-time quorum short of its postings,
- * with a signed result held. FORFEIT on proven equivocation stays first and is written at once. Otherwise SUSPENDED: the same seats sign RerunResults naming no contradicted
+ * with a run of the entry held (`holdsRun`). FORFEIT on proven equivocation stays first and is written at once. Otherwise SUSPENDED: the same seats sign RerunResults naming no contradicted
  * run, from final_after on, counted by `rerunIsAgreed` as ever. No threshold before end + 1205 s is §13C: VOID, or FORFEIT, the proof read again. With one, the existing own
  * window, to end + 1805 s, and its one objection. Publication stays a condition of finality, by the same deadline: the re-run's transcript posted by end + 1205 s, or VOID.
  * `holdsRound`: the round's settlement waits on this entry (`entriesOnRecord`), bounded by the own window and NO_QUORUM_FINAL_GRACE_MS. No outcome here is written
  * at the window's end: the seat's watch asks the peers for their evidence first and writes it, as for an objected entry.
+ * A SEAT THAT WAS OUT AT THE WINDOW'S END holds no re-run in time, and its clock alone would read VOID while five others go FINAL (measured: a seat back after + 1805 s). Past the
+ * end it counts a threshold of re-runs by their signed times, as `heard`. It takes the FINAL signatures of that run and signs none of its own.
  */
+/**
+ * THE ENTRY HAS A RUN HERE (§13A, §13C, RULED 2026-11-02, kanban #1060): a signed result, a re-run, or a mark with a receipt on it. An entry with none of these has no run and goes
+ * to VOID at final_after. "Nobody signed" alone cannot say that: a live seat holds its own receipts of a real run, and the seats may just not have 5 of them yet.
+ */
+export function holdsRun(round, roundIdBytes, entryIdBytes) {
+  if (round.results(roundIdBytes, entryIdBytes).length) return true;
+  if (typeof round.reruns === 'function' && round.reruns(roundIdBytes, entryIdBytes).length) return true;
+  return typeof round.markIds === 'function' && round.markIds(roundIdBytes, entryIdBytes).some((id) => round.receiptCount(id) > 0);
+}
+
 function noQuorumWindow({ round, roundIdBytes, entryIdBytes, contract, committee, win, nowMs, playerPubkey, signatures, needed, why, extra = {} }) {
   const verify = (s, m, k) => verifyKept(s, m, k);
   const provenBy = (untilMs) => typeof round.provenTwoFirstMarks === 'function'
@@ -87,7 +99,16 @@ function noQuorumWindow({ round, roundIdBytes, entryIdBytes, contract, committee
     return x.signedAtMs + FINAL_TOLERANCE_MS >= win.finalAfterMs && withinTolerance(x.signedAtMs, r.seenMs) && BigInt(r.seenMs) < win.rerunDeadlineMs;
   });
   const agreedOn = (recs) => rerunIsAgreed({ roundId: roundIdBytes, playerPubkey, contradictedRunId: NO_RUN, records: recs, signerNodes: committee, slots: contract.gameVerifySlots, verify });
-  const rerun = agreedOn(inside);
+  const signedInside = () => round.reruns(roundIdBytes, entryIdBytes).filter((r) => {
+    let x = null;
+    try { x = decodeRerunResult(splitSignedRerun(r.bytes).body); } catch { return false; }
+    return x.signedAtMs + FINAL_TOLERANCE_MS >= win.finalAfterMs && BigInt(x.signedAtMs) < win.rerunDeadlineMs;
+  });
+  const onTime = agreedOn(inside);
+  const heardRecords = !onTime.ok && nowMs >= win.rerunDeadlineMs ? signedInside() : null;
+  const late = heardRecords ? agreedOn(heardRecords) : null;
+  const heard = !!(late && late.ok);
+  const rerun = heard ? late : onTime;
   const said = { agreed: rerun.agreed || 0, needed: rerun.needed || needed };
   const common = { finalAfterMs: win.ownFinalAfterMs, ...extra, noQuorumRerun: true, rerunWindowOpenMs: win.rerunOpenMs, rerunWindowCloseMs: win.rerunCloseMs, ownWindowCloseMs: win.ownCloseMs };
   if (!rerun.ok) {
@@ -99,7 +120,7 @@ function noQuorumWindow({ round, roundIdBytes, entryIdBytes, contract, committee
       why: `${why} - ${d.why}: the re-run window closed at ${utc(win.rerunCloseMs)} with ${said.agreed} of ${said.needed} re-runs on one outcome (§13A, §13C)` };
   }
   const runHex = hex(rerun.runId);
-  const bySeen = [...inside].sort((a, b) => a.seenMs - b.seenMs);
+  const bySeen = [...(heard ? heardRecords : inside)].sort((a, b) => a.seenMs - b.seenMs);
   let agreedAtMs = bySeen.length ? bySeen[bySeen.length - 1].seenMs : null;
   for (let k = 1; k <= bySeen.length; k++) if (agreedOn(bySeen.slice(0, k)).ok) { agreedAtMs = bySeen[k - 1].seenMs; break; }
   const agreed = { ...common, finalAfterMs: win.ownFinalAfterMs, rerun: { ...said, runId: runHex }, agreedAtMs, closesAtMs: win.ownCloseMs, ownWindowOpenMs: win.ownOpenMs,
@@ -126,6 +147,9 @@ function noQuorumWindow({ round, roundIdBytes, entryIdBytes, contract, committee
     postings: round.postings(roundIdBytes, entryIdBytes).filter((p) => beforeMs === null || BigInt(p.seenMs) < BigInt(beforeMs)),
     signerNodes: committee, settlementSlots: contract.settlementSlots, verify });
   const nowPosted = posted(null);
+  if (heard)
+    return { ...agreed, state: PROVISIONALLY_FINAL, published: nowPosted.ok, posted: nowPosted.posted || 0, finalSigs: finSaid, holdsRound, askFinalOn: rerun.runId,
+      why: `no quorum here by final_after; ${rerun.agreed} of ${committee.length} seats signed a re-run inside the window, which reached this seat after it closed at ${utc(win.rerunCloseMs)}: it takes their FINAL signatures (§13A)` };
   if (nowMs >= win.rerunDeadlineMs) {
     const inWindow = posted(win.rerunDeadlineMs);
     if (!inWindow.ok)
@@ -170,6 +194,15 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
     // the transcript or sign at all - §13C's other door, decided by the verifier with its own reason (#unretrievedPastWindow)
     // FROM PROTOCOL 22 THE SAME GOES FOR A SEAT THAT HOLDS A RESULT BUT NONE IN TIME, IF NO QUORUM IS HELD (kanban #1038): it was out, and came back to help complete the five.
     const goesToRerun = noQuorumGoesToRerun(contract);
+    // AND A SEAT WITH NO RESULT THAT HOLDS A RUN OF THE ENTRY (RULED 2026-11-02, kanban #1060): 3 seats out before the receipts were pulled leave nobody able to sign, and the 4 left
+    // hold their own receipts of a real run. It goes to the window too, and a seat coming back with its receipts can still complete the 5. No run, nothing here: §13C's door decides.
+    if (goesToRerun && !held.length && inTime.ok && !(typeof round.entryVoid === 'function' && round.entryVoid(entryIdBytes)) && holdsRun(round, roundIdBytes, entryIdBytes)) {
+      const had = round.noQuorum(entryIdBytes);
+      if (had) return { state: had.outcome, why: had.why, noQuorum: true };
+      const found = round.entriesOf(roundIdBytes).find((e) => hex(e.entryId) === hex(entryIdBytes));
+      if (found) return noQuorumWindow({ round, roundIdBytes, entryIdBytes, contract, committee, win, nowMs: BigInt(now), playerPubkey: found.entry.playerPubkey, signatures: 0, needed: inTime.needed,
+        why: `no signed result held by ${utc(win.finalAfterMs)} (the round's end + 600 s + 5 s), and a run of the entry is held here: it has receipted marks` });
+    }
     const noneInTime = goesToRerun && inTime.ok && !inTime.final && !(inTime.agreed || 0) && held.length >= 1 && !(seen.ok && seen.final);
     if (noneInTime || (inTime.ok && !inTime.final && (inTime.agreed || 0) >= 1)) {
       const had = typeof round.noQuorum === 'function' ? round.noQuorum(entryIdBytes) : null;

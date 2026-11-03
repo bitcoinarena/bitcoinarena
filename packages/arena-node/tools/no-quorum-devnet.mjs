@@ -5,15 +5,16 @@
 // (ARENA_PROTOCOL_VERSION=22 DEVNET_KEEPER=0 devnet.mjs up, then its liquidity step). A paid round of two entries, played by tools/tn4-live-run.mjs, the page's lock client, and
 // one fault, made with SIGSTOP on the seat's node process alone (its guardian keeps running) once the entries are published:
 //
-//   SCENARIO=honest          nothing stopped: FINAL and settled as ever, no re-run on record
-//   SCENARIO=two-slow        the control, which cannot fail: seats 6 and 7 stopped; the other five reach the quorum
-//   SCENARIO=one-back        seats 5, 6 and 7 stopped, seat 5 back inside the window: the case the rule is for
-//   SCENARIO=three-silent    seats 5, 6 and 7 stopped to the window's end: VOID, nobody paid, the lock left for its player
-//   SCENARIO=nobody-signed   seats 5, 6 and 7 stopped with their receipts unread: nobody signs, VOID at final_after
+//   SCENARIO=honest            nothing stopped: FINAL and settled as ever, no re-run on record
+//   SCENARIO=two-slow          the control, which cannot fail: seats 6 and 7 stopped; the other five reach the quorum
+//   SCENARIO=one-back          seats 5, 6 and 7 stopped with their receipts unread and nobody handed them: nobody can sign. Seat 5 back inside the window, which is the case the rule is
+//                              for (#1060); seats 6 and 7 back after + 1805 s
+//   SCENARIO=three-silent      seats 5, 6 and 7 stopped the same way to the window's end: VOID, nobody paid, the lock left for its player
+//   SCENARIO=no-mark           both players enter and send no mark; seats 5, 6 and 7 stopped before the start deadline: VOID at final_after, nothing waited for
+//   SCENARIO=one-back-carried  one-back with the stopped seats' receipts handed to the other four first: what a seat that goes out just after answering the close's pull leaves behind
 //
-// A seat's close pulls the other seats' receipts. So that the four seats left can sign, the stopped seats' receipts are handed to them first (`one-back`, `three-silent`):
-// what a seat that goes out just after answering that pull leaves behind. Every state read is printed with its time from the round's end, once per change. Stopped seats
-// are always sent SIGCONT at the end, by pid. Settings as tools/devnet.mjs (DEVNET_DIR, DEVNET_BASE_PORT), with PAYER_DIR, INVITE_FILE, WASM_PKG and LNCLI as tn4-live-run.mjs takes.
+// Every state read is printed with its time from the round's end, once per change. Stopped seats are always sent SIGCONT at the end, by pid. Settings as tools/devnet.mjs
+// (DEVNET_DIR, DEVNET_BASE_PORT), with PAYER_DIR, INVITE_FILE, WASM_PKG and LNCLI as tn4-live-run.mjs takes.
 import { spawn } from 'node:child_process';
 import { readFileSync, openSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
@@ -33,9 +34,10 @@ const SCENARIO = env.SCENARIO || 'honest';
 const PLANS = {
   honest: { stop: [], carry: false, limit: 760 },
   'two-slow': { stop: [5, 6], carry: false, limit: 760, backAt: { 5: 700, 6: 700 } },
-  'one-back': { stop: [4, 5, 6], carry: true, limit: 1980, backAt: { 4: 800, 5: 1900, 6: 1900 } },
-  'three-silent': { stop: [4, 5, 6], carry: true, limit: 1360 },
-  'nobody-signed': { stop: [4, 5, 6], carry: false, limit: 760 },
+  'one-back': { stop: [4, 5, 6], carry: false, limit: 1980, backAt: { 4: 800, 5: 1900, 6: 1900 } },
+  'one-back-carried': { stop: [4, 5, 6], carry: true, limit: 1980, backAt: { 4: 800, 5: 1900, 6: 1900 } },
+  'three-silent': { stop: [4, 5, 6], carry: false, limit: 1360 },
+  'no-mark': { stop: [4, 5, 6], carry: false, limit: 760, noMarks: true },
 };
 const plan = PLANS[SCENARIO];
 if (!plan) { console.error(`SCENARIO is one of ${Object.keys(PLANS).join(', ')}`); process.exit(2); }
@@ -65,15 +67,16 @@ const players = [0, 1].map((i) => {
   const keys = join(D, `keys-${SCENARIO}.jsonl`);
   const child = spawn(process.execPath, [join(HERE, 'tn4-live-run.mjs')], { detached: true, stdio: ['ignore', fd, fd],
     // THE FIRST PLAYER SEARCHES FOR A DRIVE THAT DELIVERS, so the round has a winner to rescue; the second drives plainly
-    env: { ...env, ARENA_TN4_NETWORK: 'regtest', ROUND, PORTS: PLAN.nodes.join(','), KEYS_FILE: keys, COLLECT_MS: '60000', ...(i === 0 ? { SEARCH: '1' } : {}) } });
+    env: { ...env, ARENA_TN4_NETWORK: 'regtest', ROUND, PORTS: PLAN.nodes.join(','), KEYS_FILE: keys, COLLECT_MS: '60000', ...(plan.noMarks ? { NO_MARKS: '1' } : i === 0 ? { SEARCH: '1' } : {}) } });
   return { i, log, child };
 });
 const lines = (p) => { try { return readFileSync(p.log, 'utf8').split('\n'); } catch { return []; } };
 const said = (p, step) => lines(p).filter((l) => l.includes(`"step":"${step}"`) || l.includes(`"step":"${step} `));
-for (const stop = END - 15000; Date.now() < stop && !players.every((p) => said(p, 'published').length); await wait(2000));
+const inRound = plan.noMarks ? 'no marks sent' : 'published';
+for (const stop = END - 15000; Date.now() < stop && !players.every((p) => said(p, inRound).length); await wait(plan.noMarks ? 200 : 2000));
 const entries = [];
 try { for (const l of readFileSync(join(D, `keys-${SCENARIO}.jsonl`), 'utf8').trim().split('\n')) { const x = JSON.parse(l); if (x.round === ROUND) entries.push(x.entry); } } catch { /* the file says which entries there are */ }
-for (const p of players) say({ step: 'player', i: p.i, published: said(p, 'published').length > 0, driven: (said(p, 'driven')[0] || '').slice(0, 170), last: lines(p).filter(Boolean).slice(-1)[0]?.slice(0, 200) });
+for (const p of players) say({ step: 'player', i: p.i, published: said(p, inRound).length > 0, driven: (said(p, 'driven')[0] || '').slice(0, 170), last: lines(p).filter(Boolean).slice(-1)[0]?.slice(0, 200) });
 if (!entries.length) throw new Error('no entry was played');
 
 const stopped = new Set();

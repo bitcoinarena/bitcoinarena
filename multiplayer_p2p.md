@@ -5026,9 +5026,10 @@ left out that way gets its stake back and no share of the pool.
 that entry is decided: at most until the re-run window closes and, with a
 quorum in it, until its one objection window closes. That is at most
 `round_end + 1805 s`, plus at most 60 s for the `FINAL` signatures to arrive;
-past that the entry is left out as above. Waiting applies only if at least one
-signed result of the entry is held at `final_after`. An entry nobody signed
-has nothing to wait for, and goes to `VOID` then. The reason is money: `F`
+past that the entry is left out as above. Waiting applies only if a seat holds
+a run of the entry at `final_after`: a signed result, or a receipted mark of it
+(RULED 2026-11-02, kanban #1060). An entry with neither has no run, and goes to
+`VOID` then. The reason is money: `F`
 depends on every result, so a rescued winner left out would be paid nothing,
 and a part-settled round cannot fix that. An entry suspended by an objection
 still does not hold the round. While a round waits, its pending lines say the
@@ -5350,8 +5351,9 @@ signatures:
 
 1. If the disagreement is explained by proven player equivocation (§13B) →
    `FORFEIT`, at once.
-2. From protocol 22, with at least one signed result held: the entry goes to
-   §13A's re-run window, among the same 7. Below.
+2. From protocol 22, if a seat holds a run of the entry (a signed result or a
+   receipted mark): the entry goes to §13A's re-run window, among the same 7.
+   Below.
 3. Otherwise the fault is on the operator side → the entry becomes `VOID`,
    the stake is refunded by forfeit or by the stake lock's expiry, and the entry is
    excluded from the pool and from the payout table.
@@ -5368,7 +5370,7 @@ the infrastructure's fault and refunds.
 
 **The re-run window before `VOID` (RULED 2026-11-02, kanban #1037, #1045, #1047;
 protocol 22).** No quorum at `final_after` does not void an entry that has a
-signed result. It gives honestly overloaded seats (#735, #738) ten more minutes,
+run. It gives honestly overloaded seats (#735, #738) ten more minutes,
 and a slow seat can still complete the 5. It does nothing against collusion:
 there is one set of 7 (§5A.9), so 3 silent seats stay silent here too (§22, P6).
 
@@ -5381,7 +5383,9 @@ there is one set of 7 (§5A.9), so 3 silent seats stay silent here too (§22, P6
   `RerunResult` from its replay of the canonical transcript, naming no
   contradicted run (`contradicted_run_id` all zeros), counted by the same rule
   as any re-run: signed from `final_after`, held before `round_end + 1205 s`,
-  5 of 7 on one run.
+  5 of 7 on one run. A seat signs no re-run while a seat it cannot reach could
+  lengthen the transcript, the same rule as for a first result: re-runs signed
+  over different prefixes never reach 5.
 - **A quorum in the window** takes the re-run path: its one objection window to
   `round_end + 1800 s`, `FINAL` on the re-run from `+ 1805 s`. A valid objection
   in that window makes the entry `VOID` at once, and the re-run's signers are
@@ -5394,26 +5398,40 @@ there is one set of 7 (§5A.9), so 3 silent seats stay silent here too (§22, P6
   equivocation. Written once.
 - **Nobody is slashed for this.** No objection proved anyone wrong, so no slash
   proof is filed and no audit is contradicted. Silence leaves no artifact.
-- **A seat with no signed result.** `#noQuorum` at the first-mark door still
-  decides at `final_after`: no run was carried, so there is nothing to re-run. A
-  seat that cannot retrieve the transcript (`#unretrievedPastWindow`) holds to the
-  window's end, `FORFEIT` first, while it holds a signed result of the entry, and
-  a seat just back asks the peers for theirs first. Holding none, it decides at
-  `final_after`.
+- **What a run is (RULED 2026-11-02, kanban #1060).** A seat holds a run of the
+  entry at `final_after` if it holds a signed result or a receipted mark of it.
+  Nobody signed can mean only that the seats do not have 5 receipts yet: every
+  live seat holds its own, and a seat coming back with the rest can still save
+  the entry. So that goes to the window too, and the round waits. An entry with
+  neither has no run, and goes to `VOID` at `final_after`: `#noQuorum` at the
+  first-mark door stays there. Three seats truly gone give `VOID` at about
+  `round_end + 1208 s`, not `+ 686 s`. That price is accepted: 3 seats can delay
+  more than that anyway (#1044).
+- **A seat that cannot retrieve the transcript** (`#unretrievedPastWindow`) holds
+  to the window's end, `FORFEIT` first, while it or a peer holds a run. A seat
+  with neither asks the peers for what they signed first.
+- **A seat out at the window's end.** It holds no re-run in time, and its own
+  clock would read `VOID` while five others go `FINAL`. It asks the peers for
+  their re-runs before it writes anything, counts 5 on one run by their signed
+  times, and takes their `FINAL` signatures. It signs no `FINAL` of its own.
 - **The round waits for it** (§13A). Rounds before protocol 22 decide at
   `final_after`, byte for byte as before.
 
 Measured on seven real seats at protocol 22, a real federation, a paid round of
-two entries (`tools/no-quorum-devnet.mjs`; a seat stopped with SIGSTOP before the
-round's end). Times are from the round's end.
+two entries, one winner and one loser (`tools/no-quorum-devnet.mjs`; a seat
+stopped with SIGSTOP before the round's end). Nobody hands anybody receipts: a
+seat stopped holds its receipts unread. Times are from the round's end.
 
 | Case | Result |
 |---|---|
-| Honest round | `FINAL` by 7 of 7 and settled by + 609 s, no re-run on record |
-| 2 slow (a control: it cannot fail) | `FINAL` by 5 by + 618 s; the two, back at + 707 s, took those signatures and read `FINAL` too |
-| 3 out, one back inside the window | 4 results held: `SUSPENDED` at + 606 s, the pending line at + 1200 s. Seat back at + 807 s, 5 of 5 re-runs by + 1008 s, the pending line at + 1800 s. `FINAL` by 5 at + 1813 s, the winner's share paid from the loser's claimed lock |
-| 3 silent | 4 results held, 4 re-runs: `VOID` at + 1208 s at all seven, the lock left for its player |
-| Nobody signed | `VOID` by + 686 s, no re-run, nothing waited for |
+| Honest round | `FINAL` by 7 of 7 and settled by + 607 s, no re-run on record |
+| 2 slow (a control: it cannot fail) | `FINAL` by 5 by + 625 s, loser's lock claimed and the winner paid, the two back at + 705 s |
+| 3 out before any receipt is pulled, one back at + 804 s | Nobody can sign: `SUSPENDED` at + 614 s, the pending line at + 1200 s, no re-run signed. The four pull the seat's receipts themselves, 5 of 5 re-runs on one transcript by + 925 s, `FINAL` at + 1811 s. The loser's lock claimed, 90 000 000 msat, and paid to the winner |
+| The other two of those seats, back at + 1901 s | One pass reads `VOID`, unwritten; `FINAL` by + 1911 s, as the five |
+| 3 silent, receipts never pulled | `SUSPENDED`, no re-run, `VOID` at + 1206 s at all seven, the lock left for its player |
+| No mark at all, 3 seats out | `VOID` by + 693 s on the retry's own clock, no re-run, nothing waited for |
+
+With every seat up, an entry with no mark is `FORFEIT` at the door (§15), as ever.
 
 **AS BUILT (2026-10-04).** The result window's deadline
 is `final_after`: the round's end + 600 s + 5 s, in wall-clock ms, on each

@@ -6,58 +6,12 @@
 // watch and the table are the daemon's. The rule's money is measured on two running seats in no-quorum-rerun-money.test.js.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { schnorr } from '@noble/curves/secp256k1.js';
-import { sevenSignerNodes, object, WINDOW_MS, wait } from './window-fixture.js';
-import { testNow, skipTo } from './test-clock.js';
-import { resultFinality, NO_RUN } from '../src/finality.js';
+import { object } from './window-fixture.js';
+import { skipTo } from './test-clock.js';
 import { settleWaitsOn } from '../src/server.js';
-import { windowsOf } from '../../arena-protocol/src/window.js';
-import { splitSignedResult, decodePlayerResult, encodePlayerResult, joinSignedResult, resultId } from '../../arena-protocol/src/result.js';
-import { AUDITOR_VERSION, NO_QUORUM_FINAL_GRACE_MS } from '../../arena-protocol/src/constants.js';
+import { NO_QUORUM_FINAL_GRACE_MS } from '../../arena-protocol/src/constants.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
-
-const seven = (o = {}) => sevenSignerNodes(WINDOW_MS, undefined, { endMs: testNow() + 4000, storedBeforeTheRule: true, round: { protocolVersion: AUDITOR_VERSION }, finality: { everyMs: 100, rerunMs: 60000 }, ...o });
-const win = (w) => Object.fromEntries(Object.entries(windowsOf(w.contract)).map(([k, v]) => [k, Number(v)]));
-const stateOf = (w, eid) => resultFinality(w.holder.round, w.rid, eid);
-const until = async (ok, ms = 15000) => { for (const stop = Date.now() + ms; Date.now() < stop; await wait(50)) if (ok()) return true; return ok(); };
-
-/** The fixture's five sign, whatever the holder's own replay came to: the loser's tape can deliver under a round's random beacon. */
-const signRun = (w, name, rewrite, o = {}) => {
-  const mine = w.holder.round.results(w.rid, w.runs[name].eid).find((r) => toHex(r.nodePubkey) === toHex(w.holder.round.pubkey));
-  w.sign(name, rewrite, { ...o, expect: decodePlayerResult(splitSignedResult(mine.bytes).body).outcome });
-};
-/** `count` of the six keys sign the holder's own run, held here inside the window: with the holder's, count + 1 matching results. */
-function results(w, name, count) {
-  const eid = w.runs[name].eid;
-  const mine = w.holder.round.results(w.rid, eid).find((r) => toHex(r.nodePubkey) === toHex(w.holder.round.pubkey));
-  const shape = decodePlayerResult(splitSignedResult(mine.bytes).body);
-  for (const secret of w.others.slice(0, count)) {
-    const r = { ...shape, nodePubkey: schnorr.getPublicKey(secret) };
-    const id = resultId(r);
-    w.holder.round.putResult(w.rid, eid, r.nodePubkey, id, joinSignedResult(encodePlayerResult(r), schnorr.sign(id, secret)));
-  }
-  return eid;
-}
-/** The entry with no quorum and the other entry signed and published in time, the clock past final_after. */
-async function noQuorumAt(w, signers = 3) {
-  signRun(w, 'agrees', () => ({}));
-  const eid = results(w, 'dissents', signers);
-  skipTo(win(w).finalAfterMs + 50);
-  await w.finalBy('agrees', 5);
-  return eid;
-}
-const rerunsIn = (w, count = 4, o = {}) => w.rerunBy('dissents', count, { contradicted: NO_RUN, ...o });
-const tableOf = (w) => w.holder.settlements.entriesOnRecord(w.rid, w.contract);
-/** FINAL on the agreed re-run: past its own window, the holder's FINAL and four of the six. */
-async function finalOnRerun(w, eid) {
-  skipTo(win(w).ownFinalAfterMs + 50);
-  const q = `round=${toHex(w.rid)}&entry=${toHex(eid)}`;
-  const own = await fetch(`http://127.0.0.1:${w.holder.port}/final-sig?${q}`);
-  assert.equal(own.status, 200, await own.clone().text());
-  await fetch(`http://127.0.0.1:${w.holder.port}/final-sig?${q}`, { method: 'POST', body: new Uint8Array(await own.arrayBuffer()) });
-  await w.finalBy('dissents', 4);
-  return stateOf(w, eid);
-}
+import { seven, win, stateOf, until, signRun, results, noQuorumAt, rerunsIn, tableOf, finalOnRerun } from './no-quorum-fixture.js';
 
 test('4 of 7 at final_after is SUSPENDED, not VOID: the round waits, the holder re-runs by itself, a quorum in the window gets its objection window, and the table reads the re-run', { timeout: 110000 }, async () => {
   const w = await seven();
