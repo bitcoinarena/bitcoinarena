@@ -49,6 +49,7 @@ import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
 import { capacityBandPoint, bondLockPoint } from '../../arena-protocol/src/federation-record.js';
 import { createReserveAlarms } from './reserve-alarms.js';
 import { createReserveAudit } from './reserve-audit.js';
+import { theftTools } from './theft-evidence.js';
 import { capacityView, capacityPlea, bondIncentive, pressureOf, guardianWeights as capacityGuardianWeights, gatewayWeights as capacityGatewayWeights } from '../../arena-protocol/src/capacity.js';
 import { GATEWAY_MINIMUMS, GATEWAY_EPOCH_BLOCKS, pegInPastCap } from '../../arena-protocol/src/gateway-seats.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
@@ -156,6 +157,7 @@ import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
 import { createArbitrationEvents } from './arbitration-events.js';
 import { startsByCensusKey, isAbandonedProof } from '../../arena-protocol/src/abandoned-slash.js';
+import { slashedGuardianPays } from '../../arena-protocol/src/theft-slash.js';
 import { createHalts, wsSessionCount } from './halts.js';
 import { reserveMembersOf } from './reserve-members.js';
 import { stageDecision } from './update-stage.js';
@@ -187,7 +189,7 @@ import { CLOCKS as FEDERATION_CLOCKS, bondLapseOf } from '../../arena-protocol/s
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
-import { TYPE_SETTLEMENT_ACK, TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, TYPE_AUDIT_SLASH_PROOF, TYPE_ABANDONED_PROOF, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION, seatingRulesEpochOf } from '../../arena-protocol/src/constants.js';
+import { TYPE_SETTLEMENT_ACK, TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, TYPE_AUDIT_SLASH_PROOF, TYPE_ABANDONED_PROOF, TYPE_THEFT_PROOF, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION, seatingRulesEpochOf } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
@@ -590,6 +592,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   chainTips = null,
   chainMempoolIds = null,
   chainRawTx = null,
+  chainTxConfirmations = null,
   chainMempoolAncestors = null,
   chainRecentBlocks = null,
   expiry = {},
@@ -628,7 +631,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE NODE'S OPEN MUSIG2 SESSIONS: session id -> its message, tweak and secret nonce, each signed once
   const musigNodeSessions = new Map();
   let fedRecords = null;                       // federation-records.js, set once the roster and the invites are known
-  let reserveAlarms = null;                    // reserve-alarms.js: the marks of theft this seat saw (kanban #1093 part 5)
+  let reserveAlarms = null;
+  // THE CLIENT DIRECTORY OF A FEDERATION THIS SEAT AUDITS (ARENA_RESERVE_AUDIT=<fid hex>:<client dir>,...): what a theft's sessions are exported from
+  const reserveAuditDirOf = (fid) => { const hit = String(process.env.ARENA_RESERVE_AUDIT || '').split(',').map((x) => x.trim().split(':')).find((x) => String(x[0] || '').toLowerCase() === String(fid).toLowerCase()); return hit && hit[1] ? hit.slice(1).join(':') : null; };                    // reserve-alarms.js: the marks of theft this seat saw (kanban #1093 part 5)
   // ABSENCE ATTESTATIONS (§23A.4): taken at POST /absence, and what proves a guardian ABANDONED in the record
   // HELD ACROSS A RESTART: beside the store, as the other per-seat files are
   const absencesFile = db && db.arenaPath ? `${db.arenaPath}.held-absences.json` : null;
@@ -4172,6 +4177,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     manifestOf: (contract) => { const found = pluginForRound(contract, hosted); return found.ok ? found.plugin.manifest : null; },
     clientOf: async (fid) => { try { const port = await settlements.portForFederation(fid); return port ? { fees: () => port.fees(), txid: async (build) => fromHex((await port.settle(build)).txid) } : null; } catch { return null; } },
     abandoned: async (bytes, beforeHeight) => (fedRecords ? fedRecords.abandonedVerdict(bytes, (inv) => { const f = fedOfInvite(inv); return f ? fromHex(String(f)) : null; }, beforeHeight) : { verdict: undefined, why: 'this seat holds no federation records yet' }),
+    // A THEFT (kanban #1093 part 2, ruling #1109 X): the proof's own bytes, re-verified by this seat's session verifier and its own chain; no verifier here: undefined, never false
+    theft: async (bytes, beforeHeight) => (fedRecords ? fedRecords.theftVerdict(bytes, (inv) => { const f = fedOfInvite(inv); return f ? fromHex(String(f)) : null; }, beforeHeight) : { verdict: undefined, why: 'this seat holds no federation records yet' }),
     coreOf: (contract, rid) => coreForRound(contract, rid, hosted), beaconOf: (contract, rid, entry, eid) => verifier.proofBeacon(contract, rid, entry, eid), replayRunOf: (rid, eid, core) => verifier.proofReplay(rid, eid, core), vrf: auditVrf,
     // WHO COULD AUDIT, AS THE DESK TOOK IT: the round's census less its drawn nodes. Its players come out where this seat holds the round: a seat that does not cannot name them, and an AUDIT a player signed was refused at every door that held it
     auditSetOf: (contract, rid) => {
@@ -4278,8 +4285,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let rows = []; try { rows = fedRecords ? await fedRecords.abandonedSlashes() : []; } catch { rows = []; }
     return rows.filter((r) => startsByCensusKey(r.template)).map((r) => { if (!abandonedSeen.has(r.proof)) abandonedSeen.set(r.proof, Date.now()); return { proofId: fromHex(r.proof), seenMs: abandonedSeen.get(r.proof) }; });
   };
+  // EVERY GUARDIAN'S BOND AFTER A MARK OF THEFT (kanban #1093 part 2, ruling #1106): this seat's own alarm book names the federation, so it holds a TheftProof for every template-3 output of
+  // every guardian its newest record lists, and the starter files them as it files an abandonment's; the census key's holders judge each on their own audit
+  const theftSeen = new Map();
+  const theftHeld = async () => {
+    let rows = []; try { rows = fedRecords ? await fedRecords.theftSlashes() : []; } catch { rows = []; }
+    return rows.map((r) => { if (!theftSeen.has(r.proof)) theftSeen.set(r.proof, Date.now()); return { proofId: fromHex(r.proof), seenMs: theftSeen.get(r.proof) }; });
+  };
   const slashStarter = holdWatch && censusKey.feeCoin ? createSlashStarter({ key: round.pubkey, network: censusKey.network, db: round.db, store: new CensusKeyStore(round.db), thresholdOf: censusKey.scan.thresholdOf, tipHeight: censusKey.tipHeight, entriesAtTip: entriesAtTipForStart,
-    heldProofs: async () => [...round.allSlashProofs(), ...round.allRerunSlashProofs(), ...round.auditSlashProofs(), ...round.doubleSlashProofs(), ...round.tableSlashProofs(), ...(await abandonedHeld())].flatMap((p) => { const bytes = round.relayGet(Buffer.from(p.proofId)); return bytes ? [{ proofId: p.proofId, bytes, seenMs: p.seenMs }] : []; }), bytesOf: (id) => round.relayGet(Buffer.from(id)), judge: judgeProofBytes, holdsFor: holdsForStart, feeCoin: censusKey.feeCoin, send: (hex) => chainSend(hex), urlsOf: () => censusUrls || [],
+    heldProofs: async () => [...round.allSlashProofs(), ...round.allRerunSlashProofs(), ...round.auditSlashProofs(), ...round.doubleSlashProofs(), ...round.tableSlashProofs(), ...(await abandonedHeld()), ...(await theftHeld())].flatMap((p) => { const bytes = round.relayGet(Buffer.from(p.proofId)); return bytes ? [{ proofId: p.proofId, bytes, seenMs: p.seenMs }] : []; }), bytesOf: (id) => round.relayGet(Buffer.from(id)), judge: judgeProofBytes, holdsFor: holdsForStart, feeCoin: censusKey.feeCoin, send: (hex) => chainSend(hex), urlsOf: () => censusUrls || [],
     stepMs: Number(process.env.ARENA_SLASH_FILE_STEP_MS || 600000), log: (l) => console.log(l),
     checkOther: (request) => (slashRelease ? slashRelease.checkOther(request) : { ok: false, why: 'this seat runs no release or fallback' }),
     feeSecret: (proofId) => taggedHash('ARENA/v1/SlashFeeKey', Uint8Array.from([...round.identity.secret, ...proofId])),
@@ -5436,6 +5450,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, store: recordStore, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf,
     alarmOf: (fid) => reserveAlarms.of(fid),
+    // A THEFT'S PROOF, BUILT AND JUDGED ON ITS OWN BYTES (kanban #1093 part 2, ruling #1109 X): the stake-lock tool exports the signed sessions and verifies them (theft-evidence.js)
+    ...theftTools({ bin: process.env.ARENA_STAKE_LOCK_BIN || null, dirOf: (fid) => reserveAuditDirOf(fid), log: (l) => console.log(l) }),
+    txConfirmations: async (txid) => (typeof chainTxConfirmations === 'function' ? chainTxConfirmations(txid) : null),
     bandFrom: capacityBandPoint(chainNetworkId() ? networkOf(fromHex(chainNetworkId())) : null), endpointsOf: fedEndpointsOf,
     // a guardian's bond counts in the cap only while it is locked past the drain (kanban #1093 part 7): from BOND_LOCK_HEIGHT, or on regtest ARENA_BOND_LOCK_HEIGHT
     bondLock: (() => { const net = chainNetworkId() ? networkOf(fromHex(chainNetworkId())) : null; const env = process.env.ARENA_BOND_LOCK_HEIGHT;
@@ -11014,8 +11031,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/slashes' && url.searchParams.has('proof')) {
         const id = String(url.searchParams.get('proof')).toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(id)) return text(res, 400, 'a proof is named by its 32 bytes as hex');
-        const kept = fedRecords ? fedRecords.abandonedProof(id) : null;
-        if (!kept) return text(res, 404, 'this seat holds no proof of an abandonment under that hash');
+        const kept = fedRecords ? fedRecords.abandonedProof(id) || fedRecords.theftProof(id) : null;
+        if (!kept) return text(res, 404, 'this seat holds no proof of an abandonment or a theft under that hash');
         res.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'public, max-age=86400', ...CORS });
         return res.end(Buffer.from(kept));
       }
@@ -11034,9 +11051,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // holders on the output's newest presig, so that is named with it; none named here, the one at bonding stands, and it is on the chain
         let abandonedRows = [];
         try { abandonedRows = fedRecords ? await fedRecords.abandonedSlashes() : []; } catch (e) { console.log(`[slash] abandoned rows: ${e.message}`); }
+        // AND A MARK OF THEFT'S (kanban #1093 part 2): every seated guardian's template-3 output, under its TheftProof; each row says where the slash is owed (one rule with an abandonment's)
+        let theftRows = []; try { theftRows = fedRecords ? await fedRecords.theftSlashes() : []; } catch (e) { console.log(`[slash] theft rows: ${e.message}`); }
+        const owedTo = (r) => ({ ...r, pays: slashedGuardianPays({ federation: r.federation, halt: liquidations ? liquidations.haltOf(r.federation) : null }) });
+        abandonedRows = abandonedRows.map(owedTo); theftRows = theftRows.map(owedTo);
         abandonedRows = abandonedRows.map((r) => { const got = startsByCensusKey(r.template) && seating ? seating.presigOf({ txid: r.txid, vout: r.vout }) : null; return got ? { ...r, presig: got.signature, presigRound: got.round } : r; });
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), slashes: rows, auditSlashes: auditRows, doubleSlashes: doubleRows, tableSlashes: tableRows, abandonedSlashes: abandonedRows }));
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), slashes: rows, auditSlashes: auditRows, doubleSlashes: doubleRows, tableSlashes: tableRows, abandonedSlashes: abandonedRows, theftSlashes: theftRows }));
       }
       // A ROUND'S PROOFS OF FALSE TABLES, as published (proof, ack, the rest), one after another (kanban #1040)
       if (req.method === 'GET' && url.pathname === '/table-slash-proofs') {
@@ -11429,6 +11450,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (bytes[0] === TYPE_ABANDONED_PROOF) {
           if (!fedRecords) return text(res, 503, 'this seat holds no federation records yet');
           const r = await fedRecords.takeAbandonedProof(slashed[1], u8, (inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; });
+          if (r.ok && slashStarter) slashStarter.handed(fromHex(slashed[1]));
+          return text(res, r.status, r.ok ? 'kept' : r.why);
+        }
+        // A THEFT'S PROOF (kanban #1093 part 2): the same, the record listing the node as a guardian
+        if (bytes[0] === TYPE_THEFT_PROOF) {
+          if (!fedRecords) return text(res, 503, 'this seat holds no federation records yet');
+          const r = await fedRecords.takeTheftProof(slashed[1], u8, (inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; });
           if (r.ok && slashStarter) slashStarter.handed(fromHex(slashed[1]));
           return text(res, r.status, r.ok ? 'kept' : r.why);
         }

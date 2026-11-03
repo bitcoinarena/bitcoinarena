@@ -7,6 +7,7 @@
 // A replay costs a seat seconds and anyone can hand it bytes, so one proof is judged at a time, a verdict is kept by the hash, and a queue past `waiting` answers undefined.
 import { decodeFraudProof, fraudProofHash, readEvidence } from '../../arena-protocol/src/slash.js';
 import { decodeAbandonedProof, isAbandonedProof } from '../../arena-protocol/src/abandoned-slash.js';
+import { decodeTheftProof, isTheftProof } from '../../arena-protocol/src/theft-slash.js';
 import { splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
 import { decodeEntryContract, decodeRoundContract, entryId as entryIdOf, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
@@ -16,14 +17,19 @@ import { takesAnyFederation } from '../../arena-protocol/src/constants.js';
 
 /**
  * `committeeOf(contract, rid)` -> { ok, committee[] of keys } or { ok: false, why }, its signer nodes; `censusOf(contract, rid)` -> { ok, entries } or { ok: false, why }; `coreOf(contract, rid)` the round's core, or
- * null where this seat does not host it; `beaconOf(contract, rid, entry, eid)` -> { ok, hash } or { ok: false, why }; `replayRunOf(rid, eid, core)` this seat's replay in its worker pool; `auditSetOf(contract, rid)` { eligible, total } who could audit the round, or null; `vrf` the secp256k1 ECVRF; `manifestOf(contract)` the round's game's manifest, or null; `clientOf(fid hex)` -> { fees(), txid(build) } this seat's own client of a federation, or null; `panelsOf(contract, rid)` -> { ok, panelA, panelB } of keys or { ok: false, why }; `holdBlocksOf(contract)`; `abandoned(bytes, beforeHeight)` -> { verdict, why } this seat's word on an abandonment's proof (federation-records.js abandonedVerdict).
+ * null where this seat does not host it; `beaconOf(contract, rid, entry, eid)` -> { ok, hash } or { ok: false, why }; `replayRunOf(rid, eid, core)` this seat's replay in its worker pool; `auditSetOf(contract, rid)` { eligible, total } who could audit the round, or null; `vrf` the secp256k1 ECVRF; `manifestOf(contract)` the round's game's manifest, or null; `clientOf(fid hex)` -> { fees(), txid(build) } this seat's own client of a federation, or null; `panelsOf(contract, rid)` -> { ok, panelA, panelB } of keys or { ok: false, why }; `holdBlocksOf(contract)`; `abandoned(bytes, beforeHeight)` -> { verdict, why } this seat's word on an abandonment's proof (federation-records.js abandonedVerdict); `theft(bytes, beforeHeight)` the same on a theft's proof (theftVerdict, kanban #1093 part 2).
  * Answers `judge(bytes)` -> { verdict, why }, and `judge.read(bytes)`, the cheap part, with no replay: { ok, kind, bond: { txid, vout }, roundId, contract, floorHeight, nodePubkey } or { ok: false, why }.
  */
-export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, replayRunOf, auditSetOf = () => null, vrf = null, manifestOf = () => null, clientOf = async () => null, panelsOf = () => ({ ok: false, why: 'no panels here' }), holdBlocksOf = () => null, abandoned = async () => ({ verdict: undefined, why: 'this seat reads no federation records' }), waiting = 32, kept = 256 }) {
+export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, replayRunOf, auditSetOf = () => null, vrf = null, manifestOf = () => null, clientOf = async () => null, panelsOf = () => ({ ok: false, why: 'no panels here' }), holdBlocksOf = () => null, abandoned = async () => ({ verdict: undefined, why: 'this seat reads no federation records' }), theft = async () => ({ verdict: undefined, why: 'this seat audits no federation' }), waiting = 32, kept = 256 }) {
   /** Everything that needs no chain: the bytes read as a proof, and the contract in them is the round the proof names. */
   function read(bytes) {
     if (isAbandonedProof(bytes)) {
       try { const p = decodeAbandonedProof(bytes); return { ok: true, kind: 'abandoned', roundId: null, contract: null, nodePubkey: p.nodePubkey, bond: { txid: p.txid, vout: p.vout }, floorHeight: splitSignedRecord(p.record).record.height }; }
+      catch (e) { return { ok: false, why: `those bytes are no proof: ${e.message}` }; }
+    }
+    // A THEFT (kanban #1093 part 2): no round either; the guardian's bond output, and the record's height is the floor a start's slash height stands on
+    if (isTheftProof(bytes)) {
+      try { const p = decodeTheftProof(bytes); return { ok: true, kind: 'theft', roundId: null, contract: null, nodePubkey: p.nodePubkey, bond: { txid: p.txid, vout: p.vout }, floorHeight: splitSignedRecord(p.record).record.height, federationId: p.federationId, mark: p.mark }; }
       catch (e) { return { ok: false, why: `those bytes are no proof: ${e.message}` }; }
     }
     let complete, got, contract;
@@ -105,6 +111,8 @@ export function createProofJudge({ committeeOf, censusOf, coreOf, beaconOf, repl
   async function judge(bytes, { startHeight = null } = {}) {
     // AN ABANDONMENT IS READ OFF THE CHAIN AS IT STANDS: no replay, and its answer moves with the output, so it is kept nowhere
     if (isAbandonedProof(bytes)) return abandoned(bytes, startHeight === null ? null : startHeight - 1);
+    // A THEFT LIKEWISE: this seat's own alarm book and its own chain, kept nowhere
+    if (isTheftProof(bytes)) return theft(bytes, startHeight === null ? null : startHeight - 1);
     const id = toHex(fraudProofHash(bytes)), had = verdicts.get(id);
     if (had) return had;
     if (queued >= waiting) return { verdict: undefined, why: 'this seat has too many proofs to judge just now' };

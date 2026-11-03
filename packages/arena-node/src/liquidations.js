@@ -67,5 +67,6 @@ export function createLiquidations({ records, clocks, verify, claimsUrl = null, 
       };
     });
   }
-  return { offer, list };
+  // haltOf: the halt a federation is liquidated from, of either source or a mark of theft (kanban #1093 part 2: where a slashed guardian bond is owed, theft-slash.js slashedGuardianPays)
+  return { offer, list, haltOf };
 }

@@ -407,6 +407,11 @@ export const TYPE_STALL_NOTE = 0x41;
 export const TYPE_SETTLEMENT_ASK = 0x45;
 /** The proof an abandonment's slash commits to (§23A.5, kanban #1062): the signed record holding the row, the node, the row's proof_ref and the output. */
 export const TYPE_ABANDONED_PROOF = 0x42;
+/**
+ * The proof a theft's slash commits to (kanban #1093 part 2, ruling #1106): a federation's mark of theft (inflation or an unbacked spend), the guardian the
+ * signed record lists, and that guardian's output: theft-slash.js. 0x46, the first free byte past 0x45 (0x0d, 0x0f stay unused, see above).
+ */
+export const TYPE_THEFT_PROOF = 0x46;
 
 /** The byte `feeTableId` opens with (fee.js). It named a fee claim once; no node claims anything (kanban #1035), and the byte stays so no table id moves. */
 export const TYPE_FEE_TABLE = 0x0e;
