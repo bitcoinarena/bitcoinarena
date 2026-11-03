@@ -100,10 +100,21 @@ export function encodeAdvert(a) {
       throw new Error(`a template-${a.bondScriptTemplateVersion} advertisement names its bond_maturity_height as a block height, not ${a.bondMaturityHeight}`);
     w.u32(a.bondMaturityHeight);
     // TEMPLATE 3 NAMES ITS CENSUS KEY (5A.3B): path B's leaf holds it, so a reader cannot rebuild the output key without it.
-    if (a.bondScriptTemplateVersion === 3) w.bytes32(a.censusKey);
+    if (a.bondScriptTemplateVersion === 3) {
+      w.bytes32(a.censusKey);
+      // AND ITS OWNER KEY (kanban #1093 part 1, ruling #1103: "owner_pubkey: a field of template-3 advertisements, no protocol bump ... present
+      // in every template-3 advertisement, absent from every other"; the §23A.5a key, from the 24 words): path A and the hold's return are
+      // signed with it, so a reader cannot rebuild the output key without it, and no hot key reaches the bond
+      if (!(a.ownerPubkey instanceof Uint8Array) || a.ownerPubkey.length !== 32) throw new Error('a template-3 advertisement names its owner_pubkey (32 bytes)');
+      if (a.emergencyPubkey instanceof Uint8Array && !a.emergencyPubkey.every((b, i) => b === a.ownerPubkey[i]))
+        throw new Error('a template-3 advertisement\'s emergency key is its owner key: the two differ');
+      w.bytes32(a.ownerPubkey);
+    }
   } else if (a.bondMaturityHeight !== undefined) {
     throw new Error(`template ${a.bondScriptTemplateVersion} carries no bond_maturity_height`);
   }
+  if (a.bondScriptTemplateVersion !== 3 && a.ownerPubkey !== undefined && a.ownerPubkey !== null)
+    throw new Error(`template ${a.bondScriptTemplateVersion} carries no owner_pubkey: only template 3 does`);
 
   w.bytes32(a.payoutPubkey);
 
@@ -209,7 +220,7 @@ export function decodeAdvert(bytes) {
     bondScriptTemplateVersion: r.u16(),
   };
   if (a.bondScriptTemplateVersion === 2 || a.bondScriptTemplateVersion === 3) a.bondMaturityHeight = r.u32();
-  if (a.bondScriptTemplateVersion === 3) a.censusKey = r.bytes32();
+  if (a.bondScriptTemplateVersion === 3) { a.censusKey = r.bytes32(); a.ownerPubkey = r.bytes32(); }
   Object.assign(a, {
     payoutPubkey: r.bytes32(),
     guardianOf: r.vec((rr) => ({ federationId: rr.bytes32(), guardianKey: rr.bytes(GUARDIAN_KEY_BYTES) })),
