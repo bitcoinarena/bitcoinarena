@@ -93,10 +93,14 @@ export function abandonmentProofNeeds({ f, halted = false, seated = null }) {
  *   departure_notice   notice a guardian gives before leaving
  *   founding_window    time a drawn set has to finish its DKG
  *   drain_blocks       how long a draining federation serves, AND the late-claim tail (four weeks)
- *   claim_blocks       the liquidation claim window the arbitration set opens
+ *   claim_blocks       the old 36 h claim window, still hashed into each network id; no longer read (below)
+ *   liquidation_claim_blocks  HOW LONG A PLAYER HAS TO CLAIM (kanban #1093 part 8, the owner 2026-11-03): 3 months from the halt -
+ *                      mainnet 12,960, testnet4 at its short clocks (a twentieth), regtest its own. A claim is paid when it is made;
+ *                      what is left goes to the protocol reserves only after the window, never earlier. A code rule, not a genesis
+ *                      byte, so the live testnet4 network id does not change.
  */
 export const MAINNET_CLOCKS = Object.freeze({
-  abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216,
+  abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216, liquidationClaimBlocks: 12960,
 });
 
 /**
@@ -105,10 +109,10 @@ export const MAINNET_CLOCKS = Object.freeze({
  * Regtest counts in tens of blocks, because its blocks come when somebody presses a button.
  */
 export const TESTNET_CLOCKS = Object.freeze({
-  abandonBlocks: 12, departureNotice: 18, foundingWindow: 18, drainBlocks: 144, claimBlocks: 9,
+  abandonBlocks: 12, departureNotice: 18, foundingWindow: 18, drainBlocks: 144, claimBlocks: 9, liquidationClaimBlocks: 648,
 });
 export const REGTEST_CLOCKS = Object.freeze({
-  abandonBlocks: 10, departureNotice: 10, foundingWindow: 10, drainBlocks: 100, claimBlocks: 10,
+  abandonBlocks: 10, departureNotice: 10, foundingWindow: 10, drainBlocks: 100, claimBlocks: 10, liquidationClaimBlocks: 100,
 });
 export const CLOCKS = Object.freeze({
   mainnet: MAINNET_CLOCKS, testnet4: TESTNET_CLOCKS, testnet: TESTNET_CLOCKS, regtest: REGTEST_CLOCKS,
@@ -136,30 +140,24 @@ export function lifecycleBlocks(clocks) {
 }
 
 /**
- * WHEN A HALTED FEDERATION'S REMAINDER MAY BE SPLIT, and not one block sooner.
+ * WHEN A HALTED FEDERATION'S CLAIMS OPEN AND CLOSE, and when its remainder may be split - not one block sooner.
  *
- * The claim window closes at `claim_blocks` and every valid claim filed in it is paid. A note shown LATE
- * is still paid from what is left until `drain_blocks` after the halt - the player who was offline for a
- * weekend is not the one the deadline is for. Only the remainder after THAT goes to the reserves, and
- * nothing a player could still have claimed is ever destroyed.
+ * The window opens when the liquidation does (§23A.5: halted for abandon_blocks) and closes liquidation_claim_blocks after the halt:
+ * 3 months on mainnet (kanban #1093 part 8, the owner 2026-11-03; it was claim_blocks plus a drain_blocks late tail). A claim is paid
+ * when it is made. Only after the window does the rest go to the reserves: e-cash is anonymous, so nobody can know every holder came.
+ * `lateClaimsUntil` is the same height as the close, kept for readers that name it.
  */
 export function liquidationSchedule({ haltHeight, clocks = MAINNET_CLOCKS }) {
   if (!Number.isInteger(haltHeight) || haltHeight < 0)
     return { ok: false, why: 'a halt happens at a block height' };
-  // THE WINDOW OPENS WHEN THE LIQUIDATION DOES (§23A.5: "A federation that has been HALTED for abandon_blocks ... is liquidated
-  // ... 2. The arbitration set opens a claim window of claim_blocks"), and runs claim_blocks from there. It closed at halt +
-  // claim_blocks before (found by the claim book's test): on mainnet 72 blocks BEFORE it opened at halt + 288, and
-  // a seat listed liquidatesAt 892 beside claimWindowCloses 889.
-  return {
-    ok: true,
-    claimWindowOpens: haltHeight + clocks.abandonBlocks,
-    claimWindowCloses: haltHeight + clocks.abandonBlocks + clocks.claimBlocks,
-    lateClaimsUntil: haltHeight + clocks.drainBlocks,
-    remainderSplitsAt: haltHeight + clocks.drainBlocks,
-  };
+  const window = clocks && clocks.liquidationClaimBlocks;
+  if (!Number.isInteger(window) || window <= 0) return { ok: false, why: 'those clocks name no liquidation claim window (liquidationClaimBlocks)' };
+  const opens = haltHeight + clocks.abandonBlocks;
+  const closes = Math.max(opens, haltHeight + window);
+  return { ok: true, claimWindowOpens: opens, claimWindowCloses: closes, lateClaimsUntil: closes, remainderSplitsAt: closes + 1 };
 }
 
-/** May the remainder go to the reserves yet? Never before the late-claim tail has run out. */
+/** May the remainder go to the reserves yet? Never while a player may still claim. */
 export function remainderMaySplit({ haltHeight, atHeight, clocks = MAINNET_CLOCKS }) {
   const when = liquidationSchedule({ haltHeight, clocks });
   if (!when.ok) return when;
@@ -168,16 +166,16 @@ export function remainderMaySplit({ haltHeight, atHeight, clocks = MAINNET_CLOCK
 }
 
 /**
- * THE CLAIMS ON A HALTED FEDERATION'S ESCROW, SETTLED (spec §23A.5 liquidation steps 3-4). `claims`: notes presented
- * as [{ nonce (hex), amountMsat, height }], each checked by the injected `noteSigned(claim)` (the federation's signature on the
- * note); `spentNonces`: the published spent-note set (hex), or null when no seated guardian published one. In this order:
+ * THE CLAIMS ON A HALTED FEDERATION'S ESCROW, SETTLED (spec §23A.5, kanban #1093 part 8). `claims`: notes presented as
+ * [{ nonce (hex), amountMsat, height }], each checked by the injected `noteSigned(claim)` (the federation's signature on the note);
+ * `spentNonces`: the published spent-note set (hex), or null when no seated guardian published one. In this order:
  *   1. refused by name: not the federation's note, already spent, claimed before (the first presentation counts), or presented
- *      after drain_blocks
- *   2. the claims inside the window: at face value, or pro rata when the escrow is short (the rate is answered, the client
- *      shows it)
- *   3. the late ones, up to drain_blocks after the halt: from what is left, in order of height then nonce, each at face value
- *      while it lasts
- *   4. only then the remainder, to the protocol reserves (slashSplit), and only once remainderMaySplit says so at `atHeight`
+ *      after the window closed
+ *   2. every other claim at face, in the order it was made (height, then nonce): paid when made, nobody waits for anyone. The cap keeps
+ *      the escrow at least the reserve at the halt; should it still run short, the first claims are paid in full and `short` says so -
+ *      a later claim never takes from one made before it
+ *   3. only after the window, the remainder to the protocol reserves (slashSplit)
+ * `proRata` is always false now and `rate` 1, kept for readers that name them.
  */
 export function settleClaims({ escrowMsat, claims = [], spentNonces = null, haltHeight, atHeight, clocks = MAINNET_CLOCKS, noteSigned }) {
   const when = liquidationSchedule({ haltHeight, clocks });
@@ -185,30 +183,28 @@ export function settleClaims({ escrowMsat, claims = [], spentNonces = null, halt
   if (typeof escrowMsat !== 'bigint' || escrowMsat < 0n) return { ok: false, why: 'the escrow is a number of msat' };
   const spent = new Set((spentNonces || []).map((n) => String(n).toLowerCase()));
   const seen = new Set();
-  const refused = []; const inWindow = []; const late = [];
+  const refused = []; const taken = [];
   const ordered = [...claims].sort((a, b) => (a.height - b.height) || (String(a.nonce) < String(b.nonce) ? -1 : 1));
   for (const c of ordered) {
     const nonce = String(c.nonce).toLowerCase();
     if (typeof noteSigned !== 'function' || !noteSigned(c)) { refused.push({ nonce, why: 'that note does not carry the federation\'s signature' }); continue; }
     if (spent.has(nonce)) { refused.push({ nonce, why: 'that note\'s nonce is in the published spent set' }); continue; }
     if (seen.has(nonce)) { refused.push({ nonce, why: 'that note was claimed before' }); continue; }
-    if (c.height > when.lateClaimsUntil) { refused.push({ nonce, why: `presented at ${c.height}, after drain_blocks (until ${when.lateClaimsUntil}): the holder's loss` }); continue; }
+    if (c.height > when.claimWindowCloses) { refused.push({ nonce, why: `presented at ${c.height}, after the claim window closed at ${when.claimWindowCloses}: the holder's loss` }); continue; }
     seen.add(nonce);
-    (c.height <= when.claimWindowCloses ? inWindow : late).push({ nonce, amountMsat: BigInt(c.amountMsat), height: c.height });
+    taken.push({ nonce, amountMsat: BigInt(c.amountMsat), height: c.height });
   }
-  const owed = inWindow.reduce((a, c) => a + c.amountMsat, 0n);
-  const short = owed > escrowMsat;
-  const paid = inWindow.map((c) => ({ nonce: c.nonce, msat: short ? (c.amountMsat * escrowMsat) / owed : c.amountMsat, late: false }));
-  let left = escrowMsat - paid.reduce((a, p) => a + p.msat, 0n);
-  for (const c of late) {
+  const paid = []; let left = escrowMsat, shortMsat = 0n;
+  for (const c of taken) {
     const msat = c.amountMsat <= left ? c.amountMsat : left;
-    paid.push({ nonce: c.nonce, msat, late: true }); left -= msat;
+    shortMsat += c.amountMsat - msat;
+    paid.push({ nonce: c.nonce, msat, late: false }); left -= msat;
   }
   const may = remainderMaySplit({ haltHeight, atHeight, clocks });
   const split = may.ok && may.may ? slashSplit({ amountMsat: left }) : null;
-  return { ok: true, paid, refused, proRata: short, rate: short ? Number((escrowMsat * 10000n) / owed) / 10000 : 1,
+  return { ok: true, paid, refused, proRata: false, rate: 1, short: shortMsat > 0n, shortMsat,
     spentSetPublished: spentNonces !== null, remainderMsat: left, split: split ? { reserves: split.reserves } : null,
-    remainderSplitsAt: when.remainderSplitsAt };
+    claimWindowCloses: when.claimWindowCloses, remainderSplitsAt: when.remainderSplitsAt };
 }
 
 const hexKey = (k) => (k instanceof Uint8Array ? Array.from(k, (b) => b.toString(16).padStart(2, '0')).join('') : String(k || '')).toLowerCase();

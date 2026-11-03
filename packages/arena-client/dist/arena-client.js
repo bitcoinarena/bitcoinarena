@@ -5609,10 +5609,21 @@ function encodeAdvert(a) {
       throw new Error(`a template-${a.bondScriptTemplateVersion} advertisement names its bond_maturity_height as a block height, not ${a.bondMaturityHeight}`);
     w.u32(a.bondMaturityHeight);
     // TEMPLATE 3 NAMES ITS CENSUS KEY (5A.3B): path B's leaf holds it, so a reader cannot rebuild the output key without it.
-    if (a.bondScriptTemplateVersion === 3) w.bytes32(a.censusKey);
+    if (a.bondScriptTemplateVersion === 3) {
+      w.bytes32(a.censusKey);
+      // AND ITS OWNER KEY (kanban #1093 part 1, ruling #1103: "owner_pubkey: a field of template-3 advertisements, no protocol bump ... present
+      // in every template-3 advertisement, absent from every other"; the §23A.5a key, from the 24 words): path A and the hold's return are
+      // signed with it, so a reader cannot rebuild the output key without it, and no hot key reaches the bond
+      if (!(a.ownerPubkey instanceof Uint8Array) || a.ownerPubkey.length !== 32) throw new Error('a template-3 advertisement names its owner_pubkey (32 bytes)');
+      if (a.emergencyPubkey instanceof Uint8Array && !a.emergencyPubkey.every((b, i) => b === a.ownerPubkey[i]))
+        throw new Error('a template-3 advertisement\'s emergency key is its owner key: the two differ');
+      w.bytes32(a.ownerPubkey);
+    }
   } else if (a.bondMaturityHeight !== undefined) {
     throw new Error(`template ${a.bondScriptTemplateVersion} carries no bond_maturity_height`);
   }
+  if (a.bondScriptTemplateVersion !== 3 && a.ownerPubkey !== undefined && a.ownerPubkey !== null)
+    throw new Error(`template ${a.bondScriptTemplateVersion} carries no owner_pubkey: only template 3 does`);
 
   w.bytes32(a.payoutPubkey);
 
@@ -5642,6 +5653,13 @@ function encodeAdvert(a) {
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   w.vec(a.hostedGames, (g, ww) => ww.bytes32(g));
   w.u64(a.timestamp);
+  // WHERE THE NODE RUNS (kanban #1093 part 4, "Guardians spread": "a new optional advert field, the machine or provider, self-declared"): the
+  // hash of the name its owner gives (hostGroupOf), so no provider name is on the chain; first of the optional fields, 32 bytes after their
+  // marker. None is no bytes, so every advertisement before this keeps its bytes. The founding draw seats at most f guardians of one group.
+  if (a.hostGroup !== undefined && a.hostGroup !== null) {
+    if (!(a.hostGroup instanceof Uint8Array) || a.hostGroup.length !== 32) throw new Error('a host_group is 32 bytes (hostGroupOf of the machine or provider name)');
+    w.u8(HOST_GROUP_MARKER); w.bytes32(a.hostGroup);
+  }
   // STEPPING OUT WITHOUT UNBONDING (§5A.3, RULED 2026-09-28): `serving = false`, published as an advertisement
   // update, takes the node out of every census from that update's block on - its bond untouched. Written only when false, one
   // marker byte last: "serving" is no bytes, so every advertisement before this keeps its bytes and the hash its bond committed to.
@@ -5673,6 +5691,10 @@ function encodeAdvert(a) {
 
 /** The byte before a node's declared scalars (§27A.2), before serving. */
 const DECLARES_MARKER = 0x5d;
+/** The byte before a node's host_group (kanban #1093 part 4), first of the optional fields. */
+const HOST_GROUP_MARKER = 0x5b;
+/** A host_group from the machine or provider name its owner gives: case and spaces do not make another group. */
+const hostGroupOf = (name) => taggedHash('ARENA/v1/HostGroup', new TextEncoder().encode(String(name || '').trim().toLowerCase().replace(/\s+/g, ' ')));
 /** The byte before the owner's emergency key (§23A.5a, protocol 17), after the declared scalars, before serving. */
 const EMERGENCY_MARKER = 0x5e;
 /** The byte before a bond's slash_presig (5A.3B, kanban #1053), after the emergency key, before serving. */
@@ -5718,7 +5740,7 @@ function decodeAdvert(bytes) {
     bondScriptTemplateVersion: r.u16(),
   };
   if (a.bondScriptTemplateVersion === 2 || a.bondScriptTemplateVersion === 3) a.bondMaturityHeight = r.u32();
-  if (a.bondScriptTemplateVersion === 3) a.censusKey = r.bytes32();
+  if (a.bondScriptTemplateVersion === 3) { a.censusKey = r.bytes32(); a.ownerPubkey = r.bytes32(); }
   Object.assign(a, {
     payoutPubkey: r.bytes32(),
     guardianOf: r.vec((rr) => ({ federationId: rr.bytes32(), guardianKey: rr.bytes(GUARDIAN_KEY_BYTES) })),
@@ -5733,6 +5755,10 @@ function decodeAdvert(bytes) {
   for (let i = 1; i < a.hostedGames.length; i++)
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   a.timestamp = r.u64();
+  // the host_group (33), first, only when written (kanban #1093 part 4); then as before
+  const OPTIONAL_TAILS = [0, 1, 17, 18, 33, 34, 50, 51, 66, 67, 83, 84, 99, 100, 116, 117];
+  const left0 = bytes.length - r.at;
+  if (OPTIONAL_TAILS.map((x) => x + 33).includes(left0) && bytes[r.at] === HOST_GROUP_MARKER) { r.u8(); a.hostGroup = r.bytes32(); }
   // the declared scalars (17 bytes), the emergency key (33), the slash_presig (66) and serving = false (1), each only when written, in that order
   const left = bytes.length - r.at;
   if ([17, 18, 50, 51, 83, 84, 116, 117].includes(left) && bytes[r.at] === DECLARES_MARKER) { r.u8(); a.declares = { bondMinSats: r.u64(), proposalDepositSats: r.u64() }; }
@@ -6420,17 +6446,16 @@ function slashStartLeaf(nodeKey, censusKey) {
 }
 
 /**
- * THE TEMPLATE-3 TREE: path A as ever, path B the slash start, the key path the MuSig2 of the node and the arbitration set that
- * "stays" (5A.3B). Answers the same names `bondTapTree` does, so `controlBlockFor` serves both.
+ * THE TEMPLATE-3 TREE (kanban #1093 part 1, ruling #1103, 2026-11-03: "no hot key reaches a bond"): path A the owner key's recovery after
+ * maturity - the §23A.5a key from the 24 words, kept off the node - and path B the slash start (node key's advance signature AND the census
+ * key). The internal key is unspendable (NUMS, the hold's): template 3 has no arbitration set, and a MuSig2 of the node with a derivable test
+ * set was a door for the node key. A node leaves by path A after maturity, signed by its owner. Answers the names `bondTapTree` does.
  */
-function bond3TapTree({ nodeKey, censusKey, arbitrationKeys, bondMaturity, internalKey }, { combine } = {}) {
-  if (typeof combine !== 'function') throw new Error('no curve was given to aggregate the key path with');
-  const want = bondInternalKey({ nodeKey, arbitrationKeys }, { combine });
-  if (!want.ok) throw new Error(want.why);
-  if (!isKey32(internalKey)) throw new TypeError('the internal key is 32 bytes');
-  if (!sameKey(want.internalKey, internalKey))
-    throw new Error('that internal key is not the MuSig2 aggregate of the node and arbitration keys');
-  const a = tapLeafHash(recoveryLeaf(nodeKey, blockHeight(bondMaturity)));
+function bond3TapTree({ nodeKey, ownerKey, censusKey, bondMaturity }) {
+  if (!isKey32(ownerKey)) throw new TypeError('a template-3 bond names its owner key (32 bytes): path A is signed with it');
+  if (!isKey32(nodeKey)) throw new TypeError('the node key is 32 bytes');
+  const internalKey = HOLD_INTERNAL_KEY;
+  const a = tapLeafHash(recoveryLeaf(ownerKey, blockHeight(bondMaturity)));
   const b = tapLeafHash(slashStartLeaf(nodeKey, censusKey));
   const merkleRoot = tapBranchHash(a, b);
   return { internalKey, recovery: a, slash: b, merkleRoot, tweak: tapTweak(internalKey, merkleRoot) };
@@ -6448,11 +6473,10 @@ function outputOfTree(tree, tweakPoint) {
   return { ok: true, outputKey, parity, ...tree };
 }
 
-function bond3OutputKey(inputs, { tweakPoint, combine } = {}) {
+function bond3OutputKey(inputs, { tweakPoint } = {}) {
   if (typeof tweakPoint !== 'function') return { ok: false, why: 'no curve was given to add the tweak with' };
-  if (typeof combine !== 'function') return { ok: false, why: 'no curve was given to aggregate the key path with' };
   let tree;
-  try { tree = bond3TapTree(inputs, { combine }); } catch (e) { return { ok: false, why: e.message }; }
+  try { tree = bond3TapTree(inputs); } catch (e) { return { ok: false, why: e.message }; }
   return outputOfTree(tree, tweakPoint);
 }
 
@@ -6460,7 +6484,7 @@ function bond3OutputKeyMatches(onChain, inputs, curve = {}) {
   if (!isKey32(onChain)) return { ok: false, why: 'that is not a 32-byte taproot output key' };
   const built = bond3OutputKey(inputs, curve);
   if (!built.ok) return built;
-  if (!sameKey(built.outputKey, onChain)) return { ok: false, why: 'that output key is not the template-3 tweak of the keys, census key and maturity it declares' };
+  if (!sameKey(built.outputKey, onChain)) return { ok: false, why: 'that output key is not the template-3 tweak of the owner key, node key, census key and maturity it declares' };
   return { ok: true, ...built };
 }
 
@@ -6508,9 +6532,14 @@ function escrowReleaseLeaf({ panelA, panelB }) {
   return cat(panelCount(panelA, OP_NUMEQUALVERIFY), panelCount(panelB, OP_NUMEQUAL));
 }
 
-/** RETURN: `<slash_return_blocks> CHECKSEQUENCEVERIFY DROP <bond_maturity> CHECKLOCKTIMEVERIFY DROP <node_key> CHECKSIG`. */
-function returnLeaf({ nodeKey, bondMaturity, returnBlocks }) {
-  return cat(relativeLock(returnBlocks), recoveryLeaf(nodeKey, blockHeight(bondMaturity)));
+/**
+ * RETURN: `<slash_return_blocks> CHECKSEQUENCEVERIFY DROP <bond_maturity> CHECKLOCKTIMEVERIFY DROP <owner_key> CHECKSIG` (kanban #1093 part 1,
+ * ruling #1103: "owner key only. The owner signs it; there is no automatic return"): a false start nobody releases is taken back by the owner
+ * with the 24 words; the node prepares the transaction and shows it. A node-key leaf would put the hot key back on the bond in exactly that case.
+ */
+function returnLeaf({ ownerKey, bondMaturity, returnBlocks }) {
+  if (!isKey32(ownerKey)) throw new TypeError('the hold\'s return is signed by the owner key (32 bytes)');
+  return cat(relativeLock(returnBlocks), recoveryLeaf(ownerKey, blockHeight(bondMaturity)));
 }
 
 /** FALLBACK: `<slash_fallback_blocks> CHECKSEQUENCEVERIFY DROP <census_key(e)> CHECKSIG`. */
@@ -6519,20 +6548,20 @@ function fallbackLeaf({ censusKey, fallbackBlocks }) {
 }
 
 /**
- * THE HOLD OUTPUT, AS HASHES, rebuilt by anyone from the bond and the round: `{ nodeKey, censusKey, panelA, panelB, bondMaturity,
+ * THE HOLD OUTPUT, AS HASHES, rebuilt by anyone from the bond and the round: `{ ownerKey, censusKey, panelA, panelB, bondMaturity,
  * holdBlocks, returnBlocks, fallbackBlocks }`. The spec names the three leaves and not their shape: the release sits one level
  * down, because it is the spend the design expects, and the two leaves that should never run share the deeper branch. A round
  * with no panels (both empty) has no release leaf, and the tree is those two alone.
  *
  * 5A.3B: "a mature node leaves at slash_return_blocks, before the fallback opens". That is only true with hold < return < fallback.
  */
-function holdTapTree({ nodeKey, censusKey, panelA, panelB, bondMaturity, holdBlocks, returnBlocks, fallbackBlocks }) {
+function holdTapTree({ ownerKey, censusKey, panelA, panelB, bondMaturity, holdBlocks, returnBlocks, fallbackBlocks }) {
   if (!(holdBlocks < returnBlocks && returnBlocks < fallbackBlocks))
     throw new RangeError(`the clocks ${holdBlocks} / ${returnBlocks} / ${fallbackBlocks} do not run hold, then return, then fallback`);
   const noPanels = (panelA || []).length === 0 && (panelB || []).length === 0;
   const scripts = {
     ...(noPanels ? {} : { release: releaseLeaf({ panelA, panelB, holdBlocks }) }),
-    return: returnLeaf({ nodeKey, bondMaturity, returnBlocks }),
+    return: returnLeaf({ ownerKey, bondMaturity, returnBlocks }),
     fallback: fallbackLeaf({ censusKey, fallbackBlocks }),
   };
   const leaves = { return: tapLeafHash(scripts.return), fallback: tapLeafHash(scripts.fallback) };
@@ -6916,16 +6945,16 @@ function bondKeyMatches(script, advert, { arbitrationKeys, arbitrationK, bondMat
   const maturity = bondMaturityOf(advert, { genesisMaturity: bondMaturity, network });
   if (!maturity.ok) return maturity;
 
+  // TEMPLATE 3: path A the owner key the advertisement names, path B the census key it names, an unspendable internal key (kanban #1093
+  // part 1, ruling #1103). Whether that census key may be named is the census' question.
+  if (advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3)
+    return bond3OutputKeyMatches(script.subarray(2, 34), {
+      nodeKey: advert.nodePubkey, ownerKey: advert.ownerPubkey, censusKey: advert.censusKey, bondMaturity: maturity.maturity,
+    }, { tweakPoint });
+
   const derived = bondInternalKey(
     { nodeKey: advert.nodePubkey, arbitrationKeys }, { combine });
   if (!derived.ok) return derived;
-
-  // TEMPLATE 3: path B holds the census key the advertisement names. Whether that key may be named is the census' question.
-  if (advert.bondScriptTemplateVersion === BOND_TEMPLATE_V3)
-    return bond3OutputKeyMatches(script.subarray(2, 34), {
-      nodeKey: advert.nodePubkey, censusKey: advert.censusKey, arbitrationKeys, bondMaturity: maturity.maturity,
-      internalKey: derived.internalKey,
-    }, { tweakPoint, combine });
 
   return bondOutputKeyMatches(script.subarray(2, 34), {
     nodeKey: advert.nodePubkey, arbitrationKeys, arbitrationK, bondMaturity: maturity.maturity,
@@ -7749,10 +7778,14 @@ function abandonmentProofNeeds({ f, halted = false, seated = null }) {
  *   departure_notice   notice a guardian gives before leaving
  *   founding_window    time a drawn set has to finish its DKG
  *   drain_blocks       how long a draining federation serves, AND the late-claim tail (four weeks)
- *   claim_blocks       the liquidation claim window the arbitration set opens
+ *   claim_blocks       the old 36 h claim window, still hashed into each network id; no longer read (below)
+ *   liquidation_claim_blocks  HOW LONG A PLAYER HAS TO CLAIM (kanban #1093 part 8, the owner 2026-11-03): 3 months from the halt -
+ *                      mainnet 12,960, testnet4 at its short clocks (a twentieth), regtest its own. A claim is paid when it is made;
+ *                      what is left goes to the protocol reserves only after the window, never earlier. A code rule, not a genesis
+ *                      byte, so the live testnet4 network id does not change.
  */
 const MAINNET_CLOCKS = Object.freeze({
-  abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216,
+  abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216, liquidationClaimBlocks: 12960,
 });
 
 /**
@@ -7761,10 +7794,10 @@ const MAINNET_CLOCKS = Object.freeze({
  * Regtest counts in tens of blocks, because its blocks come when somebody presses a button.
  */
 const TESTNET_CLOCKS = Object.freeze({
-  abandonBlocks: 12, departureNotice: 18, foundingWindow: 18, drainBlocks: 144, claimBlocks: 9,
+  abandonBlocks: 12, departureNotice: 18, foundingWindow: 18, drainBlocks: 144, claimBlocks: 9, liquidationClaimBlocks: 648,
 });
 const REGTEST_CLOCKS = Object.freeze({
-  abandonBlocks: 10, departureNotice: 10, foundingWindow: 10, drainBlocks: 100, claimBlocks: 10,
+  abandonBlocks: 10, departureNotice: 10, foundingWindow: 10, drainBlocks: 100, claimBlocks: 10, liquidationClaimBlocks: 100,
 });
 const CLOCKS = Object.freeze({
   mainnet: MAINNET_CLOCKS, testnet4: TESTNET_CLOCKS, testnet: TESTNET_CLOCKS, regtest: REGTEST_CLOCKS,
@@ -7792,30 +7825,24 @@ function lifecycleBlocks(clocks) {
 }
 
 /**
- * WHEN A HALTED FEDERATION'S REMAINDER MAY BE SPLIT, and not one block sooner.
+ * WHEN A HALTED FEDERATION'S CLAIMS OPEN AND CLOSE, and when its remainder may be split - not one block sooner.
  *
- * The claim window closes at `claim_blocks` and every valid claim filed in it is paid. A note shown LATE
- * is still paid from what is left until `drain_blocks` after the halt - the player who was offline for a
- * weekend is not the one the deadline is for. Only the remainder after THAT goes to the reserves, and
- * nothing a player could still have claimed is ever destroyed.
+ * The window opens when the liquidation does (§23A.5: halted for abandon_blocks) and closes liquidation_claim_blocks after the halt:
+ * 3 months on mainnet (kanban #1093 part 8, the owner 2026-11-03; it was claim_blocks plus a drain_blocks late tail). A claim is paid
+ * when it is made. Only after the window does the rest go to the reserves: e-cash is anonymous, so nobody can know every holder came.
+ * `lateClaimsUntil` is the same height as the close, kept for readers that name it.
  */
 function liquidationSchedule({ haltHeight, clocks = MAINNET_CLOCKS }) {
   if (!Number.isInteger(haltHeight) || haltHeight < 0)
     return { ok: false, why: 'a halt happens at a block height' };
-  // THE WINDOW OPENS WHEN THE LIQUIDATION DOES (§23A.5: "A federation that has been HALTED for abandon_blocks ... is liquidated
-  // ... 2. The arbitration set opens a claim window of claim_blocks"), and runs claim_blocks from there. It closed at halt +
-  // claim_blocks before (found by the claim book's test): on mainnet 72 blocks BEFORE it opened at halt + 288, and
-  // a seat listed liquidatesAt 892 beside claimWindowCloses 889.
-  return {
-    ok: true,
-    claimWindowOpens: haltHeight + clocks.abandonBlocks,
-    claimWindowCloses: haltHeight + clocks.abandonBlocks + clocks.claimBlocks,
-    lateClaimsUntil: haltHeight + clocks.drainBlocks,
-    remainderSplitsAt: haltHeight + clocks.drainBlocks,
-  };
+  const window = clocks && clocks.liquidationClaimBlocks;
+  if (!Number.isInteger(window) || window <= 0) return { ok: false, why: 'those clocks name no liquidation claim window (liquidationClaimBlocks)' };
+  const opens = haltHeight + clocks.abandonBlocks;
+  const closes = Math.max(opens, haltHeight + window);
+  return { ok: true, claimWindowOpens: opens, claimWindowCloses: closes, lateClaimsUntil: closes, remainderSplitsAt: closes + 1 };
 }
 
-/** May the remainder go to the reserves yet? Never before the late-claim tail has run out. */
+/** May the remainder go to the reserves yet? Never while a player may still claim. */
 function remainderMaySplit({ haltHeight, atHeight, clocks = MAINNET_CLOCKS }) {
   const when = liquidationSchedule({ haltHeight, clocks });
   if (!when.ok) return when;
@@ -7824,16 +7851,16 @@ function remainderMaySplit({ haltHeight, atHeight, clocks = MAINNET_CLOCKS }) {
 }
 
 /**
- * THE CLAIMS ON A HALTED FEDERATION'S ESCROW, SETTLED (spec §23A.5 liquidation steps 3-4). `claims`: notes presented
- * as [{ nonce (hex), amountMsat, height }], each checked by the injected `noteSigned(claim)` (the federation's signature on the
- * note); `spentNonces`: the published spent-note set (hex), or null when no seated guardian published one. In this order:
+ * THE CLAIMS ON A HALTED FEDERATION'S ESCROW, SETTLED (spec §23A.5, kanban #1093 part 8). `claims`: notes presented as
+ * [{ nonce (hex), amountMsat, height }], each checked by the injected `noteSigned(claim)` (the federation's signature on the note);
+ * `spentNonces`: the published spent-note set (hex), or null when no seated guardian published one. In this order:
  *   1. refused by name: not the federation's note, already spent, claimed before (the first presentation counts), or presented
- *      after drain_blocks
- *   2. the claims inside the window: at face value, or pro rata when the escrow is short (the rate is answered, the client
- *      shows it)
- *   3. the late ones, up to drain_blocks after the halt: from what is left, in order of height then nonce, each at face value
- *      while it lasts
- *   4. only then the remainder, to the protocol reserves (slashSplit), and only once remainderMaySplit says so at `atHeight`
+ *      after the window closed
+ *   2. every other claim at face, in the order it was made (height, then nonce): paid when made, nobody waits for anyone. The cap keeps
+ *      the escrow at least the reserve at the halt; should it still run short, the first claims are paid in full and `short` says so -
+ *      a later claim never takes from one made before it
+ *   3. only after the window, the remainder to the protocol reserves (slashSplit)
+ * `proRata` is always false now and `rate` 1, kept for readers that name them.
  */
 function settleClaims({ escrowMsat, claims = [], spentNonces = null, haltHeight, atHeight, clocks = MAINNET_CLOCKS, noteSigned }) {
   const when = liquidationSchedule({ haltHeight, clocks });
@@ -7841,30 +7868,28 @@ function settleClaims({ escrowMsat, claims = [], spentNonces = null, haltHeight,
   if (typeof escrowMsat !== 'bigint' || escrowMsat < 0n) return { ok: false, why: 'the escrow is a number of msat' };
   const spent = new Set((spentNonces || []).map((n) => String(n).toLowerCase()));
   const seen = new Set();
-  const refused = []; const inWindow = []; const late = [];
+  const refused = []; const taken = [];
   const ordered = [...claims].sort((a, b) => (a.height - b.height) || (String(a.nonce) < String(b.nonce) ? -1 : 1));
   for (const c of ordered) {
     const nonce = String(c.nonce).toLowerCase();
     if (typeof noteSigned !== 'function' || !noteSigned(c)) { refused.push({ nonce, why: 'that note does not carry the federation\'s signature' }); continue; }
     if (spent.has(nonce)) { refused.push({ nonce, why: 'that note\'s nonce is in the published spent set' }); continue; }
     if (seen.has(nonce)) { refused.push({ nonce, why: 'that note was claimed before' }); continue; }
-    if (c.height > when.lateClaimsUntil) { refused.push({ nonce, why: `presented at ${c.height}, after drain_blocks (until ${when.lateClaimsUntil}): the holder's loss` }); continue; }
+    if (c.height > when.claimWindowCloses) { refused.push({ nonce, why: `presented at ${c.height}, after the claim window closed at ${when.claimWindowCloses}: the holder's loss` }); continue; }
     seen.add(nonce);
-    (c.height <= when.claimWindowCloses ? inWindow : late).push({ nonce, amountMsat: BigInt(c.amountMsat), height: c.height });
+    taken.push({ nonce, amountMsat: BigInt(c.amountMsat), height: c.height });
   }
-  const owed = inWindow.reduce((a, c) => a + c.amountMsat, 0n);
-  const short = owed > escrowMsat;
-  const paid = inWindow.map((c) => ({ nonce: c.nonce, msat: short ? (c.amountMsat * escrowMsat) / owed : c.amountMsat, late: false }));
-  let left = escrowMsat - paid.reduce((a, p) => a + p.msat, 0n);
-  for (const c of late) {
+  const paid = []; let left = escrowMsat, shortMsat = 0n;
+  for (const c of taken) {
     const msat = c.amountMsat <= left ? c.amountMsat : left;
-    paid.push({ nonce: c.nonce, msat, late: true }); left -= msat;
+    shortMsat += c.amountMsat - msat;
+    paid.push({ nonce: c.nonce, msat, late: false }); left -= msat;
   }
   const may = remainderMaySplit({ haltHeight, atHeight, clocks });
   const split = may.ok && may.may ? slashSplit({ amountMsat: left }) : null;
-  return { ok: true, paid, refused, proRata: short, rate: short ? Number((escrowMsat * 10000n) / owed) / 10000 : 1,
+  return { ok: true, paid, refused, proRata: false, rate: 1, short: shortMsat > 0n, shortMsat,
     spentSetPublished: spentNonces !== null, remainderMsat: left, split: split ? { reserves: split.reserves } : null,
-    remainderSplitsAt: when.remainderSplitsAt };
+    claimWindowCloses: when.claimWindowCloses, remainderSplitsAt: when.remainderSplitsAt };
 }
 
 const hexKey = (k) => (k instanceof Uint8Array ? Array.from(k, (b) => b.toString(16).padStart(2, '0')).join('') : String(k || '')).toLowerCase();
@@ -8370,7 +8395,7 @@ function roundPresigPlan({ entries, contract, panels, tweakPoint }) {
   if (!panels || !panels.ok) return panels || { ok: false, why: 'no panels were drawn for that round' };
   const panelA = panels.panelA.map((e) => e.pubkey), panelB = panels.panelB.map((e) => e.pubkey), clocks = holdClocksOf(contract.networkId);
   for (const e of bonds) {
-    const hold = holdOutputKey({ nodeKey: e.pubkey, censusKey: e.advert.censusKey, panelA, panelB, bondMaturity: e.advert.bondMaturityHeight, ...clocks }, { tweakPoint });
+    const hold = holdOutputKey({ ownerKey: e.advert.ownerPubkey, censusKey: e.advert.censusKey, panelA, panelB, bondMaturity: e.advert.bondMaturityHeight, ...clocks }, { tweakPoint });
     if (!hold.ok) return { ok: false, why: `the hold output of a bond cannot be built: ${hold.why}` };
     const bond = { txid: e.txid, vout: e.vout, value: BigInt(e.bondSats), script: e.script };
     const node = toHex(e.pubkey);
@@ -8385,7 +8410,7 @@ function roundPresigPlan({ entries, contract, panels, tweakPoint }) {
  * and its maturity build the hold output, panels empty, so it has the return and the fallback leaves only. `tweakPoint` is the caller's curve.
  */
 function bondPresigDigest({ bond, advert, networkId, tweakPoint }) {
-  const hold = holdOutputKey({ nodeKey: advert.nodePubkey, censusKey: advert.censusKey, panelA: [], panelB: [], bondMaturity: advert.bondMaturityHeight, ...holdClocksOf(networkId) }, { tweakPoint });
+  const hold = holdOutputKey({ ownerKey: advert.ownerPubkey, censusKey: advert.censusKey, panelA: [], panelB: [], bondMaturity: advert.bondMaturityHeight, ...holdClocksOf(networkId) }, { tweakPoint });
   if (!hold.ok) return { ok: false, why: `the hold output of a bond cannot be built: ${hold.why}` };
   return { ok: true, hold, digest: slashPresigDigest({ bond, nodeKey: advert.nodePubkey, censusKey: advert.censusKey, holdScript: hold.script }) };
 }
@@ -11819,11 +11844,25 @@ function txidHexOf(tx) {
  * last census that held them all, so no bond but those comes back.
  */
 const CENSUS_LOOKBACK = 2016;
-const CENSUS_WHOLE = { testnet4: { fromHeight: 158226, firstBlock: 156036 } };   // the newest posted round's census was 158,119
-function censusFirstBlock(censusHeight, network) {
-  const whole = CENSUS_WHOLE[network];
+// EVERY NETWORK, ONE TABLE (kanban #925, spec ruling #1101 A, 2026-11-03: "Every network reads every unspent bond since its first block ... one
+// table, and no fallback to a window"): §5A.2 counts a bond while it is confirmed and unspent at census_height - "it does not expire" - so a
+// funding vote's season-old bond and a serving guardian's bond stay in. Mainnet from its genesis_height (genesis_parameters, #1048), from
+// genesis: no mainnet round exists. Regtest from block 0, from now on: a regtest round lives one run. Testnet4 as #820 left it. A network with
+// no row derives no census rather than reading a window. CENSUS_LOOKBACK stays only for testnet4's census heights below its row.
+const CENSUS_WHOLE = Object.freeze({
+  testnet4: Object.freeze({ fromHeight: 158226, firstBlock: 156036 }),   // the newest posted round's census was 158,119
+  regtest: Object.freeze({ fromHeight: 0, firstBlock: 0 }),
+  mainnet: Object.freeze({ fromHeight: 0, firstBlock: 'genesis' }),
+});
+function censusFirstBlock(censusHeight, network, { genesisHeight = null } = {}) {
+  const whole = Object.hasOwn(CENSUS_WHOLE, String(network)) ? CENSUS_WHOLE[network] : null;
+  if (!whole) throw new Error(`no census rule for the network ${network}: a census is not derived on it (§5A.2, kanban #925)`);
+  if (whole.firstBlock === 'genesis') {
+    if (!Number.isInteger(genesisHeight) || genesisHeight < 0) throw new Error(`the ${network} census reads from genesis_height, and none was given`);
+    return Math.min(censusHeight, genesisHeight);
+  }
   const window = Math.max(0, censusHeight - CENSUS_LOOKBACK);
-  return whole && censusHeight >= whole.fromHeight ? Math.min(window, whole.firstBlock) : window;
+  return censusHeight >= whole.fromHeight ? Math.min(window, whole.firstBlock) : window;
 }
 
 function encodeEntry(e) {
@@ -33461,12 +33500,15 @@ function reimbursementOf({ status, tip, network = 'mainnet', secondsPerBlock = 6
   const c = clocksFor(network);
   const s = liquidationSchedule({ haltHeight, clocks: c.ok ? c.clocks : MAINNET_CLOCKS });
   if (!s.ok) return { ok: false, why: s.why };
-  const paysAt = Number(s.claimWindowCloses);
+  // A CLAIM IS PAID WHEN IT IS MADE (kanban #1093 part 8): from the window's opening, until it closes 3 months after the halt
+  const paysAt = Number(s.claimWindowOpens), closes = Number(s.claimWindowCloses);
   const blocks = Math.max(0, paysAt - Number(tip));
   const seconds = blocks * secondsPerBlock;
-  return { ok: true, paysAt, blocks, seconds,
-    line: blocks === 0 ? `Paid back now: the claim window closed at block ${paysAt.toLocaleString('en-US')}.`
-      : `Paid back in about ${blocks.toLocaleString('en-US')} blocks (~${humanDuration(seconds)}), at block ${paysAt.toLocaleString('en-US')}.` };
+  const until = `Claims stay open until block ${closes.toLocaleString('en-US')}.`;
+  if (Number(tip) > closes) return { ok: true, paysAt, closes, blocks: 0, seconds: 0, closed: true, line: `The claim window closed at block ${closes.toLocaleString('en-US')}.` };
+  return { ok: true, paysAt, closes, blocks, seconds,
+    line: blocks === 0 ? `Paid back now, when your notes are claimed. ${until}`
+      : `Paid back from block ${paysAt.toLocaleString('en-US')}, in about ${blocks.toLocaleString('en-US')} blocks (~${humanDuration(seconds)}). ${until}` };
 }
 
 /** A federation's capacity for the debug rows: its signed reserve and exposure cap, the room left, and the load. */

@@ -102,19 +102,15 @@ test('the clocks are the ruled ones, in blocks', () => {
   assert.equal(MAINNET_CLOCKS.drainBlocks, 4032, 'four weeks of drain, and the late-claim tail');
 });
 
-test('a late note is still paid, and the remainder cannot be split before the tail runs out', () => {
+test('the remainder cannot be split while a player may still claim: 3 months from the halt (kanban #1093 part 8)', () => {
   const halt = 900000;
   const when = liquidationSchedule({ haltHeight: halt });
   assert.equal(when.claimWindowOpens, halt + 288, 'claims open when the liquidation does, abandon_blocks after the halt');
-  assert.equal(when.claimWindowCloses, halt + 288 + 216, 'and run claim_blocks from there');
-  assert.equal(when.lateClaimsUntil, halt + 4032, 'late claims run to four weeks after the halt');
-  assert.equal(when.remainderSplitsAt, halt + 4032);
-
-  // THE WHOLE POINT: the window closing is NOT when the nodes get paid.
-  assert.equal(remainderMaySplit({ haltHeight: halt, atHeight: halt + 216 }).may, false,
-    'the remainder was split the moment the claim window closed, with the late tail still running');
-  assert.equal(remainderMaySplit({ haltHeight: halt, atHeight: halt + 4031 }).may, false);
-  assert.equal(remainderMaySplit({ haltHeight: halt, atHeight: halt + 4032 }).may, true);
+  assert.equal(when.claimWindowCloses, halt + 12960, 'and close 3 months after the halt');
+  assert.equal(when.remainderSplitsAt, halt + 12961);
+  assert.equal(remainderMaySplit({ haltHeight: halt, atHeight: halt + 4032 }).may, false, 'the old four-week tail is not the end any more');
+  assert.equal(remainderMaySplit({ haltHeight: halt, atHeight: halt + 12960 }).may, false);
+  assert.equal(remainderMaySplit({ haltHeight: halt, atHeight: halt + 12961 }).may, true);
 });
 
 test('all three networks are pinned, and an unpinned one is refused rather than guessed', () => {

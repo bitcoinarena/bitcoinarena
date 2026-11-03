@@ -15,14 +15,14 @@ test('health per status: OPEN healthy, DRAINING / CRITICAL moving to the success
   assert.equal(federationHealth(null).label, 'Not checked yet');
 });
 
-test('a halted federation pays back at halt + abandon_blocks + claim_blocks: mainnet 288 + 216, testnet4 12 + 9', () => {
+test('a halted federation pays a claim when it is made, from halt + abandon_blocks, until 3 months after the halt (kanban #1093 part 8)', () => {
   const main = reimbursementOf({ status: { status: 'HALTED', height: 900000 }, tip: 900100, network: 'mainnet', secondsPerBlock: 600 });
-  assert.equal(main.paysAt, 900504); assert.equal(main.blocks, 404); assert.equal(main.seconds, 242400);
-  assert.equal(main.line, 'Paid back in about 404 blocks (~3 days), at block 900,504.');
+  assert.equal(main.paysAt, 900288); assert.equal(main.closes, 912960); assert.equal(main.blocks, 188); assert.equal(main.seconds, 112800);
+  assert.equal(main.line, 'Paid back from block 900,288, in about 188 blocks (~31 h). Claims stay open until block 912,960.');
   const tn4 = reimbursementOf({ status: { status: 'HALTED', height: 157064 }, tip: 157070, network: 'testnet4', secondsPerBlock: 1200 });
-  assert.equal(tn4.paysAt, 157085); assert.equal(tn4.blocks, 15);
-  assert.equal(tn4.line, 'Paid back in about 15 blocks (~5 h), at block 157,085.');
-  assert.match(reimbursementOf({ status: { status: 'HALTED', height: 100 }, tip: 200, network: 'testnet4' }).line, /^Paid back now/);
+  assert.equal(tn4.paysAt, 157076); assert.equal(tn4.blocks, 6); assert.equal(tn4.closes, 157712);
+  assert.match(reimbursementOf({ status: { status: 'HALTED', height: 100 }, tip: 200, network: 'testnet4' }).line, /^Paid back now, when your notes are claimed\. Claims stay open until block 748\.$/);
+  assert.equal(reimbursementOf({ status: { status: 'HALTED', height: 100 }, tip: 800, network: 'testnet4' }).closed, true);
   assert.equal(reimbursementOf({ status: { status: 'OPEN', height: 1 }, tip: 2 }).ok, false);
   assert.equal(reimbursementOf({ status: { status: 'HALTED', height: 1 }, tip: null }).ok, false, 'no tip read yet: no number');
 });

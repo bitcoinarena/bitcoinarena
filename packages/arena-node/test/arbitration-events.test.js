@@ -93,7 +93,7 @@ test('the remainder\'s payees are kept with their part and output, and each step
   const FED = 'ab'.repeat(32), P1 = '02' + '11'.repeat(32);
   let tip = 1012;
   const claims = createLiquidationClaims({ validate: async () => ({ ok: true, notes: [{ nonce: '02' + 'a1'.repeat(32), amountMsat: 512000n }], amountMsat: 512000n }),
-    liquidationOf: async () => ({ federation: FED, haltHeight: 1000, liquidatesAt: 1010, claimWindowCloses: 1020, lateClaimsUntil: 1100, spentNonces: [] }),
+    liquidationOf: async () => ({ federation: FED, haltHeight: 1000, liquidatesAt: 1010, claimWindowCloses: 1100, lateClaimsUntil: 1100, spentNonces: [] }),
     height: async () => tip, escrowMsatOf: async () => 2_000_000n, clocks: REGTEST_CLOCKS });
   await claims.offer({ federation: FED, ecash: 'e', payoutPk: P1 });
   assert.deepEqual(claims.claimed(FED).map((c) => [c.amountMsat, c.payoutPk]), [['512000', P1]]);
@@ -107,7 +107,7 @@ test('the remainder\'s payees are kept with their part and output, and each step
   const remainderPayees = async (_fid, msat) => [{ key: '02' + 'aa'.repeat(32), msat: (msat * 75n) / 100n, part: 'node' }, { key: '03' + 'dd'.repeat(32), msat: msat - (msat * 75n) / 100n, part: 'donation' }];
   const pass = () => payOutLiquidation({ fid: FED, v, claims, height: async () => tip, run, spendEscrow: async () => ({ txid: 'e'.repeat(64), sats: '2000' }), remainderPayees });
   tip = 1021; await pass();
-  tip = 1100; await pass();
+  tip = 1101; await pass();
   assert.deepEqual([v.escrowSats, Number.isFinite(v.escrowAtMs), Number.isFinite(v.claimedAtMs), Number.isFinite(v.payouts[0].atMs), Number.isFinite(v.remainderAtMs)], ['2000', true, true, true, true]);
   assert.deepEqual(v.remainderPayouts.map((p) => [p.part, p.payoutPk.slice(0, 4), p.msat, p.outIdx]), [['node', '02aa', '1116000', 0], ['donation', '03dd', '372000', 1]]);
   const e = liquidationEvent({ network: 'regtest', fid: FED, v, claims: claims.claimed(FED) });
