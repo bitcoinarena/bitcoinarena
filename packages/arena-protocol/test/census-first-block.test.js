@@ -22,10 +22,18 @@ test('below that height nothing moves: a posted round\'s census_root still deriv
   assert.equal(censusFirstBlock(158053, 'testnet4'), 156037);
 });
 
-test('another network keeps its window; the start of a chain is block 0', () => {
-  assert.equal(censusFirstBlock(5000, 'regtest'), 5000 - CENSUS_LOOKBACK);
-  assert.equal(censusFirstBlock(100, 'regtest'), 0);
-  assert.equal(censusFirstBlock(100, 'mainnet'), 0);
+// EVERY NETWORK, ONE TABLE (kanban #925, spec ruling #1101 A): mainnet from genesis_height, regtest from block 0, no fallback to a window
+test('regtest reads every bond since block 0, at any height: a season-old bond is still in', () => {
+  for (const h of [100, 2016, 5000, 20000]) assert.equal(censusFirstBlock(h, 'regtest'), 0, `census ${h}`);
+});
+test('mainnet reads from its genesis_height, and refuses without it', () => {
+  assert.equal(censusFirstBlock(900000, 'mainnet', { genesisHeight: 880000 }), 880000);
+  assert.equal(censusFirstBlock(900000 + 12960 + 2016, 'mainnet', { genesisHeight: 880000 }), 880000, 'a bond a season old and more stays in');
+  assert.throws(() => censusFirstBlock(900000, 'mainnet'), /genesis_height/);
+});
+test('a network with no row derives no census: no fallback to a window', () => {
+  for (const n of [null, undefined, 'signet', 'testnet3', 'toString']) assert.throws(() => censusFirstBlock(5000, n), /no census rule/);
+  assert.deepEqual(Object.keys(CENSUS_WHOLE).sort(), ['mainnet', 'regtest', 'testnet4']);
 });
 
 test('both of the node\'s census reads take it', () => {
