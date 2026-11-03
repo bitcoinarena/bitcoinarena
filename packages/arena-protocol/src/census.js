@@ -73,11 +73,25 @@ export { recognizeBond, isTaprootOutput, BOND_UNCHECKED };
  * last census that held them all, so no bond but those comes back.
  */
 export const CENSUS_LOOKBACK = 2016;
-export const CENSUS_WHOLE = { testnet4: { fromHeight: 158226, firstBlock: 156036 } };   // the newest posted round's census was 158,119
-export function censusFirstBlock(censusHeight, network) {
-  const whole = CENSUS_WHOLE[network];
+// EVERY NETWORK, ONE TABLE (kanban #925, spec ruling #1101 A, 2026-11-03: "Every network reads every unspent bond since its first block ... one
+// table, and no fallback to a window"): §5A.2 counts a bond while it is confirmed and unspent at census_height - "it does not expire" - so a
+// funding vote's season-old bond and a serving guardian's bond stay in. Mainnet from its genesis_height (genesis_parameters, #1048), from
+// genesis: no mainnet round exists. Regtest from block 0, from now on: a regtest round lives one run. Testnet4 as #820 left it. A network with
+// no row derives no census rather than reading a window. CENSUS_LOOKBACK stays only for testnet4's census heights below its row.
+export const CENSUS_WHOLE = Object.freeze({
+  testnet4: Object.freeze({ fromHeight: 158226, firstBlock: 156036 }),   // the newest posted round's census was 158,119
+  regtest: Object.freeze({ fromHeight: 0, firstBlock: 0 }),
+  mainnet: Object.freeze({ fromHeight: 0, firstBlock: 'genesis' }),
+});
+export function censusFirstBlock(censusHeight, network, { genesisHeight = null } = {}) {
+  const whole = Object.hasOwn(CENSUS_WHOLE, String(network)) ? CENSUS_WHOLE[network] : null;
+  if (!whole) throw new Error(`no census rule for the network ${network}: a census is not derived on it (§5A.2, kanban #925)`);
+  if (whole.firstBlock === 'genesis') {
+    if (!Number.isInteger(genesisHeight) || genesisHeight < 0) throw new Error(`the ${network} census reads from genesis_height, and none was given`);
+    return Math.min(censusHeight, genesisHeight);
+  }
   const window = Math.max(0, censusHeight - CENSUS_LOOKBACK);
-  return whole && censusHeight >= whole.fromHeight ? Math.min(window, whole.firstBlock) : window;
+  return censusHeight >= whole.fromHeight ? Math.min(window, whole.firstBlock) : window;
 }
 
 export function encodeEntry(e) {
