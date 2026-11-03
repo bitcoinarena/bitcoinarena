@@ -15,7 +15,7 @@
 import { sandboxFor } from './core-sandbox.js';
 import { windowsOf } from '../../arena-protocol/src/window.js';
 import { noQuorumGoesToRerun } from '../../arena-protocol/src/constants.js';
-import { dissentsOn, dissentsFirstOn, postsLateOn, LATE_POSTING_AFTER_MS } from './test-dissent.js';
+import { dissentsOn, dissentsFirstOn, dissentsFailOn, postsLateOn, LATE_POSTING_AFTER_MS } from './test-dissent.js';
 import { ReplayPool } from './pool.js';
 import { checkObjectionBundle } from './objection-check.js';
 import { decodeObjectionBundle } from '../../arena-protocol/src/objection.js';
@@ -26,7 +26,7 @@ import { timed } from './slow.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { resultFrom, signResult, verifiedFinal, runId } from './verdict.js';
 import { stoppedOutcome } from '../../arena-protocol/src/first-mark.js';
-import { noQuorumOutcome as noQuorumRule } from '../../arena-protocol/src/payout.js';
+import { noQuorumOutcome as noQuorumRule, FAILED } from '../../arena-protocol/src/payout.js';
 import {
   provesEquivocation, SIGNED_CHECKPOINT_BYTES as SIGNED_MARK_BYTES, splitSigned as splitMark,
   decodeCheckpoint as decodeMark, checkpointId as markIdOf,
@@ -1150,7 +1150,12 @@ export class Verifier {
     // NO PLAYER-NODE CONFLICT GATE (§5A.13, RULED 2026-10-14): a player declares no operator, so no signer node
     // withholds its result for one
     // THE TEST FAULT, FIRST RESULT (test-dissent.js dissentsFirstOn, off by default): one score higher
-    if (dissentsFirstOn(entryId)) {
+    // AND THE FAIL FAULT (test-dissent.js dissentsFailOn, off by default): FAILED with score 0
+    if (dissentsFailOn(entryId)) {
+      built.result = { ...built.result, outcome: FAILED, score: 0 };
+      built.encoded = encodePlayerResult(built.result);
+      console.log(`[test-dissent] ${hex(entryId).slice(0, 16)}: first result signed FAILED 0`);
+    } else if (dissentsFirstOn(entryId)) {
       built.result = { ...built.result, score: (built.result.score + 1) >>> 0 };
       built.encoded = encodePlayerResult(built.result);
       console.log(`[test-dissent] ${hex(entryId).slice(0, 16)}: first result signed with score ${built.result.score}, not ${built.result.score - 1}`);

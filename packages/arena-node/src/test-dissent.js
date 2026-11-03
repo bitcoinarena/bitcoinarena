@@ -44,6 +44,20 @@ const firstNamed = () => {
 };
 export const dissentsFirstOn = (entryIdBytes) => dissentsOn(entryIdBytes) && firstNamed();
 
+// AND A FIRST RESULT THAT FAILS THE ENTRY (kanban #972, decision #1083: a manipulated round whose players lose real money, so its slash pays a real loss). The file's
+// first line `<entry hex> fail`: this seat signs that entry's first result FAILED with score 0, whatever its run gave. Regtest harnesses only, as every switch here: off by
+// default, and a seat started without the variable never reads it.
+let failAt = 0, failFromFile = false;
+const failNamed = () => {
+  if (!file) return false;
+  if (Date.now() - failAt > 2000) {
+    failAt = Date.now();
+    try { failFromFile = /^\s*[0-9a-f]{64}\s+fail\b/i.test(readFileSync(file, 'utf8').split('\n')[0]); } catch { failFromFile = false; }
+  }
+  return failFromFile;
+};
+export const dissentsFailOn = (entryIdBytes) => dissentsOn(entryIdBytes) && failNamed();
+
 // THE LATE POSTING (RULED 2026-10-04: "Off by default, same shape as ARENA_TEST_DISSENT_FILE: one named
 // entry, one seat posts after the deadline"). ARENA_TEST_LATE_POSTING_ENTRY names one entry (64 hex) at start;
 // ARENA_TEST_LATE_POSTING_FILE names a file whose first line names it, read again at most every 2 s. On a seat started with
