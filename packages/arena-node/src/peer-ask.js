@@ -50,3 +50,13 @@ export function askPeers(peers, ask, { boundMs = PEER_ASK_MS, graceMs = PEER_GRA
     });
   });
 }
+
+/**
+ * ONE ASK WITHIN A BOUND (kanban #1074): `ask(signal)` is the whole exchange, the body read too. Answers its value, or throws `no answer in <boundMs> ms`
+ * (or the ask's own error). For a server that is not a seat, such as an address's LNURL endpoint.
+ */
+export async function askWithin(ask, boundMs) {
+  const [x] = await askPeers(['one'], (_, signal) => ask(signal), { boundMs });
+  if (!('value' in x)) throw x.error;
+  return x.value;
+}
