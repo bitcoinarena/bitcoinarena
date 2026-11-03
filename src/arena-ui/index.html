@@ -1799,10 +1799,16 @@
         const report = async () => {
           const S = (window.ARENA_BROWSER_STORE && window.ARENA_BROWSER_STORE()) || store;
           const ids = new Set();
+          // every place this browser keeps an entry id (kanban #1090, measured on the owner's phone 11-03: its history held deposits only): the
+          // wallet history's stake rows, each kept lock's committedTo, each round note arena.pending.<round>.<entry>
+          const add = (x) => { if (/^[0-9a-f]{64}$/i.test(String(x || ''))) ids.add(String(x).toLowerCase()); };
           for (let i = 0; i < S.length; i++) {
-            const k = S.key(i);
-            if (!k || !k.startsWith('arena.ledger.') || k.startsWith('arena.ledger.read.')) continue;
-            try { for (const r of JSON.parse(S.getItem(k) || '[]')) if (r && /^[0-9a-f]{64}$/i.test(String(r.entry || ''))) ids.add(String(r.entry).toLowerCase()); } catch { /* not a list */ }
+            const k = S.key(i) || '';
+            try {
+              if (k.startsWith('arena.ledger.') && !k.startsWith('arena.ledger.read.')) { for (const r of JSON.parse(S.getItem(k) || '[]')) if (r) add(r.entry); }
+              else if (k.startsWith('arena.lock.saved.')) add((JSON.parse(S.getItem(k) || 'null') || {}).committedTo);
+              else if (k.startsWith('arena.pending.') && k !== 'arena.pending.mine') add(k.split('.').pop());
+            } catch { /* not ours */ }
           }
           let sent = []; try { sent = JSON.parse(store.getItem('arena.admin.marked') || '[]'); } catch { sent = []; }
           const fresh = [...ids].filter((x) => !sent.includes(x)).slice(0, 500);
@@ -1813,6 +1819,7 @@
             if (r.ok) store.setItem('arena.admin.marked', JSON.stringify(sent.concat(fresh).slice(-5000)));
           } catch { /* the next minute asks again */ }
         };
+        window.ARENA_ADMIN_REPORT = report;
         setTimeout(report, 5000); setInterval(report, 60000);
       }
     })();
@@ -3885,6 +3892,8 @@
               const mine = JSON.parse(window.sessionStorage.getItem('arena.pending.mine') || '[]');
               if (!mine.includes(key)) { mine.push(key); window.sessionStorage.setItem('arena.pending.mine', JSON.stringify(mine)); }
             } catch { /* no note, no line */ }
+            // an admin's entry is told to the explorer at once (kanban #1090), not only by the minute's sweep
+            if (window.ARENA_ADMIN_REPORT) setTimeout(window.ARENA_ADMIN_REPORT, 2000);
             return ARENACLIENT.markLockCommitted(vault(), Object.assign({ entryId: eid }, whose));
           };
           if (reuse) {
@@ -5778,21 +5787,35 @@
     // of the node's income"): this wallet's own program, keyed by its identity key (ARENACLIENT.referralOf) - never a seed minted for it.
     // What it earned is what the zap collector last read on the seats (window.ARENA_REFERRAL_EARNED); Copy also names the program on the
     // seats with the player's name, once per name (arena.referral.named), so the explorer and Health show a name, not a key.
-    const myReferral = () => {
+    // ONE OWN LINK PER PERSON (kanban #1099, the owner 2026-11-03: "Nur ein Referrer Link pro User, nicht mehr als 1"; asked: "Ein eigener Link pro
+    // Person"): the first own link this browser copied stays its link, whichever wallet is open later - a second wallet in the same browser shows
+    // the same link, not one of its own. What the link earns lands in the wallet it belongs to (`wallet` says whether that is the one open).
+    const ownReferral = () => {
       try {
         if (!window.ARENA_CURVE || typeof ARENACLIENT === 'undefined' || !ARENACLIENT.referralOf || !window.sessionStorage.getItem('arena.player.seed')) return null;
         return ARENACLIENT.referralOf({ storage: window.sessionStorage, random: () => { throw new Error('no wallet'); }, curve: window.ARENA_CURVE, origin: location.origin });
       } catch { return null; }
     };
+    const referralStore = () => { try { return window.ARENA_BROWSER_STORE ? window.ARENA_BROWSER_STORE() : window.localStorage; } catch { return null; } };
+    const keptReferral = () => { try { const k = JSON.parse(referralStore().getItem('arena.referral.mine') || 'null'); return k && /^0[23][0-9a-f]{64}$/.test(k.key || '') ? k.key : null; } catch { return null; } };
+    const myReferral = () => {
+      const own = ownReferral(), kept = keptReferral();
+      if (kept) return { key: kept, link: location.origin.replace(/\/$/, '') + '/?ref=' + kept, wallet: !!own && own.key === kept };
+      return own ? { ...own, wallet: true } : null;
+    };
     window.ARENA_MY_REFERRAL = myReferral;
+    window.ARENA_COPY_REFERRAL = () => copyReferral();   // what Settings' Copy does, for a measurement (kanban #1099)
     async function copyReferral() {
       const me = myReferral();
       if (!me) return 'Open or create your wallet first.';
+      // the first copy fixes this browser's one link (kanban #1099)
+      if (!keptReferral()) try { referralStore().setItem('arena.referral.mine', JSON.stringify({ key: me.key, atMs: Date.now() })); } catch { /* this visit only */ }
       let copied = false;
       try { await navigator.clipboard.writeText(me.link); copied = true; } catch { copied = false; }
       const name = currentName();
       let named = null; try { named = window.ARENA_BROWSER_STORE().getItem('arena.referral.named'); } catch { named = null; }
-      if (name && named !== me.key + ':' + name && typeof zapSeats === 'function') {
+      // its name is signed by the link's own wallet only: another wallet open here would name its own key, not the link's
+      if (me.wallet && name && named !== me.key + ':' + name && typeof zapSeats === 'function') {
         try {
           const body = JSON.stringify(ARENACLIENT.referralNameFor({ name, storage: window.sessionStorage, random: () => { throw new Error('no wallet'); }, curve: window.ARENA_CURVE }));
           const told = await Promise.all(zapSeats().slice(0, 3).map((s) => fetch(String(s).replace(/\/$/, '') + '/referral-name', { method: 'POST', body, signal: AbortSignal.timeout(15000) })
@@ -5806,7 +5829,7 @@
       const me = myReferral(), e = window.ARENA_REFERRAL_EARNED;
       // to the msat (kanban #681: a referral share is 10 % of the nodes' fee, mostly part of a sat - 800 msat read "0 sat")
       const sat = (msat) => (Number(BigInt(msat || 0)) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 }) + ' sat';
-      const earned = !me ? '' : !e ? '' : e.payouts ? 'Earned so far: ' + sat(e.msat) + ' from ' + e.payouts + (e.payouts === 1 ? ' payout' : ' payouts') + '. It lands in your wallet on its own.'
+      const earned = !me ? '' : !me.wallet ? 'Your one link, made by the first wallet in this browser: what it earns lands in that wallet.' : !e ? '' : e.payouts ? 'Earned so far: ' + sat(e.msat) + ' from ' + e.payouts + (e.payouts === 1 ? ' payout' : ' payouts') + '. It lands in your wallet on its own.'
         : 'Nothing earned yet.';
       window.ArenaSettings.referral(document.getElementById('arena-set-referral'), { link: me ? me.link : '', earned, onCopy: copyReferral });
     };
