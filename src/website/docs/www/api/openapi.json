@@ -2,7 +2,7 @@
  "openapi": "3.0.3",
  "info": {
   "title": "Bitcoin Arena node API",
-  "version": "2026-11-02",
+  "version": "2026-11-03",
   "description": "Every request a Bitcoin Arena node (`arena-node`) answers, generated from `packages/arena-node/src/server.js` by `src/website/docs/gen-docs.py`. Concepts and guides: https://docs.bitcoinarena.io/"
  },
  "servers": [
@@ -1882,6 +1882,86 @@
      },
      "503": {
       "description": "Seat cannot read its chain.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/census-sign/commit": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "[signed] Ask a census key holder to sign",
+    "description": "A filer's request that a census key holder sign a slash start, or a fallback (spec 5A.3B). For a start the holder replays the proof and holds the transaction to its own census and hold outputs; for a fallback it rebuilds the fallback and its payout table itself and signs only if its own table id is the one named. Only then does it commit a nonce.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none: a holder checks everything itself\n\nReturns: 200 { ok, session, node, xs, hiding, binding } or { ok: false, why }; 400\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "post_census_sign_commit",
+    "requestBody": {
+     "required": true,
+     "description": "The key, the run (the epoch), the node and its signature on ReshareReady, in hex.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "\"taken\"",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "400": {
+      "description": "Not a ReshareReady.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "409": {
+      "description": "Refused, with the reason.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/census-sign/share": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "[signed] A census key holder's signature share",
+    "description": "A holder's share of that signature. A nonce is used once: the session ends here whatever comes of it.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none: bound to the session and its checked digest\n\nReturns: 200 { ok, z } or { ok: false, why }; 400\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "post_census_sign_share",
+    "requestBody": {
+     "required": true,
+     "description": "The key, the run (the epoch), the node and its signature on ReshareReady, in hex.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "\"taken\"",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "400": {
+      "description": "Not a ReshareReady.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "409": {
+      "description": "Refused, with the reason.",
       "content": {
        "text/plain": {}
       }
@@ -9399,6 +9479,19 @@
    }
   },
   "/payout-address": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "The Lightning address an entry named, as signed, for a seat ",
+    "description": "The Lightning address an entry named, as signed, for a seat that took the entry from a peer (kanban #1071).\n\nAccess: none; the reader checks the signature under the entry's session key\n\nReturns: 200 JSON {signed, signature}; 404 when no signed address is held\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_payout_address",
+    "responses": {
+     "200": {
+      "description": "200 JSON {signed, signature}; 404 when no signed address is held"
+     }
+    }
+   },
    "post": {
     "tags": [
      "Players"
@@ -13539,6 +13632,65 @@
     }
    }
   },
+  "/slash-pegin": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "This node's peg-in as a slash carrier",
+    "description": "This node's peg-in address into a federation for carrying one slash (spec 5A.3B: panel A's members on a release, the census key's holders on a fallback), made once by its own client and signed by its node key over carrier_peg_in(network_id, script). 409 where it holds no client of that federation.\n\nAccess: none; only for a start this seat has read\n\nReturns: 200 JSON { node, federation, use, address, script, signature }; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_slash_pegin",
+    "parameters": [
+     {
+      "name": "start",
+      "in": "query",
+      "required": true,
+      "description": "The slash start's txid, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "federation",
+      "in": "query",
+      "required": true,
+      "description": "The federation id, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "use",
+      "in": "query",
+      "required": false,
+      "description": "players (the players' part) or reserves (a reserves' part): two outputs of one release are two addresses.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The signed peg-in.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "No such start read here.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "409": {
+      "description": "No client of that federation.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
   "/slash-presig": {
    "get": {
     "tags": [
@@ -13641,13 +13793,95 @@
     }
    }
   },
+  "/slash-release": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "A started bond's release and fallback",
+    "description": "What this seat built for one started template-3 bond (spec 5A.3B): the payout table and spend of its release and of its fallback, its own signature on the release and the other panel members' signatures it holds over the same bytes, and what it carried as a carrier. Panel members read each other's signatures here. For a table that left money in escrow (RULED 2026-11-03, kanban #1085), `escrow` lists the escrow spends this seat found on the chain and its own proposals for the escrow now, each outputs[] with the height it names and the signatures it holds over the same bytes; panel members read each other's here, and anyone the spends.\n\nAccess: none\n\nReturns: 200 JSON { node, start, release?: { tableId, table, txid, feeSats, sent, own: { node, signature }, signatures[] }, fallback?: {...}, carried[], escrow?: { tableId, spends[{ escrow, path, txid, outputs }], proposals[{ escrow, path, outputsId, loadHeight, outputs, txid, sent, own, signatures[] }] } }; 400\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_slash_release",
+    "parameters": [
+     {
+      "name": "start",
+      "in": "query",
+      "required": true,
+      "description": "The slash start's txid, 64 hex, as bitcoind prints it.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "What this seat built and holds for that start.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "No start named.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/slash-releases": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "Every start this seat has read",
+    "description": "Every slash start this seat has read (the newest 64), each with what /slash-release answers for it.\n\nAccess: none\n\nReturns: 200 JSON { node, starts: [{ start, height, round_id, proof_id, node, bond, release?, fallback?, carried[] }] }\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_slash_releases",
+    "responses": {
+     "200": {
+      "description": "The starts.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/slash-table/{tableId 64 hex}": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "A slash payout table by its id",
+    "description": "A slash payout table by its id, payout_table_id = tagged_hash(\"ARENA/v1/SlashPayoutTable\", its bytes) (spec 5A.3B: \"Any seat serves the table by its id\").\n\nAccess: none\n\nReturns: 200 octet-stream the PayoutTable; 404\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_slash_table_tableId_64_hex",
+    "responses": {
+     "200": {
+      "description": "The table's bytes.",
+      "content": {
+       "application/octet-stream": {
+        "schema": {
+         "type": "string",
+         "format": "binary"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No such table here.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
   "/slash/{id}": {
    "put": {
     "tags": [
      "Nodes"
     ],
     "summary": "Relay stores a slash proof",
-    "description": "Relay stores a slash proof under its own id.\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none; proof id and evidence checked\n\nReturns: 201 \"kept\"; 400/409\n\nSource: `packages/arena-node/src/server.js` line 6131.",
+    "description": "Relay stores a complete fraud proof under H(fraud_proof), the hash of its own bytes.\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none; the bytes must hash to that id\n\nReturns: 201 \"kept\"; 400/409\n\nSource: `packages/arena-node/src/server.js` line 6131.",
     "operationId": "put_slash_id",
     "parameters": [
      {
@@ -13699,7 +13933,7 @@
      "Nodes"
     ],
     "summary": "Relay serves a slash proof",
-    "description": "Relay serves a stored slash proof.\n\nAccess: none\n\nReturns: 200 octet-stream evidence; 404\n\nSource: `packages/arena-node/src/server.js` line 6155.",
+    "description": "Relay serves the bytes under H(fraud_proof).\n\nAccess: none\n\nReturns: 200 octet-stream complete proof; 404\n\nSource: `packages/arena-node/src/server.js` line 6155.",
     "operationId": "get_slash_id",
     "parameters": [
      {
@@ -13731,6 +13965,56 @@
       }
      }
     }
+   }
+  },
+  "/slash/{tableId 64 hex}/carriers": {
+   "get": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "An escrow's carriers",
+    "description": "The CarrierPegIn records this seat holds for a slash table's escrow (spec 5A.3B, RULED 2026-11-03, kanban #1085): each a carrier's peg-in into one federation for one escrow outpoint, signed by its node key over tagged_hash(\"ARENA/v1/CarrierEscrowPegIn\", payout_table_id || escrow txid || escrow vout || federation_id || script). An escrow spend pays only scripts named here.\n\nAccess: none\n\nReturns: 200 JSON { tableId, carriers: [{ node, tableId, escrow, federation, script, signature }] }\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_slash_tableId_64_hex_carriers",
+    "responses": {
+     "200": {
+      "description": "The carriers' signed peg-ins.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Take a carrier's escrow peg-in",
+    "description": "Takes a carrier's CarrierPegIn { node, tableId, escrow \"txid:vout\", federation, script, signature } for a slash table's escrow (RULED 2026-11-03, kanban #1085), checked before it is kept: the node key's signature, a table this seat reads confirmed, an escrow outpoint of that table, and a node the carrier rule lets carry it (panel A's members, or the census key's holders less the accused and the round's seats). A new one is handed on to the escrow's signers.\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none\n\nReturns: 200 JSON { ok, kept }; 400 not a CarrierPegIn; 409 refused by the carrier rule; 503 this seat has not read that table confirmed\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "post_slash_tableId_64_hex_carriers",
+    "requestBody": {
+     "required": true,
+     "description": "A CarrierPegIn as GET answers it.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Taken; kept false when it was held already.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "409": {
+      "description": "Refused, with the reason.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
    }
   },
   "/slashes": {
