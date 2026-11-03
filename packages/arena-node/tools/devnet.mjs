@@ -150,6 +150,17 @@ function needBins() {
 }
 
 /** The environment every fedimint tool and node runs with: the fork's binaries first on PATH, HOME inside the devnet. */
+/** One node's process, as `up` starts it; `extra` env on top (restart: ARENA_RELEASE_VERSION for a staged update, kanban #1093 part 3). */
+function startNode(k, { invite, apps, extra = {} }) {
+  const port = PLAN.nodes[k], client = path('clients', `node-${k + 1}`);
+  mkdirSync(client, { recursive: true });
+  return startPart(`node-${k + 1}`, process.execPath, ['src/main.js', String(port), storeOf(k)], { env: fedEnv({
+    ARENA_STAKE_LOCK_BIN: LOCK, ARENA_FEDERATION_CLIENT_DIR: client, ARENA_FEDERATION_CLIENTS_DIR: path('clients', `node-${k + 1}-others`),
+    ARENA_FEDERATION_INVITE: invite, ARENA_CLOSE_AT_END: '1', ARENA_FUND_FREE_ROUNDS: '1', ARENA_DONATION_NETWORK: 'regtest',
+    ARENA_ATTACH_PROOF_DIR: path('runner', 'proof'), ARENA_FUNDED_ROUNDS_FILE: path('runner', 'funded.txt'),
+    ARENA_APPS: apps.join(','), [`ARENA_WSS_${port}`]: `ws://127.0.0.1:${port}`, ...extra }) });
+}
+
 function fedEnv(extra = {}) {
   return { ...env, PATH: [FED, dirname(process.execPath), env.PATH || ''].join(delimiter), HOME: path('home'),
     ARENA_BITCOIND_URL: RPC_URL, ARENA_BITCOIND_COOKIE: COOKIE(), ARENA_TN4_NETWORK: 'regtest',
@@ -215,15 +226,9 @@ async function up() {
   // advertise it (a bond is posted once): start a devnet on a fresh DEVNET_DIR for it, or its rounds find no committee
   const apps = [join(NODE_PKG, '..', 'nextblock', 'plugin', 'nextblock.js'), ...APP_FILES];
   writeFileSync(path('games.json'), JSON.stringify(APP_FILES) + '\n');
-  for (const [k, port] of PLAN.nodes.entries()) {
+  for (const k of PLAN.nodes.keys()) {
     if (running(`node-${k + 1}`)) continue;
-    const client = path('clients', `node-${k + 1}`);
-    mkdirSync(client, { recursive: true });
-    startPart(`node-${k + 1}`, process.execPath, ['src/main.js', String(port), stores[k]], { env: fedEnv({
-      ARENA_STAKE_LOCK_BIN: LOCK, ARENA_FEDERATION_CLIENT_DIR: client, ARENA_FEDERATION_CLIENTS_DIR: path('clients', `node-${k + 1}-others`),
-      ARENA_FEDERATION_INVITE: invite, ARENA_CLOSE_AT_END: '1', ARENA_FUND_FREE_ROUNDS: '1', ARENA_DONATION_NETWORK: 'regtest',
-      ARENA_ATTACH_PROOF_DIR: path('runner', 'proof'), ARENA_FUNDED_ROUNDS_FILE: path('runner', 'funded.txt'),
-      ARENA_APPS: apps.join(','), [`ARENA_WSS_${port}`]: `ws://127.0.0.1:${port}` }) });
+    startNode(k, { invite, apps });
   }
   for (const [k, port] of PLAN.nodes.entries()) {
     for (let i = 0; ; i++) {
@@ -868,7 +873,25 @@ async function down() {
   if (left.length || !stopped.every((s) => s.gone)) process.exitCode = 1;
 }
 
+// restart <n>: one node stopped and started again as `up` starts it, with ARENA_RELEASE_VERSION from this process's environment when set (a staged
+// update's step, kanban #1093 part 3: tools/stage-regtest.mjs); waits until it answers again
+async function restartCmd() {
+  const n = Number(process.argv[3]);
+  if (!Number.isInteger(n) || n < 1 || n > PLAN.nodes.length) throw new Error(`restart <1..${PLAN.nodes.length}>`);
+  const invite = readFileSync(path('invite-code'), 'utf8').trim();
+  const apps = [join(NODE_PKG, '..', 'nextblock', 'plugin', 'nextblock.js'), ...JSON.parse(readFileSync(path('games.json'), 'utf8'))];
+  const stopped = await stopPart(`node-${n}`);
+  startNode(n - 1, { invite, apps, extra: env.ARENA_RELEASE_VERSION ? { ARENA_RELEASE_VERSION: env.ARENA_RELEASE_VERSION } : {} });
+  for (let i = 0; ; i++) {
+    try { if ((await fetch(`${nodeUrl(n - 1)}/identity`, { signal: AbortSignal.timeout(3000) })).ok) break; } catch { /* not yet */ }
+    if (!running(`node-${n}`)) throw new Error(`node ${n} exited: see logs/node-${n}.log`);
+    if (i > 240) throw new Error(`node ${n} did not answer in 120 s`);
+    await wait(500);
+  }
+  say({ step: 'restart', node: n, was: stopped ? stopped.pid : null, pid: readPid(`node-${n}`).pid, version: env.ARENA_RELEASE_VERSION || 'the tree\'s' });
+}
+
 const cmd = process.argv[2];
-const run = { up, runner, page, status, play, replay: replayCmd, down, 'new-game': newGame, liquidity, lnurl: lnurlDoor }[cmd];
+const run = { up, runner, page, status, play, replay: replayCmd, down, restart: restartCmd, 'new-game': newGame, liquidity, lnurl: lnurlDoor }[cmd];
 if (!run) { console.error('devnet.mjs up | liquidity | status | play [round] [--game name] | replay [round entry] | down | new-game <dir> [name]     (DEVNET_DIR, DEVNET_BASE_PORT, BITCOIN_BIN, FEDIMINT_BIN)'); process.exit(2); }
 run().catch((e) => { console.error(`devnet ${cmd}: ${e.message}`); process.exit(1); });
