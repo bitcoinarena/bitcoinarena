@@ -4206,6 +4206,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       await censusKey.scan.readDead().catch((e) => console.error(`[census-key] the keys under their threshold were not read: ${e.message}`));
       if (slashStarter) await slashStarter.pass();
       if (slashRelease) await slashRelease.pass().catch((e) => console.error(`[slash] the release pass did not run: ${e.message}`));
+      if (slashStarter) await slashStarter.sweep().catch((e) => console.error(`[slash] the repaid fee was not swept: ${e.message}`));
     } finally { ownPassing = false; }
   };
   // A PROOF FETCHED BY ITS HASH, from this seat's relay or any seat of the census: the bytes that hash to it are the proof, so the first that do are all there is to read (kanban #1065)
@@ -4273,7 +4274,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     heldProofs: async () => [...round.allSlashProofs(), ...round.allRerunSlashProofs(), ...round.auditSlashProofs(), ...round.doubleSlashProofs(), ...round.tableSlashProofs(), ...(await abandonedHeld())].flatMap((p) => { const bytes = round.relayGet(Buffer.from(p.proofId)); return bytes ? [{ proofId: p.proofId, bytes, seenMs: p.seenMs }] : []; }), bytesOf: (id) => round.relayGet(Buffer.from(id)), judge: judgeProofBytes, holdsFor: holdsForStart, feeCoin: censusKey.feeCoin, send: (hex) => chainSend(hex), urlsOf: () => censusUrls || [],
     stepMs: Number(process.env.ARENA_SLASH_FILE_STEP_MS || 600000), log: (l) => console.log(l),
     checkOther: (request) => (slashRelease ? slashRelease.checkFallback(request) : { ok: false, why: 'this seat runs no release or fallback' }),
-    feeSecret: (proofId) => taggedHash('ARENA/v1/SlashFeeKey', Uint8Array.from([...round.identity.secret, ...proofId])) }) : null;
+    feeSecret: (proofId) => taggedHash('ARENA/v1/SlashFeeKey', Uint8Array.from([...round.identity.secret, ...proofId])),
+    // THE REPAID FEE GOES HOME: once the release or the fallback that repaid it is confirmed, to the wallet a hold's return goes to
+    txOut: typeof chainTxOut === 'function' ? chainTxOut : null, returnScript: () => ownReturnScript(), ownServed: (start) => (slashRelease ? slashRelease.served(start) : null) }) : null;
   // A STARTED BOND IS RELEASED BY BOTH PANELS OR TAKEN BY THE FALLBACK, AND ITS CARRIERS PAY (5A.3B steps 4 and 5, kanban #972, decision #1083): slash-release-run.js. Everything a signer
   // reads is its own: its census at the tip, the round's seats for how the round settled, the carriers' signed peg-ins, its own federation records for the reserves' load
   const urlOfKey = new Map();
