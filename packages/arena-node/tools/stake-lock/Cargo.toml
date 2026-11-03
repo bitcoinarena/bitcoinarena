@@ -18,7 +18,9 @@ publish = false
 
 [dependencies]
 anyhow = { workspace = true }
+bitcoincore-rpc = { workspace = true }
 fedimint-api-client = { workspace = true }
+fedimint-bitcoind = { workspace = true, features = ["bitcoincore"] }
 fedimint-bip39 = { workspace = true }
 fedimint-client = { workspace = true }
 fedimint-connectors = { workspace = true }
@@ -33,6 +35,9 @@ fedimint-mint-client = { workspace = true }
 fedimint-mintv2-client = { workspace = true }
 fedimint-rocksdb = { workspace = true }
 fedimint-wallet-client = { workspace = true }
+futures = { workspace = true }
 fedimint-walletv2-client = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
+tbs = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
