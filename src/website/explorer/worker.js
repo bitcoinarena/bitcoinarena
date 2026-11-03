@@ -203,6 +203,36 @@ async function readMetrics(env) {
 }
 
 const DAY_MS = 86400000, VOLUME_DAYS = 30;
+// THE RESERVE OVER TIME (kanban #1095, the owner 2026-11-03: "Gespielte Runden auf Explorer auch grafisch darstellen, auch Volume, und Reserven"):
+// every payment into a federation's reserve carries its time (GET /reserves?all=1, paidIn[].at), so the history is rebuilt from the start, not
+// only recorded from now. Read once an hour from three seats; per federation the longest list (the most up-to-date seat); per UTC day the
+// reserve held at its end, summed over the federations. Payouts out of the reserve (none yet) are taken off on their day.
+const HISTORY_SEATS = [0, 1, 7];
+async function readReserveHistory(env) {
+  const answers = await Promise.all(HISTORY_SEATS.map((i) => ask(`${SEATS[i]}/reserves?all=1`, 45000)));
+  const best = new Map();
+  for (const a of answers) for (const f of (a.body && Array.isArray(a.body.federations) ? a.body.federations : [])) {
+    const paid = Array.isArray(f.paidIn) ? f.paidIn : [];
+    if (!best.has(f.federationId) || paid.length > best.get(f.federationId).length) best.set(f.federationId, paid);
+  }
+  if (!best.size) return null;
+  const perDay = new Map();
+  for (const paid of best.values()) for (const x of paid) {
+    const t = Date.parse(x.at); if (!Number.isFinite(t)) continue;
+    const d = new Date(Math.floor(t / DAY_MS) * DAY_MS).toISOString().slice(0, 10);
+    perDay.set(d, (perDay.get(d) || 0n) + BigInt(x.amountMsat || 0));
+  }
+  const days = [...perDay.keys()].sort();
+  const out = []; let held = 0n;
+  if (days.length) for (let t = Date.parse(days[0]); t <= Date.now(); t += DAY_MS) {
+    const d = new Date(t).toISOString().slice(0, 10);
+    const came = perDay.get(d) || 0n; held += came;
+    out.push({ day: d, inMsat: String(came), heldMsat: String(held) });
+  }
+  const h = { readAt: new Date().toISOString(), federations: best.size, days: out };
+  await statePut(env, 'reserve-history', JSON.stringify(h));
+  return h;
+}
 async function metrics(env) {
   const kept = JSON.parse((await stateGet(env, 'metrics')) || 'null');
   const since = Math.floor(Date.now() / DAY_MS) * DAY_MS - (VOLUME_DAYS - 1) * DAY_MS;
@@ -210,7 +240,9 @@ async function metrics(env) {
   const r = await env.DB.prepare(`SELECT (stored_ms / ${DAY_MS}) AS d, COUNT(*) AS n, SUM(CAST(json_extract(json, '$.entry.stakeMsat') AS INTEGER)) AS msat
     FROM txs WHERE stored_ms >= ? AND kind = 'order' GROUP BY d ORDER BY d DESC`).bind(since).all();
   const volume = (r.results || []).map((x) => ({ day: new Date(Number(x.d) * DAY_MS).toISOString().slice(0, 10), txs: Number(x.n), msat: String(x.msat || 0) }));
-  return { volume, reserve: kept ? kept.reserve : null, referral: kept ? kept.referral : null, readAt: kept ? kept.readAt : null, seats: kept ? kept.seats : null };
+  const history = JSON.parse((await stateGet(env, 'reserve-history')) || 'null');
+  return { volume, reserve: kept ? kept.reserve : null, referral: kept ? kept.referral : null, readAt: kept ? kept.readAt : null, seats: kept ? kept.seats : null,
+    reserveHistory: history };
 }
 
 // PLAYED ROUNDS (kanban #1090, the owner 2026-11-03: "Played rounds mit Tages / Wochen / Monats Anzeige", "Auch rueckwirkend seit 1.11",
@@ -281,6 +313,9 @@ async function poll(env) {
   // every fifth minute: the figures change slowly, and each read asks every seat twice
   if (Math.floor(Date.now() / 60000) % 5 === 0 || !(await stateGet(env, 'metrics')))
     await readMetrics(env).catch((e) => console.log(JSON.stringify({ metricsError: String(e && e.message ? e.message : e) })));
+  // every hour: the reserve's history (kanban #1095), three seats' whole lists of payments in
+  if (Math.floor(Date.now() / 60000) % 60 === 7 || !(await stateGet(env, 'reserve-history')))
+    await readReserveHistory(env).catch((e) => console.log(JSON.stringify({ reserveHistoryError: String(e && e.message ? e.message : e) })));
   await backfill(env).catch((e) => console.log(JSON.stringify({ backfillError: String(e && e.message ? e.message : e) })));
 }
 
